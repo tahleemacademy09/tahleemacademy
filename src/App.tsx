@@ -15,6 +15,7 @@ import About from "./pages/About";
 import Contact from "./pages/Contact";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
+import AdminLogin from "./pages/AdminLogin";
 import NotFound from "./pages/NotFound";
 
 import StudentDashboard from "./pages/student/StudentDashboard";
@@ -48,6 +49,9 @@ const App = () => (
                 <Route path="/register" element={<Register />} />
               </Route>
 
+              {/* Admin login (standalone, no public layout) */}
+              <Route path="/admin-login" element={<AdminLogin />} />
+
               {/* Student dashboard */}
               <Route element={<ProtectedRoute><DashboardLayout role="student" /></ProtectedRoute>}>
                 <Route path="/student" element={<StudentDashboard />} />
@@ -57,7 +61,7 @@ const App = () => (
               {/* Exam taking (no sidebar) */}
               <Route path="/student/exam/:attemptId" element={<ProtectedRoute><ExamTaking /></ProtectedRoute>} />
 
-              {/* Admin dashboard */}
+              {/* Admin dashboard - requires admin role */}
               <Route element={<ProtectedRoute requiredRole="admin"><DashboardLayout role="admin" /></ProtectedRoute>}>
                 <Route path="/admin" element={<AdminDashboard />} />
                 <Route path="/admin/exams" element={<ExamManager />} />

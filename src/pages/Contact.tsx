@@ -46,9 +46,9 @@ const Contact = () => {
         {/* Contact info */}
         <div className="space-y-4">
           {[
-            { icon: Mail, label: t("Email", "البريد"), value: "info@tahleemacademy.com" },
-            { icon: Phone, label: t("Phone", "الهاتف"), value: "+1 (555) 123-4567" },
-            { icon: MapPin, label: t("Address", "العنوان"), value: t("123 Learning Lane, Education City", "123 طريق التعلم، مدينة التعليم") },
+            { icon: Mail, label: t("Email", "البريد"), value: "Tahleemacademy09@gmail.com" },
+            { icon: Phone, label: t("Phone", "الهاتف"), value: "+2348163310471" },
+            { icon: MapPin, label: t("Address", "العنوان"), value: t("Tahleem Academy", "أكاديمية تعليم") },
           ].map((item, i) => (
             <Card key={i}>
               <CardContent className="flex items-center gap-3 p-4">
