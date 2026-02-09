@@ -20,12 +20,18 @@ const Login = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    const { error } = await signIn(email, password);
+    const { error, data } = await signIn(email, password);
     setLoading(false);
     if (error) {
       toast({ title: t("Error", "خطأ"), description: error.message, variant: "destructive" });
     } else {
-      navigate("/student");
+      // Check roles after login to route correctly
+      const { data: roles } = await supabase
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", data.user?.id);
+      const isAdmin = roles?.some((r) => r.role === "admin" || r.role === "teacher");
+      navigate(isAdmin ? "/admin" : "/student");
     }
   };
 
