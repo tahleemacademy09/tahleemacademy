@@ -47,11 +47,11 @@ const Footer = () => {
             <div className="flex flex-col gap-2 text-sm text-muted-foreground">
               <div className="flex items-center gap-2">
                 <Mail className="h-4 w-4" />
-                <span>info@tahleemacademy.com</span>
+                <span>Tahleemacademy09@gmail.com</span>
               </div>
               <div className="flex items-center gap-2">
                 <Phone className="h-4 w-4" />
-                <span>+1 (555) 123-4567</span>
+                <span>+2348163310471</span>
               </div>
             </div>
           </div>
