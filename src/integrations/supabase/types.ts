@@ -14,16 +14,514 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      activity_logs: {
+        Row: {
+          action: string
+          created_at: string
+          entity_id: string | null
+          entity_type: string | null
+          id: string
+          metadata: Json | null
+          user_id: string
+        }
+        Insert: {
+          action: string
+          created_at?: string
+          entity_id?: string | null
+          entity_type?: string | null
+          id?: string
+          metadata?: Json | null
+          user_id: string
+        }
+        Update: {
+          action?: string
+          created_at?: string
+          entity_id?: string | null
+          entity_type?: string | null
+          id?: string
+          metadata?: Json | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      courses: {
+        Row: {
+          category: string | null
+          created_at: string
+          created_by: string | null
+          description: string | null
+          description_ar: string | null
+          id: string
+          image_url: string | null
+          instructor_bio: string | null
+          instructor_name: string | null
+          is_published: boolean | null
+          level: string | null
+          title: string
+          title_ar: string | null
+          updated_at: string
+        }
+        Insert: {
+          category?: string | null
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          description_ar?: string | null
+          id?: string
+          image_url?: string | null
+          instructor_bio?: string | null
+          instructor_name?: string | null
+          is_published?: boolean | null
+          level?: string | null
+          title: string
+          title_ar?: string | null
+          updated_at?: string
+        }
+        Update: {
+          category?: string | null
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          description_ar?: string | null
+          id?: string
+          image_url?: string | null
+          instructor_bio?: string | null
+          instructor_name?: string | null
+          is_published?: boolean | null
+          level?: string | null
+          title?: string
+          title_ar?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      enrollments: {
+        Row: {
+          course_id: string
+          enrolled_at: string
+          id: string
+          progress: number | null
+          user_id: string
+        }
+        Insert: {
+          course_id: string
+          enrolled_at?: string
+          id?: string
+          progress?: number | null
+          user_id: string
+        }
+        Update: {
+          course_id?: string
+          enrolled_at?: string
+          id?: string
+          progress?: number | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "enrollments_course_id_fkey"
+            columns: ["course_id"]
+            isOneToOne: false
+            referencedRelation: "courses"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      exam_answers: {
+        Row: {
+          answer_data: Json | null
+          answer_text: string | null
+          attempt_id: string
+          created_at: string
+          feedback: string | null
+          graded_at: string | null
+          graded_by: string | null
+          id: string
+          is_correct: boolean | null
+          is_flagged: boolean | null
+          points_awarded: number | null
+          question_id: string
+          updated_at: string
+        }
+        Insert: {
+          answer_data?: Json | null
+          answer_text?: string | null
+          attempt_id: string
+          created_at?: string
+          feedback?: string | null
+          graded_at?: string | null
+          graded_by?: string | null
+          id?: string
+          is_correct?: boolean | null
+          is_flagged?: boolean | null
+          points_awarded?: number | null
+          question_id: string
+          updated_at?: string
+        }
+        Update: {
+          answer_data?: Json | null
+          answer_text?: string | null
+          attempt_id?: string
+          created_at?: string
+          feedback?: string | null
+          graded_at?: string | null
+          graded_by?: string | null
+          id?: string
+          is_correct?: boolean | null
+          is_flagged?: boolean | null
+          points_awarded?: number | null
+          question_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "exam_answers_attempt_id_fkey"
+            columns: ["attempt_id"]
+            isOneToOne: false
+            referencedRelation: "exam_attempts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "exam_answers_question_id_fkey"
+            columns: ["question_id"]
+            isOneToOne: false
+            referencedRelation: "exam_questions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      exam_assignments: {
+        Row: {
+          assigned_at: string
+          exam_id: string
+          id: string
+          user_id: string
+        }
+        Insert: {
+          assigned_at?: string
+          exam_id: string
+          id?: string
+          user_id: string
+        }
+        Update: {
+          assigned_at?: string
+          exam_id?: string
+          id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "exam_assignments_exam_id_fkey"
+            columns: ["exam_id"]
+            isOneToOne: false
+            referencedRelation: "exams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      exam_attempts: {
+        Row: {
+          created_at: string
+          exam_id: string
+          feedback: string | null
+          id: string
+          passed: boolean | null
+          percentage: number | null
+          score: number | null
+          started_at: string
+          status: string | null
+          submitted_at: string | null
+          tab_switches: number | null
+          total_points: number | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          exam_id: string
+          feedback?: string | null
+          id?: string
+          passed?: boolean | null
+          percentage?: number | null
+          score?: number | null
+          started_at?: string
+          status?: string | null
+          submitted_at?: string | null
+          tab_switches?: number | null
+          total_points?: number | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          exam_id?: string
+          feedback?: string | null
+          id?: string
+          passed?: boolean | null
+          percentage?: number | null
+          score?: number | null
+          started_at?: string
+          status?: string | null
+          submitted_at?: string | null
+          tab_switches?: number | null
+          total_points?: number | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "exam_attempts_exam_id_fkey"
+            columns: ["exam_id"]
+            isOneToOne: false
+            referencedRelation: "exams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      exam_questions: {
+        Row: {
+          correct_answer: string | null
+          created_at: string
+          difficulty: string | null
+          exam_id: string
+          explanation: string | null
+          explanation_ar: string | null
+          id: string
+          media_url: string | null
+          options: Json | null
+          points: number | null
+          question_text: string
+          question_text_ar: string | null
+          question_type: string
+          sort_order: number | null
+          tags: string[] | null
+        }
+        Insert: {
+          correct_answer?: string | null
+          created_at?: string
+          difficulty?: string | null
+          exam_id: string
+          explanation?: string | null
+          explanation_ar?: string | null
+          id?: string
+          media_url?: string | null
+          options?: Json | null
+          points?: number | null
+          question_text: string
+          question_text_ar?: string | null
+          question_type: string
+          sort_order?: number | null
+          tags?: string[] | null
+        }
+        Update: {
+          correct_answer?: string | null
+          created_at?: string
+          difficulty?: string | null
+          exam_id?: string
+          explanation?: string | null
+          explanation_ar?: string | null
+          id?: string
+          media_url?: string | null
+          options?: Json | null
+          points?: number | null
+          question_text?: string
+          question_text_ar?: string | null
+          question_type?: string
+          sort_order?: number | null
+          tags?: string[] | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "exam_questions_exam_id_fkey"
+            columns: ["exam_id"]
+            isOneToOne: false
+            referencedRelation: "exams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      exams: {
+        Row: {
+          allow_review: boolean | null
+          course_id: string | null
+          created_at: string
+          created_by: string | null
+          description: string | null
+          description_ar: string | null
+          display_mode: string | null
+          end_date: string | null
+          guidelines: string | null
+          guidelines_ar: string | null
+          id: string
+          is_published: boolean | null
+          max_attempts: number | null
+          passing_score: number | null
+          randomize_answers: boolean | null
+          randomize_questions: boolean | null
+          show_results_immediately: boolean | null
+          start_date: string | null
+          time_limit_minutes: number | null
+          title: string
+          title_ar: string | null
+          updated_at: string
+        }
+        Insert: {
+          allow_review?: boolean | null
+          course_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          description_ar?: string | null
+          display_mode?: string | null
+          end_date?: string | null
+          guidelines?: string | null
+          guidelines_ar?: string | null
+          id?: string
+          is_published?: boolean | null
+          max_attempts?: number | null
+          passing_score?: number | null
+          randomize_answers?: boolean | null
+          randomize_questions?: boolean | null
+          show_results_immediately?: boolean | null
+          start_date?: string | null
+          time_limit_minutes?: number | null
+          title: string
+          title_ar?: string | null
+          updated_at?: string
+        }
+        Update: {
+          allow_review?: boolean | null
+          course_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          description_ar?: string | null
+          display_mode?: string | null
+          end_date?: string | null
+          guidelines?: string | null
+          guidelines_ar?: string | null
+          id?: string
+          is_published?: boolean | null
+          max_attempts?: number | null
+          passing_score?: number | null
+          randomize_answers?: boolean | null
+          randomize_questions?: boolean | null
+          show_results_immediately?: boolean | null
+          start_date?: string | null
+          time_limit_minutes?: number | null
+          title?: string
+          title_ar?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "exams_course_id_fkey"
+            columns: ["course_id"]
+            isOneToOne: false
+            referencedRelation: "courses"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      notifications: {
+        Row: {
+          created_at: string
+          id: string
+          is_read: boolean | null
+          link: string | null
+          message: string
+          title: string
+          type: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          is_read?: boolean | null
+          link?: string | null
+          message: string
+          title: string
+          type?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          is_read?: boolean | null
+          link?: string | null
+          message?: string
+          title?: string
+          type?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      profiles: {
+        Row: {
+          avatar_url: string | null
+          bio: string | null
+          created_at: string
+          full_name: string | null
+          id: string
+          phone: string | null
+          preferred_language: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          avatar_url?: string | null
+          bio?: string | null
+          created_at?: string
+          full_name?: string | null
+          id?: string
+          phone?: string | null
+          preferred_language?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          avatar_url?: string | null
+          bio?: string | null
+          created_at?: string
+          full_name?: string | null
+          id?: string
+          phone?: string | null
+          preferred_language?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      user_roles: {
+        Row: {
+          id: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Insert: {
+          id?: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Update: {
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      has_role: {
+        Args: {
+          _role: Database["public"]["Enums"]["app_role"]
+          _user_id: string
+        }
+        Returns: boolean
+      }
     }
     Enums: {
-      [_ in never]: never
+      app_role: "admin" | "teacher" | "student"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -150,6 +648,8 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      app_role: ["admin", "teacher", "student"],
+    },
   },
 } as const
