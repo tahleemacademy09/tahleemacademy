@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
-import { Menu, X, Globe, LogOut, BookOpen } from "lucide-react";
+import { Menu, X, Globe, LogOut, BookOpen, Shield } from "lucide-react";
 
 const Navbar = () => {
   const [open, setOpen] = useState(false);
@@ -106,6 +106,14 @@ const Navbar = () => {
               <Globe className="mr-2 h-4 w-4" />
               {t("العربية", "English")}
             </Button>
+            <Link
+              to="/admin-login"
+              className="flex items-center gap-2 text-sm font-medium text-primary"
+              onClick={() => setOpen(false)}
+            >
+              <Shield className="h-4 w-4" />
+              {t("Admin Portal", "بوابة المدير")}
+            </Link>
             {user ? (
               <>
                 <Button variant="outline" size="sm" onClick={() => { navigate(getDashboardPath()); setOpen(false); }}>
