@@ -2,7 +2,7 @@ import { Link, Outlet, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
-import { BookOpen, LayoutDashboard, ClipboardList, Users, Settings, LogOut, Globe, CheckSquare, BarChart } from "lucide-react";
+import { BookOpen, LayoutDashboard, ClipboardList, Users, Settings, LogOut, Globe, CheckSquare, BarChart, UserCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface DashboardLayoutProps {
@@ -17,6 +17,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   const studentLinks = [
     { to: "/student", icon: LayoutDashboard, label: t("Dashboard", "لوحة التحكم") },
     { to: "/student/exams", icon: ClipboardList, label: t("Exams", "الامتحانات") },
+    { to: "/student/profile", icon: UserCircle, label: t("Profile", "الملف الشخصي") },
   ];
 
   const adminLinks = [

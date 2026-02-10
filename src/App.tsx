@@ -21,6 +21,7 @@ import NotFound from "./pages/NotFound";
 import StudentDashboard from "./pages/student/StudentDashboard";
 import StudentExams from "./pages/student/StudentExams";
 import ExamTaking from "./pages/student/ExamTaking";
+import ProfileSettings from "./pages/student/ProfileSettings";
 
 import AdminDashboard from "./pages/admin/AdminDashboard";
 import ExamManager from "./pages/admin/ExamManager";
@@ -56,6 +57,7 @@ const App = () => (
               <Route element={<ProtectedRoute><DashboardLayout role="student" /></ProtectedRoute>}>
                 <Route path="/student" element={<StudentDashboard />} />
                 <Route path="/student/exams" element={<StudentExams />} />
+                <Route path="/student/profile" element={<ProfileSettings />} />
               </Route>
 
               {/* Exam taking (no sidebar) */}

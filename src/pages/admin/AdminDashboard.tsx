@@ -13,7 +13,7 @@ const AdminDashboard = () => {
   const [stats, setStats] = useState({ students: 0, exams: 0, courses: 0, attempts: 0 });
 
   useEffect(() => {
-    const fetch = async () => {
+    const fetchStats = async () => {
       const [studentsRes, examsRes, coursesRes, attemptsRes] = await Promise.all([
         supabase.from("profiles").select("id", { count: "exact", head: true }),
         supabase.from("exams").select("id", { count: "exact", head: true }),
@@ -27,8 +27,15 @@ const AdminDashboard = () => {
         attempts: attemptsRes.count || 0,
       });
     };
-    fetch();
+    fetchStats();
   }, []);
+
+  const statCards = [
+    { icon: Users, label: t("Total Students", "إجمالي الطلاب"), value: stats.students, color: "text-primary", to: "/admin/students" },
+    { icon: ClipboardList, label: t("Exams", "الامتحانات"), value: stats.exams, color: "text-secondary", to: "/admin/exams" },
+    { icon: BookOpen, label: t("Courses", "الدورات"), value: stats.courses, color: "text-emerald", to: "/admin/courses" },
+    { icon: TrendingUp, label: t("Attempts", "المحاولات"), value: stats.attempts, color: "text-gold", to: "/admin/grading" },
+  ];
 
   const quickLinks = [
     { to: "/admin/exams/create", icon: Plus, label: t("Create Exam", "إنشاء امتحان"), color: "text-primary" },
@@ -44,23 +51,20 @@ const AdminDashboard = () => {
         <p className="text-muted-foreground">{t("Welcome back", "مرحبًا بعودتك")}, {profile?.full_name || t("Admin", "المدير")}</p>
       </div>
 
-      {/* Stats */}
+      {/* Stats - clickable cards */}
       <div className="mb-8 grid gap-4 md:grid-cols-4">
-        {[
-          { icon: Users, label: t("Total Students", "إجمالي الطلاب"), value: stats.students, color: "text-primary" },
-          { icon: ClipboardList, label: t("Exams", "الامتحانات"), value: stats.exams, color: "text-secondary" },
-          { icon: BookOpen, label: t("Courses", "الدورات"), value: stats.courses, color: "text-emerald" },
-          { icon: TrendingUp, label: t("Attempts", "المحاولات"), value: stats.attempts, color: "text-gold" },
-        ].map((s, i) => (
-          <Card key={i}>
-            <CardContent className="flex items-center gap-4 p-5">
-              <s.icon className={`h-8 w-8 ${s.color}`} />
-              <div>
-                <div className="text-2xl font-bold">{s.value}</div>
-                <div className="text-xs text-muted-foreground">{s.label}</div>
-              </div>
-            </CardContent>
-          </Card>
+        {statCards.map((s, i) => (
+          <Link key={i} to={s.to}>
+            <Card className="hover:shadow-md transition-shadow cursor-pointer">
+              <CardContent className="flex items-center gap-4 p-5">
+                <s.icon className={`h-8 w-8 ${s.color}`} />
+                <div>
+                  <div className="text-2xl font-bold">{s.value}</div>
+                  <div className="text-xs text-muted-foreground">{s.label}</div>
+                </div>
+              </CardContent>
+            </Card>
+          </Link>
         ))}
       </div>
 

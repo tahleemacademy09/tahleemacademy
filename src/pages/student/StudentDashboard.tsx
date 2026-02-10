@@ -19,17 +19,25 @@ const StudentDashboard = () => {
   useEffect(() => {
     if (!user) return;
     const fetchData = async () => {
-      const [enrollRes, attemptsRes, notifsRes, examsRes] = await Promise.all([
+      // Fetch assigned exams (upcoming) instead of all published exams
+      const [enrollRes, attemptsRes, notifsRes, assignmentsRes] = await Promise.all([
         supabase.from("enrollments").select("id").eq("user_id", user.id),
         supabase.from("exam_attempts").select("percentage").eq("user_id", user.id).eq("status", "graded"),
         supabase.from("notifications").select("*").eq("user_id", user.id).eq("is_read", false).order("created_at", { ascending: false }).limit(5),
-        supabase.from("exams").select("*").eq("is_published", true).gte("end_date", new Date().toISOString()).order("start_date", { ascending: true }).limit(5),
+        supabase.from("exam_assignments").select("exam_id, exams(*)").eq("user_id", user.id),
       ]);
       
       const attempts = attemptsRes.data || [];
       const avg = attempts.length > 0 ? attempts.reduce((s, a) => s + (Number(a.percentage) || 0), 0) / attempts.length : 0;
+
+      // Filter to upcoming published exams from assignments
+      const now = new Date();
+      const assignedExams = (assignmentsRes.data || [])
+        .map((a: any) => a.exams)
+        .filter((e: any) => e && e.is_published && (!e.end_date || new Date(e.end_date) >= now));
+
       setStats({ enrollments: enrollRes.data?.length || 0, attemptsDone: attempts.length, avgScore: Math.round(avg) });
-      setUpcomingExams(examsRes.data || []);
+      setUpcomingExams(assignedExams.slice(0, 5));
       setNotifications(notifsRes.data || []);
     };
     fetchData();
