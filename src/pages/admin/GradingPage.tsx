@@ -11,7 +11,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
-import { CheckCircle, XCircle, Play, Pause, Volume2, Search, Filter } from "lucide-react";
+import { CheckCircle, XCircle, Play, Pause, Volume2, Search, FileText, Image, Download } from "lucide-react";
 
 const GradingPage = () => {
   const { t, language } = useLanguage();
@@ -27,7 +27,6 @@ const GradingPage = () => {
   const [examsList, setExamsList] = useState<any[]>([]);
 
   const fetchAttempts = async () => {
-    // Fetch all attempts with profiles merged client-side (no FK)
     const [attemptsRes, profilesRes, examsRes] = await Promise.all([
       supabase
         .from("exam_attempts")
@@ -130,13 +129,35 @@ const GradingPage = () => {
       passed: percentage >= passingScore,
     }).eq("id", selectedAttempt.id);
 
-    toast({ title: t("Grading submitted!", "تم تقديم التصحيح!") });
+    // Log grading activity
+    try {
+      await supabase.from("activity_logs").insert({
+        user_id: user!.id,
+        action: "exam_graded",
+        entity_type: "exam_attempt",
+        entity_id: selectedAttempt.id,
+        metadata: {
+          student_id: selectedAttempt.user_id,
+          exam_id: selectedAttempt.exam_id,
+          score: earnedPoints,
+          total_points: totalPoints,
+          percentage: Math.round(percentage),
+          passed: percentage >= passingScore,
+        },
+      });
+    } catch (e) {}
+
+    toast({ title: t("✅ Grading submitted!", "✅ تم تقديم التصحيح!") });
     setSelectedAttempt(null);
     fetchAttempts();
   };
 
   // Grading detail view
   if (selectedAttempt) {
+    const totalPts = questions.reduce((s, q) => s + (q.points || 1), 0);
+    const earnedPts = answers.reduce((s, a) => s + (Number(a.points_awarded) || 0), 0);
+    const pct = totalPts > 0 ? Math.round((earnedPts / totalPts) * 100) : 0;
+
     return (
       <div className="container mx-auto px-4 py-6 max-w-4xl">
         <div className="mb-4 flex items-center justify-between flex-wrap gap-3">
@@ -160,13 +181,12 @@ const GradingPage = () => {
         {/* Summary */}
         <Card className="mb-4">
           <CardContent className="flex items-center gap-6 p-3 text-sm flex-wrap">
-            <div><span className="text-muted-foreground">{t("Total", "الإجمالي")}:</span> <strong>{questions.reduce((s, q) => s + (q.points || 1), 0)}</strong></div>
-            <div><span className="text-muted-foreground">{t("Earned", "المكتسبة")}:</span> <strong>{answers.reduce((s, a) => s + (Number(a.points_awarded) || 0), 0)}</strong></div>
-            <div><span className="text-muted-foreground">{t("Percentage", "النسبة")}:</span> <strong>{(() => {
-              const total = questions.reduce((s, q) => s + (q.points || 1), 0);
-              const earned = answers.reduce((s, a) => s + (Number(a.points_awarded) || 0), 0);
-              return total > 0 ? `${Math.round((earned / total) * 100)}%` : "0%";
-            })()}</strong></div>
+            <div><span className="text-muted-foreground">{t("Total", "الإجمالي")}:</span> <strong>{totalPts}</strong></div>
+            <div><span className="text-muted-foreground">{t("Earned", "المكتسبة")}:</span> <strong className={earnedPts > 0 ? "text-emerald" : ""}>{earnedPts}</strong></div>
+            <div><span className="text-muted-foreground">{t("Percentage", "النسبة")}:</span> <strong className={pct >= (selectedAttempt?.exams?.passing_score || 50) ? "text-emerald" : "text-destructive"}>{pct}%</strong></div>
+            <Badge variant={pct >= (selectedAttempt?.exams?.passing_score || 50) ? "default" : "destructive"}>
+              {pct >= (selectedAttempt?.exams?.passing_score || 50) ? t("Passing", "ناجح") : t("Failing", "راسب")}
+            </Badge>
           </CardContent>
         </Card>
 
@@ -199,7 +219,7 @@ const GradingPage = () => {
                     </div>
                   )}
 
-                  {q.media_url && <AudioPreview src={q.media_url} label={t("Question Audio", "صوت السؤال")} />}
+                  {q.media_url && <MediaPreview src={q.media_url} label={t("Question Media", "وسائط السؤال")} />}
 
                   <div className="mb-3 rounded-lg bg-muted p-3">
                     <p className="text-xs font-medium mb-1">{t("Student's Answer", "إجابة الطالب")}:</p>
@@ -213,9 +233,15 @@ const GradingPage = () => {
                     ) : (
                       <p className="text-sm" dir="auto">{ans?.answer_text || t("No answer", "لا إجابة")}</p>
                     )}
+                    {/* Render student attachments based on file type */}
                     {ans?.answer_data?.audioUrl && (
                       <div className="mt-2">
-                        <AudioPreview src={ans.answer_data.audioUrl} label={t("Student's Audio", "صوت الطالب")} />
+                        <MediaPreview src={ans.answer_data.audioUrl} label={t("Student's Recording", "تسجيل الطالب")} />
+                      </div>
+                    )}
+                    {ans?.answer_data?.fileUrl && (
+                      <div className="mt-2">
+                        <MediaPreview src={ans.answer_data.fileUrl} label={t("Student's File", "ملف الطالب")} />
                       </div>
                     )}
                   </div>
@@ -351,10 +377,35 @@ const GradingPage = () => {
   );
 };
 
-const AudioPreview = ({ src, label }: { src: string; label: string }) => {
+// Smart media preview component - detects file type and renders appropriately
+const MediaPreview = ({ src, label }: { src: string; label: string }) => {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [playing, setPlaying] = useState(false);
 
+  const fileType = detectFileType(src);
+
+  if (fileType === "image") {
+    return (
+      <div className="my-1">
+        <p className="text-xs text-muted-foreground mb-1 flex items-center gap-1"><Image className="h-3 w-3" />{label}</p>
+        <img src={src} alt={label} className="max-h-48 rounded-lg border object-contain" />
+      </div>
+    );
+  }
+
+  if (fileType === "pdf" || fileType === "document") {
+    return (
+      <div className="flex items-center gap-2 rounded-lg bg-accent/50 p-2 my-1">
+        <FileText className="h-4 w-4 text-muted-foreground" />
+        <span className="text-xs text-muted-foreground flex-1">{label}</span>
+        <a href={src} target="_blank" rel="noopener noreferrer" className="text-xs text-primary underline flex items-center gap-1">
+          <Download className="h-3 w-3" />{fileType === "pdf" ? "View PDF" : "Download"}
+        </a>
+      </div>
+    );
+  }
+
+  // Default: audio
   const toggle = () => {
     if (!audioRef.current) return;
     if (playing) { audioRef.current.pause(); } else { audioRef.current.play(); }
@@ -372,5 +423,14 @@ const AudioPreview = ({ src, label }: { src: string; label: string }) => {
     </div>
   );
 };
+
+function detectFileType(url: string): "image" | "audio" | "pdf" | "document" | "unknown" {
+  const lower = url.toLowerCase().split("?")[0];
+  if ([".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp"].some((ext) => lower.endsWith(ext))) return "image";
+  if ([".mp3", ".wav", ".ogg", ".webm", ".m4a", ".aac", ".flac"].some((ext) => lower.endsWith(ext))) return "audio";
+  if (lower.endsWith(".pdf")) return "pdf";
+  if ([".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx", ".txt", ".csv"].some((ext) => lower.endsWith(ext))) return "document";
+  return "audio"; // Default to audio for Supabase storage URLs without extensions
+}
 
 export default GradingPage;

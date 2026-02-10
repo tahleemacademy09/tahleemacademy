@@ -12,10 +12,24 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { Clock, Flag, Send, AlertTriangle, BookOpen, CheckCircle2, HelpCircle, ShieldAlert, Lock } from "lucide-react";
+import { Clock, Flag, Send, AlertTriangle, BookOpen, CheckCircle2, HelpCircle, ShieldAlert, Lock, TrendingUp } from "lucide-react";
 import AudioPlayer from "@/components/exam/AudioPlayer";
 import AudioRecorder from "@/components/exam/AudioRecorder";
 import { motion, AnimatePresence } from "framer-motion";
+
+const logActivity = async (userId: string, action: string, entityType: string, entityId: string, metadata?: any) => {
+  try {
+    await supabase.from("activity_logs").insert({
+      user_id: userId,
+      action,
+      entity_type: entityType,
+      entity_id: entityId,
+      metadata: metadata || null,
+    });
+  } catch (e) {
+    // non-critical
+  }
+};
 
 const ExamTaking = () => {
   const { attemptId } = useParams<{ attemptId: string }>();
@@ -25,6 +39,7 @@ const ExamTaking = () => {
   const navigate = useNavigate();
 
   const [exam, setExam] = useState<any>(null);
+  const [attempt, setAttempt] = useState<any>(null);
   const [questions, setQuestions] = useState<any[]>([]);
   const [answers, setAnswers] = useState<Record<string, { text: string; data: any; flagged: boolean }>>({});
   const [currentIdx, setCurrentIdx] = useState(0);
@@ -32,6 +47,7 @@ const ExamTaking = () => {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [submissionResult, setSubmissionResult] = useState<any>(null);
   const [tabSwitches, setTabSwitches] = useState(0);
   const [showConfirm, setShowConfirm] = useState(false);
   const autoSaveRef = useRef<NodeJS.Timeout>();
@@ -41,38 +57,50 @@ const ExamTaking = () => {
   useEffect(() => {
     if (!attemptId || !user) return;
     const load = async () => {
-      const { data: attempt } = await supabase
+      const { data: attemptData } = await supabase
         .from("exam_attempts")
         .select("*, exams(*)")
         .eq("id", attemptId)
         .single();
 
-      if (!attempt || attempt.user_id !== user.id) {
+      if (!attemptData || attemptData.user_id !== user.id) {
         navigate("/student/exams");
         return;
       }
 
-      // If already submitted/graded, show completed message
-      if (attempt.status !== "in_progress") {
+      setAttempt(attemptData);
+
+      // If already submitted/graded, show completed message with result
+      if (attemptData.status !== "in_progress") {
         setSubmitted(true);
-        setExam(attempt.exams);
+        setExam(attemptData.exams);
+        setSubmissionResult({
+          status: attemptData.status,
+          score: attemptData.score,
+          totalPoints: attemptData.total_points,
+          percentage: attemptData.percentage,
+          passed: attemptData.passed,
+        });
         setLoading(false);
         return;
       }
 
-      setExam(attempt.exams);
-      const elapsed = Math.floor((Date.now() - new Date(attempt.started_at).getTime()) / 1000);
-      setTimeLeft(Math.max(0, (attempt.exams.time_limit_minutes || 60) * 60 - elapsed));
-      setTabSwitches(attempt.tab_switches || 0);
+      setExam(attemptData.exams);
+      const elapsed = Math.floor((Date.now() - new Date(attemptData.started_at).getTime()) / 1000);
+      setTimeLeft(Math.max(0, (attemptData.exams.time_limit_minutes || 60) * 60 - elapsed));
+      setTabSwitches(attemptData.tab_switches || 0);
+
+      // Log exam started
+      logActivity(user.id, "exam_started", "exam_attempt", attemptId, { exam_id: attemptData.exam_id });
 
       const { data: qs } = await supabase
         .from("exam_questions")
         .select("*")
-        .eq("exam_id", attempt.exam_id)
+        .eq("exam_id", attemptData.exam_id)
         .order("sort_order");
 
       let questionList = qs || [];
-      if (attempt.exams.randomize_questions) {
+      if (attemptData.exams.randomize_questions) {
         questionList = questionList.sort(() => Math.random() - 0.5);
       }
       setQuestions(questionList);
@@ -195,6 +223,9 @@ const ExamTaking = () => {
 
     let totalPoints = 0;
     let earnedPoints = 0;
+    const objectiveTypes = ["mcq", "true_false", "fill_blank"];
+    const subjectiveTypes = ["short_answer", "essay", "audio", "dictation"];
+
     for (const q of questions) {
       totalPoints += q.points || 1;
       const ans = answers[q.id];
@@ -217,43 +248,111 @@ const ExamTaking = () => {
 
       if (isCorrect !== null) {
         earnedPoints += pts;
-        await supabase.from("exam_answers").update({ is_correct: isCorrect, points_awarded: pts }).eq("attempt_id", attemptId!).eq("question_id", q.id);
+        await supabase.from("exam_answers").update({
+          is_correct: isCorrect,
+          points_awarded: pts,
+        }).eq("attempt_id", attemptId!).eq("question_id", q.id);
       }
     }
 
     const percentage = totalPoints > 0 ? (earnedPoints / totalPoints) * 100 : 0;
-    const hasSubjective = questions.some((q) => ["short_answer", "essay", "audio", "dictation"].includes(q.question_type));
+    const hasSubjective = questions.some((q) => subjectiveTypes.includes(q.question_type));
+    const finalStatus = hasSubjective ? "submitted" : "graded";
+    const passingScore = exam?.passing_score || 50;
 
     await supabase.from("exam_attempts").update({
-      status: hasSubjective ? "submitted" : "graded",
+      status: finalStatus,
       submitted_at: new Date().toISOString(),
       score: earnedPoints,
       total_points: totalPoints,
       percentage,
-      passed: percentage >= (exam?.passing_score || 50),
+      passed: percentage >= passingScore,
     }).eq("id", attemptId!);
+
+    // Log exam submitted
+    if (user) {
+      logActivity(user.id, "exam_submitted", "exam_attempt", attemptId!, {
+        exam_id: exam?.id,
+        status: finalStatus,
+        score: earnedPoints,
+        total_points: totalPoints,
+        percentage: Math.round(percentage),
+      });
+    }
+
+    setSubmissionResult({
+      status: finalStatus,
+      score: earnedPoints,
+      totalPoints,
+      percentage,
+      passed: percentage >= passingScore,
+    });
 
     setSubmitted(true);
     setSubmitting(false);
     toast({ title: t("✅ Exam Submitted!", "✅ تم تقديم الامتحان!") });
   };
 
-  // Already submitted screen
+  // Already submitted screen with result details
   if (submitted && !loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <Card className="mx-4 w-full max-w-lg border-2">
           <CardContent className="p-8 text-center space-y-6">
-            <div className="mx-auto h-20 w-20 rounded-full bg-emerald/10 flex items-center justify-center">
-              <Lock className="h-10 w-10 text-emerald" />
-            </div>
-            <h2 className="text-2xl font-bold">{t("Exam Completed", "تم إكمال الامتحان")}</h2>
-            <p className="text-muted-foreground">
-              {t(
-                "You have already completed this exam. You cannot re-enter.",
-                "لقد أكملت هذا الامتحان بالفعل. لا يمكنك إعادة الدخول."
+            <div className={`mx-auto h-20 w-20 rounded-full flex items-center justify-center ${
+              submissionResult?.status === "graded"
+                ? (submissionResult?.passed ? "bg-emerald/10" : "bg-destructive/10")
+                : "bg-secondary/10"
+            }`}>
+              {submissionResult?.status === "graded" ? (
+                submissionResult?.passed
+                  ? <CheckCircle2 className="h-10 w-10 text-emerald" />
+                  : <AlertTriangle className="h-10 w-10 text-destructive" />
+              ) : (
+                <Lock className="h-10 w-10 text-secondary" />
               )}
+            </div>
+            <h2 className="text-2xl font-bold">
+              {submissionResult?.status === "graded"
+                ? (submissionResult?.passed ? t("Exam Passed! 🎉", "نجحت في الامتحان! 🎉") : t("Exam Not Passed", "لم تجتز الامتحان"))
+                : t("Exam Submitted", "تم تقديم الامتحان")
+              }
+            </h2>
+
+            {submissionResult?.status === "graded" && (
+              <div className="space-y-3">
+                <div className="text-4xl font-bold">
+                  <span className={submissionResult.passed ? "text-emerald" : "text-destructive"}>
+                    {Math.round(submissionResult.percentage || 0)}%
+                  </span>
+                </div>
+                <div className="flex justify-center gap-6 text-sm text-muted-foreground">
+                  <div>
+                    <span className="font-semibold text-foreground">{submissionResult.score}</span>
+                    <span>/{submissionResult.totalPoints} {t("points", "نقاط")}</span>
+                  </div>
+                  <div>
+                    <Badge variant={submissionResult.passed ? "default" : "destructive"}>
+                      {submissionResult.passed ? t("Passed", "ناجح") : t("Failed", "راسب")}
+                    </Badge>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {submissionResult?.status === "submitted" && (
+              <p className="text-muted-foreground">
+                {t(
+                  "Your exam has been submitted and is awaiting grading by your instructor. You will see your results once graded.",
+                  "تم تقديم امتحانك وهو بانتظار التصحيح من مدرسك. ستظهر نتائجك بعد التصحيح."
+                )}
+              </p>
+            )}
+
+            <p className="text-sm text-muted-foreground">
+              {t("You cannot re-enter this exam.", "لا يمكنك إعادة الدخول لهذا الامتحان.")}
             </p>
+
             <Button onClick={() => navigate("/student/exams")} className="w-full">
               {t("Back to Exams", "العودة إلى الامتحانات")}
             </Button>
@@ -361,9 +460,9 @@ const ExamTaking = () => {
         <Progress value={progressPercent} className="h-1 rounded-none" />
       </div>
 
-      {/* Three-panel layout: fits in remaining screen height */}
+      {/* Three-panel layout */}
       <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[220px_1fr_240px] gap-0 overflow-hidden">
-        {/* Left Panel: Question Navigation (hidden on mobile, shown in right panel instead) */}
+        {/* Left Panel: Question Navigation */}
         <div className="hidden lg:flex flex-col border-r bg-card/50 overflow-y-auto p-3">
           <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
             <HelpCircle className="h-3.5 w-3.5" />
@@ -464,7 +563,12 @@ const ExamTaking = () => {
                         <video controls src={q.media_url} className="w-full max-h-60 object-contain bg-black" />
                       </div>
                     )}
-                    {q?.media_url && !["audio", "dictation", "video"].includes(q?.question_type) && (
+                    {q?.media_url && isImageUrl(q.media_url) && !["audio", "dictation", "video"].includes(q?.question_type) && (
+                      <div className="mt-3">
+                        <img src={q.media_url} alt="Question media" className="max-h-60 rounded-lg border object-contain" />
+                      </div>
+                    )}
+                    {q?.media_url && !isImageUrl(q.media_url) && !["audio", "dictation", "video"].includes(q?.question_type) && (
                       <div className="mt-3">
                         <AudioPlayer src={q.media_url} title={t("Audio", "صوت")} />
                       </div>
@@ -566,9 +670,9 @@ const ExamTaking = () => {
                             const { error } = await supabase.storage.from("exam-media").upload(path, blob, { upsert: true });
                             if (!error) {
                               const { data: urlData } = supabase.storage.from("exam-media").getPublicUrl(path);
-                              setAnswer(q.id, answers[q.id]?.text || "[audio_recorded]", { audioUrl: urlData.publicUrl });
+                              setAnswer(q.id, answers[q.id]?.text || "[audio_recorded]", { audioUrl: urlData.publicUrl, fileType: "audio" });
                             } else {
-                              setAnswer(q.id, answers[q.id]?.text || "[audio_recorded]", { audioUrl: url });
+                              setAnswer(q.id, answers[q.id]?.text || "[audio_recorded]", { audioUrl: url, fileType: "audio" });
                             }
                           }}
                           existingUrl={answers[q.id]?.data?.audioUrl}
@@ -604,9 +708,8 @@ const ExamTaking = () => {
           </AnimatePresence>
         </div>
 
-        {/* Right Panel: Timer + Summary + Mobile Question Nav */}
+        {/* Right Panel: Timer + Summary */}
         <div className="hidden lg:flex flex-col border-l bg-card/50 overflow-y-auto p-3 gap-3">
-          {/* Timer card */}
           <Card>
             <CardContent className="p-3 text-center">
               <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">{t("Time Remaining", "الوقت المتبقي")}</p>
@@ -620,7 +723,6 @@ const ExamTaking = () => {
             </CardContent>
           </Card>
 
-          {/* Summary card */}
           <Card>
             <CardContent className="p-3 space-y-2 text-xs">
               <div className="flex justify-between">
@@ -645,7 +747,6 @@ const ExamTaking = () => {
             </CardContent>
           </Card>
 
-          {/* Exam info */}
           <Card>
             <CardContent className="p-3 space-y-1 text-[11px] text-muted-foreground">
               <p><strong>{t("Pass Mark:", "درجة النجاح:")}</strong> {exam?.passing_score}%</p>
@@ -660,7 +761,7 @@ const ExamTaking = () => {
           </Card>
         </div>
 
-        {/* Mobile bottom bar with question quick-nav */}
+        {/* Mobile bottom bar */}
         <div className="lg:hidden fixed bottom-0 left-0 right-0 z-40 border-t bg-card/95 backdrop-blur px-3 py-2">
           <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
             {questions.map((qq, i) => {
@@ -687,5 +788,12 @@ const ExamTaking = () => {
     </div>
   );
 };
+
+// Utility to detect if a URL is an image
+function isImageUrl(url: string): boolean {
+  const imageExts = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp"];
+  const lower = url.toLowerCase().split("?")[0];
+  return imageExts.some((ext) => lower.endsWith(ext));
+}
 
 export default ExamTaking;
