@@ -21,6 +21,7 @@ import NotFound from "./pages/NotFound";
 import StudentDashboard from "./pages/student/StudentDashboard";
 import StudentExams from "./pages/student/StudentExams";
 import ExamTaking from "./pages/student/ExamTaking";
+import ProfileSettings from "./pages/student/ProfileSettings";
 
 import AdminDashboard from "./pages/admin/AdminDashboard";
 import ExamManager from "./pages/admin/ExamManager";
