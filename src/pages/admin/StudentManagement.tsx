@@ -25,11 +25,22 @@ const StudentManagement = () => {
   const [studentAssignments, setStudentAssignments] = useState<any[]>([]);
 
   const fetchData = async () => {
-    const [studentsRes, examsRes] = await Promise.all([
-      supabase.from("profiles").select("*, user_roles(role)"),
+    const [profilesRes, rolesRes, examsRes] = await Promise.all([
+      supabase.from("profiles").select("*"),
+      supabase.from("user_roles").select("user_id, role"),
       supabase.from("exams").select("id, title, title_ar, is_published"),
     ]);
-    setStudents(studentsRes.data || []);
+    // Merge roles into profiles client-side (no FK between tables)
+    const rolesMap = new Map<string, { role: string }[]>();
+    (rolesRes.data || []).forEach((r: any) => {
+      if (!rolesMap.has(r.user_id)) rolesMap.set(r.user_id, []);
+      rolesMap.get(r.user_id)!.push({ role: r.role });
+    });
+    const merged = (profilesRes.data || []).map((p: any) => ({
+      ...p,
+      user_roles: rolesMap.get(p.user_id) || [],
+    }));
+    setStudents(merged);
     setExams(examsRes.data || []);
   };
 
