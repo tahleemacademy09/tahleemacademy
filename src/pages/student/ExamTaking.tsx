@@ -129,10 +129,29 @@ const ExamTaking = () => {
   const saveAnswers = async () => {
     if (!attemptId) return;
     for (const [qId, ans] of Object.entries(answers)) {
-      await supabase.from("exam_answers").upsert(
-        { attempt_id: attemptId, question_id: qId, answer_text: ans.text, answer_data: ans.data, is_flagged: ans.flagged },
-        { onConflict: "attempt_id,question_id" as any }
-      );
+      // Check if answer already exists
+      const { data: existing } = await supabase
+        .from("exam_answers")
+        .select("id")
+        .eq("attempt_id", attemptId)
+        .eq("question_id", qId)
+        .maybeSingle();
+
+      if (existing) {
+        await supabase.from("exam_answers").update({
+          answer_text: ans.text,
+          answer_data: ans.data,
+          is_flagged: ans.flagged,
+        }).eq("id", existing.id);
+      } else {
+        await supabase.from("exam_answers").insert({
+          attempt_id: attemptId,
+          question_id: qId,
+          answer_text: ans.text,
+          answer_data: ans.data,
+          is_flagged: ans.flagged,
+        });
+      }
     }
   };
 
@@ -462,8 +481,18 @@ const ExamTaking = () => {
                         {t("Or record your answer:", "أو سجّل إجابتك:")}
                       </p>
                       <AudioRecorder
-                        onRecordingComplete={(blob, url) => {
-                          setAnswer(q.id, answers[q.id]?.text || "[audio_recorded]", { audioUrl: url });
+                        onRecordingComplete={async (blob, url) => {
+                          // Upload to storage
+                          const ext = "webm";
+                          const path = `student-answers/${user!.id}/${attemptId}_${q.id}.${ext}`;
+                          const { error } = await supabase.storage.from("exam-media").upload(path, blob, { upsert: true });
+                          if (!error) {
+                            const { data: urlData } = supabase.storage.from("exam-media").getPublicUrl(path);
+                            setAnswer(q.id, answers[q.id]?.text || "[audio_recorded]", { audioUrl: urlData.publicUrl });
+                          } else {
+                            // Fallback to blob URL
+                            setAnswer(q.id, answers[q.id]?.text || "[audio_recorded]", { audioUrl: url });
+                          }
                         }}
                         existingUrl={answers[q.id]?.data?.audioUrl}
                       />

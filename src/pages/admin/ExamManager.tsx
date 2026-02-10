@@ -7,17 +7,36 @@ import { Switch } from "@/components/ui/switch";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Edit, Trash2, Copy, Clock, Users } from "lucide-react";
+import { Plus, Edit, Trash2, Copy, Clock, Users, AlertTriangle } from "lucide-react";
 
 const ExamManager = () => {
   const { t, language } = useLanguage();
   const { toast } = useToast();
   const navigate = useNavigate();
   const [exams, setExams] = useState<any[]>([]);
+  const [assignmentCounts, setAssignmentCounts] = useState<Record<string, number>>({});
+  const [attemptCounts, setAttemptCounts] = useState<Record<string, number>>({});
 
   const fetchExams = async () => {
     const { data } = await supabase.from("exams").select("*, exam_questions(id)").order("created_at", { ascending: false });
     setExams(data || []);
+
+    // Fetch assignment and attempt counts
+    if (data?.length) {
+      const examIds = data.map(e => e.id);
+      const [assignRes, attemptRes] = await Promise.all([
+        supabase.from("exam_assignments").select("exam_id"),
+        supabase.from("exam_attempts").select("exam_id, status"),
+      ]);
+
+      const aCounts: Record<string, number> = {};
+      (assignRes.data || []).forEach((a: any) => { aCounts[a.exam_id] = (aCounts[a.exam_id] || 0) + 1; });
+      setAssignmentCounts(aCounts);
+
+      const tCounts: Record<string, number> = {};
+      (attemptRes.data || []).forEach((a: any) => { tCounts[a.exam_id] = (tCounts[a.exam_id] || 0) + 1; });
+      setAttemptCounts(tCounts);
+    }
   };
 
   useEffect(() => { fetchExams(); }, []);
@@ -25,9 +44,14 @@ const ExamManager = () => {
   const togglePublish = async (id: string, current: boolean) => {
     await supabase.from("exams").update({ is_published: !current }).eq("id", id);
     fetchExams();
+    toast({ title: !current ? t("Exam published", "تم نشر الامتحان") : t("Exam unpublished", "تم إلغاء نشر الامتحان") });
   };
 
   const deleteExam = async (id: string) => {
+    if (!window.confirm(t("Are you sure you want to delete this exam?", "هل أنت متأكد من حذف هذا الامتحان؟"))) return;
+    // Delete related data first
+    await supabase.from("exam_questions").delete().eq("exam_id", id);
+    await supabase.from("exam_assignments").delete().eq("exam_id", id);
     await supabase.from("exams").delete().eq("id", id);
     toast({ title: t("Exam deleted", "تم حذف الامتحان") });
     fetchExams();
@@ -68,18 +92,21 @@ const ExamManager = () => {
         <div className="space-y-3">
           {exams.map((exam) => (
             <Card key={exam.id} className="hover:shadow-sm transition-shadow">
-              <CardContent className="flex items-center justify-between p-4">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <h3 className="font-semibold">{language === "ar" ? exam.title_ar || exam.title : exam.title}</h3>
+              <CardContent className="flex items-center justify-between p-4 flex-wrap gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="font-semibold truncate">{language === "ar" ? exam.title_ar || exam.title : exam.title}</h3>
                     <Badge variant={exam.is_published ? "default" : "secondary"}>
                       {exam.is_published ? t("Published", "منشور") : t("Draft", "مسودة")}
                     </Badge>
                   </div>
-                  <div className="mt-1 flex items-center gap-4 text-xs text-muted-foreground">
+                  <div className="mt-1 flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
                     <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> {exam.time_limit_minutes} {t("min", "دقيقة")}</span>
                     <span>{exam.exam_questions?.length || 0} {t("questions", "أسئلة")}</span>
                     <span>{t("Pass", "نجاح")}: {exam.passing_score}%</span>
+                    <span className="flex items-center gap-1"><Users className="h-3 w-3" /> {assignmentCounts[exam.id] || 0} {t("assigned", "معين")}</span>
+                    <span>{attemptCounts[exam.id] || 0} {t("attempts", "محاولات")}</span>
+                    <span>{t("Max", "أقصى")}: {exam.max_attempts} {t("attempts", "محاولات")}</span>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
