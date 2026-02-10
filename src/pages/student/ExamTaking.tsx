@@ -481,8 +481,18 @@ const ExamTaking = () => {
                         {t("Or record your answer:", "أو سجّل إجابتك:")}
                       </p>
                       <AudioRecorder
-                        onRecordingComplete={(blob, url) => {
-                          setAnswer(q.id, answers[q.id]?.text || "[audio_recorded]", { audioUrl: url });
+                        onRecordingComplete={async (blob, url) => {
+                          // Upload to storage
+                          const ext = "webm";
+                          const path = `student-answers/${user!.id}/${attemptId}_${q.id}.${ext}`;
+                          const { error } = await supabase.storage.from("exam-media").upload(path, blob, { upsert: true });
+                          if (!error) {
+                            const { data: urlData } = supabase.storage.from("exam-media").getPublicUrl(path);
+                            setAnswer(q.id, answers[q.id]?.text || "[audio_recorded]", { audioUrl: urlData.publicUrl });
+                          } else {
+                            // Fallback to blob URL
+                            setAnswer(q.id, answers[q.id]?.text || "[audio_recorded]", { audioUrl: url });
+                          }
                         }}
                         existingUrl={answers[q.id]?.data?.audioUrl}
                       />
