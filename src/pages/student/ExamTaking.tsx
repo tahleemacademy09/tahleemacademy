@@ -12,7 +12,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { Clock, Flag, ChevronLeft, ChevronRight, Send, AlertTriangle, BookOpen, CheckCircle2, HelpCircle } from "lucide-react";
+import { Clock, Flag, Send, AlertTriangle, BookOpen, CheckCircle2, HelpCircle, ShieldAlert, Lock } from "lucide-react";
 import AudioPlayer from "@/components/exam/AudioPlayer";
 import AudioRecorder from "@/components/exam/AudioRecorder";
 import { motion, AnimatePresence } from "framer-motion";
@@ -31,9 +31,11 @@ const ExamTaking = () => {
   const [timeLeft, setTimeLeft] = useState(0);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
   const [tabSwitches, setTabSwitches] = useState(0);
   const [showConfirm, setShowConfirm] = useState(false);
   const autoSaveRef = useRef<NodeJS.Timeout>();
+  const submittedRef = useRef(false);
 
   // Load exam data
   useEffect(() => {
@@ -45,8 +47,16 @@ const ExamTaking = () => {
         .eq("id", attemptId)
         .single();
 
-      if (!attempt || attempt.user_id !== user.id || attempt.status !== "in_progress") {
+      if (!attempt || attempt.user_id !== user.id) {
         navigate("/student/exams");
+        return;
+      }
+
+      // If already submitted/graded, show completed message
+      if (attempt.status !== "in_progress") {
+        setSubmitted(true);
+        setExam(attempt.exams);
+        setLoading(false);
         return;
       }
 
@@ -84,16 +94,18 @@ const ExamTaking = () => {
 
   // Timer
   useEffect(() => {
-    if (timeLeft <= 0 && !loading && exam) {
+    if (submitted || loading || !exam) return;
+    if (timeLeft <= 0) {
       handleSubmit();
       return;
     }
     const interval = setInterval(() => setTimeLeft((t) => Math.max(0, t - 1)), 1000);
     return () => clearInterval(interval);
-  }, [timeLeft, loading]);
+  }, [timeLeft, loading, submitted]);
 
   // Tab switch detection
   useEffect(() => {
+    if (submitted) return;
     const handler = () => {
       if (document.hidden) {
         setTabSwitches((prev) => {
@@ -103,8 +115,8 @@ const ExamTaking = () => {
             toast({
               title: t("⚠️ Warning!", "⚠️ تحذير!"),
               description: t(
-                "Tab switching detected! Your exam may be flagged for suspicious activity.",
-                "تم اكتشاف تبديل النوافذ! قد يتم تعليم امتحانك بنشاط مشبوه."
+                "Tab switching detected! Your exam may be flagged.",
+                "تم اكتشاف تبديل النوافذ! قد يتم تعليم امتحانك."
               ),
               variant: "destructive",
             });
@@ -115,21 +127,31 @@ const ExamTaking = () => {
     };
     document.addEventListener("visibilitychange", handler);
     return () => document.removeEventListener("visibilitychange", handler);
-  }, [attemptId]);
+  }, [attemptId, submitted]);
 
   // Auto-save every 30s
   useEffect(() => {
+    if (submitted) return;
     autoSaveRef.current = setInterval(() => {
       saveAnswers();
-      toast({ title: t("✓ Auto-saved", "✓ تم الحفظ التلقائي"), duration: 1500 });
     }, 30000);
     return () => clearInterval(autoSaveRef.current);
-  }, [answers]);
+  }, [answers, submitted]);
+
+  // Prevent page refresh losing answers
+  useEffect(() => {
+    if (submitted) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [submitted]);
 
   const saveAnswers = async () => {
-    if (!attemptId) return;
+    if (!attemptId || submittedRef.current) return;
     for (const [qId, ans] of Object.entries(answers)) {
-      // Check if answer already exists
       const { data: existing } = await supabase
         .from("exam_answers")
         .select("id")
@@ -156,14 +178,18 @@ const ExamTaking = () => {
   };
 
   const setAnswer = (qId: string, text: string, data?: any) => {
+    if (submitted) return;
     setAnswers((prev) => ({ ...prev, [qId]: { ...prev[qId], text, data: data ?? prev[qId]?.data, flagged: prev[qId]?.flagged || false } }));
   };
 
   const toggleFlag = (qId: string) => {
+    if (submitted) return;
     setAnswers((prev) => ({ ...prev, [qId]: { ...prev[qId], text: prev[qId]?.text || "", data: prev[qId]?.data, flagged: !prev[qId]?.flagged } }));
   };
 
   const handleSubmit = async () => {
+    if (submittedRef.current) return;
+    submittedRef.current = true;
     setSubmitting(true);
     await saveAnswers();
 
@@ -196,7 +222,7 @@ const ExamTaking = () => {
     }
 
     const percentage = totalPoints > 0 ? (earnedPoints / totalPoints) * 100 : 0;
-    const hasSubjective = questions.some((q) => ["short_answer", "essay", "audio"].includes(q.question_type));
+    const hasSubjective = questions.some((q) => ["short_answer", "essay", "audio", "dictation"].includes(q.question_type));
 
     await supabase.from("exam_attempts").update({
       status: hasSubjective ? "submitted" : "graded",
@@ -207,9 +233,35 @@ const ExamTaking = () => {
       passed: percentage >= (exam?.passing_score || 50),
     }).eq("id", attemptId!);
 
+    setSubmitted(true);
+    setSubmitting(false);
     toast({ title: t("✅ Exam Submitted!", "✅ تم تقديم الامتحان!") });
-    navigate("/student/exams");
   };
+
+  // Already submitted screen
+  if (submitted && !loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <Card className="mx-4 w-full max-w-lg border-2">
+          <CardContent className="p-8 text-center space-y-6">
+            <div className="mx-auto h-20 w-20 rounded-full bg-emerald/10 flex items-center justify-center">
+              <Lock className="h-10 w-10 text-emerald" />
+            </div>
+            <h2 className="text-2xl font-bold">{t("Exam Completed", "تم إكمال الامتحان")}</h2>
+            <p className="text-muted-foreground">
+              {t(
+                "You have already completed this exam. You cannot re-enter.",
+                "لقد أكملت هذا الامتحان بالفعل. لا يمكنك إعادة الدخول."
+              )}
+            </p>
+            <Button onClick={() => navigate("/student/exams")} className="w-full">
+              {t("Back to Exams", "العودة إلى الامتحانات")}
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -231,7 +283,7 @@ const ExamTaking = () => {
   const isTimeWarning = timeLeft < 600 && timeLeft >= 300;
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="h-screen flex flex-col overflow-hidden bg-background">
       {/* Confirmation Modal */}
       {showConfirm && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm">
@@ -243,7 +295,7 @@ const ExamTaking = () => {
             <Card className="border-2 border-destructive/20">
               <CardContent className="p-6 text-center space-y-4">
                 <div className="mx-auto h-14 w-14 rounded-full bg-destructive/10 flex items-center justify-center">
-                  <Send className="h-7 w-7 text-destructive" />
+                  <ShieldAlert className="h-7 w-7 text-destructive" />
                 </div>
                 <h3 className="text-xl font-bold">{t("Submit Exam?", "تقديم الامتحان؟")}</h3>
                 <div className="space-y-2 text-sm text-muted-foreground">
@@ -251,14 +303,14 @@ const ExamTaking = () => {
                   {flaggedCount > 0 && (
                     <p className="text-secondary"><Flag className="inline h-3 w-3 mr-1" />{flaggedCount} {t("flagged for review", "معلّمة للمراجعة")}</p>
                   )}
-                  <p className="font-medium text-destructive">{t("This action cannot be undone!", "لا يمكن التراجع عن هذا الإجراء!")}</p>
+                  <p className="font-medium text-destructive">{t("This action cannot be undone! The exam will be permanently locked.", "لا يمكن التراجع! سيتم قفل الامتحان نهائيًا.")}</p>
                 </div>
                 <div className="flex gap-3">
                   <Button variant="outline" className="flex-1" onClick={() => setShowConfirm(false)}>
                     {t("Go Back", "عودة")}
                   </Button>
                   <Button variant="destructive" className="flex-1" onClick={() => { setShowConfirm(false); handleSubmit(); }} disabled={submitting}>
-                    {t("Submit Now", "قدّم الآن")}
+                    {submitting ? t("Submitting...", "جارٍ التقديم...") : t("Submit Now", "قدّم الآن")}
                   </Button>
                 </div>
               </CardContent>
@@ -267,32 +319,27 @@ const ExamTaking = () => {
         </div>
       )}
 
-      {/* Top bar */}
-      <div className="sticky top-0 z-50 border-b bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80">
-        <div className="container mx-auto flex items-center justify-between px-4 py-3">
-          <div className="flex items-center gap-3">
-            <BookOpen className="h-5 w-5 text-primary hidden sm:block" />
-            <h2 className="text-base sm:text-lg font-semibold truncate max-w-[200px] sm:max-w-none">
+      {/* Sticky Header */}
+      <div className="shrink-0 z-50 border-b bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80">
+        <div className="flex items-center justify-between px-4 py-2">
+          <div className="flex items-center gap-3 min-w-0">
+            <BookOpen className="h-5 w-5 text-primary shrink-0 hidden sm:block" />
+            <h2 className="text-sm sm:text-base font-semibold truncate">
               {language === "ar" ? exam?.title_ar || exam?.title : exam?.title}
             </h2>
           </div>
-          <div className="flex items-center gap-2 sm:gap-4">
-            {/* Stats pills */}
-            <div className="hidden sm:flex items-center gap-2">
-              <Badge variant="outline" className="gap-1">
-                <CheckCircle2 className="h-3 w-3 text-emerald" />
-                {answeredCount}/{questions.length}
+          <div className="flex items-center gap-2 shrink-0">
+            <Badge variant="outline" className="gap-1 hidden sm:flex">
+              <CheckCircle2 className="h-3 w-3 text-emerald" />
+              {answeredCount}/{questions.length}
+            </Badge>
+            {flaggedCount > 0 && (
+              <Badge variant="outline" className="gap-1 border-secondary/50 text-secondary hidden sm:flex">
+                <Flag className="h-3 w-3" />
+                {flaggedCount}
               </Badge>
-              {flaggedCount > 0 && (
-                <Badge variant="outline" className="gap-1 border-secondary/50 text-secondary">
-                  <Flag className="h-3 w-3" />
-                  {flaggedCount}
-                </Badge>
-              )}
-            </div>
-
-            {/* Timer */}
-            <div className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 font-mono text-sm font-bold transition-colors ${
+            )}
+            <div className={`flex items-center gap-1.5 rounded-full px-3 py-1 font-mono text-sm font-bold transition-colors ${
               isTimeCritical ? "bg-destructive/10 text-destructive animate-pulse" :
               isTimeWarning ? "bg-secondary/10 text-secondary" :
               "bg-primary/10 text-primary"
@@ -300,13 +347,11 @@ const ExamTaking = () => {
               <Clock className="h-4 w-4" />
               {formatTime(timeLeft)}
             </div>
-
             {tabSwitches > 0 && (
               <Badge variant="destructive" className="text-xs gap-1">
                 <AlertTriangle className="h-3 w-3" /> {tabSwitches}
               </Badge>
             )}
-
             <Button size="sm" variant="destructive" onClick={() => setShowConfirm(true)} disabled={submitting} className="gap-1">
               <Send className="h-3 w-3" />
               <span className="hidden sm:inline">{t("Submit", "تقديم")}</span>
@@ -316,279 +361,327 @@ const ExamTaking = () => {
         <Progress value={progressPercent} className="h-1 rounded-none" />
       </div>
 
-      <div className="container mx-auto grid gap-4 px-4 py-4 lg:grid-cols-[1fr_280px]">
-        {/* Question area */}
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={currentIdx}
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -20 }}
-            transition={{ duration: 0.2 }}
-          >
-            <Card className="border-2 shadow-lg">
-              <CardContent className="p-5 sm:p-8">
-                {/* Question header */}
-                <div className="mb-6 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground text-sm font-bold">
-                      {currentIdx + 1}
-                    </div>
-                    <Badge variant="secondary" className="capitalize">
-                      {q?.question_type?.replace("_", " ")}
-                    </Badge>
-                    {q?.difficulty && (
-                      <Badge variant="outline" className={
-                        q.difficulty === "hard" ? "border-destructive/50 text-destructive" :
-                        q.difficulty === "easy" ? "border-emerald/50 text-emerald" : ""
-                      }>
-                        {q.difficulty}
+      {/* Three-panel layout: fits in remaining screen height */}
+      <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[220px_1fr_240px] gap-0 overflow-hidden">
+        {/* Left Panel: Question Navigation (hidden on mobile, shown in right panel instead) */}
+        <div className="hidden lg:flex flex-col border-r bg-card/50 overflow-y-auto p-3">
+          <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+            <HelpCircle className="h-3.5 w-3.5" />
+            {t("Questions", "الأسئلة")}
+          </h4>
+          <div className="grid grid-cols-4 gap-1.5">
+            {questions.map((qq, i) => {
+              const answered = !!answers[qq.id]?.text;
+              const flagged = answers[qq.id]?.flagged;
+              return (
+                <button
+                  key={qq.id}
+                  onClick={() => setCurrentIdx(i)}
+                  className={`flex h-9 w-9 items-center justify-center rounded-lg text-xs font-bold transition-all ${
+                    i === currentIdx ? "bg-primary text-primary-foreground shadow-md ring-2 ring-primary/30" :
+                    flagged ? "bg-secondary/20 text-secondary border border-secondary/50" :
+                    answered ? "bg-emerald/15 text-emerald border border-emerald/40" :
+                    "bg-muted text-muted-foreground hover:bg-muted/80"
+                  }`}
+                >
+                  {i + 1}
+                </button>
+              );
+            })}
+          </div>
+          <div className="mt-4 space-y-1 text-[10px] text-muted-foreground">
+            <div className="flex items-center gap-1.5">
+              <div className="h-2.5 w-2.5 rounded bg-emerald/15 border border-emerald/40" />
+              {t("Answered", "مُجاب")} ({answeredCount})
+            </div>
+            <div className="flex items-center gap-1.5">
+              <div className="h-2.5 w-2.5 rounded bg-secondary/20 border border-secondary/50" />
+              {t("Flagged", "مُعلّم")} ({flaggedCount})
+            </div>
+            <div className="flex items-center gap-1.5">
+              <div className="h-2.5 w-2.5 rounded bg-muted" />
+              {t("Unanswered", "غير مُجاب")} ({questions.length - answeredCount})
+            </div>
+          </div>
+        </div>
+
+        {/* Center Panel: Active Question */}
+        <div className="flex-1 overflow-y-auto p-4">
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={currentIdx}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.15 }}
+              className="max-w-3xl mx-auto"
+            >
+              <Card className="border-2 shadow-lg">
+                <CardContent className="p-5 sm:p-6">
+                  {/* Question header */}
+                  <div className="mb-4 flex items-center justify-between flex-wrap gap-2">
+                    <div className="flex items-center gap-2">
+                      <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary text-primary-foreground text-xs font-bold">
+                        {currentIdx + 1}
+                      </div>
+                      <Badge variant="secondary" className="capitalize text-xs">
+                        {q?.question_type?.replace("_", " ")}
                       </Badge>
+                      {q?.difficulty && (
+                        <Badge variant="outline" className={`text-xs ${
+                          q.difficulty === "hard" ? "border-destructive/50 text-destructive" :
+                          q.difficulty === "easy" ? "border-emerald/50 text-emerald" : ""
+                        }`}>
+                          {q.difficulty}
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline" className="text-xs">{q?.points || 1} {t("pts", "نقاط")}</Badge>
+                      <Button
+                        variant={answers[q?.id]?.flagged ? "destructive" : "ghost"}
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={() => q && toggleFlag(q.id)}
+                      >
+                        <Flag className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Question text */}
+                  <div className="mb-4">
+                    <p className="text-base sm:text-lg font-medium leading-relaxed">
+                      {language === "ar" ? q?.question_text_ar || q?.question_text : q?.question_text}
+                    </p>
+                    {q?.media_url && (q?.question_type === "audio" || q?.question_type === "dictation") && (
+                      <div className="mt-3">
+                        <AudioPlayer src={q.media_url} title={t("Listen carefully", "استمع بعناية")} maxPlays={3} />
+                      </div>
+                    )}
+                    {q?.media_url && q?.question_type === "video" && (
+                      <div className="mt-3 rounded-xl overflow-hidden border">
+                        <video controls src={q.media_url} className="w-full max-h-60 object-contain bg-black" />
+                      </div>
+                    )}
+                    {q?.media_url && !["audio", "dictation", "video"].includes(q?.question_type) && (
+                      <div className="mt-3">
+                        <AudioPlayer src={q.media_url} title={t("Audio", "صوت")} />
+                      </div>
                     )}
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Badge variant="outline">{q?.points || 1} {t("pts", "نقاط")}</Badge>
-                    <Button
-                      variant={answers[q?.id]?.flagged ? "destructive" : "ghost"}
-                      size="icon"
-                      className="h-8 w-8"
-                      onClick={() => q && toggleFlag(q.id)}
-                      title={t("Flag for review", "علّم للمراجعة")}
-                    >
-                      <Flag className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
 
-                {/* Question text */}
-                <div className="mb-6">
-                  <p className="text-lg sm:text-xl font-medium leading-relaxed">
-                    {language === "ar" ? q?.question_text_ar || q?.question_text : q?.question_text}
-                  </p>
-
-                  {/* Audio question */}
-                  {q?.media_url && (q?.question_type === "audio" || q?.question_type === "dictation") && (
-                    <div className="mt-4">
-                      <AudioPlayer src={q.media_url} title={t("Listen carefully", "استمع بعناية")} maxPlays={3} />
-                    </div>
+                  {/* Answer input */}
+                  {q?.question_type === "mcq" && q.options && (
+                    <RadioGroup value={answers[q.id]?.text || ""} onValueChange={(v) => setAnswer(q.id, v)}>
+                      <div className="space-y-2">
+                        {(q.options as any[]).map((opt: any, idx: number) => {
+                          const isSelected = answers[q.id]?.text === opt.id;
+                          return (
+                            <div
+                              key={opt.id}
+                              className={`flex items-center gap-3 rounded-xl border-2 p-3 cursor-pointer transition-all ${
+                                isSelected ? "border-primary bg-primary/5 shadow-sm" : "border-border hover:border-primary/30 hover:bg-accent/50"
+                              }`}
+                              onClick={() => setAnswer(q.id, opt.id)}
+                            >
+                              <RadioGroupItem value={opt.id} id={opt.id} />
+                              <Label htmlFor={opt.id} className="cursor-pointer flex-1 text-sm">
+                                <span className="mr-2 inline-flex h-5 w-5 items-center justify-center rounded-full bg-muted text-xs font-bold">
+                                  {String.fromCharCode(65 + idx)}
+                                </span>
+                                {language === "ar" ? opt.text_ar || opt.text : opt.text}
+                              </Label>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </RadioGroup>
                   )}
 
-                  {/* Video question */}
-                  {q?.media_url && q?.question_type === "video" && (
-                    <div className="mt-4 rounded-xl overflow-hidden border">
-                      <video controls src={q.media_url} className="w-full max-h-80 object-contain bg-black" />
-                    </div>
+                  {q?.question_type === "true_false" && (
+                    <RadioGroup value={answers[q.id]?.text || ""} onValueChange={(v) => setAnswer(q.id, v)}>
+                      <div className="grid grid-cols-2 gap-3">
+                        {[
+                          { v: "true", l: t("True", "صح"), emoji: "✓" },
+                          { v: "false", l: t("False", "خطأ"), emoji: "✗" },
+                        ].map((opt) => {
+                          const isSelected = answers[q.id]?.text === opt.v;
+                          return (
+                            <div
+                              key={opt.v}
+                              className={`flex items-center justify-center gap-2 rounded-xl border-2 p-4 cursor-pointer transition-all text-center ${
+                                isSelected ? "border-primary bg-primary/5 shadow-sm" : "border-border hover:border-primary/30"
+                              }`}
+                              onClick={() => setAnswer(q.id, opt.v)}
+                            >
+                              <RadioGroupItem value={opt.v} id={opt.v} className="sr-only" />
+                              <Label htmlFor={opt.v} className="cursor-pointer text-base font-semibold">
+                                <span className="block text-xl mb-0.5">{opt.emoji}</span>
+                                {opt.l}
+                              </Label>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </RadioGroup>
                   )}
 
-                  {/* Generic media for other types */}
-                  {q?.media_url && !["audio", "dictation", "video"].includes(q?.question_type) && (
-                    <div className="mt-4">
-                      <AudioPlayer src={q.media_url} title={t("Audio", "صوت")} />
-                    </div>
-                  )}
-                </div>
-
-                {/* Answer input based on type */}
-                {q?.question_type === "mcq" && q.options && (
-                  <RadioGroup value={answers[q.id]?.text || ""} onValueChange={(v) => setAnswer(q.id, v)}>
-                    <div className="space-y-3">
-                      {(q.options as any[]).map((opt: any, idx: number) => {
-                        const isSelected = answers[q.id]?.text === opt.id;
-                        return (
-                          <motion.div
-                            key={opt.id}
-                            initial={{ opacity: 0, y: 5 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ delay: idx * 0.05 }}
-                            className={`flex items-center gap-3 rounded-xl border-2 p-4 cursor-pointer transition-all ${
-                              isSelected ? "border-primary bg-primary/5 shadow-sm" : "border-border hover:border-primary/30 hover:bg-accent/50"
-                            }`}
-                            onClick={() => setAnswer(q.id, opt.id)}
-                          >
-                            <RadioGroupItem value={opt.id} id={opt.id} />
-                            <Label htmlFor={opt.id} className="cursor-pointer flex-1 text-base">
-                              <span className="mr-2 inline-flex h-6 w-6 items-center justify-center rounded-full bg-muted text-xs font-bold">
-                                {String.fromCharCode(65 + idx)}
-                              </span>
-                              {language === "ar" ? opt.text_ar || opt.text : opt.text}
-                            </Label>
-                          </motion.div>
-                        );
-                      })}
-                    </div>
-                  </RadioGroup>
-                )}
-
-                {q?.question_type === "true_false" && (
-                  <RadioGroup value={answers[q.id]?.text || ""} onValueChange={(v) => setAnswer(q.id, v)}>
-                    <div className="grid grid-cols-2 gap-4">
-                      {[
-                        { v: "true", l: t("True", "صح"), emoji: "✓" },
-                        { v: "false", l: t("False", "خطأ"), emoji: "✗" },
-                      ].map((opt) => {
-                        const isSelected = answers[q.id]?.text === opt.v;
-                        return (
-                          <div
-                            key={opt.v}
-                            className={`flex items-center justify-center gap-3 rounded-xl border-2 p-6 cursor-pointer transition-all text-center ${
-                              isSelected ? "border-primary bg-primary/5 shadow-sm" : "border-border hover:border-primary/30"
-                            }`}
-                            onClick={() => setAnswer(q.id, opt.v)}
-                          >
-                            <RadioGroupItem value={opt.v} id={opt.v} className="sr-only" />
-                            <Label htmlFor={opt.v} className="cursor-pointer text-lg font-semibold">
-                              <span className="block text-2xl mb-1">{opt.emoji}</span>
-                              {opt.l}
-                            </Label>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </RadioGroup>
-                )}
-
-                {q?.question_type === "fill_blank" && (
-                  <Input
-                    placeholder={t("Type your answer here...", "اكتب إجابتك هنا...")}
-                    value={answers[q.id]?.text || ""}
-                    onChange={(e) => setAnswer(q.id, e.target.value)}
-                    className="h-14 text-lg"
-                  />
-                )}
-
-                {(q?.question_type === "short_answer" || q?.question_type === "essay") && (
-                  <Textarea
-                    placeholder={t("Write your answer here...", "اكتب إجابتك هنا...")}
-                    rows={q.question_type === "essay" ? 10 : 5}
-                    value={answers[q.id]?.text || ""}
-                    onChange={(e) => setAnswer(q.id, e.target.value)}
-                    className="text-base leading-relaxed resize-y"
-                  />
-                )}
-
-                {/* Audio recording answer (for dictation/audio questions) */}
-                {(q?.question_type === "audio" || q?.question_type === "dictation") && (
-                  <div className="space-y-3">
-                    <Textarea
-                      placeholder={t("Write what you heard...", "اكتب ما سمعته...")}
-                      rows={4}
+                  {q?.question_type === "fill_blank" && (
+                    <Input
+                      placeholder={t("Type your answer here...", "اكتب إجابتك هنا...")}
                       value={answers[q.id]?.text || ""}
                       onChange={(e) => setAnswer(q.id, e.target.value)}
-                      className="text-base"
+                      className="h-12 text-base"
                     />
-                    <div>
-                      <p className="text-sm font-medium mb-2 text-muted-foreground">
-                        {t("Or record your answer:", "أو سجّل إجابتك:")}
-                      </p>
-                      <AudioRecorder
-                        onRecordingComplete={async (blob, url) => {
-                          // Upload to storage
-                          const ext = "webm";
-                          const path = `student-answers/${user!.id}/${attemptId}_${q.id}.${ext}`;
-                          const { error } = await supabase.storage.from("exam-media").upload(path, blob, { upsert: true });
-                          if (!error) {
-                            const { data: urlData } = supabase.storage.from("exam-media").getPublicUrl(path);
-                            setAnswer(q.id, answers[q.id]?.text || "[audio_recorded]", { audioUrl: urlData.publicUrl });
-                          } else {
-                            // Fallback to blob URL
-                            setAnswer(q.id, answers[q.id]?.text || "[audio_recorded]", { audioUrl: url });
-                          }
-                        }}
-                        existingUrl={answers[q.id]?.data?.audioUrl}
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {/* Navigation */}
-                <div className="mt-8 flex justify-between">
-                  <Button
-                    variant="outline"
-                    disabled={currentIdx === 0}
-                    onClick={() => setCurrentIdx(currentIdx - 1)}
-                    className="gap-1"
-                  >
-                    <ChevronLeft className="h-4 w-4" />
-                    {t("Previous", "السابق")}
-                  </Button>
-                  {currentIdx === questions.length - 1 ? (
-                    <Button onClick={() => setShowConfirm(true)} className="gap-1 bg-emerald hover:bg-emerald/90">
-                      <Send className="h-4 w-4" />
-                      {t("Review & Submit", "مراجعة وتقديم")}
-                    </Button>
-                  ) : (
-                    <Button onClick={() => setCurrentIdx(currentIdx + 1)} className="gap-1">
-                      {t("Next", "التالي")}
-                      <ChevronRight className="h-4 w-4" />
-                    </Button>
                   )}
-                </div>
-              </CardContent>
-            </Card>
-          </motion.div>
-        </AnimatePresence>
 
-        {/* Question navigator sidebar */}
-        <div className="space-y-4">
-          <Card className="shadow-lg">
-            <CardContent className="p-4">
-              <h4 className="mb-3 text-sm font-semibold flex items-center gap-2">
-                <HelpCircle className="h-4 w-4 text-primary" />
-                {t("Questions", "الأسئلة")}
-              </h4>
-              <div className="grid grid-cols-5 gap-2">
-                {questions.map((q, i) => {
-                  const answered = !!answers[q.id]?.text;
-                  const flagged = answers[q.id]?.flagged;
-                  return (
-                    <button
-                      key={q.id}
-                      onClick={() => setCurrentIdx(i)}
-                      className={`flex h-10 w-10 items-center justify-center rounded-lg text-xs font-bold transition-all ${
-                        i === currentIdx ? "bg-primary text-primary-foreground shadow-md scale-110" :
-                        flagged ? "bg-secondary/20 text-secondary border-2 border-secondary/50" :
-                        answered ? "bg-emerald/15 text-emerald border-2 border-emerald/40" :
-                        "bg-muted text-muted-foreground hover:bg-muted/80"
-                      }`}
+                  {(q?.question_type === "short_answer" || q?.question_type === "essay") && (
+                    <Textarea
+                      placeholder={t("Write your answer here...", "اكتب إجابتك هنا...")}
+                      rows={q.question_type === "essay" ? 8 : 4}
+                      value={answers[q.id]?.text || ""}
+                      onChange={(e) => setAnswer(q.id, e.target.value)}
+                      className="text-sm leading-relaxed resize-none"
+                    />
+                  )}
+
+                  {(q?.question_type === "audio" || q?.question_type === "dictation") && (
+                    <div className="space-y-3">
+                      <Textarea
+                        placeholder={t("Write what you heard...", "اكتب ما سمعته...")}
+                        rows={3}
+                        value={answers[q.id]?.text || ""}
+                        onChange={(e) => setAnswer(q.id, e.target.value)}
+                        className="text-sm"
+                      />
+                      <div>
+                        <p className="text-xs font-medium mb-1.5 text-muted-foreground">
+                          {t("Or record your answer:", "أو سجّل إجابتك:")}
+                        </p>
+                        <AudioRecorder
+                          onRecordingComplete={async (blob, url) => {
+                            const ext = "webm";
+                            const path = `student-answers/${user!.id}/${attemptId}_${q.id}.${ext}`;
+                            const { error } = await supabase.storage.from("exam-media").upload(path, blob, { upsert: true });
+                            if (!error) {
+                              const { data: urlData } = supabase.storage.from("exam-media").getPublicUrl(path);
+                              setAnswer(q.id, answers[q.id]?.text || "[audio_recorded]", { audioUrl: urlData.publicUrl });
+                            } else {
+                              setAnswer(q.id, answers[q.id]?.text || "[audio_recorded]", { audioUrl: url });
+                            }
+                          }}
+                          existingUrl={answers[q.id]?.data?.audioUrl}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Navigation buttons */}
+                  <div className="mt-5 flex justify-between">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={currentIdx === 0}
+                      onClick={() => setCurrentIdx(currentIdx - 1)}
                     >
-                      {i + 1}
-                    </button>
-                  );
-                })}
-              </div>
+                      {t("← Previous", "← السابق")}
+                    </Button>
+                    {currentIdx === questions.length - 1 ? (
+                      <Button size="sm" onClick={() => setShowConfirm(true)} className="bg-emerald hover:bg-emerald/90">
+                        <Send className="mr-1 h-3.5 w-3.5" />
+                        {t("Review & Submit", "مراجعة وتقديم")}
+                      </Button>
+                    ) : (
+                      <Button size="sm" onClick={() => setCurrentIdx(currentIdx + 1)}>
+                        {t("Next →", "التالي →")}
+                      </Button>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            </motion.div>
+          </AnimatePresence>
+        </div>
 
-              {/* Legend */}
-              <div className="mt-4 space-y-1.5 text-xs text-muted-foreground">
-                <div className="flex items-center gap-2">
-                  <div className="h-3 w-3 rounded bg-emerald/15 border-2 border-emerald/40" />
-                  {t("Answered", "مُجاب")} ({answeredCount})
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="h-3 w-3 rounded bg-secondary/20 border-2 border-secondary/50" />
-                  {t("Flagged", "مُعلّم")} ({flaggedCount})
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="h-3 w-3 rounded bg-muted" />
-                  {t("Unanswered", "غير مُجاب")} ({questions.length - answeredCount})
-                </div>
+        {/* Right Panel: Timer + Summary + Mobile Question Nav */}
+        <div className="hidden lg:flex flex-col border-l bg-card/50 overflow-y-auto p-3 gap-3">
+          {/* Timer card */}
+          <Card>
+            <CardContent className="p-3 text-center">
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">{t("Time Remaining", "الوقت المتبقي")}</p>
+              <div className={`text-2xl font-mono font-bold ${
+                isTimeCritical ? "text-destructive animate-pulse" :
+                isTimeWarning ? "text-secondary" :
+                "text-primary"
+              }`}>
+                {formatTime(timeLeft)}
               </div>
             </CardContent>
           </Card>
 
-          {/* Exam info card */}
+          {/* Summary card */}
           <Card>
-            <CardContent className="p-4 space-y-2 text-xs text-muted-foreground">
-              <p><strong>{t("Time Limit:", "الحد الزمني:")}</strong> {exam?.time_limit_minutes} {t("minutes", "دقيقة")}</p>
+            <CardContent className="p-3 space-y-2 text-xs">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">{t("Answered", "مُجاب")}</span>
+                <span className="font-semibold text-emerald">{answeredCount}/{questions.length}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">{t("Flagged", "مُعلّم")}</span>
+                <span className="font-semibold text-secondary">{flaggedCount}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">{t("Unanswered", "غير مُجاب")}</span>
+                <span className="font-semibold">{questions.length - answeredCount}</span>
+              </div>
+              {tabSwitches > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">{t("Tab Switches", "تبديل النوافذ")}</span>
+                  <span className="font-semibold text-destructive">{tabSwitches}</span>
+                </div>
+              )}
+              <Progress value={progressPercent} className="h-1.5 mt-1" />
+            </CardContent>
+          </Card>
+
+          {/* Exam info */}
+          <Card>
+            <CardContent className="p-3 space-y-1 text-[11px] text-muted-foreground">
               <p><strong>{t("Pass Mark:", "درجة النجاح:")}</strong> {exam?.passing_score}%</p>
               <p><strong>{t("Questions:", "الأسئلة:")}</strong> {questions.length}</p>
               {exam?.guidelines && (
-                <div className="mt-2 rounded-lg bg-accent/50 p-2">
-                  <p className="font-medium text-foreground">{t("Guidelines:", "الإرشادات:")}</p>
+                <div className="mt-1.5 rounded bg-accent/50 p-1.5 text-[10px]">
+                  <p className="font-medium text-foreground mb-0.5">{t("Guidelines:", "الإرشادات:")}</p>
                   <p>{language === "ar" ? exam.guidelines_ar || exam.guidelines : exam.guidelines}</p>
                 </div>
               )}
             </CardContent>
           </Card>
+        </div>
+
+        {/* Mobile bottom bar with question quick-nav */}
+        <div className="lg:hidden fixed bottom-0 left-0 right-0 z-40 border-t bg-card/95 backdrop-blur px-3 py-2">
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+            {questions.map((qq, i) => {
+              const answered = !!answers[qq.id]?.text;
+              const flagged = answers[qq.id]?.flagged;
+              return (
+                <button
+                  key={qq.id}
+                  onClick={() => setCurrentIdx(i)}
+                  className={`shrink-0 flex h-8 w-8 items-center justify-center rounded-lg text-xs font-bold transition-all ${
+                    i === currentIdx ? "bg-primary text-primary-foreground shadow" :
+                    flagged ? "bg-secondary/20 text-secondary" :
+                    answered ? "bg-emerald/15 text-emerald" :
+                    "bg-muted text-muted-foreground"
+                  }`}
+                >
+                  {i + 1}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
     </div>

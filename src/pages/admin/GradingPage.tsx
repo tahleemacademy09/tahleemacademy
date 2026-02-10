@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -6,43 +6,66 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
-import { CheckCircle, XCircle, Play, Pause, Volume2 } from "lucide-react";
-import { useRef } from "react";
+import { CheckCircle, XCircle, Play, Pause, Volume2, Search, Filter } from "lucide-react";
 
 const GradingPage = () => {
   const { t, language } = useLanguage();
   const { toast } = useToast();
   const { user } = useAuth();
-  const [pendingAttempts, setPendingAttempts] = useState<any[]>([]);
-  const [gradedAttempts, setGradedAttempts] = useState<any[]>([]);
+  const [allAttempts, setAllAttempts] = useState<any[]>([]);
   const [selectedAttempt, setSelectedAttempt] = useState<any>(null);
   const [answers, setAnswers] = useState<any[]>([]);
   const [questions, setQuestions] = useState<any[]>([]);
   const [gradingTab, setGradingTab] = useState("pending");
+  const [examFilter, setExamFilter] = useState("all");
+  const [studentFilter, setStudentFilter] = useState("");
+  const [examsList, setExamsList] = useState<any[]>([]);
 
   const fetchAttempts = async () => {
-    const [pendingRes, gradedRes] = await Promise.all([
+    // Fetch all attempts with profiles merged client-side (no FK)
+    const [attemptsRes, profilesRes, examsRes] = await Promise.all([
       supabase
         .from("exam_attempts")
-        .select("*, exams(title, title_ar, passing_score), profiles:user_id(full_name, email)")
-        .eq("status", "submitted")
-        .order("submitted_at", { ascending: true }),
-      supabase
-        .from("exam_attempts")
-        .select("*, exams(title, title_ar, passing_score), profiles:user_id(full_name, email)")
-        .eq("status", "graded")
-        .order("submitted_at", { ascending: false })
-        .limit(50),
+        .select("*")
+        .in("status", ["submitted", "graded"])
+        .order("submitted_at", { ascending: false }),
+      supabase.from("profiles").select("user_id, full_name, email"),
+      supabase.from("exams").select("id, title, title_ar, passing_score"),
     ]);
-    setPendingAttempts(pendingRes.data || []);
-    setGradedAttempts(gradedRes.data || []);
+
+    const profiles = profilesRes.data || [];
+    const exams = examsRes.data || [];
+    setExamsList(exams);
+
+    const merged = (attemptsRes.data || []).map((a: any) => ({
+      ...a,
+      profiles: profiles.find((p) => p.user_id === a.user_id) || {},
+      exams: exams.find((e) => e.id === a.exam_id) || {},
+    }));
+    setAllAttempts(merged);
   };
 
   useEffect(() => { fetchAttempts(); }, []);
+
+  const filteredAttempts = allAttempts.filter((a) => {
+    if (gradingTab === "pending" && a.status !== "submitted") return false;
+    if (gradingTab === "graded" && a.status !== "graded") return false;
+    if (examFilter !== "all" && a.exam_id !== examFilter) return false;
+    if (studentFilter) {
+      const name = (a.profiles?.full_name || "").toLowerCase();
+      const email = (a.profiles?.email || "").toLowerCase();
+      if (!name.includes(studentFilter.toLowerCase()) && !email.includes(studentFilter.toLowerCase())) return false;
+    }
+    return true;
+  });
+
+  const pendingCount = allAttempts.filter((a) => a.status === "submitted").length;
+  const gradedCount = allAttempts.filter((a) => a.status === "graded").length;
 
   const loadAttempt = async (attempt: any) => {
     setSelectedAttempt(attempt);
@@ -64,10 +87,8 @@ const GradingPage = () => {
     setAnswers((prev) => prev.map((ans) => {
       const q = questions.find((qq) => qq.id === ans.question_id);
       if (!q) return ans;
-
       let isCorrect: boolean | null = null;
       let pts = 0;
-
       if (q.question_type === "mcq" && q.options) {
         const correctOpts = (q.options as any[]).filter((o: any) => o.is_correct).map((o: any) => o.id);
         isCorrect = correctOpts.length === 1 && ans.answer_text === correctOpts[0];
@@ -79,10 +100,7 @@ const GradingPage = () => {
         isCorrect = ans.answer_text?.trim().toLowerCase() === q.correct_answer?.trim().toLowerCase();
         pts = isCorrect ? (q.points || 1) : 0;
       }
-
-      if (isCorrect !== null) {
-        return { ...ans, is_correct: isCorrect, points_awarded: pts };
-      }
+      if (isCorrect !== null) return { ...ans, is_correct: isCorrect, points_awarded: pts };
       return ans;
     }));
     toast({ title: t("Auto-graded objective questions", "تم التصحيح التلقائي للأسئلة الموضوعية") });
@@ -117,87 +135,74 @@ const GradingPage = () => {
     fetchAttempts();
   };
 
+  // Grading detail view
   if (selectedAttempt) {
     return (
-      <div className="container mx-auto px-4 py-8">
-        <div className="mb-6 flex items-center justify-between flex-wrap gap-3">
+      <div className="container mx-auto px-4 py-6 max-w-4xl">
+        <div className="mb-4 flex items-center justify-between flex-wrap gap-3">
           <div>
-            <h1 className="text-2xl font-bold">{t("Grading", "التصحيح")}: {language === "ar" ? selectedAttempt.exams?.title_ar || selectedAttempt.exams?.title : selectedAttempt.exams?.title}</h1>
+            <h1 className="text-xl font-bold">{t("Grading", "التصحيح")}: {language === "ar" ? selectedAttempt.exams?.title_ar || selectedAttempt.exams?.title : selectedAttempt.exams?.title}</h1>
             <p className="text-sm text-muted-foreground">
-              {t("Student", "الطالب")}: {selectedAttempt.profiles?.full_name} ({selectedAttempt.profiles?.email})
-              {selectedAttempt.submitted_at && ` • ${t("Submitted", "مُقدم")}: ${new Date(selectedAttempt.submitted_at).toLocaleString()}`}
+              {t("Student", "الطالب")}: {selectedAttempt.profiles?.full_name || selectedAttempt.profiles?.email || "Unknown"}
+              {selectedAttempt.submitted_at && ` • ${new Date(selectedAttempt.submitted_at).toLocaleString()}`}
               {selectedAttempt.tab_switches > 0 && (
                 <Badge variant="destructive" className="ml-2 text-xs">{selectedAttempt.tab_switches} {t("tab switches", "تبديل")}</Badge>
               )}
             </p>
           </div>
           <div className="flex gap-2 flex-wrap">
-            <Button variant="outline" onClick={() => setSelectedAttempt(null)}>{t("Back", "رجوع")}</Button>
-            <Button variant="secondary" onClick={autoGradeObjective}>{t("Auto-Grade Objective", "تصحيح تلقائي")}</Button>
-            <Button onClick={submitGrading}>{t("Submit Grades", "تقديم الدرجات")}</Button>
+            <Button variant="outline" size="sm" onClick={() => setSelectedAttempt(null)}>{t("Back", "رجوع")}</Button>
+            <Button variant="secondary" size="sm" onClick={autoGradeObjective}>{t("Auto-Grade", "تصحيح تلقائي")}</Button>
+            <Button size="sm" onClick={submitGrading}>{t("Submit Grades", "تقديم الدرجات")}</Button>
           </div>
         </div>
 
-        {/* Summary bar */}
+        {/* Summary */}
         <Card className="mb-4">
-          <CardContent className="flex items-center gap-4 p-4 flex-wrap">
-            <div className="text-sm">
-              <span className="font-medium">{t("Total Points", "إجمالي النقاط")}: </span>
-              {questions.reduce((s, q) => s + (q.points || 1), 0)}
-            </div>
-            <div className="text-sm">
-              <span className="font-medium">{t("Earned", "المكتسبة")}: </span>
-              {answers.reduce((s, a) => s + (Number(a.points_awarded) || 0), 0)}
-            </div>
-            <div className="text-sm">
-              <span className="font-medium">{t("Percentage", "النسبة")}: </span>
-              {(() => {
-                const total = questions.reduce((s, q) => s + (q.points || 1), 0);
-                const earned = answers.reduce((s, a) => s + (Number(a.points_awarded) || 0), 0);
-                return total > 0 ? `${Math.round((earned / total) * 100)}%` : "0%";
-              })()}
-            </div>
+          <CardContent className="flex items-center gap-6 p-3 text-sm flex-wrap">
+            <div><span className="text-muted-foreground">{t("Total", "الإجمالي")}:</span> <strong>{questions.reduce((s, q) => s + (q.points || 1), 0)}</strong></div>
+            <div><span className="text-muted-foreground">{t("Earned", "المكتسبة")}:</span> <strong>{answers.reduce((s, a) => s + (Number(a.points_awarded) || 0), 0)}</strong></div>
+            <div><span className="text-muted-foreground">{t("Percentage", "النسبة")}:</span> <strong>{(() => {
+              const total = questions.reduce((s, q) => s + (q.points || 1), 0);
+              const earned = answers.reduce((s, a) => s + (Number(a.points_awarded) || 0), 0);
+              return total > 0 ? `${Math.round((earned / total) * 100)}%` : "0%";
+            })()}</strong></div>
           </CardContent>
         </Card>
 
-        <div className="space-y-4">
+        <div className="space-y-3">
           {questions.map((q, i) => {
             const ans = answers.find((a) => a.question_id === q.id);
             return (
               <Card key={q.id} className={ans?.is_correct === true ? "border-emerald/30" : ans?.is_correct === false ? "border-destructive/30" : ""}>
                 <CardContent className="p-4">
                   <div className="mb-2 flex items-center gap-2 flex-wrap">
-                    <Badge variant="outline">{t("Q", "س")} {i + 1}</Badge>
-                    <Badge variant="secondary">{q.question_type}</Badge>
+                    <Badge variant="outline" className="text-xs">{t("Q", "س")} {i + 1}</Badge>
+                    <Badge variant="secondary" className="text-xs">{q.question_type}</Badge>
                     <span className="text-xs text-muted-foreground">{q.points} {t("pts", "نقاط")}</span>
                     {ans?.is_correct === true && <CheckCircle className="h-4 w-4 text-emerald" />}
                     {ans?.is_correct === false && <XCircle className="h-4 w-4 text-destructive" />}
                   </div>
 
-                  <p className="mb-2 font-medium" dir={language === "ar" ? "rtl" : "ltr"}>
+                  <p className="mb-2 font-medium text-sm" dir={language === "ar" ? "rtl" : "ltr"}>
                     {language === "ar" ? q.question_text_ar || q.question_text : q.question_text}
                   </p>
 
-                  {/* Show correct answer */}
                   {q.correct_answer && (
-                    <p className="mb-2 text-sm text-emerald">
+                    <p className="mb-2 text-xs text-emerald">
                       {t("Correct Answer", "الإجابة الصحيحة")}: {q.correct_answer}
                     </p>
                   )}
                   {q.question_type === "mcq" && q.options && (
-                    <div className="mb-2 text-sm text-emerald">
+                    <div className="mb-2 text-xs text-emerald">
                       {t("Correct", "صحيح")}: {(q.options as any[]).filter((o: any) => o.is_correct).map((o: any) => language === "ar" ? o.text_ar || o.text : o.text).join(", ")}
                     </div>
                   )}
 
-                  {/* Audio playback for media questions */}
-                  {q.media_url && (
-                    <AudioPreview src={q.media_url} label={t("Question Audio", "صوت السؤال")} />
-                  )}
+                  {q.media_url && <AudioPreview src={q.media_url} label={t("Question Audio", "صوت السؤال")} />}
 
-                  {/* Student's answer */}
                   <div className="mb-3 rounded-lg bg-muted p-3">
-                    <p className="text-sm font-medium mb-1">{t("Student's Answer", "إجابة الطالب")}:</p>
+                    <p className="text-xs font-medium mb-1">{t("Student's Answer", "إجابة الطالب")}:</p>
                     {q.question_type === "mcq" && q.options ? (
                       <p className="text-sm">
                         {(() => {
@@ -208,8 +213,6 @@ const GradingPage = () => {
                     ) : (
                       <p className="text-sm" dir="auto">{ans?.answer_text || t("No answer", "لا إجابة")}</p>
                     )}
-
-                    {/* Audio answer playback */}
                     {ans?.answer_data?.audioUrl && (
                       <div className="mt-2">
                         <AudioPreview src={ans.answer_data.audioUrl} label={t("Student's Audio", "صوت الطالب")} />
@@ -222,7 +225,7 @@ const GradingPage = () => {
                       <Label className="text-xs">{t("Points", "نقاط")}</Label>
                       <Input
                         type="number"
-                        className="w-20"
+                        className="w-20 h-8 text-sm"
                         value={ans?.points_awarded ?? 0}
                         min={0}
                         max={q.points}
@@ -237,6 +240,7 @@ const GradingPage = () => {
                         onChange={(e) => ans && updateGrade(ans.id, ans.points_awarded || 0, e.target.value)}
                         placeholder={t("Add feedback...", "أضف ملاحظات...")}
                         dir="auto"
+                        className="text-sm"
                       />
                     </div>
                   </div>
@@ -249,34 +253,63 @@ const GradingPage = () => {
     );
   }
 
+  // Attempts list view
   return (
-    <div className="container mx-auto px-4 py-8">
-      <h1 className="mb-6 text-3xl font-bold">{t("Grading", "التصحيح")}</h1>
+    <div className="container mx-auto px-4 py-6">
+      <h1 className="mb-4 text-2xl font-bold">{t("Grading Dashboard", "لوحة التصحيح")}</h1>
+
+      {/* Filters */}
+      <div className="mb-4 flex flex-wrap items-end gap-3">
+        <div className="w-full sm:w-auto">
+          <Label className="text-xs mb-1 block">{t("Filter by Exam", "تصفية حسب الامتحان")}</Label>
+          <Select value={examFilter} onValueChange={setExamFilter}>
+            <SelectTrigger className="w-full sm:w-[200px] h-9 text-sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{t("All Exams", "جميع الامتحانات")}</SelectItem>
+              {examsList.map((e) => (
+                <SelectItem key={e.id} value={e.id}>{language === "ar" ? e.title_ar || e.title : e.title}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="w-full sm:w-auto">
+          <Label className="text-xs mb-1 block">{t("Search Student", "البحث عن طالب")}</Label>
+          <div className="relative">
+            <Search className="absolute left-2.5 top-2 h-4 w-4 text-muted-foreground" />
+            <Input
+              className="pl-8 h-9 text-sm w-full sm:w-[200px]"
+              placeholder={t("Name or email...", "الاسم أو البريد...")}
+              value={studentFilter}
+              onChange={(e) => setStudentFilter(e.target.value)}
+            />
+          </div>
+        </div>
+      </div>
 
       <Tabs value={gradingTab} onValueChange={setGradingTab}>
         <TabsList>
-          <TabsTrigger value="pending">{t("Needs Grading", "يحتاج تصحيح")} ({pendingAttempts.length})</TabsTrigger>
-          <TabsTrigger value="graded">{t("Graded", "مُصحح")} ({gradedAttempts.length})</TabsTrigger>
+          <TabsTrigger value="pending">{t("Needs Grading", "يحتاج تصحيح")} ({pendingCount})</TabsTrigger>
+          <TabsTrigger value="graded">{t("Graded", "مُصحح")} ({gradedCount})</TabsTrigger>
         </TabsList>
 
         <TabsContent value="pending" className="mt-4">
-          {pendingAttempts.length === 0 ? (
+          {filteredAttempts.length === 0 ? (
             <Card><CardContent className="p-8 text-center text-muted-foreground">{t("No exams to grade", "لا توجد امتحانات للتصحيح")}</CardContent></Card>
           ) : (
-            <div className="space-y-3">
-              {pendingAttempts.map((attempt) => (
+            <div className="space-y-2">
+              {filteredAttempts.map((attempt) => (
                 <Card key={attempt.id} className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => loadAttempt(attempt)}>
                   <CardContent className="flex items-center justify-between p-4 flex-wrap gap-2">
                     <div>
-                      <div className="font-semibold">{language === "ar" ? attempt.exams?.title_ar || attempt.exams?.title : attempt.exams?.title}</div>
-                      <div className="text-sm text-muted-foreground">
-                        {attempt.profiles?.full_name} ({attempt.profiles?.email}) • {attempt.submitted_at ? new Date(attempt.submitted_at).toLocaleString() : ""}
+                      <div className="font-semibold text-sm">{language === "ar" ? attempt.exams?.title_ar || attempt.exams?.title : attempt.exams?.title}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {attempt.profiles?.full_name || attempt.profiles?.email || "Unknown"} • {attempt.submitted_at ? new Date(attempt.submitted_at).toLocaleString() : ""}
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      {attempt.tab_switches > 0 && (
-                        <Badge variant="destructive" className="text-xs">{attempt.tab_switches} ⚠️</Badge>
-                      )}
+                      {attempt.tab_switches > 0 && <Badge variant="destructive" className="text-xs">{attempt.tab_switches} ⚠️</Badge>}
                       <Badge>{t("Needs Grading", "يحتاج تصحيح")}</Badge>
                     </div>
                   </CardContent>
@@ -287,22 +320,22 @@ const GradingPage = () => {
         </TabsContent>
 
         <TabsContent value="graded" className="mt-4">
-          {gradedAttempts.length === 0 ? (
+          {filteredAttempts.length === 0 ? (
             <Card><CardContent className="p-8 text-center text-muted-foreground">{t("No graded exams yet", "لا توجد امتحانات مُصححة")}</CardContent></Card>
           ) : (
-            <div className="space-y-3">
-              {gradedAttempts.map((attempt) => (
+            <div className="space-y-2">
+              {filteredAttempts.map((attempt) => (
                 <Card key={attempt.id} className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => loadAttempt(attempt)}>
                   <CardContent className="flex items-center justify-between p-4 flex-wrap gap-2">
                     <div>
-                      <div className="font-semibold">{language === "ar" ? attempt.exams?.title_ar || attempt.exams?.title : attempt.exams?.title}</div>
-                      <div className="text-sm text-muted-foreground">
-                        {attempt.profiles?.full_name} • {attempt.submitted_at ? new Date(attempt.submitted_at).toLocaleString() : ""}
+                      <div className="font-semibold text-sm">{language === "ar" ? attempt.exams?.title_ar || attempt.exams?.title : attempt.exams?.title}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {attempt.profiles?.full_name || attempt.profiles?.email || "Unknown"} • {attempt.submitted_at ? new Date(attempt.submitted_at).toLocaleString() : ""}
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
                       {attempt.passed ? <CheckCircle className="h-4 w-4 text-emerald" /> : <XCircle className="h-4 w-4 text-destructive" />}
-                      <span className="font-semibold">{Math.round(attempt.percentage || 0)}%</span>
+                      <span className="font-semibold text-sm">{Math.round(attempt.percentage || 0)}%</span>
                       <Badge variant={attempt.passed ? "default" : "destructive"}>
                         {attempt.passed ? t("Passed", "ناجح") : t("Failed", "راسب")}
                       </Badge>
@@ -318,7 +351,6 @@ const GradingPage = () => {
   );
 };
 
-// Simple audio preview component for grading
 const AudioPreview = ({ src, label }: { src: string; label: string }) => {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [playing, setPlaying] = useState(false);
@@ -330,10 +362,10 @@ const AudioPreview = ({ src, label }: { src: string; label: string }) => {
   };
 
   return (
-    <div className="flex items-center gap-2 rounded-lg bg-accent/50 p-2">
+    <div className="flex items-center gap-2 rounded-lg bg-accent/50 p-2 my-1">
       <audio ref={audioRef} src={src} onEnded={() => setPlaying(false)} />
-      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={toggle}>
-        {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={toggle}>
+        {playing ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
       </Button>
       <Volume2 className="h-3 w-3 text-muted-foreground" />
       <span className="text-xs text-muted-foreground">{label}</span>
