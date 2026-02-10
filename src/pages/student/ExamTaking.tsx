@@ -128,9 +128,7 @@ const ExamTaking = () => {
     load();
   }, [attemptId, user]);
 
-  // Keep handleSubmit ref fresh for timer
-  const handleSubmitRef = useRef(handleSubmit);
-  useEffect(() => { handleSubmitRef.current = handleSubmit; }, [handleSubmit]);
+  const handleSubmitRef = useRef<() => Promise<void>>(() => Promise.resolve());
 
   // Timer — uses ref so auto-submit always has fresh data
   useEffect(() => {
