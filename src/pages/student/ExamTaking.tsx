@@ -134,10 +134,22 @@ const ExamTaking = () => {
   useEffect(() => {
     if (submitted || loading || !exam) return;
     if (timeLeft <= 0) {
-      handleSubmitRef.current();
+      // Force auto-submit immediately when timer expires
+      if (!submittedRef.current) {
+        console.log("Timer expired, auto-submitting...");
+        handleSubmitRef.current();
+      }
       return;
     }
-    const interval = setInterval(() => setTimeLeft((t) => Math.max(0, t - 1)), 1000);
+    const interval = setInterval(() => setTimeLeft((t) => {
+      const next = Math.max(0, t - 1);
+      if (next === 0 && !submittedRef.current) {
+        console.log("Timer reached 0, triggering auto-submit...");
+        // Use setTimeout to avoid state update conflicts
+        setTimeout(() => handleSubmitRef.current(), 0);
+      }
+      return next;
+    }), 1000);
     return () => clearInterval(interval);
   }, [timeLeft, loading, submitted, exam]);
 
