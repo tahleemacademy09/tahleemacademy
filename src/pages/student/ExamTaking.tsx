@@ -128,16 +128,20 @@ const ExamTaking = () => {
     load();
   }, [attemptId, user]);
 
-  // Timer
+  // Keep handleSubmit ref fresh for timer
+  const handleSubmitRef = useRef(handleSubmit);
+  useEffect(() => { handleSubmitRef.current = handleSubmit; }, [handleSubmit]);
+
+  // Timer — uses ref so auto-submit always has fresh data
   useEffect(() => {
     if (submitted || loading || !exam) return;
     if (timeLeft <= 0) {
-      handleSubmit();
+      handleSubmitRef.current();
       return;
     }
     const interval = setInterval(() => setTimeLeft((t) => Math.max(0, t - 1)), 1000);
     return () => clearInterval(interval);
-  }, [timeLeft, loading, submitted]);
+  }, [timeLeft, loading, submitted, exam]);
 
   // Tab switch detection
   useEffect(() => {
