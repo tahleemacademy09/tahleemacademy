@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,11 +9,12 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Trash2, Save, GripVertical, Music, FileText, Calendar, Settings2 } from "lucide-react";
+import { Plus, Trash2, Save, GripVertical, Music, FileText, Calendar, Settings2, Upload, Download, Image, Loader2 } from "lucide-react";
 
 interface QuestionForm {
   id?: string;
@@ -50,21 +51,23 @@ const emptyQuestion = (): QuestionForm => ({
 });
 
 const questionTypes = [
-  { value: "mcq", label: "Multiple Choice", icon: "📝" },
-  { value: "true_false", label: "True / False", icon: "✓✗" },
-  { value: "short_answer", label: "Short Answer", icon: "📝" },
-  { value: "essay", label: "Essay", icon: "📄" },
-  { value: "fill_blank", label: "Fill in Blank", icon: "___" },
-  { value: "audio", label: "Audio / Dictation", icon: "🎧" },
+  { value: "mcq", label: "Multiple Choice", label_ar: "اختيار من متعدد", icon: "📝" },
+  { value: "true_false", label: "True / False", label_ar: "صح / خطأ", icon: "✓✗" },
+  { value: "short_answer", label: "Short Answer", label_ar: "إجابة قصيرة", icon: "📝" },
+  { value: "essay", label: "Essay", label_ar: "مقال", icon: "📄" },
+  { value: "fill_blank", label: "Fill in Blank", label_ar: "ملء الفراغ", icon: "___" },
+  { value: "audio", label: "Audio / Dictation", label_ar: "صوت / إملاء", icon: "🎧" },
 ];
 
 const ExamEditor = () => {
   const { examId } = useParams<{ examId: string }>();
   const isEdit = !!examId;
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const { user } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const bulkFileInputRef = useRef<HTMLInputElement>(null);
 
   const [examForm, setExamForm] = useState({
     title: "", title_ar: "", description: "", description_ar: "",
@@ -77,11 +80,12 @@ const ExamEditor = () => {
   });
   const [questions, setQuestions] = useState<QuestionForm[]>([emptyQuestion()]);
   const [saving, setSaving] = useState(false);
+  const [uploadingMedia, setUploadingMedia] = useState<number | null>(null);
 
   useEffect(() => {
     if (!isEdit) return;
     const load = async () => {
-      const { data: exam } = await supabase.from("exams").select("*").eq("id", examId).single();
+      const { data: exam } = await supabase.from("exams").select("*").eq("id", examId).maybeSingle();
       if (exam) {
         setExamForm({
           title: exam.title || "", title_ar: exam.title_ar || "",
@@ -127,45 +131,53 @@ const ExamEditor = () => {
     }
     setSaving(true);
 
-    let eid = examId;
-    if (isEdit) {
-      await supabase.from("exams").update({
-        ...examForm,
-        start_date: examForm.start_date || null,
-        end_date: examForm.end_date || null,
-      }).eq("id", examId);
-    } else {
-      const { data } = await supabase.from("exams").insert({
-        ...examForm,
-        created_by: user!.id,
-        start_date: examForm.start_date || null,
-        end_date: examForm.end_date || null,
-      }).select("id").single();
-      eid = data?.id;
-    }
+    try {
+      let eid = examId;
+      if (isEdit) {
+        const { error } = await supabase.from("exams").update({
+          ...examForm,
+          start_date: examForm.start_date || null,
+          end_date: examForm.end_date || null,
+        }).eq("id", examId);
+        if (error) throw error;
+      } else {
+        const { data, error } = await supabase.from("exams").insert({
+          ...examForm,
+          created_by: user!.id,
+          start_date: examForm.start_date || null,
+          end_date: examForm.end_date || null,
+        }).select("id").single();
+        if (error) throw error;
+        eid = data?.id;
+      }
 
-    if (eid) {
-      if (isEdit) await supabase.from("exam_questions").delete().eq("exam_id", eid);
-      const qInserts = questions.map((q, i) => ({
-        exam_id: eid!,
-        question_type: q.question_type,
-        question_text: q.question_text,
-        question_text_ar: q.question_text_ar || null,
-        options: q.question_type === "mcq" ? q.options : null,
-        correct_answer: q.correct_answer || null,
-        points: q.points,
-        difficulty: q.difficulty,
-        sort_order: i,
-        explanation: q.explanation || null,
-        explanation_ar: q.explanation_ar || null,
-        media_url: q.media_url || null,
-      }));
-      await supabase.from("exam_questions").insert(qInserts);
-    }
+      if (eid) {
+        if (isEdit) await supabase.from("exam_questions").delete().eq("exam_id", eid);
+        const qInserts = questions.map((q, i) => ({
+          exam_id: eid!,
+          question_type: q.question_type,
+          question_text: q.question_text,
+          question_text_ar: q.question_text_ar || null,
+          options: q.question_type === "mcq" ? q.options : null,
+          correct_answer: q.correct_answer || null,
+          points: q.points,
+          difficulty: q.difficulty,
+          sort_order: i,
+          explanation: q.explanation || null,
+          explanation_ar: q.explanation_ar || null,
+          media_url: q.media_url || null,
+        }));
+        const { error } = await supabase.from("exam_questions").insert(qInserts);
+        if (error) throw error;
+      }
 
-    setSaving(false);
-    toast({ title: t("✅ Exam saved!", "✅ تم حفظ الامتحان!") });
-    navigate("/admin/exams");
+      toast({ title: t("✅ Exam saved!", "✅ تم حفظ الامتحان!") });
+      navigate("/admin/exams");
+    } catch (err: any) {
+      toast({ title: t("Error saving exam", "خطأ في حفظ الامتحان"), description: err.message, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
   };
 
   const addQuestion = () => setQuestions([...questions, { ...emptyQuestion(), sort_order: questions.length }]);
@@ -176,12 +188,152 @@ const ExamEditor = () => {
     setQuestions(copy);
   };
 
+  // Media upload handler
+  const uploadMedia = async (file: File, questionIdx: number) => {
+    setUploadingMedia(questionIdx);
+    const ext = file.name.split(".").pop();
+    const path = `questions/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+
+    const { data, error } = await supabase.storage.from("exam-media").upload(path, file);
+    if (error) {
+      toast({ title: t("Upload failed", "فشل الرفع"), description: error.message, variant: "destructive" });
+      setUploadingMedia(null);
+      return;
+    }
+
+    const { data: urlData } = supabase.storage.from("exam-media").getPublicUrl(path);
+    updateQuestion(questionIdx, { media_url: urlData.publicUrl });
+    toast({ title: t("✅ File uploaded!", "✅ تم رفع الملف!") });
+    setUploadingMedia(null);
+  };
+
+  // Bulk question import
+  const handleBulkImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const text = ev.target?.result as string;
+        let imported: any[];
+
+        if (file.name.endsWith(".json")) {
+          imported = JSON.parse(text);
+        } else {
+          // CSV parsing
+          const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
+          const headers = lines[0].split(",").map(h => h.trim().replace(/^"|"$/g, ""));
+          imported = lines.slice(1).map(line => {
+            const vals = line.split(",").map(v => v.trim().replace(/^"|"$/g, ""));
+            const obj: any = {};
+            headers.forEach((h, i) => { obj[h] = vals[i] || ""; });
+            return obj;
+          });
+        }
+
+        const newQuestions: QuestionForm[] = imported.map((item: any, i: number) => {
+          const q = emptyQuestion();
+          q.question_type = item.question_type || item.type || "mcq";
+          q.question_text = item.question_text || item.question || "";
+          q.question_text_ar = item.question_text_ar || item.question_ar || "";
+          q.correct_answer = item.correct_answer || item.answer || "";
+          q.points = Number(item.points) || 1;
+          q.difficulty = item.difficulty || "medium";
+          q.sort_order = questions.length + i;
+          q.explanation = item.explanation || "";
+          q.explanation_ar = item.explanation_ar || "";
+
+          // Parse MCQ options
+          if (q.question_type === "mcq") {
+            const opts = [];
+            for (const key of ["a", "b", "c", "d"]) {
+              if (item[`option_${key}`] || item[key]) {
+                opts.push({
+                  id: key,
+                  text: item[`option_${key}`] || item[key] || "",
+                  text_ar: item[`option_${key}_ar`] || "",
+                  is_correct: q.correct_answer.toLowerCase() === key,
+                });
+              }
+            }
+            if (opts.length > 0) q.options = opts;
+          }
+
+          return q;
+        });
+
+        setQuestions(prev => [...prev, ...newQuestions]);
+        toast({ title: t(`✅ Imported ${newQuestions.length} questions!`, `✅ تم استيراد ${newQuestions.length} سؤال!`) });
+      } catch (err) {
+        toast({ title: t("Import failed", "فشل الاستيراد"), description: t("Invalid file format", "تنسيق الملف غير صالح"), variant: "destructive" });
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  };
+
+  // Download template
+  const downloadTemplate = (format: "csv" | "json") => {
+    if (format === "json") {
+      const template = [
+        {
+          question_type: "mcq",
+          question_text: "What is the Arabic word for 'book'?",
+          question_text_ar: "ما هي الكلمة العربية لـ 'كتاب'؟",
+          option_a: "كِتَاب", option_a_ar: "كِتَاب",
+          option_b: "قَلَم", option_b_ar: "قَلَم",
+          option_c: "بَاب", option_c_ar: "بَاب",
+          option_d: "مَاء", option_d_ar: "مَاء",
+          correct_answer: "a",
+          points: 1, difficulty: "easy",
+          explanation: "كِتَاب means book", explanation_ar: "كِتَاب تعني كتاب"
+        },
+        {
+          question_type: "true_false",
+          question_text: "The Arabic alphabet has 28 letters.",
+          question_text_ar: "الأبجدية العربية تتكون من 28 حرفًا.",
+          correct_answer: "true",
+          points: 1, difficulty: "easy",
+          explanation: "", explanation_ar: ""
+        },
+        {
+          question_type: "fill_blank",
+          question_text: "The word for 'peace' in Arabic is ___.",
+          question_text_ar: "كلمة 'سلام' بالعربية هي ___.",
+          correct_answer: "سَلَام",
+          points: 2, difficulty: "medium",
+          explanation: "", explanation_ar: ""
+        },
+        {
+          question_type: "short_answer",
+          question_text: "Write a sentence using the word 'مَدْرَسَة'.",
+          question_text_ar: "اكتب جملة باستخدام كلمة 'مَدْرَسَة'.",
+          correct_answer: "",
+          points: 3, difficulty: "medium",
+          explanation: "", explanation_ar: ""
+        }
+      ];
+      const blob = new Blob([JSON.stringify(template, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a"); a.href = url; a.download = "questions_template.json"; a.click();
+    } else {
+      const csv = `question_type,question_text,question_text_ar,option_a,option_b,option_c,option_d,correct_answer,points,difficulty,explanation,explanation_ar
+mcq,"What is 'book' in Arabic?","ما هي كلمة 'كتاب' بالعربية؟","كِتَاب","قَلَم","بَاب","مَاء",a,1,easy,"كِتَاب means book",""
+true_false,"Arabic is written right to left.","العربية تُكتب من اليمين لليسار.",,,,,true,1,easy,"",""
+fill_blank,"The word for 'water' is ___.","كلمة 'ماء' هي ___.",,,,,مَاء,2,medium,"",""`;
+      const blob = new Blob([csv], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a"); a.href = url; a.download = "questions_template.csv"; a.click();
+    }
+  };
+
   return (
     <div className="container mx-auto px-4 py-8">
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-6 flex items-center justify-between flex-wrap gap-3">
         <h1 className="text-3xl font-bold">{isEdit ? t("Edit Exam", "تعديل الامتحان") : t("Create Exam", "إنشاء امتحان")}</h1>
         <Button onClick={handleSave} disabled={saving} size="lg">
-          <Save className="mr-2 h-4 w-4" />
+          {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
           {t("Save Exam", "حفظ الامتحان")}
         </Button>
       </div>
@@ -229,7 +381,7 @@ const ExamEditor = () => {
                 </div>
                 <div>
                   <Label>{t("Max Attempts", "أقصى محاولات")}</Label>
-                  <Input type="number" value={examForm.max_attempts} onChange={(e) => setExamForm({ ...examForm, max_attempts: +e.target.value })} className="mt-1" />
+                  <Input type="number" value={examForm.max_attempts} onChange={(e) => setExamForm({ ...examForm, max_attempts: +e.target.value })} className="mt-1" min={1} />
                 </div>
                 <div>
                   <Label>{t("Display Mode", "وضع العرض")}</Label>
@@ -297,11 +449,47 @@ const ExamEditor = () => {
         {/* Questions Tab */}
         <TabsContent value="questions">
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between flex-wrap gap-2">
               <h2 className="text-xl font-semibold">{t("Questions", "الأسئلة")} ({questions.length})</h2>
-              <Button variant="outline" onClick={addQuestion}>
-                <Plus className="mr-2 h-4 w-4" />{t("Add Question", "إضافة سؤال")}
-              </Button>
+              <div className="flex items-center gap-2 flex-wrap">
+                {/* Bulk import */}
+                <input ref={bulkFileInputRef} type="file" accept=".csv,.json" className="hidden" onChange={handleBulkImport} />
+                <Dialog>
+                  <DialogTrigger asChild>
+                    <Button variant="outline" size="sm" className="gap-1">
+                      <Upload className="h-3 w-3" />{t("Bulk Import", "استيراد جماعي")}
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>{t("Bulk Import Questions", "استيراد أسئلة جماعي")}</DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-4">
+                      <p className="text-sm text-muted-foreground">
+                        {t(
+                          "Download a template, fill in your questions, then upload the file. Supports CSV and JSON formats.",
+                          "قم بتنزيل قالب، ثم املأ أسئلتك وارفع الملف. يدعم صيغ CSV و JSON."
+                        )}
+                      </p>
+                      <div className="flex gap-2">
+                        <Button variant="outline" size="sm" onClick={() => downloadTemplate("csv")} className="gap-1">
+                          <Download className="h-3 w-3" /> CSV {t("Template", "قالب")}
+                        </Button>
+                        <Button variant="outline" size="sm" onClick={() => downloadTemplate("json")} className="gap-1">
+                          <Download className="h-3 w-3" /> JSON {t("Template", "قالب")}
+                        </Button>
+                      </div>
+                      <Button onClick={() => bulkFileInputRef.current?.click()} className="w-full gap-1">
+                        <Upload className="h-4 w-4" /> {t("Upload Questions File", "رفع ملف الأسئلة")}
+                      </Button>
+                    </div>
+                  </DialogContent>
+                </Dialog>
+
+                <Button variant="outline" onClick={addQuestion} className="gap-1">
+                  <Plus className="h-4 w-4" />{t("Add Question", "إضافة سؤال")}
+                </Button>
+              </div>
             </div>
 
             {questions.map((q, idx) => (
@@ -318,7 +506,7 @@ const ExamEditor = () => {
                         <SelectContent>
                           {questionTypes.map((type) => (
                             <SelectItem key={type.value} value={type.value}>
-                              {type.icon} {type.label}
+                              {type.icon} {language === "ar" ? type.label_ar : type.label}
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -342,24 +530,64 @@ const ExamEditor = () => {
                     <Input placeholder={t("Question text (English)", "نص السؤال (إنجليزي)")} value={q.question_text} onChange={(e) => updateQuestion(idx, { question_text: e.target.value })} />
                     <Input placeholder={t("Question text (Arabic)", "نص السؤال (عربي)")} value={q.question_text_ar} onChange={(e) => updateQuestion(idx, { question_text_ar: e.target.value })} dir="rtl" />
 
-                    {/* Audio URL for audio/dictation questions */}
-                    {q.question_type === "audio" && (
-                      <div className="rounded-lg border border-dashed border-primary/30 bg-accent/30 p-3">
-                        <Label className="flex items-center gap-2 mb-1.5 text-sm">
-                          <Music className="h-4 w-4 text-primary" />
-                          {t("Audio URL (for playback)", "رابط الصوت (للتشغيل)")}
-                        </Label>
-                        <Input
-                          placeholder="https://example.com/audio.mp3"
-                          value={q.media_url}
-                          onChange={(e) => updateQuestion(idx, { media_url: e.target.value })}
-                        />
-                        <p className="text-xs text-muted-foreground mt-1">
-                          {t("Students will hear this audio and can type or record their answer.", "سيسمع الطلاب هذا الصوت ويمكنهم كتابة أو تسجيل إجابتهم.")}
-                        </p>
-                      </div>
-                    )}
+                    {/* Media upload section */}
+                    <div className="rounded-lg border border-dashed border-primary/30 bg-accent/30 p-3">
+                      <Label className="flex items-center gap-2 mb-2 text-sm">
+                        {q.question_type === "audio" ? <Music className="h-4 w-4 text-primary" /> : <Image className="h-4 w-4 text-primary" />}
+                        {t("Media (Audio/Image)", "وسائط (صوت/صورة)")}
+                      </Label>
 
+                      {q.media_url ? (
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                            <span className="truncate flex-1">{q.media_url.split("/").pop()}</span>
+                            <Button variant="ghost" size="sm" className="text-destructive" onClick={() => updateQuestion(idx, { media_url: "" })}>
+                              {t("Remove", "إزالة")}
+                            </Button>
+                          </div>
+                          {q.media_url.match(/\.(mp3|wav|ogg|webm|m4a)$/i) ? (
+                            <audio controls src={q.media_url} className="w-full" />
+                          ) : q.media_url.match(/\.(jpg|jpeg|png|gif|webp|svg)$/i) ? (
+                            <img src={q.media_url} alt="Question media" className="max-h-40 rounded-lg" />
+                          ) : null}
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="gap-1"
+                            disabled={uploadingMedia === idx}
+                            onClick={() => {
+                              const input = document.createElement("input");
+                              input.type = "file";
+                              input.accept = "audio/*,image/*";
+                              input.onchange = (e: any) => {
+                                const file = e.target.files?.[0];
+                                if (file) uploadMedia(file, idx);
+                              };
+                              input.click();
+                            }}
+                          >
+                            {uploadingMedia === idx ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <Upload className="h-3 w-3" />
+                            )}
+                            {t("Upload File", "رفع ملف")}
+                          </Button>
+                          <span className="text-xs text-muted-foreground">{t("or paste URL:", "أو الصق الرابط:")}</span>
+                          <Input
+                            placeholder="https://example.com/audio.mp3"
+                            value={q.media_url}
+                            onChange={(e) => updateQuestion(idx, { media_url: e.target.value })}
+                            className="flex-1 min-w-[200px]"
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    {/* MCQ options */}
                     {q.question_type === "mcq" && (
                       <div className="space-y-2">
                         {q.options.map((opt: any, oi: number) => (
@@ -400,14 +628,31 @@ const ExamEditor = () => {
                       </div>
                     )}
 
-                    {(q.question_type === "true_false" || q.question_type === "fill_blank") && (
-                      <Input
-                        placeholder={t("Correct Answer", "الإجابة الصحيحة")}
-                        value={q.correct_answer}
-                        onChange={(e) => updateQuestion(idx, { correct_answer: e.target.value })}
-                      />
+                    {/* Correct answer for true_false, fill_blank, short_answer */}
+                    {(q.question_type === "true_false" || q.question_type === "fill_blank" || q.question_type === "short_answer") && (
+                      <div>
+                        <Label className="text-sm">{t("Correct Answer (for auto-grading)", "الإجابة الصحيحة (للتصحيح التلقائي)")}</Label>
+                        {q.question_type === "true_false" ? (
+                          <Select value={q.correct_answer} onValueChange={(v) => updateQuestion(idx, { correct_answer: v })}>
+                            <SelectTrigger className="mt-1"><SelectValue placeholder={t("Select", "اختر")} /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="true">{t("True", "صح")}</SelectItem>
+                              <SelectItem value="false">{t("False", "خطأ")}</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <Input
+                            className="mt-1"
+                            placeholder={t("Correct Answer", "الإجابة الصحيحة")}
+                            value={q.correct_answer}
+                            onChange={(e) => updateQuestion(idx, { correct_answer: e.target.value })}
+                            dir="auto"
+                          />
+                        )}
+                      </div>
                     )}
 
+                    {/* Explanation */}
                     <div className="grid gap-3 md:grid-cols-2">
                       <Input
                         placeholder={t("Explanation (optional)", "التوضيح (اختياري)")}
