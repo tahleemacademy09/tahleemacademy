@@ -302,7 +302,7 @@ const ExamTaking = () => {
     const finalStatus = hasSubjective ? "submitted" : "graded";
     const passingScore = currentExam?.passing_score || 50;
 
-    await supabase.from("exam_attempts").update({
+    const { error: updateError } = await supabase.from("exam_attempts").update({
       status: finalStatus,
       submitted_at: new Date().toISOString(),
       score: earnedPoints,
@@ -310,6 +310,14 @@ const ExamTaking = () => {
       percentage,
       passed: percentage >= passingScore,
     }).eq("id", attemptId!);
+
+    if (updateError) {
+      console.error("Failed to submit exam attempt:", updateError);
+      toast({ title: t("❌ Submission failed. Please try again.", "❌ فشل التقديم. حاول مرة أخرى."), variant: "destructive" });
+      submittedRef.current = false;
+      setSubmitting(false);
+      return;
+    }
 
     // Log exam submitted
     if (user) {
