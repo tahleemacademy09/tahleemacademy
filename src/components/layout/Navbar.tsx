@@ -106,6 +106,14 @@ const Navbar = () => {
               <Globe className="mr-2 h-4 w-4" />
               {t("العربية", "English")}
             </Button>
+            <Link
+              to="/admin-login"
+              className="flex items-center gap-2 text-sm font-medium text-primary"
+              onClick={() => setOpen(false)}
+            >
+              <Shield className="h-4 w-4" />
+              {t("Admin Portal", "بوابة المدير")}
+            </Link>
             {user ? (
               <>
                 <Button variant="outline" size="sm" onClick={() => { navigate(getDashboardPath()); setOpen(false); }}>
