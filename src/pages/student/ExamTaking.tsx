@@ -335,7 +335,9 @@ const ExamTaking = () => {
     toast({ title: t("✅ Exam Submitted!", "✅ تم تقديم الامتحان!") });
   }, [attemptId, user]);
 
-  // Already submitted screen with result details
+  // Keep handleSubmit ref in sync for timer auto-submit
+  useEffect(() => { handleSubmitRef.current = handleSubmit; }, [handleSubmit]);
+
   if (submitted && !loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
