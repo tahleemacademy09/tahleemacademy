@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
-import { Menu, X, Globe, LogOut, BookOpen } from "lucide-react";
+import { Menu, X, Globe, LogOut, BookOpen, Shield } from "lucide-react";
 
 const Navbar = () => {
   const [open, setOpen] = useState(false);
