@@ -241,44 +241,17 @@ const ExamTaking = () => {
     if (submittedRef.current) return;
     submittedRef.current = true;
     setSubmitting(true);
+    setShowConfirm(false);
 
-    // Use refs for fresh data (critical for timer auto-submit)
     const currentAnswers = answersRef.current;
     const currentQuestions = questionsRef.current;
     const currentExam = examRef.current;
 
-    // Flush all answers to DB before marking complete
-    if (attemptId) {
-      for (const [qId, ans] of Object.entries(currentAnswers)) {
-        const { data: existing } = await supabase
-          .from("exam_answers")
-          .select("id")
-          .eq("attempt_id", attemptId)
-          .eq("question_id", qId)
-          .maybeSingle();
-
-        if (existing) {
-          await supabase.from("exam_answers").update({
-            answer_text: ans.text,
-            answer_data: ans.data,
-            is_flagged: ans.flagged,
-          }).eq("id", existing.id);
-        } else if (ans.text) {
-          await supabase.from("exam_answers").insert({
-            attempt_id: attemptId,
-            question_id: qId,
-            answer_text: ans.text,
-            answer_data: ans.data,
-            is_flagged: ans.flagged,
-          });
-        }
-      }
-    }
-
+    // Grade objective questions locally first (no DB calls needed yet)
+    const subjectiveTypes = ["short_answer", "essay", "audio", "dictation"];
     let totalPoints = 0;
     let earnedPoints = 0;
-    const objectiveTypes = ["mcq", "true_false", "fill_blank"];
-    const subjectiveTypes = ["short_answer", "essay", "audio", "dictation"];
+    const gradedResults: Record<string, { is_correct: boolean | null; points_awarded: number }> = {};
 
     for (const q of currentQuestions) {
       totalPoints += q.points || 1;
@@ -302,10 +275,7 @@ const ExamTaking = () => {
 
       if (isCorrect !== null) {
         earnedPoints += pts;
-        await supabase.from("exam_answers").update({
-          is_correct: isCorrect,
-          points_awarded: pts,
-        }).eq("attempt_id", attemptId!).eq("question_id", q.id);
+        gradedResults[q.id] = { is_correct: isCorrect, points_awarded: pts };
       }
     }
 
@@ -314,6 +284,7 @@ const ExamTaking = () => {
     const finalStatus = hasSubjective ? "submitted" : "graded";
     const passingScore = currentExam?.passing_score || 50;
 
+    // Step 1: Update attempt status FIRST (fastest path to mark as submitted)
     const { error: updateError } = await supabase.from("exam_attempts").update({
       status: finalStatus,
       submitted_at: new Date().toISOString(),
@@ -331,7 +302,39 @@ const ExamTaking = () => {
       return;
     }
 
-    // Log exam submitted
+    // Show success immediately - don't wait for answer saves
+    setSubmissionResult({
+      status: finalStatus,
+      score: earnedPoints,
+      totalPoints,
+      percentage,
+      passed: percentage >= passingScore,
+    });
+    setSubmitted(true);
+    setSubmitting(false);
+    toast({ title: t("✅ Exam Submitted!", "✅ تم تقديم الامتحان!") });
+
+    // Step 2: Flush answers to DB in background (parallel upserts)
+    if (attemptId) {
+      const answerUpserts = Object.entries(currentAnswers)
+        .filter(([_, ans]) => ans.text)
+        .map(([qId, ans]) => {
+          const graded = gradedResults[qId];
+          return supabase.from("exam_answers").upsert({
+            attempt_id: attemptId,
+            question_id: qId,
+            answer_text: ans.text,
+            answer_data: ans.data,
+            is_flagged: ans.flagged,
+            ...(graded ? { is_correct: graded.is_correct, points_awarded: graded.points_awarded } : {}),
+          }, { onConflict: 'attempt_id,question_id', ignoreDuplicates: false });
+        });
+
+      // Fire all upserts in parallel
+      await Promise.allSettled(answerUpserts);
+    }
+
+    // Log activity in background
     if (user) {
       logActivity(user.id, "exam_submitted", "exam_attempt", attemptId!, {
         exam_id: currentExam?.id,
@@ -341,18 +344,6 @@ const ExamTaking = () => {
         percentage: Math.round(percentage),
       });
     }
-
-    setSubmissionResult({
-      status: finalStatus,
-      score: earnedPoints,
-      totalPoints,
-      percentage,
-      passed: percentage >= passingScore,
-    });
-
-    setSubmitted(true);
-    setSubmitting(false);
-    toast({ title: t("✅ Exam Submitted!", "✅ تم تقديم الامتحان!") });
   }, [attemptId, user]);
 
   // Keep handleSubmit ref in sync for timer auto-submit
