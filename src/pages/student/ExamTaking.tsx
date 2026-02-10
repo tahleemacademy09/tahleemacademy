@@ -52,6 +52,14 @@ const ExamTaking = () => {
   const [showConfirm, setShowConfirm] = useState(false);
   const autoSaveRef = useRef<NodeJS.Timeout>();
   const submittedRef = useRef(false);
+  const answersRef = useRef(answers);
+  const questionsRef = useRef(questions);
+  const examRef = useRef(exam);
+
+  // Keep refs in sync with state
+  useEffect(() => { answersRef.current = answers; }, [answers]);
+  useEffect(() => { questionsRef.current = questions; }, [questions]);
+  useEffect(() => { examRef.current = exam; }, [exam]);
 
   // Load exam data
   useEffect(() => {
