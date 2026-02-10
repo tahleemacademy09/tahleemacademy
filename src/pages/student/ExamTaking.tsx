@@ -52,6 +52,14 @@ const ExamTaking = () => {
   const [showConfirm, setShowConfirm] = useState(false);
   const autoSaveRef = useRef<NodeJS.Timeout>();
   const submittedRef = useRef(false);
+  const answersRef = useRef(answers);
+  const questionsRef = useRef(questions);
+  const examRef = useRef(exam);
+
+  // Keep refs in sync with state
+  useEffect(() => { answersRef.current = answers; }, [answers]);
+  useEffect(() => { questionsRef.current = questions; }, [questions]);
+  useEffect(() => { examRef.current = exam; }, [exam]);
 
   // Load exam data
   useEffect(() => {
@@ -120,16 +128,18 @@ const ExamTaking = () => {
     load();
   }, [attemptId, user]);
 
-  // Timer
+  const handleSubmitRef = useRef<() => Promise<void>>(() => Promise.resolve());
+
+  // Timer — uses ref so auto-submit always has fresh data
   useEffect(() => {
     if (submitted || loading || !exam) return;
     if (timeLeft <= 0) {
-      handleSubmit();
+      handleSubmitRef.current();
       return;
     }
     const interval = setInterval(() => setTimeLeft((t) => Math.max(0, t - 1)), 1000);
     return () => clearInterval(interval);
-  }, [timeLeft, loading, submitted]);
+  }, [timeLeft, loading, submitted, exam]);
 
   // Tab switch detection
   useEffect(() => {
@@ -215,20 +225,52 @@ const ExamTaking = () => {
     setAnswers((prev) => ({ ...prev, [qId]: { ...prev[qId], text: prev[qId]?.text || "", data: prev[qId]?.data, flagged: !prev[qId]?.flagged } }));
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = useCallback(async () => {
     if (submittedRef.current) return;
     submittedRef.current = true;
     setSubmitting(true);
-    await saveAnswers();
+
+    // Use refs for fresh data (critical for timer auto-submit)
+    const currentAnswers = answersRef.current;
+    const currentQuestions = questionsRef.current;
+    const currentExam = examRef.current;
+
+    // Flush all answers to DB before marking complete
+    if (attemptId) {
+      for (const [qId, ans] of Object.entries(currentAnswers)) {
+        const { data: existing } = await supabase
+          .from("exam_answers")
+          .select("id")
+          .eq("attempt_id", attemptId)
+          .eq("question_id", qId)
+          .maybeSingle();
+
+        if (existing) {
+          await supabase.from("exam_answers").update({
+            answer_text: ans.text,
+            answer_data: ans.data,
+            is_flagged: ans.flagged,
+          }).eq("id", existing.id);
+        } else if (ans.text) {
+          await supabase.from("exam_answers").insert({
+            attempt_id: attemptId,
+            question_id: qId,
+            answer_text: ans.text,
+            answer_data: ans.data,
+            is_flagged: ans.flagged,
+          });
+        }
+      }
+    }
 
     let totalPoints = 0;
     let earnedPoints = 0;
     const objectiveTypes = ["mcq", "true_false", "fill_blank"];
     const subjectiveTypes = ["short_answer", "essay", "audio", "dictation"];
 
-    for (const q of questions) {
+    for (const q of currentQuestions) {
       totalPoints += q.points || 1;
-      const ans = answers[q.id];
+      const ans = currentAnswers[q.id];
       if (!ans) continue;
 
       let isCorrect: boolean | null = null;
@@ -256,9 +298,9 @@ const ExamTaking = () => {
     }
 
     const percentage = totalPoints > 0 ? (earnedPoints / totalPoints) * 100 : 0;
-    const hasSubjective = questions.some((q) => subjectiveTypes.includes(q.question_type));
+    const hasSubjective = currentQuestions.some((q: any) => subjectiveTypes.includes(q.question_type));
     const finalStatus = hasSubjective ? "submitted" : "graded";
-    const passingScore = exam?.passing_score || 50;
+    const passingScore = currentExam?.passing_score || 50;
 
     await supabase.from("exam_attempts").update({
       status: finalStatus,
@@ -272,7 +314,7 @@ const ExamTaking = () => {
     // Log exam submitted
     if (user) {
       logActivity(user.id, "exam_submitted", "exam_attempt", attemptId!, {
-        exam_id: exam?.id,
+        exam_id: currentExam?.id,
         status: finalStatus,
         score: earnedPoints,
         total_points: totalPoints,
@@ -291,9 +333,11 @@ const ExamTaking = () => {
     setSubmitted(true);
     setSubmitting(false);
     toast({ title: t("✅ Exam Submitted!", "✅ تم تقديم الامتحان!") });
-  };
+  }, [attemptId, user]);
 
-  // Already submitted screen with result details
+  // Keep handleSubmit ref in sync for timer auto-submit
+  useEffect(() => { handleSubmitRef.current = handleSubmit; }, [handleSubmit]);
+
   if (submitted && !loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
