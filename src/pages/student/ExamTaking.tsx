@@ -463,7 +463,7 @@ const ExamTaking = () => {
                   <Button variant="outline" className="flex-1" onClick={() => setShowConfirm(false)}>
                     {t("Go Back", "عودة")}
                   </Button>
-                  <Button variant="destructive" className="flex-1" onClick={() => { setShowConfirm(false); handleSubmit(); }} disabled={submitting}>
+                  <Button variant="destructive" className="flex-1" onClick={handleSubmit} disabled={submitting}>
                     {submitting ? t("Submitting...", "جارٍ التقديم...") : t("Submit Now", "قدّم الآن")}
                   </Button>
                 </div>
