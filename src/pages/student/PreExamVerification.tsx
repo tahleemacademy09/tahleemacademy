@@ -189,7 +189,9 @@ const PreExamVerification = () => {
     return () => {
       webcamStream?.getTracks().forEach(t => t.stop());
       if (micAnimRef.current) cancelAnimationFrame(micAnimRef.current);
-      audioContextRef.current?.close();
+      if (audioContextRef.current && audioContextRef.current.state !== "closed") {
+        audioContextRef.current.close().catch(() => {});
+      }
     };
   }, [webcamStream]);
 
@@ -226,14 +228,7 @@ const PreExamVerification = () => {
     setStarting(true);
 
     try {
-      // Upload face snapshot to storage
-      if (faceSnapshot) {
-        const blob = await fetch(faceSnapshot).then(r => r.blob());
-        const path = `face-verification/${user.id}/${examId}_${Date.now()}.jpg`;
-        await supabase.storage.from("proctoring-media").upload(path, blob, { upsert: true });
-      }
-
-      // Create the exam attempt
+      // Create the exam attempt FIRST so we have an attempt_id
       const { data: attemptData, error } = await supabase
         .from("exam_attempts")
         .insert({ exam_id: examId, user_id: user.id })
@@ -244,6 +239,42 @@ const PreExamVerification = () => {
         toast({ title: t("Error starting exam", "خطأ في بدء الامتحان"), description: error?.message, variant: "destructive" });
         setStarting(false);
         return;
+      }
+
+      // Upload face snapshot to storage AND link to proctoring_media table
+      if (faceSnapshot) {
+        try {
+          const blob = await fetch(faceSnapshot).then(r => r.blob());
+          const timestamp = Date.now();
+          const path = `${user.id}/${attemptData.id}/verification_${timestamp}.jpg`;
+
+          const { error: uploadErr } = await supabase.storage
+            .from("proctoring-media")
+            .upload(path, blob, { contentType: "image/jpeg", upsert: true });
+
+          if (!uploadErr) {
+            // Insert into proctoring_media table so admin can see it
+            await supabase.from("proctoring_media").insert({
+              attempt_id: attemptData.id,
+              file_type: "verification_snapshot",
+              file_url: path,
+              file_name: `verification_${timestamp}.jpg`,
+              file_size: blob.size,
+              metadata: {
+                timestamp: new Date(timestamp).toISOString(),
+                type: "pre_exam_verification",
+                user_id: user.id,
+                exam_id: examId,
+              },
+            });
+            console.log("[PreExam] ✅ Verification snapshot saved:", path);
+          } else {
+            console.warn("[PreExam] Verification snapshot upload failed:", uploadErr.message);
+          }
+        } catch (snapErr) {
+          console.warn("[PreExam] Snapshot save error:", snapErr);
+          // Non-blocking — continue to exam
+        }
       }
 
       // Log device info
@@ -261,7 +292,9 @@ const PreExamVerification = () => {
       // Stop local streams (they'll be re-created in the exam page by proctoring hook)
       webcamStream?.getTracks().forEach(t => t.stop());
       if (micAnimRef.current) cancelAnimationFrame(micAnimRef.current);
-      audioContextRef.current?.close();
+      if (audioContextRef.current && audioContextRef.current.state !== "closed") {
+        audioContextRef.current.close().catch(() => {});
+      }
 
       // Navigate to exam
       navigate(`/student/exam/${attemptData.id}`);
