@@ -296,21 +296,23 @@ const ExamTaking = () => {
           .eq("question_id", qId)
           .maybeSingle();
 
-        const payload: any = {
-          answer_text: ans.text,
-          answer_data: ans.data,
-          is_flagged: ans.flagged,
+        const ansPayload: any = {
+          answer_text: ans.text || null,
+          answer_data: ans.data || null,
+          is_flagged: ans.flagged || false,
           ...(graded ? { is_correct: graded.is_correct, points_awarded: graded.points_awarded } : {}),
         };
 
         if (existing) {
-          await supabase.from("exam_answers").update(payload).eq("id", existing.id);
+          const { error: upErr } = await supabase.from("exam_answers").update(ansPayload).eq("id", existing.id);
+          if (upErr) console.error("Answer update error:", upErr);
         } else {
-          await supabase.from("exam_answers").insert({
+          const { error: insErr } = await supabase.from("exam_answers").insert({
             attempt_id: attemptId,
             question_id: qId,
-            ...payload,
+            ...ansPayload,
           });
+          if (insErr) console.error("Answer insert error:", insErr);
         }
       }
     }
@@ -324,6 +326,25 @@ const ExamTaking = () => {
       percentage,
       passed: percentage >= passingScore,
     }).eq("id", attemptId!);
+
+    if (updateError) {
+      console.error("Failed to submit exam attempt:", updateError);
+      toast({ title: t("❌ Submission failed. Please try again.", "❌ فشل التقديم. حاول مرة أخرى."), variant: "destructive" });
+      submittedRef.current = false;
+      setSubmitting(false);
+      return;
+    }
+
+    setSubmissionResult({
+      status: finalStatus,
+      score: earnedPoints,
+      totalPoints,
+      percentage,
+      passed: percentage >= passingScore,
+    });
+    setSubmitted(true);
+    setSubmitting(false);
+    toast({ title: t("✅ Exam Submitted!", "✅ تم تقديم الامتحان!") });
 
     // Log activity in background
     if (user) {
