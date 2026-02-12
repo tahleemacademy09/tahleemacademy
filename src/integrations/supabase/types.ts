@@ -95,6 +95,50 @@ export type Database = {
         }
         Relationships: []
       }
+      device_logs: {
+        Row: {
+          attempt_id: string
+          browser: string | null
+          created_at: string
+          device_type: string | null
+          id: string
+          ip_address: string | null
+          screen_resolution: string | null
+          user_agent: string | null
+          vpn_detected: boolean | null
+        }
+        Insert: {
+          attempt_id: string
+          browser?: string | null
+          created_at?: string
+          device_type?: string | null
+          id?: string
+          ip_address?: string | null
+          screen_resolution?: string | null
+          user_agent?: string | null
+          vpn_detected?: boolean | null
+        }
+        Update: {
+          attempt_id?: string
+          browser?: string | null
+          created_at?: string
+          device_type?: string | null
+          id?: string
+          ip_address?: string | null
+          screen_resolution?: string | null
+          user_agent?: string | null
+          vpn_detected?: boolean | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "device_logs_attempt_id_fkey"
+            columns: ["attempt_id"]
+            isOneToOne: false
+            referencedRelation: "exam_attempts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       enrollments: {
         Row: {
           course_id: string
@@ -225,12 +269,14 @@ export type Database = {
           exam_id: string
           feedback: string | null
           id: string
+          integrity_score: number | null
           passed: boolean | null
           percentage: number | null
           score: number | null
           started_at: string
           status: string | null
           submitted_at: string | null
+          suspicion_level: string | null
           tab_switches: number | null
           total_points: number | null
           user_id: string
@@ -240,12 +286,14 @@ export type Database = {
           exam_id: string
           feedback?: string | null
           id?: string
+          integrity_score?: number | null
           passed?: boolean | null
           percentage?: number | null
           score?: number | null
           started_at?: string
           status?: string | null
           submitted_at?: string | null
+          suspicion_level?: string | null
           tab_switches?: number | null
           total_points?: number | null
           user_id: string
@@ -255,12 +303,14 @@ export type Database = {
           exam_id?: string
           feedback?: string | null
           id?: string
+          integrity_score?: number | null
           passed?: boolean | null
           percentage?: number | null
           score?: number | null
           started_at?: string
           status?: string | null
           submitted_at?: string | null
+          suspicion_level?: string | null
           tab_switches?: number | null
           total_points?: number | null
           user_id?: string
@@ -340,6 +390,7 @@ export type Database = {
       exams: {
         Row: {
           allow_review: boolean | null
+          auto_submit_on_violation: boolean | null
           course_id: string | null
           created_at: string
           created_by: string | null
@@ -347,23 +398,33 @@ export type Database = {
           description_ar: string | null
           display_mode: string | null
           end_date: string | null
+          fullscreen_required: boolean | null
           guidelines: string | null
           guidelines_ar: string | null
           id: string
           is_published: boolean | null
           max_attempts: number | null
+          max_warnings: number | null
           passing_score: number | null
+          proctoring_enabled: boolean | null
           randomize_answers: boolean | null
           randomize_questions: boolean | null
+          record_audio: boolean | null
+          record_screen: boolean | null
+          record_webcam: boolean | null
+          screenshot_interval_seconds: number | null
           show_results_immediately: boolean | null
           start_date: string | null
+          tab_switch_limit: number | null
           time_limit_minutes: number | null
           title: string
           title_ar: string | null
           updated_at: string
+          webcam_required: boolean | null
         }
         Insert: {
           allow_review?: boolean | null
+          auto_submit_on_violation?: boolean | null
           course_id?: string | null
           created_at?: string
           created_by?: string | null
@@ -371,23 +432,33 @@ export type Database = {
           description_ar?: string | null
           display_mode?: string | null
           end_date?: string | null
+          fullscreen_required?: boolean | null
           guidelines?: string | null
           guidelines_ar?: string | null
           id?: string
           is_published?: boolean | null
           max_attempts?: number | null
+          max_warnings?: number | null
           passing_score?: number | null
+          proctoring_enabled?: boolean | null
           randomize_answers?: boolean | null
           randomize_questions?: boolean | null
+          record_audio?: boolean | null
+          record_screen?: boolean | null
+          record_webcam?: boolean | null
+          screenshot_interval_seconds?: number | null
           show_results_immediately?: boolean | null
           start_date?: string | null
+          tab_switch_limit?: number | null
           time_limit_minutes?: number | null
           title: string
           title_ar?: string | null
           updated_at?: string
+          webcam_required?: boolean | null
         }
         Update: {
           allow_review?: boolean | null
+          auto_submit_on_violation?: boolean | null
           course_id?: string | null
           created_at?: string
           created_by?: string | null
@@ -395,20 +466,29 @@ export type Database = {
           description_ar?: string | null
           display_mode?: string | null
           end_date?: string | null
+          fullscreen_required?: boolean | null
           guidelines?: string | null
           guidelines_ar?: string | null
           id?: string
           is_published?: boolean | null
           max_attempts?: number | null
+          max_warnings?: number | null
           passing_score?: number | null
+          proctoring_enabled?: boolean | null
           randomize_answers?: boolean | null
           randomize_questions?: boolean | null
+          record_audio?: boolean | null
+          record_screen?: boolean | null
+          record_webcam?: boolean | null
+          screenshot_interval_seconds?: number | null
           show_results_immediately?: boolean | null
           start_date?: string | null
+          tab_switch_limit?: number | null
           time_limit_minutes?: number | null
           title?: string
           title_ar?: string | null
           updated_at?: string
+          webcam_required?: boolean | null
         }
         Relationships: [
           {
@@ -452,6 +532,106 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      proctoring_media: {
+        Row: {
+          attempt_id: string
+          created_at: string
+          duration_seconds: number | null
+          file_name: string | null
+          file_size: number | null
+          file_type: string
+          file_url: string
+          id: string
+          metadata: Json | null
+        }
+        Insert: {
+          attempt_id: string
+          created_at?: string
+          duration_seconds?: number | null
+          file_name?: string | null
+          file_size?: number | null
+          file_type: string
+          file_url: string
+          id?: string
+          metadata?: Json | null
+        }
+        Update: {
+          attempt_id?: string
+          created_at?: string
+          duration_seconds?: number | null
+          file_name?: string | null
+          file_size?: number | null
+          file_type?: string
+          file_url?: string
+          id?: string
+          metadata?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "proctoring_media_attempt_id_fkey"
+            columns: ["attempt_id"]
+            isOneToOne: false
+            referencedRelation: "exam_attempts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      proctoring_sessions: {
+        Row: {
+          attempt_id: string
+          ended_at: string | null
+          fullscreen_active: boolean | null
+          id: string
+          integrity_score: number | null
+          max_warnings: number | null
+          microphone_enabled: boolean | null
+          started_at: string
+          suspicion_level: string | null
+          total_violations: number | null
+          updated_at: string
+          warnings_issued: number | null
+          webcam_enabled: boolean | null
+        }
+        Insert: {
+          attempt_id: string
+          ended_at?: string | null
+          fullscreen_active?: boolean | null
+          id?: string
+          integrity_score?: number | null
+          max_warnings?: number | null
+          microphone_enabled?: boolean | null
+          started_at?: string
+          suspicion_level?: string | null
+          total_violations?: number | null
+          updated_at?: string
+          warnings_issued?: number | null
+          webcam_enabled?: boolean | null
+        }
+        Update: {
+          attempt_id?: string
+          ended_at?: string | null
+          fullscreen_active?: boolean | null
+          id?: string
+          integrity_score?: number | null
+          max_warnings?: number | null
+          microphone_enabled?: boolean | null
+          started_at?: string
+          suspicion_level?: string | null
+          total_violations?: number | null
+          updated_at?: string
+          warnings_issued?: number | null
+          webcam_enabled?: boolean | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "proctoring_sessions_attempt_id_fkey"
+            columns: ["attempt_id"]
+            isOneToOne: true
+            referencedRelation: "exam_attempts"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       profiles: {
         Row: {
@@ -509,6 +689,44 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      violations: {
+        Row: {
+          attempt_id: string
+          details: string | null
+          id: string
+          screenshot_url: string | null
+          severity_score: number
+          timestamp: string
+          violation_type: string
+        }
+        Insert: {
+          attempt_id: string
+          details?: string | null
+          id?: string
+          screenshot_url?: string | null
+          severity_score?: number
+          timestamp?: string
+          violation_type: string
+        }
+        Update: {
+          attempt_id?: string
+          details?: string | null
+          id?: string
+          screenshot_url?: string | null
+          severity_score?: number
+          timestamp?: string
+          violation_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "violations_attempt_id_fkey"
+            columns: ["attempt_id"]
+            isOneToOne: false
+            referencedRelation: "exam_attempts"
+            referencedColumns: ["id"]
+          },
+        ]
       }
     }
     Views: {

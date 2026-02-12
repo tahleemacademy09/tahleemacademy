@@ -77,6 +77,10 @@ const ExamEditor = () => {
     display_mode: "one_at_a_time",
     guidelines: "", guidelines_ar: "",
     start_date: "", end_date: "",
+    proctoring_enabled: false, fullscreen_required: false,
+    tab_switch_limit: 3, max_warnings: 3,
+    auto_submit_on_violation: false,
+    screenshot_interval_seconds: 0,
   });
   const [questions, setQuestions] = useState<QuestionForm[]>([emptyQuestion()]);
   const [saving, setSaving] = useState(false);
@@ -101,6 +105,12 @@ const ExamEditor = () => {
           guidelines: exam.guidelines || "", guidelines_ar: exam.guidelines_ar || "",
           start_date: exam.start_date ? new Date(exam.start_date).toISOString().slice(0, 16) : "",
           end_date: exam.end_date ? new Date(exam.end_date).toISOString().slice(0, 16) : "",
+          proctoring_enabled: (exam as any).proctoring_enabled || false,
+          fullscreen_required: (exam as any).fullscreen_required || false,
+          tab_switch_limit: (exam as any).tab_switch_limit || 3,
+          max_warnings: (exam as any).max_warnings || 3,
+          auto_submit_on_violation: (exam as any).auto_submit_on_violation || false,
+          screenshot_interval_seconds: (exam as any).screenshot_interval_seconds || 0,
         });
       }
       const { data: qs } = await supabase.from("exam_questions").select("*").eq("exam_id", examId).order("sort_order");
@@ -339,8 +349,9 @@ fill_blank,"The word for 'water' is ___.","كلمة 'ماء' هي ___.",,,,,مَ
       </div>
 
       <Tabs defaultValue="settings" className="space-y-6">
-        <TabsList className="w-full grid grid-cols-3">
+        <TabsList className="w-full grid grid-cols-4">
           <TabsTrigger value="settings" className="gap-2"><Settings2 className="h-4 w-4" />{t("Settings", "الإعدادات")}</TabsTrigger>
+          <TabsTrigger value="proctoring" className="gap-2">🛡️ {t("Proctoring", "المراقبة")}</TabsTrigger>
           <TabsTrigger value="schedule" className="gap-2"><Calendar className="h-4 w-4" />{t("Schedule", "الجدولة")}</TabsTrigger>
           <TabsTrigger value="questions" className="gap-2"><FileText className="h-4 w-4" />{t("Questions", "الأسئلة")} ({questions.length})</TabsTrigger>
         </TabsList>
@@ -417,6 +428,47 @@ fill_blank,"The word for 'water' is ___.","كلمة 'ماء' هي ___.",,,,,مَ
                   </div>
                 ))}
               </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Proctoring Tab */}
+        <TabsContent value="proctoring">
+          <Card>
+            <CardHeader><CardTitle>🛡️ {t("Proctoring Settings", "إعدادات المراقبة")}</CardTitle></CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex flex-wrap gap-6">
+                {[
+                  { key: "proctoring_enabled", label: t("Enable Proctoring", "تفعيل المراقبة") },
+                  { key: "fullscreen_required", label: t("Require Fullscreen", "إلزام ملء الشاشة") },
+                  { key: "auto_submit_on_violation", label: t("Auto-Submit on Max Violations", "تقديم تلقائي عند الحد الأقصى") },
+                ].map((s) => (
+                  <div key={s.key} className="flex items-center gap-2">
+                    <Switch checked={(examForm as any)[s.key]} onCheckedChange={(v) => setExamForm({ ...examForm, [s.key]: v })} />
+                    <Label className="text-sm">{s.label}</Label>
+                  </div>
+                ))}
+              </div>
+              <div className="grid gap-4 md:grid-cols-3">
+                <div>
+                  <Label>{t("Tab Switch Limit", "حد تبديل النوافذ")}</Label>
+                  <Input type="number" value={examForm.tab_switch_limit} onChange={(e) => setExamForm({ ...examForm, tab_switch_limit: +e.target.value })} className="mt-1" min={1} />
+                </div>
+                <div>
+                  <Label>{t("Max Warnings", "أقصى تحذيرات")}</Label>
+                  <Input type="number" value={examForm.max_warnings} onChange={(e) => setExamForm({ ...examForm, max_warnings: +e.target.value })} className="mt-1" min={1} />
+                </div>
+                <div>
+                  <Label>{t("Screenshot Interval (sec, 0=off)", "فترة لقطة الشاشة (ثانية، 0=إيقاف)")}</Label>
+                  <Input type="number" value={examForm.screenshot_interval_seconds} onChange={(e) => setExamForm({ ...examForm, screenshot_interval_seconds: +e.target.value })} className="mt-1" min={0} />
+                </div>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                {t(
+                  "When proctoring is enabled, students will be monitored for tab switches, fullscreen exits, copy/paste, right-click, and developer tools usage. All violations are logged with timestamps.",
+                  "عند تفعيل المراقبة، ستتم مراقبة الطلاب لتبديل النوافذ، الخروج من ملء الشاشة، النسخ/اللصق، النقر بزر الماوس الأيمن، واستخدام أدوات المطور. يتم تسجيل جميع المخالفات مع الطوابع الزمنية."
+                )}
+              </p>
             </CardContent>
           </Card>
         </TabsContent>
