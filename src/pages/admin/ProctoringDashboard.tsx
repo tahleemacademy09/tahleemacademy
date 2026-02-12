@@ -5,15 +5,15 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import {
-  Shield, AlertTriangle, Search, Eye, Trash2, Download, Monitor,
-  Clock, User, Activity, ShieldAlert, ShieldCheck, ChevronDown
+  Shield, AlertTriangle, Search, Eye, Trash2, Monitor,
+  User, Activity, ShieldAlert, ShieldCheck, Camera, Image, Download
 } from "lucide-react";
 
 const severityColor = (level: string) => {
@@ -31,18 +31,17 @@ const integrityColor = (score: number) => {
   return "text-destructive";
 };
 
-// Thumbnail component for face snapshots with signed URL loading
-const MediaThumbnail = ({ media, attemptId }: { media: any; attemptId: string }) => {
+// Thumbnail component with signed URL loading
+const MediaThumbnail = ({ media, onDownload }: { media: any; onDownload?: (url: string, name: string) => void }) => {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [loadError, setLoadError] = useState(false);
 
   useEffect(() => {
     const loadUrl = async () => {
-      // file_url stores the storage path — generate a signed URL
       const { data, error } = await supabase.storage
         .from("proctoring-media")
-        .createSignedUrl(media.file_url, 3600); // 1 hour expiry
+        .createSignedUrl(media.file_url, 3600);
       if (data?.signedUrl) {
         setImageUrl(data.signedUrl);
       } else {
@@ -52,6 +51,14 @@ const MediaThumbnail = ({ media, attemptId }: { media: any; attemptId: string })
     loadUrl();
   }, [media.file_url]);
 
+  const typeLabel = media.file_type === "face_snapshot" ? "Face" :
+    media.file_type === "verification_snapshot" ? "Verification" :
+    media.file_type === "screen_capture" ? "Screen" : media.file_type;
+
+  const typeColor = media.file_type === "face_snapshot" ? "bg-primary/10 text-primary" :
+    media.file_type === "screen_capture" ? "bg-secondary/20 text-secondary-foreground" :
+    "bg-accent text-accent-foreground";
+
   return (
     <>
       <div
@@ -59,12 +66,7 @@ const MediaThumbnail = ({ media, attemptId }: { media: any; attemptId: string })
         onClick={() => !loadError && setExpanded(true)}
       >
         {imageUrl && !loadError ? (
-          <img
-            src={imageUrl}
-            alt="Face capture"
-            className="w-full h-full object-cover"
-            onError={() => setLoadError(true)}
-          />
+          <img src={imageUrl} alt={typeLabel} className="w-full h-full object-cover" onError={() => setLoadError(true)} />
         ) : loadError ? (
           <div className="flex items-center justify-center h-full text-xs text-muted-foreground">
             <User className="h-6 w-6 opacity-40" />
@@ -74,6 +76,10 @@ const MediaThumbnail = ({ media, attemptId }: { media: any; attemptId: string })
             <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
           </div>
         )}
+        {/* Type badge */}
+        <div className={`absolute top-1 left-1 text-[9px] px-1.5 py-0.5 rounded font-medium ${typeColor}`}>
+          {typeLabel}
+        </div>
         <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[10px] px-1.5 py-0.5 truncate">
           {new Date(media.created_at).toLocaleTimeString()}
         </div>
@@ -82,17 +88,25 @@ const MediaThumbnail = ({ media, attemptId }: { media: any; attemptId: string })
         </div>
       </div>
 
-      {/* Expanded view dialog */}
       <Dialog open={expanded} onOpenChange={setExpanded}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-3xl">
           <DialogHeader>
             <DialogTitle className="text-sm flex items-center gap-2">
-              <User className="h-4 w-4" />
-              Face Capture — {new Date(media.created_at).toLocaleString()}
+              {media.file_type === "screen_capture" ? <Monitor className="h-4 w-4" /> : <User className="h-4 w-4" />}
+              {typeLabel} Capture — {new Date(media.created_at).toLocaleString()}
             </DialogTitle>
           </DialogHeader>
           {imageUrl && (
-            <img src={imageUrl} alt="Face capture full" className="w-full rounded-lg" />
+            <>
+              <img src={imageUrl} alt={`${typeLabel} capture full`} className="w-full rounded-lg" />
+              <div className="flex justify-end">
+                <Button variant="outline" size="sm" asChild>
+                  <a href={imageUrl} download={media.file_name || `capture_${media.id}.jpg`} target="_blank" rel="noopener noreferrer">
+                    <Download className="h-3 w-3 mr-1" /> Download
+                  </a>
+                </Button>
+              </div>
+            </>
           )}
         </DialogContent>
       </Dialog>
@@ -113,6 +127,7 @@ const ProctoringDashboard = () => {
   const [examFilter, setExamFilter] = useState("all");
   const [examsList, setExamsList] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [mediaTab, setMediaTab] = useState("all");
 
   const fetchSessions = async () => {
     setLoading(true);
@@ -141,6 +156,12 @@ const ProctoringDashboard = () => {
 
   useEffect(() => { fetchSessions(); }, []);
 
+  // Auto-refresh every 30s for near real-time
+  useEffect(() => {
+    const interval = setInterval(fetchSessions, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
   const filteredSessions = sessions.filter((s) => {
     if (suspicionFilter !== "all" && s.suspicion_level !== suspicionFilter) return false;
     if (examFilter !== "all" && (s.attempt as any)?.exam_id !== examFilter) return false;
@@ -164,6 +185,15 @@ const ProctoringDashboard = () => {
     setMedia(mediaRes.data || []);
   };
 
+  // Auto-refresh detail media every 15s
+  useEffect(() => {
+    if (!selectedSession) return;
+    const interval = setInterval(() => {
+      loadSessionDetails(selectedSession);
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [selectedSession]);
+
   const deleteSession = async (sessionId: string, attemptId: string) => {
     await Promise.all([
       supabase.from("violations").delete().eq("attempt_id", attemptId),
@@ -180,11 +210,22 @@ const ProctoringDashboard = () => {
   const totalSessions = sessions.length;
   const criticalCount = sessions.filter(s => s.suspicion_level === "critical" || s.suspicion_level === "high").length;
   const avgIntegrity = sessions.length > 0 ? Math.round(sessions.reduce((s, ss) => s + (Number(ss.integrity_score) || 100), 0) / sessions.length) : 100;
+  const activeSessions = sessions.filter(s => !s.ended_at).length;
+
+  // Filtered media for tabs
+  const faceMedia = media.filter(m => m.file_type === "face_snapshot" || m.file_type === "verification_snapshot");
+  const screenMedia = media.filter(m => m.file_type === "screen_capture");
+  const otherMedia = media.filter(m => !["face_snapshot", "verification_snapshot", "screen_capture"].includes(m.file_type));
+  const allMedia = media;
 
   // Detail view
   if (selectedSession) {
     const s = selectedSession;
     const device = deviceLogs[0];
+    const studentName = (s.profile as any)?.full_name || (s.profile as any)?.email || "Unknown";
+    const studentEmail = (s.profile as any)?.email || "";
+    const examTitle = language === "ar" ? (s.exam as any)?.title_ar || (s.exam as any)?.title : (s.exam as any)?.title;
+
     return (
       <div className="container mx-auto px-4 py-6 max-w-5xl">
         <div className="mb-4 flex items-center justify-between flex-wrap gap-3">
@@ -193,18 +234,36 @@ const ProctoringDashboard = () => {
               <Shield className="h-5 w-5 text-primary" />
               {t("Proctoring Details", "تفاصيل المراقبة")}
             </h1>
-            <p className="text-sm text-muted-foreground">
-              {(s.profile as any)?.full_name || (s.profile as any)?.email || "Unknown"} •{" "}
-              {language === "ar" ? (s.exam as any)?.title_ar || (s.exam as any)?.title : (s.exam as any)?.title}
-            </p>
+            <p className="text-sm text-muted-foreground">{studentName} • {examTitle}</p>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={() => setSelectedSession(null)}>{t("Back", "رجوع")}</Button>
+            <Button variant="outline" size="sm" onClick={() => { setSelectedSession(null); setMedia([]); }}>{t("Back", "رجوع")}</Button>
             <Button variant="destructive" size="sm" onClick={() => deleteSession(s.id, s.attempt_id)}>
               <Trash2 className="h-3 w-3 mr-1" />{t("Delete", "حذف")}
             </Button>
           </div>
         </div>
+
+        {/* Student info card */}
+        <Card className="mb-4">
+          <CardContent className="p-4 flex items-center gap-4">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary text-primary-foreground font-bold text-lg">
+              {studentName.charAt(0).toUpperCase()}
+            </div>
+            <div className="flex-1">
+              <p className="font-semibold">{studentName}</p>
+              <p className="text-xs text-muted-foreground">{studentEmail}</p>
+              <p className="text-xs text-muted-foreground">{t("User ID", "معرف المستخدم")}: {(s.attempt as any)?.user_id?.slice(0, 8)}...</p>
+            </div>
+            <div className="text-right">
+              <p className="text-sm font-medium">{examTitle}</p>
+              <p className="text-xs text-muted-foreground">{t("Exam ID", "معرف الامتحان")}: {(s.attempt as any)?.exam_id?.slice(0, 8)}...</p>
+              <Badge className={`text-xs mt-1 ${!s.ended_at ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"}`}>
+                {!s.ended_at ? t("Active", "نشط") : t("Ended", "منتهي")}
+              </Badge>
+            </div>
+          </CardContent>
+        </Card>
 
         {/* Summary cards */}
         <div className="grid gap-3 md:grid-cols-4 mb-4">
@@ -242,14 +301,18 @@ const ProctoringDashboard = () => {
               <div><span className="text-muted-foreground">{t("Device", "الجهاز")}:</span> {device.device_type}</div>
               <div><span className="text-muted-foreground">{t("Browser", "المتصفح")}:</span> {device.browser}</div>
               <div><span className="text-muted-foreground">{t("Resolution", "الدقة")}:</span> {device.screen_resolution}</div>
-              <div className="md:col-span-3"><span className="text-muted-foreground">{t("User Agent", "وكيل المستخدم")}:</span> <span className="text-xs break-all">{device.user_agent}</span></div>
             </CardContent>
           </Card>
         )}
 
         {/* Violations timeline */}
         <Card className="mb-4">
-          <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><AlertTriangle className="h-4 w-4 text-destructive" />{t("Violation Timeline", "الجدول الزمني للمخالفات")} ({violations.length})</CardTitle></CardHeader>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 text-destructive" />
+              {t("Flagged Violations", "المخالفات المرصودة")} ({violations.length})
+            </CardTitle>
+          </CardHeader>
           <CardContent>
             {violations.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-4">{t("No violations recorded", "لم يتم تسجيل مخالفات")}</p>
@@ -260,11 +323,11 @@ const ProctoringDashboard = () => {
                     <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-destructive/10 text-xs font-bold text-destructive">{i + 1}</div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <Badge variant="outline" className="text-xs">{v.violation_type.replace("_", " ")}</Badge>
-                        <Badge className={`text-xs ${v.severity_score >= 3 ? "bg-destructive" : v.severity_score >= 2 ? "bg-secondary" : "bg-muted"} text-foreground`}>
+                        <Badge variant="outline" className="text-xs">{v.violation_type.replace(/_/g, " ")}</Badge>
+                        <Badge className={`text-xs ${v.severity_score >= 3 ? "bg-destructive text-destructive-foreground" : v.severity_score >= 2 ? "bg-secondary text-secondary-foreground" : "bg-muted text-muted-foreground"}`}>
                           {t("Severity", "الخطورة")}: {v.severity_score}
                         </Badge>
-                        <span className="text-xs text-muted-foreground">{new Date(v.timestamp).toLocaleTimeString()}</span>
+                        <span className="text-xs text-muted-foreground">{new Date(v.timestamp).toLocaleString()}</span>
                       </div>
                       {v.details && <p className="text-xs text-muted-foreground mt-1">{v.details}</p>}
                     </div>
@@ -275,40 +338,42 @@ const ProctoringDashboard = () => {
           </CardContent>
         </Card>
 
-        {/* Media files — face snapshots & screenshots */}
-        {media.length > 0 && (
-          <Card>
-            <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><User className="h-4 w-4" />{t("Captured Media & Face Snapshots", "الوسائط والصور الملتقطة")} ({media.length})</CardTitle></CardHeader>
-            <CardContent>
-              {/* Image gallery for face snapshots */}
-              {media.filter(m => m.file_type === "face_snapshot" || m.file_type === "verification_snapshot").length > 0 && (
-                <div className="mb-4">
-                  <p className="text-xs font-medium text-muted-foreground mb-2">{t("Face Captures", "صور الوجه")}</p>
-                  <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 md:grid-cols-4">
-                    {media.filter(m => m.file_type === "face_snapshot" || m.file_type === "verification_snapshot").map((m) => (
-                      <MediaThumbnail key={m.id} media={m} attemptId={s.attempt_id} />
-                    ))}
-                  </div>
-                </div>
-              )}
-              {/* Other media */}
-              {media.filter(m => m.file_type !== "face_snapshot" && m.file_type !== "verification_snapshot").length > 0 && (
-                <div>
-                  <p className="text-xs font-medium text-muted-foreground mb-2">{t("Other Media", "وسائط أخرى")}</p>
-                  <div className="grid gap-2 md:grid-cols-2">
-                    {media.filter(m => m.file_type !== "face_snapshot" && m.file_type !== "verification_snapshot").map((m) => (
-                      <div key={m.id} className="flex items-center gap-2 rounded border p-2 text-sm">
-                        <Badge variant="outline" className="text-xs shrink-0">{m.file_type}</Badge>
-                        <span className="truncate flex-1">{m.file_name || m.file_url}</span>
-                        <span className="text-xs text-muted-foreground">{new Date(m.created_at).toLocaleTimeString()}</span>
+        {/* Media — Tabbed: All / Face / Screen / Other */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <Camera className="h-4 w-4" />
+              {t("Captured Media", "الوسائط الملتقطة")} ({allMedia.length})
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Tabs value={mediaTab} onValueChange={setMediaTab} className="w-full">
+              <TabsList className="mb-3">
+                <TabsTrigger value="all">{t("All", "الكل")} ({allMedia.length})</TabsTrigger>
+                <TabsTrigger value="face">{t("Face Snapshots", "صور الوجه")} ({faceMedia.length})</TabsTrigger>
+                <TabsTrigger value="screen">{t("Screen Captures", "لقطات الشاشة")} ({screenMedia.length})</TabsTrigger>
+                {otherMedia.length > 0 && <TabsTrigger value="other">{t("Other", "أخرى")} ({otherMedia.length})</TabsTrigger>}
+              </TabsList>
+
+              {["all", "face", "screen", "other"].map(tab => {
+                const items = tab === "all" ? allMedia : tab === "face" ? faceMedia : tab === "screen" ? screenMedia : otherMedia;
+                return (
+                  <TabsContent key={tab} value={tab}>
+                    {items.length === 0 ? (
+                      <p className="text-sm text-muted-foreground text-center py-6">{t("No media captured", "لا توجد وسائط")}</p>
+                    ) : (
+                      <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+                        {items.map((m) => (
+                          <MediaThumbnail key={m.id} media={m} />
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        )}
+                    )}
+                  </TabsContent>
+                );
+              })}
+            </Tabs>
+          </CardContent>
+        </Card>
       </div>
     );
   }
@@ -324,16 +389,28 @@ const ProctoringDashboard = () => {
           </h1>
           <p className="text-sm text-muted-foreground">{t("Monitor exam integrity and review violations", "مراقبة نزاهة الامتحان ومراجعة المخالفات")}</p>
         </div>
+        <Button variant="outline" size="sm" onClick={fetchSessions}>
+          {t("Refresh", "تحديث")}
+        </Button>
       </div>
 
       {/* Stats */}
-      <div className="grid gap-4 md:grid-cols-3 mb-6">
+      <div className="grid gap-4 md:grid-cols-4 mb-6">
         <Card>
           <CardContent className="flex items-center gap-4 p-4">
             <Activity className="h-8 w-8 text-primary" />
             <div>
               <div className="text-2xl font-bold">{totalSessions}</div>
               <div className="text-xs text-muted-foreground">{t("Total Sessions", "إجمالي الجلسات")}</div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="flex items-center gap-4 p-4">
+            <Shield className="h-8 w-8 text-primary" />
+            <div>
+              <div className="text-2xl font-bold text-primary">{activeSessions}</div>
+              <div className="text-xs text-muted-foreground">{t("Active Now", "نشط الآن")}</div>
             </div>
           </CardContent>
         </Card>
@@ -408,10 +485,10 @@ const ProctoringDashboard = () => {
                 <TableRow>
                   <TableHead>{t("Student", "الطالب")}</TableHead>
                   <TableHead>{t("Exam", "الامتحان")}</TableHead>
+                  <TableHead>{t("Status", "الحالة")}</TableHead>
                   <TableHead>{t("Integrity", "النزاهة")}</TableHead>
                   <TableHead>{t("Suspicion", "الاشتباه")}</TableHead>
                   <TableHead>{t("Violations", "المخالفات")}</TableHead>
-                  <TableHead>{t("Warnings", "التحذيرات")}</TableHead>
                   <TableHead>{t("Date", "التاريخ")}</TableHead>
                   <TableHead>{t("Actions", "إجراءات")}</TableHead>
                 </TableRow>
@@ -419,12 +496,21 @@ const ProctoringDashboard = () => {
               <TableBody>
                 {filteredSessions.map((s) => (
                   <TableRow key={s.id} className="cursor-pointer hover:bg-accent/50" onClick={() => loadSessionDetails(s)}>
-                    <TableCell className="font-medium text-sm">{(s.profile as any)?.full_name || (s.profile as any)?.email || "Unknown"}</TableCell>
+                    <TableCell>
+                      <div>
+                        <p className="font-medium text-sm">{(s.profile as any)?.full_name || "Unknown"}</p>
+                        <p className="text-xs text-muted-foreground">{(s.profile as any)?.email || ""}</p>
+                      </div>
+                    </TableCell>
                     <TableCell className="text-sm">{language === "ar" ? (s.exam as any)?.title_ar || (s.exam as any)?.title : (s.exam as any)?.title}</TableCell>
+                    <TableCell>
+                      <Badge className={`text-xs ${!s.ended_at ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"}`}>
+                        {!s.ended_at ? t("Active", "نشط") : t("Ended", "منتهي")}
+                      </Badge>
+                    </TableCell>
                     <TableCell><span className={`font-bold ${integrityColor(Number(s.integrity_score) || 100)}`}>{Math.round(Number(s.integrity_score) || 100)}%</span></TableCell>
                     <TableCell><Badge className={`text-xs ${severityColor(s.suspicion_level || "low")}`}>{s.suspicion_level || "low"}</Badge></TableCell>
                     <TableCell className="font-bold text-destructive">{s.total_violations || 0}</TableCell>
-                    <TableCell>{s.warnings_issued || 0}/{s.max_warnings || 3}</TableCell>
                     <TableCell className="text-xs text-muted-foreground">{new Date(s.started_at).toLocaleDateString()}</TableCell>
                     <TableCell>
                       <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); loadSessionDetails(s); }}>
