@@ -26,6 +26,9 @@ const StudentExams = () => {
   useEffect(() => {
     if (!user) return;
     fetchExams();
+    // Re-check every 30s so scheduled exams auto-become available
+    const interval = setInterval(fetchExams, 30000);
+    return () => clearInterval(interval);
   }, [user]);
 
   const fetchExams = async () => {
@@ -194,10 +197,10 @@ const StudentExams = () => {
               {t("Continue Exam", "متابعة الامتحان")}
             </Button>
           )}
-          {status === "exhausted" && (
-            <Button size="sm" disabled className="w-full" variant="outline">
-              <Lock className="mr-2 h-4 w-4" />
-              {t("All attempts used", "تم استخدام جميع المحاولات")}
+          {status === "exhausted" && latestAttempt && (
+            <Button size="sm" className="w-full" variant="outline" onClick={() => navigate(`/student/results/${latestAttempt.id}`)}>
+              <CheckCircle className="mr-2 h-4 w-4" />
+              {t("View Results", "عرض النتائج")}
             </Button>
           )}
           {status === "not_started" && (
@@ -297,7 +300,9 @@ const StudentExams = () => {
               ) : (
                 <div className="space-y-3">
                   {pastAttempts.map((attempt) => (
-                    <Card key={attempt.id}>
+                    <Card key={attempt.id} className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => {
+                      if (attempt.status !== "in_progress") navigate(`/student/results/${attempt.id}`);
+                    }}>
                       <CardContent className="flex items-center justify-between p-4 flex-wrap gap-2">
                         <div>
                           <div className="font-medium">

@@ -317,7 +317,7 @@ const ExamTaking = () => {
     // Step 2: Flush answers to DB in background (parallel upserts)
     if (attemptId) {
       const answerUpserts = Object.entries(currentAnswers)
-        .filter(([_, ans]) => ans.text)
+        .filter(([_, ans]) => ans.text || ans.data)
         .map(([qId, ans]) => {
           const graded = gradedResults[qId];
           return supabase.from("exam_answers").upsert({

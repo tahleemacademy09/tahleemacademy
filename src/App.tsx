@@ -22,6 +22,7 @@ import StudentDashboard from "./pages/student/StudentDashboard";
 import StudentExams from "./pages/student/StudentExams";
 import ExamTaking from "./pages/student/ExamTaking";
 import ProfileSettings from "./pages/student/ProfileSettings";
+import ExamResults from "./pages/student/ExamResults";
 
 import AdminDashboard from "./pages/admin/AdminDashboard";
 import ExamManager from "./pages/admin/ExamManager";
@@ -62,6 +63,7 @@ const App = () => (
 
               {/* Exam taking (no sidebar) */}
               <Route path="/student/exam/:attemptId" element={<ProtectedRoute><ExamTaking /></ProtectedRoute>} />
+              <Route path="/student/results/:attemptId" element={<ProtectedRoute><ExamResults /></ProtectedRoute>} />
 
               {/* Admin dashboard - requires admin role */}
               <Route element={<ProtectedRoute requiredRole="admin"><DashboardLayout role="admin" /></ProtectedRoute>}>
