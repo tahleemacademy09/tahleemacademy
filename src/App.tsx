@@ -23,6 +23,7 @@ import StudentExams from "./pages/student/StudentExams";
 import ExamTaking from "./pages/student/ExamTaking";
 import ProfileSettings from "./pages/student/ProfileSettings";
 import ExamResults from "./pages/student/ExamResults";
+import PreExamVerification from "./pages/student/PreExamVerification";
 
 import AdminDashboard from "./pages/admin/AdminDashboard";
 import ExamManager from "./pages/admin/ExamManager";
@@ -63,6 +64,7 @@ const App = () => (
               </Route>
 
               {/* Exam taking (no sidebar) */}
+              <Route path="/student/exam-verify/:examId" element={<ProtectedRoute><PreExamVerification /></ProtectedRoute>} />
               <Route path="/student/exam/:attemptId" element={<ProtectedRoute><ExamTaking /></ProtectedRoute>} />
               <Route path="/student/results/:attemptId" element={<ProtectedRoute><ExamResults /></ProtectedRoute>} />
 
