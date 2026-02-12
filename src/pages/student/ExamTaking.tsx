@@ -16,6 +16,7 @@ import { Clock, Flag, Send, AlertTriangle, BookOpen, CheckCircle2, HelpCircle, S
 import AudioPlayer from "@/components/exam/AudioPlayer";
 import AudioRecorder from "@/components/exam/AudioRecorder";
 import { motion, AnimatePresence } from "framer-motion";
+import { useProctoring } from "@/hooks/useProctoring";
 
 const logActivity = async (userId: string, action: string, entityType: string, entityId: string, metadata?: any) => {
   try {
@@ -55,6 +56,24 @@ const ExamTaking = () => {
   const answersRef = useRef(answers);
   const questionsRef = useRef(questions);
   const examRef = useRef(exam);
+
+  // Proctoring system
+  const proctoringEnabled = exam?.proctoring_enabled === true;
+  const proctoring = useProctoring({
+    attemptId: attemptId || "",
+    userId: user?.id || "",
+    proctoring_enabled: exam?.proctoring_enabled,
+    fullscreen_required: exam?.fullscreen_required,
+    tab_switch_limit: exam?.tab_switch_limit,
+    max_warnings: exam?.max_warnings,
+    auto_submit_on_violation: exam?.auto_submit_on_violation,
+    screenshot_interval_seconds: exam?.screenshot_interval_seconds,
+  }, proctoringEnabled && !submitted && !loading, () => {
+    // Auto-submit callback when max violations reached
+    if (!submittedRef.current) {
+      handleSubmitRef.current();
+    }
+  });
 
   // Keep refs in sync with state
   useEffect(() => { answersRef.current = answers; }, [answers]);
@@ -516,6 +535,11 @@ const ExamTaking = () => {
             {tabSwitches > 0 && (
               <Badge variant="destructive" className="text-xs gap-1">
                 <AlertTriangle className="h-3 w-3" /> {tabSwitches}
+              </Badge>
+            )}
+            {proctoringEnabled && (
+              <Badge variant={proctoring.suspicionLevel === "low" ? "outline" : "destructive"} className="text-xs gap-1">
+                <ShieldAlert className="h-3 w-3" /> {Math.round(proctoring.integrityScore)}%
               </Badge>
             )}
             <Button size="sm" variant="destructive" onClick={() => setShowConfirm(true)} disabled={submitting} className="gap-1">

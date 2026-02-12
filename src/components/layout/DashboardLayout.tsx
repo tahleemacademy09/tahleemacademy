@@ -25,6 +25,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     { to: "/admin/exams", icon: ClipboardList, label: t("Exams", "الامتحانات") },
     { to: "/admin/students", icon: Users, label: t("Students", "الطلاب") },
     { to: "/admin/grading", icon: CheckSquare, label: t("Grading", "التصحيح") },
+    { to: "/admin/proctoring", icon: BarChart, label: t("Proctoring", "المراقبة") },
   ];
 
   const links = role === "admin" ? adminLinks : studentLinks;

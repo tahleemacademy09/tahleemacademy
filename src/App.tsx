@@ -29,6 +29,7 @@ import ExamManager from "./pages/admin/ExamManager";
 import ExamEditor from "./pages/admin/ExamEditor";
 import GradingPage from "./pages/admin/GradingPage";
 import StudentManagement from "./pages/admin/StudentManagement";
+import ProctoringDashboard from "./pages/admin/ProctoringDashboard";
 
 const queryClient = new QueryClient();
 
@@ -72,6 +73,7 @@ const App = () => (
                 <Route path="/admin/exams/create" element={<ExamEditor />} />
                 <Route path="/admin/exams/:examId/edit" element={<ExamEditor />} />
                 <Route path="/admin/grading" element={<GradingPage />} />
+                <Route path="/admin/proctoring" element={<ProctoringDashboard />} />
                 <Route path="/admin/students" element={<StudentManagement />} />
               </Route>
 
