@@ -31,6 +31,75 @@ const integrityColor = (score: number) => {
   return "text-destructive";
 };
 
+// Thumbnail component for face snapshots with signed URL loading
+const MediaThumbnail = ({ media, attemptId }: { media: any; attemptId: string }) => {
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+
+  useEffect(() => {
+    const loadUrl = async () => {
+      // file_url stores the storage path — generate a signed URL
+      const { data, error } = await supabase.storage
+        .from("proctoring-media")
+        .createSignedUrl(media.file_url, 3600); // 1 hour expiry
+      if (data?.signedUrl) {
+        setImageUrl(data.signedUrl);
+      } else {
+        setLoadError(true);
+      }
+    };
+    loadUrl();
+  }, [media.file_url]);
+
+  return (
+    <>
+      <div
+        className="relative group cursor-pointer rounded-lg overflow-hidden border bg-muted aspect-square"
+        onClick={() => !loadError && setExpanded(true)}
+      >
+        {imageUrl && !loadError ? (
+          <img
+            src={imageUrl}
+            alt="Face capture"
+            className="w-full h-full object-cover"
+            onError={() => setLoadError(true)}
+          />
+        ) : loadError ? (
+          <div className="flex items-center justify-center h-full text-xs text-muted-foreground">
+            <User className="h-6 w-6 opacity-40" />
+          </div>
+        ) : (
+          <div className="flex items-center justify-center h-full">
+            <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+          </div>
+        )}
+        <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[10px] px-1.5 py-0.5 truncate">
+          {new Date(media.created_at).toLocaleTimeString()}
+        </div>
+        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
+          <Eye className="h-5 w-5 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+        </div>
+      </div>
+
+      {/* Expanded view dialog */}
+      <Dialog open={expanded} onOpenChange={setExpanded}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-sm flex items-center gap-2">
+              <User className="h-4 w-4" />
+              Face Capture — {new Date(media.created_at).toLocaleString()}
+            </DialogTitle>
+          </DialogHeader>
+          {imageUrl && (
+            <img src={imageUrl} alt="Face capture full" className="w-full rounded-lg" />
+          )}
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+};
+
 const ProctoringDashboard = () => {
   const { t, language } = useLanguage();
   const { toast } = useToast();
@@ -206,20 +275,37 @@ const ProctoringDashboard = () => {
           </CardContent>
         </Card>
 
-        {/* Media files */}
+        {/* Media files — face snapshots & screenshots */}
         {media.length > 0 && (
           <Card>
-            <CardHeader className="pb-2"><CardTitle className="text-sm">{t("Captured Media", "الوسائط الملتقطة")} ({media.length})</CardTitle></CardHeader>
+            <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><User className="h-4 w-4" />{t("Captured Media & Face Snapshots", "الوسائط والصور الملتقطة")} ({media.length})</CardTitle></CardHeader>
             <CardContent>
-              <div className="grid gap-2 md:grid-cols-2">
-                {media.map((m) => (
-                  <div key={m.id} className="flex items-center gap-2 rounded border p-2 text-sm">
-                    <Badge variant="outline" className="text-xs shrink-0">{m.file_type}</Badge>
-                    <span className="truncate flex-1">{m.file_name || m.file_url}</span>
-                    <span className="text-xs text-muted-foreground">{new Date(m.created_at).toLocaleTimeString()}</span>
+              {/* Image gallery for face snapshots */}
+              {media.filter(m => m.file_type === "face_snapshot" || m.file_type === "verification_snapshot").length > 0 && (
+                <div className="mb-4">
+                  <p className="text-xs font-medium text-muted-foreground mb-2">{t("Face Captures", "صور الوجه")}</p>
+                  <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 md:grid-cols-4">
+                    {media.filter(m => m.file_type === "face_snapshot" || m.file_type === "verification_snapshot").map((m) => (
+                      <MediaThumbnail key={m.id} media={m} attemptId={s.attempt_id} />
+                    ))}
                   </div>
-                ))}
-              </div>
+                </div>
+              )}
+              {/* Other media */}
+              {media.filter(m => m.file_type !== "face_snapshot" && m.file_type !== "verification_snapshot").length > 0 && (
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground mb-2">{t("Other Media", "وسائط أخرى")}</p>
+                  <div className="grid gap-2 md:grid-cols-2">
+                    {media.filter(m => m.file_type !== "face_snapshot" && m.file_type !== "verification_snapshot").map((m) => (
+                      <div key={m.id} className="flex items-center gap-2 rounded border p-2 text-sm">
+                        <Badge variant="outline" className="text-xs shrink-0">{m.file_type}</Badge>
+                        <span className="truncate flex-1">{m.file_name || m.file_url}</span>
+                        <span className="text-xs text-muted-foreground">{new Date(m.created_at).toLocaleTimeString()}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         )}
