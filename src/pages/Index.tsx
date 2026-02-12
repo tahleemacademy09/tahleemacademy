@@ -74,7 +74,7 @@ const Index = () => {
                   <ArrowRight className="ml-2 h-4 w-4" />
                 </Link>
               </Button>
-              <Button size="lg" variant="outline" className="border-primary-foreground/30 bg-transparent text-primary-foreground hover:bg-primary-foreground/10 rounded-xl px-8 py-6 text-base transition-all duration-300" asChild>
+              <Button size="lg" variant="outline" className="border-gold/40 bg-white/15 backdrop-blur-sm text-primary-foreground hover:bg-white/25 rounded-xl px-8 py-6 text-base font-semibold shadow-md transition-all duration-300 hover:scale-[1.03]" asChild>
                 <Link to="/courses">{t("Browse Courses", "تصفح الدورات")}</Link>
               </Button>
             </div>
