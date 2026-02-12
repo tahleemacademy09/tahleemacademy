@@ -284,7 +284,38 @@ const ExamTaking = () => {
     const finalStatus = hasSubjective ? "submitted" : "graded";
     const passingScore = currentExam?.passing_score || 50;
 
-    // Step 1: Update attempt status FIRST (fastest path to mark as submitted)
+    // Step 1: Save answers FIRST while attempt is still 'in_progress' (RLS requires this)
+    if (attemptId) {
+      for (const [qId, ans] of Object.entries(currentAnswers)) {
+        if (!ans.text && !ans.data) continue;
+        const graded = gradedResults[qId];
+        const { data: existing } = await supabase
+          .from("exam_answers")
+          .select("id")
+          .eq("attempt_id", attemptId)
+          .eq("question_id", qId)
+          .maybeSingle();
+
+        const payload: any = {
+          answer_text: ans.text,
+          answer_data: ans.data,
+          is_flagged: ans.flagged,
+          ...(graded ? { is_correct: graded.is_correct, points_awarded: graded.points_awarded } : {}),
+        };
+
+        if (existing) {
+          await supabase.from("exam_answers").update(payload).eq("id", existing.id);
+        } else {
+          await supabase.from("exam_answers").insert({
+            attempt_id: attemptId,
+            question_id: qId,
+            ...payload,
+          });
+        }
+      }
+    }
+
+    // Step 2: Now update attempt status (answers are already saved)
     const { error: updateError } = await supabase.from("exam_attempts").update({
       status: finalStatus,
       submitted_at: new Date().toISOString(),
@@ -293,46 +324,6 @@ const ExamTaking = () => {
       percentage,
       passed: percentage >= passingScore,
     }).eq("id", attemptId!);
-
-    if (updateError) {
-      console.error("Failed to submit exam attempt:", updateError);
-      toast({ title: t("❌ Submission failed. Please try again.", "❌ فشل التقديم. حاول مرة أخرى."), variant: "destructive" });
-      submittedRef.current = false;
-      setSubmitting(false);
-      return;
-    }
-
-    // Show success immediately - don't wait for answer saves
-    setSubmissionResult({
-      status: finalStatus,
-      score: earnedPoints,
-      totalPoints,
-      percentage,
-      passed: percentage >= passingScore,
-    });
-    setSubmitted(true);
-    setSubmitting(false);
-    toast({ title: t("✅ Exam Submitted!", "✅ تم تقديم الامتحان!") });
-
-    // Step 2: Flush answers to DB in background (parallel upserts)
-    if (attemptId) {
-      const answerUpserts = Object.entries(currentAnswers)
-        .filter(([_, ans]) => ans.text || ans.data)
-        .map(([qId, ans]) => {
-          const graded = gradedResults[qId];
-          return supabase.from("exam_answers").upsert({
-            attempt_id: attemptId,
-            question_id: qId,
-            answer_text: ans.text,
-            answer_data: ans.data,
-            is_flagged: ans.flagged,
-            ...(graded ? { is_correct: graded.is_correct, points_awarded: graded.points_awarded } : {}),
-          }, { onConflict: 'attempt_id,question_id', ignoreDuplicates: false });
-        });
-
-      // Fire all upserts in parallel
-      await Promise.allSettled(answerUpserts);
-    }
 
     // Log activity in background
     if (user) {
