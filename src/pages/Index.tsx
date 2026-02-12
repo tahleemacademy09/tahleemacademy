@@ -21,9 +21,10 @@ const Index = () => {
   ];
 
   const testimonials = [
-    { name: t("Sarah Ahmed", "سارة أحمد"), text: t("Tahleem Academy transformed my understanding of Arabic. The structured courses and exams helped me progress rapidly.", "غيّرت أكاديمية تعليم فهمي للعربية. ساعدتني الدورات والامتحانات المنظمة على التقدم بسرعة."), role: t("Student", "طالبة") },
-    { name: t("Omar Hassan", "عمر حسن"), text: t("The exam portal is incredible. Immediate feedback and detailed analytics helped me identify and improve my weak areas.", "بوابة الامتحانات رائعة. ساعدتني التغذية الراجعة الفورية والتحليلات على تحديد نقاط ضعفي وتحسينها."), role: t("Student", "طالب") },
-    { name: t("Fatima Ali", "فاطمة علي"), text: t("As a teacher, I love the comprehensive tools for creating exams and tracking student progress effortlessly.", "كمعلمة، أحب الأدوات الشاملة لإنشاء الامتحانات وتتبع تقدم الطلاب بسهولة."), role: t("Teacher", "معلمة") },
+    { name: "Abdul Waarith Qasim", text: t("The depth of knowledge at Tahleem Academy is remarkable. The instructors provide a gateway to understanding our Deen more profoundly.", "عمق المعرفة في أكاديمية تعليم مذهل. يوفر المعلمون بوابة لفهم ديننا بشكل أعمق."), role: t("Student", "طالب") },
+    { name: "Qudroh Animashaun", text: t("The simplification provided by the instructors made Arabic finally 'click' for me. It's been a transformative experience for my Salah.", "التبسيط الذي قدمه المعلمون جعل العربية أخيرًا 'تنقر' بالنسبة لي. لقد كانت تجربة تحويلية لصلاتي."), role: t("Student", "طالبة") },
+    { name: "Ruqayyah Yusuf", text: t("The focus on Tajweed and Riwaayat here is top-tier. My recitation and confidence have improved significantly.", "التركيز على التجويد والروايات هنا من الدرجة الأولى. تحسنت تلاوتي وثقتي بشكل ملحوظ."), role: t("Student", "طالبة") },
+    { name: "Zeenat Agoro", text: t("A perfect blend of traditional values and modern convenience. The mission of nurturing the next generation is evident in every lesson.", "مزيج مثالي من القيم التقليدية والراحة الحديثة. مهمة رعاية الجيل القادم واضحة في كل درس."), role: t("Student", "طالبة") },
   ];
 
   return (
@@ -69,11 +70,16 @@ const Index = () => {
         </div>
       </section>
 
-      {/* Features */}
+      {/* Why Tahleem Academy */}
       <section className="container mx-auto px-4 py-20">
         <div className="mb-12 text-center">
           <h2 className="mb-3 text-3xl font-bold">{t("Why Tahleem Academy?", "لماذا أكاديمية تعليم؟")}</h2>
-          <p className="text-muted-foreground">{t("Everything you need to excel in Arabic", "كل ما تحتاجه للتفوق في العربية")}</p>
+          <p className="text-muted-foreground max-w-2xl mx-auto">
+            {t(
+              "Dedicated to nurturing the next generation of Muslims through comprehensive Islamic education that combines traditional values with modern teaching excellence.",
+              "مكرسة لرعاية الجيل القادم من المسلمين من خلال تعليم إسلامي شامل يجمع بين القيم التقليدية والتميز التعليمي الحديث."
+            )}
+          </p>
         </div>
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
           {features.map((f, i) => (
@@ -94,10 +100,10 @@ const Index = () => {
       <section className="bg-primary text-primary-foreground">
         <div className="container mx-auto grid grid-cols-2 gap-8 px-4 py-16 md:grid-cols-4">
           {[
-            { value: "500+", label: t("Students", "طالب") },
-            { value: "50+", label: t("Courses", "دورة") },
-            { value: "1000+", label: t("Exams Taken", "امتحان") },
-            { value: "98%", label: t("Satisfaction", "رضا") },
+            { value: "20+", label: t("Students", "طالب") },
+            { value: "30+", label: t("Exams Taken", "امتحان") },
+            { value: "95%+", label: t("Satisfaction", "رضا") },
+            { value: "3", label: t("Expert Instructors", "معلمون خبراء") },
           ].map((s, i) => (
             <motion.div key={i} className="text-center" initial="hidden" whileInView="visible" viewport={{ once: true }} variants={fadeUp} custom={i}>
               <div className="text-3xl font-bold md:text-4xl">{s.value}</div>
@@ -112,7 +118,7 @@ const Index = () => {
         <div className="mb-12 text-center">
           <h2 className="mb-3 text-3xl font-bold">{t("What Our Students Say", "ماذا يقول طلابنا")}</h2>
         </div>
-        <div className="grid gap-6 md:grid-cols-3">
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
           {testimonials.map((tm, i) => (
             <motion.div key={i} initial="hidden" whileInView="visible" viewport={{ once: true }} variants={fadeUp} custom={i}>
               <Card className="h-full">
@@ -135,7 +141,7 @@ const Index = () => {
         <div className="container mx-auto px-4 py-20 text-center">
           <h2 className="mb-4 text-3xl font-bold">{t("Ready to Begin?", "مستعد للبدء؟")}</h2>
           <p className="mb-8 text-muted-foreground">
-            {t("Join hundreds of students mastering Arabic today.", "انضم إلى مئات الطلاب الذين يتقنون العربية اليوم.")}
+            {t("Join our growing community of students mastering Arabic today.", "انضم إلى مجتمعنا المتنامي من الطلاب الذين يتقنون العربية اليوم.")}
           </p>
           <Button size="lg" asChild>
             <Link to="/register">
