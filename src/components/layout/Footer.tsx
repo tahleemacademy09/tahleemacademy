@@ -6,17 +6,20 @@ const Footer = () => {
   const { t } = useLanguage();
 
   return (
-    <footer className="border-t bg-card">
-      <div className="container mx-auto px-4 py-12">
-        <div className="grid gap-8 md:grid-cols-4">
+    <footer className="bg-primary text-primary-foreground">
+      <div className="container mx-auto px-4 py-14">
+        <div className="grid gap-10 md:grid-cols-4">
           <div>
-            <div className="flex items-center gap-2 mb-4">
-              <BookOpen className="h-6 w-6 text-primary" />
-              <span className="text-lg font-bold text-primary font-arabic">
-                {t("Tahleem Academy", "أكاديمية تعليم")}
+            <div className="flex items-center gap-2.5 mb-5">
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gold/20">
+                <BookOpen className="h-5 w-5 text-gold" />
+              </div>
+              <span className="text-lg font-bold font-display">
+                {t("Tahleem", "تعليم")}
+                <span className="text-gold"> {t("Academy", "أكاديمية")}</span>
               </span>
             </div>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm leading-relaxed text-primary-foreground/60">
               {t(
                 "Empowering students to master Arabic through structured learning and certified courses.",
                 "تمكين الطلاب من إتقان اللغة العربية من خلال التعلم المنظم والدورات المعتمدة."
@@ -25,17 +28,17 @@ const Footer = () => {
           </div>
 
           <div>
-            <h4 className="mb-3 font-semibold">{t("Quick Links", "روابط سريعة")}</h4>
-            <div className="flex flex-col gap-2 text-sm text-muted-foreground">
-              <Link to="/courses" className="hover:text-primary">{t("Courses", "الدورات")}</Link>
-              <Link to="/about" className="hover:text-primary">{t("About Us", "عن الأكاديمية")}</Link>
-              <Link to="/contact" className="hover:text-primary">{t("Contact", "اتصل بنا")}</Link>
+            <h4 className="mb-4 text-sm font-semibold uppercase tracking-wider text-gold">{t("Quick Links", "روابط سريعة")}</h4>
+            <div className="flex flex-col gap-3 text-sm text-primary-foreground/60">
+              <Link to="/courses" className="transition-colors hover:text-gold">{t("Courses", "الدورات")}</Link>
+              <Link to="/about" className="transition-colors hover:text-gold">{t("About Us", "عن الأكاديمية")}</Link>
+              <Link to="/contact" className="transition-colors hover:text-gold">{t("Contact", "اتصل بنا")}</Link>
             </div>
           </div>
 
           <div>
-            <h4 className="mb-3 font-semibold">{t("Programs", "البرامج")}</h4>
-            <div className="flex flex-col gap-2 text-sm text-muted-foreground">
+            <h4 className="mb-4 text-sm font-semibold uppercase tracking-wider text-gold">{t("Programs", "البرامج")}</h4>
+            <div className="flex flex-col gap-3 text-sm text-primary-foreground/60">
               <span>{t("Arabic Language", "اللغة العربية")}</span>
               <span>{t("Tajweed", "التجويد")}</span>
               <span>{t("Quran Memorization", "حفظ القرآن")}</span>
@@ -43,21 +46,22 @@ const Footer = () => {
           </div>
 
           <div>
-            <h4 className="mb-3 font-semibold">{t("Contact", "اتصل بنا")}</h4>
-            <div className="flex flex-col gap-2 text-sm text-muted-foreground">
-              <div className="flex items-center gap-2">
-                <Mail className="h-4 w-4" />
+            <h4 className="mb-4 text-sm font-semibold uppercase tracking-wider text-gold">{t("Contact", "اتصل بنا")}</h4>
+            <div className="flex flex-col gap-3 text-sm text-primary-foreground/60">
+              <a href="mailto:Tahleemacademy09@gmail.com" className="flex items-center gap-2 transition-colors hover:text-gold">
+                <Mail className="h-4 w-4 text-gold/60" />
                 <span>Tahleemacademy09@gmail.com</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Phone className="h-4 w-4" />
+              </a>
+              <a href="tel:+2348163310471" className="flex items-center gap-2 transition-colors hover:text-gold">
+                <Phone className="h-4 w-4 text-gold/60" />
                 <span>+2348163310471</span>
-              </div>
+              </a>
             </div>
           </div>
         </div>
 
-        <div className="mt-8 border-t pt-6 text-center text-sm text-muted-foreground">
+        <div className="gold-divider mt-10 mb-6 opacity-20" />
+        <div className="text-center text-sm text-primary-foreground/40">
           © {new Date().getFullYear()} {t("Tahleem Academy. All rights reserved.", "أكاديمية تعليم. جميع الحقوق محفوظة.")}
         </div>
       </div>
