@@ -77,6 +77,7 @@ const StudentExams = () => {
       return;
     }
 
+    // Check for existing in-progress attempt
     const { data: existing } = await supabase
       .from("exam_attempts")
       .select("id")
@@ -100,17 +101,8 @@ const StudentExams = () => {
       return;
     }
 
-    const { data, error } = await supabase
-      .from("exam_attempts")
-      .insert({ exam_id: examId, user_id: user!.id })
-      .select("id")
-      .single();
-
-    if (error) {
-      toast({ title: t("Error", "خطأ"), description: error.message, variant: "destructive" });
-      return;
-    }
-    if (data) navigate(`/student/exam/${data.id}`);
+    // Navigate to pre-exam verification page (attempt created there after checks pass)
+    navigate(`/student/exam-verify/${examId}`);
   };
 
   const getExamStatus = (exam: any) => {
