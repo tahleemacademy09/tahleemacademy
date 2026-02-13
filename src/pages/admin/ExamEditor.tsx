@@ -59,6 +59,16 @@ const questionTypes = [
   { value: "audio", label: "Audio / Dictation", label_ar: "صوت / إملاء", icon: "🎧" },
 ];
 
+// Convert a Date to local datetime-local input format (YYYY-MM-DDTHH:MM)
+const toLocalDatetimeString = (date: Date): string => {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  const h = String(date.getHours()).padStart(2, "0");
+  const min = String(date.getMinutes()).padStart(2, "0");
+  return `${y}-${m}-${d}T${h}:${min}`;
+};
+
 const ExamEditor = () => {
   const { examId } = useParams<{ examId: string }>();
   const isEdit = !!examId;
@@ -103,8 +113,8 @@ const ExamEditor = () => {
           allow_review: exam.allow_review ?? true,
           display_mode: exam.display_mode || "one_at_a_time",
           guidelines: exam.guidelines || "", guidelines_ar: exam.guidelines_ar || "",
-          start_date: exam.start_date ? new Date(exam.start_date).toISOString().slice(0, 16) : "",
-          end_date: exam.end_date ? new Date(exam.end_date).toISOString().slice(0, 16) : "",
+          start_date: exam.start_date ? toLocalDatetimeString(new Date(exam.start_date)) : "",
+          end_date: exam.end_date ? toLocalDatetimeString(new Date(exam.end_date)) : "",
           proctoring_enabled: (exam as any).proctoring_enabled || false,
           fullscreen_required: (exam as any).fullscreen_required || false,
           tab_switch_limit: (exam as any).tab_switch_limit || 3,
@@ -146,16 +156,16 @@ const ExamEditor = () => {
       if (isEdit) {
         const { error } = await supabase.from("exams").update({
           ...examForm,
-          start_date: examForm.start_date || null,
-          end_date: examForm.end_date || null,
+          start_date: examForm.start_date ? new Date(examForm.start_date).toISOString() : null,
+          end_date: examForm.end_date ? new Date(examForm.end_date).toISOString() : null,
         }).eq("id", examId);
         if (error) throw error;
       } else {
         const { data, error } = await supabase.from("exams").insert({
           ...examForm,
           created_by: user!.id,
-          start_date: examForm.start_date || null,
-          end_date: examForm.end_date || null,
+          start_date: examForm.start_date ? new Date(examForm.start_date).toISOString() : null,
+          end_date: examForm.end_date ? new Date(examForm.end_date).toISOString() : null,
         }).select("id").single();
         if (error) throw error;
         eid = data?.id;
@@ -490,10 +500,30 @@ fill_blank,"The word for 'water' is ___.","كلمة 'ماء' هي ___.",,,,,مَ
               </div>
               <p className="text-sm text-muted-foreground">
                 {t(
-                  "Set the window during which students can take this exam. Leave blank for no restrictions.",
-                  "حدد النافذة الزمنية التي يمكن للطلاب فيها أداء هذا الامتحان. اتركها فارغة بدون قيود."
+                  "Set the window during which students can take this exam. Leave blank for no restrictions. Times are in your local timezone.",
+                  "حدد النافذة الزمنية التي يمكن للطلاب فيها أداء هذا الامتحان. اتركها فارغة بدون قيود. الأوقات بتوقيتك المحلي."
                 )}
               </p>
+              {(examForm.start_date || examForm.end_date) && (
+                <div className="rounded-lg border bg-accent/30 p-3 text-sm space-y-1">
+                  <p className="font-medium text-xs text-muted-foreground">{t("Student visibility preview:", "معاينة ظهور الامتحان للطلاب:")}</p>
+                  {examForm.start_date && (
+                    <p>✅ {t("Opens", "يفتح")}: <strong>{new Date(examForm.start_date).toLocaleString()}</strong> ({t("your local time", "توقيتك المحلي")})</p>
+                  )}
+                  {examForm.end_date && (
+                    <p>🔒 {t("Closes", "يغلق")}: <strong>{new Date(examForm.end_date).toLocaleString()}</strong></p>
+                  )}
+                  {examForm.start_date && new Date(examForm.start_date).getTime() > Date.now() && (
+                    <p className="text-xs text-muted-foreground">{t("⏳ Exam is not yet open for students", "⏳ الامتحان لم يفتح للطلاب بعد")}</p>
+                  )}
+                  {examForm.start_date && examForm.end_date && new Date(examForm.start_date).getTime() <= Date.now() && new Date(examForm.end_date).getTime() >= Date.now() && (
+                    <p className="text-xs text-primary font-medium">{t("🟢 Exam is currently open for students", "🟢 الامتحان مفتوح حاليًا للطلاب")}</p>
+                  )}
+                  {examForm.end_date && new Date(examForm.end_date).getTime() < Date.now() && (
+                    <p className="text-xs text-destructive font-medium">{t("🔴 Exam window has passed", "🔴 انتهت فترة الامتحان")}</p>
+                  )}
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
