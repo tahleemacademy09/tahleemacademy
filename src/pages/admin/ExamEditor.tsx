@@ -227,6 +227,39 @@ const ExamEditor = () => {
     setUploadingMedia(null);
   };
 
+  // Parse CSV line handling quoted fields (supports commas and Arabic inside quotes)
+  const parseCSVLine = (line: string): string[] => {
+    const result: string[] = [];
+    let current = "";
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (inQuotes) {
+        if (ch === '"') {
+          if (i + 1 < line.length && line[i + 1] === '"') {
+            current += '"';
+            i++; // skip escaped quote
+          } else {
+            inQuotes = false;
+          }
+        } else {
+          current += ch;
+        }
+      } else {
+        if (ch === '"') {
+          inQuotes = true;
+        } else if (ch === ',') {
+          result.push(current.trim());
+          current = "";
+        } else {
+          current += ch;
+        }
+      }
+    }
+    result.push(current.trim());
+    return result;
+  };
+
   // Bulk question import
   const handleBulkImport = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -241,11 +274,11 @@ const ExamEditor = () => {
         if (file.name.endsWith(".json")) {
           imported = JSON.parse(text);
         } else {
-          // CSV parsing
+          // CSV parsing with proper quoted field handling
           const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
-          const headers = lines[0].split(",").map(h => h.trim().replace(/^"|"$/g, ""));
+          const headers = parseCSVLine(lines[0]);
           imported = lines.slice(1).map(line => {
-            const vals = line.split(",").map(v => v.trim().replace(/^"|"$/g, ""));
+            const vals = parseCSVLine(line);
             const obj: any = {};
             headers.forEach((h, i) => { obj[h] = vals[i] || ""; });
             return obj;
@@ -285,11 +318,12 @@ const ExamEditor = () => {
 
         setQuestions(prev => [...prev, ...newQuestions]);
         toast({ title: t(`✅ Imported ${newQuestions.length} questions!`, `✅ تم استيراد ${newQuestions.length} سؤال!`) });
-      } catch (err) {
-        toast({ title: t("Import failed", "فشل الاستيراد"), description: t("Invalid file format", "تنسيق الملف غير صالح"), variant: "destructive" });
+      } catch (err: any) {
+        console.error("Bulk import error:", err);
+        toast({ title: t("Import failed", "فشل الاستيراد"), description: err.message || t("Invalid file format", "تنسيق الملف غير صالح"), variant: "destructive" });
       }
     };
-    reader.readAsText(file);
+    reader.readAsText(file, "UTF-8");
     e.target.value = "";
   };
 
@@ -338,11 +372,12 @@ const ExamEditor = () => {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a"); a.href = url; a.download = "questions_template.json"; a.click();
     } else {
-      const csv = `question_type,question_text,question_text_ar,option_a,option_b,option_c,option_d,correct_answer,points,difficulty,explanation,explanation_ar
-mcq,"What is 'book' in Arabic?","ما هي كلمة 'كتاب' بالعربية؟","كِتَاب","قَلَم","بَاب","مَاء",a,1,easy,"كِتَاب means book",""
-true_false,"Arabic is written right to left.","العربية تُكتب من اليمين لليسار.",,,,,true,1,easy,"",""
-fill_blank,"The word for 'water' is ___.","كلمة 'ماء' هي ___.",,,,,مَاء,2,medium,"",""`;
-      const blob = new Blob([csv], { type: "text/csv" });
+      const csv = `question_type,question_text,question_text_ar,option_a,option_a_ar,option_b,option_b_ar,option_c,option_c_ar,option_d,option_d_ar,correct_answer,points,difficulty,explanation,explanation_ar
+mcq,"What is 'book' in Arabic?","ما هي كلمة 'كتاب' بالعربية؟","كِتَاب","كِتَاب","قَلَم","قَلَم","بَاب","بَاب","مَاء","مَاء",a,1,easy,"كِتَاب means book","كِتَاب تعني كتاب"
+true_false,"Arabic is written right to left.","العربية تُكتب من اليمين لليسار.",,,,,,,,,,true,1,easy,"",""
+fill_blank,"The word for 'water' is ___.","كلمة 'ماء' هي ___.",,,,,,,,,,مَاء,2,medium,"",""`;
+      const bom = "\uFEFF"; // UTF-8 BOM for Excel Arabic support
+      const blob = new Blob([bom + csv], { type: "text/csv;charset=utf-8" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a"); a.href = url; a.download = "questions_template.csv"; a.click();
     }
