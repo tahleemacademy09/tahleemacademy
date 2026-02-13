@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from "react";
+import * as XLSX from "xlsx";
 import { useParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -260,70 +261,150 @@ const ExamEditor = () => {
     return result;
   };
 
+  // Map the QuestionType string from XLSX to our internal type
+  const mapQuestionType = (raw: string): string => {
+    if (!raw) return "mcq";
+    const lower = raw.toLowerCase().trim();
+    if (lower.includes("multiple choice") || lower.includes("radiobutton") || lower.includes("dropdown")) return "mcq";
+    if (lower.includes("multiple correct") || lower.includes("all correct")) return "mcq";
+    if (lower.includes("true") || lower.includes("false") || lower.includes("yes/no")) return "true_false";
+    if (lower.includes("fill in") || lower.includes("fill_blank")) return "fill_blank";
+    if (lower.includes("essay")) return "essay";
+    if (lower.includes("audio")) return "audio";
+    if (lower.includes("short") || lower.includes("matching") || lower.includes("drag")) return "short_answer";
+    return "mcq";
+  };
+
+  // Map DifficultyLevel number to string
+  const mapDifficulty = (raw: any): string => {
+    const val = String(raw).trim();
+    if (val === "1") return "easy";
+    if (val === "2") return "medium";
+    if (val === "3") return "hard";
+    if (["easy", "medium", "hard"].includes(val)) return val;
+    return "medium";
+  };
+
+  // Convert XLSX row (Question.xlsx format) to QuestionForm
+  const mapXlsxRow = (item: any, index: number): QuestionForm => {
+    const q = emptyQuestion();
+    // Map question type from XLSX column names
+    const qType = item["QuestionType"] || item["question_type"] || item["type"] || "";
+    q.question_type = mapQuestionType(qType);
+    q.question_text = item["Question"] || item["question_text"] || item["question"] || "";
+    q.question_text_ar = item["Question_ar"] || item["question_text_ar"] || item["question_ar"] || "";
+    q.explanation = item["Explanation"] || item["explanation"] || "";
+    q.explanation_ar = item["Explanation_ar"] || item["explanation_ar"] || "";
+    q.points = Number(item["Marks"] || item["points"] || 1) || 1;
+    q.difficulty = mapDifficulty(item["DifficultyLevel"] || item["difficulty"]);
+    q.sort_order = index;
+
+    // Collect answers from Answer1..Answer8 columns
+    const answers: string[] = [];
+    for (let i = 1; i <= 8; i++) {
+      const val = item[`Answer${i}`] || item[`answer${i}`] || "";
+      if (String(val).trim()) answers.push(String(val).trim());
+    }
+
+    // Parse correct answer index(es) — "1" means Answer1, "1, 3" means multiple
+    const correctRaw = String(item["correctanswer"] || item["correct_answer"] || item["answer"] || "").trim();
+
+    if (q.question_type === "mcq" && answers.length > 0) {
+      const opts = answers.map((text, ai) => ({
+        id: String.fromCharCode(97 + ai), // a, b, c, d...
+        text,
+        text_ar: item[`Answer${ai + 1}_ar`] || "",
+        is_correct: false,
+      }));
+      // Mark correct answers
+      const correctIndices = correctRaw.split(",").map(s => parseInt(s.trim())).filter(n => !isNaN(n));
+      correctIndices.forEach(ci => {
+        if (ci >= 1 && ci <= opts.length) opts[ci - 1].is_correct = true;
+      });
+      q.options = opts;
+      // Set correct_answer letter for first correct
+      const firstCorrect = opts.findIndex(o => o.is_correct);
+      q.correct_answer = firstCorrect >= 0 ? opts[firstCorrect].id : "";
+    } else if (q.question_type === "true_false") {
+      // Answer1 = TRUE, Answer2 = FALSE; correctanswer = 1 means TRUE
+      const ci = parseInt(correctRaw);
+      if (ci === 1) q.correct_answer = "true";
+      else if (ci === 2) q.correct_answer = "false";
+      else q.correct_answer = correctRaw.toLowerCase();
+    } else if (q.question_type === "fill_blank" || q.question_type === "short_answer") {
+      // For fill in the blank, Answer1 is the correct answer
+      q.correct_answer = answers[0] || correctRaw || "";
+    }
+
+    return q;
+  };
+
   // Bulk question import
   const handleBulkImport = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      try {
-        const text = ev.target?.result as string;
-        let imported: any[];
+    const isExcel = file.name.match(/\.xlsx?$/i);
 
-        if (file.name.endsWith(".json")) {
-          imported = JSON.parse(text);
-        } else {
-          // CSV parsing with proper quoted field handling
-          const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
-          const headers = parseCSVLine(lines[0]);
-          imported = lines.slice(1).map(line => {
-            const vals = parseCSVLine(line);
-            const obj: any = {};
-            headers.forEach((h, i) => { obj[h] = vals[i] || ""; });
-            return obj;
-          });
-        }
+    if (isExcel) {
+      // XLSX import using SheetJS
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        try {
+          const data = new Uint8Array(ev.target?.result as ArrayBuffer);
+          const workbook = XLSX.read(data, { type: "array" });
+          const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+          const rows: any[] = XLSX.utils.sheet_to_json(firstSheet, { defval: "" });
 
-        const newQuestions: QuestionForm[] = imported.map((item: any, i: number) => {
-          const q = emptyQuestion();
-          q.question_type = item.question_type || item.type || "mcq";
-          q.question_text = item.question_text || item.question || "";
-          q.question_text_ar = item.question_text_ar || item.question_ar || "";
-          q.correct_answer = item.correct_answer || item.answer || "";
-          q.points = Number(item.points) || 1;
-          q.difficulty = item.difficulty || "medium";
-          q.sort_order = questions.length + i;
-          q.explanation = item.explanation || "";
-          q.explanation_ar = item.explanation_ar || "";
+          // Filter out empty rows (no Question text)
+          const validRows = rows.filter(r => r["Question"] || r["question_text"] || r["question"]);
+          const newQuestions = validRows.map((row, i) => mapXlsxRow(row, questions.length + i));
 
-          // Parse MCQ options
-          if (q.question_type === "mcq") {
-            const opts = [];
-            for (const key of ["a", "b", "c", "d"]) {
-              if (item[`option_${key}`] || item[key]) {
-                opts.push({
-                  id: key,
-                  text: item[`option_${key}`] || item[key] || "",
-                  text_ar: item[`option_${key}_ar`] || "",
-                  is_correct: q.correct_answer.toLowerCase() === key,
-                });
-              }
-            }
-            if (opts.length > 0) q.options = opts;
+          if (newQuestions.length === 0) {
+            toast({ title: t("No questions found", "لم يتم العثور على أسئلة"), description: t("Make sure your file has a 'Question' column", "تأكد أن الملف يحتوي على عمود 'Question'"), variant: "destructive" });
+            return;
           }
 
-          return q;
-        });
+          setQuestions(prev => [...prev, ...newQuestions]);
+          toast({ title: t(`✅ Imported ${newQuestions.length} questions!`, `✅ تم استيراد ${newQuestions.length} سؤال!`) });
+        } catch (err: any) {
+          console.error("XLSX import error:", err);
+          toast({ title: t("Import failed", "فشل الاستيراد"), description: err.message, variant: "destructive" });
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    } else {
+      // CSV / JSON import
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        try {
+          const text = ev.target?.result as string;
+          let imported: any[];
 
-        setQuestions(prev => [...prev, ...newQuestions]);
-        toast({ title: t(`✅ Imported ${newQuestions.length} questions!`, `✅ تم استيراد ${newQuestions.length} سؤال!`) });
-      } catch (err: any) {
-        console.error("Bulk import error:", err);
-        toast({ title: t("Import failed", "فشل الاستيراد"), description: err.message || t("Invalid file format", "تنسيق الملف غير صالح"), variant: "destructive" });
-      }
-    };
-    reader.readAsText(file, "UTF-8");
+          if (file.name.endsWith(".json")) {
+            imported = JSON.parse(text);
+          } else {
+            const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
+            const headers = parseCSVLine(lines[0]);
+            imported = lines.slice(1).map(line => {
+              const vals = parseCSVLine(line);
+              const obj: any = {};
+              headers.forEach((h, i) => { obj[h] = vals[i] || ""; });
+              return obj;
+            });
+          }
+
+          const newQuestions: QuestionForm[] = imported.map((item: any, i: number) => mapXlsxRow(item, questions.length + i));
+
+          setQuestions(prev => [...prev, ...newQuestions]);
+          toast({ title: t(`✅ Imported ${newQuestions.length} questions!`, `✅ تم استيراد ${newQuestions.length} سؤال!`) });
+        } catch (err: any) {
+          console.error("Bulk import error:", err);
+          toast({ title: t("Import failed", "فشل الاستيراد"), description: err.message || t("Invalid file format", "تنسيق الملف غير صالح"), variant: "destructive" });
+        }
+      };
+      reader.readAsText(file, "UTF-8");
+    }
     e.target.value = "";
   };
 
@@ -570,7 +651,7 @@ fill_blank,"The word for 'water' is ___.","كلمة 'ماء' هي ___.",,,,,,,,,
               <h2 className="text-xl font-semibold">{t("Questions", "الأسئلة")} ({questions.length})</h2>
               <div className="flex items-center gap-2 flex-wrap">
                 {/* Bulk import */}
-                <input ref={bulkFileInputRef} type="file" accept=".csv,.json" className="hidden" onChange={handleBulkImport} />
+                <input ref={bulkFileInputRef} type="file" accept=".csv,.json,.xlsx,.xls" className="hidden" onChange={handleBulkImport} />
                 <Dialog>
                   <DialogTrigger asChild>
                     <Button variant="outline" size="sm" className="gap-1">
@@ -584,8 +665,8 @@ fill_blank,"The word for 'water' is ___.","كلمة 'ماء' هي ___.",,,,,,,,,
                     <div className="space-y-4">
                       <p className="text-sm text-muted-foreground">
                         {t(
-                          "Download a template, fill in your questions, then upload the file. Supports CSV and JSON formats.",
-                          "قم بتنزيل قالب، ثم املأ أسئلتك وارفع الملف. يدعم صيغ CSV و JSON."
+                          "Upload your questions file. Supports Excel (.xlsx), CSV, and JSON formats. Use the exact column format: QuestionType, Question, Answer1-Answer8, correctanswer, Marks, DifficultyLevel, Explanation, Tags.",
+                          "ارفع ملف الأسئلة. يدعم صيغ Excel (.xlsx) و CSV و JSON. استخدم تنسيق الأعمدة: QuestionType, Question, Answer1-Answer8, correctanswer, Marks, DifficultyLevel, Explanation, Tags."
                         )}
                       </p>
                       <div className="flex gap-2">
