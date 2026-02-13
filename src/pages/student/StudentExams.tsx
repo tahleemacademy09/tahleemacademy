@@ -113,9 +113,9 @@ const StudentExams = () => {
     if (hasInProgress) return "in_progress";
     if (completedCount >= maxAttempts) return "exhausted";
 
-    const now = new Date();
-    if (exam.start_date && new Date(exam.start_date) > now) return "not_started";
-    if (exam.end_date && new Date(exam.end_date) < now) return "expired";
+    const nowMs = Date.now();
+    if (exam.start_date && new Date(exam.start_date).getTime() > nowMs) return "not_started";
+    if (exam.end_date && new Date(exam.end_date).getTime() < nowMs) return "expired";
 
     return "available";
   };
@@ -196,16 +196,26 @@ const StudentExams = () => {
             </Button>
           )}
           {status === "not_started" && (
-            <Button size="sm" disabled className="w-full" variant="outline">
-              <Clock className="mr-2 h-4 w-4" />
-              {t("Not started yet", "لم يبدأ بعد")}
-            </Button>
+            <div>
+              <Button size="sm" disabled className="w-full" variant="outline">
+                <Clock className="mr-2 h-4 w-4" />
+                {t("Not started yet", "لم يبدأ بعد")}
+              </Button>
+              <p className="text-xs text-muted-foreground mt-1.5 text-center">
+                {t("Opens", "يفتح")}: {new Date(exam.start_date).toLocaleString()}
+              </p>
+            </div>
           )}
           {status === "expired" && (
-            <Button size="sm" disabled className="w-full" variant="outline">
-              <XCircle className="mr-2 h-4 w-4" />
-              {t("Expired", "منتهي")}
-            </Button>
+            <div>
+              <Button size="sm" disabled className="w-full" variant="outline">
+                <XCircle className="mr-2 h-4 w-4" />
+                {t("Expired", "منتهي")}
+              </Button>
+              <p className="text-xs text-muted-foreground mt-1.5 text-center">
+                {t("Closed", "أغلق")}: {new Date(exam.end_date).toLocaleString()}
+              </p>
+            </div>
           )}
         </CardContent>
       </Card>
