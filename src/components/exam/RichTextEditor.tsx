@@ -1,4 +1,4 @@
-import { useRef, useCallback } from "react";
+import { useRef, useCallback, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -29,13 +29,22 @@ interface RichTextEditorProps {
 
 const RichTextEditor = ({ value, onChange, placeholder, dir, className }: RichTextEditorProps) => {
   const editorRef = useRef<HTMLDivElement>(null);
+  const internalValue = useRef(value);
 
-  const execCommand = useCallback((command: string, value?: string) => {
-    document.execCommand(command, false, value);
+  // Only set innerHTML when value changes externally (not from user typing)
+  useEffect(() => {
+    if (editorRef.current && value !== internalValue.current) {
+      internalValue.current = value;
+      editorRef.current.innerHTML = value;
+    }
+  }, [value]);
+
+  const execCommand = useCallback((command: string, val?: string) => {
+    document.execCommand(command, false, val);
     editorRef.current?.focus();
-    // Trigger onChange after command
     setTimeout(() => {
       if (editorRef.current) {
+        internalValue.current = editorRef.current.innerHTML;
         onChange(editorRef.current.innerHTML);
       }
     }, 0);
@@ -43,6 +52,7 @@ const RichTextEditor = ({ value, onChange, placeholder, dir, className }: RichTe
 
   const handleInput = useCallback(() => {
     if (editorRef.current) {
+      internalValue.current = editorRef.current.innerHTML;
       onChange(editorRef.current.innerHTML);
     }
   }, [onChange]);
@@ -129,12 +139,11 @@ const RichTextEditor = ({ value, onChange, placeholder, dir, className }: RichTe
       <div
         ref={editorRef}
         contentEditable
-        dir={dir}
+        dir={dir || "ltr"}
         className="min-h-[100px] px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ring-offset-background rounded-b-md [&:empty]:before:content-[attr(data-placeholder)] [&:empty]:before:text-muted-foreground"
         data-placeholder={placeholder || "Type here..."}
         onInput={handleInput}
         onPaste={handlePaste}
-        dangerouslySetInnerHTML={{ __html: value }}
         suppressContentEditableWarning
       />
     </div>
