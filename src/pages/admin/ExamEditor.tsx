@@ -55,6 +55,7 @@ const emptyQuestion = (): QuestionForm => ({
 
 const questionTypes = [
   { value: "mcq", label: "Multiple Choice", label_ar: "اختيار من متعدد", icon: "📝" },
+  { value: "image_mcq", label: "Image Choice", label_ar: "اختيار بالصور", icon: "🖼️" },
   { value: "true_false", label: "True / False", label_ar: "صح / خطأ", icon: "✓✗" },
   { value: "short_answer", label: "Short Answer", label_ar: "إجابة قصيرة", icon: "📝" },
   { value: "essay", label: "Essay", label_ar: "مقال", icon: "📄" },
@@ -182,7 +183,7 @@ const ExamEditor = () => {
           question_type: q.question_type,
           question_text: q.question_text,
           question_text_ar: q.question_text_ar || null,
-          options: q.question_type === "mcq" ? q.options : null,
+          options: (q.question_type === "mcq" || q.question_type === "image_mcq") ? q.options : null,
           correct_answer: q.correct_answer || null,
           points: q.points,
           difficulty: q.difficulty,
@@ -229,6 +230,29 @@ const ExamEditor = () => {
     updateQuestion(questionIdx, { media_url: urlData.publicUrl });
     toast({ title: t("✅ File uploaded!", "✅ تم رفع الملف!") });
     setUploadingMedia(null);
+  };
+
+  // Upload image for an MCQ/image_mcq option
+  const [uploadingOptionImage, setUploadingOptionImage] = useState<string | null>(null);
+  const uploadOptionImage = async (file: File, questionIdx: number, optionIdx: number) => {
+    const key = `${questionIdx}-${optionIdx}`;
+    setUploadingOptionImage(key);
+    const ext = file.name.split(".").pop();
+    const path = `questions/options/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+
+    const { data, error } = await supabase.storage.from("exam-media").upload(path, file);
+    if (error) {
+      toast({ title: t("Upload failed", "فشل الرفع"), description: error.message, variant: "destructive" });
+      setUploadingOptionImage(null);
+      return;
+    }
+
+    const { data: urlData } = supabase.storage.from("exam-media").getPublicUrl(path);
+    const newOpts = [...questions[questionIdx].options];
+    newOpts[optionIdx] = { ...newOpts[optionIdx], image_url: urlData.publicUrl };
+    updateQuestion(questionIdx, { options: newOpts });
+    toast({ title: t("✅ Image uploaded!", "✅ تم رفع الصورة!") });
+    setUploadingOptionImage(null);
   };
 
   // Parse CSV line handling quoted fields (supports commas and Arabic inside quotes)
@@ -800,11 +824,11 @@ fill_blank,"The word for 'water' is ___.","كلمة 'ماء' هي ___.",,,,,,,,,
                       )}
                     </div>
 
-                    {/* MCQ options */}
-                    {q.question_type === "mcq" && (
+                    {/* MCQ / Image Choice options */}
+                    {(q.question_type === "mcq" || q.question_type === "image_mcq") && (
                       <div className="space-y-2">
                         {q.options.map((opt: any, oi: number) => (
-                          <div key={opt.id} className="flex items-center gap-2">
+                          <div key={opt.id} className="flex items-start gap-2 rounded-lg border p-2">
                             <input
                               type="radio"
                               name={`correct-${idx}`}
@@ -813,29 +837,72 @@ fill_blank,"The word for 'water' is ___.","كلمة 'ماء' هي ___.",,,,,,,,,
                                 const newOpts = q.options.map((o: any, j: number) => ({ ...o, is_correct: j === oi }));
                                 updateQuestion(idx, { options: newOpts });
                               }}
-                              className="accent-primary"
+                              className="accent-primary mt-2.5"
                             />
-                            <Input
-                              className="flex-1"
-                              placeholder={`${t("Option", "خيار")} ${String.fromCharCode(65 + oi)}`}
-                              value={opt.text}
-                              onChange={(e) => {
-                                const newOpts = [...q.options];
-                                newOpts[oi] = { ...newOpts[oi], text: e.target.value };
-                                updateQuestion(idx, { options: newOpts });
-                              }}
-                            />
-                            <Input
-                              className="flex-1"
-                              placeholder={`${t("Option", "خيار")} ${String.fromCharCode(65 + oi)} (${t("Arabic", "عربي")})`}
-                              value={opt.text_ar}
-                              dir="rtl"
-                              onChange={(e) => {
-                                const newOpts = [...q.options];
-                                newOpts[oi] = { ...newOpts[oi], text_ar: e.target.value };
-                                updateQuestion(idx, { options: newOpts });
-                              }}
-                            />
+                            <div className="flex-1 space-y-2">
+                              <div className="flex items-center gap-2">
+                                <Input
+                                  className="flex-1"
+                                  placeholder={`${t("Option", "خيار")} ${String.fromCharCode(65 + oi)}`}
+                                  value={opt.text}
+                                  onChange={(e) => {
+                                    const newOpts = [...q.options];
+                                    newOpts[oi] = { ...newOpts[oi], text: e.target.value };
+                                    updateQuestion(idx, { options: newOpts });
+                                  }}
+                                />
+                                <Input
+                                  className="flex-1"
+                                  placeholder={`${t("Option", "خيار")} ${String.fromCharCode(65 + oi)} (${t("Arabic", "عربي")})`}
+                                  value={opt.text_ar}
+                                  dir="rtl"
+                                  onChange={(e) => {
+                                    const newOpts = [...q.options];
+                                    newOpts[oi] = { ...newOpts[oi], text_ar: e.target.value };
+                                    updateQuestion(idx, { options: newOpts });
+                                  }}
+                                />
+                              </div>
+                              {/* Option image */}
+                              <div className="flex items-center gap-2">
+                                {opt.image_url ? (
+                                  <div className="flex items-center gap-2">
+                                    <img src={opt.image_url} alt={`Option ${String.fromCharCode(65 + oi)}`} className="h-16 w-16 object-cover rounded-md border" />
+                                    <Button variant="ghost" size="sm" className="text-destructive text-xs" onClick={() => {
+                                      const newOpts = [...q.options];
+                                      newOpts[oi] = { ...newOpts[oi], image_url: "" };
+                                      updateQuestion(idx, { options: newOpts });
+                                    }}>
+                                      {t("Remove", "إزالة")}
+                                    </Button>
+                                  </div>
+                                ) : (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="gap-1 text-xs"
+                                    disabled={uploadingOptionImage === `${idx}-${oi}`}
+                                    onClick={() => {
+                                      const input = document.createElement("input");
+                                      input.type = "file";
+                                      input.accept = "image/*";
+                                      input.onchange = (e: any) => {
+                                        const file = e.target.files?.[0];
+                                        if (file) uploadOptionImage(file, idx, oi);
+                                      };
+                                      input.click();
+                                    }}
+                                  >
+                                    {uploadingOptionImage === `${idx}-${oi}` ? (
+                                      <Loader2 className="h-3 w-3 animate-spin" />
+                                    ) : (
+                                      <Image className="h-3 w-3" />
+                                    )}
+                                    {t("Add Image", "إضافة صورة")}
+                                  </Button>
+                                )}
+                              </div>
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -938,9 +1005,9 @@ fill_blank,"The word for 'water' is ___.","كلمة 'ماء' هي ___.",,,,,,,,,
                       </div>
                     )}
 
-                    {/* MCQ options preview */}
-                    {q.question_type === "mcq" && (
-                      <div className="space-y-1.5 mt-2">
+                    {/* MCQ / Image Choice options preview */}
+                    {(q.question_type === "mcq" || q.question_type === "image_mcq") && (
+                      <div className={q.question_type === "image_mcq" ? "grid grid-cols-2 gap-2 mt-2" : "space-y-1.5 mt-2"}>
                         {q.options.map((opt: any, oi: number) => (
                           <div
                             key={opt.id}
@@ -950,8 +1017,13 @@ fill_blank,"The word for 'water' is ___.","كلمة 'ماء' هي ___.",,,,,,,,,
                             )}
                           >
                             <span className="font-mono text-xs w-5">{String.fromCharCode(65 + oi)}.</span>
-                            <span>{opt.text}</span>
-                            {opt.text_ar && <span className="text-muted-foreground ml-auto" dir="rtl">{opt.text_ar}</span>}
+                            <div className="flex-1">
+                              {opt.image_url && (
+                                <img src={opt.image_url} alt={`Option ${String.fromCharCode(65 + oi)}`} className="h-20 w-full object-contain rounded mb-1" />
+                              )}
+                              {opt.text && <span>{opt.text}</span>}
+                              {opt.text_ar && <span className="text-muted-foreground ml-2" dir="rtl">{opt.text_ar}</span>}
+                            </div>
                             {opt.is_correct && <Badge className="ml-2 text-xs" variant="default">✓</Badge>}
                           </div>
                         ))}
