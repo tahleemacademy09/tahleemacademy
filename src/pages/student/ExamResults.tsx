@@ -136,7 +136,7 @@ const ExamResults = () => {
                   {/* Student's Answer */}
                   <div className="rounded-lg bg-muted p-3 mb-2">
                     <p className="text-xs font-medium mb-1">{t("Your Answer", "إجابتك")}:</p>
-                    {q.question_type === "mcq" && q.options ? (
+                    {(q.question_type === "mcq" || q.question_type === "image_mcq") && q.options ? (
                       <p className="text-sm">
                         {(() => {
                           const opt = (q.options as any[]).find((o: any) => o.id === ans?.answer_text);
@@ -153,7 +153,7 @@ const ExamResults = () => {
                   {/* Correct Answer (only after grading) */}
                   {isGraded && exam.show_results_immediately !== false && (
                     <>
-                      {q.question_type === "mcq" && q.options && (
+                      {(q.question_type === "mcq" || q.question_type === "image_mcq") && q.options && (
                         <p className="text-xs text-emerald-500">
                           {t("Correct", "صحيح")}: {(q.options as any[]).filter((o: any) => o.is_correct).map((o: any) => language === "ar" ? o.text_ar || o.text : o.text).join(", ")}
                         </p>

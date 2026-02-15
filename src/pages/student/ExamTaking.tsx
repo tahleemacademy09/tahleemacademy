@@ -280,7 +280,7 @@ const ExamTaking = () => {
       let isCorrect: boolean | null = null;
       let pts = 0;
 
-      if (q.question_type === "mcq" && q.options) {
+      if ((q.question_type === "mcq" || q.question_type === "image_mcq") && q.options) {
         const correctOpts = (q.options as any[]).filter((o: any) => o.is_correct).map((o: any) => o.id);
         isCorrect = correctOpts.length === 1 && ans.text === correctOpts[0];
         pts = isCorrect ? (q.points || 1) : 0;
@@ -667,26 +667,31 @@ const ExamTaking = () => {
                   </div>
 
                   {/* Answer input */}
-                  {q?.question_type === "mcq" && q.options && (
+                  {(q?.question_type === "mcq" || q?.question_type === "image_mcq") && q.options && (
                     <RadioGroup value={answers[q.id]?.text || ""} onValueChange={(v) => setAnswer(q.id, v)}>
-                      <div className="space-y-2">
+                      <div className={q.question_type === "image_mcq" ? "grid grid-cols-2 gap-3" : "space-y-2"}>
                         {(q.options as any[]).map((opt: any, idx: number) => {
                           const isSelected = answers[q.id]?.text === opt.id;
                           return (
                             <div
                               key={opt.id}
-                              className={`flex items-center gap-3 rounded-xl border-2 p-3 cursor-pointer transition-all ${
+                              className={`flex ${q.question_type === "image_mcq" ? "flex-col" : "flex-row"} items-center gap-3 rounded-xl border-2 p-3 cursor-pointer transition-all ${
                                 isSelected ? "border-primary bg-primary/5 shadow-sm" : "border-border hover:border-primary/30 hover:bg-accent/50"
                               }`}
                               onClick={() => setAnswer(q.id, opt.id)}
                             >
-                              <RadioGroupItem value={opt.id} id={opt.id} />
-                              <Label htmlFor={opt.id} className="cursor-pointer flex-1 text-sm">
-                                <span className="mr-2 inline-flex h-5 w-5 items-center justify-center rounded-full bg-muted text-xs font-bold">
-                                  {String.fromCharCode(65 + idx)}
-                                </span>
-                                {language === "ar" ? opt.text_ar || opt.text : opt.text}
-                              </Label>
+                              {opt.image_url && (
+                                <img src={opt.image_url} alt={`Option ${String.fromCharCode(65 + idx)}`} className="h-24 w-full object-contain rounded-lg" />
+                              )}
+                              <div className="flex items-center gap-2">
+                                <RadioGroupItem value={opt.id} id={`${q.id}-${opt.id}`} />
+                                <Label htmlFor={`${q.id}-${opt.id}`} className="cursor-pointer flex-1 text-sm">
+                                  <span className="mr-2 inline-flex h-5 w-5 items-center justify-center rounded-full bg-muted text-xs font-bold">
+                                    {String.fromCharCode(65 + idx)}
+                                  </span>
+                                  {language === "ar" ? opt.text_ar || opt.text : opt.text}
+                                </Label>
+                              </div>
                             </div>
                           );
                         })}

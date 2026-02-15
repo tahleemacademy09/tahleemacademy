@@ -88,7 +88,7 @@ const GradingPage = () => {
       if (!q) return ans;
       let isCorrect: boolean | null = null;
       let pts = 0;
-      if (q.question_type === "mcq" && q.options) {
+      if ((q.question_type === "mcq" || q.question_type === "image_mcq") && q.options) {
         const correctOpts = (q.options as any[]).filter((o: any) => o.is_correct).map((o: any) => o.id);
         isCorrect = correctOpts.length === 1 && ans.answer_text === correctOpts[0];
         pts = isCorrect ? (q.points || 1) : 0;
@@ -213,7 +213,7 @@ const GradingPage = () => {
                       {t("Correct Answer", "الإجابة الصحيحة")}: {q.correct_answer}
                     </p>
                   )}
-                  {q.question_type === "mcq" && q.options && (
+                  {(q.question_type === "mcq" || q.question_type === "image_mcq") && q.options && (
                     <div className="mb-2 text-xs text-emerald">
                       {t("Correct", "صحيح")}: {(q.options as any[]).filter((o: any) => o.is_correct).map((o: any) => language === "ar" ? o.text_ar || o.text : o.text).join(", ")}
                     </div>
@@ -223,7 +223,7 @@ const GradingPage = () => {
 
                   <div className="mb-3 rounded-lg bg-muted p-3">
                     <p className="text-xs font-medium mb-1">{t("Student's Answer", "إجابة الطالب")}:</p>
-                    {q.question_type === "mcq" && q.options ? (
+                    {(q.question_type === "mcq" || q.question_type === "image_mcq") && q.options ? (
                       <p className="text-sm">
                         {(() => {
                           const opt = (q.options as any[]).find((o: any) => o.id === ans?.answer_text);
