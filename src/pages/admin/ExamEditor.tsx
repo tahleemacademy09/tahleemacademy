@@ -14,8 +14,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
+import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Trash2, Save, GripVertical, Music, FileText, Calendar, Settings2, Upload, Download, Image, Loader2 } from "lucide-react";
+import { Plus, Trash2, Save, GripVertical, Music, FileText, Calendar, Settings2, Upload, Download, Image, Loader2, Eye } from "lucide-react";
+import RichTextEditor from "@/components/exam/RichTextEditor";
 
 interface QuestionForm {
   id?: string;
@@ -96,6 +98,7 @@ const ExamEditor = () => {
   const [questions, setQuestions] = useState<QuestionForm[]>([emptyQuestion()]);
   const [saving, setSaving] = useState(false);
   const [uploadingMedia, setUploadingMedia] = useState<number | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   useEffect(() => {
     if (!isEdit) return;
@@ -684,6 +687,9 @@ fill_blank,"The word for 'water' is ___.","كلمة 'ماء' هي ___.",,,,,,,,,
                   </DialogContent>
                 </Dialog>
 
+                <Button variant="outline" onClick={() => setPreviewOpen(true)} className="gap-1">
+                  <Eye className="h-4 w-4" />{t("Preview", "معاينة")}
+                </Button>
                 <Button variant="outline" onClick={addQuestion} className="gap-1">
                   <Plus className="h-4 w-4" />{t("Add Question", "إضافة سؤال")}
                 </Button>
@@ -725,8 +731,17 @@ fill_blank,"The word for 'water' is ___.","كلمة 'ماء' هي ___.",,,,,,,,,
                   </div>
 
                   <div className="space-y-3">
-                    <Input placeholder={t("Question text (English)", "نص السؤال (إنجليزي)")} value={q.question_text} onChange={(e) => updateQuestion(idx, { question_text: e.target.value })} />
-                    <Input placeholder={t("Question text (Arabic)", "نص السؤال (عربي)")} value={q.question_text_ar} onChange={(e) => updateQuestion(idx, { question_text_ar: e.target.value })} dir="rtl" />
+                    <RichTextEditor
+                      placeholder={t("Question text (English)", "نص السؤال (إنجليزي)")}
+                      value={q.question_text}
+                      onChange={(val) => updateQuestion(idx, { question_text: val })}
+                    />
+                    <RichTextEditor
+                      placeholder={t("Question text (Arabic)", "نص السؤال (عربي)")}
+                      value={q.question_text_ar}
+                      onChange={(val) => updateQuestion(idx, { question_text_ar: val })}
+                      dir="rtl"
+                    />
 
                     {/* Media upload section */}
                     <div className="rounded-lg border border-dashed border-primary/30 bg-accent/30 p-3">
@@ -871,6 +886,99 @@ fill_blank,"The word for 'water' is ___.","كلمة 'ماء' هي ___.",,,,,,,,,
           </div>
         </TabsContent>
       </Tabs>
+
+      {/* Preview Dialog */}
+      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+        <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{t("Exam Preview", "معاينة الامتحان")}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-6">
+            {examForm.title && (
+              <div className="text-center border-b pb-4">
+                <h2 className="text-2xl font-bold">{examForm.title}</h2>
+                {examForm.title_ar && <p className="text-lg text-muted-foreground mt-1" dir="rtl">{examForm.title_ar}</p>}
+                {examForm.description && <p className="text-sm text-muted-foreground mt-2">{examForm.description}</p>}
+              </div>
+            )}
+            {questions.map((q, idx) => (
+              <div key={idx} className="border rounded-lg p-4 space-y-3">
+                <div className="flex items-start gap-3">
+                  <span className="flex-shrink-0 w-8 h-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-sm font-bold">
+                    {idx + 1}
+                  </span>
+                  <div className="flex-1 space-y-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Badge variant="secondary">{questionTypes.find(t => t.value === q.question_type)?.label || q.question_type}</Badge>
+                      <Badge variant="outline">{q.points} {t("pts", "نقطة")}</Badge>
+                      <Badge variant={q.difficulty === "easy" ? "default" : q.difficulty === "hard" ? "destructive" : "secondary"}>
+                        {q.difficulty}
+                      </Badge>
+                    </div>
+                    <div
+                      className="text-base prose prose-sm max-w-none"
+                      dangerouslySetInnerHTML={{ __html: q.question_text || `<span class="text-muted-foreground italic">${t("No question text", "لا يوجد نص")}</span>` }}
+                    />
+                    {q.question_text_ar && (
+                      <div
+                        className="text-base prose prose-sm max-w-none text-muted-foreground"
+                        dir="rtl"
+                        dangerouslySetInnerHTML={{ __html: q.question_text_ar }}
+                      />
+                    )}
+
+                    {/* Media preview */}
+                    {q.media_url && (
+                      <div className="mt-2">
+                        {q.media_url.match(/\.(mp3|wav|ogg|webm|m4a)$/i) ? (
+                          <audio controls src={q.media_url} className="w-full" />
+                        ) : q.media_url.match(/\.(jpg|jpeg|png|gif|webp|svg)$/i) ? (
+                          <img src={q.media_url} alt="Question media" className="max-h-40 rounded-lg" />
+                        ) : null}
+                      </div>
+                    )}
+
+                    {/* MCQ options preview */}
+                    {q.question_type === "mcq" && (
+                      <div className="space-y-1.5 mt-2">
+                        {q.options.map((opt: any, oi: number) => (
+                          <div
+                            key={opt.id}
+                            className={cn(
+                              "flex items-center gap-2 rounded-md border px-3 py-2 text-sm",
+                              opt.is_correct ? "border-primary bg-primary/10 font-medium" : "border-input"
+                            )}
+                          >
+                            <span className="font-mono text-xs w-5">{String.fromCharCode(65 + oi)}.</span>
+                            <span>{opt.text}</span>
+                            {opt.text_ar && <span className="text-muted-foreground ml-auto" dir="rtl">{opt.text_ar}</span>}
+                            {opt.is_correct && <Badge className="ml-2 text-xs" variant="default">✓</Badge>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* True/False preview */}
+                    {q.question_type === "true_false" && q.correct_answer && (
+                      <p className="text-sm"><strong>{t("Answer", "الإجابة")}:</strong> {q.correct_answer === "true" ? t("True", "صح") : t("False", "خطأ")}</p>
+                    )}
+
+                    {/* Fill blank / short answer preview */}
+                    {(q.question_type === "fill_blank" || q.question_type === "short_answer") && q.correct_answer && (
+                      <p className="text-sm"><strong>{t("Answer", "الإجابة")}:</strong> {q.correct_answer}</p>
+                    )}
+
+                    {/* Explanation */}
+                    {q.explanation && (
+                      <p className="text-xs text-muted-foreground mt-2">💡 {q.explanation}</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
