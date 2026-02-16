@@ -1,5 +1,6 @@
 import { useRef, useCallback, useEffect } from "react";
 import { cn } from "@/lib/utils";
+import { sanitizeHtml } from "@/lib/sanitize";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -52,15 +53,18 @@ const RichTextEditor = ({ value, onChange, placeholder, dir, className }: RichTe
 
   const handleInput = useCallback(() => {
     if (editorRef.current) {
-      internalValue.current = editorRef.current.innerHTML;
-      onChange(editorRef.current.innerHTML);
+      const sanitized = sanitizeHtml(editorRef.current.innerHTML);
+      internalValue.current = sanitized;
+      onChange(sanitized);
     }
   }, [onChange]);
 
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
     e.preventDefault();
-    const text = e.clipboardData.getData("text/html") || e.clipboardData.getData("text/plain");
-    document.execCommand("insertHTML", false, text);
+    const html = e.clipboardData.getData("text/html");
+    const text = e.clipboardData.getData("text/plain");
+    const content = html ? sanitizeHtml(html) : text;
+    document.execCommand("insertHTML", false, content);
   }, []);
 
   const ToolbarButton = ({ command, icon: Icon, label, value: cmdValue }: { command: string; icon: any; label: string; value?: string }) => (

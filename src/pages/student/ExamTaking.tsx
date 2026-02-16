@@ -120,11 +120,9 @@ const ExamTaking = () => {
       // Log exam started
       logActivity(user.id, "exam_started", "exam_attempt", attemptId, { exam_id: attemptData.exam_id });
 
+      // Use secure RPC to get questions without correct answers
       const { data: qs } = await supabase
-        .from("exam_questions")
-        .select("*")
-        .eq("exam_id", attemptData.exam_id)
-        .order("sort_order");
+        .rpc("get_exam_questions_for_student", { _exam_id: attemptData.exam_id });
 
       let questionList = qs || [];
       if (attemptData.exams.randomize_questions) {
@@ -765,8 +763,8 @@ const ExamTaking = () => {
                             const path = `student-answers/${user!.id}/${attemptId}_${q.id}.${ext}`;
                             const { error } = await supabase.storage.from("exam-media").upload(path, blob, { upsert: true });
                             if (!error) {
-                              const { data: urlData } = supabase.storage.from("exam-media").getPublicUrl(path);
-                              setAnswer(q.id, answers[q.id]?.text || "[audio_recorded]", { audioUrl: urlData.publicUrl, fileType: "audio" });
+                             const { data: urlData } = await supabase.storage.from("exam-media").createSignedUrl(path, 3600);
+                              setAnswer(q.id, answers[q.id]?.text || "[audio_recorded]", { audioUrl: urlData?.signedUrl || url, fileType: "audio" });
                             } else {
                               setAnswer(q.id, answers[q.id]?.text || "[audio_recorded]", { audioUrl: url, fileType: "audio" });
                             }
