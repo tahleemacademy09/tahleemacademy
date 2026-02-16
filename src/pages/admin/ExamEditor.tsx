@@ -182,8 +182,8 @@ const ExamEditor = () => {
         const qInserts = questions.map((q, i) => ({
           exam_id: eid!,
           question_type: q.question_type,
-          question_text: q.question_text,
-          question_text_ar: q.question_text_ar || null,
+          question_text: sanitizeHtml(q.question_text),
+          question_text_ar: q.question_text_ar ? sanitizeHtml(q.question_text_ar) : null,
           options: (q.question_type === "mcq" || q.question_type === "image_mcq") ? q.options : null,
           correct_answer: q.correct_answer || null,
           points: q.points,

@@ -53,9 +53,8 @@ const RichTextEditor = ({ value, onChange, placeholder, dir, className }: RichTe
 
   const handleInput = useCallback(() => {
     if (editorRef.current) {
-      const sanitized = sanitizeHtml(editorRef.current.innerHTML);
-      internalValue.current = sanitized;
-      onChange(sanitized);
+      internalValue.current = editorRef.current.innerHTML;
+      onChange(editorRef.current.innerHTML);
     }
   }, [onChange]);
 
