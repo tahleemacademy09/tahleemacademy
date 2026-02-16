@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { logger } from "@/lib/logger";
 
 interface ProctoringConfig {
   attemptId: string;
@@ -66,7 +67,7 @@ export const useProctoring = (config: ProctoringConfig, enabled: boolean, onAuto
         .from("proctoring-media")
         .upload(path, blob, { contentType: "image/jpeg", upsert: false });
       if (!error) return true;
-      console.warn(`Upload retry ${i + 1}/${retries}:`, error.message);
+      logger.warn(`Upload retry ${i + 1}/${retries}:`, error.message);
       if (i < retries - 1) await new Promise(r => setTimeout(r, 2000 * (i + 1)));
     }
     return false;
@@ -75,17 +76,13 @@ export const useProctoring = (config: ProctoringConfig, enabled: boolean, onAuto
   // Capture a webcam face snapshot and upload
   const captureWebcamSnapshot = useCallback(async (triggerType: string = "periodic_face_capture") => {
     if (!videoRef.current || !config.attemptId || !cameraReadyRef.current) {
-      console.log("[Proctoring] Skip capture: camera not ready", {
-        hasVideo: !!videoRef.current,
-        attemptId: config.attemptId,
-        cameraReady: cameraReadyRef.current,
-      });
+      logger.log("[Proctoring] Skip capture: camera not ready");
       return;
     }
 
     const video = videoRef.current;
     if (video.readyState < 2) {
-      console.log("[Proctoring] Skip capture: video not ready, readyState:", video.readyState);
+      logger.log("[Proctoring] Skip capture: video not ready");
       return;
     }
 
@@ -105,24 +102,24 @@ export const useProctoring = (config: ProctoringConfig, enabled: boolean, onAuto
         canvas.toBlob(resolve, "image/jpeg", 0.65)
       );
       if (!blob) {
-        console.warn("[Proctoring] Failed to create blob from canvas");
+        logger.warn("[Proctoring] Failed to create blob from canvas");
         return;
       }
 
       // Limit to ~500KB
       if (blob.size > 600_000) {
-        console.warn("[Proctoring] Snapshot too large, skipping:", blob.size);
+        logger.warn("[Proctoring] Snapshot too large, skipping");
         return;
       }
 
       const timestamp = Date.now();
       const filePath = `${config.userId}/${config.attemptId}/face_${timestamp}.jpg`;
 
-      console.log("[Proctoring] Uploading face snapshot:", filePath, "size:", blob.size, "trigger:", triggerType);
+      logger.log("[Proctoring] Uploading face snapshot");
 
       const uploaded = await uploadWithRetry(filePath, blob);
       if (!uploaded) {
-        console.warn("[Proctoring] Face capture upload failed after retries");
+        logger.warn("[Proctoring] Face capture upload failed after retries");
         return;
       }
 
@@ -136,12 +133,12 @@ export const useProctoring = (config: ProctoringConfig, enabled: boolean, onAuto
       });
 
       if (dbError) {
-        console.warn("[Proctoring] DB insert error:", dbError.message);
+        logger.warn("[Proctoring] DB insert error");
       } else {
-        console.log("[Proctoring] ✅ Face snapshot saved successfully:", filePath);
+        logger.log("[Proctoring] Face snapshot saved successfully");
       }
     } catch (e) {
-      console.warn("[Proctoring] Face capture error:", e);
+      logger.warn("[Proctoring] Face capture error");
     }
   }, [config.attemptId, uploadWithRetry]);
 
@@ -234,13 +231,13 @@ export const useProctoring = (config: ProctoringConfig, enabled: boolean, onAuto
       videoRef.current = video;
       cameraReadyRef.current = true;
       setState(prev => ({ ...prev, cameraReady: true }));
-      console.log("[Proctoring] ✅ Camera initialized successfully");
+      logger.log("[Proctoring] Camera initialized successfully");
 
       // Monitor track for unexpected end
       const track = stream.getVideoTracks()[0];
       if (track) {
         track.onended = () => {
-          console.warn("[Proctoring] Camera track ended, attempting reconnect...");
+          logger.warn("[Proctoring] Camera track ended, attempting reconnect");
           cameraReadyRef.current = false;
           setState(prev => ({ ...prev, cameraReady: false }));
           if (enabledRef.current) {
@@ -252,7 +249,7 @@ export const useProctoring = (config: ProctoringConfig, enabled: boolean, onAuto
 
       return true;
     } catch (e: any) {
-      console.warn(`[Proctoring] Camera init failed (attempt ${retryCount + 1}):`, e.message);
+      logger.warn(`[Proctoring] Camera init failed (attempt ${retryCount + 1})`);
       if (retryCount < maxRetries - 1) {
         await new Promise(r => setTimeout(r, 2000));
         return initCamera(retryCount + 1);
@@ -278,7 +275,7 @@ export const useProctoring = (config: ProctoringConfig, enabled: boolean, onAuto
 
       if (data) {
         sessionId.current = data.id;
-        console.log("[Proctoring] Session created:", data.id);
+        logger.log("[Proctoring] Session created");
       }
 
       // Init camera
@@ -318,13 +315,13 @@ export const useProctoring = (config: ProctoringConfig, enabled: boolean, onAuto
       }
 
       if (!cameraReadyRef.current) {
-        console.warn("[Proctoring] Camera never became ready, skipping periodic captures");
+        logger.warn("[Proctoring] Camera never became ready, skipping periodic captures");
         return;
       }
 
       // Initial capture
       if (!cancelled) {
-        console.log("[Proctoring] Starting initial face capture");
+        logger.log("[Proctoring] Starting initial face capture");
         await captureWebcamSnapshot("initial_capture");
       }
 
@@ -367,7 +364,7 @@ export const useProctoring = (config: ProctoringConfig, enabled: boolean, onAuto
           supabase.from("proctoring_sessions").update({ fullscreen_active: true }).eq("id", sessionId.current);
         }
       } catch (e) {
-        console.warn("Fullscreen request failed:", e);
+        logger.warn("Fullscreen request failed");
       }
     };
 
@@ -450,7 +447,7 @@ export const useProctoring = (config: ProctoringConfig, enabled: boolean, onAuto
         // Stream was lost
         cameraReadyRef.current = false;
         setState(prev => ({ ...prev, cameraReady: false }));
-        console.warn("[Proctoring] Stream lost, attempting reconnect");
+        logger.warn("[Proctoring] Stream lost, attempting reconnect");
         initCamera();
       }
     }, 10000);

@@ -12,6 +12,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { logger } from "@/lib/logger";
 import { Clock, Flag, Send, AlertTriangle, BookOpen, CheckCircle2, HelpCircle, ShieldAlert, Lock, TrendingUp } from "lucide-react";
 import AudioPlayer from "@/components/exam/AudioPlayer";
 import AudioRecorder from "@/components/exam/AudioRecorder";
@@ -153,7 +154,7 @@ const ExamTaking = () => {
     if (timeLeft <= 0) {
       // Force auto-submit immediately when timer expires
       if (!submittedRef.current) {
-        console.log("Timer expired, auto-submitting...");
+        logger.log("Timer expired, auto-submitting...");
         handleSubmitRef.current();
       }
       return;
@@ -161,7 +162,7 @@ const ExamTaking = () => {
     const interval = setInterval(() => setTimeLeft((t) => {
       const next = Math.max(0, t - 1);
       if (next === 0 && !submittedRef.current) {
-        console.log("Timer reached 0, triggering auto-submit...");
+        logger.log("Timer reached 0, triggering auto-submit...");
         // Use setTimeout to avoid state update conflicts
         setTimeout(() => handleSubmitRef.current(), 0);
       }
@@ -283,14 +284,14 @@ const ExamTaking = () => {
 
         if (existing) {
           const { error: upErr } = await supabase.from("exam_answers").update(ansPayload).eq("id", existing.id);
-          if (upErr) console.error("Answer update error:", upErr);
+          if (upErr) logger.error("Answer update error:", upErr);
         } else {
           const { error: insErr } = await supabase.from("exam_answers").insert({
             attempt_id: attemptId,
             question_id: qId,
             ...ansPayload,
           });
-          if (insErr) console.error("Answer insert error:", insErr);
+          if (insErr) logger.error("Answer insert error:", insErr);
         }
       }
     }
@@ -299,7 +300,7 @@ const ExamTaking = () => {
     const { data: gradeResult, error: gradeError } = await supabase.rpc("grade_exam_attempt", { _attempt_id: attemptId! });
 
     if (gradeError) {
-      console.error("Failed to grade exam:", gradeError);
+      logger.error("Failed to grade exam:", gradeError);
       toast({ title: t("❌ Submission failed. Please try again.", "❌ فشل التقديم. حاول مرة أخرى."), variant: "destructive" });
       submittedRef.current = false;
       setSubmitting(false);
