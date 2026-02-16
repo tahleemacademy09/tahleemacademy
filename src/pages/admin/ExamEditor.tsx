@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { Plus, Trash2, Save, GripVertical, Music, FileText, Calendar, Settings2, Upload, Download, Image, Loader2, Eye } from "lucide-react";
 import RichTextEditor from "@/components/exam/RichTextEditor";
+import { sanitizeHtml } from "@/lib/sanitize";
 
 interface QuestionForm {
   id?: string;
@@ -226,8 +227,8 @@ const ExamEditor = () => {
       return;
     }
 
-    const { data: urlData } = supabase.storage.from("exam-media").getPublicUrl(path);
-    updateQuestion(questionIdx, { media_url: urlData.publicUrl });
+    const { data: urlData } = await supabase.storage.from("exam-media").createSignedUrl(path, 3600);
+    updateQuestion(questionIdx, { media_url: urlData?.signedUrl || '' });
     toast({ title: t("✅ File uploaded!", "✅ تم رفع الملف!") });
     setUploadingMedia(null);
   };
@@ -247,9 +248,9 @@ const ExamEditor = () => {
       return;
     }
 
-    const { data: urlData } = supabase.storage.from("exam-media").getPublicUrl(path);
+    const { data: urlData } = await supabase.storage.from("exam-media").createSignedUrl(path, 3600);
     const newOpts = [...questions[questionIdx].options];
-    newOpts[optionIdx] = { ...newOpts[optionIdx], image_url: urlData.publicUrl };
+    newOpts[optionIdx] = { ...newOpts[optionIdx], image_url: urlData?.signedUrl || '' };
     updateQuestion(questionIdx, { options: newOpts });
     toast({ title: t("✅ Image uploaded!", "✅ تم رفع الصورة!") });
     setUploadingOptionImage(null);
@@ -984,13 +985,13 @@ fill_blank,"The word for 'water' is ___.","كلمة 'ماء' هي ___.",,,,,,,,,
                     </div>
                     <div
                       className="text-base prose prose-sm max-w-none"
-                      dangerouslySetInnerHTML={{ __html: q.question_text || `<span class="text-muted-foreground italic">${t("No question text", "لا يوجد نص")}</span>` }}
+                      dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.question_text) || `<span class="text-muted-foreground italic">${t("No question text", "لا يوجد نص")}</span>` }}
                     />
                     {q.question_text_ar && (
                       <div
                         className="text-base prose prose-sm max-w-none text-muted-foreground"
                         dir="rtl"
-                        dangerouslySetInnerHTML={{ __html: q.question_text_ar }}
+                        dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.question_text_ar) }}
                       />
                     )}
 
