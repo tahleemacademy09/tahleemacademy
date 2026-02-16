@@ -733,6 +733,24 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      get_exam_questions_for_review: {
+        Args: { _attempt_id: string }
+        Returns: {
+          correct_answer: string
+          difficulty: string
+          exam_id: string
+          explanation: string
+          explanation_ar: string
+          id: string
+          media_url: string
+          options: Json
+          points: number
+          question_text: string
+          question_text_ar: string
+          question_type: string
+          sort_order: number
+        }[]
+      }
       get_exam_questions_for_student: {
         Args: { _exam_id: string }
         Returns: {
@@ -750,6 +768,7 @@ export type Database = {
           sort_order: number
         }[]
       }
+      grade_exam_attempt: { Args: { _attempt_id: string }; Returns: Json }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]

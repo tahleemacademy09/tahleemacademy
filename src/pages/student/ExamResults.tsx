@@ -37,7 +37,7 @@ const ExamResults = () => {
       setExam(attemptData.exams);
 
       const [questionsRes, answersRes] = await Promise.all([
-        supabase.from("exam_questions").select("*").eq("exam_id", attemptData.exam_id).order("sort_order"),
+        supabase.rpc("get_exam_questions_for_review", { _attempt_id: attemptId }),
         supabase.from("exam_answers").select("*").eq("attempt_id", attemptId),
       ]);
 

@@ -264,48 +264,10 @@ const ExamTaking = () => {
     const currentQuestions = questionsRef.current;
     const currentExam = examRef.current;
 
-    // Grade objective questions locally first (no DB calls needed yet)
-    const subjectiveTypes = ["short_answer", "essay", "audio", "dictation"];
-    let totalPoints = 0;
-    let earnedPoints = 0;
-    const gradedResults: Record<string, { is_correct: boolean | null; points_awarded: number }> = {};
-
-    for (const q of currentQuestions) {
-      totalPoints += q.points || 1;
-      const ans = currentAnswers[q.id];
-      if (!ans) continue;
-
-      let isCorrect: boolean | null = null;
-      let pts = 0;
-
-      if ((q.question_type === "mcq" || q.question_type === "image_mcq") && q.options) {
-        const correctOpts = (q.options as any[]).filter((o: any) => o.is_correct).map((o: any) => o.id);
-        isCorrect = correctOpts.length === 1 && ans.text === correctOpts[0];
-        pts = isCorrect ? (q.points || 1) : 0;
-      } else if (q.question_type === "true_false") {
-        isCorrect = ans.text?.toLowerCase() === q.correct_answer?.toLowerCase();
-        pts = isCorrect ? (q.points || 1) : 0;
-      } else if (q.question_type === "fill_blank") {
-        isCorrect = ans.text?.trim().toLowerCase() === q.correct_answer?.trim().toLowerCase();
-        pts = isCorrect ? (q.points || 1) : 0;
-      }
-
-      if (isCorrect !== null) {
-        earnedPoints += pts;
-        gradedResults[q.id] = { is_correct: isCorrect, points_awarded: pts };
-      }
-    }
-
-    const percentage = totalPoints > 0 ? (earnedPoints / totalPoints) * 100 : 0;
-    const hasSubjective = currentQuestions.some((q: any) => subjectiveTypes.includes(q.question_type));
-    const finalStatus = hasSubjective ? "submitted" : "graded";
-    const passingScore = currentExam?.passing_score || 50;
-
     // Step 1: Save answers FIRST while attempt is still 'in_progress' (RLS requires this)
     if (attemptId) {
       for (const [qId, ans] of Object.entries(currentAnswers)) {
         if (!ans.text && !ans.data) continue;
-        const graded = gradedResults[qId];
         const { data: existing } = await supabase
           .from("exam_answers")
           .select("id")
@@ -317,7 +279,6 @@ const ExamTaking = () => {
           answer_text: ans.text || null,
           answer_data: ans.data || null,
           is_flagged: ans.flagged || false,
-          ...(graded ? { is_correct: graded.is_correct, points_awarded: graded.points_awarded } : {}),
         };
 
         if (existing) {
@@ -334,30 +295,24 @@ const ExamTaking = () => {
       }
     }
 
-    // Step 2: Now update attempt status (answers are already saved)
-    const { error: updateError } = await supabase.from("exam_attempts").update({
-      status: finalStatus,
-      submitted_at: new Date().toISOString(),
-      score: earnedPoints,
-      total_points: totalPoints,
-      percentage,
-      passed: percentage >= passingScore,
-    }).eq("id", attemptId!);
+    // Step 2: Grade server-side via RPC (answers are already saved)
+    const { data: gradeResult, error: gradeError } = await supabase.rpc("grade_exam_attempt", { _attempt_id: attemptId! });
 
-    if (updateError) {
-      console.error("Failed to submit exam attempt:", updateError);
+    if (gradeError) {
+      console.error("Failed to grade exam:", gradeError);
       toast({ title: t("❌ Submission failed. Please try again.", "❌ فشل التقديم. حاول مرة أخرى."), variant: "destructive" });
       submittedRef.current = false;
       setSubmitting(false);
       return;
     }
 
+    const result = gradeResult as any;
     setSubmissionResult({
-      status: finalStatus,
-      score: earnedPoints,
-      totalPoints,
-      percentage,
-      passed: percentage >= passingScore,
+      status: result.status,
+      score: result.score,
+      totalPoints: result.total_points,
+      percentage: result.percentage,
+      passed: result.passed,
     });
     setSubmitted(true);
     setSubmitting(false);
@@ -367,10 +322,10 @@ const ExamTaking = () => {
     if (user) {
       logActivity(user.id, "exam_submitted", "exam_attempt", attemptId!, {
         exam_id: currentExam?.id,
-        status: finalStatus,
-        score: earnedPoints,
-        total_points: totalPoints,
-        percentage: Math.round(percentage),
+        status: result.status,
+        score: result.score,
+        total_points: result.total_points,
+        percentage: Math.round(result.percentage),
       });
     }
   }, [attemptId, user]);
