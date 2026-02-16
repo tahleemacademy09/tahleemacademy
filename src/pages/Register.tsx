@@ -20,8 +20,11 @@ const Register = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (password.length < 6) {
-      toast({ title: t("Error", "خطأ"), description: t("Password must be at least 6 characters", "يجب أن تكون كلمة المرور 6 أحرف على الأقل"), variant: "destructive" });
+    const hasUpperCase = /[A-Z]/.test(password);
+    const hasLowerCase = /[a-z]/.test(password);
+    const hasNumbers = /\d/.test(password);
+    if (password.length < 8 || !(hasUpperCase && hasLowerCase && hasNumbers)) {
+      toast({ title: t("Error", "خطأ"), description: t("Password must be at least 8 characters with uppercase, lowercase, and numbers", "يجب أن تكون كلمة المرور 8 أحرف على الأقل مع أحرف كبيرة وصغيرة وأرقام"), variant: "destructive" });
       return;
     }
     setLoading(true);
@@ -66,7 +69,7 @@ const Register = () => {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
-              minLength={6}
+              minLength={8}
             />
             <Button type="submit" className="w-full" disabled={loading}>
               {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
