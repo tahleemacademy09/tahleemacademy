@@ -29,6 +29,7 @@ import AdminDashboard from "./pages/admin/AdminDashboard";
 import ExamManager from "./pages/admin/ExamManager";
 import ExamEditor from "./pages/admin/ExamEditor";
 import GradingPage from "./pages/admin/GradingPage";
+import QuestionBank from "./pages/admin/QuestionBank";
 import StudentManagement from "./pages/admin/StudentManagement";
 import ProctoringDashboard from "./pages/admin/ProctoringDashboard";
 
