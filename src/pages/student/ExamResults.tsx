@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
+import { sanitizeHtml } from "@/lib/sanitize";
 import { CheckCircle, XCircle, ArrowLeft, Clock, Play, Pause, Volume2, FileText, Image, Download } from "lucide-react";
 
 const ExamResults = () => {
