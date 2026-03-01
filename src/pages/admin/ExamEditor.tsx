@@ -183,14 +183,14 @@ const ExamEditor = () => {
           exam_id: eid!,
           question_type: q.question_type,
           question_text: sanitizeHtml(q.question_text),
-          question_text_ar: q.question_text_ar ? sanitizeHtml(q.question_text_ar) : null,
+          question_text_ar: q.question_text_ar ? sanitizeHtml(q.question_text_ar) : sanitizeHtml(q.question_text),
           options: (q.question_type === "mcq" || q.question_type === "image_mcq") ? q.options : null,
           correct_answer: q.correct_answer || null,
           points: q.points,
           difficulty: q.difficulty,
           sort_order: i,
           explanation: q.explanation || null,
-          explanation_ar: q.explanation_ar || null,
+          explanation_ar: q.explanation_ar || q.explanation || null,
           media_url: q.media_url || null,
         }));
         const { error } = await supabase.from("exam_questions").insert(qInserts);
