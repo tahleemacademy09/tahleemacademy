@@ -595,9 +595,11 @@ const ExamTaking = () => {
 
                   {/* Question text */}
                   <div className="mb-4">
-                    <p className="text-base sm:text-lg font-medium leading-relaxed">
-                      {language === "ar" ? q?.question_text_ar || q?.question_text : q?.question_text}
-                    </p>
+                    <div
+                      className="text-base sm:text-lg font-medium leading-relaxed prose prose-sm max-w-none"
+                      dir={language === "ar" ? "rtl" : "ltr"}
+                      dangerouslySetInnerHTML={{ __html: sanitizeHtml(language === "ar" ? q?.question_text_ar || q?.question_text || "" : q?.question_text || "") }}
+                    />
                     {q?.media_url && (q?.question_type === "audio" || q?.question_type === "dictation") && (
                       <div className="mt-3">
                         <AudioPlayer src={q.media_url} title={t("Listen carefully", "استمع بعناية")} maxPlays={3} />
