@@ -842,22 +842,12 @@ fill_blank,"The word for 'water' is ___.","كلمة 'ماء' هي ___.",,,,,,,,,
                               <div className="flex items-center gap-2">
                                 <Input
                                   className="flex-1"
-                                  placeholder={`${t("Option", "خيار")} ${String.fromCharCode(65 + oi)}`}
+                                  placeholder={`${t("Option", "خيار")} ${String.fromCharCode(65 + oi)} ${t("(any language)", "(أي لغة)")}`}
                                   value={opt.text}
+                                  dir="auto"
                                   onChange={(e) => {
                                     const newOpts = [...q.options];
                                     newOpts[oi] = { ...newOpts[oi], text: e.target.value };
-                                    updateQuestion(idx, { options: newOpts });
-                                  }}
-                                />
-                                <Input
-                                  className="flex-1"
-                                  placeholder={`${t("Option", "خيار")} ${String.fromCharCode(65 + oi)} (${t("Arabic", "عربي")})`}
-                                  value={opt.text_ar}
-                                  dir="rtl"
-                                  onChange={(e) => {
-                                    const newOpts = [...q.options];
-                                    newOpts[oi] = { ...newOpts[oi], text_ar: e.target.value };
                                     updateQuestion(idx, { options: newOpts });
                                   }}
                                 />
