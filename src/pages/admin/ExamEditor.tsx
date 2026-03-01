@@ -748,6 +748,9 @@ fill_blank,"The word for 'water' is ___.","كلمة 'ماء' هي ___.",,,,,,,,,
                   </DialogContent>
                 </Dialog>
 
+                <Button variant="outline" onClick={openQuestionBank} className="gap-1">
+                  <Library className="h-4 w-4" />{t("Import from Bank", "استيراد من البنك")}
+                </Button>
                 <Button variant="outline" onClick={() => setPreviewOpen(true)} className="gap-1">
                   <Eye className="h-4 w-4" />{t("Preview", "معاينة")}
                 </Button>
