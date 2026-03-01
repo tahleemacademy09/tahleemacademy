@@ -23,6 +23,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   const adminLinks = [
     { to: "/admin", icon: LayoutDashboard, label: t("Dashboard", "لوحة التحكم") },
     { to: "/admin/exams", icon: ClipboardList, label: t("Exams", "الامتحانات") },
+    { to: "/admin/question-bank", icon: Library, label: t("Question Bank", "بنك الأسئلة") },
     { to: "/admin/students", icon: Users, label: t("Students", "الطلاب") },
     { to: "/admin/grading", icon: CheckSquare, label: t("Grading", "التصحيح") },
     { to: "/admin/proctoring", icon: BarChart, label: t("Proctoring", "المراقبة") },

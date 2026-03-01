@@ -76,6 +76,7 @@ const App = () => (
                 <Route path="/admin/exams/create" element={<ExamEditor />} />
                 <Route path="/admin/exams/:examId/edit" element={<ExamEditor />} />
                 <Route path="/admin/grading" element={<GradingPage />} />
+                <Route path="/admin/question-bank" element={<QuestionBank />} />
                 <Route path="/admin/proctoring" element={<ProctoringDashboard />} />
                 <Route path="/admin/students" element={<StudentManagement />} />
               </Route>
