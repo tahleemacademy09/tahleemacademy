@@ -16,7 +16,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Trash2, Save, GripVertical, Music, FileText, Calendar, Settings2, Upload, Download, Image, Loader2, Eye } from "lucide-react";
+import { Plus, Trash2, Save, GripVertical, Music, FileText, Calendar, Settings2, Upload, Download, Image, Loader2, Eye, Library } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 import RichTextEditor from "@/components/exam/RichTextEditor";
 import { sanitizeHtml } from "@/lib/sanitize";
 
