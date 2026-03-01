@@ -102,6 +102,41 @@ const ExamEditor = () => {
   const [saving, setSaving] = useState(false);
   const [uploadingMedia, setUploadingMedia] = useState<number | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [bankOpen, setBankOpen] = useState(false);
+  const [bankQuestions, setBankQuestions] = useState<any[]>([]);
+  const [bankSelected, setBankSelected] = useState<Set<string>>(new Set());
+  const [bankSearch, setBankSearch] = useState("");
+  const [bankLoading, setBankLoading] = useState(false);
+
+  const openQuestionBank = async () => {
+    setBankOpen(true);
+    setBankLoading(true);
+    setBankSelected(new Set());
+    setBankSearch("");
+    const { data } = await supabase.from("exam_questions").select("*, exams(title, title_ar)").order("created_at", { ascending: false });
+    setBankQuestions(data || []);
+    setBankLoading(false);
+  };
+
+  const importFromBank = () => {
+    const selected = bankQuestions.filter((q) => bankSelected.has(q.id));
+    const newQs: QuestionForm[] = selected.map((q, i) => ({
+      question_type: q.question_type,
+      question_text: q.question_text,
+      question_text_ar: q.question_text_ar || "",
+      options: (q.options as any[]) || [],
+      correct_answer: q.correct_answer || "",
+      points: q.points || 1,
+      difficulty: q.difficulty || "medium",
+      sort_order: questions.length + i,
+      explanation: q.explanation || "",
+      explanation_ar: q.explanation_ar || "",
+      media_url: q.media_url || "",
+    }));
+    setQuestions((prev) => [...prev, ...newQs]);
+    setBankOpen(false);
+    toast({ title: t(`✅ Imported ${newQs.length} questions from bank!`, `✅ تم استيراد ${newQs.length} سؤال من البنك!`) });
+  };
 
   useEffect(() => {
     if (!isEdit) return;
