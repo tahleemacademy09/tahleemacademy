@@ -1074,6 +1074,84 @@ fill_blank,"The word for 'water' is ___.","كلمة 'ماء' هي ___.",,,,,,,,,
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Question Bank Import Dialog */}
+      <Dialog open={bankOpen} onOpenChange={setBankOpen}>
+        <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Library className="h-5 w-5" />
+              {t("Import from Question Bank", "استيراد من بنك الأسئلة")}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <Input
+              placeholder={t("Search questions...", "البحث في الأسئلة...")}
+              value={bankSearch}
+              onChange={(e) => setBankSearch(e.target.value)}
+            />
+            {bankLoading ? (
+              <div className="flex justify-center py-8">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              </div>
+            ) : (
+              <>
+                <div className="text-xs text-muted-foreground">
+                  {bankSelected.size} {t("selected", "محدد")} • {bankQuestions.filter((q) => {
+                    if (!bankSearch) return true;
+                    const s = bankSearch.toLowerCase();
+                    return (q.question_text || "").toLowerCase().includes(s) || (q.question_text_ar || "").toLowerCase().includes(s);
+                  }).length} {t("questions", "سؤال")}
+                </div>
+                <div className="max-h-[400px] overflow-y-auto space-y-1.5">
+                  {bankQuestions.filter((q) => {
+                    if (!bankSearch) return true;
+                    const s = bankSearch.toLowerCase();
+                    return (q.question_text || "").toLowerCase().includes(s) || (q.question_text_ar || "").toLowerCase().includes(s);
+                  }).map((q) => {
+                    const strip = (html: string) => {
+                      const doc = new DOMParser().parseFromString(html || "", "text/html");
+                      return doc.body.textContent || "";
+                    };
+                    return (
+                      <div
+                        key={q.id}
+                        className={`flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition-colors ${bankSelected.has(q.id) ? "border-primary bg-primary/5" : "hover:bg-accent/50"}`}
+                        onClick={() => {
+                          setBankSelected((prev) => {
+                            const next = new Set(prev);
+                            next.has(q.id) ? next.delete(q.id) : next.add(q.id);
+                            return next;
+                          });
+                        }}
+                      >
+                        <Checkbox checked={bankSelected.has(q.id)} className="mt-0.5" />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex gap-1.5 flex-wrap mb-1">
+                            <Badge variant="secondary" className="text-[10px]">{q.question_type?.replace("_", " ")}</Badge>
+                            <Badge variant="outline" className="text-[10px]">{q.difficulty}</Badge>
+                            <Badge variant="outline" className="text-[10px]">{q.points} pts</Badge>
+                            {q.exams?.title && (
+                              <span className="text-[10px] text-muted-foreground">
+                                {language === "ar" ? q.exams?.title_ar || q.exams?.title : q.exams?.title}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-sm truncate" dir="auto">{strip(q.question_text)}</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <Button onClick={importFromBank} disabled={bankSelected.size === 0} className="w-full gap-2">
+                  <Plus className="h-4 w-4" />
+                  {t(`Import ${bankSelected.size} Questions`, `استيراد ${bankSelected.size} سؤال`)}
+                </Button>
+              </>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
