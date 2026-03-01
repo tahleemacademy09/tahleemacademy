@@ -204,9 +204,11 @@ const GradingPage = () => {
                     {ans?.is_correct === false && <XCircle className="h-4 w-4 text-destructive" />}
                   </div>
 
-                  <p className="mb-2 font-medium text-sm" dir={language === "ar" ? "rtl" : "ltr"}>
-                    {language === "ar" ? q.question_text_ar || q.question_text : q.question_text}
-                  </p>
+                  <div
+                    className="mb-2 font-medium text-sm prose prose-sm max-w-none"
+                    dir={language === "ar" ? "rtl" : "ltr"}
+                    dangerouslySetInnerHTML={{ __html: sanitizeHtml(language === "ar" ? q.question_text_ar || q.question_text : q.question_text) }}
+                  />
 
                   {q.correct_answer && (
                     <p className="mb-2 text-xs text-emerald">
