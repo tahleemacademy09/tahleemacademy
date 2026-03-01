@@ -756,17 +756,15 @@ fill_blank,"The word for 'water' is ___.","كلمة 'ماء' هي ___.",,,,,,,,,
                   </div>
 
                   <div className="space-y-3">
-                    <RichTextEditor
-                      placeholder={t("Question text (English)", "نص السؤال (إنجليزي)")}
-                      value={q.question_text}
-                      onChange={(val) => updateQuestion(idx, { question_text: val })}
-                    />
-                    <RichTextEditor
-                      placeholder={t("Question text (Arabic)", "نص السؤال (عربي)")}
-                      value={q.question_text_ar}
-                      onChange={(val) => updateQuestion(idx, { question_text_ar: val })}
-                      dir="rtl"
-                    />
+                    <div>
+                      <Label className="text-sm mb-1 block">{t("Question Text (supports mixed English & Arabic)", "نص السؤال (يدعم الإنجليزية والعربية معاً)")}</Label>
+                      <RichTextEditor
+                        placeholder={t("Type your question here in any language...", "اكتب سؤالك هنا بأي لغة...")}
+                        value={q.question_text}
+                        onChange={(val) => updateQuestion(idx, { question_text: val })}
+                        dir="auto"
+                      />
+                    </div>
 
                     {/* Media upload section */}
                     <div className="rounded-lg border border-dashed border-primary/30 bg-accent/30 p-3">
