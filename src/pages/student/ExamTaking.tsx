@@ -13,6 +13,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { logger } from "@/lib/logger";
+import { sanitizeHtml } from "@/lib/sanitize";
 import { Clock, Flag, Send, AlertTriangle, BookOpen, CheckCircle2, HelpCircle, ShieldAlert, Lock, TrendingUp } from "lucide-react";
 import AudioPlayer from "@/components/exam/AudioPlayer";
 import AudioRecorder from "@/components/exam/AudioRecorder";
@@ -595,9 +596,11 @@ const ExamTaking = () => {
 
                   {/* Question text */}
                   <div className="mb-4">
-                    <p className="text-base sm:text-lg font-medium leading-relaxed">
-                      {language === "ar" ? q?.question_text_ar || q?.question_text : q?.question_text}
-                    </p>
+                    <div
+                      className="text-base sm:text-lg font-medium leading-relaxed prose prose-sm max-w-none"
+                      dir={language === "ar" ? "rtl" : "ltr"}
+                      dangerouslySetInnerHTML={{ __html: sanitizeHtml(language === "ar" ? q?.question_text_ar || q?.question_text || "" : q?.question_text || "") }}
+                    />
                     {q?.media_url && (q?.question_type === "audio" || q?.question_type === "dictation") && (
                       <div className="mt-3">
                         <AudioPlayer src={q.media_url} title={t("Listen carefully", "استمع بعناية")} maxPlays={3} />
@@ -643,7 +646,7 @@ const ExamTaking = () => {
                                   <span className="mr-2 inline-flex h-5 w-5 items-center justify-center rounded-full bg-muted text-xs font-bold">
                                     {String.fromCharCode(65 + idx)}
                                   </span>
-                                  {language === "ar" ? opt.text_ar || opt.text : opt.text}
+                                  <span dangerouslySetInnerHTML={{ __html: sanitizeHtml(language === "ar" ? opt.text_ar || opt.text : opt.text) }} />
                                 </Label>
                               </div>
                             </div>

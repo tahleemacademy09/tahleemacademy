@@ -16,7 +16,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Trash2, Save, GripVertical, Music, FileText, Calendar, Settings2, Upload, Download, Image, Loader2, Eye } from "lucide-react";
+import { Plus, Trash2, Save, GripVertical, Music, FileText, Calendar, Settings2, Upload, Download, Image, Loader2, Eye, Library } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 import RichTextEditor from "@/components/exam/RichTextEditor";
 import { sanitizeHtml } from "@/lib/sanitize";
 
@@ -101,6 +102,41 @@ const ExamEditor = () => {
   const [saving, setSaving] = useState(false);
   const [uploadingMedia, setUploadingMedia] = useState<number | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [bankOpen, setBankOpen] = useState(false);
+  const [bankQuestions, setBankQuestions] = useState<any[]>([]);
+  const [bankSelected, setBankSelected] = useState<Set<string>>(new Set());
+  const [bankSearch, setBankSearch] = useState("");
+  const [bankLoading, setBankLoading] = useState(false);
+
+  const openQuestionBank = async () => {
+    setBankOpen(true);
+    setBankLoading(true);
+    setBankSelected(new Set());
+    setBankSearch("");
+    const { data } = await supabase.from("exam_questions").select("*, exams(title, title_ar)").order("created_at", { ascending: false });
+    setBankQuestions(data || []);
+    setBankLoading(false);
+  };
+
+  const importFromBank = () => {
+    const selected = bankQuestions.filter((q) => bankSelected.has(q.id));
+    const newQs: QuestionForm[] = selected.map((q, i) => ({
+      question_type: q.question_type,
+      question_text: q.question_text,
+      question_text_ar: q.question_text_ar || "",
+      options: (q.options as any[]) || [],
+      correct_answer: q.correct_answer || "",
+      points: q.points || 1,
+      difficulty: q.difficulty || "medium",
+      sort_order: questions.length + i,
+      explanation: q.explanation || "",
+      explanation_ar: q.explanation_ar || "",
+      media_url: q.media_url || "",
+    }));
+    setQuestions((prev) => [...prev, ...newQs]);
+    setBankOpen(false);
+    toast({ title: t(`✅ Imported ${newQs.length} questions from bank!`, `✅ تم استيراد ${newQs.length} سؤال من البنك!`) });
+  };
 
   useEffect(() => {
     if (!isEdit) return;
@@ -183,14 +219,14 @@ const ExamEditor = () => {
           exam_id: eid!,
           question_type: q.question_type,
           question_text: sanitizeHtml(q.question_text),
-          question_text_ar: q.question_text_ar ? sanitizeHtml(q.question_text_ar) : null,
+          question_text_ar: q.question_text_ar ? sanitizeHtml(q.question_text_ar) : sanitizeHtml(q.question_text),
           options: (q.question_type === "mcq" || q.question_type === "image_mcq") ? q.options : null,
           correct_answer: q.correct_answer || null,
           points: q.points,
           difficulty: q.difficulty,
           sort_order: i,
           explanation: q.explanation || null,
-          explanation_ar: q.explanation_ar || null,
+          explanation_ar: q.explanation_ar || q.explanation || null,
           media_url: q.media_url || null,
         }));
         const { error } = await supabase.from("exam_questions").insert(qInserts);
@@ -712,6 +748,9 @@ fill_blank,"The word for 'water' is ___.","كلمة 'ماء' هي ___.",,,,,,,,,
                   </DialogContent>
                 </Dialog>
 
+                <Button variant="outline" onClick={openQuestionBank} className="gap-1">
+                  <Library className="h-4 w-4" />{t("Import from Bank", "استيراد من البنك")}
+                </Button>
                 <Button variant="outline" onClick={() => setPreviewOpen(true)} className="gap-1">
                   <Eye className="h-4 w-4" />{t("Preview", "معاينة")}
                 </Button>
@@ -756,17 +795,15 @@ fill_blank,"The word for 'water' is ___.","كلمة 'ماء' هي ___.",,,,,,,,,
                   </div>
 
                   <div className="space-y-3">
-                    <RichTextEditor
-                      placeholder={t("Question text (English)", "نص السؤال (إنجليزي)")}
-                      value={q.question_text}
-                      onChange={(val) => updateQuestion(idx, { question_text: val })}
-                    />
-                    <RichTextEditor
-                      placeholder={t("Question text (Arabic)", "نص السؤال (عربي)")}
-                      value={q.question_text_ar}
-                      onChange={(val) => updateQuestion(idx, { question_text_ar: val })}
-                      dir="rtl"
-                    />
+                    <div>
+                      <Label className="text-sm mb-1 block">{t("Question Text (supports mixed English & Arabic)", "نص السؤال (يدعم الإنجليزية والعربية معاً)")}</Label>
+                      <RichTextEditor
+                        placeholder={t("Type your question here in any language...", "اكتب سؤالك هنا بأي لغة...")}
+                        value={q.question_text}
+                        onChange={(val) => updateQuestion(idx, { question_text: val })}
+                        dir="auto"
+                      />
+                    </div>
 
                     {/* Media upload section */}
                     <div className="rounded-lg border border-dashed border-primary/30 bg-accent/30 p-3">
@@ -844,22 +881,12 @@ fill_blank,"The word for 'water' is ___.","كلمة 'ماء' هي ___.",,,,,,,,,
                               <div className="flex items-center gap-2">
                                 <Input
                                   className="flex-1"
-                                  placeholder={`${t("Option", "خيار")} ${String.fromCharCode(65 + oi)}`}
+                                  placeholder={`${t("Option", "خيار")} ${String.fromCharCode(65 + oi)} ${t("(any language)", "(أي لغة)")}`}
                                   value={opt.text}
+                                  dir="auto"
                                   onChange={(e) => {
                                     const newOpts = [...q.options];
                                     newOpts[oi] = { ...newOpts[oi], text: e.target.value };
-                                    updateQuestion(idx, { options: newOpts });
-                                  }}
-                                />
-                                <Input
-                                  className="flex-1"
-                                  placeholder={`${t("Option", "خيار")} ${String.fromCharCode(65 + oi)} (${t("Arabic", "عربي")})`}
-                                  value={opt.text_ar}
-                                  dir="rtl"
-                                  onChange={(e) => {
-                                    const newOpts = [...q.options];
-                                    newOpts[oi] = { ...newOpts[oi], text_ar: e.target.value };
                                     updateQuestion(idx, { options: newOpts });
                                   }}
                                 />
@@ -934,17 +961,12 @@ fill_blank,"The word for 'water' is ___.","كلمة 'ماء' هي ___.",,,,,,,,,
                     )}
 
                     {/* Explanation */}
-                    <div className="grid gap-3 md:grid-cols-2">
+                    <div>
                       <Input
-                        placeholder={t("Explanation (optional)", "التوضيح (اختياري)")}
+                        placeholder={t("Explanation (optional, any language)", "التوضيح (اختياري، أي لغة)")}
                         value={q.explanation}
                         onChange={(e) => updateQuestion(idx, { explanation: e.target.value })}
-                      />
-                      <Input
-                        placeholder={t("Explanation Arabic (optional)", "التوضيح عربي (اختياري)")}
-                        value={q.explanation_ar}
-                        onChange={(e) => updateQuestion(idx, { explanation_ar: e.target.value })}
-                        dir="rtl"
+                        dir="auto"
                       />
                     </div>
                   </div>
@@ -1049,6 +1071,84 @@ fill_blank,"The word for 'water' is ___.","كلمة 'ماء' هي ___.",,,,,,,,,
                 </div>
               </div>
             ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Question Bank Import Dialog */}
+      <Dialog open={bankOpen} onOpenChange={setBankOpen}>
+        <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Library className="h-5 w-5" />
+              {t("Import from Question Bank", "استيراد من بنك الأسئلة")}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <Input
+              placeholder={t("Search questions...", "البحث في الأسئلة...")}
+              value={bankSearch}
+              onChange={(e) => setBankSearch(e.target.value)}
+            />
+            {bankLoading ? (
+              <div className="flex justify-center py-8">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              </div>
+            ) : (
+              <>
+                <div className="text-xs text-muted-foreground">
+                  {bankSelected.size} {t("selected", "محدد")} • {bankQuestions.filter((q) => {
+                    if (!bankSearch) return true;
+                    const s = bankSearch.toLowerCase();
+                    return (q.question_text || "").toLowerCase().includes(s) || (q.question_text_ar || "").toLowerCase().includes(s);
+                  }).length} {t("questions", "سؤال")}
+                </div>
+                <div className="max-h-[400px] overflow-y-auto space-y-1.5">
+                  {bankQuestions.filter((q) => {
+                    if (!bankSearch) return true;
+                    const s = bankSearch.toLowerCase();
+                    return (q.question_text || "").toLowerCase().includes(s) || (q.question_text_ar || "").toLowerCase().includes(s);
+                  }).map((q) => {
+                    const strip = (html: string) => {
+                      const doc = new DOMParser().parseFromString(html || "", "text/html");
+                      return doc.body.textContent || "";
+                    };
+                    return (
+                      <div
+                        key={q.id}
+                        className={`flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition-colors ${bankSelected.has(q.id) ? "border-primary bg-primary/5" : "hover:bg-accent/50"}`}
+                        onClick={() => {
+                          setBankSelected((prev) => {
+                            const next = new Set(prev);
+                            next.has(q.id) ? next.delete(q.id) : next.add(q.id);
+                            return next;
+                          });
+                        }}
+                      >
+                        <Checkbox checked={bankSelected.has(q.id)} className="mt-0.5" />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex gap-1.5 flex-wrap mb-1">
+                            <Badge variant="secondary" className="text-[10px]">{q.question_type?.replace("_", " ")}</Badge>
+                            <Badge variant="outline" className="text-[10px]">{q.difficulty}</Badge>
+                            <Badge variant="outline" className="text-[10px]">{q.points} pts</Badge>
+                            {q.exams?.title && (
+                              <span className="text-[10px] text-muted-foreground">
+                                {language === "ar" ? q.exams?.title_ar || q.exams?.title : q.exams?.title}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-sm truncate" dir="auto">{strip(q.question_text)}</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <Button onClick={importFromBank} disabled={bankSelected.size === 0} className="w-full gap-2">
+                  <Plus className="h-4 w-4" />
+                  {t(`Import ${bankSelected.size} Questions`, `استيراد ${bankSelected.size} سؤال`)}
+                </Button>
+              </>
+            )}
           </div>
         </DialogContent>
       </Dialog>

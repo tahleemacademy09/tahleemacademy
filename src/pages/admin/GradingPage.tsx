@@ -11,6 +11,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
+import { sanitizeHtml } from "@/lib/sanitize";
 import { CheckCircle, XCircle, Play, Pause, Volume2, Search, FileText, Image, Download } from "lucide-react";
 
 const GradingPage = () => {
@@ -66,14 +67,46 @@ const GradingPage = () => {
   const pendingCount = allAttempts.filter((a) => a.status === "submitted").length;
   const gradedCount = allAttempts.filter((a) => a.status === "graded").length;
 
+  const resignUrl = async (url: string): Promise<string> => {
+    if (!url) return url;
+    // Extract storage path from signed URL or raw path
+    const match = url.match(/\/object\/sign\/([^?]+)/);
+    if (match) {
+      const bucketAndPath = decodeURIComponent(match[1]);
+      const slashIdx = bucketAndPath.indexOf('/');
+      const bucket = bucketAndPath.substring(0, slashIdx);
+      const path = bucketAndPath.substring(slashIdx + 1);
+      const { data } = await supabase.storage.from(bucket).createSignedUrl(path, 3600);
+      return data?.signedUrl || url;
+    }
+    return url;
+  };
+
   const loadAttempt = async (attempt: any) => {
     setSelectedAttempt(attempt);
     const [answersRes, questionsRes] = await Promise.all([
       supabase.from("exam_answers").select("*").eq("attempt_id", attempt.id),
       supabase.from("exam_questions").select("*").eq("exam_id", attempt.exam_id).order("sort_order"),
     ]);
-    setAnswers(answersRes.data || []);
-    setQuestions(questionsRes.data || []);
+
+    // Re-sign media URLs for questions
+    const qs = questionsRes.data || [];
+    for (const q of qs) {
+      if (q.media_url) q.media_url = await resignUrl(q.media_url);
+    }
+
+    // Re-sign audio/file URLs in answers
+    const ans = answersRes.data || [];
+    for (const a of ans) {
+      if (a.answer_data && typeof a.answer_data === 'object') {
+        const data = a.answer_data as any;
+        if (data.audioUrl) data.audioUrl = await resignUrl(data.audioUrl);
+        if (data.fileUrl) data.fileUrl = await resignUrl(data.fileUrl);
+      }
+    }
+
+    setAnswers(ans);
+    setQuestions(qs);
   };
 
   const updateGrade = (answerId: string, pointsAwarded: number, feedback: string) => {
@@ -204,9 +237,11 @@ const GradingPage = () => {
                     {ans?.is_correct === false && <XCircle className="h-4 w-4 text-destructive" />}
                   </div>
 
-                  <p className="mb-2 font-medium text-sm" dir={language === "ar" ? "rtl" : "ltr"}>
-                    {language === "ar" ? q.question_text_ar || q.question_text : q.question_text}
-                  </p>
+                  <div
+                    className="mb-2 font-medium text-sm prose prose-sm max-w-none"
+                    dir={language === "ar" ? "rtl" : "ltr"}
+                    dangerouslySetInnerHTML={{ __html: sanitizeHtml(language === "ar" ? q.question_text_ar || q.question_text : q.question_text) }}
+                  />
 
                   {q.correct_answer && (
                     <p className="mb-2 text-xs text-emerald">
