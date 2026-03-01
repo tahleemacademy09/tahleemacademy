@@ -67,14 +67,46 @@ const GradingPage = () => {
   const pendingCount = allAttempts.filter((a) => a.status === "submitted").length;
   const gradedCount = allAttempts.filter((a) => a.status === "graded").length;
 
+  const resignUrl = async (url: string): Promise<string> => {
+    if (!url) return url;
+    // Extract storage path from signed URL or raw path
+    const match = url.match(/\/object\/sign\/([^?]+)/);
+    if (match) {
+      const bucketAndPath = decodeURIComponent(match[1]);
+      const slashIdx = bucketAndPath.indexOf('/');
+      const bucket = bucketAndPath.substring(0, slashIdx);
+      const path = bucketAndPath.substring(slashIdx + 1);
+      const { data } = await supabase.storage.from(bucket).createSignedUrl(path, 3600);
+      return data?.signedUrl || url;
+    }
+    return url;
+  };
+
   const loadAttempt = async (attempt: any) => {
     setSelectedAttempt(attempt);
     const [answersRes, questionsRes] = await Promise.all([
       supabase.from("exam_answers").select("*").eq("attempt_id", attempt.id),
       supabase.from("exam_questions").select("*").eq("exam_id", attempt.exam_id).order("sort_order"),
     ]);
-    setAnswers(answersRes.data || []);
-    setQuestions(questionsRes.data || []);
+
+    // Re-sign media URLs for questions
+    const qs = questionsRes.data || [];
+    for (const q of qs) {
+      if (q.media_url) q.media_url = await resignUrl(q.media_url);
+    }
+
+    // Re-sign audio/file URLs in answers
+    const ans = answersRes.data || [];
+    for (const a of ans) {
+      if (a.answer_data && typeof a.answer_data === 'object') {
+        const data = a.answer_data as any;
+        if (data.audioUrl) data.audioUrl = await resignUrl(data.audioUrl);
+        if (data.fileUrl) data.fileUrl = await resignUrl(data.fileUrl);
+      }
+    }
+
+    setAnswers(ans);
+    setQuestions(qs);
   };
 
   const updateGrade = (answerId: string, pointsAwarded: number, feedback: string) => {
