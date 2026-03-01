@@ -130,9 +130,11 @@ const ExamResults = () => {
                     {isGraded && ans && <span className="text-xs font-medium">{ans.points_awarded || 0}/{q.points || 1}</span>}
                   </div>
 
-                  <p className="mb-2 font-medium text-sm" dir={language === "ar" ? "rtl" : "ltr"}>
-                    {language === "ar" ? q.question_text_ar || q.question_text : q.question_text}
-                  </p>
+                  <div
+                    className="mb-2 font-medium text-sm prose prose-sm max-w-none"
+                    dir={language === "ar" ? "rtl" : "ltr"}
+                    dangerouslySetInnerHTML={{ __html: sanitizeHtml(language === "ar" ? q.question_text_ar || q.question_text : q.question_text) }}
+                  />
 
                   {/* Student's Answer */}
                   <div className="rounded-lg bg-muted p-3 mb-2">
