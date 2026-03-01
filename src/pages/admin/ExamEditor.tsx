@@ -922,17 +922,12 @@ fill_blank,"The word for 'water' is ___.","كلمة 'ماء' هي ___.",,,,,,,,,
                     )}
 
                     {/* Explanation */}
-                    <div className="grid gap-3 md:grid-cols-2">
+                    <div>
                       <Input
-                        placeholder={t("Explanation (optional)", "التوضيح (اختياري)")}
+                        placeholder={t("Explanation (optional, any language)", "التوضيح (اختياري، أي لغة)")}
                         value={q.explanation}
                         onChange={(e) => updateQuestion(idx, { explanation: e.target.value })}
-                      />
-                      <Input
-                        placeholder={t("Explanation Arabic (optional)", "التوضيح عربي (اختياري)")}
-                        value={q.explanation_ar}
-                        onChange={(e) => updateQuestion(idx, { explanation_ar: e.target.value })}
-                        dir="rtl"
+                        dir="auto"
                       />
                     </div>
                   </div>
