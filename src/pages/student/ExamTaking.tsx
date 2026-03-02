@@ -657,7 +657,10 @@ const ExamTaking = () => {
                                   <span className="mr-2 inline-flex h-5 w-5 items-center justify-center rounded-full bg-muted text-xs font-bold">
                                     {String.fromCharCode(65 + idx)}
                                   </span>
-                                  <span dangerouslySetInnerHTML={{ __html: sanitizeHtml(language === "ar" ? opt.text_ar || opt.text : opt.text) }} />
+                                  <span dangerouslySetInnerHTML={{ __html: sanitizeHtml(opt.text || "") }} />
+                                  {opt.text_ar && opt.text_ar !== opt.text && (
+                                    <span className="arabic-exam-text block mt-0.5" dangerouslySetInnerHTML={{ __html: sanitizeHtml(opt.text_ar) }} />
+                                  )}
                                 </Label>
                               </div>
                             </div>
