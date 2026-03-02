@@ -1,131 +1,202 @@
 
 
-## Tahleem Platform — Master Correction Plan
+# Tahleem Academy — Full Website & Exam Portal
 
-This plan addresses 8 areas: bilingual display merge, editor save/reload, audio fixes, admin audio player upgrade, Arabic text readability, question nav wrapping, and data safety. No database schema changes. No data loss.
-
----
-
-### PART 1 — Merge English + Arabic Display Logic
-
-**Problem:** Student view uses `language === "ar" ? question_text_ar || question_text : question_text` — so if the user's UI is English, Arabic-only questions show blank. Both fields are never shown together.
-
-**Fix in 3 files:**
-
-- **`ExamTaking.tsx` (line ~602):** Replace single-language render with a helper that shows both fields when both exist, one below the other. If only one exists, show that one. If both empty, show "Question text missing" fallback.
-- **`GradingPage.tsx` (line ~241-244):** Same bilingual merge logic.
-- **`ExamResults.tsx` (line ~133-137):** Same bilingual merge logic.
-
-The render pattern will be:
-```tsx
-{q.question_text && (
-  <div dir="auto" dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.question_text) }} />
-)}
-{q.question_text_ar && q.question_text_ar !== q.question_text && (
-  <div dir="rtl" className="arabic-text-styles" dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.question_text_ar) }} />
-)}
-{!q.question_text && !q.question_text_ar && (
-  <p className="text-muted-foreground italic">Question text missing. Please contact administrator.</p>
-)}
-```
-
-Similarly for MCQ option text: show both `opt.text` and `opt.text_ar` when both exist and differ.
+## Overview
+A complete Arabic learning academy platform with a marketing website, student/admin dashboards, and a fully-featured exam portal. Built with React, Tailwind CSS, and Supabase (backend, auth, storage, edge functions).
 
 ---
 
-### PART 2 — Fix Editor Save & Reload Consistency
+## 1. Marketing Website
 
-**Problem:** The editor saves `question_text` and copies it to `question_text_ar` on save (line 222). On reload (line 170-183), it loads `question_text` back into the editor. This is already consistent.
+### Homepage
+- Hero section with Arabic calligraphy imagery and academy tagline
+- Featured courses carousel
+- Testimonials section
+- Call-to-action for registration
 
-**Actual issue:** The `RichTextEditor` uses `contentEditable` with a ref-based sync. When questions load from DB, the `useEffect` at line 36-41 checks `value !== internalValue.current`. If the value is set before the component mounts, it may not apply. 
+### Courses Page
+- List of courses (Arabic language, Tajweed, Quran memorization, etc.)
+- Filter by level: beginner, intermediate, advanced
+- Course detail pages with syllabus and instructor info
 
-**Fix:** In `RichTextEditor.tsx`, update the `useEffect` to also handle initial mount — set innerHTML on first render if `value` is non-empty. Add an `initializedRef` to ensure first load always applies.
+### About Us Page
+- Academy story, mission, and vision
+- Instructor profiles with credentials
 
----
-
-### PART 3 — Audio Recording System Fix
-
-**Current state:** Audio upload happens inline (ExamTaking line 720-732). The upload uses `upsert: true` and stores the signed URL in `answer_data.audioUrl`.
-
-**Fixes:**
-- Add file size validation (> 0 bytes) before upload.
-- Add error toast when upload fails instead of silently falling back to blob URL.
-- On submit, check if any audio questions have pending uploads (no signed URL yet) and warn.
-- Add error display in MediaPreview when audio fails to load (`onError` handler).
-
----
-
-### PART 4 — Admin Audio Player Controls
-
-**Problem:** GradingPage's `MediaPreview` for audio is minimal — just play/pause with no seek, volume, speed, or skip controls.
-
-**Fix:** Create a new `AdminAudioPlayer` component with:
-- Play/Pause button
-- Seek bar (slider showing current time / duration)
-- Current time and duration display
-- Volume control slider
-- 10-second forward/backward skip buttons
-- Playback speed selector (1x, 1.5x, 2x)
-- Error state: "Audio file unavailable or corrupted"
-
-Replace the audio section in both `GradingPage.tsx` MediaPreview and `ExamResults.tsx` MediaPreview with this component.
+### Contact Page
+- Contact form with validation
+- Email, phone, social media links
+- Embedded map (optional)
 
 ---
 
-### PART 5 — Arabic Text Readability Fix
+## 2. Authentication & User Roles
 
-**Fix:** Add CSS classes for Arabic content rendering across all views:
-
-In `index.css`, add:
-```css
-.arabic-exam-text {
-  font-family: 'Amiri', 'Noto Naskh Arabic', 'Cairo', serif;
-  font-size: 20px;
-  line-height: 1.8;
-  direction: rtl;
-  text-align: right;
-}
-```
-
-Apply this class to all Arabic `dangerouslySetInnerHTML` blocks in ExamTaking, GradingPage, and ExamResults. Also apply to Arabic option text rendering.
+- Secure sign-up and sign-in (email/password) via Supabase Auth
+- Three roles stored in a dedicated `user_roles` table: **Admin**, **Teacher**, **Student**
+- Role-based route protection — students, teachers, and admins each see different dashboards
+- Profile management (name, avatar, contact info)
 
 ---
 
-### PART 6 — Student Exam Navigation Fix
+## 3. Student Dashboard
 
-**Problem:** Mobile bottom bar (ExamTaking line 818-839) uses `overflow-x-auto` with `shrink-0` on buttons, causing horizontal scroll.
-
-**Fix:** Replace with `flex-wrap` layout:
-```tsx
-<div className="flex flex-wrap items-center gap-1.5 pb-1">
-  {questions.map((qq, i) => (
-    <button
-      key={qq.id}
-      className={`flex h-8 w-8 items-center justify-center rounded-lg text-xs font-bold ...`}
-    >
-      {i + 1}
-    </button>
-  ))}
-</div>
-```
-Remove `shrink-0` and `overflow-x-auto`. The container auto-wraps into rows. Apply same treatment to desktop left panel grid (already uses `grid-cols-4` which wraps, so that's fine).
+- Overview: enrolled courses, upcoming exams, recent scores
+- Course progress tracking
+- Exam schedule calendar
+- Notifications panel (exam reminders, results published)
+- Exam history with scores and detailed feedback
 
 ---
 
-### PART 7 — Data Safety
+## 4. Admin / Teacher Dashboard
 
-No database migrations needed. No columns dropped. No data overwritten. All changes are purely frontend rendering and component logic. The `question_text_ar` column is read but never deleted or truncated.
+- Overview: total students, active exams, recent activity stats
+- Student management: view, search, assign to classes/groups
+- Course management: create, edit, delete courses
+- Exam management hub (see below)
+- Reports & analytics with charts (using Recharts)
+- Notification management: send announcements to students
 
 ---
 
-### Files to Create/Modify
+## 5. Exam Portal — Student Side
 
-| File | Action |
+### Exam Registration & Listing
+- Browse available exams with date, duration, and subject
+- Register for upcoming exams
+
+### Exam Interface
+- Distraction-free, full-screen exam view
+- Configurable display: one question at a time or all at once
+- Countdown timer with warnings at milestones
+- Auto-save answers periodically
+- Save draft and final submit buttons
+- Flag questions for review
+- Progress bar showing answered/unanswered/flagged questions
+- Navigation panel to jump between questions
+
+### Supported Question Types
+- Multiple Choice (single and multiple correct answers)
+- True/False
+- Short Answer / Essay
+- Fill-in-the-blank
+- Matching questions
+- Audio/Video playback questions (for listening and pronunciation exams)
+
+### Exam Tools
+- Audio playback controls for listening questions
+- Clear indication of answered vs. unanswered questions
+- Exam guidelines/rules displayed before starting
+
+### Results & History
+- Immediate or delayed result display (configurable by admin)
+- Detailed per-question feedback when enabled
+- Full exam history with scores and progress over time
+
+### Proctoring Features
+- Question randomization and answer shuffling
+- Tab-switch detection with warnings
+- Prevent multiple simultaneous logins during exam
+- Exam activity logging
+
+---
+
+## 6. Exam Portal — Admin / Teacher Side
+
+### Exam Creation & Management
+- Create, edit, duplicate, and delete exams
+- Rich question editor with full Arabic diacritics support
+- Bulk import questions via CSV/Excel upload
+- Question bank with tagging by topic, difficulty, and type
+- Set exam parameters: time limit, passing score, max attempts, auto-grade toggle
+
+### Scheduling
+- Set exam date/time windows
+- Auto-open and auto-close exams on schedule
+
+### Student Assignment
+- Assign exams to specific classes, groups, or individual students
+
+### Grading & Feedback
+- Auto-grading for objective questions (MCQ, True/False, matching)
+- Manual grading interface for short answer and essay questions
+- Add per-question and overall feedback/comments per student
+
+### Reports & Analytics
+- Performance reports by student, class, or exam
+- Question-level analysis (difficulty index, average score, discrimination)
+- Export reports to PDF and Excel
+
+### Proctoring Monitoring
+- View exam activity logs per student
+- Flag suspicious behavior (excessive tab switches)
+
+---
+
+## 7. Multi-Language Support
+- Full interface available in Arabic (RTL) and English (LTR)
+- Language toggle accessible from any page
+- Arabic-first design with proper RTL layout
+
+---
+
+## 8. Notifications System
+- In-app notification center
+- Email notifications via Supabase Edge Functions for:
+  - Exam schedule reminders
+  - Results published
+  - Admin announcements
+
+---
+
+## 9. Mobile-Responsive Design
+- Fully responsive across all pages including the exam interface
+- Touch-friendly controls for exam-taking on mobile
+- Mobile-optimized navigation with hamburger menu
+
+---
+
+## 10. Security & Data Integrity
+- Role-based access control with server-side validation (Supabase RLS)
+- Encrypted data storage for student info and exam content
+- Input validation on all forms (Zod schemas)
+- Rate limiting on auth endpoints
+- Exam anti-cheat measures (randomization, tab detection, activity logging)
+
+---
+
+## Database Structure (Supabase)
+- **profiles** — user profile data linked to auth.users
+- **user_roles** — separate role table (admin, teacher, student)
+- **courses** — course catalog
+- **enrollments** — student-course relationships
+- **exams** — exam definitions and settings
+- **exam_questions** — question bank with type, content, options, tags
+- **exam_assignments** — which students/groups are assigned to which exams
+- **exam_attempts** — student exam sessions with timing and status
+- **exam_answers** — individual question responses per attempt
+- **exam_results** — computed scores and feedback
+- **notifications** — in-app notification records
+- **activity_logs** — proctoring and audit trail
+
+---
+
+## Pages Summary
+| Page | Access |
 |------|--------|
-| `src/components/exam/AdminAudioPlayer.tsx` | **Create** — Full-featured audio player for admin |
-| `src/pages/student/ExamTaking.tsx` | Edit — Bilingual merge, nav wrapping, Arabic styles |
-| `src/pages/admin/GradingPage.tsx` | Edit — Bilingual merge, replace MediaPreview audio with AdminAudioPlayer |
-| `src/pages/student/ExamResults.tsx` | Edit — Bilingual merge, replace MediaPreview audio, Arabic styles |
-| `src/components/exam/RichTextEditor.tsx` | Edit — Fix initial load reliability |
-| `src/index.css` | Edit — Add Arabic text styling class |
+| Home, Courses, About, Contact | Public |
+| Login / Register | Public |
+| Student Dashboard | Student |
+| Student Exam List & Registration | Student |
+| Exam Taking Interface | Student |
+| Exam Results & History | Student |
+| Admin Dashboard | Admin/Teacher |
+| Exam Creator/Editor | Admin/Teacher |
+| Question Bank | Admin/Teacher |
+| Student Management | Admin/Teacher |
+| Grading Interface | Admin/Teacher |
+| Reports & Analytics | Admin/Teacher |
+| Settings & Notifications | All authenticated |
 

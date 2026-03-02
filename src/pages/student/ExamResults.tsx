@@ -7,7 +7,8 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { sanitizeHtml } from "@/lib/sanitize";
-import { CheckCircle, XCircle, ArrowLeft, Clock, Play, Pause, Volume2, FileText, Image, Download } from "lucide-react";
+import { CheckCircle, XCircle, ArrowLeft, Clock, Play, Pause, Volume2, FileText, Image, Download, AlertTriangle } from "lucide-react";
+import AdminAudioPlayer from "@/components/exam/AdminAudioPlayer";
 
 const ExamResults = () => {
   const { attemptId } = useParams<{ attemptId: string }>();
@@ -130,11 +131,22 @@ const ExamResults = () => {
                     {isGraded && ans && <span className="text-xs font-medium">{ans.points_awarded || 0}/{q.points || 1}</span>}
                   </div>
 
-                  <div
-                    className="mb-2 font-medium text-sm prose prose-sm max-w-none"
-                    dir={language === "ar" ? "rtl" : "ltr"}
-                    dangerouslySetInnerHTML={{ __html: sanitizeHtml(language === "ar" ? q.question_text_ar || q.question_text : q.question_text) }}
-                  />
+                  {q.question_text ? (
+                    <div
+                      className="mb-1 font-medium text-sm prose prose-sm max-w-none"
+                      dir="auto"
+                      dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.question_text) }}
+                    />
+                  ) : null}
+                  {q.question_text_ar && q.question_text_ar !== q.question_text ? (
+                    <div
+                      className="mb-2 arabic-exam-text prose prose-sm max-w-none"
+                      dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.question_text_ar) }}
+                    />
+                  ) : null}
+                  {!q.question_text && !q.question_text_ar && (
+                    <p className="mb-2 text-muted-foreground italic text-sm">Question text missing. Please contact administrator.</p>
+                  )}
 
                   {/* Student's Answer */}
                   <div className="rounded-lg bg-muted p-3 mb-2">
@@ -196,8 +208,6 @@ const ExamResults = () => {
 };
 
 const MediaPreview = ({ src, label }: { src: string; label: string }) => {
-  const audioRef = useRef<HTMLAudioElement>(null);
-  const [playing, setPlaying] = useState(false);
   const lower = src.toLowerCase().split("?")[0];
   const isImage = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"].some(ext => lower.endsWith(ext));
   const isPdf = lower.endsWith(".pdf");
@@ -217,20 +227,7 @@ const MediaPreview = ({ src, label }: { src: string; label: string }) => {
     </div>
   );
 
-  return (
-    <div className="flex items-center gap-2 rounded-lg bg-accent/50 p-2 mt-1">
-      <audio ref={audioRef} src={src} onEnded={() => setPlaying(false)} />
-      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => {
-        if (!audioRef.current) return;
-        playing ? audioRef.current.pause() : audioRef.current.play();
-        setPlaying(!playing);
-      }}>
-        {playing ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
-      </Button>
-      <Volume2 className="h-3 w-3 text-muted-foreground" />
-      <span className="text-xs text-muted-foreground">{label}</span>
-    </div>
-  );
+  return <AdminAudioPlayer src={src} label={label} />;
 };
 
 export default ExamResults;

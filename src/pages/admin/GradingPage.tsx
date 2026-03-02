@@ -13,6 +13,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import { sanitizeHtml } from "@/lib/sanitize";
 import { CheckCircle, XCircle, Play, Pause, Volume2, Search, FileText, Image, Download } from "lucide-react";
+import AdminAudioPlayer from "@/components/exam/AdminAudioPlayer";
 
 const GradingPage = () => {
   const { t, language } = useLanguage();
@@ -237,11 +238,22 @@ const GradingPage = () => {
                     {ans?.is_correct === false && <XCircle className="h-4 w-4 text-destructive" />}
                   </div>
 
-                  <div
-                    className="mb-2 font-medium text-sm prose prose-sm max-w-none"
-                    dir={language === "ar" ? "rtl" : "ltr"}
-                    dangerouslySetInnerHTML={{ __html: sanitizeHtml(language === "ar" ? q.question_text_ar || q.question_text : q.question_text) }}
-                  />
+                  {q.question_text ? (
+                    <div
+                      className="mb-1 font-medium text-sm prose prose-sm max-w-none"
+                      dir="auto"
+                      dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.question_text) }}
+                    />
+                  ) : null}
+                  {q.question_text_ar && q.question_text_ar !== q.question_text ? (
+                    <div
+                      className="mb-2 arabic-exam-text prose prose-sm max-w-none"
+                      dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.question_text_ar) }}
+                    />
+                  ) : null}
+                  {!q.question_text && !q.question_text_ar && (
+                    <p className="mb-2 text-muted-foreground italic text-sm">Question text missing. Please contact administrator.</p>
+                  )}
 
                   {q.correct_answer && (
                     <p className="mb-2 text-xs text-emerald">
@@ -414,9 +426,6 @@ const GradingPage = () => {
 
 // Smart media preview component - detects file type and renders appropriately
 const MediaPreview = ({ src, label }: { src: string; label: string }) => {
-  const audioRef = useRef<HTMLAudioElement>(null);
-  const [playing, setPlaying] = useState(false);
-
   const fileType = detectFileType(src);
 
   if (fileType === "image") {
@@ -440,23 +449,8 @@ const MediaPreview = ({ src, label }: { src: string; label: string }) => {
     );
   }
 
-  // Default: audio
-  const toggle = () => {
-    if (!audioRef.current) return;
-    if (playing) { audioRef.current.pause(); } else { audioRef.current.play(); }
-    setPlaying(!playing);
-  };
-
-  return (
-    <div className="flex items-center gap-2 rounded-lg bg-accent/50 p-2 my-1">
-      <audio ref={audioRef} src={src} onEnded={() => setPlaying(false)} />
-      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={toggle}>
-        {playing ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
-      </Button>
-      <Volume2 className="h-3 w-3 text-muted-foreground" />
-      <span className="text-xs text-muted-foreground">{label}</span>
-    </div>
-  );
+  // Default: audio — use full AdminAudioPlayer
+  return <AdminAudioPlayer src={src} label={label} />;
 };
 
 function detectFileType(url: string): "image" | "audio" | "pdf" | "document" | "unknown" {

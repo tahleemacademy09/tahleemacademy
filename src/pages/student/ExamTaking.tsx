@@ -594,13 +594,24 @@ const ExamTaking = () => {
                     </div>
                   </div>
 
-                  {/* Question text */}
+                  {/* Question text — bilingual merge */}
                   <div className="mb-4">
-                    <div
-                      className="text-base sm:text-lg font-medium leading-relaxed prose prose-sm max-w-none"
-                      dir={language === "ar" ? "rtl" : "ltr"}
-                      dangerouslySetInnerHTML={{ __html: sanitizeHtml(language === "ar" ? q?.question_text_ar || q?.question_text || "" : q?.question_text || "") }}
-                    />
+                    {q?.question_text ? (
+                      <div
+                        className="text-base sm:text-lg font-medium leading-relaxed prose prose-sm max-w-none"
+                        dir="auto"
+                        dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.question_text) }}
+                      />
+                    ) : null}
+                    {q?.question_text_ar && q.question_text_ar !== q.question_text ? (
+                      <div
+                        className="arabic-exam-text mt-2 prose prose-sm max-w-none"
+                        dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.question_text_ar) }}
+                      />
+                    ) : null}
+                    {!q?.question_text && !q?.question_text_ar && (
+                      <p className="text-muted-foreground italic text-sm">Question text missing. Please contact administrator.</p>
+                    )}
                     {q?.media_url && (q?.question_type === "audio" || q?.question_type === "dictation") && (
                       <div className="mt-3">
                         <AudioPlayer src={q.media_url} title={t("Listen carefully", "استمع بعناية")} maxPlays={3} />
@@ -646,7 +657,10 @@ const ExamTaking = () => {
                                   <span className="mr-2 inline-flex h-5 w-5 items-center justify-center rounded-full bg-muted text-xs font-bold">
                                     {String.fromCharCode(65 + idx)}
                                   </span>
-                                  <span dangerouslySetInnerHTML={{ __html: sanitizeHtml(language === "ar" ? opt.text_ar || opt.text : opt.text) }} />
+                                  <span dangerouslySetInnerHTML={{ __html: sanitizeHtml(opt.text || "") }} />
+                                  {opt.text_ar && opt.text_ar !== opt.text && (
+                                    <span className="arabic-exam-text block mt-0.5" dangerouslySetInnerHTML={{ __html: sanitizeHtml(opt.text_ar) }} />
+                                  )}
                                 </Label>
                               </div>
                             </div>
@@ -718,6 +732,10 @@ const ExamTaking = () => {
                         </p>
                         <AudioRecorder
                           onRecordingComplete={async (blob, url) => {
+                            if (blob.size === 0) {
+                              toast({ title: t("Recording is empty. Please try again.", "التسجيل فارغ. حاول مرة أخرى."), variant: "destructive" });
+                              return;
+                            }
                             const ext = "webm";
                             const path = `student-answers/${user!.id}/${attemptId}_${q.id}.${ext}`;
                             const { error } = await supabase.storage.from("exam-media").upload(path, blob, { upsert: true });
@@ -725,6 +743,7 @@ const ExamTaking = () => {
                              const { data: urlData } = await supabase.storage.from("exam-media").createSignedUrl(path, 3600);
                               setAnswer(q.id, answers[q.id]?.text || "[audio_recorded]", { audioUrl: urlData?.signedUrl || url, fileType: "audio" });
                             } else {
+                              toast({ title: t("Audio upload failed. Please try again.", "فشل رفع الصوت. حاول مرة أخرى."), variant: "destructive" });
                               setAnswer(q.id, answers[q.id]?.text || "[audio_recorded]", { audioUrl: url, fileType: "audio" });
                             }
                           }}
@@ -816,7 +835,7 @@ const ExamTaking = () => {
 
         {/* Mobile bottom bar */}
         <div className="lg:hidden fixed bottom-0 left-0 right-0 z-40 border-t bg-card/95 backdrop-blur px-3 py-2">
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+          <div className="flex flex-wrap items-center gap-1.5 pb-1">
             {questions.map((qq, i) => {
               const answered = !!answers[qq.id]?.text;
               const flagged = answers[qq.id]?.flagged;
@@ -824,7 +843,7 @@ const ExamTaking = () => {
                 <button
                   key={qq.id}
                   onClick={() => setCurrentIdx(i)}
-                  className={`shrink-0 flex h-8 w-8 items-center justify-center rounded-lg text-xs font-bold transition-all ${
+                  className={`flex h-8 w-8 items-center justify-center rounded-lg text-xs font-bold transition-all ${
                     i === currentIdx ? "bg-primary text-primary-foreground shadow" :
                     flagged ? "bg-secondary/20 text-secondary" :
                     answered ? "bg-emerald/15 text-emerald" :
