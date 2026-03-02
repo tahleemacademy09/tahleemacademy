@@ -594,13 +594,24 @@ const ExamTaking = () => {
                     </div>
                   </div>
 
-                  {/* Question text */}
+                  {/* Question text — bilingual merge */}
                   <div className="mb-4">
-                    <div
-                      className="text-base sm:text-lg font-medium leading-relaxed prose prose-sm max-w-none"
-                      dir={language === "ar" ? "rtl" : "ltr"}
-                      dangerouslySetInnerHTML={{ __html: sanitizeHtml(language === "ar" ? q?.question_text_ar || q?.question_text || "" : q?.question_text || "") }}
-                    />
+                    {q?.question_text ? (
+                      <div
+                        className="text-base sm:text-lg font-medium leading-relaxed prose prose-sm max-w-none"
+                        dir="auto"
+                        dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.question_text) }}
+                      />
+                    ) : null}
+                    {q?.question_text_ar && q.question_text_ar !== q.question_text ? (
+                      <div
+                        className="arabic-exam-text mt-2 prose prose-sm max-w-none"
+                        dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.question_text_ar) }}
+                      />
+                    ) : null}
+                    {!q?.question_text && !q?.question_text_ar && (
+                      <p className="text-muted-foreground italic text-sm">Question text missing. Please contact administrator.</p>
+                    )}
                     {q?.media_url && (q?.question_type === "audio" || q?.question_type === "dictation") && (
                       <div className="mt-3">
                         <AudioPlayer src={q.media_url} title={t("Listen carefully", "استمع بعناية")} maxPlays={3} />
