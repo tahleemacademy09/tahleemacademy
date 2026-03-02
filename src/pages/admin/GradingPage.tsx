@@ -452,23 +452,8 @@ const MediaPreview = ({ src, label }: { src: string; label: string }) => {
     );
   }
 
-  // Default: audio
-  const toggle = () => {
-    if (!audioRef.current) return;
-    if (playing) { audioRef.current.pause(); } else { audioRef.current.play(); }
-    setPlaying(!playing);
-  };
-
-  return (
-    <div className="flex items-center gap-2 rounded-lg bg-accent/50 p-2 my-1">
-      <audio ref={audioRef} src={src} onEnded={() => setPlaying(false)} />
-      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={toggle}>
-        {playing ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
-      </Button>
-      <Volume2 className="h-3 w-3 text-muted-foreground" />
-      <span className="text-xs text-muted-foreground">{label}</span>
-    </div>
-  );
+  // Default: audio — use full AdminAudioPlayer
+  return <AdminAudioPlayer src={src} label={label} />;
 };
 
 function detectFileType(url: string): "image" | "audio" | "pdf" | "document" | "unknown" {

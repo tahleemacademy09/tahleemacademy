@@ -830,7 +830,7 @@ const ExamTaking = () => {
 
         {/* Mobile bottom bar */}
         <div className="lg:hidden fixed bottom-0 left-0 right-0 z-40 border-t bg-card/95 backdrop-blur px-3 py-2">
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+          <div className="flex flex-wrap items-center gap-1.5 pb-1">
             {questions.map((qq, i) => {
               const answered = !!answers[qq.id]?.text;
               const flagged = answers[qq.id]?.flagged;
@@ -838,7 +838,7 @@ const ExamTaking = () => {
                 <button
                   key={qq.id}
                   onClick={() => setCurrentIdx(i)}
-                  className={`shrink-0 flex h-8 w-8 items-center justify-center rounded-lg text-xs font-bold transition-all ${
+                  className={`flex h-8 w-8 items-center justify-center rounded-lg text-xs font-bold transition-all ${
                     i === currentIdx ? "bg-primary text-primary-foreground shadow" :
                     flagged ? "bg-secondary/20 text-secondary" :
                     answered ? "bg-emerald/15 text-emerald" :

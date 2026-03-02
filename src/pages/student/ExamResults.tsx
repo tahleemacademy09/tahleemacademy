@@ -229,20 +229,7 @@ const MediaPreview = ({ src, label }: { src: string; label: string }) => {
     </div>
   );
 
-  return (
-    <div className="flex items-center gap-2 rounded-lg bg-accent/50 p-2 mt-1">
-      <audio ref={audioRef} src={src} onEnded={() => setPlaying(false)} />
-      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => {
-        if (!audioRef.current) return;
-        playing ? audioRef.current.pause() : audioRef.current.play();
-        setPlaying(!playing);
-      }}>
-        {playing ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
-      </Button>
-      <Volume2 className="h-3 w-3 text-muted-foreground" />
-      <span className="text-xs text-muted-foreground">{label}</span>
-    </div>
-  );
+  return <AdminAudioPlayer src={src} label={label} />;
 };
 
 export default ExamResults;
