@@ -746,7 +746,6 @@ const ExamTaking = () => {
                               toast({ title: t("Audio upload failed. Please try again.", "فشل رفع الصوت. حاول مرة أخرى."), variant: "destructive" });
                               setAnswer(q.id, answers[q.id]?.text || "[audio_recorded]", { audioUrl: url, fileType: "audio" });
                             }
-                            }
                           }}
                           existingUrl={answers[q.id]?.data?.audioUrl}
                         />
