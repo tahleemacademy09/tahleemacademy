@@ -208,8 +208,6 @@ const ExamResults = () => {
 };
 
 const MediaPreview = ({ src, label }: { src: string; label: string }) => {
-  const audioRef = useRef<HTMLAudioElement>(null);
-  const [playing, setPlaying] = useState(false);
   const lower = src.toLowerCase().split("?")[0];
   const isImage = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"].some(ext => lower.endsWith(ext));
   const isPdf = lower.endsWith(".pdf");

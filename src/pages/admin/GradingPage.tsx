@@ -426,9 +426,6 @@ const GradingPage = () => {
 
 // Smart media preview component - detects file type and renders appropriately
 const MediaPreview = ({ src, label }: { src: string; label: string }) => {
-  const audioRef = useRef<HTMLAudioElement>(null);
-  const [playing, setPlaying] = useState(false);
-
   const fileType = detectFileType(src);
 
   if (fileType === "image") {

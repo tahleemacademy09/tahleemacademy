@@ -732,6 +732,10 @@ const ExamTaking = () => {
                         </p>
                         <AudioRecorder
                           onRecordingComplete={async (blob, url) => {
+                            if (blob.size === 0) {
+                              toast({ title: t("Recording is empty. Please try again.", "التسجيل فارغ. حاول مرة أخرى."), variant: "destructive" });
+                              return;
+                            }
                             const ext = "webm";
                             const path = `student-answers/${user!.id}/${attemptId}_${q.id}.${ext}`;
                             const { error } = await supabase.storage.from("exam-media").upload(path, blob, { upsert: true });
@@ -739,7 +743,9 @@ const ExamTaking = () => {
                              const { data: urlData } = await supabase.storage.from("exam-media").createSignedUrl(path, 3600);
                               setAnswer(q.id, answers[q.id]?.text || "[audio_recorded]", { audioUrl: urlData?.signedUrl || url, fileType: "audio" });
                             } else {
+                              toast({ title: t("Audio upload failed. Please try again.", "فشل رفع الصوت. حاول مرة أخرى."), variant: "destructive" });
                               setAnswer(q.id, answers[q.id]?.text || "[audio_recorded]", { audioUrl: url, fileType: "audio" });
+                            }
                             }
                           }}
                           existingUrl={answers[q.id]?.data?.audioUrl}
