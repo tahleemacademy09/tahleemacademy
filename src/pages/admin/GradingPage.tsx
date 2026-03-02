@@ -13,6 +13,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import { sanitizeHtml } from "@/lib/sanitize";
 import { CheckCircle, XCircle, Play, Pause, Volume2, Search, FileText, Image, Download } from "lucide-react";
+import AdminAudioPlayer from "@/components/exam/AdminAudioPlayer";
 
 const GradingPage = () => {
   const { t, language } = useLanguage();
