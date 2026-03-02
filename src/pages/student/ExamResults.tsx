@@ -7,7 +7,8 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { sanitizeHtml } from "@/lib/sanitize";
-import { CheckCircle, XCircle, ArrowLeft, Clock, Play, Pause, Volume2, FileText, Image, Download } from "lucide-react";
+import { CheckCircle, XCircle, ArrowLeft, Clock, Play, Pause, Volume2, FileText, Image, Download, AlertTriangle } from "lucide-react";
+import AdminAudioPlayer from "@/components/exam/AdminAudioPlayer";
 
 const ExamResults = () => {
   const { attemptId } = useParams<{ attemptId: string }>();
