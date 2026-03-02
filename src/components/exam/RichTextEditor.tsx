@@ -31,10 +31,20 @@ interface RichTextEditorProps {
 const RichTextEditor = ({ value, onChange, placeholder, dir, className }: RichTextEditorProps) => {
   const editorRef = useRef<HTMLDivElement>(null);
   const internalValue = useRef(value);
+  const initializedRef = useRef(false);
 
-  // Only set innerHTML when value changes externally (not from user typing)
+  // Set innerHTML on initial mount and when value changes externally
   useEffect(() => {
-    if (editorRef.current && value !== internalValue.current) {
+    if (!editorRef.current) return;
+    if (!initializedRef.current) {
+      initializedRef.current = true;
+      if (value) {
+        internalValue.current = value;
+        editorRef.current.innerHTML = value;
+      }
+      return;
+    }
+    if (value !== internalValue.current) {
       internalValue.current = value;
       editorRef.current.innerHTML = value;
     }

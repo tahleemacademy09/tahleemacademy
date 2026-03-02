@@ -165,6 +165,15 @@
   background: linear-gradient(to right, transparent, hsl(var(--gold)), transparent);
 }
 
+/* Arabic exam text readability */
+.arabic-exam-text {
+  font-family: 'Amiri', 'Noto Naskh Arabic', 'Cairo', serif;
+  font-size: 20px;
+  line-height: 1.8;
+  direction: rtl;
+  text-align: right;
+}
+
 /* Smooth scroll */
 html {
   scroll-behavior: smooth;
