@@ -238,11 +238,22 @@ const GradingPage = () => {
                     {ans?.is_correct === false && <XCircle className="h-4 w-4 text-destructive" />}
                   </div>
 
-                  <div
-                    className="mb-2 font-medium text-sm prose prose-sm max-w-none"
-                    dir={language === "ar" ? "rtl" : "ltr"}
-                    dangerouslySetInnerHTML={{ __html: sanitizeHtml(language === "ar" ? q.question_text_ar || q.question_text : q.question_text) }}
-                  />
+                  {q.question_text ? (
+                    <div
+                      className="mb-1 font-medium text-sm prose prose-sm max-w-none"
+                      dir="auto"
+                      dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.question_text) }}
+                    />
+                  ) : null}
+                  {q.question_text_ar && q.question_text_ar !== q.question_text ? (
+                    <div
+                      className="mb-2 arabic-exam-text prose prose-sm max-w-none"
+                      dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.question_text_ar) }}
+                    />
+                  ) : null}
+                  {!q.question_text && !q.question_text_ar && (
+                    <p className="mb-2 text-muted-foreground italic text-sm">Question text missing. Please contact administrator.</p>
+                  )}
 
                   {q.correct_answer && (
                     <p className="mb-2 text-xs text-emerald">
