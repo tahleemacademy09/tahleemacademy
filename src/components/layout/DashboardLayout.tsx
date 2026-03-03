@@ -2,7 +2,7 @@ import { Link, Outlet, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
-import { BookOpen, LayoutDashboard, ClipboardList, Users, Settings, LogOut, Globe, CheckSquare, BarChart, UserCircle, Library } from "lucide-react";
+import { BookOpen, LayoutDashboard, ClipboardList, Users, Settings, LogOut, Globe, CheckSquare, BarChart, UserCircle, Library, GraduationCap, MessageCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface DashboardLayoutProps {
