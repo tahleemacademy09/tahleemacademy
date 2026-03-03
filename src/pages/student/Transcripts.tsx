@@ -181,7 +181,7 @@ const Transcripts = () => {
                 <div className="text-xs text-muted-foreground">{t("Exams Graded", "امتحانات مصححة")}</div>
               </div>
               <div className="text-center">
-                <div className="text-2xl font-bold text-emerald-600">
+                <div className="text-2xl font-bold text-primary">
                   {exams.filter(e => e.passed).length}
                 </div>
                 <div className="text-xs text-muted-foreground">{t("Passed", "ناجح")}</div>
