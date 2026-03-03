@@ -44,6 +44,69 @@ export type Database = {
         }
         Relationships: []
       }
+      ai_query_logs: {
+        Row: {
+          created_at: string
+          id: string
+          intent_type: string | null
+          query_text: string
+          result_meta: Json | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          intent_type?: string | null
+          query_text: string
+          result_meta?: Json | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          intent_type?: string | null
+          query_text?: string
+          result_meta?: Json | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      chat_messages: {
+        Row: {
+          audio_duration_ms: number | null
+          class_level_id: string
+          content_type: string
+          created_at: string
+          id: string
+          is_system: boolean | null
+          media_path: string | null
+          text: string | null
+          user_id: string
+        }
+        Insert: {
+          audio_duration_ms?: number | null
+          class_level_id: string
+          content_type?: string
+          created_at?: string
+          id?: string
+          is_system?: boolean | null
+          media_path?: string | null
+          text?: string | null
+          user_id: string
+        }
+        Update: {
+          audio_duration_ms?: number | null
+          class_level_id?: string
+          content_type?: string
+          created_at?: string
+          id?: string
+          is_system?: boolean | null
+          media_path?: string | null
+          text?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       courses: {
         Row: {
           category: string | null
