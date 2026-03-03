@@ -24,6 +24,9 @@ import ExamTaking from "./pages/student/ExamTaking";
 import ProfileSettings from "./pages/student/ProfileSettings";
 import ExamResults from "./pages/student/ExamResults";
 import PreExamVerification from "./pages/student/PreExamVerification";
+import Transcripts from "./pages/student/Transcripts";
+import Majlis from "./pages/student/Majlis";
+import MuallimOverlay from "./components/majlis/MuallimOverlay";
 
 import AdminDashboard from "./pages/admin/AdminDashboard";
 import ExamManager from "./pages/admin/ExamManager";
@@ -43,6 +46,7 @@ const App = () => (
           <Toaster />
           <Sonner />
           <BrowserRouter>
+            <MuallimOverlay />
             <Routes>
               {/* Public pages */}
               <Route element={<PublicLayout />}>
@@ -61,6 +65,8 @@ const App = () => (
               <Route element={<ProtectedRoute><DashboardLayout role="student" /></ProtectedRoute>}>
                 <Route path="/student" element={<StudentDashboard />} />
                 <Route path="/student/exams" element={<StudentExams />} />
+                <Route path="/student/transcripts" element={<Transcripts />} />
+                <Route path="/student/majlis" element={<Majlis />} />
                 <Route path="/student/profile" element={<ProfileSettings />} />
               </Route>
 
