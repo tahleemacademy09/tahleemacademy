@@ -46,6 +46,7 @@ const App = () => (
           <Toaster />
           <Sonner />
           <BrowserRouter>
+            <MuallimOverlay />
             <Routes>
               {/* Public pages */}
               <Route element={<PublicLayout />}>
