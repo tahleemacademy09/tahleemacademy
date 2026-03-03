@@ -17,6 +17,8 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   const studentLinks = [
     { to: "/student", icon: LayoutDashboard, label: t("Dashboard", "لوحة التحكم") },
     { to: "/student/exams", icon: ClipboardList, label: t("Exams", "الامتحانات") },
+    { to: "/student/transcripts", icon: GraduationCap, label: t("Transcripts", "السجل الأكاديمي") },
+    { to: "/student/majlis", icon: MessageCircle, label: t("Al-Majlis", "المجلس") },
     { to: "/student/profile", icon: UserCircle, label: t("Profile", "الملف الشخصي") },
   ];
 
