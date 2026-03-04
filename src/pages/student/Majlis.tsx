@@ -1,14 +1,15 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
-import { Send, Users, MessageCircle, Hash } from "lucide-react";
+import { Send, Users, MessageCircle, Hash, Menu, Reply, Smile, Check, CheckCheck, Search } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 interface ChatMessage {
@@ -21,15 +22,16 @@ interface ChatMessage {
   sender_name?: string;
 }
 
-// Group channels derived from courses the student is enrolled in
 interface ChatRoom {
   id: string;
   name: string;
   name_ar: string | null;
 }
 
+const REACTIONS = ["👍", "❤️", "😂", "🤲", "📖", "⭐"];
+
 const Majlis = () => {
-  const { t, language } = useLanguage();
+  const { t, language, dir } = useLanguage();
   const { user, profile } = useAuth();
   const { toast } = useToast();
   const [rooms, setRooms] = useState<ChatRoom[]>([]);
@@ -37,9 +39,13 @@ const Majlis = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [profiles, setProfiles] = useState<Record<string, string>>({});
+  const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [showChannels, setShowChannels] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  // Load rooms from enrolled courses
+  // Load rooms
   useEffect(() => {
     if (!user) return;
     const loadRooms = async () => {
@@ -56,7 +62,6 @@ const Majlis = () => {
           name_ar: e.courses.title_ar,
         }));
 
-      // Also add a "General" room
       courseRooms.unshift({ id: "general", name: "General Majlis", name_ar: "المجلس العام" });
       setRooms(courseRooms);
       if (courseRooms.length > 0) setActiveRoom(courseRooms[0].id);
@@ -64,7 +69,7 @@ const Majlis = () => {
     loadRooms();
   }, [user]);
 
-  // Load messages for active room
+  // Load messages
   useEffect(() => {
     if (!activeRoom) return;
     const loadMessages = async () => {
@@ -76,7 +81,6 @@ const Majlis = () => {
         .limit(100);
       setMessages((data as ChatMessage[]) || []);
 
-      // Load unique sender profiles
       const userIds = [...new Set((data || []).map((m: any) => m.user_id))];
       if (userIds.length > 0) {
         const { data: profs } = await supabase
@@ -90,7 +94,6 @@ const Majlis = () => {
     };
     loadMessages();
 
-    // Subscribe to realtime
     const channel = supabase
       .channel(`majlis-${activeRoom}`)
       .on("postgres_changes", {
@@ -101,7 +104,6 @@ const Majlis = () => {
       }, (payload) => {
         const newMsg = payload.new as ChatMessage;
         setMessages(prev => [...prev, newMsg]);
-        // Load profile if not cached
         if (!profiles[newMsg.user_id]) {
           supabase.from("profiles").select("user_id, full_name").eq("user_id", newMsg.user_id).maybeSingle()
             .then(({ data }) => {
@@ -121,8 +123,13 @@ const Majlis = () => {
 
   const sendMessage = async () => {
     if (!input.trim() || !activeRoom || !user) return;
-    const text = input.trim();
+    let text = input.trim();
+    if (replyTo) {
+      const replyName = profiles[replyTo.user_id] || "Student";
+      text = `↩ ${replyName}: "${(replyTo.text || "").slice(0, 50)}"\n\n${text}`;
+    }
     setInput("");
+    setReplyTo(null);
     const { error } = await supabase.from("chat_messages").insert({
       class_level_id: activeRoom,
       user_id: user.id,
@@ -132,97 +139,141 @@ const Majlis = () => {
     if (error) {
       toast({ title: t("Error sending message", "خطأ في إرسال الرسالة"), variant: "destructive" });
     }
+    inputRef.current?.focus();
   };
 
   const activeRoomData = rooms.find(r => r.id === activeRoom);
+  const filteredMessages = searchQuery
+    ? messages.filter(m => m.text?.toLowerCase().includes(searchQuery.toLowerCase()))
+    : messages;
+
+  const ChannelList = ({ onSelect }: { onSelect?: () => void }) => (
+    <div className="flex h-full flex-col">
+      <div className="p-3 border-b">
+        <h3 className="font-semibold text-sm flex items-center gap-2">
+          <Hash className="h-4 w-4" />
+          {t("Channels", "القنوات")}
+        </h3>
+      </div>
+      <div className="flex-1 overflow-auto p-2 space-y-1">
+        {rooms.map(room => (
+          <button
+            key={room.id}
+            onClick={() => { setActiveRoom(room.id); onSelect?.(); }}
+            className={`w-full rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors ${
+              activeRoom === room.id
+                ? "bg-primary text-primary-foreground"
+                : "hover:bg-accent text-foreground"
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <MessageCircle className="h-3.5 w-3.5 shrink-0" />
+              <span dir="auto" className="truncate">
+                {language === "ar" ? room.name_ar || room.name : room.name}
+              </span>
+            </div>
+          </button>
+        ))}
+        {rooms.length === 0 && (
+          <p className="text-xs text-muted-foreground p-3">
+            {t("No channels yet. Enroll in a course to join.", "لا توجد قنوات بعد. سجّل في مقرر للانضمام.")}
+          </p>
+        )}
+      </div>
+    </div>
+  );
 
   return (
-    <div className="container mx-auto px-4 py-8">
-      <div className="mb-6">
-        <h1 className="text-3xl font-bold font-arabic">{t("Al-Majlis", "المجلس")}</h1>
-        <p className="text-muted-foreground">{t("Connect with your classmates", "تواصل مع زملائك")}</p>
+    <div className="flex flex-col h-[calc(100vh-3.5rem)] md:h-[calc(100vh-0px)]">
+      {/* Header */}
+      <div className="flex items-center gap-2 border-b px-4 py-3">
+        {/* Mobile channel trigger */}
+        <Sheet open={showChannels} onOpenChange={setShowChannels}>
+          <SheetTrigger asChild>
+            <Button variant="ghost" size="icon" className="md:hidden shrink-0">
+              <Menu className="h-5 w-5" />
+            </Button>
+          </SheetTrigger>
+          <SheetContent side={dir === "rtl" ? "right" : "left"} className="w-72 p-0">
+            <ChannelList onSelect={() => setShowChannels(false)} />
+          </SheetContent>
+        </Sheet>
+
+        <div className="flex-1 min-w-0">
+          <h1 className="text-lg font-bold font-arabic truncate" dir="auto">
+            {activeRoomData ? (language === "ar" ? activeRoomData.name_ar || activeRoomData.name : activeRoomData.name) : t("Al-Majlis", "المجلس")}
+          </h1>
+        </div>
+
+        {/* Search */}
+        <div className="relative hidden sm:block">
+          <Search className="absolute start-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+          <Input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder={t("Search...", "بحث...")}
+            className="h-8 w-40 ps-8 text-xs"
+          />
+        </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-4" style={{ height: "calc(100vh - 220px)" }}>
-        {/* Room list */}
-        <Card className="md:col-span-1 flex flex-col">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center gap-2">
-              <Hash className="h-4 w-4" />
-              {t("Channels", "القنوات")}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="flex-1 overflow-auto p-2">
-            <div className="space-y-1">
-              {rooms.map(room => (
-                <button
-                  key={room.id}
-                  onClick={() => setActiveRoom(room.id)}
-                  className={`w-full rounded-lg px-3 py-2 text-left text-sm transition-colors ${
-                    activeRoom === room.id
-                      ? "bg-primary text-primary-foreground"
-                      : "hover:bg-accent"
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <MessageCircle className="h-3.5 w-3.5 shrink-0" />
-                    <span dir="auto" className="truncate">
-                      {language === "ar" ? room.name_ar || room.name : room.name}
-                    </span>
-                  </div>
-                </button>
-              ))}
-              {rooms.length === 0 && (
-                <p className="text-xs text-muted-foreground p-2">
-                  {t("No channels yet. Enroll in a course to join.", "لا توجد قنوات بعد. سجّل في مقرر للانضمام.")}
-                </p>
-              )}
-            </div>
-          </CardContent>
-        </Card>
+      <div className="flex flex-1 min-h-0">
+        {/* Desktop channel list */}
+        <div className="hidden md:flex w-56 border-e flex-col bg-muted/30">
+          <ChannelList />
+        </div>
 
         {/* Chat area */}
-        <Card className="md:col-span-3 flex flex-col">
+        <div className="flex-1 flex flex-col min-w-0">
           {activeRoom ? (
             <>
-              <CardHeader className="border-b pb-3">
-                <CardTitle className="text-sm flex items-center gap-2">
-                  <Hash className="h-4 w-4 text-secondary" />
-                  <span dir="auto">
-                    {activeRoomData ? (language === "ar" ? activeRoomData.name_ar || activeRoomData.name : activeRoomData.name) : ""}
-                  </span>
-                </CardTitle>
-              </CardHeader>
               <ScrollArea className="flex-1 p-4" ref={scrollRef}>
                 <div className="space-y-3">
-                  {messages.length === 0 && (
+                  {filteredMessages.length === 0 && (
                     <p className="text-center text-sm text-muted-foreground py-8">
-                      {t("No messages yet. Start the conversation!", "لا توجد رسائل بعد. ابدأ المحادثة!")}
+                      {searchQuery
+                        ? t("No messages found", "لا توجد رسائل")
+                        : t("No messages yet. Start the conversation!", "لا توجد رسائل بعد. ابدأ المحادثة!")}
                     </p>
                   )}
-                  {messages.map((m) => {
+                  {filteredMessages.map((m) => {
                     const isMe = m.user_id === user?.id;
                     const name = profiles[m.user_id] || (isMe ? profile?.full_name : "Student");
                     return (
-                      <div key={m.id} className={`flex gap-2 ${isMe ? "flex-row-reverse" : ""}`}>
-                        <Avatar className="h-7 w-7 shrink-0">
-                          <AvatarFallback className="text-xs bg-accent">
+                      <div key={m.id} className={`flex gap-2 group ${isMe ? "flex-row-reverse" : ""}`}>
+                        <Avatar className="h-7 w-7 shrink-0 mt-0.5">
+                          <AvatarFallback className="text-[10px] bg-accent font-bold">
                             {(name || "S").charAt(0).toUpperCase()}
                           </AvatarFallback>
                         </Avatar>
-                        <div className={`max-w-[75%] ${isMe ? "text-right" : ""}`}>
-                          <div className="text-xs text-muted-foreground mb-0.5" dir="auto">
-                            {isMe ? t("You", "أنت") : name}
-                            <span className="mx-1">·</span>
-                            {new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        <div className={`max-w-[75%] ${isMe ? "text-end" : ""}`}>
+                          <div className="text-[10px] text-muted-foreground mb-0.5 flex items-center gap-1" dir="auto">
+                            <span className="font-medium">{isMe ? t("You", "أنت") : name}</span>
+                            <span>·</span>
+                            <span>{new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+                            {isMe && <CheckCheck className="h-3 w-3 text-primary ms-0.5" />}
                           </div>
                           <div
-                            className={`rounded-xl px-3 py-2 text-sm ${
+                            className={`rounded-xl px-3 py-2 text-sm inline-block ${
                               isMe ? "bg-primary text-primary-foreground" : "bg-muted"
                             }`}
                             dir="auto"
                           >
-                            {m.text}
+                            {m.text?.split("\n").map((line, i) => (
+                              <span key={i}>
+                                {i > 0 && <br />}
+                                {line}
+                              </span>
+                            ))}
+                          </div>
+                          {/* Actions */}
+                          <div className={`opacity-0 group-hover:opacity-100 transition-opacity flex gap-1 mt-0.5 ${isMe ? "justify-end" : ""}`}>
+                            <button
+                              onClick={() => { setReplyTo(m); inputRef.current?.focus(); }}
+                              className="text-muted-foreground hover:text-foreground p-0.5"
+                            >
+                              <Reply className="h-3 w-3" />
+                            </button>
                           </div>
                         </div>
                       </div>
@@ -230,16 +281,31 @@ const Majlis = () => {
                   })}
                 </div>
               </ScrollArea>
+
+              {/* Reply indicator */}
+              {replyTo && (
+                <div className="border-t border-secondary/30 bg-secondary/5 px-4 py-2 flex items-center gap-2">
+                  <Reply className="h-3.5 w-3.5 text-secondary shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium text-secondary">{profiles[replyTo.user_id] || "Student"}</p>
+                    <p className="text-xs text-muted-foreground truncate">{replyTo.text}</p>
+                  </div>
+                  <button onClick={() => setReplyTo(null)} className="text-muted-foreground hover:text-foreground text-xs">✕</button>
+                </div>
+              )}
+
+              {/* Input */}
               <div className="border-t p-3">
                 <form onSubmit={(e) => { e.preventDefault(); sendMessage(); }} className="flex gap-2">
                   <Input
+                    ref={inputRef}
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     placeholder={t("Type a message...", "اكتب رسالة...")}
                     dir="auto"
                     className="flex-1"
                   />
-                  <Button type="submit" size="icon" disabled={!input.trim()}>
+                  <Button type="submit" size="icon" disabled={!input.trim()} className="shrink-0">
                     <Send className="h-4 w-4" />
                   </Button>
                 </form>
@@ -250,7 +316,7 @@ const Majlis = () => {
               <p className="text-muted-foreground">{t("Select a channel to start chatting", "اختر قناة لبدء المحادثة")}</p>
             </div>
           )}
-        </Card>
+        </div>
       </div>
     </div>
   );

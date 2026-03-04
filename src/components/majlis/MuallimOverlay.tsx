@@ -5,13 +5,12 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { Bot, X, Send, GraduationCap, Calendar, BarChart3, BookOpen, Loader2 } from "lucide-react";
-import ReactMarkdown from "react-markdown";
 
 type Msg = { role: "user" | "assistant"; content: string };
 
 const MuallimOverlay = () => {
   const { user } = useAuth();
-  const { t } = useLanguage();
+  const { t, dir } = useLanguage();
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
@@ -102,33 +101,39 @@ const MuallimOverlay = () => {
 
   if (!user) return null;
 
+  // Reduced size (30% smaller): 10 → 7, h-14 → h-10, w-14 → w-10
+  // Position: LTR → bottom-left, RTL → bottom-right
+  // z-index: 40 (above content, below modals at 50)
+  const btnPosition = dir === "rtl" ? "right-5 bottom-5" : "left-5 bottom-5";
+  const panelPosition = dir === "rtl" ? "right-4 bottom-4" : "left-4 bottom-4";
+
   return (
     <>
-      {/* Floating button */}
+      {/* Floating button — 30% reduced */}
       {!open && (
         <button
           onClick={() => setOpen(true)}
-          className="fixed bottom-6 right-6 z-50 flex h-14 w-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-xl hover:scale-105 transition-transform"
+          className={`fixed ${btnPosition} z-40 flex h-10 w-10 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg hover:scale-105 transition-transform`}
           aria-label="Open Mu'allim AI"
         >
-          <Bot className="h-7 w-7" />
+          <Bot className="h-5 w-5" />
         </button>
       )}
 
       {/* Overlay panel */}
       {open && (
-        <div className="fixed bottom-4 right-4 z-50 flex h-[550px] w-[380px] max-w-[calc(100vw-2rem)] flex-col rounded-2xl border bg-card shadow-2xl">
+        <div className={`fixed ${panelPosition} z-40 flex h-[500px] w-[360px] max-w-[calc(100vw-2rem)] flex-col rounded-2xl border bg-card shadow-2xl`}>
           {/* Header */}
           <div className="flex items-center justify-between rounded-t-2xl bg-primary px-4 py-3">
             <div className="flex items-center gap-2 text-primary-foreground">
-              <Bot className="h-5 w-5" />
+              <Bot className="h-4 w-4" />
               <div>
                 <div className="font-bold text-sm font-arabic">{t("Mu'allim", "المُعلِّم")}</div>
-                <div className="text-xs opacity-80">{t("AI Academic Assistant", "المساعد الأكاديمي")}</div>
+                <div className="text-[10px] opacity-80">{t("AI Academic Assistant", "المساعد الأكاديمي")}</div>
               </div>
             </div>
-            <Button variant="ghost" size="icon" className="text-primary-foreground hover:bg-primary/80" onClick={() => setOpen(false)}>
-              <X className="h-4 w-4" />
+            <Button variant="ghost" size="icon" className="h-7 w-7 text-primary-foreground hover:bg-primary/80" onClick={() => setOpen(false)}>
+              <X className="h-3.5 w-3.5" />
             </Button>
           </div>
 
@@ -146,8 +151,8 @@ const MuallimOverlay = () => {
                       onClick={() => send(qa.text, qa.action)}
                       className="flex items-center gap-2 rounded-lg border bg-muted/50 p-2 text-left text-xs hover:bg-accent transition-colors"
                     >
-                      <qa.icon className="h-4 w-4 shrink-0 text-secondary" />
-                      <span>{qa.label}</span>
+                      <qa.icon className="h-3.5 w-3.5 shrink-0 text-secondary" />
+                      <span className="line-clamp-2">{qa.label}</span>
                     </button>
                   ))}
                 </div>
@@ -161,13 +166,7 @@ const MuallimOverlay = () => {
                       ? "bg-primary text-primary-foreground"
                       : "bg-muted text-foreground"
                   }`}>
-                    {m.role === "assistant" ? (
-                      <div className="prose prose-sm max-w-none dark:prose-invert" dir="auto">
-                        <ReactMarkdown>{m.content}</ReactMarkdown>
-                      </div>
-                    ) : (
-                      <span dir="auto">{m.content}</span>
-                    )}
+                    <span dir="auto" className="whitespace-pre-wrap">{m.content}</span>
                   </div>
                 </div>
               ))}
@@ -191,14 +190,14 @@ const MuallimOverlay = () => {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder={t("Ask Mu'allim...", "اسأل المُعلِّم...")}
-                className="min-h-[40px] max-h-[80px] resize-none text-sm"
+                className="min-h-[36px] max-h-[72px] resize-none text-sm"
                 dir="auto"
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(input); }
                 }}
               />
-              <Button type="submit" size="icon" disabled={isLoading || !input.trim()} className="shrink-0">
-                <Send className="h-4 w-4" />
+              <Button type="submit" size="icon" disabled={isLoading || !input.trim()} className="shrink-0 h-9 w-9">
+                <Send className="h-3.5 w-3.5" />
               </Button>
             </form>
           </div>

@@ -3,22 +3,62 @@ import { Link } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
-import { BookOpen, ClipboardList, Bell, TrendingUp, Calendar, CheckCircle, XCircle, ChevronDown, ChevronRight } from "lucide-react";
+import {
+  BookOpen, ClipboardList, Bell, TrendingUp, Calendar, CheckCircle, XCircle,
+  GraduationCap, MessageCircle, ArrowRight
+} from "lucide-react";
+
+// Hijri date conversion (simplified Kuwaiti algorithm)
+const toHijri = (date: Date) => {
+  const jd = Math.floor((date.getTime() / 86400000) + 2440587.5);
+  const l = jd - 1948440 + 10632;
+  const n = Math.floor((l - 1) / 10631);
+  const l2 = l - 10631 * n + 354;
+  const j = Math.floor((10985 - l2) / 5316) * Math.floor((50 * l2) / 17719) + Math.floor(l2 / 5670) * Math.floor((43 * l2) / 15238);
+  const l3 = l2 - Math.floor((30 - j) / 15) * Math.floor((17719 * j) / 50) - Math.floor(j / 16) * Math.floor((15238 * j) / 43) + 29;
+  const m = Math.floor((24 * l3) / 709);
+  const d = l3 - Math.floor((709 * m) / 24);
+  const y = 30 * n + j - 30;
+  const months = ["محرم", "صفر", "ربيع الأول", "ربيع الثاني", "جمادى الأولى", "جمادى الآخرة", "رجب", "شعبان", "رمضان", "شوال", "ذو القعدة", "ذو الحجة"];
+  return `${d} ${months[m - 1]} ${y}`;
+};
+
+// Daily Quranic verse rotation
+const VERSES = [
+  { ar: "إِنَّ مَعَ الْعُسْرِ يُسْرًا", en: "Indeed, with hardship comes ease.", ref: "Quran 94:6" },
+  { ar: "وَمَن يَتَوَكَّلْ عَلَى اللَّهِ فَهُوَ حَسْبُهُ", en: "Whoever relies upon Allah, He is sufficient for him.", ref: "Quran 65:3" },
+  { ar: "رَبِّ زِدْنِي عِلْمًا", en: "My Lord, increase me in knowledge.", ref: "Quran 20:114" },
+  { ar: "وَاصْبِرْ فَإِنَّ اللَّهَ لَا يُضِيعُ أَجْرَ الْمُحْسِنِينَ", en: "Be patient, for Allah does not waste the reward of the righteous.", ref: "Quran 11:115" },
+  { ar: "فَاذْكُرُونِي أَذْكُرْكُمْ", en: "Remember Me; I will remember you.", ref: "Quran 2:152" },
+  { ar: "وَلَسَوْفَ يُعْطِيكَ رَبُّكَ فَتَرْضَىٰ", en: "And your Lord is going to give you, and you will be satisfied.", ref: "Quran 93:5" },
+  { ar: "إِنَّ اللَّهَ مَعَ الصَّابِرِينَ", en: "Indeed, Allah is with the patient.", ref: "Quran 2:153" },
+];
+
+const gradePoint = (pct: number): number => {
+  if (pct >= 85) return 4.0;
+  if (pct >= 75) return 3.5;
+  if (pct >= 65) return 3.0;
+  if (pct >= 55) return 2.0;
+  if (pct >= 45) return 1.0;
+  return 0.0;
+};
 
 const StudentDashboard = () => {
   const { t, language } = useLanguage();
   const { user, profile } = useAuth();
-  const [stats, setStats] = useState({ enrollments: 0, attemptsDone: 0, avgScore: 0, pendingGrading: 0 });
+  const [loading, setLoading] = useState(true);
+  const [stats, setStats] = useState({ enrollments: 0, attemptsDone: 0, avgScore: 0, pendingGrading: 0, cgpa: 0 });
   const [upcomingExams, setUpcomingExams] = useState<any[]>([]);
-  const [completedExams, setCompletedExams] = useState<any[]>([]);
   const [recentResults, setRecentResults] = useState<any[]>([]);
   const [notifications, setNotifications] = useState<any[]>([]);
-  const [upcomingOpen, setUpcomingOpen] = useState(true);
-  const [completedOpen, setCompletedOpen] = useState(true);
+
+  const dayOfYear = Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0).getTime()) / 86400000);
+  const dailyVerse = VERSES[dayOfYear % VERSES.length];
+  const hijriDate = toHijri(new Date());
 
   useEffect(() => {
     if (!user) return;
@@ -30,13 +70,16 @@ const StudentDashboard = () => {
         supabase.from("notifications").select("*").eq("user_id", user.id).eq("is_read", false).order("created_at", { ascending: false }).limit(5),
         supabase.from("exam_assignments").select("exam_id, exams(*)").eq("user_id", user.id),
         supabase.from("exam_attempts").select("*, exams(title, title_ar)").eq("user_id", user.id).in("status", ["graded", "submitted"]).order("submitted_at", { ascending: false }).limit(5),
-        supabase.from("exam_attempts").select("exam_id, status").eq("user_id", user.id),
+        supabase.from("exam_attempts").select("exam_id, status, percentage").eq("user_id", user.id),
       ]);
-      
+
       const gradedAttempts = gradedAttemptsRes.data || [];
       const avg = gradedAttempts.length > 0 ? gradedAttempts.reduce((s, a) => s + (Number(a.percentage) || 0), 0) / gradedAttempts.length : 0;
 
-      // Count completed attempts per exam
+      // Calculate CGPA
+      const totalGP = gradedAttempts.reduce((sum, a) => sum + gradePoint(Number(a.percentage) || 0), 0);
+      const cgpa = gradedAttempts.length > 0 ? totalGP / gradedAttempts.length : 0;
+
       const attemptCounts: Record<string, number> = {};
       (allAttemptsRes.data || []).forEach((a: any) => {
         if (a.status !== "in_progress") {
@@ -44,19 +87,13 @@ const StudentDashboard = () => {
         }
       });
 
-      const now = new Date();
       const allAssigned = (assignmentsRes.data || [])
         .map((a: any) => a.exams)
         .filter((e: any) => e && e.is_published);
 
-      // Split into upcoming (not exhausted) and completed (exhausted)
       const upcoming = allAssigned.filter((e: any) => {
         const max = e.max_attempts || 1;
         return (attemptCounts[e.id] || 0) < max;
-      });
-      const completed = allAssigned.filter((e: any) => {
-        const max = e.max_attempts || 1;
-        return (attemptCounts[e.id] || 0) >= max;
       });
 
       setStats({
@@ -64,152 +101,182 @@ const StudentDashboard = () => {
         attemptsDone: gradedAttempts.length,
         avgScore: Math.round(avg),
         pendingGrading: pendingAttemptsRes.data?.length || 0,
+        cgpa,
       });
       setUpcomingExams(upcoming.slice(0, 5));
-      setCompletedExams(completed.slice(0, 5));
       setRecentResults(recentRes.data || []);
       setNotifications(notifsRes.data || []);
+      setLoading(false);
     };
     fetchData();
   }, [user]);
 
+  // CGPA gauge
+  const gaugePercent = (stats.cgpa / 4.0) * 100;
+  const circumference = 2 * Math.PI * 45;
+  const strokeDashoffset = circumference - (gaugePercent / 100) * circumference;
+
+  if (loading) {
+    return (
+      <div className="container mx-auto px-4 py-8">
+        <Skeleton className="h-8 w-64 mb-4" />
+        <div className="grid gap-4 md:grid-cols-4 mb-8">
+          {[1,2,3,4].map(i => <Skeleton key={i} className="h-24 rounded-xl" />)}
+        </div>
+        <div className="grid gap-6 lg:grid-cols-2">
+          {[1,2].map(i => <Skeleton key={i} className="h-64 rounded-xl" />)}
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="container mx-auto px-4 py-8">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold">
-          {t("Welcome back", "مرحبًا بعودتك")}, {profile?.full_name || t("Student", "طالب")}! 👋
-        </h1>
-        <p className="text-muted-foreground">{t("Here's your learning overview", "إليك نظرة عامة على تعلّمك")}</p>
+    <div className="container mx-auto px-4 py-6 md:py-8">
+      {/* Welcome + Hijri + Verse */}
+      <div className="mb-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
+          <div>
+            <h1 className="text-2xl md:text-3xl font-bold font-display">
+              {t("Welcome back", "مرحبًا بعودتك")}, {profile?.full_name || t("Student", "طالب")} 👋
+            </h1>
+            <p className="text-muted-foreground text-sm">{t("Here's your learning overview", "إليك نظرة عامة على تعلّمك")}</p>
+          </div>
+          <div className="text-end">
+            <p className="text-xs text-muted-foreground">{new Date().toLocaleDateString(language === "ar" ? "ar-SA" : "en-US", { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
+            <p className="text-xs font-arabic text-secondary font-medium" dir="rtl">{hijriDate}</p>
+          </div>
+        </div>
+
+        {/* Daily verse */}
+        <Card className="bg-primary/5 border-primary/15">
+          <CardContent className="py-3 px-4 flex items-center gap-3">
+            <span className="text-gold text-lg">✦</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-arabic arabic-exam-text leading-relaxed" dir="rtl" style={{ fontSize: '16px', lineHeight: '1.6' }}>
+                {dailyVerse.ar}
+              </p>
+              <p className="text-xs text-muted-foreground mt-0.5 italic">
+                "{dailyVerse.en}" — <span className="font-medium">{dailyVerse.ref}</span>
+              </p>
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
-      {/* Stats */}
-      <div className="mb-8 grid gap-4 md:grid-cols-4">
-        {[
-          { icon: BookOpen, label: t("Enrollments", "التسجيلات"), value: stats.enrollments, color: "text-primary" },
-          { icon: ClipboardList, label: t("Exams Graded", "مُصحّحة"), value: stats.attemptsDone, color: "text-secondary" },
-          { icon: TrendingUp, label: t("Avg Score", "المعدل"), value: `${stats.avgScore}%`, color: "text-emerald-500" },
-          { icon: Bell, label: t("Pending Grading", "بانتظار التصحيح"), value: stats.pendingGrading, color: "text-destructive" },
-        ].map((s, i) => (
-          <Card key={i}>
-            <CardContent className="flex items-center gap-4 p-5">
-              <s.icon className={`h-8 w-8 ${s.color}`} />
-              <div>
-                <div className="text-2xl font-bold">{s.value}</div>
-                <div className="text-xs text-muted-foreground">{s.label}</div>
+      {/* CGPA Gauge + Stats */}
+      <div className="mb-6 grid gap-4 grid-cols-2 md:grid-cols-5">
+        {/* CGPA gauge */}
+        <Card className="col-span-2 md:col-span-1">
+          <CardContent className="flex flex-col items-center justify-center p-4">
+            <div className="relative">
+              <svg width="100" height="100" className="-rotate-90">
+                <circle cx="50" cy="50" r="45" stroke="hsl(var(--muted))" strokeWidth="8" fill="none" />
+                <circle
+                  cx="50" cy="50" r="45"
+                  stroke="hsl(var(--primary))"
+                  strokeWidth="8" fill="none" strokeLinecap="round"
+                  strokeDasharray={circumference}
+                  strokeDashoffset={strokeDashoffset}
+                  className="transition-all duration-1000"
+                />
+              </svg>
+              <div className="absolute inset-0 flex flex-col items-center justify-center">
+                <span className="text-xl font-bold">{stats.cgpa.toFixed(2)}</span>
+                <span className="text-[10px] text-muted-foreground">{t("CGPA", "المعدل")}</span>
               </div>
-            </CardContent>
-          </Card>
+            </div>
+          </CardContent>
+        </Card>
+
+        {[
+          { icon: BookOpen, label: t("Enrollments", "التسجيلات"), value: stats.enrollments, color: "text-primary", to: "/student/exams" },
+          { icon: ClipboardList, label: t("Graded", "مُصحّحة"), value: stats.attemptsDone, color: "text-secondary", to: "/student/transcripts" },
+          { icon: TrendingUp, label: t("Avg Score", "المعدل"), value: `${stats.avgScore}%`, color: "text-primary", to: "/student/transcripts" },
+          { icon: Bell, label: t("Pending", "بانتظار"), value: stats.pendingGrading, color: "text-destructive", to: "/student/exams" },
+        ].map((s, i) => (
+          <Link key={i} to={s.to}>
+            <Card className="hover:shadow-md transition-shadow cursor-pointer h-full">
+              <CardContent className="flex items-center gap-3 p-4">
+                <s.icon className={`h-6 w-6 ${s.color} shrink-0`} />
+                <div className="min-w-0">
+                  <div className="text-xl font-bold truncate">{s.value}</div>
+                  <div className="text-[10px] text-muted-foreground truncate">{s.label}</div>
+                </div>
+              </CardContent>
+            </Card>
+          </Link>
         ))}
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
         {/* Upcoming Exams */}
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="text-lg">{t("Upcoming Exams", "الامتحانات القادمة")}</CardTitle>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-base">{t("Upcoming Exams", "الامتحانات القادمة")}</CardTitle>
             <Button variant="ghost" size="sm" asChild>
-              <Link to="/student/exams">{t("View All", "عرض الكل")}</Link>
+              <Link to="/student/exams" className="flex items-center gap-1 text-xs">
+                {t("View All", "عرض الكل")}
+                <ArrowRight className="h-3 w-3" />
+              </Link>
             </Button>
           </CardHeader>
           <CardContent>
-            <Collapsible open={upcomingOpen} onOpenChange={setUpcomingOpen}>
-              <CollapsibleTrigger className="flex items-center gap-2 mb-3 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors">
-                {upcomingOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-                {upcomingExams.length} {t("exams", "امتحانات")}
-              </CollapsibleTrigger>
-              <CollapsibleContent>
-                {upcomingExams.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">{t("No upcoming exams", "لا توجد امتحانات قادمة")}</p>
-                ) : (
-                  <div className="space-y-3">
-                    {upcomingExams.map((exam) => (
-                      <div key={exam.id} className="flex items-center justify-between rounded-lg border p-3">
-                        <div>
-                          <div className="font-medium text-sm">{language === "ar" ? exam.title_ar || exam.title : exam.title}</div>
-                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                            <Calendar className="h-3 w-3" />
-                            {exam.start_date ? new Date(exam.start_date).toLocaleDateString() : t("TBD", "غير محدد")}
-                          </div>
-                        </div>
-                        <Badge variant="secondary">{exam.time_limit_minutes} {t("min", "دقيقة")}</Badge>
+            {upcomingExams.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-4 text-center">{t("No upcoming exams", "لا توجد امتحانات قادمة")}</p>
+            ) : (
+              <div className="space-y-2">
+                {upcomingExams.map((exam) => (
+                  <div key={exam.id} className="flex items-center justify-between rounded-lg border p-3">
+                    <div className="min-w-0">
+                      <div className="font-medium text-sm truncate" dir="auto">{language === "ar" ? exam.title_ar || exam.title : exam.title}</div>
+                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-0.5">
+                        <Calendar className="h-3 w-3" />
+                        {exam.start_date ? new Date(exam.start_date).toLocaleDateString() : t("TBD", "غير محدد")}
                       </div>
-                    ))}
+                    </div>
+                    <Badge variant="secondary" className="shrink-0 text-xs">{exam.time_limit_minutes} {t("min", "د")}</Badge>
                   </div>
-                )}
-              </CollapsibleContent>
-            </Collapsible>
-          </CardContent>
-        </Card>
-
-        {/* Completed Exams */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="text-lg">{t("Completed Exams", "الامتحانات المكتملة")}</CardTitle>
-            <Button variant="ghost" size="sm" asChild>
-              <Link to="/student/exams">{t("View All", "عرض الكل")}</Link>
-            </Button>
-          </CardHeader>
-          <CardContent>
-            <Collapsible open={completedOpen} onOpenChange={setCompletedOpen}>
-              <CollapsibleTrigger className="flex items-center gap-2 mb-3 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors">
-                {completedOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-                {completedExams.length} {t("exams", "امتحانات")}
-              </CollapsibleTrigger>
-              <CollapsibleContent>
-                {completedExams.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">{t("No completed exams yet", "لا توجد امتحانات مكتملة بعد")}</p>
-                ) : (
-                  <div className="space-y-3">
-                    {completedExams.map((exam) => (
-                      <div key={exam.id} className="flex items-center justify-between rounded-lg border p-3">
-                        <div>
-                          <div className="font-medium text-sm">{language === "ar" ? exam.title_ar || exam.title : exam.title}</div>
-                        </div>
-                        <Badge variant="default">{t("Done", "مكتمل")}</Badge>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </CollapsibleContent>
-            </Collapsible>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
 
         {/* Recent Results */}
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="text-lg">{t("Recent Results", "النتائج الأخيرة")}</CardTitle>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-base">{t("Recent Results", "النتائج الأخيرة")}</CardTitle>
             <Button variant="ghost" size="sm" asChild>
-              <Link to="/student/exams">{t("View All", "عرض الكل")}</Link>
+              <Link to="/student/transcripts" className="flex items-center gap-1 text-xs">
+                {t("View All", "عرض الكل")}
+                <ArrowRight className="h-3 w-3" />
+              </Link>
             </Button>
           </CardHeader>
           <CardContent>
             {recentResults.length === 0 ? (
-              <p className="text-sm text-muted-foreground">{t("No results yet", "لا توجد نتائج بعد")}</p>
+              <p className="text-sm text-muted-foreground py-4 text-center">{t("No results yet", "لا توجد نتائج بعد")}</p>
             ) : (
-              <div className="space-y-3">
+              <div className="space-y-2">
                 {recentResults.map((attempt) => (
                   <div key={attempt.id} className="flex items-center justify-between rounded-lg border p-3">
-                    <div>
-                      <div className="font-medium text-sm">
+                    <div className="min-w-0">
+                      <div className="font-medium text-sm truncate" dir="auto">
                         {language === "ar" ? attempt.exams?.title_ar || attempt.exams?.title : attempt.exams?.title}
                       </div>
                       <div className="text-xs text-muted-foreground">
                         {attempt.submitted_at ? new Date(attempt.submitted_at).toLocaleDateString() : ""}
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 shrink-0">
                       {attempt.status === "graded" ? (
                         <>
-                          {attempt.passed ? <CheckCircle className="h-4 w-4 text-emerald-500" /> : <XCircle className="h-4 w-4 text-destructive" />}
+                          {attempt.passed ? <CheckCircle className="h-4 w-4 text-primary" /> : <XCircle className="h-4 w-4 text-destructive" />}
                           <span className="font-semibold text-sm">{Math.round(attempt.percentage || 0)}%</span>
-                          <Badge variant={attempt.passed ? "default" : "destructive"} className="text-xs">
-                            {attempt.passed ? t("Passed", "ناجح") : t("Failed", "راسب")}
-                          </Badge>
                         </>
                       ) : (
                         <Badge variant="secondary" className="text-xs">
-                          {t("Awaiting Grade", "بانتظار التصحيح")}
+                          {t("Awaiting", "بانتظار")}
                         </Badge>
                       )}
                     </div>
@@ -220,14 +287,38 @@ const StudentDashboard = () => {
           </CardContent>
         </Card>
 
+        {/* Quick Actions */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">{t("Quick Actions", "إجراءات سريعة")}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                { to: "/student/exams", icon: ClipboardList, label: t("My Exams", "امتحاناتي"), color: "text-primary" },
+                { to: "/student/transcripts", icon: GraduationCap, label: t("Transcripts", "السجل"), color: "text-secondary" },
+                { to: "/student/majlis", icon: MessageCircle, label: t("Al-Majlis", "المجلس"), color: "text-primary" },
+                { to: "/student/profile", icon: TrendingUp, label: t("Settings", "الإعدادات"), color: "text-secondary" },
+              ].map((link, i) => (
+                <Button key={i} variant="outline" className="h-auto flex-col gap-1.5 p-3" asChild>
+                  <Link to={link.to}>
+                    <link.icon className={`h-5 w-5 ${link.color}`} />
+                    <span className="text-xs">{link.label}</span>
+                  </Link>
+                </Button>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+
         {/* Notifications */}
         {notifications.length > 0 && (
           <Card>
-            <CardHeader>
-              <CardTitle className="text-lg">{t("Notifications", "الإشعارات")}</CardTitle>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">{t("Notifications", "الإشعارات")}</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="space-y-3">
+              <div className="space-y-2">
                 {notifications.map((n) => (
                   <div key={n.id} className="rounded-lg border p-3">
                     <div className="font-medium text-sm">{n.title}</div>

@@ -1,8 +1,14 @@
+import { useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
+import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
-import { BookOpen, LayoutDashboard, ClipboardList, Users, Settings, LogOut, Globe, CheckSquare, BarChart, UserCircle, Library, GraduationCap, MessageCircle } from "lucide-react";
+import {
+  BookOpen, LayoutDashboard, ClipboardList, Users, LogOut, Globe,
+  CheckSquare, BarChart, UserCircle, Library, GraduationCap, MessageCircle,
+  Menu, Video, Mic, Settings, Shield,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface DashboardLayoutProps {
@@ -10,16 +16,17 @@ interface DashboardLayoutProps {
 }
 
 const DashboardLayout = ({ role }: DashboardLayoutProps) => {
-  const { t, language, setLanguage } = useLanguage();
+  const { t, language, setLanguage, dir } = useLanguage();
   const { signOut, profile } = useAuth();
   const location = useLocation();
+  const [open, setOpen] = useState(false);
 
   const studentLinks = [
     { to: "/student", icon: LayoutDashboard, label: t("Dashboard", "لوحة التحكم") },
     { to: "/student/exams", icon: ClipboardList, label: t("Exams", "الامتحانات") },
     { to: "/student/transcripts", icon: GraduationCap, label: t("Transcripts", "السجل الأكاديمي") },
     { to: "/student/majlis", icon: MessageCircle, label: t("Al-Majlis", "المجلس") },
-    { to: "/student/profile", icon: UserCircle, label: t("Profile", "الملف الشخصي") },
+    { to: "/student/profile", icon: UserCircle, label: t("Settings", "الإعدادات") },
   ];
 
   const adminLinks = [
@@ -33,67 +40,106 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
 
   const links = role === "admin" ? adminLinks : studentLinks;
 
+  const SidebarContent = ({ onNavigate }: { onNavigate?: () => void }) => (
+    <div className="flex h-full flex-col">
+      {/* Logo */}
+      <div className="flex h-16 items-center gap-2.5 border-b border-sidebar-border px-4">
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-sidebar-primary">
+          <BookOpen className="h-4 w-4 text-sidebar-primary-foreground" />
+        </div>
+        <span className="font-bold text-sidebar-foreground font-arabic text-lg">
+          {t("Tahleem", "تعليم")}
+          <span className="text-sidebar-primary ms-1 text-sm">{t("Academy", "أكاديمية")}</span>
+        </span>
+      </div>
+
+      {/* Nav */}
+      <nav className="flex-1 space-y-1 p-3 overflow-auto">
+        {links.map((link) => (
+          <Link
+            key={link.to}
+            to={link.to}
+            onClick={onNavigate}
+            className={cn(
+              "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
+              location.pathname === link.to
+                ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground"
+            )}
+          >
+            <link.icon className="h-4 w-4 shrink-0" />
+            <span>{link.label}</span>
+          </Link>
+        ))}
+      </nav>
+
+      {/* Footer */}
+      <div className="border-t border-sidebar-border p-3 space-y-1">
+        {/* Profile info */}
+        {profile?.full_name && (
+          <div className="px-3 py-2 mb-1">
+            <p className="text-xs text-sidebar-foreground/50 truncate">{profile.full_name}</p>
+            <p className="text-xs text-sidebar-foreground/40 truncate">{profile.email}</p>
+          </div>
+        )}
+        <Button
+          variant="ghost"
+          size="sm"
+          className="w-full justify-start text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/50"
+          onClick={() => { setLanguage(language === "en" ? "ar" : "en"); onNavigate?.(); }}
+        >
+          <Globe className="h-4 w-4 me-2" />
+          {t("العربية", "English")}
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="w-full justify-start text-sidebar-foreground/70 hover:text-destructive hover:bg-destructive/10"
+          onClick={() => { signOut(); onNavigate?.(); }}
+        >
+          <LogOut className="h-4 w-4 me-2" />
+          {t("Sign Out", "تسجيل الخروج")}
+        </Button>
+      </div>
+    </div>
+  );
+
   return (
     <div className="flex min-h-screen">
-      {/* Sidebar */}
-      <aside className="hidden w-64 flex-col border-r bg-sidebar md:flex">
-        <div className="flex h-16 items-center gap-2 border-b border-sidebar-border px-4">
-          <BookOpen className="h-6 w-6 text-sidebar-primary" />
-          <span className="font-bold text-sidebar-foreground font-arabic">
-            {t("Tahleem", "تعليم")}
-          </span>
-        </div>
-        <nav className="flex-1 space-y-1 p-3">
-          {links.map((link) => (
-            <Link
-              key={link.to}
-              to={link.to}
-              className={cn(
-                "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
-                location.pathname === link.to
-                  ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                  : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground"
-              )}
-            >
-              <link.icon className="h-4 w-4" />
-              {link.label}
-            </Link>
-          ))}
-        </nav>
-        <div className="border-t border-sidebar-border p-3 space-y-1">
-          <Button variant="ghost" size="sm" className="w-full justify-start text-sidebar-foreground/70" onClick={() => setLanguage(language === "en" ? "ar" : "en")}>
-            <Globe className="mr-2 h-4 w-4" />
-            {t("العربية", "English")}
-          </Button>
-          <Button variant="ghost" size="sm" className="w-full justify-start text-sidebar-foreground/70" onClick={signOut}>
-            <LogOut className="mr-2 h-4 w-4" />
-            {t("Sign Out", "تسجيل الخروج")}
-          </Button>
-        </div>
+      {/* Desktop sidebar */}
+      <aside className="hidden w-64 flex-col bg-sidebar md:flex">
+        <SidebarContent />
       </aside>
 
       {/* Main content */}
-      <div className="flex-1">
-        {/* Mobile header */}
-        <div className="flex h-16 items-center justify-between border-b px-4 md:hidden">
-          <div className="flex items-center gap-2">
-            <BookOpen className="h-5 w-5 text-primary" />
-            <span className="font-bold font-arabic">{t("Tahleem", "تعليم")}</span>
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* Mobile header with hamburger */}
+        <div className="flex h-14 items-center border-b px-4 md:hidden">
+          <Sheet open={open} onOpenChange={setOpen}>
+            <SheetTrigger asChild>
+              <Button variant="ghost" size="icon" className={cn(dir === "rtl" ? "order-first" : "order-first")}>
+                <Menu className="h-5 w-5" />
+              </Button>
+            </SheetTrigger>
+            <SheetContent
+              side={dir === "rtl" ? "right" : "left"}
+              className="w-72 p-0 bg-sidebar border-sidebar-border"
+            >
+              <SidebarContent onNavigate={() => setOpen(false)} />
+            </SheetContent>
+          </Sheet>
+          <div className="flex-1 flex items-center justify-center">
+            <div className="flex items-center gap-2">
+              <BookOpen className="h-4 w-4 text-primary" />
+              <span className="font-bold font-arabic text-sm">{t("Tahleem", "تعليم")}</span>
+            </div>
           </div>
-          <div className="flex gap-2">
-            {links.map((link) => (
-              <Link key={link.to} to={link.to}>
-                <Button variant={location.pathname === link.to ? "default" : "ghost"} size="icon">
-                  <link.icon className="h-4 w-4" />
-                </Button>
-              </Link>
-            ))}
-            <Button variant="ghost" size="icon" onClick={signOut}>
-              <LogOut className="h-4 w-4" />
-            </Button>
-          </div>
+          <div className="w-10" /> {/* Spacer for centering */}
         </div>
-        <Outlet />
+
+        <main className="flex-1 overflow-auto">
+          <Outlet />
+        </main>
       </div>
     </div>
   );
