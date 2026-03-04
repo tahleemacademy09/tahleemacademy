@@ -5,14 +5,15 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { Save, User, Camera, ShieldCheck, ShieldAlert, Shield } from "lucide-react";
+import { Save, User, Camera, ShieldCheck, ShieldAlert, Shield, Globe } from "lucide-react";
 
 const ProfileSettings = () => {
-  const { t } = useLanguage();
+  const { t, language, setLanguage } = useLanguage();
   const { user, profile } = useAuth();
   const { toast } = useToast();
   const [saving, setSaving] = useState(false);
@@ -23,6 +24,7 @@ const ProfileSettings = () => {
     bio: "",
     preferred_language: "en",
   });
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (profile) {
@@ -35,11 +37,10 @@ const ProfileSettings = () => {
     }
   }, [profile]);
 
-  // Fetch proctoring status
+  // Proctoring status
   useEffect(() => {
     if (!user) return;
     const fetchStatus = async () => {
-      // Check if there's a verification snapshot (face registered)
       const { data: attempts } = await supabase
         .from("exam_attempts")
         .select("id, status")
@@ -52,7 +53,6 @@ const ProfileSettings = () => {
         return;
       }
 
-      // Check for active proctoring session
       const activeAttempt = attempts.find(a => a.status === "in_progress");
       if (activeAttempt) {
         const { data: session } = await supabase
@@ -60,13 +60,9 @@ const ProfileSettings = () => {
           .select("id")
           .eq("attempt_id", activeAttempt.id)
           .maybeSingle();
-        if (session) {
-          setProctoringStatus("active");
-          return;
-        }
+        if (session) { setProctoringStatus("active"); return; }
       }
 
-      // Check if any face snapshot exists (face registered)
       const attemptIds = attempts.map(a => a.id);
       const { data: media } = await supabase
         .from("proctoring_media")
@@ -75,27 +71,37 @@ const ProfileSettings = () => {
         .eq("file_type", "verification_snapshot")
         .limit(1);
 
-      if (media && media.length > 0) {
-        setProctoringStatus("registered");
-      } else {
-        setProctoringStatus("not_registered");
-      }
+      setProctoringStatus(media && media.length > 0 ? "registered" : "not_registered");
     };
     fetchStatus();
   }, [user]);
 
+  const validate = () => {
+    const errs: Record<string, string> = {};
+    if (!form.full_name.trim()) errs.full_name = t("Full name is required", "الاسم الكامل مطلوب");
+    setErrors(errs);
+    return Object.keys(errs).length === 0;
+  };
+
   const handleSave = async () => {
-    if (!user) return;
+    if (!user || !validate()) return;
     setSaving(true);
     const { error } = await supabase
       .from("profiles")
-      .update(form)
+      .update({
+        ...form,
+        updated_at: new Date().toISOString(),
+      })
       .eq("user_id", user.id);
 
     if (error) {
       toast({ title: t("Error", "خطأ"), description: error.message, variant: "destructive" });
     } else {
       toast({ title: t("Profile updated!", "تم تحديث الملف الشخصي!") });
+      // Apply language preference
+      if (form.preferred_language !== language) {
+        setLanguage(form.preferred_language as "en" | "ar");
+      }
     }
     setSaving(false);
   };
@@ -109,12 +115,12 @@ const ProfileSettings = () => {
     registered: {
       label: t("Face Registered", "الوجه مسجل"),
       icon: ShieldCheck,
-      color: "bg-emerald-500/10 text-emerald-700 border-emerald-500/30",
+      color: "bg-primary/10 text-primary border-primary/30",
     },
     active: {
       label: t("Proctoring Active", "المراقبة نشطة"),
       icon: Shield,
-      color: "bg-primary/10 text-primary border-primary/30",
+      color: "bg-secondary/10 text-secondary border-secondary/30",
     },
   };
 
@@ -122,19 +128,19 @@ const ProfileSettings = () => {
   const StatusIcon = currentStatus.icon;
 
   return (
-    <div className="container mx-auto px-4 py-8 max-w-2xl">
-      <h1 className="text-3xl font-bold mb-6">{t("Profile Settings", "إعدادات الملف الشخصي")}</h1>
+    <div className="container mx-auto px-4 py-6 md:py-8 max-w-2xl">
+      <h1 className="text-2xl md:text-3xl font-bold font-display mb-6">{t("Scholar's Settings", "إعدادات الدارس")}</h1>
 
-      {/* Proctoring Status Card */}
+      {/* Proctoring Status */}
       <Card className="mb-6">
         <CardHeader className="pb-3">
-          <CardTitle className="text-base flex items-center gap-2">
+          <CardTitle className="text-sm flex items-center gap-2">
             <Camera className="h-4 w-4" />
             {t("Proctoring Status", "حالة المراقبة")}
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className={`inline-flex items-center gap-2 rounded-lg border px-4 py-2.5 text-sm font-medium ${currentStatus.color}`}>
+          <div className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium ${currentStatus.color}`}>
             <StatusIcon className="h-4 w-4" />
             {currentStatus.label}
           </div>
@@ -146,6 +152,7 @@ const ProfileSettings = () => {
         </CardContent>
       </Card>
 
+      {/* Profile Form */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -161,12 +168,14 @@ const ProfileSettings = () => {
           </div>
 
           <div>
-            <Label>{t("Full Name", "الاسم الكامل")}</Label>
+            <Label>{t("Full Name", "الاسم الكامل")} <span className="text-destructive">*</span></Label>
             <Input
               value={form.full_name}
               onChange={(e) => setForm({ ...form, full_name: e.target.value })}
               placeholder={t("Enter your full name", "أدخل اسمك الكامل")}
+              dir="auto"
             />
+            {errors.full_name && <p className="text-xs text-destructive mt-1">{errors.full_name}</p>}
           </div>
 
           <div>
@@ -175,6 +184,7 @@ const ProfileSettings = () => {
               value={form.phone}
               onChange={(e) => setForm({ ...form, phone: e.target.value })}
               placeholder={t("Enter your phone number", "أدخل رقم هاتفك")}
+              type="tel"
             />
           </div>
 
@@ -185,23 +195,31 @@ const ProfileSettings = () => {
               onChange={(e) => setForm({ ...form, bio: e.target.value })}
               placeholder={t("Tell us about yourself", "أخبرنا عن نفسك")}
               rows={3}
+              dir="auto"
             />
           </div>
 
           <div>
-            <Label>{t("Preferred Language", "اللغة المفضلة")}</Label>
-            <select
+            <Label className="flex items-center gap-1.5">
+              <Globe className="h-3.5 w-3.5" />
+              {t("Preferred Language", "اللغة المفضلة")}
+            </Label>
+            <Select
               value={form.preferred_language}
-              onChange={(e) => setForm({ ...form, preferred_language: e.target.value })}
-              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              onValueChange={(v) => setForm({ ...form, preferred_language: v })}
             >
-              <option value="en">English</option>
-              <option value="ar">العربية</option>
-            </select>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="en">English</SelectItem>
+                <SelectItem value="ar">العربية</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
 
           <Button onClick={handleSave} disabled={saving} className="w-full">
-            <Save className="mr-2 h-4 w-4" />
+            <Save className="h-4 w-4 me-2" />
             {saving ? t("Saving...", "جاري الحفظ...") : t("Save Changes", "حفظ التغييرات")}
           </Button>
         </CardContent>
