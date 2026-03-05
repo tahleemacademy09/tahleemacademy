@@ -71,6 +71,103 @@ export type Database = {
         }
         Relationships: []
       }
+      assignment_submissions: {
+        Row: {
+          assignment_id: string
+          comment: string | null
+          created_at: string | null
+          feedback: string | null
+          file_url: string | null
+          grade: number | null
+          graded_at: string | null
+          graded_by: string | null
+          id: string
+          is_late: boolean | null
+          submitted_at: string | null
+          user_id: string
+        }
+        Insert: {
+          assignment_id: string
+          comment?: string | null
+          created_at?: string | null
+          feedback?: string | null
+          file_url?: string | null
+          grade?: number | null
+          graded_at?: string | null
+          graded_by?: string | null
+          id?: string
+          is_late?: boolean | null
+          submitted_at?: string | null
+          user_id: string
+        }
+        Update: {
+          assignment_id?: string
+          comment?: string | null
+          created_at?: string | null
+          feedback?: string | null
+          file_url?: string | null
+          grade?: number | null
+          graded_at?: string | null
+          graded_by?: string | null
+          id?: string
+          is_late?: boolean | null
+          submitted_at?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "assignment_submissions_assignment_id_fkey"
+            columns: ["assignment_id"]
+            isOneToOne: false
+            referencedRelation: "subject_assignments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      attendance_logs: {
+        Row: {
+          created_at: string | null
+          device_info: string | null
+          duration_seconds: number | null
+          id: string
+          ip_address: string | null
+          joined_at: string | null
+          left_at: string | null
+          session_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          device_info?: string | null
+          duration_seconds?: number | null
+          id?: string
+          ip_address?: string | null
+          joined_at?: string | null
+          left_at?: string | null
+          session_id: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          device_info?: string | null
+          duration_seconds?: number | null
+          id?: string
+          ip_address?: string | null
+          joined_at?: string | null
+          left_at?: string | null
+          session_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "attendance_logs_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       chat_messages: {
         Row: {
           audio_duration_ms: number | null
@@ -563,6 +660,56 @@ export type Database = {
           },
         ]
       }
+      live_sessions: {
+        Row: {
+          chat_count: number | null
+          created_at: string | null
+          ended_at: string | null
+          host_id: string
+          id: string
+          peak_participants: number | null
+          recording_status: string | null
+          started_at: string | null
+          status: string | null
+          subject_id: string
+          total_participants: number | null
+        }
+        Insert: {
+          chat_count?: number | null
+          created_at?: string | null
+          ended_at?: string | null
+          host_id: string
+          id?: string
+          peak_participants?: number | null
+          recording_status?: string | null
+          started_at?: string | null
+          status?: string | null
+          subject_id: string
+          total_participants?: number | null
+        }
+        Update: {
+          chat_count?: number | null
+          created_at?: string | null
+          ended_at?: string | null
+          host_id?: string
+          id?: string
+          peak_participants?: number | null
+          recording_status?: string | null
+          started_at?: string | null
+          status?: string | null
+          subject_id?: string
+          total_participants?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_sessions_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       notifications: {
         Row: {
           created_at: string
@@ -732,6 +879,301 @@ export type Database = {
           preferred_language?: string | null
           updated_at?: string
           user_id?: string
+        }
+        Relationships: []
+      }
+      session_chat: {
+        Row: {
+          created_at: string | null
+          id: string
+          is_teacher_only: boolean | null
+          message: string
+          session_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          is_teacher_only?: boolean | null
+          message: string
+          session_id: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          is_teacher_only?: boolean | null
+          message?: string
+          session_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_chat_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      session_recordings: {
+        Row: {
+          created_at: string | null
+          duration_seconds: number | null
+          file_size: number | null
+          file_url: string | null
+          id: string
+          session_id: string
+          subject_id: string
+          teacher_name: string | null
+          thumbnail_url: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          duration_seconds?: number | null
+          file_size?: number | null
+          file_url?: string | null
+          id?: string
+          session_id: string
+          subject_id: string
+          teacher_name?: string | null
+          thumbnail_url?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          duration_seconds?: number | null
+          file_size?: number | null
+          file_url?: string | null
+          id?: string
+          session_id?: string
+          subject_id?: string
+          teacher_name?: string | null
+          thumbnail_url?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_recordings_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_recordings_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      subject_announcements: {
+        Row: {
+          content: string
+          created_at: string | null
+          created_by: string
+          file_url: string | null
+          id: string
+          is_pinned: boolean | null
+          subject_id: string
+          title: string
+        }
+        Insert: {
+          content: string
+          created_at?: string | null
+          created_by: string
+          file_url?: string | null
+          id?: string
+          is_pinned?: boolean | null
+          subject_id: string
+          title: string
+        }
+        Update: {
+          content?: string
+          created_at?: string | null
+          created_by?: string
+          file_url?: string | null
+          id?: string
+          is_pinned?: boolean | null
+          subject_id?: string
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subject_announcements_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      subject_assignments: {
+        Row: {
+          created_at: string | null
+          created_by: string
+          deadline: string | null
+          description: string | null
+          file_url: string | null
+          id: string
+          subject_id: string
+          title: string
+        }
+        Insert: {
+          created_at?: string | null
+          created_by: string
+          deadline?: string | null
+          description?: string | null
+          file_url?: string | null
+          id?: string
+          subject_id: string
+          title: string
+        }
+        Update: {
+          created_at?: string | null
+          created_by?: string
+          deadline?: string | null
+          description?: string | null
+          file_url?: string | null
+          id?: string
+          subject_id?: string
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subject_assignments_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      subject_materials: {
+        Row: {
+          created_at: string | null
+          file_size: number | null
+          file_type: string | null
+          file_url: string
+          id: string
+          subject_id: string
+          title: string
+          topic: string | null
+          uploaded_by: string
+        }
+        Insert: {
+          created_at?: string | null
+          file_size?: number | null
+          file_type?: string | null
+          file_url: string
+          id?: string
+          subject_id: string
+          title: string
+          topic?: string | null
+          uploaded_by: string
+        }
+        Update: {
+          created_at?: string | null
+          file_size?: number | null
+          file_type?: string | null
+          file_url?: string
+          id?: string
+          subject_id?: string
+          title?: string
+          topic?: string | null
+          uploaded_by?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subject_materials_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      subject_syllabus: {
+        Row: {
+          created_at: string | null
+          description: string | null
+          file_url: string | null
+          id: string
+          objectives: string[] | null
+          subject_id: string
+          title: string
+          week_number: number | null
+        }
+        Insert: {
+          created_at?: string | null
+          description?: string | null
+          file_url?: string | null
+          id?: string
+          objectives?: string[] | null
+          subject_id: string
+          title: string
+          week_number?: number | null
+        }
+        Update: {
+          created_at?: string | null
+          description?: string | null
+          file_url?: string | null
+          id?: string
+          objectives?: string[] | null
+          subject_id?: string
+          title?: string
+          week_number?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subject_syllabus_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      subjects: {
+        Row: {
+          created_at: string | null
+          created_by: string | null
+          description: string | null
+          description_ar: string | null
+          id: string
+          is_active: boolean | null
+          livekit_room_name: string | null
+          teacher_id: string | null
+          title: string
+          title_ar: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          created_by?: string | null
+          description?: string | null
+          description_ar?: string | null
+          id?: string
+          is_active?: boolean | null
+          livekit_room_name?: string | null
+          teacher_id?: string | null
+          title: string
+          title_ar?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          created_by?: string | null
+          description?: string | null
+          description_ar?: string | null
+          id?: string
+          is_active?: boolean | null
+          livekit_room_name?: string | null
+          teacher_id?: string | null
+          title?: string
+          title_ar?: string | null
+          updated_at?: string | null
         }
         Relationships: []
       }
