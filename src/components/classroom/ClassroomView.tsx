@@ -182,17 +182,17 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-black relative">
+    <div className="h-screen flex flex-col bg-foreground relative">
       {/* Top bar */}
       <div className="h-12 bg-background/90 backdrop-blur border-b flex items-center justify-between px-4 z-10">
         <div className="flex items-center gap-3">
           <Badge variant="outline" className="gap-1">
-            <Circle className="h-2 w-2 fill-green-500 text-green-500" />
+            <Circle className="h-2 w-2 fill-primary text-primary" />
             {subject.title}
           </Badge>
           {recording && (
-            <Badge className="bg-red-600 text-white gap-1 animate-pulse">
-              <Circle className="h-2 w-2 fill-white" />
+            <Badge variant="destructive" className="gap-1 animate-pulse">
+              <Circle className="h-2 w-2 fill-destructive-foreground" />
               REC {formatTime(recordingTime)}
             </Badge>
           )}
