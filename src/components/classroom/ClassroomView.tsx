@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { LiveKitRoom, VideoConference, RoomAudioRenderer, ControlBar, useTracks, useRoomContext, useParticipants } from "@livekit/components-react";
+// @ts-ignore
 import "@livekit/components-styles";
 import { Track, RoomEvent } from "livekit-client";
 import { supabase } from "@/integrations/supabase/client";

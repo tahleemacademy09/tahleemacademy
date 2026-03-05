@@ -23,6 +23,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
 
   const studentLinks = [
     { to: "/student", icon: LayoutDashboard, label: t("Dashboard", "لوحة التحكم") },
+    { to: "/student/live-classes", icon: Video, label: t("Live Classes", "الفصول الحية") },
     { to: "/student/exams", icon: ClipboardList, label: t("Exams", "الامتحانات") },
     { to: "/student/transcripts", icon: GraduationCap, label: t("Transcripts", "السجل الأكاديمي") },
     { to: "/student/majlis", icon: MessageCircle, label: t("Al-Majlis", "المجلس") },
@@ -31,6 +32,8 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
 
   const adminLinks = [
     { to: "/admin", icon: LayoutDashboard, label: t("Dashboard", "لوحة التحكم") },
+    { to: "/admin/subjects", icon: BookOpen, label: t("Subjects", "المواد") },
+    { to: "/admin/live-classes", icon: Video, label: t("Live Classes", "الفصول الحية") },
     { to: "/admin/exams", icon: ClipboardList, label: t("Exams", "الامتحانات") },
     { to: "/admin/question-bank", icon: Library, label: t("Question Bank", "بنك الأسئلة") },
     { to: "/admin/students", icon: Users, label: t("Students", "الطلاب") },

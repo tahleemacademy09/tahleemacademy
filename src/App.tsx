@@ -26,6 +26,7 @@ import ExamResults from "./pages/student/ExamResults";
 import PreExamVerification from "./pages/student/PreExamVerification";
 import Transcripts from "./pages/student/Transcripts";
 import Majlis from "./pages/student/Majlis";
+import LiveClasses from "./pages/student/LiveClasses";
 import MuallimOverlay from "./components/majlis/MuallimOverlay";
 
 import AdminDashboard from "./pages/admin/AdminDashboard";
@@ -35,6 +36,7 @@ import GradingPage from "./pages/admin/GradingPage";
 import QuestionBank from "./pages/admin/QuestionBank";
 import StudentManagement from "./pages/admin/StudentManagement";
 import ProctoringDashboard from "./pages/admin/ProctoringDashboard";
+import SubjectManagement from "./pages/admin/SubjectManagement";
 
 const queryClient = new QueryClient();
 
@@ -67,6 +69,7 @@ const App = () => (
                 <Route path="/student/exams" element={<StudentExams />} />
                 <Route path="/student/transcripts" element={<Transcripts />} />
                 <Route path="/student/majlis" element={<Majlis />} />
+                <Route path="/student/live-classes" element={<LiveClasses />} />
                 <Route path="/student/profile" element={<ProfileSettings />} />
               </Route>
 
@@ -85,6 +88,8 @@ const App = () => (
                 <Route path="/admin/question-bank" element={<QuestionBank />} />
                 <Route path="/admin/proctoring" element={<ProctoringDashboard />} />
                 <Route path="/admin/students" element={<StudentManagement />} />
+                <Route path="/admin/subjects" element={<SubjectManagement />} />
+                <Route path="/admin/live-classes" element={<LiveClasses />} />
               </Route>
 
               <Route path="*" element={<NotFound />} />
