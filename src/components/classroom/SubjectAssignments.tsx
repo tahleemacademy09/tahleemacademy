@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -10,8 +10,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "@/hooks/use-toast";
-import { ClipboardList, Plus, Upload, Clock, CheckCircle, AlertCircle, Send } from "lucide-react";
+import { ClipboardList, Plus, Upload, Clock, CheckCircle, AlertCircle, Send, Mic, MicOff, FileText, PenLine } from "lucide-react";
 
 const SubjectAssignments = ({ subjectId }: { subjectId: string }) => {
   const { t } = useLanguage();
@@ -24,6 +25,10 @@ const SubjectAssignments = ({ subjectId }: { subjectId: string }) => {
   const [file, setFile] = useState<File | null>(null);
   const [submitFile, setSubmitFile] = useState<File | null>(null);
   const [submitComment, setSubmitComment] = useState("");
+  const [isRecordingVoice, setIsRecordingVoice] = useState(false);
+  const [voiceBlob, setVoiceBlob] = useState<Blob | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
 
   const { data: assignments, isLoading } = useQuery({
     queryKey: ["assignments", subjectId],
@@ -59,12 +64,8 @@ const SubjectAssignments = ({ subjectId }: { subjectId: string }) => {
         fileUrl = path;
       }
       const { error } = await supabase.from("subject_assignments").insert({
-        subject_id: subjectId,
-        title: form.title,
-        description: form.description || null,
-        deadline: form.deadline || null,
-        file_url: fileUrl,
-        created_by: user.id,
+        subject_id: subjectId, title: form.title, description: form.description || null,
+        deadline: form.deadline || null, file_url: fileUrl, created_by: user.id,
       });
       if (error) throw error;
     },
@@ -79,23 +80,27 @@ const SubjectAssignments = ({ subjectId }: { subjectId: string }) => {
   });
 
   const submitMutation = useMutation({
-    mutationFn: async (assignmentId: string) => {
+    mutationFn: async ({ assignmentId, mode }: { assignmentId: string; mode: string }) => {
       if (!user) throw new Error("Not authenticated");
       let fileUrl = null;
-      if (submitFile) {
+
+      if (mode === "file" && submitFile) {
         const path = `submissions/${assignmentId}/${user.id}/${crypto.randomUUID()}-${submitFile.name}`;
         const { error } = await supabase.storage.from("subject-files").upload(path, submitFile);
         if (error) throw error;
         fileUrl = path;
+      } else if (mode === "voice" && voiceBlob) {
+        const path = `submissions/${assignmentId}/${user.id}/${crypto.randomUUID()}-voice.webm`;
+        const { error } = await supabase.storage.from("subject-files").upload(path, voiceBlob);
+        if (error) throw error;
+        fileUrl = path;
       }
+
       const assignment = assignments?.find((a) => a.id === assignmentId);
       const isLate = assignment?.deadline ? new Date() > new Date(assignment.deadline) : false;
       const { error } = await supabase.from("assignment_submissions").insert({
-        assignment_id: assignmentId,
-        user_id: user.id,
-        file_url: fileUrl,
-        comment: submitComment || null,
-        is_late: isLate,
+        assignment_id: assignmentId, user_id: user.id, file_url: fileUrl,
+        comment: submitComment || null, is_late: isLate,
       });
       if (error) throw error;
     },
@@ -104,10 +109,35 @@ const SubjectAssignments = ({ subjectId }: { subjectId: string }) => {
       setSubmitOpen(null);
       setSubmitFile(null);
       setSubmitComment("");
+      setVoiceBlob(null);
       toast({ title: t("Submitted!", "تم التسليم!") });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
+
+  const startVoiceRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      chunksRef.current = [];
+      recorder.ondataavailable = (e) => chunksRef.current.push(e.data);
+      recorder.onstop = () => {
+        const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+        setVoiceBlob(blob);
+        stream.getTracks().forEach(t => t.stop());
+      };
+      recorder.start();
+      mediaRecorderRef.current = recorder;
+      setIsRecordingVoice(true);
+    } catch {
+      toast({ title: t("Microphone access denied", "تم رفض الوصول للميكروفون"), variant: "destructive" });
+    }
+  };
+
+  const stopVoiceRecording = () => {
+    mediaRecorderRef.current?.stop();
+    setIsRecordingVoice(false);
+  };
 
   const getSubmission = (assignmentId: string) => submissions?.find((s) => s.assignment_id === assignmentId);
   const isOverdue = (deadline: string) => deadline && new Date() > new Date(deadline);
@@ -150,9 +180,10 @@ const SubjectAssignments = ({ subjectId }: { subjectId: string }) => {
                 <CardContent className="p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex-1">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <p className="font-semibold text-sm">{a.title}</p>
                         {sub && <Badge variant="outline" className="text-xs gap-1"><CheckCircle className="h-3 w-3 text-green-500" />{t("Submitted", "تم التسليم")}</Badge>}
+                        {sub?.is_late && <Badge variant="destructive" className="text-xs">{t("Late", "متأخر")}</Badge>}
                         {sub?.grade !== null && sub?.grade !== undefined && <Badge className="text-xs">Grade: {sub.grade}</Badge>}
                       </div>
                       {a.description && <p className="text-sm text-muted-foreground mt-1">{a.description}</p>}
@@ -168,19 +199,72 @@ const SubjectAssignments = ({ subjectId }: { subjectId: string }) => {
                       {sub?.feedback && <p className="text-xs mt-2 p-2 bg-muted rounded">{t("Feedback:", "الملاحظات:")} {sub.feedback}</p>}
                     </div>
                     {!isPrivileged && !sub && (
-                      <Dialog open={submitOpen === a.id} onOpenChange={(v) => setSubmitOpen(v ? a.id : null)}>
+                      <Dialog open={submitOpen === a.id} onOpenChange={(v) => { setSubmitOpen(v ? a.id : null); setVoiceBlob(null); setSubmitFile(null); setSubmitComment(""); }}>
                         <DialogTrigger asChild>
                           <Button size="sm" className="gap-1 shrink-0"><Send className="h-3 w-3" />{t("Submit", "تسليم")}</Button>
                         </DialogTrigger>
-                        <DialogContent>
+                        <DialogContent className="max-w-lg">
                           <DialogHeader><DialogTitle>{t("Submit Assignment", "تسليم الواجب")}</DialogTitle></DialogHeader>
-                          <div className="space-y-3">
-                            <div><Label>{t("File", "الملف")}</Label><Input type="file" onChange={(e) => setSubmitFile(e.target.files?.[0] || null)} /></div>
-                            <div><Label>{t("Comment (optional)", "تعليق (اختياري)")}</Label><Textarea value={submitComment} onChange={(e) => setSubmitComment(e.target.value)} /></div>
-                            <Button className="w-full" onClick={() => submitMutation.mutate(a.id)} disabled={submitMutation.isPending}>
-                              {t("Submit", "تسليم")}
-                            </Button>
-                          </div>
+                          <Tabs defaultValue="text" className="w-full">
+                            <TabsList className="w-full">
+                              <TabsTrigger value="text" className="flex-1 gap-1"><PenLine className="h-3 w-3" />{t("Write", "كتابة")}</TabsTrigger>
+                              <TabsTrigger value="voice" className="flex-1 gap-1"><Mic className="h-3 w-3" />{t("Voice", "صوتي")}</TabsTrigger>
+                              <TabsTrigger value="file" className="flex-1 gap-1"><Upload className="h-3 w-3" />{t("File", "ملف")}</TabsTrigger>
+                            </TabsList>
+
+                            <TabsContent value="text" className="space-y-3 mt-3">
+                              <div>
+                                <Label>{t("Your Answer", "إجابتك")}</Label>
+                                <Textarea value={submitComment} onChange={(e) => setSubmitComment(e.target.value)} rows={6} placeholder={t("Write your response here...", "اكتب إجابتك هنا...")} />
+                              </div>
+                              <Button className="w-full" onClick={() => submitMutation.mutate({ assignmentId: a.id, mode: "text" })}
+                                disabled={!submitComment.trim() || submitMutation.isPending}>
+                                <Send className="h-3 w-3 me-2" />{t("Submit Text", "تسليم النص")}
+                              </Button>
+                            </TabsContent>
+
+                            <TabsContent value="voice" className="space-y-3 mt-3">
+                              <div className="text-center py-6">
+                                {!voiceBlob ? (
+                                  <Button
+                                    variant={isRecordingVoice ? "destructive" : "outline"}
+                                    size="lg"
+                                    className="rounded-full h-20 w-20"
+                                    onClick={isRecordingVoice ? stopVoiceRecording : startVoiceRecording}
+                                  >
+                                    {isRecordingVoice ? <MicOff className="h-8 w-8" /> : <Mic className="h-8 w-8" />}
+                                  </Button>
+                                ) : (
+                                  <div className="space-y-2">
+                                    <Badge variant="outline" className="gap-1"><CheckCircle className="h-3 w-3 text-green-500" />{t("Recording ready", "التسجيل جاهز")}</Badge>
+                                    <audio controls src={URL.createObjectURL(voiceBlob)} className="mx-auto" />
+                                    <Button variant="ghost" size="sm" onClick={() => setVoiceBlob(null)}>{t("Re-record", "إعادة التسجيل")}</Button>
+                                  </div>
+                                )}
+                                <p className="text-xs text-muted-foreground mt-2">
+                                  {isRecordingVoice ? t("Recording... Click to stop", "جاري التسجيل... اضغط للإيقاف") : t("Click to start recording", "اضغط لبدء التسجيل")}
+                                </p>
+                              </div>
+                              <Textarea value={submitComment} onChange={(e) => setSubmitComment(e.target.value)} rows={2} placeholder={t("Add a note (optional)", "أضف ملاحظة (اختياري)")} />
+                              <Button className="w-full" onClick={() => submitMutation.mutate({ assignmentId: a.id, mode: "voice" })}
+                                disabled={!voiceBlob || submitMutation.isPending}>
+                                <Send className="h-3 w-3 me-2" />{t("Submit Voice", "تسليم الصوت")}
+                              </Button>
+                            </TabsContent>
+
+                            <TabsContent value="file" className="space-y-3 mt-3">
+                              <div>
+                                <Label>{t("Upload File", "رفع ملف")}</Label>
+                                <Input type="file" onChange={(e) => setSubmitFile(e.target.files?.[0] || null)} />
+                                {submitFile && <p className="text-xs text-muted-foreground mt-1">{submitFile.name} ({(submitFile.size / 1024).toFixed(0)} KB)</p>}
+                              </div>
+                              <Textarea value={submitComment} onChange={(e) => setSubmitComment(e.target.value)} rows={2} placeholder={t("Add a note (optional)", "أضف ملاحظة (اختياري)")} />
+                              <Button className="w-full" onClick={() => submitMutation.mutate({ assignmentId: a.id, mode: "file" })}
+                                disabled={!submitFile || submitMutation.isPending}>
+                                <Upload className="h-3 w-3 me-2" />{t("Upload & Submit", "رفع وتسليم")}
+                              </Button>
+                            </TabsContent>
+                          </Tabs>
                         </DialogContent>
                       </Dialog>
                     )}
