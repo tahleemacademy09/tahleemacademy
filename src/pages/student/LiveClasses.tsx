@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { BookOpen, Video, FileText, ClipboardList, Megaphone, Calendar, Users } from "lucide-react";
+import { BookOpen, Video, FileText, ClipboardList, Megaphone, Calendar } from "lucide-react";
 import ClassroomView from "@/components/classroom/ClassroomView";
 import SubjectRecordings from "@/components/classroom/SubjectRecordings";
 import SubjectMaterials from "@/components/classroom/SubjectMaterials";
@@ -20,6 +20,7 @@ const LiveClasses = () => {
   const { user, hasRole } = useAuth();
   const [selectedSubject, setSelectedSubject] = useState<any>(null);
   const [inClass, setInClass] = useState(false);
+  const [showRejoin, setShowRejoin] = useState(false);
   const isPrivileged = hasRole("admin") || hasRole("teacher");
 
   const { data: subjects, isLoading } = useQuery({
@@ -42,15 +43,20 @@ const LiveClasses = () => {
 
   const isSubjectLive = (subjectId: string) => liveSessions?.some((s) => s.subject_id === subjectId);
 
+  const handleLeaveClass = () => {
+    setInClass(false);
+    setShowRejoin(true);
+  };
+
   if (inClass && selectedSubject) {
-    return <ClassroomView subject={selectedSubject} onLeave={() => setInClass(false)} />;
+    return <ClassroomView subject={selectedSubject} onLeave={handleLeaveClass} />;
   }
 
   if (selectedSubject) {
     return (
       <div className="p-4 md:p-6 space-y-4">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" onClick={() => setSelectedSubject(null)}>← {t("Back", "رجوع")}</Button>
+          <Button variant="ghost" onClick={() => { setSelectedSubject(null); setShowRejoin(false); }}>← {t("Back", "رجوع")}</Button>
           <div>
             <h1 className="text-xl font-bold">{selectedSubject.title}</h1>
             {selectedSubject.title_ar && <p className="text-sm text-muted-foreground font-arabic" dir="rtl">{selectedSubject.title_ar}</p>}
@@ -59,11 +65,32 @@ const LiveClasses = () => {
         </div>
 
         <div className="flex gap-2 flex-wrap">
-          <Button onClick={() => setInClass(true)} className="gap-2">
-            <Video className="h-4 w-4" />
-            {isPrivileged ? t("Start Class", "بدء الفصل") : t("Join Class", "انضمام للفصل")}
-          </Button>
+          {showRejoin && isSubjectLive(selectedSubject.id) ? (
+            <Button onClick={() => { setInClass(true); setShowRejoin(false); }} className="gap-2 bg-secondary text-secondary-foreground hover:bg-secondary/90">
+              <Video className="h-4 w-4" />
+              {t("Rejoin Class", "إعادة الانضمام")}
+            </Button>
+          ) : (
+            <Button onClick={() => { setInClass(true); setShowRejoin(false); }} className="gap-2">
+              <Video className="h-4 w-4" />
+              {isPrivileged ? t("Start Class", "بدء الفصل") : t("Join Class", "انضمام للفصل")}
+            </Button>
+          )}
         </div>
+
+        {showRejoin && isSubjectLive(selectedSubject.id) && (
+          <Card className="border-secondary/50 bg-secondary/5">
+            <CardContent className="py-4 flex items-center gap-3">
+              <div className="h-10 w-10 rounded-full bg-secondary/10 flex items-center justify-center animate-pulse">
+                <Video className="h-5 w-5 text-secondary" />
+              </div>
+              <div>
+                <p className="font-medium text-sm">{t("Class is still in session", "الفصل لا يزال قائماً")}</p>
+                <p className="text-xs text-muted-foreground">{t("You can rejoin anytime", "يمكنك إعادة الانضمام في أي وقت")}</p>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         <Tabs defaultValue="recordings" className="w-full">
           <TabsList className="flex-wrap h-auto gap-1">
