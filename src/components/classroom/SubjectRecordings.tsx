@@ -134,4 +134,80 @@ const SubjectRecordings = ({ subjectId }: { subjectId: string }) => {
   );
 };
 
+
+export default SubjectRecordings;      </div>
+
+      {/* Video Player */}
+      {playingUrl && (
+        <Card className="overflow-hidden">
+          <CardContent className="p-0 bg-black">
+            <video
+              ref={videoRef}
+              src={playingUrl}
+              controls
+              autoPlay
+              className="w-full max-h-[400px]"
+              controlsList="nodownload"
+            >
+              {t("Your browser does not support video playback", "متصفحك لا يدعم تشغيل الفيديو")}
+            </video>
+            <div className="p-2 flex justify-end bg-muted">
+              <Button size="sm" variant="ghost" onClick={() => setPlayingUrl(null)} className="text-xs">
+                {t("Close Player", "إغلاق المشغل")}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {!filtered?.length ? (
+        <Card><CardContent className="py-8 text-center text-muted-foreground">
+          <Video className="h-10 w-10 mx-auto mb-2 opacity-50" />
+          {t("No recordings yet", "لا توجد تسجيلات بعد")}
+        </CardContent></Card>
+      ) : (
+        <div className="space-y-3">
+          {filtered.map((r) => (
+            <Card key={r.id}>
+              <CardContent className="p-4 flex items-center gap-4">
+                <div className="h-16 w-24 bg-muted rounded-lg flex items-center justify-center shrink-0 relative group cursor-pointer"
+                  onClick={() => r.file_url && streamRecording(r.file_url)}>
+                  {r.thumbnail_url ? (
+                    <img src={r.thumbnail_url} className="h-full w-full object-cover rounded-lg" alt="" />
+                  ) : (
+                    <Play className="h-6 w-6 text-muted-foreground group-hover:text-primary transition-colors" />
+                  )}
+                  <div className="absolute inset-0 bg-black/20 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                    <Play className="h-8 w-8 text-white" />
+                  </div>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium text-sm">{new Date(r.created_at).toLocaleDateString(undefined, { weekday: "short", year: "numeric", month: "short", day: "numeric" })}</p>
+                  <div className="flex items-center gap-3 text-xs text-muted-foreground mt-1">
+                    <span className="flex items-center gap-1"><User className="h-3 w-3" />{r.teacher_name || "Teacher"}</span>
+                    {r.duration_seconds && <span className="flex items-center gap-1"><Clock className="h-3 w-3" />{formatDuration(r.duration_seconds)}</span>}
+                    {r.file_size && <span>{(r.file_size / 1048576).toFixed(1)} MB</span>}
+                  </div>
+                </div>
+                <div className="flex gap-2 shrink-0">
+                  {r.file_url && (
+                    <>
+                      <Button size="sm" variant="outline" className="gap-1" onClick={() => streamRecording(r.file_url!)}>
+                        <Play className="h-3 w-3" />{t("Stream", "تشغيل")}
+                      </Button>
+                      <Button size="sm" variant="ghost" className="gap-1" onClick={() => downloadRecording(r.file_url!)}>
+                        <Download className="h-3 w-3" />
+                      </Button>
+                    </>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 export default SubjectRecordings;
