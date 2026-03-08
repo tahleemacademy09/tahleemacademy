@@ -601,7 +601,20 @@ fill_blank,"The word for 'water' is ___.","كلمة 'ماء' هي ___.",,,,,,,,,
                 </div>
               </div>
 
-              <div className="grid gap-4 md:grid-cols-2">
+              {/* Level Selector */}
+              <div>
+                <Label>{t("Level", "المستوى")}</Label>
+                <Select value={examForm.level || "none"} onValueChange={(v) => setExamForm({ ...examForm, level: v === "none" ? "" : v })}>
+                  <SelectTrigger className="mt-1"><SelectValue placeholder={t("Select level", "اختر المستوى")} /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">{t("All Levels", "جميع المستويات")}</SelectItem>
+                    <SelectItem value="beginner">{t("Beginner / مبتدئ", "مبتدئ / Beginner")}</SelectItem>
+                    <SelectItem value="intermediate">{t("Intermediate / متوسط", "متوسط / Intermediate")}</SelectItem>
+                    <SelectItem value="advanced">{t("Advanced / متقدم", "متقدم / Advanced")}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
                 <div>
                   <Label>{t("Title (English)", "العنوان (إنجليزي)")}</Label>
                   <Input value={examForm.title} onChange={(e) => setExamForm({ ...examForm, title: e.target.value })} className="mt-1" />
