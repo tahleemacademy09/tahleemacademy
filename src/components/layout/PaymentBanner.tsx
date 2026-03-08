@@ -1,14 +1,21 @@
 import { useAuth } from "@/contexts/AuthContext";
 import { useNavigate } from "react-router-dom";
+import { useAcademySettings } from "@/hooks/useAcademySettings";
 import { Button } from "@/components/ui/button";
 import { AlertTriangle } from "lucide-react";
 
 const PaymentBanner = () => {
   const { profile, hasRole } = useAuth();
   const navigate = useNavigate();
+  const { isPaymentEnabled, isHoliday, loading } = useAcademySettings();
 
+  if (loading) return null;
   if (hasRole("admin") || hasRole("teacher")) return null;
   if (!profile) return null;
+
+  // If payments are OFF or academy is on holiday, no banner
+  if (!isPaymentEnabled || isHoliday) return null;
+
   if (profile.payment_status === "paid" || profile.payment_status === "exempt" || profile.is_payment_exempt) return null;
   if (profile.payment_status !== "grace") return null;
 
