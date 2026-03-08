@@ -49,11 +49,17 @@ const StudentManagement = () => {
 
   useEffect(() => { fetchData(); }, []);
 
-  const filtered = students.filter((s) =>
-    s.full_name?.toLowerCase().includes(search.toLowerCase()) ||
-    s.email?.toLowerCase().includes(search.toLowerCase()) ||
-    s.phone?.includes(search)
-  );
+  const isAdmin = hasRole("admin");
+
+  const filtered = students.filter((s) => {
+    const matchesSearch = s.full_name?.toLowerCase().includes(search.toLowerCase()) ||
+      s.email?.toLowerCase().includes(search.toLowerCase()) ||
+      s.phone?.includes(search);
+    const matchesType = typeFilter === "all" || s.student_type === typeFilter;
+    // Teachers only see group students + their own private students
+    const visibleToTeacher = isAdmin || s.student_type !== "private" || s.assigned_teacher_id === currentUser?.id;
+    return matchesSearch && matchesType && visibleToTeacher;
+  });
 
   const assignExam = async () => {
     if (!selectedStudent || !selectedExamId) return;
