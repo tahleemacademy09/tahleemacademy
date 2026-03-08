@@ -10,7 +10,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import {
   BookOpen, ClipboardList, Bell, TrendingUp, Calendar, CheckCircle, XCircle,
-  GraduationCap, MessageCircle, ArrowRight, Video, Star
+  GraduationCap, MessageCircle, ArrowRight, Video, Star, ChevronLeft, ChevronRight, AlertTriangle, Info
 } from "lucide-react";
 
 const toHijri = (date: Date) => {
@@ -59,6 +59,9 @@ const StudentDashboard = () => {
   const [notifications, setNotifications] = useState<any[]>([]);
   const [liveSubjects, setLiveSubjects] = useState<any[]>([]);
   const [assignments, setAssignments] = useState<any[]>([]);
+  const [allExamsForCalendar, setAllExamsForCalendar] = useState<any[]>([]);
+  const [subjectAssignments, setSubjectAssignments] = useState<any[]>([]);
+  const [calendarMonth, setCalendarMonth] = useState(new Date());
 
   const dayOfYear = Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0).getTime()) / 86400000);
   const dailyVerse = VERSES[dayOfYear % VERSES.length];
@@ -67,15 +70,17 @@ const StudentDashboard = () => {
   useEffect(() => {
     if (!user) return;
     const fetchData = async () => {
-      const [enrollRes, gradedAttemptsRes, pendingAttemptsRes, notifsRes, assignmentsRes, recentRes, allAttemptsRes, subjectsRes] = await Promise.all([
+      const [enrollRes, gradedAttemptsRes, pendingAttemptsRes, notifsRes, assignmentsRes, recentRes, allAttemptsRes, subjectsRes, calendarExamsRes, subAssignmentsRes] = await Promise.all([
         supabase.from("enrollments").select("id").eq("user_id", user.id),
         supabase.from("exam_attempts").select("percentage").eq("user_id", user.id).eq("status", "graded"),
         supabase.from("exam_attempts").select("id").eq("user_id", user.id).eq("status", "submitted"),
-        supabase.from("notifications").select("*").eq("user_id", user.id).eq("is_read", false).order("created_at", { ascending: false }).limit(5),
+        supabase.from("notifications").select("*").eq("user_id", user.id).order("created_at", { ascending: false }).limit(20),
         supabase.from("exam_assignments").select("exam_id, exams(*)").eq("user_id", user.id),
         supabase.from("exam_attempts").select("*, exams(title, title_ar)").eq("user_id", user.id).in("status", ["graded", "submitted"]).order("submitted_at", { ascending: false }).limit(5),
         supabase.from("exam_attempts").select("exam_id, status, percentage").eq("user_id", user.id),
         supabase.from("subjects").select("*").eq("is_active", true).limit(4),
+        supabase.from("exams").select("id, title, title_ar, start_date, end_date, time_limit_minutes").eq("is_published", true),
+        supabase.from("subject_assignments").select("id, title, deadline, subject_id, subjects(title, title_ar)"),
       ]);
 
       const gradedAttempts = gradedAttemptsRes.data || [];
@@ -97,6 +102,8 @@ const StudentDashboard = () => {
       setRecentResults(recentRes.data || []);
       setNotifications(notifsRes.data || []);
       setLiveSubjects(subjectsRes.data || []);
+      setAllExamsForCalendar(calendarExamsRes.data || []);
+      setSubjectAssignments(subAssignmentsRes.data || []);
       setLoading(false);
     };
     fetchData();
@@ -116,6 +123,44 @@ const StudentDashboard = () => {
       </div>
     );
   }
+
+  const markAsRead = async (id: string) => {
+    await supabase.from("notifications").update({ is_read: true }).eq("id", id);
+    setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
+  };
+
+  const unreadCount = notifications.filter(n => !n.is_read).length;
+
+  // Calendar helpers
+  const calendarYear = calendarMonth.getFullYear();
+  const calendarMonthIdx = calendarMonth.getMonth();
+  const daysInMonth = new Date(calendarYear, calendarMonthIdx + 1, 0).getDate();
+  const firstDayOfWeek = new Date(calendarYear, calendarMonthIdx, 1).getDay();
+
+  const getEventsForDay = (day: number) => {
+    const dateStr = `${calendarYear}-${String(calendarMonthIdx + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const events: { type: 'exam' | 'assignment'; title: string; color: string }[] = [];
+    allExamsForCalendar.forEach(e => {
+      if (e.start_date && e.start_date.startsWith(dateStr)) {
+        events.push({ type: 'exam', title: e.title_ar || e.title, color: 'bg-destructive' });
+      }
+    });
+    subjectAssignments.forEach(a => {
+      if (a.deadline && a.deadline.startsWith(dateStr)) {
+        events.push({ type: 'assignment', title: a.title, color: 'bg-secondary' });
+      }
+    });
+    return events;
+  };
+
+  const prevMonth = () => setCalendarMonth(new Date(calendarYear, calendarMonthIdx - 1, 1));
+  const nextMonth = () => setCalendarMonth(new Date(calendarYear, calendarMonthIdx + 1, 1));
+
+  const notifIcon = (type: string | null) => {
+    if (type === 'warning') return <AlertTriangle className="h-3 w-3 text-secondary" />;
+    if (type === 'exam') return <ClipboardList className="h-3 w-3 text-destructive" />;
+    return <Info className="h-3 w-3 text-primary" />;
+  };
 
   const today = new Date();
 
@@ -273,34 +318,122 @@ const StudentDashboard = () => {
       </div>
 
       {/* ═══════════════════════════════════════════════
-          5. NOTIFICATIONS (if any)
+          5. NOTIFICATIONS PANEL (always shown)
       ═══════════════════════════════════════════════ */}
-      {notifications.length > 0 && (
-        <Card className="rounded-2xl shadow-[0_4px_20px_rgba(0,0,0,0.05)] border-0 border-l-4 border-l-secondary">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center gap-2" style={{ fontFamily: "'Playfair Display', serif" }}>
-              <Bell className="h-4 w-4 text-secondary" />
-              {t("Notifications", "الإشعارات")}
-              <Badge variant="secondary" className="text-[10px]">{notifications.length}</Badge>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="pt-0">
-            <div className="space-y-2">
+      <Card className="rounded-2xl shadow-[0_4px_20px_rgba(0,0,0,0.05)] border-0 border-l-4 border-l-secondary">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2" style={{ fontFamily: "'Playfair Display', serif" }}>
+            <Bell className="h-4 w-4 text-secondary" />
+            {t("Notifications", "الإشعارات")}
+            {unreadCount > 0 && <Badge variant="destructive" className="text-[10px]">{unreadCount}</Badge>}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="pt-0">
+          {notifications.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-4">{t("No notifications yet", "لا توجد إشعارات بعد")}</p>
+          ) : (
+            <div className="space-y-2 max-h-[300px] overflow-y-auto">
               {notifications.map((n) => (
-                <div key={n.id} className="rounded-xl bg-muted/30 p-3 flex items-start gap-3">
-                  <div className="h-7 w-7 rounded-full bg-secondary/10 flex items-center justify-center shrink-0 mt-0.5">
-                    <Bell className="h-3 w-3 text-secondary" />
+                <div
+                  key={n.id}
+                  className={`rounded-xl p-3 flex items-start gap-3 transition-colors cursor-pointer ${n.is_read ? 'bg-muted/20' : 'bg-secondary/10 border border-secondary/20'}`}
+                  onClick={() => !n.is_read && markAsRead(n.id)}
+                >
+                  <div className={`h-7 w-7 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${n.is_read ? 'bg-muted/40' : 'bg-secondary/20'}`}>
+                    {notifIcon(n.type)}
                   </div>
-                  <div className="min-w-0">
-                    <p className="font-medium text-sm">{n.title}</p>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <p className={`font-medium text-sm ${!n.is_read ? 'text-foreground' : 'text-muted-foreground'}`}>{n.title}</p>
+                      {!n.is_read && <div className="h-2 w-2 rounded-full bg-secondary shrink-0" />}
+                    </div>
                     <p className="text-xs text-muted-foreground">{n.message}</p>
+                    <p className="text-[10px] text-muted-foreground mt-1">
+                      {new Date(n.created_at).toLocaleDateString(language === "ar" ? "ar-SA" : "en-US", { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    </p>
                   </div>
                 </div>
               ))}
             </div>
-          </CardContent>
-        </Card>
-      )}
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ═══════════════════════════════════════════════
+          5b. ACADEMIC CALENDAR
+      ═══════════════════════════════════════════════ */}
+      <Card className="rounded-2xl shadow-[0_4px_20px_rgba(0,0,0,0.05)] border-0">
+        <CardHeader className="pb-2">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-sm flex items-center gap-2" style={{ fontFamily: "'Playfair Display', serif" }}>
+              <Calendar className="h-4 w-4 text-primary" />
+              {t("Academic Calendar", "التقويم الأكاديمي")}
+            </CardTitle>
+            <div className="flex items-center gap-1">
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={prevMonth}>
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <span className="text-sm font-medium min-w-[120px] text-center">
+                {calendarMonth.toLocaleDateString(language === "ar" ? "ar-SA" : "en-US", { month: 'long', year: 'numeric' })}
+              </span>
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={nextMonth}>
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="pt-0">
+          {/* Day headers */}
+          <div className="grid grid-cols-7 gap-1 mb-1">
+            {(language === "ar"
+              ? ["أحد", "إثن", "ثلا", "أرب", "خمي", "جمع", "سبت"]
+              : ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+            ).map(d => (
+              <div key={d} className="text-[10px] text-muted-foreground text-center font-medium py-1">{d}</div>
+            ))}
+          </div>
+          {/* Calendar grid */}
+          <div className="grid grid-cols-7 gap-1">
+            {Array.from({ length: firstDayOfWeek }).map((_, i) => (
+              <div key={`empty-${i}`} className="h-10" />
+            ))}
+            {Array.from({ length: daysInMonth }).map((_, i) => {
+              const day = i + 1;
+              const events = getEventsForDay(day);
+              const isToday = day === today.getDate() && calendarMonthIdx === today.getMonth() && calendarYear === today.getFullYear();
+              return (
+                <div
+                  key={day}
+                  className={`h-10 rounded-lg flex flex-col items-center justify-center relative text-xs transition-colors
+                    ${isToday ? 'bg-primary text-primary-foreground font-bold' : 'hover:bg-muted/40'}
+                    ${events.length > 0 ? 'font-semibold' : ''}`}
+                  title={events.map(e => e.title).join(', ')}
+                >
+                  <span>{day}</span>
+                  {events.length > 0 && (
+                    <div className="flex gap-0.5 absolute bottom-0.5">
+                      {events.slice(0, 3).map((e, ei) => (
+                        <div key={ei} className={`h-1 w-1 rounded-full ${e.color}`} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          {/* Legend */}
+          <div className="flex items-center gap-4 mt-3 pt-2 border-t border-muted">
+            <div className="flex items-center gap-1.5">
+              <div className="h-2 w-2 rounded-full bg-destructive" />
+              <span className="text-[10px] text-muted-foreground">{t("Exams", "امتحانات")}</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <div className="h-2 w-2 rounded-full bg-secondary" />
+              <span className="text-[10px] text-muted-foreground">{t("Assignments", "واجبات")}</span>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* ═══════════════════════════════════════════════
           6. ACTION AGENDA: Tabbed Classes / Exams / Results
