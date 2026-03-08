@@ -273,99 +273,154 @@ const Transcripts = () => {
   const strokeDashoffset = circumference - (gaugePercent / 100) * circumference;
 
   // Transcript preview component
-  const TranscriptPreview = () => (
-    <div ref={transcriptRef} className="bg-[#FAFAF8] p-6 md:p-10 font-arabic geometric-pattern min-h-[800px]" dir="rtl" style={{ fontFamily: "'Amiri', serif" }}>
-      {/* Header */}
-      <div className="text-center mb-6">
-        <p className="text-sm text-muted-foreground mb-2">بسم الله الرحمن الرحيم</p>
-        <h2 className="text-2xl font-bold" style={{ color: "#064E3B" }}>أكاديمية التعليم</h2>
-        <p className="text-sm" style={{ color: "#064E3B" }}>TAHLEEM ACADEMY</p>
-        <div className="h-px my-3 mx-auto w-3/4" style={{ background: "linear-gradient(to right, transparent, #D4AF37, transparent)" }} />
-        <h3 className="text-lg font-bold" style={{ color: "#064E3B" }}>صحيفة النتائج الأكاديمية</h3>
-        <p className="text-xs text-muted-foreground">(لفصلين دراسيين)</p>
-      </div>
+  const TranscriptPreview = () => {
+    const totalObtainable = exams.length * 100;
+    const totalObtained = exams.reduce((s, e) => s + Math.round(e.percentage), 0);
 
-      {/* Student Info */}
-      <div className="grid grid-cols-2 gap-3 mb-6 text-sm border rounded-lg p-4" style={{ borderColor: "#D4AF37" }}>
-        <div><span className="font-bold" style={{ color: "#064E3B" }}>اسم الطالب / الطالبة:</span> {profile?.full_name || "---"}</div>
-        <div><span className="font-bold" style={{ color: "#064E3B" }}>العام الدراسي:</span> {toArabicNum(hijriYear)} هـ / {toArabicNum(currentYear)} م</div>
-        <div><span className="font-bold" style={{ color: "#064E3B" }}>المرحلة الدراسية / الصف:</span> ---</div>
-        <div><span className="font-bold" style={{ color: "#064E3B" }}>عدد المقررات:</span> {toArabicNum(exams.length)}</div>
-      </div>
-
-      {/* Semester 1 */}
-      <SemesterTable title="الفصل الدراسي الأول" data={sem1} gpa={sem1GP} />
-      <div className="my-4" />
-      {/* Semester 2 */}
-      <SemesterTable title="الفصل الدراسي الثاني" data={sem2} gpa={sem2GP} />
-
-      {/* Final Section */}
-      <div className="mt-6 p-4 rounded-lg text-center" style={{ backgroundColor: "#064E3B", color: "#FAFAF8" }}>
-        <p className="text-lg font-bold">المعدل التراكمي العام (CGPA): {toArabicNum(cgpa.toFixed(2))}</p>
-        <p className="text-sm mt-1">النتيجة النهائية: {gradeLabel(cgpa)}</p>
-      </div>
-
-      {/* Signatures */}
-      <div className="flex justify-between mt-8 text-sm px-4">
-        <div className="text-center">
-          <div className="border-b border-foreground/30 w-40 mb-1" />
-          <p>توقيع رائد الفصل</p>
+    return (
+      <div ref={transcriptRef} className="bg-white p-8 md:p-10 min-h-[800px]" dir="rtl" style={{ fontFamily: "'Cairo', 'Amiri', sans-serif" }}>
+        {/* Header */}
+        <div className="text-center mb-4">
+          <h2 className="text-2xl font-bold" style={{ fontFamily: "'Amiri', serif" }}>أكاديمية التعليم</h2>
+          <p className="text-lg font-bold tracking-widest">TAHLEEM ACADEMY</p>
         </div>
-        <div className="text-center">
-          <div className="border-b border-foreground/30 w-40 mb-1" />
-          <p>توقيع مدير الأكاديمية (مع الختم)</p>
+
+        {/* Title box */}
+        <div className="border-2 border-[#2a7a2a] rounded px-6 py-2 mx-auto w-fit flex gap-10 items-center justify-center mb-5">
+          <span className="text-base font-semibold">كشف نتائج الطلبة</span>
+          <span className="text-base font-semibold">Student Report Sheet.</span>
         </div>
-      </div>
 
-      {/* Closing */}
-      <p className="text-center mt-8 text-sm font-bold" style={{ color: "#064E3B" }}>وبالله التوفيق</p>
-    </div>
-  );
+        {/* Info grid */}
+        <div className="mb-5 space-y-2">
+          <div className="flex justify-between gap-8">
+            <div className="flex items-baseline gap-1 flex-1">
+              <span className="font-bold text-sm whitespace-nowrap">اسم الطالب(ة)</span>
+              <span className="flex-1 border-b border-black text-sm text-center">{profile?.full_name || "---"}</span>
+            </div>
+            <div className="flex items-baseline gap-1 flex-1">
+              <span className="font-bold text-sm whitespace-nowrap">العام الدراسي</span>
+              <span className="flex-1 border-b border-black text-sm text-center">{toArabicNum(hijriYear)} هـ / {toArabicNum(currentYear)} م</span>
+            </div>
+          </div>
+          <div className="flex justify-between gap-8">
+            <div className="flex items-baseline gap-1 flex-1">
+              <span className="font-bold text-sm whitespace-nowrap">المرحلة</span>
+              <span className="flex-1 border-b border-black text-sm text-center">{profile?.level === "beginner" ? "المبتدئة / Beginner" : profile?.level === "intermediate" ? "المتوسطة / Intermediate" : profile?.level || "---"}</span>
+            </div>
+            <div className="flex items-baseline gap-1 flex-1">
+              <span className="font-bold text-sm whitespace-nowrap">عدد المواد</span>
+              <span className="flex-1 border-b border-black text-sm text-center">{toArabicNum(exams.length)}</span>
+            </div>
+          </div>
+          <div className="flex justify-between gap-8">
+            <div className="flex items-baseline gap-1 flex-1">
+              <span className="font-bold text-sm whitespace-nowrap">التاريخ</span>
+              <span className="flex-1 border-b border-black text-sm text-center">{new Date().toLocaleDateString("ar-SA")}</span>
+            </div>
+            <div className="flex items-baseline gap-1 flex-1">
+              <span className="font-bold text-sm whitespace-nowrap">الحالة</span>
+              <span className="flex-1 border-b border-black text-sm text-center">{cgpa >= 2.0 ? "منتظمة / Regular" : "تحت المراقبة / Probation"}</span>
+            </div>
+          </div>
+        </div>
 
-  const SemesterTable = ({ title, data, gpa }: { title: string; data: GradedExam[]; gpa: number }) => (
-    <div>
-      <h4 className="text-base font-bold mb-2" style={{ color: "#064E3B" }}>{title}</h4>
-      <table className="w-full text-sm border-collapse">
-        <thead>
-          <tr style={{ backgroundColor: "#064E3B", color: "#FAFAF8" }}>
-            <th className="p-2 text-right">المادة</th>
-            <th className="p-2 text-center">أعمال السنة (30)</th>
-            <th className="p-2 text-center">الامتحان النهائي (70)</th>
-            <th className="p-2 text-center">المجموع (100)</th>
-            <th className="p-2 text-center">التقدير</th>
-            <th className="p-2 text-center">النقاط (GP)</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data.length === 0 ? (
-            <tr><td colSpan={6} className="text-center p-4 text-muted-foreground">لا توجد مقررات</td></tr>
-          ) : data.map((e) => {
-            const gp = gradePoint(e.percentage);
-            const coursework = Math.round(e.percentage * 0.3);
-            const finalExam = Math.round(e.percentage * 0.7);
-            return (
-              <tr key={e.exam_id + e.submitted_at} className="border-b" style={{ borderColor: "#E6E6E1" }}>
-                <td className="p-2 text-right font-medium">{e.title_ar || e.title}</td>
-                <td className="p-2 text-center">{toArabicNum(coursework)}</td>
-                <td className="p-2 text-center">{toArabicNum(finalExam)}</td>
-                <td className="p-2 text-center font-bold">{toArabicNum(Math.round(e.percentage))}</td>
-                <td className="p-2 text-center">
-                  <span className={`px-2 py-0.5 rounded text-xs ${e.passed ? "bg-primary/10 text-primary" : "bg-destructive/10 text-destructive"}`}>
-                    {gradeLabel(gp)}
-                  </span>
-                </td>
-                <td className="p-2 text-center">{toArabicNum(gp.toFixed(1))}</td>
+        {/* Section title */}
+        <h4 className="text-xl font-bold text-left mb-3" style={{ fontFamily: "'Amiri', serif" }}>الفترة الأولى</h4>
+
+        {/* Main table */}
+        <table className="w-full border-collapse mb-6" dir="rtl" style={{ borderColor: "#333" }}>
+          <thead>
+            <tr>
+              <th className="border-[1.5px] border-[#333] p-1 text-center text-sm">
+                <span className="block" style={{ fontFamily: "'Amiri', serif", fontWeight: 700 }}>المواد</span>
+                <span className="block text-xs font-bold">Subject</span>
+              </th>
+              <th className="border-[1.5px] border-[#333] p-1 text-center text-sm">
+                <span className="block" style={{ fontFamily: "'Amiri', serif", fontWeight: 700 }}>التمرينات (٣٠)</span>
+                <span className="block text-xs font-bold">Test</span>
+              </th>
+              <th className="border-[1.5px] border-[#333] p-1 text-center text-sm">
+                <span className="block" style={{ fontFamily: "'Amiri', serif", fontWeight: 700 }}>الإمتحانات (٧٠)</span>
+                <span className="block text-xs font-bold">Exam</span>
+              </th>
+              <th className="border-[1.5px] border-[#333] p-1 text-center text-sm">
+                <span className="block" style={{ fontFamily: "'Amiri', serif", fontWeight: 700 }}>المجموع الكلي (١٠٠)</span>
+                <span className="block text-xs font-bold">Total</span>
+              </th>
+              <th className="border-[1.5px] border-[#333] p-1 text-center text-sm">
+                <span className="block" style={{ fontFamily: "'Amiri', serif", fontWeight: 700 }}>%</span>
+                <span className="block text-xs font-bold">%</span>
+              </th>
+              <th className="border-[1.5px] border-[#333] p-1 text-center text-sm">
+                <span className="block" style={{ fontFamily: "'Amiri', serif", fontWeight: 700 }}>GP</span>
+                <span className="block text-xs font-bold">GP</span>
+              </th>
+              <th className="border-[1.5px] border-[#333] p-1 text-center text-sm">
+                <span className="block" style={{ fontFamily: "'Amiri', serif", fontWeight: 700 }}>النتيجة</span>
+                <span className="block text-xs font-bold">Result</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {exams.map((e) => {
+              const coursework = Math.round(e.percentage * 0.3);
+              const finalExam = Math.round(e.percentage * 0.7);
+              const total = coursework + finalExam;
+              const gp = gradePoint(e.percentage);
+              return (
+                <tr key={e.exam_id + e.submitted_at}>
+                  <td className="border-[1.5px] border-[#333] p-1 text-center text-sm">{e.title_ar || e.title}</td>
+                  <td className="border-[1.5px] border-[#333] p-1 text-center text-sm">{coursework}</td>
+                  <td className="border-[1.5px] border-[#333] p-1 text-center text-sm">{finalExam}</td>
+                  <td className="border-[1.5px] border-[#333] p-1 text-center text-sm font-bold">{total}</td>
+                  <td className="border-[1.5px] border-[#333] p-1 text-center text-sm">{total}%</td>
+                  <td className="border-[1.5px] border-[#333] p-1 text-center text-sm">{gp.toFixed(1)}</td>
+                  <td className={`border-[1.5px] border-[#333] p-1 text-center text-sm font-bold ${e.passed ? "text-[#2a7a2a]" : "text-destructive"}`}>
+                    {e.passed ? "Pass ✓" : "Fail ✗"}
+                  </td>
+                </tr>
+              );
+            })}
+            {/* Fill empty rows to make at least 10 */}
+            {Array.from({ length: Math.max(0, 10 - exams.length) }).map((_, i) => (
+              <tr key={`empty-${i}`}>
+                {Array.from({ length: 7 }).map((_, j) => (
+                  <td key={j} className="border-[1.5px] border-[#333] p-1 h-8" />
+                ))}
               </tr>
-            );
-          })}
-        </tbody>
-      </table>
-      <div className="flex justify-between mt-2 text-sm px-2">
-        <span style={{ color: "#064E3B" }} className="font-bold">المعدل الفصلي: {toArabicNum(gpa.toFixed(2))}</span>
-        <span className="text-muted-foreground">ملاحظات: {gpa >= 3.5 ? "ممتاز، واصل تقدمك" : gpa >= 2.0 ? "جيد، يمكنك تحسين مستواك" : gpa > 0 ? "يحتاج تحسين" : "---"}</span>
+            ))}
+          </tbody>
+        </table>
+
+        {/* Summary table */}
+        <table className="w-full border-collapse" dir="ltr">
+          <tbody>
+            <tr>
+              <td className="border-[1.5px] border-[#333] p-2 font-bold text-sm w-[18%]">Marks Obtainable</td>
+              <td className="border-[1.5px] border-[#333] p-2 text-sm text-center">{totalObtainable || ""}</td>
+              <td className="border-[1.5px] border-[#333] p-2 font-bold text-sm w-[18%]">Marks Obtained</td>
+              <td className="border-[1.5px] border-[#333] p-2 text-sm text-center">{totalObtained || ""}</td>
+            </tr>
+            <tr>
+              <td className="border-[1.5px] border-[#333] p-2 font-bold text-sm">Cgpa</td>
+              <td className="border-[1.5px] border-[#333] p-2 text-sm text-center">{exams.length > 0 ? cgpa.toFixed(2) : ""}</td>
+              <td className="border-[1.5px] border-[#333] p-2 font-bold text-sm">Status</td>
+              <td className="border-[1.5px] border-[#333] p-2 text-sm text-center">{exams.length > 0 ? (cgpa >= 1.0 ? "Pass ✓" : "Fail ✗") : ""}</td>
+            </tr>
+            <tr>
+              <td className="border-[1.5px] border-[#333] p-2 font-bold text-sm">Comment</td>
+              <td className="border-[1.5px] border-[#333] p-2 text-sm text-center">
+                {exams.length > 0 ? (cgpa >= 3.5 ? "طالب(ة) متميز(ة) / Outstanding" : cgpa >= 2.0 ? "طالب(ة) مجتهد(ة) / Hardworking" : "يحتاج تحسين / Needs improvement") : ""}
+              </td>
+              <td className="border-[1.5px] border-[#333] p-2 font-bold text-sm">Signature</td>
+              <td className="border-[1.5px] border-[#333] p-2 text-sm text-center"></td>
+            </tr>
+          </tbody>
+        </table>
       </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <div className="container mx-auto px-4 py-8">
