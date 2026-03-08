@@ -24,6 +24,9 @@ const EntranceExamAdmin = () => {
   const [loading, setLoading] = useState(true);
   const [selectedLevel, setSelectedLevel] = useState("beginner");
   const [selectedSubject, setSelectedSubject] = useState("");
+  const [showLevelDialog, setShowLevelDialog] = useState(false);
+  const [targetStudent, setTargetStudent] = useState<any>(null);
+  const [newLevel, setNewLevel] = useState("beginner");
 
   useEffect(() => {
     loadData();
