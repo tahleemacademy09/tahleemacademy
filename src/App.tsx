@@ -59,6 +59,7 @@ import MajlisModeration from "./pages/admin/MajlisModeration";
 import NotificationManagement from "./pages/admin/NotificationManagement";
 import TranscriptManagement from "./pages/admin/TranscriptManagement";
 import AttendanceManagement from "./pages/admin/AttendanceManagement";
+import PaymentManagement from "./pages/admin/PaymentManagement";
 
 import TeacherDashboard from "./pages/teacher/TeacherDashboard";
 import TeacherStudents from "./pages/teacher/TeacherStudents";
