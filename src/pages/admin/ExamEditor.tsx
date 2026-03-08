@@ -99,6 +99,7 @@ const ExamEditor = () => {
     screenshot_interval_seconds: 0,
     term: "first",
     max_review_views: 1,
+    type: "exam" as "exam" | "test",
   });
   const [questions, setQuestions] = useState<QuestionForm[]>([emptyQuestion()]);
   const [saving, setSaving] = useState(false);
