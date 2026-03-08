@@ -615,6 +615,7 @@ fill_blank,"The word for 'water' is ___.","كلمة 'ماء' هي ___.",,,,,,,,,
                 </Select>
               </div>
 
+              <div className="grid gap-4 md:grid-cols-2">
                 <div>
                   <Label>{t("Title (English)", "العنوان (إنجليزي)")}</Label>
                   <Input value={examForm.title} onChange={(e) => setExamForm({ ...examForm, title: e.target.value })} className="mt-1" />
