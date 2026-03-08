@@ -106,9 +106,14 @@ const App = () => (
               </Route>
 
               {/* Exam taking (no sidebar) */}
-              <Route path="/student/exam-verify/:examId" element={<ProtectedRoute><PreExamVerification /></ProtectedRoute>} />
-              <Route path="/student/exam/:attemptId" element={<ProtectedRoute><ExamTaking /></ProtectedRoute>} />
-              <Route path="/student/results/:attemptId" element={<ProtectedRoute><ExamResults /></ProtectedRoute>} />
+              <Route path="/student/exam-verify/:examId" element={<ProtectedRoute skipOnboardingCheck><PreExamVerification /></ProtectedRoute>} />
+              <Route path="/student/exam/:attemptId" element={<ProtectedRoute skipOnboardingCheck><ExamTaking /></ProtectedRoute>} />
+              <Route path="/student/results/:attemptId" element={<ProtectedRoute skipOnboardingCheck><ExamResults /></ProtectedRoute>} />
+
+              {/* Onboarding & Entrance Exam (no sidebar) */}
+              <Route path="/onboarding" element={<ProtectedRoute skipOnboardingCheck><Onboarding /></ProtectedRoute>} />
+              <Route path="/student/entrance-exam/:attemptId" element={<ProtectedRoute skipOnboardingCheck><EntranceExamTaking /></ProtectedRoute>} />
+              <Route path="/student/entrance-results/:attemptId" element={<ProtectedRoute skipOnboardingCheck><EntranceResults /></ProtectedRoute>} />
 
               {/* Teacher dashboard - requires teacher role */}
               <Route element={<ProtectedRoute requiredRole="teacher"><TeacherLayout /></ProtectedRoute>}>
@@ -143,6 +148,7 @@ const App = () => (
                 <Route path="/admin/proctoring" element={<ProctoringDashboard />} />
                 <Route path="/admin/private-sessions" element={<PrivateSessions />} />
                 <Route path="/admin/students" element={<StudentManagement />} />
+                <Route path="/admin/entrance-exam" element={<EntranceExamAdmin />} />
               </Route>
 
               <Route path="*" element={<NotFound />} />
