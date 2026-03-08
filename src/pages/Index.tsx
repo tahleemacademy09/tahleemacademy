@@ -470,7 +470,12 @@ const Index = () => {
           <div>
             <h4 className="ta-footer-heading">Quick Links</h4>
             <ul className="ta-footer-links">
-              {["🏠 Home","📚 Courses","ℹ️ About Us","📋 Programs","📞 Contact"].map(l=><li key={l}><a href="#">{l}</a></li>)}
+              {[
+                {label:"🏠 Home", path:"/"},
+                {label:"📚 Courses", path:"/courses"},
+                {label:"ℹ️ About Us", path:"/about"},
+                {label:"📞 Contact", path:"/contact"},
+              ].map(l=><li key={l.label}><a onClick={() => navigate(l.path)} style={{cursor:"pointer"}}>{l.label}</a></li>)}
             </ul>
           </div>
           <div>
