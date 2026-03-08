@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import quranTajweedImg from "@/assets/quran-tajweed.jpeg";
-import arabicLanguageImg from "@/assets/arabic-language.jpeg";
+
+const quranTajweedImg = "/images/quran-tajweed.jpeg";
+const arabicLanguageImg = "/images/arabic-language.jpeg";
 
 const Index = () => {
   const navigate = useNavigate();
