@@ -33,6 +33,9 @@ import StudentCourses from "./pages/student/StudentCourses";
 import CourseView from "./pages/student/CourseView";
 import SubjectView from "./pages/student/SubjectView";
 import MuallimOverlay from "./components/majlis/MuallimOverlay";
+import Onboarding from "./pages/student/Onboarding";
+import EntranceExamTaking from "./pages/student/EntranceExamTaking";
+import EntranceResults from "./pages/student/EntranceResults";
 
 import AdminDashboard from "./pages/admin/AdminDashboard";
 import ExamManager from "./pages/admin/ExamManager";
