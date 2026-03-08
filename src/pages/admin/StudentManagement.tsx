@@ -264,6 +264,25 @@ const StudentManagement = () => {
         </div>
       </div>
 
+      {/* Type Filter */}
+      <div className="mb-4 flex gap-2 flex-wrap">
+        {[
+          { val: "all", label: t("All Students", "كل الطلاب") },
+          { val: "group", label: t("Group / الجماعيون", "الطلاب الجماعيون") },
+          { val: "private", label: t("Private / الخاصون", "الطلاب الخاصون") },
+        ].map(f => (
+          <Button
+            key={f.val}
+            variant={typeFilter === f.val ? "default" : "outline"}
+            size="sm"
+            onClick={() => setTypeFilter(f.val as any)}
+            className={typeFilter === f.val ? "bg-emerald-600 hover:bg-emerald-700 text-white" : ""}
+          >
+            {f.label}
+          </Button>
+        ))}
+      </div>
+
       <div className="mb-6 relative">
         <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <Input
