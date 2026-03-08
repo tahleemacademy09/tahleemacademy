@@ -232,8 +232,9 @@ body{font-family:'Cairo','Amiri',sans-serif;background:#fff;padding:30px 40px;po
 .title-box{border:2px solid #2a7a2a;border-radius:4px;padding:6px 20px;margin:14px auto;width:fit-content;display:flex;gap:30px;align-items:center;justify-content:center}
 .title-box span{font-size:14px;font-weight:600}
 .term-title{border:2px solid #2a7a2a;border-radius:4px;padding:4px 16px;margin:8px auto;width:fit-content;font-family:'Amiri',serif;font-size:16px;font-weight:700;text-align:center}
-.term-section{margin-bottom:20px;padding-top:10px;border-top:2px dashed #ccc}
-.term-section:first-child{border-top:none;padding-top:0}
+.term-page{position:relative;padding:10px 0}
+.page-break{page-break-before:always;break-before:page}
+.watermark-inner{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-30deg);font-size:80px;font-weight:700;color:#064E3B;opacity:0.04;white-space:nowrap;letter-spacing:8px;font-family:'Cairo',sans-serif;pointer-events:none;z-index:0}
 .info-grid{margin:16px 0}
 .info-row{display:flex;justify-content:space-between;margin-bottom:8px;gap:24px}
 .info-field{display:flex;align-items:baseline;flex:1;gap:4px}
