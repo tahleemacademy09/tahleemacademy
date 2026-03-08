@@ -370,6 +370,22 @@ const TeacherStudents = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {/* Request Enrol/Remove Dialog */}
+      <Dialog open={!!requestDialog} onOpenChange={o => !o && setRequestDialog(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {requestDialog?.type === "enrol" ? t("Request Enrolment", "طلب تسجيل") : t("Request Removal", "طلب إزالة")} — {requestDialog?.student?.full_name}
+            </DialogTitle>
+          </DialogHeader>
+          <Textarea value={requestMsg} onChange={e => setRequestMsg(e.target.value)}
+            placeholder={t("Add details (subject name, reason)...", "أضف تفاصيل (اسم المادة، السبب)...")} rows={3} />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRequestDialog(null)}>{t("Cancel", "إلغاء")}</Button>
+            <Button onClick={sendEnrolRequest}>{t("Send Request", "إرسال الطلب")}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
