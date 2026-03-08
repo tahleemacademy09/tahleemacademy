@@ -282,6 +282,7 @@ const SubjectView = () => {
           <TabsTrigger value="homework">{t("Homework", "الواجبات")}</TabsTrigger>
           <TabsTrigger value="attendance">{t("Attendance", "الحضور")}</TabsTrigger>
           <TabsTrigger value="progress">{t("Progress", "التقدم")}</TabsTrigger>
+          <TabsTrigger value="revision">📚 {t("Revision", "المراجعة")}</TabsTrigger>
         </TabsList>
 
         {/* ═══ TAB 1: Overview ═══ */}
