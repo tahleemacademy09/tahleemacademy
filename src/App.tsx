@@ -43,6 +43,7 @@ import ProctoringDashboard from "./pages/admin/ProctoringDashboard";
 import SubjectManagement from "./pages/admin/SubjectManagement";
 import CourseManagement from "./pages/admin/CourseManagement";
 import SyllabusManager from "./pages/admin/SyllabusManager";
+import PrivateSessions from "./pages/admin/PrivateSessions";
 
 const queryClient = new QueryClient();
 
