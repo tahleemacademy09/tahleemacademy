@@ -575,7 +575,8 @@ const PreExamVerification = () => {
                 {!allChecksPassed && t("Complete all system checks", "أكمل جميع فحوصات النظام")}
                 {allChecksPassed && !faceCaptured && t("Capture your face snapshot", "التقط صورة لوجهك")}
                 {allChecksPassed && faceCaptured && !micTested && t("Test your microphone by speaking", "اختبر الميكروفون بالتحدث")}
-                {allChecksPassed && faceCaptured && micTested && !agreed && t("Accept the exam rules", "وافق على قوانين الامتحان")}
+                {allChecksPassed && faceCaptured && micTested && !allChecked && t("Complete the proctoring checklist", "أكمل قائمة التحقق")}
+                {allChecksPassed && faceCaptured && micTested && allChecked && !agreed && t("Accept the exam rules", "وافق على قوانين الامتحان")}
               </p>
             )}
           </div>
