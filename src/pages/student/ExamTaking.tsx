@@ -439,6 +439,7 @@ const ExamTaking = () => {
           violations={proctoring.violations}
           lastWarningType={proctoring.lastWarningType}
           audioMonitoring={proctoring.audioMonitoring}
+          recentViolations={proctoring.recentViolations}
           getStream={proctoring.getStream}
         />
       )}
