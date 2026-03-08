@@ -97,6 +97,7 @@ const ExamEditor = () => {
     tab_switch_limit: 3, max_warnings: 3,
     auto_submit_on_violation: false,
     screenshot_interval_seconds: 0,
+    term: "first",
   });
   const [questions, setQuestions] = useState<QuestionForm[]>([emptyQuestion()]);
   const [saving, setSaving] = useState(false);
