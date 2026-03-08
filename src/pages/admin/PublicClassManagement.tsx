@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -11,7 +12,7 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Copy, Share2, QrCode, Trash2, Radio, Calendar, Users, ExternalLink } from "lucide-react";
+import { Plus, Copy, Share2, QrCode, Trash2, Radio, Calendar, Users, ExternalLink, Video } from "lucide-react";
 import { format } from "date-fns";
 import { toast } from "sonner";
 
@@ -50,6 +51,7 @@ const generateRoomCode = () => {
 const PublicClassManagement = () => {
   const { user } = useAuth();
   const { t } = useLanguage();
+  const navigate = useNavigate();
   const [classes, setClasses] = useState<PublicClass[]>([]);
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
@@ -117,6 +119,53 @@ const PublicClassManagement = () => {
     await supabase.from("public_classes").update(updates).eq("id", id);
     toast.success(`Class ${status}`);
     fetchClasses();
+  };
+
+  const goLiveAndJoin = async (cls: PublicClass) => {
+    // Set class to live
+    await supabase.from("public_classes").update({
+      status: "live",
+      actual_start_time: new Date().toISOString(),
+    }).eq("id", cls.id);
+
+    // Get LiveKit token as host
+    try {
+      const session = await supabase.auth.getSession();
+      const accessToken = session.data.session?.access_token;
+      const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
+
+      const res = await fetch(`https://${projectId}.supabase.co/functions/v1/public-class-token`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "apikey": import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+          "Authorization": `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          room_code: cls.room_code,
+          guest_name: user?.user_metadata?.full_name || "Teacher",
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || "Failed to get classroom token");
+        return;
+      }
+
+      navigate(`/live/${cls.room_code}/classroom`, {
+        state: {
+          token: data.token,
+          url: data.url,
+          room: data.room,
+          guestName: data.participant_name,
+          classTitle: cls.title,
+          classTitleAr: cls.title_ar,
+          isHost: true,
+        },
+      });
+    } catch {
+      toast.error("Failed to connect to classroom");
+    }
   };
 
   const deleteClass = async (id: string) => {
@@ -226,12 +275,17 @@ const PublicClassManagement = () => {
                         </div>
                         <div className="flex gap-2 flex-wrap">
                           {cls.status === "scheduled" && (
-                            <Button size="sm" onClick={() => updateStatus(cls.id, "live")} className="bg-green-600 text-white hover:bg-green-700">
-                              <Radio className="h-3 w-3 mr-1" /> Go Live
+                            <Button size="sm" onClick={() => goLiveAndJoin(cls)} className="bg-green-600 text-white hover:bg-green-700">
+                              <Video className="h-3 w-3 mr-1" /> Go Live & Join
                             </Button>
                           )}
                           {cls.status === "live" && (
-                            <Button size="sm" variant="destructive" onClick={() => updateStatus(cls.id, "ended")}>End Class</Button>
+                            <>
+                              <Button size="sm" onClick={() => goLiveAndJoin(cls)} className="bg-green-600 text-white hover:bg-green-700">
+                                <Video className="h-3 w-3 mr-1" /> Join Classroom
+                              </Button>
+                              <Button size="sm" variant="destructive" onClick={() => updateStatus(cls.id, "ended")}>End Class</Button>
+                            </>
                           )}
                           <Button size="sm" variant="outline" onClick={() => showLinks(cls)}><Share2 className="h-3 w-3 mr-1" /> Share</Button>
                           <Button size="sm" variant="outline" onClick={() => window.open(`/live/${cls.room_code}`, "_blank")}><ExternalLink className="h-3 w-3" /></Button>
