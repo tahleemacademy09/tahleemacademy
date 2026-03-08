@@ -138,6 +138,57 @@ const PaymentManagement = () => {
     loadData();
   };
 
+  const openCreatePlan = () => {
+    setEditingPlan(null);
+    setPlanForm({ ...EMPTY_PLAN });
+    setPlanDialogOpen(true);
+  };
+
+  const openEditPlan = (plan: any) => {
+    setEditingPlan(plan);
+    setPlanForm({
+      name: plan.name || "", name_ar: plan.name_ar || "",
+      description: plan.description || "", description_ar: plan.description_ar || "",
+      amount: plan.amount || 0, currency: plan.currency || "NGN",
+      type: plan.type || "term", level: plan.level || "all",
+      duration_months: plan.duration_months || 3, is_active: plan.is_active ?? true,
+      paystack_plan_code: plan.paystack_plan_code || "",
+    });
+    setPlanDialogOpen(true);
+  };
+
+  const savePlan = async () => {
+    if (!planForm.name || !planForm.amount) {
+      toast({ title: t("Plan name and amount are required", "اسم الخطة والمبلغ مطلوبان"), variant: "destructive" });
+      return;
+    }
+    const payload = {
+      name: planForm.name, name_ar: planForm.name_ar || null,
+      description: planForm.description || null, description_ar: planForm.description_ar || null,
+      amount: Number(planForm.amount), currency: planForm.currency,
+      type: planForm.type, level: planForm.level === "all" ? null : planForm.level,
+      duration_months: Number(planForm.duration_months) || null,
+      is_active: planForm.is_active,
+      paystack_plan_code: planForm.paystack_plan_code || null,
+    };
+    if (editingPlan) {
+      await supabase.from("payment_plans" as any).update(payload as any).eq("id", editingPlan.id);
+      toast({ title: t("Plan updated ✅", "تم تحديث الخطة ✅") });
+    } else {
+      await supabase.from("payment_plans" as any).insert(payload as any);
+      toast({ title: t("Plan created ✅", "تم إنشاء الخطة ✅") });
+    }
+    setPlanDialogOpen(false);
+    loadData();
+  };
+
+  const deletePlan = async (planId: string) => {
+    if (!confirm(t("Delete this plan? This cannot be undone.", "حذف هذه الخطة؟ لا يمكن التراجع."))) return;
+    await supabase.from("payment_plans" as any).delete().eq("id", planId);
+    toast({ title: t("Plan deleted", "تم حذف الخطة") });
+    loadData();
+  };
+
   const exportCSV = () => {
     const headers = "Date,Student,Plan,Amount,Status,Method,Reference\n";
     const rows = payments.map((p: any) => {
