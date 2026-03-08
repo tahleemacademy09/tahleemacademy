@@ -1,9 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-const quranTajweedImg = "/images/quran-tajweed.jpeg";
-const arabicLanguageImg = "/images/arabic-language.jpeg";
-
 const Index = () => {
   const navigate = useNavigate();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
