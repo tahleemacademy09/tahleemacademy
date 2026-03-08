@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
@@ -13,7 +13,6 @@ import {
   GraduationCap, MessageCircle, ArrowRight, Video, Star
 } from "lucide-react";
 
-// Hijri date conversion (simplified Kuwaiti algorithm)
 const toHijri = (date: Date) => {
   const jd = Math.floor((date.getTime() / 86400000) + 2440587.5);
   const l = jd - 1948440 + 10632;
@@ -28,7 +27,6 @@ const toHijri = (date: Date) => {
   return { day: d, month: months[m - 1], year: y, full: `${d} ${months[m - 1]} ${y} هـ` };
 };
 
-// Daily Quranic verse rotation
 const VERSES = [
   { ar: "إِنَّ مَعَ الْعُسْرِ يُسْرًا", en: "Indeed, with hardship comes ease.", ref: "Quran 94:6" },
   { ar: "وَمَن يَتَوَكَّلْ عَلَى اللَّهِ فَهُوَ حَسْبُهُ", en: "Whoever relies upon Allah, He is sufficient for him.", ref: "Quran 65:3" },
@@ -120,61 +118,161 @@ const StudentDashboard = () => {
   }
 
   const today = new Date();
-  const weekDays = ["الأحد", "الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"];
-  const currentDay = today.getDay();
 
   return (
-    <div className="container mx-auto px-4 py-6 md:py-8 space-y-6">
-      {/* ─── Islamic Greeting ─── */}
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary via-primary to-emerald-mid p-6 md:p-8 text-primary-foreground geometric-pattern">
-        <div className="relative z-10 text-center">
-          <p className="text-xs uppercase tracking-[0.3em] opacity-70 mb-2">
-            بسم الله الرحمن الرحيم
-          </p>
-          <h1 className="text-3xl md:text-4xl font-bold font-arabic mb-1" dir="rtl" style={{ fontFamily: "'Amiri', serif" }}>
-            السلام عليكم
-          </h1>
-          <h2 className="text-2xl md:text-3xl font-bold font-arabic mb-3" dir="rtl" style={{ fontFamily: "'Amiri', serif" }}>
-            مَرْحَبًا
-          </h2>
-          <div className="ornament-divider mb-3 opacity-50">
-            <span className="text-xs">✦</span>
+    <div className="container mx-auto px-4 py-6 md:py-8 space-y-5">
+
+      {/* ═══════════════════════════════════════════════
+          1. HEADER: Greeting + Hijri Pill
+      ═══════════════════════════════════════════════ */}
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary via-primary to-emerald-mid p-5 md:p-7 text-primary-foreground geometric-pattern">
+        <div className="relative z-10">
+          {/* Top row: Bismillah + Hijri pill */}
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-[10px] uppercase tracking-[0.25em] opacity-60">
+              بسم الله الرحمن الرحيم
+            </p>
+            <div className="bg-white/15 backdrop-blur-sm rounded-full px-3 py-1 flex items-center gap-1.5">
+              <Calendar className="h-3 w-3 opacity-70" />
+              <span className="text-[11px] font-medium font-arabic" dir="rtl">{hijri.full}</span>
+            </div>
           </div>
-          <p className="text-lg md:text-xl opacity-90">
-            {profile?.full_name || t("Student", "طالب")}
-          </p>
-          <div className="mt-3 flex items-center justify-center gap-4 text-xs opacity-70">
-            <span>{today.toLocaleDateString(language === "ar" ? "ar-SA" : "en-US", { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</span>
-            <span>•</span>
-            <span dir="rtl">{hijri.full}</span>
+          {/* Greeting */}
+          <div className="text-center">
+            <h1 className="text-2xl md:text-3xl font-bold mb-0.5" dir="rtl" style={{ fontFamily: "'Amiri', serif" }}>
+              السلام عليكم
+            </h1>
+            <p className="text-base md:text-lg opacity-90">
+              {profile?.full_name || t("Student", "طالب")}
+            </p>
+            <p className="text-[11px] opacity-50 mt-1">
+              {today.toLocaleDateString(language === "ar" ? "ar-SA" : "en-US", { weekday: 'long', month: 'long', day: 'numeric' })}
+            </p>
           </div>
         </div>
-        {/* Decorative circles */}
-        <div className="absolute -top-10 -right-10 h-40 w-40 rounded-full bg-white/5" />
-        <div className="absolute -bottom-8 -left-8 h-32 w-32 rounded-full bg-white/5" />
+        {/* Decorative */}
+        <div className="absolute -top-10 -right-10 h-36 w-36 rounded-full bg-white/5" />
+        <div className="absolute -bottom-8 -left-8 h-28 w-28 rounded-full bg-white/5" />
       </div>
 
-      {/* ─── 1. Notifications ─── */}
+      {/* ═══════════════════════════════════════════════
+          2. HERO: Daily Quranic Reflection
+      ═══════════════════════════════════════════════ */}
+      <div className="rounded-2xl p-5 md:p-6 text-center shadow-[0_4px_20px_rgba(0,0,0,0.05)]" style={{ background: '#064E3B' }}>
+        <div className="flex items-center justify-center gap-2 mb-3">
+          <Star className="h-4 w-4" style={{ color: '#D4AF37' }} />
+          <p className="text-sm font-medium" style={{ color: '#D4AF37', fontFamily: "'Playfair Display', serif" }}>
+            {t("Daily Quranic Reflection", "تأمل قرآني يومي")}
+          </p>
+          <Star className="h-4 w-4" style={{ color: '#D4AF37' }} />
+        </div>
+        <div className="my-1 opacity-30">
+          <span style={{ color: '#D4AF37' }}>✦ ─────── ✦</span>
+        </div>
+        <p
+          className="text-xl md:text-2xl leading-[2.2] mx-auto max-w-lg my-4 font-arabic"
+          dir="rtl"
+          style={{ color: '#FFFFFF', fontFamily: "'Amiri', serif", fontSize: '22px', lineHeight: '2' }}
+        >
+          {dailyVerse.ar}
+        </p>
+        <div className="my-2 opacity-30">
+          <span style={{ color: '#D4AF37' }}>❖</span>
+        </div>
+        <p className="text-sm italic max-w-md mx-auto mb-1" style={{ color: 'rgba(255,255,255,0.8)' }}>
+          "{dailyVerse.en}"
+        </p>
+        <p className="text-xs font-semibold" style={{ color: '#D4AF37' }}>{dailyVerse.ref}</p>
+      </div>
+
+      {/* ═══════════════════════════════════════════════
+          3. ACADEMIC SNAPSHOT: CGPA + 4 Stats
+      ═══════════════════════════════════════════════ */}
+      <Card className="rounded-2xl shadow-[0_4px_20px_rgba(0,0,0,0.05)] border-0">
+        <CardContent className="p-5">
+          <div className="flex flex-col sm:flex-row items-center gap-5">
+            {/* CGPA Gauge — Gold ring */}
+            <div className="relative shrink-0">
+              <svg width="110" height="110" className="-rotate-90">
+                <circle cx="55" cy="55" r="45" stroke="hsl(var(--muted))" strokeWidth="9" fill="none" />
+                <circle
+                  cx="55" cy="55" r="45"
+                  stroke="#D4AF37"
+                  strokeWidth="9" fill="none" strokeLinecap="round"
+                  strokeDasharray={circumference}
+                  strokeDashoffset={strokeDashoffset}
+                  className="transition-all duration-1000"
+                />
+              </svg>
+              <div className="absolute inset-0 flex flex-col items-center justify-center">
+                <span className="text-2xl font-bold" style={{ fontFamily: "'Playfair Display', serif" }}>{stats.cgpa.toFixed(2)}</span>
+                <span className="text-[10px] text-muted-foreground font-medium">{t("CGPA", "المعدل")}</span>
+              </div>
+            </div>
+            {/* 4 Stats */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 flex-1 w-full">
+              {[
+                { icon: BookOpen, label: t("Enrollments", "التسجيلات"), value: stats.enrollments, color: "text-primary" },
+                { icon: ClipboardList, label: t("Graded", "مُصحّحة"), value: stats.attemptsDone, color: "text-secondary" },
+                { icon: TrendingUp, label: t("Avg Score", "المعدل"), value: `${stats.avgScore}%`, color: "text-primary" },
+                { icon: Bell, label: t("Pending", "بانتظار"), value: stats.pendingGrading, color: "text-destructive" },
+              ].map((s, i) => (
+                <div key={i} className="text-center rounded-xl bg-muted/40 p-3">
+                  <s.icon className={`h-5 w-5 mx-auto mb-1.5 ${s.color}`} />
+                  <div className="text-lg font-bold">{s.value}</div>
+                  <div className="text-[10px] text-muted-foreground">{s.label}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ═══════════════════════════════════════════════
+          4. QUICK ACTIONS: 2×2 Grid
+      ═══════════════════════════════════════════════ */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {[
+          { to: "/student/exams", icon: ClipboardList, label: t("My Exams", "امتحاناتي") },
+          { to: "/student/transcripts", icon: GraduationCap, label: t("Transcripts", "السجل") },
+          { to: "/student/live-classes", icon: Video, label: t("Live Classes", "الفصول الحية") },
+          { to: "/student/majlis", icon: MessageCircle, label: t("Al-Majlis", "المجلس") },
+        ].map((link, i) => (
+          <Link to={link.to} key={i}>
+            <Card className="rounded-2xl shadow-[0_4px_20px_rgba(0,0,0,0.05)] border-0 hover:scale-[1.05] transition-transform duration-200 cursor-pointer">
+              <CardContent className="flex flex-col items-center justify-center gap-2 p-4">
+                <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center">
+                  <link.icon className="h-5 w-5 text-primary" />
+                </div>
+                <span className="text-xs font-medium text-center">{link.label}</span>
+              </CardContent>
+            </Card>
+          </Link>
+        ))}
+      </div>
+
+      {/* ═══════════════════════════════════════════════
+          5. NOTIFICATIONS (if any)
+      ═══════════════════════════════════════════════ */}
       {notifications.length > 0 && (
-        <Card className="border-secondary/30">
+        <Card className="rounded-2xl shadow-[0_4px_20px_rgba(0,0,0,0.05)] border-0 border-l-4 border-l-secondary">
           <CardHeader className="pb-2">
-            <CardTitle className="text-base flex items-center gap-2">
+            <CardTitle className="text-sm flex items-center gap-2" style={{ fontFamily: "'Playfair Display', serif" }}>
               <Bell className="h-4 w-4 text-secondary" />
               {t("Notifications", "الإشعارات")}
-              <Badge variant="secondary" className="text-xs">{notifications.length}</Badge>
+              <Badge variant="secondary" className="text-[10px]">{notifications.length}</Badge>
             </CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="pt-0">
             <div className="space-y-2">
               {notifications.map((n) => (
-                <div key={n.id} className="rounded-lg border p-3 flex items-start gap-3">
-                  <div className="h-8 w-8 rounded-full bg-secondary/10 flex items-center justify-center shrink-0">
-                    <Bell className="h-3.5 w-3.5 text-secondary" />
+                <div key={n.id} className="rounded-xl bg-muted/30 p-3 flex items-start gap-3">
+                  <div className="h-7 w-7 rounded-full bg-secondary/10 flex items-center justify-center shrink-0 mt-0.5">
+                    <Bell className="h-3 w-3 text-secondary" />
                   </div>
                   <div className="min-w-0">
                     <p className="font-medium text-sm">{n.title}</p>
                     <p className="text-xs text-muted-foreground">{n.message}</p>
-                    <p className="text-xs text-muted-foreground mt-1">{new Date(n.created_at).toLocaleString()}</p>
                   </div>
                 </div>
               ))}
@@ -183,245 +281,126 @@ const StudentDashboard = () => {
         </Card>
       )}
 
-      {/* ─── 2. Upcoming Classes ─── */}
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between pb-2">
-          <CardTitle className="text-base flex items-center gap-2">
-            <Video className="h-4 w-4 text-primary" />
-            {t("Upcoming Classes", "الفصول القادمة")}
-          </CardTitle>
-          <Button variant="ghost" size="sm" asChild>
-            <Link to="/student/live-classes" className="flex items-center gap-1 text-xs">
-              {t("View All", "عرض الكل")} <ArrowRight className="h-3 w-3" />
-            </Link>
-          </Button>
-        </CardHeader>
-        <CardContent>
-          {liveSubjects.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-4">{t("No active classes", "لا توجد فصول نشطة")}</p>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {liveSubjects.map((s) => (
-                <Link to="/student/live-classes" key={s.id}>
-                  <div className="rounded-lg border p-3 hover:bg-accent/30 transition-colors flex items-center gap-3">
-                    <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-                      <BookOpen className="h-5 w-5 text-primary" />
-                    </div>
-                    <div className="min-w-0">
-                      <p className="font-medium text-sm truncate">{s.title}</p>
-                      {s.title_ar && <p className="text-xs text-muted-foreground font-arabic" dir="rtl">{s.title_ar}</p>}
-                    </div>
-                  </div>
-                </Link>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* ─── 3. Quranic Text Section ─── */}
-      <Card className="border-secondary/20 overflow-hidden">
-        <div className="bg-gradient-to-r from-primary/5 via-secondary/5 to-primary/5">
+      {/* ═══════════════════════════════════════════════
+          6. ACTION AGENDA: Tabbed Classes / Exams / Results
+      ═══════════════════════════════════════════════ */}
+      <Card className="rounded-2xl shadow-[0_4px_20px_rgba(0,0,0,0.05)] border-0">
+        <Tabs defaultValue="classes" className="w-full">
           <CardHeader className="pb-2">
-            <CardTitle className="text-base flex items-center gap-2">
-              <Star className="h-4 w-4 text-secondary" />
-              {t("Daily Quranic Reflection", "تأمل قرآني يومي")}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ScrollArea className="max-h-48">
-              <div className="text-center py-4 space-y-3">
-                <div className="ornament-divider mb-4">
-                  <span className="text-secondary text-lg">✦</span>
-                </div>
-                <p className="text-2xl md:text-3xl font-arabic leading-[2] arabic-exam-text mx-auto max-w-lg" dir="rtl">
-                  {dailyVerse.ar}
-                </p>
-                <div className="ornament-divider my-3">
-                  <span className="text-secondary text-xs">❖</span>
-                </div>
-                <p className="text-sm text-muted-foreground italic max-w-md mx-auto">
-                  "{dailyVerse.en}"
-                </p>
-                <p className="text-xs font-medium text-secondary">{dailyVerse.ref}</p>
-              </div>
-            </ScrollArea>
-          </CardContent>
-        </div>
-      </Card>
-
-      {/* ─── 4. Hijri Calendar ─── */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base flex items-center gap-2">
-            <Calendar className="h-4 w-4 text-primary" />
-            {t("Hijri Calendar", "التقويم الهجري")}
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex items-center gap-4">
-            {/* Large Hijri date display */}
-            <div className="text-center bg-primary/5 rounded-xl p-4 flex-1">
-              <p className="text-4xl font-bold text-primary font-arabic">{hijri.day}</p>
-              <p className="text-lg font-arabic font-bold text-foreground" dir="rtl">{hijri.month}</p>
-              <p className="text-sm text-muted-foreground font-arabic" dir="rtl">{hijri.year} هـ</p>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-sm" style={{ fontFamily: "'Playfair Display', serif" }}>
+                {t("Agenda", "الأجندة")}
+              </CardTitle>
+              <TabsList className="h-8 bg-muted/50">
+                <TabsTrigger value="classes" className="text-[11px] px-2.5 h-6">{t("Classes", "الفصول")}</TabsTrigger>
+                <TabsTrigger value="exams" className="text-[11px] px-2.5 h-6">{t("Exams", "الامتحانات")}</TabsTrigger>
+                <TabsTrigger value="results" className="text-[11px] px-2.5 h-6">{t("Results", "النتائج")}</TabsTrigger>
+              </TabsList>
             </div>
-            {/* Week strip */}
-            <div className="flex-1">
-              <div className="grid grid-cols-7 gap-1 text-center">
-                {weekDays.map((day, i) => (
-                  <div key={i} className={`rounded-lg p-2 text-xs ${i === currentDay ? "bg-primary text-primary-foreground font-bold" : "bg-muted text-muted-foreground"}`}>
-                    <span className="font-arabic text-[10px]">{day.slice(0, 3)}</span>
-                  </div>
-                ))}
-              </div>
+          </CardHeader>
+          <CardContent className="pt-0">
+
+            {/* Classes Tab */}
+            <TabsContent value="classes" className="mt-0">
+              {liveSubjects.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-6">{t("No active classes", "لا توجد فصول نشطة")}</p>
+              ) : (
+                <div className="space-y-2">
+                  {liveSubjects.map((s) => (
+                    <Link to="/student/live-classes" key={s.id}>
+                      <div className="rounded-xl bg-muted/20 p-3 hover:bg-accent/30 transition-colors flex items-center gap-3">
+                        <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+                          <BookOpen className="h-4 w-4 text-primary" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="font-medium text-sm truncate">{s.title}</p>
+                          {s.title_ar && <p className="text-xs text-muted-foreground font-arabic mt-0.5" dir="rtl">{s.title_ar}</p>}
+                        </div>
+                        <ArrowRight className="h-3.5 w-3.5 text-muted-foreground ml-auto shrink-0" />
+                      </div>
+                    </Link>
+                  ))}
+                </div>
+              )}
               <div className="mt-3 text-center">
-                <p className="text-xs text-muted-foreground">
-                  {today.toLocaleDateString(language === "ar" ? "ar-SA" : "en-US", { month: 'long', year: 'numeric' })}
-                </p>
+                <Button variant="ghost" size="sm" asChild>
+                  <Link to="/student/live-classes" className="text-xs text-primary">
+                    {t("View All Classes", "عرض كل الفصول")} <ArrowRight className="h-3 w-3 ml-1" />
+                  </Link>
+                </Button>
               </div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+            </TabsContent>
 
-      {/* ─── 5. Upcoming Exams (Assignments) ─── */}
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-base">{t("Upcoming Exams", "الامتحانات القادمة")}</CardTitle>
-            <Button variant="ghost" size="sm" asChild>
-              <Link to="/student/exams" className="flex items-center gap-1 text-xs">
-                {t("View All", "عرض الكل")} <ArrowRight className="h-3 w-3" />
-              </Link>
-            </Button>
-          </CardHeader>
-          <CardContent>
-            {upcomingExams.length === 0 ? (
-              <p className="text-sm text-muted-foreground py-4 text-center">{t("No upcoming exams", "لا توجد امتحانات قادمة")}</p>
-            ) : (
-              <div className="space-y-2">
-                {upcomingExams.map((exam) => (
-                  <div key={exam.id} className="flex items-center justify-between rounded-lg border p-3">
-                    <div className="min-w-0">
-                      <div className="font-medium text-sm truncate" dir="auto">{language === "ar" ? exam.title_ar || exam.title : exam.title}</div>
-                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-0.5">
-                        <Calendar className="h-3 w-3" />
-                        {exam.start_date ? new Date(exam.start_date).toLocaleDateString() : t("TBD", "غير محدد")}
+            {/* Exams Tab */}
+            <TabsContent value="exams" className="mt-0">
+              {upcomingExams.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-6">{t("No upcoming exams", "لا توجد امتحانات قادمة")}</p>
+              ) : (
+                <div className="space-y-2">
+                  {upcomingExams.map((exam) => (
+                    <div key={exam.id} className="flex items-center justify-between rounded-xl bg-muted/20 p-3">
+                      <div className="min-w-0">
+                        <div className="font-medium text-sm truncate" dir="auto">{language === "ar" ? exam.title_ar || exam.title : exam.title}</div>
+                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-0.5">
+                          <Calendar className="h-3 w-3" />
+                          {exam.start_date ? new Date(exam.start_date).toLocaleDateString() : t("TBD", "غير محدد")}
+                        </div>
                       </div>
+                      <Badge variant="secondary" className="shrink-0 text-[10px]">{exam.time_limit_minutes} {t("min", "د")}</Badge>
                     </div>
-                    <Badge variant="secondary" className="shrink-0 text-xs">{exam.time_limit_minutes} {t("min", "د")}</Badge>
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Recent Results */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-base">{t("Recent Results", "النتائج الأخيرة")}</CardTitle>
-            <Button variant="ghost" size="sm" asChild>
-              <Link to="/student/transcripts" className="flex items-center gap-1 text-xs">
-                {t("View All", "عرض الكل")} <ArrowRight className="h-3 w-3" />
-              </Link>
-            </Button>
-          </CardHeader>
-          <CardContent>
-            {recentResults.length === 0 ? (
-              <p className="text-sm text-muted-foreground py-4 text-center">{t("No results yet", "لا توجد نتائج بعد")}</p>
-            ) : (
-              <div className="space-y-2">
-                {recentResults.map((attempt) => (
-                  <div key={attempt.id} className="flex items-center justify-between rounded-lg border p-3">
-                    <div className="min-w-0">
-                      <div className="font-medium text-sm truncate" dir="auto">
-                        {language === "ar" ? attempt.exams?.title_ar || attempt.exams?.title : attempt.exams?.title}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        {attempt.submitted_at ? new Date(attempt.submitted_at).toLocaleDateString() : ""}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      {attempt.status === "graded" ? (
-                        <>
-                          {attempt.passed ? <CheckCircle className="h-4 w-4 text-primary" /> : <XCircle className="h-4 w-4 text-destructive" />}
-                          <span className="font-semibold text-sm">{Math.round(attempt.percentage || 0)}%</span>
-                        </>
-                      ) : (
-                        <Badge variant="secondary" className="text-xs">{t("Awaiting", "بانتظار")}</Badge>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* ─── Quick Actions ─── */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base">{t("Quick Actions", "إجراءات سريعة")}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            {[
-              { to: "/student/exams", icon: ClipboardList, label: t("My Exams", "امتحاناتي"), color: "text-primary" },
-              { to: "/student/transcripts", icon: GraduationCap, label: t("Transcripts", "السجل"), color: "text-secondary" },
-              { to: "/student/live-classes", icon: Video, label: t("Live Classes", "الفصول الحية"), color: "text-primary" },
-              { to: "/student/majlis", icon: MessageCircle, label: t("Al-Majlis", "المجلس"), color: "text-secondary" },
-            ].map((link, i) => (
-              <Button key={i} variant="outline" className="h-auto flex-col gap-1.5 p-3" asChild>
-                <Link to={link.to}>
-                  <link.icon className={`h-5 w-5 ${link.color}`} />
-                  <span className="text-xs">{link.label}</span>
-                </Link>
-              </Button>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* ─── 6. CGPA (LAST) ─── */}
-      <Card>
-        <CardContent className="p-6">
-          <div className="flex flex-col sm:flex-row items-center gap-6">
-            <div className="relative shrink-0">
-              <svg width="100" height="100" className="-rotate-90">
-                <circle cx="50" cy="50" r="45" stroke="hsl(var(--muted))" strokeWidth="8" fill="none" />
-                <circle
-                  cx="50" cy="50" r="45"
-                  stroke="hsl(var(--primary))"
-                  strokeWidth="8" fill="none" strokeLinecap="round"
-                  strokeDasharray={circumference}
-                  strokeDashoffset={strokeDashoffset}
-                  className="transition-all duration-1000"
-                />
-              </svg>
-              <div className="absolute inset-0 flex flex-col items-center justify-center">
-                <span className="text-xl font-bold">{stats.cgpa.toFixed(2)}</span>
-                <span className="text-[10px] text-muted-foreground">{t("CGPA", "المعدل")}</span>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 flex-1">
-              {[
-                { icon: BookOpen, label: t("Enrollments", "التسجيلات"), value: stats.enrollments, color: "text-primary" },
-                { icon: ClipboardList, label: t("Graded", "مُصحّحة"), value: stats.attemptsDone, color: "text-secondary" },
-                { icon: TrendingUp, label: t("Avg Score", "المعدل"), value: `${stats.avgScore}%`, color: "text-primary" },
-                { icon: Bell, label: t("Pending", "بانتظار"), value: stats.pendingGrading, color: "text-destructive" },
-              ].map((s, i) => (
-                <div key={i} className="text-center">
-                  <s.icon className={`h-5 w-5 mx-auto mb-1 ${s.color}`} />
-                  <div className="text-lg font-bold">{s.value}</div>
-                  <div className="text-[10px] text-muted-foreground">{s.label}</div>
+                  ))}
                 </div>
-              ))}
-            </div>
-          </div>
-        </CardContent>
+              )}
+              <div className="mt-3 text-center">
+                <Button variant="ghost" size="sm" asChild>
+                  <Link to="/student/exams" className="text-xs text-primary">
+                    {t("View All Exams", "عرض كل الامتحانات")} <ArrowRight className="h-3 w-3 ml-1" />
+                  </Link>
+                </Button>
+              </div>
+            </TabsContent>
+
+            {/* Results Tab */}
+            <TabsContent value="results" className="mt-0">
+              {recentResults.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-6">{t("No results yet", "لا توجد نتائج بعد")}</p>
+              ) : (
+                <div className="space-y-2">
+                  {recentResults.map((attempt) => (
+                    <div key={attempt.id} className="flex items-center justify-between rounded-xl bg-muted/20 p-3">
+                      <div className="min-w-0">
+                        <div className="font-medium text-sm truncate" dir="auto">
+                          {language === "ar" ? attempt.exams?.title_ar || attempt.exams?.title : attempt.exams?.title}
+                        </div>
+                        <div className="text-xs text-muted-foreground mt-0.5">
+                          {attempt.submitted_at ? new Date(attempt.submitted_at).toLocaleDateString() : ""}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {attempt.status === "graded" ? (
+                          <>
+                            {attempt.passed ? <CheckCircle className="h-4 w-4 text-primary" /> : <XCircle className="h-4 w-4 text-destructive" />}
+                            <span className="font-semibold text-sm">{Math.round(attempt.percentage || 0)}%</span>
+                          </>
+                        ) : (
+                          <Badge variant="secondary" className="text-[10px]">{t("Awaiting", "بانتظار")}</Badge>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="mt-3 text-center">
+                <Button variant="ghost" size="sm" asChild>
+                  <Link to="/student/transcripts" className="text-xs text-primary">
+                    {t("View Transcripts", "عرض السجل")} <ArrowRight className="h-3 w-3 ml-1" />
+                  </Link>
+                </Button>
+              </div>
+            </TabsContent>
+
+          </CardContent>
+        </Tabs>
       </Card>
     </div>
   );
