@@ -1,7 +1,8 @@
 import { supabase } from "@/integrations/supabase/client";
+import type { TablesInsert } from "@/integrations/supabase/types";
 
 // Function to save a recording
-export const saveRecording = async (recording: Record<string, unknown>) => {
+export const saveRecording = async (recording: TablesInsert<'session_recordings'>) => {
     const { data, error } = await supabase
         .from('session_recordings')
         .insert([recording]);
