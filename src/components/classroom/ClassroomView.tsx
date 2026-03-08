@@ -200,8 +200,7 @@ const ConnectionIndicator = () => {
 
   useEffect(() => {
     const interval = setInterval(() => {
-      const stats = room.localParticipant.connectionQuality;
-      // ConnectionQuality enum: 0=unknown,1=poor,2=good,3=excellent
+      const stats = room.localParticipant.connectionQuality as unknown as number;
       if (stats >= 3) setQuality("excellent");
       else if (stats >= 2) setQuality("good");
       else if (stats >= 1) setQuality("fair");
