@@ -83,7 +83,27 @@ const ExamManager = () => {
         </Button>
       </div>
 
-      {exams.length === 0 ? (
+      {/* Term Filter Bar */}
+      <div className="mb-4 flex items-center gap-2 flex-wrap">
+        {[
+          { value: "all", label: t("All Terms", "جميع الفصول") },
+          { value: "first", label: t("First Term / الفصل الأول", "الفصل الأول") },
+          { value: "second", label: t("Second Term / الفصل الثاني", "الفصل الثاني") },
+          { value: "third", label: t("Third Term / الفصل الثالث", "الفصل الثالث") },
+        ].map((f) => (
+          <Button
+            key={f.value}
+            variant={termFilter === f.value ? "default" : "outline"}
+            size="sm"
+            className={termFilter === f.value ? "bg-emerald-600 hover:bg-emerald-700 text-white" : ""}
+            onClick={() => setTermFilter(f.value)}
+          >
+            {f.label}
+          </Button>
+        ))}
+      </div>
+
+      {exams.filter(e => termFilter === "all" || (e as any).term === termFilter).length === 0 ? (
         <Card>
           <CardContent className="p-8 text-center text-muted-foreground">
             {t("No exams yet. Create your first exam!", "لا توجد امتحانات بعد. أنشئ امتحانك الأول!")}
