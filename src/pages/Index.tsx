@@ -353,7 +353,8 @@ const Index = () => {
       {/* WHY SECTION — 3 IMAGE CARDS */}
       <section className="ta-why-outer">
         <div className="ta-why-inner">
-          <div className="ta-section-tag">وَفَوْقَ كُلِّ ذِي عِلْمٍ عَلِيمٌ · Above Every Knower Is One More Knowing</div>
+          <div className="ta-section-tag" style={{direction:"rtl", fontFamily:"'Amiri',serif", fontSize:"20px", letterSpacing:"0", textTransform:"none"}}>وَفَوْقَ كُلِّ ذِي عِلْمٍ عَلِيمٌ</div>
+          <div style={{color:"#c9973a", fontSize:"13px", letterSpacing:"2px", textTransform:"uppercase", fontWeight:700, marginBottom:"12px"}}>Above Every Knower Is One More Knowing</div>
           <h2 className="ta-section-title">Seeking Knowledge Is<br />An Act of Worship</h2>
           <p className="ta-section-subtitle">
             The Prophet ﷺ said: <strong style={{color:"#0f3122"}}>
