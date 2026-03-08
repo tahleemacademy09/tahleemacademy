@@ -48,7 +48,7 @@ const Index = () => {
       .ta-hero { min-height:100vh; position:relative; display:flex; align-items:center; overflow:hidden; }
       .ta-hero-bg {
         position:absolute; inset:0;
-        background-image:url('https://images.unsplash.com/photo-1548438294-1ad5d5f4f063?w=1600&q=90');
+        background-image:url('https://images.unsplash.com/photo-1609599006353-e629aaabfeae?w=1600&q=90');
         background-size:cover; background-position:center top; filter:brightness(0.55);
       }
       .ta-hero-overlay {
@@ -304,7 +304,7 @@ const Index = () => {
           </div>
           <div className="ta-hero-right">
             <div className="ta-hero-card">
-              <img src="https://images.unsplash.com/photo-1544947950-fa07a98d237f?w=800&q=80" alt="Islamic study" />
+              <img src="https://images.unsplash.com/photo-1609599006353-e629aaabfeae?w=800&q=80" alt="Islamic study" />
               <div className="ta-hero-card-label">📖 Live Quranic Classes</div>
             </div>
             <div className="ta-hero-card">
@@ -377,7 +377,7 @@ const Index = () => {
               </div>
             </div>
             <div className="ta-why-card">
-              <img src="https://images.unsplash.com/photo-1529156069898-49953e39b3ac?w=600&q=80" alt="Arabic" />
+              <img src="https://images.unsplash.com/photo-1579187707643-35646d22b596?w=600&q=80" alt="Arabic calligraphy" />
               <div className="ta-why-card-body">
                 <div className="ta-why-card-icon">✍️</div>
                 <div className="ta-why-card-title">اللغة العربية — Arabic Language</div>
