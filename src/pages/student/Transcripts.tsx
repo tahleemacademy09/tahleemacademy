@@ -95,11 +95,20 @@ const Transcripts = () => {
   const statusAr = cgpa >= 3.5 ? "وضع جيد" : cgpa >= 2.0 ? "تحذير أكاديمي" : cgpa > 0 ? "إنذار أكاديمي" : "لا توجد بيانات";
   const statusColor = cgpa >= 3.5 ? "default" : cgpa >= 2.0 ? "secondary" : "destructive";
 
-  // Split exams into 3 terms
-  const termSize = Math.ceil(exams.length / 3);
-  const term1 = exams.slice(0, termSize);
-  const term2 = exams.slice(termSize, termSize * 2);
-  const term3 = exams.slice(termSize * 2);
+  // Split exams evenly into 3 terms — each exam belongs to exactly one term
+  const splitIntoTerms = (items: GradedExam[]): [GradedExam[], GradedExam[], GradedExam[]] => {
+    const t1: GradedExam[] = [];
+    const t2: GradedExam[] = [];
+    const t3: GradedExam[] = [];
+    items.forEach((item, idx) => {
+      const termIdx = idx % 3;
+      if (termIdx === 0) t1.push(item);
+      else if (termIdx === 1) t2.push(item);
+      else t3.push(item);
+    });
+    return [t1, t2, t3];
+  };
+  const [term1, term2, term3] = splitIntoTerms(exams);
 
   const termNames = ["الفترة الأولى", "الفترة الثانية", "الفترة الثالثة"];
   const termNamesEn = ["First Term", "Second Term", "Third Term"];
