@@ -940,41 +940,83 @@ export type Database = {
         Row: {
           avatar_url: string | null
           bio: string | null
+          city: string | null
+          country: string | null
           created_at: string
+          date_of_birth: string | null
           email: string | null
+          enrollment_date: string | null
           full_name: string | null
+          full_name_ar: string | null
+          gender: string | null
           id: string
           level: string | null
+          nationality: string | null
+          parent_name: string | null
+          parent_phone: string | null
+          parent_relationship: string | null
+          parent_whatsapp: string | null
           phone: string | null
           preferred_language: string | null
+          status: string | null
+          student_id: string | null
           updated_at: string
           user_id: string
+          whatsapp: string | null
         }
         Insert: {
           avatar_url?: string | null
           bio?: string | null
+          city?: string | null
+          country?: string | null
           created_at?: string
+          date_of_birth?: string | null
           email?: string | null
+          enrollment_date?: string | null
           full_name?: string | null
+          full_name_ar?: string | null
+          gender?: string | null
           id?: string
           level?: string | null
+          nationality?: string | null
+          parent_name?: string | null
+          parent_phone?: string | null
+          parent_relationship?: string | null
+          parent_whatsapp?: string | null
           phone?: string | null
           preferred_language?: string | null
+          status?: string | null
+          student_id?: string | null
           updated_at?: string
           user_id: string
+          whatsapp?: string | null
         }
         Update: {
           avatar_url?: string | null
           bio?: string | null
+          city?: string | null
+          country?: string | null
           created_at?: string
+          date_of_birth?: string | null
           email?: string | null
+          enrollment_date?: string | null
           full_name?: string | null
+          full_name_ar?: string | null
+          gender?: string | null
           id?: string
           level?: string | null
+          nationality?: string | null
+          parent_name?: string | null
+          parent_phone?: string | null
+          parent_relationship?: string | null
+          parent_whatsapp?: string | null
           phone?: string | null
           preferred_language?: string | null
+          status?: string | null
+          student_id?: string | null
           updated_at?: string
           user_id?: string
+          whatsapp?: string | null
         }
         Relationships: []
       }
