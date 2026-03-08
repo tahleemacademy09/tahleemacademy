@@ -375,8 +375,13 @@ table.summary td.lbl{font-weight:700;width:18%}
               <td className="border-[1.5px] border-[#333] p-2 font-bold text-sm">Signature</td>
               <td className="border-[1.5px] border-[#333] p-2 text-sm text-center"></td>
             </tr>
-          </tbody>
+           </tbody>
         </table>
+
+        {/* Stamp */}
+        <div className="flex justify-end mt-6">
+          <img src={tahleemStamp} alt="Tahleem Academy Stamp" className="w-32 h-32 opacity-80" />
+        </div>
       </div>
     );
   };
