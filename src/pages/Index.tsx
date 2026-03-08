@@ -48,7 +48,7 @@ const Index = () => {
       .ta-hero { min-height:100vh; position:relative; display:flex; align-items:center; overflow:hidden; }
       .ta-hero-bg {
         position:absolute; inset:0;
-        background-image:url('https://images.unsplash.com/photo-1548438294-1ad5d5f4f063?w=1600&q=90');
+        background-image:url('https://images.unsplash.com/photo-1609599006353-e629aaabfeae?w=1600&q=90');
         background-size:cover; background-position:center top; filter:brightness(0.55);
       }
       .ta-hero-overlay {
