@@ -148,10 +148,10 @@ const TeacherSubjects = () => {
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-2 text-xs">
-                <div className="flex items-center gap-1"><Users className="h-3 w-3" /> {sub.studentCount} {t("students", "طلاب")}</div>
-                <div className="flex items-center gap-1"><Mic className="h-3 w-3" /> {sub.recordingCount} {t("recordings", "تسجيلات")}</div>
-                <div className="flex items-center gap-1"><ClipboardList className="h-3 w-3" /> {sub.examCount} {t("exams", "امتحانات")}</div>
-                <div className="flex items-center gap-1"><FileText className="h-3 w-3" /> {sub.testCount} {t("tests", "تمرينات")}</div>
+                <div className="flex items-center gap-1"><Users className="h-3 w-3" /> {subjectCounts[sub.id]?.studentCount || 0} {t("students", "طلاب")}</div>
+                <div className="flex items-center gap-1"><Mic className="h-3 w-3" /> {subjectCounts[sub.id]?.recordingCount || 0} {t("recordings", "تسجيلات")}</div>
+                <div className="flex items-center gap-1"><ClipboardList className="h-3 w-3" /> {subjectCounts[sub.id]?.examCount || 0} {t("exams", "امتحانات")}</div>
+                <div className="flex items-center gap-1"><FileText className="h-3 w-3" /> {subjectCounts[sub.id]?.testCount || 0} {t("tests", "تمرينات")}</div>
               </div>
               <Button size="sm" className="w-full">{t("Open Subject", "فتح المادة")}</Button>
             </CardContent>
