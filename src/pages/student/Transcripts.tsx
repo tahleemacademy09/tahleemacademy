@@ -170,6 +170,68 @@ const Transcripts = () => {
       <div class="section-title">${termNames[i]}</div>
       <table class="main">${tableHeader}<tbody>${buildTermRows(t)}</tbody></table>
     `).join("");
+
+    const html = `<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<title>Transcript - ${profile?.full_name || "Student"}</title>
+<link href="https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Cairo','Amiri',sans-serif;background:#fff;padding:30px 40px;position:relative}
+.watermark{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-30deg);font-size:90px;font-weight:700;color:#064E3B;opacity:0.04;white-space:nowrap;letter-spacing:8px;font-family:'Cairo',sans-serif;pointer-events:none;z-index:0}
+.content{position:relative;z-index:1}
+.header{text-align:center;margin-bottom:14px}
+.header .ar{font-family:'Amiri',serif;font-size:24px;font-weight:700}
+.header .en{font-size:16px;font-weight:700;letter-spacing:3px}
+.title-box{border:2px solid #2a7a2a;border-radius:4px;padding:6px 20px;margin:14px auto;width:fit-content;display:flex;gap:30px;align-items:center;justify-content:center}
+.title-box span{font-size:14px;font-weight:600}
+.info-grid{margin:16px 0}
+.info-row{display:flex;justify-content:space-between;margin-bottom:8px;gap:24px}
+.info-field{display:flex;align-items:baseline;flex:1;gap:4px}
+.info-field label{font-weight:700;font-size:13px;white-space:nowrap}
+.info-field .val{flex:1;border-bottom:1px solid #333;font-size:12px;text-align:right;padding:0 4px 1px}
+.section-title{font-family:'Amiri',serif;font-size:16px;font-weight:700;text-align:left;margin:12px 0 6px}
+table.main{width:100%;border-collapse:collapse;direction:rtl;margin-bottom:10px}
+table.main th,table.main td{border:1.5px solid #333;padding:3px 4px;text-align:center;font-size:10px;vertical-align:middle}
+table.main th .ar{display:block;font-family:'Amiri',serif;font-size:11px;font-weight:700}
+table.main th .en{display:block;font-size:9px;font-weight:700}
+table.main td{height:22px}
+table.summary{width:100%;border-collapse:collapse;direction:ltr;margin-top:14px}
+table.summary td{border:1.5px solid #333;padding:5px 8px;font-size:12px}
+table.summary td.lbl{font-weight:700;width:18%}
+.stamp-section{display:flex;justify-content:flex-end;margin-top:20px}
+.stamp-section img{width:120px;height:120px;opacity:0.8}
+@media print{body{padding:15px 20px}.watermark{position:fixed}@page{size:A4;margin:8mm}}
+</style>
+</head>
+<body>
+<div class="watermark">TAHLEEM ACADEMY</div>
+<div class="content">
+<div class="header">
+  <div class="ar">أكاديمية التعليم</div>
+  <div class="en">TAHLEEM ACADEMY</div>
+</div>
+<div class="title-box">
+  <span>كشف نتائج الطلبة</span>
+  <span>Student Report Sheet.</span>
+</div>
+<div class="info-grid">
+  <div class="info-row">
+    <div class="info-field"><label>اسم الطالب(ة)</label><span class="val">${profile?.full_name || "---"}</span></div>
+    <div class="info-field"><label>العام الدراسي</label><span class="val">${hijriYear} هـ / ${currentYear} م</span></div>
+  </div>
+  <div class="info-row">
+    <div class="info-field"><label>المرحلة</label><span class="val">${levelText}</span></div>
+    <div class="info-field"><label>عدد المواد</label><span class="val">${exams.length}</span></div>
+  </div>
+  <div class="info-row">
+    <div class="info-field"><label>التاريخ</label><span class="val">${new Date().toLocaleDateString("ar-SA")}</span></div>
+    <div class="info-field"><label>الحالة</label><span class="val">${statusText}</span></div>
+  </div>
+</div>
+${termTables}
 <table class="summary">
   <tr><td class="lbl">Marks Obtainable</td><td style="text-align:center">${totalObtainable || ""}</td><td class="lbl">Marks Obtained</td><td style="text-align:center">${totalObtained || ""}</td></tr>
   <tr><td class="lbl">Cgpa</td><td style="text-align:center">${exams.length > 0 ? cgpa.toFixed(2) : ""}</td><td class="lbl">Status</td><td style="text-align:center">${exams.length > 0 ? (cgpa >= 1.0 ? "Pass ✓" : "Fail ✗") : ""}</td></tr>
