@@ -172,6 +172,11 @@ const ExamManager = () => {
                       <Badge variant="outline" className="text-xs">
                         {examType === "test" ? "30" : "70"} {t("marks", "درجة")}
                       </Badge>
+                      {(exam as any).level && (
+                        <Badge variant="outline" className="text-xs border-violet-500 text-violet-600 bg-violet-500/10">
+                          {(exam as any).level === "beginner" ? t("Beginner", "مبتدئ") : (exam as any).level === "intermediate" ? t("Intermediate", "متوسط") : t("Advanced", "متقدم")}
+                        </Badge>
+                      )}
                     </div>
                     <div className="mt-1 flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
                       <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> {exam.time_limit_minutes} {t("min", "دقيقة")}</span>
