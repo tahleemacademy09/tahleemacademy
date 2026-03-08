@@ -44,6 +44,12 @@ const Majlis = () => {
   const [showChannelInfo, setShowChannelInfo] = useState(false);
   const [showBrowseChannels, setShowBrowseChannels] = useState(false);
 
+  // Admin state
+  const [contextMenu, setContextMenu] = useState<{ message: ChatMessage; x: number; y: number } | null>(null);
+  const [showBroadcast, setShowBroadcast] = useState(false);
+  const [showAdminDashboard, setShowAdminDashboard] = useState(false);
+  const [profileCardUserId, setProfileCardUserId] = useState<string | null>(null);
+
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
