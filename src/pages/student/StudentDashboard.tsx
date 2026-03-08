@@ -120,10 +120,31 @@ const StudentDashboard = () => {
   const today = new Date();
 
   return (
-    <div className="container mx-auto px-4 py-6 md:py-8 space-y-4">
+    <div className="container mx-auto px-4 py-6 md:py-8 space-y-5">
 
       {/* ═══════════════════════════════════════════════
-          HEADER: Welcome + Hijri Pill
+          0. WELCOME MESSAGE
+      ═══════════════════════════════════════════════ */}
+      <div className={language === "ar" ? "text-right" : "text-left"}>
+        <h1
+          className="text-2xl md:text-3xl font-bold"
+          style={{
+            color: '#064E3B',
+            fontFamily: language === "ar" ? "'Amiri', serif" : "'Playfair Display', serif",
+          }}
+          dir={language === "ar" ? "rtl" : "ltr"}
+        >
+          {language === "ar"
+            ? `مرحباً بك يا ${profile?.full_name || "طالب"}! 👋`
+            : `Marhaban, ${profile?.full_name || "Student"}! 👋`}
+        </h1>
+        <p className="text-sm text-muted-foreground mt-1">
+          {t("Here's your learning overview", "إليك نظرة عامة على مسارك التعليمي")}
+        </p>
+      </div>
+
+      {/* ═══════════════════════════════════════════════
+          1. HEADER: Greeting + Hijri Pill
       ═══════════════════════════════════════════════ */}
       <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary via-primary to-emerald-mid p-5 md:p-7 text-primary-foreground geometric-pattern">
         <div className="relative z-10">
@@ -139,12 +160,12 @@ const StudentDashboard = () => {
           </div>
           {/* Greeting */}
           <div className="text-center">
-            <p className="text-sm opacity-70 mb-1">
-              {language === "ar" ? "مرحباً بك" : "Marhaban"} 👋
-            </p>
-            <h1 className="text-2xl md:text-3xl font-bold mb-0.5" style={{ fontFamily: language === "ar" ? "'Amiri', serif" : "'Playfair Display', serif" }}>
-              {profile?.full_name || t("Student", "طالب")}
+            <h1 className="text-2xl md:text-3xl font-bold mb-0.5" dir="rtl" style={{ fontFamily: "'Amiri', serif" }}>
+              السلام عليكم
             </h1>
+            <p className="text-base md:text-lg opacity-90">
+              {profile?.full_name || t("Student", "طالب")}
+            </p>
             <p className="text-[11px] opacity-50 mt-1">
               {today.toLocaleDateString(language === "ar" ? "ar-SA" : "en-US", { weekday: 'long', month: 'long', day: 'numeric' })}
             </p>
