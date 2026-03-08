@@ -27,6 +27,9 @@ import PreExamVerification from "./pages/student/PreExamVerification";
 import Transcripts from "./pages/student/Transcripts";
 import Majlis from "./pages/student/Majlis";
 import LiveClasses from "./pages/student/LiveClasses";
+import StudentCourses from "./pages/student/StudentCourses";
+import CourseView from "./pages/student/CourseView";
+import SubjectView from "./pages/student/SubjectView";
 import MuallimOverlay from "./components/majlis/MuallimOverlay";
 
 import AdminDashboard from "./pages/admin/AdminDashboard";
@@ -37,6 +40,8 @@ import QuestionBank from "./pages/admin/QuestionBank";
 import StudentManagement from "./pages/admin/StudentManagement";
 import ProctoringDashboard from "./pages/admin/ProctoringDashboard";
 import SubjectManagement from "./pages/admin/SubjectManagement";
+import CourseManagement from "./pages/admin/CourseManagement";
+import SyllabusManager from "./pages/admin/SyllabusManager";
 
 const queryClient = new QueryClient();
 
@@ -66,6 +71,9 @@ const App = () => (
               {/* Student dashboard */}
               <Route element={<ProtectedRoute><DashboardLayout role="student" /></ProtectedRoute>}>
                 <Route path="/student" element={<StudentDashboard />} />
+                <Route path="/student/courses" element={<StudentCourses />} />
+                <Route path="/student/courses/:courseId" element={<CourseView />} />
+                <Route path="/student/subjects/:subjectId" element={<SubjectView />} />
                 <Route path="/student/exams" element={<StudentExams />} />
                 <Route path="/student/transcripts" element={<Transcripts />} />
                 <Route path="/student/majlis" element={<Majlis />} />
@@ -81,6 +89,10 @@ const App = () => (
               {/* Admin dashboard - requires admin role */}
               <Route element={<ProtectedRoute requiredRole="admin"><DashboardLayout role="admin" /></ProtectedRoute>}>
                 <Route path="/admin" element={<AdminDashboard />} />
+                <Route path="/admin/subjects" element={<SubjectManagement />} />
+                <Route path="/admin/courses" element={<CourseManagement />} />
+                <Route path="/admin/syllabus" element={<SyllabusManager />} />
+                <Route path="/admin/live-classes" element={<LiveClasses />} />
                 <Route path="/admin/exams" element={<ExamManager />} />
                 <Route path="/admin/exams/create" element={<ExamEditor />} />
                 <Route path="/admin/exams/:examId/edit" element={<ExamEditor />} />
@@ -88,8 +100,6 @@ const App = () => (
                 <Route path="/admin/question-bank" element={<QuestionBank />} />
                 <Route path="/admin/proctoring" element={<ProctoringDashboard />} />
                 <Route path="/admin/students" element={<StudentManagement />} />
-                <Route path="/admin/subjects" element={<SubjectManagement />} />
-                <Route path="/admin/live-classes" element={<LiveClasses />} />
               </Route>
 
               <Route path="*" element={<NotFound />} />

@@ -7,7 +7,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import {
   BookOpen, LayoutDashboard, ClipboardList, Users, LogOut, Globe,
   CheckSquare, BarChart, UserCircle, Library, GraduationCap, MessageCircle,
-  Menu, Video, Mic, Settings, Shield,
+  Menu, Video, Mic, Settings, Shield, Layers, FileText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -23,6 +23,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
 
   const studentLinks = [
     { to: "/student", icon: LayoutDashboard, label: t("Dashboard", "لوحة التحكم") },
+    { to: "/student/courses", icon: BookOpen, label: t("Courses", "الدورات") },
     { to: "/student/live-classes", icon: Video, label: t("Live Classes", "الفصول الحية") },
     { to: "/student/exams", icon: ClipboardList, label: t("Exams", "الامتحانات") },
     { to: "/student/transcripts", icon: GraduationCap, label: t("Transcripts", "السجل الأكاديمي") },
@@ -33,6 +34,8 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   const adminLinks = [
     { to: "/admin", icon: LayoutDashboard, label: t("Dashboard", "لوحة التحكم") },
     { to: "/admin/subjects", icon: BookOpen, label: t("Subjects", "المواد") },
+    { to: "/admin/courses", icon: Layers, label: t("Courses", "الدورات") },
+    { to: "/admin/syllabus", icon: FileText, label: t("Syllabus & Materials", "المنهج والمواد") },
     { to: "/admin/live-classes", icon: Video, label: t("Live Classes", "الفصول الحية") },
     { to: "/admin/exams", icon: ClipboardList, label: t("Exams", "الامتحانات") },
     { to: "/admin/question-bank", icon: Library, label: t("Question Bank", "بنك الأسئلة") },
