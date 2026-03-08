@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { LiveKitRoom, VideoConference, RoomAudioRenderer } from "@livekit/components-react";
 // @ts-ignore
 import "@livekit/components-styles";
@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "@/hooks/use-toast";
-import { LogOut, MessageCircle, Circle, Send, X, Pause, Play, Square } from "lucide-react";
+import { LogOut, MessageCircle, Circle, Send, X, Pause, Play, Square, Loader2 } from "lucide-react";
 
 interface ClassroomViewProps {
   subject: any;
@@ -34,8 +34,11 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
   const [recording, setRecording] = useState(false);
   const [recordingPaused, setRecordingPaused] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
-  const [recordingStartedAt, setRecordingStartedAt] = useState<Date | null>(null);
+  const [savingRecording, setSavingRecording] = useState(false);
   const timerRef = useRef<any>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordedChunksRef = useRef<Blob[]>([]);
+  const displayStreamRef = useRef<MediaStream | null>(null);
   const isPrivileged = hasRole("admin") || hasRole("teacher");
 
   // Connect to LiveKit
@@ -50,7 +53,6 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
         setToken(data.token);
         setWsUrl(data.url);
 
-        // Get or create session
         const { data: sessions } = await supabase.from("live_sessions")
           .select("id").eq("subject_id", subject.id).eq("status", "live").limit(1);
         if (sessions?.length) {
@@ -62,8 +64,9 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
           }).select("id").single();
           if (att) setAttendanceId(att.id);
         }
-      } catch (err: any) {
-        setError(err.message || "Failed to connect");
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : "Failed to connect";
+        setError(message);
       } finally {
         setLoading(false);
       }
@@ -72,6 +75,9 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
 
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
+      if (displayStreamRef.current) {
+        displayStreamRef.current.getTracks().forEach(t => t.stop());
+      }
     };
   }, []);
 
@@ -123,46 +129,162 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
     setChatInput("");
   };
 
-  // Recording controls
-  const startRecording = () => {
-    setRecording(true);
-    setRecordingPaused(false);
-    setRecordingStartedAt(new Date());
-    setRecordingTime(0);
-    timerRef.current = setInterval(() => setRecordingTime(p => p + 1), 1000);
-    toast({ title: t("Recording started", "بدأ التسجيل") });
-  };
+  // ─── Recording with MediaRecorder ───
+  const startRecording = useCallback(async () => {
+    try {
+      // Capture the screen/tab with audio
+      const displayStream = await navigator.mediaDevices.getDisplayMedia({
+        video: { width: 1280, height: 720 },
+        audio: true,
+      });
+      displayStreamRef.current = displayStream;
 
-  const pauseRecording = () => {
-    setRecordingPaused(true);
-    clearInterval(timerRef.current);
-    toast({ title: t("Recording paused", "تم إيقاف التسجيل مؤقتاً") });
-  };
+      // Also capture mic audio to mix in
+      let combinedStream = displayStream;
+      try {
+        const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const audioContext = new AudioContext();
+        const destination = audioContext.createMediaStreamDestination();
 
-  const resumeRecording = () => {
-    setRecordingPaused(false);
-    timerRef.current = setInterval(() => setRecordingTime(p => p + 1), 1000);
-    toast({ title: t("Recording resumed", "تم استئناف التسجيل") });
-  };
+        // Mix display audio + mic audio
+        displayStream.getAudioTracks().forEach(track => {
+          const source = audioContext.createMediaStreamSource(new MediaStream([track]));
+          source.connect(destination);
+        });
+        const micSource = audioContext.createMediaStreamSource(micStream);
+        micSource.connect(destination);
 
-  const stopRecording = async () => {
-    setRecording(false);
-    setRecordingPaused(false);
+        // Combine video tracks from display + mixed audio
+        combinedStream = new MediaStream([
+          ...displayStream.getVideoTracks(),
+          ...destination.stream.getAudioTracks(),
+        ]);
+      } catch {
+        // If mic fails, just use display stream as-is
+      }
+
+      // Determine best supported mimeType
+      const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp9,opus")
+        ? "video/webm;codecs=vp9,opus"
+        : MediaRecorder.isTypeSupported("video/webm;codecs=vp8,opus")
+          ? "video/webm;codecs=vp8,opus"
+          : "video/webm";
+
+      const recorder = new MediaRecorder(combinedStream, { mimeType });
+      recordedChunksRef.current = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) recordedChunksRef.current.push(e.data);
+      };
+
+      // When user stops sharing screen, auto-stop recording
+      displayStream.getVideoTracks()[0].addEventListener("ended", () => {
+        if (mediaRecorderRef.current?.state !== "inactive") {
+          stopRecording();
+        }
+      });
+
+      recorder.start(1000); // collect data every second
+      mediaRecorderRef.current = recorder;
+
+      setRecording(true);
+      setRecordingPaused(false);
+      setRecordingTime(0);
+      timerRef.current = setInterval(() => setRecordingTime(p => p + 1), 1000);
+      toast({ title: t("Recording started", "بدأ التسجيل"), description: t("Screen capture active", "التقاط الشاشة نشط") });
+    } catch (err) {
+      toast({ title: t("Recording failed", "فشل التسجيل"), description: t("Screen sharing was denied or unavailable", "تم رفض مشاركة الشاشة أو غير متاحة"), variant: "destructive" });
+    }
+  }, [sessionId, t]);
+
+  const pauseRecording = useCallback(() => {
+    if (mediaRecorderRef.current?.state === "recording") {
+      mediaRecorderRef.current.pause();
+      setRecordingPaused(true);
+      clearInterval(timerRef.current);
+      toast({ title: t("Recording paused", "تم إيقاف التسجيل مؤقتاً") });
+    }
+  }, [t]);
+
+  const resumeRecording = useCallback(() => {
+    if (mediaRecorderRef.current?.state === "paused") {
+      mediaRecorderRef.current.resume();
+      setRecordingPaused(false);
+      timerRef.current = setInterval(() => setRecordingTime(p => p + 1), 1000);
+      toast({ title: t("Recording resumed", "تم استئناف التسجيل") });
+    }
+  }, [t]);
+
+  const stopRecording = useCallback(async () => {
     clearInterval(timerRef.current);
     const duration = recordingTime;
-    if (sessionId) {
+
+    if (!mediaRecorderRef.current || mediaRecorderRef.current.state === "inactive") {
+      setRecording(false);
+      setRecordingPaused(false);
+      setRecordingTime(0);
+      return;
+    }
+
+    setSavingRecording(true);
+
+    // Wait for recorder to finalize
+    await new Promise<void>((resolve) => {
+      mediaRecorderRef.current!.onstop = () => resolve();
+      mediaRecorderRef.current!.stop();
+    });
+
+    // Stop all tracks
+    if (displayStreamRef.current) {
+      displayStreamRef.current.getTracks().forEach(t => t.stop());
+      displayStreamRef.current = null;
+    }
+
+    setRecording(false);
+    setRecordingPaused(false);
+    setRecordingTime(0);
+
+    // Build blob and upload
+    const blob = new Blob(recordedChunksRef.current, { type: "video/webm" });
+    recordedChunksRef.current = [];
+
+    if (blob.size < 1000) {
+      setSavingRecording(false);
+      toast({ title: t("Recording too short", "التسجيل قصير جداً"), variant: "destructive" });
+      return;
+    }
+
+    try {
+      const timestamp = Date.now();
+      const storagePath = `recordings/${sessionId || subject.id}/${timestamp}.webm`;
+
+      const { error: uploadErr } = await supabase.storage
+        .from("subject-files")
+        .upload(storagePath, blob, { contentType: "video/webm", upsert: false });
+
+      if (uploadErr) throw uploadErr;
+
+      // Save record to DB with storage path
       await supabase.from("session_recordings").insert({
-        session_id: sessionId,
+        session_id: sessionId || subject.id,
         subject_id: subject.id,
         teacher_name: user?.email || "Teacher",
         duration_seconds: duration,
-        file_url: "",
+        file_url: storagePath,
+        file_size: blob.size,
       });
-      toast({ title: t("Recording saved", "تم حفظ التسجيل"), description: `${Math.floor(duration / 60)}m ${duration % 60}s` });
+
+      toast({
+        title: t("Recording saved!", "تم حفظ التسجيل!"),
+        description: `${Math.floor(duration / 60)}m ${duration % 60}s — ${(blob.size / 1048576).toFixed(1)} MB`,
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Upload failed";
+      toast({ title: t("Failed to save recording", "فشل حفظ التسجيل"), description: message, variant: "destructive" });
+    } finally {
+      setSavingRecording(false);
     }
-    setRecordingTime(0);
-    setRecordingStartedAt(null);
-  };
+  }, [recordingTime, sessionId, subject.id, user, t]);
 
   const endSession = async () => {
     if (recording) await stopRecording();
@@ -172,11 +294,7 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
     onLeave();
   };
 
-  const leaveClass = () => {
-    // Student leaves but session stays active
-    onLeave();
-  };
-
+  const leaveClass = () => onLeave();
   const formatTime = (s: number) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 
   if (loading) {
@@ -198,7 +316,7 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
             <X className="h-8 w-8 text-destructive" />
           </div>
           <h2 className="text-xl font-bold">{t("Connection Failed", "فشل الاتصال")}</h2>
-          <p className="text-muted-foreground">{error === "LiveKit not configured" ? t("Live System Not Configured", "نظام البث غير مُهيأ") : error}</p>
+          <p className="text-muted-foreground">{error}</p>
           <Button onClick={onLeave}>{t("Go Back", "رجوع")}</Button>
         </div>
       </div>
@@ -221,10 +339,15 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
               {recordingPaused && <span className="ms-1 text-[10px]">(PAUSED)</span>}
             </Badge>
           )}
+          {savingRecording && (
+            <Badge variant="secondary" className="gap-1">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              {t("Saving...", "جاري الحفظ...")}
+            </Badge>
+          )}
         </div>
         <div className="flex items-center gap-1.5">
-          {/* Recording controls (admin/teacher) */}
-          {isPrivileged && !recording && (
+          {isPrivileged && !recording && !savingRecording && (
             <Button size="sm" variant="outline" onClick={startRecording} className="gap-1 text-xs">
               <Circle className="h-2 w-2 fill-red-500" />
               {t("Record", "تسجيل")}
