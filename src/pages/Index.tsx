@@ -1,371 +1,524 @@
-import { Link } from "react-router-dom";
-import { Button } from "@/components/ui/button";
-import { useLanguage } from "@/contexts/LanguageContext";
-import { motion } from "framer-motion";
-import { BookOpen, Video, FileText, Award, Users, GraduationCap, Monitor, Star, Heart, Trophy, ArrowRight, Play } from "lucide-react";
-
-const fadeUp = {
-  hidden: { opacity: 0, y: 30 },
-  visible: (i: number) => ({ opacity: 1, y: 0, transition: { delay: i * 0.12, duration: 0.7, ease: [0.25, 0.1, 0.25, 1] as const } }),
-};
+import { useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 
 const Index = () => {
-  const { t } = useLanguage();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    // Inject Google Fonts
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href =
+      "https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Cairo:wght@400;600;700&family=Amiri:wght@400;700&display=swap";
+    document.head.appendChild(link);
+
+    // Inject CSS
+    const style = document.createElement("style");
+    style.innerHTML = `
+      .ta-root * { margin:0; padding:0; box-sizing:border-box; }
+      .ta-root {
+        font-family: 'Cairo', sans-serif;
+        background: #fdf8f0;
+        color: #1a1a1a;
+        overflow-x: hidden;
+      }
+      /* NAVBAR */
+      .ta-nav {
+        position:fixed; top:0; width:100%; z-index:100;
+        display:flex; justify-content:space-between; align-items:center;
+        padding:16px 40px;
+        background:rgba(15,49,34,0.92);
+        backdrop-filter:blur(12px);
+        border-bottom:1px solid rgba(201,151,58,0.3);
+      }
+      .ta-nav-logo { display:flex; align-items:center; gap:10px; }
+      .ta-nav-logo .ta-icon { width:36px; height:36px; background:#c9973a; border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:18px; }
+      .ta-nav-logo span { color:#fff; font-family:'Cormorant Garamond',serif; font-size:20px; font-weight:600; letter-spacing:1px; }
+      .ta-nav-logo span em { color:#c9973a; font-style:normal; }
+      .ta-nav-links { display:flex; gap:28px; list-style:none; }
+      .ta-nav-links a { color:rgba(255,255,255,0.8); text-decoration:none; font-size:14px; transition:0.2s; cursor:pointer; }
+      .ta-nav-links a:hover { color:#e8c070; }
+      .ta-nav-cta { display:flex; gap:12px; }
+      .ta-btn-outline { padding:8px 20px; border:1px solid #c9973a; color:#c9973a; background:transparent; border-radius:6px; cursor:pointer; font-family:'Cairo',sans-serif; font-size:13px; transition:0.2s; }
+      .ta-btn-outline:hover { background:#c9973a; color:#fff; }
+      .ta-btn-solid { padding:8px 20px; background:#c9973a; color:#fff; border:none; border-radius:6px; cursor:pointer; font-family:'Cairo',sans-serif; font-size:13px; font-weight:700; transition:0.2s; }
+      .ta-btn-solid:hover { background:#e8c070; color:#0f3122; }
+
+      /* HERO */
+      .ta-hero { min-height:100vh; position:relative; display:flex; align-items:center; overflow:hidden; }
+      .ta-hero-bg {
+        position:absolute; inset:0;
+        background-image:url('https://images.unsplash.com/photo-1548438294-1ad5d5f4f063?w=1600&q=90');
+        background-size:cover; background-position:center top; filter:brightness(0.55);
+      }
+      .ta-hero-overlay {
+        position:absolute; inset:0;
+        background:linear-gradient(160deg, rgba(10,30,20,0.72) 0%, rgba(15,49,34,0.55) 40%, rgba(10,20,15,0.65) 100%);
+      }
+      .ta-hero-pattern {
+        position:absolute; inset:0; opacity:0.06;
+        background-image:url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23c9973a' fill-opacity='1'%3E%3Cpath d='M30 0l8.66 5v10L30 20l-8.66-5V5zM0 17.32l8.66 5v10L0 37.32l-8.66-5v-10zM60 17.32l8.66 5v10L60 37.32l-8.66-5v-10zM30 34.64l8.66 5v10L30 54.64l-8.66-5v-10z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+      }
+      .ta-hero-content {
+        position:relative; z-index:2;
+        max-width:1200px; margin:0 auto; padding:120px 40px 80px;
+        display:grid; grid-template-columns:1fr 1fr; gap:60px; align-items:center; width:100%;
+      }
+      .ta-hero-badge {
+        display:inline-flex; align-items:center; gap:8px;
+        background:rgba(201,151,58,0.15); border:1px solid rgba(201,151,58,0.4);
+        color:#e8c070; padding:6px 16px; border-radius:30px;
+        font-size:12px; letter-spacing:1px; text-transform:uppercase; margin-bottom:24px;
+      }
+      .ta-hero-arabic {
+        font-family:'Amiri',serif; font-size:34px; color:#fff;
+        text-shadow:0 0 30px rgba(201,151,58,1), 0 2px 12px rgba(0,0,0,1);
+        background:rgba(0,0,0,0.45); display:inline-block;
+        padding:8px 22px; border-radius:10px;
+        border-left:4px solid #c9973a; border-right:4px solid #c9973a;
+        direction:rtl; margin-bottom:12px;
+      }
+      .ta-hero-title {
+        font-family:'Cormorant Garamond',serif;
+        font-size:clamp(38px,5vw,62px); font-weight:700;
+        color:#fff; line-height:1.15; margin-bottom:20px;
+      }
+      .ta-hero-title em { color:#c9973a; font-style:normal; display:block; }
+      .ta-hero-subtitle { color:rgba(255,255,255,0.75); font-size:16px; line-height:1.7; max-width:480px; margin-bottom:36px; }
+      .ta-hero-buttons { display:flex; gap:14px; flex-wrap:wrap; }
+      .ta-hero-btn-primary {
+        padding:14px 32px; background:#c9973a; color:#fff;
+        border:none; border-radius:8px; font-family:'Cairo',sans-serif;
+        font-size:15px; font-weight:700; cursor:pointer; transition:0.25s;
+      }
+      .ta-hero-btn-primary:hover { background:#e8c070; transform:translateY(-2px); box-shadow:0 8px 24px rgba(201,151,58,0.4); }
+      .ta-hero-btn-secondary {
+        padding:14px 32px; background:transparent;
+        border:2px solid rgba(255,255,255,0.4); color:#fff;
+        border-radius:8px; font-family:'Cairo',sans-serif; font-size:15px; cursor:pointer; transition:0.25s;
+      }
+      .ta-hero-btn-secondary:hover { border-color:#fff; background:rgba(255,255,255,0.1); }
+      .ta-hero-right { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+      .ta-hero-card { border-radius:16px; overflow:hidden; position:relative; box-shadow:0 20px 60px rgba(0,0,0,0.5); }
+      .ta-hero-card:first-child { grid-column:span 2; height:220px; }
+      .ta-hero-card:not(:first-child) { height:160px; }
+      .ta-hero-card img { width:100%; height:100%; object-fit:cover; transition:0.4s; }
+      .ta-hero-card:hover img { transform:scale(1.05); }
+      .ta-hero-card-label {
+        position:absolute; bottom:0; left:0; right:0;
+        background:linear-gradient(transparent, rgba(0,0,0,0.7));
+        color:#fff; padding:20px 16px 12px; font-size:13px; font-weight:600;
+      }
+
+      /* FEATURES STRIP */
+      .ta-features-strip { background:#0f3122; padding:20px 40px; display:flex; justify-content:center; gap:60px; flex-wrap:wrap; }
+      .ta-feature-item { display:flex; align-items:center; gap:10px; color:rgba(255,255,255,0.85); font-size:14px; }
+      .ta-dot { width:8px; height:8px; background:#c9973a; border-radius:50%; display:inline-block; }
+
+      /* AYAH BANNER */
+      .ta-ayah-section { position:relative; padding:90px 40px; overflow:hidden; background:#0f3122; text-align:center; }
+      .ta-ayah-bg {
+        position:absolute; inset:0;
+        background-image:url('https://images.unsplash.com/photo-1519817650390-64a93db51149?w=1600&q=80');
+        background-size:cover; background-position:center 30%;
+        filter:brightness(0.15) saturate(0.5);
+      }
+      .ta-ayah-geometric {
+        position:absolute; inset:0; opacity:0.07;
+        background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='80'%3E%3Cpolygon points='40,4 76,20 76,60 40,76 4,60 4,20' fill='none' stroke='%23c9973a' stroke-width='1'/%3E%3Cpolygon points='40,14 66,26 66,54 40,66 14,54 14,26' fill='none' stroke='%23c9973a' stroke-width='0.5'/%3E%3Ccircle cx='40' cy='40' r='10' fill='none' stroke='%23c9973a' stroke-width='0.5'/%3E%3C/svg%3E");
+      }
+      .ta-ayah-content { position:relative; z-index:2; max-width:860px; margin:0 auto; }
+      .ta-ayah-ornament { font-size:32px; color:#c9973a; opacity:0.6; margin-bottom:20px; display:block; }
+      .ta-ayah-divider { display:flex; align-items:center; gap:16px; justify-content:center; margin:18px 0; }
+      .ta-ayah-divider-line { display:block; height:1px; width:120px; background:linear-gradient(to right, transparent, #c9973a, transparent); }
+      .ta-ayah-diamond { color:#c9973a; font-size:10px; }
+      .ta-ayah-main { font-family:'Amiri',serif; font-size:clamp(28px,5vw,52px); color:#fff; line-height:1.7; direction:rtl; letter-spacing:2px; text-shadow:0 2px 20px rgba(201,151,58,0.3); }
+      .ta-ayah-translation { font-family:'Cormorant Garamond',serif; font-size:clamp(16px,2.5vw,22px); color:#e8c070; font-style:italic; margin-top:10px; letter-spacing:0.5px; }
+      .ta-ayah-ref { margin-top:14px; font-size:13px; color:rgba(255,255,255,0.45); letter-spacing:1px; }
+
+      /* WHY SECTION */
+      .ta-why-outer { padding:90px 40px; }
+      .ta-why-inner { max-width:1200px; margin:0 auto; }
+      .ta-section-tag { color:#c9973a; font-size:12px; text-transform:uppercase; letter-spacing:2px; font-weight:700; margin-bottom:12px; }
+      .ta-section-title { font-family:'Cormorant Garamond',serif; font-size:42px; font-weight:700; color:#0f3122; margin-bottom:16px; line-height:1.2; }
+      .ta-section-subtitle { color:#555; font-size:16px; line-height:1.7; max-width:560px; margin-bottom:52px; }
+      .ta-why-grid { display:grid; grid-template-columns:1fr 1fr; gap:24px; }
+      .ta-why-card { position:relative; border-radius:20px; overflow:hidden; height:300px; cursor:pointer; box-shadow:0 10px 40px rgba(0,0,0,0.12); }
+      .ta-why-card img { width:100%; height:100%; object-fit:cover; transition:0.5s; }
+      .ta-why-card:hover img { transform:scale(1.08); }
+      .ta-why-card-body {
+        position:absolute; inset:0;
+        background:linear-gradient(0deg, rgba(15,49,34,0.92) 0%, rgba(15,49,34,0.3) 60%, transparent 100%);
+        display:flex; flex-direction:column; justify-content:flex-end; padding:28px;
+      }
+      .ta-why-card-icon { font-size:28px; margin-bottom:10px; }
+      .ta-why-card-title { font-family:'Cormorant Garamond',serif; font-size:22px; font-weight:700; color:#fff; margin-bottom:6px; }
+      .ta-why-card-text { color:rgba(255,255,255,0.75); font-size:13px; line-height:1.6; }
+      .ta-why-card-large { grid-row:span 2; height:100%; min-height:624px; }
+
+      /* COURSES */
+      .ta-courses-section { background:#0f3122; padding:90px 40px; }
+      .ta-courses-inner { max-width:1200px; margin:0 auto; }
+      .ta-courses-section .ta-section-title { color:#fff; }
+      .ta-courses-section .ta-section-subtitle { color:rgba(255,255,255,0.65); }
+      .ta-courses-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:24px; }
+      .ta-course-card { background:rgba(255,255,255,0.06); border:1px solid rgba(201,151,58,0.2); border-radius:16px; overflow:hidden; transition:0.3s; }
+      .ta-course-card:hover { transform:translateY(-6px); border-color:#c9973a; background:rgba(255,255,255,0.1); }
+      .ta-course-img { height:180px; overflow:hidden; position:relative; }
+      .ta-course-img img { width:100%; height:100%; object-fit:cover; transition:0.4s; }
+      .ta-course-card:hover .ta-course-img img { transform:scale(1.06); }
+      .ta-course-badge { position:absolute; top:12px; right:12px; background:#c9973a; color:#fff; font-size:11px; font-weight:700; padding:4px 10px; border-radius:20px; }
+      .ta-course-body { padding:20px; }
+      .ta-course-arabic { font-family:'Amiri',serif; font-size:16px; color:#e8c070; direction:rtl; margin-bottom:4px; }
+      .ta-course-title { color:#fff; font-size:16px; font-weight:700; margin-bottom:8px; }
+      .ta-course-desc { color:rgba(255,255,255,0.6); font-size:13px; line-height:1.6; margin-bottom:16px; }
+      .ta-course-footer { display:flex; justify-content:space-between; align-items:center; }
+      .ta-course-level { font-size:12px; color:#e8c070; }
+      .ta-course-btn { padding:7px 18px; background:#c9973a; color:#fff; border:none; border-radius:6px; font-size:12px; font-weight:700; cursor:pointer; font-family:'Cairo',sans-serif; }
+
+      /* STATS */
+      .ta-stats-section {
+        padding:70px 40px;
+        background:url('https://images.unsplash.com/photo-1585036156171-384164a8c675?w=1600&q=80') center/cover no-repeat;
+        position:relative;
+      }
+      .ta-stats-section::before { content:''; position:absolute; inset:0; background:rgba(15,49,34,0.88); }
+      .ta-stats-inner { position:relative; z-index:1; max-width:1000px; margin:0 auto; text-align:center; }
+      .ta-stats-arabic { font-family:'Amiri',serif; font-size:22px; color:#e8c070; margin-bottom:8px; }
+      .ta-stats-title { font-family:'Cormorant Garamond',serif; font-size:38px; color:#fff; margin-bottom:50px; }
+      .ta-stats-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:30px; }
+      .ta-stat-number { font-family:'Cormorant Garamond',serif; font-size:52px; color:#c9973a; font-weight:700; line-height:1; }
+      .ta-stat-label { color:rgba(255,255,255,0.7); font-size:14px; margin-top:8px; }
+
+      /* CTA */
+      .ta-cta-section { padding:90px 40px; text-align:center; background:#fdf8f0; }
+      .ta-cta-inner { max-width:650px; margin:0 auto; }
+      .ta-cta-arabic { font-family:'Amiri',serif; font-size:26px; color:#c9973a; margin-bottom:16px; }
+      .ta-cta-title { font-family:'Cormorant Garamond',serif; font-size:42px; color:#0f3122; font-weight:700; margin-bottom:16px; }
+      .ta-cta-text { color:#666; font-size:16px; margin-bottom:36px; line-height:1.7; }
+      .ta-cta-btn { padding:16px 48px; background:#0f3122; color:#fff; border:none; border-radius:10px; font-family:'Cairo',sans-serif; font-size:16px; font-weight:700; cursor:pointer; transition:0.25s; }
+      .ta-cta-btn:hover { background:#1a4d35; transform:translateY(-2px); box-shadow:0 12px 30px rgba(15,49,34,0.3); }
+
+      /* WHY TAHLEEM 6 CARDS */
+      .ta-why6-section { background:#fff; padding:80px 20px; }
+      .ta-why6-inner { max-width:1100px; margin:0 auto; text-align:center; }
+      .ta-why6-tag { display:inline-block; background:rgba(15,49,34,0.08); color:#0f3122; border:1px solid rgba(15,49,34,0.2); padding:5px 18px; border-radius:30px; font-family:'Amiri',serif; font-size:14px; margin-bottom:14px; }
+      .ta-why6-title { font-family:'Cormorant Garamond',serif; font-size:38px; font-weight:700; color:#0f3122; margin-bottom:16px; }
+      .ta-why6-subtitle { font-size:16px; color:#555; max-width:680px; margin:0 auto 50px; line-height:1.8; }
+      .ta-why6-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:24px; }
+      .ta-why6-card { background:#fdf8f0; border:1px solid #e8e0d0; border-radius:14px; padding:28px 24px; text-align:left; transition:0.3s; border-bottom:3px solid transparent; }
+      .ta-why6-card:hover { transform:translateY(-4px); box-shadow:0 8px 28px rgba(0,0,0,0.08); border-bottom-color:#c9973a; }
+      .ta-why6-icon { font-size:32px; margin-bottom:14px; }
+      .ta-why6-card h3 { font-size:16px; font-weight:700; color:#0f3122; margin-bottom:8px; }
+      .ta-why6-card p { font-size:13.5px; color:#666; line-height:1.7; }
+
+      /* FOOTER */
+      .ta-footer { background:#0a1e14; color:#ccc; padding:60px 20px 0; }
+      .ta-footer-top { max-width:1100px; margin:0 auto; display:grid; grid-template-columns:2fr 1fr 1fr 1.5fr; gap:40px; padding-bottom:50px; }
+      .ta-footer-logo { display:flex; align-items:center; gap:12px; margin-bottom:16px; }
+      .ta-footer-logo-icon { width:44px; height:44px; background:#c9973a; border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:22px; }
+      .ta-footer-logo-name { font-family:'Cormorant Garamond',serif; font-size:20px; font-weight:700; color:#fff; }
+      .ta-footer-logo-ar { font-family:'Amiri',serif; font-size:14px; color:#c9973a; }
+      .ta-footer-tagline { font-size:13.5px; line-height:1.8; color:rgba(255,255,255,0.55); margin-bottom:20px; max-width:300px; }
+      .ta-footer-social { display:flex; gap:10px; flex-wrap:wrap; }
+      .ta-social-btn { display:inline-block; padding:7px 16px; border:1px solid rgba(201,151,58,0.4); color:#c9973a; border-radius:6px; font-size:12px; text-decoration:none; transition:0.2s; }
+      .ta-social-btn:hover { background:#c9973a; color:#fff; }
+      .ta-footer-heading { font-size:14px; font-weight:700; color:#fff; margin-bottom:18px; padding-bottom:8px; border-bottom:1px solid rgba(201,151,58,0.3); text-transform:uppercase; letter-spacing:0.5px; }
+      .ta-footer-links { list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:10px; }
+      .ta-footer-links a { color:rgba(255,255,255,0.55); text-decoration:none; font-size:13.5px; transition:0.2s; }
+      .ta-footer-links a:hover { color:#c9973a; }
+      .ta-footer-contact { list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:12px; }
+      .ta-footer-contact li { display:flex; align-items:flex-start; gap:10px; font-size:13px; }
+      .ta-contact-icon { font-size:15px; margin-top:1px; }
+      .ta-footer-contact a { color:rgba(255,255,255,0.6); text-decoration:none; transition:0.2s; word-break:break-all; }
+      .ta-footer-contact a:hover { color:#c9973a; }
+      .ta-footer-divider { max-width:1100px; margin:0 auto; border:none; border-top:1px solid rgba(255,255,255,0.08); }
+      .ta-footer-bottom { max-width:1100px; margin:0 auto; padding:20px 0 24px; display:flex; flex-direction:column; align-items:center; gap:6px; text-align:center; }
+      .ta-footer-bottom-arabic { font-family:'Amiri',serif; font-size:18px; color:#c9973a; }
+      .ta-footer-copy { font-size:12px; color:rgba(255,255,255,0.35); }
+
+      /* RESPONSIVE */
+      @media(max-width:768px){
+        .ta-nav { padding:14px 20px; }
+        .ta-nav-links, .ta-nav-cta { display:none; }
+        .ta-hero-content { grid-template-columns:1fr; padding:100px 20px 60px; }
+        .ta-hero-right { display:none; }
+        .ta-why-grid, .ta-courses-grid, .ta-why6-grid { grid-template-columns:1fr; }
+        .ta-stats-grid { grid-template-columns:1fr 1fr; }
+        .ta-features-strip { gap:20px; }
+        .ta-why-outer, .ta-cta-section { padding:60px 20px; }
+        .ta-footer-top { grid-template-columns:1fr; gap:30px; }
+        .ta-why6-title { font-size:28px; }
+        .ta-why-card-large { min-height:300px; }
+      }
+    `;
+    document.head.appendChild(style);
+
+    return () => {
+      document.head.removeChild(link);
+      document.head.removeChild(style);
+    };
+  }, []);
 
   return (
-    <div className="overflow-hidden">
-      {/* ============ SECTION 2 — HERO ============ */}
-      <section className="relative min-h-screen flex items-center">
-        {/* Background image */}
-        <div
-          className="absolute inset-0 bg-cover bg-center"
-          style={{
-            backgroundImage: `url('/images/hero-bg.jpg')`,
-            filter: "brightness(0.55)",
-          }}
-        />
-        {/* Dark overlay */}
-        <div
-          className="absolute inset-0"
-          style={{
-            background: "linear-gradient(160deg, rgba(10,30,20,0.72), rgba(15,49,34,0.55), rgba(10,20,15,0.65))",
-          }}
-        />
-        {/* Islamic geometric pattern overlay */}
-        <div
-          className="absolute inset-0"
-          style={{
-            backgroundImage: `url("data:image/svg+xml,%3Csvg width='80' height='80' viewBox='0 0 80 80' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23c9973a' fill-opacity='0.06'%3E%3Cpath d='M40 0L80 40L40 80L0 40z'/%3E%3Ccircle cx='40' cy='40' r='8'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`,
-          }}
-        />
+    <div className="ta-root">
 
-        <div className="container relative mx-auto px-4 py-28 md:py-36">
-          <div className="grid gap-12 lg:grid-cols-2 lg:gap-16 items-center">
-            {/* Left content */}
-            <motion.div initial="hidden" animate="visible" variants={fadeUp} custom={0}>
-              {/* Bismillah badge */}
-              <div className="mb-8 inline-flex items-center gap-3 rounded-lg px-5 py-3" style={{ background: "rgba(10,20,15,0.55)", borderLeft: "3px solid #c9973a", borderRight: "3px solid #c9973a" }}>
-                <span className="font-arabic text-lg text-white" dir="rtl" style={{ textShadow: "0 0 20px rgba(201,153,58,0.4)" }}>
-                  بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ
-                </span>
-              </div>
+      {/* NAVBAR */}
+      <nav className="ta-nav">
+        <div className="ta-nav-logo">
+          <div className="ta-icon">📖</div>
+          <span>Tahleem <em>Academy</em></span>
+        </div>
+        <ul className="ta-nav-links">
+          <li><a href="#">Home</a></li>
+          <li><a href="#">Courses</a></li>
+          <li><a href="#">About</a></li>
+          <li><a href="#">Contact</a></li>
+        </ul>
+        <div className="ta-nav-cta">
+          <button className="ta-btn-outline" onClick={() => navigate("/auth")}>Sign In</button>
+          <button className="ta-btn-solid" onClick={() => navigate("/auth")}>Register Free</button>
+        </div>
+      </nav>
 
-              <h1 className="mb-6 font-heading text-5xl font-bold leading-[1.1] tracking-tight text-white md:text-7xl">
-                {t("Master Arabic &", "أتقن العربية و")}
-                <span className="block mt-2" style={{ color: "#c9973a" }}>
-                  {t("Islamic Knowledge", "العلوم الإسلامية")}
-                </span>
-              </h1>
-
-              <p className="mb-8 max-w-xl text-lg leading-relaxed text-white/75 md:text-xl font-body">
-                {t(
-                  "Join thousands of students learning Quran, Tajweed, Arabic Language and Islamic Sciences — guided by qualified scholars, powered by modern technology.",
-                  "انضم إلى آلاف الطلاب الذين يتعلمون القرآن والتجويد واللغة العربية والعلوم الإسلامية — بإرشاد علماء مؤهلين وتقنيات حديثة."
-                )}
-              </p>
-
-              <div className="flex flex-col gap-4 sm:flex-row mb-10">
-                <Button size="lg" className="bg-gold text-gold-foreground hover:bg-gold/90 rounded-xl px-8 py-6 text-base font-semibold shadow-gold" asChild>
-                  <Link to="/register">
-                    {t("Begin Your Journey", "ابدأ رحلتك")}
-                    <ArrowRight className="ml-2 h-4 w-4" />
-                  </Link>
-                </Button>
-                <Button size="lg" variant="outline" className="border-white/30 bg-transparent text-white hover:bg-white/10 rounded-xl px-8 py-6 text-base font-semibold">
-                  <Play className="mr-2 h-4 w-4" />
-                  {t("Watch Overview", "شاهد النظرة العامة")}
-                </Button>
-              </div>
-
-              {/* Stats */}
-              <div className="flex flex-wrap gap-6 md:gap-10">
-                {[
-                  { value: "500+", label: t("Students Enrolled", "طالب مسجل") },
-                  { value: "4", label: t("Core Programmes", "برامج أساسية") },
-                  { value: "95%", label: t("Success Rate", "نسبة النجاح") },
-                ].map((s, i) => (
-                  <div key={i} className="text-center">
-                    <div className="text-2xl font-bold text-white md:text-3xl font-heading">{s.value}</div>
-                    <div className="text-xs text-white/60 mt-1">{s.label}</div>
-                  </div>
-                ))}
-              </div>
-            </motion.div>
-
-            {/* Right — floating cards */}
-            <motion.div className="hidden lg:block relative h-[500px]" initial="hidden" animate="visible" variants={fadeUp} custom={2}>
-              <div className="absolute top-0 right-0 w-72 h-48 rounded-2xl overflow-hidden shadow-2xl rotate-3 border-2 border-white/10">
-                <img src="https://images.unsplash.com/photo-1609599006353-e629aaabfeae?w=600&q=80" alt="Mosque" className="w-full h-full object-cover" />
-              </div>
-              <div className="absolute top-40 right-24 w-64 h-44 rounded-2xl overflow-hidden shadow-2xl -rotate-2 border-2 border-white/10">
-                <img src="https://images.unsplash.com/photo-1585036156171-384164a8c675?w=600&q=80" alt="Quran study" className="w-full h-full object-cover" />
-              </div>
-              <div className="absolute top-72 right-4 w-60 h-40 rounded-2xl overflow-hidden shadow-2xl rotate-1 border-2 border-white/10">
-                <img src="https://images.unsplash.com/photo-1581351123004-757df051db8b?w=600&q=80" alt="Arabic calligraphy" className="w-full h-full object-cover" />
-              </div>
-            </motion.div>
+      {/* HERO */}
+      <section className="ta-hero">
+        <div className="ta-hero-bg"></div>
+        <div className="ta-hero-overlay"></div>
+        <div className="ta-hero-pattern"></div>
+        <div className="ta-hero-content">
+          <div className="ta-hero-left">
+            <div className="ta-hero-badge">✦ Arabic Learning Excellence ✦</div>
+            <div className="ta-hero-arabic">بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ</div>
+            <h1 className="ta-hero-title">
+              Master Arabic &amp;
+              <em>Islamic Sciences</em>
+            </h1>
+            <p className="ta-hero-subtitle">
+              Learn Quran, Tajweed, Arabic Language and Islamic Studies with qualified scholars — live, interactive, and designed for every level.
+            </p>
+            <div className="ta-hero-buttons">
+              <button className="ta-hero-btn-primary" onClick={() => navigate("/auth")}>Start Learning →</button>
+              <button className="ta-hero-btn-secondary">Browse Courses</button>
+            </div>
+          </div>
+          <div className="ta-hero-right">
+            <div className="ta-hero-card">
+              <img src="https://images.unsplash.com/photo-1544947950-fa07a98d237f?w=800&q=80" alt="Islamic study" />
+              <div className="ta-hero-card-label">📖 Live Quranic Classes</div>
+            </div>
+            <div className="ta-hero-card">
+              <img src="https://images.unsplash.com/photo-1519817650390-64a93db51149?w=400&q=80" alt="Mosque" />
+              <div className="ta-hero-card-label">🕌 Expert Scholars</div>
+            </div>
+            <div className="ta-hero-card">
+              <img src="https://images.unsplash.com/photo-1585036156171-384164a8c675?w=400&q=80" alt="Arabic" />
+              <div className="ta-hero-card-label">🌙 Certified Exams</div>
+            </div>
           </div>
         </div>
       </section>
 
-      {/* ============ SECTION 3 — FEATURES STRIP ============ */}
-      <section className="bg-primary">
-        <div className="container mx-auto px-4 py-8">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-            {[
-              { icon: Video, en: "Live Classes", ar: "حصص مباشرة" },
-              { icon: Monitor, en: "Recorded Sessions", ar: "جلسات مسجلة" },
-              { icon: FileText, en: "Exams & Tests", ar: "اختبارات وتمرينات" },
-              { icon: Award, en: "Certified Results", ar: "شهادات معتمدة" },
-            ].map((f, i) => (
-              <motion.div key={i} className="flex flex-col items-center gap-2 py-4 text-center" initial="hidden" whileInView="visible" viewport={{ once: true }} variants={fadeUp} custom={i}>
-                <f.icon className="h-7 w-7 text-gold" />
-                <span className="text-sm font-semibold text-primary-foreground">{t(f.en, f.ar)}</span>
-                <span className="text-xs text-primary-foreground/50 font-arabic" dir="rtl">{f.ar}</span>
-              </motion.div>
-            ))}
+      {/* FEATURES STRIP */}
+      <div className="ta-features-strip">
+        {["Structured Curriculum by Scholars","Live Interactive Classes","Bilingual Arabic & English","Certificates Upon Completion","Recorded Sessions"].map((f) => (
+          <div className="ta-feature-item" key={f}><span className="ta-dot"></span> {f}</div>
+        ))}
+      </div>
+
+      {/* AYAH BANNER */}
+      <section className="ta-ayah-section">
+        <div className="ta-ayah-bg"></div>
+        <div className="ta-ayah-geometric"></div>
+        <div className="ta-ayah-content">
+          <span className="ta-ayah-ornament">❧</span>
+          <div className="ta-ayah-divider">
+            <span className="ta-ayah-divider-line"></span>
+            <span className="ta-ayah-diamond">◆</span>
+            <span className="ta-ayah-divider-line"></span>
+          </div>
+          <div className="ta-ayah-main">وَتَوَكَّلْ عَلَى اللَّهِ ۚ وَكَفَىٰ بِاللَّهِ وَكِيلًا</div>
+          <div className="ta-ayah-divider">
+            <span className="ta-ayah-divider-line"></span>
+            <span className="ta-ayah-diamond">◆</span>
+            <span className="ta-ayah-divider-line"></span>
+          </div>
+          <div className="ta-ayah-translation">"And put your trust in Allah — and Allah is sufficient as a Disposer of affairs."</div>
+          <div className="ta-ayah-ref">سورة الأحزاب — Surah Al-Ahzab, Ayah 3</div>
+        </div>
+      </section>
+
+      {/* WHY SECTION — 3 IMAGE CARDS */}
+      <section className="ta-why-outer">
+        <div className="ta-why-inner">
+          <div className="ta-section-tag">وَفَوْقَ كُلِّ ذِي عِلْمٍ عَلِيمٌ · Above Every Knower Is One More Knowing</div>
+          <h2 className="ta-section-title">Seeking Knowledge Is<br />An Act of Worship</h2>
+          <p className="ta-section-subtitle">
+            The Prophet ﷺ said: <strong style={{color:"#0f3122"}}>
+              "Seeking knowledge is an obligation upon every Muslim."
+            </strong>
+            <br />At Tahleem Academy, we honour this sacred duty — nurturing every student's mind, heart and soul through authentic Islamic education.
+          </p>
+          <div className="ta-why-grid">
+            <div className="ta-why-card ta-why-card-large">
+              <img src="https://images.unsplash.com/photo-1564769625392-651b89c6a4b2?w=800&q=80" alt="Quran" />
+              <div className="ta-why-card-body">
+                <div className="ta-why-card-icon">📖</div>
+                <div className="ta-why-card-title">القرآن الكريم — Quran & Tajweed</div>
+                <div className="ta-why-card-text">The Quran is the speech of Allah ﷻ. Learn to recite it beautifully with correct Tajweed from certified Huffadh who have memorised the Book of Allah.</div>
+              </div>
+            </div>
+            <div className="ta-why-card">
+              <img src="https://images.unsplash.com/photo-1519817650390-64a93db51149?w=600&q=80" alt="Mosque" />
+              <div className="ta-why-card-body">
+                <div className="ta-why-card-icon">🕌</div>
+                <div className="ta-why-card-title">العلوم الإسلامية — Islamic Sciences</div>
+                <div className="ta-why-card-text">Deepen your Iman through Fiqh, Aqeedah, Seerah and Hadith — knowledge grounded in the Quran and Sunnah of the Prophet ﷺ.</div>
+              </div>
+            </div>
+            <div className="ta-why-card">
+              <img src="https://images.unsplash.com/photo-1529156069898-49953e39b3ac?w=600&q=80" alt="Arabic" />
+              <div className="ta-why-card-body">
+                <div className="ta-why-card-icon">✍️</div>
+                <div className="ta-why-card-title">اللغة العربية — Arabic Language</div>
+                <div className="ta-why-card-text">Arabic is the language of the Quran. From the first letter to full fluency — reading, writing, Nahw and Sarf taught by passionate native scholars.</div>
+              </div>
+            </div>
           </div>
         </div>
       </section>
 
-      {/* ============ SECTION 4 — WHY TAHLEEM (ISLAMIC) ============ */}
-      <section className="bg-background">
-        <div className="container mx-auto px-4 py-24">
-          <div className="text-center mb-14">
-            <motion.div initial="hidden" whileInView="visible" viewport={{ once: true }} variants={fadeUp} custom={0}>
-              <p className="text-sm font-arabic text-gold mb-3" dir="rtl">
-                وَفَوْقَ كُلِّ ذِي عِلْمٍ عَلِيمٌ · Above Every Knower Is One More Knowing
-              </p>
-              <h2 className="font-heading text-3xl font-bold md:text-4xl text-foreground gold-underline">
-                {t("Seeking Knowledge Is An Act of Worship", "طلب العلم عبادة")}
-              </h2>
-            </motion.div>
-            <motion.p className="mt-8 text-muted-foreground max-w-3xl mx-auto leading-relaxed font-body" initial="hidden" whileInView="visible" viewport={{ once: true }} variants={fadeUp} custom={1}>
-              {t(
-                'The Prophet ﷺ said: "Seeking knowledge is an obligation upon every Muslim." At Tahleem Academy, we honour this sacred duty — nurturing every student\'s mind, heart and soul through authentic Islamic education passed down from the scholars of our Ummah.',
-                'قال النبي ﷺ: "طلب العلم فريضة على كل مسلم." في أكاديمية تعليم، نحترم هذا الواجب المقدس — نغذي عقل كل طالب وقلبه وروحه من خلال التعليم الإسلامي الأصيل المتوارث عن علماء أمتنا.'
-              )}
-            </motion.p>
-          </div>
-
-          <div className="grid gap-6 md:grid-cols-3">
+      {/* COURSES */}
+      <section className="ta-courses-section">
+        <div className="ta-courses-inner">
+          <div className="ta-section-tag" style={{color:"#e8c070"}}>Our Programs</div>
+          <h2 className="ta-section-title" style={{color:"#fff"}}>Explore Our Courses</h2>
+          <p className="ta-section-subtitle" style={{color:"rgba(255,255,255,0.65)",marginBottom:"40px"}}>
+            Each course is carefully structured with live sessions, assignments, and certified exams.
+          </p>
+          <div className="ta-courses-grid">
             {[
-              {
-                img: "https://images.unsplash.com/photo-1609599006353-e629aaabfeae?w=600&q=80",
-                icon: "📖",
-                titleAr: "القرآن الكريم",
-                titleEn: "Quran & Tajweed",
-                desc: t(
-                  "The Quran is the speech of Allah ﷻ. Learn to recite it beautifully with correct Tajweed from certified Huffadh who have memorised the Book of Allah.",
-                  "القرآن كلام الله ﷻ. تعلم تلاوته بأحكام التجويد الصحيحة من حفاظ مجازين حفظوا كتاب الله."
-                ),
-              },
-              {
-                img: "https://images.unsplash.com/photo-1564769625905-50e93615e769?w=600&q=80",
-                icon: "🕌",
-                titleAr: "العلوم الإسلامية",
-                titleEn: "Islamic Sciences",
-                desc: t(
-                  "Deepen your Iman through Fiqh, Aqeedah, Seerah and Hadith — knowledge grounded in the Quran and Sunnah of the Prophet ﷺ.",
-                  "عمّق إيمانك من خلال الفقه والعقيدة والسيرة والحديث — علم مبني على القرآن وسنة النبي ﷺ."
-                ),
-              },
-              {
-                img: "https://images.unsplash.com/photo-1581351123004-757df051db8b?w=600&q=80",
-                icon: "✍️",
-                titleAr: "اللغة العربية",
-                titleEn: "Arabic Language",
-                desc: t(
-                  "Arabic is the language of the Quran. From the first letter to full fluency — reading, writing, Nahw and Sarf taught by passionate native scholars.",
-                  "العربية لغة القرآن. من الحرف الأول إلى الطلاقة الكاملة — القراءة والكتابة والنحو والصرف على يد علماء متحمسين."
-                ),
-              },
-            ].map((card, i) => (
-              <motion.div key={i} className="group rounded-2xl overflow-hidden border border-border bg-card shadow-premium card-premium" initial="hidden" whileInView="visible" viewport={{ once: true }} variants={fadeUp} custom={i}>
-                <div className="h-48 overflow-hidden">
-                  <img src={card.img} alt={card.titleEn} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" />
+              { img:"https://images.unsplash.com/photo-1564769625392-651b89c6a4b2?w=600&q=80", badge:"Most Popular", ar:"القرآن والتجويد", en:"Quran & Tajweed", desc:"Perfect your recitation with certified Huffadh — from beginner Qaida to advanced Tajweed rules.", level:"⭐ All Levels" },
+              { img:"https://images.unsplash.com/photo-1585036156171-384164a8c675?w=600&q=80", badge:"New", ar:"اللغة العربية", en:"Arabic Language", desc:"From beginner to advanced — reading, writing, grammar and spoken Arabic.", level:"⭐ Beginner Friendly" },
+              { img:"https://images.unsplash.com/photo-1519817650390-64a93db51149?w=600&q=80", badge:"Certified", ar:"العلوم الإسلامية", en:"Islamic Sciences", desc:"Fiqh, Aqeedah, Seerah — comprehensive Islamic education with qualified scholars.", level:"⭐ Intermediate" },
+            ].map((c) => (
+              <div className="ta-course-card" key={c.en}>
+                <div className="ta-course-img">
+                  <img src={c.img} alt={c.en} />
+                  <div className="ta-course-badge">{c.badge}</div>
                 </div>
-                <div className="p-6">
-                  <div className="text-3xl mb-3">{card.icon}</div>
-                  <h3 className="font-heading text-lg font-bold text-foreground">
-                    <span className="font-arabic text-gold" dir="rtl">{card.titleAr}</span> — {card.titleEn}
-                  </h3>
-                  <p className="mt-3 text-sm leading-relaxed text-muted-foreground font-body">{card.desc}</p>
-                </div>
-              </motion.div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* ============ SECTION 5 — COURSES ============ */}
-      <section className="bg-cream">
-        <div className="container mx-auto px-4 py-24">
-          <div className="text-center mb-14">
-            <motion.div initial="hidden" whileInView="visible" viewport={{ once: true }} variants={fadeUp} custom={0}>
-              <span className="inline-block text-sm font-semibold text-gold uppercase tracking-wider mb-3">{t("Our Programs", "برامجنا")}</span>
-              <h2 className="font-heading text-3xl font-bold md:text-4xl text-foreground gold-underline">
-                {t("Explore Our Courses", "استكشف دوراتنا")}
-              </h2>
-              <p className="mt-6 text-muted-foreground max-w-2xl mx-auto font-body">
-                {t(
-                  "Each course is carefully structured with live sessions, assignments, and certified exams.",
-                  "كل دورة مصممة بعناية مع حصص مباشرة وواجبات واختبارات معتمدة."
-                )}
-              </p>
-            </motion.div>
-          </div>
-
-          <div className="grid gap-8 md:grid-cols-3">
-            {[
-              {
-                img: "https://images.unsplash.com/photo-1609599006353-e629aaabfeae?w=600&q=80",
-                badge: t("Most Popular", "الأكثر طلباً"),
-                badgeColor: "bg-gold text-gold-foreground",
-                titleAr: "القرآن والتجويد",
-                titleEn: "Quran & Tajweed",
-                desc: t("Perfect your recitation with certified Huffadh — from beginner Qaida to advanced Tajweed rules.", "أتقن تلاوتك مع حفاظ مجازين — من قاعدة المبتدئين إلى أحكام التجويد المتقدمة."),
-                level: t("⭐ All Levels", "⭐ جميع المستويات"),
-              },
-              {
-                img: "https://images.unsplash.com/photo-1581351123004-757df051db8b?w=600&q=80",
-                badge: t("New", "جديد"),
-                badgeColor: "bg-emerald text-primary-foreground",
-                titleAr: "اللغة العربية",
-                titleEn: "Arabic Language",
-                desc: t("From beginner to advanced — reading, writing, grammar and spoken Arabic.", "من المبتدئ إلى المتقدم — القراءة والكتابة والقواعد والعربية المحكية."),
-                level: t("⭐ Beginner Friendly", "⭐ مناسب للمبتدئين"),
-              },
-              {
-                img: "https://images.unsplash.com/photo-1564769625905-50e93615e769?w=600&q=80",
-                badge: t("Certified", "معتمد"),
-                badgeColor: "bg-secondary text-secondary-foreground",
-                titleAr: "العلوم الإسلامية",
-                titleEn: "Islamic Sciences",
-                desc: t("Fiqh, Aqeedah, Seerah — comprehensive Islamic education with qualified scholars.", "الفقه والعقيدة والسيرة — تعليم إسلامي شامل مع علماء مؤهلين."),
-                level: t("⭐ Intermediate", "⭐ متوسط"),
-              },
-            ].map((course, i) => (
-              <motion.div key={i} className="rounded-2xl overflow-hidden border border-border bg-card shadow-premium card-premium" initial="hidden" whileInView="visible" viewport={{ once: true }} variants={fadeUp} custom={i}>
-                <div className="relative h-48 overflow-hidden">
-                  <img src={course.img} alt={course.titleEn} className="w-full h-full object-cover" />
-                  <span className={`absolute top-3 right-3 ${course.badgeColor} text-xs font-semibold px-3 py-1 rounded-full`}>
-                    {course.badge}
-                  </span>
-                </div>
-                <div className="p-6">
-                  <p className="text-sm font-arabic text-gold mb-1" dir="rtl">{course.titleAr}</p>
-                  <h3 className="font-heading text-xl font-bold text-foreground">{course.titleEn}</h3>
-                  <p className="mt-2 text-sm text-muted-foreground font-body leading-relaxed">{course.desc}</p>
-                  <div className="mt-4 flex items-center justify-between">
-                    <span className="text-xs text-muted-foreground">{course.level}</span>
-                    <Button size="sm" className="bg-gold text-gold-foreground hover:bg-gold/90 rounded-lg font-semibold shadow-gold" asChild>
-                      <Link to="/register">{t("Enrol Now", "سجل الآن")}</Link>
-                    </Button>
+                <div className="ta-course-body">
+                  <div className="ta-course-arabic">{c.ar}</div>
+                  <div className="ta-course-title">{c.en}</div>
+                  <div className="ta-course-desc">{c.desc}</div>
+                  <div className="ta-course-footer">
+                    <span className="ta-course-level">{c.level}</span>
+                    <button className="ta-course-btn" onClick={() => navigate("/auth")}>Enrol Now</button>
                   </div>
                 </div>
-              </motion.div>
+              </div>
             ))}
           </div>
         </div>
       </section>
 
-      {/* ============ SECTION 6 — STATS ============ */}
-      <section className="relative bg-primary geometric-pattern">
-        <div className="absolute inset-0 bg-primary/90" />
-        <div className="container relative mx-auto px-4 py-20 text-center">
-          <motion.p className="text-lg font-arabic text-gold/80 mb-3" dir="rtl" initial="hidden" whileInView="visible" viewport={{ once: true }} variants={fadeUp} custom={0}>
-            الحمد لله على نعمة العلم
-          </motion.p>
-          <motion.h2 className="font-heading text-3xl font-bold text-primary-foreground md:text-4xl mb-12" initial="hidden" whileInView="visible" viewport={{ once: true }} variants={fadeUp} custom={1}>
-            {t("Growing Together in Knowledge", "ننمو معاً في العلم")}
-          </motion.h2>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
+      {/* STATS */}
+      <section className="ta-stats-section">
+        <div className="ta-stats-inner">
+          <div className="ta-stats-arabic">الحمد لله على نعمة العلم</div>
+          <h2 className="ta-stats-title">Growing Together in Knowledge</h2>
+          <div className="ta-stats-grid">
+            {[["500+","Lessons Delivered"],["3","Certified Scholars"],["95%","Student Satisfaction"],["4","Core Programs"]].map(([n,l]) => (
+              <div key={l}>
+                <div className="ta-stat-number">{n}</div>
+                <div className="ta-stat-label">{l}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* CTA */}
+      <section className="ta-cta-section">
+        <div className="ta-cta-inner">
+          <div className="ta-cta-arabic">اطلبوا العلم من المهد إلى اللحد</div>
+          <h2 className="ta-cta-title">Begin Your Journey Today</h2>
+          <p className="ta-cta-text">Join Tahleem Academy and take your first step towards mastering Arabic and Islamic knowledge — guided by qualified scholars.</p>
+          <button className="ta-cta-btn" onClick={() => navigate("/auth")}>Create Free Account →</button>
+        </div>
+      </section>
+
+      {/* WHY TAHLEEM — 6 CARDS */}
+      <section className="ta-why6-section">
+        <div className="ta-why6-inner">
+          <div className="ta-why6-tag">لماذا أكاديمية التعليم؟</div>
+          <h2 className="ta-why6-title">Why Tahleem Academy?</h2>
+          <p className="ta-why6-subtitle">Dedicated to nurturing the next generation of Muslims through comprehensive Islamic education that combines traditional values with modern teaching excellence.</p>
+          <div className="ta-why6-grid">
             {[
-              { value: "500+", label: t("Lessons Delivered", "درس تم تقديمه") },
-              { value: "3", label: t("Certified Scholars", "علماء مجازون") },
-              { value: "95%", label: t("Student Satisfaction", "رضا الطلاب") },
-              { value: "4", label: t("Core Programs", "برامج أساسية") },
-            ].map((s, i) => (
-              <motion.div key={i} className="text-center" initial="hidden" whileInView="visible" viewport={{ once: true }} variants={fadeUp} custom={i}>
-                <div className="font-heading text-4xl font-bold text-gold md:text-5xl">{s.value}</div>
-                <div className="mt-2 text-sm text-primary-foreground/70">{s.label}</div>
-              </motion.div>
+              {icon:"🕌",title:"Traditional Foundation",text:"Our curriculum is rooted in authentic Islamic scholarship — the same knowledge passed down through generations of scholars."},
+              {icon:"💻",title:"Modern Platform",text:"Live classes, recorded sessions, interactive exams and progress tracking — all in one place, accessible anywhere."},
+              {icon:"👨‍🏫",title:"Qualified Teachers",text:"Learn from certified Islamic scholars and Arabic language specialists who are passionate about your growth."},
+              {icon:"📊",title:"Track Your Progress",text:"Detailed transcripts, term results and performance reports help students and parents stay informed at every stage."},
+              {icon:"🤲",title:"Inclusive Community",text:"Group classes and one-on-one private sessions available — tailored learning for every student's needs and pace."},
+              {icon:"🏆",title:"Certified Programmes",text:"Earn recognised certificates in Arabic Language, Tajweed, Quran Memorisation and Islamic Sciences."},
+            ].map((c) => (
+              <div className="ta-why6-card" key={c.title}>
+                <div className="ta-why6-icon">{c.icon}</div>
+                <h3>{c.title}</h3>
+                <p>{c.text}</p>
+              </div>
             ))}
           </div>
         </div>
       </section>
 
-      {/* ============ SECTION 7 — WHY TAHLEEM (6 CARDS) ============ */}
-      <section className="bg-background">
-        <div className="container mx-auto px-4 py-24">
-          <div className="text-center mb-14">
-            <motion.div initial="hidden" whileInView="visible" viewport={{ once: true }} variants={fadeUp} custom={0}>
-              <span className="inline-block text-sm font-arabic text-gold mb-3" dir="rtl">لماذا أكاديمية التعليم؟</span>
-              <h2 className="font-heading text-3xl font-bold md:text-4xl text-foreground gold-underline">
-                {t("Why Tahleem Academy?", "لماذا أكاديمية تعليم؟")}
-              </h2>
-              <p className="mt-6 text-muted-foreground max-w-3xl mx-auto font-body">
-                {t(
-                  "Dedicated to nurturing the next generation of Muslims through comprehensive Islamic education that combines traditional values with modern teaching excellence.",
-                  "مكرسة لرعاية الجيل القادم من المسلمين من خلال تعليم إسلامي شامل يجمع بين القيم التقليدية والتميز التعليمي الحديث."
-                )}
-              </p>
-            </motion.div>
+      {/* FOOTER */}
+      <footer className="ta-footer">
+        <div className="ta-footer-top">
+          <div>
+            <div className="ta-footer-logo">
+              <div className="ta-footer-logo-icon">📖</div>
+              <div>
+                <div className="ta-footer-logo-name">Tahleem Academy</div>
+                <div className="ta-footer-logo-ar">أكاديمية التعليم</div>
+              </div>
+            </div>
+            <p className="ta-footer-tagline">Empowering students to master Arabic and Islamic knowledge through structured learning and certified excellence.</p>
+            <div className="ta-footer-social">
+              <a href="mailto:Tahleemacademy09@gmail.com" className="ta-social-btn">✉️ Email Us</a>
+              <a href="https://wa.me/2348163310471" className="ta-social-btn">💬 WhatsApp</a>
+            </div>
           </div>
-
-          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-            {[
-              { icon: "🕌", title: t("Traditional Foundation", "أساس تقليدي"), desc: t("Our curriculum is rooted in authentic Islamic scholarship — the same knowledge passed down through generations of scholars.", "منهجنا متجذر في العلم الإسلامي الأصيل — نفس المعرفة المتوارثة عبر أجيال من العلماء.") },
-              { icon: "💻", title: t("Modern Platform", "منصة حديثة"), desc: t("Live classes, recorded sessions, interactive exams and progress tracking — all in one place, accessible anywhere.", "حصص مباشرة وتسجيلات واختبارات تفاعلية وتتبع التقدم — كل شيء في مكان واحد.") },
-              { icon: "👨‍🏫", title: t("Qualified Teachers", "معلمون مؤهلون"), desc: t("Learn from certified Islamic scholars and Arabic language specialists who are passionate about your growth.", "تعلم من علماء إسلاميين مجازين ومتخصصين في اللغة العربية شغوفين بنموك.") },
-              { icon: "📊", title: t("Track Your Progress", "تابع تقدمك"), desc: t("Detailed transcripts, term results and performance reports help students and parents stay informed at every stage.", "كشوف درجات مفصلة ونتائج فصلية وتقارير أداء تبقي الطلاب وأولياء الأمور على اطلاع.") },
-              { icon: "🤲", title: t("Inclusive Community", "مجتمع شامل"), desc: t("Group classes and one-on-one private sessions available — tailored learning for every student's needs and pace.", "حصص جماعية وخصوصية — تعلم مخصص لاحتياجات كل طالب ووتيرته.") },
-              { icon: "🏆", title: t("Certified Programmes", "برامج معتمدة"), desc: t("Earn recognised certificates in Arabic Language, Tajweed, Quran Memorisation and Islamic Sciences.", "احصل على شهادات معترف بها في اللغة العربية والتجويد وحفظ القرآن والعلوم الإسلامية.") },
-            ].map((card, i) => (
-              <motion.div key={i} className="rounded-2xl p-7 bg-cream border border-border shadow-sm hover:shadow-premium transition-all duration-300 hover:border-b-4 hover:border-b-gold" initial="hidden" whileInView="visible" viewport={{ once: true }} variants={fadeUp} custom={i}>
-                <div className="text-3xl mb-4">{card.icon}</div>
-                <h3 className="font-heading text-lg font-bold text-foreground mb-2">{card.title}</h3>
-                <p className="text-sm text-muted-foreground leading-relaxed font-body">{card.desc}</p>
-              </motion.div>
-            ))}
+          <div>
+            <h4 className="ta-footer-heading">Quick Links</h4>
+            <ul className="ta-footer-links">
+              {["🏠 Home","📚 Courses","ℹ️ About Us","📋 Programs","📞 Contact"].map(l=><li key={l}><a href="#">{l}</a></li>)}
+            </ul>
+          </div>
+          <div>
+            <h4 className="ta-footer-heading">Programs</h4>
+            <ul className="ta-footer-links">
+              {["🔤 Arabic Language","🎵 Tajweed","📖 Quran Memorisation","⚖️ Islamic Fiqh","🕌 Islamic Sciences"].map(l=><li key={l}><a href="#">{l}</a></li>)}
+            </ul>
+          </div>
+          <div>
+            <h4 className="ta-footer-heading">Contact Us</h4>
+            <ul className="ta-footer-contact">
+              <li><span className="ta-contact-icon">✉️</span><a href="mailto:Tahleemacademy09@gmail.com">Tahleemacademy09@gmail.com</a></li>
+              <li><span className="ta-contact-icon">📱</span><a href="tel:+2348163310471">+234 816 331 0471</a></li>
+              <li><span className="ta-contact-icon">💬</span><a href="https://wa.me/2348163310471">WhatsApp Us</a></li>
+              <li><span className="ta-contact-icon">🌐</span><a href="#">tahleemacademy.vercel.app</a></li>
+            </ul>
           </div>
         </div>
-      </section>
-
-      {/* ============ SECTION 8 — CTA ============ */}
-      <section className="relative">
-        <div
-          className="absolute inset-0 bg-cover bg-center"
-          style={{
-            backgroundImage: `url('https://images.unsplash.com/photo-1564769625905-50e93615e769?w=1600&q=80')`,
-            filter: "brightness(0.3)",
-          }}
-        />
-        <div className="absolute inset-0 bg-primary/70" />
-        <div className="container relative mx-auto px-4 py-24 text-center">
-          <motion.div initial="hidden" whileInView="visible" viewport={{ once: true }} variants={fadeUp} custom={0}>
-            <p className="text-lg font-arabic text-gold/80 mb-4" dir="rtl">
-              اطلبوا العلم من المهد إلى اللحد
-            </p>
-            <h2 className="font-heading text-3xl font-bold text-white md:text-4xl mb-4">
-              {t("Begin Your Journey Today", "ابدأ رحلتك اليوم")}
-            </h2>
-            <p className="text-white/70 max-w-lg mx-auto mb-10 font-body">
-              {t(
-                "Join Tahleem Academy and take your first step towards mastering Arabic and Islamic knowledge — guided by qualified scholars.",
-                "انضم إلى أكاديمية تعليم واتخذ خطوتك الأولى نحو إتقان العربية والعلوم الإسلامية — بإرشاد علماء مؤهلين."
-              )}
-            </p>
-            <Button size="lg" className="bg-gold text-gold-foreground hover:bg-gold/90 rounded-xl px-10 py-6 text-base font-semibold shadow-gold" asChild>
-              <Link to="/register">
-                {t("Create Free Account", "إنشاء حساب مجاني")}
-                <ArrowRight className="ml-2 h-4 w-4" />
-              </Link>
-            </Button>
-          </motion.div>
+        <div className="ta-footer-divider"></div>
+        <div className="ta-footer-bottom">
+          <div className="ta-footer-bottom-arabic">وَقُل رَّبِّ زِدْنِي عِلْمًا</div>
+          <div className="ta-footer-copy">© 2026 Tahleem Academy. All Rights Reserved. Built with ❤️ for the Ummah.</div>
         </div>
-      </section>
+      </footer>
+
     </div>
   );
 };
