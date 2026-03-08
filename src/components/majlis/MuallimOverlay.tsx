@@ -154,7 +154,7 @@ const MuallimOverlay = () => {
 
       {/* Overlay panel */}
       {open && (
-        <div className={`fixed ${panelPosition} z-40 flex h-[500px] w-[360px] max-w-[calc(100vw-2rem)] flex-col rounded-2xl border bg-card shadow-2xl`}>
+        <div className={`fixed ${panelPosition} z-[60] flex h-[500px] w-[360px] max-w-[calc(100vw-2rem)] flex-col rounded-2xl border bg-card shadow-2xl`}>
           {/* Header */}
           <div className="flex items-center justify-between rounded-t-2xl bg-primary px-4 py-3">
             <div className="flex items-center gap-2 text-primary-foreground">
