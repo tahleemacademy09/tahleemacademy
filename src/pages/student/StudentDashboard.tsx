@@ -373,9 +373,14 @@ const StudentDashboard = () => {
               <Button variant="ghost" size="icon" className="h-7 w-7" onClick={prevMonth}>
                 <ChevronLeft className="h-4 w-4" />
               </Button>
-              <span className="text-sm font-medium min-w-[120px] text-center">
-                {calendarMonth.toLocaleDateString(language === "ar" ? "ar-SA" : "en-US", { month: 'long', year: 'numeric' })}
-              </span>
+              <div className="text-center">
+                <span className="text-sm font-medium block">
+                  {calendarMonth.toLocaleDateString(language === "ar" ? "ar-SA" : "en-US", { month: 'long', year: 'numeric' })}
+                </span>
+                <span className="text-[10px] text-muted-foreground font-arabic" dir="rtl">
+                  {(() => { const h = toHijri(new Date(calendarYear, calendarMonthIdx, 15)); return `${h.month} ${h.year} هـ`; })()}
+                </span>
+              </div>
               <Button variant="ghost" size="icon" className="h-7 w-7" onClick={nextMonth}>
                 <ChevronRight className="h-4 w-4" />
               </Button>
