@@ -111,7 +111,7 @@ const RecordingPlayer = () => {
 
       // Increment view count
       await supabase.from("session_recordings")
-        .update({ view_count: (rec.view_count || 0) + 1, last_watched_at: new Date().toISOString() } as any)
+        .update({ view_count: ((rec as any).view_count || 0) + 1, last_watched_at: new Date().toISOString() } as any)
         .eq("id", recordingId);
 
     } catch (err) {
