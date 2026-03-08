@@ -387,23 +387,34 @@ const GradingPage = () => {
           {filteredAttempts.length === 0 ? (
             <Card><CardContent className="p-8 text-center text-muted-foreground">{t("No exams to grade", "لا توجد امتحانات للتصحيح")}</CardContent></Card>
           ) : (
-            <div className="space-y-2">
-              {filteredAttempts.map((attempt) => (
-                <Card key={attempt.id} className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => loadAttempt(attempt)}>
-                  <CardContent className="flex items-center justify-between p-4 flex-wrap gap-2">
-                    <div>
-                      <div className="font-semibold text-sm">{language === "ar" ? attempt.exams?.title_ar || attempt.exams?.title : attempt.exams?.title}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {attempt.profiles?.full_name || attempt.profiles?.email || "Unknown"} • {attempt.submitted_at ? new Date(attempt.submitted_at).toLocaleString() : ""}
-                      </div>
+            <div className="space-y-6">
+              {(["first", "second", "third"] as const).map((term) => {
+                const termAttempts = groupByTerm(filteredAttempts)[term];
+                if (!termAttempts?.length) return null;
+                return (
+                  <div key={term}>
+                    <h3 className="text-lg font-semibold mb-3 border-b pb-2">{termLabels[term]}</h3>
+                    <div className="space-y-2">
+                      {termAttempts.map((attempt: any) => (
+                        <Card key={attempt.id} className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => loadAttempt(attempt)}>
+                          <CardContent className="flex items-center justify-between p-4 flex-wrap gap-2">
+                            <div>
+                              <div className="font-semibold text-sm">{language === "ar" ? attempt.exams?.title_ar || attempt.exams?.title : attempt.exams?.title}</div>
+                              <div className="text-xs text-muted-foreground">
+                                {attempt.profiles?.full_name || attempt.profiles?.email || "Unknown"} • {attempt.submitted_at ? new Date(attempt.submitted_at).toLocaleString() : ""}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {attempt.tab_switches > 0 && <Badge variant="destructive" className="text-xs">{attempt.tab_switches} ⚠️</Badge>}
+                              <Badge>{t("Needs Grading", "يحتاج تصحيح")}</Badge>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))}
                     </div>
-                    <div className="flex items-center gap-2">
-                      {attempt.tab_switches > 0 && <Badge variant="destructive" className="text-xs">{attempt.tab_switches} ⚠️</Badge>}
-                      <Badge>{t("Needs Grading", "يحتاج تصحيح")}</Badge>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
+                  </div>
+                );
+              })}
             </div>
           )}
         </TabsContent>
@@ -412,26 +423,37 @@ const GradingPage = () => {
           {filteredAttempts.length === 0 ? (
             <Card><CardContent className="p-8 text-center text-muted-foreground">{t("No graded exams yet", "لا توجد امتحانات مُصححة")}</CardContent></Card>
           ) : (
-            <div className="space-y-2">
-              {filteredAttempts.map((attempt) => (
-                <Card key={attempt.id} className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => loadAttempt(attempt)}>
-                  <CardContent className="flex items-center justify-between p-4 flex-wrap gap-2">
-                    <div>
-                      <div className="font-semibold text-sm">{language === "ar" ? attempt.exams?.title_ar || attempt.exams?.title : attempt.exams?.title}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {attempt.profiles?.full_name || attempt.profiles?.email || "Unknown"} • {attempt.submitted_at ? new Date(attempt.submitted_at).toLocaleString() : ""}
-                      </div>
+            <div className="space-y-6">
+              {(["first", "second", "third"] as const).map((term) => {
+                const termAttempts = groupByTerm(filteredAttempts)[term];
+                if (!termAttempts?.length) return null;
+                return (
+                  <div key={term}>
+                    <h3 className="text-lg font-semibold mb-3 border-b pb-2">{termLabels[term]}</h3>
+                    <div className="space-y-2">
+                      {termAttempts.map((attempt: any) => (
+                        <Card key={attempt.id} className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => loadAttempt(attempt)}>
+                          <CardContent className="flex items-center justify-between p-4 flex-wrap gap-2">
+                            <div>
+                              <div className="font-semibold text-sm">{language === "ar" ? attempt.exams?.title_ar || attempt.exams?.title : attempt.exams?.title}</div>
+                              <div className="text-xs text-muted-foreground">
+                                {attempt.profiles?.full_name || attempt.profiles?.email || "Unknown"} • {attempt.submitted_at ? new Date(attempt.submitted_at).toLocaleString() : ""}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {attempt.passed ? <CheckCircle className="h-4 w-4 text-emerald" /> : <XCircle className="h-4 w-4 text-destructive" />}
+                              <span className="font-semibold text-sm">{Math.round(attempt.percentage || 0)}%</span>
+                              <Badge variant={attempt.passed ? "default" : "destructive"}>
+                                {attempt.passed ? t("Passed", "ناجح") : t("Failed", "راسب")}
+                              </Badge>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))}
                     </div>
-                    <div className="flex items-center gap-2">
-                      {attempt.passed ? <CheckCircle className="h-4 w-4 text-emerald" /> : <XCircle className="h-4 w-4 text-destructive" />}
-                      <span className="font-semibold text-sm">{Math.round(attempt.percentage || 0)}%</span>
-                      <Badge variant={attempt.passed ? "default" : "destructive"}>
-                        {attempt.passed ? t("Passed", "ناجح") : t("Failed", "راسب")}
-                      </Badge>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
+                  </div>
+                );
+              })}
             </div>
           )}
         </TabsContent>
