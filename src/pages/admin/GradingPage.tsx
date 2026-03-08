@@ -399,7 +399,12 @@ const GradingPage = () => {
                         <Card key={attempt.id} className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => loadAttempt(attempt)}>
                           <CardContent className="flex items-center justify-between p-4 flex-wrap gap-2">
                             <div>
-                              <div className="font-semibold text-sm">{language === "ar" ? attempt.exams?.title_ar || attempt.exams?.title : attempt.exams?.title}</div>
+                              <div className="font-semibold text-sm flex items-center gap-2">
+                                {language === "ar" ? attempt.exams?.title_ar || attempt.exams?.title : attempt.exams?.title}
+                                <Badge variant="outline" className={`text-[10px] ${(attempt.exams?.type || "exam") === "test" ? "border-amber-500 text-amber-600" : "border-primary text-primary"}`}>
+                                  {(attempt.exams?.type || "exam") === "test" ? t("Test", "تمرين") : t("Exam", "امتحان")}
+                                </Badge>
+                              </div>
                               <div className="text-xs text-muted-foreground">
                                 {attempt.profiles?.full_name || attempt.profiles?.email || "Unknown"} • {attempt.submitted_at ? new Date(attempt.submitted_at).toLocaleString() : ""}
                               </div>
