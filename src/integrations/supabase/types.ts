@@ -1910,6 +1910,186 @@ export type Database = {
         }
         Relationships: []
       }
+      public_class_guests: {
+        Row: {
+          class_id: string | null
+          device_info: string | null
+          duration_minutes: number | null
+          guest_email: string | null
+          guest_name: string
+          id: string
+          is_registered_user: boolean | null
+          joined_at: string | null
+          left_at: string | null
+          user_id: string | null
+        }
+        Insert: {
+          class_id?: string | null
+          device_info?: string | null
+          duration_minutes?: number | null
+          guest_email?: string | null
+          guest_name: string
+          id?: string
+          is_registered_user?: boolean | null
+          joined_at?: string | null
+          left_at?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          class_id?: string | null
+          device_info?: string | null
+          duration_minutes?: number | null
+          guest_email?: string | null
+          guest_name?: string
+          id?: string
+          is_registered_user?: boolean | null
+          joined_at?: string | null
+          left_at?: string | null
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "public_class_guests_class_id_fkey"
+            columns: ["class_id"]
+            isOneToOne: false
+            referencedRelation: "public_classes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      public_class_registrations: {
+        Row: {
+          class_id: string | null
+          email: string | null
+          id: string
+          name: string
+          phone: string | null
+          registered_at: string | null
+        }
+        Insert: {
+          class_id?: string | null
+          email?: string | null
+          id?: string
+          name: string
+          phone?: string | null
+          registered_at?: string | null
+        }
+        Update: {
+          class_id?: string | null
+          email?: string | null
+          id?: string
+          name?: string
+          phone?: string | null
+          registered_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "public_class_registrations_class_id_fkey"
+            columns: ["class_id"]
+            isOneToOne: false
+            referencedRelation: "public_classes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      public_classes: {
+        Row: {
+          actual_end_time: string | null
+          actual_start_time: string | null
+          allow_guest_camera: boolean | null
+          allow_guest_mic: boolean | null
+          allow_guests: boolean | null
+          chat_enabled: boolean | null
+          created_at: string | null
+          description: string | null
+          description_ar: string | null
+          guest_count: number | null
+          host_id: string
+          id: string
+          is_featured: boolean | null
+          join_url: string | null
+          livekit_room_name: string | null
+          max_guests: number | null
+          password: string | null
+          password_enabled: boolean | null
+          raise_hand_enabled: boolean | null
+          recording_enabled: boolean | null
+          require_name: boolean | null
+          room_code: string
+          scheduled_at: string | null
+          status: string | null
+          subject_id: string | null
+          title: string
+          title_ar: string | null
+        }
+        Insert: {
+          actual_end_time?: string | null
+          actual_start_time?: string | null
+          allow_guest_camera?: boolean | null
+          allow_guest_mic?: boolean | null
+          allow_guests?: boolean | null
+          chat_enabled?: boolean | null
+          created_at?: string | null
+          description?: string | null
+          description_ar?: string | null
+          guest_count?: number | null
+          host_id: string
+          id?: string
+          is_featured?: boolean | null
+          join_url?: string | null
+          livekit_room_name?: string | null
+          max_guests?: number | null
+          password?: string | null
+          password_enabled?: boolean | null
+          raise_hand_enabled?: boolean | null
+          recording_enabled?: boolean | null
+          require_name?: boolean | null
+          room_code: string
+          scheduled_at?: string | null
+          status?: string | null
+          subject_id?: string | null
+          title: string
+          title_ar?: string | null
+        }
+        Update: {
+          actual_end_time?: string | null
+          actual_start_time?: string | null
+          allow_guest_camera?: boolean | null
+          allow_guest_mic?: boolean | null
+          allow_guests?: boolean | null
+          chat_enabled?: boolean | null
+          created_at?: string | null
+          description?: string | null
+          description_ar?: string | null
+          guest_count?: number | null
+          host_id?: string
+          id?: string
+          is_featured?: boolean | null
+          join_url?: string | null
+          livekit_room_name?: string | null
+          max_guests?: number | null
+          password?: string | null
+          password_enabled?: boolean | null
+          raise_hand_enabled?: boolean | null
+          recording_enabled?: boolean | null
+          require_name?: boolean | null
+          room_code?: string
+          scheduled_at?: string | null
+          status?: string | null
+          subject_id?: string | null
+          title?: string
+          title_ar?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "public_classes_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       recording_bookmarks: {
         Row: {
           created_at: string | null
