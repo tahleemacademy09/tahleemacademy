@@ -263,6 +263,90 @@ const StudentManagement = () => {
 
   if (loading) return <div className="flex items-center justify-center min-h-[400px]"><div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" /></div>;
 
+  // Enrol student in subject manually
+  const manualEnrol = async (userId: string, subjectId: string) => {
+    const { data: courses } = await supabase.from("courses").select("id").eq("subject_id", subjectId);
+    if (!courses?.length) { toast({ title: t("No courses found for this subject", "لا توجد دورات لهذه المادة"), variant: "destructive" }); return; }
+    const { error } = await supabase.from("enrollments").insert({ user_id: userId, course_id: courses[0].id });
+    if (error) { toast({ title: t("Error", "خطأ"), description: error.message, variant: "destructive" }); return; }
+    toast({ title: t("Student enrolled", "تم تسجيل الطالب") });
+    if (detailStudent) viewStudentDetails(detailStudent);
+  };
+
+  // Export exam results CSV
+  const exportExamResultsCSV = () => {
+    if (!detailStudent || studentAttempts.length === 0) return;
+    const headers = ["Exam", "Type", "Status", "Score", "Total", "Percentage", "Passed", "Date"];
+    const csv = [headers.join(","), ...studentAttempts.map(a =>
+      [a.exams?.title, a.exams?.type || "exam", a.status, a.score, a.total_points, Math.round(a.percentage || 0), a.passed ? "Yes" : "No", a.submitted_at?.split("T")[0] || ""].join(",")
+    )].join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = `results-${detailStudent.full_name || "student"}.csv`; a.click();
+    toast({ title: t("Results exported", "تم تصدير النتائج") });
+  };
+
+  // View exam answers side by side
+  const [viewingAnswers, setViewingAnswers] = useState<any>(null);
+  const [examAnswers, setExamAnswers] = useState<any[]>([]);
+  const [examQuestions, setExamQuestions] = useState<any[]>([]);
+
+  const viewAnswersSideBySide = async (attempt: any) => {
+    const [answersRes, questionsRes] = await Promise.all([
+      supabase.from("exam_answers").select("*").eq("attempt_id", attempt.id),
+      supabase.from("exam_questions").select("*").eq("exam_id", attempt.exam_id).order("sort_order"),
+    ]);
+    setExamAnswers(answersRes.data || []);
+    setExamQuestions(questionsRes.data || []);
+    setViewingAnswers(attempt);
+  };
+
+  // Enrol dialog for detail view
+  const [enrolSubjectId, setEnrolSubjectId] = useState("");
+
+  // ─── EXAM ANSWERS SIDE BY SIDE VIEW ───
+  if (viewingAnswers) {
+    return (
+      <div className="container mx-auto px-4 py-6">
+        <div className="mb-4 flex items-center justify-between">
+          <h1 className="text-xl font-bold">{t("Answers Review", "مراجعة الإجابات")} — {language === "ar" ? viewingAnswers.exams?.title_ar || viewingAnswers.exams?.title : viewingAnswers.exams?.title}</h1>
+          <Button variant="outline" size="sm" onClick={() => setViewingAnswers(null)}>{t("Back", "رجوع")}</Button>
+        </div>
+        <div className="space-y-4">
+          {examQuestions.map((q, i) => {
+            const answer = examAnswers.find(a => a.question_id === q.id);
+            return (
+              <Card key={q.id} className={answer?.is_correct === true ? "border-emerald-300" : answer?.is_correct === false ? "border-destructive/50" : ""}>
+                <CardContent className="p-4 space-y-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="font-medium text-sm">Q{i + 1}: <span dangerouslySetInnerHTML={{ __html: q.question_text }} /></p>
+                    {answer?.is_correct !== null && (
+                      answer?.is_correct ? <CheckCircle className="h-5 w-5 text-emerald-500 shrink-0" /> : <XCircle className="h-5 w-5 text-destructive shrink-0" />
+                    )}
+                  </div>
+                  <div className="grid md:grid-cols-2 gap-3 text-sm">
+                    <div className="p-2 rounded bg-muted/50">
+                      <p className="text-xs font-medium text-muted-foreground mb-1">{t("Student Answer", "إجابة الطالب")}</p>
+                      <p>{answer?.answer_text || <span className="text-muted-foreground italic">{t("No answer", "بدون إجابة")}</span>}</p>
+                    </div>
+                    <div className="p-2 rounded bg-emerald-50 dark:bg-emerald-950/20">
+                      <p className="text-xs font-medium text-emerald-700 dark:text-emerald-400 mb-1">{t("Correct Answer", "الإجابة الصحيحة")}</p>
+                      <p>{q.correct_answer || "—"}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                    <span>{t("Points", "الدرجات")}: {answer?.points_awarded ?? "—"}/{q.points}</span>
+                    {q.explanation && <span>{t("Explanation", "الشرح")}: {q.explanation}</span>}
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
   // ─── STUDENT DETAIL VIEW ───
   if (detailStudent) {
     return (
@@ -286,8 +370,12 @@ const StudentManagement = () => {
               </p>
             </div>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
+            <Button variant="default" size="sm" onClick={() => navigate(`/admin/students/${detailStudent.user_id}/view`)}>
+              <Eye className="h-3 w-3 me-1" />{t("View as Student", "عرض كطالب")}
+            </Button>
             <Button variant="outline" size="sm" onClick={() => openEditProfile(detailStudent)}><Edit className="h-3 w-3 me-1" />{t("Edit", "تعديل")}</Button>
+            <Button variant="outline" size="sm" onClick={exportExamResultsCSV}><Download className="h-3 w-3 me-1" />{t("Export Results", "تصدير النتائج")}</Button>
             <Button variant="outline" size="sm" onClick={() => setDetailStudent(null)}>{t("Back", "رجوع")}</Button>
           </div>
         </div>
