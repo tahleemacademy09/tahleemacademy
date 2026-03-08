@@ -5,14 +5,16 @@ import { Badge } from "@/components/ui/badge";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { motion } from "framer-motion";
 import { BookOpen, Clock, Users } from "lucide-react";
+import quranTajweedImg from "@/assets/quran-tajweed.jpeg";
+import arabicLanguageImg from "@/assets/arabic-language.jpeg";
 
 const DEMO_COURSES = [
-  { id: "1", title: "Foundations of Arabic", title_ar: "أساسيات اللغة العربية", description: "Build a strong foundation in reading, writing, and basic conversation.", description_ar: "بناء أساس قوي في القراءة والكتابة والمحادثة الأساسية.", level: "beginner", category: "Arabic Language", students: 120, duration: "12 weeks" },
-  { id: "2", title: "Intermediate Arabic Grammar", title_ar: "النحو العربي المتوسط", description: "Deep dive into Arabic grammar rules — Nahw and Sarf.", description_ar: "دراسة معمّقة في قواعد النحو والصرف.", level: "intermediate", category: "Arabic Language", students: 85, duration: "16 weeks" },
-  { id: "3", title: "Tajweed Fundamentals", title_ar: "أساسيات التجويد", description: "Learn the rules of Quran recitation with proper pronunciation.", description_ar: "تعلّم أحكام تلاوة القرآن مع النطق الصحيح.", level: "beginner", category: "Tajweed", students: 200, duration: "10 weeks" },
-  { id: "4", title: "Advanced Tajweed", title_ar: "التجويد المتقدم", description: "Master complex Tajweed rules and recitation styles.", description_ar: "إتقان أحكام التجويد المتقدمة وأساليب القراءة.", level: "advanced", category: "Tajweed", students: 60, duration: "20 weeks" },
-  { id: "5", title: "Quran Memorization Program", title_ar: "برنامج حفظ القرآن", description: "Structured Hifz program with weekly milestones and review sessions.", description_ar: "برنامج حفظ منظم مع أهداف أسبوعية وجلسات مراجعة.", level: "beginner", category: "Quran", students: 150, duration: "52 weeks" },
-  { id: "6", title: "Arabic Literature & Poetry", title_ar: "الأدب العربي والشعر", description: "Explore classical and modern Arabic literature and poetry.", description_ar: "استكشاف الأدب والشعر العربي الكلاسيكي والحديث.", level: "advanced", category: "Arabic Language", students: 45, duration: "14 weeks" },
+  { id: "1", title: "Foundations of Arabic", title_ar: "أساسيات اللغة العربية", description: "Build a strong foundation in reading, writing, and basic conversation.", description_ar: "بناء أساس قوي في القراءة والكتابة والمحادثة الأساسية.", level: "beginner", category: "Arabic Language", students: 120, duration: "12 weeks", image: arabicLanguageImg },
+  { id: "2", title: "Intermediate Arabic Grammar", title_ar: "النحو العربي المتوسط", description: "Deep dive into Arabic grammar rules — Nahw and Sarf.", description_ar: "دراسة معمّقة في قواعد النحو والصرف.", level: "intermediate", category: "Arabic Language", students: 85, duration: "16 weeks", image: arabicLanguageImg },
+  { id: "3", title: "Tajweed Fundamentals", title_ar: "أساسيات التجويد", description: "Learn the rules of Quran recitation with proper pronunciation.", description_ar: "تعلّم أحكام تلاوة القرآن مع النطق الصحيح.", level: "beginner", category: "Tajweed", students: 200, duration: "10 weeks", image: quranTajweedImg },
+  { id: "4", title: "Advanced Tajweed", title_ar: "التجويد المتقدم", description: "Master complex Tajweed rules and recitation styles.", description_ar: "إتقان أحكام التجويد المتقدمة وأساليب القراءة.", level: "advanced", category: "Tajweed", students: 60, duration: "20 weeks", image: quranTajweedImg },
+  { id: "5", title: "Quran Memorization Program", title_ar: "برنامج حفظ القرآن", description: "Structured Hifz program with weekly milestones and review sessions.", description_ar: "برنامج حفظ منظم مع أهداف أسبوعية وجلسات مراجعة.", level: "beginner", category: "Quran", students: 150, duration: "52 weeks", image: quranTajweedImg },
+  { id: "6", title: "Arabic Literature & Poetry", title_ar: "الأدب العربي والشعر", description: "Explore classical and modern Arabic literature and poetry.", description_ar: "استكشاف الأدب والشعر العربي الكلاسيكي والحديث.", level: "advanced", category: "Arabic Language", students: 45, duration: "14 weeks", image: arabicLanguageImg },
 ];
 
 const Courses = () => {
@@ -59,8 +61,12 @@ const Courses = () => {
             transition={{ delay: i * 0.05 }}
           >
             <Card className="group h-full overflow-hidden hover:shadow-lg transition-shadow">
-              <div className="h-40 bg-gradient-to-br from-primary/20 to-secondary/20 flex items-center justify-center">
-                <BookOpen className="h-16 w-16 text-primary/40 group-hover:scale-110 transition-transform" />
+              <div className="h-40 overflow-hidden">
+                <img 
+                  src={course.image} 
+                  alt={language === "ar" ? course.title_ar : course.title}
+                  className="h-full w-full object-cover group-hover:scale-110 transition-transform"
+                />
               </div>
               <CardContent className="p-5">
                 <div className="mb-2 flex items-center gap-2">
