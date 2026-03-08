@@ -282,6 +282,7 @@ const SubjectView = () => {
           <TabsTrigger value="homework">{t("Homework", "الواجبات")}</TabsTrigger>
           <TabsTrigger value="attendance">{t("Attendance", "الحضور")}</TabsTrigger>
           <TabsTrigger value="progress">{t("Progress", "التقدم")}</TabsTrigger>
+          <TabsTrigger value="revision">📚 {t("Revision", "المراجعة")}</TabsTrigger>
         </TabsList>
 
         {/* ═══ TAB 1: Overview ═══ */}
@@ -667,6 +668,24 @@ const SubjectView = () => {
             <CardContent className="p-5">
               <h3 className="font-semibold mb-3">{t("Current Level", "المستوى الحالي")}</h3>
               <Badge className={`text-lg px-4 py-1 ${levelColors[subjectLevel] || ""}`}>{levelLabel(subjectLevel)}</Badge>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ═══ TAB 9: Revision ═══ */}
+        <TabsContent value="revision" className="mt-4 space-y-4">
+          <Card>
+            <CardContent className="p-5 space-y-4 text-center">
+              <h3 className="font-semibold text-lg" style={{ color: '#064E3B' }}>{t("Revision Room", "غرفة المراجعة")}</h3>
+              <p className="text-sm text-muted-foreground">{t("Access flashcards, quizzes, summaries and notes for this subject", "الوصول إلى البطاقات والاختبارات والملخصات والملاحظات لهذه المادة")}</p>
+              <div className="flex gap-3 justify-center flex-wrap">
+                <Button variant="outline" onClick={() => navigate(`/student/revision/${subjectId}?tab=flashcards`)}>🃏 {t("Flashcards", "بطاقات")}</Button>
+                <Button variant="outline" onClick={() => navigate(`/student/revision/${subjectId}?tab=quiz`)}>📝 {t("Quick Quiz", "اختبار سريع")}</Button>
+                <Button variant="outline" onClick={() => navigate(`/student/revision/${subjectId}?tab=summaries`)}>📄 {t("Summaries", "ملخصات")}</Button>
+              </div>
+              <Button onClick={() => navigate(`/student/revision/${subjectId}`)} style={{ backgroundColor: '#c9973a' }} className="text-white">
+                {t("Open Full Revision Room →", "افتح غرفة المراجعة الكاملة →")}
+              </Button>
             </CardContent>
           </Card>
         </TabsContent>

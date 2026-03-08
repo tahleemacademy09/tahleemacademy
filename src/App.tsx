@@ -36,6 +36,8 @@ import MuallimOverlay from "./components/majlis/MuallimOverlay";
 import Onboarding from "./pages/student/Onboarding";
 import EntranceExamTaking from "./pages/student/EntranceExamTaking";
 import EntranceResults from "./pages/student/EntranceResults";
+import RevisionHub from "./pages/student/RevisionHub";
+import RevisionRoom from "./pages/student/RevisionRoom";
 
 import AdminDashboard from "./pages/admin/AdminDashboard";
 import ExamManager from "./pages/admin/ExamManager";
@@ -109,6 +111,8 @@ const App = () => (
                 <Route path="/student/transcripts" element={<Transcripts />} />
                 <Route path="/student/majlis" element={<Majlis />} />
                 <Route path="/student/live-classes" element={<LiveClasses />} />
+                <Route path="/student/revision" element={<RevisionHub />} />
+                <Route path="/student/revision/:subjectId" element={<RevisionRoom />} />
                 <Route path="/student/profile" element={<ProfileSettings />} />
               </Route>
 

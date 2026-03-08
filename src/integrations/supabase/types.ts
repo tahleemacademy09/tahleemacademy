@@ -1345,6 +1345,404 @@ export type Database = {
         }
         Relationships: []
       }
+      revision_flashcard_progress: {
+        Row: {
+          flashcard_id: string | null
+          id: string
+          last_reviewed_at: string | null
+          status: string | null
+          student_id: string
+          times_reviewed: number | null
+        }
+        Insert: {
+          flashcard_id?: string | null
+          id?: string
+          last_reviewed_at?: string | null
+          status?: string | null
+          student_id: string
+          times_reviewed?: number | null
+        }
+        Update: {
+          flashcard_id?: string | null
+          id?: string
+          last_reviewed_at?: string | null
+          status?: string | null
+          student_id?: string
+          times_reviewed?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "revision_flashcard_progress_flashcard_id_fkey"
+            columns: ["flashcard_id"]
+            isOneToOne: false
+            referencedRelation: "revision_flashcards"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      revision_flashcards: {
+        Row: {
+          back_text: string
+          back_text_ar: string | null
+          created_at: string | null
+          created_by: string | null
+          front_text: string
+          front_text_ar: string | null
+          id: string
+          level: string | null
+          order_index: number | null
+          room_id: string | null
+          subject_id: string | null
+          topic: string | null
+        }
+        Insert: {
+          back_text: string
+          back_text_ar?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          front_text: string
+          front_text_ar?: string | null
+          id?: string
+          level?: string | null
+          order_index?: number | null
+          room_id?: string | null
+          subject_id?: string | null
+          topic?: string | null
+        }
+        Update: {
+          back_text?: string
+          back_text_ar?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          front_text?: string
+          front_text_ar?: string | null
+          id?: string
+          level?: string | null
+          order_index?: number | null
+          room_id?: string | null
+          subject_id?: string | null
+          topic?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "revision_flashcards_room_id_fkey"
+            columns: ["room_id"]
+            isOneToOne: false
+            referencedRelation: "revision_rooms"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "revision_flashcards_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      revision_notes: {
+        Row: {
+          content: string | null
+          created_at: string | null
+          id: string
+          is_private: boolean | null
+          session_id: string | null
+          student_id: string
+          subject_id: string | null
+          title: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          content?: string | null
+          created_at?: string | null
+          id?: string
+          is_private?: boolean | null
+          session_id?: string | null
+          student_id: string
+          subject_id?: string | null
+          title?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          content?: string | null
+          created_at?: string | null
+          id?: string
+          is_private?: boolean | null
+          session_id?: string | null
+          student_id?: string
+          subject_id?: string | null
+          title?: string | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "revision_notes_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "revision_notes_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      revision_quiz_sessions: {
+        Row: {
+          answers: Json | null
+          completed_at: string | null
+          id: string
+          percentage: number | null
+          room_id: string | null
+          score: number | null
+          source: string | null
+          student_id: string
+          subject_id: string | null
+          total: number | null
+        }
+        Insert: {
+          answers?: Json | null
+          completed_at?: string | null
+          id?: string
+          percentage?: number | null
+          room_id?: string | null
+          score?: number | null
+          source?: string | null
+          student_id: string
+          subject_id?: string | null
+          total?: number | null
+        }
+        Update: {
+          answers?: Json | null
+          completed_at?: string | null
+          id?: string
+          percentage?: number | null
+          room_id?: string | null
+          score?: number | null
+          source?: string | null
+          student_id?: string
+          subject_id?: string | null
+          total?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "revision_quiz_sessions_room_id_fkey"
+            columns: ["room_id"]
+            isOneToOne: false
+            referencedRelation: "revision_rooms"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "revision_quiz_sessions_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      revision_room_members: {
+        Row: {
+          id: string
+          joined_at: string | null
+          room_id: string | null
+          student_id: string
+        }
+        Insert: {
+          id?: string
+          joined_at?: string | null
+          room_id?: string | null
+          student_id: string
+        }
+        Update: {
+          id?: string
+          joined_at?: string | null
+          room_id?: string | null
+          student_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "revision_room_members_room_id_fkey"
+            columns: ["room_id"]
+            isOneToOne: false
+            referencedRelation: "revision_rooms"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      revision_rooms: {
+        Row: {
+          created_at: string | null
+          created_by: string | null
+          description: string | null
+          description_ar: string | null
+          duration_minutes: number | null
+          id: string
+          is_active: boolean | null
+          level: string | null
+          max_students: number | null
+          scheduled_at: string | null
+          subject_id: string | null
+          title: string
+          title_ar: string | null
+          type: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          created_by?: string | null
+          description?: string | null
+          description_ar?: string | null
+          duration_minutes?: number | null
+          id?: string
+          is_active?: boolean | null
+          level?: string | null
+          max_students?: number | null
+          scheduled_at?: string | null
+          subject_id?: string | null
+          title: string
+          title_ar?: string | null
+          type?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          created_by?: string | null
+          description?: string | null
+          description_ar?: string | null
+          duration_minutes?: number | null
+          id?: string
+          is_active?: boolean | null
+          level?: string | null
+          max_students?: number | null
+          scheduled_at?: string | null
+          subject_id?: string | null
+          title?: string
+          title_ar?: string | null
+          type?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "revision_rooms_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      revision_schedule: {
+        Row: {
+          created_at: string | null
+          duration_minutes: number | null
+          id: string
+          is_completed: boolean | null
+          reminder_sent: boolean | null
+          revision_type: string | null
+          scheduled_date: string | null
+          scheduled_time: string | null
+          student_id: string
+          subject_id: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          duration_minutes?: number | null
+          id?: string
+          is_completed?: boolean | null
+          reminder_sent?: boolean | null
+          revision_type?: string | null
+          scheduled_date?: string | null
+          scheduled_time?: string | null
+          student_id: string
+          subject_id?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          duration_minutes?: number | null
+          id?: string
+          is_completed?: boolean | null
+          reminder_sent?: boolean | null
+          revision_type?: string | null
+          scheduled_date?: string | null
+          scheduled_time?: string | null
+          student_id?: string
+          subject_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "revision_schedule_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      revision_summaries: {
+        Row: {
+          content: string
+          content_ar: string | null
+          created_at: string | null
+          created_by: string | null
+          id: string
+          is_ai_generated: boolean | null
+          level: string | null
+          session_id: string | null
+          subject_id: string | null
+          title: string
+          title_ar: string | null
+          topic: string | null
+          type: string | null
+        }
+        Insert: {
+          content: string
+          content_ar?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          id?: string
+          is_ai_generated?: boolean | null
+          level?: string | null
+          session_id?: string | null
+          subject_id?: string | null
+          title: string
+          title_ar?: string | null
+          topic?: string | null
+          type?: string | null
+        }
+        Update: {
+          content?: string
+          content_ar?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          id?: string
+          is_ai_generated?: boolean | null
+          level?: string | null
+          session_id?: string | null
+          subject_id?: string | null
+          title?: string
+          title_ar?: string | null
+          topic?: string | null
+          type?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "revision_summaries_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "revision_summaries_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       session_chat: {
         Row: {
           created_at: string | null
