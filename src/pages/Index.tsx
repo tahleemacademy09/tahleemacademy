@@ -1,10 +1,11 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import quranTajweedImg from "@/assets/quran-tajweed.jpeg";
 import arabicLanguageImg from "@/assets/arabic-language.jpeg";
 
 const Index = () => {
   const navigate = useNavigate();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     // Inject Google Fonts
@@ -41,10 +42,24 @@ const Index = () => {
       .ta-nav-links a { color:rgba(255,255,255,0.8); text-decoration:none; font-size:14px; transition:0.2s; cursor:pointer; }
       .ta-nav-links a:hover { color:#e8c070; }
       .ta-nav-cta { display:flex; gap:12px; }
+      .ta-nav-hamburger { display:none; background:none; border:none; cursor:pointer; padding:4px; }
+      .ta-nav-hamburger svg { width:28px; height:28px; color:#c9973a; }
       .ta-btn-outline { padding:8px 20px; border:1px solid #c9973a; color:#c9973a; background:transparent; border-radius:6px; cursor:pointer; font-family:'Cairo',sans-serif; font-size:13px; transition:0.2s; }
       .ta-btn-outline:hover { background:#c9973a; color:#fff; }
       .ta-btn-solid { padding:8px 20px; background:#c9973a; color:#fff; border:none; border-radius:6px; cursor:pointer; font-family:'Cairo',sans-serif; font-size:13px; font-weight:700; transition:0.2s; }
       .ta-btn-solid:hover { background:#e8c070; color:#0f3122; }
+
+      /* MOBILE MENU */
+      .ta-mobile-menu {
+        display:none; position:fixed; top:0; left:0; right:0; bottom:0; z-index:99;
+        background:rgba(10,30,20,0.97); flex-direction:column; align-items:center; justify-content:center; gap:24px;
+      }
+      .ta-mobile-menu.open { display:flex; }
+      .ta-mobile-menu a, .ta-mobile-menu button { font-size:18px; }
+      .ta-mobile-menu a { color:rgba(255,255,255,0.85); text-decoration:none; cursor:pointer; font-family:'Cairo',sans-serif; transition:0.2s; }
+      .ta-mobile-menu a:hover { color:#e8c070; }
+      .ta-mobile-close { position:absolute; top:18px; right:20px; background:none; border:none; cursor:pointer; }
+      .ta-mobile-close svg { width:32px; height:32px; color:#c9973a; }
 
       /* HERO */
       .ta-hero { min-height:100vh; position:relative; display:flex; align-items:center; overflow:hidden; }
@@ -243,6 +258,7 @@ const Index = () => {
       @media(max-width:768px){
         .ta-nav { padding:14px 20px; }
         .ta-nav-links, .ta-nav-cta { display:none; }
+        .ta-nav-hamburger { display:block; }
         .ta-hero-content { grid-template-columns:1fr; padding:100px 20px 60px; }
         .ta-hero-right { display:none; }
         .ta-why-grid, .ta-courses-grid, .ta-why6-grid { grid-template-columns:1fr; }
@@ -281,7 +297,23 @@ const Index = () => {
           <button className="ta-btn-outline" onClick={() => navigate("/login")}>Sign In</button>
           <button className="ta-btn-solid" onClick={() => navigate("/register")}>Register Free</button>
         </div>
+        <button className="ta-nav-hamburger" onClick={() => setMobileMenuOpen(true)}>
+          <svg fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
+        </button>
       </nav>
+
+      {/* MOBILE MENU OVERLAY */}
+      <div className={`ta-mobile-menu ${mobileMenuOpen ? 'open' : ''}`}>
+        <button className="ta-mobile-close" onClick={() => setMobileMenuOpen(false)}>
+          <svg fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+        <a onClick={() => { navigate("/"); setMobileMenuOpen(false); }}>Home</a>
+        <a onClick={() => { navigate("/courses"); setMobileMenuOpen(false); }}>Courses</a>
+        <a onClick={() => { navigate("/about"); setMobileMenuOpen(false); }}>About</a>
+        <a onClick={() => { navigate("/contact"); setMobileMenuOpen(false); }}>Contact</a>
+        <button className="ta-btn-outline" onClick={() => { navigate("/login"); setMobileMenuOpen(false); }}>Sign In</button>
+        <button className="ta-btn-solid" onClick={() => { navigate("/register"); setMobileMenuOpen(false); }}>Register Free</button>
+      </div>
 
       {/* HERO */}
       <section className="ta-hero">
