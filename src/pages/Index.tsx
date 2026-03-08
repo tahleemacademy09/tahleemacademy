@@ -390,7 +390,7 @@ const Index = () => {
                   <div className="ta-course-desc">{c.desc}</div>
                   <div className="ta-course-footer">
                     <span className="ta-course-level">{c.level}</span>
-                    <button className="ta-course-btn" onClick={() => navigate("/auth")}>Enrol Now</button>
+                    <button className="ta-course-btn" onClick={() => navigate("/register")}>Enrol Now</button>
                   </div>
                 </div>
               </div>
