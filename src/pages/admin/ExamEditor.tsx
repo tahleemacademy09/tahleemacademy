@@ -101,6 +101,7 @@ const ExamEditor = () => {
     term: "first",
     max_review_views: 1,
     type: "exam" as "exam" | "test",
+    level: "" as string,
   });
   const [questions, setQuestions] = useState<QuestionForm[]>([emptyQuestion()]);
   const [formatSettings, setFormatSettings] = useState<ExamFormatSettings>({ ...DEFAULT_FORMAT });
