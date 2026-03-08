@@ -79,10 +79,28 @@ const ProfileSettings = () => {
         bio: profile.bio || "",
         level: profile.level || "beginner",
         status: profile.status || "active",
+        student_type: profile.student_type || "group",
+        assigned_teacher_id: profile.assigned_teacher_id || "",
+        private_session_rate: profile.private_session_rate || "",
+        private_notes: profile.private_notes || "",
       });
       setStudentId(profile.student_id || "");
       setEnrollmentDate(profile.enrollment_date || "");
     }
+  }, [profile]);
+
+  // Fetch teachers for assignment dropdown
+  useEffect(() => {
+    const fetchTeachers = async () => {
+      const { data: roles } = await supabase.from("user_roles").select("user_id").in("role", ["teacher", "admin"]);
+      if (roles && roles.length > 0) {
+        const teacherIds = roles.map(r => r.user_id);
+        const { data: profiles } = await supabase.from("profiles").select("user_id, full_name, email").in("user_id", teacherIds);
+        setTeachers(profiles || []);
+      }
+    };
+    if (isAdmin) fetchTeachers();
+  }, [isAdmin]);
   }, [profile]);
 
   // Proctoring status
