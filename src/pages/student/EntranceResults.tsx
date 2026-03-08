@@ -328,11 +328,11 @@ const EntranceResults = () => {
               transition={{ delay: 1.1 }}
             >
               <Button
-                onClick={() => navigate("/student/payment", { replace: true })}
+                onClick={() => navigate("/student", { replace: true })}
                 className="w-full py-6 text-base rounded-xl font-bold"
                 style={{ background: "#c9973a", color: "#fff", fontFamily: "'Cairo', sans-serif" }}
               >
-                Complete Enrollment <ArrowRight className="ml-2 h-4 w-4" />
+                Go to Dashboard <ArrowRight className="ml-2 h-4 w-4" />
               </Button>
             </motion.div>
           </CardContent>
