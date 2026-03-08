@@ -168,6 +168,7 @@ const ExamEditor = () => {
           screenshot_interval_seconds: (exam as any).screenshot_interval_seconds || 0,
           term: (exam as any).term || "first",
           max_review_views: (exam as any).max_review_views ?? 1,
+          type: (exam as any).type || "exam",
         });
       }
       const { data: qs } = await supabase.from("exam_questions").select("*").eq("exam_id", examId).order("sort_order");
