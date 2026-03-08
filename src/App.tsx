@@ -48,6 +48,7 @@ import SubjectManagement from "./pages/admin/SubjectManagement";
 import CourseManagement from "./pages/admin/CourseManagement";
 import SyllabusManager from "./pages/admin/SyllabusManager";
 import PrivateSessions from "./pages/admin/PrivateSessions";
+import EntranceExamAdmin from "./pages/admin/EntranceExamAdmin";
 
 import TeacherDashboard from "./pages/teacher/TeacherDashboard";
 import TeacherStudents from "./pages/teacher/TeacherStudents";
