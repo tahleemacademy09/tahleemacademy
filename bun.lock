@@ -1263,8 +1263,6 @@
 
     "jspdf/@babel/runtime": ["@babel/runtime@7.28.6", "", {}, "sha512-05WQkdpL9COIMz4LjTxGpPNCdlpyimKppYNoJ5Di5EUObifl8t4tuLuUBBZEpoLYOmfvIWrsp9fCl0HoPRVTdA=="],
 
-    "livekit-server-sdk/@livekit/protocol": ["@livekit/protocol@1.45.0", "", { "dependencies": { "@bufbuild/protobuf": "^1.10.0" } }, "sha512-z22Ej7RRBFm5uVZpU7kBHOdDwZV6Hz+1crCOrse2g7yx8TcHXG0bKnOKwyN/meD233nEDlU2IHNCoT8Vq8lvtg=="],
-
     "livekit-server-sdk/jose": ["jose@5.10.0", "", {}, "sha512-s+3Al/p9g32Iq+oqXxkW//7jk2Vig6FF1CFqzVXoTUXt2qz89YWbL+OwS17NFYEvxC35n0FKeGO2LGYSxeM2Gg=="],
 
     "micromatch/picomatch": ["picomatch@2.3.1", "", {}, "sha512-JU3teHTNjmE2VCGFzuY8EXzCDVwEqB2a8fsIvwaStHhAWJEeVd1o1QD80CU6+ZdEXXSLbSsuLwJjkCBWqRQUVA=="],
