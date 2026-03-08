@@ -6,7 +6,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   Search, Plus, MessageCircle, Users, GraduationCap, Megaphone,
-  Hash, Globe, ChevronDown, ChevronRight, BarChart3
+  Hash, Globe, ChevronDown, ChevronRight
 } from "lucide-react";
 import type { ChatChannel, UserProfile } from "./types";
 
@@ -19,14 +19,11 @@ interface MajlisSidebarProps {
   profiles: Record<string, UserProfile>;
   unreadCounts: Record<string, number>;
   userId: string;
-  onBroadcast?: () => void;
-  onAdminDashboard?: () => void;
 }
 
 const MajlisSidebar = ({
   channels, activeChannelId, onSelectChannel, onNewChat,
-  onBrowseChannels, profiles, unreadCounts, userId,
-  onBroadcast, onAdminDashboard
+  onBrowseChannels, profiles, unreadCounts, userId
 }: MajlisSidebarProps) => {
   const { t, language } = useLanguage();
   const { hasRole } = useAuth();
@@ -166,24 +163,6 @@ const MajlisSidebar = ({
           {t("Al-Majlis", "المجلس")}
         </h1>
         <div className="flex items-center gap-1">
-          {onAdminDashboard && (
-            <button
-              onClick={onAdminDashboard}
-              className="text-amber-300 hover:text-amber-200 p-1.5 rounded-full hover:bg-white/10 transition-colors"
-              title={t("Admin Dashboard", "لوحة المشرف")}
-            >
-              <BarChart3 className="h-5 w-5" />
-            </button>
-          )}
-          {onBroadcast && (
-            <button
-              onClick={onBroadcast}
-              className="text-amber-300 hover:text-amber-200 p-1.5 rounded-full hover:bg-white/10 transition-colors"
-              title={t("Broadcast", "بث")}
-            >
-              <Megaphone className="h-5 w-5" />
-            </button>
-          )}
           <button
             onClick={onBrowseChannels}
             className="text-white/80 hover:text-white p-1.5 rounded-full hover:bg-white/10 transition-colors"

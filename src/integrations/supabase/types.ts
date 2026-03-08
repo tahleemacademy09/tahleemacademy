@@ -342,18 +342,9 @@ export type Database = {
           class_level_id: string
           content_type: string
           created_at: string
-          deleted_by: string | null
-          deleted_reason: string | null
-          edited_at: string | null
-          edited_by: string | null
           id: string
-          is_broadcast: boolean | null
-          is_flagged: boolean | null
-          is_pinned: boolean | null
-          is_starred: boolean | null
           is_system: boolean | null
           media_path: string | null
-          original_text: string | null
           text: string | null
           user_id: string
         }
@@ -363,18 +354,9 @@ export type Database = {
           class_level_id: string
           content_type?: string
           created_at?: string
-          deleted_by?: string | null
-          deleted_reason?: string | null
-          edited_at?: string | null
-          edited_by?: string | null
           id?: string
-          is_broadcast?: boolean | null
-          is_flagged?: boolean | null
-          is_pinned?: boolean | null
-          is_starred?: boolean | null
           is_system?: boolean | null
           media_path?: string | null
-          original_text?: string | null
           text?: string | null
           user_id: string
         }
@@ -384,18 +366,9 @@ export type Database = {
           class_level_id?: string
           content_type?: string
           created_at?: string
-          deleted_by?: string | null
-          deleted_reason?: string | null
-          edited_at?: string | null
-          edited_by?: string | null
           id?: string
-          is_broadcast?: boolean | null
-          is_flagged?: boolean | null
-          is_pinned?: boolean | null
-          is_starred?: boolean | null
           is_system?: boolean | null
           media_path?: string | null
-          original_text?: string | null
           text?: string | null
           user_id?: string
         }
@@ -1417,253 +1390,6 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "subjects"
             referencedColumns: ["id"]
-          },
-        ]
-      }
-      majlis_admin_actions: {
-        Row: {
-          action_type: string
-          admin_id: string | null
-          created_at: string | null
-          duration_hours: number | null
-          id: string
-          reason: string | null
-          target_channel_id: string | null
-          target_message_id: string | null
-          target_user_id: string | null
-        }
-        Insert: {
-          action_type: string
-          admin_id?: string | null
-          created_at?: string | null
-          duration_hours?: number | null
-          id?: string
-          reason?: string | null
-          target_channel_id?: string | null
-          target_message_id?: string | null
-          target_user_id?: string | null
-        }
-        Update: {
-          action_type?: string
-          admin_id?: string | null
-          created_at?: string | null
-          duration_hours?: number | null
-          id?: string
-          reason?: string | null
-          target_channel_id?: string | null
-          target_message_id?: string | null
-          target_user_id?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "majlis_admin_actions_admin_id_fkey"
-            columns: ["admin_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["user_id"]
-          },
-          {
-            foreignKeyName: "majlis_admin_actions_target_channel_id_fkey"
-            columns: ["target_channel_id"]
-            isOneToOne: false
-            referencedRelation: "chat_channels"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "majlis_admin_actions_target_message_id_fkey"
-            columns: ["target_message_id"]
-            isOneToOne: false
-            referencedRelation: "chat_messages"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "majlis_admin_actions_target_user_id_fkey"
-            columns: ["target_user_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["user_id"]
-          },
-        ]
-      }
-      majlis_admin_notes: {
-        Row: {
-          admin_id: string | null
-          created_at: string | null
-          id: string
-          is_private: boolean | null
-          note: string
-          user_id: string | null
-        }
-        Insert: {
-          admin_id?: string | null
-          created_at?: string | null
-          id?: string
-          is_private?: boolean | null
-          note: string
-          user_id?: string | null
-        }
-        Update: {
-          admin_id?: string | null
-          created_at?: string | null
-          id?: string
-          is_private?: boolean | null
-          note?: string
-          user_id?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "majlis_admin_notes_admin_id_fkey"
-            columns: ["admin_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["user_id"]
-          },
-          {
-            foreignKeyName: "majlis_admin_notes_user_id_fkey"
-            columns: ["user_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["user_id"]
-          },
-        ]
-      }
-      majlis_audit_log: {
-        Row: {
-          action: string
-          admin_id: string | null
-          created_at: string | null
-          details: Json | null
-          id: string
-        }
-        Insert: {
-          action: string
-          admin_id?: string | null
-          created_at?: string | null
-          details?: Json | null
-          id?: string
-        }
-        Update: {
-          action?: string
-          admin_id?: string | null
-          created_at?: string | null
-          details?: Json | null
-          id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "majlis_audit_log_admin_id_fkey"
-            columns: ["admin_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["user_id"]
-          },
-        ]
-      }
-      majlis_banned_users: {
-        Row: {
-          banned_at: string | null
-          banned_by: string | null
-          channel_id: string | null
-          expires_at: string | null
-          id: string
-          is_active: boolean | null
-          is_permanent: boolean | null
-          reason: string | null
-          user_id: string
-        }
-        Insert: {
-          banned_at?: string | null
-          banned_by?: string | null
-          channel_id?: string | null
-          expires_at?: string | null
-          id?: string
-          is_active?: boolean | null
-          is_permanent?: boolean | null
-          reason?: string | null
-          user_id: string
-        }
-        Update: {
-          banned_at?: string | null
-          banned_by?: string | null
-          channel_id?: string | null
-          expires_at?: string | null
-          id?: string
-          is_active?: boolean | null
-          is_permanent?: boolean | null
-          reason?: string | null
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "majlis_banned_users_banned_by_fkey"
-            columns: ["banned_by"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["user_id"]
-          },
-          {
-            foreignKeyName: "majlis_banned_users_channel_id_fkey"
-            columns: ["channel_id"]
-            isOneToOne: false
-            referencedRelation: "chat_channels"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "majlis_banned_users_user_id_fkey"
-            columns: ["user_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["user_id"]
-          },
-        ]
-      }
-      majlis_broadcast: {
-        Row: {
-          id: string
-          is_pinned: boolean | null
-          message: string
-          message_ar: string | null
-          pin_expires_at: string | null
-          read_count: number | null
-          sent_at: string | null
-          sent_by: string | null
-          target: string | null
-          target_user_ids: string[] | null
-          title: string | null
-        }
-        Insert: {
-          id?: string
-          is_pinned?: boolean | null
-          message: string
-          message_ar?: string | null
-          pin_expires_at?: string | null
-          read_count?: number | null
-          sent_at?: string | null
-          sent_by?: string | null
-          target?: string | null
-          target_user_ids?: string[] | null
-          title?: string | null
-        }
-        Update: {
-          id?: string
-          is_pinned?: boolean | null
-          message?: string
-          message_ar?: string | null
-          pin_expires_at?: string | null
-          read_count?: number | null
-          sent_at?: string | null
-          sent_by?: string | null
-          target?: string | null
-          target_user_ids?: string[] | null
-          title?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "majlis_broadcast_sent_by_fkey"
-            columns: ["sent_by"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["user_id"]
           },
         ]
       }

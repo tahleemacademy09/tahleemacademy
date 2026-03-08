@@ -8,18 +8,13 @@ import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import {
   Send, MessageCircle, Reply, CheckCheck, Mic, MicOff,
-  Image, Paperclip, Smile, ArrowLeft, FileText, Trash2, Info,
-  BarChart3, Megaphone, Star
+  Image, Paperclip, Smile, ArrowLeft, FileText, Trash2, Info
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import MajlisSidebar from "@/components/majlis/MajlisSidebar";
 import CreateChannelDialog from "@/components/majlis/CreateChannelDialog";
 import ChannelInfoPanel from "@/components/majlis/ChannelInfoPanel";
 import BrowseChannelsDialog from "@/components/majlis/BrowseChannelsDialog";
-import AdminMessageMenu from "@/components/majlis/AdminMessageMenu";
-import AdminBroadcastDialog from "@/components/majlis/AdminBroadcastDialog";
-import AdminDashboardPanel from "@/components/majlis/AdminDashboardPanel";
-import AdminProfileCard from "@/components/majlis/AdminProfileCard";
 import type { ChatChannel, ChatMessage, UserProfile } from "@/components/majlis/types";
 
 const Majlis = () => {
@@ -43,12 +38,6 @@ const Majlis = () => {
   const [createMode, setCreateMode] = useState<"group" | "dm" | "menu">("menu");
   const [showChannelInfo, setShowChannelInfo] = useState(false);
   const [showBrowseChannels, setShowBrowseChannels] = useState(false);
-
-  // Admin state
-  const [contextMenu, setContextMenu] = useState<{ message: ChatMessage; x: number; y: number } | null>(null);
-  const [showBroadcast, setShowBroadcast] = useState(false);
-  const [showAdminDashboard, setShowAdminDashboard] = useState(false);
-  const [profileCardUserId, setProfileCardUserId] = useState<string | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -384,25 +373,6 @@ const Majlis = () => {
                 : `${activeChannel.member_count} ${t("members", "عضو")}`}
             </p>
           </button>
-          {/* Admin quick actions in header */}
-          {isAdmin && (
-            <>
-              <button
-                onClick={() => setShowBroadcast(true)}
-                className="text-white/80 hover:text-white p-1.5"
-                title={t("Broadcast", "بث")}
-              >
-                <Megaphone className="h-5 w-5" />
-              </button>
-              <button
-                onClick={() => setShowAdminDashboard(true)}
-                className="text-white/80 hover:text-white p-1.5"
-                title={t("Admin Dashboard", "لوحة المشرف")}
-              >
-                <BarChart3 className="h-5 w-5" />
-              </button>
-            </>
-          )}
           <button
             onClick={() => setShowChannelInfo(true)}
             className="text-white/80 hover:text-white p-1.5"
@@ -443,32 +413,16 @@ const Majlis = () => {
                       isMe ? "rounded-tr-none" : "rounded-tl-none"
                     }`}
                     style={{
-                      backgroundColor: (m as any).is_broadcast ? "#FFF8E1" : isMe ? "#DCF8C6" : "#FFFFFF",
+                      backgroundColor: isMe ? "#DCF8C6" : "#FFFFFF",
                       marginTop: showName || (prevMsg && prevMsg.user_id !== m.user_id) ? "8px" : "2px",
                     }}
-                    onContextMenu={(e) => {
-                      if (isAdmin) {
-                        e.preventDefault();
-                        setContextMenu({ message: m, x: e.clientX, y: e.clientY });
-                      }
-                    }}
                   >
-                    {/* Pinned indicator */}
-                    {(m as any).is_pinned && (
-                      <div className="text-[9px] text-amber-600 mb-0.5">📌 {t("Pinned", "مثبت")}</div>
-                    )}
-
                     {/* Sender name + badges */}
                     {showName && (
                       <div className="flex items-center gap-1.5 mb-0.5">
-                        <button
-                          className="text-[11px] font-semibold hover:underline"
-                          style={{ color: "#064E3B" }}
-                          dir="auto"
-                          onClick={() => isAdmin && setProfileCardUserId(m.user_id)}
-                        >
+                        <p className="text-[11px] font-semibold" style={{ color: "#064E3B" }} dir="auto">
                           {name}
-                        </button>
+                        </p>
                         {getLevelBadge(senderProfile?.level || null)}
                         {getRoleBadge(m.user_id)}
                       </div>
@@ -476,9 +430,7 @@ const Majlis = () => {
 
                     {/* Content */}
                     <div className="text-sm text-gray-900" dir="auto">
-                      {(m as any).content_type === "deleted" ? (
-                        <span className="italic text-muted-foreground text-xs">🚫 {t("This message was deleted", "تم حذف هذه الرسالة")}</span>
-                      ) : m.content_type === "audio" && m.media_path ? (
+                      {m.content_type === "audio" && m.media_path ? (
                         <AudioMessage path={m.media_path} />
                       ) : m.content_type === "image" && m.media_path ? (
                         <ImageMessage path={m.media_path} />
@@ -489,14 +441,8 @@ const Majlis = () => {
                       )}
                     </div>
 
-                    {/* Edited indicator */}
-                    {(m as any).edited_at && (
-                      <span className="text-[9px] text-muted-foreground italic"> ✏️ {t("edited", "معدّل")}</span>
-                    )}
-
                     {/* Time + Read receipts */}
                     <div className="flex items-center gap-1 mt-0.5 justify-end">
-                      {(m as any).is_starred && <Star className="h-3 w-3 text-amber-400" />}
                       <span className="text-[10px] text-gray-500">{formatTime(m.created_at)}</span>
                       {isMe && <CheckCheck className="h-3.5 w-3.5" style={{ color: "#53BDEB" }} />}
                     </div>
@@ -614,8 +560,6 @@ const Majlis = () => {
             profiles={profiles}
             unreadCounts={unreadCounts}
             userId={user?.id || ""}
-            onBroadcast={isAdmin ? () => setShowBroadcast(true) : undefined}
-            onAdminDashboard={isAdmin ? () => setShowAdminDashboard(true) : undefined}
           />
         </div>
 
@@ -647,38 +591,6 @@ const Majlis = () => {
         myChannelIds={channels.map(c => c.id)}
         onJoined={handleBrowseJoined}
       />
-
-      {/* Admin Components */}
-      {isAdmin && contextMenu && (
-        <AdminMessageMenu
-          message={contextMenu.message}
-          senderProfile={profiles[contextMenu.message.user_id] || null}
-          isMe={contextMenu.message.user_id === user?.id}
-          position={{ x: contextMenu.x, y: contextMenu.y }}
-          onClose={() => setContextMenu(null)}
-          onReply={() => { setReplyTo(contextMenu.message); inputRef.current?.focus(); }}
-          onDelete={(msgId) => setMessages(prev => prev.filter(m => m.id !== msgId))}
-          onEditComplete={(msgId, newText) => setMessages(prev => prev.map(m => m.id === msgId ? { ...m, text: newText } : m))}
-          onViewProfile={(userId) => setProfileCardUserId(userId)}
-        />
-      )}
-
-      {isAdmin && (
-        <>
-          <AdminBroadcastDialog open={showBroadcast} onOpenChange={setShowBroadcast} />
-          <AdminDashboardPanel open={showAdminDashboard} onClose={() => setShowAdminDashboard(false)} />
-          <AdminProfileCard
-            userId={profileCardUserId || ""}
-            open={!!profileCardUserId}
-            onClose={() => setProfileCardUserId(null)}
-            onStartDM={(uid) => {
-              // Trigger DM creation via CreateChannelDialog approach
-              setCreateMode("dm");
-              setShowCreateDialog(true);
-            }}
-          />
-        </>
-      )}
     </>
   );
 };
