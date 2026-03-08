@@ -24,6 +24,7 @@ const ProfileSettings = () => {
   const isAdmin = hasRole("admin") || hasRole("teacher");
   const isStudent = !isAdmin;
 
+  const [teachers, setTeachers] = useState<any[]>([]);
   const [form, setForm] = useState({
     full_name: "",
     full_name_ar: "",
@@ -42,6 +43,10 @@ const ProfileSettings = () => {
     bio: "",
     level: "beginner",
     status: "active",
+    student_type: "group",
+    assigned_teacher_id: "",
+    private_session_rate: "",
+    private_notes: "",
   });
 
   const [readOnlyFields] = useState({
