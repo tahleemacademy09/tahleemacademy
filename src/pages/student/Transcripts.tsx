@@ -166,10 +166,19 @@ const Transcripts = () => {
       <th><span class="ar">النتيجة</span><span class="en">Result</span></th>
     </tr></thead>`;
 
-    const termTables = terms.map((t, i) => `
-      <div class="section-title">${termNames[i]}</div>
-      <table class="main">${tableHeader}<tbody>${buildTermRows(t)}</tbody></table>
-    `).join("");
+    const buildTermSection = (termExams: GradedExam[], termName: string, termNameEn: string) => {
+      return `
+      <div class="term-section">
+        <div class="header">
+          <div class="ar">أكاديمية التعليم</div>
+          <div class="en">TAHLEEM ACADEMY</div>
+        </div>
+        <div class="term-title">${termName} — ${termNameEn}</div>
+        <table class="main">${tableHeader}<tbody>${buildTermRows(termExams)}</tbody></table>
+      </div>`;
+    };
+
+    const termSections = terms.map((t, i) => buildTermSection(t, termNames[i], termNamesEn[i])).join("");
 
     const html = `<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -182,17 +191,19 @@ const Transcripts = () => {
 body{font-family:'Cairo','Amiri',sans-serif;background:#fff;padding:30px 40px;position:relative}
 .watermark{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-30deg);font-size:90px;font-weight:700;color:#064E3B;opacity:0.04;white-space:nowrap;letter-spacing:8px;font-family:'Cairo',sans-serif;pointer-events:none;z-index:0}
 .content{position:relative;z-index:1}
-.header{text-align:center;margin-bottom:14px}
-.header .ar{font-family:'Amiri',serif;font-size:24px;font-weight:700}
-.header .en{font-size:16px;font-weight:700;letter-spacing:3px}
+.header{text-align:center;margin-bottom:10px}
+.header .ar{font-family:'Amiri',serif;font-size:22px;font-weight:700}
+.header .en{font-size:14px;font-weight:700;letter-spacing:3px}
 .title-box{border:2px solid #2a7a2a;border-radius:4px;padding:6px 20px;margin:14px auto;width:fit-content;display:flex;gap:30px;align-items:center;justify-content:center}
 .title-box span{font-size:14px;font-weight:600}
+.term-title{border:2px solid #2a7a2a;border-radius:4px;padding:4px 16px;margin:8px auto;width:fit-content;font-family:'Amiri',serif;font-size:16px;font-weight:700;text-align:center}
+.term-section{margin-bottom:20px;padding-top:10px;border-top:2px dashed #ccc}
+.term-section:first-child{border-top:none;padding-top:0}
 .info-grid{margin:16px 0}
 .info-row{display:flex;justify-content:space-between;margin-bottom:8px;gap:24px}
 .info-field{display:flex;align-items:baseline;flex:1;gap:4px}
 .info-field label{font-weight:700;font-size:13px;white-space:nowrap}
 .info-field .val{flex:1;border-bottom:1px solid #333;font-size:12px;text-align:right;padding:0 4px 1px}
-.section-title{font-family:'Amiri',serif;font-size:16px;font-weight:700;text-align:left;margin:12px 0 6px}
 table.main{width:100%;border-collapse:collapse;direction:rtl;margin-bottom:10px}
 table.main th,table.main td{border:1.5px solid #333;padding:3px 4px;text-align:center;font-size:10px;vertical-align:middle}
 table.main th .ar{display:block;font-family:'Amiri',serif;font-size:11px;font-weight:700}
@@ -201,8 +212,7 @@ table.main td{height:22px}
 table.summary{width:100%;border-collapse:collapse;direction:ltr;margin-top:14px}
 table.summary td{border:1.5px solid #333;padding:5px 8px;font-size:12px}
 table.summary td.lbl{font-weight:700;width:18%}
-.stamp-section{display:flex;justify-content:flex-end;margin-top:20px}
-.stamp-section img{width:120px;height:120px;opacity:0.8}
+.stamp-cell img{width:90px;height:90px;opacity:0.8;display:block;margin:0 auto}
 @media print{body{padding:15px 20px}.watermark{position:fixed}@page{size:A4;margin:8mm}}
 </style>
 </head>
@@ -231,15 +241,12 @@ table.summary td.lbl{font-weight:700;width:18%}
     <div class="info-field"><label>الحالة</label><span class="val">${statusText}</span></div>
   </div>
 </div>
-${termTables}
+${termSections}
 <table class="summary">
   <tr><td class="lbl">Marks Obtainable</td><td style="text-align:center">${totalObtainable || ""}</td><td class="lbl">Marks Obtained</td><td style="text-align:center">${totalObtained || ""}</td></tr>
   <tr><td class="lbl">Cgpa</td><td style="text-align:center">${exams.length > 0 ? cgpa.toFixed(2) : ""}</td><td class="lbl">Status</td><td style="text-align:center">${exams.length > 0 ? (cgpa >= 1.0 ? "Pass ✓" : "Fail ✗") : ""}</td></tr>
-  <tr><td class="lbl">Comment</td><td style="text-align:center">${commentText}</td><td class="lbl">Signature</td><td style="text-align:center"></td></tr>
+  <tr><td class="lbl">Comment</td><td style="text-align:center">${commentText}</td><td class="lbl">Signature</td><td class="stamp-cell"><img src="${stampBase64}" alt="Stamp" /></td></tr>
 </table>
-<div class="stamp-section">
-  <img src="${stampBase64}" alt="Tahleem Academy Stamp" />
-</div>
 </div>
 <script>
   window.onload = function() {
