@@ -265,8 +265,6 @@ const StudentManagement = () => {
     </span>
   );
 
-  if (loading) return <div className="flex items-center justify-center min-h-[400px]"><div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" /></div>;
-
   // Enrol student in subject manually
   const manualEnrol = async (userId: string, subjectId: string) => {
     const { data: courses } = await supabase.from("courses").select("id").eq("subject_id", subjectId);
@@ -286,13 +284,22 @@ const StudentManagement = () => {
     )].join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a"); a.href = url; a.download = `results-${detailStudent.full_name || "student"}.csv`; a.click();
+    const anchor = document.createElement("a"); anchor.href = url; anchor.download = `results-${detailStudent.full_name || "student"}.csv`; anchor.click();
     toast({ title: t("Results exported", "تم تصدير النتائج") });
   };
 
   // View exam answers side by side
+  const viewAnswersSideBySide = async (attempt: any) => {
+    const [answersRes, questionsRes] = await Promise.all([
+      supabase.from("exam_answers").select("*").eq("attempt_id", attempt.id),
+      supabase.from("exam_questions").select("*").eq("exam_id", attempt.exam_id).order("sort_order"),
+    ]);
+    setExamAnswers(answersRes.data || []);
+    setExamQuestions(questionsRes.data || []);
+    setViewingAnswers(attempt);
+  };
 
-
+  if (loading) return <div className="flex items-center justify-center min-h-[400px]"><div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" /></div>;
 
   // ─── EXAM ANSWERS SIDE BY SIDE VIEW ───
   if (viewingAnswers) {
