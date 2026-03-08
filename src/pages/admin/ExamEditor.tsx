@@ -98,6 +98,7 @@ const ExamEditor = () => {
     auto_submit_on_violation: false,
     screenshot_interval_seconds: 0,
     term: "first",
+    max_review_views: 1,
   });
   const [questions, setQuestions] = useState<QuestionForm[]>([emptyQuestion()]);
   const [saving, setSaving] = useState(false);
@@ -165,6 +166,7 @@ const ExamEditor = () => {
           auto_submit_on_violation: (exam as any).auto_submit_on_violation || false,
           screenshot_interval_seconds: (exam as any).screenshot_interval_seconds || 0,
           term: (exam as any).term || "first",
+          max_review_views: (exam as any).max_review_views ?? 1,
         });
       }
       const { data: qs } = await supabase.from("exam_questions").select("*").eq("exam_id", examId).order("sort_order");
@@ -631,6 +633,20 @@ fill_blank,"The word for 'water' is ___.","كلمة 'ماء' هي ___.",,,,,,,,,
                   </div>
                 ))}
               </div>
+              {examForm.allow_review && (
+                <div className="flex items-center gap-3 pt-2">
+                  <Label className="text-sm whitespace-nowrap">{t("Max Review Views", "الحد الأقصى لمرات المراجعة")}</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={100}
+                    className="w-24"
+                    value={examForm.max_review_views}
+                    onChange={(e) => setExamForm({ ...examForm, max_review_views: parseInt(e.target.value) || 1 })}
+                  />
+                  <span className="text-xs text-muted-foreground">{t("times", "مرات")}</span>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

@@ -561,6 +561,38 @@ export type Database = {
           },
         ]
       }
+      exam_review_views: {
+        Row: {
+          attempt_id: string
+          id: string
+          user_id: string
+          view_count: number | null
+          viewed_at: string
+        }
+        Insert: {
+          attempt_id: string
+          id?: string
+          user_id: string
+          view_count?: number | null
+          viewed_at?: string
+        }
+        Update: {
+          attempt_id?: string
+          id?: string
+          user_id?: string
+          view_count?: number | null
+          viewed_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "exam_review_views_attempt_id_fkey"
+            columns: ["attempt_id"]
+            isOneToOne: false
+            referencedRelation: "exam_attempts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       exams: {
         Row: {
           allow_review: boolean | null
@@ -578,6 +610,7 @@ export type Database = {
           id: string
           is_published: boolean | null
           max_attempts: number | null
+          max_review_views: number | null
           max_warnings: number | null
           passing_score: number | null
           proctoring_enabled: boolean | null
@@ -613,6 +646,7 @@ export type Database = {
           id?: string
           is_published?: boolean | null
           max_attempts?: number | null
+          max_review_views?: number | null
           max_warnings?: number | null
           passing_score?: number | null
           proctoring_enabled?: boolean | null
@@ -648,6 +682,7 @@ export type Database = {
           id?: string
           is_published?: boolean | null
           max_attempts?: number | null
+          max_review_views?: number | null
           max_warnings?: number | null
           passing_score?: number | null
           proctoring_enabled?: boolean | null
