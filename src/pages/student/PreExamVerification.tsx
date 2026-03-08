@@ -324,6 +324,15 @@ const PreExamVerification = () => {
     { icon: <AlertTriangle className="h-4 w-4" />, text: t("Excessive violations may trigger automatic submission", "المخالفات المتكررة قد تؤدي إلى تقديم تلقائي للامتحان") },
   ];
 
+  const [checklist, setChecklist] = useState({
+    quietEnvironment: false,
+    faceVisible: false,
+    noDevices: false,
+    noTabSwitch: false,
+  });
+
+  const allChecked = Object.values(checklist).every(Boolean);
+
   return (
     <div className="min-h-screen bg-background">
       <div className="container mx-auto max-w-4xl px-4 py-6">
