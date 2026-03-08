@@ -131,7 +131,7 @@ const MuallimOverlay = () => {
       {/* Floating button with dismiss */}
       {!open && (
         <div
-          className={`fixed ${btnPosition} z-40 flex items-center gap-1.5 transition-all duration-300 ${
+          className={`fixed ${btnPosition} z-[60] flex items-center gap-1.5 transition-all duration-300 ${
             visible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4 pointer-events-none"
           }`}
         >
@@ -154,7 +154,7 @@ const MuallimOverlay = () => {
 
       {/* Overlay panel */}
       {open && (
-        <div className={`fixed ${panelPosition} z-40 flex h-[500px] w-[360px] max-w-[calc(100vw-2rem)] flex-col rounded-2xl border bg-card shadow-2xl`}>
+        <div className={`fixed ${panelPosition} z-[60] flex h-[500px] w-[360px] max-w-[calc(100vw-2rem)] flex-col rounded-2xl border bg-card shadow-2xl`}>
           {/* Header */}
           <div className="flex items-center justify-between rounded-t-2xl bg-primary px-4 py-3">
             <div className="flex items-center gap-2 text-primary-foreground">
