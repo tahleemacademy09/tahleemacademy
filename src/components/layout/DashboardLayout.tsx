@@ -25,6 +25,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     { to: "/student", icon: LayoutDashboard, label: t("Dashboard", "لوحة التحكم") },
     { to: "/student/courses", icon: BookOpen, label: t("Courses", "الدورات") },
     { to: "/student/live-classes", icon: Video, label: t("Live Classes", "الفصول الحية") },
+    { to: "/student/revision", icon: BookMarked, label: t("Revision", "المراجعة") },
     { to: "/student/exams", icon: ClipboardList, label: t("Exams", "الامتحانات") },
     { to: "/student/transcripts", icon: GraduationCap, label: t("Transcripts", "السجل الأكاديمي") },
     { to: "/student/majlis", icon: MessageCircle, label: t("Al-Majlis", "المجلس") },
