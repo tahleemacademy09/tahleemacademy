@@ -316,73 +316,74 @@ ${termTables}
           </div>
         </div>
 
-        {/* Section title */}
-        <h4 className="text-xl font-bold text-left mb-3" style={{ fontFamily: "'Amiri', serif" }}>الفترة الأولى</h4>
-
-        {/* Main table */}
-        <table className="w-full border-collapse mb-6" dir="rtl" style={{ borderColor: "#333" }}>
-          <thead>
-            <tr>
-              <th className="border-[1.5px] border-[#333] p-1 text-center text-sm">
-                <span className="block" style={{ fontFamily: "'Amiri', serif", fontWeight: 700 }}>المواد</span>
-                <span className="block text-xs font-bold">Subject</span>
-              </th>
-              <th className="border-[1.5px] border-[#333] p-1 text-center text-sm">
-                <span className="block" style={{ fontFamily: "'Amiri', serif", fontWeight: 700 }}>التمرينات (٣٠)</span>
-                <span className="block text-xs font-bold">Test</span>
-              </th>
-              <th className="border-[1.5px] border-[#333] p-1 text-center text-sm">
-                <span className="block" style={{ fontFamily: "'Amiri', serif", fontWeight: 700 }}>الإمتحانات (٧٠)</span>
-                <span className="block text-xs font-bold">Exam</span>
-              </th>
-              <th className="border-[1.5px] border-[#333] p-1 text-center text-sm">
-                <span className="block" style={{ fontFamily: "'Amiri', serif", fontWeight: 700 }}>المجموع الكلي (١٠٠)</span>
-                <span className="block text-xs font-bold">Total</span>
-              </th>
-              <th className="border-[1.5px] border-[#333] p-1 text-center text-sm">
-                <span className="block" style={{ fontFamily: "'Amiri', serif", fontWeight: 700 }}>%</span>
-                <span className="block text-xs font-bold">%</span>
-              </th>
-              <th className="border-[1.5px] border-[#333] p-1 text-center text-sm">
-                <span className="block" style={{ fontFamily: "'Amiri', serif", fontWeight: 700 }}>GP</span>
-                <span className="block text-xs font-bold">GP</span>
-              </th>
-              <th className="border-[1.5px] border-[#333] p-1 text-center text-sm">
-                <span className="block" style={{ fontFamily: "'Amiri', serif", fontWeight: 700 }}>النتيجة</span>
-                <span className="block text-xs font-bold">Result</span>
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {exams.map((e) => {
-              const coursework = Math.round(e.percentage * 0.3);
-              const finalExam = Math.round(e.percentage * 0.7);
-              const total = coursework + finalExam;
-              const gp = gradePoint(e.percentage);
-              return (
-                <tr key={e.exam_id + e.submitted_at}>
-                  <td className="border-[1.5px] border-[#333] p-1 text-center text-sm">{e.title_ar || e.title}</td>
-                  <td className="border-[1.5px] border-[#333] p-1 text-center text-sm">{coursework}</td>
-                  <td className="border-[1.5px] border-[#333] p-1 text-center text-sm">{finalExam}</td>
-                  <td className="border-[1.5px] border-[#333] p-1 text-center text-sm font-bold">{total}</td>
-                  <td className="border-[1.5px] border-[#333] p-1 text-center text-sm">{total}%</td>
-                  <td className="border-[1.5px] border-[#333] p-1 text-center text-sm">{gp.toFixed(1)}</td>
-                  <td className={`border-[1.5px] border-[#333] p-1 text-center text-sm font-bold ${e.passed ? "text-[#2a7a2a]" : "text-destructive"}`}>
-                    {e.passed ? "Pass ✓" : "Fail ✗"}
-                  </td>
+        {/* Term tables */}
+        {terms.map((termExams, termIdx) => (
+          <div key={termIdx}>
+            <h4 className="text-lg font-bold text-left mb-2 mt-4" style={{ fontFamily: "'Amiri', serif" }}>{termNames[termIdx]}</h4>
+            <table className="w-full border-collapse mb-4" dir="rtl" style={{ borderColor: "#333" }}>
+              <thead>
+                <tr>
+                  <th className="border-[1.5px] border-[#333] p-1 text-center text-xs">
+                    <span className="block" style={{ fontFamily: "'Amiri', serif", fontWeight: 700 }}>المواد</span>
+                    <span className="block text-[10px] font-bold">Subject</span>
+                  </th>
+                  <th className="border-[1.5px] border-[#333] p-1 text-center text-xs">
+                    <span className="block" style={{ fontFamily: "'Amiri', serif", fontWeight: 700 }}>التمرينات (٣٠)</span>
+                    <span className="block text-[10px] font-bold">Test</span>
+                  </th>
+                  <th className="border-[1.5px] border-[#333] p-1 text-center text-xs">
+                    <span className="block" style={{ fontFamily: "'Amiri', serif", fontWeight: 700 }}>الإمتحانات (٧٠)</span>
+                    <span className="block text-[10px] font-bold">Exam</span>
+                  </th>
+                  <th className="border-[1.5px] border-[#333] p-1 text-center text-xs">
+                    <span className="block" style={{ fontFamily: "'Amiri', serif", fontWeight: 700 }}>المجموع (١٠٠)</span>
+                    <span className="block text-[10px] font-bold">Total</span>
+                  </th>
+                  <th className="border-[1.5px] border-[#333] p-1 text-center text-xs">
+                    <span className="block" style={{ fontFamily: "'Amiri', serif", fontWeight: 700 }}>%</span>
+                    <span className="block text-[10px] font-bold">%</span>
+                  </th>
+                  <th className="border-[1.5px] border-[#333] p-1 text-center text-xs">
+                    <span className="block" style={{ fontFamily: "'Amiri', serif", fontWeight: 700 }}>GP</span>
+                    <span className="block text-[10px] font-bold">GP</span>
+                  </th>
+                  <th className="border-[1.5px] border-[#333] p-1 text-center text-xs">
+                    <span className="block" style={{ fontFamily: "'Amiri', serif", fontWeight: 700 }}>النتيجة</span>
+                    <span className="block text-[10px] font-bold">Result</span>
+                  </th>
                 </tr>
-              );
-            })}
-            {/* Fill empty rows to make at least 10 */}
-            {Array.from({ length: Math.max(0, 10 - exams.length) }).map((_, i) => (
-              <tr key={`empty-${i}`}>
-                {Array.from({ length: 7 }).map((_, j) => (
-                  <td key={j} className="border-[1.5px] border-[#333] p-1 h-8" />
+              </thead>
+              <tbody>
+                {termExams.map((e) => {
+                  const coursework = Math.round(e.percentage * 0.3);
+                  const finalExam = Math.round(e.percentage * 0.7);
+                  const total = coursework + finalExam;
+                  const gp = gradePoint(e.percentage);
+                  return (
+                    <tr key={e.exam_id + e.submitted_at}>
+                      <td className="border-[1.5px] border-[#333] p-1 text-center text-xs">{e.title_ar || e.title}</td>
+                      <td className="border-[1.5px] border-[#333] p-1 text-center text-xs">{coursework}</td>
+                      <td className="border-[1.5px] border-[#333] p-1 text-center text-xs">{finalExam}</td>
+                      <td className="border-[1.5px] border-[#333] p-1 text-center text-xs font-bold">{total}</td>
+                      <td className="border-[1.5px] border-[#333] p-1 text-center text-xs">{total}%</td>
+                      <td className="border-[1.5px] border-[#333] p-1 text-center text-xs">{gp.toFixed(1)}</td>
+                      <td className={`border-[1.5px] border-[#333] p-1 text-center text-xs font-bold ${e.passed ? "text-[#2a7a2a]" : "text-destructive"}`}>
+                        {e.passed ? "Pass ✓" : "Fail ✗"}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {Array.from({ length: Math.max(0, 5 - termExams.length) }).map((_, i) => (
+                  <tr key={`empty-${termIdx}-${i}`}>
+                    {Array.from({ length: 7 }).map((_, j) => (
+                      <td key={j} className="border-[1.5px] border-[#333] p-1 h-6" />
+                    ))}
+                  </tr>
                 ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+              </tbody>
+            </table>
+          </div>
+        ))}
 
         {/* Summary table */}
         <table className="w-full border-collapse" dir="ltr">
