@@ -17,6 +17,8 @@ export default {
         sans: ["Inter", "sans-serif"],
         display: ["Playfair Display", "serif"],
         arabic: ["Amiri", "serif"],
+        heading: ["Cormorant Garamond", "serif"],
+        body: ["Cairo", "sans-serif"],
       },
       colors: {
         border: "hsl(var(--border))",
