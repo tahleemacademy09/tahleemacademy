@@ -301,7 +301,7 @@ const Index = () => {
             </p>
             <div className="ta-hero-buttons">
               <button className="ta-hero-btn-primary" onClick={() => navigate("/auth")}>Start Learning →</button>
-              <button className="ta-hero-btn-secondary">Browse Courses</button>
+              <button className="ta-hero-btn-secondary" onClick={() => navigate("/courses")}>Browse Courses</button>
             </div>
           </div>
           <div className="ta-hero-right">
