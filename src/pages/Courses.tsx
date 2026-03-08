@@ -61,8 +61,12 @@ const Courses = () => {
             transition={{ delay: i * 0.05 }}
           >
             <Card className="group h-full overflow-hidden hover:shadow-lg transition-shadow">
-              <div className="h-40 bg-gradient-to-br from-primary/20 to-secondary/20 flex items-center justify-center">
-                <BookOpen className="h-16 w-16 text-primary/40 group-hover:scale-110 transition-transform" />
+              <div className="h-40 overflow-hidden">
+                <img 
+                  src={course.image} 
+                  alt={language === "ar" ? course.title_ar : course.title}
+                  className="h-full w-full object-cover group-hover:scale-110 transition-transform"
+                />
               </div>
               <CardContent className="p-5">
                 <div className="mb-2 flex items-center gap-2">
