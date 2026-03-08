@@ -219,7 +219,7 @@ const PreExamVerification = () => {
   // Calculate readiness
   const passedChecks = checks.filter(c => c.status === "passed").length;
   const allChecksPassed = checks.every(c => c.status === "passed");
-  const allReady = allChecksPassed && agreed && faceCaptured && micTested;
+  const allReady = allChecksPassed && agreed && faceCaptured && micTested && allChecked;
   const progressValue = (passedChecks / checks.length) * 100;
 
   // Start exam
