@@ -516,14 +516,25 @@ ${termPages}
         </Card>
       </div>
 
-      {/* Islamic Transcript Preview Card */}
+      {/* Islamic Transcript Preview Card — hidden behind View button */}
       <Card className="overflow-hidden">
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>{t("Islamic Academic Result Sheet", "صحيفة النتائج الأكاديمية")}</CardTitle>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowPreview(prev => !prev)}
+            disabled={exams.length === 0}
+          >
+            <Eye className="mr-2 h-4 w-4" />
+            {showPreview ? t("Hide", "إخفاء") : t("View", "عرض")}
+          </Button>
         </CardHeader>
-        <CardContent className="p-0">
-          <TranscriptPreview />
-        </CardContent>
+        {showPreview && (
+          <CardContent className="p-0">
+            <TranscriptPreview />
+          </CardContent>
+        )}
       </Card>
     </div>
   );

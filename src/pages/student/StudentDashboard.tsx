@@ -124,6 +124,44 @@ const StudentDashboard = () => {
     );
   }
 
+  const markAsRead = async (id: string) => {
+    await supabase.from("notifications").update({ is_read: true }).eq("id", id);
+    setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
+  };
+
+  const unreadCount = notifications.filter(n => !n.is_read).length;
+
+  // Calendar helpers
+  const calendarYear = calendarMonth.getFullYear();
+  const calendarMonthIdx = calendarMonth.getMonth();
+  const daysInMonth = new Date(calendarYear, calendarMonthIdx + 1, 0).getDate();
+  const firstDayOfWeek = new Date(calendarYear, calendarMonthIdx, 1).getDay();
+
+  const getEventsForDay = (day: number) => {
+    const dateStr = `${calendarYear}-${String(calendarMonthIdx + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const events: { type: 'exam' | 'assignment'; title: string; color: string }[] = [];
+    allExamsForCalendar.forEach(e => {
+      if (e.start_date && e.start_date.startsWith(dateStr)) {
+        events.push({ type: 'exam', title: e.title_ar || e.title, color: 'bg-destructive' });
+      }
+    });
+    subjectAssignments.forEach(a => {
+      if (a.deadline && a.deadline.startsWith(dateStr)) {
+        events.push({ type: 'assignment', title: a.title, color: 'bg-secondary' });
+      }
+    });
+    return events;
+  };
+
+  const prevMonth = () => setCalendarMonth(new Date(calendarYear, calendarMonthIdx - 1, 1));
+  const nextMonth = () => setCalendarMonth(new Date(calendarYear, calendarMonthIdx + 1, 1));
+
+  const notifIcon = (type: string | null) => {
+    if (type === 'warning') return <AlertTriangle className="h-3 w-3 text-secondary" />;
+    if (type === 'exam') return <ClipboardList className="h-3 w-3 text-destructive" />;
+    return <Info className="h-3 w-3 text-primary" />;
+  };
+
   const today = new Date();
 
   return (
