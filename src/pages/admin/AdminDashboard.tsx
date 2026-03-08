@@ -9,7 +9,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import {
   Users, ClipboardList, BookOpen, TrendingUp, Plus, AlertTriangle,
-  CheckSquare, BarChart, Shield, Activity, ArrowRight
+  CheckSquare, BarChart, Shield, Activity, ArrowRight, UserCheck
 } from "lucide-react";
 
 const AdminDashboard = () => {
