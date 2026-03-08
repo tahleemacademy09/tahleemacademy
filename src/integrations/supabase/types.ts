@@ -168,9 +168,96 @@ export type Database = {
           },
         ]
       }
+      chat_channels: {
+        Row: {
+          avatar: string | null
+          created_at: string | null
+          created_by: string | null
+          description: string | null
+          id: string
+          is_private: boolean | null
+          last_message: string | null
+          last_message_at: string | null
+          level: string | null
+          member_count: number | null
+          name: string | null
+          name_ar: string | null
+          type: string | null
+        }
+        Insert: {
+          avatar?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          is_private?: boolean | null
+          last_message?: string | null
+          last_message_at?: string | null
+          level?: string | null
+          member_count?: number | null
+          name?: string | null
+          name_ar?: string | null
+          type?: string | null
+        }
+        Update: {
+          avatar?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          is_private?: boolean | null
+          last_message?: string | null
+          last_message_at?: string | null
+          level?: string | null
+          member_count?: number | null
+          name?: string | null
+          name_ar?: string | null
+          type?: string | null
+        }
+        Relationships: []
+      }
+      chat_members: {
+        Row: {
+          channel_id: string
+          id: string
+          is_muted: boolean | null
+          joined_at: string | null
+          last_read_at: string | null
+          role: string | null
+          user_id: string
+        }
+        Insert: {
+          channel_id: string
+          id?: string
+          is_muted?: boolean | null
+          joined_at?: string | null
+          last_read_at?: string | null
+          role?: string | null
+          user_id: string
+        }
+        Update: {
+          channel_id?: string
+          id?: string
+          is_muted?: boolean | null
+          joined_at?: string | null
+          last_read_at?: string | null
+          role?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chat_members_channel_id_fkey"
+            columns: ["channel_id"]
+            isOneToOne: false
+            referencedRelation: "chat_channels"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       chat_messages: {
         Row: {
           audio_duration_ms: number | null
+          channel_id: string | null
           class_level_id: string
           content_type: string
           created_at: string
@@ -182,6 +269,7 @@ export type Database = {
         }
         Insert: {
           audio_duration_ms?: number | null
+          channel_id?: string | null
           class_level_id: string
           content_type?: string
           created_at?: string
@@ -193,6 +281,7 @@ export type Database = {
         }
         Update: {
           audio_duration_ms?: number | null
+          channel_id?: string | null
           class_level_id?: string
           content_type?: string
           created_at?: string
@@ -202,7 +291,15 @@ export type Database = {
           text?: string | null
           user_id?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "chat_messages_channel_id_fkey"
+            columns: ["channel_id"]
+            isOneToOne: false
+            referencedRelation: "chat_channels"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       courses: {
         Row: {
