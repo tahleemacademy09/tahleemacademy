@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -11,7 +12,7 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Copy, Share2, QrCode, Trash2, Radio, Calendar, Users, ExternalLink } from "lucide-react";
+import { Plus, Copy, Share2, QrCode, Trash2, Radio, Calendar, Users, ExternalLink, Video } from "lucide-react";
 import { format } from "date-fns";
 import { toast } from "sonner";
 
