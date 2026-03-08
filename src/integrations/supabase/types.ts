@@ -1678,6 +1678,117 @@ export type Database = {
         }
         Relationships: []
       }
+      recording_bookmarks: {
+        Row: {
+          created_at: string | null
+          id: string
+          label: string | null
+          recording_id: string
+          student_id: string
+          timestamp_seconds: number
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          label?: string | null
+          recording_id: string
+          student_id: string
+          timestamp_seconds: number
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          label?: string | null
+          recording_id?: string
+          student_id?: string
+          timestamp_seconds?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recording_bookmarks_recording_id_fkey"
+            columns: ["recording_id"]
+            isOneToOne: false
+            referencedRelation: "session_recordings"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      recording_notes: {
+        Row: {
+          created_at: string | null
+          id: string
+          note_text: string
+          recording_id: string
+          student_id: string
+          timestamp_seconds: number
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          note_text: string
+          recording_id: string
+          student_id: string
+          timestamp_seconds: number
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          note_text?: string
+          recording_id?: string
+          student_id?: string
+          timestamp_seconds?: number
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recording_notes_recording_id_fkey"
+            columns: ["recording_id"]
+            isOneToOne: false
+            referencedRelation: "session_recordings"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      recording_watch_progress: {
+        Row: {
+          completed: boolean | null
+          id: string
+          last_watched_at: string | null
+          progress_seconds: number | null
+          recording_id: string
+          student_id: string
+          watch_count: number | null
+        }
+        Insert: {
+          completed?: boolean | null
+          id?: string
+          last_watched_at?: string | null
+          progress_seconds?: number | null
+          recording_id: string
+          student_id: string
+          watch_count?: number | null
+        }
+        Update: {
+          completed?: boolean | null
+          id?: string
+          last_watched_at?: string | null
+          progress_seconds?: number | null
+          recording_id?: string
+          student_id?: string
+          watch_count?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recording_watch_progress_recording_id_fkey"
+            columns: ["recording_id"]
+            isOneToOne: false
+            referencedRelation: "session_recordings"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       revision_flashcard_progress: {
         Row: {
           flashcard_id: string | null

@@ -39,6 +39,7 @@ import EntranceResults from "./pages/student/EntranceResults";
 import RevisionHub from "./pages/student/RevisionHub";
 import RevisionRoom from "./pages/student/RevisionRoom";
 import PaymentScreen from "./pages/student/PaymentScreen";
+import RecordingPlayer from "./pages/student/RecordingPlayer";
 
 import AdminDashboard from "./pages/admin/AdminDashboard";
 import ExamManager from "./pages/admin/ExamManager";
@@ -129,6 +130,7 @@ const App = () => (
               <Route path="/student/entrance-exam/:attemptId" element={<ProtectedRoute skipOnboardingCheck><EntranceExamTaking /></ProtectedRoute>} />
               <Route path="/student/entrance-results/:attemptId" element={<ProtectedRoute skipOnboardingCheck><EntranceResults /></ProtectedRoute>} />
               <Route path="/student/payment" element={<ProtectedRoute skipOnboardingCheck><PaymentScreen /></ProtectedRoute>} />
+              <Route path="/recordings/:recordingId" element={<ProtectedRoute><RecordingPlayer /></ProtectedRoute>} />
 
               {/* Teacher dashboard - requires teacher role */}
               <Route element={<ProtectedRoute requiredRole="teacher"><TeacherLayout /></ProtectedRoute>}>
