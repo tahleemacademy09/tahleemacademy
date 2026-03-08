@@ -106,7 +106,7 @@ const AdminDashboard = () => {
   const statCards = [
     { icon: Users, label: t("Students", "الطلاب"), value: stats.students, color: "text-primary", to: "/admin/students" },
     { icon: ClipboardList, label: t("Exams", "الامتحانات"), value: stats.exams, color: "text-secondary", to: "/admin/exams" },
-    { icon: BookOpen, label: t("Courses", "الدورات"), value: stats.courses, color: "text-primary", to: "/admin/exams" },
+    { icon: CheckSquare, label: t("Tests", "التمرينات"), value: stats.tests, color: "text-amber-500", to: "/admin/exams" },
     { icon: TrendingUp, label: t("Attempts", "المحاولات"), value: stats.attempts, color: "text-secondary", to: "/admin/grading" },
   ];
 

@@ -540,7 +540,7 @@ fill_blank,"The word for 'water' is ___.","كلمة 'ماء' هي ___.",,,,,,,,,
         <h1 className="text-3xl font-bold">{isEdit ? t("Edit Exam", "تعديل الامتحان") : t("Create Exam", "إنشاء امتحان")}</h1>
         <Button onClick={handleSave} disabled={saving} size="lg">
           {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-          {t("Save Exam", "حفظ الامتحان")}
+          {examForm.type === "test" ? t("Save Test", "حفظ التمرين") : t("Save Exam", "حفظ الامتحان")}
         </Button>
       </div>
 
