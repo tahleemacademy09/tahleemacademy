@@ -384,6 +384,25 @@ const Majlis = () => {
                 : `${activeChannel.member_count} ${t("members", "عضو")}`}
             </p>
           </button>
+          {/* Admin quick actions in header */}
+          {isAdmin && (
+            <>
+              <button
+                onClick={() => setShowBroadcast(true)}
+                className="text-white/80 hover:text-white p-1.5"
+                title={t("Broadcast", "بث")}
+              >
+                <Megaphone className="h-5 w-5" />
+              </button>
+              <button
+                onClick={() => setShowAdminDashboard(true)}
+                className="text-white/80 hover:text-white p-1.5"
+                title={t("Admin Dashboard", "لوحة المشرف")}
+              >
+                <BarChart3 className="h-5 w-5" />
+              </button>
+            </>
+          )}
           <button
             onClick={() => setShowChannelInfo(true)}
             className="text-white/80 hover:text-white p-1.5"
