@@ -14,6 +14,87 @@ export type Database = {
   }
   public: {
     Tables: {
+      academic_calendar: {
+        Row: {
+          academic_year: string
+          created_at: string | null
+          created_by: string | null
+          holiday_reason: string | null
+          holiday_reason_ar: string | null
+          id: string
+          is_active: boolean | null
+          is_holiday: boolean | null
+          payment_due_date: string | null
+          resume_date: string
+          term: string
+          term_end_date: string
+          term_start_date: string
+          title: string
+          title_ar: string | null
+        }
+        Insert: {
+          academic_year: string
+          created_at?: string | null
+          created_by?: string | null
+          holiday_reason?: string | null
+          holiday_reason_ar?: string | null
+          id?: string
+          is_active?: boolean | null
+          is_holiday?: boolean | null
+          payment_due_date?: string | null
+          resume_date: string
+          term: string
+          term_end_date: string
+          term_start_date: string
+          title: string
+          title_ar?: string | null
+        }
+        Update: {
+          academic_year?: string
+          created_at?: string | null
+          created_by?: string | null
+          holiday_reason?: string | null
+          holiday_reason_ar?: string | null
+          id?: string
+          is_active?: boolean | null
+          is_holiday?: boolean | null
+          payment_due_date?: string | null
+          resume_date?: string
+          term?: string
+          term_end_date?: string
+          term_start_date?: string
+          title?: string
+          title_ar?: string | null
+        }
+        Relationships: []
+      }
+      academy_settings: {
+        Row: {
+          description: string | null
+          id: string
+          key: string
+          updated_at: string | null
+          updated_by: string | null
+          value: string | null
+        }
+        Insert: {
+          description?: string | null
+          id?: string
+          key: string
+          updated_at?: string | null
+          updated_by?: string | null
+          value?: string | null
+        }
+        Update: {
+          description?: string | null
+          id?: string
+          key?: string
+          updated_at?: string | null
+          updated_by?: string | null
+          value?: string | null
+        }
+        Relationships: []
+      }
       activity_logs: {
         Row: {
           action: string
@@ -1132,6 +1213,39 @@ export type Database = {
         }
         Relationships: []
       }
+      payment_switch_log: {
+        Row: {
+          action: string | null
+          affected_students: number | null
+          auto_on_date: string | null
+          created_at: string | null
+          done_by: string | null
+          id: string
+          reason: string | null
+          reason_ar: string | null
+        }
+        Insert: {
+          action?: string | null
+          affected_students?: number | null
+          auto_on_date?: string | null
+          created_at?: string | null
+          done_by?: string | null
+          id?: string
+          reason?: string | null
+          reason_ar?: string | null
+        }
+        Update: {
+          action?: string | null
+          affected_students?: number | null
+          auto_on_date?: string | null
+          created_at?: string | null
+          done_by?: string | null
+          id?: string
+          reason?: string | null
+          reason_ar?: string | null
+        }
+        Relationships: []
+      }
       payments: {
         Row: {
           amount: number
@@ -1148,6 +1262,7 @@ export type Database = {
           recorded_by: string | null
           status: string | null
           student_id: string
+          term: string | null
           type: string | null
         }
         Insert: {
@@ -1165,6 +1280,7 @@ export type Database = {
           recorded_by?: string | null
           status?: string | null
           student_id: string
+          term?: string | null
           type?: string | null
         }
         Update: {
@@ -1182,6 +1298,7 @@ export type Database = {
           recorded_by?: string | null
           status?: string | null
           student_id?: string
+          term?: string | null
           type?: string | null
         }
         Relationships: [
@@ -1374,6 +1491,7 @@ export type Database = {
           gender: string | null
           has_taken_entrance_exam: boolean | null
           id: string
+          is_founding_member: boolean | null
           is_payment_exempt: boolean | null
           learning_goal: string | null
           level: string | null
@@ -1383,6 +1501,7 @@ export type Database = {
           parent_phone: string | null
           parent_relationship: string | null
           parent_whatsapp: string | null
+          payment_grace_end: string | null
           payment_status: string | null
           phone: string | null
           preferred_language: string | null
@@ -1414,6 +1533,7 @@ export type Database = {
           gender?: string | null
           has_taken_entrance_exam?: boolean | null
           id?: string
+          is_founding_member?: boolean | null
           is_payment_exempt?: boolean | null
           learning_goal?: string | null
           level?: string | null
@@ -1423,6 +1543,7 @@ export type Database = {
           parent_phone?: string | null
           parent_relationship?: string | null
           parent_whatsapp?: string | null
+          payment_grace_end?: string | null
           payment_status?: string | null
           phone?: string | null
           preferred_language?: string | null
@@ -1454,6 +1575,7 @@ export type Database = {
           gender?: string | null
           has_taken_entrance_exam?: boolean | null
           id?: string
+          is_founding_member?: boolean | null
           is_payment_exempt?: boolean | null
           learning_goal?: string | null
           level?: string | null
@@ -1463,6 +1585,7 @@ export type Database = {
           parent_phone?: string | null
           parent_relationship?: string | null
           parent_whatsapp?: string | null
+          payment_grace_end?: string | null
           payment_status?: string | null
           phone?: string | null
           preferred_language?: string | null
@@ -2097,6 +2220,7 @@ export type Database = {
       student_subscriptions: {
         Row: {
           auto_renew: boolean | null
+          count_from_date: string | null
           created_at: string | null
           end_date: string | null
           id: string
@@ -2109,6 +2233,7 @@ export type Database = {
         }
         Insert: {
           auto_renew?: boolean | null
+          count_from_date?: string | null
           created_at?: string | null
           end_date?: string | null
           id?: string
@@ -2121,6 +2246,7 @@ export type Database = {
         }
         Update: {
           auto_renew?: boolean | null
+          count_from_date?: string | null
           created_at?: string | null
           end_date?: string | null
           id?: string

@@ -8,10 +8,12 @@ import {
   BookOpen, LayoutDashboard, ClipboardList, Users, LogOut, Globe,
   CheckSquare, BarChart, UserCircle, Library, GraduationCap, MessageCircle,
   Menu, Video, Mic, Settings, Shield, Layers, FileText, UserCheck, BookMarked,
-  CreditCard,
+  CreditCard, Calendar,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import PaymentBanner from "./PaymentBanner";
+import HolidayBanner from "./HolidayBanner";
+import AdminPaymentIndicator from "./AdminPaymentIndicator";
 
 interface DashboardLayoutProps {
   role: "student" | "admin";
@@ -48,6 +50,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     { to: "/admin/proctoring", icon: BarChart, label: t("Proctoring", "المراقبة") },
     { to: "/admin/entrance-exam", icon: GraduationCap, label: t("Entrance Exam", "اختبار القبول") },
     { to: "/admin/payments", icon: CreditCard, label: t("Payments", "المدفوعات") },
+    { to: "/admin/calendar", icon: Calendar, label: t("Calendar", "التقويم") },
   ];
 
   const links = role === "admin" ? adminLinks : studentLinks;
@@ -149,7 +152,9 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
           <div className="w-10" /> {/* Spacer for centering */}
         </div>
 
+        <HolidayBanner />
         {role === "student" && <PaymentBanner />}
+        {role === "admin" && <AdminPaymentIndicator />}
         <main className="flex-1 overflow-auto">
           <Outlet />
         </main>

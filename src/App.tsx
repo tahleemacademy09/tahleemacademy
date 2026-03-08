@@ -60,6 +60,7 @@ import NotificationManagement from "./pages/admin/NotificationManagement";
 import TranscriptManagement from "./pages/admin/TranscriptManagement";
 import AttendanceManagement from "./pages/admin/AttendanceManagement";
 import PaymentManagement from "./pages/admin/PaymentManagement";
+import AcademicCalendar from "./pages/admin/AcademicCalendar";
 
 import TeacherDashboard from "./pages/teacher/TeacherDashboard";
 import TeacherStudents from "./pages/teacher/TeacherStudents";
@@ -171,6 +172,7 @@ const App = () => (
                 <Route path="/admin/transcripts" element={<TranscriptManagement />} />
                 <Route path="/admin/attendance" element={<AttendanceManagement />} />
                 <Route path="/admin/payments" element={<PaymentManagement />} />
+                <Route path="/admin/calendar" element={<AcademicCalendar />} />
               </Route>
 
               <Route path="*" element={<NotFound />} />
