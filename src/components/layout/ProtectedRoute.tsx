@@ -33,7 +33,8 @@ const ProtectedRoute = ({ children, requiredRole, skipOnboardingCheck }: Protect
     !(profile as any).onboarding_completed &&
     !(profile as any).has_taken_entrance_exam &&
     !location.pathname.startsWith("/onboarding") &&
-    !location.pathname.startsWith("/student/entrance")
+    !location.pathname.startsWith("/student/entrance") &&
+    !location.pathname.startsWith("/student/results")
   ) {
     return <Navigate to="/onboarding" replace />;
   }

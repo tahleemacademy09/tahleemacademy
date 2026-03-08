@@ -12,6 +12,7 @@ interface AuthContextType {
   signIn: (email: string, password: string) => Promise<any>;
   signOut: () => Promise<void>;
   hasRole: (role: string) => boolean;
+  refreshProfile: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -30,6 +31,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     ]);
     if (rolesRes.data) setRoles(rolesRes.data.map((r) => r.role));
     if (profileRes.data) setProfile(profileRes.data);
+  };
+
+  const refreshProfile = async () => {
+    if (!user) return;
+    const { data } = await supabase.from("profiles").select("*").eq("user_id", user.id).maybeSingle();
+    if (data) setProfile(data);
   };
 
   useEffect(() => {
@@ -81,7 +88,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const hasRole = (role: string) => roles.includes(role);
 
   return (
-    <AuthContext.Provider value={{ user, session, loading, roles, profile, signUp, signIn, signOut, hasRole }}>
+    <AuthContext.Provider value={{ user, session, loading, roles, profile, signUp, signIn, signOut, hasRole, refreshProfile }}>
       {children}
     </AuthContext.Provider>
   );
