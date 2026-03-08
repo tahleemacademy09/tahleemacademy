@@ -921,40 +921,73 @@ export type Database = {
         Row: {
           chat_count: number | null
           created_at: string | null
+          duration_minutes: number | null
           ended_at: string | null
+          homework: string | null
+          homework_ar: string | null
           host_id: string
           id: string
+          is_recorded: boolean | null
+          level: string | null
+          materials_url: string | null
           peak_participants: number | null
+          recording_auto_saved: boolean | null
           recording_status: string | null
+          scheduled_at: string | null
+          session_number: number | null
           started_at: string | null
           status: string | null
           subject_id: string
+          topic: string | null
+          topic_ar: string | null
           total_participants: number | null
         }
         Insert: {
           chat_count?: number | null
           created_at?: string | null
+          duration_minutes?: number | null
           ended_at?: string | null
+          homework?: string | null
+          homework_ar?: string | null
           host_id: string
           id?: string
+          is_recorded?: boolean | null
+          level?: string | null
+          materials_url?: string | null
           peak_participants?: number | null
+          recording_auto_saved?: boolean | null
           recording_status?: string | null
+          scheduled_at?: string | null
+          session_number?: number | null
           started_at?: string | null
           status?: string | null
           subject_id: string
+          topic?: string | null
+          topic_ar?: string | null
           total_participants?: number | null
         }
         Update: {
           chat_count?: number | null
           created_at?: string | null
+          duration_minutes?: number | null
           ended_at?: string | null
+          homework?: string | null
+          homework_ar?: string | null
           host_id?: string
           id?: string
+          is_recorded?: boolean | null
+          level?: string | null
+          materials_url?: string | null
           peak_participants?: number | null
+          recording_auto_saved?: boolean | null
           recording_status?: string | null
+          scheduled_at?: string | null
+          session_number?: number | null
           started_at?: string | null
           status?: string | null
           subject_id?: string
+          topic?: string | null
+          topic_ar?: string | null
           total_participants?: number | null
         }
         Relationships: [
@@ -1347,6 +1380,72 @@ export type Database = {
           },
         ]
       }
+      session_homework: {
+        Row: {
+          created_at: string | null
+          description: string | null
+          description_ar: string | null
+          due_date: string | null
+          grade: number | null
+          id: string
+          session_id: string | null
+          status: string | null
+          student_id: string
+          subject_id: string | null
+          submission_notes: string | null
+          submission_url: string | null
+          teacher_feedback: string | null
+          teacher_id: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          description?: string | null
+          description_ar?: string | null
+          due_date?: string | null
+          grade?: number | null
+          id?: string
+          session_id?: string | null
+          status?: string | null
+          student_id: string
+          subject_id?: string | null
+          submission_notes?: string | null
+          submission_url?: string | null
+          teacher_feedback?: string | null
+          teacher_id?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          description?: string | null
+          description_ar?: string | null
+          due_date?: string | null
+          grade?: number | null
+          id?: string
+          session_id?: string | null
+          status?: string | null
+          student_id?: string
+          subject_id?: string | null
+          submission_notes?: string | null
+          submission_url?: string | null
+          teacher_feedback?: string | null
+          teacher_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_homework_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_homework_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       session_recordings: {
         Row: {
           created_at: string | null
@@ -1557,6 +1656,7 @@ export type Database = {
           is_downloadable: boolean | null
           level: string | null
           material_type: string | null
+          session_id: string | null
           sort_order: number | null
           subject_id: string
           title: string
@@ -1573,6 +1673,7 @@ export type Database = {
           is_downloadable?: boolean | null
           level?: string | null
           material_type?: string | null
+          session_id?: string | null
           sort_order?: number | null
           subject_id: string
           title: string
@@ -1589,6 +1690,7 @@ export type Database = {
           is_downloadable?: boolean | null
           level?: string | null
           material_type?: string | null
+          session_id?: string | null
           sort_order?: number | null
           subject_id?: string
           title?: string
@@ -1596,6 +1698,13 @@ export type Database = {
           uploaded_by?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "subject_materials_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "subject_materials_subject_id_fkey"
             columns: ["subject_id"]
@@ -1651,6 +1760,8 @@ export type Database = {
       }
       subjects: {
         Row: {
+          course_syllabus: string | null
+          course_syllabus_ar: string | null
           created_at: string | null
           created_by: string | null
           description: string | null
@@ -1658,13 +1769,22 @@ export type Database = {
           icon: string | null
           id: string
           is_active: boolean | null
+          level: string | null
           livekit_room_name: string | null
+          next_session_at: string | null
+          session_day: string | null
+          session_duration: number | null
+          session_time: string | null
+          sessions_per_week: number | null
           teacher_id: string | null
           title: string
           title_ar: string | null
+          total_sessions: number | null
           updated_at: string | null
         }
         Insert: {
+          course_syllabus?: string | null
+          course_syllabus_ar?: string | null
           created_at?: string | null
           created_by?: string | null
           description?: string | null
@@ -1672,13 +1792,22 @@ export type Database = {
           icon?: string | null
           id?: string
           is_active?: boolean | null
+          level?: string | null
           livekit_room_name?: string | null
+          next_session_at?: string | null
+          session_day?: string | null
+          session_duration?: number | null
+          session_time?: string | null
+          sessions_per_week?: number | null
           teacher_id?: string | null
           title: string
           title_ar?: string | null
+          total_sessions?: number | null
           updated_at?: string | null
         }
         Update: {
+          course_syllabus?: string | null
+          course_syllabus_ar?: string | null
           created_at?: string | null
           created_by?: string | null
           description?: string | null
@@ -1686,10 +1815,17 @@ export type Database = {
           icon?: string | null
           id?: string
           is_active?: boolean | null
+          level?: string | null
           livekit_room_name?: string | null
+          next_session_at?: string | null
+          session_day?: string | null
+          session_duration?: number | null
+          session_time?: string | null
+          sessions_per_week?: number | null
           teacher_id?: string | null
           title?: string
           title_ar?: string | null
+          total_sessions?: number | null
           updated_at?: string | null
         }
         Relationships: []

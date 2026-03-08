@@ -23,7 +23,7 @@ const TeacherDashboard = () => {
     if (!user) return;
     const fetchData = async () => {
       // Get teacher's subjects
-      const { data: subjects } = await supabase.from("subjects").select("id, title, title_ar").eq("teacher_id", user.id);
+      const { data: subjects } = await supabase.from("subjects").select("id, title, title_ar, level, next_session_at, total_sessions").eq("teacher_id", user.id);
       const subjectIds = (subjects || []).map(s => s.id);
 
       // Count students via enrollments -> courses -> subjects
@@ -44,8 +44,13 @@ const TeacherDashboard = () => {
       const today = new Date().toISOString().split("T")[0];
       let sessionsToday: any[] = [];
       if (subjectIds.length > 0) {
-        const { data } = await supabase.from("live_sessions").select("*, subjects(title, title_ar)").in("subject_id", subjectIds).gte("created_at", today + "T00:00:00").lte("created_at", today + "T23:59:59");
+        const { data } = await supabase.from("live_sessions").select("*, subjects(title, title_ar)").in("subject_id", subjectIds).gte("scheduled_at", today + "T00:00:00").lte("scheduled_at", today + "T23:59:59");
         sessionsToday = data || [];
+        // Fallback to created_at if no scheduled_at results
+        if (!sessionsToday.length) {
+          const { data: fallback } = await supabase.from("live_sessions").select("*, subjects(title, title_ar)").in("subject_id", subjectIds).gte("created_at", today + "T00:00:00").lte("created_at", today + "T23:59:59");
+          sessionsToday = fallback || [];
+        }
       }
 
       // Today's private sessions
@@ -54,16 +59,20 @@ const TeacherDashboard = () => {
       // Pending grading
       let pendingTests = 0, pendingExams = 0;
       if (subjectIds.length > 0) {
-        const { data: exams } = await supabase.from("exams").select("id, type").in("course_id", (await supabase.from("courses").select("id").in("subject_id", subjectIds)).data?.map(c => c.id) || []);
-        const examIds = (exams || []).filter(e => (e.type || "exam") === "exam").map(e => e.id);
-        const testIds = (exams || []).filter(e => (e.type || "exam") === "test").map(e => e.id);
-        if (examIds.length > 0) {
-          const { count } = await supabase.from("exam_attempts").select("id", { count: "exact", head: true }).in("exam_id", examIds).eq("status", "submitted");
-          pendingExams = count || 0;
-        }
-        if (testIds.length > 0) {
-          const { count } = await supabase.from("exam_attempts").select("id", { count: "exact", head: true }).in("exam_id", testIds).eq("status", "submitted");
-          pendingTests = count || 0;
+        const { data: coursesForExams } = await supabase.from("courses").select("id").in("subject_id", subjectIds);
+        const cIds = (coursesForExams || []).map(c => c.id);
+        if (cIds.length > 0) {
+          const { data: exams } = await supabase.from("exams").select("id, type").in("course_id", cIds);
+          const examIds = (exams || []).filter(e => (e.type || "exam") === "exam").map(e => e.id);
+          const testIds = (exams || []).filter(e => (e.type || "exam") === "test").map(e => e.id);
+          if (examIds.length > 0) {
+            const { count } = await supabase.from("exam_attempts").select("id", { count: "exact", head: true }).in("exam_id", examIds).eq("status", "submitted");
+            pendingExams = count || 0;
+          }
+          if (testIds.length > 0) {
+            const { count } = await supabase.from("exam_attempts").select("id", { count: "exact", head: true }).in("exam_id", testIds).eq("status", "submitted");
+            pendingTests = count || 0;
+          }
         }
       }
 

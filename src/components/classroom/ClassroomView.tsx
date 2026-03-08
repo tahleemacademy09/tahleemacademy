@@ -54,8 +54,6 @@ const RecordingController = ({ sessionId, subjectId, userEmail, isPrivileged, on
       audioContextRef.current = audioContext;
       const destination = audioContext.createMediaStreamDestination();
       let trackCount = 0;
-
-      // Get all participants' audio tracks from the LiveKit room
       const participants = [room.localParticipant, ...Array.from(room.remoteParticipants.values())];
       for (const participant of participants) {
         const pubs = [...participant.trackPublications.values()];
@@ -70,83 +68,45 @@ const RecordingController = ({ sessionId, subjectId, userEmail, isPrivileged, on
           }
         }
       }
-
       if (trackCount === 0) return null;
       return destination.stream;
-    } catch {
-      return null;
-    }
+    } catch { return null; }
   }, [room]);
 
   const startRecording = useCallback(async () => {
-    // Try screen capture first (works on desktop)
     let stream: MediaStream | null = null;
     let mode: "screen" | "audio" = "audio";
-
     if (typeof navigator.mediaDevices.getDisplayMedia === "function") {
       try {
         stream = await navigator.mediaDevices.getDisplayMedia({ video: { width: 1280, height: 720 }, audio: true });
         mode = "screen";
-
-        // Try to mix in room audio
         const roomAudio = collectRoomAudioStream();
         if (roomAudio && audioContextRef.current) {
           const ctx = audioContextRef.current;
           const dest = ctx.createMediaStreamDestination();
-          // Mix display audio
-          stream.getAudioTracks().forEach(t => {
-            const src = ctx.createMediaStreamSource(new MediaStream([t]));
-            src.connect(dest);
-          });
-          // Mix room audio
-          roomAudio.getAudioTracks().forEach(t => {
-            const src = ctx.createMediaStreamSource(new MediaStream([t]));
-            src.connect(dest);
-          });
+          stream.getAudioTracks().forEach(t => { const src = ctx.createMediaStreamSource(new MediaStream([t])); src.connect(dest); });
+          roomAudio.getAudioTracks().forEach(t => { const src = ctx.createMediaStreamSource(new MediaStream([t])); src.connect(dest); });
           stream = new MediaStream([...stream.getVideoTracks(), ...dest.stream.getAudioTracks()]);
         }
-      } catch {
-        stream = null; // Denied or unavailable, fall through to audio-only
-      }
+      } catch { stream = null; }
     }
-
-    // Fallback: audio-only recording from room tracks
     if (!stream) {
       mode = "audio";
       stream = collectRoomAudioStream();
-
-      // Also try capturing local mic if room audio failed
       if (!stream) {
-        try {
-          stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        } catch {
-          toast({ title: t("Recording failed", "فشل التسجيل"), description: t("No audio source available", "لا يوجد مصدر صوت متاح"), variant: "destructive" });
-          return;
-        }
+        try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+        catch { toast({ title: t("Recording failed", "فشل التسجيل"), variant: "destructive" }); return; }
       }
     }
-
     streamsRef.current.push(stream);
-
-    // Choose mimeType
     const isVideo = stream.getVideoTracks().length > 0;
     const mimeType = isVideo
-      ? (MediaRecorder.isTypeSupported("video/webm;codecs=vp9,opus") ? "video/webm;codecs=vp9,opus"
-        : MediaRecorder.isTypeSupported("video/webm;codecs=vp8,opus") ? "video/webm;codecs=vp8,opus"
-        : "video/webm")
+      ? (MediaRecorder.isTypeSupported("video/webm;codecs=vp9,opus") ? "video/webm;codecs=vp9,opus" : "video/webm")
       : (MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm");
-
     const recorder = new MediaRecorder(stream, { mimeType });
     recordedChunksRef.current = [];
     recorder.ondataavailable = (e) => { if (e.data.size > 0) recordedChunksRef.current.push(e.data); };
-
-    // Auto-stop if screen share ends
-    if (isVideo) {
-      stream.getVideoTracks()[0]?.addEventListener("ended", () => {
-        if (mediaRecorderRef.current?.state !== "inactive") stopRecording();
-      });
-    }
-
+    if (isVideo) { stream.getVideoTracks()[0]?.addEventListener("ended", () => { if (mediaRecorderRef.current?.state !== "inactive") stopRecording(); }); }
     recorder.start(1000);
     mediaRecorderRef.current = recorder;
     setRecordingMode(mode);
@@ -154,111 +114,49 @@ const RecordingController = ({ sessionId, subjectId, userEmail, isPrivileged, on
     setRecordingPaused(false);
     setRecordingTime(0);
     timerRef.current = setInterval(() => setRecordingTime(p => p + 1), 1000);
-
-    toast({
-      title: t("Recording started", "بدأ التسجيل"),
-      description: mode === "screen"
-        ? t("Screen + audio capture active", "التقاط الشاشة والصوت نشط")
-        : t("Audio recording active", "تسجيل صوتي نشط"),
-    });
+    toast({ title: t("Recording started", "بدأ التسجيل"), description: mode === "screen" ? t("Screen + audio", "شاشة + صوت") : t("Audio recording", "تسجيل صوتي") });
   }, [collectRoomAudioStream, t]);
 
   const pauseRecording = useCallback(() => {
-    if (mediaRecorderRef.current?.state === "recording") {
-      mediaRecorderRef.current.pause();
-      setRecordingPaused(true);
-      clearInterval(timerRef.current);
-      toast({ title: t("Recording paused", "تم إيقاف التسجيل مؤقتاً") });
-    }
-  }, [t]);
+    if (mediaRecorderRef.current?.state === "recording") { mediaRecorderRef.current.pause(); setRecordingPaused(true); clearInterval(timerRef.current); }
+  }, []);
 
   const resumeRecording = useCallback(() => {
-    if (mediaRecorderRef.current?.state === "paused") {
-      mediaRecorderRef.current.resume();
-      setRecordingPaused(false);
-      timerRef.current = setInterval(() => setRecordingTime(p => p + 1), 1000);
-      toast({ title: t("Recording resumed", "تم استئناف التسجيل") });
-    }
-  }, [t]);
+    if (mediaRecorderRef.current?.state === "paused") { mediaRecorderRef.current.resume(); setRecordingPaused(false); timerRef.current = setInterval(() => setRecordingTime(p => p + 1), 1000); }
+  }, []);
 
   const stopRecording = useCallback(async () => {
     clearInterval(timerRef.current);
     const duration = recordingTime;
     const mode = recordingMode;
-
-    if (!mediaRecorderRef.current || mediaRecorderRef.current.state === "inactive") {
-      setRecording(false);
-      setRecordingPaused(false);
-      setRecordingTime(0);
-      return;
-    }
-
+    if (!mediaRecorderRef.current || mediaRecorderRef.current.state === "inactive") { setRecording(false); setRecordingPaused(false); setRecordingTime(0); return; }
     setSavingRecording(true);
     onSavingChange(true);
-
-    await new Promise<void>((resolve) => {
-      mediaRecorderRef.current!.onstop = () => resolve();
-      mediaRecorderRef.current!.stop();
-    });
-
-    // Stop all captured streams
+    await new Promise<void>((resolve) => { mediaRecorderRef.current!.onstop = () => resolve(); mediaRecorderRef.current!.stop(); });
     streamsRef.current.forEach(s => s.getTracks().forEach(t => t.stop()));
     streamsRef.current = [];
-    if (audioContextRef.current) {
-      audioContextRef.current.close().catch(() => {});
-      audioContextRef.current = null;
-    }
-
+    if (audioContextRef.current) { audioContextRef.current.close().catch(() => {}); audioContextRef.current = null; }
     setRecording(false);
     setRecordingPaused(false);
     setRecordingTime(0);
-
     const isVideo = mode === "screen";
-    const ext = isVideo ? "webm" : "webm";
     const contentType = isVideo ? "video/webm" : "audio/webm";
     const blob = new Blob(recordedChunksRef.current, { type: contentType });
     recordedChunksRef.current = [];
-
-    if (blob.size < 500) {
-      setSavingRecording(false);
-      onSavingChange(false);
-      toast({ title: t("Recording too short", "التسجيل قصير جداً"), variant: "destructive" });
-      return;
-    }
-
+    if (blob.size < 500) { setSavingRecording(false); onSavingChange(false); toast({ title: t("Recording too short", "التسجيل قصير جداً"), variant: "destructive" }); return; }
     try {
       const timestamp = Date.now();
-      const storagePath = `recordings/${sessionId || subjectId}/${timestamp}.${ext}`;
-
-      const { error: uploadErr } = await supabase.storage
-        .from("subject-files")
-        .upload(storagePath, blob, { contentType, upsert: false });
+      const storagePath = `recordings/${sessionId || subjectId}/${timestamp}.webm`;
+      const { error: uploadErr } = await supabase.storage.from("subject-files").upload(storagePath, blob, { contentType, upsert: false });
       if (uploadErr) throw uploadErr;
-
-      await supabase.from("session_recordings").insert({
-        session_id: sessionId || subjectId,
-        subject_id: subjectId,
-        teacher_name: userEmail || "Teacher",
-        duration_seconds: duration,
-        file_url: storagePath,
-        file_size: blob.size,
-      });
-
-      toast({
-        title: t("Recording saved!", "تم حفظ التسجيل!"),
-        description: `${Math.floor(duration / 60)}m ${duration % 60}s — ${(blob.size / 1048576).toFixed(1)} MB`,
-      });
+      await supabase.from("session_recordings").insert({ session_id: sessionId || subjectId, subject_id: subjectId, teacher_name: userEmail || "Teacher", duration_seconds: duration, file_url: storagePath, file_size: blob.size });
+      toast({ title: t("Recording saved!", "تم حفظ التسجيل!"), description: `${Math.floor(duration / 60)}m ${duration % 60}s` });
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Upload failed";
-      toast({ title: t("Failed to save recording", "فشل حفظ التسجيل"), description: message, variant: "destructive" });
-    } finally {
-      setSavingRecording(false);
-      onSavingChange(false);
-    }
+      toast({ title: t("Failed to save", "فشل الحفظ"), description: err instanceof Error ? err.message : "Upload failed", variant: "destructive" });
+    } finally { setSavingRecording(false); onSavingChange(false); }
   }, [recordingTime, recordingMode, sessionId, subjectId, userEmail, t, onSavingChange]);
 
   const formatTime = (s: number) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
-
   if (!isPrivileged) return null;
 
   return (
@@ -270,35 +168,18 @@ const RecordingController = ({ sessionId, subjectId, userEmail, isPrivileged, on
           {recordingPaused && <span className="ms-1 text-[10px]">(PAUSED)</span>}
         </Badge>
       )}
-      {savingRecording && (
-        <Badge variant="secondary" className="gap-1">
-          <Loader2 className="h-3 w-3 animate-spin" />
-          {t("Saving...", "جاري الحفظ...")}
-        </Badge>
-      )}
+      {savingRecording && <Badge variant="secondary" className="gap-1"><Loader2 className="h-3 w-3 animate-spin" />{t("Saving...", "جاري الحفظ...")}</Badge>}
       {!recording && !savingRecording && (
-        <Button size="sm" variant="outline" onClick={startRecording} className="gap-1 text-xs">
-          <Circle className="h-2 w-2 fill-red-500 text-red-500" />
-          {t("Record", "تسجيل")}
-        </Button>
+        <Button size="sm" variant="outline" onClick={startRecording} className="gap-1 text-xs"><Circle className="h-2 w-2 fill-red-500 text-red-500" />{t("Record", "تسجيل")}</Button>
       )}
       {recording && (
         <>
           {recordingPaused ? (
-            <Button size="sm" variant="outline" onClick={resumeRecording} className="gap-1 text-xs">
-              <Play className="h-3 w-3" />
-              {t("Resume", "استئناف")}
-            </Button>
+            <Button size="sm" variant="outline" onClick={resumeRecording} className="gap-1 text-xs"><Play className="h-3 w-3" />{t("Resume", "استئناف")}</Button>
           ) : (
-            <Button size="sm" variant="outline" onClick={pauseRecording} className="gap-1 text-xs">
-              <Pause className="h-3 w-3" />
-              {t("Pause", "إيقاف مؤقت")}
-            </Button>
+            <Button size="sm" variant="outline" onClick={pauseRecording} className="gap-1 text-xs"><Pause className="h-3 w-3" />{t("Pause", "إيقاف مؤقت")}</Button>
           )}
-          <Button size="sm" variant="destructive" onClick={stopRecording} className="gap-1 text-xs">
-            <Square className="h-3 w-3" />
-            {t("Stop", "إيقاف")}
-          </Button>
+          <Button size="sm" variant="destructive" onClick={stopRecording} className="gap-1 text-xs"><Square className="h-3 w-3" />{t("Stop", "إيقاف")}</Button>
         </>
       )}
     </div>
@@ -314,6 +195,7 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sessionInfo, setSessionInfo] = useState<any>(null);
   const [attendanceId, setAttendanceId] = useState<string | null>(null);
   const [joinedAt] = useState(Date.now());
   const [chatOpen, setChatOpen] = useState(false);
@@ -335,22 +217,18 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
         setWsUrl(data.url);
 
         const { data: sessions } = await supabase.from("live_sessions")
-          .select("id").eq("subject_id", subject.id).eq("status", "live").limit(1);
+          .select("*").eq("subject_id", subject.id).in("status", ["live", "active", "scheduled"]).order("scheduled_at", { ascending: false, nullsFirst: false }).limit(1);
         if (sessions?.length) {
           setSessionId(sessions[0].id);
+          setSessionInfo(sessions[0]);
           const { data: att } = await supabase.from("attendance_logs").insert({
-            session_id: sessions[0].id,
-            user_id: user!.id,
-            device_info: navigator.userAgent,
+            session_id: sessions[0].id, user_id: user!.id, device_info: navigator.userAgent,
           }).select("id").single();
           if (att) setAttendanceId(att.id);
         }
       } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : "Failed to connect";
-        setError(message);
-      } finally {
-        setLoading(false);
-      }
+        setError(err instanceof Error ? err.message : "Failed to connect");
+      } finally { setLoading(false); }
     };
     getToken();
   }, []);
@@ -359,10 +237,7 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
     return () => {
       if (attendanceId) {
         const duration = Math.floor((Date.now() - joinedAt) / 1000);
-        supabase.from("attendance_logs").update({
-          left_at: new Date().toISOString(),
-          duration_seconds: duration,
-        }).eq("id", attendanceId).then(() => {});
+        supabase.from("attendance_logs").update({ left_at: new Date().toISOString(), duration_seconds: duration }).eq("id", attendanceId).then(() => {});
       }
     };
   }, [attendanceId, joinedAt]);
@@ -371,8 +246,7 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
   useEffect(() => {
     if (!sessionId) return;
     const loadChat = async () => {
-      const { data } = await supabase.from("session_chat")
-        .select("*").eq("session_id", sessionId).order("created_at");
+      const { data } = await supabase.from("session_chat").select("*").eq("session_id", sessionId).order("created_at");
       setChatMessages(data || []);
       const userIds = [...new Set((data || []).map((m: any) => m.user_id))];
       if (userIds.length) {
@@ -424,9 +298,7 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
     return (
       <div className="flex items-center justify-center min-h-screen bg-background">
         <div className="text-center space-y-4 max-w-md p-6">
-          <div className="h-16 w-16 rounded-full bg-destructive/10 flex items-center justify-center mx-auto">
-            <X className="h-8 w-8 text-destructive" />
-          </div>
+          <div className="h-16 w-16 rounded-full bg-destructive/10 flex items-center justify-center mx-auto"><X className="h-8 w-8 text-destructive" /></div>
           <h2 className="text-xl font-bold">{t("Connection Failed", "فشل الاتصال")}</h2>
           <p className="text-muted-foreground">{error}</p>
           <Button onClick={onLeave}>{t("Go Back", "رجوع")}</Button>
@@ -440,50 +312,37 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
       {token && wsUrl && (
         <LiveKitRoom serverUrl={wsUrl} token={token} connect={true}
           options={{ adaptiveStream: true, dynacast: true, videoCaptureDefaults: { resolution: { width: 1280, height: 720 } } }}
-          style={{ height: "100%" }}
-          data-lk-theme="default"
+          style={{ height: "100%" }} data-lk-theme="default"
         >
-          {/* Top bar — inside LiveKitRoom so RecordingController can access room context */}
+          {/* Top bar */}
           <div className="h-12 bg-background/90 backdrop-blur border-b flex items-center justify-between px-4 z-10">
             <div className="flex items-center gap-3">
               <Badge variant="outline" className="gap-1">
                 <Circle className="h-2 w-2 fill-primary text-primary" />
                 {subject.title}
               </Badge>
+              {sessionInfo && (sessionInfo as any).topic && (
+                <span className="text-xs text-muted-foreground">
+                  #{(sessionInfo as any).session_number} — {(sessionInfo as any).topic}
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-1.5">
-              <RecordingController
-                sessionId={sessionId}
-                subjectId={subject.id}
-                userEmail={user?.email || ""}
-                isPrivileged={isPrivileged}
-                onSavingChange={setSavingRecording}
-              />
-              <Button size="sm" variant="ghost" onClick={() => setChatOpen(!chatOpen)}>
-                <MessageCircle className="h-4 w-4" />
-              </Button>
+              <RecordingController sessionId={sessionId} subjectId={subject.id} userEmail={user?.email || ""} isPrivileged={isPrivileged} onSavingChange={setSavingRecording} />
+              <Button size="sm" variant="ghost" onClick={() => setChatOpen(!chatOpen)}><MessageCircle className="h-4 w-4" /></Button>
               <Button size="sm" variant="destructive" onClick={isPrivileged ? endSession : onLeave} className="gap-1">
-                <LogOut className="h-3 w-3" />
-                {isPrivileged ? t("End", "إنهاء") : t("Leave", "مغادرة")}
+                <LogOut className="h-3 w-3" />{isPrivileged ? t("End", "إنهاء") : t("Leave", "مغادرة")}
               </Button>
             </div>
           </div>
 
-          {/* Main content */}
           <div className="flex-1 flex overflow-hidden">
-            <div className="flex-1">
-              <VideoConference />
-              <RoomAudioRenderer />
-            </div>
-
-            {/* Chat sidebar */}
+            <div className="flex-1"><VideoConference /><RoomAudioRenderer /></div>
             {chatOpen && (
               <div className="w-72 sm:w-80 bg-background border-s flex flex-col">
                 <div className="p-3 border-b flex items-center justify-between">
                   <h3 className="font-semibold text-sm">{t("Chat", "المحادثة")}</h3>
-                  <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setChatOpen(false)}>
-                    <X className="h-3 w-3" />
-                  </Button>
+                  <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setChatOpen(false)}><X className="h-3 w-3" /></Button>
                 </div>
                 <ScrollArea className="flex-1 p-3">
                   <div className="space-y-2">
