@@ -71,8 +71,10 @@ const ExamTaking = () => {
     max_warnings: exam?.max_warnings,
     auto_submit_on_violation: exam?.auto_submit_on_violation,
     screenshot_interval_seconds: exam?.screenshot_interval_seconds,
+    webcam_required: exam?.webcam_required,
+    record_audio: exam?.record_audio,
   }, proctoringEnabled && !submitted && !loading, () => {
-    // Auto-submit callback when max violations reached
+    // Auto-submit callback when max strikes reached
     if (!submittedRef.current) {
       handleSubmitRef.current();
     }
