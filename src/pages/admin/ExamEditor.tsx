@@ -172,6 +172,23 @@ const ExamEditor = () => {
           max_review_views: (exam as any).max_review_views ?? 1,
           type: (exam as any).type || "exam",
         });
+        // Load formatting settings
+        setFormatSettings({
+          question_font_size: (exam as any).question_font_size ?? 16,
+          question_font_family: (exam as any).question_font_family ?? "Cairo",
+          question_alignment: (exam as any).question_alignment ?? "left",
+          question_bold: (exam as any).question_bold ?? false,
+          question_italic: (exam as any).question_italic ?? false,
+          options_font_size: (exam as any).options_font_size ?? 14,
+          options_bold: (exam as any).options_bold ?? false,
+          options_alignment: (exam as any).options_alignment ?? "left",
+          question_color: (exam as any).question_color ?? "#1a1a1a",
+          question_line_height: (exam as any).question_line_height ?? 1.7,
+          question_padding: (exam as any).question_padding ?? 16,
+          show_question_numbers: (exam as any).show_question_numbers ?? true,
+          show_marks_per_question: (exam as any).show_marks_per_question ?? true,
+          rtl_mode: (exam as any).rtl_mode ?? false,
+        });
       }
       const { data: qs } = await supabase.from("exam_questions").select("*").eq("exam_id", examId).order("sort_order");
       if (qs?.length) {
