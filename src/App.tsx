@@ -22,6 +22,7 @@ import PublicLiveClasses from "./pages/public/LiveClasses";
 import JoinClass from "./pages/public/JoinClass";
 import GuestClassroom from "./pages/public/GuestClassroom";
 import NotFound from "./pages/NotFound";
+import PublicClassManagement from "./pages/admin/PublicClassManagement";
 
 import StudentDashboard from "./pages/student/StudentDashboard";
 import StudentExams from "./pages/student/StudentExams";
