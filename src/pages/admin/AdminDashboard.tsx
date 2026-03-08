@@ -167,6 +167,41 @@ const AdminDashboard = () => {
         </Card>
       )}
 
+      {/* Private Students Overview */}
+      {privateStudentsList.length > 0 && (
+        <Card className="mb-6 border-[#D4AF37]/30 bg-[#D4AF37]/5">
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <UserCheck className="h-4 w-4 text-[#D4AF37]" />
+              {t("Private Students Overview", "نظرة على الطلاب الخصوصيين")}
+              <Badge className="bg-[#D4AF37]/20 text-[#D4AF37] border-[#D4AF37]/30 text-xs">{stats.privateStudents}</Badge>
+            </CardTitle>
+            <Button variant="ghost" size="sm" asChild>
+              <Link to="/admin/private-sessions" className="flex items-center gap-1 text-xs">
+                {t("Sessions", "الجلسات")} ({stats.privateSessions})
+                <ArrowRight className="h-3 w-3" />
+              </Link>
+            </Button>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2 max-h-[200px] overflow-y-auto">
+              {privateStudentsList.map(s => (
+                <div key={s.user_id} className="flex items-center justify-between rounded-lg border p-2.5 bg-background">
+                  <div className="min-w-0">
+                    <div className="font-medium text-sm truncate">{s.full_name || s.email}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {t("Teacher", "المعلم")}: {s.teacher_name}
+                      {s.private_session_rate && <span className="ms-2">• {s.private_session_rate}</span>}
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-[#D4AF37]/20 text-[#D4AF37] border border-[#D4AF37]/30 shrink-0">Private</span>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       <div className="grid gap-6 lg:grid-cols-2">
         {/* Recent Submissions */}
         <Card>
