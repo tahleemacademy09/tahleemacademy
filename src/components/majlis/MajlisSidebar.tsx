@@ -19,6 +19,8 @@ interface MajlisSidebarProps {
   profiles: Record<string, UserProfile>;
   unreadCounts: Record<string, number>;
   userId: string;
+  onBroadcast?: () => void;
+  onAdminDashboard?: () => void;
 }
 
 const MajlisSidebar = ({
