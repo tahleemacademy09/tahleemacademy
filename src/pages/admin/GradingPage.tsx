@@ -36,7 +36,7 @@ const GradingPage = () => {
         .in("status", ["submitted", "graded"])
         .order("submitted_at", { ascending: false }),
       supabase.from("profiles").select("user_id, full_name, email"),
-      supabase.from("exams").select("id, title, title_ar, passing_score, term"),
+      supabase.from("exams").select("id, title, title_ar, passing_score, term, type"),
     ]);
 
     const profiles = profilesRes.data || [];
