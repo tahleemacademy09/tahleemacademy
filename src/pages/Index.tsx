@@ -278,8 +278,8 @@ const Index = () => {
           <li><a onClick={() => navigate("/contact")} style={{cursor:"pointer"}}>Contact</a></li>
         </ul>
         <div className="ta-nav-cta">
-          <button className="ta-btn-outline" onClick={() => navigate("/auth")}>Sign In</button>
-          <button className="ta-btn-solid" onClick={() => navigate("/auth")}>Register Free</button>
+          <button className="ta-btn-outline" onClick={() => navigate("/login")}>Sign In</button>
+          <button className="ta-btn-solid" onClick={() => navigate("/register")}>Register Free</button>
         </div>
       </nav>
 
