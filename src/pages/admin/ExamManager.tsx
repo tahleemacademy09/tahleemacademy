@@ -76,6 +76,7 @@ const ExamManager = () => {
   const filtered = exams.filter(e => {
     if (termFilter !== "all" && (e as any).term !== termFilter) return false;
     if (typeFilter !== "all" && ((e as any).type || "exam") !== typeFilter) return false;
+    if (levelFilter !== "all" && ((e as any).level || "") !== levelFilter) return false;
     return true;
   });
 
