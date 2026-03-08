@@ -133,6 +133,9 @@ const EntranceResults = () => {
         .maybeSingle();
     }
 
+    // Refresh the auth context so ProtectedRoute sees updated profile
+    await refreshProfile();
+
     setProcessing(false);
   };
 
