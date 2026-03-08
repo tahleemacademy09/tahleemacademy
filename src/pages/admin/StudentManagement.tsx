@@ -7,16 +7,19 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { Search, User, ClipboardList, Mail, Calendar, Eye, CheckCircle, XCircle } from "lucide-react";
+import { Search, User, ClipboardList, Mail, Calendar, Eye, CheckCircle, XCircle, UserCheck } from "lucide-react";
 
 const StudentManagement = () => {
   const { t, language } = useLanguage();
   const { toast } = useToast();
+  const { user: currentUser, hasRole } = useAuth();
   const [students, setStudents] = useState<any[]>([]);
   const [exams, setExams] = useState<any[]>([]);
   const [search, setSearch] = useState("");
+  const [typeFilter, setTypeFilter] = useState<"all" | "group" | "private">("all");
   const [assignDialogOpen, setAssignDialogOpen] = useState(false);
   const [selectedStudent, setSelectedStudent] = useState<any>(null);
   const [selectedExamId, setSelectedExamId] = useState("");
@@ -46,11 +49,17 @@ const StudentManagement = () => {
 
   useEffect(() => { fetchData(); }, []);
 
-  const filtered = students.filter((s) =>
-    s.full_name?.toLowerCase().includes(search.toLowerCase()) ||
-    s.email?.toLowerCase().includes(search.toLowerCase()) ||
-    s.phone?.includes(search)
-  );
+  const isAdmin = hasRole("admin");
+
+  const filtered = students.filter((s) => {
+    const matchesSearch = s.full_name?.toLowerCase().includes(search.toLowerCase()) ||
+      s.email?.toLowerCase().includes(search.toLowerCase()) ||
+      s.phone?.includes(search);
+    const matchesType = typeFilter === "all" || s.student_type === typeFilter;
+    // Teachers only see group students + their own private students
+    const visibleToTeacher = isAdmin || s.student_type !== "private" || s.assigned_teacher_id === currentUser?.id;
+    return matchesSearch && matchesType && visibleToTeacher;
+  });
 
   const assignExam = async () => {
     if (!selectedStudent || !selectedExamId) return;
@@ -255,6 +264,25 @@ const StudentManagement = () => {
         </div>
       </div>
 
+      {/* Type Filter */}
+      <div className="mb-4 flex gap-2 flex-wrap">
+        {[
+          { val: "all", label: t("All Students", "كل الطلاب") },
+          { val: "group", label: t("Group / الجماعيون", "الطلاب الجماعيون") },
+          { val: "private", label: t("Private / الخاصون", "الطلاب الخاصون") },
+        ].map(f => (
+          <Button
+            key={f.val}
+            variant={typeFilter === f.val ? "default" : "outline"}
+            size="sm"
+            onClick={() => setTypeFilter(f.val as any)}
+            className={typeFilter === f.val ? "bg-emerald-600 hover:bg-emerald-700 text-white" : ""}
+          >
+            {f.label}
+          </Button>
+        ))}
+      </div>
+
       <div className="mb-6 relative">
         <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <Input
@@ -276,7 +304,14 @@ const StudentManagement = () => {
                     <User className="h-5 w-5 text-primary" />
                   </div>
                   <div>
-                    <div className="font-medium">{student.full_name || t("Unnamed", "بدون اسم")}</div>
+                    <div className="font-medium flex items-center gap-2">
+                      {student.full_name || t("Unnamed", "بدون اسم")}
+                      {student.student_type === "private" ? (
+                        <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-[#D4AF37]/20 text-[#D4AF37] border border-[#D4AF37]/30">Private</span>
+                      ) : (
+                        <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200">Group</span>
+                      )}
+                    </div>
                     <div className="flex items-center gap-3 text-xs text-muted-foreground">
                       {student.email && <span className="flex items-center gap-1"><Mail className="h-3 w-3" />{student.email}</span>}
                       <span className="flex items-center gap-1"><Calendar className="h-3 w-3" />{new Date(student.created_at).toLocaleDateString()}</span>

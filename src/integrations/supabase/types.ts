@@ -836,6 +836,53 @@ export type Database = {
         }
         Relationships: []
       }
+      private_sessions: {
+        Row: {
+          created_at: string | null
+          end_time: string
+          id: string
+          notes: string | null
+          session_date: string
+          start_time: string
+          status: string | null
+          student_id: string
+          subject_id: string | null
+          teacher_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          end_time: string
+          id?: string
+          notes?: string | null
+          session_date: string
+          start_time: string
+          status?: string | null
+          student_id: string
+          subject_id?: string | null
+          teacher_id: string
+        }
+        Update: {
+          created_at?: string | null
+          end_time?: string
+          id?: string
+          notes?: string | null
+          session_date?: string
+          start_time?: string
+          status?: string | null
+          student_id?: string
+          subject_id?: string | null
+          teacher_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "private_sessions_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       proctoring_media: {
         Row: {
           attempt_id: string
@@ -938,6 +985,7 @@ export type Database = {
       }
       profiles: {
         Row: {
+          assigned_teacher_id: string | null
           avatar_url: string | null
           bio: string | null
           city: string | null
@@ -958,13 +1006,17 @@ export type Database = {
           parent_whatsapp: string | null
           phone: string | null
           preferred_language: string | null
+          private_notes: string | null
+          private_session_rate: string | null
           status: string | null
           student_id: string | null
+          student_type: string | null
           updated_at: string
           user_id: string
           whatsapp: string | null
         }
         Insert: {
+          assigned_teacher_id?: string | null
           avatar_url?: string | null
           bio?: string | null
           city?: string | null
@@ -985,13 +1037,17 @@ export type Database = {
           parent_whatsapp?: string | null
           phone?: string | null
           preferred_language?: string | null
+          private_notes?: string | null
+          private_session_rate?: string | null
           status?: string | null
           student_id?: string | null
+          student_type?: string | null
           updated_at?: string
           user_id: string
           whatsapp?: string | null
         }
         Update: {
+          assigned_teacher_id?: string | null
           avatar_url?: string | null
           bio?: string | null
           city?: string | null
@@ -1012,8 +1068,11 @@ export type Database = {
           parent_whatsapp?: string | null
           phone?: string | null
           preferred_language?: string | null
+          private_notes?: string | null
+          private_session_rate?: string | null
           status?: string | null
           student_id?: string | null
+          student_type?: string | null
           updated_at?: string
           user_id?: string
           whatsapp?: string | null

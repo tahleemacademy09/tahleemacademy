@@ -43,6 +43,7 @@ import ProctoringDashboard from "./pages/admin/ProctoringDashboard";
 import SubjectManagement from "./pages/admin/SubjectManagement";
 import CourseManagement from "./pages/admin/CourseManagement";
 import SyllabusManager from "./pages/admin/SyllabusManager";
+import PrivateSessions from "./pages/admin/PrivateSessions";
 
 const queryClient = new QueryClient();
 
@@ -102,6 +103,7 @@ const App = () => (
                 <Route path="/admin/grading" element={<GradingPage />} />
                 <Route path="/admin/question-bank" element={<QuestionBank />} />
                 <Route path="/admin/proctoring" element={<ProctoringDashboard />} />
+                <Route path="/admin/private-sessions" element={<PrivateSessions />} />
                 <Route path="/admin/students" element={<StudentManagement />} />
               </Route>
 

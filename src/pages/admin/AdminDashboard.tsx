@@ -9,7 +9,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import {
   Users, ClipboardList, BookOpen, TrendingUp, Plus, AlertTriangle,
-  CheckSquare, BarChart, Shield, Activity, ArrowRight
+  CheckSquare, BarChart, Shield, Activity, ArrowRight, UserCheck
 } from "lucide-react";
 
 const AdminDashboard = () => {
@@ -18,14 +18,15 @@ const AdminDashboard = () => {
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({
     students: 0, exams: 0, courses: 0, attempts: 0, pendingGrading: 0,
-    activeExams: 0, activeStudents: 0, violations: 0,
+    activeExams: 0, activeStudents: 0, violations: 0, privateStudents: 0, privateSessions: 0,
   });
   const [recentSubmissions, setRecentSubmissions] = useState<any[]>([]);
   const [recentActivity, setRecentActivity] = useState<any[]>([]);
+  const [privateStudentsList, setPrivateStudentsList] = useState<any[]>([]);
 
   useEffect(() => {
     const fetchStats = async () => {
-      const [studentsRes, examsRes, coursesRes, attemptsRes, pendingRes, recentRes, profilesRes, activeRes, violationsRes, activityRes] = await Promise.all([
+      const [studentsRes, examsRes, coursesRes, attemptsRes, pendingRes, recentRes, profilesRes, activeRes, violationsRes, activityRes, privateStudentsRes, privateSessionsRes] = await Promise.all([
         supabase.from("profiles").select("id", { count: "exact", head: true }),
         supabase.from("exams").select("id", { count: "exact", head: true }),
         supabase.from("courses").select("id", { count: "exact", head: true }),
@@ -36,12 +37,20 @@ const AdminDashboard = () => {
         supabase.from("exam_attempts").select("id", { count: "exact", head: true }).eq("status", "in_progress"),
         supabase.from("violations").select("id", { count: "exact", head: true }),
         supabase.from("activity_logs").select("*").order("created_at", { ascending: false }).limit(8),
+        supabase.from("profiles").select("user_id, full_name, email, assigned_teacher_id, private_session_rate").eq("student_type", "private"),
+        supabase.from("private_sessions").select("id", { count: "exact", head: true }),
       ]);
 
       const profiles = profilesRes.data || [];
       const merged = (recentRes.data || []).map((a: any) => ({
         ...a,
         profiles: profiles.find((p) => p.user_id === a.user_id) || {},
+      }));
+
+      // Map teacher names for private students
+      const pvtStudents = (privateStudentsRes.data || []).map((s: any) => ({
+        ...s,
+        teacher_name: profiles.find(p => p.user_id === s.assigned_teacher_id)?.full_name || "—",
       }));
 
       setStats({
@@ -53,9 +62,12 @@ const AdminDashboard = () => {
         activeExams: activeRes.count || 0,
         activeStudents: activeRes.count || 0,
         violations: violationsRes.count || 0,
+        privateStudents: privateStudentsRes.data?.length || 0,
+        privateSessions: privateSessionsRes.count || 0,
       });
       setRecentSubmissions(merged);
       setRecentActivity(activityRes.data || []);
+      setPrivateStudentsList(pvtStudents);
       setLoading(false);
     };
     fetchStats();
@@ -151,6 +163,41 @@ const AdminDashboard = () => {
             <Button size="sm" asChild>
               <Link to="/admin/grading">{t("Grade Now", "صحّح الآن")}</Link>
             </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Private Students Overview */}
+      {privateStudentsList.length > 0 && (
+        <Card className="mb-6 border-[#D4AF37]/30 bg-[#D4AF37]/5">
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <UserCheck className="h-4 w-4 text-[#D4AF37]" />
+              {t("Private Students Overview", "نظرة على الطلاب الخصوصيين")}
+              <Badge className="bg-[#D4AF37]/20 text-[#D4AF37] border-[#D4AF37]/30 text-xs">{stats.privateStudents}</Badge>
+            </CardTitle>
+            <Button variant="ghost" size="sm" asChild>
+              <Link to="/admin/private-sessions" className="flex items-center gap-1 text-xs">
+                {t("Sessions", "الجلسات")} ({stats.privateSessions})
+                <ArrowRight className="h-3 w-3" />
+              </Link>
+            </Button>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2 max-h-[200px] overflow-y-auto">
+              {privateStudentsList.map(s => (
+                <div key={s.user_id} className="flex items-center justify-between rounded-lg border p-2.5 bg-background">
+                  <div className="min-w-0">
+                    <div className="font-medium text-sm truncate">{s.full_name || s.email}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {t("Teacher", "المعلم")}: {s.teacher_name}
+                      {s.private_session_rate && <span className="ms-2">• {s.private_session_rate}</span>}
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-[#D4AF37]/20 text-[#D4AF37] border border-[#D4AF37]/30 shrink-0">Private</span>
+                </div>
+              ))}
+            </div>
           </CardContent>
         </Card>
       )}

@@ -7,7 +7,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import {
   BookOpen, LayoutDashboard, ClipboardList, Users, LogOut, Globe,
   CheckSquare, BarChart, UserCircle, Library, GraduationCap, MessageCircle,
-  Menu, Video, Mic, Settings, Shield, Layers, FileText,
+  Menu, Video, Mic, Settings, Shield, Layers, FileText, UserCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -41,6 +41,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     { to: "/admin/question-bank", icon: Library, label: t("Question Bank", "بنك الأسئلة") },
     { to: "/admin/students", icon: Users, label: t("Students", "الطلاب") },
     { to: "/admin/grading", icon: CheckSquare, label: t("Grading", "التصحيح") },
+    { to: "/admin/private-sessions", icon: UserCheck, label: t("Private Sessions", "الجلسات الخاصة") },
     { to: "/admin/proctoring", icon: BarChart, label: t("Proctoring", "المراقبة") },
   ];
 
