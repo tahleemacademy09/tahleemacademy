@@ -422,6 +422,12 @@ const StudentManagement = () => {
                             <OverrideScoreForm attempt={a} onSave={overrideScore} t={t} />
                           </DialogContent>
                         </Dialog>
+                        {/* View Answers Side by Side */}
+                        {(a.status === "graded" || a.status === "submitted") && (
+                          <Button variant="ghost" size="sm" className="text-xs" onClick={() => viewAnswersSideBySide(a)}>
+                            <Eye className="h-3 w-3 me-1" />{t("Answers", "الإجابات")}
+                          </Button>
+                        )}
                         {/* Reset attempt */}
                         <Button variant="ghost" size="sm" className="text-xs text-destructive" onClick={() => resetExamAttempt(a.id)}>
                           <RotateCcw className="h-3 w-3 me-1" />{t("Reset", "إعادة")}
