@@ -8,7 +8,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate } from "react-router-dom";
-import { FileText, Users, Settings, Plus, Trash2, Download, Eye, BookOpen } from "lucide-react";
+import { FileText, Users, Settings, Plus, Trash2, Download, Eye, BookOpen, RotateCcw, UserCog } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 
 const ENTRANCE_EXAM_ID = "36ef6492-2515-44ea-b086-67c9cee02475";
 
