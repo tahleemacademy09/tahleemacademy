@@ -169,7 +169,7 @@ export const useProctoring = (config: ProctoringConfig, enabled: boolean, onAuto
       lastWarningType: type,
     }));
 
-    await supabase.from("violations").insert({
+    await (supabase as any).from("violations").insert({
       attempt_id: config.attemptId,
       violation_type: type,
       severity_score: severity,
@@ -517,8 +517,146 @@ export const useProctoring = (config: ProctoringConfig, enabled: boolean, onAuto
     return () => clearInterval(checkStream);
   }, [enabled, logViolation, initCamera]);
 
+  // Face detection using skin-tone pixel analysis
+  useEffect(() => {
+    if (!enabled || !config.webcam_required) return;
+
+    let cancelled = false;
+    let consecutiveAbsent = 0;
+    const ABSENT_THRESHOLD = 3; // 3 consecutive fails = no face
+
+    const detectFace = () => {
+      if (cancelled || !videoRef.current || !cameraReadyRef.current) return;
+      const video = videoRef.current;
+      if (video.readyState < 2) return;
+
+      try {
+        const canvas = document.createElement("canvas");
+        const w = 160; // small for perf
+        const h = 120;
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return;
+        ctx.drawImage(video, 0, 0, w, h);
+        const imageData = ctx.getImageData(0, 0, w, h);
+        const data = imageData.data;
+        const totalPixels = w * h;
+
+        let skinPixels = 0;
+        let motionPixels = 0;
+
+        for (let i = 0; i < data.length; i += 16) { // sample every 4th pixel
+          const r = data[i];
+          const g = data[i + 1];
+          const b = data[i + 2];
+
+          // Skin-tone detection across diverse skin colors
+          // Wide range: R > 60, G > 30, B > 15, R > G, R > B, |R-G| < 100
+          const isSkin = r > 60 && g > 30 && b > 15 &&
+            r > g && r > b &&
+            Math.abs(r - g) < 100 &&
+            (r - b) > 15;
+
+          if (isSkin) skinPixels++;
+        }
+
+        const sampledTotal = Math.ceil(totalPixels / 4);
+        const skinRatio = skinPixels / sampledTotal;
+
+        // A face typically covers 5-60% of the frame as skin pixels
+        const facePresent = skinRatio > 0.04;
+
+        if (facePresent) {
+          consecutiveAbsent = 0;
+          if (!state.faceDetected) {
+            setState(prev => ({ ...prev, faceDetected: true }));
+          }
+          // Clear any pending absence timer
+          if (faceAbsentTimerRef.current) {
+            clearTimeout(faceAbsentTimerRef.current);
+            faceAbsentTimerRef.current = undefined;
+          }
+        } else {
+          consecutiveAbsent++;
+          if (consecutiveAbsent >= ABSENT_THRESHOLD) {
+            setState(prev => ({ ...prev, faceDetected: false }));
+            // Only log violation after sustained absence (not already timed)
+            if (!faceAbsentTimerRef.current) {
+              faceAbsentTimerRef.current = setTimeout(() => {
+                if (!cancelled && consecutiveAbsent >= ABSENT_THRESHOLD) {
+                  logViolation("face_not_detected", 2, "Face not visible in camera for extended period");
+                  captureWebcamSnapshot("face_absent");
+                }
+                faceAbsentTimerRef.current = undefined;
+              }, 5000);
+            }
+          }
+        }
+      } catch (e) {
+        // Silently fail
+      }
+    };
+
+    // Wait for camera, then start detection every 2s
+    const startDetection = async () => {
+      for (let i = 0; i < 30; i++) {
+        if (cancelled) return;
+        if (cameraReadyRef.current) break;
+        await new Promise(r => setTimeout(r, 500));
+      }
+
+      const interval = setInterval(() => {
+        if (!cancelled) detectFace();
+      }, 2000);
+
+      return () => clearInterval(interval);
+    };
+
+    let cleanupFn: (() => void) | undefined;
+    startDetection().then(fn => { cleanupFn = fn; });
+
+    return () => {
+      cancelled = true;
+      cleanupFn?.();
+      if (faceAbsentTimerRef.current) {
+        clearTimeout(faceAbsentTimerRef.current);
+        faceAbsentTimerRef.current = undefined;
+      }
+    };
+  }, [enabled, config.webcam_required, logViolation, captureWebcamSnapshot]);
+
+  // Fetch recent violations for activity feed
+  const [recentViolations, setRecentViolations] = useState<Array<{ type: string; time: string; details: string }>>([]);
+
+  useEffect(() => {
+    if (!enabled || !config.attemptId) return;
+
+    const fetchViolations = async () => {
+      const { data } = await (supabase as any)
+        .from("violations")
+        .select("violation_type, created_at, details")
+        .eq("attempt_id", config.attemptId)
+        .order("created_at", { ascending: false })
+        .limit(10);
+
+      if (data) {
+        setRecentViolations((data as any[]).map((v: any) => ({
+          type: v.violation_type,
+          time: new Date(v.created_at).toLocaleTimeString(),
+          details: v.details || "",
+        })));
+      }
+    };
+
+    fetchViolations();
+    const interval = setInterval(fetchViolations, 10000);
+    return () => clearInterval(interval);
+  }, [enabled, config.attemptId, state.violations]);
+
   return {
     ...state,
+    recentViolations,
     logViolation,
     sessionId: sessionId.current,
     getVideoElement,
