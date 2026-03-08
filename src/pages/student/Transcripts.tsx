@@ -318,8 +318,15 @@ ${termTables}
 
         {/* Term tables */}
         {terms.map((termExams, termIdx) => (
-          <div key={termIdx}>
-            <h4 className="text-lg font-bold text-left mb-2 mt-4" style={{ fontFamily: "'Amiri', serif" }}>{termNames[termIdx]}</h4>
+          <div key={termIdx} className={termIdx > 0 ? "mt-8 pt-6 border-t-2 border-dashed border-[#ccc]" : ""}>
+            {/* Repeat header for each term */}
+            <div className="text-center mb-3">
+              <h2 className="text-xl font-bold" style={{ fontFamily: "'Amiri', serif" }}>أكاديمية التعليم</h2>
+              <p className="text-sm font-bold tracking-widest">TAHLEEM ACADEMY</p>
+            </div>
+            <h4 className="text-lg font-bold text-center mb-3 border-2 border-[#2a7a2a] rounded px-4 py-1 mx-auto w-fit" style={{ fontFamily: "'Amiri', serif" }}>
+              {termNames[termIdx]} — {termNamesEn[termIdx]}
+            </h4>
             <table className="w-full border-collapse mb-4" dir="rtl" style={{ borderColor: "#333" }}>
               <thead>
                 <tr>
@@ -386,7 +393,7 @@ ${termTables}
         ))}
 
         {/* Summary table */}
-        <table className="w-full border-collapse" dir="ltr">
+        <table className="w-full border-collapse mt-6" dir="ltr">
           <tbody>
             <tr>
               <td className="border-[1.5px] border-[#333] p-2 font-bold text-sm w-[18%]">Marks Obtainable</td>
@@ -406,15 +413,12 @@ ${termTables}
                 {exams.length > 0 ? (cgpa >= 3.5 ? "طالب(ة) متميز(ة) / Outstanding" : cgpa >= 2.0 ? "طالب(ة) مجتهد(ة) / Hardworking" : "يحتاج تحسين / Needs improvement") : ""}
               </td>
               <td className="border-[1.5px] border-[#333] p-2 font-bold text-sm">Signature</td>
-              <td className="border-[1.5px] border-[#333] p-2 text-sm text-center"></td>
+              <td className="border-[1.5px] border-[#333] p-2 text-center relative">
+                <img src={tahleemStamp} alt="Tahleem Academy Stamp" className="w-24 h-24 opacity-80 mx-auto" />
+              </td>
             </tr>
            </tbody>
         </table>
-
-        {/* Stamp */}
-        <div className="flex justify-end mt-6">
-          <img src={tahleemStamp} alt="Tahleem Academy Stamp" className="w-32 h-32 opacity-80" />
-        </div>
       </div>
     );
   };
