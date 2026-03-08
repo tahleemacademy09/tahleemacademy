@@ -12,7 +12,7 @@ import StandaloneNav from "@/components/layout/StandaloneNav";
 
 const EntranceResults = () => {
   const { attemptId } = useParams<{ attemptId: string }>();
-  const { user } = useAuth();
+  const { user, refreshProfile } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
   const [attempt, setAttempt] = useState<any>(null);
