@@ -103,6 +103,7 @@ const ExamEditor = () => {
     type: "exam" as "exam" | "test",
   });
   const [questions, setQuestions] = useState<QuestionForm[]>([emptyQuestion()]);
+  const [formatSettings, setFormatSettings] = useState<ExamFormatSettings>({ ...DEFAULT_FORMAT });
   const [saving, setSaving] = useState(false);
   const [uploadingMedia, setUploadingMedia] = useState<number | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
