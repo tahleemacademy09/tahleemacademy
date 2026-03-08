@@ -307,7 +307,30 @@ const ProctoringDashboard = () => {
           </Card>
         </div>
 
-        {/* Device info */}
+        {/* Verdict & Duration */}
+        <Card className="mb-4">
+          <CardContent className="p-4 flex items-center justify-between flex-wrap gap-3">
+            <div className="flex items-center gap-3">
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">{t("Final Verdict", "الحكم النهائي")}</p>
+                <Badge className={`text-sm px-3 py-1 ${verdict.color}`}>
+                  {language === "ar" ? verdict.labelAr : verdict.label}
+                </Badge>
+              </div>
+            </div>
+            {examDuration && (
+              <div className="text-right">
+                <p className="text-xs text-muted-foreground">{t("Exam Duration", "مدة الامتحان")}</p>
+                <p className="text-lg font-bold">{examDuration} {t("min", "دقيقة")}</p>
+              </div>
+            )}
+            <div className="text-right">
+              <p className="text-xs text-muted-foreground">{t("Started", "بدأ في")}</p>
+              <p className="text-sm">{new Date(s.started_at).toLocaleString()}</p>
+            </div>
+          </CardContent>
+        </Card>
+
         {device && (
           <Card className="mb-4">
             <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><Monitor className="h-4 w-4" />{t("Device Information", "معلومات الجهاز")}</CardTitle></CardHeader>
