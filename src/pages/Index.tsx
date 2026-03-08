@@ -86,8 +86,8 @@ const Index = () => {
         color:#fff; line-height:1.15; margin-bottom:20px;
       }
       .ta-hero-title em { color:#c9973a; font-style:normal; display:block; }
-      .ta-hero-subtitle { color:rgba(255,255,255,0.75); font-size:16px; line-height:1.7; max-width:480px; margin-bottom:36px; }
-      .ta-hero-buttons { display:flex; gap:14px; flex-wrap:wrap; }
+      .ta-hero-subtitle { color:rgba(255,255,255,0.75); font-size:16px; line-height:1.7; max-width:480px; margin:0 auto 36px; }
+      .ta-hero-buttons { display:flex; gap:14px; flex-wrap:wrap; justify-content:center; }
       .ta-hero-btn-primary {
         padding:14px 32px; background:#c9973a; color:#fff;
         border:none; border-radius:8px; font-family:'Cairo',sans-serif;
