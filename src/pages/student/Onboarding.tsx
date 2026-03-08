@@ -12,6 +12,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { motion, AnimatePresence } from "framer-motion";
 import { BookOpen, Clock, FileText, ChevronRight, Star, Sparkles } from "lucide-react";
+import StandaloneNav from "@/components/layout/StandaloneNav";
 
 const ENTRANCE_EXAM_ID = "36ef6492-2515-44ea-b086-67c9cee02475";
 
