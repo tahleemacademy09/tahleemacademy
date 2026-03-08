@@ -164,6 +164,7 @@ const ExamEditor = () => {
           max_warnings: (exam as any).max_warnings || 3,
           auto_submit_on_violation: (exam as any).auto_submit_on_violation || false,
           screenshot_interval_seconds: (exam as any).screenshot_interval_seconds || 0,
+          term: (exam as any).term || "first",
         });
       }
       const { data: qs } = await supabase.from("exam_questions").select("*").eq("exam_id", examId).order("sort_order");
