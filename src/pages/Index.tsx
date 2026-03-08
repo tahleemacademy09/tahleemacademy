@@ -258,6 +258,7 @@ const Index = () => {
       @media(max-width:768px){
         .ta-nav { padding:14px 20px; }
         .ta-nav-links, .ta-nav-cta { display:none; }
+        .ta-nav-hamburger { display:block; }
         .ta-hero-content { grid-template-columns:1fr; padding:100px 20px 60px; }
         .ta-hero-right { display:none; }
         .ta-why-grid, .ta-courses-grid, .ta-why6-grid { grid-template-columns:1fr; }
