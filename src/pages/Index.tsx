@@ -40,7 +40,7 @@ const Index = () => {
       .ta-nav-links a { color:rgba(255,255,255,0.8); text-decoration:none; font-size:14px; transition:0.2s; cursor:pointer; }
       .ta-nav-links a:hover { color:#e8c070; }
       .ta-nav-cta { display:flex; gap:12px; }
-      .ta-nav-hamburger { display:none; background:none; border:none; cursor:pointer; padding:4px; }
+      .ta-nav-hamburger { display:block; background:none; border:none; cursor:pointer; padding:4px; }
       .ta-nav-hamburger svg { width:28px; height:28px; color:#c9973a; }
       .ta-btn-outline { padding:8px 20px; border:1px solid #c9973a; color:#c9973a; background:transparent; border-radius:6px; cursor:pointer; font-family:'Cairo',sans-serif; font-size:13px; transition:0.2s; }
       .ta-btn-outline:hover { background:#c9973a; color:#fff; }
