@@ -16,6 +16,7 @@ const TeacherSubjects = () => {
   const [subjects, setSubjects] = useState<any[]>([]);
   const [selectedSubject, setSelectedSubject] = useState<any>(null);
   const [subjectData, setSubjectData] = useState<{ students: any[]; recordings: any[]; exams: any[]; tests: any[] }>({ students: [], recordings: [], exams: [], tests: [] });
+  const [subjectCounts, setSubjectCounts] = useState<Record<string, { studentCount: number; recordingCount: number; examCount: number; testCount: number }>>({});
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
