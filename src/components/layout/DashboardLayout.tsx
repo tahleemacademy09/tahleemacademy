@@ -34,6 +34,8 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   const adminLinks = [
     { to: "/admin", icon: LayoutDashboard, label: t("Dashboard", "لوحة التحكم") },
     { to: "/admin/subjects", icon: BookOpen, label: t("Subjects", "المواد") },
+    { to: "/admin/courses", icon: Layers, label: t("Courses", "الدورات") },
+    { to: "/admin/syllabus", icon: FileText, label: t("Syllabus & Materials", "المنهج والمواد") },
     { to: "/admin/live-classes", icon: Video, label: t("Live Classes", "الفصول الحية") },
     { to: "/admin/exams", icon: ClipboardList, label: t("Exams", "الامتحانات") },
     { to: "/admin/question-bank", icon: Library, label: t("Question Bank", "بنك الأسئلة") },
