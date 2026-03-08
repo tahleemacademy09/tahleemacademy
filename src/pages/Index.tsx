@@ -140,10 +140,10 @@ const Index = () => {
 
       /* WHY SECTION */
       .ta-why-outer { padding:90px 40px; }
-      .ta-why-inner { max-width:1200px; margin:0 auto; }
+      .ta-why-inner { max-width:1200px; margin:0 auto; text-align:center; }
       .ta-section-tag { color:#c9973a; font-size:12px; text-transform:uppercase; letter-spacing:2px; font-weight:700; margin-bottom:12px; }
       .ta-section-title { font-family:'Cormorant Garamond',serif; font-size:42px; font-weight:700; color:#0f3122; margin-bottom:16px; line-height:1.2; }
-      .ta-section-subtitle { color:#555; font-size:16px; line-height:1.7; max-width:560px; margin-bottom:52px; }
+      .ta-section-subtitle { color:#555; font-size:16px; line-height:1.7; max-width:560px; margin:0 auto 52px; }
       .ta-why-grid { display:grid; grid-template-columns:1fr 1fr; gap:24px; }
       .ta-why-card { position:relative; border-radius:20px; overflow:hidden; height:300px; cursor:pointer; box-shadow:0 10px 40px rgba(0,0,0,0.12); }
       .ta-why-card img { width:100%; height:100%; object-fit:cover; transition:0.5s; }
