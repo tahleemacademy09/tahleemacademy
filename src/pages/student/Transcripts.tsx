@@ -233,7 +233,11 @@ table.summary td.lbl{font-weight:700;width:18%}
     const totalObtained = exams.reduce((s, e) => s + Math.round(e.percentage), 0);
 
     return (
-      <div ref={transcriptRef} className="bg-white p-8 md:p-10 min-h-[800px]" dir="rtl" style={{ fontFamily: "'Cairo', 'Amiri', sans-serif" }}>
+      <div ref={transcriptRef} className="bg-white p-8 md:p-10 min-h-[800px] relative overflow-hidden" dir="rtl" style={{ fontFamily: "'Cairo', 'Amiri', sans-serif" }}>
+        {/* Watermark background */}
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none" style={{ opacity: 0.04, transform: 'rotate(-30deg)' }}>
+          <span className="text-[120px] font-bold whitespace-nowrap tracking-widest" style={{ fontFamily: "'Cairo', sans-serif", color: '#064E3B' }}>TAHLEEM ACADEMY</span>
+        </div>
         {/* Header */}
         <div className="text-center mb-4">
           <h2 className="text-2xl font-bold" style={{ fontFamily: "'Amiri', serif" }}>أكاديمية التعليم</h2>
