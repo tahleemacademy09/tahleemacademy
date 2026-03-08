@@ -1,9 +1,17 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { supabase } from "@/integrations/supabase/client";
 
 const Index = () => {
   const navigate = useNavigate();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [liveClass, setLiveClass] = useState<{ title: string; room_code: string } | null>(null);
+
+  useEffect(() => {
+    supabase.from("public_classes").select("title, room_code").eq("status", "live").eq("is_featured", true).limit(1).then(({ data }) => {
+      if (data && data.length > 0) setLiveClass(data[0] as { title: string; room_code: string });
+    });
+  }, []);
 
   useEffect(() => {
     // Inject Google Fonts
@@ -312,6 +320,22 @@ const Index = () => {
         <button className="ta-btn-outline" onClick={() => { navigate("/login"); setMobileMenuOpen(false); }}>Sign In</button>
         <button className="ta-btn-solid" onClick={() => { navigate("/register"); setMobileMenuOpen(false); }}>Register Free</button>
       </div>
+
+      {/* LIVE NOW BANNER */}
+      {liveClass && (
+        <div onClick={() => navigate(`/live/${liveClass.room_code}`)} style={{
+          background: "linear-gradient(90deg, #0f3122, #1a5c3a)",
+          borderBottom: "2px solid #c9973a",
+          padding: "12px 24px",
+          display: "flex", alignItems: "center", justifyContent: "center", gap: "12px",
+          cursor: "pointer", position: "fixed", top: "65px", left: 0, right: 0, zIndex: 90,
+        }}>
+          <span style={{ width: "10px", height: "10px", background: "#ef4444", borderRadius: "50%", animation: "pulse 1.5s infinite" }} />
+          <span style={{ color: "white", fontWeight: 600, fontSize: "14px" }}>
+            🔴 LIVE NOW: {liveClass.title} — Join Free →
+          </span>
+        </div>
+      )}
 
       {/* HERO */}
       <section className="ta-hero">

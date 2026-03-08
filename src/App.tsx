@@ -18,7 +18,11 @@ import Login from "./pages/Login";
 import Register from "./pages/Register";
 import AdminLogin from "./pages/AdminLogin";
 import ResetPassword from "./pages/ResetPassword";
+import PublicLiveClasses from "./pages/public/LiveClasses";
+import JoinClass from "./pages/public/JoinClass";
+import GuestClassroom from "./pages/public/GuestClassroom";
 import NotFound from "./pages/NotFound";
+import PublicClassManagement from "./pages/admin/PublicClassManagement";
 
 import StudentDashboard from "./pages/student/StudentDashboard";
 import StudentExams from "./pages/student/StudentExams";
@@ -100,6 +104,11 @@ const App = () => (
                 <Route path="/register" element={<Register />} />
               </Route>
 
+              {/* Public live classes (no auth required) */}
+              <Route path="/live" element={<PublicLiveClasses />} />
+              <Route path="/live/:roomCode" element={<JoinClass />} />
+              <Route path="/live/:roomCode/classroom" element={<GuestClassroom />} />
+
               {/* Admin login (hidden URL) */}
               <Route path="/admin-secure" element={<AdminLogin />} />
               {/* Password reset */}
@@ -148,6 +157,7 @@ const App = () => (
                 <Route path="/teacher/attendance" element={<TeacherAttendance />} />
                 <Route path="/teacher/announcements" element={<TeacherAnnouncements />} />
                 <Route path="/teacher/settings" element={<TeacherSettings />} />
+                <Route path="/teacher/public-classes" element={<PublicClassManagement />} />
               </Route>
 
               {/* Admin dashboard - requires admin role */}
@@ -175,6 +185,7 @@ const App = () => (
                 <Route path="/admin/attendance" element={<AttendanceManagement />} />
                 <Route path="/admin/payments" element={<PaymentManagement />} />
                 <Route path="/admin/calendar" element={<AcademicCalendar />} />
+                <Route path="/admin/public-classes" element={<PublicClassManagement />} />
               </Route>
 
               <Route path="*" element={<NotFound />} />
