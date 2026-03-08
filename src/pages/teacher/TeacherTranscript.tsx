@@ -149,12 +149,55 @@ const TeacherTranscript = () => {
                     </tr>
                   );
                 })}
-                {subjectResults.length === 0 && <tr><td colSpan={6} className="text-center text-muted-foreground p-4">{t("No results for this term", "لا توجد نتائج لهذه الفترة")}</td></tr>}
+                {subjectResults.length === 0 && <tr><td colSpan={7} className="text-center text-muted-foreground p-4">{t("No results for this term", "لا توجد نتائج لهذه الفترة")}</td></tr>}
               </tbody>
             </table>
+            <div className="flex gap-2 mt-4">
+              <Button variant="outline" onClick={async () => {
+                const stampBase64 = await new Promise<string>((resolve) => {
+                  const img = new Image(); img.crossOrigin = "anonymous";
+                  img.onload = () => { const c = document.createElement("canvas"); c.width = img.width; c.height = img.height; c.getContext("2d")!.drawImage(img, 0, 0); resolve(c.toDataURL("image/png")); };
+                  img.src = tahleemStamp;
+                });
+                const rows = subjectResults.map(s => {
+                  const total = s.test + s.exam; const gp = gradePoint(total);
+                  return `<tr><td>${s.title_ar || s.title}</td><td>${s.test}</td><td>${s.exam}</td><td>${total}</td><td>${gp.toFixed(1)}</td><td>${total >= 50 ? 'Pass' : 'Fail'}</td></tr>`;
+                }).join("");
+                const pw = window.open("", "_blank"); if (!pw) return;
+                pw.document.write(`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>Transcript</title>
+<link href="https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
+<style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Cairo',sans-serif;padding:30px}
+table{width:100%;border-collapse:collapse;margin:10px 0}th,td{border:1px solid #333;padding:4px 8px;text-align:center;font-size:12px}
+th{font-weight:700;background:#f5f5f5}.stamp{width:80px;opacity:0.8}@media print{@page{size:A4;margin:8mm}}</style></head><body>
+<h2 style="text-align:center;font-family:'Amiri',serif">أكاديمية التعليم — TAHLEEM ACADEMY</h2>
+<p style="text-align:center">Student: ${studentProfile?.full_name || ""} | Level: ${studentProfile?.level || ""} | Term: ${term}</p>
+<table><thead><tr><th>المادة</th><th>تمرينات (30)</th><th>امتحان (70)</th><th>المجموع</th><th>GP</th><th>النتيجة</th></tr></thead><tbody>${rows}</tbody></table>
+<div style="text-align:left;margin-top:20px"><img src="${stampBase64}" class="stamp" alt="stamp" /></div>
+<script>window.onload=function(){setTimeout(function(){window.print()},500)}</script></body></html>`);
+                pw.document.close();
+                toast({ title: t("Print dialog opened", "تم فتح نافذة الطباعة") });
+              }}><Download className="h-4 w-4 me-2" />{t("Download PDF", "تحميل PDF")}</Button>
+            </div>
           </CardContent>
         </Card>
       )}
+
+      {/* Add Comment Dialog */}
+      <Dialog open={showComment} onOpenChange={setShowComment}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>{t("Add Teacher Comment", "إضافة تعليق المعلم")}</DialogTitle></DialogHeader>
+          <div className="space-y-4">
+            <div><Label>{t("Comment", "التعليق")}</Label><Textarea value={commentText} onChange={e => setCommentText(e.target.value)} /></div>
+            <Button className="w-full" onClick={async () => {
+              if (!commentAttemptId) return;
+              await supabase.from("exam_attempts").update({ feedback: commentText }).eq("id", commentAttemptId);
+              toast({ title: t("Comment saved", "تم حفظ التعليق") });
+              setShowComment(false);
+              if (selectedStudent) loadTranscript();
+            }}>{t("Save", "حفظ")}</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

@@ -161,6 +161,8 @@ const App = () => (
                 <Route path="/admin/majlis-moderation" element={<MajlisModeration />} />
                 <Route path="/admin/notifications" element={<NotificationManagement />} />
                 <Route path="/admin/entrance-exam" element={<EntranceExamAdmin />} />
+                <Route path="/admin/transcripts" element={<TranscriptManagement />} />
+                <Route path="/admin/attendance" element={<AttendanceManagement />} />
               </Route>
 
               <Route path="*" element={<NotFound />} />
