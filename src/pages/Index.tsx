@@ -272,10 +272,10 @@ const Index = () => {
           <span>Tahleem <em>Academy</em></span>
         </div>
         <ul className="ta-nav-links">
-          <li><a href="#">Home</a></li>
-          <li><a href="#">Courses</a></li>
-          <li><a href="#">About</a></li>
-          <li><a href="#">Contact</a></li>
+          <li><a onClick={() => navigate("/")} style={{cursor:"pointer"}}>Home</a></li>
+          <li><a onClick={() => navigate("/courses")} style={{cursor:"pointer"}}>Courses</a></li>
+          <li><a onClick={() => navigate("/about")} style={{cursor:"pointer"}}>About</a></li>
+          <li><a onClick={() => navigate("/contact")} style={{cursor:"pointer"}}>Contact</a></li>
         </ul>
         <div className="ta-nav-cta">
           <button className="ta-btn-outline" onClick={() => navigate("/auth")}>Sign In</button>
