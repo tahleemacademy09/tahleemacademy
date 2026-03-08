@@ -705,6 +705,7 @@ export type Database = {
           guidelines: string | null
           guidelines_ar: string | null
           id: string
+          is_entrance: boolean | null
           is_published: boolean | null
           max_attempts: number | null
           max_review_views: number | null
@@ -742,6 +743,7 @@ export type Database = {
           guidelines?: string | null
           guidelines_ar?: string | null
           id?: string
+          is_entrance?: boolean | null
           is_published?: boolean | null
           max_attempts?: number | null
           max_review_views?: number | null
@@ -779,6 +781,7 @@ export type Database = {
           guidelines?: string | null
           guidelines_ar?: string | null
           id?: string
+          is_entrance?: boolean | null
           is_published?: boolean | null
           max_attempts?: number | null
           max_review_views?: number | null
@@ -884,6 +887,32 @@ export type Database = {
             columns: ["course_id"]
             isOneToOne: false
             referencedRelation: "courses"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      level_courses: {
+        Row: {
+          id: string
+          level: string
+          subject_id: string | null
+        }
+        Insert: {
+          id?: string
+          level: string
+          subject_id?: string | null
+        }
+        Update: {
+          id?: string
+          level?: string
+          subject_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "level_courses_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
             referencedColumns: ["id"]
           },
         ]
@@ -1171,6 +1200,8 @@ export type Database = {
       }
       profiles: {
         Row: {
+          age_group: string | null
+          allow_entrance_retake: boolean | null
           assigned_teacher_id: string | null
           avatar_url: string | null
           bio: string | null
@@ -1180,12 +1211,16 @@ export type Database = {
           date_of_birth: string | null
           email: string | null
           enrollment_date: string | null
+          entrance_completed_at: string | null
           full_name: string | null
           full_name_ar: string | null
           gender: string | null
+          has_taken_entrance_exam: boolean | null
           id: string
+          learning_goal: string | null
           level: string | null
           nationality: string | null
+          onboarding_completed: boolean | null
           parent_name: string | null
           parent_phone: string | null
           parent_relationship: string | null
@@ -1202,6 +1237,8 @@ export type Database = {
           whatsapp: string | null
         }
         Insert: {
+          age_group?: string | null
+          allow_entrance_retake?: boolean | null
           assigned_teacher_id?: string | null
           avatar_url?: string | null
           bio?: string | null
@@ -1211,12 +1248,16 @@ export type Database = {
           date_of_birth?: string | null
           email?: string | null
           enrollment_date?: string | null
+          entrance_completed_at?: string | null
           full_name?: string | null
           full_name_ar?: string | null
           gender?: string | null
+          has_taken_entrance_exam?: boolean | null
           id?: string
+          learning_goal?: string | null
           level?: string | null
           nationality?: string | null
+          onboarding_completed?: boolean | null
           parent_name?: string | null
           parent_phone?: string | null
           parent_relationship?: string | null
@@ -1233,6 +1274,8 @@ export type Database = {
           whatsapp?: string | null
         }
         Update: {
+          age_group?: string | null
+          allow_entrance_retake?: boolean | null
           assigned_teacher_id?: string | null
           avatar_url?: string | null
           bio?: string | null
@@ -1242,12 +1285,16 @@ export type Database = {
           date_of_birth?: string | null
           email?: string | null
           enrollment_date?: string | null
+          entrance_completed_at?: string | null
           full_name?: string | null
           full_name_ar?: string | null
           gender?: string | null
+          has_taken_entrance_exam?: boolean | null
           id?: string
+          learning_goal?: string | null
           level?: string | null
           nationality?: string | null
+          onboarding_completed?: boolean | null
           parent_name?: string | null
           parent_phone?: string | null
           parent_relationship?: string | null

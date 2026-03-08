@@ -33,6 +33,9 @@ import StudentCourses from "./pages/student/StudentCourses";
 import CourseView from "./pages/student/CourseView";
 import SubjectView from "./pages/student/SubjectView";
 import MuallimOverlay from "./components/majlis/MuallimOverlay";
+import Onboarding from "./pages/student/Onboarding";
+import EntranceExamTaking from "./pages/student/EntranceExamTaking";
+import EntranceResults from "./pages/student/EntranceResults";
 
 import AdminDashboard from "./pages/admin/AdminDashboard";
 import ExamManager from "./pages/admin/ExamManager";
@@ -45,6 +48,7 @@ import SubjectManagement from "./pages/admin/SubjectManagement";
 import CourseManagement from "./pages/admin/CourseManagement";
 import SyllabusManager from "./pages/admin/SyllabusManager";
 import PrivateSessions from "./pages/admin/PrivateSessions";
+import EntranceExamAdmin from "./pages/admin/EntranceExamAdmin";
 
 import TeacherDashboard from "./pages/teacher/TeacherDashboard";
 import TeacherStudents from "./pages/teacher/TeacherStudents";
@@ -102,9 +106,14 @@ const App = () => (
               </Route>
 
               {/* Exam taking (no sidebar) */}
-              <Route path="/student/exam-verify/:examId" element={<ProtectedRoute><PreExamVerification /></ProtectedRoute>} />
-              <Route path="/student/exam/:attemptId" element={<ProtectedRoute><ExamTaking /></ProtectedRoute>} />
-              <Route path="/student/results/:attemptId" element={<ProtectedRoute><ExamResults /></ProtectedRoute>} />
+              <Route path="/student/exam-verify/:examId" element={<ProtectedRoute skipOnboardingCheck><PreExamVerification /></ProtectedRoute>} />
+              <Route path="/student/exam/:attemptId" element={<ProtectedRoute skipOnboardingCheck><ExamTaking /></ProtectedRoute>} />
+              <Route path="/student/results/:attemptId" element={<ProtectedRoute skipOnboardingCheck><ExamResults /></ProtectedRoute>} />
+
+              {/* Onboarding & Entrance Exam (no sidebar) */}
+              <Route path="/onboarding" element={<ProtectedRoute skipOnboardingCheck><Onboarding /></ProtectedRoute>} />
+              <Route path="/student/entrance-exam/:attemptId" element={<ProtectedRoute skipOnboardingCheck><EntranceExamTaking /></ProtectedRoute>} />
+              <Route path="/student/entrance-results/:attemptId" element={<ProtectedRoute skipOnboardingCheck><EntranceResults /></ProtectedRoute>} />
 
               {/* Teacher dashboard - requires teacher role */}
               <Route element={<ProtectedRoute requiredRole="teacher"><TeacherLayout /></ProtectedRoute>}>
@@ -139,6 +148,7 @@ const App = () => (
                 <Route path="/admin/proctoring" element={<ProctoringDashboard />} />
                 <Route path="/admin/private-sessions" element={<PrivateSessions />} />
                 <Route path="/admin/students" element={<StudentManagement />} />
+                <Route path="/admin/entrance-exam" element={<EntranceExamAdmin />} />
               </Route>
 
               <Route path="*" element={<NotFound />} />
