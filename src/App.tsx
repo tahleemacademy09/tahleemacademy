@@ -16,6 +16,7 @@ import Contact from "./pages/Contact";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import AdminLogin from "./pages/AdminLogin";
+import ResetPassword from "./pages/ResetPassword";
 import NotFound from "./pages/NotFound";
 
 import StudentDashboard from "./pages/student/StudentDashboard";
@@ -65,8 +66,10 @@ const App = () => (
                 <Route path="/register" element={<Register />} />
               </Route>
 
-              {/* Admin login (standalone, no public layout) */}
-              <Route path="/admin-login" element={<AdminLogin />} />
+              {/* Admin login (hidden URL) */}
+              <Route path="/admin-secure" element={<AdminLogin />} />
+              {/* Password reset */}
+              <Route path="/reset-password" element={<ResetPassword />} />
 
               {/* Student dashboard */}
               <Route element={<ProtectedRoute><DashboardLayout role="student" /></ProtectedRoute>}>

@@ -23,6 +23,8 @@ const Navbar = () => {
     return "/student";
   };
 
+  const isAdmin = hasRole("admin") || hasRole("teacher");
+
   const navLinks = [
     { to: "/", label: t("Home", "الرئيسية") },
     { to: "/courses", label: t("Courses", "الدورات") },
@@ -68,6 +70,18 @@ const Navbar = () => {
           </Button>
           {user ? (
             <>
+              {/* Admin portal link - only visible to admin/teacher */}
+              {isAdmin && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="gap-1.5 text-muted-foreground hover:text-foreground"
+                  onClick={() => navigate("/admin")}
+                >
+                  <Shield className="h-4 w-4" />
+                  {t("Admin", "المدير")}
+                </Button>
+              )}
               <Button variant="outline" size="sm" className="rounded-lg" onClick={() => navigate(getDashboardPath())}>
                 {t("Dashboard", "لوحة التحكم")}
               </Button>
@@ -117,14 +131,17 @@ const Navbar = () => {
               <Globe className="mr-2 h-4 w-4" />
               {t("العربية", "English")}
             </Button>
-            <Link
-              to="/admin-login"
-              className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-primary"
-              onClick={() => setOpen(false)}
-            >
-              <Shield className="h-4 w-4" />
-              {t("Admin Portal", "بوابة المدير")}
-            </Link>
+            {/* Admin link - only for logged-in admins/teachers */}
+            {user && isAdmin && (
+              <Link
+                to="/admin"
+                className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-primary"
+                onClick={() => setOpen(false)}
+              >
+                <Shield className="h-4 w-4" />
+                {t("Admin Portal", "بوابة المدير")}
+              </Link>
+            )}
             {user ? (
               <>
                 <Button variant="outline" size="sm" className="rounded-lg" onClick={() => { navigate(getDashboardPath()); setOpen(false); }}>
