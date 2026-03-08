@@ -13,10 +13,27 @@ const MuallimOverlay = () => {
   const { user } = useAuth();
   const { t, dir } = useLanguage();
   const [open, setOpen] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
+  const [visible, setVisible] = useState(true);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const scrollTimeout = useRef<ReturnType<typeof setTimeout>>();
+
+  // Hide on scroll, show after stopping
+  useEffect(() => {
+    const onScroll = () => {
+      setVisible(false);
+      if (scrollTimeout.current) clearTimeout(scrollTimeout.current);
+      scrollTimeout.current = setTimeout(() => setVisible(true), 800);
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      if (scrollTimeout.current) clearTimeout(scrollTimeout.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (scrollRef.current) {
