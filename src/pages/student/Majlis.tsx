@@ -645,6 +645,38 @@ const Majlis = () => {
         myChannelIds={channels.map(c => c.id)}
         onJoined={handleBrowseJoined}
       />
+
+      {/* Admin Components */}
+      {isAdmin && contextMenu && (
+        <AdminMessageMenu
+          message={contextMenu.message}
+          senderProfile={profiles[contextMenu.message.user_id] || null}
+          isMe={contextMenu.message.user_id === user?.id}
+          position={{ x: contextMenu.x, y: contextMenu.y }}
+          onClose={() => setContextMenu(null)}
+          onReply={() => { setReplyTo(contextMenu.message); inputRef.current?.focus(); }}
+          onDelete={(msgId) => setMessages(prev => prev.filter(m => m.id !== msgId))}
+          onEditComplete={(msgId, newText) => setMessages(prev => prev.map(m => m.id === msgId ? { ...m, text: newText } : m))}
+          onViewProfile={(userId) => setProfileCardUserId(userId)}
+        />
+      )}
+
+      {isAdmin && (
+        <>
+          <AdminBroadcastDialog open={showBroadcast} onOpenChange={setShowBroadcast} />
+          <AdminDashboardPanel open={showAdminDashboard} onClose={() => setShowAdminDashboard(false)} />
+          <AdminProfileCard
+            userId={profileCardUserId || ""}
+            open={!!profileCardUserId}
+            onClose={() => setProfileCardUserId(null)}
+            onStartDM={(uid) => {
+              // Trigger DM creation via CreateChannelDialog approach
+              setCreateMode("dm");
+              setShowCreateDialog(true);
+            }}
+          />
+        </>
+      )}
     </>
   );
 };
