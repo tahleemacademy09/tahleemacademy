@@ -382,6 +382,211 @@ export type Database = {
           },
         ]
       }
+      class_chat_messages: {
+        Row: {
+          created_at: string | null
+          file_url: string | null
+          id: string
+          is_pinned: boolean | null
+          message: string
+          sender_id: string
+          session_id: string | null
+          type: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          file_url?: string | null
+          id?: string
+          is_pinned?: boolean | null
+          message: string
+          sender_id: string
+          session_id?: string | null
+          type?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          file_url?: string | null
+          id?: string
+          is_pinned?: boolean | null
+          message?: string
+          sender_id?: string
+          session_id?: string | null
+          type?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "class_chat_messages_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      class_participants: {
+        Row: {
+          camera_on: boolean | null
+          duration_minutes: number | null
+          hand_raised: boolean | null
+          hand_raised_at: string | null
+          id: string
+          is_muted: boolean | null
+          joined_at: string | null
+          left_at: string | null
+          session_id: string | null
+          student_id: string
+        }
+        Insert: {
+          camera_on?: boolean | null
+          duration_minutes?: number | null
+          hand_raised?: boolean | null
+          hand_raised_at?: string | null
+          id?: string
+          is_muted?: boolean | null
+          joined_at?: string | null
+          left_at?: string | null
+          session_id?: string | null
+          student_id: string
+        }
+        Update: {
+          camera_on?: boolean | null
+          duration_minutes?: number | null
+          hand_raised?: boolean | null
+          hand_raised_at?: string | null
+          id?: string
+          is_muted?: boolean | null
+          joined_at?: string | null
+          left_at?: string | null
+          session_id?: string | null
+          student_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "class_participants_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      class_poll_answers: {
+        Row: {
+          answer_index: number
+          created_at: string | null
+          id: string
+          poll_id: string | null
+          student_id: string
+        }
+        Insert: {
+          answer_index: number
+          created_at?: string | null
+          id?: string
+          poll_id?: string | null
+          student_id: string
+        }
+        Update: {
+          answer_index?: number
+          created_at?: string | null
+          id?: string
+          poll_id?: string | null
+          student_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "class_poll_answers_poll_id_fkey"
+            columns: ["poll_id"]
+            isOneToOne: false
+            referencedRelation: "class_polls"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      class_polls: {
+        Row: {
+          created_at: string | null
+          created_by: string | null
+          id: string
+          is_active: boolean | null
+          options: Json
+          question: string
+          session_id: string | null
+          show_results: boolean | null
+        }
+        Insert: {
+          created_at?: string | null
+          created_by?: string | null
+          id?: string
+          is_active?: boolean | null
+          options: Json
+          question: string
+          session_id?: string | null
+          show_results?: boolean | null
+        }
+        Update: {
+          created_at?: string | null
+          created_by?: string | null
+          id?: string
+          is_active?: boolean | null
+          options?: Json
+          question?: string
+          session_id?: string | null
+          show_results?: boolean | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "class_polls_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      class_quiz_live: {
+        Row: {
+          correct_answer: number
+          created_at: string | null
+          created_by: string | null
+          id: string
+          is_active: boolean | null
+          options: Json
+          question: string
+          session_id: string | null
+          time_limit_seconds: number | null
+        }
+        Insert: {
+          correct_answer: number
+          created_at?: string | null
+          created_by?: string | null
+          id?: string
+          is_active?: boolean | null
+          options: Json
+          question: string
+          session_id?: string | null
+          time_limit_seconds?: number | null
+        }
+        Update: {
+          correct_answer?: number
+          created_at?: string | null
+          created_by?: string | null
+          id?: string
+          is_active?: boolean | null
+          options?: Json
+          question?: string
+          session_id?: string | null
+          time_limit_seconds?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "class_quiz_live_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       courses: {
         Row: {
           category: string | null
@@ -1077,10 +1282,15 @@ export type Database = {
       }
       live_sessions: {
         Row: {
+          actual_end_time: string | null
+          actual_start_time: string | null
           chat_count: number | null
+          chat_enabled: boolean | null
+          class_settings: Json | null
           created_at: string | null
           duration_minutes: number | null
           ended_at: string | null
+          hand_raise_enabled: boolean | null
           homework: string | null
           homework_ar: string | null
           host_id: string
@@ -1088,8 +1298,10 @@ export type Database = {
           is_recorded: boolean | null
           level: string | null
           materials_url: string | null
+          participant_count: number | null
           peak_participants: number | null
           recording_auto_saved: boolean | null
+          recording_enabled: boolean | null
           recording_status: string | null
           scheduled_at: string | null
           session_number: number | null
@@ -1099,12 +1311,19 @@ export type Database = {
           topic: string | null
           topic_ar: string | null
           total_participants: number | null
+          waiting_room_enabled: boolean | null
+          whiteboard_enabled: boolean | null
         }
         Insert: {
+          actual_end_time?: string | null
+          actual_start_time?: string | null
           chat_count?: number | null
+          chat_enabled?: boolean | null
+          class_settings?: Json | null
           created_at?: string | null
           duration_minutes?: number | null
           ended_at?: string | null
+          hand_raise_enabled?: boolean | null
           homework?: string | null
           homework_ar?: string | null
           host_id: string
@@ -1112,8 +1331,10 @@ export type Database = {
           is_recorded?: boolean | null
           level?: string | null
           materials_url?: string | null
+          participant_count?: number | null
           peak_participants?: number | null
           recording_auto_saved?: boolean | null
+          recording_enabled?: boolean | null
           recording_status?: string | null
           scheduled_at?: string | null
           session_number?: number | null
@@ -1123,12 +1344,19 @@ export type Database = {
           topic?: string | null
           topic_ar?: string | null
           total_participants?: number | null
+          waiting_room_enabled?: boolean | null
+          whiteboard_enabled?: boolean | null
         }
         Update: {
+          actual_end_time?: string | null
+          actual_start_time?: string | null
           chat_count?: number | null
+          chat_enabled?: boolean | null
+          class_settings?: Json | null
           created_at?: string | null
           duration_minutes?: number | null
           ended_at?: string | null
+          hand_raise_enabled?: boolean | null
           homework?: string | null
           homework_ar?: string | null
           host_id?: string
@@ -1136,8 +1364,10 @@ export type Database = {
           is_recorded?: boolean | null
           level?: string | null
           materials_url?: string | null
+          participant_count?: number | null
           peak_participants?: number | null
           recording_auto_saved?: boolean | null
+          recording_enabled?: boolean | null
           recording_status?: string | null
           scheduled_at?: string | null
           session_number?: number | null
@@ -1147,6 +1377,8 @@ export type Database = {
           topic?: string | null
           topic_ar?: string | null
           total_participants?: number | null
+          waiting_room_enabled?: boolean | null
+          whiteboard_enabled?: boolean | null
         }
         Relationships: [
           {
