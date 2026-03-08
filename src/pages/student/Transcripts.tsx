@@ -60,6 +60,7 @@ const Transcripts = () => {
   const [exams, setExams] = useState<GradedExam[]>([]);
   const [loading, setLoading] = useState(true);
   const transcriptRef = useRef<HTMLDivElement>(null);
+  const [showPreview, setShowPreview] = useState(false);
 
   useEffect(() => {
     if (!user) return;
