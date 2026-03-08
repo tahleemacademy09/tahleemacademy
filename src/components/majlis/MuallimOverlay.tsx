@@ -131,7 +131,7 @@ const MuallimOverlay = () => {
       {/* Floating button with dismiss */}
       {!open && (
         <div
-          className={`fixed ${btnPosition} z-40 flex items-center gap-1.5 transition-all duration-300 ${
+          className={`fixed ${btnPosition} z-[60] flex items-center gap-1.5 transition-all duration-300 ${
             visible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4 pointer-events-none"
           }`}
         >
