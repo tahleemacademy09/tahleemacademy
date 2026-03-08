@@ -1,17 +1,14 @@
-import { useEffect, useState, useRef, useCallback } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useEffect, useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
-import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Textarea } from "@/components/ui/textarea";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
-import { Send, Users, MessageCircle, Hash, Menu, Reply, Smile, Check, CheckCheck, Search, Mic, MicOff, Image, FileText, Trash2, Edit, X } from "lucide-react";
+import {
+  Send, MessageCircle, Reply, Check, CheckCheck, Search, Mic, MicOff,
+  Image, Paperclip, Smile, ArrowLeft, FileText, Trash2
+} from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 interface ChatMessage {
@@ -29,9 +26,10 @@ interface ChatRoom {
   id: string;
   name: string;
   name_ar: string | null;
+  lastMessage?: string;
+  lastMessageTime?: string;
+  unread?: number;
 }
-
-const REACTIONS = ["👍", "❤️", "😂", "🤲", "📖", "⭐"];
 
 const Majlis = () => {
   const { t, language, dir } = useLanguage();
@@ -44,11 +42,9 @@ const Majlis = () => {
   const [profiles, setProfiles] = useState<Record<string, string>>({});
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [showChannels, setShowChannels] = useState(false);
-  const [editingMsg, setEditingMsg] = useState<string | null>(null);
-  const [editText, setEditText] = useState("");
+  const [showSearch, setShowSearch] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
-  const [mediaFile, setMediaFile] = useState<File | null>(null);
+  const [mobileShowChat, setMobileShowChat] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -68,11 +64,15 @@ const Majlis = () => {
 
       const courseRooms: ChatRoom[] = (enrollments || [])
         .filter((e: any) => e.courses)
-        .map((e: any) => ({ id: e.courses.id, name: e.courses.title, name_ar: e.courses.title_ar }));
+        .map((e: any) => ({
+          id: e.courses.id,
+          name: e.courses.title,
+          name_ar: e.courses.title_ar,
+        }));
 
       courseRooms.unshift({ id: "general", name: "General Majlis", name_ar: "المجلس العام" });
       setRooms(courseRooms);
-      if (courseRooms.length > 0) setActiveRoom(courseRooms[0].id);
+      if (courseRooms.length > 0 && !activeRoom) setActiveRoom(courseRooms[0].id);
     };
     loadRooms();
   }, [user]);
@@ -189,180 +189,401 @@ const Majlis = () => {
     ? messages.filter(m => m.text?.toLowerCase().includes(searchQuery.toLowerCase()))
     : messages;
 
-  const ChannelList = ({ onSelect }: { onSelect?: () => void }) => (
-    <div className="flex h-full flex-col">
-      <div className="p-3 border-b">
-        <h3 className="font-semibold text-sm flex items-center gap-2">
-          <Hash className="h-4 w-4" />
-          {t("Channels", "القنوات")}
-        </h3>
+  const formatTime = (dateStr: string) =>
+    new Date(dateStr).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+  const getLastMessage = (roomId: string) => {
+    const roomMsgs = messages.filter(m => m.class_level_id === roomId);
+    return roomMsgs[roomMsgs.length - 1];
+  };
+
+  const getRoomDisplayName = (room: ChatRoom) =>
+    language === "ar" ? room.name_ar || room.name : room.name;
+
+  const selectRoom = (roomId: string) => {
+    setActiveRoom(roomId);
+    setMobileShowChat(true);
+  };
+
+  // ─── Chat List Pane ───
+  const ChatListPane = () => (
+    <div className="flex flex-col h-full" style={{ backgroundColor: "#FAFAF8" }}>
+      {/* Header */}
+      <div
+        className="px-4 py-3 flex items-center justify-between"
+        style={{ backgroundColor: "#064E3B" }}
+      >
+        <h1
+          className="text-lg font-bold text-white"
+          style={{ fontFamily: language === "ar" ? "'Amiri', serif" : "'Playfair Display', serif" }}
+        >
+          {t("Al-Majlis", "المجلس")}
+        </h1>
+        <button
+          onClick={() => setShowSearch(!showSearch)}
+          className="text-white/80 hover:text-white p-1"
+        >
+          <Search className="h-5 w-5" />
+        </button>
       </div>
-      <div className="flex-1 overflow-auto p-2 space-y-1">
-        {rooms.map(room => (
-          <button
-            key={room.id}
-            onClick={() => { setActiveRoom(room.id); onSelect?.(); }}
-            className={`w-full rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors ${
-              activeRoom === room.id ? "bg-primary text-primary-foreground" : "hover:bg-accent text-foreground"
-            }`}
-          >
-            <div className="flex items-center gap-2">
-              <MessageCircle className="h-3.5 w-3.5 shrink-0" />
-              <span dir="auto" className="truncate">
-                {language === "ar" ? room.name_ar || room.name : room.name}
-              </span>
-            </div>
-          </button>
-        ))}
+
+      {/* Search */}
+      {showSearch && (
+        <div className="px-3 py-2 border-b" style={{ borderColor: "hsl(var(--border))" }}>
+          <Input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder={t("Search chats...", "بحث في المحادثات...")}
+            className="h-8 text-sm"
+            dir="auto"
+          />
+        </div>
+      )}
+
+      {/* Room list */}
+      <div className="flex-1 overflow-y-auto">
         {rooms.length === 0 && (
-          <p className="text-xs text-muted-foreground p-3">
+          <p className="text-sm text-muted-foreground p-6 text-center" dir="auto">
             {t("No channels yet. Enroll in a course to join.", "لا توجد قنوات بعد. سجّل في مقرر للانضمام.")}
           </p>
         )}
+        {rooms.map((room) => (
+          <button
+            key={room.id}
+            onClick={() => selectRoom(room.id)}
+            className={`w-full flex items-center gap-3 px-4 py-3 transition-colors border-b hover:bg-accent/30 ${
+              activeRoom === room.id ? "bg-accent/40" : ""
+            }`}
+            style={{ borderColor: "hsl(var(--border))" }}
+          >
+            {/* Avatar */}
+            <Avatar className="h-12 w-12 shrink-0">
+              <AvatarFallback
+                className="text-sm font-bold text-white"
+                style={{ backgroundColor: "#064E3B" }}
+              >
+                {getRoomDisplayName(room).charAt(0).toUpperCase()}
+              </AvatarFallback>
+            </Avatar>
+
+            {/* Info */}
+            <div className="flex-1 min-w-0 text-start">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-sm truncate text-foreground" dir="auto">
+                  {getRoomDisplayName(room)}
+                </span>
+                {room.lastMessageTime && (
+                  <span className="text-[11px] text-muted-foreground shrink-0 ms-2">
+                    {room.lastMessageTime}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center justify-between mt-0.5">
+                <p className="text-xs text-muted-foreground truncate" dir="auto">
+                  {room.lastMessage || t("Tap to open", "اضغط لفتح")}
+                </p>
+                {room.unread && room.unread > 0 ? (
+                  <span
+                    className="shrink-0 ms-2 h-5 min-w-[20px] px-1 rounded-full text-[11px] font-bold text-white flex items-center justify-center"
+                    style={{ backgroundColor: "#25D366" }}
+                  >
+                    {room.unread}
+                  </span>
+                ) : null}
+              </div>
+            </div>
+          </button>
+        ))}
       </div>
     </div>
   );
 
-  return (
-    <div className="flex flex-col h-[calc(100vh-3.5rem)] md:h-[calc(100vh-0px)]">
-      {/* Header */}
-      <div className="flex items-center gap-2 border-b px-4 py-3">
-        <Sheet open={showChannels} onOpenChange={setShowChannels}>
-          <SheetTrigger asChild>
-            <Button variant="ghost" size="icon" className="md:hidden shrink-0"><Menu className="h-5 w-5" /></Button>
-          </SheetTrigger>
-          <SheetContent side={dir === "rtl" ? "right" : "left"} className="w-72 p-0">
-            <ChannelList onSelect={() => setShowChannels(false)} />
-          </SheetContent>
-        </Sheet>
-        <div className="flex-1 min-w-0">
-          <h1 className="text-lg font-bold font-arabic truncate" dir="auto">
-            {activeRoomData ? (language === "ar" ? activeRoomData.name_ar || activeRoomData.name : activeRoomData.name) : t("Al-Majlis", "المجلس")}
-          </h1>
+  // ─── Active Chat Pane ───
+  const ActiveChatPane = () => {
+    if (!activeRoom || !activeRoomData) {
+      return (
+        <div
+          className="flex-1 flex flex-col items-center justify-center"
+          style={{ backgroundColor: "#F0ECE3" }}
+        >
+          <div className="text-center space-y-2 opacity-60">
+            <MessageCircle className="h-16 w-16 mx-auto text-muted-foreground" />
+            <p className="text-muted-foreground text-lg" style={{ fontFamily: "'Playfair Display', serif" }}>
+              {t("Select a chat to start messaging", "اختر محادثة لبدء المراسلة")}
+            </p>
+          </div>
         </div>
-        <div className="relative hidden sm:block">
-          <Search className="absolute start-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
-          <Input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder={t("Search...", "بحث...")} className="h-8 w-40 ps-8 text-xs" />
+      );
+    }
+
+    return (
+      <div className="flex-1 flex flex-col min-w-0 h-full">
+        {/* Chat Header */}
+        <div
+          className="px-3 py-2.5 flex items-center gap-3 shadow-sm"
+          style={{ backgroundColor: "#064E3B" }}
+        >
+          {/* Back button mobile */}
+          <button
+            onClick={() => setMobileShowChat(false)}
+            className="md:hidden text-white/80 hover:text-white p-1"
+          >
+            <ArrowLeft className="h-5 w-5" />
+          </button>
+
+          <Avatar className="h-10 w-10 shrink-0">
+            <AvatarFallback className="text-sm font-bold bg-emerald-light text-foreground">
+              {getRoomDisplayName(activeRoomData).charAt(0).toUpperCase()}
+            </AvatarFallback>
+          </Avatar>
+
+          <div className="flex-1 min-w-0">
+            <h2 className="text-white font-semibold text-sm truncate" dir="auto">
+              {getRoomDisplayName(activeRoomData)}
+            </h2>
+            <p className="text-white/60 text-[11px]">
+              {t("Online", "متصل")}
+            </p>
+          </div>
         </div>
-      </div>
 
-      <div className="flex flex-1 min-h-0">
-        {/* Desktop channel list */}
-        <div className="hidden md:flex w-56 border-e flex-col bg-muted/30">
-          <ChannelList />
-        </div>
-
-        {/* Chat area */}
-        <div className="flex-1 flex flex-col min-w-0">
-          {activeRoom ? (
-            <>
-              <ScrollArea className="flex-1 p-4" ref={scrollRef}>
-                <div className="space-y-3">
-                  {filteredMessages.length === 0 && (
-                    <p className="text-center text-sm text-muted-foreground py-8">
-                      {searchQuery ? t("No messages found", "لا توجد رسائل") : t("No messages yet. Start the conversation!", "لا توجد رسائل بعد. ابدأ المحادثة!")}
-                    </p>
-                  )}
-                  {filteredMessages.map((m) => {
-                    const isMe = m.user_id === user?.id;
-                    const name = profiles[m.user_id] || (isMe ? profile?.full_name : "Student");
-                    return (
-                      <div key={m.id} className={`flex gap-2 group ${isMe ? "flex-row-reverse" : ""}`}>
-                        <Avatar className="h-7 w-7 shrink-0 mt-0.5">
-                          <AvatarFallback className="text-[10px] bg-accent font-bold">
-                            {(name || "S").charAt(0).toUpperCase()}
-                          </AvatarFallback>
-                        </Avatar>
-                        <div className={`max-w-[75%] ${isMe ? "text-end" : ""}`}>
-                          <div className="text-[10px] text-muted-foreground mb-0.5 flex items-center gap-1" dir="auto">
-                            <span className="font-medium">{isMe ? t("You", "أنت") : name}</span>
-                            <span>·</span>
-                            <span>{new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
-                            {isMe && <CheckCheck className="h-3 w-3 text-primary ms-0.5" />}
-                          </div>
-                          <div className={`rounded-xl px-3 py-2 text-sm inline-block ${isMe ? "bg-primary text-primary-foreground" : "bg-muted"}`} dir="auto">
-                            {m.content_type === "audio" && m.media_path ? (
-                              <AudioMessage path={m.media_path} />
-                            ) : m.content_type === "image" && m.media_path ? (
-                              <ImageMessage path={m.media_path} />
-                            ) : m.content_type === "file" && m.media_path ? (
-                              <FileMessage path={m.media_path} text={m.text} />
-                            ) : (
-                              m.text?.split("\n").map((line, i) => (
-                                <span key={i}>{i > 0 && <br />}{line}</span>
-                              ))
-                            )}
-                          </div>
-                          {/* Actions */}
-                          <div className={`opacity-0 group-hover:opacity-100 transition-opacity flex gap-1 mt-0.5 ${isMe ? "justify-end" : ""}`}>
-                            <button onClick={() => { setReplyTo(m); inputRef.current?.focus(); }} className="text-muted-foreground hover:text-foreground p-0.5">
-                              <Reply className="h-3 w-3" />
-                            </button>
-                            {(isMe || isAdmin) && (
-                              <button onClick={() => deleteMessage(m.id)} className="text-muted-foreground hover:text-destructive p-0.5">
-                                <Trash2 className="h-3 w-3" />
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </ScrollArea>
-
-              {/* Reply indicator */}
-              {replyTo && (
-                <div className="border-t border-secondary/30 bg-secondary/5 px-4 py-2 flex items-center gap-2">
-                  <Reply className="h-3.5 w-3.5 text-secondary shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-medium text-secondary">{profiles[replyTo.user_id] || "Student"}</p>
-                    <p className="text-xs text-muted-foreground truncate">{replyTo.text}</p>
-                  </div>
-                  <button onClick={() => setReplyTo(null)} className="text-muted-foreground hover:text-foreground text-xs">✕</button>
-                </div>
-              )}
-
-              {/* Input */}
-              <div className="border-t p-3">
-                <form onSubmit={(e) => { e.preventDefault(); sendMessage(); }} className="flex gap-2 items-end">
-                  {/* Media buttons */}
-                  <div className="flex gap-1 shrink-0">
-                    <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => { if (e.target.files?.[0]) handleFileUpload(e.target.files[0], "image"); }} />
-                    <input ref={fileInputRef} type="file" accept=".pdf,.doc,.docx,.xls,.xlsx" className="hidden" onChange={(e) => { if (e.target.files?.[0]) handleFileUpload(e.target.files[0], "file"); }} />
-                    <Button type="button" size="icon" variant="ghost" className="h-8 w-8" onClick={() => imageInputRef.current?.click()}>
-                      <Image className="h-4 w-4" />
-                    </Button>
-                    <Button type="button" size="icon" variant="ghost" className="h-8 w-8" onClick={() => fileInputRef.current?.click()}>
-                      <FileText className="h-4 w-4" />
-                    </Button>
-                    <Button type="button" size="icon" variant={isRecording ? "destructive" : "ghost"} className="h-8 w-8"
-                      onClick={isRecording ? stopRecording : startRecording}>
-                      {isRecording ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-                    </Button>
-                  </div>
-                  <Input ref={inputRef} value={input} onChange={(e) => setInput(e.target.value)} placeholder={t("Type a message...", "اكتب رسالة...")} dir="auto" className="flex-1" />
-                  <Button type="submit" size="icon" disabled={!input.trim()} className="shrink-0">
-                    <Send className="h-4 w-4" />
-                  </Button>
-                </form>
-                {isRecording && (
-                  <p className="text-xs text-destructive mt-1 animate-pulse">{t("🎙 Recording... Click mic to stop", "🎙 جاري التسجيل... اضغط الميكروفون للإيقاف")}</p>
-                )}
+        {/* Messages Area with Islamic doodle background */}
+        <div
+          className="flex-1 overflow-y-auto px-3 py-4"
+          ref={scrollRef}
+          style={{
+            backgroundColor: "#FAFAF8",
+            backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23064E3B' fill-opacity='0.03'%3E%3Cpath d='M30 0l30 30-30 30L0 30z'/%3E%3Ccircle cx='30' cy='30' r='8'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`,
+          }}
+        >
+          <div className="max-w-2xl mx-auto space-y-1">
+            {filteredMessages.length === 0 && (
+              <div className="text-center py-12">
+                <p className="text-sm text-muted-foreground" dir="auto">
+                  {searchQuery
+                    ? t("No messages found", "لا توجد رسائل")
+                    : t("No messages yet. Start the conversation!", "لا توجد رسائل بعد. ابدأ المحادثة!")}
+                </p>
               </div>
-            </>
-          ) : (
-            <div className="flex flex-1 items-center justify-center">
-              <p className="text-muted-foreground">{t("Select a channel to start chatting", "اختر قناة لبدء المحادثة")}</p>
+            )}
+
+            {filteredMessages.map((m, idx) => {
+              const isMe = m.user_id === user?.id;
+              const name = profiles[m.user_id] || (isMe ? profile?.full_name : "Student");
+              const prevMsg = filteredMessages[idx - 1];
+              const showName = !isMe && (!prevMsg || prevMsg.user_id !== m.user_id);
+
+              return (
+                <div
+                  key={m.id}
+                  className={`flex group ${isMe ? "justify-end" : "justify-start"}`}
+                >
+                  <div
+                    className={`relative max-w-[80%] md:max-w-[65%] px-3 py-1.5 rounded-lg shadow-sm ${
+                      isMe ? "rounded-tr-none" : "rounded-tl-none"
+                    }`}
+                    style={{
+                      backgroundColor: isMe ? "#DCF8C6" : "#FFFFFF",
+                      marginTop: showName || (prevMsg && prevMsg.user_id !== m.user_id) ? "8px" : "2px",
+                    }}
+                  >
+                    {/* Sender name for group chats */}
+                    {showName && (
+                      <p
+                        className="text-[11px] font-semibold mb-0.5"
+                        style={{ color: "#064E3B" }}
+                        dir="auto"
+                      >
+                        {name}
+                      </p>
+                    )}
+
+                    {/* Content */}
+                    <div className="text-sm text-gray-900" dir="auto">
+                      {m.content_type === "audio" && m.media_path ? (
+                        <AudioMessage path={m.media_path} />
+                      ) : m.content_type === "image" && m.media_path ? (
+                        <ImageMessage path={m.media_path} />
+                      ) : m.content_type === "file" && m.media_path ? (
+                        <FileMessage path={m.media_path} text={m.text} />
+                      ) : (
+                        <span className="whitespace-pre-wrap break-words">{m.text}</span>
+                      )}
+                    </div>
+
+                    {/* Time + Read receipts */}
+                    <div className={`flex items-center gap-1 mt-0.5 ${isMe ? "justify-end" : "justify-end"}`}>
+                      <span className="text-[10px] text-gray-500">
+                        {formatTime(m.created_at)}
+                      </span>
+                      {isMe && (
+                        <CheckCheck className="h-3.5 w-3.5" style={{ color: "#53BDEB" }} />
+                      )}
+                    </div>
+
+                    {/* Hover actions */}
+                    <div className={`absolute top-1 ${isMe ? "start-[-60px]" : "end-[-60px]"} opacity-0 group-hover:opacity-100 transition-opacity flex gap-0.5`}>
+                      <button
+                        onClick={() => { setReplyTo(m); inputRef.current?.focus(); }}
+                        className="p-1 rounded-full bg-white shadow-md text-gray-500 hover:text-gray-700"
+                      >
+                        <Reply className="h-3.5 w-3.5" />
+                      </button>
+                      {(isMe || isAdmin) && (
+                        <button
+                          onClick={() => deleteMessage(m.id)}
+                          className="p-1 rounded-full bg-white shadow-md text-gray-500 hover:text-red-500"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Reply indicator */}
+        {replyTo && (
+          <div
+            className="px-4 py-2 flex items-center gap-2 border-t"
+            style={{ backgroundColor: "#F0F2F5", borderColor: "hsl(var(--border))" }}
+          >
+            <div
+              className="w-1 h-10 rounded-full"
+              style={{ backgroundColor: "#064E3B" }}
+            />
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-semibold" style={{ color: "#064E3B" }}>
+                {profiles[replyTo.user_id] || "Student"}
+              </p>
+              <p className="text-xs text-muted-foreground truncate">{replyTo.text}</p>
             </div>
+            <button
+              onClick={() => setReplyTo(null)}
+              className="text-muted-foreground hover:text-foreground p-1"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
+        {/* Recording indicator */}
+        {isRecording && (
+          <div
+            className="px-4 py-2 flex items-center gap-3"
+            style={{ backgroundColor: "#F0F2F5" }}
+          >
+            <div className="w-3 h-3 rounded-full bg-destructive animate-pulse" />
+            <span className="text-sm text-destructive font-medium flex-1">
+              {t("Recording... Tap mic to stop", "جاري التسجيل... اضغط على الميكروفون للإيقاف")}
+            </span>
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={stopRecording}
+              className="h-8"
+            >
+              <MicOff className="h-4 w-4" />
+            </Button>
+          </div>
+        )}
+
+        {/* Input Bar */}
+        <div className="px-2 py-2 flex items-end gap-2" style={{ backgroundColor: "#F0F2F5" }}>
+          <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => { if (e.target.files?.[0]) handleFileUpload(e.target.files[0], "image"); }} />
+          <input ref={fileInputRef} type="file" accept=".pdf,.doc,.docx,.xls,.xlsx" className="hidden" onChange={(e) => { if (e.target.files?.[0]) handleFileUpload(e.target.files[0], "file"); }} />
+
+          {/* Emoji placeholder */}
+          <button className="p-2 text-gray-500 hover:text-gray-700 shrink-0">
+            <Smile className="h-5 w-5" />
+          </button>
+
+          {/* Attachment */}
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="p-2 text-gray-500 hover:text-gray-700 shrink-0"
+          >
+            <Paperclip className="h-5 w-5" />
+          </button>
+
+          {/* Image */}
+          <button
+            onClick={() => imageInputRef.current?.click()}
+            className="p-2 text-gray-500 hover:text-gray-700 shrink-0 hidden sm:block"
+          >
+            <Image className="h-5 w-5" />
+          </button>
+
+          {/* Text input */}
+          <form
+            onSubmit={(e) => { e.preventDefault(); sendMessage(); }}
+            className="flex-1 flex items-center"
+          >
+            <Input
+              ref={inputRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder={t("Type a message...", "اكتب رسالة...")}
+              dir="auto"
+              className="rounded-full border-0 bg-white shadow-sm h-10 px-4 text-sm focus-visible:ring-1"
+            />
+          </form>
+
+          {/* Mic or Send */}
+          {input.trim() ? (
+            <button
+              onClick={() => sendMessage()}
+              className="p-2.5 rounded-full shrink-0 text-white"
+              style={{ backgroundColor: "#25D366" }}
+            >
+              <Send className="h-5 w-5" />
+            </button>
+          ) : (
+            <button
+              onClick={isRecording ? stopRecording : startRecording}
+              className={`p-2.5 rounded-full shrink-0 text-white ${isRecording ? "animate-pulse" : ""}`}
+              style={{ backgroundColor: isRecording ? "#EF4444" : "#25D366" }}
+            >
+              {isRecording ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+            </button>
           )}
         </div>
+      </div>
+    );
+  };
+
+  // ─── Main Layout ───
+  return (
+    <div className="flex h-[calc(100vh-3.5rem)] md:h-[calc(100vh-0px)] overflow-hidden">
+      {/* Desktop: two-pane | Mobile: stack */}
+
+      {/* Chat list - always visible on desktop, conditionally on mobile */}
+      <div
+        className={`${
+          mobileShowChat ? "hidden md:flex" : "flex"
+        } w-full md:w-80 lg:w-96 flex-col border-e`}
+        style={{ borderColor: "hsl(var(--border))" }}
+      >
+        <ChatListPane />
+      </div>
+
+      {/* Chat area - always visible on desktop, conditionally on mobile */}
+      <div
+        className={`${
+          mobileShowChat ? "flex" : "hidden md:flex"
+        } flex-1 flex-col min-w-0`}
+      >
+        <ActiveChatPane />
       </div>
     </div>
   );
 };
 
-// Sub-components for media messages
+// ─── Media Sub-components ───
+
 const AudioMessage = ({ path }: { path: string }) => {
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
@@ -370,7 +591,20 @@ const AudioMessage = ({ path }: { path: string }) => {
       if (data?.signedUrl) setUrl(data.signedUrl);
     });
   }, [path]);
-  return url ? <audio controls src={url} className="max-w-[200px]" /> : <span className="text-xs opacity-70">Loading audio...</span>;
+
+  if (!url) return <span className="text-xs opacity-70">Loading audio...</span>;
+
+  return (
+    <div className="flex items-center gap-2 min-w-[180px]">
+      <div
+        className="w-8 h-8 rounded-full flex items-center justify-center shrink-0"
+        style={{ backgroundColor: "#25D366" }}
+      >
+        <Mic className="h-4 w-4 text-white" />
+      </div>
+      <audio controls src={url} className="h-8 flex-1" style={{ maxWidth: "200px" }} />
+    </div>
+  );
 };
 
 const ImageMessage = ({ path }: { path: string }) => {
@@ -380,7 +614,9 @@ const ImageMessage = ({ path }: { path: string }) => {
       if (data?.signedUrl) setUrl(data.signedUrl);
     });
   }, [path]);
-  return url ? <img src={url} className="max-w-[200px] max-h-[200px] rounded-lg" alt="" /> : <span className="text-xs opacity-70">Loading image...</span>;
+  return url
+    ? <img src={url} className="max-w-[240px] max-h-[240px] rounded-lg" alt="" loading="lazy" />
+    : <span className="text-xs opacity-70">Loading image...</span>;
 };
 
 const FileMessage = ({ path, text }: { path: string; text: string | null }) => {
@@ -390,9 +626,11 @@ const FileMessage = ({ path, text }: { path: string; text: string | null }) => {
     if (data?.signedUrl) window.open(data.signedUrl, "_blank");
   };
   return (
-    <button onClick={openFile} className="flex items-center gap-2 hover:underline">
-      <FileText className="h-4 w-4" />
-      <span className="text-xs">{text || fileName}</span>
+    <button onClick={openFile} className="flex items-center gap-2 hover:underline py-1">
+      <div className="w-8 h-8 rounded-lg bg-accent flex items-center justify-center shrink-0">
+        <FileText className="h-4 w-4 text-foreground" />
+      </div>
+      <span className="text-xs font-medium">{text || fileName}</span>
     </button>
   );
 };
