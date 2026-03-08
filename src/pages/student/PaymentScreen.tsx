@@ -8,6 +8,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { motion } from "framer-motion";
 import { CheckCircle, CreditCard, Shield, BookOpen, Video, ClipboardList, MessageCircle, BookMarked } from "lucide-react";
+import StandaloneNav from "@/components/layout/StandaloneNav";
 
 declare global {
   interface Window {
@@ -221,7 +222,8 @@ const PaymentScreen = () => {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4" style={{ background: "linear-gradient(135deg, #0f3122 0%, #1a4a35 50%, #0f3122 100%)" }}>
+    <div className="min-h-screen flex items-center justify-center p-4 pt-20" style={{ background: "linear-gradient(135deg, #0f3122 0%, #1a4a35 50%, #0f3122 100%)" }}>
+      <StandaloneNav />
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&family=Cairo:wght@400;600;700&display=swap');
         .payment-card { font-family: 'Cairo', sans-serif; }
