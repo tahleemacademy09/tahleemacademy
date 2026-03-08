@@ -175,19 +175,45 @@ const Transcripts = () => {
       <th><span class="ar">النتيجة</span><span class="en">Result</span></th>
     </tr></thead>`;
 
-    const buildTermSection = (termExams: GradedExam[], termName: string, termNameEn: string) => {
+    const buildTermPage = (termExams: GradedExam[], termName: string, termNameEn: string, isFirst: boolean) => {
+      const termObtainable = termExams.length * 100;
+      const termObtained = termExams.reduce((s, e) => s + Math.round(e.percentage), 0);
+      const termGP = termExams.reduce((s, e) => s + gradePoint(e.percentage), 0);
+      const termCgpa = termExams.length > 0 ? termGP / termExams.length : 0;
+      const termComment = termExams.length > 0 ? (termCgpa >= 3.5 ? "طالب(ة) متميز(ة) / Outstanding" : termCgpa >= 2.0 ? "طالب(ة) مجتهد(ة) / Hardworking" : "يحتاج تحسين / Needs improvement") : "";
       return `
-      <div class="term-section">
+      <div class="term-page${isFirst ? '' : ' page-break'}">
+        <div class="watermark-inner">TAHLEEM ACADEMY</div>
         <div class="header">
           <div class="ar">أكاديمية التعليم</div>
           <div class="en">TAHLEEM ACADEMY</div>
         </div>
+        <div class="title-box"><span>كشف نتائج الطلبة</span><span>Student Report Sheet.</span></div>
+        <div class="info-grid">
+          <div class="info-row">
+            <div class="info-field"><label>اسم الطالب(ة)</label><span class="val">${profile?.full_name || "---"}</span></div>
+            <div class="info-field"><label>العام الدراسي</label><span class="val">${hijriYear} هـ / ${currentYear} م</span></div>
+          </div>
+          <div class="info-row">
+            <div class="info-field"><label>المرحلة</label><span class="val">${levelText}</span></div>
+            <div class="info-field"><label>عدد المواد</label><span class="val">${termExams.length}</span></div>
+          </div>
+          <div class="info-row">
+            <div class="info-field"><label>التاريخ</label><span class="val">${new Date().toLocaleDateString("ar-SA")}</span></div>
+            <div class="info-field"><label>الحالة</label><span class="val">${statusText}</span></div>
+          </div>
+        </div>
         <div class="term-title">${termName} — ${termNameEn}</div>
         <table class="main">${tableHeader}<tbody>${buildTermRows(termExams)}</tbody></table>
+        <table class="summary">
+          <tr><td class="lbl">Marks Obtainable</td><td style="text-align:center">${termObtainable || ""}</td><td class="lbl">Marks Obtained</td><td style="text-align:center">${termObtained || ""}</td></tr>
+          <tr><td class="lbl">Cgpa</td><td style="text-align:center">${termExams.length > 0 ? termCgpa.toFixed(2) : ""}</td><td class="lbl">Status</td><td style="text-align:center">${termExams.length > 0 ? (termCgpa >= 1.0 ? "Pass ✓" : "Fail ✗") : ""}</td></tr>
+          <tr><td class="lbl">Comment</td><td style="text-align:center">${termComment}</td><td class="lbl">Signature</td><td class="stamp-cell"><img src="${stampBase64}" alt="Stamp" /></td></tr>
+        </table>
       </div>`;
     };
 
-    const termSections = terms.map((t, i) => buildTermSection(t, termNames[i], termNamesEn[i])).join("");
+    const termPages = terms.map((t, i) => buildTermPage(t, termNames[i], termNamesEn[i], i === 0)).join("");
 
     const html = `<!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -206,8 +232,9 @@ body{font-family:'Cairo','Amiri',sans-serif;background:#fff;padding:30px 40px;po
 .title-box{border:2px solid #2a7a2a;border-radius:4px;padding:6px 20px;margin:14px auto;width:fit-content;display:flex;gap:30px;align-items:center;justify-content:center}
 .title-box span{font-size:14px;font-weight:600}
 .term-title{border:2px solid #2a7a2a;border-radius:4px;padding:4px 16px;margin:8px auto;width:fit-content;font-family:'Amiri',serif;font-size:16px;font-weight:700;text-align:center}
-.term-section{margin-bottom:20px;padding-top:10px;border-top:2px dashed #ccc}
-.term-section:first-child{border-top:none;padding-top:0}
+.term-page{position:relative;padding:10px 0}
+.page-break{page-break-before:always;break-before:page}
+.watermark-inner{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-30deg);font-size:80px;font-weight:700;color:#064E3B;opacity:0.04;white-space:nowrap;letter-spacing:8px;font-family:'Cairo',sans-serif;pointer-events:none;z-index:0}
 .info-grid{margin:16px 0}
 .info-row{display:flex;justify-content:space-between;margin-bottom:8px;gap:24px}
 .info-field{display:flex;align-items:baseline;flex:1;gap:4px}
@@ -226,37 +253,7 @@ table.summary td.lbl{font-weight:700;width:18%}
 </style>
 </head>
 <body>
-<div class="watermark">TAHLEEM ACADEMY</div>
-<div class="content">
-<div class="header">
-  <div class="ar">أكاديمية التعليم</div>
-  <div class="en">TAHLEEM ACADEMY</div>
-</div>
-<div class="title-box">
-  <span>كشف نتائج الطلبة</span>
-  <span>Student Report Sheet.</span>
-</div>
-<div class="info-grid">
-  <div class="info-row">
-    <div class="info-field"><label>اسم الطالب(ة)</label><span class="val">${profile?.full_name || "---"}</span></div>
-    <div class="info-field"><label>العام الدراسي</label><span class="val">${hijriYear} هـ / ${currentYear} م</span></div>
-  </div>
-  <div class="info-row">
-    <div class="info-field"><label>المرحلة</label><span class="val">${levelText}</span></div>
-    <div class="info-field"><label>عدد المواد</label><span class="val">${exams.length}</span></div>
-  </div>
-  <div class="info-row">
-    <div class="info-field"><label>التاريخ</label><span class="val">${new Date().toLocaleDateString("ar-SA")}</span></div>
-    <div class="info-field"><label>الحالة</label><span class="val">${statusText}</span></div>
-  </div>
-</div>
-${termSections}
-<table class="summary">
-  <tr><td class="lbl">Marks Obtainable</td><td style="text-align:center">${totalObtainable || ""}</td><td class="lbl">Marks Obtained</td><td style="text-align:center">${totalObtained || ""}</td></tr>
-  <tr><td class="lbl">Cgpa</td><td style="text-align:center">${exams.length > 0 ? cgpa.toFixed(2) : ""}</td><td class="lbl">Status</td><td style="text-align:center">${exams.length > 0 ? (cgpa >= 1.0 ? "Pass ✓" : "Fail ✗") : ""}</td></tr>
-  <tr><td class="lbl">Comment</td><td style="text-align:center">${commentText}</td><td class="lbl">Signature</td><td class="stamp-cell"><img src="${stampBase64}" alt="Stamp" /></td></tr>
-</table>
-</div>
+${termPages}
 <script>
   window.onload = function() {
     setTimeout(function() { window.print(); }, 500);
