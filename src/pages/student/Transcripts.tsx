@@ -175,19 +175,45 @@ const Transcripts = () => {
       <th><span class="ar">النتيجة</span><span class="en">Result</span></th>
     </tr></thead>`;
 
-    const buildTermSection = (termExams: GradedExam[], termName: string, termNameEn: string) => {
+    const buildTermPage = (termExams: GradedExam[], termName: string, termNameEn: string, isFirst: boolean) => {
+      const termObtainable = termExams.length * 100;
+      const termObtained = termExams.reduce((s, e) => s + Math.round(e.percentage), 0);
+      const termGP = termExams.reduce((s, e) => s + gradePoint(e.percentage), 0);
+      const termCgpa = termExams.length > 0 ? termGP / termExams.length : 0;
+      const termComment = termExams.length > 0 ? (termCgpa >= 3.5 ? "طالب(ة) متميز(ة) / Outstanding" : termCgpa >= 2.0 ? "طالب(ة) مجتهد(ة) / Hardworking" : "يحتاج تحسين / Needs improvement") : "";
       return `
-      <div class="term-section">
+      <div class="term-page${isFirst ? '' : ' page-break'}">
+        <div class="watermark-inner">TAHLEEM ACADEMY</div>
         <div class="header">
           <div class="ar">أكاديمية التعليم</div>
           <div class="en">TAHLEEM ACADEMY</div>
         </div>
+        <div class="title-box"><span>كشف نتائج الطلبة</span><span>Student Report Sheet.</span></div>
+        <div class="info-grid">
+          <div class="info-row">
+            <div class="info-field"><label>اسم الطالب(ة)</label><span class="val">${profile?.full_name || "---"}</span></div>
+            <div class="info-field"><label>العام الدراسي</label><span class="val">${hijriYear} هـ / ${currentYear} م</span></div>
+          </div>
+          <div class="info-row">
+            <div class="info-field"><label>المرحلة</label><span class="val">${levelText}</span></div>
+            <div class="info-field"><label>عدد المواد</label><span class="val">${termExams.length}</span></div>
+          </div>
+          <div class="info-row">
+            <div class="info-field"><label>التاريخ</label><span class="val">${new Date().toLocaleDateString("ar-SA")}</span></div>
+            <div class="info-field"><label>الحالة</label><span class="val">${statusText}</span></div>
+          </div>
+        </div>
         <div class="term-title">${termName} — ${termNameEn}</div>
         <table class="main">${tableHeader}<tbody>${buildTermRows(termExams)}</tbody></table>
+        <table class="summary">
+          <tr><td class="lbl">Marks Obtainable</td><td style="text-align:center">${termObtainable || ""}</td><td class="lbl">Marks Obtained</td><td style="text-align:center">${termObtained || ""}</td></tr>
+          <tr><td class="lbl">Cgpa</td><td style="text-align:center">${termExams.length > 0 ? termCgpa.toFixed(2) : ""}</td><td class="lbl">Status</td><td style="text-align:center">${termExams.length > 0 ? (termCgpa >= 1.0 ? "Pass ✓" : "Fail ✗") : ""}</td></tr>
+          <tr><td class="lbl">Comment</td><td style="text-align:center">${termComment}</td><td class="lbl">Signature</td><td class="stamp-cell"><img src="${stampBase64}" alt="Stamp" /></td></tr>
+        </table>
       </div>`;
     };
 
-    const termSections = terms.map((t, i) => buildTermSection(t, termNames[i], termNamesEn[i])).join("");
+    const termPages = terms.map((t, i) => buildTermPage(t, termNames[i], termNamesEn[i], i === 0)).join("");
 
     const html = `<!DOCTYPE html>
 <html lang="ar" dir="rtl">
