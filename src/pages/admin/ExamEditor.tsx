@@ -223,17 +223,19 @@ const ExamEditor = () => {
       if (isEdit) {
         const { error } = await supabase.from("exams").update({
           ...examForm,
+          ...formatSettings,
           start_date: examForm.start_date ? new Date(examForm.start_date).toISOString() : null,
           end_date: examForm.end_date ? new Date(examForm.end_date).toISOString() : null,
-        }).eq("id", examId);
+        } as any).eq("id", examId);
         if (error) throw error;
       } else {
         const { data, error } = await supabase.from("exams").insert({
           ...examForm,
+          ...formatSettings,
           created_by: user!.id,
           start_date: examForm.start_date ? new Date(examForm.start_date).toISOString() : null,
           end_date: examForm.end_date ? new Date(examForm.end_date).toISOString() : null,
-        }).select("id").single();
+        } as any).select("id").single();
         if (error) throw error;
         eid = data?.id;
       }
