@@ -313,13 +313,27 @@ const EntranceExamAdmin = () => {
                             {r.submitted_at ? new Date(r.submitted_at).toLocaleDateString() : "-"}
                           </TableCell>
                           <TableCell>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => navigate(`/student/results/${r.id}`)}
-                            >
-                              <Eye className="h-4 w-4" />
-                            </Button>
+                            <div className="flex gap-1">
+                              <Button variant="ghost" size="sm" onClick={() => navigate(`/student/results/${r.id}`)}>
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                              <Button variant="ghost" size="sm" title="Reset attempt" onClick={async () => {
+                                if (!confirm("Reset this student's entrance exam? They can retake it.")) return;
+                                await supabase.from("exam_attempts").delete().eq("id", r.id);
+                                await supabase.from("profiles").update({ has_taken_entrance_exam: false, allow_entrance_retake: true }).eq("user_id", r.user_id);
+                                toast({ title: "Entrance exam reset" });
+                                loadData();
+                              }}>
+                                <RotateCcw className="h-4 w-4 text-amber-500" />
+                              </Button>
+                              <Button variant="ghost" size="sm" title="Change level manually" onClick={() => {
+                                setTargetStudent(r);
+                                setNewLevel(profile?.level || "beginner");
+                                setShowLevelDialog(true);
+                              }}>
+                                <UserCog className="h-4 w-4 text-primary" />
+                              </Button>
+                            </div>
                           </TableCell>
                         </TableRow>
                       );
