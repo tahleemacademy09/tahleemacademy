@@ -463,23 +463,30 @@ const StudentDashboard = () => {
           </CardHeader>
           <CardContent className="pt-0">
 
-            {/* Classes Tab */}
+            {/* Classes Tab — Enhanced Subject Cards */}
             <TabsContent value="classes" className="mt-0">
               {liveSubjects.length === 0 ? (
                 <p className="text-sm text-muted-foreground text-center py-6">{t("No active classes", "لا توجد فصول نشطة")}</p>
               ) : (
                 <div className="space-y-2">
-                  {liveSubjects.map((s) => (
-                    <Link to="/student/live-classes" key={s.id}>
+                  {liveSubjects.map((s: any) => (
+                    <Link to={`/student/subjects/${s.id}`} key={s.id}>
                       <div className="rounded-xl bg-muted/20 p-3 hover:bg-accent/30 transition-colors flex items-center gap-3">
                         <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
                           <BookOpen className="h-4 w-4 text-primary" />
                         </div>
-                        <div className="min-w-0">
+                        <div className="min-w-0 flex-1">
                           <p className="font-medium text-sm truncate">{s.title}</p>
                           {s.title_ar && <p className="text-xs text-muted-foreground font-arabic mt-0.5" dir="rtl">{s.title_ar}</p>}
+                          {s.next_session_at && (
+                            <p className="text-[10px] text-primary mt-0.5 flex items-center gap-1">
+                              <Calendar className="h-3 w-3" />
+                              {t("Next", "التالي")}: {new Date(s.next_session_at).toLocaleDateString(language === "ar" ? "ar-SA" : "en-US", { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                            </p>
+                          )}
                         </div>
-                        <ArrowRight className="h-3.5 w-3.5 text-muted-foreground ml-auto shrink-0" />
+                        {s.level && <Badge variant="secondary" className="text-[9px] shrink-0">{s.level}</Badge>}
+                        <ArrowRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                       </div>
                     </Link>
                   ))}
@@ -487,8 +494,8 @@ const StudentDashboard = () => {
               )}
               <div className="mt-3 text-center">
                 <Button variant="ghost" size="sm" asChild>
-                  <Link to="/student/live-classes" className="text-xs text-primary">
-                    {t("View All Classes", "عرض كل الفصول")} <ArrowRight className="h-3 w-3 ml-1" />
+                  <Link to="/student/courses" className="text-xs text-primary">
+                    {t("View All Subjects", "عرض كل المواد")} <ArrowRight className="h-3 w-3 ml-1" />
                   </Link>
                 </Button>
               </div>
