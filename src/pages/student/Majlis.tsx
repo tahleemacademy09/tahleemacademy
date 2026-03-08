@@ -614,6 +614,8 @@ const Majlis = () => {
             profiles={profiles}
             unreadCounts={unreadCounts}
             userId={user?.id || ""}
+            onBroadcast={isAdmin ? () => setShowBroadcast(true) : undefined}
+            onAdminDashboard={isAdmin ? () => setShowAdminDashboard(true) : undefined}
           />
         </div>
 
