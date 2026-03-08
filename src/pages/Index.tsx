@@ -304,7 +304,7 @@ const Index = () => {
           </div>
           <div className="ta-hero-right">
             <div className="ta-hero-card">
-              <img src="https://images.unsplash.com/photo-1544947950-fa07a98d237f?w=800&q=80" alt="Islamic study" />
+              <img src="https://images.unsplash.com/photo-1609599006353-e629aaabfeae?w=800&q=80" alt="Islamic study" />
               <div className="ta-hero-card-label">📖 Live Quranic Classes</div>
             </div>
             <div className="ta-hero-card">
