@@ -101,7 +101,6 @@ const ProfileSettings = () => {
     };
     if (isAdmin) fetchTeachers();
   }, [isAdmin]);
-  }, [profile]);
 
   // Proctoring status
   useEffect(() => {
