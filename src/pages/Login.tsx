@@ -36,7 +36,14 @@ const Login = () => {
   // Auto-redirect if already logged in
   useEffect(() => {
     if (user) {
-      navigate("/student", { replace: true });
+      // Check role to redirect appropriately
+      supabase.from("user_roles").select("role").eq("user_id", user.id).then(({ data: roles }) => {
+        const isAdmin = roles?.some(r => r.role === "admin");
+        const isTeacher = roles?.some(r => r.role === "teacher");
+        if (isAdmin) navigate("/admin", { replace: true });
+        else if (isTeacher) navigate("/teacher/dashboard", { replace: true });
+        else navigate("/student", { replace: true });
+      });
     }
   }, [user, navigate]);
 
@@ -64,8 +71,9 @@ const Login = () => {
         .from("user_roles")
         .select("role")
         .eq("user_id", data.user?.id);
-      const isAdmin = roles?.some((r) => r.role === "admin" || r.role === "teacher");
-      navigate(isAdmin ? "/admin" : "/student");
+      const isAdmin = roles?.some((r) => r.role === "admin");
+      const isTeacher = roles?.some((r) => r.role === "teacher");
+      navigate(isAdmin ? "/admin" : isTeacher ? "/teacher/dashboard" : "/student");
     }
   };
 

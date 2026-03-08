@@ -841,6 +841,57 @@ export type Database = {
           },
         ]
       }
+      manual_attendance: {
+        Row: {
+          created_at: string | null
+          date: string
+          id: string
+          notes: string | null
+          session_id: string | null
+          status: string | null
+          student_id: string
+          subject_id: string | null
+          teacher_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          date: string
+          id?: string
+          notes?: string | null
+          session_id?: string | null
+          status?: string | null
+          student_id: string
+          subject_id?: string | null
+          teacher_id: string
+        }
+        Update: {
+          created_at?: string | null
+          date?: string
+          id?: string
+          notes?: string | null
+          session_id?: string | null
+          status?: string | null
+          student_id?: string
+          subject_id?: string | null
+          teacher_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "manual_attendance_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "manual_attendance_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       notifications: {
         Row: {
           created_at: string
@@ -1496,6 +1547,39 @@ export type Database = {
           title?: string
           title_ar?: string | null
           updated_at?: string | null
+        }
+        Relationships: []
+      }
+      teacher_announcements: {
+        Row: {
+          created_at: string | null
+          id: string
+          message: string
+          priority: string | null
+          target_id: string | null
+          target_type: string | null
+          teacher_id: string
+          title: string
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          message: string
+          priority?: string | null
+          target_id?: string | null
+          target_type?: string | null
+          teacher_id: string
+          title: string
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          message?: string
+          priority?: string | null
+          target_id?: string | null
+          target_type?: string | null
+          teacher_id?: string
+          title?: string
         }
         Relationships: []
       }

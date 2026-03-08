@@ -7,6 +7,7 @@ import { LanguageProvider } from "@/contexts/LanguageContext";
 import { AuthProvider } from "@/contexts/AuthContext";
 import PublicLayout from "@/components/layout/PublicLayout";
 import DashboardLayout from "@/components/layout/DashboardLayout";
+import TeacherLayout from "@/components/layout/TeacherLayout";
 import ProtectedRoute from "@/components/layout/ProtectedRoute";
 
 import Index from "./pages/Index";
@@ -44,6 +45,20 @@ import SubjectManagement from "./pages/admin/SubjectManagement";
 import CourseManagement from "./pages/admin/CourseManagement";
 import SyllabusManager from "./pages/admin/SyllabusManager";
 import PrivateSessions from "./pages/admin/PrivateSessions";
+
+import TeacherDashboard from "./pages/teacher/TeacherDashboard";
+import TeacherStudents from "./pages/teacher/TeacherStudents";
+import TeacherPrivateStudents from "./pages/teacher/TeacherPrivateStudents";
+import TeacherSubjects from "./pages/teacher/TeacherSubjects";
+import TeacherClasses from "./pages/teacher/TeacherClasses";
+import TeacherRecordings from "./pages/teacher/TeacherRecordings";
+import TeacherPrivateSessions from "./pages/teacher/TeacherPrivateSessions";
+import TeacherExamsPage from "./pages/teacher/TeacherExamsPage";
+import TeacherResults from "./pages/teacher/TeacherResults";
+import TeacherTranscript from "./pages/teacher/TeacherTranscript";
+import TeacherAttendance from "./pages/teacher/TeacherAttendance";
+import TeacherAnnouncements from "./pages/teacher/TeacherAnnouncements";
+import TeacherSettings from "./pages/teacher/TeacherSettings";
 
 const queryClient = new QueryClient();
 
@@ -89,6 +104,24 @@ const App = () => (
               <Route path="/student/exam-verify/:examId" element={<ProtectedRoute><PreExamVerification /></ProtectedRoute>} />
               <Route path="/student/exam/:attemptId" element={<ProtectedRoute><ExamTaking /></ProtectedRoute>} />
               <Route path="/student/results/:attemptId" element={<ProtectedRoute><ExamResults /></ProtectedRoute>} />
+
+              {/* Teacher dashboard - requires teacher role */}
+              <Route element={<ProtectedRoute requiredRole="teacher"><TeacherLayout /></ProtectedRoute>}>
+                <Route path="/teacher/dashboard" element={<TeacherDashboard />} />
+                <Route path="/teacher/students" element={<TeacherStudents />} />
+                <Route path="/teacher/private-students" element={<TeacherPrivateStudents />} />
+                <Route path="/teacher/subjects" element={<TeacherSubjects />} />
+                <Route path="/teacher/classes" element={<TeacherClasses />} />
+                <Route path="/teacher/recordings" element={<TeacherRecordings />} />
+                <Route path="/teacher/private-sessions" element={<TeacherPrivateSessions />} />
+                <Route path="/teacher/exams" element={<TeacherExamsPage type="exam" />} />
+                <Route path="/teacher/tests" element={<TeacherExamsPage type="test" />} />
+                <Route path="/teacher/results" element={<TeacherResults />} />
+                <Route path="/teacher/transcript" element={<TeacherTranscript />} />
+                <Route path="/teacher/attendance" element={<TeacherAttendance />} />
+                <Route path="/teacher/announcements" element={<TeacherAnnouncements />} />
+                <Route path="/teacher/settings" element={<TeacherSettings />} />
+              </Route>
 
               {/* Admin dashboard - requires admin role */}
               <Route element={<ProtectedRoute requiredRole="admin"><DashboardLayout role="admin" /></ProtectedRoute>}>
