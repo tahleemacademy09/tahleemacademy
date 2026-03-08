@@ -42,10 +42,24 @@ const Index = () => {
       .ta-nav-links a { color:rgba(255,255,255,0.8); text-decoration:none; font-size:14px; transition:0.2s; cursor:pointer; }
       .ta-nav-links a:hover { color:#e8c070; }
       .ta-nav-cta { display:flex; gap:12px; }
+      .ta-nav-hamburger { display:none; background:none; border:none; cursor:pointer; padding:4px; }
+      .ta-nav-hamburger svg { width:28px; height:28px; color:#c9973a; }
       .ta-btn-outline { padding:8px 20px; border:1px solid #c9973a; color:#c9973a; background:transparent; border-radius:6px; cursor:pointer; font-family:'Cairo',sans-serif; font-size:13px; transition:0.2s; }
       .ta-btn-outline:hover { background:#c9973a; color:#fff; }
       .ta-btn-solid { padding:8px 20px; background:#c9973a; color:#fff; border:none; border-radius:6px; cursor:pointer; font-family:'Cairo',sans-serif; font-size:13px; font-weight:700; transition:0.2s; }
       .ta-btn-solid:hover { background:#e8c070; color:#0f3122; }
+
+      /* MOBILE MENU */
+      .ta-mobile-menu {
+        display:none; position:fixed; top:0; left:0; right:0; bottom:0; z-index:99;
+        background:rgba(10,30,20,0.97); flex-direction:column; align-items:center; justify-content:center; gap:24px;
+      }
+      .ta-mobile-menu.open { display:flex; }
+      .ta-mobile-menu a, .ta-mobile-menu button { font-size:18px; }
+      .ta-mobile-menu a { color:rgba(255,255,255,0.85); text-decoration:none; cursor:pointer; font-family:'Cairo',sans-serif; transition:0.2s; }
+      .ta-mobile-menu a:hover { color:#e8c070; }
+      .ta-mobile-close { position:absolute; top:18px; right:20px; background:none; border:none; cursor:pointer; }
+      .ta-mobile-close svg { width:32px; height:32px; color:#c9973a; }
 
       /* HERO */
       .ta-hero { min-height:100vh; position:relative; display:flex; align-items:center; overflow:hidden; }
