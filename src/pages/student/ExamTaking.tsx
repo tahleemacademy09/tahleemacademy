@@ -17,6 +17,7 @@ import { sanitizeHtml } from "@/lib/sanitize";
 import { Clock, Flag, Send, AlertTriangle, BookOpen, CheckCircle2, HelpCircle, ShieldAlert, Lock, TrendingUp } from "lucide-react";
 import AudioPlayer from "@/components/exam/AudioPlayer";
 import AudioRecorder from "@/components/exam/AudioRecorder";
+import ProctoringOverlay from "@/components/exam/ProctoringOverlay";
 import { motion, AnimatePresence } from "framer-motion";
 import { useProctoring } from "@/hooks/useProctoring";
 
