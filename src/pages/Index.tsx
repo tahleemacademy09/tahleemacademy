@@ -300,7 +300,7 @@ const Index = () => {
               Learn Quran, Tajweed, Arabic Language and Islamic Studies with qualified scholars — live, interactive, and designed for every level.
             </p>
             <div className="ta-hero-buttons">
-              <button className="ta-hero-btn-primary" onClick={() => navigate("/auth")}>Start Learning →</button>
+              <button className="ta-hero-btn-primary" onClick={() => navigate("/register")}>Start Learning →</button>
               <button className="ta-hero-btn-secondary" onClick={() => navigate("/courses")}>Browse Courses</button>
             </div>
           </div>
