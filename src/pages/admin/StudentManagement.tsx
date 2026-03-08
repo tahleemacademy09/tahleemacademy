@@ -570,14 +570,14 @@ const StudentManagement = () => {
               <div className="w-16 text-center">{typeBadge(student.student_type)}</div>
               <div className="w-16 text-center">{statusBadge(student.status)}</div>
               <div className="flex items-center gap-1 flex-wrap">
-                <Button variant="ghost" size="icon" className="h-7 w-7" title={t("View Dashboard", "عرض لوحة التحكم")} onClick={() => viewStudentDetails(student)}>
+                <Button variant="ghost" size="icon" className="h-7 w-7" title={t("View as Student", "عرض كطالب")} onClick={() => navigate(`/admin/students/${student.user_id}/view`)}>
                   <Eye className="h-3.5 w-3.5" />
+                </Button>
+                <Button variant="ghost" size="icon" className="h-7 w-7" title={t("View Details", "عرض التفاصيل")} onClick={() => viewStudentDetails(student)}>
+                  <BarChart className="h-3.5 w-3.5" />
                 </Button>
                 <Button variant="ghost" size="icon" className="h-7 w-7" title={t("Edit Profile", "تعديل الملف")} onClick={() => openEditProfile(student)}>
                   <Edit className="h-3.5 w-3.5" />
-                </Button>
-                <Button variant="ghost" size="icon" className="h-7 w-7" title={t("View Results", "عرض النتائج")} onClick={() => viewStudentDetails(student)}>
-                  <BarChart className="h-3.5 w-3.5" />
                 </Button>
                 <Button variant="ghost" size="icon" className="h-7 w-7" title={t("Assign Exam", "تعيين امتحان")} onClick={() => { setSelectedStudent(student); setAssignDialogOpen(true); }}>
                   <ClipboardList className="h-3.5 w-3.5" />
