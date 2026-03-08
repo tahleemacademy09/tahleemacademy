@@ -161,6 +161,7 @@ const PublicClassManagement = () => {
           classTitle: cls.title,
           classTitleAr: cls.title_ar,
           isHost: true,
+          classId: cls.id,
         },
       });
     } catch {
