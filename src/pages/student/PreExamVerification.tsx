@@ -42,6 +42,13 @@ const PreExamVerification = () => {
   const [micLevel, setMicLevel] = useState(0);
   const [micTested, setMicTested] = useState(false);
   const [webcamStream, setWebcamStream] = useState<MediaStream | null>(null);
+  const [checklist, setChecklist] = useState({
+    quietEnvironment: false,
+    faceVisible: false,
+    noDevices: false,
+    noTabSwitch: false,
+  });
+  const allChecked = Object.values(checklist).every(Boolean);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
