@@ -53,9 +53,15 @@ const AdminDashboard = () => {
         teacher_name: profiles.find(p => p.user_id === s.assigned_teacher_id)?.full_name || "—",
       }));
 
+      // Count exams vs tests from all exams data
+      const allExamsData = await supabase.from("exams").select("type");
+      const examCount = (allExamsData.data || []).filter((e: any) => (e.type || "exam") === "exam").length;
+      const testCount = (allExamsData.data || []).filter((e: any) => e.type === "test").length;
+
       setStats({
         students: studentsRes.count || 0,
-        exams: examsRes.count || 0,
+        exams: examCount,
+        tests: testCount,
         courses: coursesRes.count || 0,
         attempts: attemptsRes.count || 0,
         pendingGrading: pendingRes.count || 0,
