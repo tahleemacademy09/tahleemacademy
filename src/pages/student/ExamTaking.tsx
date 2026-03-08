@@ -686,7 +686,11 @@ const ExamTaking = () => {
                               )}
                               <div className="flex items-center gap-2">
                                 <RadioGroupItem value={opt.id} id={`${q.id}-${opt.id}`} />
-                                <Label htmlFor={`${q.id}-${opt.id}`} className="cursor-pointer flex-1 text-sm">
+                                <Label htmlFor={`${q.id}-${opt.id}`} className="cursor-pointer flex-1" style={{
+                                  fontSize: `${exam?.options_font_size || 14}px`,
+                                  fontWeight: exam?.options_bold ? 'bold' : 'normal',
+                                  textAlign: (exam?.options_alignment || 'left') as any,
+                                }}>
                                   <span className="mr-2 inline-flex h-5 w-5 items-center justify-center rounded-full bg-muted text-xs font-bold">
                                     {String.fromCharCode(65 + idx)}
                                   </span>
