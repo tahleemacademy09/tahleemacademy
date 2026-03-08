@@ -65,6 +65,22 @@ const GradingPage = () => {
     return true;
   });
 
+  const termLabels: Record<string, string> = {
+    first: t("First Term / الفصل الأول", "الفصل الأول / First Term"),
+    second: t("Second Term / الفصل الثاني", "الفصل الثاني / Second Term"),
+    third: t("Third Term / الفصل الثالث", "الفصل الثالث / Third Term"),
+  };
+
+  const groupByTerm = (attempts: any[]) => {
+    const groups: Record<string, any[]> = { first: [], second: [], third: [] };
+    attempts.forEach((a) => {
+      const term = (a.exams?.term || "first") as string;
+      if (!groups[term]) groups[term] = [];
+      groups[term].push(a);
+    });
+    return groups;
+  };
+
   const pendingCount = allAttempts.filter((a) => a.status === "submitted").length;
   const gradedCount = allAttempts.filter((a) => a.status === "graded").length;
 
