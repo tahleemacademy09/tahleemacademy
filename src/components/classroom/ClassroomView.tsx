@@ -58,8 +58,8 @@ const RecordingController = ({ sessionId, subjectId, userEmail, isPrivileged, on
       // Get all participants' audio tracks from the LiveKit room
       const participants = [room.localParticipant, ...Array.from(room.remoteParticipants.values())];
       for (const participant of participants) {
-        const pubs = participant.getTrackPublications();
-        for (const [, pub] of pubs) {
+        const pubs = Array.from(participant.trackPublications.values());
+        for (const pub of pubs) {
           if (pub.track && (pub.source === Track.Source.Microphone || pub.source === Track.Source.ScreenShareAudio)) {
             const mst = pub.track.mediaStreamTrack;
             if (mst && mst.readyState === "live") {
