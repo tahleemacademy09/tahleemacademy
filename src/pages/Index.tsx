@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import quranTajweedImg from "@/assets/quran-tajweed.jpeg";
+import arabicLanguageImg from "@/assets/arabic-language.jpeg";
 
 const Index = () => {
   const navigate = useNavigate();
@@ -400,7 +401,7 @@ const Index = () => {
           <div className="ta-courses-grid">
             {[
               { img: quranTajweedImg, badge:"Most Popular", ar:"القرآن والتجويد", en:"Quran & Tajweed", desc:"Perfect your recitation with certified Huffadh — from beginner Qaida to advanced Tajweed rules.", level:"⭐ All Levels" },
-              { img:"https://images.unsplash.com/photo-1585036156171-384164a8c675?w=600&q=80", badge:"New", ar:"اللغة العربية", en:"Arabic Language", desc:"From beginner to advanced — reading, writing, grammar and spoken Arabic.", level:"⭐ Beginner Friendly" },
+              { img: arabicLanguageImg, badge:"New", ar:"اللغة العربية", en:"Arabic Language", desc:"From beginner to advanced — reading, writing, grammar and spoken Arabic.", level:"⭐ Beginner Friendly" },
               { img:"https://images.unsplash.com/photo-1519817650390-64a93db51149?w=600&q=80", badge:"Certified", ar:"العلوم الإسلامية", en:"Islamic Sciences", desc:"Fiqh, Aqeedah, Seerah — comprehensive Islamic education with qualified scholars.", level:"⭐ Intermediate" },
             ].map((c) => (
               <div className="ta-course-card" key={c.en}>
