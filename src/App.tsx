@@ -54,6 +54,8 @@ import RecordingManagement from "./pages/admin/RecordingManagement";
 import LiveClassManagement from "./pages/admin/LiveClassManagement";
 import MajlisModeration from "./pages/admin/MajlisModeration";
 import NotificationManagement from "./pages/admin/NotificationManagement";
+import TranscriptManagement from "./pages/admin/TranscriptManagement";
+import AttendanceManagement from "./pages/admin/AttendanceManagement";
 
 import TeacherDashboard from "./pages/teacher/TeacherDashboard";
 import TeacherStudents from "./pages/teacher/TeacherStudents";
@@ -159,6 +161,8 @@ const App = () => (
                 <Route path="/admin/majlis-moderation" element={<MajlisModeration />} />
                 <Route path="/admin/notifications" element={<NotificationManagement />} />
                 <Route path="/admin/entrance-exam" element={<EntranceExamAdmin />} />
+                <Route path="/admin/transcripts" element={<TranscriptManagement />} />
+                <Route path="/admin/attendance" element={<AttendanceManagement />} />
               </Route>
 
               <Route path="*" element={<NotFound />} />

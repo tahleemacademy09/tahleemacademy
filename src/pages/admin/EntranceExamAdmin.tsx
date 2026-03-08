@@ -8,7 +8,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate } from "react-router-dom";
-import { FileText, Users, Settings, Plus, Trash2, Download, Eye, BookOpen } from "lucide-react";
+import { FileText, Users, Settings, Plus, Trash2, Download, Eye, BookOpen, RotateCcw, UserCog } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 
 const ENTRANCE_EXAM_ID = "36ef6492-2515-44ea-b086-67c9cee02475";
 
@@ -22,6 +24,9 @@ const EntranceExamAdmin = () => {
   const [loading, setLoading] = useState(true);
   const [selectedLevel, setSelectedLevel] = useState("beginner");
   const [selectedSubject, setSelectedSubject] = useState("");
+  const [showLevelDialog, setShowLevelDialog] = useState(false);
+  const [targetStudent, setTargetStudent] = useState<any>(null);
+  const [newLevel, setNewLevel] = useState("beginner");
 
   useEffect(() => {
     loadData();
@@ -308,13 +313,27 @@ const EntranceExamAdmin = () => {
                             {r.submitted_at ? new Date(r.submitted_at).toLocaleDateString() : "-"}
                           </TableCell>
                           <TableCell>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => navigate(`/student/results/${r.id}`)}
-                            >
-                              <Eye className="h-4 w-4" />
-                            </Button>
+                            <div className="flex gap-1">
+                              <Button variant="ghost" size="sm" onClick={() => navigate(`/student/results/${r.id}`)}>
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                              <Button variant="ghost" size="sm" title="Reset attempt" onClick={async () => {
+                                if (!confirm("Reset this student's entrance exam? They can retake it.")) return;
+                                await supabase.from("exam_attempts").delete().eq("id", r.id);
+                                await supabase.from("profiles").update({ has_taken_entrance_exam: false, allow_entrance_retake: true }).eq("user_id", r.user_id);
+                                toast({ title: "Entrance exam reset" });
+                                loadData();
+                              }}>
+                                <RotateCcw className="h-4 w-4 text-amber-500" />
+                              </Button>
+                              <Button variant="ghost" size="sm" title="Change level manually" onClick={() => {
+                                setTargetStudent(r);
+                                setNewLevel(profile?.level || "beginner");
+                                setShowLevelDialog(true);
+                              }}>
+                                <UserCog className="h-4 w-4 text-primary" />
+                              </Button>
+                            </div>
                           </TableCell>
                         </TableRow>
                       );
@@ -326,6 +345,34 @@ const EntranceExamAdmin = () => {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Manual Level Assignment Dialog */}
+      <Dialog open={showLevelDialog} onOpenChange={setShowLevelDialog}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Assign Level Manually</DialogTitle></DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">Override the auto-assigned level for {(targetStudent as any)?.profiles?.full_name || "this student"}.</p>
+            <div>
+              <Label>New Level</Label>
+              <Select value={newLevel} onValueChange={setNewLevel}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="beginner">Beginner / مبتدئ</SelectItem>
+                  <SelectItem value="intermediate">Intermediate / متوسط</SelectItem>
+                  <SelectItem value="advanced">Advanced / متقدم</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <Button className="w-full" onClick={async () => {
+              if (!targetStudent) return;
+              await supabase.from("profiles").update({ level: newLevel }).eq("user_id", targetStudent.user_id);
+              toast({ title: `Level changed to ${newLevel}` });
+              setShowLevelDialog(false);
+              loadData();
+            }}>Save Level</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
