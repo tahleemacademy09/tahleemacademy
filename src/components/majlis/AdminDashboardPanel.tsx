@@ -32,14 +32,12 @@ const AdminDashboardPanel = ({ open, onClose }: AdminDashboardPanelProps) => {
 
   const loadData = async () => {
     setLoading(true);
-    const [msgRes, chRes, flagRes, banRes, bcRes, auditRes] = await Promise.all([
-      supabase.from("chat_messages").select("id", { count: "exact", head: true }),
-      supabase.from("chat_channels").select("id", { count: "exact", head: true }),
-      supabase.from("chat_messages").select("*").eq("is_flagged" as any, true).order("created_at", { ascending: false }).limit(50) as any,
-      supabase.from("majlis_banned_users" as any).select("*, profiles!majlis_banned_users_user_id_fkey(full_name, level)").eq("is_active", true),
-      supabase.from("majlis_broadcast" as any).select("*").order("sent_at", { ascending: false }).limit(20),
-      supabase.from("majlis_audit_log" as any).select("*, profiles!majlis_audit_log_admin_id_fkey(full_name)").order("created_at", { ascending: false }).limit(50),
-    ]);
+    const msgRes = await supabase.from("chat_messages").select("id", { count: "exact", head: true });
+    const chRes = await supabase.from("chat_channels").select("id", { count: "exact", head: true });
+    const flagRes = await (supabase.from("chat_messages").select("*").eq("is_flagged" as any, true).order("created_at", { ascending: false }).limit(50) as any);
+    const banRes = await (supabase.from("majlis_banned_users" as any).select("*").eq("is_active", true) as any);
+    const bcRes = await (supabase.from("majlis_broadcast" as any).select("*").order("sent_at", { ascending: false }).limit(20) as any);
+    const auditRes = await (supabase.from("majlis_audit_log" as any).select("*").order("created_at", { ascending: false }).limit(50) as any);
 
     setStats({
       messagesTotal: msgRes.count || 0,
