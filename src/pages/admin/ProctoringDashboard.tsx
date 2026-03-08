@@ -218,6 +218,16 @@ const ProctoringDashboard = () => {
   const otherMedia = media.filter(m => !["face_snapshot", "verification_snapshot", "screen_capture"].includes(m.file_type));
   const allMedia = media;
 
+  // Verdict calculation
+  const getVerdict = (session: any) => {
+    const integrity = Number(session.integrity_score) || 100;
+    const violations = session.total_violations || 0;
+    const suspicion = session.suspicion_level || "low";
+    if (suspicion === "critical" || integrity < 30 || violations >= 8) return { label: "FLAGGED", labelAr: "مُعلّم", color: "bg-destructive text-destructive-foreground" };
+    if (suspicion === "high" || integrity < 60 || violations >= 4) return { label: "REVIEW NEEDED", labelAr: "يحتاج مراجعة", color: "bg-secondary text-secondary-foreground" };
+    return { label: "CLEAR", labelAr: "واضح", color: "bg-emerald-500/10 text-emerald-600 border border-emerald-500/30" };
+  };
+
   // Detail view
   if (selectedSession) {
     const s = selectedSession;
@@ -225,6 +235,10 @@ const ProctoringDashboard = () => {
     const studentName = (s.profile as any)?.full_name || (s.profile as any)?.email || "Unknown";
     const studentEmail = (s.profile as any)?.email || "";
     const examTitle = language === "ar" ? (s.exam as any)?.title_ar || (s.exam as any)?.title : (s.exam as any)?.title;
+    const verdict = getVerdict(s);
+    const examDuration = s.ended_at
+      ? Math.round((new Date(s.ended_at).getTime() - new Date(s.started_at).getTime()) / 60000)
+      : null;
 
     return (
       <div className="container mx-auto px-4 py-6 max-w-5xl">
