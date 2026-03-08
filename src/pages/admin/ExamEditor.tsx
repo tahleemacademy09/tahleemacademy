@@ -20,6 +20,7 @@ import { Plus, Trash2, Save, GripVertical, Music, FileText, Calendar, Settings2,
 import { Checkbox } from "@/components/ui/checkbox";
 import RichTextEditor from "@/components/exam/RichTextEditor";
 import { sanitizeHtml } from "@/lib/sanitize";
+import BulkQuestionFormatter, { DEFAULT_FORMAT, type ExamFormatSettings } from "@/components/exam/BulkQuestionFormatter";
 
 interface QuestionForm {
   id?: string;
