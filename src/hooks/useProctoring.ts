@@ -169,7 +169,7 @@ export const useProctoring = (config: ProctoringConfig, enabled: boolean, onAuto
       lastWarningType: type,
     }));
 
-    await supabase.from("violations").insert({
+    await (supabase as any).from("violations").insert({
       attempt_id: config.attemptId,
       violation_type: type,
       severity_score: severity,
