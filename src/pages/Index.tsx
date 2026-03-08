@@ -63,7 +63,7 @@ const Index = () => {
       }
       .ta-hero-content {
         position:relative; z-index:2;
-        max-width:1200px; margin:0 auto; padding:120px 40px 80px;
+        max-width:1200px; margin:0 auto; padding:120px 40px 80px; text-align:center;
         display:grid; grid-template-columns:1fr 1fr; gap:60px; align-items:center; width:100%;
       }
       .ta-hero-badge {
