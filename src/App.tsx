@@ -130,6 +130,7 @@ const App = () => (
               <Route path="/student/entrance-exam/:attemptId" element={<ProtectedRoute skipOnboardingCheck><EntranceExamTaking /></ProtectedRoute>} />
               <Route path="/student/entrance-results/:attemptId" element={<ProtectedRoute skipOnboardingCheck><EntranceResults /></ProtectedRoute>} />
               <Route path="/student/payment" element={<ProtectedRoute skipOnboardingCheck><PaymentScreen /></ProtectedRoute>} />
+              <Route path="/recordings/:recordingId" element={<ProtectedRoute><RecordingPlayer /></ProtectedRoute>} />
 
               {/* Teacher dashboard - requires teacher role */}
               <Route element={<ProtectedRoute requiredRole="teacher"><TeacherLayout /></ProtectedRoute>}>
