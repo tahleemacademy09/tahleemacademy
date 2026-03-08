@@ -27,6 +27,9 @@ import PreExamVerification from "./pages/student/PreExamVerification";
 import Transcripts from "./pages/student/Transcripts";
 import Majlis from "./pages/student/Majlis";
 import LiveClasses from "./pages/student/LiveClasses";
+import StudentCourses from "./pages/student/StudentCourses";
+import CourseView from "./pages/student/CourseView";
+import SubjectView from "./pages/student/SubjectView";
 import MuallimOverlay from "./components/majlis/MuallimOverlay";
 
 import AdminDashboard from "./pages/admin/AdminDashboard";
@@ -37,6 +40,8 @@ import QuestionBank from "./pages/admin/QuestionBank";
 import StudentManagement from "./pages/admin/StudentManagement";
 import ProctoringDashboard from "./pages/admin/ProctoringDashboard";
 import SubjectManagement from "./pages/admin/SubjectManagement";
+import CourseManagement from "./pages/admin/CourseManagement";
+import SyllabusManager from "./pages/admin/SyllabusManager";
 
 const queryClient = new QueryClient();
 
