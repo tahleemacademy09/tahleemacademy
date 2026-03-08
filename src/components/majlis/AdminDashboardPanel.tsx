@@ -34,7 +34,7 @@ const AdminDashboardPanel = ({ open, onClose }: AdminDashboardPanelProps) => {
     setLoading(true);
     const msgRes = await (supabase.from("chat_messages").select("id", { count: "exact", head: true }) as any);
     const chRes = await (supabase.from("chat_channels").select("id", { count: "exact", head: true }) as any);
-    const flagRes = await (supabase.from("chat_messages").select("*").eq("is_flagged" as any, true).order("created_at", { ascending: false }).limit(50) as any);
+    const flagRes: any = await (supabase.from("chat_messages" as any).select("*").eq("is_flagged", true).order("created_at", { ascending: false }).limit(50));
     const banRes = await (supabase.from("majlis_banned_users" as any).select("*").eq("is_active", true) as any);
     const bcRes = await (supabase.from("majlis_broadcast" as any).select("*").order("sent_at", { ascending: false }).limit(20) as any);
     const auditRes = await (supabase.from("majlis_audit_log" as any).select("*").order("created_at", { ascending: false }).limit(50) as any);
