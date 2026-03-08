@@ -8,6 +8,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
+import { Download, AlertTriangle } from "lucide-react";
 
 const TeacherAttendance = () => {
   const { t } = useLanguage();
@@ -112,7 +113,35 @@ const TeacherAttendance = () => {
             </Table>
           </CardContent>
         </Card>
-        <Button onClick={saveAttendance} className="w-full md:w-auto">{t("Save Attendance", "حفظ الحضور")}</Button>
+        <div className="flex gap-2">
+          <Button onClick={saveAttendance} className="w-full md:w-auto">{t("Save Attendance", "حفظ الحضور")}</Button>
+          <Button variant="outline" onClick={() => {
+            const rows = [["Student", "Status"].join(",")];
+            students.forEach(s => rows.push([s.full_name, attendance[s.user_id] || "absent"].join(",")));
+            const blob = new Blob([rows.join("\n")], { type: "text/csv" });
+            const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "attendance.csv"; a.click();
+          }}><Download className="h-4 w-4 me-2" />{t("Export CSV", "تصدير CSV")}</Button>
+        </div>
+        {/* Attendance percentage summary */}
+        {students.length > 0 && (
+          <Card>
+            <CardHeader><CardTitle className="text-sm">{t("Attendance Summary", "ملخص الحضور")}</CardTitle></CardHeader>
+            <CardContent>
+              <div className="flex gap-4 text-sm">
+                <span className="text-green-600">{t("Present", "حاضر")}: {Object.values(attendance).filter(v => v === "present").length}</span>
+                <span className="text-amber-500">{t("Late", "متأخر")}: {Object.values(attendance).filter(v => v === "late").length}</span>
+                <span className="text-destructive">{t("Absent", "غائب")}: {Object.values(attendance).filter(v => v === "absent").length}</span>
+              </div>
+              {/* Flag poor attendance */}
+              {students.filter(s => attendance[s.user_id] === "absent").length > students.length * 0.4 && (
+                <div className="flex items-center gap-2 mt-2 text-amber-600 text-sm">
+                  <AlertTriangle className="h-4 w-4" />
+                  {t("High absence rate detected", "تم اكتشاف معدل غياب مرتفع")}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
       </div>
     );
   }

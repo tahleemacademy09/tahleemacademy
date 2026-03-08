@@ -50,6 +50,10 @@ import SyllabusManager from "./pages/admin/SyllabusManager";
 import PrivateSessions from "./pages/admin/PrivateSessions";
 import EntranceExamAdmin from "./pages/admin/EntranceExamAdmin";
 import ViewAsStudent from "./pages/admin/ViewAsStudent";
+import RecordingManagement from "./pages/admin/RecordingManagement";
+import LiveClassManagement from "./pages/admin/LiveClassManagement";
+import MajlisModeration from "./pages/admin/MajlisModeration";
+import NotificationManagement from "./pages/admin/NotificationManagement";
 
 import TeacherDashboard from "./pages/teacher/TeacherDashboard";
 import TeacherStudents from "./pages/teacher/TeacherStudents";
@@ -150,6 +154,10 @@ const App = () => (
                 <Route path="/admin/private-sessions" element={<PrivateSessions />} />
                 <Route path="/admin/students" element={<StudentManagement />} />
                 <Route path="/admin/students/:userId/view" element={<ViewAsStudent />} />
+                <Route path="/admin/recordings" element={<RecordingManagement />} />
+                <Route path="/admin/live-class-management" element={<LiveClassManagement />} />
+                <Route path="/admin/majlis-moderation" element={<MajlisModeration />} />
+                <Route path="/admin/notifications" element={<NotificationManagement />} />
                 <Route path="/admin/entrance-exam" element={<EntranceExamAdmin />} />
               </Route>
 
