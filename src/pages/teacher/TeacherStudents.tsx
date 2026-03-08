@@ -35,6 +35,8 @@ const TeacherStudents = () => {
   const [studentAttempts, setStudentAttempts] = useState<any[]>([]);
   const [noteDialog, setNoteDialog] = useState<any>(null);
   const [noteText, setNoteText] = useState("");
+  const [requestDialog, setRequestDialog] = useState<{ student: any; type: "enrol" | "remove" } | null>(null);
+  const [requestMsg, setRequestMsg] = useState("");
 
   useEffect(() => {
     if (!user) return;
