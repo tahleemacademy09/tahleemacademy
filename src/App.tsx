@@ -104,6 +104,11 @@ const App = () => (
                 <Route path="/register" element={<Register />} />
               </Route>
 
+              {/* Public live classes (no auth required) */}
+              <Route path="/live" element={<PublicLiveClasses />} />
+              <Route path="/live/:roomCode" element={<JoinClass />} />
+              <Route path="/live/:roomCode/classroom" element={<GuestClassroom />} />
+
               {/* Admin login (hidden URL) */}
               <Route path="/admin-secure" element={<AdminLogin />} />
               {/* Password reset */}
