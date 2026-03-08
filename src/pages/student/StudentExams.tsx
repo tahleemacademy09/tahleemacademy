@@ -19,14 +19,11 @@ const StudentExams = () => {
   const [assignedExams, setAssignedExams] = useState<any[]>([]);
   const [pastAttempts, setPastAttempts] = useState<any[]>([]);
   const [attemptCounts, setAttemptCounts] = useState<Record<string, number>>({});
-  const [completedOpen, setCompletedOpen] = useState(true);
-  const [availableOpen, setAvailableOpen] = useState(true);
   const [historyOpen, setHistoryOpen] = useState(true);
 
   useEffect(() => {
     if (!user) return;
     fetchExams();
-    // Re-check every 30s so scheduled exams auto-become available
     const interval = setInterval(fetchExams, 30000);
     return () => clearInterval(interval);
   }, [user]);
@@ -45,7 +42,7 @@ const StudentExams = () => {
 
     const { data: attempts } = await supabase
       .from("exam_attempts")
-      .select("*, exams(title, title_ar, max_attempts)")
+      .select("*, exams(title, title_ar, max_attempts, type)")
       .eq("user_id", user!.id)
       .order("created_at", { ascending: false });
 
@@ -67,41 +64,29 @@ const StudentExams = () => {
 
     if (completedCount >= maxAttempts) {
       toast({
-        title: t("Cannot retake this exam", "لا يمكن إعادة هذا الامتحان"),
-        description: t(
-          `You have used all ${maxAttempts} attempt(s) for this exam.`,
-          `لقد استخدمت جميع المحاولات (${maxAttempts}) لهذا الامتحان.`
-        ),
+        title: t("Cannot retake", "لا يمكن الإعادة"),
+        description: t(`You have used all ${maxAttempts} attempt(s).`, `لقد استخدمت جميع المحاولات (${maxAttempts}).`),
         variant: "destructive",
       });
       return;
     }
 
-    // Check for existing in-progress attempt
     const { data: existing } = await supabase
-      .from("exam_attempts")
-      .select("id")
-      .eq("exam_id", examId)
-      .eq("user_id", user!.id)
-      .eq("status", "in_progress")
-      .maybeSingle();
+      .from("exam_attempts").select("id")
+      .eq("exam_id", examId).eq("user_id", user!.id).eq("status", "in_progress").maybeSingle();
 
-    if (existing) {
-      navigate(`/student/exam/${existing.id}`);
-      return;
-    }
+    if (existing) { navigate(`/student/exam/${existing.id}`); return; }
 
     const now = new Date();
     if (exam.start_date && new Date(exam.start_date) > now) {
-      toast({ title: t("Exam not started yet", "الامتحان لم يبدأ بعد"), variant: "destructive" });
+      toast({ title: t("Not started yet", "لم يبدأ بعد"), variant: "destructive" });
       return;
     }
     if (exam.end_date && new Date(exam.end_date) < now) {
-      toast({ title: t("Exam expired", "انتهى الامتحان"), variant: "destructive" });
+      toast({ title: t("Expired", "منتهي"), variant: "destructive" });
       return;
     }
 
-    // Navigate to pre-exam verification page (attempt created there after checks pass)
     navigate(`/student/exam-verify/${examId}`);
   };
 
@@ -120,19 +105,7 @@ const StudentExams = () => {
     return "available";
   };
 
-  // Split exams into available (not completed) and completed
-  const availableExams = assignedExams.filter(e => {
-    const status = getExamStatus(e);
-    return status !== "exhausted";
-  });
-
-  const completedExams = assignedExams.filter(e => {
-    const status = getExamStatus(e);
-    return status === "exhausted";
-  });
-
   const clearHistory = () => {
-    // We just hide them from UI (can't delete from DB due to RLS)
     setPastAttempts([]);
     toast({ title: t("History cleared", "تم مسح السجل") });
   };
@@ -141,16 +114,21 @@ const StudentExams = () => {
     const status = getExamStatus(exam);
     const completedCount = attemptCounts[exam.id] || 0;
     const maxAttempts = exam.max_attempts || 1;
-
-    // Get latest attempt for completed exams
     const latestAttempt = pastAttempts.find(a => a.exam_id === exam.id && a.status !== "in_progress");
+    const examType = (exam as any).type || "exam";
+    const isTest = examType === "test";
 
     return (
       <Card key={exam.id} className="hover:shadow-md transition-shadow">
         <CardContent className="p-5">
-          <h3 className="mb-2 text-lg font-semibold">
-            {language === "ar" ? exam.title_ar || exam.title : exam.title}
-          </h3>
+          <div className="flex items-center gap-2 mb-2">
+            <h3 className="text-lg font-semibold flex-1">
+              {language === "ar" ? exam.title_ar || exam.title : exam.title}
+            </h3>
+            <Badge variant="outline" className={isTest ? "border-amber-500 text-amber-600 bg-amber-500/10 text-xs" : "border-primary text-primary bg-primary/10 text-xs"}>
+              {isTest ? t("Test", "تمرين") : t("Exam", "امتحان")}
+            </Badge>
+          </div>
           <p className="mb-3 text-sm text-muted-foreground line-clamp-2">
             {language === "ar" ? exam.description_ar || exam.description : exam.description}
           </p>
@@ -158,9 +136,9 @@ const StudentExams = () => {
             <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> {exam.time_limit_minutes} {t("min", "دقيقة")}</span>
             <Badge variant="outline">{t("Pass", "نجاح")}: {exam.passing_score}%</Badge>
             <Badge variant="outline">{completedCount}/{maxAttempts} {t("attempts", "محاولات")}</Badge>
+            <Badge variant="outline">{isTest ? "30" : "70"} {t("marks", "درجة")}</Badge>
           </div>
 
-          {/* Show score for completed exams */}
           {status === "exhausted" && latestAttempt && (
             <div className="mb-3 flex items-center gap-2">
               {latestAttempt.status === "graded" ? (
@@ -180,13 +158,13 @@ const StudentExams = () => {
           {status === "available" && (
             <Button size="sm" onClick={() => startExam(exam)} className="w-full">
               <PlayCircle className="mr-2 h-4 w-4" />
-              {t("Start Exam", "بدء الامتحان")}
+              {isTest ? t("Start Test", "بدء التمرين") : t("Start Exam", "بدء الامتحان")}
             </Button>
           )}
           {status === "in_progress" && (
             <Button size="sm" onClick={() => startExam(exam)} className="w-full" variant="secondary">
               <PlayCircle className="mr-2 h-4 w-4" />
-              {t("Continue Exam", "متابعة الامتحان")}
+              {t("Continue", "متابعة")}
             </Button>
           )}
           {status === "exhausted" && latestAttempt && (
@@ -198,8 +176,7 @@ const StudentExams = () => {
           {status === "not_started" && (
             <div>
               <Button size="sm" disabled className="w-full" variant="outline">
-                <Clock className="mr-2 h-4 w-4" />
-                {t("Not started yet", "لم يبدأ بعد")}
+                <Clock className="mr-2 h-4 w-4" />{t("Not started yet", "لم يبدأ بعد")}
               </Button>
               <p className="text-xs text-muted-foreground mt-1.5 text-center">
                 {t("Opens", "يفتح")}: {new Date(exam.start_date).toLocaleString()}
@@ -209,12 +186,8 @@ const StudentExams = () => {
           {status === "expired" && (
             <div>
               <Button size="sm" disabled className="w-full" variant="outline">
-                <XCircle className="mr-2 h-4 w-4" />
-                {t("Expired", "منتهي")}
+                <XCircle className="mr-2 h-4 w-4" />{t("Expired", "منتهي")}
               </Button>
-              <p className="text-xs text-muted-foreground mt-1.5 text-center">
-                {t("Closed", "أغلق")}: {new Date(exam.end_date).toLocaleString()}
-              </p>
             </div>
           )}
         </CardContent>
@@ -222,75 +195,80 @@ const StudentExams = () => {
     );
   };
 
+  const terms = [
+    { term: "first", label: t("First Term / الفصل الأول", "الفصل الأول") },
+    { term: "second", label: t("Second Term / الفصل الثاني", "الفصل الثاني") },
+    { term: "third", label: t("Third Term / الفصل الثالث", "الفصل الثالث") },
+  ];
+
+  const renderTermGroups = (examsList: any[]) => {
+    if (examsList.length === 0) return (
+      <Card><CardContent className="p-8 text-center text-muted-foreground">
+        <AlertTriangle className="h-8 w-8 mx-auto mb-2 text-muted-foreground/50" />
+        <p>{t("No items found.", "لا توجد عناصر.")}</p>
+      </CardContent></Card>
+    );
+
+    return (
+      <div className="space-y-6">
+        {terms.map(({ term, label }) => {
+          const termExams = examsList.filter((e: any) => (e.term || "first") === term);
+          if (termExams.length === 0) return null;
+          return (
+            <div key={term}>
+              <h3 className="text-lg font-semibold mb-3 border-b pb-2">{label}</h3>
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">{termExams.map(renderExamCard)}</div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  // Split by type
+  const examsOnly = assignedExams.filter(e => ((e as any).type || "exam") === "exam");
+  const testsOnly = assignedExams.filter(e => ((e as any).type || "exam") === "test");
+
+  const availableExams = examsOnly.filter(e => getExamStatus(e) !== "exhausted");
+  const completedExams = examsOnly.filter(e => getExamStatus(e) === "exhausted");
+  const availableTests = testsOnly.filter(e => getExamStatus(e) !== "exhausted");
+  const completedTests = testsOnly.filter(e => getExamStatus(e) === "exhausted");
+
   return (
     <div className="container mx-auto px-4 py-8">
-      <h1 className="mb-6 text-3xl font-bold">{t("Exams", "الامتحانات")}</h1>
+      <h1 className="mb-6 text-3xl font-bold">{t("Exams & Tests", "الامتحانات والتمرينات")}</h1>
 
-      <Tabs defaultValue="available">
-        <TabsList>
-          <TabsTrigger value="available">{t("Available", "المتاحة")} ({availableExams.length})</TabsTrigger>
-          <TabsTrigger value="completed">{t("Completed", "المكتملة")} ({completedExams.length})</TabsTrigger>
+      <Tabs defaultValue="exams">
+        <TabsList className="mb-6">
+          <TabsTrigger value="exams">{t("Exams / الامتحانات", "الامتحانات")} ({examsOnly.length})</TabsTrigger>
+          <TabsTrigger value="tests">{t("Tests / التمرينات", "التمرينات")} ({testsOnly.length})</TabsTrigger>
           <TabsTrigger value="history">{t("History", "السجل")} ({pastAttempts.length})</TabsTrigger>
         </TabsList>
 
-        {/* Available Exams Tab */}
-        <TabsContent value="available" className="mt-6">
-          {availableExams.length === 0 ? (
-            <Card>
-              <CardContent className="p-8 text-center text-muted-foreground">
-                <AlertTriangle className="h-8 w-8 mx-auto mb-2 text-muted-foreground/50" />
-                <p>{t("No available exams. All exams have been completed!", "لا توجد امتحانات متاحة. تم إكمال جميع الامتحانات!")}</p>
-              </CardContent>
-            </Card>
-          ) : (
-            <div className="space-y-6">
-              {[
-                { term: "first", label: t("First Term / الفصل الأول", "الفصل الأول / First Term") },
-                { term: "second", label: t("Second Term / الفصل الثاني", "الفصل الثاني / Second Term") },
-                { term: "third", label: t("Third Term / الفصل الثالث", "الفصل الثالث / Third Term") },
-              ].map(({ term, label }) => {
-                const termExams = availableExams.filter((e: any) => (e.term || "first") === term);
-                if (termExams.length === 0) return null;
-                return (
-                  <div key={term}>
-                    <h3 className="text-lg font-semibold mb-3 border-b pb-2">{label}</h3>
-                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                      {termExams.map(renderExamCard)}
-                    </div>
-                  </div>
-                );
-              })}
+        {/* Exams Tab */}
+        <TabsContent value="exams" className="space-y-8">
+          <div>
+            <h2 className="text-xl font-semibold mb-4">{t("Available", "المتاحة")} ({availableExams.length})</h2>
+            {renderTermGroups(availableExams)}
+          </div>
+          {completedExams.length > 0 && (
+            <div>
+              <h2 className="text-xl font-semibold mb-4">{t("Completed", "المكتملة")} ({completedExams.length})</h2>
+              {renderTermGroups(completedExams)}
             </div>
           )}
         </TabsContent>
 
-        {/* Completed Exams Tab */}
-        <TabsContent value="completed" className="mt-6">
-          {completedExams.length === 0 ? (
-            <Card>
-              <CardContent className="p-8 text-center text-muted-foreground">
-                <CheckCircle className="h-8 w-8 mx-auto mb-2 text-muted-foreground/50" />
-                <p>{t("No completed exams yet.", "لا توجد امتحانات مكتملة بعد.")}</p>
-              </CardContent>
-            </Card>
-          ) : (
-            <div className="space-y-6">
-              {[
-                { term: "first", label: t("First Term / الفصل الأول", "الفصل الأول / First Term") },
-                { term: "second", label: t("Second Term / الفصل الثاني", "الفصل الثاني / Second Term") },
-                { term: "third", label: t("Third Term / الفصل الثالث", "الفصل الثالث / Third Term") },
-              ].map(({ term, label }) => {
-                const termExams = completedExams.filter((e: any) => (e.term || "first") === term);
-                if (termExams.length === 0) return null;
-                return (
-                  <div key={term}>
-                    <h3 className="text-lg font-semibold mb-3 border-b pb-2">{label}</h3>
-                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                      {termExams.map(renderExamCard)}
-                    </div>
-                  </div>
-                );
-              })}
+        {/* Tests Tab */}
+        <TabsContent value="tests" className="space-y-8">
+          <div>
+            <h2 className="text-xl font-semibold mb-4">{t("Available", "المتاحة")} ({availableTests.length})</h2>
+            {renderTermGroups(availableTests)}
+          </div>
+          {completedTests.length > 0 && (
+            <div>
+              <h2 className="text-xl font-semibold mb-4">{t("Completed", "المكتملة")} ({completedTests.length})</h2>
+              {renderTermGroups(completedTests)}
             </div>
           )}
         </TabsContent>
@@ -301,62 +279,61 @@ const StudentExams = () => {
             <div className="flex items-center justify-between mb-4">
               <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
                 {historyOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                {t("Exam History", "سجل الامتحانات")} ({pastAttempts.length})
+                {t("History", "السجل")} ({pastAttempts.length})
               </CollapsibleTrigger>
               {pastAttempts.length > 0 && (
                 <Button variant="ghost" size="sm" onClick={clearHistory} className="text-destructive hover:text-destructive">
-                  <Trash2 className="mr-1 h-3 w-3" />
-                  {t("Clear History", "مسح السجل")}
+                  <Trash2 className="mr-1 h-3 w-3" />{t("Clear", "مسح")}
                 </Button>
               )}
             </div>
             <CollapsibleContent>
               {pastAttempts.length === 0 ? (
-                <p className="text-muted-foreground">{t("No exam history", "لا يوجد سجل امتحانات")}</p>
+                <p className="text-muted-foreground">{t("No history", "لا يوجد سجل")}</p>
               ) : (
                 <div className="space-y-3">
-                  {pastAttempts.map((attempt) => (
-                    <Card key={attempt.id} className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => {
-                      if (attempt.status !== "in_progress") navigate(`/student/results/${attempt.id}`);
-                    }}>
-                      <CardContent className="flex items-center justify-between p-4 flex-wrap gap-2">
-                        <div>
-                          <div className="font-medium">
-                            {language === "ar" ? attempt.exams?.title_ar || attempt.exams?.title : attempt.exams?.title}
-                          </div>
-                          <div className="text-xs text-muted-foreground">
-                            {new Date(attempt.created_at).toLocaleDateString()}
-                            {attempt.submitted_at && ` • ${t("Submitted", "مُقدم")}: ${new Date(attempt.submitted_at).toLocaleString()}`}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          {attempt.status === "graded" && (
-                            <div className="flex items-center gap-1">
-                              {attempt.passed ? (
-                                <CheckCircle className="h-4 w-4 text-emerald-500" />
-                              ) : (
-                                <XCircle className="h-4 w-4 text-destructive" />
-                              )}
-                              <span className="font-semibold">{Math.round(attempt.percentage || 0)}%</span>
-                              <span className="text-xs text-muted-foreground">({attempt.score}/{attempt.total_points})</span>
+                  {pastAttempts.map((attempt) => {
+                    const attemptType = (attempt.exams as any)?.type || "exam";
+                    const isTest = attemptType === "test";
+                    return (
+                      <Card key={attempt.id} className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => {
+                        if (attempt.status !== "in_progress") navigate(`/student/results/${attempt.id}`);
+                      }}>
+                        <CardContent className="flex items-center justify-between p-4 flex-wrap gap-2">
+                          <div>
+                            <div className="font-medium flex items-center gap-2">
+                              {language === "ar" ? attempt.exams?.title_ar || attempt.exams?.title : attempt.exams?.title}
+                              <Badge variant="outline" className={`text-[10px] ${isTest ? "border-amber-500 text-amber-600" : "border-primary text-primary"}`}>
+                                {isTest ? t("Test", "تمرين") : t("Exam", "امتحان")}
+                              </Badge>
                             </div>
-                          )}
-                          <Badge variant={
-                            attempt.status === "graded" ? (attempt.passed ? "default" : "destructive") :
-                            attempt.status === "submitted" ? "secondary" : "outline"
-                          }>
-                            {attempt.status === "in_progress" ? t("In Progress", "قيد التنفيذ") :
-                             attempt.status === "submitted" ? t("Awaiting Grade", "بانتظار التصحيح") :
-                             attempt.status === "graded" ? (attempt.passed ? t("Passed", "ناجح") : t("Failed", "راسب")) :
-                             attempt.status}
-                          </Badge>
-                          {attempt.tab_switches > 0 && (
-                            <Badge variant="destructive" className="text-xs">{attempt.tab_switches} ⚠️</Badge>
-                          )}
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
+                            <div className="text-xs text-muted-foreground">
+                              {new Date(attempt.created_at).toLocaleDateString()}
+                              {attempt.submitted_at && ` • ${new Date(attempt.submitted_at).toLocaleString()}`}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            {attempt.status === "graded" && (
+                              <div className="flex items-center gap-1">
+                                {attempt.passed ? <CheckCircle className="h-4 w-4 text-emerald-500" /> : <XCircle className="h-4 w-4 text-destructive" />}
+                                <span className="font-semibold">{Math.round(attempt.percentage || 0)}%</span>
+                                <span className="text-xs text-muted-foreground">({attempt.score}/{attempt.total_points})</span>
+                              </div>
+                            )}
+                            <Badge variant={
+                              attempt.status === "graded" ? (attempt.passed ? "default" : "destructive") :
+                              attempt.status === "submitted" ? "secondary" : "outline"
+                            }>
+                              {attempt.status === "in_progress" ? t("In Progress", "قيد التنفيذ") :
+                               attempt.status === "submitted" ? t("Awaiting Grade", "بانتظار التصحيح") :
+                               attempt.status === "graded" ? (attempt.passed ? t("Passed", "ناجح") : t("Failed", "راسب")) :
+                               attempt.status}
+                            </Badge>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
                 </div>
               )}
             </CollapsibleContent>
