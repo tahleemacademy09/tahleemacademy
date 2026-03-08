@@ -149,6 +149,7 @@ const App = () => (
                 <Route path="/admin/proctoring" element={<ProctoringDashboard />} />
                 <Route path="/admin/private-sessions" element={<PrivateSessions />} />
                 <Route path="/admin/students" element={<StudentManagement />} />
+                <Route path="/admin/students/:userId/view" element={<ViewAsStudent />} />
                 <Route path="/admin/entrance-exam" element={<EntranceExamAdmin />} />
               </Route>
 
