@@ -425,32 +425,47 @@ const PaymentManagement = () => {
           </div>
         </TabsContent>
 
-        <TabsContent value="plans">
+        <TabsContent value="plans" className="space-y-4">
+          <div className="flex justify-between items-center">
+            <p className="text-sm text-muted-foreground">{t("Create, edit and manage payment plans", "إنشاء وتعديل وإدارة خطط الدفع")}</p>
+            <Button onClick={openCreatePlan}><Plus className="h-4 w-4 mr-2" /> {t("New Plan", "خطة جديدة")}</Button>
+          </div>
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             {plans.map((plan: any) => (
-              <Card key={plan.id}>
+              <Card key={plan.id} className={!plan.is_active ? "opacity-60" : ""}>
                 <CardHeader className="pb-3">
                   <div className="flex justify-between items-start">
                     <div>
                       <CardTitle className="text-base">{plan.name}</CardTitle>
-                      <p className="text-xs text-muted-foreground font-arabic">{plan.name_ar}</p>
+                      {plan.name_ar && <p className="text-xs text-muted-foreground font-arabic">{plan.name_ar}</p>}
                     </div>
-                    <Switch
-                      checked={plan.is_active}
-                      onCheckedChange={async (checked) => {
-                        await supabase.from("payment_plans" as any).update({ is_active: checked }).eq("id", plan.id);
-                        loadData();
-                      }}
-                    />
+                    <div className="flex items-center gap-1">
+                      <Switch
+                        checked={plan.is_active}
+                        onCheckedChange={async (checked) => {
+                          await supabase.from("payment_plans" as any).update({ is_active: checked }).eq("id", plan.id);
+                          loadData();
+                        }}
+                      />
+                    </div>
                   </div>
                 </CardHeader>
-                <CardContent>
-                  <p className="text-2xl font-bold">₦{plan.amount?.toLocaleString()}</p>
-                  <p className="text-sm text-muted-foreground">{plan.description}</p>
-                  <div className="flex gap-2 mt-2">
+                <CardContent className="space-y-3">
+                  <p className="text-2xl font-bold">{plan.currency === "USD" ? "$" : "₦"}{plan.amount?.toLocaleString()}</p>
+                  {plan.description && <p className="text-sm text-muted-foreground">{plan.description}</p>}
+                  <div className="flex gap-2 flex-wrap">
                     <Badge variant="outline">{plan.type}</Badge>
-                    <Badge variant="outline">{plan.level || "all"}</Badge>
-                    {plan.duration_months && <Badge variant="outline">{plan.duration_months}mo</Badge>}
+                    <Badge variant="outline">{plan.level || "all levels"}</Badge>
+                    {plan.duration_months && <Badge variant="outline">{plan.duration_months} {t("months", "شهور")}</Badge>}
+                    <Badge variant="outline">{plan.currency}</Badge>
+                  </div>
+                  <div className="flex gap-2 pt-2 border-t">
+                    <Button size="sm" variant="outline" className="flex-1" onClick={() => openEditPlan(plan)}>
+                      <Pencil className="h-3 w-3 mr-1" /> {t("Edit", "تعديل")}
+                    </Button>
+                    <Button size="sm" variant="outline" className="text-destructive hover:text-destructive" onClick={() => deletePlan(plan.id)}>
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
                   </div>
                 </CardContent>
               </Card>
@@ -458,6 +473,104 @@ const PaymentManagement = () => {
           </div>
         </TabsContent>
       </Tabs>
+
+      {/* Plan Create/Edit Dialog */}
+      <Dialog open={planDialogOpen} onOpenChange={setPlanDialogOpen}>
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{editingPlan ? t("Edit Payment Plan", "تعديل خطة الدفع") : t("Create Payment Plan", "إنشاء خطة دفع")}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>{t("Plan Name (English)", "اسم الخطة (إنجليزي)")}</Label>
+                <Input value={planForm.name} onChange={e => setPlanForm((f: any) => ({ ...f, name: e.target.value }))} placeholder="e.g. Term Fee" />
+              </div>
+              <div>
+                <Label>{t("Plan Name (Arabic)", "اسم الخطة (عربي)")}</Label>
+                <Input value={planForm.name_ar} onChange={e => setPlanForm((f: any) => ({ ...f, name_ar: e.target.value }))} placeholder="مثال: رسوم الفصل" dir="rtl" />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>{t("Amount", "المبلغ")}</Label>
+                <Input type="number" value={planForm.amount} onChange={e => setPlanForm((f: any) => ({ ...f, amount: +e.target.value }))} min={0} />
+              </div>
+              <div>
+                <Label>{t("Currency", "العملة")}</Label>
+                <Select value={planForm.currency} onValueChange={v => setPlanForm((f: any) => ({ ...f, currency: v }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="NGN">NGN (₦)</SelectItem>
+                    <SelectItem value="USD">USD ($)</SelectItem>
+                    <SelectItem value="GBP">GBP (£)</SelectItem>
+                    <SelectItem value="SAR">SAR (﷼)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>{t("Plan Type", "نوع الخطة")}</Label>
+                <Select value={planForm.type} onValueChange={v => setPlanForm((f: any) => ({ ...f, type: v }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="term">{t("Term", "فصل دراسي")}</SelectItem>
+                    <SelectItem value="monthly">{t("Monthly", "شهري")}</SelectItem>
+                    <SelectItem value="yearly">{t("Yearly", "سنوي")}</SelectItem>
+                    <SelectItem value="one_time">{t("One-Time", "مرة واحدة")}</SelectItem>
+                    <SelectItem value="private">{t("Private Session", "جلسة خاصة")}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>{t("Duration (months)", "المدة (بالأشهر)")}</Label>
+                <Input type="number" value={planForm.duration_months} onChange={e => setPlanForm((f: any) => ({ ...f, duration_months: +e.target.value }))} min={1} max={36} />
+              </div>
+            </div>
+
+            <div>
+              <Label>{t("Level", "المستوى")}</Label>
+              <Select value={planForm.level} onValueChange={v => setPlanForm((f: any) => ({ ...f, level: v }))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{t("All Levels", "جميع المستويات")}</SelectItem>
+                  <SelectItem value="beginner">{t("Beginner", "مبتدئ")}</SelectItem>
+                  <SelectItem value="intermediate">{t("Intermediate", "متوسط")}</SelectItem>
+                  <SelectItem value="advanced">{t("Advanced", "متقدم")}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>{t("Description (English)", "الوصف (إنجليزي)")}</Label>
+                <Textarea value={planForm.description} onChange={e => setPlanForm((f: any) => ({ ...f, description: e.target.value }))} rows={2} />
+              </div>
+              <div>
+                <Label>{t("Description (Arabic)", "الوصف (عربي)")}</Label>
+                <Textarea value={planForm.description_ar} onChange={e => setPlanForm((f: any) => ({ ...f, description_ar: e.target.value }))} rows={2} dir="rtl" />
+              </div>
+            </div>
+
+            <div>
+              <Label>{t("Paystack Plan Code (optional)", "كود خطة Paystack (اختياري)")}</Label>
+              <Input value={planForm.paystack_plan_code} onChange={e => setPlanForm((f: any) => ({ ...f, paystack_plan_code: e.target.value }))} placeholder="PLN_xxxxx" />
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Switch checked={planForm.is_active} onCheckedChange={v => setPlanForm((f: any) => ({ ...f, is_active: v }))} />
+              <Label>{t("Active", "نشط")}</Label>
+            </div>
+
+            <Button onClick={savePlan} className="w-full">
+              {editingPlan ? t("Update Plan", "تحديث الخطة") : t("Create Plan", "إنشاء الخطة")}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
