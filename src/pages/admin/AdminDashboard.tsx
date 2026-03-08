@@ -17,7 +17,7 @@ const AdminDashboard = () => {
   const { profile } = useAuth();
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({
-    students: 0, exams: 0, courses: 0, attempts: 0, pendingGrading: 0,
+    students: 0, exams: 0, tests: 0, courses: 0, attempts: 0, pendingGrading: 0,
     activeExams: 0, activeStudents: 0, violations: 0, privateStudents: 0, privateSessions: 0,
   });
   const [recentSubmissions, setRecentSubmissions] = useState<any[]>([]);
