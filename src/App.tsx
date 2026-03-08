@@ -71,6 +71,9 @@ const App = () => (
               {/* Student dashboard */}
               <Route element={<ProtectedRoute><DashboardLayout role="student" /></ProtectedRoute>}>
                 <Route path="/student" element={<StudentDashboard />} />
+                <Route path="/student/courses" element={<StudentCourses />} />
+                <Route path="/student/courses/:courseId" element={<CourseView />} />
+                <Route path="/student/subjects/:subjectId" element={<SubjectView />} />
                 <Route path="/student/exams" element={<StudentExams />} />
                 <Route path="/student/transcripts" element={<Transcripts />} />
                 <Route path="/student/majlis" element={<Majlis />} />
