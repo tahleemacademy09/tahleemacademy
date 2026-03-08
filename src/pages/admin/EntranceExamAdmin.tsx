@@ -345,6 +345,34 @@ const EntranceExamAdmin = () => {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Manual Level Assignment Dialog */}
+      <Dialog open={showLevelDialog} onOpenChange={setShowLevelDialog}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Assign Level Manually</DialogTitle></DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">Override the auto-assigned level for {(targetStudent as any)?.profiles?.full_name || "this student"}.</p>
+            <div>
+              <Label>New Level</Label>
+              <Select value={newLevel} onValueChange={setNewLevel}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="beginner">Beginner / مبتدئ</SelectItem>
+                  <SelectItem value="intermediate">Intermediate / متوسط</SelectItem>
+                  <SelectItem value="advanced">Advanced / متقدم</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <Button className="w-full" onClick={async () => {
+              if (!targetStudent) return;
+              await supabase.from("profiles").update({ level: newLevel }).eq("user_id", targetStudent.user_id);
+              toast({ title: `Level changed to ${newLevel}` });
+              setShowLevelDialog(false);
+              loadData();
+            }}>Save Level</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
