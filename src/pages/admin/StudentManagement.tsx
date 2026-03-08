@@ -442,6 +442,20 @@ const StudentManagement = () => {
 
           {/* Enrollments */}
           <TabsContent value="enrollments" className="mt-4 space-y-3">
+            {/* Manual Enrol */}
+            <Card className="border-dashed border-primary/30 bg-primary/5">
+              <CardContent className="flex items-center gap-3 p-3 flex-wrap">
+                <span className="text-sm font-medium">{t("Enrol in subject:", "تسجيل في مادة:")}</span>
+                <Select value={enrolSubjectId} onValueChange={setEnrolSubjectId}>
+                  <SelectTrigger className="w-48"><SelectValue placeholder={t("Select subject", "اختر المادة")} /></SelectTrigger>
+                  <SelectContent>{subjects.map(s => <SelectItem key={s.id} value={s.id}>{language === "ar" ? s.title_ar || s.title : s.title}</SelectItem>)}</SelectContent>
+                </Select>
+                <Button size="sm" disabled={!enrolSubjectId} onClick={() => { manualEnrol(detailStudent.user_id, enrolSubjectId); setEnrolSubjectId(""); }}>
+                  {t("Enrol", "تسجيل")}
+                </Button>
+              </CardContent>
+            </Card>
+
             {studentEnrollments.length === 0 ? (
               <p className="text-center text-muted-foreground py-8">{t("No enrollments", "لا توجد تسجيلات")}</p>
             ) : studentEnrollments.map(e => (
