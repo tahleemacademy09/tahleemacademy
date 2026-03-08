@@ -627,6 +627,7 @@ export type Database = {
           time_limit_minutes: number | null
           title: string
           title_ar: string | null
+          type: string | null
           updated_at: string
           webcam_required: boolean | null
         }
@@ -663,6 +664,7 @@ export type Database = {
           time_limit_minutes?: number | null
           title: string
           title_ar?: string | null
+          type?: string | null
           updated_at?: string
           webcam_required?: boolean | null
         }
@@ -699,6 +701,7 @@ export type Database = {
           time_limit_minutes?: number | null
           title?: string
           title_ar?: string | null
+          type?: string | null
           updated_at?: string
           webcam_required?: boolean | null
         }
