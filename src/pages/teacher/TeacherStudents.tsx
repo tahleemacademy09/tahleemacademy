@@ -135,6 +135,24 @@ const TeacherStudents = () => {
     setNoteDialog(null); setNoteText("");
   };
 
+  // Request admin to enrol/remove student
+  const sendEnrolRequest = async () => {
+    if (!requestDialog || !user) return;
+    // Find admins
+    const { data: admins } = await supabase.from("user_roles").select("user_id").eq("role", "admin");
+    if (!admins?.length) { toast({ title: t("No admin found", "لم يتم العثور على مدير"), variant: "destructive" }); return; }
+    const msg = requestDialog.type === "enrol"
+      ? `Teacher requests to ENROL student "${requestDialog.student.full_name}" in a subject. ${requestMsg}`
+      : `Teacher requests to REMOVE student "${requestDialog.student.full_name}" from a subject. ${requestMsg}`;
+    const inserts = admins.map(a => ({
+      user_id: a.user_id, title: requestDialog.type === "enrol" ? "Enrol Request" : "Remove Request",
+      message: msg, type: "admin",
+    }));
+    await supabase.from("notifications").insert(inserts);
+    toast({ title: t("Request sent to admin", "تم إرسال الطلب للمدير") });
+    setRequestDialog(null); setRequestMsg("");
+  };
+
   const levelBadge = (level: string) => {
     const map: any = { beginner: { label: t("Beginner", "مبتدئ"), class: "bg-blue-100 text-blue-700 border-blue-200" },
       intermediate: { label: t("Intermediate", "متوسط"), class: "bg-amber-100 text-amber-700 border-amber-200" },
