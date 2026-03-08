@@ -291,22 +291,8 @@ const StudentManagement = () => {
   };
 
   // View exam answers side by side
-  const [viewingAnswers, setViewingAnswers] = useState<any>(null);
-  const [examAnswers, setExamAnswers] = useState<any[]>([]);
-  const [examQuestions, setExamQuestions] = useState<any[]>([]);
 
-  const viewAnswersSideBySide = async (attempt: any) => {
-    const [answersRes, questionsRes] = await Promise.all([
-      supabase.from("exam_answers").select("*").eq("attempt_id", attempt.id),
-      supabase.from("exam_questions").select("*").eq("exam_id", attempt.exam_id).order("sort_order"),
-    ]);
-    setExamAnswers(answersRes.data || []);
-    setExamQuestions(questionsRes.data || []);
-    setViewingAnswers(attempt);
-  };
 
-  // Enrol dialog for detail view
-  const [enrolSubjectId, setEnrolSubjectId] = useState("");
 
   // ─── EXAM ANSWERS SIDE BY SIDE VIEW ───
   if (viewingAnswers) {
