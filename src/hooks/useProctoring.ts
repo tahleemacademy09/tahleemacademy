@@ -12,16 +12,22 @@ interface ProctoringConfig {
   max_warnings?: number;
   auto_submit_on_violation?: boolean;
   webcam_required?: boolean;
+  record_audio?: boolean;
 }
 
 interface ProctoringState {
   violations: number;
   warnings: number;
+  strikes: number;
+  maxStrikes: number;
   integrityScore: number;
   suspicionLevel: string;
   fullscreenActive: boolean;
   shouldAutoSubmit: boolean;
   cameraReady: boolean;
+  faceDetected: boolean;
+  audioMonitoring: boolean;
+  lastWarningType: string | null;
 }
 
 const randomInterval = (minSec: number, maxSec: number) =>
@@ -33,21 +39,34 @@ export const useProctoring = (config: ProctoringConfig, enabled: boolean, onAuto
   const [state, setState] = useState<ProctoringState>({
     violations: 0,
     warnings: 0,
+    strikes: 0,
+    maxStrikes: config.max_warnings || 3,
     integrityScore: 100,
     suspicionLevel: "low",
     fullscreenActive: false,
     shouldAutoSubmit: false,
     cameraReady: false,
+    faceDetected: true,
+    audioMonitoring: false,
+    lastWarningType: null,
   });
 
   const sessionId = useRef<string | null>(null);
   const violationCount = useRef(0);
   const warningCount = useRef(0);
+  const strikeCount = useRef(0);
   const webcamTimeout = useRef<ReturnType<typeof setTimeout>>();
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const audioStreamRef = useRef<MediaStream | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const audioMonitorRef = useRef<ReturnType<typeof setInterval>>();
   const cameraReadyRef = useRef(false);
   const enabledRef = useRef(enabled);
+  const faceAbsentTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const tabAwayTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const tabAwayStartRef = useRef<number | null>(null);
 
   useEffect(() => { enabledRef.current = enabled; }, [enabled]);
 
@@ -90,7 +109,6 @@ export const useProctoring = (config: ProctoringConfig, enabled: boolean, onAuto
       const canvas = document.createElement("canvas");
       const w = video.videoWidth || 640;
       const h = video.videoHeight || 480;
-      // Compress: max 480p for face snapshots
       const scale = Math.min(1, 480 / Math.max(w, h));
       canvas.width = Math.round(w * scale);
       canvas.height = Math.round(h * scale);
@@ -101,29 +119,16 @@ export const useProctoring = (config: ProctoringConfig, enabled: boolean, onAuto
       const blob = await new Promise<Blob | null>((resolve) =>
         canvas.toBlob(resolve, "image/jpeg", 0.65)
       );
-      if (!blob) {
-        logger.warn("[Proctoring] Failed to create blob from canvas");
-        return;
-      }
-
-      // Limit to ~500KB
-      if (blob.size > 600_000) {
-        logger.warn("[Proctoring] Snapshot too large, skipping");
-        return;
-      }
+      if (!blob) return;
+      if (blob.size > 600_000) return;
 
       const timestamp = Date.now();
       const filePath = `${config.userId}/${config.attemptId}/face_${timestamp}.jpg`;
 
-      logger.log("[Proctoring] Uploading face snapshot");
-
       const uploaded = await uploadWithRetry(filePath, blob);
-      if (!uploaded) {
-        logger.warn("[Proctoring] Face capture upload failed after retries");
-        return;
-      }
+      if (!uploaded) return;
 
-      const { error: dbError } = await supabase.from("proctoring_media").insert({
+      await supabase.from("proctoring_media").insert({
         attempt_id: config.attemptId,
         file_type: "face_snapshot",
         file_url: filePath,
@@ -131,27 +136,37 @@ export const useProctoring = (config: ProctoringConfig, enabled: boolean, onAuto
         file_size: blob.size,
         metadata: { timestamp: new Date(timestamp).toISOString(), type: triggerType },
       });
-
-      if (dbError) {
-        logger.warn("[Proctoring] DB insert error");
-      } else {
-        logger.log("[Proctoring] Face snapshot saved successfully");
-      }
     } catch (e) {
       logger.warn("[Proctoring] Face capture error");
     }
-  }, [config.attemptId, uploadWithRetry]);
+  }, [config.attemptId, config.userId, uploadWithRetry]);
+
+  // Add a strike — HIGH RISK violations count as 2
+  const addStrike = useCallback((count: number = 1) => {
+    strikeCount.current += count;
+    const maxStrikes = config.max_warnings || 3;
+    setState(prev => ({ ...prev, strikes: strikeCount.current, maxStrikes }));
+
+    if (config.auto_submit_on_violation && strikeCount.current >= maxStrikes) {
+      setState(prev => ({ ...prev, shouldAutoSubmit: true }));
+      onAutoSubmit?.();
+    }
+  }, [config.max_warnings, config.auto_submit_on_violation, onAutoSubmit]);
 
   const logViolation = useCallback(async (type: string, severity: number, details?: string, screenshotUrl?: string) => {
     if (!config.attemptId) return;
     violationCount.current += 1;
     const newCount = violationCount.current;
 
+    const newSuspicion = calcSuspicion(newCount);
+    const newIntegrity = calcIntegrity(newCount);
+
     setState(prev => ({
       ...prev,
       violations: newCount,
-      integrityScore: calcIntegrity(newCount),
-      suspicionLevel: calcSuspicion(newCount),
+      integrityScore: newIntegrity,
+      suspicionLevel: newSuspicion,
+      lastWarningType: type,
     }));
 
     await supabase.from("violations").insert({
@@ -165,15 +180,15 @@ export const useProctoring = (config: ProctoringConfig, enabled: boolean, onAuto
     if (sessionId.current) {
       await supabase.from("proctoring_sessions").update({
         total_violations: newCount,
-        integrity_score: calcIntegrity(newCount),
-        suspicion_level: calcSuspicion(newCount),
+        integrity_score: newIntegrity,
+        suspicion_level: newSuspicion,
         updated_at: new Date().toISOString(),
       }).eq("id", sessionId.current);
     }
 
     await supabase.from("exam_attempts").update({
-      suspicion_level: calcSuspicion(newCount),
-      integrity_score: calcIntegrity(newCount),
+      suspicion_level: newSuspicion,
+      integrity_score: newIntegrity,
     }).eq("id", config.attemptId);
 
     // Capture face snapshot on violations (severity >= 2)
@@ -181,7 +196,7 @@ export const useProctoring = (config: ProctoringConfig, enabled: boolean, onAuto
       captureWebcamSnapshot(`violation_${type}`);
     }
 
-    const maxWarnings = config.max_warnings || 3;
+    // Strike system: severity >= 2 = 1 strike, HIGH RISK (multiple_faces, phone_detected) = 2 strikes
     if (severity >= 2) {
       warningCount.current += 1;
       setState(prev => ({ ...prev, warnings: warningCount.current }));
@@ -191,13 +206,15 @@ export const useProctoring = (config: ProctoringConfig, enabled: boolean, onAuto
           warnings_issued: warningCount.current,
         }).eq("id", sessionId.current);
       }
-    }
 
-    if (config.auto_submit_on_violation && warningCount.current >= maxWarnings) {
-      setState(prev => ({ ...prev, shouldAutoSubmit: true }));
-      onAutoSubmit?.();
+      const isHighRisk = ["multiple_faces", "phone_detected"].includes(type);
+      addStrike(isHighRisk ? 2 : 1);
     }
-  }, [config.attemptId, config.max_warnings, config.auto_submit_on_violation, onAutoSubmit, captureWebcamSnapshot]);
+  }, [config.attemptId, config.auto_submit_on_violation, captureWebcamSnapshot, addStrike]);
+
+  // Get video element for external camera preview
+  const getVideoElement = useCallback(() => videoRef.current, []);
+  const getStream = useCallback(() => streamRef.current, []);
 
   // Initialize webcam with mobile front camera priority and retry
   const initCamera = useCallback(async (retryCount = 0): Promise<boolean> => {
@@ -206,7 +223,7 @@ export const useProctoring = (config: ProctoringConfig, enabled: boolean, onAuto
       const isMobile = /mobile|android|iphone/i.test(navigator.userAgent);
       const constraints: MediaStreamConstraints = {
         video: {
-          facingMode: "user", // front camera priority
+          facingMode: "user",
           width: { ideal: isMobile ? 320 : 640 },
           height: { ideal: isMobile ? 240 : 480 },
         },
@@ -220,7 +237,6 @@ export const useProctoring = (config: ProctoringConfig, enabled: boolean, onAuto
       video.setAttribute("playsinline", "true");
       video.muted = true;
 
-      // Wait for video to actually be ready
       await new Promise<void>((resolve, reject) => {
         video.onloadeddata = () => resolve();
         video.onerror = () => reject(new Error("Video load error"));
@@ -230,16 +246,15 @@ export const useProctoring = (config: ProctoringConfig, enabled: boolean, onAuto
 
       videoRef.current = video;
       cameraReadyRef.current = true;
-      setState(prev => ({ ...prev, cameraReady: true }));
+      setState(prev => ({ ...prev, cameraReady: true, faceDetected: true }));
       logger.log("[Proctoring] Camera initialized successfully");
 
-      // Monitor track for unexpected end
       const track = stream.getVideoTracks()[0];
       if (track) {
         track.onended = () => {
           logger.warn("[Proctoring] Camera track ended, attempting reconnect");
           cameraReadyRef.current = false;
-          setState(prev => ({ ...prev, cameraReady: false }));
+          setState(prev => ({ ...prev, cameraReady: false, faceDetected: false }));
           if (enabledRef.current) {
             setTimeout(() => initCamera(), 2000);
             logViolation("webcam_disabled", 3, "Camera stream ended unexpectedly");
@@ -259,16 +274,58 @@ export const useProctoring = (config: ProctoringConfig, enabled: boolean, onAuto
     }
   }, [logViolation]);
 
-  // Initialize proctoring session + webcam
+  // Initialize audio monitoring
+  const initAudioMonitoring = useCallback(async () => {
+    if (!config.record_audio) return;
+    try {
+      const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioStreamRef.current = audioStream;
+
+      const audioCtx = new AudioContext();
+      const source = audioCtx.createMediaStreamSource(audioStream);
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 256;
+      source.connect(analyser);
+      audioContextRef.current = audioCtx;
+      analyserRef.current = analyser;
+
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+      let highNoiseCount = 0;
+
+      audioMonitorRef.current = setInterval(() => {
+        if (!enabledRef.current || !analyserRef.current) return;
+        analyserRef.current.getByteFrequencyData(dataArray);
+        const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+        const normalized = (avg / 128) * 100;
+
+        // Threshold: sustained noise above 40% for multiple checks
+        if (normalized > 40) {
+          highNoiseCount++;
+          if (highNoiseCount >= 3) {
+            logViolation("unusual_audio", 2, `Sustained background noise detected (level: ${Math.round(normalized)}%)`);
+            highNoiseCount = 0; // Reset after logging
+          }
+        } else {
+          highNoiseCount = Math.max(0, highNoiseCount - 1);
+        }
+      }, 2000);
+
+      setState(prev => ({ ...prev, audioMonitoring: true }));
+      logger.log("[Proctoring] Audio monitoring initialized");
+    } catch (e) {
+      logger.warn("[Proctoring] Audio monitoring init failed");
+    }
+  }, [config.record_audio, logViolation]);
+
+  // Initialize proctoring session + webcam + audio
   useEffect(() => {
     if (!enabled || !config.attemptId) return;
 
     const init = async () => {
-      // Create proctoring session
       const { data } = await supabase.from("proctoring_sessions").insert({
         attempt_id: config.attemptId,
         webcam_enabled: true,
-        microphone_enabled: false,
+        microphone_enabled: config.record_audio || false,
         fullscreen_active: false,
         max_warnings: config.max_warnings || 3,
       }).select("id").single();
@@ -278,8 +335,8 @@ export const useProctoring = (config: ProctoringConfig, enabled: boolean, onAuto
         logger.log("[Proctoring] Session created");
       }
 
-      // Init camera
       await initCamera();
+      await initAudioMonitoring();
     };
 
     init();
@@ -295,37 +352,36 @@ export const useProctoring = (config: ProctoringConfig, enabled: boolean, onAuto
         streamRef.current.getTracks().forEach(t => t.stop());
         streamRef.current = null;
       }
+      if (audioStreamRef.current) {
+        audioStreamRef.current.getTracks().forEach(t => t.stop());
+        audioStreamRef.current = null;
+      }
+      if (audioContextRef.current && audioContextRef.current.state !== "closed") {
+        audioContextRef.current.close().catch(() => {});
+      }
+      if (audioMonitorRef.current) clearInterval(audioMonitorRef.current);
       cameraReadyRef.current = false;
       videoRef.current = null;
     };
   }, [enabled, config.attemptId]);
 
-  // Random-interval face capture — waits for camera to be ready
+  // Random-interval face capture
   useEffect(() => {
     if (!enabled || !config.attemptId) return;
 
     let cancelled = false;
 
     const startCaptures = async () => {
-      // Wait up to 15s for camera to be ready
       for (let i = 0; i < 30; i++) {
         if (cancelled) return;
         if (cameraReadyRef.current) break;
         await new Promise(r => setTimeout(r, 500));
       }
 
-      if (!cameraReadyRef.current) {
-        logger.warn("[Proctoring] Camera never became ready, skipping periodic captures");
-        return;
-      }
+      if (!cameraReadyRef.current) return;
 
-      // Initial capture
-      if (!cancelled) {
-        logger.log("[Proctoring] Starting initial face capture");
-        await captureWebcamSnapshot("initial_capture");
-      }
+      if (!cancelled) await captureWebcamSnapshot("initial_capture");
 
-      // Schedule recurring random captures
       const scheduleNext = () => {
         if (cancelled) return;
         const baseInterval = config.screenshot_interval_seconds || 30;
@@ -421,12 +477,19 @@ export const useProctoring = (config: ProctoringConfig, enabled: boolean, onAuto
     return () => document.removeEventListener("keydown", handler);
   }, [enabled, logViolation]);
 
-  // Tab switch detection
+  // Tab switch detection with timing
   useEffect(() => {
     if (!enabled) return;
     const handler = () => {
       if (document.hidden) {
+        tabAwayStartRef.current = Date.now();
         logViolation("tab_switch", 2, "Tab/window switch detected");
+      } else if (tabAwayStartRef.current) {
+        const awayDuration = Math.round((Date.now() - tabAwayStartRef.current) / 1000);
+        tabAwayStartRef.current = null;
+        if (awayDuration > 2) {
+          logViolation("tab_switch_return", 1, `Returned after ${awayDuration}s away`);
+        }
       }
     };
     document.addEventListener("visibilitychange", handler);
@@ -444,9 +507,8 @@ export const useProctoring = (config: ProctoringConfig, enabled: boolean, onAuto
           logViolation("webcam_disabled", 3, "Webcam was disabled during exam");
         }
       } else if (cameraReadyRef.current) {
-        // Stream was lost
         cameraReadyRef.current = false;
-        setState(prev => ({ ...prev, cameraReady: false }));
+        setState(prev => ({ ...prev, cameraReady: false, faceDetected: false }));
         logger.warn("[Proctoring] Stream lost, attempting reconnect");
         initCamera();
       }
@@ -459,5 +521,7 @@ export const useProctoring = (config: ProctoringConfig, enabled: boolean, onAuto
     ...state,
     logViolation,
     sessionId: sessionId.current,
+    getVideoElement,
+    getStream,
   };
 };

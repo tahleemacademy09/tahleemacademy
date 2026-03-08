@@ -17,6 +17,7 @@ import { sanitizeHtml } from "@/lib/sanitize";
 import { Clock, Flag, Send, AlertTriangle, BookOpen, CheckCircle2, HelpCircle, ShieldAlert, Lock, TrendingUp } from "lucide-react";
 import AudioPlayer from "@/components/exam/AudioPlayer";
 import AudioRecorder from "@/components/exam/AudioRecorder";
+import ProctoringOverlay from "@/components/exam/ProctoringOverlay";
 import { motion, AnimatePresence } from "framer-motion";
 import { useProctoring } from "@/hooks/useProctoring";
 
@@ -70,8 +71,10 @@ const ExamTaking = () => {
     max_warnings: exam?.max_warnings,
     auto_submit_on_violation: exam?.auto_submit_on_violation,
     screenshot_interval_seconds: exam?.screenshot_interval_seconds,
+    webcam_required: exam?.webcam_required,
+    record_audio: exam?.record_audio,
   }, proctoringEnabled && !submitted && !loading, () => {
-    // Auto-submit callback when max violations reached
+    // Auto-submit callback when max strikes reached
     if (!submittedRef.current) {
       handleSubmitRef.current();
     }
@@ -424,7 +427,21 @@ const ExamTaking = () => {
 
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-background">
-      {/* Confirmation Modal */}
+      {/* Proctoring Camera Overlay */}
+      {proctoringEnabled && !submitted && (
+        <ProctoringOverlay
+          cameraReady={proctoring.cameraReady}
+          faceDetected={proctoring.faceDetected}
+          integrityScore={proctoring.integrityScore}
+          suspicionLevel={proctoring.suspicionLevel}
+          strikes={proctoring.strikes}
+          maxStrikes={proctoring.maxStrikes}
+          violations={proctoring.violations}
+          lastWarningType={proctoring.lastWarningType}
+          audioMonitoring={proctoring.audioMonitoring}
+          getStream={proctoring.getStream}
+        />
+      )}
       {showConfirm && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm">
           <motion.div

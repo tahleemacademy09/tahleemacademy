@@ -218,6 +218,16 @@ const ProctoringDashboard = () => {
   const otherMedia = media.filter(m => !["face_snapshot", "verification_snapshot", "screen_capture"].includes(m.file_type));
   const allMedia = media;
 
+  // Verdict calculation
+  const getVerdict = (session: any) => {
+    const integrity = Number(session.integrity_score) || 100;
+    const violations = session.total_violations || 0;
+    const suspicion = session.suspicion_level || "low";
+    if (suspicion === "critical" || integrity < 30 || violations >= 8) return { label: "FLAGGED", labelAr: "مُعلّم", color: "bg-destructive text-destructive-foreground" };
+    if (suspicion === "high" || integrity < 60 || violations >= 4) return { label: "REVIEW NEEDED", labelAr: "يحتاج مراجعة", color: "bg-secondary text-secondary-foreground" };
+    return { label: "CLEAR", labelAr: "واضح", color: "bg-emerald-500/10 text-emerald-600 border border-emerald-500/30" };
+  };
+
   // Detail view
   if (selectedSession) {
     const s = selectedSession;
@@ -225,6 +235,10 @@ const ProctoringDashboard = () => {
     const studentName = (s.profile as any)?.full_name || (s.profile as any)?.email || "Unknown";
     const studentEmail = (s.profile as any)?.email || "";
     const examTitle = language === "ar" ? (s.exam as any)?.title_ar || (s.exam as any)?.title : (s.exam as any)?.title;
+    const verdict = getVerdict(s);
+    const examDuration = s.ended_at
+      ? Math.round((new Date(s.ended_at).getTime() - new Date(s.started_at).getTime()) / 60000)
+      : null;
 
     return (
       <div className="container mx-auto px-4 py-6 max-w-5xl">
@@ -293,7 +307,30 @@ const ProctoringDashboard = () => {
           </Card>
         </div>
 
-        {/* Device info */}
+        {/* Verdict & Duration */}
+        <Card className="mb-4">
+          <CardContent className="p-4 flex items-center justify-between flex-wrap gap-3">
+            <div className="flex items-center gap-3">
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">{t("Final Verdict", "الحكم النهائي")}</p>
+                <Badge className={`text-sm px-3 py-1 ${verdict.color}`}>
+                  {language === "ar" ? verdict.labelAr : verdict.label}
+                </Badge>
+              </div>
+            </div>
+            {examDuration && (
+              <div className="text-right">
+                <p className="text-xs text-muted-foreground">{t("Exam Duration", "مدة الامتحان")}</p>
+                <p className="text-lg font-bold">{examDuration} {t("min", "دقيقة")}</p>
+              </div>
+            )}
+            <div className="text-right">
+              <p className="text-xs text-muted-foreground">{t("Started", "بدأ في")}</p>
+              <p className="text-sm">{new Date(s.started_at).toLocaleString()}</p>
+            </div>
+          </CardContent>
+        </Card>
+
         {device && (
           <Card className="mb-4">
             <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><Monitor className="h-4 w-4" />{t("Device Information", "معلومات الجهاز")}</CardTitle></CardHeader>
@@ -488,9 +525,10 @@ const ProctoringDashboard = () => {
                   <TableHead>{t("Status", "الحالة")}</TableHead>
                   <TableHead>{t("Integrity", "النزاهة")}</TableHead>
                   <TableHead>{t("Suspicion", "الاشتباه")}</TableHead>
-                  <TableHead>{t("Violations", "المخالفات")}</TableHead>
-                  <TableHead>{t("Date", "التاريخ")}</TableHead>
-                  <TableHead>{t("Actions", "إجراءات")}</TableHead>
+                   <TableHead>{t("Violations", "المخالفات")}</TableHead>
+                   <TableHead>{t("Verdict", "الحكم")}</TableHead>
+                   <TableHead>{t("Date", "التاريخ")}</TableHead>
+                   <TableHead>{t("Actions", "إجراءات")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -511,6 +549,12 @@ const ProctoringDashboard = () => {
                     <TableCell><span className={`font-bold ${integrityColor(Number(s.integrity_score) || 100)}`}>{Math.round(Number(s.integrity_score) || 100)}%</span></TableCell>
                     <TableCell><Badge className={`text-xs ${severityColor(s.suspicion_level || "low")}`}>{s.suspicion_level || "low"}</Badge></TableCell>
                     <TableCell className="font-bold text-destructive">{s.total_violations || 0}</TableCell>
+                    <TableCell>
+                      {(() => {
+                        const v = getVerdict(s);
+                        return <Badge className={`text-[10px] ${v.color}`}>{language === "ar" ? v.labelAr : v.label}</Badge>;
+                      })()}
+                    </TableCell>
                     <TableCell className="text-xs text-muted-foreground">{new Date(s.started_at).toLocaleDateString()}</TableCell>
                     <TableCell>
                       <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); loadSessionDetails(s); }}>

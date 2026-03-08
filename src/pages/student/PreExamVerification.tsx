@@ -42,6 +42,13 @@ const PreExamVerification = () => {
   const [micLevel, setMicLevel] = useState(0);
   const [micTested, setMicTested] = useState(false);
   const [webcamStream, setWebcamStream] = useState<MediaStream | null>(null);
+  const [checklist, setChecklist] = useState({
+    quietEnvironment: false,
+    faceVisible: false,
+    noDevices: false,
+    noTabSwitch: false,
+  });
+  const allChecked = Object.values(checklist).every(Boolean);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -219,7 +226,7 @@ const PreExamVerification = () => {
   // Calculate readiness
   const passedChecks = checks.filter(c => c.status === "passed").length;
   const allChecksPassed = checks.every(c => c.status === "passed");
-  const allReady = allChecksPassed && agreed && faceCaptured && micTested;
+  const allReady = allChecksPassed && agreed && faceCaptured && micTested && allChecked;
   const progressValue = (passedChecks / checks.length) * 100;
 
   // Start exam
@@ -493,6 +500,39 @@ const PreExamVerification = () => {
                     </div>
                   ))}
                 </div>
+
+                {/* GDPR Proctoring Checklist */}
+                <div className="border-t pt-3 space-y-2">
+                  <p className="text-xs font-semibold text-muted-foreground mb-2">
+                    {t("📋 Proctoring Checklist — Please confirm:", "📋 قائمة التحقق — يرجى التأكيد:")}
+                  </p>
+                  {[
+                    { key: "quietEnvironment" as const, en: "I am in a quiet environment", ar: "أنا في بيئة هادئة" },
+                    { key: "faceVisible" as const, en: "My face is clearly visible", ar: "وجهي مرئي بوضوح" },
+                    { key: "noDevices" as const, en: "I will not use any other devices", ar: "لن أستخدم أي أجهزة أخرى" },
+                    { key: "noTabSwitch" as const, en: "I will not switch tabs during the exam", ar: "لن أبدل بين النوافذ أثناء الامتحان" },
+                  ].map(item => (
+                    <label key={item.key} className="flex items-start gap-2 cursor-pointer">
+                      <Checkbox
+                        checked={checklist[item.key]}
+                        onCheckedChange={(v) => setChecklist(prev => ({ ...prev, [item.key]: !!v }))}
+                        className="mt-0.5"
+                      />
+                      <span className="text-xs">{t(item.en, item.ar)}</span>
+                    </label>
+                  ))}
+                </div>
+
+                {/* GDPR notice */}
+                <div className="border-t pt-3 mt-2">
+                  <p className="text-[10px] text-muted-foreground leading-relaxed">
+                    🔒 {t(
+                      "Your camera and microphone will be recorded during this exam for academic integrity purposes. All data is stored securely and only accessible to your instructor.",
+                      "سيتم تسجيل الكاميرا والميكروفون أثناء هذا الامتحان لأغراض النزاهة الأكاديمية. جميع البيانات مخزنة بشكل آمن ومتاحة فقط لمدرسك."
+                    )}
+                  </p>
+                </div>
+
                 <div className="border-t pt-3">
                   <label className="flex items-start gap-3 cursor-pointer">
                     <Checkbox
@@ -502,8 +542,8 @@ const PreExamVerification = () => {
                     />
                     <span className="text-xs leading-relaxed">
                       {t(
-                        "I have read and agree to all the exam rules. I understand that any violation may result in automatic submission or disqualification.",
-                        "لقد قرأت ووافقت على جميع قوانين الامتحان. أفهم أن أي مخالفة قد تؤدي إلى تقديم تلقائي أو استبعاد."
+                        "I have read and agree to all the exam rules. I understand that my camera and audio will be monitored and any violation may result in automatic submission.",
+                        "لقد قرأت ووافقت على جميع قوانين الامتحان. أفهم أنه سيتم مراقبة الكاميرا والصوت وأن أي مخالفة قد تؤدي إلى تقديم تلقائي."
                       )}
                     </span>
                   </label>
@@ -535,7 +575,8 @@ const PreExamVerification = () => {
                 {!allChecksPassed && t("Complete all system checks", "أكمل جميع فحوصات النظام")}
                 {allChecksPassed && !faceCaptured && t("Capture your face snapshot", "التقط صورة لوجهك")}
                 {allChecksPassed && faceCaptured && !micTested && t("Test your microphone by speaking", "اختبر الميكروفون بالتحدث")}
-                {allChecksPassed && faceCaptured && micTested && !agreed && t("Accept the exam rules", "وافق على قوانين الامتحان")}
+                {allChecksPassed && faceCaptured && micTested && !allChecked && t("Complete the proctoring checklist", "أكمل قائمة التحقق")}
+                {allChecksPassed && faceCaptured && micTested && allChecked && !agreed && t("Accept the exam rules", "وافق على قوانين الامتحان")}
               </p>
             )}
           </div>
