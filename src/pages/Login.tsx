@@ -71,8 +71,9 @@ const Login = () => {
         .from("user_roles")
         .select("role")
         .eq("user_id", data.user?.id);
-      const isAdmin = roles?.some((r) => r.role === "admin" || r.role === "teacher");
-      navigate(isAdmin ? "/admin" : "/student");
+      const isAdmin = roles?.some((r) => r.role === "admin");
+      const isTeacher = roles?.some((r) => r.role === "teacher");
+      navigate(isAdmin ? "/admin" : isTeacher ? "/teacher/dashboard" : "/student");
     }
   };
 
