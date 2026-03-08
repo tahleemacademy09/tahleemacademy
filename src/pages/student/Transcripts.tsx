@@ -104,175 +104,121 @@ const Transcripts = () => {
   const currentYear = new Date().getFullYear();
   const hijriYear = currentYear - 579;
 
-  const downloadPDF = async () => {
-    try {
-      const { jsPDF } = await import("jspdf");
-      const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-
-      // Load Amiri font for Arabic support
-      const fontUrl = "https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/amiri/Amiri-Regular.ttf";
-      try {
-        const response = await fetch(fontUrl);
-        const buffer = await response.arrayBuffer();
-        const base64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
-        doc.addFileToVFS("Amiri-Regular.ttf", base64);
-        doc.addFont("Amiri-Regular.ttf", "Amiri", "normal");
-        doc.setFont("Amiri");
-      } catch {
-        toast({ title: t("Warning: Arabic font could not be loaded.", "تحذير: تعذر تحميل الخط العربي."), variant: "destructive" });
-        doc.setFont("helvetica");
-      }
-
-      const pw = 210;
-      const m = 20;
-      const cw = pw - m * 2;
-      let y = 20;
-
-      // Header
-      doc.setFontSize(20);
-      doc.setTextColor(0, 0, 0);
-      doc.text("أكاديمية التعليم", pw / 2, y, { align: "center" });
-      y += 8;
-      doc.setFontSize(14);
-      doc.text("TAHLEEM ACADEMY", pw / 2, y, { align: "center" });
-      y += 10;
-
-      // Title box
-      doc.setDrawColor(42, 122, 42);
-      doc.setLineWidth(0.6);
-      doc.rect(pw / 2 - 45, y - 5, 90, 12);
-      doc.setFontSize(11);
-      doc.text("كشف نتائج الطلبة", pw / 2 + 20, y + 2, { align: "center" });
-      doc.text("Student Report Sheet.", pw / 2 - 20, y + 2, { align: "center" });
-      y += 14;
-
-      // Info fields
-      doc.setFontSize(10);
-      doc.setTextColor(0, 0, 0);
-      const infoR = pw - m;
-      const drawInfoLine = (labelAr: string, value: string, x: number, yy: number) => {
-        doc.text(labelAr, x, yy, { align: "right" });
-        const labelW = doc.getTextWidth(labelAr);
-        const lineStart = x - labelW - 2;
-        doc.text(value, lineStart - 2, yy, { align: "right" });
-        doc.setDrawColor(0);
-        doc.setLineWidth(0.3);
-        doc.line(lineStart - 60, yy + 1, lineStart - 1, yy + 1);
-      };
-
-      drawInfoLine("اسم الطالب(ة)", profile?.full_name || "---", infoR, y);
-      drawInfoLine("العام الدراسي", `${hijriYear} هـ / ${currentYear} م`, pw / 2 - 5, y);
-      y += 7;
-      const levelText = profile?.level === "beginner" ? "المبتدئة" : profile?.level === "intermediate" ? "المتوسطة" : profile?.level || "---";
-      drawInfoLine("المرحلة", levelText, infoR, y);
-      drawInfoLine("عدد المواد", String(exams.length), pw / 2 - 5, y);
-      y += 7;
-      drawInfoLine("التاريخ", new Date().toLocaleDateString("ar-SA"), infoR, y);
-      drawInfoLine("الحالة", cgpa >= 2.0 ? "منتظمة" : "تحت المراقبة", pw / 2 - 5, y);
-      y += 12;
-
-      // Section title
-      doc.setFontSize(14);
-      doc.text("الفترة الأولى", m + 5, y, { align: "left" });
-      y += 8;
-
-      // Table
-      const colWidths = [45, 22, 22, 22, 16, 16, 22];
-      const totalW = colWidths.reduce((a, b) => a + b, 0);
-      const tableX = pw - m; // RTL start from right
-
-      // Header row
-      const headers = [
-        ["المواد", "Subject"],
-        ["التمرينات (٣٠)", "Test"],
-        ["الإمتحانات (٧٠)", "Exam"],
-        ["المجموع الكلي (١٠٠)", "Total"],
-        ["%", "%"],
-        ["GP", "GP"],
-        ["النتيجة", "Result"],
-      ];
-
-      const rowH = 10;
-      let cx = tableX;
-      doc.setFontSize(7);
-      doc.setDrawColor(51, 51, 51);
-      doc.setLineWidth(0.4);
-
-      // Draw header cells
-      headers.forEach((h, i) => {
-        const w = colWidths[i];
-        doc.rect(cx - w, y, w, rowH);
-        doc.text(h[0], cx - w / 2, y + 4, { align: "center" });
-        doc.text(h[1], cx - w / 2, y + 8, { align: "center" });
-        cx -= w;
-      });
-      y += rowH;
-
-      // Data rows
-      const dataRowH = 8;
-      const rows = Math.max(10, exams.length);
-      for (let i = 0; i < rows; i++) {
-        cx = tableX;
-        const e = exams[i];
-        const coursework = e ? Math.round(e.percentage * 0.3) : "";
-        const finalExam = e ? Math.round(e.percentage * 0.7) : "";
-        const total = e ? Number(coursework) + Number(finalExam) : "";
-        const gp = e ? gradePoint(e.percentage).toFixed(1) : "";
-        const result = e ? (e.passed ? "Pass ✓" : "Fail ✗") : "";
-        const pct = e ? `${total}%` : "";
-        const subject = e ? (e.title_ar || e.title) : "";
-        const vals = [subject, String(coursework), String(finalExam), String(total), pct, gp, result];
-
-        vals.forEach((v, j) => {
-          const w = colWidths[j];
-          doc.rect(cx - w, y, w, dataRowH);
-          if (v) {
-            doc.setFontSize(7);
-            if (j === 6 && e) {
-              doc.setTextColor(e.passed ? 42 : 192, e.passed ? 122 : 57, e.passed ? 42 : 43);
-            } else {
-              doc.setTextColor(0, 0, 0);
-            }
-            doc.text(v, cx - w / 2, y + 5.5, { align: "center" });
-          }
-          cx -= w;
-        });
-        y += dataRowH;
-      }
-      doc.setTextColor(0, 0, 0);
-      y += 6;
-
-      // Summary table
-      const totalObtainable = exams.length * 100;
-      const totalObtained = exams.reduce((s, e) => s + Math.round(e.percentage), 0);
-      const summaryRows = [
-        ["Marks Obtainable", String(totalObtainable || ""), "Marks Obtained", String(totalObtained || "")],
-        ["Cgpa", exams.length > 0 ? cgpa.toFixed(2) : "", "Status", exams.length > 0 ? (cgpa >= 1.0 ? "Pass ✓" : "Fail ✗") : ""],
-        ["Comment", exams.length > 0 ? (cgpa >= 3.5 ? "Outstanding" : cgpa >= 2.0 ? "Hardworking" : "Needs improvement") : "", "Signature", ""],
-      ];
-
-      const sColW = cw / 4;
-      doc.setFontSize(9);
-      summaryRows.forEach((row) => {
-        let sx = m;
-        row.forEach((cell, ci) => {
-          doc.rect(sx, y, sColW, 8);
-          if (ci % 2 === 0) {
-            doc.setFont("Amiri", "normal");
-            doc.text(cell, sx + 3, y + 5.5);
-          } else {
-            doc.text(cell, sx + sColW / 2, y + 5.5, { align: "center" });
-          }
-          sx += sColW;
-        });
-        y += 8;
-      });
-
-      doc.save(`Transcript-${profile?.full_name || "student"}.pdf`);
-      toast({ title: t("PDF downloaded successfully", "تم تحميل الملف بنجاح") });
-    } catch (err: any) {
-      toast({ title: t("Error generating PDF", "خطأ في إنشاء الملف"), description: err.message, variant: "destructive" });
+  const downloadPDF = () => {
+    // Use browser print to generate PDF — this ensures Arabic renders correctly
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+      toast({ title: t("Please allow popups to download PDF", "يرجى السماح بالنوافذ المنبثقة لتحميل PDF"), variant: "destructive" });
+      return;
     }
+
+    const totalObtainable = exams.length * 100;
+    const totalObtained = exams.reduce((s, e) => s + Math.round(e.percentage), 0);
+    const levelText = profile?.level === "beginner" ? "المبتدئة / Beginner" : profile?.level === "intermediate" ? "المتوسطة / Intermediate" : profile?.level || "---";
+    const statusText = cgpa >= 2.0 ? "منتظمة / Regular" : "تحت المراقبة / Probation";
+    const commentText = exams.length > 0 ? (cgpa >= 3.5 ? "طالب(ة) متميز(ة) / Outstanding" : cgpa >= 2.0 ? "طالب(ة) مجتهد(ة) / Hardworking" : "يحتاج تحسين / Needs improvement") : "";
+
+    const examRows = exams.map((e) => {
+      const cw = Math.round(e.percentage * 0.3);
+      const fe = Math.round(e.percentage * 0.7);
+      const total = cw + fe;
+      const gp = gradePoint(e.percentage);
+      const result = e.passed ? "Pass ✓" : "Fail ✗";
+      const resultColor = e.passed ? "#2a7a2a" : "#c0392b";
+      return `<tr>
+        <td>${e.title_ar || e.title}</td>
+        <td>${cw}</td><td>${fe}</td><td style="font-weight:700">${total}</td>
+        <td>${total}%</td><td>${gp.toFixed(1)}</td>
+        <td style="color:${resultColor};font-weight:700">${result}</td>
+      </tr>`;
+    }).join("");
+
+    const emptyRows = Array.from({ length: Math.max(0, 10 - exams.length) })
+      .map(() => `<tr>${"<td>&nbsp;</td>".repeat(7)}</tr>`).join("");
+
+    const html = `<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<title>Transcript - ${profile?.full_name || "Student"}</title>
+<link href="https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Cairo','Amiri',sans-serif;background:#fff;padding:30px 40px}
+.header{text-align:center;margin-bottom:14px}
+.header .ar{font-family:'Amiri',serif;font-size:24px;font-weight:700}
+.header .en{font-size:16px;font-weight:700;letter-spacing:3px}
+.title-box{border:2px solid #2a7a2a;border-radius:4px;padding:6px 20px;margin:14px auto;width:fit-content;display:flex;gap:30px;align-items:center;justify-content:center}
+.title-box span{font-size:14px;font-weight:600}
+.info-grid{margin:16px 0}
+.info-row{display:flex;justify-content:space-between;margin-bottom:8px;gap:24px}
+.info-field{display:flex;align-items:baseline;flex:1;gap:4px}
+.info-field label{font-weight:700;font-size:13px;white-space:nowrap}
+.info-field .val{flex:1;border-bottom:1px solid #333;font-size:12px;text-align:right;padding:0 4px 1px}
+.section-title{font-family:'Amiri',serif;font-size:18px;font-weight:700;text-align:left;margin:14px 0 8px}
+table.main{width:100%;border-collapse:collapse;direction:rtl;margin-bottom:18px}
+table.main th,table.main td{border:1.5px solid #333;padding:4px 5px;text-align:center;font-size:11px;vertical-align:middle}
+table.main th .ar{display:block;font-family:'Amiri',serif;font-size:12px;font-weight:700}
+table.main th .en{display:block;font-size:10px;font-weight:700}
+table.main td{height:26px}
+table.summary{width:100%;border-collapse:collapse;direction:ltr;margin-top:14px}
+table.summary td{border:1.5px solid #333;padding:5px 8px;font-size:12px}
+table.summary td.lbl{font-weight:700;width:18%}
+@media print{body{padding:15px 20px}@page{size:A4;margin:8mm}}
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="ar">أكاديمية التعليم</div>
+  <div class="en">TAHLEEM ACADEMY</div>
+</div>
+<div class="title-box">
+  <span>كشف نتائج الطلبة</span>
+  <span>Student Report Sheet.</span>
+</div>
+<div class="info-grid">
+  <div class="info-row">
+    <div class="info-field"><label>اسم الطالب(ة)</label><span class="val">${profile?.full_name || "---"}</span></div>
+    <div class="info-field"><label>العام الدراسي</label><span class="val">${hijriYear} هـ / ${currentYear} م</span></div>
+  </div>
+  <div class="info-row">
+    <div class="info-field"><label>المرحلة</label><span class="val">${levelText}</span></div>
+    <div class="info-field"><label>عدد المواد</label><span class="val">${exams.length}</span></div>
+  </div>
+  <div class="info-row">
+    <div class="info-field"><label>التاريخ</label><span class="val">${new Date().toLocaleDateString("ar-SA")}</span></div>
+    <div class="info-field"><label>الحالة</label><span class="val">${statusText}</span></div>
+  </div>
+</div>
+<div class="section-title">الفترة الأولى</div>
+<table class="main">
+  <thead><tr>
+    <th><span class="ar">المواد</span><span class="en">Subject</span></th>
+    <th><span class="ar">التمرينات (٣٠)</span><span class="en">Test</span></th>
+    <th><span class="ar">الإمتحانات (٧٠)</span><span class="en">Exam</span></th>
+    <th><span class="ar">المجموع الكلي (١٠٠)</span><span class="en">Total</span></th>
+    <th><span class="ar">%</span><span class="en">%</span></th>
+    <th><span class="ar">GP</span><span class="en">GP</span></th>
+    <th><span class="ar">النتيجة</span><span class="en">Result</span></th>
+  </tr></thead>
+  <tbody>${examRows}${emptyRows}</tbody>
+</table>
+<table class="summary">
+  <tr><td class="lbl">Marks Obtainable</td><td style="text-align:center">${totalObtainable || ""}</td><td class="lbl">Marks Obtained</td><td style="text-align:center">${totalObtained || ""}</td></tr>
+  <tr><td class="lbl">Cgpa</td><td style="text-align:center">${exams.length > 0 ? cgpa.toFixed(2) : ""}</td><td class="lbl">Status</td><td style="text-align:center">${exams.length > 0 ? (cgpa >= 1.0 ? "Pass ✓" : "Fail ✗") : ""}</td></tr>
+  <tr><td class="lbl">Comment</td><td style="text-align:center">${commentText}</td><td class="lbl">Signature</td><td style="text-align:center"></td></tr>
+</table>
+<script>
+  window.onload = function() {
+    setTimeout(function() { window.print(); }, 500);
+  };
+</script>
+</body>
+</html>`;
+
+    printWindow.document.write(html);
+    printWindow.document.close();
+    toast({ title: t("Print dialog opened — save as PDF", "تم فتح نافذة الطباعة — احفظ كـ PDF") });
   };
 
   // CGPA gauge
