@@ -400,21 +400,25 @@ const StudentDashboard = () => {
           {/* Calendar grid */}
           <div className="grid grid-cols-7 gap-1">
             {Array.from({ length: firstDayOfWeek }).map((_, i) => (
-              <div key={`empty-${i}`} className="h-10" />
+              <div key={`empty-${i}`} className="h-12" />
             ))}
             {Array.from({ length: daysInMonth }).map((_, i) => {
               const day = i + 1;
               const events = getEventsForDay(day);
               const isToday = day === today.getDate() && calendarMonthIdx === today.getMonth() && calendarYear === today.getFullYear();
+              const hijriDay = toHijri(new Date(calendarYear, calendarMonthIdx, day));
               return (
                 <div
                   key={day}
-                  className={`h-10 rounded-lg flex flex-col items-center justify-center relative text-xs transition-colors
+                  className={`h-12 rounded-lg flex flex-col items-center justify-center relative text-xs transition-colors
                     ${isToday ? 'bg-primary text-primary-foreground font-bold' : 'hover:bg-muted/40'}
                     ${events.length > 0 ? 'font-semibold' : ''}`}
                   title={events.map(e => e.title).join(', ')}
                 >
-                  <span>{day}</span>
+                  <span className="leading-none">{day}</span>
+                  <span className={`text-[8px] leading-none mt-0.5 ${isToday ? 'text-primary-foreground/70' : 'text-muted-foreground/60'}`} dir="rtl">
+                    {hijriDay.day}
+                  </span>
                   {events.length > 0 && (
                     <div className="flex gap-0.5 absolute bottom-0.5">
                       {events.slice(0, 3).map((e, ei) => (
