@@ -235,50 +235,64 @@ const StudentExams = () => {
 
         {/* Available Exams Tab */}
         <TabsContent value="available" className="mt-6">
-          <Collapsible open={availableOpen} onOpenChange={setAvailableOpen}>
-            <CollapsibleTrigger className="flex items-center gap-2 mb-4 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
-              {availableOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-              {t("Available Exams", "الامتحانات المتاحة")} ({availableExams.length})
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              {availableExams.length === 0 ? (
-                <Card>
-                  <CardContent className="p-8 text-center text-muted-foreground">
-                    <AlertTriangle className="h-8 w-8 mx-auto mb-2 text-muted-foreground/50" />
-                    <p>{t("No available exams. All exams have been completed!", "لا توجد امتحانات متاحة. تم إكمال جميع الامتحانات!")}</p>
-                  </CardContent>
-                </Card>
-              ) : (
-                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                  {availableExams.map(renderExamCard)}
-                </div>
-              )}
-            </CollapsibleContent>
-          </Collapsible>
+          {availableExams.length === 0 ? (
+            <Card>
+              <CardContent className="p-8 text-center text-muted-foreground">
+                <AlertTriangle className="h-8 w-8 mx-auto mb-2 text-muted-foreground/50" />
+                <p>{t("No available exams. All exams have been completed!", "لا توجد امتحانات متاحة. تم إكمال جميع الامتحانات!")}</p>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="space-y-6">
+              {[
+                { term: "first", label: t("First Term / الفصل الأول", "الفصل الأول / First Term") },
+                { term: "second", label: t("Second Term / الفصل الثاني", "الفصل الثاني / Second Term") },
+                { term: "third", label: t("Third Term / الفصل الثالث", "الفصل الثالث / Third Term") },
+              ].map(({ term, label }) => {
+                const termExams = availableExams.filter((e: any) => (e.term || "first") === term);
+                if (termExams.length === 0) return null;
+                return (
+                  <div key={term}>
+                    <h3 className="text-lg font-semibold mb-3 border-b pb-2">{label}</h3>
+                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                      {termExams.map(renderExamCard)}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </TabsContent>
 
         {/* Completed Exams Tab */}
         <TabsContent value="completed" className="mt-6">
-          <Collapsible open={completedOpen} onOpenChange={setCompletedOpen}>
-            <CollapsibleTrigger className="flex items-center gap-2 mb-4 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
-              {completedOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-              {t("Completed Exams", "الامتحانات المكتملة")} ({completedExams.length})
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              {completedExams.length === 0 ? (
-                <Card>
-                  <CardContent className="p-8 text-center text-muted-foreground">
-                    <CheckCircle className="h-8 w-8 mx-auto mb-2 text-muted-foreground/50" />
-                    <p>{t("No completed exams yet.", "لا توجد امتحانات مكتملة بعد.")}</p>
-                  </CardContent>
-                </Card>
-              ) : (
-                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                  {completedExams.map(renderExamCard)}
-                </div>
-              )}
-            </CollapsibleContent>
-          </Collapsible>
+          {completedExams.length === 0 ? (
+            <Card>
+              <CardContent className="p-8 text-center text-muted-foreground">
+                <CheckCircle className="h-8 w-8 mx-auto mb-2 text-muted-foreground/50" />
+                <p>{t("No completed exams yet.", "لا توجد امتحانات مكتملة بعد.")}</p>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="space-y-6">
+              {[
+                { term: "first", label: t("First Term / الفصل الأول", "الفصل الأول / First Term") },
+                { term: "second", label: t("Second Term / الفصل الثاني", "الفصل الثاني / Second Term") },
+                { term: "third", label: t("Third Term / الفصل الثالث", "الفصل الثالث / Third Term") },
+              ].map(({ term, label }) => {
+                const termExams = completedExams.filter((e: any) => (e.term || "first") === term);
+                if (termExams.length === 0) return null;
+                return (
+                  <div key={term}>
+                    <h3 className="text-lg font-semibold mb-3 border-b pb-2">{label}</h3>
+                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                      {termExams.map(renderExamCard)}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </TabsContent>
 
         {/* History Tab */}

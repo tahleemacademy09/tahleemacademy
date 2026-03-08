@@ -590,6 +590,7 @@ export type Database = {
           show_results_immediately: boolean | null
           start_date: string | null
           tab_switch_limit: number | null
+          term: string | null
           time_limit_minutes: number | null
           title: string
           title_ar: string | null
@@ -624,6 +625,7 @@ export type Database = {
           show_results_immediately?: boolean | null
           start_date?: string | null
           tab_switch_limit?: number | null
+          term?: string | null
           time_limit_minutes?: number | null
           title: string
           title_ar?: string | null
@@ -658,6 +660,7 @@ export type Database = {
           show_results_immediately?: boolean | null
           start_date?: string | null
           tab_switch_limit?: number | null
+          term?: string | null
           time_limit_minutes?: number | null
           title?: string
           title_ar?: string | null

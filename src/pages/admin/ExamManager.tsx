@@ -16,6 +16,7 @@ const ExamManager = () => {
   const [exams, setExams] = useState<any[]>([]);
   const [assignmentCounts, setAssignmentCounts] = useState<Record<string, number>>({});
   const [attemptCounts, setAttemptCounts] = useState<Record<string, number>>({});
+  const [termFilter, setTermFilter] = useState<string>("all");
 
   const fetchExams = async () => {
     const { data } = await supabase.from("exams").select("*, exam_questions(id)").order("created_at", { ascending: false });
@@ -82,7 +83,27 @@ const ExamManager = () => {
         </Button>
       </div>
 
-      {exams.length === 0 ? (
+      {/* Term Filter Bar */}
+      <div className="mb-4 flex items-center gap-2 flex-wrap">
+        {[
+          { value: "all", label: t("All Terms", "جميع الفصول") },
+          { value: "first", label: t("First Term / الفصل الأول", "الفصل الأول") },
+          { value: "second", label: t("Second Term / الفصل الثاني", "الفصل الثاني") },
+          { value: "third", label: t("Third Term / الفصل الثالث", "الفصل الثالث") },
+        ].map((f) => (
+          <Button
+            key={f.value}
+            variant={termFilter === f.value ? "default" : "outline"}
+            size="sm"
+            className={termFilter === f.value ? "bg-emerald-600 hover:bg-emerald-700 text-white" : ""}
+            onClick={() => setTermFilter(f.value)}
+          >
+            {f.label}
+          </Button>
+        ))}
+      </div>
+
+      {exams.filter(e => termFilter === "all" || (e as any).term === termFilter).length === 0 ? (
         <Card>
           <CardContent className="p-8 text-center text-muted-foreground">
             {t("No exams yet. Create your first exam!", "لا توجد امتحانات بعد. أنشئ امتحانك الأول!")}
@@ -90,7 +111,7 @@ const ExamManager = () => {
         </Card>
       ) : (
         <div className="space-y-3">
-          {exams.map((exam) => (
+          {exams.filter(e => termFilter === "all" || (e as any).term === termFilter).map((exam) => (
             <Card key={exam.id} className="hover:shadow-sm transition-shadow">
               <CardContent className="flex items-center justify-between p-4 flex-wrap gap-3">
                 <div className="flex-1 min-w-0">
