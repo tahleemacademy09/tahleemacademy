@@ -127,6 +127,26 @@ const ExamManager = () => {
         ))}
       </div>
 
+      {/* Level Filter */}
+      <div className="mb-4 flex items-center gap-2 flex-wrap">
+        {[
+          { value: "all", label: t("All Levels", "جميع المستويات") },
+          { value: "beginner", label: t("Beginner", "مبتدئ") },
+          { value: "intermediate", label: t("Intermediate", "متوسط") },
+          { value: "advanced", label: t("Advanced", "متقدم") },
+        ].map((f) => (
+          <Button
+            key={f.value}
+            variant={levelFilter === f.value ? "default" : "outline"}
+            size="sm"
+            className={levelFilter === f.value ? "bg-violet-600 hover:bg-violet-700 text-white" : ""}
+            onClick={() => setLevelFilter(f.value)}
+          >
+            {f.label}
+          </Button>
+        ))}
+      </div>
+
       {filtered.length === 0 ? (
         <Card>
           <CardContent className="p-8 text-center text-muted-foreground">
