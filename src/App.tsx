@@ -170,6 +170,7 @@ const App = () => (
                 <Route path="/admin/entrance-exam" element={<EntranceExamAdmin />} />
                 <Route path="/admin/transcripts" element={<TranscriptManagement />} />
                 <Route path="/admin/attendance" element={<AttendanceManagement />} />
+                <Route path="/admin/payments" element={<PaymentManagement />} />
               </Route>
 
               <Route path="*" element={<NotFound />} />

@@ -164,7 +164,7 @@ const PaymentScreen = () => {
       .from("payments" as any)
       .select("id")
       .eq("paystack_reference", reference)
-      .single();
+      .single() as any;
 
     await supabase.from("student_subscriptions" as any).insert({
       student_id: user!.id,
