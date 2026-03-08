@@ -5,6 +5,13 @@ import { supabase } from "@/integrations/supabase/client";
 const Index = () => {
   const navigate = useNavigate();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [liveClass, setLiveClass] = useState<{ title: string; room_code: string } | null>(null);
+
+  useEffect(() => {
+    supabase.from("public_classes").select("title, room_code").eq("status", "live").eq("is_featured", true).limit(1).then(({ data }) => {
+      if (data && data.length > 0) setLiveClass(data[0] as { title: string; room_code: string });
+    });
+  }, []);
 
   useEffect(() => {
     // Inject Google Fonts
