@@ -119,146 +119,154 @@ const Transcripts = () => {
         doc.addFont("Amiri-Regular.ttf", "Amiri", "normal");
         doc.setFont("Amiri");
       } catch {
-        toast({ title: t("Warning: Arabic font could not be loaded. Using fallback.", "تحذير: تعذر تحميل الخط العربي. سيتم استخدام خط بديل."), variant: "destructive" });
+        toast({ title: t("Warning: Arabic font could not be loaded.", "تحذير: تعذر تحميل الخط العربي."), variant: "destructive" });
         doc.setFont("helvetica");
       }
 
-      const pageWidth = 210;
-      const margin = 15;
-      let y = 15;
-
-      // Background color
-      doc.setFillColor(250, 250, 248);
-      doc.rect(0, 0, pageWidth, 297, "F");
+      const pw = 210;
+      const m = 20;
+      const cw = pw - m * 2;
+      let y = 20;
 
       // Header
-      doc.setFontSize(12);
-      doc.setTextColor(6, 78, 59);
-      doc.text("بسم الله الرحمن الرحيم", pageWidth / 2, y, { align: "center" });
-      y += 10;
-
-      doc.setFontSize(16);
-      doc.text("أكاديمية التعليم", pageWidth / 2, y, { align: "center" });
-      y += 6;
-      doc.setFontSize(11);
-      doc.text("TAHLEEM ACADEMY", pageWidth / 2, y, { align: "center" });
+      doc.setFontSize(20);
+      doc.setTextColor(0, 0, 0);
+      doc.text("أكاديمية التعليم", pw / 2, y, { align: "center" });
       y += 8;
-
-      // Gold line
-      doc.setDrawColor(212, 175, 55);
-      doc.setLineWidth(0.5);
-      doc.line(margin, y, pageWidth - margin, y);
-      y += 6;
-
       doc.setFontSize(14);
-      doc.text("صحيفة النتائج الأكاديمية", pageWidth / 2, y, { align: "center" });
-      y += 5;
-      doc.setFontSize(10);
-      doc.text("(لفصلين دراسيين)", pageWidth / 2, y, { align: "center" });
+      doc.text("TAHLEEM ACADEMY", pw / 2, y, { align: "center" });
       y += 10;
 
-      // Student info grid
+      // Title box
+      doc.setDrawColor(42, 122, 42);
+      doc.setLineWidth(0.6);
+      doc.rect(pw / 2 - 45, y - 5, 90, 12);
+      doc.setFontSize(11);
+      doc.text("كشف نتائج الطلبة", pw / 2 + 20, y + 2, { align: "center" });
+      doc.text("Student Report Sheet.", pw / 2 - 20, y + 2, { align: "center" });
+      y += 14;
+
+      // Info fields
       doc.setFontSize(10);
-      doc.setTextColor(30, 30, 30);
-      const infoX = pageWidth - margin;
-      doc.text(`اسم الطالب / الطالبة: ${profile?.full_name || "---"}`, infoX, y, { align: "right" });
-      doc.text(`العام الدراسي: ${hijriYear} هـ / ${currentYear} م`, margin + 80, y);
-      y += 6;
-      doc.text(`المرحلة الدراسية / الصف: ---`, infoX, y, { align: "right" });
-      doc.text(`عدد المقررات: ${exams.length}`, margin + 80, y);
-      y += 10;
-
-      // Helper to draw semester table
-      const drawSemTable = (title: string, data: GradedExam[], startY: number): number => {
-        let sy = startY;
-        doc.setFontSize(11);
-        doc.setTextColor(6, 78, 59);
-        doc.text(title, pageWidth / 2, sy, { align: "center" });
-        sy += 6;
-
-        // Table header
-        const cols = [
-          { label: "المادة", x: pageWidth - margin, w: 45 },
-          { label: "أعمال السنة (30)", x: pageWidth - margin - 45, w: 25 },
-          { label: "الامتحان النهائي (70)", x: pageWidth - margin - 70, w: 25 },
-          { label: "المجموع (100)", x: pageWidth - margin - 95, w: 20 },
-          { label: "التقدير", x: pageWidth - margin - 115, w: 20 },
-          { label: "النقاط (GP)", x: pageWidth - margin - 135, w: 20 },
-        ];
-
-        doc.setFillColor(6, 78, 59);
-        doc.rect(margin, sy - 4, pageWidth - margin * 2, 7, "F");
-        doc.setFontSize(8);
-        doc.setTextColor(255, 255, 255);
-        cols.forEach(c => doc.text(c.label, c.x, sy, { align: "right" }));
-        sy += 6;
-        doc.setTextColor(30, 30, 30);
-
-        data.forEach((e) => {
-          if (sy > 270) { doc.addPage(); sy = 20; }
-          const coursework = Math.round(e.percentage * 0.3);
-          const finalExam = Math.round(e.percentage * 0.7);
-          const gp = gradePoint(e.percentage);
-          doc.setFontSize(8);
-          doc.text(e.title_ar || e.title, cols[0].x, sy, { align: "right" });
-          doc.text(String(coursework), cols[1].x, sy, { align: "right" });
-          doc.text(String(finalExam), cols[2].x, sy, { align: "right" });
-          doc.text(String(Math.round(e.percentage)), cols[3].x, sy, { align: "right" });
-          doc.text(gradeLabel(gp), cols[4].x, sy, { align: "right" });
-          doc.text(gp.toFixed(1), cols[5].x, sy, { align: "right" });
-          sy += 5;
-          doc.setDrawColor(230, 230, 225);
-          doc.line(margin, sy - 2, pageWidth - margin, sy - 2);
-        });
-
-        if (data.length === 0) {
-          doc.setFontSize(9);
-          doc.text("لا توجد مقررات", pageWidth / 2, sy, { align: "center" });
-          sy += 6;
-        }
-
-        return sy;
+      doc.setTextColor(0, 0, 0);
+      const infoR = pw - m;
+      const drawInfoLine = (labelAr: string, value: string, x: number, yy: number) => {
+        doc.text(labelAr, x, yy, { align: "right" });
+        const labelW = doc.getTextWidth(labelAr);
+        const lineStart = x - labelW - 2;
+        doc.text(value, lineStart - 2, yy, { align: "right" });
+        doc.setDrawColor(0);
+        doc.setLineWidth(0.3);
+        doc.line(lineStart - 60, yy + 1, lineStart - 1, yy + 1);
       };
 
-      y = drawSemTable("الفصل الدراسي الأول", sem1, y);
-      y += 4;
-      doc.setFontSize(9);
-      doc.text(`المعدل الفصلي: ${sem1GP.toFixed(2)}`, pageWidth - margin, y, { align: "right" });
-      y += 5;
-      doc.text(`ملاحظات: ${sem1GP >= 3.5 ? "ممتاز، واصل تقدمك" : sem1GP >= 2.0 ? "جيد، يمكنك تحسين مستواك" : "يحتاج تحسين"}`, pageWidth - margin, y, { align: "right" });
-      y += 10;
-
-      y = drawSemTable("الفصل الدراسي الثاني", sem2, y);
-      y += 4;
-      doc.setFontSize(9);
-      doc.text(`المعدل الفصلي: ${sem2GP.toFixed(2)}`, pageWidth - margin, y, { align: "right" });
-      y += 5;
-      doc.text(`ملاحظات: ${sem2GP >= 3.5 ? "ممتاز، واصل تقدمك" : sem2GP >= 2.0 ? "جيد، يمكنك تحسين مستواك" : "يحتاج تحسين"}`, pageWidth - margin, y, { align: "right" });
+      drawInfoLine("اسم الطالب(ة)", profile?.full_name || "---", infoR, y);
+      drawInfoLine("العام الدراسي", `${hijriYear} هـ / ${currentYear} م`, pw / 2 - 5, y);
+      y += 7;
+      const levelText = profile?.level === "beginner" ? "المبتدئة" : profile?.level === "intermediate" ? "المتوسطة" : profile?.level || "---";
+      drawInfoLine("المرحلة", levelText, infoR, y);
+      drawInfoLine("عدد المواد", String(exams.length), pw / 2 - 5, y);
+      y += 7;
+      drawInfoLine("التاريخ", new Date().toLocaleDateString("ar-SA"), infoR, y);
+      drawInfoLine("الحالة", cgpa >= 2.0 ? "منتظمة" : "تحت المراقبة", pw / 2 - 5, y);
       y += 12;
 
-      // CGPA Section
-      doc.setDrawColor(212, 175, 55);
-      doc.setLineWidth(0.5);
-      doc.line(margin, y, pageWidth - margin, y);
+      // Section title
+      doc.setFontSize(14);
+      doc.text("الفترة الأولى", m + 5, y, { align: "left" });
       y += 8;
-      doc.setFontSize(12);
-      doc.setTextColor(6, 78, 59);
-      doc.text(`المعدل التراكمي العام (CGPA): ${cgpa.toFixed(2)}`, pageWidth / 2, y, { align: "center" });
-      y += 7;
-      doc.text(`النتيجة النهائية: ${gradeLabel(cgpa)}`, pageWidth / 2, y, { align: "center" });
-      y += 14;
 
-      // Signatures
+      // Table
+      const colWidths = [45, 22, 22, 22, 16, 16, 22];
+      const totalW = colWidths.reduce((a, b) => a + b, 0);
+      const tableX = pw - m; // RTL start from right
+
+      // Header row
+      const headers = [
+        ["المواد", "Subject"],
+        ["التمرينات (٣٠)", "Test"],
+        ["الإمتحانات (٧٠)", "Exam"],
+        ["المجموع الكلي (١٠٠)", "Total"],
+        ["%", "%"],
+        ["GP", "GP"],
+        ["النتيجة", "Result"],
+      ];
+
+      const rowH = 10;
+      let cx = tableX;
+      doc.setFontSize(7);
+      doc.setDrawColor(51, 51, 51);
+      doc.setLineWidth(0.4);
+
+      // Draw header cells
+      headers.forEach((h, i) => {
+        const w = colWidths[i];
+        doc.rect(cx - w, y, w, rowH);
+        doc.text(h[0], cx - w / 2, y + 4, { align: "center" });
+        doc.text(h[1], cx - w / 2, y + 8, { align: "center" });
+        cx -= w;
+      });
+      y += rowH;
+
+      // Data rows
+      const dataRowH = 8;
+      const rows = Math.max(10, exams.length);
+      for (let i = 0; i < rows; i++) {
+        cx = tableX;
+        const e = exams[i];
+        const coursework = e ? Math.round(e.percentage * 0.3) : "";
+        const finalExam = e ? Math.round(e.percentage * 0.7) : "";
+        const total = e ? Number(coursework) + Number(finalExam) : "";
+        const gp = e ? gradePoint(e.percentage).toFixed(1) : "";
+        const result = e ? (e.passed ? "Pass ✓" : "Fail ✗") : "";
+        const pct = e ? `${total}%` : "";
+        const subject = e ? (e.title_ar || e.title) : "";
+        const vals = [subject, String(coursework), String(finalExam), String(total), pct, gp, result];
+
+        vals.forEach((v, j) => {
+          const w = colWidths[j];
+          doc.rect(cx - w, y, w, dataRowH);
+          if (v) {
+            doc.setFontSize(7);
+            if (j === 6 && e) {
+              doc.setTextColor(e.passed ? 42 : 192, e.passed ? 122 : 57, e.passed ? 42 : 43);
+            } else {
+              doc.setTextColor(0, 0, 0);
+            }
+            doc.text(v, cx - w / 2, y + 5.5, { align: "center" });
+          }
+          cx -= w;
+        });
+        y += dataRowH;
+      }
+      doc.setTextColor(0, 0, 0);
+      y += 6;
+
+      // Summary table
+      const totalObtainable = exams.length * 100;
+      const totalObtained = exams.reduce((s, e) => s + Math.round(e.percentage), 0);
+      const summaryRows = [
+        ["Marks Obtainable", String(totalObtainable || ""), "Marks Obtained", String(totalObtained || "")],
+        ["Cgpa", exams.length > 0 ? cgpa.toFixed(2) : "", "Status", exams.length > 0 ? (cgpa >= 1.0 ? "Pass ✓" : "Fail ✗") : ""],
+        ["Comment", exams.length > 0 ? (cgpa >= 3.5 ? "Outstanding" : cgpa >= 2.0 ? "Hardworking" : "Needs improvement") : "", "Signature", ""],
+      ];
+
+      const sColW = cw / 4;
       doc.setFontSize(9);
-      doc.setTextColor(80, 80, 80);
-      doc.text("توقيع رائد الفصل: _______________", pageWidth - margin, y, { align: "right" });
-      doc.text("توقيع مدير الأكاديمية (مع الختم): _______________", margin, y);
-      y += 14;
-
-      // Closing dua
-      doc.setFontSize(11);
-      doc.setTextColor(6, 78, 59);
-      doc.text("وبالله التوفيق", pageWidth / 2, y, { align: "center" });
+      summaryRows.forEach((row) => {
+        let sx = m;
+        row.forEach((cell, ci) => {
+          doc.rect(sx, y, sColW, 8);
+          if (ci % 2 === 0) {
+            doc.setFont("Amiri", "normal");
+            doc.text(cell, sx + 3, y + 5.5);
+          } else {
+            doc.text(cell, sx + sColW / 2, y + 5.5, { align: "center" });
+          }
+          sx += sColW;
+        });
+        y += 8;
+      });
 
       doc.save(`Transcript-${profile?.full_name || "student"}.pdf`);
       toast({ title: t("PDF downloaded successfully", "تم تحميل الملف بنجاح") });
