@@ -421,7 +421,7 @@ const Index = () => {
           <div className="ta-cta-arabic">اطلبوا العلم من المهد إلى اللحد</div>
           <h2 className="ta-cta-title">Begin Your Journey Today</h2>
           <p className="ta-cta-text">Join Tahleem Academy and take your first step towards mastering Arabic and Islamic knowledge — guided by qualified scholars.</p>
-          <button className="ta-cta-btn" onClick={() => navigate("/auth")}>Create Free Account →</button>
+          <button className="ta-cta-btn" onClick={() => navigate("/register")}>Create Free Account →</button>
         </div>
       </section>
 
