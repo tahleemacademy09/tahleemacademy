@@ -109,7 +109,7 @@ const MuallimOverlay = () => {
   // Reduced size (30% smaller): 10 → 7, h-14 → h-10, w-14 → w-10
   // Position: LTR → bottom-left, RTL → bottom-right
   // z-index: 40 (above content, below modals at 50)
-  const btnPosition = dir === "rtl" ? "right-5 bottom-5" : "left-5 bottom-5";
+  const btnPosition = dir === "rtl" ? "right-5 bottom-20" : "left-5 bottom-20";
   const panelPosition = dir === "rtl" ? "right-4 bottom-4" : "left-4 bottom-4";
 
   return (
