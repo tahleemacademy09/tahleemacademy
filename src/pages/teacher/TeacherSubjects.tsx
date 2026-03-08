@@ -24,7 +24,7 @@ const TeacherSubjects = () => {
     const fetch = async () => {
       const { data } = await supabase.from("subjects").select("*").eq("teacher_id", user.id);
       const subs = data || [];
-      // Enrich with counts
+      const counts: Record<string, any> = {};
       for (const sub of subs) {
         const { data: courses } = await supabase.from("courses").select("id").eq("subject_id", sub.id);
         const courseIds = (courses || []).map((c: any) => c.id);
@@ -35,11 +35,15 @@ const TeacherSubjects = () => {
         const { data: examsData } = courseIds.length > 0
           ? await supabase.from("exams").select("id, type").in("course_id", courseIds)
           : { data: [] };
-        sub.studentCount = studentCount || 0;
-        sub.recordingCount = recordingCount || 0;
-        sub.examCount = (examsData || []).filter((e: any) => (e.type || "exam") === "exam").length;
-        sub.testCount = (examsData || []).filter((e: any) => e.type === "test").length;
+        counts[sub.id] = {
+          studentCount: studentCount || 0,
+          recordingCount: recordingCount || 0,
+          examCount: (examsData || []).filter((e: any) => (e.type || "exam") === "exam").length,
+          testCount: (examsData || []).filter((e: any) => e.type === "test").length,
+        };
       }
+      setSubjectCounts(counts);
+      setSubjects(subs);
       setSubjects(subs);
       setLoading(false);
     };
