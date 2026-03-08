@@ -51,6 +51,7 @@ const generateRoomCode = () => {
 const PublicClassManagement = () => {
   const { user } = useAuth();
   const { t } = useLanguage();
+  const navigate = useNavigate();
   const [classes, setClasses] = useState<PublicClass[]>([]);
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
