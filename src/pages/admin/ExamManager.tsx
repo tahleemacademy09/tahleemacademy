@@ -18,6 +18,7 @@ const ExamManager = () => {
   const [attemptCounts, setAttemptCounts] = useState<Record<string, number>>({});
   const [termFilter, setTermFilter] = useState<string>("all");
   const [typeFilter, setTypeFilter] = useState<string>("all");
+  const [levelFilter, setLevelFilter] = useState<string>("all");
 
   const fetchExams = async () => {
     const { data } = await supabase.from("exams").select("*, exam_questions(id)").order("created_at", { ascending: false });
@@ -75,6 +76,7 @@ const ExamManager = () => {
   const filtered = exams.filter(e => {
     if (termFilter !== "all" && (e as any).term !== termFilter) return false;
     if (typeFilter !== "all" && ((e as any).type || "exam") !== typeFilter) return false;
+    if (levelFilter !== "all" && ((e as any).level || "") !== levelFilter) return false;
     return true;
   });
 
@@ -125,6 +127,26 @@ const ExamManager = () => {
         ))}
       </div>
 
+      {/* Level Filter */}
+      <div className="mb-4 flex items-center gap-2 flex-wrap">
+        {[
+          { value: "all", label: t("All Levels", "جميع المستويات") },
+          { value: "beginner", label: t("Beginner", "مبتدئ") },
+          { value: "intermediate", label: t("Intermediate", "متوسط") },
+          { value: "advanced", label: t("Advanced", "متقدم") },
+        ].map((f) => (
+          <Button
+            key={f.value}
+            variant={levelFilter === f.value ? "default" : "outline"}
+            size="sm"
+            className={levelFilter === f.value ? "bg-violet-600 hover:bg-violet-700 text-white" : ""}
+            onClick={() => setLevelFilter(f.value)}
+          >
+            {f.label}
+          </Button>
+        ))}
+      </div>
+
       {filtered.length === 0 ? (
         <Card>
           <CardContent className="p-8 text-center text-muted-foreground">
@@ -150,6 +172,11 @@ const ExamManager = () => {
                       <Badge variant="outline" className="text-xs">
                         {examType === "test" ? "30" : "70"} {t("marks", "درجة")}
                       </Badge>
+                      {(exam as any).level && (
+                        <Badge variant="outline" className="text-xs border-violet-500 text-violet-600 bg-violet-500/10">
+                          {(exam as any).level === "beginner" ? t("Beginner", "مبتدئ") : (exam as any).level === "intermediate" ? t("Intermediate", "متوسط") : t("Advanced", "متقدم")}
+                        </Badge>
+                      )}
                     </div>
                     <div className="mt-1 flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
                       <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> {exam.time_limit_minutes} {t("min", "دقيقة")}</span>

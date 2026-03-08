@@ -1028,6 +1028,7 @@ export type Database = {
           id: string
           is_entrance: boolean | null
           is_published: boolean | null
+          level: string | null
           max_attempts: number | null
           max_review_views: number | null
           max_warnings: number | null
@@ -1080,6 +1081,7 @@ export type Database = {
           id?: string
           is_entrance?: boolean | null
           is_published?: boolean | null
+          level?: string | null
           max_attempts?: number | null
           max_review_views?: number | null
           max_warnings?: number | null
@@ -1132,6 +1134,7 @@ export type Database = {
           id?: string
           is_entrance?: boolean | null
           is_published?: boolean | null
+          level?: string | null
           max_attempts?: number | null
           max_review_views?: number | null
           max_warnings?: number | null
