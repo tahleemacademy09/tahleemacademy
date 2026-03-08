@@ -6,7 +6,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   Search, Plus, MessageCircle, Users, GraduationCap, Megaphone,
-  Hash, Globe, ChevronDown, ChevronRight
+  Hash, Globe, ChevronDown, ChevronRight, BarChart3
 } from "lucide-react";
 import type { ChatChannel, UserProfile } from "./types";
 
