@@ -14,7 +14,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useNavigate } from "react-router-dom";
 import {
   Search, Users, Eye, BarChart, FileText, Calendar, MessageSquare,
-  StickyNote, CheckCircle, XCircle, GraduationCap, Mail
+  StickyNote, CheckCircle, XCircle, GraduationCap, Mail, Bell, UserPlus, UserMinus
 } from "lucide-react";
 
 const TeacherStudents = () => {
