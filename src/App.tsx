@@ -18,6 +18,9 @@ import Login from "./pages/Login";
 import Register from "./pages/Register";
 import AdminLogin from "./pages/AdminLogin";
 import ResetPassword from "./pages/ResetPassword";
+import PublicLiveClasses from "./pages/public/LiveClasses";
+import JoinClass from "./pages/public/JoinClass";
+import GuestClassroom from "./pages/public/GuestClassroom";
 import NotFound from "./pages/NotFound";
 
 import StudentDashboard from "./pages/student/StudentDashboard";
