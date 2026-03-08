@@ -197,7 +197,8 @@ const EntranceExamTaking = () => {
   const isWarning = timeLeft < 60;
 
   return (
-    <div className="min-h-screen" style={{ background: "linear-gradient(180deg, #0f3122 0%, #1a4a35 100%)" }}>
+    <div className="min-h-screen pt-16" style={{ background: "linear-gradient(180deg, #0f3122 0%, #1a4a35 100%)" }}>
+      <StandaloneNav />
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&family=Cairo:wght@400;600;700&display=swap');
         .entrance-exam { font-family: 'Cairo', sans-serif; }
