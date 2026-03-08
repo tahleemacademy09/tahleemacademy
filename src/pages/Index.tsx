@@ -361,32 +361,6 @@ const Index = () => {
             </strong>
             <br />At Tahleem Academy, we honour this sacred duty — nurturing every student's mind, heart and soul through authentic Islamic education.
           </p>
-          <div className="ta-why-grid">
-            <div className="ta-why-card ta-why-card-large">
-              <img src="https://images.unsplash.com/photo-1564769625392-651b89c6a4b2?w=800&q=80" alt="Quran" />
-              <div className="ta-why-card-body">
-                <div className="ta-why-card-icon">📖</div>
-                <div className="ta-why-card-title">القرآن الكريم — Quran & Tajweed</div>
-                <div className="ta-why-card-text">The Quran is the speech of Allah ﷻ. Learn to recite it beautifully with correct Tajweed from certified Huffadh who have memorised the Book of Allah.</div>
-              </div>
-            </div>
-            <div className="ta-why-card">
-              <img src="https://images.unsplash.com/photo-1519817650390-64a93db51149?w=600&q=80" alt="Mosque" />
-              <div className="ta-why-card-body">
-                <div className="ta-why-card-icon">🕌</div>
-                <div className="ta-why-card-title">العلوم الإسلامية — Islamic Sciences</div>
-                <div className="ta-why-card-text">Deepen your Iman through Fiqh, Aqeedah, Seerah and Hadith — knowledge grounded in the Quran and Sunnah of the Prophet ﷺ.</div>
-              </div>
-            </div>
-            <div className="ta-why-card">
-              <img src="https://images.unsplash.com/photo-1579187707643-35646d22b596?w=600&q=80" alt="Arabic calligraphy" />
-              <div className="ta-why-card-body">
-                <div className="ta-why-card-icon">✍️</div>
-                <div className="ta-why-card-title">اللغة العربية — Arabic Language</div>
-                <div className="ta-why-card-text">Arabic is the language of the Quran. From the first letter to full fluency — reading, writing, Nahw and Sarf taught by passionate native scholars.</div>
-              </div>
-            </div>
-          </div>
         </div>
       </section>
 
