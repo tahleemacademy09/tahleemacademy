@@ -95,12 +95,15 @@ const Transcripts = () => {
   const statusAr = cgpa >= 3.5 ? "وضع جيد" : cgpa >= 2.0 ? "تحذير أكاديمي" : cgpa > 0 ? "إنذار أكاديمي" : "لا توجد بيانات";
   const statusColor = cgpa >= 3.5 ? "default" : cgpa >= 2.0 ? "secondary" : "destructive";
 
-  // Split exams into 2 semesters
-  const mid = Math.ceil(exams.length / 2);
-  const sem1 = exams.slice(0, mid);
-  const sem2 = exams.slice(mid);
-  const sem1GP = sem1.length > 0 ? sem1.reduce((s, e) => s + gradePoint(e.percentage), 0) / sem1.length : 0;
-  const sem2GP = sem2.length > 0 ? sem2.reduce((s, e) => s + gradePoint(e.percentage), 0) / sem2.length : 0;
+  // Split exams into 3 terms
+  const termSize = Math.ceil(exams.length / 3);
+  const term1 = exams.slice(0, termSize);
+  const term2 = exams.slice(termSize, termSize * 2);
+  const term3 = exams.slice(termSize * 2);
+
+  const termNames = ["الفترة الأولى", "الفترة الثانية", "الفترة الثالثة"];
+  const termNamesEn = ["First Term", "Second Term", "Third Term"];
+  const terms = [term1, term2, term3];
 
   const currentYear = new Date().getFullYear();
   const hijriYear = currentYear - 579;
