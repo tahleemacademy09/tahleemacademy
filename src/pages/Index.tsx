@@ -5,6 +5,7 @@ import arabicLanguageImg from "@/assets/arabic-language.jpeg";
 
 const Index = () => {
   const navigate = useNavigate();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     // Inject Google Fonts
