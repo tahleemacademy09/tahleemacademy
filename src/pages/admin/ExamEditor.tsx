@@ -98,6 +98,7 @@ const ExamEditor = () => {
     auto_submit_on_violation: false,
     screenshot_interval_seconds: 0,
     term: "first",
+    max_review_views: 1,
   });
   const [questions, setQuestions] = useState<QuestionForm[]>([emptyQuestion()]);
   const [saving, setSaving] = useState(false);
