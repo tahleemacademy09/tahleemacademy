@@ -26,7 +26,7 @@ const AdminDashboard = () => {
 
   useEffect(() => {
     const fetchStats = async () => {
-      const [studentsRes, examsRes, coursesRes, attemptsRes, pendingRes, recentRes, profilesRes, activeRes, violationsRes, activityRes] = await Promise.all([
+      const [studentsRes, examsRes, coursesRes, attemptsRes, pendingRes, recentRes, profilesRes, activeRes, violationsRes, activityRes, privateStudentsRes, privateSessionsRes] = await Promise.all([
         supabase.from("profiles").select("id", { count: "exact", head: true }),
         supabase.from("exams").select("id", { count: "exact", head: true }),
         supabase.from("courses").select("id", { count: "exact", head: true }),
@@ -37,12 +37,20 @@ const AdminDashboard = () => {
         supabase.from("exam_attempts").select("id", { count: "exact", head: true }).eq("status", "in_progress"),
         supabase.from("violations").select("id", { count: "exact", head: true }),
         supabase.from("activity_logs").select("*").order("created_at", { ascending: false }).limit(8),
+        supabase.from("profiles").select("user_id, full_name, email, assigned_teacher_id, private_session_rate").eq("student_type", "private"),
+        supabase.from("private_sessions").select("id", { count: "exact", head: true }),
       ]);
 
       const profiles = profilesRes.data || [];
       const merged = (recentRes.data || []).map((a: any) => ({
         ...a,
         profiles: profiles.find((p) => p.user_id === a.user_id) || {},
+      }));
+
+      // Map teacher names for private students
+      const pvtStudents = (privateStudentsRes.data || []).map((s: any) => ({
+        ...s,
+        teacher_name: profiles.find(p => p.user_id === s.assigned_teacher_id)?.full_name || "—",
       }));
 
       setStats({
@@ -54,9 +62,12 @@ const AdminDashboard = () => {
         activeExams: activeRes.count || 0,
         activeStudents: activeRes.count || 0,
         violations: violationsRes.count || 0,
+        privateStudents: privateStudentsRes.data?.length || 0,
+        privateSessions: privateSessionsRes.count || 0,
       });
       setRecentSubmissions(merged);
       setRecentActivity(activityRes.data || []);
+      setPrivateStudentsList(pvtStudents);
       setLoading(false);
     };
     fetchStats();
