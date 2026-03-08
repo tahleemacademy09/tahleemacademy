@@ -152,7 +152,9 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
           <div className="w-10" /> {/* Spacer for centering */}
         </div>
 
+        <HolidayBanner />
         {role === "student" && <PaymentBanner />}
+        {role === "admin" && <AdminPaymentIndicator />}
         <main className="flex-1 overflow-auto">
           <Outlet />
         </main>
