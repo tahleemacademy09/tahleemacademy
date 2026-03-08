@@ -121,6 +121,53 @@ const PublicClassManagement = () => {
     fetchClasses();
   };
 
+  const goLiveAndJoin = async (cls: PublicClass) => {
+    // Set class to live
+    await supabase.from("public_classes").update({
+      status: "live",
+      actual_start_time: new Date().toISOString(),
+    }).eq("id", cls.id);
+
+    // Get LiveKit token as host
+    try {
+      const session = await supabase.auth.getSession();
+      const accessToken = session.data.session?.access_token;
+      const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
+
+      const res = await fetch(`https://${projectId}.supabase.co/functions/v1/public-class-token`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "apikey": import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+          "Authorization": `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          room_code: cls.room_code,
+          guest_name: user?.user_metadata?.full_name || "Teacher",
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || "Failed to get classroom token");
+        return;
+      }
+
+      navigate(`/live/${cls.room_code}/classroom`, {
+        state: {
+          token: data.token,
+          url: data.url,
+          room: data.room,
+          guestName: data.participant_name,
+          classTitle: cls.title,
+          classTitleAr: cls.title_ar,
+          isHost: true,
+        },
+      });
+    } catch {
+      toast.error("Failed to connect to classroom");
+    }
+  };
+
   const deleteClass = async (id: string) => {
     if (!confirm("Delete this public class?")) return;
     await supabase.from("public_classes").delete().eq("id", id);
