@@ -8,8 +8,10 @@ import {
   BookOpen, LayoutDashboard, ClipboardList, Users, LogOut, Globe,
   CheckSquare, BarChart, UserCircle, Library, GraduationCap, MessageCircle,
   Menu, Video, Mic, Settings, Shield, Layers, FileText, UserCheck, BookMarked,
+  CreditCard,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import PaymentBanner from "./PaymentBanner";
 
 interface DashboardLayoutProps {
   role: "student" | "admin";
