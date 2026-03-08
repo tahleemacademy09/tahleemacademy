@@ -304,7 +304,14 @@ const StudentManagement = () => {
                     <User className="h-5 w-5 text-primary" />
                   </div>
                   <div>
-                    <div className="font-medium">{student.full_name || t("Unnamed", "بدون اسم")}</div>
+                    <div className="font-medium flex items-center gap-2">
+                      {student.full_name || t("Unnamed", "بدون اسم")}
+                      {student.student_type === "private" ? (
+                        <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-[#D4AF37]/20 text-[#D4AF37] border border-[#D4AF37]/30">Private</span>
+                      ) : (
+                        <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200">Group</span>
+                      )}
+                    </div>
                     <div className="flex items-center gap-3 text-xs text-muted-foreground">
                       {student.email && <span className="flex items-center gap-1"><Mail className="h-3 w-3" />{student.email}</span>}
                       <span className="flex items-center gap-1"><Calendar className="h-3 w-3" />{new Date(student.created_at).toLocaleDateString()}</span>
