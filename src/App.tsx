@@ -103,6 +103,7 @@ const App = () => (
                 <Route path="/admin/grading" element={<GradingPage />} />
                 <Route path="/admin/question-bank" element={<QuestionBank />} />
                 <Route path="/admin/proctoring" element={<ProctoringDashboard />} />
+                <Route path="/admin/private-sessions" element={<PrivateSessions />} />
                 <Route path="/admin/students" element={<StudentManagement />} />
               </Route>
 

@@ -41,6 +41,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     { to: "/admin/question-bank", icon: Library, label: t("Question Bank", "بنك الأسئلة") },
     { to: "/admin/students", icon: Users, label: t("Students", "الطلاب") },
     { to: "/admin/grading", icon: CheckSquare, label: t("Grading", "التصحيح") },
+    { to: "/admin/private-sessions", icon: UserCheck, label: t("Private Sessions", "الجلسات الخاصة") },
     { to: "/admin/proctoring", icon: BarChart, label: t("Proctoring", "المراقبة") },
   ];
 
