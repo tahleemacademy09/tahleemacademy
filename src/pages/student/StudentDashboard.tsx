@@ -59,6 +59,9 @@ const StudentDashboard = () => {
   const [notifications, setNotifications] = useState<any[]>([]);
   const [liveSubjects, setLiveSubjects] = useState<any[]>([]);
   const [assignments, setAssignments] = useState<any[]>([]);
+  const [allExamsForCalendar, setAllExamsForCalendar] = useState<any[]>([]);
+  const [subjectAssignments, setSubjectAssignments] = useState<any[]>([]);
+  const [calendarMonth, setCalendarMonth] = useState(new Date());
 
   const dayOfYear = Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0).getTime()) / 86400000);
   const dailyVerse = VERSES[dayOfYear % VERSES.length];
