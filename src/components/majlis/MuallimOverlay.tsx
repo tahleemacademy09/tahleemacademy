@@ -121,25 +121,35 @@ const MuallimOverlay = () => {
     { icon: BookOpen, label: t("Hifdh score", "درجة الحفظ"), action: "grades", text: "Show my Hifdh exam score if available." },
   ];
 
-  if (!user) return null;
+  if (!user || dismissed) return null;
 
-  // Reduced size (30% smaller): 10 → 7, h-14 → h-10, w-14 → w-10
-  // Position: LTR → bottom-left, RTL → bottom-right
-  // z-index: 40 (above content, below modals at 50)
-  const btnPosition = dir === "rtl" ? "right-5 bottom-20" : "left-5 bottom-20";
-  const panelPosition = dir === "rtl" ? "right-4 bottom-4" : "left-4 bottom-4";
+  const btnPosition = "right-5 bottom-20";
+  const panelPosition = "right-4 bottom-4";
 
   return (
     <>
-      {/* Floating button — 30% reduced */}
+      {/* Floating button with dismiss */}
       {!open && (
-        <button
-          onClick={() => setOpen(true)}
-          className={`fixed ${btnPosition} z-40 flex h-10 w-10 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg hover:scale-105 transition-transform`}
-          aria-label="Open Mu'allim AI"
+        <div
+          className={`fixed ${btnPosition} z-40 flex items-center gap-1.5 transition-all duration-300 ${
+            visible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4 pointer-events-none"
+          }`}
         >
-          <Bot className="h-5 w-5" />
-        </button>
+          <button
+            onClick={() => setDismissed(true)}
+            className="flex h-6 w-6 items-center justify-center rounded-full bg-muted text-muted-foreground shadow hover:bg-destructive hover:text-destructive-foreground transition-colors"
+            aria-label="Dismiss Mu'allim"
+          >
+            <X className="h-3 w-3" />
+          </button>
+          <button
+            onClick={() => setOpen(true)}
+            className="flex h-10 w-10 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg hover:scale-105 transition-transform"
+            aria-label="Open Mu'allim AI"
+          >
+            <Bot className="h-5 w-5" />
+          </button>
+        </div>
       )}
 
       {/* Overlay panel */}
