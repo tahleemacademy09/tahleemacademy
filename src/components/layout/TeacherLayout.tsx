@@ -34,6 +34,7 @@ const TeacherLayout = () => {
         { to: "/teacher/classes", icon: Video, label: t("Live Classes", "الفصول المباشرة") },
         { to: "/teacher/recordings", icon: Mic, label: t("Recordings", "التسجيلات") },
         { to: "/teacher/private-sessions", icon: Calendar, label: t("Private Sessions", "الجلسات الخاصة") },
+        { to: "/teacher/public-classes", icon: Globe, label: t("Public Classes", "الدروس العامة") },
       ],
     },
     {
