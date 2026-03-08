@@ -39,7 +39,7 @@ const CourseView = () => {
 
   const { data: progress } = useQuery({
     queryKey: ["lesson-progress", courseId, user?.id],
-    enabled: !!user,
+    enabled: !!user && !!lessons?.length,
     queryFn: async () => {
       const lessonIds = (lessons || []).map((l: any) => l.id);
       if (lessonIds.length === 0) return [];
@@ -47,7 +47,6 @@ const CourseView = () => {
       if (error) throw error;
       return data;
     },
-    enabled: !!user && !!lessons?.length,
   });
 
   const completedSet = new Set((progress || []).filter((p: any) => p.completed).map((p: any) => p.lesson_id));
