@@ -424,16 +424,32 @@ const Majlis = () => {
                       isMe ? "rounded-tr-none" : "rounded-tl-none"
                     }`}
                     style={{
-                      backgroundColor: isMe ? "#DCF8C6" : "#FFFFFF",
+                      backgroundColor: (m as any).is_broadcast ? "#FFF8E1" : isMe ? "#DCF8C6" : "#FFFFFF",
                       marginTop: showName || (prevMsg && prevMsg.user_id !== m.user_id) ? "8px" : "2px",
                     }}
+                    onContextMenu={(e) => {
+                      if (isAdmin) {
+                        e.preventDefault();
+                        setContextMenu({ message: m, x: e.clientX, y: e.clientY });
+                      }
+                    }}
                   >
+                    {/* Pinned indicator */}
+                    {(m as any).is_pinned && (
+                      <div className="text-[9px] text-amber-600 mb-0.5">📌 {t("Pinned", "مثبت")}</div>
+                    )}
+
                     {/* Sender name + badges */}
                     {showName && (
                       <div className="flex items-center gap-1.5 mb-0.5">
-                        <p className="text-[11px] font-semibold" style={{ color: "#064E3B" }} dir="auto">
+                        <button
+                          className="text-[11px] font-semibold hover:underline"
+                          style={{ color: "#064E3B" }}
+                          dir="auto"
+                          onClick={() => isAdmin && setProfileCardUserId(m.user_id)}
+                        >
                           {name}
-                        </p>
+                        </button>
                         {getLevelBadge(senderProfile?.level || null)}
                         {getRoleBadge(m.user_id)}
                       </div>
@@ -441,7 +457,9 @@ const Majlis = () => {
 
                     {/* Content */}
                     <div className="text-sm text-gray-900" dir="auto">
-                      {m.content_type === "audio" && m.media_path ? (
+                      {(m as any).content_type === "deleted" ? (
+                        <span className="italic text-muted-foreground text-xs">🚫 {t("This message was deleted", "تم حذف هذه الرسالة")}</span>
+                      ) : m.content_type === "audio" && m.media_path ? (
                         <AudioMessage path={m.media_path} />
                       ) : m.content_type === "image" && m.media_path ? (
                         <ImageMessage path={m.media_path} />
@@ -452,8 +470,14 @@ const Majlis = () => {
                       )}
                     </div>
 
+                    {/* Edited indicator */}
+                    {(m as any).edited_at && (
+                      <span className="text-[9px] text-muted-foreground italic"> ✏️ {t("edited", "معدّل")}</span>
+                    )}
+
                     {/* Time + Read receipts */}
                     <div className="flex items-center gap-1 mt-0.5 justify-end">
+                      {(m as any).is_starred && <Star className="h-3 w-3 text-amber-400" />}
                       <span className="text-[10px] text-gray-500">{formatTime(m.created_at)}</span>
                       {isMe && <CheckCheck className="h-3.5 w-3.5" style={{ color: "#53BDEB" }} />}
                     </div>
