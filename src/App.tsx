@@ -157,6 +157,7 @@ const App = () => (
                 <Route path="/teacher/attendance" element={<TeacherAttendance />} />
                 <Route path="/teacher/announcements" element={<TeacherAnnouncements />} />
                 <Route path="/teacher/settings" element={<TeacherSettings />} />
+                <Route path="/teacher/public-classes" element={<PublicClassManagement />} />
               </Route>
 
               {/* Admin dashboard - requires admin role */}
