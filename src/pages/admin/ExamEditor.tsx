@@ -573,7 +573,7 @@ fill_blank,"The word for 'water' is ___.","كلمة 'ماء' هي ___.",,,,,,,,,
                   <Textarea value={examForm.description_ar} onChange={(e) => setExamForm({ ...examForm, description_ar: e.target.value })} dir="rtl" className="mt-1" />
                 </div>
               </div>
-              <div className="grid gap-4 md:grid-cols-4">
+              <div className="grid gap-4 md:grid-cols-5">
                 <div>
                   <Label>{t("Time Limit (min)", "الحد الزمني (دقيقة)")}</Label>
                   <Input type="number" value={examForm.time_limit_minutes} onChange={(e) => setExamForm({ ...examForm, time_limit_minutes: +e.target.value })} className="mt-1" />
@@ -593,6 +593,17 @@ fill_blank,"The word for 'water' is ___.","كلمة 'ماء' هي ___.",,,,,,,,,
                     <SelectContent>
                       <SelectItem value="one_at_a_time">{t("One at a time", "واحد في كل مرة")}</SelectItem>
                       <SelectItem value="all_at_once">{t("All at once", "الكل مرة واحدة")}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label>{t("Term", "الفصل الدراسي")}</Label>
+                  <Select value={examForm.term} onValueChange={(v) => setExamForm({ ...examForm, term: v })}>
+                    <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="first">{t("First Term / الفصل الأول", "الفصل الأول / First Term")}</SelectItem>
+                      <SelectItem value="second">{t("Second Term / الفصل الثاني", "الفصل الثاني / Second Term")}</SelectItem>
+                      <SelectItem value="third">{t("Third Term / الفصل الثالث", "الفصل الثالث / Third Term")}</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

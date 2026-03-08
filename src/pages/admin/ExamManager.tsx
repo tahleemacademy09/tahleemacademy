@@ -111,7 +111,7 @@ const ExamManager = () => {
         </Card>
       ) : (
         <div className="space-y-3">
-          {exams.map((exam) => (
+          {exams.filter(e => termFilter === "all" || (e as any).term === termFilter).map((exam) => (
             <Card key={exam.id} className="hover:shadow-sm transition-shadow">
               <CardContent className="flex items-center justify-between p-4 flex-wrap gap-3">
                 <div className="flex-1 min-w-0">
