@@ -1200,6 +1200,72 @@ export type Database = {
           },
         ]
       }
+      student_preferences: {
+        Row: {
+          autoplay_recordings: boolean | null
+          class_reminder: boolean | null
+          class_reminder_minutes: number | null
+          created_at: string | null
+          dark_mode: boolean | null
+          default_subject_view: string | null
+          email_notifications: boolean | null
+          exam_reminder: boolean | null
+          id: string
+          language: string | null
+          new_recording_alert: boolean | null
+          playback_speed: string | null
+          results_notification: boolean | null
+          show_profile_photo: boolean | null
+          show_subtitles: boolean | null
+          text_direction: string | null
+          updated_at: string | null
+          user_id: string
+          whatsapp_notifications: boolean | null
+        }
+        Insert: {
+          autoplay_recordings?: boolean | null
+          class_reminder?: boolean | null
+          class_reminder_minutes?: number | null
+          created_at?: string | null
+          dark_mode?: boolean | null
+          default_subject_view?: string | null
+          email_notifications?: boolean | null
+          exam_reminder?: boolean | null
+          id?: string
+          language?: string | null
+          new_recording_alert?: boolean | null
+          playback_speed?: string | null
+          results_notification?: boolean | null
+          show_profile_photo?: boolean | null
+          show_subtitles?: boolean | null
+          text_direction?: string | null
+          updated_at?: string | null
+          user_id: string
+          whatsapp_notifications?: boolean | null
+        }
+        Update: {
+          autoplay_recordings?: boolean | null
+          class_reminder?: boolean | null
+          class_reminder_minutes?: number | null
+          created_at?: string | null
+          dark_mode?: boolean | null
+          default_subject_view?: string | null
+          email_notifications?: boolean | null
+          exam_reminder?: boolean | null
+          id?: string
+          language?: string | null
+          new_recording_alert?: boolean | null
+          playback_speed?: string | null
+          results_notification?: boolean | null
+          show_profile_photo?: boolean | null
+          show_subtitles?: boolean | null
+          text_direction?: string | null
+          updated_at?: string | null
+          user_id?: string
+          whatsapp_notifications?: boolean | null
+        }
+        Relationships: []
+      }
       subject_announcements: {
         Row: {
           content: string
