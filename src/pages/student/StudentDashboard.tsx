@@ -318,34 +318,122 @@ const StudentDashboard = () => {
       </div>
 
       {/* ═══════════════════════════════════════════════
-          5. NOTIFICATIONS (if any)
+          5. NOTIFICATIONS PANEL (always shown)
       ═══════════════════════════════════════════════ */}
-      {notifications.length > 0 && (
-        <Card className="rounded-2xl shadow-[0_4px_20px_rgba(0,0,0,0.05)] border-0 border-l-4 border-l-secondary">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center gap-2" style={{ fontFamily: "'Playfair Display', serif" }}>
-              <Bell className="h-4 w-4 text-secondary" />
-              {t("Notifications", "الإشعارات")}
-              <Badge variant="secondary" className="text-[10px]">{notifications.length}</Badge>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="pt-0">
-            <div className="space-y-2">
+      <Card className="rounded-2xl shadow-[0_4px_20px_rgba(0,0,0,0.05)] border-0 border-l-4 border-l-secondary">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2" style={{ fontFamily: "'Playfair Display', serif" }}>
+            <Bell className="h-4 w-4 text-secondary" />
+            {t("Notifications", "الإشعارات")}
+            {unreadCount > 0 && <Badge variant="destructive" className="text-[10px]">{unreadCount}</Badge>}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="pt-0">
+          {notifications.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-4">{t("No notifications yet", "لا توجد إشعارات بعد")}</p>
+          ) : (
+            <div className="space-y-2 max-h-[300px] overflow-y-auto">
               {notifications.map((n) => (
-                <div key={n.id} className="rounded-xl bg-muted/30 p-3 flex items-start gap-3">
-                  <div className="h-7 w-7 rounded-full bg-secondary/10 flex items-center justify-center shrink-0 mt-0.5">
-                    <Bell className="h-3 w-3 text-secondary" />
+                <div
+                  key={n.id}
+                  className={`rounded-xl p-3 flex items-start gap-3 transition-colors cursor-pointer ${n.is_read ? 'bg-muted/20' : 'bg-secondary/10 border border-secondary/20'}`}
+                  onClick={() => !n.is_read && markAsRead(n.id)}
+                >
+                  <div className={`h-7 w-7 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${n.is_read ? 'bg-muted/40' : 'bg-secondary/20'}`}>
+                    {notifIcon(n.type)}
                   </div>
-                  <div className="min-w-0">
-                    <p className="font-medium text-sm">{n.title}</p>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <p className={`font-medium text-sm ${!n.is_read ? 'text-foreground' : 'text-muted-foreground'}`}>{n.title}</p>
+                      {!n.is_read && <div className="h-2 w-2 rounded-full bg-secondary shrink-0" />}
+                    </div>
                     <p className="text-xs text-muted-foreground">{n.message}</p>
+                    <p className="text-[10px] text-muted-foreground mt-1">
+                      {new Date(n.created_at).toLocaleDateString(language === "ar" ? "ar-SA" : "en-US", { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    </p>
                   </div>
                 </div>
               ))}
             </div>
-          </CardContent>
-        </Card>
-      )}
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ═══════════════════════════════════════════════
+          5b. ACADEMIC CALENDAR
+      ═══════════════════════════════════════════════ */}
+      <Card className="rounded-2xl shadow-[0_4px_20px_rgba(0,0,0,0.05)] border-0">
+        <CardHeader className="pb-2">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-sm flex items-center gap-2" style={{ fontFamily: "'Playfair Display', serif" }}>
+              <Calendar className="h-4 w-4 text-primary" />
+              {t("Academic Calendar", "التقويم الأكاديمي")}
+            </CardTitle>
+            <div className="flex items-center gap-1">
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={prevMonth}>
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <span className="text-sm font-medium min-w-[120px] text-center">
+                {calendarMonth.toLocaleDateString(language === "ar" ? "ar-SA" : "en-US", { month: 'long', year: 'numeric' })}
+              </span>
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={nextMonth}>
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="pt-0">
+          {/* Day headers */}
+          <div className="grid grid-cols-7 gap-1 mb-1">
+            {(language === "ar"
+              ? ["أحد", "إثن", "ثلا", "أرب", "خمي", "جمع", "سبت"]
+              : ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+            ).map(d => (
+              <div key={d} className="text-[10px] text-muted-foreground text-center font-medium py-1">{d}</div>
+            ))}
+          </div>
+          {/* Calendar grid */}
+          <div className="grid grid-cols-7 gap-1">
+            {Array.from({ length: firstDayOfWeek }).map((_, i) => (
+              <div key={`empty-${i}`} className="h-10" />
+            ))}
+            {Array.from({ length: daysInMonth }).map((_, i) => {
+              const day = i + 1;
+              const events = getEventsForDay(day);
+              const isToday = day === today.getDate() && calendarMonthIdx === today.getMonth() && calendarYear === today.getFullYear();
+              return (
+                <div
+                  key={day}
+                  className={`h-10 rounded-lg flex flex-col items-center justify-center relative text-xs transition-colors
+                    ${isToday ? 'bg-primary text-primary-foreground font-bold' : 'hover:bg-muted/40'}
+                    ${events.length > 0 ? 'font-semibold' : ''}`}
+                  title={events.map(e => e.title).join(', ')}
+                >
+                  <span>{day}</span>
+                  {events.length > 0 && (
+                    <div className="flex gap-0.5 absolute bottom-0.5">
+                      {events.slice(0, 3).map((e, ei) => (
+                        <div key={ei} className={`h-1 w-1 rounded-full ${e.color}`} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          {/* Legend */}
+          <div className="flex items-center gap-4 mt-3 pt-2 border-t border-muted">
+            <div className="flex items-center gap-1.5">
+              <div className="h-2 w-2 rounded-full bg-destructive" />
+              <span className="text-[10px] text-muted-foreground">{t("Exams", "امتحانات")}</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <div className="h-2 w-2 rounded-full bg-secondary" />
+              <span className="text-[10px] text-muted-foreground">{t("Assignments", "واجبات")}</span>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* ═══════════════════════════════════════════════
           6. ACTION AGENDA: Tabbed Classes / Exams / Results
