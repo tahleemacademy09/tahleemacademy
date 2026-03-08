@@ -548,6 +548,12 @@ const ProctoringDashboard = () => {
                     <TableCell><span className={`font-bold ${integrityColor(Number(s.integrity_score) || 100)}`}>{Math.round(Number(s.integrity_score) || 100)}%</span></TableCell>
                     <TableCell><Badge className={`text-xs ${severityColor(s.suspicion_level || "low")}`}>{s.suspicion_level || "low"}</Badge></TableCell>
                     <TableCell className="font-bold text-destructive">{s.total_violations || 0}</TableCell>
+                    <TableCell>
+                      {(() => {
+                        const v = getVerdict(s);
+                        return <Badge className={`text-[10px] ${v.color}`}>{language === "ar" ? v.labelAr : v.label}</Badge>;
+                      })()}
+                    </TableCell>
                     <TableCell className="text-xs text-muted-foreground">{new Date(s.started_at).toLocaleDateString()}</TableCell>
                     <TableCell>
                       <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); loadSessionDetails(s); }}>
