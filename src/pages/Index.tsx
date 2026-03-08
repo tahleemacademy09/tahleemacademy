@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import quranTajweedImg from "@/assets/quran-tajweed.jpeg";
 import arabicLanguageImg from "@/assets/arabic-language.jpeg";
