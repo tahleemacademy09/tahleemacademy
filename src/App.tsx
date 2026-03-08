@@ -89,6 +89,10 @@ const App = () => (
               {/* Admin dashboard - requires admin role */}
               <Route element={<ProtectedRoute requiredRole="admin"><DashboardLayout role="admin" /></ProtectedRoute>}>
                 <Route path="/admin" element={<AdminDashboard />} />
+                <Route path="/admin/subjects" element={<SubjectManagement />} />
+                <Route path="/admin/courses" element={<CourseManagement />} />
+                <Route path="/admin/syllabus" element={<SyllabusManager />} />
+                <Route path="/admin/live-classes" element={<LiveClasses />} />
                 <Route path="/admin/exams" element={<ExamManager />} />
                 <Route path="/admin/exams/create" element={<ExamEditor />} />
                 <Route path="/admin/exams/:examId/edit" element={<ExamEditor />} />
@@ -96,8 +100,6 @@ const App = () => (
                 <Route path="/admin/question-bank" element={<QuestionBank />} />
                 <Route path="/admin/proctoring" element={<ProctoringDashboard />} />
                 <Route path="/admin/students" element={<StudentManagement />} />
-                <Route path="/admin/subjects" element={<SubjectManagement />} />
-                <Route path="/admin/live-classes" element={<LiveClasses />} />
               </Route>
 
               <Route path="*" element={<NotFound />} />
