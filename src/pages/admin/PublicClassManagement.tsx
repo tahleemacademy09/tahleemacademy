@@ -275,12 +275,17 @@ const PublicClassManagement = () => {
                         </div>
                         <div className="flex gap-2 flex-wrap">
                           {cls.status === "scheduled" && (
-                            <Button size="sm" onClick={() => updateStatus(cls.id, "live")} className="bg-green-600 text-white hover:bg-green-700">
-                              <Radio className="h-3 w-3 mr-1" /> Go Live
+                            <Button size="sm" onClick={() => goLiveAndJoin(cls)} className="bg-green-600 text-white hover:bg-green-700">
+                              <Video className="h-3 w-3 mr-1" /> Go Live & Join
                             </Button>
                           )}
                           {cls.status === "live" && (
-                            <Button size="sm" variant="destructive" onClick={() => updateStatus(cls.id, "ended")}>End Class</Button>
+                            <>
+                              <Button size="sm" onClick={() => goLiveAndJoin(cls)} className="bg-green-600 text-white hover:bg-green-700">
+                                <Video className="h-3 w-3 mr-1" /> Join Classroom
+                              </Button>
+                              <Button size="sm" variant="destructive" onClick={() => updateStatus(cls.id, "ended")}>End Class</Button>
+                            </>
                           )}
                           <Button size="sm" variant="outline" onClick={() => showLinks(cls)}><Share2 className="h-3 w-3 mr-1" /> Share</Button>
                           <Button size="sm" variant="outline" onClick={() => window.open(`/live/${cls.room_code}`, "_blank")}><ExternalLink className="h-3 w-3" /></Button>
