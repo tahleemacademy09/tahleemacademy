@@ -1,50 +1,44 @@
 import { useEffect, useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import {
-  Send, MessageCircle, Reply, Check, CheckCheck, Search, Mic, MicOff,
-  Image, Paperclip, Smile, ArrowLeft, FileText, Trash2
+  Send, MessageCircle, Reply, CheckCheck, Mic, MicOff,
+  Image, Paperclip, Smile, ArrowLeft, FileText, Trash2, Info
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-
-interface ChatMessage {
-  id: string;
-  class_level_id: string;
-  user_id: string;
-  content_type: string;
-  text: string | null;
-  media_path: string | null;
-  created_at: string;
-  sender_name?: string;
-}
-
-interface ChatRoom {
-  id: string;
-  name: string;
-  name_ar: string | null;
-  lastMessage?: string;
-  lastMessageTime?: string;
-  unread?: number;
-}
+import MajlisSidebar from "@/components/majlis/MajlisSidebar";
+import CreateChannelDialog from "@/components/majlis/CreateChannelDialog";
+import ChannelInfoPanel from "@/components/majlis/ChannelInfoPanel";
+import BrowseChannelsDialog from "@/components/majlis/BrowseChannelsDialog";
+import type { ChatChannel, ChatMessage, UserProfile } from "@/components/majlis/types";
 
 const Majlis = () => {
   const { t, language, dir } = useLanguage();
   const { user, profile, hasRole } = useAuth();
   const { toast } = useToast();
-  const [rooms, setRooms] = useState<ChatRoom[]>([]);
-  const [activeRoom, setActiveRoom] = useState<string | null>(null);
+
+  // Channels & messages
+  const [channels, setChannels] = useState<ChatChannel[]>([]);
+  const [activeChannelId, setActiveChannelId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [profiles, setProfiles] = useState<Record<string, UserProfile>>({});
+  const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
+
+  // UI state
   const [input, setInput] = useState("");
-  const [profiles, setProfiles] = useState<Record<string, string>>({});
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [showSearch, setShowSearch] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [mobileShowChat, setMobileShowChat] = useState(false);
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [createMode, setCreateMode] = useState<"group" | "dm" | "menu">("menu");
+  const [showChannelInfo, setShowChannelInfo] = useState(false);
+  const [showBrowseChannels, setShowBrowseChannels] = useState(false);
+
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -52,95 +46,175 @@ const Majlis = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const isAdmin = hasRole("admin");
+  const isTeacher = hasRole("teacher");
 
-  // Load rooms
+  const activeChannel = channels.find(c => c.id === activeChannelId) || null;
+
+  // ─── Load channels user is a member of ───
   useEffect(() => {
     if (!user) return;
-    const loadRooms = async () => {
-      const { data: enrollments } = await supabase
-        .from("enrollments")
-        .select("course_id, courses(id, title, title_ar)")
+    const loadChannels = async () => {
+      // Get channels the user is a member of
+      const { data: memberData } = await supabase
+        .from("chat_members" as any)
+        .select("channel_id")
         .eq("user_id", user.id);
 
-      const courseRooms: ChatRoom[] = (enrollments || [])
-        .filter((e: any) => e.courses)
-        .map((e: any) => ({
-          id: e.courses.id,
-          name: e.courses.title,
-          name_ar: e.courses.title_ar,
-        }));
+      const channelIds = (memberData || []).map((m: any) => m.channel_id);
 
-      courseRooms.unshift({ id: "general", name: "General Majlis", name_ar: "المجلس العام" });
-      setRooms(courseRooms);
-      if (courseRooms.length > 0 && !activeRoom) setActiveRoom(courseRooms[0].id);
+      // Also get public channels
+      const { data: publicChannels } = await supabase
+        .from("chat_channels" as any)
+        .select("*")
+        .eq("is_private", false);
+
+      const { data: memberChannels } = channelIds.length > 0
+        ? await supabase.from("chat_channels" as any).select("*").in("id", channelIds)
+        : { data: [] };
+
+      // Merge and deduplicate
+      const allChannels = [...(memberChannels || []), ...(publicChannels || [])];
+      const unique = Array.from(new Map(allChannels.map((c: any) => [c.id, c])).values()) as unknown as ChatChannel[];
+      setChannels(unique);
+
+      // Auto-join level channel based on profile
+      await autoJoinLevelChannel(user.id, profile?.level);
+
+      // Auto-join general & announcement channels
+      await autoJoinDefaultChannels(user.id, unique);
+
+      // Select first channel if none selected
+      if (!activeChannelId && unique.length > 0) {
+        setActiveChannelId(unique[0].id);
+      }
     };
-    loadRooms();
-  }, [user]);
+    loadChannels();
+  }, [user, profile?.level]);
 
-  // Load messages
+  const autoJoinLevelChannel = async (userId: string, level: string | null) => {
+    if (!level) return;
+    const { data: levelChannels } = await supabase
+      .from("chat_channels" as any)
+      .select("id")
+      .eq("type", "level")
+      .eq("level", level);
+
+    for (const ch of (levelChannels || []) as any[]) {
+      await supabase.from("chat_members" as any).upsert(
+        { channel_id: ch.id, user_id: userId, role: "member" },
+        { onConflict: "channel_id,user_id" }
+      );
+    }
+  };
+
+  const autoJoinDefaultChannels = async (userId: string, allChannels: ChatChannel[]) => {
+    const defaults = allChannels.filter(c => c.type === "group" && c.name === "General" || c.type === "announcement");
+    for (const ch of defaults) {
+      await supabase.from("chat_members" as any).upsert(
+        { channel_id: ch.id, user_id: userId, role: "member" },
+        { onConflict: "channel_id,user_id" }
+      );
+    }
+  };
+
+  // ─── Load messages for active channel ───
   useEffect(() => {
-    if (!activeRoom) return;
+    if (!activeChannelId) return;
     const loadMessages = async () => {
       const { data } = await supabase
         .from("chat_messages")
         .select("*")
-        .eq("class_level_id", activeRoom)
+        .eq("channel_id", activeChannelId)
         .order("created_at", { ascending: true })
         .limit(200);
-      setMessages((data as ChatMessage[]) || []);
+      setMessages((data as unknown as ChatMessage[]) || []);
 
+      // Load profiles for senders
       const userIds = [...new Set((data || []).map((m: any) => m.user_id))];
       if (userIds.length > 0) {
-        const { data: profs } = await supabase.from("profiles").select("user_id, full_name").in("user_id", userIds);
-        const map: Record<string, string> = {};
-        (profs || []).forEach((p: any) => { map[p.user_id] = p.full_name || "Student"; });
+        const { data: profs } = await supabase.from("profiles").select("user_id, full_name, full_name_ar, avatar_url, level, email").in("user_id", userIds);
+        const map: Record<string, UserProfile> = {};
+        (profs || []).forEach((p: any) => { map[p.user_id] = p as UserProfile; });
         setProfiles(prev => ({ ...prev, ...map }));
+      }
+
+      // Update last_read_at
+      if (user) {
+        await supabase.from("chat_members" as any)
+          .update({ last_read_at: new Date().toISOString() })
+          .eq("channel_id", activeChannelId)
+          .eq("user_id", user.id);
       }
     };
     loadMessages();
 
+    // Realtime subscription
     const channel = supabase
-      .channel(`majlis-${activeRoom}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "chat_messages", filter: `class_level_id=eq.${activeRoom}` },
-        (payload) => {
-          if (payload.eventType === "INSERT") {
-            const newMsg = payload.new as ChatMessage;
-            setMessages(prev => [...prev, newMsg]);
-            if (!profiles[newMsg.user_id]) {
-              supabase.from("profiles").select("user_id, full_name").eq("user_id", newMsg.user_id).maybeSingle()
-                .then(({ data }) => { if (data) setProfiles(prev => ({ ...prev, [data.user_id]: data.full_name || "Student" })); });
-            }
-          } else if (payload.eventType === "DELETE") {
-            setMessages(prev => prev.filter(m => m.id !== payload.old.id));
+      .channel(`majlis-channel-${activeChannelId}`)
+      .on("postgres_changes", {
+        event: "*", schema: "public", table: "chat_messages",
+        filter: `channel_id=eq.${activeChannelId}`
+      }, (payload) => {
+        if (payload.eventType === "INSERT") {
+          const newMsg = payload.new as unknown as ChatMessage;
+          setMessages(prev => [...prev, newMsg]);
+          if (!profiles[newMsg.user_id]) {
+            supabase.from("profiles").select("user_id, full_name, full_name_ar, avatar_url, level, email")
+              .eq("user_id", newMsg.user_id).maybeSingle()
+              .then(({ data }) => {
+                if (data) setProfiles(prev => ({ ...prev, [data.user_id]: data as unknown as UserProfile }));
+              });
           }
-        })
+        } else if (payload.eventType === "DELETE") {
+          setMessages(prev => prev.filter(m => m.id !== (payload.old as any).id));
+        }
+      })
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
-  }, [activeRoom]);
+  }, [activeChannelId]);
 
   // Auto-scroll
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages]);
 
+  // ─── Send message ───
   const sendMessage = async (contentType = "text", mediaPath?: string) => {
-    if ((!input.trim() && contentType === "text" && !mediaPath) || !activeRoom || !user) return;
+    if ((!input.trim() && contentType === "text" && !mediaPath) || !activeChannelId || !user) return;
+
+    // Check announcement permission
+    if (activeChannel?.type === "announcement" && !isAdmin && !isTeacher) {
+      toast({ title: t("Only teachers and admins can post here", "فقط المعلمون والمشرفون يمكنهم النشر هنا"), variant: "destructive" });
+      return;
+    }
+
     let text = input.trim();
     if (replyTo) {
-      const replyName = profiles[replyTo.user_id] || "Student";
+      const replyName = profiles[replyTo.user_id]?.full_name || "Student";
       text = `↩ ${replyName}: "${(replyTo.text || "").slice(0, 50)}"\n\n${text}`;
     }
     setInput("");
     setReplyTo(null);
+
     const { error } = await supabase.from("chat_messages").insert({
-      class_level_id: activeRoom,
+      class_level_id: activeChannelId,
+      channel_id: activeChannelId,
       user_id: user.id,
       content_type: contentType,
       text: contentType === "text" ? text : (text || null),
       media_path: mediaPath || null,
-    });
-    if (error) toast({ title: t("Error sending message", "خطأ في إرسال الرسالة"), variant: "destructive" });
+    } as any);
+
+    if (error) {
+      toast({ title: t("Error sending message", "خطأ في إرسال الرسالة"), variant: "destructive" });
+    } else {
+      // Update last_message on channel
+      await supabase.from("chat_channels" as any).update({
+        last_message: contentType === "text" ? (text || "").slice(0, 100) : `📎 ${contentType}`,
+        last_message_at: new Date().toISOString(),
+      }).eq("id", activeChannelId);
+    }
     inputRef.current?.focus();
   };
 
@@ -149,7 +223,7 @@ const Majlis = () => {
     setMessages(prev => prev.filter(m => m.id !== msgId));
   };
 
-  // Voice recording
+  // ─── Voice recording ───
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -159,7 +233,7 @@ const Majlis = () => {
       recorder.onstop = async () => {
         const blob = new Blob(chunksRef.current, { type: "audio/webm" });
         stream.getTracks().forEach(t => t.stop());
-        const path = `voice/${activeRoom}/${user!.id}/${crypto.randomUUID()}.webm`;
+        const path = `voice/${activeChannelId}/${user!.id}/${crypto.randomUUID()}.webm`;
         const { error } = await supabase.storage.from("subject-files").upload(path, blob);
         if (!error) await sendMessage("audio", path);
       };
@@ -176,136 +250,97 @@ const Majlis = () => {
     setIsRecording(false);
   };
 
-  // File/Image upload
+  // ─── File/Image upload ───
   const handleFileUpload = async (file: File, type: "image" | "file") => {
-    const path = `${type}s/${activeRoom}/${user!.id}/${crypto.randomUUID()}-${file.name}`;
+    const path = `${type}s/${activeChannelId}/${user!.id}/${crypto.randomUUID()}-${file.name}`;
     const { error } = await supabase.storage.from("subject-files").upload(path, file);
     if (!error) await sendMessage(type, path);
     else toast({ title: t("Upload failed", "فشل الرفع"), variant: "destructive" });
   };
 
-  const activeRoomData = rooms.find(r => r.id === activeRoom);
-  const filteredMessages = searchQuery
-    ? messages.filter(m => m.text?.toLowerCase().includes(searchQuery.toLowerCase()))
-    : messages;
+  // ─── Channel actions ───
+  const selectChannel = (channelId: string) => {
+    setActiveChannelId(channelId);
+    setMobileShowChat(true);
+  };
+
+  const handleNewChat = () => {
+    setCreateMode("menu");
+    setShowCreateDialog(true);
+  };
+
+  const handleChannelCreated = async (channelId: string) => {
+    // Reload channels
+    const { data } = await supabase.from("chat_channels" as any).select("*").eq("id", channelId).single();
+    if (data) {
+      setChannels(prev => {
+        const exists = prev.find(c => c.id === channelId);
+        if (exists) return prev;
+        return [data as unknown as ChatChannel, ...prev];
+      });
+    }
+    setActiveChannelId(channelId);
+    setMobileShowChat(true);
+  };
+
+  const handleLeaveChannel = async () => {
+    if (!activeChannelId || !user) return;
+    await supabase.from("chat_members" as any).delete().eq("channel_id", activeChannelId).eq("user_id", user.id);
+    setChannels(prev => prev.filter(c => c.id !== activeChannelId));
+    setActiveChannelId(channels[0]?.id || null);
+    setShowChannelInfo(false);
+    toast({ title: t("Left the group", "غادرت المجموعة") });
+  };
+
+  const handleDeleteChannel = async () => {
+    if (!activeChannelId) return;
+    await supabase.from("chat_channels" as any).delete().eq("id", activeChannelId);
+    setChannels(prev => prev.filter(c => c.id !== activeChannelId));
+    setActiveChannelId(channels[0]?.id || null);
+    setShowChannelInfo(false);
+    toast({ title: t("Group deleted", "تم حذف المجموعة") });
+  };
+
+  const handleBrowseJoined = (channelId: string) => {
+    handleChannelCreated(channelId);
+    setShowBrowseChannels(false);
+  };
 
   const formatTime = (dateStr: string) =>
     new Date(dateStr).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
-  const getLastMessage = (roomId: string) => {
-    const roomMsgs = messages.filter(m => m.class_level_id === roomId);
-    return roomMsgs[roomMsgs.length - 1];
+  const getChannelDisplayName = (channel: ChatChannel) =>
+    language === "ar" ? (channel.name_ar || channel.name || "") : (channel.name || "");
+
+  const getLevelBadge = (level: string | null) => {
+    switch (level) {
+      case "beginner": return <span className="text-[10px]">🟢</span>;
+      case "intermediate": return <span className="text-[10px]">🟡</span>;
+      case "advanced": return <span className="text-[10px]">🔴</span>;
+      default: return null;
+    }
   };
 
-  const getRoomDisplayName = (room: ChatRoom) =>
-    language === "ar" ? room.name_ar || room.name : room.name;
-
-  const selectRoom = (roomId: string) => {
-    setActiveRoom(roomId);
-    setMobileShowChat(true);
+  const getRoleBadge = (userId: string) => {
+    // We can check from user_roles but for now use a simple approach
+    if (userId === user?.id) {
+      if (isAdmin) return <Badge className="text-[9px] px-1 py-0 bg-amber-500 text-white border-0 leading-tight">⚙️</Badge>;
+      if (isTeacher) return <Badge className="text-[9px] px-1 py-0 bg-green-600 text-white border-0 leading-tight">👨‍🏫</Badge>;
+    }
+    return null;
   };
 
-  // ─── Chat List Pane ───
-  const ChatListPane = () => (
-    <div className="flex flex-col h-full" style={{ backgroundColor: "#FAFAF8" }}>
-      {/* Header */}
-      <div
-        className="px-4 py-3 flex items-center justify-between"
-        style={{ backgroundColor: "#064E3B" }}
-      >
-        <h1
-          className="text-lg font-bold text-white"
-          style={{ fontFamily: language === "ar" ? "'Amiri', serif" : "'Playfair Display', serif" }}
-        >
-          {t("Al-Majlis", "المجلس")}
-        </h1>
-        <button
-          onClick={() => setShowSearch(!showSearch)}
-          className="text-white/80 hover:text-white p-1"
-        >
-          <Search className="h-5 w-5" />
-        </button>
-      </div>
-
-      {/* Search */}
-      {showSearch && (
-        <div className="px-3 py-2 border-b" style={{ borderColor: "hsl(var(--border))" }}>
-          <Input
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder={t("Search chats...", "بحث في المحادثات...")}
-            className="h-8 text-sm"
-            dir="auto"
-          />
-        </div>
-      )}
-
-      {/* Room list */}
-      <div className="flex-1 overflow-y-auto">
-        {rooms.length === 0 && (
-          <p className="text-sm text-muted-foreground p-6 text-center" dir="auto">
-            {t("No channels yet. Enroll in a course to join.", "لا توجد قنوات بعد. سجّل في مقرر للانضمام.")}
-          </p>
-        )}
-        {rooms.map((room) => (
-          <button
-            key={room.id}
-            onClick={() => selectRoom(room.id)}
-            className={`w-full flex items-center gap-3 px-4 py-3 transition-colors border-b hover:bg-accent/30 ${
-              activeRoom === room.id ? "bg-accent/40" : ""
-            }`}
-            style={{ borderColor: "hsl(var(--border))" }}
-          >
-            {/* Avatar */}
-            <Avatar className="h-12 w-12 shrink-0">
-              <AvatarFallback
-                className="text-sm font-bold text-white"
-                style={{ backgroundColor: "#064E3B" }}
-              >
-                {getRoomDisplayName(room).charAt(0).toUpperCase()}
-              </AvatarFallback>
-            </Avatar>
-
-            {/* Info */}
-            <div className="flex-1 min-w-0 text-start">
-              <div className="flex items-center justify-between">
-                <span className="font-semibold text-sm truncate text-foreground" dir="auto">
-                  {getRoomDisplayName(room)}
-                </span>
-                {room.lastMessageTime && (
-                  <span className="text-[11px] text-muted-foreground shrink-0 ms-2">
-                    {room.lastMessageTime}
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center justify-between mt-0.5">
-                <p className="text-xs text-muted-foreground truncate" dir="auto">
-                  {room.lastMessage || t("Tap to open", "اضغط لفتح")}
-                </p>
-                {room.unread && room.unread > 0 ? (
-                  <span
-                    className="shrink-0 ms-2 h-5 min-w-[20px] px-1 rounded-full text-[11px] font-bold text-white flex items-center justify-center"
-                    style={{ backgroundColor: "#25D366" }}
-                  >
-                    {room.unread}
-                  </span>
-                ) : null}
-              </div>
-            </div>
-          </button>
-        ))}
-      </div>
-    </div>
-  );
+  const canSendInChannel = () => {
+    if (!activeChannel) return false;
+    if (activeChannel.type === "announcement") return isAdmin || isTeacher;
+    return true;
+  };
 
   // ─── Active Chat Pane ───
   const ActiveChatPane = () => {
-    if (!activeRoom || !activeRoomData) {
+    if (!activeChannelId || !activeChannel) {
       return (
-        <div
-          className="flex-1 flex flex-col items-center justify-center"
-          style={{ backgroundColor: "#F0ECE3" }}
-        >
+        <div className="flex-1 flex flex-col items-center justify-center" style={{ backgroundColor: "#F0ECE3" }}>
           <div className="text-center space-y-2 opacity-60">
             <MessageCircle className="h-16 w-16 mx-auto text-muted-foreground" />
             <p className="text-muted-foreground text-lg" style={{ fontFamily: "'Playfair Display', serif" }}>
@@ -319,35 +354,34 @@ const Majlis = () => {
     return (
       <div className="flex-1 flex flex-col min-w-0 h-full">
         {/* Chat Header */}
-        <div
-          className="px-3 py-2.5 flex items-center gap-3 shadow-sm"
-          style={{ backgroundColor: "#064E3B" }}
-        >
-          {/* Back button mobile */}
-          <button
-            onClick={() => setMobileShowChat(false)}
-            className="md:hidden text-white/80 hover:text-white p-1"
-          >
+        <div className="px-3 py-2.5 flex items-center gap-3 shadow-sm" style={{ backgroundColor: "#064E3B" }}>
+          <button onClick={() => setMobileShowChat(false)} className="md:hidden text-white/80 hover:text-white p-1">
             <ArrowLeft className="h-5 w-5" />
           </button>
-
           <Avatar className="h-10 w-10 shrink-0">
-            <AvatarFallback className="text-sm font-bold bg-emerald-light text-foreground">
-              {getRoomDisplayName(activeRoomData).charAt(0).toUpperCase()}
+            <AvatarFallback className="text-sm font-bold" style={{ backgroundColor: "hsl(var(--accent))", color: "hsl(var(--accent-foreground))" }}>
+              {activeChannel.type === "announcement" ? "📢" : getChannelDisplayName(activeChannel).charAt(0).toUpperCase()}
             </AvatarFallback>
           </Avatar>
-
-          <div className="flex-1 min-w-0">
+          <button className="flex-1 min-w-0 text-start" onClick={() => setShowChannelInfo(true)}>
             <h2 className="text-white font-semibold text-sm truncate" dir="auto">
-              {getRoomDisplayName(activeRoomData)}
+              {getChannelDisplayName(activeChannel)}
             </h2>
             <p className="text-white/60 text-[11px]">
-              {t("Online", "متصل")}
+              {activeChannel.type === "direct"
+                ? t("Online", "متصل")
+                : `${activeChannel.member_count} ${t("members", "عضو")}`}
             </p>
-          </div>
+          </button>
+          <button
+            onClick={() => setShowChannelInfo(true)}
+            className="text-white/80 hover:text-white p-1.5"
+          >
+            <Info className="h-5 w-5" />
+          </button>
         </div>
 
-        {/* Messages Area with Islamic doodle background */}
+        {/* Messages Area */}
         <div
           className="flex-1 overflow-y-auto px-3 py-4"
           ref={scrollRef}
@@ -357,27 +391,23 @@ const Majlis = () => {
           }}
         >
           <div className="max-w-2xl mx-auto space-y-1">
-            {filteredMessages.length === 0 && (
+            {messages.length === 0 && (
               <div className="text-center py-12">
                 <p className="text-sm text-muted-foreground" dir="auto">
-                  {searchQuery
-                    ? t("No messages found", "لا توجد رسائل")
-                    : t("No messages yet. Start the conversation!", "لا توجد رسائل بعد. ابدأ المحادثة!")}
+                  {t("No messages yet. Start the conversation!", "لا توجد رسائل بعد. ابدأ المحادثة!")}
                 </p>
               </div>
             )}
 
-            {filteredMessages.map((m, idx) => {
+            {messages.map((m, idx) => {
               const isMe = m.user_id === user?.id;
-              const name = profiles[m.user_id] || (isMe ? profile?.full_name : "Student");
-              const prevMsg = filteredMessages[idx - 1];
+              const senderProfile = profiles[m.user_id];
+              const name = senderProfile?.full_name || (isMe ? profile?.full_name : "Student");
+              const prevMsg = messages[idx - 1];
               const showName = !isMe && (!prevMsg || prevMsg.user_id !== m.user_id);
 
               return (
-                <div
-                  key={m.id}
-                  className={`flex group ${isMe ? "justify-end" : "justify-start"}`}
-                >
+                <div key={m.id} className={`flex group ${isMe ? "justify-end" : "justify-start"}`}>
                   <div
                     className={`relative max-w-[80%] md:max-w-[65%] px-3 py-1.5 rounded-lg shadow-sm ${
                       isMe ? "rounded-tr-none" : "rounded-tl-none"
@@ -387,15 +417,15 @@ const Majlis = () => {
                       marginTop: showName || (prevMsg && prevMsg.user_id !== m.user_id) ? "8px" : "2px",
                     }}
                   >
-                    {/* Sender name for group chats */}
+                    {/* Sender name + badges */}
                     {showName && (
-                      <p
-                        className="text-[11px] font-semibold mb-0.5"
-                        style={{ color: "#064E3B" }}
-                        dir="auto"
-                      >
-                        {name}
-                      </p>
+                      <div className="flex items-center gap-1.5 mb-0.5">
+                        <p className="text-[11px] font-semibold" style={{ color: "#064E3B" }} dir="auto">
+                          {name}
+                        </p>
+                        {getLevelBadge(senderProfile?.level || null)}
+                        {getRoleBadge(m.user_id)}
+                      </div>
                     )}
 
                     {/* Content */}
@@ -412,13 +442,9 @@ const Majlis = () => {
                     </div>
 
                     {/* Time + Read receipts */}
-                    <div className={`flex items-center gap-1 mt-0.5 ${isMe ? "justify-end" : "justify-end"}`}>
-                      <span className="text-[10px] text-gray-500">
-                        {formatTime(m.created_at)}
-                      </span>
-                      {isMe && (
-                        <CheckCheck className="h-3.5 w-3.5" style={{ color: "#53BDEB" }} />
-                      )}
+                    <div className="flex items-center gap-1 mt-0.5 justify-end">
+                      <span className="text-[10px] text-gray-500">{formatTime(m.created_at)}</span>
+                      {isMe && <CheckCheck className="h-3.5 w-3.5" style={{ color: "#53BDEB" }} />}
                     </div>
 
                     {/* Hover actions */}
@@ -447,138 +473,125 @@ const Majlis = () => {
 
         {/* Reply indicator */}
         {replyTo && (
-          <div
-            className="px-4 py-2 flex items-center gap-2 border-t"
-            style={{ backgroundColor: "#F0F2F5", borderColor: "hsl(var(--border))" }}
-          >
-            <div
-              className="w-1 h-10 rounded-full"
-              style={{ backgroundColor: "#064E3B" }}
-            />
+          <div className="px-4 py-2 flex items-center gap-2 border-t" style={{ backgroundColor: "#F0F2F5", borderColor: "hsl(var(--border))" }}>
+            <div className="w-1 h-10 rounded-full" style={{ backgroundColor: "#064E3B" }} />
             <div className="flex-1 min-w-0">
               <p className="text-xs font-semibold" style={{ color: "#064E3B" }}>
-                {profiles[replyTo.user_id] || "Student"}
+                {profiles[replyTo.user_id]?.full_name || "Student"}
               </p>
               <p className="text-xs text-muted-foreground truncate">{replyTo.text}</p>
             </div>
-            <button
-              onClick={() => setReplyTo(null)}
-              className="text-muted-foreground hover:text-foreground p-1"
-            >
-              ✕
-            </button>
+            <button onClick={() => setReplyTo(null)} className="text-muted-foreground hover:text-foreground p-1">✕</button>
           </div>
         )}
 
         {/* Recording indicator */}
         {isRecording && (
-          <div
-            className="px-4 py-2 flex items-center gap-3"
-            style={{ backgroundColor: "#F0F2F5" }}
-          >
+          <div className="px-4 py-2 flex items-center gap-3" style={{ backgroundColor: "#F0F2F5" }}>
             <div className="w-3 h-3 rounded-full bg-destructive animate-pulse" />
             <span className="text-sm text-destructive font-medium flex-1">
               {t("Recording... Tap mic to stop", "جاري التسجيل... اضغط على الميكروفون للإيقاف")}
             </span>
-            <Button
-              size="sm"
-              variant="destructive"
-              onClick={stopRecording}
-              className="h-8"
-            >
+            <Button size="sm" variant="destructive" onClick={stopRecording} className="h-8">
               <MicOff className="h-4 w-4" />
             </Button>
           </div>
         )}
 
         {/* Input Bar */}
-        <div className="px-2 py-2 flex items-end gap-2" style={{ backgroundColor: "#F0F2F5" }}>
-          <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => { if (e.target.files?.[0]) handleFileUpload(e.target.files[0], "image"); }} />
-          <input ref={fileInputRef} type="file" accept=".pdf,.doc,.docx,.xls,.xlsx" className="hidden" onChange={(e) => { if (e.target.files?.[0]) handleFileUpload(e.target.files[0], "file"); }} />
+        {canSendInChannel() ? (
+          <div className="px-2 py-2 flex items-end gap-2" style={{ backgroundColor: "#F0F2F5" }}>
+            <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => { if (e.target.files?.[0]) handleFileUpload(e.target.files[0], "image"); }} />
+            <input ref={fileInputRef} type="file" accept=".pdf,.doc,.docx,.xls,.xlsx" className="hidden" onChange={(e) => { if (e.target.files?.[0]) handleFileUpload(e.target.files[0], "file"); }} />
 
-          {/* Emoji placeholder */}
-          <button className="p-2 text-gray-500 hover:text-gray-700 shrink-0">
-            <Smile className="h-5 w-5" />
-          </button>
+            <button className="p-2 text-gray-500 hover:text-gray-700 shrink-0"><Smile className="h-5 w-5" /></button>
+            <button onClick={() => fileInputRef.current?.click()} className="p-2 text-gray-500 hover:text-gray-700 shrink-0"><Paperclip className="h-5 w-5" /></button>
+            <button onClick={() => imageInputRef.current?.click()} className="p-2 text-gray-500 hover:text-gray-700 shrink-0 hidden sm:block"><Image className="h-5 w-5" /></button>
 
-          {/* Attachment */}
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            className="p-2 text-gray-500 hover:text-gray-700 shrink-0"
-          >
-            <Paperclip className="h-5 w-5" />
-          </button>
+            <form onSubmit={(e) => { e.preventDefault(); sendMessage(); }} className="flex-1 flex items-center">
+              <Input
+                ref={inputRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder={t("Type a message...", "اكتب رسالة...")}
+                dir="auto"
+                className="rounded-full border-0 bg-white shadow-sm h-10 px-4 text-sm focus-visible:ring-1"
+              />
+            </form>
 
-          {/* Image */}
-          <button
-            onClick={() => imageInputRef.current?.click()}
-            className="p-2 text-gray-500 hover:text-gray-700 shrink-0 hidden sm:block"
-          >
-            <Image className="h-5 w-5" />
-          </button>
-
-          {/* Text input */}
-          <form
-            onSubmit={(e) => { e.preventDefault(); sendMessage(); }}
-            className="flex-1 flex items-center"
-          >
-            <Input
-              ref={inputRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder={t("Type a message...", "اكتب رسالة...")}
-              dir="auto"
-              className="rounded-full border-0 bg-white shadow-sm h-10 px-4 text-sm focus-visible:ring-1"
-            />
-          </form>
-
-          {/* Mic or Send */}
-          {input.trim() ? (
-            <button
-              onClick={() => sendMessage()}
-              className="p-2.5 rounded-full shrink-0 text-white"
-              style={{ backgroundColor: "#25D366" }}
-            >
-              <Send className="h-5 w-5" />
-            </button>
-          ) : (
-            <button
-              onClick={isRecording ? stopRecording : startRecording}
-              className={`p-2.5 rounded-full shrink-0 text-white ${isRecording ? "animate-pulse" : ""}`}
-              style={{ backgroundColor: isRecording ? "#EF4444" : "#25D366" }}
-            >
-              {isRecording ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
-            </button>
-          )}
-        </div>
+            {input.trim() ? (
+              <button onClick={() => sendMessage()} className="p-2.5 rounded-full shrink-0 text-white" style={{ backgroundColor: "#25D366" }}>
+                <Send className="h-5 w-5" />
+              </button>
+            ) : (
+              <button
+                onClick={isRecording ? stopRecording : startRecording}
+                className={`p-2.5 rounded-full shrink-0 text-white ${isRecording ? "animate-pulse" : ""}`}
+                style={{ backgroundColor: isRecording ? "#EF4444" : "#25D366" }}
+              >
+                {isRecording ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="px-4 py-3 text-center text-sm text-muted-foreground" style={{ backgroundColor: "#F0F2F5" }}>
+            {t("Only teachers and admins can post in this channel", "فقط المعلمون والمشرفون يمكنهم النشر في هذه القناة")}
+          </div>
+        )}
       </div>
     );
   };
 
   // ─── Main Layout ───
   return (
-    <div className="flex h-[calc(100vh-3.5rem)] md:h-[calc(100vh-0px)] overflow-hidden">
-      {/* Desktop: two-pane | Mobile: stack */}
+    <>
+      <div className="flex h-[calc(100vh-3.5rem)] md:h-[calc(100vh-0px)] overflow-hidden">
+        {/* Sidebar */}
+        <div
+          className={`${mobileShowChat ? "hidden md:flex" : "flex"} w-full md:w-80 lg:w-96 flex-col border-e`}
+          style={{ borderColor: "hsl(var(--border))" }}
+        >
+          <MajlisSidebar
+            channels={channels}
+            activeChannelId={activeChannelId}
+            onSelectChannel={selectChannel}
+            onNewChat={handleNewChat}
+            onBrowseChannels={() => setShowBrowseChannels(true)}
+            profiles={profiles}
+            unreadCounts={unreadCounts}
+            userId={user?.id || ""}
+          />
+        </div>
 
-      {/* Chat list - always visible on desktop, conditionally on mobile */}
-      <div
-        className={`${
-          mobileShowChat ? "hidden md:flex" : "flex"
-        } w-full md:w-80 lg:w-96 flex-col border-e`}
-        style={{ borderColor: "hsl(var(--border))" }}
-      >
-        <ChatListPane />
+        {/* Chat area */}
+        <div className={`${mobileShowChat ? "flex" : "hidden md:flex"} flex-1 flex-col min-w-0`}>
+          <ActiveChatPane />
+        </div>
       </div>
 
-      {/* Chat area - always visible on desktop, conditionally on mobile */}
-      <div
-        className={`${
-          mobileShowChat ? "flex" : "hidden md:flex"
-        } flex-1 flex-col min-w-0`}
-      >
-        <ActiveChatPane />
-      </div>
-    </div>
+      {/* Dialogs */}
+      <CreateChannelDialog
+        open={showCreateDialog}
+        onOpenChange={setShowCreateDialog}
+        mode={createMode}
+        onCreated={handleChannelCreated}
+      />
+
+      <ChannelInfoPanel
+        open={showChannelInfo}
+        onOpenChange={setShowChannelInfo}
+        channel={activeChannel}
+        onLeave={handleLeaveChannel}
+        onDelete={handleDeleteChannel}
+      />
+
+      <BrowseChannelsDialog
+        open={showBrowseChannels}
+        onOpenChange={setShowBrowseChannels}
+        myChannelIds={channels.map(c => c.id)}
+        onJoined={handleBrowseJoined}
+      />
+    </>
   );
 };
 
@@ -591,15 +604,10 @@ const AudioMessage = ({ path }: { path: string }) => {
       if (data?.signedUrl) setUrl(data.signedUrl);
     });
   }, [path]);
-
   if (!url) return <span className="text-xs opacity-70">Loading audio...</span>;
-
   return (
     <div className="flex items-center gap-2 min-w-[180px]">
-      <div
-        className="w-8 h-8 rounded-full flex items-center justify-center shrink-0"
-        style={{ backgroundColor: "#25D366" }}
-      >
+      <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ backgroundColor: "#25D366" }}>
         <Mic className="h-4 w-4 text-white" />
       </div>
       <audio controls src={url} className="h-8 flex-1" style={{ maxWidth: "200px" }} />
