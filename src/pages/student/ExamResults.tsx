@@ -7,7 +7,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { sanitizeHtml } from "@/lib/sanitize";
-import { CheckCircle, XCircle, ArrowLeft, Clock, Play, Pause, Volume2, FileText, Image, Download, AlertTriangle } from "lucide-react";
+import { CheckCircle, XCircle, ArrowLeft, Clock, Play, Pause, Volume2, FileText, Image, Download, AlertTriangle, Eye, EyeOff } from "lucide-react";
 import AdminAudioPlayer from "@/components/exam/AdminAudioPlayer";
 
 const ExamResults = () => {
@@ -20,6 +20,9 @@ const ExamResults = () => {
   const [questions, setQuestions] = useState<any[]>([]);
   const [answers, setAnswers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [viewCount, setViewCount] = useState<number>(0);
+  const [maxViews, setMaxViews] = useState<number>(1);
+  const [viewLimitReached, setViewLimitReached] = useState(false);
 
   useEffect(() => {
     if (!attemptId || !user) return;
@@ -37,6 +40,48 @@ const ExamResults = () => {
 
       setAttempt(attemptData);
       setExam(attemptData.exams);
+
+      const examData = attemptData.exams as any;
+      const allowReview = examData?.allow_review !== false;
+      const maxReviewViews = (examData as any)?.max_review_views ?? 1;
+      setMaxViews(maxReviewViews);
+
+      if (!allowReview) {
+        setLoading(false);
+        return;
+      }
+
+      // Check current view count
+      const { data: existingView } = await supabase
+        .from("exam_review_views" as any)
+        .select("view_count")
+        .eq("attempt_id", attemptId)
+        .eq("user_id", user.id)
+        .maybeSingle();
+
+      const currentViews = (existingView as any)?.view_count ?? 0;
+
+      if (currentViews >= maxReviewViews) {
+        setViewCount(currentViews);
+        setViewLimitReached(true);
+        setLoading(false);
+        return;
+      }
+
+      // Increment view count
+      if (existingView) {
+        await supabase
+          .from("exam_review_views" as any)
+          .update({ view_count: currentViews + 1, viewed_at: new Date().toISOString() } as any)
+          .eq("attempt_id", attemptId)
+          .eq("user_id", user.id);
+      } else {
+        await supabase
+          .from("exam_review_views" as any)
+          .insert({ attempt_id: attemptId, user_id: user.id, view_count: 1 } as any);
+      }
+
+      setViewCount(currentViews + 1);
 
       const [questionsRes, answersRes] = await Promise.all([
         supabase.rpc("get_exam_questions_for_review", { _attempt_id: attemptId }),
@@ -113,8 +158,32 @@ const ExamResults = () => {
         </CardContent>
       </Card>
 
+      {/* View limit reached */}
+      {allowReview && viewLimitReached && (
+        <Card className="mb-6 border-amber-500/30">
+          <CardContent className="p-6 text-center space-y-3">
+            <EyeOff className="h-10 w-10 mx-auto text-amber-500" />
+            <p className="text-lg font-semibold">{t("Review Limit Reached", "تم الوصول إلى حد المراجعة")}</p>
+            <p className="text-sm text-muted-foreground">
+              {t(
+                `You have used all ${maxViews} allowed review(s) for this exam script. Contact your instructor if you need additional access.`,
+                `لقد استخدمت جميع مرات المراجعة المسموحة (${maxViews}) لهذا الامتحان. تواصل مع مدرسك إذا كنت بحاجة إلى مراجعة إضافية.`
+              )}
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* View count indicator */}
+      {allowReview && !viewLimitReached && (
+        <div className="mb-4 flex items-center gap-2 text-sm text-muted-foreground">
+          <Eye className="h-4 w-4" />
+          <span>{t(`Review ${viewCount} of ${maxViews}`, `المراجعة ${viewCount} من ${maxViews}`)}</span>
+        </div>
+      )}
+
       {/* Answer Sheet */}
-      {allowReview && (
+      {allowReview && !viewLimitReached && (
         <div className="space-y-3">
           <h2 className="text-lg font-semibold mb-3">{t("Answer Sheet", "ورقة الإجابة")}</h2>
           {questions.map((q, i) => {
