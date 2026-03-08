@@ -253,37 +253,7 @@ table.summary td.lbl{font-weight:700;width:18%}
 </style>
 </head>
 <body>
-<div class="watermark">TAHLEEM ACADEMY</div>
-<div class="content">
-<div class="header">
-  <div class="ar">أكاديمية التعليم</div>
-  <div class="en">TAHLEEM ACADEMY</div>
-</div>
-<div class="title-box">
-  <span>كشف نتائج الطلبة</span>
-  <span>Student Report Sheet.</span>
-</div>
-<div class="info-grid">
-  <div class="info-row">
-    <div class="info-field"><label>اسم الطالب(ة)</label><span class="val">${profile?.full_name || "---"}</span></div>
-    <div class="info-field"><label>العام الدراسي</label><span class="val">${hijriYear} هـ / ${currentYear} م</span></div>
-  </div>
-  <div class="info-row">
-    <div class="info-field"><label>المرحلة</label><span class="val">${levelText}</span></div>
-    <div class="info-field"><label>عدد المواد</label><span class="val">${exams.length}</span></div>
-  </div>
-  <div class="info-row">
-    <div class="info-field"><label>التاريخ</label><span class="val">${new Date().toLocaleDateString("ar-SA")}</span></div>
-    <div class="info-field"><label>الحالة</label><span class="val">${statusText}</span></div>
-  </div>
-</div>
-${termSections}
-<table class="summary">
-  <tr><td class="lbl">Marks Obtainable</td><td style="text-align:center">${totalObtainable || ""}</td><td class="lbl">Marks Obtained</td><td style="text-align:center">${totalObtained || ""}</td></tr>
-  <tr><td class="lbl">Cgpa</td><td style="text-align:center">${exams.length > 0 ? cgpa.toFixed(2) : ""}</td><td class="lbl">Status</td><td style="text-align:center">${exams.length > 0 ? (cgpa >= 1.0 ? "Pass ✓" : "Fail ✗") : ""}</td></tr>
-  <tr><td class="lbl">Comment</td><td style="text-align:center">${commentText}</td><td class="lbl">Signature</td><td class="stamp-cell"><img src="${stampBase64}" alt="Stamp" /></td></tr>
-</table>
-</div>
+${termPages}
 <script>
   window.onload = function() {
     setTimeout(function() { window.print(); }, 500);
