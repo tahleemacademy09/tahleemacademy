@@ -123,6 +123,27 @@ const StudentDashboard = () => {
     <div className="container mx-auto px-4 py-6 md:py-8 space-y-5">
 
       {/* ═══════════════════════════════════════════════
+          0. WELCOME MESSAGE
+      ═══════════════════════════════════════════════ */}
+      <div className={language === "ar" ? "text-right" : "text-left"}>
+        <h1
+          className="text-2xl md:text-3xl font-bold"
+          style={{
+            color: '#064E3B',
+            fontFamily: language === "ar" ? "'Amiri', serif" : "'Playfair Display', serif",
+          }}
+          dir={language === "ar" ? "rtl" : "ltr"}
+        >
+          {language === "ar"
+            ? `مرحباً بك يا ${profile?.full_name || "طالب"}! 👋`
+            : `Marhaban, ${profile?.full_name || "Student"}! 👋`}
+        </h1>
+        <p className="text-sm text-muted-foreground mt-1">
+          {t("Here's your learning overview", "إليك نظرة عامة على مسارك التعليمي")}
+        </p>
+      </div>
+
+      {/* ═══════════════════════════════════════════════
           1. HEADER: Greeting + Hijri Pill
       ═══════════════════════════════════════════════ */}
       <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary via-primary to-emerald-mid p-5 md:p-7 text-primary-foreground geometric-pattern">
