@@ -3,6 +3,116 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Student Report Sheet - كشف نتائج الطلبة</title>
+<link href="https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:#e0e0e0;font-family:'Cairo',sans-serif;display:flex;flex-direction:column;align-items:center;padding:20px}
+  .toolbar{display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap;justify-content:center}
+  .toolbar button{padding:10px 28px;border-radius:6px;font-family:'Cairo',sans-serif;font-size:15px;font-weight:600;cursor:pointer;transition:opacity .2s}
+  .toolbar button:hover{opacity:.85}
+  .btn-print{background:#1a472a;color:#fff;border:none}
+  .btn-clear{background:#fff;color:#333;border:1px solid #999}
+  .page{width:210mm;min-height:297mm;background:#fff;padding:40px 45px;box-shadow:0 2px 12px rgba(0,0,0,.15)}
+  .header{text-align:center;margin-bottom:18px}
+  .header .ar-title{font-family:'Amiri',serif;font-size:26px;font-weight:700;margin-bottom:2px}
+  .header .en-title{font-family:'Cairo',sans-serif;font-size:18px;font-weight:700;letter-spacing:3px}
+  .title-box{border:2px solid #2a7a2a;border-radius:4px;padding:8px 24px;margin:18px auto;width:fit-content;display:flex;gap:40px;align-items:center;justify-content:center}
+  .title-box span{font-size:16px;font-weight:600}
+  .info-grid{direction:rtl;margin:22px 0 18px 0}
+  .info-row{display:flex;justify-content:space-between;margin-bottom:10px;gap:30px}
+  .info-field{display:flex;align-items:baseline;flex:1;gap:6px}
+  .info-field label{font-weight:700;font-size:15px;white-space:nowrap}
+  .info-field input{flex:1;border:none;border-bottom:1px solid #333;outline:none;font-family:'Cairo',sans-serif;font-size:14px;padding:0 4px 2px;background:transparent;min-width:80px;text-align:right}
+  .section-title{font-family:'Amiri',serif;font-size:22px;font-weight:700;text-align:left;margin:20px 0 10px;direction:rtl}
+  .main-table{width:100%;border-collapse:collapse;direction:rtl;margin-bottom:24px}
+  .main-table th,.main-table td{border:1.5px solid #333;padding:4px 6px;text-align:center;font-size:13px;vertical-align:middle}
+  .main-table thead th{background:#fff;font-weight:700}
+  .main-table th .ar{display:block;font-family:'Amiri',serif;font-size:14px;font-weight:700}
+  .main-table th .en{display:block;font-family:'Cairo',sans-serif;font-size:12px;font-weight:700}
+  .main-table td input{width:100%;border:none;outline:none;text-align:center;font-family:'Cairo',sans-serif;font-size:13px;background:transparent;padding:2px 0}
+  .main-table td{height:32px}
+  .summary-table{width:100%;border-collapse:collapse;direction:ltr;margin-top:20px}
+  .summary-table td{border:1.5px solid #333;padding:6px 10px;font-size:14px;font-weight:600}
+  .summary-table td.label-cell{width:18%;background:#fff;font-weight:700}
+  .summary-table td input{width:100%;border:none;outline:none;font-family:'Cairo',sans-serif;font-size:13px;background:transparent;padding:2px 4px}
+  @media print{body{background:#fff;padding:0}.toolbar{display:none!important}.page{box-shadow:none;padding:20px 25px;width:100%;min-height:auto}@page{size:A4;margin:0}}
+</style>
+</head>
+<body>
+<div class="toolbar">
+  <button class="btn-print" onclick="window.print()">🖨️ Print / Download PDF</button>
+  <button class="btn-clear" onclick="clearAll()">🗑️ Clear All</button>
+</div>
+<div class="page">
+  <div class="header">
+    <div class="ar-title">أكاديمية التعليم</div>
+    <div class="en-title">TAHLEEM ACADEMY</div>
+  </div>
+  <div class="title-box">
+    <span>كشف نتائج الطلبة</span>
+    <span>Student Report Sheet.</span>
+  </div>
+  <div class="info-grid">
+    <div class="info-row">
+      <div class="info-field"><label>اسم الطالب(ة)</label><input type="text"></div>
+      <div class="info-field"><label>العام الدراسي</label><input type="text"></div>
+    </div>
+    <div class="info-row">
+      <div class="info-field"><label>المرحلة</label><input type="text"></div>
+      <div class="info-field"><label>عدد المواد</label><input type="text"></div>
+    </div>
+    <div class="info-row">
+      <div class="info-field"><label>التاريخ</label><input type="text"></div>
+      <div class="info-field"><label>الحالة</label><input type="text"></div>
+    </div>
+  </div>
+  <div class="section-title">الفترة الأولى</div>
+  <table class="main-table">
+    <thead>
+      <tr>
+        <th><span class="ar">المواد</span><span class="en">Subject</span></th>
+        <th><span class="ar">التمرينات (٣٠)</span><span class="en">Test</span></th>
+        <th><span class="ar">الإمتحانات (٧٠)</span><span class="en">Exam</span></th>
+        <th><span class="ar">المجموع الكلي (١٠٠)</span><span class="en">Total</span></th>
+        <th><span class="ar">%</span><span class="en">%</span></th>
+        <th><span class="ar">GP</span><span class="en">GP</span></th>
+        <th><span class="ar">النتيجة</span><span class="en">Result</span></th>
+      </tr>
+    </thead>
+    <tbody id="tableBody"></tbody>
+  </table>
+  <table class="summary-table">
+    <tr>
+      <td class="label-cell">Marks Obtainable</td>
+      <td><input type="text" id="marksObtainable"></td>
+      <td class="label-cell">Marks Obtained</td>
+      <td><input type="text" id="marksObtained" readonly></td>
+    </tr>
+    <tr>
+      <td class="label-cell">Cgpa</td>
+      <td><input type="text" id="cgpa" readonly></td>
+      <td class="label-cell">Status</td>
+      <td><input type="text" id="status"></td>
+    </tr>
+    <tr>
+      <td class="label-cell">Comment</td>
+      <td><input type="text" id="comment"></td>
+      <td class="label-cell">Signature</td>
+      <td><input type="text" id="signature"></td>
+    </tr>
+  </table>
+</div>
+<script>
+  var tbody=document.getElementById('tableBody');
+  for(var i=0;i<10;i++){var tr=document.createElement('tr');tr.innerHTML='<td><input type="text" class="subject"></td><td><input type="number" class="test" min="0" max="30"></td><td><input type="number" class="exam" min="0" max="70"></td><td><input type="text" class="total" readonly></td><td><input type="text" class="pct" readonly></td><td><input type="text" class="gp" readonly></td><td><input type="text" class="result" readonly></td>';tbody.appendChild(tr);}
+  function calcGP(t){if(t>=90)return 4;if(t>=80)return 3;if(t>=70)return 2;if(t>=60)return 1;return 0;}
+  function recalc(){var ts=0,gs=0,c=0;tbody.querySelectorAll('tr').forEach(function(tr){var t=parseFloat(tr.querySelector('.test').value)||0;var e=parseFloat(tr.querySelector('.exam').value)||0;if(!t&&!e){tr.querySelector('.total').value='';tr.querySelector('.pct').value='';tr.querySelector('.gp').value='';tr.querySelector('.result').value='';return;}var tot=t+e,gp=calcGP(tot);tr.querySelector('.total').value=tot;tr.querySelector('.pct').value=tot+'%';tr.querySelector('.gp').value=gp.toFixed(1);tr.querySelector('.result').value=tot>=50?'Pass ✓':'Fail ✗';ts+=tot;gs+=gp;c++;});document.getElementById('marksObtained').value=c?ts:'';document.getElementById('cgpa').value=c?(gs/c).toFixed(2):'';}
+  tbody.addEventListener('input',recalc);
+  function clearAll(){if(!confirm('هل تريد مسح جميع البيانات؟\nClear all data?'))return;document.querySelectorAll('input').forEach(function(i){i.value=''});}
+</script>
+</body>
+</html>
 <title>كشف نتائج الطلبة - Tahleem Academy</title>
 <link href="https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
