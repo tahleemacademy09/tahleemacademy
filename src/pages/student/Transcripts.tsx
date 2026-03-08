@@ -105,8 +105,22 @@ const Transcripts = () => {
   const currentYear = new Date().getFullYear();
   const hijriYear = currentYear - 579;
 
-  const downloadPDF = () => {
-    // Use browser print to generate PDF — this ensures Arabic renders correctly
+  const downloadPDF = async () => {
+    // Convert stamp to base64 for the print window
+    const stampBase64 = await new Promise<string>((resolve) => {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext("2d")!;
+        ctx.drawImage(img, 0, 0);
+        resolve(canvas.toDataURL("image/png"));
+      };
+      img.src = tahleemStamp;
+    });
+
     const printWindow = window.open("", "_blank");
     if (!printWindow) {
       toast({ title: t("Please allow popups to download PDF", "يرجى السماح بالنوافذ المنبثقة لتحميل PDF"), variant: "destructive" });
@@ -145,7 +159,9 @@ const Transcripts = () => {
 <link href="https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:'Cairo','Amiri',sans-serif;background:#fff;padding:30px 40px}
+body{font-family:'Cairo','Amiri',sans-serif;background:#fff;padding:30px 40px;position:relative}
+.watermark{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-30deg);font-size:90px;font-weight:700;color:#064E3B;opacity:0.04;white-space:nowrap;letter-spacing:8px;font-family:'Cairo',sans-serif;pointer-events:none;z-index:0}
+.content{position:relative;z-index:1}
 .header{text-align:center;margin-bottom:14px}
 .header .ar{font-family:'Amiri',serif;font-size:24px;font-weight:700}
 .header .en{font-size:16px;font-weight:700;letter-spacing:3px}
@@ -165,10 +181,14 @@ table.main td{height:26px}
 table.summary{width:100%;border-collapse:collapse;direction:ltr;margin-top:14px}
 table.summary td{border:1.5px solid #333;padding:5px 8px;font-size:12px}
 table.summary td.lbl{font-weight:700;width:18%}
-@media print{body{padding:15px 20px}@page{size:A4;margin:8mm}}
+.stamp-section{display:flex;justify-content:flex-end;margin-top:20px}
+.stamp-section img{width:120px;height:120px;opacity:0.8}
+@media print{body{padding:15px 20px}.watermark{position:fixed}@page{size:A4;margin:8mm}}
 </style>
 </head>
 <body>
+<div class="watermark">TAHLEEM ACADEMY</div>
+<div class="content">
 <div class="header">
   <div class="ar">أكاديمية التعليم</div>
   <div class="en">TAHLEEM ACADEMY</div>
@@ -209,6 +229,10 @@ table.summary td.lbl{font-weight:700;width:18%}
   <tr><td class="lbl">Cgpa</td><td style="text-align:center">${exams.length > 0 ? cgpa.toFixed(2) : ""}</td><td class="lbl">Status</td><td style="text-align:center">${exams.length > 0 ? (cgpa >= 1.0 ? "Pass ✓" : "Fail ✗") : ""}</td></tr>
   <tr><td class="lbl">Comment</td><td style="text-align:center">${commentText}</td><td class="lbl">Signature</td><td style="text-align:center"></td></tr>
 </table>
+<div class="stamp-section">
+  <img src="${stampBase64}" alt="Tahleem Academy Stamp" />
+</div>
+</div>
 <script>
   window.onload = function() {
     setTimeout(function() { window.print(); }, 500);
