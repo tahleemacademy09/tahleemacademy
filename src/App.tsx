@@ -38,6 +38,7 @@ import EntranceExamTaking from "./pages/student/EntranceExamTaking";
 import EntranceResults from "./pages/student/EntranceResults";
 import RevisionHub from "./pages/student/RevisionHub";
 import RevisionRoom from "./pages/student/RevisionRoom";
+import PaymentScreen from "./pages/student/PaymentScreen";
 
 import AdminDashboard from "./pages/admin/AdminDashboard";
 import ExamManager from "./pages/admin/ExamManager";
@@ -58,6 +59,7 @@ import MajlisModeration from "./pages/admin/MajlisModeration";
 import NotificationManagement from "./pages/admin/NotificationManagement";
 import TranscriptManagement from "./pages/admin/TranscriptManagement";
 import AttendanceManagement from "./pages/admin/AttendanceManagement";
+import PaymentManagement from "./pages/admin/PaymentManagement";
 
 import TeacherDashboard from "./pages/teacher/TeacherDashboard";
 import TeacherStudents from "./pages/teacher/TeacherStudents";
@@ -121,10 +123,11 @@ const App = () => (
               <Route path="/student/exam/:attemptId" element={<ProtectedRoute skipOnboardingCheck><ExamTaking /></ProtectedRoute>} />
               <Route path="/student/results/:attemptId" element={<ProtectedRoute skipOnboardingCheck><ExamResults /></ProtectedRoute>} />
 
-              {/* Onboarding & Entrance Exam (no sidebar) */}
+              {/* Onboarding, Entrance Exam & Payment (no sidebar) */}
               <Route path="/onboarding" element={<ProtectedRoute skipOnboardingCheck><Onboarding /></ProtectedRoute>} />
               <Route path="/student/entrance-exam/:attemptId" element={<ProtectedRoute skipOnboardingCheck><EntranceExamTaking /></ProtectedRoute>} />
               <Route path="/student/entrance-results/:attemptId" element={<ProtectedRoute skipOnboardingCheck><EntranceResults /></ProtectedRoute>} />
+              <Route path="/student/payment" element={<ProtectedRoute skipOnboardingCheck><PaymentScreen /></ProtectedRoute>} />
 
               {/* Teacher dashboard - requires teacher role */}
               <Route element={<ProtectedRoute requiredRole="teacher"><TeacherLayout /></ProtectedRoute>}>
@@ -167,6 +170,7 @@ const App = () => (
                 <Route path="/admin/entrance-exam" element={<EntranceExamAdmin />} />
                 <Route path="/admin/transcripts" element={<TranscriptManagement />} />
                 <Route path="/admin/attendance" element={<AttendanceManagement />} />
+                <Route path="/admin/payments" element={<PaymentManagement />} />
               </Route>
 
               <Route path="*" element={<NotFound />} />

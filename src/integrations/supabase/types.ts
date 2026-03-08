@@ -1084,6 +1084,130 @@ export type Database = {
         }
         Relationships: []
       }
+      payment_plans: {
+        Row: {
+          amount: number
+          created_at: string | null
+          currency: string | null
+          description: string | null
+          description_ar: string | null
+          duration_months: number | null
+          id: string
+          is_active: boolean | null
+          level: string | null
+          name: string
+          name_ar: string | null
+          paystack_plan_code: string | null
+          type: string | null
+        }
+        Insert: {
+          amount: number
+          created_at?: string | null
+          currency?: string | null
+          description?: string | null
+          description_ar?: string | null
+          duration_months?: number | null
+          id?: string
+          is_active?: boolean | null
+          level?: string | null
+          name: string
+          name_ar?: string | null
+          paystack_plan_code?: string | null
+          type?: string | null
+        }
+        Update: {
+          amount?: number
+          created_at?: string | null
+          currency?: string | null
+          description?: string | null
+          description_ar?: string | null
+          duration_months?: number | null
+          id?: string
+          is_active?: boolean | null
+          level?: string | null
+          name?: string
+          name_ar?: string | null
+          paystack_plan_code?: string | null
+          type?: string | null
+        }
+        Relationships: []
+      }
+      payments: {
+        Row: {
+          amount: number
+          created_at: string | null
+          currency: string | null
+          id: string
+          notes: string | null
+          paid_at: string | null
+          payment_method: string | null
+          paystack_reference: string | null
+          paystack_transaction_id: string | null
+          plan_id: string | null
+          receipt_sent: boolean | null
+          recorded_by: string | null
+          status: string | null
+          student_id: string
+          type: string | null
+        }
+        Insert: {
+          amount: number
+          created_at?: string | null
+          currency?: string | null
+          id?: string
+          notes?: string | null
+          paid_at?: string | null
+          payment_method?: string | null
+          paystack_reference?: string | null
+          paystack_transaction_id?: string | null
+          plan_id?: string | null
+          receipt_sent?: boolean | null
+          recorded_by?: string | null
+          status?: string | null
+          student_id: string
+          type?: string | null
+        }
+        Update: {
+          amount?: number
+          created_at?: string | null
+          currency?: string | null
+          id?: string
+          notes?: string | null
+          paid_at?: string | null
+          payment_method?: string | null
+          paystack_reference?: string | null
+          paystack_transaction_id?: string | null
+          plan_id?: string | null
+          receipt_sent?: boolean | null
+          recorded_by?: string | null
+          status?: string | null
+          student_id?: string
+          type?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payments_plan_id_fkey"
+            columns: ["plan_id"]
+            isOneToOne: false
+            referencedRelation: "payment_plans"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payments_recorded_by_fkey"
+            columns: ["recorded_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "payments_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["user_id"]
+          },
+        ]
+      }
       private_sessions: {
         Row: {
           created_at: string | null
@@ -1250,6 +1374,7 @@ export type Database = {
           gender: string | null
           has_taken_entrance_exam: boolean | null
           id: string
+          is_payment_exempt: boolean | null
           learning_goal: string | null
           level: string | null
           nationality: string | null
@@ -1258,6 +1383,7 @@ export type Database = {
           parent_phone: string | null
           parent_relationship: string | null
           parent_whatsapp: string | null
+          payment_status: string | null
           phone: string | null
           preferred_language: string | null
           private_notes: string | null
@@ -1265,6 +1391,7 @@ export type Database = {
           status: string | null
           student_id: string | null
           student_type: string | null
+          subscription_end_date: string | null
           updated_at: string
           user_id: string
           whatsapp: string | null
@@ -1287,6 +1414,7 @@ export type Database = {
           gender?: string | null
           has_taken_entrance_exam?: boolean | null
           id?: string
+          is_payment_exempt?: boolean | null
           learning_goal?: string | null
           level?: string | null
           nationality?: string | null
@@ -1295,6 +1423,7 @@ export type Database = {
           parent_phone?: string | null
           parent_relationship?: string | null
           parent_whatsapp?: string | null
+          payment_status?: string | null
           phone?: string | null
           preferred_language?: string | null
           private_notes?: string | null
@@ -1302,6 +1431,7 @@ export type Database = {
           status?: string | null
           student_id?: string | null
           student_type?: string | null
+          subscription_end_date?: string | null
           updated_at?: string
           user_id: string
           whatsapp?: string | null
@@ -1324,6 +1454,7 @@ export type Database = {
           gender?: string | null
           has_taken_entrance_exam?: boolean | null
           id?: string
+          is_payment_exempt?: boolean | null
           learning_goal?: string | null
           level?: string | null
           nationality?: string | null
@@ -1332,6 +1463,7 @@ export type Database = {
           parent_phone?: string | null
           parent_relationship?: string | null
           parent_whatsapp?: string | null
+          payment_status?: string | null
           phone?: string | null
           preferred_language?: string | null
           private_notes?: string | null
@@ -1339,6 +1471,7 @@ export type Database = {
           status?: string | null
           student_id?: string | null
           student_type?: string | null
+          subscription_end_date?: string | null
           updated_at?: string
           user_id?: string
           whatsapp?: string | null
@@ -1960,6 +2093,67 @@ export type Database = {
           whatsapp_notifications?: boolean | null
         }
         Relationships: []
+      }
+      student_subscriptions: {
+        Row: {
+          auto_renew: boolean | null
+          created_at: string | null
+          end_date: string | null
+          id: string
+          payment_id: string | null
+          paystack_subscription_code: string | null
+          plan_id: string | null
+          start_date: string | null
+          status: string | null
+          student_id: string
+        }
+        Insert: {
+          auto_renew?: boolean | null
+          created_at?: string | null
+          end_date?: string | null
+          id?: string
+          payment_id?: string | null
+          paystack_subscription_code?: string | null
+          plan_id?: string | null
+          start_date?: string | null
+          status?: string | null
+          student_id: string
+        }
+        Update: {
+          auto_renew?: boolean | null
+          created_at?: string | null
+          end_date?: string | null
+          id?: string
+          payment_id?: string | null
+          paystack_subscription_code?: string | null
+          plan_id?: string | null
+          start_date?: string | null
+          status?: string | null
+          student_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "student_subscriptions_payment_id_fkey"
+            columns: ["payment_id"]
+            isOneToOne: false
+            referencedRelation: "payments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "student_subscriptions_plan_id_fkey"
+            columns: ["plan_id"]
+            isOneToOne: false
+            referencedRelation: "payment_plans"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "student_subscriptions_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["user_id"]
+          },
+        ]
       }
       subject_announcements: {
         Row: {
