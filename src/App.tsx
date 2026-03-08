@@ -49,6 +49,7 @@ import CourseManagement from "./pages/admin/CourseManagement";
 import SyllabusManager from "./pages/admin/SyllabusManager";
 import PrivateSessions from "./pages/admin/PrivateSessions";
 import EntranceExamAdmin from "./pages/admin/EntranceExamAdmin";
+import ViewAsStudent from "./pages/admin/ViewAsStudent";
 
 import TeacherDashboard from "./pages/teacher/TeacherDashboard";
 import TeacherStudents from "./pages/teacher/TeacherStudents";
@@ -148,6 +149,7 @@ const App = () => (
                 <Route path="/admin/proctoring" element={<ProctoringDashboard />} />
                 <Route path="/admin/private-sessions" element={<PrivateSessions />} />
                 <Route path="/admin/students" element={<StudentManagement />} />
+                <Route path="/admin/students/:userId/view" element={<ViewAsStudent />} />
                 <Route path="/admin/entrance-exam" element={<EntranceExamAdmin />} />
               </Route>
 

@@ -14,7 +14,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useNavigate } from "react-router-dom";
 import {
   Search, Users, Eye, BarChart, FileText, Calendar, MessageSquare,
-  StickyNote, CheckCircle, XCircle, GraduationCap, Mail
+  StickyNote, CheckCircle, XCircle, GraduationCap, Mail, Bell, UserPlus, UserMinus
 } from "lucide-react";
 
 const TeacherStudents = () => {
@@ -35,6 +35,8 @@ const TeacherStudents = () => {
   const [studentAttempts, setStudentAttempts] = useState<any[]>([]);
   const [noteDialog, setNoteDialog] = useState<any>(null);
   const [noteText, setNoteText] = useState("");
+  const [requestDialog, setRequestDialog] = useState<{ student: any; type: "enrol" | "remove" } | null>(null);
+  const [requestMsg, setRequestMsg] = useState("");
 
   useEffect(() => {
     if (!user) return;
@@ -131,6 +133,24 @@ const TeacherStudents = () => {
     await supabase.from("profiles").update({ private_notes: updated }).eq("user_id", noteDialog.user_id);
     toast({ title: t("Note saved", "تم حفظ الملاحظة") });
     setNoteDialog(null); setNoteText("");
+  };
+
+  // Request admin to enrol/remove student
+  const sendEnrolRequest = async () => {
+    if (!requestDialog || !user) return;
+    // Find admins
+    const { data: admins } = await supabase.from("user_roles").select("user_id").eq("role", "admin");
+    if (!admins?.length) { toast({ title: t("No admin found", "لم يتم العثور على مدير"), variant: "destructive" }); return; }
+    const msg = requestDialog.type === "enrol"
+      ? `Teacher requests to ENROL student "${requestDialog.student.full_name}" in a subject. ${requestMsg}`
+      : `Teacher requests to REMOVE student "${requestDialog.student.full_name}" from a subject. ${requestMsg}`;
+    const inserts = admins.map(a => ({
+      user_id: a.user_id, title: requestDialog.type === "enrol" ? "Enrol Request" : "Remove Request",
+      message: msg, type: "admin",
+    }));
+    await supabase.from("notifications").insert(inserts);
+    toast({ title: t("Request sent to admin", "تم إرسال الطلب للمدير") });
+    setRequestDialog(null); setRequestMsg("");
   };
 
   const levelBadge = (level: string) => {
@@ -317,6 +337,12 @@ const TeacherStudents = () => {
                     <Calendar className="h-3 w-3 me-1" /> {t("Session", "جلسة")}
                   </Button>
                 )}
+                <Button size="sm" variant="ghost" className="text-xs" title={t("Request Enrol", "طلب تسجيل")} onClick={() => setRequestDialog({ student: s, type: "enrol" })}>
+                  <UserPlus className="h-3 w-3" />
+                </Button>
+                <Button size="sm" variant="ghost" className="text-xs" title={t("Request Remove", "طلب إزالة")} onClick={() => setRequestDialog({ student: s, type: "remove" })}>
+                  <UserMinus className="h-3 w-3" />
+                </Button>
                 <Button size="sm" variant="ghost" className="text-xs" onClick={() => { setNoteDialog(s); setNoteText(""); }}>
                   <StickyNote className="h-3 w-3" />
                 </Button>
@@ -341,6 +367,22 @@ const TeacherStudents = () => {
           <DialogFooter>
             <Button variant="outline" onClick={() => setNoteDialog(null)}>{t("Cancel", "إلغاء")}</Button>
             <Button onClick={saveNote} disabled={!noteText.trim()}>{t("Save Note", "حفظ الملاحظة")}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {/* Request Enrol/Remove Dialog */}
+      <Dialog open={!!requestDialog} onOpenChange={o => !o && setRequestDialog(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {requestDialog?.type === "enrol" ? t("Request Enrolment", "طلب تسجيل") : t("Request Removal", "طلب إزالة")} — {requestDialog?.student?.full_name}
+            </DialogTitle>
+          </DialogHeader>
+          <Textarea value={requestMsg} onChange={e => setRequestMsg(e.target.value)}
+            placeholder={t("Add details (subject name, reason)...", "أضف تفاصيل (اسم المادة، السبب)...")} rows={3} />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRequestDialog(null)}>{t("Cancel", "إلغاء")}</Button>
+            <Button onClick={sendEnrolRequest}>{t("Send Request", "إرسال الطلب")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
