@@ -16,6 +16,7 @@ const ExamManager = () => {
   const [exams, setExams] = useState<any[]>([]);
   const [assignmentCounts, setAssignmentCounts] = useState<Record<string, number>>({});
   const [attemptCounts, setAttemptCounts] = useState<Record<string, number>>({});
+  const [termFilter, setTermFilter] = useState<string>("all");
 
   const fetchExams = async () => {
     const { data } = await supabase.from("exams").select("*, exam_questions(id)").order("created_at", { ascending: false });
