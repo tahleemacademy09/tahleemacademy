@@ -337,6 +337,12 @@ const TeacherStudents = () => {
                     <Calendar className="h-3 w-3 me-1" /> {t("Session", "جلسة")}
                   </Button>
                 )}
+                <Button size="sm" variant="ghost" className="text-xs" title={t("Request Enrol", "طلب تسجيل")} onClick={() => setRequestDialog({ student: s, type: "enrol" })}>
+                  <UserPlus className="h-3 w-3" />
+                </Button>
+                <Button size="sm" variant="ghost" className="text-xs" title={t("Request Remove", "طلب إزالة")} onClick={() => setRequestDialog({ student: s, type: "remove" })}>
+                  <UserMinus className="h-3 w-3" />
+                </Button>
                 <Button size="sm" variant="ghost" className="text-xs" onClick={() => { setNoteDialog(s); setNoteText(""); }}>
                   <StickyNote className="h-3 w-3" />
                 </Button>
