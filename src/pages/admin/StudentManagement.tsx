@@ -52,6 +52,10 @@ const StudentManagement = () => {
   const [editProfileStudent, setEditProfileStudent] = useState<any>(null);
   const [editForm, setEditForm] = useState<any>({});
   const [deactivateStudent, setDeactivateStudent] = useState<any>(null);
+  const [viewingAnswers, setViewingAnswers] = useState<any>(null);
+  const [examAnswers, setExamAnswers] = useState<any[]>([]);
+  const [examQuestions, setExamQuestions] = useState<any[]>([]);
+  const [enrolSubjectId, setEnrolSubjectId] = useState("");
 
   const isAdmin = hasRole("admin");
 
