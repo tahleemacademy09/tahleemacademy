@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -6,30 +6,67 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
-import { Shield, Loader2, Lock } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
+import { Shield, Loader2, Lock, Mail, Eye, EyeOff } from "lucide-react";
 
 const AdminLogin = () => {
   const { t } = useLanguage();
-  const { signIn, hasRole } = useAuth();
+  const { signIn, user, hasRole, loading: authLoading } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+
+  // Redirect logic: if already logged in, redirect based on role
+  useEffect(() => {
+    if (!authLoading && user) {
+      if (hasRole("admin") || hasRole("teacher")) {
+        navigate("/admin", { replace: true });
+      } else {
+        // Non-admin user trying to access admin-secure: redirect to home silently
+        navigate("/", { replace: true });
+      }
+    }
+  }, [authLoading, user, hasRole, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    const { error } = await signIn(email, password);
+    const { error, data } = await signIn(email, password);
     setLoading(false);
     if (error) {
       toast({ title: t("Error", "خطأ"), description: error.message, variant: "destructive" });
       return;
     }
-    // After sign in, roles are fetched via AuthContext. We redirect to /admin
-    // The ProtectedRoute will verify admin role server-side
-    navigate("/admin");
+    // Check role after login
+    const { data: roles } = await supabase
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", data.user?.id);
+    const isAdmin = roles?.some((r) => r.role === "admin" || r.role === "teacher");
+    if (isAdmin) {
+      navigate("/admin");
+    } else {
+      // Not an admin - sign them out and show error
+      await supabase.auth.signOut();
+      toast({
+        title: t("Access Denied", "تم رفض الوصول"),
+        description: t("You do not have admin privileges.", "ليس لديك صلاحيات المدير."),
+        variant: "destructive",
+      });
+    }
   };
+
+  // Don't render until we know auth state
+  if (authLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-sidebar via-background to-sidebar px-4">
@@ -46,28 +83,37 @@ const AdminLogin = () => {
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
+            <div className="relative">
+              <Mail className="absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 type="email"
                 placeholder={t("Admin Email", "البريد الإلكتروني للمدير")}
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
-                className="h-12"
+                className="h-12 ps-10"
               />
             </div>
-            <div>
+            <div className="relative">
+              <Lock className="absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
-                type="password"
+                type={showPassword ? "text" : "password"}
                 placeholder={t("Password", "كلمة المرور")}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
-                className="h-12"
+                className="h-12 ps-10 pe-10"
               />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute end-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              >
+                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
             </div>
             <Button type="submit" className="w-full h-12 text-base" disabled={loading}>
-              {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {loading && <Loader2 className="me-2 h-4 w-4 animate-spin" />}
               {t("Sign In as Admin", "تسجيل الدخول كمدير")}
             </Button>
           </form>
