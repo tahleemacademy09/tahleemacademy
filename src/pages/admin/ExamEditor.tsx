@@ -172,6 +172,7 @@ const ExamEditor = () => {
           term: (exam as any).term || "first",
           max_review_views: (exam as any).max_review_views ?? 1,
           type: (exam as any).type || "exam",
+          level: (exam as any).level || "",
         });
         // Load formatting settings
         setFormatSettings({
