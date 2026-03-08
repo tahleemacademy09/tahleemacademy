@@ -10,7 +10,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import {
   BookOpen, ClipboardList, Bell, TrendingUp, Calendar, CheckCircle, XCircle,
-  GraduationCap, MessageCircle, ArrowRight, Video, Star
+  GraduationCap, MessageCircle, ArrowRight, Video, Star, ChevronLeft, ChevronRight, AlertTriangle, Info
 } from "lucide-react";
 
 const toHijri = (date: Date) => {
