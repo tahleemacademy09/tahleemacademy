@@ -18,10 +18,11 @@ const AdminDashboard = () => {
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({
     students: 0, exams: 0, courses: 0, attempts: 0, pendingGrading: 0,
-    activeExams: 0, activeStudents: 0, violations: 0,
+    activeExams: 0, activeStudents: 0, violations: 0, privateStudents: 0, privateSessions: 0,
   });
   const [recentSubmissions, setRecentSubmissions] = useState<any[]>([]);
   const [recentActivity, setRecentActivity] = useState<any[]>([]);
+  const [privateStudentsList, setPrivateStudentsList] = useState<any[]>([]);
 
   useEffect(() => {
     const fetchStats = async () => {
