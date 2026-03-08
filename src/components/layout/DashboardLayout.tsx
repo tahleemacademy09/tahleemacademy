@@ -7,7 +7,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import {
   BookOpen, LayoutDashboard, ClipboardList, Users, LogOut, Globe,
   CheckSquare, BarChart, UserCircle, Library, GraduationCap, MessageCircle,
-  Menu, Video, Mic, Settings, Shield, Layers, FileText, UserCheck,
+  Menu, Video, Mic, Settings, Shield, Layers, FileText, UserCheck, BookMarked,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
