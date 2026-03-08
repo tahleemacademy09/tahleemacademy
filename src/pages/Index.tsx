@@ -321,6 +321,22 @@ const Index = () => {
         <button className="ta-btn-solid" onClick={() => { navigate("/register"); setMobileMenuOpen(false); }}>Register Free</button>
       </div>
 
+      {/* LIVE NOW BANNER */}
+      {liveClass && (
+        <div onClick={() => navigate(`/live/${liveClass.room_code}`)} style={{
+          background: "linear-gradient(90deg, #0f3122, #1a5c3a)",
+          borderBottom: "2px solid #c9973a",
+          padding: "12px 24px",
+          display: "flex", alignItems: "center", justifyContent: "center", gap: "12px",
+          cursor: "pointer", position: "fixed", top: "65px", left: 0, right: 0, zIndex: 90,
+        }}>
+          <span style={{ width: "10px", height: "10px", background: "#ef4444", borderRadius: "50%", animation: "pulse 1.5s infinite" }} />
+          <span style={{ color: "white", fontWeight: 600, fontSize: "14px" }}>
+            🔴 LIVE NOW: {liveClass.title} — Join Free →
+          </span>
+        </div>
+      )}
+
       {/* HERO */}
       <section className="ta-hero">
         <div className="ta-hero-bg"></div>
