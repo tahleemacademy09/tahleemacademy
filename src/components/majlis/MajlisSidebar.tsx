@@ -25,7 +25,8 @@ interface MajlisSidebarProps {
 
 const MajlisSidebar = ({
   channels, activeChannelId, onSelectChannel, onNewChat,
-  onBrowseChannels, profiles, unreadCounts, userId
+  onBrowseChannels, profiles, unreadCounts, userId,
+  onBroadcast, onAdminDashboard
 }: MajlisSidebarProps) => {
   const { t, language } = useLanguage();
   const { hasRole } = useAuth();
