@@ -16,9 +16,15 @@ import { useToast } from "@/hooks/use-toast";
 import { useLanguage } from "@/contexts/LanguageContext";
 import {
   DollarSign, Users, AlertTriangle, TrendingUp, Download,
-  CreditCard, Search, UserCheck, Bell, GraduationCap, Plus
+  CreditCard, Search, UserCheck, Bell, GraduationCap, Plus, Pencil, Trash2
 } from "lucide-react";
 import { format } from "date-fns";
+
+const EMPTY_PLAN = {
+  name: "", name_ar: "", description: "", description_ar: "",
+  amount: 0, currency: "NGN", type: "term", level: "all",
+  duration_months: 3, is_active: true, paystack_plan_code: "",
+};
 
 const PaymentManagement = () => {
   const { user } = useAuth();
@@ -34,6 +40,9 @@ const PaymentManagement = () => {
   const [manualDialogOpen, setManualDialogOpen] = useState(false);
   const [manualForm, setManualForm] = useState({ student_id: "", plan_id: "", amount: 0, method: "bank_transfer", reference: "", notes: "", date: new Date().toISOString().split("T")[0] });
   const [loading, setLoading] = useState(true);
+  const [planDialogOpen, setPlanDialogOpen] = useState(false);
+  const [editingPlan, setEditingPlan] = useState<any>(null);
+  const [planForm, setPlanForm] = useState<any>({ ...EMPTY_PLAN });
 
   useEffect(() => { loadData(); }, []);
 
