@@ -1,1 +1,4 @@
 project_id = "wvqeubhupkddtkcdwqcm"
+
+[functions.public-class-token]
+verify_jwt = false
