@@ -272,14 +272,14 @@ const Index = () => {
           <span>Tahleem <em>Academy</em></span>
         </div>
         <ul className="ta-nav-links">
-          <li><a href="#">Home</a></li>
-          <li><a href="#">Courses</a></li>
-          <li><a href="#">About</a></li>
-          <li><a href="#">Contact</a></li>
+          <li><a onClick={() => navigate("/")} style={{cursor:"pointer"}}>Home</a></li>
+          <li><a onClick={() => navigate("/courses")} style={{cursor:"pointer"}}>Courses</a></li>
+          <li><a onClick={() => navigate("/about")} style={{cursor:"pointer"}}>About</a></li>
+          <li><a onClick={() => navigate("/contact")} style={{cursor:"pointer"}}>Contact</a></li>
         </ul>
         <div className="ta-nav-cta">
-          <button className="ta-btn-outline" onClick={() => navigate("/auth")}>Sign In</button>
-          <button className="ta-btn-solid" onClick={() => navigate("/auth")}>Register Free</button>
+          <button className="ta-btn-outline" onClick={() => navigate("/login")}>Sign In</button>
+          <button className="ta-btn-solid" onClick={() => navigate("/register")}>Register Free</button>
         </div>
       </nav>
 
@@ -300,8 +300,8 @@ const Index = () => {
               Learn Quran, Tajweed, Arabic Language and Islamic Studies with qualified scholars — live, interactive, and designed for every level.
             </p>
             <div className="ta-hero-buttons">
-              <button className="ta-hero-btn-primary" onClick={() => navigate("/auth")}>Start Learning →</button>
-              <button className="ta-hero-btn-secondary">Browse Courses</button>
+              <button className="ta-hero-btn-primary" onClick={() => navigate("/register")}>Start Learning →</button>
+              <button className="ta-hero-btn-secondary" onClick={() => navigate("/courses")}>Browse Courses</button>
             </div>
           </div>
           <div className="ta-hero-right">
@@ -390,7 +390,7 @@ const Index = () => {
                   <div className="ta-course-desc">{c.desc}</div>
                   <div className="ta-course-footer">
                     <span className="ta-course-level">{c.level}</span>
-                    <button className="ta-course-btn" onClick={() => navigate("/auth")}>Enrol Now</button>
+                    <button className="ta-course-btn" onClick={() => navigate("/register")}>Enrol Now</button>
                   </div>
                 </div>
               </div>
@@ -421,7 +421,7 @@ const Index = () => {
           <div className="ta-cta-arabic">اطلبوا العلم من المهد إلى اللحد</div>
           <h2 className="ta-cta-title">Begin Your Journey Today</h2>
           <p className="ta-cta-text">Join Tahleem Academy and take your first step towards mastering Arabic and Islamic knowledge — guided by qualified scholars.</p>
-          <button className="ta-cta-btn" onClick={() => navigate("/auth")}>Create Free Account →</button>
+          <button className="ta-cta-btn" onClick={() => navigate("/register")}>Create Free Account →</button>
         </div>
       </section>
 
@@ -470,7 +470,12 @@ const Index = () => {
           <div>
             <h4 className="ta-footer-heading">Quick Links</h4>
             <ul className="ta-footer-links">
-              {["🏠 Home","📚 Courses","ℹ️ About Us","📋 Programs","📞 Contact"].map(l=><li key={l}><a href="#">{l}</a></li>)}
+              {[
+                {label:"🏠 Home", path:"/"},
+                {label:"📚 Courses", path:"/courses"},
+                {label:"ℹ️ About Us", path:"/about"},
+                {label:"📞 Contact", path:"/contact"},
+              ].map(l=><li key={l.label}><a onClick={() => navigate(l.path)} style={{cursor:"pointer"}}>{l.label}</a></li>)}
             </ul>
           </div>
           <div>
@@ -485,7 +490,7 @@ const Index = () => {
               <li><span className="ta-contact-icon">✉️</span><a href="mailto:Tahleemacademy09@gmail.com">Tahleemacademy09@gmail.com</a></li>
               <li><span className="ta-contact-icon">📱</span><a href="tel:+2348163310471">+234 816 331 0471</a></li>
               <li><span className="ta-contact-icon">💬</span><a href="https://wa.me/2348163310471">WhatsApp Us</a></li>
-              <li><span className="ta-contact-icon">🌐</span><a href="#">tahleemacademy.vercel.app</a></li>
+              <li><span className="ta-contact-icon">🌐</span><a href="https://tahleemacademy.lovable.app">tahleemacademy.lovable.app</a></li>
             </ul>
           </div>
         </div>

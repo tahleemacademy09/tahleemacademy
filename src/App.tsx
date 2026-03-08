@@ -73,8 +73,9 @@ const App = () => (
             <MuallimOverlay />
             <Routes>
               {/* Public pages */}
+              {/* Index has its own navbar/footer */}
+              <Route path="/" element={<Index />} />
               <Route element={<PublicLayout />}>
-                <Route path="/" element={<Index />} />
                 <Route path="/courses" element={<Courses />} />
                 <Route path="/about" element={<About />} />
                 <Route path="/contact" element={<Contact />} />
