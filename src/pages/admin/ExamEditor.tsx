@@ -557,6 +557,27 @@ fill_blank,"The word for 'water' is ___.","كلمة 'ماء' هي ___.",,,,,,,,,
           <Card>
             <CardHeader><CardTitle>{t("Exam Details", "تفاصيل الامتحان")}</CardTitle></CardHeader>
             <CardContent className="space-y-4">
+              {/* Type Selector */}
+              <div className="rounded-lg border-2 border-dashed p-4">
+                <Label className="text-base font-semibold mb-3 block">{t("Type", "النوع")}</Label>
+                <div className="grid grid-cols-2 gap-3">
+                  {[
+                    { value: "exam" as const, label: t("Exam / امتحان", "امتحان / Exam"), marks: 70, color: "border-primary bg-primary/5" },
+                    { value: "test" as const, label: t("Test / تمرين", "تمرين / Test"), marks: 30, color: "border-amber-500 bg-amber-500/5" },
+                  ].map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => setExamForm({ ...examForm, type: opt.value })}
+                      className={`rounded-lg border-2 p-4 text-start transition-all ${examForm.type === opt.value ? opt.color : "border-border hover:border-muted-foreground/30"}`}
+                    >
+                      <p className="font-semibold text-sm">{opt.label}</p>
+                      <p className="text-xs text-muted-foreground mt-1">{t(`Max ${opt.marks} marks`, `${opt.marks} درجة كحد أقصى`)}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <div className="grid gap-4 md:grid-cols-2">
                 <div>
                   <Label>{t("Title (English)", "العنوان (إنجليزي)")}</Label>
