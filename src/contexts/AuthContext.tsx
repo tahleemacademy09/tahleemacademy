@@ -33,6 +33,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (profileRes.data) setProfile(profileRes.data);
   };
 
+  const refreshProfile = async () => {
+    if (!user) return;
+    const { data } = await supabase.from("profiles").select("*").eq("user_id", user.id).maybeSingle();
+    if (data) setProfile(data);
+  };
+
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
       setSession(session);
