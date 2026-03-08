@@ -13,8 +13,8 @@ Deno.serve(async (req) => {
   try {
     const { room_code, guest_name, guest_email, password } = await req.json();
 
-    if (!room_code || !guest_name) {
-      return new Response(JSON.stringify({ error: 'room_code and guest_name are required' }),
+    if (!room_code) {
+      return new Response(JSON.stringify({ error: 'room_code is required' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
@@ -34,30 +34,12 @@ Deno.serve(async (req) => {
         { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
-    if (publicClass.status !== 'live') {
-      return new Response(JSON.stringify({ error: 'Class is not live', status: publicClass.status }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-    }
-
-    // Check password
-    if (publicClass.password_enabled && publicClass.password) {
-      if (password !== publicClass.password) {
-        return new Response(JSON.stringify({ error: 'Invalid password' }),
-          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-      }
-    }
-
-    // Check max guests
-    if (publicClass.guest_count >= publicClass.max_guests) {
-      return new Response(JSON.stringify({ error: 'Class is full' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-    }
-
-    // Check if user is authenticated (registered user joining)
+    // Check if user is authenticated (registered user or host)
     let isRegisteredUser = false;
     let userId: string | null = null;
+    let isHost = false;
     const authHeader = req.headers.get('Authorization');
-    if (authHeader && authHeader !== 'Bearer null') {
+    if (authHeader && authHeader !== 'Bearer null' && authHeader !== 'Bearer undefined') {
       const anonClient = createClient(supabaseUrl, Deno.env.get('SUPABASE_ANON_KEY')!, {
         global: { headers: { Authorization: authHeader } },
       });
@@ -65,26 +47,75 @@ Deno.serve(async (req) => {
       if (user) {
         isRegisteredUser = true;
         userId = user.id;
+        isHost = publicClass.host_id === user.id;
+
+        // Check if user is admin or teacher
+        if (!isHost) {
+          const { data: roles } = await supabase
+            .from('user_roles')
+            .select('role')
+            .eq('user_id', user.id);
+          const userRoles = roles?.map((r: any) => r.role) || [];
+          if (userRoles.includes('admin') || userRoles.includes('teacher')) {
+            isHost = true; // Admins and teachers get host-level access
+          }
+        }
+      }
+    }
+
+    // For non-host users, enforce live status and other checks
+    if (!isHost) {
+      if (publicClass.status !== 'live') {
+        return new Response(JSON.stringify({ error: 'Class is not live', status: publicClass.status }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
+      if (!guest_name) {
+        return new Response(JSON.stringify({ error: 'guest_name is required' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
+      // Check password
+      if (publicClass.password_enabled && publicClass.password) {
+        if (password !== publicClass.password) {
+          return new Response(JSON.stringify({ error: 'Invalid password' }),
+            { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+      }
+
+      // Check max guests
+      if (publicClass.guest_count >= publicClass.max_guests) {
+        return new Response(JSON.stringify({ error: 'Class is full' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
     }
 
     const guestId = crypto.randomUUID();
-    const identity = isRegisteredUser ? `user_${userId}` : `guest_${guestId}`;
+    const participantName = isHost 
+      ? (guest_name || 'Teacher')
+      : (guest_name || 'Guest');
+    const identity = isHost 
+      ? `host_${userId}` 
+      : isRegisteredUser 
+        ? `user_${userId}` 
+        : `guest_${guestId}`;
 
-    // Save guest record
-    await supabase.from('public_class_guests').insert({
-      class_id: publicClass.id,
-      guest_name,
-      guest_email: guest_email || null,
-      is_registered_user: isRegisteredUser,
-      user_id: userId,
-      device_info: req.headers.get('User-Agent') || null,
-    });
+    // Save guest record for non-host users
+    if (!isHost) {
+      await supabase.from('public_class_guests').insert({
+        class_id: publicClass.id,
+        guest_name: participantName,
+        guest_email: guest_email || null,
+        is_registered_user: isRegisteredUser,
+        user_id: userId,
+        device_info: req.headers.get('User-Agent') || null,
+      });
 
-    // Increment guest count
-    await supabase.from('public_classes')
-      .update({ guest_count: (publicClass.guest_count || 0) + 1 })
-      .eq('id', publicClass.id);
+      // Increment guest count
+      await supabase.from('public_classes')
+        .update({ guest_count: (publicClass.guest_count || 0) + 1 })
+        .eq('id', publicClass.id);
+    }
 
     // Generate LiveKit token
     const LIVEKIT_API_KEY = Deno.env.get('LIVEKIT_API_KEY')!;
@@ -97,25 +128,37 @@ Deno.serve(async (req) => {
     const now = Math.floor(Date.now() / 1000);
     const exp = now + 7200; // 2 hours
 
+    const videoGrant: Record<string, unknown> = {
+      roomJoin: true,
+      room: roomName,
+      canSubscribe: true,
+      canPublishData: true,
+    };
+
+    if (isHost) {
+      // Host gets full permissions
+      videoGrant.canPublish = true;
+      videoGrant.roomAdmin = true;
+      videoGrant.roomRecord = true;
+    } else {
+      // Guests get limited permissions based on class settings
+      videoGrant.canPublish = publicClass.allow_guest_camera || publicClass.allow_guest_mic;
+    }
+
     const claims: Record<string, unknown> = {
       iss: LIVEKIT_API_KEY,
       sub: identity,
       nbf: now,
       exp,
       jti: identity,
-      name: guest_name,
-      video: {
-        roomJoin: true,
-        room: roomName,
-        canPublish: publicClass.allow_guest_camera || publicClass.allow_guest_mic,
-        canSubscribe: true,
-        canPublishData: true,
-      },
+      name: participantName,
+      video: videoGrant,
       metadata: JSON.stringify({
-        role: 'guest',
-        guest_id: guestId,
+        role: isHost ? 'host' : 'guest',
+        guest_id: isHost ? null : guestId,
         class_id: publicClass.id,
         is_registered: isRegisteredUser,
+        is_host: isHost,
       }),
     };
 
@@ -143,11 +186,12 @@ Deno.serve(async (req) => {
       token,
       url: LIVEKIT_URL,
       room: roomName,
-      role: 'guest',
-      participant_name: guest_name,
+      role: isHost ? 'host' : 'guest',
+      participant_name: participantName,
       class_id: publicClass.id,
       class_title: publicClass.title,
       class_title_ar: publicClass.title_ar,
+      is_host: isHost,
     }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
   } catch (err: unknown) {
