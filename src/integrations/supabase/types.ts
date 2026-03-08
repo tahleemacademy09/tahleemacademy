@@ -217,6 +217,8 @@ export type Database = {
           instructor_name: string | null
           is_published: boolean | null
           level: string | null
+          sort_order: number | null
+          subject_id: string | null
           title: string
           title_ar: string | null
           updated_at: string
@@ -233,6 +235,8 @@ export type Database = {
           instructor_name?: string | null
           is_published?: boolean | null
           level?: string | null
+          sort_order?: number | null
+          subject_id?: string | null
           title: string
           title_ar?: string | null
           updated_at?: string
@@ -249,11 +253,21 @@ export type Database = {
           instructor_name?: string | null
           is_published?: boolean | null
           level?: string | null
+          sort_order?: number | null
+          subject_id?: string | null
           title?: string
           title_ar?: string | null
           updated_at?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "courses_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       device_logs: {
         Row: {
@@ -660,6 +674,82 @@ export type Database = {
           },
         ]
       }
+      lesson_progress: {
+        Row: {
+          completed: boolean | null
+          completed_at: string | null
+          created_at: string | null
+          id: string
+          lesson_id: string
+          user_id: string
+        }
+        Insert: {
+          completed?: boolean | null
+          completed_at?: string | null
+          created_at?: string | null
+          id?: string
+          lesson_id: string
+          user_id: string
+        }
+        Update: {
+          completed?: boolean | null
+          completed_at?: string | null
+          created_at?: string | null
+          id?: string
+          lesson_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "lesson_progress_lesson_id_fkey"
+            columns: ["lesson_id"]
+            isOneToOne: false
+            referencedRelation: "lessons"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      lessons: {
+        Row: {
+          course_id: string
+          created_at: string | null
+          duration_minutes: number | null
+          id: string
+          sort_order: number | null
+          title: string
+          title_ar: string | null
+          video_url: string | null
+        }
+        Insert: {
+          course_id: string
+          created_at?: string | null
+          duration_minutes?: number | null
+          id?: string
+          sort_order?: number | null
+          title: string
+          title_ar?: string | null
+          video_url?: string | null
+        }
+        Update: {
+          course_id?: string
+          created_at?: string | null
+          duration_minutes?: number | null
+          id?: string
+          sort_order?: number | null
+          title?: string
+          title_ar?: string | null
+          video_url?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "lessons_course_id_fkey"
+            columns: ["course_id"]
+            isOneToOne: false
+            referencedRelation: "courses"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       live_sessions: {
         Row: {
           chat_count: number | null
@@ -851,6 +941,7 @@ export type Database = {
           email: string | null
           full_name: string | null
           id: string
+          level: string | null
           phone: string | null
           preferred_language: string | null
           updated_at: string
@@ -863,6 +954,7 @@ export type Database = {
           email?: string | null
           full_name?: string | null
           id?: string
+          level?: string | null
           phone?: string | null
           preferred_language?: string | null
           updated_at?: string
@@ -875,6 +967,7 @@ export type Database = {
           email?: string | null
           full_name?: string | null
           id?: string
+          level?: string | null
           phone?: string | null
           preferred_language?: string | null
           updated_at?: string
@@ -1052,33 +1145,48 @@ export type Database = {
       }
       subject_materials: {
         Row: {
+          content: string | null
           created_at: string | null
           file_size: number | null
           file_type: string | null
           file_url: string
           id: string
+          is_downloadable: boolean | null
+          level: string | null
+          material_type: string | null
+          sort_order: number | null
           subject_id: string
           title: string
           topic: string | null
           uploaded_by: string
         }
         Insert: {
+          content?: string | null
           created_at?: string | null
           file_size?: number | null
           file_type?: string | null
           file_url: string
           id?: string
+          is_downloadable?: boolean | null
+          level?: string | null
+          material_type?: string | null
+          sort_order?: number | null
           subject_id: string
           title: string
           topic?: string | null
           uploaded_by: string
         }
         Update: {
+          content?: string | null
           created_at?: string | null
           file_size?: number | null
           file_type?: string | null
           file_url?: string
           id?: string
+          is_downloadable?: boolean | null
+          level?: string | null
+          material_type?: string | null
+          sort_order?: number | null
           subject_id?: string
           title?: string
           topic?: string | null
@@ -1100,6 +1208,7 @@ export type Database = {
           description: string | null
           file_url: string | null
           id: string
+          level: string | null
           objectives: string[] | null
           subject_id: string
           title: string
@@ -1110,6 +1219,7 @@ export type Database = {
           description?: string | null
           file_url?: string | null
           id?: string
+          level?: string | null
           objectives?: string[] | null
           subject_id: string
           title: string
@@ -1120,6 +1230,7 @@ export type Database = {
           description?: string | null
           file_url?: string | null
           id?: string
+          level?: string | null
           objectives?: string[] | null
           subject_id?: string
           title?: string
@@ -1141,6 +1252,7 @@ export type Database = {
           created_by: string | null
           description: string | null
           description_ar: string | null
+          icon: string | null
           id: string
           is_active: boolean | null
           livekit_room_name: string | null
@@ -1154,6 +1266,7 @@ export type Database = {
           created_by?: string | null
           description?: string | null
           description_ar?: string | null
+          icon?: string | null
           id?: string
           is_active?: boolean | null
           livekit_room_name?: string | null
@@ -1167,6 +1280,7 @@ export type Database = {
           created_by?: string | null
           description?: string | null
           description_ar?: string | null
+          icon?: string | null
           id?: string
           is_active?: boolean | null
           livekit_room_name?: string | null
