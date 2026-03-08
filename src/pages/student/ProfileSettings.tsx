@@ -494,14 +494,8 @@ const ProfileSettings = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <Label>{t("Level", "المستوى")}</Label>
-              <Select
-                value={form.level}
-                onValueChange={(v) => setForm({ ...form, level: v })}
-                disabled={!canEdit("level")}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
+              <Select value={form.level} onValueChange={(v) => setForm({ ...form, level: v })} disabled={!canEdit("level")}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="beginner">{t("Beginner / المبتدئة", "المبتدئة")}</SelectItem>
                   <SelectItem value="intermediate">{t("Intermediate / المتوسطة", "المتوسطة")}</SelectItem>
@@ -511,14 +505,8 @@ const ProfileSettings = () => {
             </div>
             <div>
               <Label>{t("Status", "الحالة")}</Label>
-              <Select
-                value={form.status}
-                onValueChange={(v) => setForm({ ...form, status: v })}
-                disabled={!canEdit("status")}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
+              <Select value={form.status} onValueChange={(v) => setForm({ ...form, status: v })} disabled={!canEdit("status")}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="active">{t("Active", "نشط")}</SelectItem>
                   <SelectItem value="inactive">{t("Inactive", "غير نشط")}</SelectItem>
@@ -531,6 +519,76 @@ const ProfileSettings = () => {
           {isStudent && (
             <p className="text-xs text-muted-foreground bg-muted/50 p-2 rounded">
               {t("Academic details can only be updated by an administrator.", "يمكن تحديث التفاصيل الأكاديمية فقط بواسطة المسؤول.")}
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ══════════════════════════════════════════
+          SECTION 5: Student Type (Admin only)
+      ══════════════════════════════════════════ */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Users className="h-5 w-5 text-primary" />
+            {t("Student Type", "نوع الطالب")}
+            {form.student_type === "private" && (
+              <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-[#D4AF37]/20 text-[#D4AF37] border border-[#D4AF37]/30">
+                {t("Private", "خاص")}
+              </span>
+            )}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div>
+            <Label>{t("Student Type", "نوع الطالب")}</Label>
+            <Select value={form.student_type} onValueChange={(v) => setForm({ ...form, student_type: v })} disabled={!canEdit("student_type")}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="group">{t("Group Student / طالب جماعي", "طالب جماعي")}</SelectItem>
+                <SelectItem value="private">{t("Private Student / طالب خاص", "طالب خاص")}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {form.student_type === "private" && (
+            <>
+              <div>
+                <Label>{t("Assigned Teacher", "المعلم المسؤول")}</Label>
+                <Select value={form.assigned_teacher_id} onValueChange={(v) => setForm({ ...form, assigned_teacher_id: v })} disabled={!canEdit("assigned_teacher_id")}>
+                  <SelectTrigger><SelectValue placeholder={t("Select a teacher", "اختر معلمًا")} /></SelectTrigger>
+                  <SelectContent>
+                    {teachers.map(tc => (
+                      <SelectItem key={tc.user_id} value={tc.user_id}>{tc.full_name || tc.email}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>{t("Private Session Rate", "سعر الجلسة الخاصة")}</Label>
+                <Input
+                  value={form.private_session_rate}
+                  onChange={(e) => setForm({ ...form, private_session_rate: e.target.value })}
+                  disabled={!canEdit("private_session_rate")}
+                  placeholder={t("e.g. $20/hour", "مثال: ٢٠$/ساعة")}
+                />
+              </div>
+              <div>
+                <Label>{t("Private Notes", "ملاحظات خاصة")}</Label>
+                <textarea
+                  className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+                  value={form.private_notes}
+                  onChange={(e) => setForm({ ...form, private_notes: e.target.value })}
+                  disabled={!canEdit("private_notes")}
+                  placeholder={t("Special notes about this student...", "ملاحظات خاصة عن هذا الطالب...")}
+                />
+              </div>
+            </>
+          )}
+
+          {isStudent && (
+            <p className="text-xs text-muted-foreground bg-muted/50 p-2 rounded">
+              {t("Student type can only be changed by an administrator.", "يمكن تغيير نوع الطالب فقط بواسطة المسؤول.")}
             </p>
           )}
         </CardContent>
