@@ -633,6 +633,20 @@ fill_blank,"The word for 'water' is ___.","كلمة 'ماء' هي ___.",,,,,,,,,
                   </div>
                 ))}
               </div>
+              {examForm.allow_review && (
+                <div className="flex items-center gap-3 pt-2">
+                  <Label className="text-sm whitespace-nowrap">{t("Max Review Views", "الحد الأقصى لمرات المراجعة")}</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={100}
+                    className="w-24"
+                    value={examForm.max_review_views}
+                    onChange={(e) => setExamForm({ ...examForm, max_review_views: parseInt(e.target.value) || 1 })}
+                  />
+                  <span className="text-xs text-muted-foreground">{t("times", "مرات")}</span>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
