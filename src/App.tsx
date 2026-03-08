@@ -123,10 +123,11 @@ const App = () => (
               <Route path="/student/exam/:attemptId" element={<ProtectedRoute skipOnboardingCheck><ExamTaking /></ProtectedRoute>} />
               <Route path="/student/results/:attemptId" element={<ProtectedRoute skipOnboardingCheck><ExamResults /></ProtectedRoute>} />
 
-              {/* Onboarding & Entrance Exam (no sidebar) */}
+              {/* Onboarding, Entrance Exam & Payment (no sidebar) */}
               <Route path="/onboarding" element={<ProtectedRoute skipOnboardingCheck><Onboarding /></ProtectedRoute>} />
               <Route path="/student/entrance-exam/:attemptId" element={<ProtectedRoute skipOnboardingCheck><EntranceExamTaking /></ProtectedRoute>} />
               <Route path="/student/entrance-results/:attemptId" element={<ProtectedRoute skipOnboardingCheck><EntranceResults /></ProtectedRoute>} />
+              <Route path="/student/payment" element={<ProtectedRoute skipOnboardingCheck><PaymentScreen /></ProtectedRoute>} />
 
               {/* Teacher dashboard - requires teacher role */}
               <Route element={<ProtectedRoute requiredRole="teacher"><TeacherLayout /></ProtectedRoute>}>
