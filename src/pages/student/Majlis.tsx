@@ -8,13 +8,18 @@ import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import {
   Send, MessageCircle, Reply, CheckCheck, Mic, MicOff,
-  Image, Paperclip, Smile, ArrowLeft, FileText, Trash2, Info
+  Image, Paperclip, Smile, ArrowLeft, FileText, Trash2, Info,
+  BarChart3, Megaphone
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import MajlisSidebar from "@/components/majlis/MajlisSidebar";
 import CreateChannelDialog from "@/components/majlis/CreateChannelDialog";
 import ChannelInfoPanel from "@/components/majlis/ChannelInfoPanel";
 import BrowseChannelsDialog from "@/components/majlis/BrowseChannelsDialog";
+import AdminMessageMenu from "@/components/majlis/AdminMessageMenu";
+import AdminBroadcastDialog from "@/components/majlis/AdminBroadcastDialog";
+import AdminDashboardPanel from "@/components/majlis/AdminDashboardPanel";
+import AdminProfileCard from "@/components/majlis/AdminProfileCard";
 import type { ChatChannel, ChatMessage, UserProfile } from "@/components/majlis/types";
 
 const Majlis = () => {
