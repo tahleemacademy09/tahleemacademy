@@ -1,30 +1,51 @@
-import { useParams, Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useParams, Link, useNavigate } from "react-router-dom";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ArrowLeft, BookOpen, FileText, Download, Play, ExternalLink, Music, Video, Type, Lock, CheckCircle, Circle } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Switch } from "@/components/ui/switch";
+import { useToast } from "@/hooks/use-toast";
+import ClassroomView from "@/components/classroom/ClassroomView";
+import {
+  ArrowLeft, BookOpen, FileText, Download, Play, ExternalLink, Video, Clock,
+  Calendar, CheckCircle, XCircle, AlertCircle, Plus, Upload, Eye, BarChart3,
+  Users, Mic, Link as LinkIcon, StickyNote, ClipboardList, TrendingUp
+} from "lucide-react";
+import { format, isPast, isFuture, differenceInMinutes } from "date-fns";
 
-const materialTypeIcon: Record<string, any> = {
-  PDF: FileText,
-  Video: Video,
-  Audio: Music,
-  Link: ExternalLink,
-  Text: Type,
+const levelColors: Record<string, string> = {
+  beginner: "bg-green-100 text-green-800",
+  intermediate: "bg-yellow-100 text-yellow-800",
+  advanced: "bg-red-100 text-red-800",
 };
 
 const SubjectView = () => {
   const { subjectId } = useParams();
   const { t, language } = useLanguage();
-  const { user, profile } = useAuth();
-  const studentLevel = profile?.level || "beginner";
+  const { user, profile, hasRole } = useAuth();
+  const navigate = useNavigate();
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const isTeacher = hasRole("teacher") || hasRole("admin");
+  const [inClassroom, setInClassroom] = useState(false);
+  const [classroomSubject, setClassroomSubject] = useState<any>(null);
+  const [showSchedule, setShowSchedule] = useState(false);
+  const [scheduleForm, setScheduleForm] = useState({
+    topic: "", topic_ar: "", date: "", time: "", duration: 60, is_recorded: true, homework: "", homework_ar: "",
+  });
 
+  // ─── Data Queries ───
   const { data: subject, isLoading } = useQuery({
     queryKey: ["subject", subjectId],
     queryFn: async () => {
@@ -34,59 +55,114 @@ const SubjectView = () => {
     },
   });
 
-  const { data: courses } = useQuery({
-    queryKey: ["subject-courses", subjectId],
+  const { data: teacherProfile } = useQuery({
+    queryKey: ["subject-teacher", subject?.teacher_id],
+    enabled: !!subject?.teacher_id,
     queryFn: async () => {
-      const { data, error } = await supabase.from("courses").select("*").eq("subject_id", subjectId!).eq("is_published", true).order("sort_order");
-      if (error) throw error;
+      const { data } = await supabase.from("profiles").select("full_name, full_name_ar, avatar_url").eq("user_id", subject!.teacher_id!).single();
       return data;
     },
   });
 
-  const { data: syllabus } = useQuery({
-    queryKey: ["subject-syllabus", subjectId, studentLevel],
+  const { data: sessions = [] } = useQuery({
+    queryKey: ["subject-sessions", subjectId],
     queryFn: async () => {
-      const { data, error } = await supabase.from("subject_syllabus").select("*").eq("subject_id", subjectId!).eq("level", studentLevel).order("week_number");
-      if (error) throw error;
-      return data;
+      const { data } = await supabase.from("live_sessions").select("*").eq("subject_id", subjectId!).order("scheduled_at", { ascending: true, nullsFirst: false });
+      return (data || []) as any[];
     },
   });
 
-  const { data: materials } = useQuery({
-    queryKey: ["subject-materials", subjectId, studentLevel],
+  const { data: recordings = [] } = useQuery({
+    queryKey: ["subject-recordings", subjectId],
     queryFn: async () => {
-      const { data, error } = await supabase.from("subject_materials").select("*").eq("subject_id", subjectId!).eq("level", studentLevel).order("sort_order");
-      if (error) throw error;
-      return data;
+      const { data } = await supabase.from("session_recordings").select("*").eq("subject_id", subjectId!).order("created_at", { ascending: false });
+      return (data || []) as any[];
     },
   });
 
-  const { data: lessons } = useQuery({
-    queryKey: ["subject-all-lessons", subjectId],
-    enabled: !!courses?.length,
+  const { data: materials = [] } = useQuery({
+    queryKey: ["subject-materials-all", subjectId],
     queryFn: async () => {
-      const courseIds = (courses || []).map((c: any) => c.id);
-      const { data, error } = await supabase.from("lessons").select("id, course_id").in("course_id", courseIds);
-      if (error) throw error;
-      return data;
+      const { data } = await supabase.from("subject_materials").select("*").eq("subject_id", subjectId!).order("created_at", { ascending: false });
+      return (data || []) as any[];
     },
   });
 
-  const { data: progressData } = useQuery({
-    queryKey: ["subject-progress", subjectId, user?.id],
-    enabled: !!user && !!lessons?.length,
+  const { data: exams = [] } = useQuery({
+    queryKey: ["subject-exams", subjectId],
     queryFn: async () => {
-      const lessonIds = (lessons || []).map((l: any) => l.id);
-      const { data, error } = await supabase.from("lesson_progress").select("lesson_id, completed").eq("user_id", user!.id).in("lesson_id", lessonIds).eq("completed", true);
-      if (error) throw error;
-      return data;
+      const { data: courses } = await supabase.from("courses").select("id").eq("subject_id", subjectId!);
+      if (!courses?.length) return [];
+      const { data } = await supabase.from("exams").select("*").in("course_id", courses.map(c => c.id)).eq("is_published", true);
+      return (data || []) as any[];
     },
   });
 
-  const completedSet = new Set((progressData || []).map((p: any) => p.lesson_id));
+  const { data: myAttempts = [] } = useQuery({
+    queryKey: ["subject-attempts", subjectId, user?.id],
+    enabled: !!user && exams.length > 0,
+    queryFn: async () => {
+      const examIds = exams.map((e: any) => e.id);
+      const { data } = await supabase.from("exam_attempts").select("*").eq("user_id", user!.id).in("exam_id", examIds);
+      return (data || []) as any[];
+    },
+  });
 
-  const getLessonCount = (courseId: string) => (lessons || []).filter((l: any) => l.course_id === courseId).length;
-  const getCompletedCount = (courseId: string) => (lessons || []).filter((l: any) => l.course_id === courseId && completedSet.has(l.id)).length;
+  const { data: homework = [] } = useQuery({
+    queryKey: ["subject-homework", subjectId, user?.id],
+    enabled: !!user,
+    queryFn: async () => {
+      let query = supabase.from("session_homework" as any).select("*").eq("subject_id", subjectId!);
+      if (!isTeacher) query = query.eq("student_id", user!.id);
+      const { data } = await query.order("created_at", { ascending: false });
+      return (data || []) as any[];
+    },
+  });
+
+  const { data: attendanceLogs = [] } = useQuery({
+    queryKey: ["subject-attendance", subjectId, user?.id],
+    enabled: !!user && sessions.length > 0,
+    queryFn: async () => {
+      const sessionIds = sessions.map((s: any) => s.id);
+      if (!sessionIds.length) return [];
+      let query = supabase.from("attendance_logs").select("*").in("session_id", sessionIds);
+      if (!isTeacher) query = query.eq("user_id", user!.id);
+      const { data } = await query;
+      return (data || []) as any[];
+    },
+  });
+
+  // ─── Derived Data ───
+  const now = new Date();
+  const upcomingSessions = sessions.filter((s: any) => s.scheduled_at && isFuture(new Date(s.scheduled_at)) && s.status !== "ended");
+  const pastSessions = sessions.filter((s: any) => s.status === "ended" || (s.scheduled_at && isPast(new Date(s.scheduled_at))));
+  const nextSession = upcomingSessions[0];
+  const canJoin = nextSession && differenceInMinutes(new Date(nextSession.scheduled_at), now) <= 10;
+
+  const examsList = exams.filter((e: any) => (e.type || "exam") === "exam");
+  const testsList = exams.filter((e: any) => (e.type || "exam") === "test");
+
+  const attendedSessionIds = new Set(attendanceLogs.map((a: any) => a.session_id));
+  const completedSessions = pastSessions.filter((s: any) => attendedSessionIds.has(s.id)).length;
+  const totalSessions = (subject as any)?.total_sessions || sessions.length || 1;
+  const attendanceRate = pastSessions.length > 0 ? Math.round((completedSessions / pastSessions.length) * 100) : 100;
+
+  const examAttempts = myAttempts.filter((a: any) => {
+    const exam = exams.find((e: any) => e.id === a.exam_id);
+    return exam && (exam.type || "exam") === "exam" && a.status === "graded";
+  });
+  const testAttempts = myAttempts.filter((a: any) => {
+    const exam = exams.find((e: any) => e.id === a.exam_id);
+    return exam && (exam.type || "exam") === "test" && a.status === "graded";
+  });
+  const avgExam = examAttempts.length > 0 ? examAttempts.reduce((s: number, a: any) => s + (Number(a.percentage) || 0), 0) / examAttempts.length : 0;
+  const avgTest = testAttempts.length > 0 ? testAttempts.reduce((s: number, a: any) => s + (Number(a.percentage) || 0), 0) / testAttempts.length : 0;
+
+  const completionPct = Math.round(
+    (completedSessions / Math.max(totalSessions, 1)) * 40 +
+    (avgExam / 100) * 40 +
+    (avgTest / 100) * 20
+  );
 
   const levelLabel = (level: string) => {
     const labels: Record<string, [string, string]> = { beginner: ["Beginner", "مبتدئ"], intermediate: ["Intermediate", "متوسط"], advanced: ["Advanced", "متقدم"] };
@@ -94,76 +170,274 @@ const SubjectView = () => {
     return t(en, ar);
   };
 
-  if (isLoading) {
-    return <div className="container mx-auto px-4 py-8"><Skeleton className="h-64" /></div>;
+  // ─── Schedule Class ───
+  const handleScheduleClass = async () => {
+    if (!scheduleForm.date || !scheduleForm.time || !user) return;
+    const scheduledAt = new Date(`${scheduleForm.date}T${scheduleForm.time}`).toISOString();
+    const sessionNum = sessions.length + 1;
+
+    const { error } = await supabase.from("live_sessions").insert({
+      subject_id: subjectId,
+      host_id: user.id,
+      status: "scheduled",
+      scheduled_at: scheduledAt,
+      duration_minutes: scheduleForm.duration,
+      topic: scheduleForm.topic,
+      topic_ar: scheduleForm.topic_ar,
+      session_number: sessionNum,
+      level: (subject as any)?.level || null,
+      is_recorded: scheduleForm.is_recorded,
+      homework: scheduleForm.homework || null,
+      homework_ar: scheduleForm.homework_ar || null,
+    } as any);
+
+    if (!error) {
+      // Update subject next_session_at
+      await supabase.from("subjects").update({ next_session_at: scheduledAt, total_sessions: sessionNum } as any).eq("id", subjectId!);
+      toast({ title: t("Class scheduled!", "تم جدولة الحصة!") });
+      setShowSchedule(false);
+      setScheduleForm({ topic: "", topic_ar: "", date: "", time: "", duration: 60, is_recorded: true, homework: "", homework_ar: "" });
+      queryClient.invalidateQueries({ queryKey: ["subject-sessions", subjectId] });
+    } else {
+      toast({ title: t("Error", "خطأ"), description: error.message, variant: "destructive" });
+    }
+  };
+
+  const joinClassroom = (s?: any) => {
+    setClassroomSubject(subject);
+    setInClassroom(true);
+  };
+
+  // ─── Classroom Mode ───
+  if (inClassroom && classroomSubject) {
+    return <ClassroomView subject={classroomSubject} onLeave={() => setInClassroom(false)} />;
   }
 
-  if (!subject) {
-    return <div className="container mx-auto px-4 py-16 text-center"><h2>{t("Subject not found", "المادة غير موجودة")}</h2></div>;
-  }
+  if (isLoading) return <div className="container mx-auto px-4 py-8"><Skeleton className="h-64" /></div>;
+  if (!subject) return <div className="container mx-auto px-4 py-16 text-center"><h2>{t("Subject not found", "المادة غير موجودة")}</h2></div>;
+
+  const subjectLevel = (subject as any).level || profile?.level || "beginner";
 
   return (
     <div className="container mx-auto px-4 py-6 md:py-8 space-y-6">
-      <Link to="/student/courses" className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground">
-        <ArrowLeft className="h-4 w-4 me-1" /> {t("Back to Courses", "العودة للدورات")}
+      <Link to={isTeacher ? "/teacher/subjects" : "/student/courses"} className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground">
+        <ArrowLeft className="h-4 w-4 me-1" /> {t("Back", "رجوع")}
       </Link>
 
-      <div>
-        <h1 className="text-2xl md:text-3xl font-bold" style={{ fontFamily: language === "ar" ? "'Amiri', serif" : "'Playfair Display', serif", color: '#064E3B' }}>
-          {language === "ar" ? subject.title_ar || subject.title : subject.title}
-        </h1>
-        {subject.description && <p className="text-sm text-muted-foreground mt-1">{language === "ar" ? subject.description_ar || subject.description : subject.description}</p>}
+      {/* Subject Header */}
+      <div className="flex flex-col md:flex-row md:items-center gap-4">
+        <div className="flex-1">
+          <div className="flex items-center gap-2 mb-1">
+            <h1 className="text-2xl md:text-3xl font-bold" style={{ fontFamily: language === "ar" ? "'Amiri', serif" : "'Playfair Display', serif", color: '#064E3B' }}>
+              {language === "ar" ? subject.title_ar || subject.title : subject.title}
+            </h1>
+            <Badge className={levelColors[subjectLevel] || ""}>{levelLabel(subjectLevel)}</Badge>
+          </div>
+          {teacherProfile && (
+            <p className="text-sm text-muted-foreground">
+              {t("Teacher", "المعلم")}: {language === "ar" ? teacherProfile.full_name_ar || teacherProfile.full_name : teacherProfile.full_name}
+            </p>
+          )}
+        </div>
+        <div className="flex gap-2">
+          {nextSession && canJoin && (
+            <Button onClick={() => joinClassroom()} className="gap-1"><Video className="h-4 w-4" />{t("Join Class", "انضم للحصة")}</Button>
+          )}
+          {isTeacher && (
+            <Dialog open={showSchedule} onOpenChange={setShowSchedule}>
+              <DialogTrigger asChild><Button variant="outline" className="gap-1"><Plus className="h-4 w-4" />{t("Schedule Class", "جدولة حصة")}</Button></DialogTrigger>
+              <DialogContent className="max-w-md">
+                <DialogHeader><DialogTitle>{t("Schedule New Class", "جدولة حصة جديدة")}</DialogTitle></DialogHeader>
+                <div className="space-y-4">
+                  <div><Label>{t("Subject", "المادة")}</Label><Input value={subject.title} disabled /></div>
+                  <div><Label>{t("Session #", "رقم الحصة")}</Label><Input value={`#${sessions.length + 1}`} disabled /></div>
+                  <div><Label>{t("Topic (English)", "الموضوع (إنجليزي)")}</Label><Input value={scheduleForm.topic} onChange={e => setScheduleForm(p => ({ ...p, topic: e.target.value }))} /></div>
+                  <div><Label>{t("Topic (Arabic)", "الموضوع (عربي)")}</Label><Input dir="rtl" value={scheduleForm.topic_ar} onChange={e => setScheduleForm(p => ({ ...p, topic_ar: e.target.value }))} /></div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div><Label>{t("Date", "التاريخ")}</Label><Input type="date" value={scheduleForm.date} onChange={e => setScheduleForm(p => ({ ...p, date: e.target.value }))} /></div>
+                    <div><Label>{t("Time", "الوقت")}</Label><Input type="time" value={scheduleForm.time} onChange={e => setScheduleForm(p => ({ ...p, time: e.target.value }))} /></div>
+                  </div>
+                  <div><Label>{t("Duration (minutes)", "المدة (دقائق)")}</Label><Input type="number" value={scheduleForm.duration} onChange={e => setScheduleForm(p => ({ ...p, duration: Number(e.target.value) }))} /></div>
+                  <div className="flex items-center justify-between">
+                    <Label>{t("Record session?", "تسجيل الحصة؟")}</Label>
+                    <Switch checked={scheduleForm.is_recorded} onCheckedChange={v => setScheduleForm(p => ({ ...p, is_recorded: v }))} />
+                  </div>
+                  <div><Label>{t("Homework", "الواجب")}</Label><Textarea value={scheduleForm.homework} onChange={e => setScheduleForm(p => ({ ...p, homework: e.target.value }))} placeholder={t("Optional homework...", "واجب اختياري...")} /></div>
+                  <Button onClick={handleScheduleClass} className="w-full">{t("Schedule", "جدولة")}</Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+          )}
+        </div>
       </div>
 
-      <Tabs defaultValue="courses">
-        <TabsList className="w-full justify-start">
-          <TabsTrigger value="courses">{t("Courses", "الدورات")}</TabsTrigger>
-          <TabsTrigger value="syllabus">{t("Syllabus", "المنهج الدراسي")}</TabsTrigger>
-          <TabsTrigger value="materials">{t("Materials", "المواد التعليمية")}</TabsTrigger>
+      {/* Tabs */}
+      <Tabs defaultValue="overview">
+        <TabsList className="w-full justify-start overflow-x-auto flex-nowrap">
+          <TabsTrigger value="overview">{t("Overview", "نظرة عامة")}</TabsTrigger>
+          <TabsTrigger value="classes">{t("Live Classes", "الفصول")}</TabsTrigger>
+          <TabsTrigger value="recordings">{t("Recordings", "التسجيلات")}</TabsTrigger>
+          <TabsTrigger value="materials">{t("Materials", "المواد")}</TabsTrigger>
+          <TabsTrigger value="exams">{t("Exams & Tests", "الاختبارات")}</TabsTrigger>
+          <TabsTrigger value="homework">{t("Homework", "الواجبات")}</TabsTrigger>
+          <TabsTrigger value="attendance">{t("Attendance", "الحضور")}</TabsTrigger>
+          <TabsTrigger value="progress">{t("Progress", "التقدم")}</TabsTrigger>
         </TabsList>
 
-        {/* COURSES TAB */}
-        <TabsContent value="courses" className="space-y-4 mt-4">
-          {(courses || []).length === 0 ? (
-            <div className="text-center py-12 text-muted-foreground">
-              <BookOpen className="h-10 w-10 mx-auto mb-2 opacity-40" />
-              <p>{t("No courses available", "لا توجد دورات متاحة")}</p>
-            </div>
-          ) : (
-            <div className="grid gap-4 md:grid-cols-2">
-              {(courses || []).map((course: any) => {
-                const accessible = course.level?.toLowerCase() === studentLevel?.toLowerCase() || !course.level;
-                const total = getLessonCount(course.id);
-                const completed = getCompletedCount(course.id);
-                const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+        {/* ═══ TAB 1: Overview ═══ */}
+        <TabsContent value="overview" className="space-y-4 mt-4">
+          <div className="grid md:grid-cols-2 gap-4">
+            <Card>
+              <CardContent className="p-5 space-y-3">
+                <h3 className="font-semibold">{t("Subject Info", "معلومات المادة")}</h3>
+                {subject.description && <p className="text-sm text-muted-foreground">{language === "ar" ? subject.description_ar || subject.description : subject.description}</p>}
+                {(subject as any).course_syllabus && <p className="text-sm text-muted-foreground mt-2">{language === "ar" ? (subject as any).course_syllabus_ar || (subject as any).course_syllabus : (subject as any).course_syllabus}</p>}
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div className="flex items-center gap-2"><Calendar className="h-4 w-4 text-muted-foreground" />{(subject as any).session_day || t("TBD", "غير محدد")}</div>
+                  <div className="flex items-center gap-2"><Clock className="h-4 w-4 text-muted-foreground" />{(subject as any).session_time || t("TBD", "غير محدد")}</div>
+                  <div className="flex items-center gap-2"><Video className="h-4 w-4 text-muted-foreground" />{(subject as any).sessions_per_week || 1}x/{t("week", "أسبوع")}</div>
+                  <div className="flex items-center gap-2"><BookOpen className="h-4 w-4 text-muted-foreground" />{totalSessions} {t("sessions", "حصص")}</div>
+                </div>
+                <div className="space-y-1 pt-2">
+                  <div className="flex justify-between text-xs text-muted-foreground"><span>{t("Progress", "التقدم")}</span><span>{completionPct}%</span></div>
+                  <Progress value={completionPct} className="h-2" />
+                </div>
+              </CardContent>
+            </Card>
 
-                return (
-                  <Card key={course.id} className={`${!accessible ? 'opacity-60' : ''}`}>
-                    <CardContent className="p-5 space-y-3">
-                      <div className="flex items-center gap-2">
-                        <Badge variant="secondary">{levelLabel(course.level || 'beginner')}</Badge>
-                        <span className="text-xs text-muted-foreground">{total} {t("lessons", "درس")}</span>
-                      </div>
-                      <h3 className="font-semibold">{language === "ar" ? course.title_ar || course.title : course.title}</h3>
-                      {accessible ? (
-                        <>
-                          {total > 0 && (
-                            <div className="space-y-1">
-                              <div className="flex justify-between text-xs text-muted-foreground">
-                                <span>{completed}/{total}</span><span>{pct}%</span>
-                              </div>
-                              <Progress value={pct} className="h-2" />
-                            </div>
-                          )}
-                          <Link to={`/student/courses/${course.id}`}>
-                            <Button size="sm" className="w-full"><Play className="h-3 w-3 me-1" />{completed > 0 ? t("Continue", "متابعة") : t("Start", "ابدأ")}</Button>
-                          </Link>
-                        </>
-                      ) : (
-                        <div className="text-center">
-                          <p className="text-xs text-muted-foreground mb-2">{t(`Upgrade to ${levelLabel(course.level || '')}`, `ارتقِ إلى ${levelLabel(course.level || '')}`)}</p>
-                          <Button size="sm" variant="outline" disabled><Lock className="h-3 w-3 me-1" />{t("Locked", "مقفل")}</Button>
+            {/* Next Session Card */}
+            <Card className={nextSession ? "border-primary/30" : ""}>
+              <CardContent className="p-5 space-y-3">
+                <h3 className="font-semibold flex items-center gap-2"><Calendar className="h-4 w-4 text-primary" />{t("Next Live Session", "الحصة القادمة")}</h3>
+                {nextSession ? (
+                  <>
+                    <div className="space-y-1">
+                      <p className="font-medium">{(nextSession as any).topic || t("Session", "حصة")} #{(nextSession as any).session_number}</p>
+                      {(nextSession as any).topic_ar && <p className="text-sm text-muted-foreground font-arabic" dir="rtl">{(nextSession as any).topic_ar}</p>}
+                      <p className="text-sm text-muted-foreground">{format(new Date(nextSession.scheduled_at), "EEEE, MMM d 'at' h:mm a")}</p>
+                      <p className="text-xs text-muted-foreground">{(nextSession as any).duration_minutes || 60} {t("minutes", "دقيقة")}</p>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button onClick={() => joinClassroom()} disabled={!canJoin} className="gap-1">
+                        <Video className="h-4 w-4" />{canJoin ? t("Join Class", "انضم") : t("Not yet", "لم يحن الوقت")}
+                      </Button>
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-sm text-muted-foreground py-4 text-center">{t("No upcoming sessions", "لا توجد حصص قادمة")}</p>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        {/* ═══ TAB 2: Live Classes ═══ */}
+        <TabsContent value="classes" className="space-y-4 mt-4">
+          {isTeacher && (
+            <div className="flex justify-end">
+              <Button onClick={() => setShowSchedule(true)} className="gap-1"><Plus className="h-4 w-4" />{t("Schedule Class", "جدولة حصة")}</Button>
+            </div>
+          )}
+
+          {/* Upcoming */}
+          <div>
+            <h3 className="font-semibold mb-3">{t("Upcoming", "القادمة")}</h3>
+            {upcomingSessions.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-4">{t("No upcoming classes", "لا توجد حصص قادمة")}</p>
+            ) : (
+              <div className="space-y-2">
+                {upcomingSessions.map((s: any) => {
+                  const canJoinThis = s.scheduled_at && differenceInMinutes(new Date(s.scheduled_at), now) <= 10;
+                  return (
+                    <Card key={s.id}>
+                      <CardContent className="p-4 flex items-center justify-between">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <Badge variant="outline">#{s.session_number || "?"}</Badge>
+                            <span className="font-medium text-sm">{s.topic || t("Session", "حصة")}</span>
+                            {s.status === "active" && <Badge className="bg-green-500">LIVE</Badge>}
+                          </div>
+                          {s.topic_ar && <p className="text-xs text-muted-foreground mt-1 font-arabic" dir="rtl">{s.topic_ar}</p>}
+                          <p className="text-xs text-muted-foreground mt-1">
+                            {s.scheduled_at ? format(new Date(s.scheduled_at), "EEE, MMM d 'at' h:mm a") : ""} • {s.duration_minutes || 60}m
+                          </p>
                         </div>
+                        <Button size="sm" onClick={() => joinClassroom()} disabled={!canJoinThis && s.status !== "active"}>
+                          <Video className="h-3 w-3 me-1" />{t("Join", "انضم")}
+                        </Button>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Past */}
+          <div>
+            <h3 className="font-semibold mb-3">{t("Past Sessions", "الحصص السابقة")}</h3>
+            {pastSessions.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-4">{t("No past sessions", "لا توجد حصص سابقة")}</p>
+            ) : (
+              <div className="space-y-2">
+                {[...pastSessions].reverse().map((s: any) => {
+                  const attended = attendedSessionIds.has(s.id);
+                  const rec = recordings.find((r: any) => r.session_id === s.id);
+                  const sessionMats = materials.filter((m: any) => (m as any).session_id === s.id);
+                  return (
+                    <Card key={s.id}>
+                      <CardContent className="p-4 flex items-center justify-between">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <Badge variant="outline">#{s.session_number || "?"}</Badge>
+                            <span className="font-medium text-sm">{s.topic || t("Session", "حصة")}</span>
+                            {attended ? <CheckCircle className="h-4 w-4 text-green-500" /> : <XCircle className="h-4 w-4 text-destructive" />}
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            {s.scheduled_at ? format(new Date(s.scheduled_at), "MMM d, yyyy") : s.created_at ? format(new Date(s.created_at), "MMM d, yyyy") : ""}
+                            {s.duration_minutes ? ` • ${s.duration_minutes}m` : ""}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {rec && <Badge variant="secondary" className="gap-1"><Video className="h-3 w-3" />🎥</Badge>}
+                          {sessionMats.length > 0 && <Badge variant="outline">📎 {sessionMats.length}</Badge>}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </TabsContent>
+
+        {/* ═══ TAB 3: Recordings ═══ */}
+        <TabsContent value="recordings" className="mt-4">
+          {recordings.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-8">{t("No recordings available", "لا توجد تسجيلات")}</p>
+          ) : (
+            <div className="space-y-2">
+              {recordings.map((rec: any) => {
+                const session = sessions.find((s: any) => s.id === rec.session_id);
+                return (
+                  <Card key={rec.id}>
+                    <CardContent className="p-4 flex items-center justify-between">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <Video className="h-4 w-4 text-primary" />
+                          <span className="font-medium text-sm">
+                            {session ? `#${(session as any).session_number || "?"} — ${(session as any).topic || ""}` : rec.teacher_name || t("Recording", "تسجيل")}
+                          </span>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {rec.created_at ? format(new Date(rec.created_at), "MMM d, yyyy") : ""}
+                          {rec.duration_seconds ? ` • ${Math.floor(rec.duration_seconds / 60)}m` : ""}
+                        </p>
+                      </div>
+                      {rec.file_url && (
+                        <Button size="sm" variant="outline" onClick={() => window.open(rec.file_url.startsWith("http") ? rec.file_url : `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/subject-files/${rec.file_url}`, "_blank")}>
+                          <Play className="h-3 w-3 me-1" />{t("Watch", "مشاهدة")}
+                        </Button>
                       )}
                     </CardContent>
                   </Card>
@@ -173,76 +447,228 @@ const SubjectView = () => {
           )}
         </TabsContent>
 
-        {/* SYLLABUS TAB */}
-        <TabsContent value="syllabus" className="mt-4">
-          <h3 className="font-bold text-lg mb-4" style={{ fontFamily: language === "ar" ? "'Amiri', serif" : "'Playfair Display', serif" }}>
-            {t("Course Syllabus", "المنهج الدراسي")}
-          </h3>
-          {(syllabus || []).length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-8">{t("No syllabus items for your level", "لا توجد عناصر منهج لمستواك")}</p>
-          ) : (
-            <div className="space-y-3">
-              {(syllabus || []).map((item: any, idx: number) => (
-                <Card key={item.id}>
-                  <CardContent className="p-4 flex items-start gap-4">
-                    <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0 text-sm font-bold text-primary">
-                      {item.week_number || idx + 1}
-                    </div>
-                    <div>
-                      <h4 className="font-semibold text-sm">{item.title}</h4>
-                      {item.description && <p className="text-xs text-muted-foreground mt-1">{item.description}</p>}
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          )}
-        </TabsContent>
-
-        {/* MATERIALS TAB */}
+        {/* ═══ TAB 4: Materials ═══ */}
         <TabsContent value="materials" className="mt-4">
-          <h3 className="font-bold text-lg mb-4" style={{ fontFamily: language === "ar" ? "'Amiri', serif" : "'Playfair Display', serif" }}>
-            {t("Course Materials", "المواد التعليمية")}
-          </h3>
-          {(materials || []).length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-8">{t("No materials for your level", "لا توجد مواد لمستواك")}</p>
+          {materials.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-8">{t("No materials available", "لا توجد مواد")}</p>
           ) : (
             <div className="space-y-2">
-              {(materials || []).map((mat: any) => {
-                const Icon = materialTypeIcon[mat.material_type] || FileText;
+              {materials.map((mat: any) => {
+                const session = mat.session_id ? sessions.find((s: any) => s.id === mat.session_id) : null;
+                const typeIcons: Record<string, any> = { PDF: FileText, Video: Video, Audio: Mic, Link: LinkIcon, Text: StickyNote };
+                const Icon = typeIcons[mat.material_type] || FileText;
                 return (
                   <Card key={mat.id}>
                     <CardContent className="p-4 flex items-center gap-4">
-                      <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-                        <Icon className="h-5 w-5 text-primary" />
-                      </div>
+                      <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0"><Icon className="h-5 w-5 text-primary" /></div>
                       <div className="flex-1 min-w-0">
                         <h4 className="font-medium text-sm truncate">{mat.title}</h4>
-                        <p className="text-xs text-muted-foreground">{mat.material_type}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {mat.material_type || "File"}
+                          {session ? ` • ${t("Session", "حصة")} #${(session as any).session_number}` : ""}
+                        </p>
                       </div>
-                      <div className="flex gap-2">
-                        {mat.file_url && (
-                          <a href={mat.file_url} target="_blank" rel="noopener noreferrer">
-                            <Button size="sm" variant="outline">
-                              <ExternalLink className="h-3 w-3 me-1" />
-                              {t("View", "عرض")}
-                            </Button>
-                          </a>
-                        )}
-                        {mat.is_downloadable && mat.file_url && (
-                          <a href={mat.file_url} download>
-                            <Button size="sm" variant="ghost">
-                              <Download className="h-3 w-3" />
-                            </Button>
-                          </a>
-                        )}
-                      </div>
+                      {mat.file_url && (
+                        <a href={mat.file_url} target="_blank" rel="noopener noreferrer">
+                          <Button size="sm" variant="outline"><ExternalLink className="h-3 w-3 me-1" />{t("Open", "فتح")}</Button>
+                        </a>
+                      )}
                     </CardContent>
                   </Card>
                 );
               })}
             </div>
           )}
+        </TabsContent>
+
+        {/* ═══ TAB 5: Exams & Tests ═══ */}
+        <TabsContent value="exams" className="mt-4">
+          <Tabs defaultValue="exams-sub">
+            <TabsList>
+              <TabsTrigger value="exams-sub">{t("Exams", "امتحانات")} ({examsList.length})</TabsTrigger>
+              <TabsTrigger value="tests-sub">{t("Tests", "تمرينات")} ({testsList.length})</TabsTrigger>
+            </TabsList>
+            <TabsContent value="exams-sub" className="space-y-2 mt-3">
+              {examsList.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-6">{t("No exams", "لا توجد امتحانات")}</p>
+              ) : examsList.map((exam: any) => {
+                const attempt = myAttempts.find((a: any) => a.exam_id === exam.id && a.status === "graded");
+                return (
+                  <Card key={exam.id}>
+                    <CardContent className="p-4 flex items-center justify-between">
+                      <div>
+                        <p className="font-medium text-sm">{language === "ar" ? exam.title_ar || exam.title : exam.title}</p>
+                        <p className="text-xs text-muted-foreground">{exam.time_limit_minutes}m • {t("Passing", "النجاح")}: {exam.passing_score}%</p>
+                      </div>
+                      {attempt ? (
+                        <div className="flex items-center gap-2">
+                          {attempt.passed ? <CheckCircle className="h-4 w-4 text-green-500" /> : <XCircle className="h-4 w-4 text-destructive" />}
+                          <span className="text-sm font-semibold">{Math.round(attempt.percentage || 0)}%</span>
+                        </div>
+                      ) : (
+                        <Button size="sm" onClick={() => navigate(`/student/exam-verify/${exam.id}`)}>{t("Take Exam", "ابدأ الامتحان")}</Button>
+                      )}
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </TabsContent>
+            <TabsContent value="tests-sub" className="space-y-2 mt-3">
+              {testsList.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-6">{t("No tests", "لا توجد تمرينات")}</p>
+              ) : testsList.map((test: any) => {
+                const attempt = myAttempts.find((a: any) => a.exam_id === test.id && a.status === "graded");
+                return (
+                  <Card key={test.id}>
+                    <CardContent className="p-4 flex items-center justify-between">
+                      <div>
+                        <p className="font-medium text-sm">{language === "ar" ? test.title_ar || test.title : test.title}</p>
+                        <p className="text-xs text-muted-foreground">{test.time_limit_minutes}m</p>
+                      </div>
+                      {attempt ? (
+                        <div className="flex items-center gap-2">
+                          {attempt.passed ? <CheckCircle className="h-4 w-4 text-green-500" /> : <XCircle className="h-4 w-4 text-destructive" />}
+                          <span className="text-sm font-semibold">{Math.round(attempt.percentage || 0)}%</span>
+                        </div>
+                      ) : (
+                        <Button size="sm" onClick={() => navigate(`/student/exam-verify/${test.id}`)}>{t("Take Test", "ابدأ التمرين")}</Button>
+                      )}
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </TabsContent>
+          </Tabs>
+        </TabsContent>
+
+        {/* ═══ TAB 6: Homework ═══ */}
+        <TabsContent value="homework" className="mt-4">
+          {homework.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-8">{t("No homework assigned", "لا توجد واجبات")}</p>
+          ) : (
+            <div className="space-y-2">
+              {homework.map((hw: any) => {
+                const session = hw.session_id ? sessions.find((s: any) => s.id === hw.session_id) : null;
+                const statusColors: Record<string, string> = { pending: "bg-yellow-100 text-yellow-800", submitted: "bg-blue-100 text-blue-800", graded: "bg-green-100 text-green-800" };
+                return (
+                  <Card key={hw.id}>
+                    <CardContent className="p-4 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="font-medium text-sm">{hw.description || t("Homework", "واجب")}</p>
+                          {hw.description_ar && <p className="text-xs text-muted-foreground font-arabic" dir="rtl">{hw.description_ar}</p>}
+                        </div>
+                        <Badge className={statusColors[hw.status] || ""}>{hw.status}</Badge>
+                      </div>
+                      <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                        {session && <span>{t("Session", "حصة")} #{(session as any).session_number}</span>}
+                        {hw.due_date && <span>{t("Due", "الموعد")}: {format(new Date(hw.due_date), "MMM d")}</span>}
+                        {hw.grade != null && <span className="font-semibold text-foreground">{t("Grade", "الدرجة")}: {hw.grade}</span>}
+                      </div>
+                      {hw.teacher_feedback && <p className="text-xs bg-muted/50 rounded p-2">{t("Feedback", "ملاحظات")}: {hw.teacher_feedback}</p>}
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+        </TabsContent>
+
+        {/* ═══ TAB 7: Attendance ═══ */}
+        <TabsContent value="attendance" className="mt-4 space-y-4">
+          <div className="flex items-center gap-4">
+            <div className="text-center">
+              <p className="text-3xl font-bold" style={{ color: attendanceRate >= 80 ? '#059669' : attendanceRate >= 60 ? '#D97706' : '#DC2626' }}>{attendanceRate}%</p>
+              <p className="text-xs text-muted-foreground">{t("Attendance Rate", "نسبة الحضور")}</p>
+            </div>
+            <Badge className={attendanceRate >= 80 ? "bg-green-100 text-green-800" : attendanceRate >= 60 ? "bg-yellow-100 text-yellow-800" : "bg-red-100 text-red-800"}>
+              {attendanceRate >= 80 ? t("Good", "جيد") : attendanceRate >= 60 ? t("Average", "متوسط") : t("Poor", "ضعيف")}
+            </Badge>
+          </div>
+
+          <div className="space-y-2">
+            {pastSessions.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-6">{t("No sessions yet", "لا توجد حصص بعد")}</p>
+            ) : [...pastSessions].reverse().map((s: any) => {
+              const attended = attendedSessionIds.has(s.id);
+              return (
+                <div key={s.id} className="flex items-center justify-between p-3 rounded-lg bg-muted/30">
+                  <div>
+                    <span className="text-sm font-medium">#{s.session_number || "?"} {s.topic || ""}</span>
+                    <p className="text-xs text-muted-foreground">{s.scheduled_at ? format(new Date(s.scheduled_at), "MMM d, yyyy") : ""}</p>
+                  </div>
+                  {attended ? <Badge className="bg-green-100 text-green-800 gap-1"><CheckCircle className="h-3 w-3" />{t("Present", "حاضر")}</Badge>
+                    : <Badge className="bg-red-100 text-red-800 gap-1"><XCircle className="h-3 w-3" />{t("Absent", "غائب")}</Badge>}
+                </div>
+              );
+            })}
+          </div>
+        </TabsContent>
+
+        {/* ═══ TAB 8: Progress ═══ */}
+        <TabsContent value="progress" className="mt-4 space-y-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <Card>
+              <CardContent className="p-4 text-center">
+                <p className="text-2xl font-bold text-primary">{Math.round(avgExam * 0.7)}/70</p>
+                <p className="text-xs text-muted-foreground">{t("Avg Exam Score", "معدل الامتحانات")}</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4 text-center">
+                <p className="text-2xl font-bold text-secondary">{Math.round(avgTest * 0.3)}/30</p>
+                <p className="text-xs text-muted-foreground">{t("Avg Test Score", "معدل التمرينات")}</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4 text-center">
+                <p className="text-2xl font-bold">{attendanceRate}%</p>
+                <p className="text-xs text-muted-foreground">{t("Attendance", "الحضور")}</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4 text-center">
+                <p className="text-2xl font-bold" style={{ color: '#D4AF37' }}>{completionPct}%</p>
+                <p className="text-xs text-muted-foreground">{t("Overall Progress", "التقدم الكلي")}</p>
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card>
+            <CardContent className="p-5">
+              <h3 className="font-semibold mb-3">{t("Completion Breakdown", "تفصيل الإنجاز")}</h3>
+              <div className="space-y-3">
+                <div>
+                  <div className="flex justify-between text-sm mb-1">
+                    <span>{t("Sessions Attended", "الحصص المحضورة")}</span>
+                    <span>{completedSessions}/{totalSessions}</span>
+                  </div>
+                  <Progress value={totalSessions > 0 ? (completedSessions / totalSessions) * 100 : 0} className="h-2" />
+                </div>
+                <div>
+                  <div className="flex justify-between text-sm mb-1">
+                    <span>{t("Exams Completed", "الامتحانات المكتملة")}</span>
+                    <span>{examAttempts.length}/{examsList.length}</span>
+                  </div>
+                  <Progress value={examsList.length > 0 ? (examAttempts.length / examsList.length) * 100 : 0} className="h-2" />
+                </div>
+                <div>
+                  <div className="flex justify-between text-sm mb-1">
+                    <span>{t("Tests Completed", "التمرينات المكتملة")}</span>
+                    <span>{testAttempts.length}/{testsList.length}</span>
+                  </div>
+                  <Progress value={testsList.length > 0 ? (testAttempts.length / testsList.length) * 100 : 0} className="h-2" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="p-5">
+              <h3 className="font-semibold mb-3">{t("Current Level", "المستوى الحالي")}</h3>
+              <Badge className={`text-lg px-4 py-1 ${levelColors[subjectLevel] || ""}`}>{levelLabel(subjectLevel)}</Badge>
+            </CardContent>
+          </Card>
         </TabsContent>
       </Tabs>
     </div>
