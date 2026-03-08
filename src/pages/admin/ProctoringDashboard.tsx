@@ -525,9 +525,9 @@ const ProctoringDashboard = () => {
                   <TableHead>{t("Status", "الحالة")}</TableHead>
                   <TableHead>{t("Integrity", "النزاهة")}</TableHead>
                   <TableHead>{t("Suspicion", "الاشتباه")}</TableHead>
-                  <TableHead>{t("Violations", "المخالفات")}</TableHead>
-                  <TableHead>{t("Date", "التاريخ")}</TableHead>
-                  <TableHead>{t("Actions", "إجراءات")}</TableHead>
+                   <TableHead>{t("Violations", "المخالفات")}</TableHead>
+                   <TableHead>{t("Verdict", "الحكم")}</TableHead>
+                   <TableHead>{t("Date", "التاريخ")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
