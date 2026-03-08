@@ -25,6 +25,9 @@ const TeacherTranscript = () => {
   const [results, setResults] = useState<any[]>([]);
   const [studentProfile, setStudentProfile] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [showComment, setShowComment] = useState(false);
+  const [commentAttemptId, setCommentAttemptId] = useState("");
+  const [commentText, setCommentText] = useState("");
 
   useEffect(() => {
     if (!user) return;
