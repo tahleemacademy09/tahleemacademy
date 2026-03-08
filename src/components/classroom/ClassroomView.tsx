@@ -7,11 +7,18 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "@/hooks/use-toast";
-import { LogOut, MessageCircle, Circle, Send, X, Pause, Play, Square, Loader2, Mic } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Circle, Loader2, Mic, Pause, Play, Square, X, Wifi, WifiOff } from "lucide-react";
+import ClassLobby from "./ClassLobby";
+import ClassParticipants from "./ClassParticipants";
+import ClassChatPanel from "./ClassChatPanel";
+import ClassControls from "./ClassControls";
+import ClassPolls from "./ClassPolls";
+import ClassEndScreen from "./ClassEndScreen";
+import LiveQuizOverlay from "./LiveQuizOverlay";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 interface ClassroomViewProps {
   subject: any;
@@ -186,103 +193,252 @@ const RecordingController = ({ sessionId, subjectId, userEmail, isPrivileged, on
   );
 };
 
+/* ─── Connection Quality Indicator ─── */
+const ConnectionIndicator = () => {
+  const room = useRoomContext();
+  const [quality, setQuality] = useState<"excellent" | "good" | "fair" | "poor">("excellent");
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const stats = room.localParticipant.connectionQuality;
+      // ConnectionQuality enum: 0=unknown,1=poor,2=good,3=excellent
+      if (stats >= 3) setQuality("excellent");
+      else if (stats >= 2) setQuality("good");
+      else if (stats >= 1) setQuality("fair");
+      else setQuality("poor");
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [room]);
+
+  const colors = {
+    excellent: "text-green-500",
+    good: "text-green-400",
+    fair: "text-yellow-500",
+    poor: "text-destructive",
+  };
+
+  const bars = { excellent: 4, good: 3, fair: 2, poor: 1 };
+
+  return (
+    <div className="flex items-center gap-1">
+      <div className="flex items-end gap-px h-3.5">
+        {[1, 2, 3, 4].map(i => (
+          <div
+            key={i}
+            className={`w-1 rounded-sm transition-colors ${i <= bars[quality] ? colors[quality] : "bg-muted-foreground/20"}`}
+            style={{ height: `${i * 3 + 2}px` }}
+          />
+        ))}
+      </div>
+    </div>
+  );
+};
+
 /* ─── Main ClassroomView ─── */
 const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
   const { user, hasRole } = useAuth();
   const { t } = useLanguage();
+  const isMobile = useIsMobile();
+  const [phase, setPhase] = useState<"lobby" | "live" | "ended">("lobby");
   const [token, setToken] = useState<string | null>(null);
   const [wsUrl, setWsUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sessionInfo, setSessionInfo] = useState<any>(null);
   const [attendanceId, setAttendanceId] = useState<string | null>(null);
   const [joinedAt] = useState(Date.now());
-  const [chatOpen, setChatOpen] = useState(false);
-  const [chatMessages, setChatMessages] = useState<any[]>([]);
-  const [chatInput, setChatInput] = useState("");
-  const [chatProfiles, setChatProfiles] = useState<Record<string, string>>({});
   const [savingRecording, setSavingRecording] = useState(false);
   const isPrivileged = hasRole("admin") || hasRole("teacher");
 
+  // UI state
+  const [chatOpen, setChatOpen] = useState(!isMobile);
+  const [participantsOpen, setParticipantsOpen] = useState(!isMobile);
+  const [activeSideTab, setActiveSideTab] = useState<"chat" | "polls">("chat");
+  const [chatUnread, setChatUnread] = useState(0);
+  const [showQuiz, setShowQuiz] = useState(false);
+  const [showEndConfirm, setShowEndConfirm] = useState(false);
+  const [participantCount, setParticipantCount] = useState(0);
+  const [classDuration, setClassDuration] = useState(0);
+
+  // Check if session is already live
+  const [isSessionLive, setIsSessionLive] = useState(false);
   useEffect(() => {
-    const getToken = async () => {
-      try {
-        const { data, error } = await supabase.functions.invoke("livekit-token", {
-          body: { subject_id: subject.id, action: isPrivileged ? "start_session" : "join" },
-        });
-        if (error) throw error;
-        if (data.error) throw new Error(data.error);
-        setToken(data.token);
-        setWsUrl(data.url);
-
-        const { data: sessions } = await supabase.from("live_sessions")
-          .select("*").eq("subject_id", subject.id).in("status", ["live", "active", "scheduled"]).order("scheduled_at", { ascending: false, nullsFirst: false }).limit(1);
-        if (sessions?.length) {
-          setSessionId(sessions[0].id);
-          setSessionInfo(sessions[0]);
-          const { data: att } = await supabase.from("attendance_logs").insert({
-            session_id: sessions[0].id, user_id: user!.id, device_info: navigator.userAgent,
-          }).select("id").single();
-          if (att) setAttendanceId(att.id);
-        }
-      } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : "Failed to connect");
-      } finally { setLoading(false); }
+    const check = async () => {
+      const { data } = await supabase.from("live_sessions")
+        .select("*").eq("subject_id", subject.id).eq("status", "live").maybeSingle();
+      if (data) {
+        setSessionInfo(data);
+        setSessionId(data.id);
+        setIsSessionLive(true);
+      }
     };
-    getToken();
-  }, []);
+    check();
+    const interval = setInterval(check, 5000);
+    return () => clearInterval(interval);
+  }, [subject.id]);
 
+  // Auto-join for students when class goes live
+  useEffect(() => {
+    if (!isPrivileged && isSessionLive && phase === "lobby") {
+      // Session is live, student can join
+    }
+  }, [isSessionLive, isPrivileged, phase]);
+
+  // Duration timer
+  useEffect(() => {
+    if (phase !== "live") return;
+    const timer = setInterval(() => setClassDuration(prev => prev + 1), 1000);
+    return () => clearInterval(timer);
+  }, [phase]);
+
+  const connectToLiveKit = async (action: string, settings?: any) => {
+    setLoading(true);
+    try {
+      // If teacher starting, update session settings
+      if (settings && sessionId) {
+        await supabase.from("live_sessions").update({
+          ...settings,
+          actual_start_time: new Date().toISOString(),
+          status: "live",
+        }).eq("id", sessionId);
+      }
+
+      const { data, error } = await supabase.functions.invoke("livekit-token", {
+        body: { subject_id: subject.id, action },
+      });
+      if (error) throw error;
+      if (data.error) throw new Error(data.error);
+      setToken(data.token);
+      setWsUrl(data.url);
+
+      // Get/create session
+      const { data: sessions } = await supabase.from("live_sessions")
+        .select("*").eq("subject_id", subject.id).in("status", ["live", "active", "scheduled"]).order("scheduled_at", { ascending: false, nullsFirst: false }).limit(1);
+      if (sessions?.length) {
+        setSessionId(sessions[0].id);
+        setSessionInfo(sessions[0]);
+        // Log attendance
+        const { data: att } = await supabase.from("attendance_logs").insert({
+          session_id: sessions[0].id, user_id: user!.id, device_info: navigator.userAgent,
+        }).select("id").single();
+        if (att) setAttendanceId(att.id);
+        // Add to class_participants
+        await supabase.from("class_participants").upsert({
+          session_id: sessions[0].id,
+          student_id: user!.id,
+          joined_at: new Date().toISOString(),
+          is_muted: !isPrivileged,
+          camera_on: true,
+        }, { onConflict: "session_id,student_id" });
+      }
+
+      setPhase("live");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to connect");
+    } finally { setLoading(false); }
+  };
+
+  const handleStartClass = (settings: any) => {
+    connectToLiveKit("start_session", settings);
+  };
+
+  const handleJoinClass = () => {
+    connectToLiveKit("join");
+  };
+
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (attendanceId) {
         const duration = Math.floor((Date.now() - joinedAt) / 1000);
         supabase.from("attendance_logs").update({ left_at: new Date().toISOString(), duration_seconds: duration }).eq("id", attendanceId).then(() => {});
       }
-    };
-  }, [attendanceId, joinedAt]);
-
-  // Chat
-  useEffect(() => {
-    if (!sessionId) return;
-    const loadChat = async () => {
-      const { data } = await supabase.from("session_chat").select("*").eq("session_id", sessionId).order("created_at");
-      setChatMessages(data || []);
-      const userIds = [...new Set((data || []).map((m: any) => m.user_id))];
-      if (userIds.length) {
-        const { data: profs } = await supabase.from("profiles").select("user_id, full_name").in("user_id", userIds);
-        const map: Record<string, string> = {};
-        (profs || []).forEach((p: any) => { map[p.user_id] = p.full_name || "Student"; });
-        setChatProfiles(prev => ({ ...prev, ...map }));
+      if (sessionId && user) {
+        supabase.from("class_participants").update({
+          left_at: new Date().toISOString(),
+          duration_minutes: Math.floor((Date.now() - joinedAt) / 60000),
+        }).eq("session_id", sessionId).eq("student_id", user.id).then(() => {});
       }
     };
-    loadChat();
-    const channel = supabase.channel(`session-chat-${sessionId}`)
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "session_chat", filter: `session_id=eq.${sessionId}` },
-        (payload) => {
-          setChatMessages(prev => [...prev, payload.new]);
-          if (!chatProfiles[payload.new.user_id]) {
-            supabase.from("profiles").select("user_id, full_name").eq("user_id", payload.new.user_id).maybeSingle()
-              .then(({ data }) => { if (data) setChatProfiles(prev => ({ ...prev, [data.user_id]: data.full_name || "Student" })); });
-          }
-        })
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, [sessionId]);
-
-  const sendChat = async () => {
-    if (!chatInput.trim() || !sessionId || !user) return;
-    await supabase.from("session_chat").insert({ session_id: sessionId, user_id: user.id, message: chatInput.trim() });
-    setChatInput("");
-  };
+  }, [attendanceId, joinedAt, sessionId, user]);
 
   const endSession = async () => {
+    setShowEndConfirm(false);
     if (sessionId) {
-      await supabase.from("live_sessions").update({ status: "ended", ended_at: new Date().toISOString() }).eq("id", sessionId);
+      await supabase.from("live_sessions").update({
+        status: "ended",
+        ended_at: new Date().toISOString(),
+        actual_end_time: new Date().toISOString(),
+      }).eq("id", sessionId);
+
+      // Send system message
+      if (user) {
+        await supabase.from("class_chat_messages").insert({
+          session_id: sessionId,
+          sender_id: user.id,
+          message: t("Class has ended", "انتهت الحصة"),
+          type: "system",
+        });
+      }
+    }
+    setPhase("ended");
+  };
+
+  const leaveSession = () => {
+    if (attendanceId) {
+      const duration = Math.floor((Date.now() - joinedAt) / 1000);
+      supabase.from("attendance_logs").update({ left_at: new Date().toISOString(), duration_seconds: duration }).eq("id", attendanceId);
+    }
+    if (sessionId && user) {
+      supabase.from("class_participants").update({
+        left_at: new Date().toISOString(),
+        duration_minutes: Math.floor((Date.now() - joinedAt) / 60000),
+      }).eq("session_id", sessionId).eq("student_id", user.id);
     }
     onLeave();
   };
 
+  const formatTime = (s: number) => {
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    return h > 0
+      ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`
+      : `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+  };
+
+  // PHASE: Ended
+  if (phase === "ended") {
+    return (
+      <ClassEndScreen
+        subject={subject}
+        session={sessionInfo}
+        duration={classDuration}
+        participantCount={participantCount}
+        onGoToDashboard={onLeave}
+        onGoToRevision={() => {
+          window.location.href = `/student/revision/${subject.id}`;
+        }}
+      />
+    );
+  }
+
+  // PHASE: Lobby
+  if (phase === "lobby" && !loading && !error) {
+    return (
+      <ClassLobby
+        subject={subject}
+        session={sessionInfo}
+        onStartClass={handleStartClass}
+        onJoinClass={handleJoinClass}
+        onBack={onLeave}
+        isLive={isSessionLive}
+      />
+    );
+  }
+
+  // Loading
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-background">
@@ -294,6 +450,7 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
     );
   }
 
+  // Error
   if (error) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-background">
@@ -301,12 +458,16 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
           <div className="h-16 w-16 rounded-full bg-destructive/10 flex items-center justify-center mx-auto"><X className="h-8 w-8 text-destructive" /></div>
           <h2 className="text-xl font-bold">{t("Connection Failed", "فشل الاتصال")}</h2>
           <p className="text-muted-foreground">{error}</p>
-          <Button onClick={onLeave}>{t("Go Back", "رجوع")}</Button>
+          <div className="flex gap-2 justify-center">
+            <Button onClick={() => { setError(null); setPhase("lobby"); }}>{t("Try Again", "حاول مرة أخرى")}</Button>
+            <Button variant="outline" onClick={onLeave}>{t("Go Back", "رجوع")}</Button>
+          </div>
         </div>
       </div>
     );
   }
 
+  // PHASE: Live classroom
   return (
     <div className="h-screen flex flex-col bg-foreground relative">
       {token && wsUrl && (
@@ -315,60 +476,167 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
           style={{ height: "100%" }} data-lk-theme="default"
         >
           {/* Top bar */}
-          <div className="h-12 bg-background/90 backdrop-blur border-b flex items-center justify-between px-4 z-10">
-            <div className="flex items-center gap-3">
-              <Badge variant="outline" className="gap-1">
+          <div className="h-11 bg-background/95 backdrop-blur border-b flex items-center justify-between px-3 z-10">
+            <div className="flex items-center gap-2 min-w-0">
+              <Badge variant="outline" className="gap-1 shrink-0">
                 <Circle className="h-2 w-2 fill-primary text-primary" />
-                {subject.title}
+                <span className="truncate max-w-[120px]">{subject.title}</span>
               </Badge>
               {sessionInfo && (sessionInfo as any).topic && (
-                <span className="text-xs text-muted-foreground">
+                <span className="text-xs text-muted-foreground truncate hidden sm:block">
                   #{(sessionInfo as any).session_number} — {(sessionInfo as any).topic}
                 </span>
               )}
+              <Badge variant="secondary" className="text-[10px] gap-1 shrink-0">
+                <Circle className="h-1.5 w-1.5 fill-destructive text-destructive animate-pulse" />
+                {formatTime(classDuration)}
+              </Badge>
             </div>
             <div className="flex items-center gap-1.5">
-              <RecordingController sessionId={sessionId} subjectId={subject.id} userEmail={user?.email || ""} isPrivileged={isPrivileged} onSavingChange={setSavingRecording} />
-              <Button size="sm" variant="ghost" onClick={() => setChatOpen(!chatOpen)}><MessageCircle className="h-4 w-4" /></Button>
-              <Button size="sm" variant="destructive" onClick={isPrivileged ? endSession : onLeave} className="gap-1">
-                <LogOut className="h-3 w-3" />{isPrivileged ? t("End", "إنهاء") : t("Leave", "مغادرة")}
-              </Button>
+              <ConnectionIndicator />
+              <RecordingController
+                sessionId={sessionId}
+                subjectId={subject.id}
+                userEmail={user?.email || ""}
+                isPrivileged={isPrivileged}
+                onSavingChange={setSavingRecording}
+              />
             </div>
           </div>
 
+          {/* Main content */}
           <div className="flex-1 flex overflow-hidden">
-            <div className="flex-1"><VideoConference /><RoomAudioRenderer /></div>
-            {chatOpen && (
-              <div className="w-72 sm:w-80 bg-background border-s flex flex-col">
-                <div className="p-3 border-b flex items-center justify-between">
-                  <h3 className="font-semibold text-sm">{t("Chat", "المحادثة")}</h3>
-                  <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setChatOpen(false)}><X className="h-3 w-3" /></Button>
+            {/* Participants panel */}
+            {participantsOpen && !isMobile && (
+              <div className="w-56 bg-background border-e flex flex-col shrink-0">
+                <ClassParticipants
+                  sessionId={sessionId || ""}
+                  onMuteStudent={(studentId) => {
+                    supabase.from("class_participants").update({ is_muted: true }).eq("session_id", sessionId!).eq("student_id", studentId);
+                  }}
+                  onRemoveStudent={(studentId) => {
+                    supabase.from("class_participants").update({ left_at: new Date().toISOString() }).eq("session_id", sessionId!).eq("student_id", studentId);
+                    toast({ title: t("Student removed", "تمت إزالة الطالب") });
+                  }}
+                />
+              </div>
+            )}
+
+            {/* Video area */}
+            <div className="flex-1 relative">
+              <VideoConference />
+              <RoomAudioRenderer />
+            </div>
+
+            {/* Right panel: Chat/Polls */}
+            {chatOpen && !isMobile && (
+              <div className="w-72 bg-background border-s flex flex-col shrink-0">
+                {/* Tabs */}
+                <div className="flex border-b">
+                  <button
+                    className={`flex-1 py-2 text-xs font-medium transition-colors ${activeSideTab === "chat" ? "border-b-2 border-primary text-foreground" : "text-muted-foreground"}`}
+                    onClick={() => { setActiveSideTab("chat"); setChatUnread(0); }}
+                  >
+                    💬 {t("Chat", "محادثة")}
+                  </button>
+                  <button
+                    className={`flex-1 py-2 text-xs font-medium transition-colors ${activeSideTab === "polls" ? "border-b-2 border-primary text-foreground" : "text-muted-foreground"}`}
+                    onClick={() => setActiveSideTab("polls")}
+                  >
+                    📊 {t("Polls", "تصويت")}
+                  </button>
                 </div>
-                <ScrollArea className="flex-1 p-3">
-                  <div className="space-y-2">
-                    {chatMessages.map((m) => {
-                      const isMe = m.user_id === user?.id;
-                      const name = chatProfiles[m.user_id] || (isMe ? "You" : m.user_id.slice(0, 8));
-                      return (
-                        <div key={m.id} className={`text-sm p-2 rounded-lg ${isMe ? "bg-primary/10 ms-4" : "bg-muted me-4"}`}>
-                          <p className="text-xs text-muted-foreground mb-0.5 font-medium">{isMe ? t("You", "أنت") : name}</p>
-                          <p>{m.message}</p>
-                          <p className="text-xs text-muted-foreground mt-0.5">{new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </ScrollArea>
-                <div className="p-2 border-t flex gap-2">
-                  <Input value={chatInput} onChange={(e) => setChatInput(e.target.value)} placeholder={t("Type message...", "اكتب رسالة...")}
-                    className="text-sm" onKeyDown={(e) => e.key === "Enter" && sendChat()} />
-                  <Button size="icon" onClick={sendChat} disabled={!chatInput.trim()}><Send className="h-3 w-3" /></Button>
+                <div className="flex-1 overflow-hidden">
+                  {activeSideTab === "chat" ? (
+                    <ClassChatPanel sessionId={sessionId || ""} />
+                  ) : (
+                    <ClassPolls sessionId={sessionId || ""} />
+                  )}
                 </div>
               </div>
             )}
           </div>
+
+          {/* Bottom control bar */}
+          <ClassControls
+            sessionId={sessionId || ""}
+            onToggleChat={() => { setChatOpen(!chatOpen); if (!chatOpen) setChatUnread(0); }}
+            onToggleParticipants={() => setParticipantsOpen(!participantsOpen)}
+            onEndClass={() => setShowEndConfirm(true)}
+            onLeaveClass={leaveSession}
+            chatUnread={chatUnread}
+            onLaunchPoll={() => { setChatOpen(true); setActiveSideTab("polls"); }}
+            onLaunchQuiz={() => setShowQuiz(true)}
+          />
+
+          {/* Live Quiz Overlay */}
+          <LiveQuizOverlay
+            sessionId={sessionId || ""}
+            isOpen={showQuiz}
+            onClose={() => setShowQuiz(false)}
+          />
         </LiveKitRoom>
       )}
+
+      {/* Mobile side panels as bottom sheets */}
+      {isMobile && participantsOpen && (
+        <div className="fixed inset-0 bg-black/50 z-40" onClick={() => setParticipantsOpen(false)}>
+          <div className="absolute bottom-16 left-0 right-0 bg-background rounded-t-xl max-h-[60vh] overflow-auto" onClick={e => e.stopPropagation()}>
+            <div className="w-12 h-1 bg-muted-foreground/30 rounded-full mx-auto mt-2 mb-1" />
+            <ClassParticipants sessionId={sessionId || ""} />
+          </div>
+        </div>
+      )}
+
+      {isMobile && chatOpen && (
+        <div className="fixed inset-0 bg-black/50 z-40" onClick={() => setChatOpen(false)}>
+          <div className="absolute bottom-16 left-0 right-0 bg-background rounded-t-xl max-h-[60vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="w-12 h-1 bg-muted-foreground/30 rounded-full mx-auto mt-2 mb-1" />
+            <div className="flex border-b">
+              <button
+                className={`flex-1 py-2 text-xs font-medium ${activeSideTab === "chat" ? "border-b-2 border-primary" : "text-muted-foreground"}`}
+                onClick={() => setActiveSideTab("chat")}
+              >
+                💬 {t("Chat", "محادثة")}
+              </button>
+              <button
+                className={`flex-1 py-2 text-xs font-medium ${activeSideTab === "polls" ? "border-b-2 border-primary" : "text-muted-foreground"}`}
+                onClick={() => setActiveSideTab("polls")}
+              >
+                📊 {t("Polls", "تصويت")}
+              </button>
+            </div>
+            <div className="flex-1 overflow-hidden min-h-[300px]">
+              {activeSideTab === "chat" ? (
+                <ClassChatPanel sessionId={sessionId || ""} />
+              ) : (
+                <ClassPolls sessionId={sessionId || ""} />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* End class confirmation dialog */}
+      <Dialog open={showEndConfirm} onOpenChange={setShowEndConfirm}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t("End class for everyone?", "إنهاء الحصة للجميع؟")}</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            {t("This will disconnect all participants and end the recording.", "سيتم قطع الاتصال عن جميع المشاركين وإيقاف التسجيل.")}
+          </p>
+          <DialogFooter className="flex gap-2">
+            <Button variant="outline" onClick={() => setShowEndConfirm(false)}>{t("Cancel", "إلغاء")}</Button>
+            <Button variant="outline" onClick={() => { setShowEndConfirm(false); leaveSession(); }}>
+              {t("Leave but Keep Open", "غادر لكن أبقِ الحصة")}
+            </Button>
+            <Button variant="destructive" onClick={endSession}>
+              {t("End for All", "إنهاء للجميع")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
