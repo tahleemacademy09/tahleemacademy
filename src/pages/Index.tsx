@@ -490,7 +490,7 @@ const Index = () => {
               <li><span className="ta-contact-icon">✉️</span><a href="mailto:Tahleemacademy09@gmail.com">Tahleemacademy09@gmail.com</a></li>
               <li><span className="ta-contact-icon">📱</span><a href="tel:+2348163310471">+234 816 331 0471</a></li>
               <li><span className="ta-contact-icon">💬</span><a href="https://wa.me/2348163310471">WhatsApp Us</a></li>
-              <li><span className="ta-contact-icon">🌐</span><a href="#">tahleemacademy.vercel.app</a></li>
+              <li><span className="ta-contact-icon">🌐</span><a href="https://tahleemacademy.lovable.app">tahleemacademy.lovable.app</a></li>
             </ul>
           </div>
         </div>
