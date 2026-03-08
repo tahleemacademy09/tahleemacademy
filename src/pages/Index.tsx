@@ -297,7 +297,23 @@ const Index = () => {
           <button className="ta-btn-outline" onClick={() => navigate("/login")}>Sign In</button>
           <button className="ta-btn-solid" onClick={() => navigate("/register")}>Register Free</button>
         </div>
+        <button className="ta-nav-hamburger" onClick={() => setMobileMenuOpen(true)}>
+          <svg fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
+        </button>
       </nav>
+
+      {/* MOBILE MENU OVERLAY */}
+      <div className={`ta-mobile-menu ${mobileMenuOpen ? 'open' : ''}`}>
+        <button className="ta-mobile-close" onClick={() => setMobileMenuOpen(false)}>
+          <svg fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+        <a onClick={() => { navigate("/"); setMobileMenuOpen(false); }}>Home</a>
+        <a onClick={() => { navigate("/courses"); setMobileMenuOpen(false); }}>Courses</a>
+        <a onClick={() => { navigate("/about"); setMobileMenuOpen(false); }}>About</a>
+        <a onClick={() => { navigate("/contact"); setMobileMenuOpen(false); }}>Contact</a>
+        <button className="ta-btn-outline" onClick={() => { navigate("/login"); setMobileMenuOpen(false); }}>Sign In</button>
+        <button className="ta-btn-solid" onClick={() => { navigate("/register"); setMobileMenuOpen(false); }}>Register Free</button>
+      </div>
 
       {/* HERO */}
       <section className="ta-hero">
