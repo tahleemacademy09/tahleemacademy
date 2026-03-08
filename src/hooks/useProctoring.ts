@@ -633,7 +633,7 @@ export const useProctoring = (config: ProctoringConfig, enabled: boolean, onAuto
     if (!enabled || !config.attemptId) return;
 
     const fetchViolations = async () => {
-      const { data } = await supabase
+      const { data } = await (supabase as any)
         .from("violations")
         .select("violation_type, created_at, details")
         .eq("attempt_id", config.attemptId)
@@ -641,7 +641,7 @@ export const useProctoring = (config: ProctoringConfig, enabled: boolean, onAuto
         .limit(10);
 
       if (data) {
-        setRecentViolations(data.map(v => ({
+        setRecentViolations((data as any[]).map((v: any) => ({
           type: v.violation_type,
           time: new Date(v.created_at).toLocaleTimeString(),
           details: v.details || "",
