@@ -63,7 +63,7 @@ const Index = () => {
       }
       .ta-hero-content {
         position:relative; z-index:2;
-        max-width:1200px; margin:0 auto; padding:120px 40px 80px;
+        max-width:1200px; margin:0 auto; padding:120px 40px 80px; text-align:center;
         display:grid; grid-template-columns:1fr 1fr; gap:60px; align-items:center; width:100%;
       }
       .ta-hero-badge {
@@ -86,8 +86,8 @@ const Index = () => {
         color:#fff; line-height:1.15; margin-bottom:20px;
       }
       .ta-hero-title em { color:#c9973a; font-style:normal; display:block; }
-      .ta-hero-subtitle { color:rgba(255,255,255,0.75); font-size:16px; line-height:1.7; max-width:480px; margin-bottom:36px; }
-      .ta-hero-buttons { display:flex; gap:14px; flex-wrap:wrap; }
+      .ta-hero-subtitle { color:rgba(255,255,255,0.75); font-size:16px; line-height:1.7; max-width:480px; margin:0 auto 36px; }
+      .ta-hero-buttons { display:flex; gap:14px; flex-wrap:wrap; justify-content:center; }
       .ta-hero-btn-primary {
         padding:14px 32px; background:#c9973a; color:#fff;
         border:none; border-radius:8px; font-family:'Cairo',sans-serif;
@@ -140,10 +140,10 @@ const Index = () => {
 
       /* WHY SECTION */
       .ta-why-outer { padding:90px 40px; }
-      .ta-why-inner { max-width:1200px; margin:0 auto; }
+      .ta-why-inner { max-width:1200px; margin:0 auto; text-align:center; }
       .ta-section-tag { color:#c9973a; font-size:12px; text-transform:uppercase; letter-spacing:2px; font-weight:700; margin-bottom:12px; }
       .ta-section-title { font-family:'Cormorant Garamond',serif; font-size:42px; font-weight:700; color:#0f3122; margin-bottom:16px; line-height:1.2; }
-      .ta-section-subtitle { color:#555; font-size:16px; line-height:1.7; max-width:560px; margin-bottom:52px; }
+      .ta-section-subtitle { color:#555; font-size:16px; line-height:1.7; max-width:560px; margin:0 auto 52px; }
       .ta-why-grid { display:grid; grid-template-columns:1fr 1fr; gap:24px; }
       .ta-why-card { position:relative; border-radius:20px; overflow:hidden; height:300px; cursor:pointer; box-shadow:0 10px 40px rgba(0,0,0,0.12); }
       .ta-why-card img { width:100%; height:100%; object-fit:cover; transition:0.5s; }
