@@ -9,14 +9,16 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { Search, User, ClipboardList, Mail, Calendar, Eye, CheckCircle, XCircle } from "lucide-react";
+import { Search, User, ClipboardList, Mail, Calendar, Eye, CheckCircle, XCircle, UserCheck } from "lucide-react";
 
 const StudentManagement = () => {
   const { t, language } = useLanguage();
   const { toast } = useToast();
+  const { user: currentUser, hasRole } = useAuth();
   const [students, setStudents] = useState<any[]>([]);
   const [exams, setExams] = useState<any[]>([]);
   const [search, setSearch] = useState("");
+  const [typeFilter, setTypeFilter] = useState<"all" | "group" | "private">("all");
   const [assignDialogOpen, setAssignDialogOpen] = useState(false);
   const [selectedStudent, setSelectedStudent] = useState<any>(null);
   const [selectedExamId, setSelectedExamId] = useState("");
