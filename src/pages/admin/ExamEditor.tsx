@@ -833,6 +833,18 @@ fill_blank,"The word for 'water' is ___.","كلمة 'ماء' هي ___.",,,,,,,,,
               </div>
             </div>
 
+            {/* Bulk Question Formatter */}
+            <BulkQuestionFormatter
+              format={formatSettings}
+              onChange={setFormatSettings}
+              onApply={() => {
+                toast({ title: t(`✅ Formatting applied to all ${questions.length} questions`, `✅ تم تطبيق التنسيق على كل ${questions.length} سؤال`) });
+              }}
+              questions={questions}
+              examTitle={examForm.title}
+              examTitleAr={examForm.title_ar}
+            />
+
             {questions.map((q, idx) => (
               <Card key={idx} className="border-2">
                 <CardContent className="p-4">
