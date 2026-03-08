@@ -6,7 +6,7 @@ import { BookOpen, Video, FileText, Award, Users, GraduationCap, Monitor, Star, 
 
 const fadeUp = {
   hidden: { opacity: 0, y: 30 },
-  visible: (i: number) => ({ opacity: 1, y: 0, transition: { delay: i * 0.12, duration: 0.7, ease: [0.25, 0.1, 0.25, 1] } }),
+  visible: (i: number) => ({ opacity: 1, y: 0, transition: { delay: i * 0.12, duration: 0.7, ease: [0.25, 0.1, 0.25, 1] as const } }),
 };
 
 const Index = () => {
