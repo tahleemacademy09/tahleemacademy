@@ -9,7 +9,7 @@ import { supabase } from "@/integrations/supabase/client";
 import {
   Send, MessageCircle, Reply, CheckCheck, Mic, MicOff,
   Image, Paperclip, Smile, ArrowLeft, FileText, Trash2, Info,
-  BarChart3, Megaphone
+  BarChart3, Megaphone, Star
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import MajlisSidebar from "@/components/majlis/MajlisSidebar";
