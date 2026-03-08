@@ -8,6 +8,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { motion } from "framer-motion";
 import { CheckCircle, CreditCard, Shield, BookOpen, Video, ClipboardList, MessageCircle, BookMarked } from "lucide-react";
+import StandaloneNav from "@/components/layout/StandaloneNav";
 
 declare global {
   interface Window {

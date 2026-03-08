@@ -147,7 +147,8 @@ const Onboarding = () => {
   ];
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4" style={{ background: "linear-gradient(135deg, #0f3122 0%, #1a4a35 50%, #0f3122 100%)" }}>
+    <div className="min-h-screen flex items-center justify-center p-4 pt-20" style={{ background: "linear-gradient(135deg, #0f3122 0%, #1a4a35 50%, #0f3122 100%)" }}>
+      <StandaloneNav />
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&family=Cairo:wght@400;600;700&family=Cormorant+Garamond:wght@400;600;700&display=swap');
         .onboarding-card { font-family: 'Cairo', sans-serif; }

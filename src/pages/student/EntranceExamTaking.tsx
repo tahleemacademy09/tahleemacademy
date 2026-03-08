@@ -16,6 +16,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { Clock, Flag, Send, CheckCircle2, BookOpen, ChevronLeft, ChevronRight } from "lucide-react";
 import { motion } from "framer-motion";
+import StandaloneNav from "@/components/layout/StandaloneNav";
 
 const EntranceExamTaking = () => {
   const { attemptId } = useParams<{ attemptId: string }>();
