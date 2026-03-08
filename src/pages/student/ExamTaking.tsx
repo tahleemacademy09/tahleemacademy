@@ -611,18 +611,34 @@ const ExamTaking = () => {
                     </div>
                   </div>
 
-                  {/* Question text — bilingual merge */}
-                  <div className="mb-4">
+                  {/* Question text — bilingual merge with formatting */}
+                  <div className="mb-4" style={{
+                    direction: exam?.rtl_mode ? 'rtl' : 'ltr',
+                  }}>
                     {q?.question_text ? (
                       <div
-                        className="text-base sm:text-lg font-medium leading-relaxed prose prose-sm max-w-none"
+                        className="font-medium leading-relaxed prose prose-sm max-w-none"
                         dir="auto"
+                        style={{
+                          fontSize: `${(q as any)?.custom_format?.font_size || exam?.question_font_size || 16}px`,
+                          fontFamily: exam?.question_font_family || 'Cairo',
+                          textAlign: ((q as any)?.custom_format?.alignment || exam?.question_alignment || 'left') as any,
+                          fontWeight: ((q as any)?.custom_format?.bold ?? exam?.question_bold) ? 'bold' : 'normal',
+                          fontStyle: exam?.question_italic ? 'italic' : 'normal',
+                          color: (q as any)?.custom_format?.color || exam?.question_color || undefined,
+                          lineHeight: exam?.question_line_height || 1.7,
+                        }}
                         dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.question_text) }}
                       />
                     ) : null}
                     {q?.question_text_ar && q.question_text_ar !== q.question_text ? (
                       <div
                         className="arabic-exam-text mt-2 prose prose-sm max-w-none"
+                        style={{
+                          fontSize: `${(q as any)?.custom_format?.font_size || exam?.question_font_size || 16}px`,
+                          fontFamily: exam?.question_font_family || 'Cairo',
+                          lineHeight: exam?.question_line_height || 1.7,
+                        }}
                         dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.question_text_ar) }}
                       />
                     ) : null}
@@ -670,7 +686,11 @@ const ExamTaking = () => {
                               )}
                               <div className="flex items-center gap-2">
                                 <RadioGroupItem value={opt.id} id={`${q.id}-${opt.id}`} />
-                                <Label htmlFor={`${q.id}-${opt.id}`} className="cursor-pointer flex-1 text-sm">
+                                <Label htmlFor={`${q.id}-${opt.id}`} className="cursor-pointer flex-1" style={{
+                                  fontSize: `${exam?.options_font_size || 14}px`,
+                                  fontWeight: exam?.options_bold ? 'bold' : 'normal',
+                                  textAlign: (exam?.options_alignment || 'left') as any,
+                                }}>
                                   <span className="mr-2 inline-flex h-5 w-5 items-center justify-center rounded-full bg-muted text-xs font-bold">
                                     {String.fromCharCode(65 + idx)}
                                   </span>

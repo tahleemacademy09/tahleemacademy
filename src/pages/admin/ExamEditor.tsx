@@ -20,6 +20,7 @@ import { Plus, Trash2, Save, GripVertical, Music, FileText, Calendar, Settings2,
 import { Checkbox } from "@/components/ui/checkbox";
 import RichTextEditor from "@/components/exam/RichTextEditor";
 import { sanitizeHtml } from "@/lib/sanitize";
+import BulkQuestionFormatter, { DEFAULT_FORMAT, type ExamFormatSettings } from "@/components/exam/BulkQuestionFormatter";
 
 interface QuestionForm {
   id?: string;
@@ -102,6 +103,7 @@ const ExamEditor = () => {
     type: "exam" as "exam" | "test",
   });
   const [questions, setQuestions] = useState<QuestionForm[]>([emptyQuestion()]);
+  const [formatSettings, setFormatSettings] = useState<ExamFormatSettings>({ ...DEFAULT_FORMAT });
   const [saving, setSaving] = useState(false);
   const [uploadingMedia, setUploadingMedia] = useState<number | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -170,6 +172,23 @@ const ExamEditor = () => {
           max_review_views: (exam as any).max_review_views ?? 1,
           type: (exam as any).type || "exam",
         });
+        // Load formatting settings
+        setFormatSettings({
+          question_font_size: (exam as any).question_font_size ?? 16,
+          question_font_family: (exam as any).question_font_family ?? "Cairo",
+          question_alignment: (exam as any).question_alignment ?? "left",
+          question_bold: (exam as any).question_bold ?? false,
+          question_italic: (exam as any).question_italic ?? false,
+          options_font_size: (exam as any).options_font_size ?? 14,
+          options_bold: (exam as any).options_bold ?? false,
+          options_alignment: (exam as any).options_alignment ?? "left",
+          question_color: (exam as any).question_color ?? "#1a1a1a",
+          question_line_height: (exam as any).question_line_height ?? 1.7,
+          question_padding: (exam as any).question_padding ?? 16,
+          show_question_numbers: (exam as any).show_question_numbers ?? true,
+          show_marks_per_question: (exam as any).show_marks_per_question ?? true,
+          rtl_mode: (exam as any).rtl_mode ?? false,
+        });
       }
       const { data: qs } = await supabase.from("exam_questions").select("*").eq("exam_id", examId).order("sort_order");
       if (qs?.length) {
@@ -204,17 +223,19 @@ const ExamEditor = () => {
       if (isEdit) {
         const { error } = await supabase.from("exams").update({
           ...examForm,
+          ...formatSettings,
           start_date: examForm.start_date ? new Date(examForm.start_date).toISOString() : null,
           end_date: examForm.end_date ? new Date(examForm.end_date).toISOString() : null,
-        }).eq("id", examId);
+        } as any).eq("id", examId);
         if (error) throw error;
       } else {
         const { data, error } = await supabase.from("exams").insert({
           ...examForm,
+          ...formatSettings,
           created_by: user!.id,
           start_date: examForm.start_date ? new Date(examForm.start_date).toISOString() : null,
           end_date: examForm.end_date ? new Date(examForm.end_date).toISOString() : null,
-        }).select("id").single();
+        } as any).select("id").single();
         if (error) throw error;
         eid = data?.id;
       }
@@ -811,6 +832,18 @@ fill_blank,"The word for 'water' is ___.","كلمة 'ماء' هي ___.",,,,,,,,,
                 </Button>
               </div>
             </div>
+
+            {/* Bulk Question Formatter */}
+            <BulkQuestionFormatter
+              format={formatSettings}
+              onChange={setFormatSettings}
+              onApply={() => {
+                toast({ title: t(`✅ Formatting applied to all ${questions.length} questions`, `✅ تم تطبيق التنسيق على كل ${questions.length} سؤال`) });
+              }}
+              questions={questions}
+              examTitle={examForm.title}
+              examTitleAr={examForm.title_ar}
+            />
 
             {questions.map((q, idx) => (
               <Card key={idx} className="border-2">

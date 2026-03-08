@@ -677,10 +677,43 @@ export type Database = {
           },
         ]
       }
+      exam_format_templates: {
+        Row: {
+          created_at: string | null
+          created_by: string | null
+          id: string
+          name: string
+          settings: Json
+        }
+        Insert: {
+          created_at?: string | null
+          created_by?: string | null
+          id?: string
+          name: string
+          settings: Json
+        }
+        Update: {
+          created_at?: string | null
+          created_by?: string | null
+          id?: string
+          name?: string
+          settings?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "exam_format_templates_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["user_id"]
+          },
+        ]
+      }
       exam_questions: {
         Row: {
           correct_answer: string | null
           created_at: string
+          custom_format: Json | null
           difficulty: string | null
           exam_id: string
           explanation: string | null
@@ -698,6 +731,7 @@ export type Database = {
         Insert: {
           correct_answer?: string | null
           created_at?: string
+          custom_format?: Json | null
           difficulty?: string | null
           exam_id: string
           explanation?: string | null
@@ -715,6 +749,7 @@ export type Database = {
         Update: {
           correct_answer?: string | null
           created_at?: string
+          custom_format?: Json | null
           difficulty?: string | null
           exam_id?: string
           explanation?: string | null
@@ -791,14 +826,28 @@ export type Database = {
           max_attempts: number | null
           max_review_views: number | null
           max_warnings: number | null
+          options_alignment: string | null
+          options_bold: boolean | null
+          options_font_size: number | null
           passing_score: number | null
           proctoring_enabled: boolean | null
+          question_alignment: string | null
+          question_bold: boolean | null
+          question_color: string | null
+          question_font_family: string | null
+          question_font_size: number | null
+          question_italic: boolean | null
+          question_line_height: number | null
+          question_padding: number | null
           randomize_answers: boolean | null
           randomize_questions: boolean | null
           record_audio: boolean | null
           record_screen: boolean | null
           record_webcam: boolean | null
+          rtl_mode: boolean | null
           screenshot_interval_seconds: number | null
+          show_marks_per_question: boolean | null
+          show_question_numbers: boolean | null
           show_results_immediately: boolean | null
           start_date: string | null
           tab_switch_limit: number | null
@@ -829,14 +878,28 @@ export type Database = {
           max_attempts?: number | null
           max_review_views?: number | null
           max_warnings?: number | null
+          options_alignment?: string | null
+          options_bold?: boolean | null
+          options_font_size?: number | null
           passing_score?: number | null
           proctoring_enabled?: boolean | null
+          question_alignment?: string | null
+          question_bold?: boolean | null
+          question_color?: string | null
+          question_font_family?: string | null
+          question_font_size?: number | null
+          question_italic?: boolean | null
+          question_line_height?: number | null
+          question_padding?: number | null
           randomize_answers?: boolean | null
           randomize_questions?: boolean | null
           record_audio?: boolean | null
           record_screen?: boolean | null
           record_webcam?: boolean | null
+          rtl_mode?: boolean | null
           screenshot_interval_seconds?: number | null
+          show_marks_per_question?: boolean | null
+          show_question_numbers?: boolean | null
           show_results_immediately?: boolean | null
           start_date?: string | null
           tab_switch_limit?: number | null
@@ -867,14 +930,28 @@ export type Database = {
           max_attempts?: number | null
           max_review_views?: number | null
           max_warnings?: number | null
+          options_alignment?: string | null
+          options_bold?: boolean | null
+          options_font_size?: number | null
           passing_score?: number | null
           proctoring_enabled?: boolean | null
+          question_alignment?: string | null
+          question_bold?: boolean | null
+          question_color?: string | null
+          question_font_family?: string | null
+          question_font_size?: number | null
+          question_italic?: boolean | null
+          question_line_height?: number | null
+          question_padding?: number | null
           randomize_answers?: boolean | null
           randomize_questions?: boolean | null
           record_audio?: boolean | null
           record_screen?: boolean | null
           record_webcam?: boolean | null
+          rtl_mode?: boolean | null
           screenshot_interval_seconds?: number | null
+          show_marks_per_question?: boolean | null
+          show_question_numbers?: boolean | null
           show_results_immediately?: boolean | null
           start_date?: string | null
           tab_switch_limit?: number | null
