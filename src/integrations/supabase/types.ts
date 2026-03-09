@@ -1208,6 +1208,334 @@ export type Database = {
           },
         ]
       }
+      hifdh_ai_chat: {
+        Row: {
+          created_at: string | null
+          id: string
+          message: string
+          message_ar: string | null
+          sender_id: string | null
+          sender_type: string | null
+          session_id: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          message: string
+          message_ar?: string | null
+          sender_id?: string | null
+          sender_type?: string | null
+          session_id?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          message?: string
+          message_ar?: string | null
+          sender_id?: string | null
+          sender_type?: string | null
+          session_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "hifdh_ai_chat_sender_id_fkey"
+            columns: ["sender_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "hifdh_ai_chat_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "hifdh_revision_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      hifdh_ai_corrections: {
+        Row: {
+          ai_suggestion: string | null
+          ayah: number | null
+          correct_text: string | null
+          created_at: string | null
+          error_type: string | null
+          id: string
+          is_resolved: boolean | null
+          session_id: string | null
+          severity: string | null
+          student_id: string | null
+          student_text: string | null
+          surah: string | null
+        }
+        Insert: {
+          ai_suggestion?: string | null
+          ayah?: number | null
+          correct_text?: string | null
+          created_at?: string | null
+          error_type?: string | null
+          id?: string
+          is_resolved?: boolean | null
+          session_id?: string | null
+          severity?: string | null
+          student_id?: string | null
+          student_text?: string | null
+          surah?: string | null
+        }
+        Update: {
+          ai_suggestion?: string | null
+          ayah?: number | null
+          correct_text?: string | null
+          created_at?: string | null
+          error_type?: string | null
+          id?: string
+          is_resolved?: boolean | null
+          session_id?: string | null
+          severity?: string | null
+          student_id?: string | null
+          student_text?: string | null
+          surah?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "hifdh_ai_corrections_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "hifdh_revision_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "hifdh_ai_corrections_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["user_id"]
+          },
+        ]
+      }
+      hifdh_revision_sessions: {
+        Row: {
+          actual_end_time: string | null
+          actual_start_time: string | null
+          ai_assistance_level: string | null
+          ai_language: string | null
+          ai_moderation_enabled: boolean | null
+          ayah_from: number | null
+          ayah_to: number | null
+          created_at: string | null
+          id: string
+          level: string | null
+          live_session_id: string | null
+          max_students: number | null
+          notes: string | null
+          page_from: number | null
+          page_to: number | null
+          revision_type: string | null
+          scheduled_at: string | null
+          session_summary: string | null
+          session_type: string | null
+          status: string | null
+          subject_id: string | null
+          surah_from: string | null
+          surah_to: string | null
+          teacher_id: string | null
+          title: string
+          title_ar: string | null
+        }
+        Insert: {
+          actual_end_time?: string | null
+          actual_start_time?: string | null
+          ai_assistance_level?: string | null
+          ai_language?: string | null
+          ai_moderation_enabled?: boolean | null
+          ayah_from?: number | null
+          ayah_to?: number | null
+          created_at?: string | null
+          id?: string
+          level?: string | null
+          live_session_id?: string | null
+          max_students?: number | null
+          notes?: string | null
+          page_from?: number | null
+          page_to?: number | null
+          revision_type?: string | null
+          scheduled_at?: string | null
+          session_summary?: string | null
+          session_type?: string | null
+          status?: string | null
+          subject_id?: string | null
+          surah_from?: string | null
+          surah_to?: string | null
+          teacher_id?: string | null
+          title: string
+          title_ar?: string | null
+        }
+        Update: {
+          actual_end_time?: string | null
+          actual_start_time?: string | null
+          ai_assistance_level?: string | null
+          ai_language?: string | null
+          ai_moderation_enabled?: boolean | null
+          ayah_from?: number | null
+          ayah_to?: number | null
+          created_at?: string | null
+          id?: string
+          level?: string | null
+          live_session_id?: string | null
+          max_students?: number | null
+          notes?: string | null
+          page_from?: number | null
+          page_to?: number | null
+          revision_type?: string | null
+          scheduled_at?: string | null
+          session_summary?: string | null
+          session_type?: string | null
+          status?: string | null
+          subject_id?: string | null
+          surah_from?: string | null
+          surah_to?: string | null
+          teacher_id?: string | null
+          title?: string
+          title_ar?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "hifdh_revision_sessions_live_session_id_fkey"
+            columns: ["live_session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "hifdh_revision_sessions_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "hifdh_revision_sessions_teacher_id_fkey"
+            columns: ["teacher_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["user_id"]
+          },
+        ]
+      }
+      hifdh_session_participants: {
+        Row: {
+          ai_feedback: string | null
+          ai_score: number | null
+          audio_url: string | null
+          errors_detected: Json | null
+          final_score: number | null
+          id: string
+          is_approved: boolean | null
+          joined_at: string | null
+          left_at: string | null
+          pages_assigned: string | null
+          session_id: string | null
+          student_id: string | null
+          teacher_feedback: string | null
+          teacher_score: number | null
+        }
+        Insert: {
+          ai_feedback?: string | null
+          ai_score?: number | null
+          audio_url?: string | null
+          errors_detected?: Json | null
+          final_score?: number | null
+          id?: string
+          is_approved?: boolean | null
+          joined_at?: string | null
+          left_at?: string | null
+          pages_assigned?: string | null
+          session_id?: string | null
+          student_id?: string | null
+          teacher_feedback?: string | null
+          teacher_score?: number | null
+        }
+        Update: {
+          ai_feedback?: string | null
+          ai_score?: number | null
+          audio_url?: string | null
+          errors_detected?: Json | null
+          final_score?: number | null
+          id?: string
+          is_approved?: boolean | null
+          joined_at?: string | null
+          left_at?: string | null
+          pages_assigned?: string | null
+          session_id?: string | null
+          student_id?: string | null
+          teacher_feedback?: string | null
+          teacher_score?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "hifdh_session_participants_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "hifdh_revision_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "hifdh_session_participants_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["user_id"]
+          },
+        ]
+      }
+      hifdh_session_queue: {
+        Row: {
+          ended_at: string | null
+          id: string
+          pages_to_recite: string | null
+          queue_position: number
+          session_id: string | null
+          started_at: string | null
+          status: string | null
+          student_id: string | null
+        }
+        Insert: {
+          ended_at?: string | null
+          id?: string
+          pages_to_recite?: string | null
+          queue_position: number
+          session_id?: string | null
+          started_at?: string | null
+          status?: string | null
+          student_id?: string | null
+        }
+        Update: {
+          ended_at?: string | null
+          id?: string
+          pages_to_recite?: string | null
+          queue_position?: number
+          session_id?: string | null
+          started_at?: string | null
+          status?: string | null
+          student_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "hifdh_session_queue_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "hifdh_revision_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "hifdh_session_queue_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["user_id"]
+          },
+        ]
+      }
       lesson_progress: {
         Row: {
           completed: boolean | null
