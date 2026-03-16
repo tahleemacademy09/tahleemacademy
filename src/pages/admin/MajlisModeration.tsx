@@ -32,7 +32,7 @@ const MajlisModeration = () => {
     });
     setShowBroadcast(false);
     setBroadcastMsg({ title: "", message: "" });
-    toast({ title: t("Broadcast sent", "تم إرسال البث") });
+    toast({ title: t("Broadcast sent ✅", "تم إرسال البث ✅") });
   };
 
   const handleCreateChannel = async () => {
@@ -46,6 +46,7 @@ const MajlisModeration = () => {
       created_by: user.id,
       is_private: false,
     }).select().single();
+
     if (data) {
       await supabase.from("chat_members" as any).insert({ channel_id: (data as any).id, user_id: user.id, role: "admin" });
       const { data: allProfiles } = await supabase.from("profiles").select("user_id");
@@ -54,14 +55,17 @@ const MajlisModeration = () => {
         await supabase.from("chat_members" as any).upsert(members, { onConflict: "channel_id,user_id" });
       }
     }
+
     setShowCreateChannel(false);
     setChannelForm({ name: "", name_ar: "", type: "group", level: "", description: "" });
-    toast({ title: t("Channel created successfully", "تم إنشاء القناة بنجاح") });
+    toast({ title: t("Channel created ✅", "تم إنشاء القناة ✅") });
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-3.5rem)]">
-      <div className="flex items-center gap-2 px-4 py-2 border-b" style={{ backgroundColor: "#f5f0e8" }}>
+    <div className="flex flex-col" style={{ height: "calc(100vh - 3.5rem)" }}>
+
+      {/* Admin Top Bar */}
+      <div className="flex items-center gap-2 px-4 py-2 border-b shrink-0" style={{ backgroundColor: "#f5f0e8" }}>
         <span className="text-xs font-semibold text-gray-500 flex-1">👑 {t("Admin View", "عرض المشرف")}</span>
         <Button size="sm" onClick={() => setShowCreateChannel(true)} className="h-8 text-xs" style={{ backgroundColor: "#1a3a2a" }}>
           <Plus className="h-3.5 w-3.5 mr-1" />{t("New Channel", "قناة جديدة")}
@@ -70,9 +74,13 @@ const MajlisModeration = () => {
           <Megaphone className="h-3.5 w-3.5 mr-1" />{t("Broadcast", "بث")}
         </Button>
       </div>
-      <div className="flex-1 overflow-hidden">
+
+      {/* Majlis Chat — takes remaining height */}
+      <div className="flex-1 min-h-0 overflow-hidden">
         <Majlis />
       </div>
+
+      {/* Broadcast Dialog */}
       <Dialog open={showBroadcast} onOpenChange={setShowBroadcast}>
         <DialogContent>
           <DialogHeader><DialogTitle>{t("Broadcast Announcement", "بث إعلان")}</DialogTitle></DialogHeader>
@@ -83,6 +91,8 @@ const MajlisModeration = () => {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Create Channel Dialog */}
       <Dialog open={showCreateChannel} onOpenChange={setShowCreateChannel}>
         <DialogContent>
           <DialogHeader><DialogTitle>{t("Create Channel", "إنشاء قناة")}</DialogTitle></DialogHeader>
