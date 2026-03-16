@@ -210,8 +210,9 @@ const StudentDashboard = () => {
           </div>
         </div>
         <div className="absolute -top-10 -right-10 h-36 w-36 rounded-full bg-white/5" />
-        <div className="absolute -bottom-8 -left-8 h-28 w-28 rounded-full bg-white/5" />
+        <<div className="absolute -bottom-8 -left-8 h-28 w-28 rounded-full bg-white/5" />
       </div>
+    </div>
 
       {/* DAILY QURANIC REFLECTION */}
       <div className="rounded-2xl p-5 md:p-6 text-center shadow-[0_4px_20px_rgba(0,0,0,0.05)]" style={{ background: '#064E3B' }}>
