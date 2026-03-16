@@ -145,11 +145,13 @@ const Majlis = () => {
   };
 
   const sendMessage = async (contentType = "text", mediaPath?: string) => {
-    if (activeChannel?.type === "announcement" && !isAdmin && !isTeacher) {
-  toast({
-    title: "Access Denied",
-    description: "Only teachers can post in the announcement channel.",
-    variant: "destructive",
-  });
-  return;
-}
+        if (activeChannel?.type === "announcement" && !isAdmin && !isTeacher) {
+      toast({
+        title: "Restricted",
+        description: "Only teachers and admins can post in this channel.",
+        variant: "destructive",
+      });
+      return; // Stop the function here
+    }
+
+// ... make sure the rest of your function and file are closed below this ...
