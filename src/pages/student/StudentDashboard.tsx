@@ -210,7 +210,7 @@ const StudentDashboard = () => {
           </div>
         </div>
         <div className="absolute -top-10 -right-10 h-36 w-36 rounded-full bg-white/5" />
-        <<div className="absolute -bottom-8 -left-8 h-28 w-28 rounded-full bg-white/5" />
+        <div className="absolute -bottom-8 -left-8 h-28 w-28 rounded-full bg-white/5" />
       </div>
     </div>
 
