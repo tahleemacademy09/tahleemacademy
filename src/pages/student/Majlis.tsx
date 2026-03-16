@@ -1,309 +1,229 @@
-// src/pages/MajlisChat.tsx
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { createClient } from "@supabase/supabase-js";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
+import { useLanguage } from "@/contexts/LanguageContext";
+import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/integrations/supabase/client";
+import {
+  Send, MessageCircle, Reply, CheckCheck, Mic, MicOff,
+  Image, Paperclip, Smile, ArrowLeft, FileText, Trash2, Info, X
+} from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
-// ----------------- Supabase Setup -----------------
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+import MajlisSidebar from "@/components/majlis/MajlisSidebar";
+import CreateChannelDialog from "@/components/majlis/CreateChannelDialog";
+import BrowseChannelsDialog from "@/components/majlis/BrowseChannelsDialog";
+import type { ChatChannel, ChatMessage, UserProfile } from "@/components/majlis/types";
 
-// ----------------- Master Component -----------------
-const MajlisChat = () => {
-  // ---- MOCK USER ----
-  // Replace with real auth if you want
-  const user = { id: "123", role: "admin", name: "Admin" };
-  const hasRole = (role: string) => role === user.role;
+const MajlisEnhanced = () => {
+  const { t, dir } = useLanguage();
+  const { user, profile, hasRole } = useAuth();
+  const { toast } = useToast();
 
-  // ---- STATES ----
-  const [channels, setChannels] = useState<any[]>([]);
+  // --- States ---
+  const [channels, setChannels] = useState<ChatChannel[]>([]);
   const [activeChannelId, setActiveChannelId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<any[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [profiles, setProfiles] = useState<Record<string, UserProfile>>({});
   const [input, setInput] = useState("");
-  const [file, setFile] = useState<File | null>(null);
-  const [typingUsers, setTypingUsers] = useState<string[]>([]);
+  const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
+  const [mobileShowChat, setMobileShowChat] = useState(false);
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [showBrowseChannels, setShowBrowseChannels] = useState(false);
+  const [reactions, setReactions] = useState<Record<string, Record<string, string[]>>>({});
+  const [isRecording, setIsRecording] = useState(false);
+
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const isAdmin = hasRole("admin");
+  const isTeacher = hasRole("teacher");
+  const activeChannel = channels.find(c => c.id === activeChannelId);
 
-  // ---- Fetch Channels ----
+  // --- Load Channels ---
   useEffect(() => {
-    const fetchChannels = async () => {
-      const { data: memberData } = await supabase
-        .from("chat_members")
+    if (!user) return;
+    const loadChannels = async () => {
+      const { data: memberData } = await supabase.from("chat_members" as any)
         .select("channel_id")
         .eq("user_id", user.id);
-
-      const memberIds = (memberData || []).map((m: any) => m.channel_id);
-      const { data: channels } = await supabase
-        .from("chat_channels")
-        .select("*")
-        .in("id", memberIds.length ? memberIds : [""]);
-
-      setChannels(channels || []);
-      if (!activeChannelId && channels?.length) setActiveChannelId(channels[0].id);
+      const memberIds = (memberData || []).map(m => m.channel_id);
+      const { data: publicChannels } = await supabase.from("chat_channels").select("*").eq("is_private", false);
+      const { data: memberChannels } = memberIds.length > 0 
+        ? await supabase.from("chat_channels").select("*").in("id", memberIds) 
+        : { data: [] };
+      const all = [...(memberChannels || []), ...(publicChannels || [])];
+      const unique = Array.from(new Map(all.map(c => [c.id, c])).values());
+      setChannels(unique as ChatChannel[]);
+      if (!activeChannelId && unique.length) setActiveChannelId(unique[0].id);
     };
-    fetchChannels();
-  }, []);
+    loadChannels();
+  }, [user]);
 
-  // ---- Fetch Messages + Realtime ----
+  // --- Load Messages & Profiles ---
   useEffect(() => {
     if (!activeChannelId) return;
 
-    const fetchMessages = async () => {
-      const { data } = await supabase
-        .from("chat_messages")
+    const loadMessages = async () => {
+      const { data } = await supabase.from("chat_messages")
         .select("*")
         .eq("channel_id", activeChannelId)
         .order("created_at", { ascending: true });
       setMessages(data || []);
-    };
-    fetchMessages();
 
-    const channel = supabase
-      .channel(`room-${activeChannelId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "chat_messages",
-          filter: `channel_id=eq.${activeChannelId}`,
-        },
-        (payload) => {
-          setMessages((prev) => [...prev, payload.new]);
+      // Load user profiles
+      const userIds = [...new Set((data || []).map(m => m.user_id))];
+      if (userIds.length) {
+        const { data: profs } = await supabase.from("profiles")
+          .select("user_id, full_name, avatar_url")
+          .in("user_id", userIds);
+        const map: Record<string, UserProfile> = {};
+        (profs || []).forEach(p => { map[p.user_id] = p; });
+        setProfiles(prev => ({ ...prev, ...map }));
+      }
+    };
+
+    loadMessages();
+
+    const channel = supabase.channel(`majlis-channel-${activeChannelId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "chat_messages", filter: `channel_id=eq.${activeChannelId}` }, (payload) => {
+        if (payload.eventType === "INSERT") {
+          const newMsg = payload.new as ChatMessage;
+          setMessages(prev => [...prev, newMsg]);
         }
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "UPDATE",
-          schema: "public",
-          table: "chat_messages",
-          filter: `channel_id=eq.${activeChannelId}`,
-        },
-        (payload) => {
-          setMessages((prev) =>
-            prev.map((m) => (m.id === payload.new.id ? payload.new : m))
-          );
+        if (payload.eventType === "DELETE") {
+          setMessages(prev => prev.filter(m => m.id !== (payload.old as any).id));
         }
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "chat_typing",
-          filter: `channel_id=eq.${activeChannelId}`,
-        },
-        (payload) => {
-          if (payload.eventType === "UPDATE" && payload.new.user_id !== user.id) {
-            if (payload.new.is_typing) {
-              setTypingUsers((prev) => [...new Set([...prev, payload.new.user_id])]);
-            } else {
-              setTypingUsers((prev) =>
-                prev.filter((id) => id !== payload.new.user_id)
-              );
-            }
-          }
-        }
-      )
-      .subscribe();
+      }).subscribe();
 
     return () => supabase.removeChannel(channel);
   }, [activeChannelId]);
 
-  // ---- Auto-scroll ----
+  // --- Auto Scroll ---
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages]);
 
-  // ---- Send Message ----
-  const handleSend = async () => {
-    if (!input.trim() && !file) return;
+  // --- Send Message ---
+  const sendMessage = async (type: "text" | "image" | "file" | "voice" = "text", mediaUrl?: string) => {
+    if (!user || !activeChannelId) return;
+    if (type === "text" && !input.trim() && !mediaUrl) return;
 
-    let content = input;
-    let content_type = "text";
-
-    if (file) {
-      const { data, error } = await supabase.storage
-        .from("chat_files")
-        .upload(`${Date.now()}-${file.name}`, file);
-      if (error) return alert(error.message);
-      content = supabase.storage.from("chat_files").getPublicUrl(data.path).publicUrl;
-      content_type = file.type.startsWith("audio/") ? "voice" : "file";
-      setFile(null);
+    if (activeChannel?.type === "announcement" && !isAdmin && !isTeacher) {
+      toast({ title: "Restricted", description: "Only teachers/admins can post here", variant: "destructive" });
+      return;
     }
 
-    await supabase.from("chat_messages").insert({
+    const { error } = await supabase.from("chat_messages").insert({
       channel_id: activeChannelId,
       user_id: user.id,
-      content,
-      content_type,
+      content: type === "text" ? input : (mediaUrl || ""),
+      content_type: type,
+      reply_to: replyTo?.id || null
     });
 
-    setInput("");
-    await supabase
-      .from("chat_typing")
-      .upsert({ channel_id: activeChannelId, user_id: user.id, is_typing: false });
+    if (!error) {
+      setInput("");
+      setReplyTo(null);
+    }
   };
 
-  const handleTyping = async (value: string) => {
-    setInput(value);
-    await supabase
-      .from("chat_typing")
-      .upsert({ channel_id: activeChannelId, user_id: user.id, is_typing: !!value });
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, type: "image" | "file") => {
+    const file = e.target.files?.[0];
+    if (!file || !user) return;
+
+    const filePath = `${user.id}/${Date.now()}-${file.name}`;
+    const { error } = await supabase.storage.from("chat_attachments").upload(filePath, file);
+    if (error) return toast({ title: "Upload failed", variant: "destructive" });
+
+    const { data: { publicUrl } } = supabase.storage.from("chat_attachments").getPublicUrl(filePath);
+    sendMessage(type, publicUrl);
   };
-
-  const deleteMessage = async (msgId: string) =>
-    await supabase.from("chat_messages").delete().eq("id", msgId);
-
-  const editMessage = async (msgId: string, content: string) =>
-    await supabase
-      .from("chat_messages")
-      .update({ content, updated_at: new Date() })
-      .eq("id", msgId);
-
-  // ---- Active Channel ----
-  const activeChannel = channels.find((c) => c.id === activeChannelId);
 
   return (
-    <div style={{ display: "flex", height: "100vh", fontFamily: "sans-serif" }}>
+    <div className="flex h-[calc(100vh-64px)] overflow-hidden bg-background" dir={dir}>
       {/* Sidebar */}
-      <div style={{ width: 250, borderRight: "1px solid #ccc", padding: 10 }}>
-        <h2>Channels</h2>
-        {channels.map((c) => (
-          <div
-            key={c.id}
-            onClick={() => setActiveChannelId(c.id)}
-            style={{
-              padding: 5,
-              cursor: "pointer",
-              background: activeChannelId === c.id ? "#eee" : undefined,
-            }}
-          >
-            {c.name}
-          </div>
-        ))}
+      <div className={`${mobileShowChat ? "hidden" : "flex"} md:flex w-80 border-r flex-col`}>
+        <MajlisSidebar
+          channels={channels}
+          activeChannelId={activeChannelId}
+          onSelectChannel={(id) => { setActiveChannelId(id); setMobileShowChat(true); }}
+          onShowCreate={() => setShowCreateDialog(true)}
+          onShowBrowse={() => setShowBrowseChannels(true)}
+        />
       </div>
 
-      {/* Chat Area */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-        {/* Header */}
-        <div
-          style={{
-            padding: 10,
-            borderBottom: "1px solid #ccc",
-            display: "flex",
-            justifyContent: "space-between",
-          }}
-        >
-          <div>
-            <strong>{activeChannel?.name || "Select a channel"}</strong>
-            {typingUsers.length > 0 && (
-              <span style={{ marginLeft: 10, color: "gray", fontSize: 12 }}>
-                Someone is typing...
-              </span>
-            )}
+      {/* Chat Window */}
+      <div className={`${mobileShowChat ? "flex" : "hidden"} md:flex flex-1 flex-col min-w-0`}>
+        {!activeChannel ? (
+          <div className="flex-1 flex items-center justify-center text-muted-foreground">
+            <MessageCircle className="h-16 w-16 opacity-20" />
+            <p className="ml-2 text-lg">Select a channel to start chatting</p>
           </div>
-        </div>
-
-        {/* Messages */}
-        <div
-          ref={scrollRef}
-          style={{
-            flex: 1,
-            overflowY: "auto",
-            padding: 10,
-            background: "#f5f5f5",
-          }}
-        >
-          {messages.map((msg) => {
-            const isMe = msg.user_id === user.id;
-            return (
-              <div
-                key={msg.id}
-                style={{
-                  display: "flex",
-                  justifyContent: isMe ? "flex-end" : "flex-start",
-                  marginBottom: 5,
-                }}
-              >
-                <div
-                  style={{
-                    padding: 8,
-                    borderRadius: 8,
-                    maxWidth: "70%",
-                    background: isMe ? "#dcf8c6" : "#fff",
-                    position: "relative",
-                  }}
-                >
-                  {msg.content_type === "text" && msg.content}
-                  {msg.content_type === "file" && (
-                    <a href={msg.content} target="_blank" rel="noreferrer">
-                      Download File
-                    </a>
-                  )}
-                  {msg.content_type === "voice" && <audio controls src={msg.content} />}
-                  <div
-                    style={{
-                      fontSize: 10,
-                      color: "gray",
-                      marginTop: 2,
-                      display: "flex",
-                      justifyContent: "flex-end",
-                      gap: 5,
-                    }}
-                  >
-                    {new Date(msg.created_at).toLocaleTimeString([], {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                    {isMe && <span>✓</span>}
-                    {isMe && (
-                      <button onClick={() => deleteMessage(msg.id)}>🗑</button>
-                    )}
-                    {isMe && (
-                      <button
-                        onClick={() =>
-                          editMessage(msg.id, prompt("Edit message", msg.content) || msg.content)
-                        }
-                      >
-                        ✏️
-                      </button>
-                    )}
-                  </div>
-                </div>
+        ) : (
+          <>
+            {/* Header */}
+            <div className="h-16 border-b flex items-center justify-between px-4">
+              <div className="flex items-center gap-3">
+                <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setMobileShowChat(false)}>
+                  <ArrowLeft className="h-5 w-5" />
+                </Button>
+                <h3 className="font-bold">{activeChannel.name}</h3>
+                <Badge variant="outline">{activeChannel.type}</Badge>
               </div>
-            );
-          })}
-        </div>
+              <Button variant="ghost" size="icon"><Info className="h-5 w-5" /></Button>
+            </div>
 
-        {/* Input */}
-        <div
-          style={{
-            padding: 10,
-            borderTop: "1px solid #ccc",
-            display: "flex",
-            alignItems: "center",
-            gap: 5,
-          }}
-        >
-          <input type="file" onChange={(e) => e.target.files && setFile(e.target.files[0])} />
-          <input
-            value={input}
-            onChange={(e) => handleTyping(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleSend()}
-            style={{ flex: 1, padding: 5 }}
-            placeholder="Type a message..."
-          />
-          <button onClick={handleSend}>Send</button>
-        </div>
+            {/* Messages */}
+            <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-4">
+              {messages.map(msg => {
+                const isMe = msg.user_id === user?.id;
+                return (
+                  <div key={msg.id} className={`flex ${isMe ? "justify-end" : "justify-start"}`}>
+                    <div className={`max-w-[80%] flex gap-2 ${isMe ? "flex-row-reverse" : ""}`}>
+                      <Avatar className="h-8 w-8 shrink-0">
+                        <AvatarImage src={profiles[msg.user_id]?.avatar_url} />
+                        <AvatarFallback>{profiles[msg.user_id]?.full_name?.charAt(0) || "?"}</AvatarFallback>
+                      </Avatar>
+                      <div className="flex flex-col">
+                        <span className="text-[10px] text-muted-foreground">{profiles[msg.user_id]?.full_name}</span>
+                        <div className={`rounded-2xl px-4 py-2 ${isMe ? "bg-primary text-primary-foreground rounded-tr-none" : "bg-muted rounded-tl-none"}`}>
+                          {msg.content_type === "image" ? <img src={msg.content} className="max-w-full rounded-lg" /> : <p className="text-sm">{msg.content}</p>}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Input */}
+            <div className="p-4 border-t flex items-center gap-2">
+              <Button variant="ghost" size="icon" onClick={() => imageInputRef.current?.click()}><Image className="h-5 w-5" /></Button>
+              <Input
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && sendMessage()}
+                placeholder="Type a message..."
+              />
+              <Button onClick={() => sendMessage()} disabled={!input.trim()}><Send className="h-5 w-5" /></Button>
+            </div>
+          </>
+        )}
       </div>
+
+      <input type="file" ref={imageInputRef} className="hidden" accept="image/*" onChange={(e) => handleFileUpload(e, "image")} />
+      <CreateChannelDialog open={showCreateDialog} onOpenChange={setShowCreateDialog} />
+      <BrowseChannelsDialog open={showBrowseChannels} onOpenChange={setShowBrowseChannels} />
     </div>
   );
 };
 
-export default MajlisChat;
+export default MajlisEnhanced;
