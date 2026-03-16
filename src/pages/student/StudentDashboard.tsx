@@ -13,6 +13,8 @@ import {
   GraduationCap, MessageCircle, ArrowRight, Video, Star, ChevronLeft, ChevronRight, AlertTriangle, Info
 } from "lucide-react";
 
+// --- Helper Functions and Constants ---
+
 const toHijri = (date: Date) => {
   const jd = Math.floor((date.getTime() / 86400000) + 2440587.5);
   const l = jd - 1948440 + 10632;
@@ -25,7 +27,7 @@ const toHijri = (date: Date) => {
   const y = 30 * n + j - 30;
   const months = ["محرم", "صفر", "ربيع الأول", "ربيع الثاني", "جمادى الأولى", "جمادى الآخرة", "رجب", "شعبان", "رمضان", "شوال", "ذو القعدة", "ذو الحجة"];
   return { day: d, month: months[m - 1], year: y, full: `${d} ${months[m - 1]} ${y} هـ` };
-};
+[span_2](start_span)}; [cite: 7-15]
 
 const VERSES = [
   { ar: "إِنَّ مَعَ الْعُسْرِ يُسْرًا", en: "Indeed, with hardship comes ease.", ref: "Quran 94:6" },
@@ -38,7 +40,7 @@ const VERSES = [
   { ar: "وَقُل رَّبِّ أَدْخِلْنِي مُدْخَلَ صِدْقٍ وَأَخْرِجْنِي مُخْرَجَ صِدْقٍ", en: "My Lord, cause me to enter a sound entrance and exit a sound exit.", ref: "Quran 17:80" },
   { ar: "وَعَسَىٰ أَن تَكْرَهُوا شَيْئًا وَهُوَ خَيْرٌ لَّكُمْ", en: "Perhaps you dislike something which is good for you.", ref: "Quran 2:216" },
   { ar: "إِنَّ اللَّهَ لَا يُغَيِّرُ مَا بِقَوْمٍ حَتَّىٰ يُغَيِّرُوا مَا بِأَنفُسِهِمْ", en: "Allah does not change a people until they change what is within themselves.", ref: "Quran 13:11" },
-];
+[cite_start]]; [cite: 16-18]
 
 const gradePoint = (pct: number): number => {
   if (pct >= 85) return 4.0;
@@ -47,7 +49,9 @@ const gradePoint = (pct: number): number => {
   if (pct >= 55) return 2.0;
   if (pct >= 45) return 1.0;
   return 0.0;
-};
+[cite_start]}; [cite: 19-21]
+
+// --- Component Definition ---
 
 const StudentDashboard = () => {
   const { t, language } = useLanguage();
@@ -60,11 +64,11 @@ const StudentDashboard = () => {
   const [liveSubjects, setLiveSubjects] = useState<any[]>([]);
   const [allExamsForCalendar, setAllExamsForCalendar] = useState<any[]>([]);
   const [subjectAssignments, setSubjectAssignments] = useState<any[]>([]);
-  const [calendarMonth, setCalendarMonth] = useState(new Date());
+  [cite_start]const [calendarMonth, setCalendarMonth] = useState(new Date()); [cite: 22-26]
 
   const dayOfYear = Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0).getTime()) / 86400000);
   const dailyVerse = VERSES[dayOfYear % VERSES.length];
-  const hijri = toHijri(new Date());
+  [cite_start]const hijri = toHijri(new Date());[span_2](end_span)
 
   useEffect(() => {
     if (!user) return;
@@ -80,18 +84,21 @@ const StudentDashboard = () => {
         supabase.from("subjects").select("*").eq("is_active", true).limit(4),
         supabase.from("exams").select("id, title, title_ar, start_date, end_date, time_limit_minutes").eq("is_published", true),
         supabase.from("subject_assignments").select("id, title, deadline, subject_id, subjects(title, title_ar)"),
-      ]);
+      [span_3](start_span)]); [cite: 28-29]
+
       const gradedAttempts = gradedAttemptsRes.data || [];
       const avg = gradedAttempts.length > 0 ? gradedAttempts.reduce((s, a) => s + (Number(a.percentage) || 0), 0) / gradedAttempts.length : 0;
       const totalGP = gradedAttempts.reduce((sum, a) => sum + gradePoint(Number(a.percentage) || 0), 0);
-      const cgpa = gradedAttempts.length > 0 ? totalGP / gradedAttempts.length : 0;
+      [cite_start]const cgpa = gradedAttempts.length > 0 ? totalGP / gradedAttempts.length : 0; [cite: 30-33]
 
       const attemptCounts: Record<string, number> = {};
       (allAttemptsRes.data || []).forEach((a: any) => {
         if (a.status !== "in_progress") attemptCounts[a.exam_id] = (attemptCounts[a.exam_id] || 0) + 1;
       });
+
       const allAssigned = (assignmentsRes.data || []).map((a: any) => a.exams).filter((e: any) => e && e.is_published);
-      const upcoming = allAssigned.filter((e: any) => (attemptCounts[e.id] || 0) < (e.max_attempts || 1));
+      [cite_start]const upcoming = allAssigned.filter((e: any) => (attemptCounts[e.id] || 0) < (e.max_attempts || 1)); [cite: 34-36]
+
       setStats({ enrollments: enrollRes.data?.length || 0, attemptsDone: gradedAttempts.length, avgScore: Math.round(avg), pendingGrading: pendingAttemptsRes.data?.length || 0, cgpa });
       setUpcomingExams(upcoming.slice(0, 5));
       setRecentResults(recentRes.data || []);
@@ -102,11 +109,11 @@ const StudentDashboard = () => {
       setLoading(false);
     };
     fetchData();
-  }, [user]);
+  [cite_start]}, [user]); [cite: 37-38]
 
   const gaugePercent = (stats.cgpa / 4.0) * 100;
   const circumference = 2 * Math.PI * 45;
-  const strokeDashoffset = circumference - (gaugePercent / 100) * circumference;
+  [cite_start]const strokeDashoffset = circumference - (gaugePercent / 100) * circumference; [cite: 39-40]
 
   if (loading) {
     return (
@@ -117,18 +124,19 @@ const StudentDashboard = () => {
         </div>
       </div>
     );
-  }
+  [cite_start]}[span_3](end_span)
 
   const markAsRead = async (id: string) => {
     await supabase.from("notifications").update({ is_read: true }).eq("id", id);
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
-  };
-  const unreadCount = notifications.filter(n => !n.is_read).length;
+  [span_4](start_span)}; [cite: 42-43]
+
+  [cite_start]const unreadCount = notifications.filter(n => !n.is_read).length;[span_4](end_span)
 
   const calendarYear = calendarMonth.getFullYear();
   const calendarMonthIdx = calendarMonth.getMonth();
   const daysInMonth = new Date(calendarYear, calendarMonthIdx + 1, 0).getDate();
-  const firstDayOfWeek = new Date(calendarYear, calendarMonthIdx, 1).getDay();
+  [span_5](start_span)const firstDayOfWeek = new Date(calendarYear, calendarMonthIdx, 1).getDay();[span_5](end_span)
 
   const getEventsForDay = (day: number) => {
     const dateStr = `${calendarYear}-${String(calendarMonthIdx + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
@@ -144,21 +152,22 @@ const StudentDashboard = () => {
       }
     });
     return events;
-  };
+  [span_6](start_span)}; [cite: 46-50]
 
   const prevMonth = () => setCalendarMonth(new Date(calendarYear, calendarMonthIdx - 1, 1));
-  const nextMonth = () => setCalendarMonth(new Date(calendarYear, calendarMonthIdx + 1, 1));
+  [cite_start]const nextMonth = () => setCalendarMonth(new Date(calendarYear, calendarMonthIdx + 1, 1));[span_6](end_span)
 
   const notifIcon = (type: string | null) => {
     if (type === 'warning') return <AlertTriangle className="h-3 w-3 text-secondary" />;
     if (type === 'exam') return <ClipboardList className="h-3 w-3 text-destructive" />;
     return <Info className="h-3 w-3 text-primary" />;
-  };
+  [span_7](start_span)}; [cite: 52-53]
 
-  const today = new Date();
+  [cite_start]const today = new Date();[span_7](end_span)
 
   return (
     <div className="container mx-auto px-4 py-6 md:py-8 space-y-5">
+
       {/* WELCOME MESSAGE */}
       <div className={language === "ar" ? "text-right" : "text-left"}>
         <h1
@@ -176,27 +185,21 @@ const StudentDashboard = () => {
         <p className="text-base mt-1.5 font-medium" style={{ color: '#374151' }}>
           {t("Here's your learning overview", "إليك نظرة عامة على مسارك التعليمي")}
         </p>
-      </div>
+      [cite_start]</div> [cite: 55-56]
 
       {/* HEADER: Greeting + Hijri Pill */}
       <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary via-primary to-emerald-mid p-5 md:p-7 text-primary-foreground geometric-pattern">
         <div className="relative z-10">
           <div className="flex items-center justify-between mb-3">
-            <p className="text-[10px] uppercase tracking-[0.25em] opacity-60">
-              بسم الله الرحمن الرحيم
-            </p>
+            <p className="text-[10px] uppercase tracking-[0.25em] opacity-60">بسم الله الرحمن الرحيم</p>
             <div className="bg-white/15 backdrop-blur-sm rounded-full px-3 py-1 flex items-center gap-1.5">
               <Calendar className="h-3 w-3 opacity-70" />
               <span className="text-[11px] font-medium font-arabic" dir="rtl">{hijri.full}</span>
             </div>
           </div>
           <div className="text-center">
-            <h1 className="text-2xl md:text-3xl font-bold mb-0.5" dir="rtl" style={{ fontFamily: "'Amiri', serif" }}>
-              السلام عليكم
-            </h1>
-            <p className="text-base md:text-lg opacity-90">
-              {profile?.full_name || t("Student", "طالب")}
-            </p>
+            <h1 className="text-2xl md:text-3xl font-bold mb-0.5" dir="rtl" style={{ fontFamily: "'Amiri', serif" }}>السلام عليكم</h1>
+            <p className="text-base md:text-lg opacity-90">{profile?.full_name || t("Student", "طالب")}</p>
             <p className="text-[11px] opacity-50 mt-1">
               {today.toLocaleDateString(language === "ar" ? "ar-SA" : "en-US", { weekday: 'long', month: 'long', day: 'numeric' })}
             </p>
@@ -204,7 +207,7 @@ const StudentDashboard = () => {
         </div>
         <div className="absolute -top-10 -right-10 h-36 w-36 rounded-full bg-white/5" />
         <div className="absolute -bottom-8 -left-8 h-28 w-28 rounded-full bg-white/5" />
-      </div>
+      [cite_start]</div> [cite: 57-60]
 
       {/* DAILY QURANIC REFLECTION */}
       <div className="rounded-2xl p-5 md:p-6 text-center shadow-[0_4px_20px_rgba(0,0,0,0.05)]" style={{ background: '#064E3B' }}>
@@ -215,24 +218,14 @@ const StudentDashboard = () => {
           </p>
           <Star className="h-4 w-4" style={{ color: '#D4AF37' }} />
         </div>
-        <div className="my-1 opacity-30">
-          <span style={{ color: '#D4AF37' }}>✦ ─────── ✦</span>
-        </div>
-        <p
-          className="text-xl md:text-2xl leading-[2.2] mx-auto max-w-lg my-4 font-arabic"
-          dir="rtl"
-          style={{ color: '#FFFFFF', fontFamily: "'Amiri', serif", fontSize: '22px', lineHeight: '2' }}
-        >
+        <div className="my-1 opacity-30"><span style={{ color: '#D4AF37' }}>✦ ─────── ✦</span></div>
+        <p className="text-xl md:text-2xl leading-[2.2] mx-auto max-w-lg my-4 font-arabic" dir="rtl" style={{ color: '#FFFFFF', fontFamily: "'Amiri', serif", fontSize: '22px', lineHeight: '2' }}>
           {dailyVerse.ar}
         </p>
-        <div className="my-2 opacity-30">
-          <span style={{ color: '#D4AF37' }}>❖</span>
-        </div>
-        <p className="text-sm italic max-w-md mx-auto mb-1" style={{ color: 'rgba(255,255,255,0.8)' }}>
-          "{dailyVerse.en}"
-        </p>
+        <div className="my-2 opacity-30"><span style={{ color: '#D4AF37' }}>❖</span></div>
+        <p className="text-sm italic max-w-md mx-auto mb-1" style={{ color: 'rgba(255,255,255,0.8)' }}>"{dailyVerse.en}"</p>
         <p className="text-xs font-semibold" style={{ color: '#D4AF37' }}>{dailyVerse.ref}</p>
-      </div>
+      [cite_start]</div> [cite: 61-64]
 
       {/* ACADEMIC SNAPSHOT: CGPA + 4 Stats */}
       <Card className="rounded-2xl shadow-[0_4px_20px_rgba(0,0,0,0.05)] border-0">
@@ -241,14 +234,7 @@ const StudentDashboard = () => {
             <div className="relative shrink-0">
               <svg width="110" height="110" className="-rotate-90">
                 <circle cx="55" cy="55" r="45" stroke="hsl(var(--muted))" strokeWidth="9" fill="none" />
-                <circle
-                  cx="55" cy="55" r="45"
-                  stroke="#D4AF37"
-                  strokeWidth="9" fill="none" strokeLinecap="round"
-                  strokeDasharray={circumference}
-                  strokeDashoffset={strokeDashoffset}
-                  className="transition-all duration-1000"
-                />
+                <circle cx="55" cy="55" r="45" stroke="#D4AF37" strokeWidth="9" fill="none" strokeLinecap="round" strokeDasharray={circumference} strokeDashoffset={strokeDashoffset} className="transition-all duration-1000" />
               </svg>
               <div className="absolute inset-0 flex flex-col items-center justify-center">
                 <span className="text-2xl font-bold" style={{ fontFamily: "'Playfair Display', serif" }}>{stats.cgpa.toFixed(2)}</span>
@@ -271,7 +257,7 @@ const StudentDashboard = () => {
             </div>
           </div>
         </CardContent>
-      </Card>
+      [cite_start]</Card> [cite: 65-70]
 
       {/* QUICK ACTIONS */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -292,7 +278,7 @@ const StudentDashboard = () => {
             </Card>
           </Link>
         ))}
-      </div>
+      [cite_start]</div> [cite: 71-73]
 
       {/* NOTIFICATIONS */}
       <Card className="rounded-2xl shadow-[0_4px_20px_rgba(0,0,0,0.05)] border-0 border-l-4 border-l-secondary">
@@ -332,7 +318,7 @@ const StudentDashboard = () => {
             </div>
           )}
         </CardContent>
-      </Card>
+      [cite_start]</Card> [cite: 74-81]
 
       {/* ACADEMIC CALENDAR */}
       <Card className="rounded-2xl shadow-[0_4px_20px_rgba(0,0,0,0.05)] border-0">
@@ -343,75 +329,56 @@ const StudentDashboard = () => {
               {t("Academic Calendar", "التقويم الأكاديمي")}
             </CardTitle>
             <div className="flex items-center gap-1">
-              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={prevMonth}>
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={prevMonth}><ChevronLeft className="h-4 w-4" /></Button>
               <div className="text-center">
-                <span className="text-sm font-medium block">
-                  {calendarMonth.toLocaleDateString(language === "ar" ? "ar-SA" : "en-US", { month: 'long', year: 'numeric' })}
-                </span>
+                <span className="text-sm font-medium block">{calendarMonth.toLocaleDateString(language === "ar" ? "ar-SA" : "en-US", { month: 'long', year: 'numeric' })}</span>
                 <span className="text-[10px] text-muted-foreground font-arabic" dir="rtl">
                   {(() => { const h = toHijri(new Date(calendarYear, calendarMonthIdx, 15)); return `${h.month} ${h.year} هـ`; })()}
                 </span>
               </div>
-              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={nextMonth}>
-                <ChevronRight className="h-4 w-4" />
-              </Button>
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={nextMonth}><ChevronRight className="h-4 w-4" /></Button>
             </div>
           </div>
         </CardHeader>
         <CardContent className="pt-0">
           <div className="grid grid-cols-7 gap-1 mb-1">
-            {(language === "ar"
-              ? ["أحد", "إثن", "ثلا", "أرب", "خمي", "جمع", "سبت"]
-              : ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
-            ).map(d => (
+            {(language === "ar" ? ["أحد", "إثن", "ثلا", "أرب", "خمي", "جمع", "سبت"] : ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]).map(d => (
               <div key={d} className="text-[10px] text-muted-foreground text-center font-medium py-1">{d}</div>
             ))}
           </div>
           <div className="grid grid-cols-7 gap-1">
-            {Array.from({ length: firstDayOfWeek }).map((_, i) => (
-              <div key={`empty-${i}`} className="h-12" />
-            ))}
+            {Array.from({ length: firstDayOfWeek }).map((_, i) => <div key={`empty-${i}`} className="h-12" />)}
             {Array.from({ length: daysInMonth }).map((_, i) => {
               const day = i + 1;
               const events = getEventsForDay(day);
               const isToday = day === today.getDate() && calendarMonthIdx === today.getMonth() && calendarYear === today.getFullYear();
               const hijriDay = toHijri(new Date(calendarYear, calendarMonthIdx, day));
               return (
-                <div
-                  key={day}
-                  className={`h-12 rounded-lg flex flex-col items-center justify-center relative text-xs transition-colors
-                    ${isToday ? 'bg-primary text-primary-foreground font-bold' : 'hover:bg-muted/40'}
-                    ${events.length > 0 ? 'font-semibold' : ''}`}
-                  title={events.map(e => e.title).join(', ')}
-                >
+                <div key={day} className={`h-12 rounded-lg flex flex-col items-center justify-center relative text-xs transition-colors ${isToday ? 'bg-primary text-primary-foreground font-bold' : 'hover:bg-muted/40'} ${events.length > 0 ? 'font-semibold' : ''}`} title={events.map(e => e.title).join(', ')}>
                   <span className="leading-none">{day}</span>
-                  <span className={`text-[8px] leading-none mt-0.5 ${isToday ? 'text-primary-foreground/70' : 'text-muted-foreground/60'}`} dir="rtl">
-                    {hijriDay.day}
-                  </span>
+                  <span className={`text-[8px] leading-none mt-0.5 ${isToday ? 'text-primary-foreground/70' : 'text-muted-foreground/60'}`} dir="rtl">{hijriDay.day}</span>
                   {events.length > 0 && (
                     <div className="flex gap-0.5 absolute bottom-0.5">
-                      {events.slice(0, 3).map((e, ei) => (
-                        <div key={ei} className={`h-1 w-1 rounded-full ${e.color}`} />
-                      ))}
+                      {events.slice(0, 3).map((e, ei) => <div key={ei} className={`h-1 w-1 rounded-full ${e.color}`} />)}
                     </div>
                   )}
                 </div>
               );
             })}
           </div>
+          <div className="flex items-center gap-4 mt-3 pt-2 border-t border-muted">
+            <div className="flex items-center gap-1.5"><div className="h-2 w-2 rounded-full bg-destructive" /><span className="text-[10px] text-muted-foreground">{t("Exams", "امتحانات")}</span></div>
+            <div className="flex items-center gap-1.5"><div className="h-2 w-2 rounded-full bg-secondary" /><span className="text-[10px] text-muted-foreground">{t("Assignments", "واجبات")}</span></div>
+          </div>
         </CardContent>
-      </Card>
+      [cite_start]</Card> [cite: 82-96]
 
       {/* ACTION AGENDA */}
       <Card className="rounded-2xl shadow-[0_4px_20px_rgba(0,0,0,0.05)] border-0">
         <Tabs defaultValue="classes" className="w-full">
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-sm" style={{ fontFamily: "'Playfair Display', serif" }}>
-                {t("Agenda", "الأجندة")}
-              </CardTitle>
+              <CardTitle className="text-sm" style={{ fontFamily: "'Playfair Display', serif" }}>{t("Agenda", "الأجندة")}</CardTitle>
               <TabsList className="h-8 bg-muted/50">
                 <TabsTrigger value="classes" className="text-[11px] px-2.5 h-6">{t("Classes", "الفصول")}</TabsTrigger>
                 <TabsTrigger value="exams" className="text-[11px] px-2.5 h-6">{t("Exams", "الامتحانات")}</TabsTrigger>
@@ -428,9 +395,7 @@ const StudentDashboard = () => {
                   {liveSubjects.map((s: any) => (
                     <Link to={`/student/subjects/${s.id}`} key={s.id}>
                       <div className="rounded-xl bg-muted/20 p-3 hover:bg-accent/30 transition-colors flex items-center gap-3">
-                        <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-                          <BookOpen className="h-4 w-4 text-primary" />
-                        </div>
+                        <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0"><BookOpen className="h-4 w-4 text-primary" /></div>
                         <div className="min-w-0 flex-1">
                           <p className="font-medium text-sm truncate">{s.title}</p>
                           {s.title_ar && <p className="text-xs text-muted-foreground font-arabic mt-0.5" dir="rtl">{s.title_ar}</p>}
@@ -441,13 +406,58 @@ const StudentDashboard = () => {
                   ))}
                 </div>
               )}
+              <div className="mt-3 text-center"><Button variant="ghost" size="sm" asChild><Link to="/student/courses" className="text-xs text-primary">{t("View All Subjects", "عرض كل المواد")} <ArrowRight className="h-3 w-3 ml-1" /></Link></Button></div>
             </TabsContent>
-            {/* Additional TabsContent for Exams and Results would go here as per your original logic */}
+
+            <TabsContent value="exams" className="mt-0">
+              {upcomingExams.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-6">{t("No upcoming exams", "لا توجد امتحانات قادمة")}</p>
+              ) : (
+                <div className="space-y-2">
+                  {upcomingExams.map((exam) => (
+                    <div key={exam.id} className="flex items-center justify-between rounded-xl bg-muted/20 p-3">
+                      <div className="min-w-0">
+                        <div className="font-medium text-sm truncate" dir="auto">{language === "ar" ? exam.title_ar || exam.title : exam.title}</div>
+                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-0.5"><Calendar className="h-3 w-3" /> {exam.start_date ? new Date(exam.start_date).toLocaleDateString() : t("TBD", "غير محدد")}</div>
+                      </div>
+                      <Badge variant="secondary" className="shrink-0 text-[10px]">{exam.time_limit_minutes} {t("min", "د")}</Badge>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="mt-3 text-center"><Button variant="ghost" size="sm" asChild><Link to="/student/exams" className="text-xs text-primary">{t("View All Exams", "عرض كل الامتحانات")} <ArrowRight className="h-3 w-3 ml-1" /></Link></Button></div>
+            </TabsContent>
+
+            <TabsContent value="results" className="mt-0">
+              {recentResults.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-6">{t("No results yet", "لا توجد نتائج بعد")}</p>
+              ) : (
+                <div className="space-y-2">
+                  {recentResults.map((attempt) => (
+                    <div key={attempt.id} className="flex items-center justify-between rounded-xl bg-muted/20 p-3">
+                      <div className="min-w-0">
+                        <div className="font-medium text-sm truncate" dir="auto">{language === "ar" ? attempt.exams?.title_ar || attempt.exams?.title : attempt.exams?.title}</div>
+                        <div className="text-xs text-muted-foreground mt-0.5">{attempt.submitted_at ? new Date(attempt.submitted_at).toLocaleDateString() : ""}</div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {attempt.status === "graded" ? (
+                          <>
+                            {attempt.passed ? <CheckCircle className="h-4 w-4 text-primary" /> : <XCircle className="h-4 w-4 text-destructive" />}
+                            <span className="font-semibold text-sm">{Math.round(attempt.percentage || 0)}%</span>
+                          </>
+                        ) : (<Badge variant="secondary" className="text-[10px]">{t("Awaiting", "بانتظار")}</Badge>)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="mt-3 text-center"><Button variant="ghost" size="sm" asChild><Link to="/student/transcripts" className="text-xs text-primary">{t("View Transcripts", "عرض السجل")} <ArrowRight className="h-3 w-3 ml-1" /></Link></Button></div>
+            </TabsContent>
           </CardContent>
         </Tabs>
       </Card>
     </div>
   );
-};
+[cite_start]}; [cite: 97-125]
 
 export default StudentDashboard;
