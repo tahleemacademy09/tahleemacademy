@@ -41,6 +41,7 @@ import Onboarding from "./pages/student/Onboarding";
 import EntranceExamTaking from "./pages/student/EntranceExamTaking";
 import EntranceResults from "./pages/student/EntranceResults";
 import RevisionHub from "./pages/student/RevisionHub";
+import HifdhRevision from "./pages/student/HifdhRevision";
 import RevisionRoom from "./pages/student/RevisionRoom";
 import PaymentScreen from "./pages/student/PaymentScreen";
 import RecordingPlayer from "./pages/student/RecordingPlayer";
@@ -125,6 +126,7 @@ const App = () => (
                 <Route path="/student/majlis" element={<Majlis />} />
                 <Route path="/student/live-classes" element={<LiveClasses />} />
                 <Route path="/student/revision" element={<RevisionHub />} />
+                <Route path="/student/hifdh" element={<HifdhRevision />} />
                 <Route path="/student/revision/:subjectId" element={<RevisionRoom />} />
                 <Route path="/student/profile" element={<ProfileSettings />} />
               </Route>
