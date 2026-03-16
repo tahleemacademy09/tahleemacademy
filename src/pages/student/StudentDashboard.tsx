@@ -13,8 +13,6 @@ import {
   GraduationCap, MessageCircle, ArrowRight, Video, Star, ChevronLeft, ChevronRight, AlertTriangle, Info
 } from "lucide-react";
 
-// --- Helper Functions and Constants ---
-
 const toHijri = (date: Date) => {
   const jd = Math.floor((date.getTime() / 86400000) + 2440587.5);
   const l = jd - 1948440 + 10632;
@@ -27,7 +25,7 @@ const toHijri = (date: Date) => {
   const y = 30 * n + j - 30;
   const months = ["محرم", "صفر", "ربيع الأول", "ربيع الثاني", "جمادى الأولى", "جمادى الآخرة", "رجب", "شعبان", "رمضان", "شوال", "ذو القعدة", "ذو الحجة"];
   return { day: d, month: months[m - 1], year: y, full: `${d} ${months[m - 1]} ${y} هـ` };
-[span_2](start_span)}; [cite: 7-15]
+};
 
 const VERSES = [
   { ar: "إِنَّ مَعَ الْعُسْرِ يُسْرًا", en: "Indeed, with hardship comes ease.", ref: "Quran 94:6" },
@@ -40,7 +38,7 @@ const VERSES = [
   { ar: "وَقُل رَّبِّ أَدْخِلْنِي مُدْخَلَ صِدْقٍ وَأَخْرِجْنِي مُخْرَجَ صِدْقٍ", en: "My Lord, cause me to enter a sound entrance and exit a sound exit.", ref: "Quran 17:80" },
   { ar: "وَعَسَىٰ أَن تَكْرَهُوا شَيْئًا وَهُوَ خَيْرٌ لَّكُمْ", en: "Perhaps you dislike something which is good for you.", ref: "Quran 2:216" },
   { ar: "إِنَّ اللَّهَ لَا يُغَيِّرُ مَا بِقَوْمٍ حَتَّىٰ يُغَيِّرُوا مَا بِأَنفُسِهِمْ", en: "Allah does not change a people until they change what is within themselves.", ref: "Quran 13:11" },
-[cite_start]]; [cite: 16-18]
+];
 
 const gradePoint = (pct: number): number => {
   if (pct >= 85) return 4.0;
@@ -49,9 +47,7 @@ const gradePoint = (pct: number): number => {
   if (pct >= 55) return 2.0;
   if (pct >= 45) return 1.0;
   return 0.0;
-[cite_start]}; [cite: 19-21]
-
-// --- Component Definition ---
+};
 
 const StudentDashboard = () => {
   const { t, language } = useLanguage();
@@ -64,11 +60,11 @@ const StudentDashboard = () => {
   const [liveSubjects, setLiveSubjects] = useState<any[]>([]);
   const [allExamsForCalendar, setAllExamsForCalendar] = useState<any[]>([]);
   const [subjectAssignments, setSubjectAssignments] = useState<any[]>([]);
-  [cite_start]const [calendarMonth, setCalendarMonth] = useState(new Date()); [cite: 22-26]
+  const [calendarMonth, setCalendarMonth] = useState(new Date());
 
   const dayOfYear = Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0).getTime()) / 86400000);
   const dailyVerse = VERSES[dayOfYear % VERSES.length];
-  [cite_start]const hijri = toHijri(new Date());[span_2](end_span)
+  const hijri = toHijri(new Date());
 
   useEffect(() => {
     if (!user) return;
@@ -84,12 +80,12 @@ const StudentDashboard = () => {
         supabase.from("subjects").select("*").eq("is_active", true).limit(4),
         supabase.from("exams").select("id, title, title_ar, start_date, end_date, time_limit_minutes").eq("is_published", true),
         supabase.from("subject_assignments").select("id, title, deadline, subject_id, subjects(title, title_ar)"),
-      [span_3](start_span)]); [cite: 28-29]
+      ]);
 
       const gradedAttempts = gradedAttemptsRes.data || [];
       const avg = gradedAttempts.length > 0 ? gradedAttempts.reduce((s, a) => s + (Number(a.percentage) || 0), 0) / gradedAttempts.length : 0;
       const totalGP = gradedAttempts.reduce((sum, a) => sum + gradePoint(Number(a.percentage) || 0), 0);
-      [cite_start]const cgpa = gradedAttempts.length > 0 ? totalGP / gradedAttempts.length : 0; [cite: 30-33]
+      const cgpa = gradedAttempts.length > 0 ? totalGP / gradedAttempts.length : 0;
 
       const attemptCounts: Record<string, number> = {};
       (allAttemptsRes.data || []).forEach((a: any) => {
@@ -97,7 +93,7 @@ const StudentDashboard = () => {
       });
 
       const allAssigned = (assignmentsRes.data || []).map((a: any) => a.exams).filter((e: any) => e && e.is_published);
-      [cite_start]const upcoming = allAssigned.filter((e: any) => (attemptCounts[e.id] || 0) < (e.max_attempts || 1)); [cite: 34-36]
+      const upcoming = allAssigned.filter((e: any) => (attemptCounts[e.id] || 0) < (e.max_attempts || 1));
 
       setStats({ enrollments: enrollRes.data?.length || 0, attemptsDone: gradedAttempts.length, avgScore: Math.round(avg), pendingGrading: pendingAttemptsRes.data?.length || 0, cgpa });
       setUpcomingExams(upcoming.slice(0, 5));
@@ -109,11 +105,11 @@ const StudentDashboard = () => {
       setLoading(false);
     };
     fetchData();
-  [cite_start]}, [user]); [cite: 37-38]
+  }, [user]);
 
   const gaugePercent = (stats.cgpa / 4.0) * 100;
   const circumference = 2 * Math.PI * 45;
-  [cite_start]const strokeDashoffset = circumference - (gaugePercent / 100) * circumference; [cite: 39-40]
+  const strokeDashoffset = circumference - (gaugePercent / 100) * circumference;
 
   if (loading) {
     return (
@@ -124,19 +120,19 @@ const StudentDashboard = () => {
         </div>
       </div>
     );
-  [cite_start]}[span_3](end_span)
+  }
 
   const markAsRead = async (id: string) => {
     await supabase.from("notifications").update({ is_read: true }).eq("id", id);
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
-  [span_4](start_span)}; [cite: 42-43]
+  };
 
-  [cite_start]const unreadCount = notifications.filter(n => !n.is_read).length;[span_4](end_span)
+  const unreadCount = notifications.filter(n => !n.is_read).length;
 
   const calendarYear = calendarMonth.getFullYear();
   const calendarMonthIdx = calendarMonth.getMonth();
   const daysInMonth = new Date(calendarYear, calendarMonthIdx + 1, 0).getDate();
-  [span_5](start_span)const firstDayOfWeek = new Date(calendarYear, calendarMonthIdx, 1).getDay();[span_5](end_span)
+  const firstDayOfWeek = new Date(calendarYear, calendarMonthIdx, 1).getDay();
 
   const getEventsForDay = (day: number) => {
     const dateStr = `${calendarYear}-${String(calendarMonthIdx + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
@@ -152,22 +148,21 @@ const StudentDashboard = () => {
       }
     });
     return events;
-  [span_6](start_span)}; [cite: 46-50]
+  };
 
   const prevMonth = () => setCalendarMonth(new Date(calendarYear, calendarMonthIdx - 1, 1));
-  [cite_start]const nextMonth = () => setCalendarMonth(new Date(calendarYear, calendarMonthIdx + 1, 1));[span_6](end_span)
+  const nextMonth = () => setCalendarMonth(new Date(calendarYear, calendarMonthIdx + 1, 1));
 
   const notifIcon = (type: string | null) => {
     if (type === 'warning') return <AlertTriangle className="h-3 w-3 text-secondary" />;
     if (type === 'exam') return <ClipboardList className="h-3 w-3 text-destructive" />;
     return <Info className="h-3 w-3 text-primary" />;
-  [span_7](start_span)}; [cite: 52-53]
+  };
 
-  [cite_start]const today = new Date();[span_7](end_span)
+  const today = new Date();
 
   return (
     <div className="container mx-auto px-4 py-6 md:py-8 space-y-5">
-
       {/* WELCOME MESSAGE */}
       <div className={language === "ar" ? "text-right" : "text-left"}>
         <h1
@@ -185,7 +180,7 @@ const StudentDashboard = () => {
         <p className="text-base mt-1.5 font-medium" style={{ color: '#374151' }}>
           {t("Here's your learning overview", "إليك نظرة عامة على مسارك التعليمي")}
         </p>
-      [cite_start]</div> [cite: 55-56]
+      </div>
 
       {/* HEADER: Greeting + Hijri Pill */}
       <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary via-primary to-emerald-mid p-5 md:p-7 text-primary-foreground geometric-pattern">
@@ -207,7 +202,7 @@ const StudentDashboard = () => {
         </div>
         <div className="absolute -top-10 -right-10 h-36 w-36 rounded-full bg-white/5" />
         <div className="absolute -bottom-8 -left-8 h-28 w-28 rounded-full bg-white/5" />
-      [cite_start]</div> [cite: 57-60]
+      </div>
 
       {/* DAILY QURANIC REFLECTION */}
       <div className="rounded-2xl p-5 md:p-6 text-center shadow-[0_4px_20px_rgba(0,0,0,0.05)]" style={{ background: '#064E3B' }}>
@@ -225,7 +220,7 @@ const StudentDashboard = () => {
         <div className="my-2 opacity-30"><span style={{ color: '#D4AF37' }}>❖</span></div>
         <p className="text-sm italic max-w-md mx-auto mb-1" style={{ color: 'rgba(255,255,255,0.8)' }}>"{dailyVerse.en}"</p>
         <p className="text-xs font-semibold" style={{ color: '#D4AF37' }}>{dailyVerse.ref}</p>
-      [cite_start]</div> [cite: 61-64]
+      </div>
 
       {/* ACADEMIC SNAPSHOT: CGPA + 4 Stats */}
       <Card className="rounded-2xl shadow-[0_4px_20px_rgba(0,0,0,0.05)] border-0">
@@ -257,13 +252,13 @@ const StudentDashboard = () => {
             </div>
           </div>
         </CardContent>
-      [cite_start]</Card> [cite: 65-70]
+      </Card>
 
       {/* QUICK ACTIONS */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
           { to: "/student/exams", icon: ClipboardList, label: t("My Exams", "امتحاناتي") },
-          { to: "/student/transcripts", icon: GraduationCap, label: t("Transcripts", "السجل") },
+          { to: "/student/transcripts", icon: GraduationCap, label: t("Transcripts", "الفجل") },
           { to: "/student/live-classes", icon: Video, label: t("Live Classes", "الفصول الحية") },
           { to: "/student/majlis", icon: MessageCircle, label: t("Al-Majlis", "المجلس") },
         ].map((link, i) => (
@@ -278,7 +273,7 @@ const StudentDashboard = () => {
             </Card>
           </Link>
         ))}
-      [cite_start]</div> [cite: 71-73]
+      </div>
 
       {/* NOTIFICATIONS */}
       <Card className="rounded-2xl shadow-[0_4px_20px_rgba(0,0,0,0.05)] border-0 border-l-4 border-l-secondary">
@@ -318,7 +313,7 @@ const StudentDashboard = () => {
             </div>
           )}
         </CardContent>
-      [cite_start]</Card> [cite: 74-81]
+      </Card>
 
       {/* ACADEMIC CALENDAR */}
       <Card className="rounded-2xl shadow-[0_4px_20px_rgba(0,0,0,0.05)] border-0">
@@ -366,12 +361,8 @@ const StudentDashboard = () => {
               );
             })}
           </div>
-          <div className="flex items-center gap-4 mt-3 pt-2 border-t border-muted">
-            <div className="flex items-center gap-1.5"><div className="h-2 w-2 rounded-full bg-destructive" /><span className="text-[10px] text-muted-foreground">{t("Exams", "امتحانات")}</span></div>
-            <div className="flex items-center gap-1.5"><div className="h-2 w-2 rounded-full bg-secondary" /><span className="text-[10px] text-muted-foreground">{t("Assignments", "واجبات")}</span></div>
-          </div>
         </CardContent>
-      [cite_start]</Card> [cite: 82-96]
+      </Card>
 
       {/* ACTION AGENDA */}
       <Card className="rounded-2xl shadow-[0_4px_20px_rgba(0,0,0,0.05)] border-0">
@@ -406,7 +397,6 @@ const StudentDashboard = () => {
                   ))}
                 </div>
               )}
-              <div className="mt-3 text-center"><Button variant="ghost" size="sm" asChild><Link to="/student/courses" className="text-xs text-primary">{t("View All Subjects", "عرض كل المواد")} <ArrowRight className="h-3 w-3 ml-1" /></Link></Button></div>
             </TabsContent>
 
             <TabsContent value="exams" className="mt-0">
@@ -425,7 +415,6 @@ const StudentDashboard = () => {
                   ))}
                 </div>
               )}
-              <div className="mt-3 text-center"><Button variant="ghost" size="sm" asChild><Link to="/student/exams" className="text-xs text-primary">{t("View All Exams", "عرض كل الامتحانات")} <ArrowRight className="h-3 w-3 ml-1" /></Link></Button></div>
             </TabsContent>
 
             <TabsContent value="results" className="mt-0">
@@ -451,13 +440,12 @@ const StudentDashboard = () => {
                   ))}
                 </div>
               )}
-              <div className="mt-3 text-center"><Button variant="ghost" size="sm" asChild><Link to="/student/transcripts" className="text-xs text-primary">{t("View Transcripts", "عرض السجل")} <ArrowRight className="h-3 w-3 ml-1" /></Link></Button></div>
             </TabsContent>
           </CardContent>
         </Tabs>
       </Card>
     </div>
   );
-[cite_start]}; [cite: 97-125]
+};
 
 export default StudentDashboard;
