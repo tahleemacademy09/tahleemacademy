@@ -145,6 +145,11 @@ const Majlis = () => {
   };
 
   const sendMessage = async (contentType = "text", mediaPath?: string) => {
-    if ((!input.trim() && contentType === "text" && !mediaPath) || !activeChannelId || !user) return;
     if (activeChannel?.type === "announcement" && !isAdmin && !isTeacher) {
-      toast({ title
+  toast({
+    title: "Access Denied",
+    description: "Only teachers can post in the announcement channel.",
+    variant: "destructive",
+  });
+  return;
+}
