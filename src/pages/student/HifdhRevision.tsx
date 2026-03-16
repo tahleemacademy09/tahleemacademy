@@ -6,8 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
   Mic, MicOff, CheckCircle, Clock, Flame,
-  BookOpen, ArrowLeft, RotateCcw, Send, ChevronRight,
-  Eye, EyeOff, Star, Settings
+  BookOpen, ArrowLeft, RotateCcw, Send, Star,
+  Eye, EyeOff, Settings, Volume2, VolumeX, RefreshCw
 } from "lucide-react";
 import HifdhPlanSettings from "@/components/hifdh/HifdhPlanSettings";
 
@@ -16,11 +16,8 @@ const SURAH_NAMES: Record<number, { ar: string; en: string }> = {
   2: { ar: "البقرة", en: "Al-Baqarah" },
   36: { ar: "يس", en: "Ya-Sin" },
   55: { ar: "الرحمن", en: "Ar-Rahman" },
-  56: { ar: "الواقعة", en: "Al-Waqi'a" },
   67: { ar: "الملك", en: "Al-Mulk" },
   78: { ar: "النبأ", en: "An-Naba" },
-  79: { ar: "النازعات", en: "An-Naziat" },
-  80: { ar: "عبس", en: "Abasa" },
   87: { ar: "الأعلى", en: "Al-Ala" },
   88: { ar: "الغاشية", en: "Al-Ghashiya" },
   89: { ar: "الفجر", en: "Al-Fajr" },
@@ -46,6 +43,51 @@ const SURAH_NAMES: Record<number, { ar: string; en: string }> = {
   112: { ar: "الإخلاص", en: "Al-Ikhlas" },
   113: { ar: "الفلق", en: "Al-Falaq" },
   114: { ar: "الناس", en: "An-Nas" },
+};
+
+// ─── Arabic word comparison ───
+const normalizeArabic = (text: string) =>
+  text.replace(/[\u064B-\u065F\u0670]/g, "")
+      .replace(/[أإآا]/g, "ا")
+      .replace(/[ىي]/g, "ي")
+      .replace(/ة/g, "ه")
+      .replace(/\s+/g, " ").trim();
+
+type WordStatus = "correct" | "mispronounced" | "skipped" | "pending";
+
+interface WordResult {
+  word: string;
+  status: WordStatus;
+}
+
+interface AyahResult {
+  number: number;
+  text: string;
+  words: WordResult[];
+  fullyRecited: boolean;
+}
+
+const compareWords = (quranText: string, transcriptText: string): WordResult[] => {
+  const qWords = quranText.replace(/[^\u0600-\u06FF\s]/g, "").split(/\s+/).filter(Boolean);
+  const tWords = transcriptText.replace(/[^\u0600-\u06FF\s]/g, "").split(/\s+/).filter(Boolean);
+  return qWords.map(qw => {
+    const nqw = normalizeArabic(qw);
+    const exactMatch = tWords.some(tw => normalizeArabic(tw) === nqw);
+    if (exactMatch) return { word: qw, status: "correct" as WordStatus };
+    const partialMatch = tWords.some(tw => {
+      const ntw = normalizeArabic(tw);
+      return ntw.length >= 3 && (ntw.includes(nqw.slice(0, 3)) || nqw.includes(ntw.slice(0, 3)));
+    });
+    if (partialMatch) return { word: qw, status: "mispronounced" as WordStatus };
+    return { word: qw, status: "skipped" as WordStatus };
+  });
+};
+
+const wordColor = (status: WordStatus) => {
+  if (status === "correct") return { color: "#16a34a", bg: "#dcfce7" };
+  if (status === "mispronounced") return { color: "#ea580c", bg: "#ffedd5" };
+  if (status === "skipped") return { color: "#dc2626", bg: "#fee2e2" };
+  return { color: "#9ca3af", bg: "#f3f4f6" };
 };
 
 interface HifdhPlan {
@@ -82,7 +124,7 @@ interface Ayah {
   text: string;
 }
 
-type View = "home" | "session";
+type View = "home" | "session" | "dictation" | "result";
 
 const HifdhRevision = () => {
   const { user, profile } = useAuth();
@@ -98,64 +140,80 @@ const HifdhRevision = () => {
 
   // Session state
   const [ayahs, setAyahs] = useState<Ayah[]>([]);
+  const [ayahResults, setAyahResults] = useState<AyahResult[]>([]);
   const [hideAyahs, setHideAyahs] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
-  const [transcript, setTranscript] = useState("");
-  const [submitted, setSubmitted] = useState(false);
-  const [feedback, setFeedback] = useState("");
-  const [score, setScore] = useState<number | null>(null);
+  const [liveTranscript, setLiveTranscript] = useState("");
+  const [finalTranscript, setFinalTranscript] = useState("");
+  const [sessionScore, setSessionScore] = useState<number | null>(null);
+  const [sessionFeedback, setSessionFeedback] = useState("");
 
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
-  const timerRef = useRef<any>(null);
+  // Dictation state
+  const [dictationAyahs, setDictationAyahs] = useState<Ayah[]>([]);
+  const [dictationPlaying, setDictationPlaying] = useState(false);
+  const [dictationRecording, setDictationRecording] = useState(false);
+  const [dictationTranscript, setDictationTranscript] = useState("");
+  const [dictationScore, setDictationScore] = useState<number | null>(null);
+  const [dictationTime, setDictationTime] = useState(0);
+  const [currentDictationIdx, setCurrentDictationIdx] = useState(0);
+
+  // Final result
+  const [finalScore, setFinalScore] = useState<number | null>(null);
+
   const recognitionRef = useRef<any>(null);
+  const dictRecognitionRef = useRef<any>(null);
+  const timerRef = useRef<any>(null);
+  const dictTimerRef = useRef<any>(null);
+  const synthRef = useRef<SpeechSynthesisUtterance | null>(null);
 
   useEffect(() => { if (user) loadData(); }, [user]);
+
+  // Update word highlights when transcript changes
+  useEffect(() => {
+    if (!liveTranscript || !ayahs.length) return;
+    const results = ayahs.map(a => {
+      const words = compareWords(a.text, liveTranscript);
+      const correctCount = words.filter(w => w.status === "correct").length;
+      return { number: a.number, text: a.text, words, fullyRecited: correctCount / words.length > 0.7 };
+    });
+    setAyahResults(results);
+  }, [liveTranscript, ayahs]);
 
   const loadData = async () => {
     setLoading(true);
     const { data: planData } = await supabase.from("hifdh_plans" as any).select("*").eq("student_id", user!.id).maybeSingle();
-
     if (planData) {
       setPlan(planData as HifdhPlan);
     } else {
-      const { data: newPlan } = await supabase.from("hifdh_plans" as any).insert({
+      const { data: np } = await supabase.from("hifdh_plans" as any).insert({
         student_id: user!.id, current_juz: 30, daily_target_ayahs: 5,
-        surah_rotation: [114, 113, 112, 111, 110, 109, 108],
+        surah_rotation: [114, 113, 112, 111, 110],
         surah_number: 114, ayah_start: 1, ayah_end: 6,
         revision_mode: "memorize", difficulty: "beginner",
         teacher_locked: false, max_ayahs_override: 10,
       }).select().single();
-      if (newPlan) setPlan(newPlan as HifdhPlan);
+      if (np) setPlan(np as HifdhPlan);
     }
-
-    const { data: sessionData } = await supabase.from("hifdh_sessions" as any).select("*").eq("student_id", user!.id).order("session_date", { ascending: false }).limit(30);
-    const sess = (sessionData || []) as HifdhSession[];
+    const { data: sd } = await supabase.from("hifdh_sessions" as any).select("*").eq("student_id", user!.id).order("session_date", { ascending: false }).limit(30);
+    const sess = (sd || []) as HifdhSession[];
     setSessions(sess);
-
     const today = new Date().toISOString().split("T")[0];
-    const todaySess = sess.find(s => s.session_date === today);
-
-    if (!todaySess && planData) {
+    const ts = sess.find(s => s.session_date === today);
+    if (!ts && planData) {
       const p = planData as HifdhPlan;
-      const { data: newSession } = await supabase.from("hifdh_sessions" as any).insert({
+      const { data: ns } = await supabase.from("hifdh_sessions" as any).insert({
         student_id: user!.id, plan_id: p.id, session_date: today,
-        surah_number: p.surah_number || 114,
-        ayah_start: p.ayah_start || 1,
-        ayah_end: p.ayah_end || 6,
-        status: "pending", streak_count: calculateStreak(sess),
+        surah_number: p.surah_number || 114, ayah_start: p.ayah_start || 1, ayah_end: p.ayah_end || 6,
+        status: "pending", streak_count: calcStreak(sess),
       }).select().single();
-      if (newSession) setTodaySession(newSession as HifdhSession);
-    } else {
-      setTodaySession(todaySess || null);
-    }
-
-    setStreak(calculateStreak(sess));
+      if (ns) setTodaySession(ns as HifdhSession);
+    } else setTodaySession(ts || null);
+    setStreak(calcStreak(sess));
     setLoading(false);
   };
 
-  const calculateStreak = (sess: HifdhSession[]) => {
+  const calcStreak = (sess: HifdhSession[]) => {
     let s = 0;
     const today = new Date();
     for (let i = 0; i < 30; i++) {
@@ -172,66 +230,141 @@ const HifdhRevision = () => {
       const res = await fetch(`https://api.quran.com/api/v4/verses/by_chapter/${surahNum}?fields=text_uthmani&per_page=50`);
       const json = await res.json();
       const verses = (json.verses || []).slice(start - 1, end);
-      setAyahs(verses.map((v: any, i: number) => ({ number: start + i, text: v.text_uthmani })));
-    } catch { setAyahs([{ number: start, text: "Failed to load. Check connection." }]); }
+      return verses.map((v: any, i: number) => ({ number: start + i, text: v.text_uthmani })) as Ayah[];
+    } catch { return [{ number: start, text: "Failed to load. Check connection." }]; }
   };
 
   const startSession = async () => {
     if (!todaySession) return;
-    await fetchAyahs(todaySession.surah_number, todaySession.ayah_start, todaySession.ayah_end);
-    setView("session"); setTranscript(""); setSubmitted(false); setFeedback(""); setScore(null);
+    const fetched = await fetchAyahs(todaySession.surah_number, todaySession.ayah_start, todaySession.ayah_end);
+    setAyahs(fetched);
+    setAyahResults(fetched.map(a => ({ number: a.number, text: a.text, words: a.text.split(" ").map(w => ({ word: w, status: "pending" as WordStatus })), fullyRecited: false })));
+    setLiveTranscript(""); setFinalTranscript(""); setSessionScore(null); setSessionFeedback("");
+    setView("session");
   };
 
-  const startRecording = async () => {
-    setTranscript("");
-    if ("webkitSpeechRecognition" in window || "SpeechRecognition" in window) {
-      const SR = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
-      const r = new SR(); r.lang = "ar-SA"; r.continuous = true; r.interimResults = true;
-      r.onresult = (e: any) => { let t = ""; for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript; setTranscript(t); };
-      r.start(); recognitionRef.current = r;
-      setIsRecording(true);
-      timerRef.current = setInterval(() => setRecordingTime(t => t + 1), 1000);
-      return;
-    }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
-      chunksRef.current = [];
-      recorder.ondataavailable = e => chunksRef.current.push(e.data);
-      recorder.onstop = () => stream.getTracks().forEach(t => t.stop());
-      recorder.start(); mediaRecorderRef.current = recorder;
-      setIsRecording(true);
-      timerRef.current = setInterval(() => setRecordingTime(t => t + 1), 1000);
-    } catch { toast({ title: "Microphone denied", variant: "destructive" }); }
+  // ─── Recitation Recording ───
+  const startRecording = () => {
+    setLiveTranscript("");
+    const SR = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
+    if (!SR) { toast({ title: "Speech recognition not supported on this browser", variant: "destructive" }); return; }
+    const r = new SR();
+    r.lang = "ar-SA"; r.continuous = true; r.interimResults = true;
+    r.onresult = (e: any) => {
+      let t = "";
+      for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript + " ";
+      setLiveTranscript(t);
+    };
+    r.onerror = () => toast({ title: "Mic error", variant: "destructive" });
+    r.start();
+    recognitionRef.current = r;
+    setIsRecording(true);
+    timerRef.current = setInterval(() => setRecordingTime(t => t + 1), 1000);
   };
 
   const stopRecording = () => {
     if (recognitionRef.current) { recognitionRef.current.stop(); recognitionRef.current = null; }
-    if (mediaRecorderRef.current) mediaRecorderRef.current.stop();
     clearInterval(timerRef.current); setIsRecording(false); setRecordingTime(0);
+    setFinalTranscript(liveTranscript);
+    // Final highlight pass
+    if (ayahs.length && liveTranscript) {
+      const results = ayahs.map(a => {
+        const words = compareWords(a.text, liveTranscript);
+        const correctCount = words.filter(w => w.status === "correct").length;
+        return { number: a.number, text: a.text, words, fullyRecited: correctCount / words.length > 0.7 };
+      });
+      setAyahResults(results);
+      // Calculate score
+      const allWords = results.flatMap(r => r.words);
+      const correct = allWords.filter(w => w.status === "correct").length;
+      const pct = Math.round((correct / allWords.length) * 100);
+      setSessionScore(pct);
+      if (pct >= 80) setSessionFeedback("ما شاء الله! Excellent recitation! Ready for dictation evaluation. 🌟");
+      else if (pct >= 50) setSessionFeedback("جيد! Good effort! Check the highlighted words and try again or proceed. 📖");
+      else setSessionFeedback("استمر في المحاولة! Review the red words carefully before proceeding. 🤲");
+    }
   };
 
-  const submitSession = async () => {
-    if (!todaySession || !user) return;
-    const ayahText = ayahs.map(a => a.text).join(" ");
-    const ayahWords = ayahText.replace(/[^\u0600-\u06FF\s]/g, "").split(/\s+/).filter(Boolean);
-    const txWords = transcript.replace(/[^\u0600-\u06FF\s]/g, "").split(/\s+/).filter(Boolean);
-    let matches = 0;
-    ayahWords.forEach(w => { if (txWords.some(tw => tw.includes(w.slice(0, 3)))) matches++; });
-    const pct = ayahWords.length > 0 ? Math.min(Math.round((matches / ayahWords.length) * 100), 100) : 50;
-    const fb = pct >= 80 ? "ما شاء الله! Excellent recitation! Your accuracy is very good. 🌟" : pct >= 50 ? "جيد! Good effort! Review the ayahs and try again. 📖" : "استمر! Keep practicing! Every attempt brings you closer. 🤲";
-    setScore(pct); setFeedback(fb);
-    await supabase.from("hifdh_sessions" as any).update({ status: "completed", recitation_transcript: transcript, accuracy_score: pct, fluency_score: pct, feedback: fb, submitted_at: new Date().toISOString(), streak_count: streak }).eq("id", todaySession.id);
-    setSubmitted(true);
-    setTodaySession(prev => prev ? { ...prev, status: "completed", accuracy_score: pct } : prev);
-    toast({ title: "بارك الله فيك! Session submitted ✅" });
-  };
-
-  const markManual = async () => {
+  // ─── Dictation: AI reads ayahs aloud ───
+  const startDictation = async () => {
     if (!todaySession) return;
-    await supabase.from("hifdh_sessions" as any).update({ status: "completed", submitted_at: new Date().toISOString() }).eq("id", todaySession.id);
-    setTodaySession(prev => prev ? { ...prev, status: "completed" } : prev);
-    toast({ title: "Marked as completed ✅" });
+    // Pick 2-3 random ayahs from assigned portion
+    const allAyahs = await fetchAyahs(todaySession.surah_number, todaySession.ayah_start, todaySession.ayah_end);
+    const shuffled = [...allAyahs].sort(() => Math.random() - 0.5).slice(0, Math.min(3, allAyahs.length));
+    setDictationAyahs(shuffled);
+    setDictationTranscript(""); setDictationScore(null); setCurrentDictationIdx(0);
+    setView("dictation");
+    // Start playing after short delay
+    setTimeout(() => playDictationAyah(shuffled, 0), 800);
+  };
+
+  const playDictationAyah = (ayahList: Ayah[], idx: number) => {
+    if (idx >= ayahList.length) { setDictationPlaying(false); return; }
+    setCurrentDictationIdx(idx);
+    setDictationPlaying(true);
+    if ("speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+      const utt = new SpeechSynthesisUtterance(ayahList[idx].text);
+      utt.lang = "ar-SA"; utt.rate = 0.7; utt.pitch = 1;
+      utt.onend = () => {
+        setDictationPlaying(false);
+        if (idx < ayahList.length - 1) setTimeout(() => playDictationAyah(ayahList, idx + 1), 1000);
+      };
+      window.speechSynthesis.speak(utt);
+      synthRef.current = utt;
+    } else {
+      toast({ title: "Text-to-speech not supported", variant: "destructive" });
+      setDictationPlaying(false);
+    }
+  };
+
+  const replayDictation = () => {
+    window.speechSynthesis?.cancel();
+    setDictationTranscript("");
+    playDictationAyah(dictationAyahs, 0);
+  };
+
+  const startDictationRecording = () => {
+    setDictationTranscript("");
+    const SR = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
+    if (!SR) { toast({ title: "Speech recognition not supported", variant: "destructive" }); return; }
+    const r = new SR();
+    r.lang = "ar-SA"; r.continuous = true; r.interimResults = true;
+    r.onresult = (e: any) => {
+      let t = "";
+      for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript + " ";
+      setDictationTranscript(t);
+    };
+    r.start();
+    dictRecognitionRef.current = r;
+    setDictationRecording(true);
+    dictTimerRef.current = setInterval(() => setDictationTime(t => t + 1), 1000);
+  };
+
+  const stopDictationRecording = () => {
+    if (dictRecognitionRef.current) { dictRecognitionRef.current.stop(); dictRecognitionRef.current = null; }
+    clearInterval(dictTimerRef.current); setDictationRecording(false); setDictationTime(0);
+  };
+
+  const submitDictation = async () => {
+    const allText = dictationAyahs.map(a => a.text).join(" ");
+    const allWords = compareWords(allText, dictationTranscript);
+    const correct = allWords.filter(w => w.status === "correct").length;
+    const pct = Math.round((correct / allWords.length) * 100);
+    setDictationScore(pct);
+    const combined = Math.round(((sessionScore || 50) + pct) / 2);
+    setFinalScore(combined);
+    // Save to DB
+    if (todaySession) {
+      await supabase.from("hifdh_sessions" as any).update({
+        status: "completed", recitation_transcript: finalTranscript,
+        accuracy_score: combined, fluency_score: sessionScore || 50,
+        feedback: sessionFeedback, submitted_at: new Date().toISOString(), streak_count: streak,
+      }).eq("id", todaySession.id);
+      setTodaySession(prev => prev ? { ...prev, status: "completed", accuracy_score: combined } : prev);
+    }
+    setView("result");
+    toast({ title: "بارك الله فيك! Session complete ✅" });
   };
 
   const fr = (s: number) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
@@ -246,9 +379,136 @@ const HifdhRevision = () => {
     </div>
   );
 
+  // ─── RESULT VIEW ───
+  if (view === "result") {
+    const score = finalScore || 0;
+    return (
+      <div className="flex flex-col min-h-screen items-center justify-center px-6 py-10 space-y-6" style={{ backgroundColor: "#f5f0e8" }}>
+        <div className="text-6xl">{score >= 80 ? "🌟" : score >= 50 ? "📖" : "🤲"}</div>
+        <div className="text-center">
+          <p className="text-4xl font-bold" style={{ color: score >= 80 ? "#16a34a" : score >= 50 ? "#b8962e" : "#ef4444" }}>{score}%</p>
+          <p className="text-gray-500 text-sm mt-1">Final Combined Score</p>
+        </div>
+        <div className="grid grid-cols-2 gap-4 w-full max-w-xs">
+          <div className="bg-white rounded-2xl p-4 text-center shadow-sm">
+            <p className="text-2xl font-bold" style={{ color: "#1a3a2a" }}>{sessionScore || 0}%</p>
+            <p className="text-xs text-gray-400">Recitation</p>
+          </div>
+          <div className="bg-white rounded-2xl p-4 text-center shadow-sm">
+            <p className="text-2xl font-bold" style={{ color: "#1a3a2a" }}>{dictationScore || 0}%</p>
+            <p className="text-xs text-gray-400">Dictation</p>
+          </div>
+        </div>
+        <div className="bg-white rounded-2xl p-4 w-full max-w-xs shadow-sm text-sm text-center text-gray-600">{sessionFeedback}</div>
+        <div className="flex items-center gap-2 text-sm text-gray-500">
+          <Flame className="h-4 w-4 text-orange-500" /><span>{streak} day streak 🔥</span>
+        </div>
+        <button onClick={() => { setView("home"); loadData(); }} className="w-full max-w-xs py-3 rounded-2xl text-white font-semibold" style={{ backgroundColor: "#1a3a2a" }}>Done ✅</button>
+      </div>
+    );
+  }
+
+  // ─── DICTATION VIEW ───
+  if (view === "dictation") {
+    return (
+      <div className="flex flex-col min-h-screen" style={{ backgroundColor: "#f5f0e8" }}>
+        <div className="px-4 py-3 flex items-center gap-3" style={{ backgroundColor: "#1a3a2a" }}>
+          <button onClick={() => setView("session")} className="text-white/80 p-1"><ArrowLeft className="h-5 w-5" /></button>
+          <div className="flex-1">
+            <h2 className="text-white font-semibold text-sm">Dictation Evaluation</h2>
+            <p className="text-white/60 text-[11px]">Listen carefully then recite back</p>
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto px-4 py-5 space-y-5">
+
+          {/* Instructions */}
+          <div className="bg-white rounded-2xl p-4 shadow-sm">
+            <p className="text-sm font-semibold mb-1" style={{ color: "#1a3a2a" }}>📢 How it works:</p>
+            <ol className="text-xs text-gray-500 space-y-1 list-decimal list-inside">
+              <li>Listen to the AI recite the ayahs</li>
+              <li>Tap microphone to recite back what you heard</li>
+              <li>AI evaluates your accuracy</li>
+            </ol>
+          </div>
+
+          {/* Ayahs being dictated */}
+          <div className="rounded-2xl overflow-hidden shadow-sm" style={{ backgroundColor: "#1a3a2a" }}>
+            <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
+              <p className="text-white/70 text-xs">Dictation Ayahs ({dictationAyahs.length})</p>
+              <div className="flex items-center gap-2">
+                {dictationPlaying && <div className="flex gap-0.5">{[1,2,3].map(i => <div key={i} className="w-1 h-3 bg-green-400 rounded-full animate-bounce" style={{ animationDelay: `${i * 0.1}s` }} />)}</div>}
+                <button onClick={replayDictation} className="flex items-center gap-1 text-white/60 text-xs">
+                  <RefreshCw className="h-3.5 w-3.5" /> Replay
+                </button>
+              </div>
+            </div>
+            <div className="px-4 py-4 space-y-3">
+              {dictationAyahs.map((a, i) => (
+                <div key={a.number} className={`border-b border-white/10 pb-3 last:border-0 transition-opacity ${i === currentDictationIdx && dictationPlaying ? "opacity-100" : "opacity-60"}`}>
+                  <span className="text-[11px] text-white/40 block mb-1">Ayah {a.number}</span>
+                  {dictationScore !== null ? (
+                    // Show highlighted after submission
+                    <div className="flex flex-wrap gap-1 justify-end" dir="rtl">
+                      {compareWords(a.text, dictationTranscript).map((w, wi) => {
+                        const c = wordColor(w.status);
+                        return <span key={wi} className="px-1 py-0.5 rounded text-sm" style={{ backgroundColor: c.bg, color: c.color, fontFamily: "'Amiri', serif" }}>{w.word}</span>;
+                      })}
+                    </div>
+                  ) : (
+                    <p className="text-white text-xl leading-loose text-right" dir="rtl" style={{ fontFamily: "'Amiri', serif", lineHeight: "2.2" }}>
+                      {dictationPlaying && i === currentDictationIdx ? a.text : "━━━━━━━━━━"}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Recording */}
+          {!dictationScore && (
+            <div className="bg-white rounded-2xl p-5 shadow-sm text-center space-y-4">
+              <p className="text-sm text-gray-500">Now recite back what you heard</p>
+              <div className="flex flex-col items-center gap-3">
+                <button
+                  onClick={dictationRecording ? stopDictationRecording : startDictationRecording}
+                  disabled={dictationPlaying}
+                  className={`h-18 w-18 h-20 w-20 rounded-full flex items-center justify-center text-white shadow-lg transition-all ${dictationRecording ? "animate-pulse" : ""} ${dictationPlaying ? "opacity-40" : ""}`}
+                  style={{ backgroundColor: dictationRecording ? "#EF4444" : "#1a3a2a" }}
+                >
+                  {dictationRecording ? <MicOff className="h-8 w-8" /> : <Mic className="h-8 w-8" />}
+                </button>
+                {dictationRecording && <p className="text-red-500 text-sm font-medium">🔴 {fr(dictationTime)}</p>}
+                {dictationPlaying && <p className="text-green-600 text-xs">Listen first...</p>}
+              </div>
+
+              {dictationTranscript && (
+                <div className="p-3 rounded-xl text-right border" style={{ backgroundColor: "#f5f0e8" }}>
+                  <p className="text-[10px] text-gray-500 mb-1 text-left">Your recitation:</p>
+                  <p className="text-base leading-loose" dir="rtl" style={{ fontFamily: "'Amiri', serif", color: "#1a3a2a" }}>{dictationTranscript}</p>
+                </div>
+              )}
+
+              {dictationTranscript && (
+                <button onClick={submitDictation} className="w-full py-3 rounded-2xl text-white font-medium flex items-center justify-center gap-2" style={{ backgroundColor: "#1a3a2a" }}>
+                  <Send className="h-4 w-4" /> Submit Dictation
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   // ─── SESSION VIEW ───
   if (view === "session" && todaySession) {
     const name = sn(todaySession.surah_number);
+    const hasResults = ayahResults.length > 0;
+    const allWords = ayahResults.flatMap(r => r.words);
+    const correct = allWords.filter(w => w.status === "correct").length;
+    const skipped = allWords.filter(w => w.status === "skipped").length;
+    const mispronounced = allWords.filter(w => w.status === "mispronounced").length;
+
     return (
       <div className="flex flex-col min-h-screen" style={{ backgroundColor: "#f5f0e8" }}>
         <div className="px-4 py-3 flex items-center gap-3 shadow-sm" style={{ backgroundColor: "#1a3a2a" }}>
@@ -260,92 +520,154 @@ const HifdhRevision = () => {
           <div className="text-white/60 text-xs" dir="rtl">{name.ar}</div>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-4 py-5 space-y-5">
-          {!submitted && (
-            <div className="rounded-2xl overflow-hidden shadow-sm" style={{ backgroundColor: "#1a3a2a" }}>
-              <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
-                <p className="text-white/70 text-xs">Your Assigned Ayahs</p>
+        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+
+          {/* Legend */}
+          {isRecording || finalTranscript ? (
+            <div className="flex items-center gap-3 bg-white rounded-2xl px-4 py-2.5 shadow-sm flex-wrap">
+              {[
+                { color: "#16a34a", bg: "#dcfce7", label: "Correct" },
+                { color: "#ea580c", bg: "#ffedd5", label: "Mispronounced" },
+                { color: "#dc2626", bg: "#fee2e2", label: "Skipped" },
+                { color: "#9ca3af", bg: "#f3f4f6", label: "Pending" },
+              ].map(l => (
+                <div key={l.label} className="flex items-center gap-1">
+                  <div className="h-3 w-3 rounded-full" style={{ backgroundColor: l.color }} />
+                  <span className="text-[10px] text-gray-500">{l.label}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          {/* Ayahs with word highlighting */}
+          <div className="rounded-2xl overflow-hidden shadow-sm" style={{ backgroundColor: "#1a3a2a" }}>
+            <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
+              <p className="text-white/70 text-xs">Assigned Ayahs</p>
+              <div className="flex items-center gap-2">
+                {isRecording && (
+                  <div className="flex items-center gap-1">
+                    <div className="w-2 h-2 rounded-full bg-red-400 animate-pulse" />
+                    <span className="text-red-300 text-[10px]">Live</span>
+                  </div>
+                )}
                 <button onClick={() => setHideAyahs(!hideAyahs)} className="flex items-center gap-1 text-white/60 text-xs">
                   {hideAyahs ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
                   {hideAyahs ? "Show" : "Hide"}
                 </button>
               </div>
-              {!hideAyahs ? (
-                <div className="px-4 py-4 space-y-3">
-                  {ayahs.map(a => (
-                    <div key={a.number} className="border-b border-white/10 pb-3 last:border-0">
-                      <span className="text-[11px] text-white/40 block mb-1">{a.number}</span>
-                      <p className="text-white text-xl leading-loose text-right" dir="rtl" style={{ fontFamily: "'Amiri', serif", lineHeight: "2.2" }}>{a.text}</p>
+            </div>
+
+            {!hideAyahs ? (
+              <div className="px-4 py-4 space-y-4">
+                {(hasResults ? ayahResults : ayahs.map(a => ({ number: a.number, text: a.text, words: [], fullyRecited: false }))).map(a => (
+                  <div key={a.number} className="border-b border-white/10 pb-4 last:border-0 last:pb-0">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[10px] text-white/40">Ayah {a.number}</span>
+                      {a.words.length > 0 && (
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full ${a.fullyRecited ? "bg-green-500/20 text-green-300" : "bg-white/10 text-white/40"}`}>
+                          {a.fullyRecited ? "✓ Recited" : "Pending"}
+                        </span>
+                      )}
                     </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="px-4 py-6 text-center text-white/40 text-sm">Ayahs hidden — recite from memory 🧠</div>
-              )}
+                    {a.words.length > 0 ? (
+                      // Highlighted words
+                      <div className="flex flex-wrap gap-1 justify-end" dir="rtl">
+                        {a.words.map((w, wi) => {
+                          const c = wordColor(w.status);
+                          return (
+                            <span
+                              key={wi}
+                              className="px-1.5 py-0.5 rounded-lg text-lg transition-all"
+                              style={{
+                                backgroundColor: w.status === "pending" ? "transparent" : c.bg,
+                                color: w.status === "pending" ? "white" : c.color,
+                                fontFamily: "'Amiri', serif",
+                                lineHeight: "2"
+                              }}
+                            >
+                              {w.word}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      // Plain text before recording
+                      <p className="text-white text-xl leading-loose text-right" dir="rtl" style={{ fontFamily: "'Amiri', serif", lineHeight: "2.2" }}>
+                        {ayahs.find(x => x.number === a.number)?.text}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="px-4 py-6 text-center text-white/40 text-sm">Ayahs hidden — recite from memory 🧠</div>
+            )}
+          </div>
+
+          {/* Stats after recording */}
+          {finalTranscript && sessionScore !== null && (
+            <div className="bg-white rounded-2xl p-4 shadow-sm">
+              <div className="grid grid-cols-3 gap-3 mb-3">
+                <div className="text-center"><p className="text-lg font-bold text-green-600">{correct}</p><p className="text-[10px] text-gray-400">Correct</p></div>
+                <div className="text-center"><p className="text-lg font-bold text-orange-500">{mispronounced}</p><p className="text-[10px] text-gray-400">Mispronounced</p></div>
+                <div className="text-center"><p className="text-lg font-bold text-red-500">{skipped}</p><p className="text-[10px] text-gray-400">Skipped</p></div>
+              </div>
+              <div className="h-2 rounded-full overflow-hidden bg-gray-100">
+                <div className="h-full rounded-full transition-all" style={{ width: `${sessionScore}%`, backgroundColor: sessionScore >= 80 ? "#16a34a" : sessionScore >= 50 ? "#b8962e" : "#ef4444" }} />
+              </div>
+              <p className="text-center text-sm font-bold mt-2" style={{ color: "#1a3a2a" }}>{sessionScore}% accuracy</p>
+              <p className="text-center text-xs text-gray-500 mt-1">{sessionFeedback}</p>
             </div>
           )}
 
-          {!submitted && (
-            <div className="bg-white rounded-2xl p-5 shadow-sm text-center space-y-4">
-              <p className="text-sm font-medium text-gray-600">Tap microphone to record your recitation</p>
-              <div className="flex flex-col items-center gap-3">
-                <button onClick={isRecording ? stopRecording : startRecording}
-                  className={`h-20 w-20 rounded-full flex items-center justify-center text-white shadow-lg transition-transform active:scale-95 ${isRecording ? "animate-pulse" : ""}`}
-                  style={{ backgroundColor: isRecording ? "#EF4444" : "#1a3a2a" }}>
-                  {isRecording ? <MicOff className="h-8 w-8" /> : <Mic className="h-8 w-8" />}
-                </button>
-                {isRecording && <p className="text-red-500 text-sm font-medium">🔴 {fr(recordingTime)}</p>}
-                {!isRecording && !transcript && <p className="text-gray-400 text-xs">Tap to start recording</p>}
-              </div>
-
-              {transcript && (
-                <div className="p-3 rounded-xl text-right border" style={{ backgroundColor: "#f5f0e8" }}>
-                  <p className="text-[10px] text-gray-500 mb-1 text-left">ما قرأته — Your recitation:</p>
-                  <p className="text-base leading-loose" dir="rtl" style={{ fontFamily: "'Amiri', serif", color: "#1a3a2a" }}>{transcript}</p>
-                </div>
-              )}
-
-              <div className="flex gap-2 pt-2">
-                <button onClick={() => { setTranscript(""); setIsRecording(false); }} className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl border text-sm text-gray-500">
-                  <RotateCcw className="h-4 w-4" /> Re-record
-                </button>
-                {transcript && (
-                  <button onClick={submitSession} className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-white text-sm" style={{ backgroundColor: "#1a3a2a" }}>
-                    <Send className="h-4 w-4" /> Submit
+          {/* Recording Controls */}
+          <div className="bg-white rounded-2xl p-5 shadow-sm text-center space-y-4">
+            {!finalTranscript ? (
+              <>
+                <p className="text-sm text-gray-500">{isRecording ? "Reciting... words highlighted in real-time" : "Tap mic to start reciting"}</p>
+                <div className="flex flex-col items-center gap-3">
+                  <button
+                    onClick={isRecording ? stopRecording : startRecording}
+                    className={`h-20 w-20 rounded-full flex items-center justify-center text-white shadow-lg transition-transform active:scale-95 ${isRecording ? "animate-pulse" : ""}`}
+                    style={{ backgroundColor: isRecording ? "#EF4444" : "#1a3a2a" }}
+                  >
+                    {isRecording ? <MicOff className="h-8 w-8" /> : <Mic className="h-8 w-8" />}
                   </button>
-                )}
-              </div>
-              {!transcript && (
-                <button onClick={markManual} className="w-full py-2.5 rounded-xl border text-sm" style={{ borderColor: "#b8962e", color: "#b8962e" }}>
-                  ✅ Mark as Completed Manually
+                  {isRecording && <p className="text-red-500 text-sm font-medium">🔴 {fr(recordingTime)}</p>}
+                </div>
+              </>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => { setFinalTranscript(""); setLiveTranscript(""); setAyahResults(ayahs.map(a => ({ number: a.number, text: a.text, words: [], fullyRecited: false }))); setSessionScore(null); }}
+                    className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl border text-sm text-gray-500"
+                  >
+                    <RotateCcw className="h-4 w-4" /> Re-record
+                  </button>
+                  <button
+                    onClick={startDictation}
+                    className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-white text-sm"
+                    style={{ backgroundColor: "#1a3a2a" }}
+                  >
+                    <Volume2 className="h-4 w-4" /> Dictation Test
+                  </button>
+                </div>
+                <button
+                  onClick={async () => {
+                    if (!todaySession) return;
+                    await supabase.from("hifdh_sessions" as any).update({ status: "completed", recitation_transcript: finalTranscript, accuracy_score: sessionScore, submitted_at: new Date().toISOString() }).eq("id", todaySession.id);
+                    setTodaySession(prev => prev ? { ...prev, status: "completed" } : prev);
+                    setView("home"); loadData();
+                    toast({ title: "Session saved ✅" });
+                  }}
+                  className="w-full py-2 text-xs text-gray-400 underline"
+                >
+                  Skip dictation & finish
                 </button>
-              )}
-            </div>
-          )}
-
-          {submitted && score !== null && (
-            <div className="bg-white rounded-2xl p-6 shadow-sm text-center space-y-4">
-              <div className="text-5xl">{score >= 80 ? "🌟" : score >= 50 ? "📖" : "🤲"}</div>
-              <div>
-                <p className="text-2xl font-bold" style={{ color: score >= 80 ? "#1a3a2a" : score >= 50 ? "#b8962e" : "#ef4444" }}>{score}%</p>
-                <p className="text-xs text-gray-500 mt-0.5">Accuracy Score</p>
               </div>
-              <div className="p-3 rounded-xl text-sm text-gray-700" style={{ backgroundColor: "#f5f0e8" }}>{feedback}</div>
-              <div className="flex items-center justify-center gap-2 text-sm text-gray-500">
-                <Flame className="h-4 w-4 text-orange-500" /><span>{streak} day streak 🔥</span>
-              </div>
-              <button onClick={() => { setView("home"); loadData(); }} className="w-full py-3 rounded-xl text-white font-medium" style={{ backgroundColor: "#1a3a2a" }}>Done ✅</button>
-            </div>
-          )}
-
-          {submitted && score === null && (
-            <div className="bg-white rounded-2xl p-6 shadow-sm text-center space-y-3">
-              <CheckCircle className="h-12 w-12 text-green-500 mx-auto" />
-              <p className="font-semibold">Session Completed!</p>
-              <p className="text-sm text-gray-500">بارك الله فيك</p>
-              <button onClick={() => { setView("home"); loadData(); }} className="w-full py-3 rounded-xl text-white" style={{ backgroundColor: "#1a3a2a" }}>Done</button>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </div>
     );
@@ -355,7 +677,6 @@ const HifdhRevision = () => {
   return (
     <div className="container mx-auto px-4 py-6 space-y-5 max-w-xl">
 
-      {/* Header */}
       <div className="text-center py-4 px-4 rounded-2xl relative" style={{ backgroundColor: "#1a3a2a" }}>
         <button onClick={() => setShowPlanSettings(true)} className="absolute top-3 right-3 p-2 rounded-full" style={{ backgroundColor: "rgba(255,255,255,0.1)" }}>
           <Settings className="h-4 w-4 text-white/70" />
@@ -365,17 +686,12 @@ const HifdhRevision = () => {
         <p className="text-white/60 text-xs mt-0.5">Daily Quran Revision</p>
         {plan && (
           <div className="flex items-center justify-center gap-2 mt-2">
-            <span className="text-[10px] px-2 py-0.5 rounded-full text-white/80" style={{ backgroundColor: "rgba(255,255,255,0.1)" }}>
-              {plan.revision_mode === "memorize" ? "📖 Memorize" : "🔄 Review"}
-            </span>
-            <span className="text-[10px] px-2 py-0.5 rounded-full text-white/80" style={{ backgroundColor: "rgba(255,255,255,0.1)" }}>
-              {plan.difficulty || "beginner"}
-            </span>
+            <span className="text-[10px] px-2 py-0.5 rounded-full text-white/80" style={{ backgroundColor: "rgba(255,255,255,0.1)" }}>{plan.revision_mode === "memorize" ? "📖 Memorize" : "🔄 Review"}</span>
+            <span className="text-[10px] px-2 py-0.5 rounded-full text-white/80" style={{ backgroundColor: "rgba(255,255,255,0.1)" }}>{plan.difficulty || "beginner"}</span>
           </div>
         )}
       </div>
 
-      {/* Stats */}
       <div className="grid grid-cols-3 gap-3">
         {[
           { icon: <Flame className="h-5 w-5 text-orange-500" />, label: "Streak", value: `${streak} days` },
@@ -390,14 +706,11 @@ const HifdhRevision = () => {
         ))}
       </div>
 
-      {/* Today's Assignment */}
       {todaySession ? (
         <div className="rounded-2xl overflow-hidden shadow-sm">
           <div className="px-4 py-3" style={{ backgroundColor: "#1a3a2a" }}>
             <p className="text-white/60 text-xs">Today's Revision</p>
-            <h2 className="text-white font-semibold text-lg" style={{ fontFamily: "'Playfair Display', serif" }}>
-              {sn(todaySession.surah_number).en}
-            </h2>
+            <h2 className="text-white font-semibold text-lg" style={{ fontFamily: "'Playfair Display', serif" }}>{sn(todaySession.surah_number).en}</h2>
             <p className="text-white/60 text-sm" dir="rtl" style={{ fontFamily: "'Amiri', serif" }}>{sn(todaySession.surah_number).ar}</p>
           </div>
           <div className="bg-white px-4 py-4 space-y-3">
@@ -414,7 +727,8 @@ const HifdhRevision = () => {
             ) : (
               <div className="text-center py-2">
                 <p className="text-green-600 font-medium text-sm">✅ Today's revision complete!</p>
-                <p className="text-xs text-gray-500 mt-0.5">بارك الله فيك — May Allah bless you</p>
+                <p className="text-xs text-gray-500 mt-0.5">بارك الله فيك</p>
+                {todaySession.accuracy_score != null && <p className="text-sm font-bold mt-1" style={{ color: "#1a3a2a" }}>Score: {todaySession.accuracy_score}%</p>}
               </div>
             )}
           </div>
@@ -423,20 +737,15 @@ const HifdhRevision = () => {
         <div className="bg-white rounded-2xl p-6 text-center shadow-sm">
           <BookOpen className="h-10 w-10 mx-auto mb-2" style={{ color: "#1a3a2a" }} />
           <p className="font-medium">No plan assigned yet</p>
-          <p className="text-xs text-gray-500 mt-1">Contact your teacher to assign a Hifdh plan</p>
-          <button onClick={() => setShowPlanSettings(true)} className="mt-3 text-xs underline" style={{ color: "#b8962e" }}>
-            Or set your own plan →
-          </button>
+          <p className="text-xs text-gray-500 mt-1">Contact your teacher or set your own plan</p>
+          <button onClick={() => setShowPlanSettings(true)} className="mt-3 text-xs underline" style={{ color: "#b8962e" }}>Set my plan →</button>
         </div>
       )}
 
-      {/* Recent Sessions */}
       <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
-        <div className="flex items-center justify-between px-4 py-3 border-b">
-          <h3 className="font-semibold text-sm" style={{ color: "#1a3a2a" }}>Recent Sessions</h3>
-        </div>
+        <div className="px-4 py-3 border-b"><h3 className="font-semibold text-sm" style={{ color: "#1a3a2a" }}>Recent Sessions</h3></div>
         {sessions.slice(0, 5).length === 0 ? (
-          <div className="px-4 py-6 text-center text-sm text-gray-400">No sessions yet — start your first one! 🌙</div>
+          <div className="px-4 py-6 text-center text-sm text-gray-400">No sessions yet 🌙</div>
         ) : (
           <div className="divide-y">
             {sessions.slice(0, 5).map(s => (
@@ -448,22 +757,14 @@ const HifdhRevision = () => {
                   <p className="text-sm font-medium truncate">{sn(s.surah_number).en} — {s.ayah_start}:{s.ayah_end}</p>
                   <p className="text-xs text-gray-400">{new Date(s.session_date).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}</p>
                 </div>
-                {s.accuracy_score != null && (
-                  <span className={`text-sm font-bold ${s.accuracy_score >= 80 ? "text-green-500" : s.accuracy_score >= 50 ? "text-amber-500" : "text-red-400"}`}>{s.accuracy_score}%</span>
-                )}
+                {s.accuracy_score != null && <span className={`text-sm font-bold ${s.accuracy_score >= 80 ? "text-green-500" : s.accuracy_score >= 50 ? "text-amber-500" : "text-red-400"}`}>{s.accuracy_score}%</span>}
               </div>
             ))}
           </div>
         )}
       </div>
 
-      {/* Plan Settings */}
-      <HifdhPlanSettings
-        open={showPlanSettings}
-        onClose={() => setShowPlanSettings(false)}
-        plan={plan}
-        onSaved={(updated) => { setPlan(updated as HifdhPlan); loadData(); }}
-      />
+      <HifdhPlanSettings open={showPlanSettings} onClose={() => setShowPlanSettings(false)} plan={plan} onSaved={(updated) => { setPlan(updated as HifdhPlan); loadData(); }} />
     </div>
   );
 };
