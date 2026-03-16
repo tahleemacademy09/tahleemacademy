@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
@@ -46,20 +46,14 @@ const MajlisModeration = () => {
       created_by: user.id,
       is_private: false,
     }).select().single();
-
     if (data) {
       await supabase.from("chat_members" as any).insert({ channel_id: (data as any).id, user_id: user.id, role: "admin" });
       const { data: allProfiles } = await supabase.from("profiles").select("user_id");
       if (allProfiles && allProfiles.length > 0) {
-        const members = allProfiles.map((p: any) => ({
-          channel_id: (data as any).id,
-          user_id: p.user_id,
-          role: "member",
-        }));
+        const members = allProfiles.map((p: any) => ({ channel_id: (data as any).id, user_id: p.user_id, role: "member" }));
         await supabase.from("chat_members" as any).upsert(members, { onConflict: "channel_id,user_id" });
       }
     }
-
     setShowCreateChannel(false);
     setChannelForm({ name: "", name_ar: "", type: "group", level: "", description: "" });
     toast({ title: t("Channel created successfully", "تم إنشاء القناة بنجاح") });
@@ -68,23 +62,17 @@ const MajlisModeration = () => {
   return (
     <div className="flex flex-col h-[calc(100vh-3.5rem)]">
       <div className="flex items-center gap-2 px-4 py-2 border-b" style={{ backgroundColor: "#f5f0e8" }}>
-        <span className="text-xs font-semibold text-gray-500 flex-1">
-          👑 {t("Admin View", "عرض المشرف")}
-        </span>
+        <span className="text-xs font-semibold text-gray-500 flex-1">👑 {t("Admin View", "عرض المشرف")}</span>
         <Button size="sm" onClick={() => setShowCreateChannel(true)} className="h-8 text-xs" style={{ backgroundColor: "#1a3a2a" }}>
-          <Plus className="h-3.5 w-3.5 mr-1" />
-          {t("New Channel", "قناة جديدة")}
+          <Plus className="h-3.5 w-3.5 mr-1" />{t("New Channel", "قناة جديدة")}
         </Button>
         <Button size="sm" variant="outline" onClick={() => setShowBroadcast(true)} className="h-8 text-xs border-amber-500 text-amber-600">
-          <Megaphone className="h-3.5 w-3.5 mr-1" />
-          {t("Broadcast", "بث")}
+          <Megaphone className="h-3.5 w-3.5 mr-1" />{t("Broadcast", "بث")}
         </Button>
       </div>
-
       <div className="flex-1 overflow-hidden">
         <Majlis />
       </div>
-
       <Dialog open={showBroadcast} onOpenChange={setShowBroadcast}>
         <DialogContent>
           <DialogHeader><DialogTitle>{t("Broadcast Announcement", "بث إعلان")}</DialogTitle></DialogHeader>
@@ -95,7 +83,6 @@ const MajlisModeration = () => {
           </div>
         </DialogContent>
       </Dialog>
-
       <Dialog open={showCreateChannel} onOpenChange={setShowCreateChannel}>
         <DialogContent>
           <DialogHeader><DialogTitle>{t("Create Channel", "إنشاء قناة")}</DialogTitle></DialogHeader>
