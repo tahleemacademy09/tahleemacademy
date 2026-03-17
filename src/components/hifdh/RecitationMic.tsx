@@ -34,14 +34,15 @@ export default function RecitationMic({ userId }: Props) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [saving, setSaving]         = useState(false);
 
-  const recogRef    = useRef<any>(null);
-  const timerRef    = useRef<ReturnType<typeof setInterval>|null>(null);
-  const countRef    = useRef<ReturnType<typeof setInterval>|null>(null);
-  const mediaRecRef = useRef<MediaRecorder|null>(null);
-  const chunksRef   = useRef<Blob[]>([]);
-  const peekTimerRef = useRef<ReturnType<typeof setTimeout>|null>(null);
-  const ayahIdxRef  = useRef(ayahIdx);
-  const ayahsRef    = useRef(ayahs);
+  const recogRef      = useRef<any>(null);
+  const timerRef      = useRef<ReturnType<typeof setInterval>|null>(null);
+  const countRef      = useRef<ReturnType<typeof setInterval>|null>(null);
+  const mediaRecRef   = useRef<MediaRecorder|null>(null);
+  const chunksRef     = useRef<Blob[]>([]);
+  const peekTimerRef  = useRef<ReturnType<typeof setTimeout>|null>(null);
+  const ayahIdxRef    = useRef(ayahIdx);
+  const ayahsRef      = useRef(ayahs);
+  const isRecordingRef = useRef(false); // ← ref version to avoid stale closure
 
   useEffect(() => { ayahIdxRef.current = ayahIdx; }, [ayahIdx]);
   useEffect(() => { ayahsRef.current = ayahs; }, [ayahs]);
@@ -196,62 +197,84 @@ export default function RecitationMic({ userId }: Props) {
       return u;
     });
 
-    // Start audio recording — no hardcoded mimeType (crashes on Android)
+    // Start audio recording for admin review
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { noiseSuppression: false, echoCancellation: false, autoGainControl: true }
-      });
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       chunksRef.current = [];
-      const mr = new MediaRecorder(stream); // let browser pick best format
+      const mr = new MediaRecorder(stream);
       mr.ondataavailable = e => { if (e.data?.size > 0) chunksRef.current.push(e.data); };
       mr.start(200);
       mediaRecRef.current = mr;
     } catch(_) {}
 
-    // Start speech recognition
+    // ── Speech Recognition ──
     const rec = new SR();
     rec.lang            = "ar-SA";
     rec.continuous      = true;
     rec.interimResults  = true;
-    rec.maxAlternatives = 5; // more alternatives = better matching on Android
+    rec.maxAlternatives = 5;
+
+    // Accumulate ALL transcripts so far (final + interim)
+    const finalTranscripts: string[] = [];
 
     rec.onresult = (e: any) => {
-      // Collect ALL results (final + interim) into one string
-      let full = "";
-      for (let i = 0; i < e.results.length; i++) {
-        full += e.results[i][0].transcript + " ";
+      // Separate final and interim results
+      let interim = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) {
+          finalTranscripts.push(t);
+        } else {
+          interim = t;
+        }
       }
-      full = full.trim();
+      // Combine all finals + current interim for full accumulated text
+      const full = [...finalTranscripts, interim].join(" ").trim();
       setTranscript(full);
-      checkWords(full);
+      if (full) checkWords(full);
     };
 
     rec.onerror = (e: any) => {
-      if (e.error === "no-speech") return; // ignore silence
+      if (e.error === "no-speech") return;
       if (e.error === "aborted")   return;
-      stopRecording();
+      // On network error, try to restart
+      if (e.error === "network" && isRecordingRef.current) {
+        setTimeout(() => { try { rec.start(); } catch(_) {} }, 500);
+      }
     };
 
-    // Auto-restart on Android (recognition stops after silence)
+    // ── KEY FIX: use isRecordingRef not isRecording state ──
     rec.onend = () => {
-      if (recogRef.current === rec && isRecording) {
-        try { rec.start(); } catch(_) {}
+      if (isRecordingRef.current && recogRef.current === rec) {
+        setTimeout(() => {
+          try { rec.start(); } catch(_) {}
+        }, 200);
       }
     };
 
     recogRef.current = rec;
     try {
       rec.start();
+      isRecordingRef.current = true;
       setIsRecording(true);
       setTimer(0);
       setTranscript("");
-    } catch(_) {}
+    } catch(e) {
+      isRecordingRef.current = false;
+    }
   };
 
   const stopRecording = () => {
-    if (recogRef.current) { try{recogRef.current.stop();}catch(_){} recogRef.current = null; }
-    if (mediaRecRef.current) { try{mediaRecRef.current.stop();}catch(_){} mediaRecRef.current = null; }
+    isRecordingRef.current = false; // ← set ref FIRST so onend doesn't restart
     setIsRecording(false);
+    if (recogRef.current) {
+      try { recogRef.current.stop(); } catch(_) {}
+      recogRef.current = null;
+    }
+    if (mediaRecRef.current) {
+      try { mediaRecRef.current.stop(); } catch(_) {}
+      mediaRecRef.current = null;
+    }
   };
 
   const handlePeekStart = (wi: number) => {
@@ -516,11 +539,20 @@ export default function RecitationMic({ userId }: Props) {
               </div>
             )}
 
-            {transcript && (
-              <div style={{ width:"100%", background:"#f8fafb", border:"1px solid #e2e8f0", borderRadius:10, padding:"10px 14px", fontSize:18, fontWeight:700, color:"#1a3d24", textAlign:"right", direction:"rtl", fontFamily:"'Amiri Quran',serif", lineHeight:2, maxHeight:80, overflowY:"auto" }}>
-                {transcript}
-              </div>
-            )}
+            {/* Always show this box while recording so user knows if mic is picking up */}
+            <div style={{ width:"100%", background: transcript ? "#f0fff4" : "#f8fafb", border:`1px solid ${transcript?"#9ae6b4":"#e2e8f0"}`, borderRadius:10, padding:"10px 14px", minHeight:50, transition:"all .3s" }}>
+              {transcript ? (
+                <div style={{ fontSize:18, fontWeight:700, color:"#1a3d24", textAlign:"right", direction:"rtl", fontFamily:"'Amiri Quran',serif", lineHeight:2 }}>
+                  {transcript}
+                </div>
+              ) : (
+                <div style={{ fontSize:12, fontWeight:600, color:"#7a9e88", textAlign:"center" }}>
+                  {isRecording
+                    ? "🎙️ Listening… Start reciting الآن"
+                    : "Transcript will appear here as you recite"}
+                </div>
+              )}
+            </div>
 
             <div style={{ display:"flex", gap:10, width:"100%" }}>
               <button onClick={stopRecording} disabled={!isRecording}
