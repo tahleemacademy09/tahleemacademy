@@ -174,23 +174,26 @@ export default function AudioPlayer({ userId }: Props) {
   };
 
   const startPersonalRec = async () => {
-    snapAyahIdx.current = ayahIdx; // lock in which ayah we're recording
+    snapAyahIdx.current = ayahIdx;
     const mime = getBestMime();
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
-          noiseSuppression: true,
-          echoCancellation: true,
+          noiseSuppression: false,   // OFF — was muffling the voice
+          echoCancellation: false,   // OFF — was distorting recitation
           autoGainControl:  true,
-          sampleRate: 44100,
+          sampleRate: 48000,         // higher quality
+          channelCount: 1,           // mono is cleaner for voice
         }
       });
       streamRef.current  = stream;
       chunksRef.current  = [];
 
-      const mr = mime
-        ? new MediaRecorder(stream, { mimeType: mime })
+      // Use highest bitrate available for clarity
+      const mrOptions: MediaRecorderOptions = mime ? { mimeType: mime, audioBitsPerSecond: 128000 } : {};
+      const mr = Object.keys(mrOptions).length > 0
+        ? new MediaRecorder(stream, mrOptions)
         : new MediaRecorder(stream);
 
       mr.ondataavailable = (e) => {
@@ -300,6 +303,29 @@ export default function AudioPlayer({ userId }: Props) {
     stopAll();
     setPlayingPersonal(idx);
     audioManager.play(personalRecs[ayah.numberInSurah], ()=>setPlayingPersonal(null), ()=>setPlayingPersonal(null));
+  };
+
+  const deleteRec = async (ayahNum: number) => {
+    if (!userId || !selected) return;
+    if (!window.confirm(`Delete recording for Ayah ${ayahNum}?`)) return;
+    stopAll();
+    // Remove from local state immediately
+    setPersonalRecs(p => {
+      const updated = { ...p };
+      delete updated[ayahNum];
+      return updated;
+    });
+    setSaveStatus(p => {
+      const updated = { ...p };
+      delete updated[ayahNum];
+      return updated;
+    });
+    // Delete from database
+    await supabase.from("hifdh_recordings")
+      .delete()
+      .eq("student_id", userId)
+      .eq("surah_num", selected.number)
+      .eq("ayah_start", ayahNum);
   };
 
   const filtered = surahs.filter(s=>s.englishName.toLowerCase().includes(search.toLowerCase())||s.name.includes(search));
@@ -674,10 +700,27 @@ export default function AudioPlayer({ userId }: Props) {
                           {a.text.substring(0, 40)}…
                         </div>
                       </div>
-                      <div style={{ fontSize:11, fontWeight:700,
-                        color: st==="saving"?"#b7791f": st==="error"?"#c0392b":"#276749",
-                      }}>
-                        {st==="saving" ? "⏳" : st==="error" ? "⚠️" : "✅"}
+                      <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                        {/* Status */}
+                        <div style={{ fontSize:11, fontWeight:700,
+                          color: st==="saving"?"#b7791f": st==="error"?"#c0392b":"#276749",
+                        }}>
+                          {st==="saving" ? "⏳" : st==="error" ? "⚠️" : "✅"}
+                        </div>
+                        {/* Re-record button */}
+                        <button
+                          onClick={() => { stopAll(); setAyahIdx(idx2); }}
+                          title="Re-record this ayah"
+                          style={{ width:32, height:32, borderRadius:"50%", background:"#fffbeb", border:"1px solid #f6d860", color:"#b7791f", fontSize:14, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                          🔄
+                        </button>
+                        {/* Delete button */}
+                        <button
+                          onClick={() => deleteRec(a.numberInSurah)}
+                          title="Delete this recording"
+                          style={{ width:32, height:32, borderRadius:"50%", background:"#fff5f5", border:"1px solid #fca5a5", color:"#c0392b", fontSize:14, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                          🗑️
+                        </button>
                       </div>
                     </div>
                   );
