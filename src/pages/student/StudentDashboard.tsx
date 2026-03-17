@@ -15,17 +15,19 @@ import {
 } from "lucide-react";
 
 const toHijri = (date: Date) => {
-  const jd = Math.floor((date.getTime() / 86400000) + 2440587.5);
-  const l = jd - 1948440 + 10632;
-  const n = Math.floor((l - 1) / 10631);
-  const l2 = l - 10631 * n + 354;
-  const j = Math.floor((10985 - l2) / 5316) * Math.floor((50 * l2) / 17719) + Math.floor(l2 / 5670) * Math.floor((43 * l2) / 15238);
-  const l3 = l2 - Math.floor((30 - j) / 15) * Math.floor((17719 * j) / 50) - Math.floor(j / 16) * Math.floor((15238 * j) / 43) + 29;
-  const m = Math.floor((24 * l3) / 709);
-  const d = l3 - Math.floor((709 * m) / 24);
-  const y = 30 * n + j - 30;
-  const months = ["محرم","صفر","ربيع الأول","ربيع الثاني","جمادى الأولى","جمادى الآخرة","رجب","شعبان","رمضان","شوال","ذو القعدة","ذو الحجة"];
-  return { day: d, month: months[m - 1], year: y, full: `${d} ${months[m - 1]} ${y} هـ` };
+  try {
+    const parts = new Intl.DateTimeFormat("en-u-ca-islamic-umalqura", {
+      day: "numeric", month: "numeric", year: "numeric"
+    }).formatToParts(date);
+    const d = parts.find(p => p.type === "day")?.value ?? "0";
+    const m = parts.find(p => p.type === "month")?.value ?? "0";
+    const y = parts.find(p => p.type === "year")?.value ?? "0";
+    const months = ["محرم","صفر","ربيع الأول","ربيع الثاني","جمادى الأولى","جمادى الآخرة","رجب","شعبان","رمضان","شوال","ذو القعدة","ذو الحجة"];
+    const monthName = months[parseInt(m) - 1] ?? "";
+    return { day: parseInt(d), month: monthName, year: parseInt(y), full: `${d} ${monthName} ${y} هـ` };
+  } catch {
+    return { day: 0, month: "", year: 0, full: "" };
+  }
 };
 
 const VERSES = [
@@ -160,50 +162,78 @@ const StudentDashboard = () => {
 
       <div style={{ maxWidth: 720, margin: "0 auto", padding: "20px 16px 40px", display: "flex", flexDirection: "column", gap: 18 }}>
 
-        {/* ── Hero Banner ── */}
-        <div style={{ background: `linear-gradient(135deg, ${DARK_GREEN} 0%, ${MID_GREEN} 60%, #1e5c35 100%)`, borderRadius: 20, padding: "22px 20px", position: "relative", overflow: "hidden" }}>
+        {/* ── Hero + Daily Verse — Merged Card ── */}
+        <div style={{
+          background: `linear-gradient(160deg, ${DARK_GREEN} 0%, ${MID_GREEN} 50%, #1a5c35 100%)`,
+          borderRadius: 22, overflow: "hidden", position: "relative",
+          boxShadow: "0 8px 32px rgba(15,45,31,0.25)"
+        }}>
           {/* Decorative circles */}
-          <div style={{ position:"absolute", top:-40, right:-40, width:140, height:140, borderRadius:"50%", background:"rgba(255,255,255,0.04)", pointerEvents:"none" }} />
-          <div style={{ position:"absolute", bottom:-30, left:-30, width:110, height:110, borderRadius:"50%", background:"rgba(255,255,255,0.04)", pointerEvents:"none" }} />
-          {/* Bismillah */}
-          <div style={{ textAlign:"center", fontSize:10, color:"rgba(255,255,255,0.5)", letterSpacing:"0.3em", marginBottom:12 }}>بسم الله الرحمن الرحيم</div>
-          {/* Hijri date pill */}
-          <div style={{ display:"flex", justifyContent:"center", marginBottom:14 }}>
-            <div style={{ background:"rgba(255,255,255,0.12)", backdropFilter:"blur(8px)", borderRadius:30, padding:"5px 14px", display:"flex", alignItems:"center", gap:6 }}>
-              <Calendar style={{ width:12, height:12, color:GOLD_LIGHT }} />
-              <span style={{ fontSize:11, color:"#fff", fontFamily:"'Amiri',serif" }} dir="rtl">{hijri.full}</span>
+          <div style={{ position:"absolute", top:-50, right:-50, width:180, height:180, borderRadius:"50%", background:"rgba(255,255,255,0.03)", pointerEvents:"none" }} />
+          <div style={{ position:"absolute", bottom:-40, left:-40, width:140, height:140, borderRadius:"50%", background:"rgba(255,255,255,0.03)", pointerEvents:"none" }} />
+          <div style={{ position:"absolute", top:"40%", right:-20, width:80, height:80, borderRadius:"50%", background:"rgba(201,168,76,0.06)", pointerEvents:"none" }} />
+
+          {/* ── TOP: Greeting section ── */}
+          <div style={{ padding: "24px 22px 20px", position:"relative", zIndex:1 }}>
+            {/* Top row: bismillah + hijri */}
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16 }}>
+              <span style={{ fontSize:10, color:"rgba(255,255,255,0.45)", letterSpacing:"0.25em", fontFamily:"'Amiri',serif" }}>
+                بسم الله الرحمن الرحيم
+              </span>
+              <div style={{ background:"rgba(255,255,255,0.1)", backdropFilter:"blur(8px)", borderRadius:30, padding:"4px 12px", display:"flex", alignItems:"center", gap:5, border:"1px solid rgba(255,255,255,0.12)" }}>
+                <Calendar style={{ width:10, height:10, color:GOLD_LIGHT }} />
+                <span style={{ fontSize:10, color:"rgba(255,255,255,0.85)", fontFamily:"'Amiri',serif" }} dir="rtl">{hijri.full}</span>
+              </div>
+            </div>
+
+            {/* Greeting */}
+            <div style={{ textAlign:"center" }}>
+              <h1 style={{ fontFamily:"'Amiri',serif", fontSize:32, fontWeight:700, color:"#fff", margin:"0 0 6px", lineHeight:1.3 }} dir="rtl">
+                السلام عليكم
+              </h1>
+              <p style={{ fontSize:17, fontWeight:700, color:"rgba(255,255,255,0.92)", margin:"0 0 5px", letterSpacing:"-0.2px" }}>
+                {t(`Marhaban, ${profile?.full_name || "Student"}! 👋`, `مرحباً، ${profile?.full_name || "طالب"}! 👋`)}
+              </p>
+              <p style={{ fontSize:12, color:"rgba(255,255,255,0.45)", margin:0 }}>
+                {today.toLocaleDateString(language === "ar" ? "ar-SA" : "en-US", { weekday:"long", month:"long", day:"numeric" })}
+              </p>
             </div>
           </div>
-          {/* Greeting */}
-          <div style={{ textAlign:"center" }}>
-            <h1 style={{ fontFamily:"'Amiri',serif", fontSize:28, fontWeight:700, color:"#fff", margin:"0 0 4px" }} dir="rtl">
-              السلام عليكم
-            </h1>
-            <p style={{ fontSize:16, fontWeight:700, color:"rgba(255,255,255,0.9)", margin:"0 0 4px" }}>
-              {t(`Marhaban, ${profile?.full_name || "Student"}! 👋`, `مرحباً، ${profile?.full_name || "طالب"}! 👋`)}
-            </p>
-            <p style={{ fontSize:11, color:"rgba(255,255,255,0.5)", margin:0 }}>
-              {today.toLocaleDateString(language === "ar" ? "ar-SA" : "en-US", { weekday:"long", month:"long", day:"numeric" })}
-            </p>
-          </div>
-        </div>
 
-        {/* ── Daily Verse ── */}
-        <div style={{ background:`linear-gradient(135deg, ${DARK_GREEN} 0%, #0d3b27 100%)`, borderRadius:18, padding:"20px 18px", textAlign:"center" }}>
-          <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:8, marginBottom:12 }}>
-            <Star style={{ width:14, height:14, color:GOLD }} />
-            <span style={{ fontSize:13, fontWeight:700, color:GOLD, fontFamily:"'Playfair Display',serif" }}>
-              {t("Daily Quranic Reflection", "تأمل قرآني يومي")}
-            </span>
-            <Star style={{ width:14, height:14, color:GOLD }} />
+          {/* ── GOLD SPLICER DIVIDER ── */}
+          <div style={{ position:"relative", zIndex:1, padding:"0 22px" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+              <div style={{ flex:1, height:"1px", background:`linear-gradient(90deg, transparent, ${GOLD}88, transparent)` }} />
+              <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                <div style={{ width:5, height:5, borderRadius:"50%", background:GOLD, opacity:0.6 }} />
+                <Star style={{ width:14, height:14, color:GOLD }} />
+                <div style={{ width:5, height:5, borderRadius:"50%", background:GOLD, opacity:0.6 }} />
+              </div>
+              <div style={{ flex:1, height:"1px", background:`linear-gradient(90deg, transparent, ${GOLD}88, transparent)` }} />
+            </div>
           </div>
-          <div style={{ color:GOLD, opacity:0.4, marginBottom:10, fontSize:12 }}>✦ ─────── ✦</div>
-          <p style={{ fontFamily:"'Amiri Quran',serif", fontSize:24, lineHeight:2.2, color:"#fff", margin:"0 0 8px", direction:"rtl" }}>
-            {dailyVerse.ar}
-          </p>
-          <div style={{ color:GOLD, opacity:0.4, fontSize:12, marginBottom:8 }}>❖</div>
-          <p style={{ fontSize:13, fontStyle:"italic", color:"rgba(255,255,255,0.75)", margin:"0 0 4px" }}>"{dailyVerse.en}"</p>
-          <p style={{ fontSize:11, fontWeight:700, color:GOLD, margin:0 }}>{dailyVerse.ref}</p>
+
+          {/* ── BOTTOM: Daily Verse section ── */}
+          <div style={{ padding:"18px 22px 24px", textAlign:"center", position:"relative", zIndex:1 }}>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:8, marginBottom:14 }}>
+              <Star style={{ width:12, height:12, color:GOLD, opacity:0.7 }} />
+              <span style={{ fontSize:12, fontWeight:700, color:GOLD, fontFamily:"'Playfair Display',serif", letterSpacing:"0.05em" }}>
+                {t("Daily Quranic Reflection", "تأمل قرآني يومي")}
+              </span>
+              <Star style={{ width:12, height:12, color:GOLD, opacity:0.7 }} />
+            </div>
+
+            <p style={{ fontFamily:"'Amiri Quran',serif", fontSize:26, lineHeight:2.2, color:"#fff", margin:"0 0 12px", direction:"rtl" }}>
+              {dailyVerse.ar}
+            </p>
+
+            <div style={{ width:40, height:"1px", background:`${GOLD}55`, margin:"0 auto 10px" }} />
+
+            <p style={{ fontSize:13, fontStyle:"italic", color:"rgba(255,255,255,0.7)", margin:"0 0 5px" }}>
+              "{dailyVerse.en}"
+            </p>
+            <p style={{ fontSize:11, fontWeight:700, color:GOLD, margin:0 }}>{dailyVerse.ref}</p>
+          </div>
         </div>
 
         {/* ── Academic Snapshot ── */}
