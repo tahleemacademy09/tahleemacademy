@@ -34,6 +34,7 @@ import Transcripts from "./pages/student/Transcripts";
 import Majlis from "./pages/student/Majlis";
 import LiveClasses from "./pages/student/LiveClasses";
 import StudentCourses from "./pages/student/StudentCourses";
+import LearningHub from "./pages/student/LearningHub";
 import CourseView from "./pages/student/CourseView";
 import SubjectView from "./pages/student/SubjectView";
 import MuallimOverlay from "./components/majlis/MuallimOverlay";
@@ -118,13 +119,13 @@ const App = () => (
               {/* Student dashboard */}
               <Route element={<ProtectedRoute><DashboardLayout role="student" /></ProtectedRoute>}>
                 <Route path="/student" element={<StudentDashboard />} />
-                <Route path="/student/courses" element={<StudentCourses />} />
-                <Route path="/student/courses/:courseId" element={<CourseView />} />
+                <Route path="/student/courses" element={<LearningHub />} />
+                <Route path="/student/courses/:courseId" element={<LearningHub />} />
                 <Route path="/student/subjects/:subjectId" element={<SubjectView />} />
                 <Route path="/student/exams" element={<StudentExams />} />
                 <Route path="/student/transcripts" element={<Transcripts />} />
                 <Route path="/student/majlis" element={<Majlis />} />
-                <Route path="/student/live-classes" element={<LiveClasses />} />
+                <Route path="/student/live-classes" element={<LearningHub defaultTab="live" />} />
                 <Route path="/student/revision" element={<RevisionHub />} />
                 <Route path="/student/hifdh" element={<HifdhRevision />} />
                 <Route path="/student/revision/:subjectId" element={<RevisionRoom />} />
