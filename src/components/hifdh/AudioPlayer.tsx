@@ -142,80 +142,146 @@ export default function AudioPlayer({ userId }: Props) {
   };
 
   const [savingPersonal, setSavingPersonal] = useState(false);
-  const snapAyahIdx = useRef(0); // snapshot index at record time
+  const [saveStatus, setSaveStatus]         = useState<Record<number, "saving"|"saved"|"error">>({});
+  const snapAyahIdx   = useRef(0);
+  const streamRef     = useRef<MediaStream|null>(null);
 
-  // Personal recording
+  // Pick best supported mime type for Android/iOS/Chrome
+  const getBestMime = () => {
+    const types = [
+      "audio/webm;codecs=opus",
+      "audio/webm",
+      "audio/ogg;codecs=opus",
+      "audio/ogg",
+      "audio/mp4",
+      "",
+    ];
+    for (const t of types) {
+      if (!t || MediaRecorder.isTypeSupported(t)) return t;
+    }
+    return "";
+  };
+
   const startPersonalRec = async () => {
-    // Snapshot the current ayah index so onstop uses the right ayah
-    snapAyahIdx.current = ayahIdx;
-
-    const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-      ? "audio/webm;codecs=opus"
-      : MediaRecorder.isTypeSupported("audio/webm")
-      ? "audio/webm" : "";
+    snapAyahIdx.current = ayahIdx; // lock in which ayah we're recording
+    const mime = getBestMime();
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { noiseSuppression: true, echoCancellation: true, autoGainControl: true }
+        audio: {
+          noiseSuppression: true,
+          echoCancellation: true,
+          autoGainControl:  true,
+          sampleRate: 44100,
+        }
       });
-      chunksRef.current = [];
-      const mr = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      streamRef.current  = stream;
+      chunksRef.current  = [];
 
-      mr.ondataavailable = e => { if (e.data && e.data.size > 0) chunksRef.current.push(e.data); };
+      const mr = mime
+        ? new MediaRecorder(stream, { mimeType: mime })
+        : new MediaRecorder(stream);
 
-      mr.onstop = async () => {
-        stream.getTracks().forEach(t => t.stop());
-        setSavingPersonal(true);
-        try {
-          if (!userId || !selected) return;
-          const idx = snapAyahIdx.current;
-          const ayah = ayahs[idx];
-          if (!ayah || chunksRef.current.length === 0) return;
-
-          const blob = new Blob(chunksRef.current, { type: mr.mimeType || "audio/webm" });
-          if (blob.size < 100) return; // empty blob guard
-
-          const path = `${userId}/personal_${selected.number}_${ayah.numberInSurah}_${Date.now()}.webm`;
-          const { data: up, error: upErr } = await supabase.storage
-            .from("hifdh-recordings")
-            .upload(path, blob, { contentType: mr.mimeType || "audio/webm" });
-
-          if (upErr || !up) { console.error("Upload failed:", upErr); return; }
-
-          const { data: urlData } = supabase.storage.from("hifdh-recordings").getPublicUrl(path);
-          const url = urlData?.publicUrl ?? "";
-          if (!url) return;
-
-          // Update UI immediately
-          setPersonalRecs(p => ({ ...p, [ayah.numberInSurah]: url }));
-
-          // Save to DB
-          await supabase.from("hifdh_recordings").upsert({
-            student_id: userId, surah_num: selected.number,
-            surah_name: selected.englishName,
-            ayah_start: ayah.numberInSurah, ayah_end: ayah.numberInSurah,
-            audio_url: url, ai_score: 0, status: "pending",
-          });
-        } catch (e) { console.error("Recording save error:", e); }
-        finally { setSavingPersonal(false); }
+      mr.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
       };
 
-      mr.start(250); // capture in 250ms chunks so data is not lost
+      mr.onstop = async () => {
+        // Stop all tracks
+        streamRef.current?.getTracks().forEach(t => t.stop());
+        streamRef.current = null;
+
+        const idx  = snapAyahIdx.current;
+        const ayah = ayahs[idx];
+
+        if (!ayah || chunksRef.current.length === 0) {
+          setSavingPersonal(false);
+          return;
+        }
+
+        const actualMime = mr.mimeType || "audio/webm";
+        const blob = new Blob(chunksRef.current, { type: actualMime });
+
+        if (blob.size < 50) {
+          setSaveStatus(p => ({ ...p, [ayah.numberInSurah]: "error" }));
+          setSavingPersonal(false);
+          return;
+        }
+
+        // ── Show immediately with local blob URL so user can hear it right away ──
+        const localUrl = URL.createObjectURL(blob);
+        setPersonalRecs(p => ({ ...p, [ayah.numberInSurah]: localUrl }));
+        setSaveStatus(p => ({ ...p, [ayah.numberInSurah]: "saving" }));
+        setSavingPersonal(true);
+
+        // ── Upload to Supabase in background ──
+        if (userId && selected) {
+          try {
+            const ext  = actualMime.includes("ogg") ? "ogg" : actualMime.includes("mp4") ? "m4a" : "webm";
+            const path = `${userId}/${selected.number}_ayah${ayah.numberInSurah}_${Date.now()}.${ext}`;
+
+            const { data: up, error: upErr } = await supabase.storage
+              .from("hifdh-recordings")
+              .upload(path, blob, { contentType: actualMime, upsert: true });
+
+            if (upErr) throw upErr;
+
+            const { data: urlData } = supabase.storage
+              .from("hifdh-recordings")
+              .getPublicUrl(path);
+
+            const remoteUrl = urlData?.publicUrl ?? "";
+
+            if (remoteUrl) {
+              // Swap local blob URL for permanent remote URL
+              setPersonalRecs(p => ({ ...p, [ayah.numberInSurah]: remoteUrl }));
+              URL.revokeObjectURL(localUrl);
+
+              // Save to DB — use insert not upsert to avoid constraint issues
+              await supabase.from("hifdh_recordings").insert({
+                student_id:   userId,
+                surah_num:    selected.number,
+                surah_name:   selected.englishName,
+                ayah_start:   ayah.numberInSurah,
+                ayah_end:     ayah.numberInSurah,
+                audio_url:    remoteUrl,
+                ai_score:     0,
+                status:       "pending",
+              });
+            }
+
+            setSaveStatus(p => ({ ...p, [ayah.numberInSurah]: "saved" }));
+          } catch (err: any) {
+            console.error("Upload error:", err?.message ?? err);
+            // Keep local URL so student can still play it this session
+            setSaveStatus(p => ({ ...p, [ayah.numberInSurah]: "error" }));
+          }
+        }
+        setSavingPersonal(false);
+      };
+
+      mr.start(200);
       mediaRecRef.current = mr;
       setIsRecording(true);
-    } catch (err) {
-      console.error("Mic access error:", err);
-      alert("Microphone access denied. Please allow microphone permission and try again.");
+
+    } catch (err: any) {
+      const msg = err?.name === "NotAllowedError"
+        ? "Microphone permission denied. Please allow microphone access in your browser settings."
+        : `Could not start recording: ${err?.message ?? err}`;
+      alert(msg);
     }
   };
 
   const stopPersonalRec = () => {
     setIsRecording(false);
+    setSavingPersonal(true);
     if (!mediaRecRef.current) return;
-    // DO NOT null the ref here — onstop needs it to fire first
-    try { mediaRecRef.current.stop(); } catch(_) {}
-    // null it after a safe delay
-    setTimeout(() => { mediaRecRef.current = null; }, 2000);
+    try {
+      mediaRecRef.current.requestData(); // flush any buffered data
+      mediaRecRef.current.stop();
+    } catch (_) {}
+    // Let onstop handle the rest — clear ref after delay
+    setTimeout(() => { mediaRecRef.current = null; }, 3000);
   };
 
   const playPersonal = (idx: number) => {
@@ -447,9 +513,22 @@ export default function AudioPlayer({ userId }: Props) {
               {/* Current ayah */}
               <div style={{ background:"#fffdf5", border:"1px solid #e2e8f0", borderRadius:10, padding:"14px 16px", marginBottom:14 }}>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
-                  <div style={{ fontSize:12, fontWeight:700, color:"#7a9e88" }}>Ayah {ayahs[ayahIdx]?.numberInSurah} of {selected.numberOfAyahs}</div>
-                  <div style={{ fontSize:11, color:personalRecs[ayahs[ayahIdx]?.numberInSurah]?"#276749":"#7a9e88", fontWeight:700 }}>
-                    {personalRecs[ayahs[ayahIdx]?.numberInSurah]?"✓ Recorded":"Not recorded yet"}
+                  <div style={{ fontSize:12, fontWeight:700, color:"#7a9e88" }}>
+                    Ayah {ayahs[ayahIdx]?.numberInSurah} of {selected.numberOfAyahs}
+                  </div>
+                  {/* Save status badge */}
+                  <div style={{ fontSize:11, fontWeight:700,
+                    color: saveStatus[ayahs[ayahIdx]?.numberInSurah]==="saving" ? "#b7791f"
+                         : saveStatus[ayahs[ayahIdx]?.numberInSurah]==="saved"  ? "#276749"
+                         : saveStatus[ayahs[ayahIdx]?.numberInSurah]==="error"  ? "#c0392b"
+                         : personalRecs[ayahs[ayahIdx]?.numberInSurah]           ? "#276749"
+                         : "#7a9e88",
+                  }}>
+                    {saveStatus[ayahs[ayahIdx]?.numberInSurah]==="saving" ? "⏳ Saving…"
+                   : saveStatus[ayahs[ayahIdx]?.numberInSurah]==="saved"  ? "✅ Saved!"
+                   : saveStatus[ayahs[ayahIdx]?.numberInSurah]==="error"  ? "⚠️ Save failed"
+                   : personalRecs[ayahs[ayahIdx]?.numberInSurah]           ? "✓ Recorded"
+                   : "Not recorded yet"}
                   </div>
                 </div>
                 <div style={{ fontFamily:"'Amiri Quran',serif", fontSize:22, fontWeight:700, color:"#1a3d24", direction:"rtl", lineHeight:2.2, textAlign:"right" }}>
@@ -457,59 +536,124 @@ export default function AudioPlayer({ userId }: Props) {
                 </div>
               </div>
 
+              {/* Big mic button */}
               <div style={{ display:"flex", justifyContent:"center", marginBottom:14 }}>
-                <div onClick={isRecording?stopPersonalRec:startPersonalRec}
-                  style={{ width:86, height:86, borderRadius:"50%", cursor:"pointer", transition:"all .2s",
-                    background:isRecording?"#c0392b":"#1a3d24", display:"flex", alignItems:"center", justifyContent:"center", fontSize:28,
-                    boxShadow:isRecording?"0 0 0 10px rgba(192,57,43,.12)":"0 2px 10px rgba(0,0,0,.15)",
+                <div
+                  onClick={isRecording ? stopPersonalRec : (!savingPersonal ? startPersonalRec : undefined)}
+                  style={{ width:90, height:90, borderRadius:"50%",
+                    cursor: savingPersonal ? "not-allowed" : "pointer",
+                    transition:"all .2s",
+                    background: isRecording ? "#c0392b" : savingPersonal ? "#b7791f" : "#1a3d24",
+                    display:"flex", alignItems:"center", justifyContent:"center", fontSize:30,
+                    boxShadow: isRecording
+                      ? "0 0 0 12px rgba(192,57,43,.12), 0 0 0 24px rgba(192,57,43,.05)"
+                      : "0 2px 12px rgba(0,0,0,.2)",
+                    animation: isRecording ? "pulse 1.5s ease-in-out infinite" : "none",
                   }}>
-                  {isRecording?"⏹":"🎤"}
+                  {savingPersonal ? "⏳" : isRecording ? "⏹" : "🎤"}
                 </div>
               </div>
-              <div style={{ textAlign:"center", fontSize:13, fontWeight:700, color:isRecording?"#c0392b":savingPersonal?"#b7791f":"#7a9e88", marginBottom:14 }}>
-                {savingPersonal
-                  ? "⏳ Saving recording… · جارٍ الحفظ"
-                  : isRecording
-                  ? "● Recording… tap to stop · جارٍ التسجيل"
-                  : "Tap to record this ayah"}
-                {isRecording && <div style={{ fontSize:11, fontWeight:400, marginTop:2 }}>Noise suppression active · تقليل الضوضاء</div>}
+
+              {/* Status text */}
+              <div style={{ textAlign:"center", marginBottom:14 }}>
+                <div style={{ fontSize:14, fontWeight:700,
+                  color: isRecording ? "#c0392b" : savingPersonal ? "#b7791f" : "#1a3d24"
+                }}>
+                  {savingPersonal
+                    ? "⏳ Saving your recording…"
+                    : isRecording
+                    ? "● Recording — tap ⏹ to stop"
+                    : personalRecs[ayahs[ayahIdx]?.numberInSurah]
+                    ? "✓ Tap to re-record this ayah"
+                    : "Tap 🎤 to start recording"}
+                </div>
+                <div style={{ fontSize:11, color:"#7a9e88", marginTop:3 }}>
+                  {isRecording
+                    ? "جارٍ التسجيل — Noise suppression active"
+                    : savingPersonal
+                    ? "جارٍ الحفظ…"
+                    : "اضغط للتسجيل"}
+                </div>
               </div>
 
+              {/* Play recorded ayah immediately */}
+              {personalRecs[ayahs[ayahIdx]?.numberInSurah] && !isRecording && !savingPersonal && (
+                <div style={{ display:"flex", justifyContent:"center", marginBottom:14 }}>
+                  <button
+                    onClick={() => {
+                      const ayah = ayahs[ayahIdx];
+                      if (!ayah) return;
+                      const url = personalRecs[ayah.numberInSurah];
+                      if (playingPersonal === ayahIdx) { stopAll(); return; }
+                      stopAll();
+                      setPlayingPersonal(ayahIdx);
+                      audioManager.play(url, () => setPlayingPersonal(null), () => setPlayingPersonal(null));
+                    }}
+                    style={{ display:"flex", alignItems:"center", gap:8, padding:"10px 24px", borderRadius:12,
+                      background: playingPersonal===ayahIdx ? "#fff5f5" : "#f0fff4",
+                      border: `1px solid ${playingPersonal===ayahIdx ? "#fca5a5" : "#9ae6b4"}`,
+                      color: playingPersonal===ayahIdx ? "#c0392b" : "#276749",
+                      fontSize:14, fontWeight:700,
+                    }}>
+                    {playingPersonal===ayahIdx ? "⏹ Stop" : "▶ Play My Recording"}
+                  </button>
+                </div>
+              )}
+
+              {/* Navigation */}
               <div style={{ display:"flex", gap:8, marginBottom:16 }}>
-                <button onClick={()=>setAyahIdx(i=>Math.max(0,i-1))} disabled={ayahIdx===0}
-                  style={{ flex:1, padding:"10px 0", borderRadius:10, background:"#f8fafb", border:"1px solid #e2e8f0", fontSize:13, fontWeight:700, color:ayahIdx===0?"#7a9e88":"#1a3d24", opacity:ayahIdx===0?.5:1 }}>
+                <button onClick={()=>{ stopAll(); setAyahIdx(i=>Math.max(0,i-1)); }}
+                  disabled={ayahIdx===0||isRecording}
+                  style={{ flex:1, padding:"10px 0", borderRadius:10, background:"#f8fafb", border:"1px solid #e2e8f0", fontSize:13, fontWeight:700, color:ayahIdx===0?"#7a9e88":"#1a3d24", opacity:ayahIdx===0||isRecording?.5:1 }}>
                   ← Previous
                 </button>
-                <button onClick={()=>setAyahIdx(i=>Math.min(ayahs.length-1,i+1))} disabled={ayahIdx===ayahs.length-1}
-                  style={{ flex:1, padding:"10px 0", borderRadius:10, background:"#1a3d24", border:"none", color:"#fff", fontSize:13, fontWeight:700, opacity:ayahIdx===ayahs.length-1?.5:1 }}>
+                <button onClick={()=>{ stopAll(); setAyahIdx(i=>Math.min(ayahs.length-1,i+1)); }}
+                  disabled={ayahIdx===ayahs.length-1||isRecording}
+                  style={{ flex:1, padding:"10px 0", borderRadius:10, background:"#1a3d24", border:"none", color:"#fff", fontSize:13, fontWeight:700, opacity:ayahIdx===ayahs.length-1||isRecording?.5:1 }}>
                   Next →
                 </button>
               </div>
 
-              {/* Recorded list */}
+              {/* Recordings list */}
               <div style={{ borderTop:"1px solid #e2e8f0", paddingTop:14 }}>
-                <div style={{ textAlign:"center", marginBottom:10 }}>
-                  <div style={{ fontSize:15, fontWeight:900, color:"#1a3d24" }}>Your Recordings</div>
+                <div style={{ textAlign:"center", marginBottom:12 }}>
+                  <div style={{ fontSize:15, fontWeight:900, color:"#1a3d24" }}>
+                    Your Recordings ({Object.keys(personalRecs).length})
+                  </div>
                   <div style={{ fontSize:11, color:"#b7791f" }}>تسجيلاتك</div>
                 </div>
-                {Object.keys(personalRecs).length===0 ? (
-                  <div style={{ textAlign:"center", fontSize:13, color:"#7a9e88", padding:"14px 0" }}>No recordings yet · لا توجد تسجيلات</div>
-                ) : ayahs.filter(a=>personalRecs[a.numberInSurah]).map((a,i)=>{
+
+                {Object.keys(personalRecs).length === 0 ? (
+                  <div style={{ textAlign:"center", padding:"20px 0" }}>
+                    <div style={{ fontSize:32, marginBottom:8 }}>🎙️</div>
+                    <div style={{ fontSize:13, fontWeight:700, color:"#7a9e88" }}>No recordings yet</div>
+                    <div style={{ fontSize:11, color:"#7a9e88", marginTop:2 }}>لا توجد تسجيلات بعد</div>
+                    <div style={{ fontSize:11, color:"#b7791f", marginTop:6 }}>Tap the mic above to record your first ayah!</div>
+                  </div>
+                ) : ayahs.filter(a => personalRecs[a.numberInSurah]).map((a, i) => {
                   const idx2 = ayahs.indexOf(a);
+                  const st = saveStatus[a.numberInSurah];
                   return (
-                    <div key={i} onClick={()=>playPersonal(idx2)}
-                      style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", borderRadius:10, marginBottom:6, cursor:"pointer",
-                        background:playingPersonal===idx2?"#f0fff4":"#f8fafb",
-                        border:`1px solid ${playingPersonal===idx2?"#9ae6b4":"#e2e8f0"}`,
+                    <div key={i}
+                      style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", borderRadius:10, marginBottom:6,
+                        background: playingPersonal===idx2 ? "#f0fff4" : "#f8fafb",
+                        border:`1px solid ${playingPersonal===idx2 ? "#9ae6b4" : "#e2e8f0"}`,
                       }}>
-                      <div style={{ width:36, height:36, borderRadius:"50%", background:playingPersonal===idx2?"#c0392b":"#1a3d24", border:"none", color:"#fff", fontSize:16, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
-                        {playingPersonal===idx2?"⏹":"▶"}
-                      </div>
+                      <button onClick={() => playPersonal(idx2)}
+                        style={{ width:38, height:38, borderRadius:"50%", background:playingPersonal===idx2?"#c0392b":"#1a3d24", border:"none", color:"#fff", fontSize:16, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                        {playingPersonal===idx2 ? "⏹" : "▶"}
+                      </button>
                       <div style={{ flex:1 }}>
                         <div style={{ fontSize:14, fontWeight:700, color:"#1a3d24" }}>Ayah {a.numberInSurah}</div>
-                        <div style={{ fontSize:11, color:"#7a9e88" }}>Tap to play · اضغط للتشغيل</div>
+                        <div style={{ fontSize:10, color:"#7a9e88", fontFamily:"'Amiri Quran',serif" }}>
+                          {a.text.substring(0, 40)}…
+                        </div>
                       </div>
-                      <div style={{ fontSize:18 }}>🎤</div>
+                      <div style={{ fontSize:11, fontWeight:700,
+                        color: st==="saving"?"#b7791f": st==="error"?"#c0392b":"#276749",
+                      }}>
+                        {st==="saving" ? "⏳" : st==="error" ? "⚠️" : "✅"}
+                      </div>
                     </div>
                   );
                 })}
