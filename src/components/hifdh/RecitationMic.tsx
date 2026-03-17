@@ -27,6 +27,8 @@ export default function RecitationMic({ userId }: Props) {
   const [timer, setTimer]           = useState(0);
   const [transcript, setTranscript] = useState("");
   const [speechOk, setSpeechOk]     = useState(true);
+  const [speechError, setSpeechError] = useState("");
+  const [manualMode, setManualMode] = useState(false);
   const [countdown, setCountdown]   = useState<number|null>(null);
   const [sessionDone, setSessionDone] = useState(false);
   const [sessionStats, setSessionStats] = useState({ correct:0, wrong:0 });
@@ -184,20 +186,21 @@ export default function RecitationMic({ userId }: Props) {
 
   const startRecording = async () => {
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SR) { setSpeechOk(false); return; }
 
-    // Reset word pointer for this ayah
+    // Reset
     wordPointerRef.current = 0;
+    setSpeechError("");
+    setTranscript("");
 
-    // Reset current ayah words to hidden
+    // Reset ayah words to hidden
     setAyahs(prev => {
-      const u   = [...prev];
+      const u = [...prev];
       const idx = ayahIdxRef.current;
       if (u[idx]) u[idx] = { ...u[idx], words: u[idx].words.map(w => ({ ...w, state: "hidden" as const })) };
       return u;
     });
 
-    // Start audio recording for admin review
+    // Start audio recording for admin
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       chunksRef.current = [];
@@ -207,65 +210,74 @@ export default function RecitationMic({ userId }: Props) {
       mediaRecRef.current = mr;
     } catch(_) {}
 
-    // ── Speech Recognition ──
-    const rec = new SR();
-    rec.lang            = "ar-SA";
-    rec.continuous      = true;
-    rec.interimResults  = true;
-    rec.maxAlternatives = 5;
+    isRecordingRef.current = true;
+    setIsRecording(true);
+    setTimer(0);
 
-    // Accumulate ALL transcripts so far (final + interim)
+    // ── No speech recognition support → manual mode ──
+    if (!SR) {
+      setSpeechOk(false);
+      setSpeechError("Speech recognition not supported. Use manual mode below.");
+      return;
+    }
+
+    // ── Try Speech Recognition ──
     const finalTranscripts: string[] = [];
 
-    rec.onresult = (e: any) => {
-      // Separate final and interim results
-      let interim = "";
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        const t = e.results[i][0].transcript;
-        if (e.results[i].isFinal) {
-          finalTranscripts.push(t);
-        } else {
-          interim = t;
+    const startRec = () => {
+      const rec = new SR();
+      rec.lang            = "ar-SA";
+      rec.continuous      = false; // false is more reliable on Android
+      rec.interimResults  = true;
+      rec.maxAlternatives = 5;
+
+      rec.onstart = () => {
+        setSpeechError(""); // clear any previous error — it's working
+      };
+
+      rec.onresult = (e: any) => {
+        let interim = "";
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          const t = e.results[i][0].transcript;
+          if (e.results[i].isFinal) {
+            finalTranscripts.push(t);
+          } else {
+            interim = t;
+          }
         }
+        const full = [...finalTranscripts, interim].join(" ").trim();
+        setTranscript(full);
+        if (full) checkWords(full);
+      };
+
+      rec.onerror = (e: any) => {
+        const ignorable = ["no-speech", "aborted"];
+        if (ignorable.includes(e.error)) return;
+        setSpeechError(`Mic error: ${e.error} — try manual mode below`);
+      };
+
+      rec.onend = () => {
+        // Auto-restart while still recording
+        if (isRecordingRef.current) {
+          setTimeout(() => {
+            if (isRecordingRef.current) {
+              try { startRec(); } catch(_) {}
+            }
+          }, 100);
+        }
+      };
+
+      recogRef.current = rec;
+      try { rec.start(); } catch(e: any) {
+        setSpeechError(`Could not start: ${e?.message ?? e}`);
       }
-      // Combine all finals + current interim for full accumulated text
-      const full = [...finalTranscripts, interim].join(" ").trim();
-      setTranscript(full);
-      if (full) checkWords(full);
     };
 
-    rec.onerror = (e: any) => {
-      if (e.error === "no-speech") return;
-      if (e.error === "aborted")   return;
-      // On network error, try to restart
-      if (e.error === "network" && isRecordingRef.current) {
-        setTimeout(() => { try { rec.start(); } catch(_) {} }, 500);
-      }
-    };
-
-    // ── KEY FIX: use isRecordingRef not isRecording state ──
-    rec.onend = () => {
-      if (isRecordingRef.current && recogRef.current === rec) {
-        setTimeout(() => {
-          try { rec.start(); } catch(_) {}
-        }, 200);
-      }
-    };
-
-    recogRef.current = rec;
-    try {
-      rec.start();
-      isRecordingRef.current = true;
-      setIsRecording(true);
-      setTimer(0);
-      setTranscript("");
-    } catch(e) {
-      isRecordingRef.current = false;
-    }
+    startRec();
   };
 
   const stopRecording = () => {
-    isRecordingRef.current = false; // ← set ref FIRST so onend doesn't restart
+    isRecordingRef.current = false;
     setIsRecording(false);
     if (recogRef.current) {
       try { recogRef.current.stop(); } catch(_) {}
@@ -275,6 +287,29 @@ export default function RecitationMic({ userId }: Props) {
       try { mediaRecRef.current.stop(); } catch(_) {}
       mediaRecRef.current = null;
     }
+  };
+
+  // Manual mode: tap to reveal next word
+  const manualRevealNext = () => {
+    const idx = ayahIdxRef.current;
+    const words = ayahsRef.current[idx]?.words;
+    if (!words) return;
+    const newPointer = Math.min(wordPointerRef.current + 1, words.length);
+    wordPointerRef.current = newPointer;
+    setAyahs(prev => {
+      const updated = [...prev];
+      const ayah = { ...updated[idx], words: [...updated[idx].words] };
+      ayah.words = ayah.words.map((w, wi) => {
+        if (wi < newPointer)    return { ...w, state: "correct" as const };
+        if (wi === newPointer)  return { ...w, state: "current" as const };
+        return { ...w, state: "hidden" as const };
+      });
+      updated[idx] = ayah;
+      if (newPointer >= ayah.words.length) {
+        setTimeout(() => triggerCountdown(ayah.words), 300);
+      }
+      return updated;
+    });
   };
 
   const handlePeekStart = (wi: number) => {
@@ -504,62 +539,123 @@ export default function RecitationMic({ userId }: Props) {
               <div style={{ fontSize:13, color:"#b7791f" }}>التلاوة</div>
             </div>
 
-            {!speechOk && (
-              <div style={{ width:"100%", background:"#fff5f5", border:"1px solid #fca5a5", borderRadius:10, padding:"10px 14px", fontSize:13, fontWeight:700, color:"#c0392b", textAlign:"center" }}>
-                ⚠️ Please use Chrome or Edge for speech recognition
+            {/* Speech error — shown when recognition fails */}
+            {speechError !== "" && (
+              <div style={{ width:"100%", background:"#fff5f5", border:"1px solid #fca5a5", borderRadius:10, padding:"12px 14px" }}>
+                <div style={{ fontSize:13, fontWeight:700, color:"#c0392b", marginBottom:6 }}>
+                  ⚠️ {speechError}
+                </div>
+                <button onClick={() => setManualMode(true)}
+                  style={{ width:"100%", padding:"9px 0", borderRadius:10, background:"#1a3d24", border:"none", color:"#fff", fontSize:13, fontWeight:700 }}>
+                  Switch to Manual Mode
+                </button>
               </div>
             )}
 
-            <div style={{ fontSize:14, fontWeight:700, color: isRecording?"#b7791f":"#718096" }}>
-              {isRecording?"● Listening…":"Tap to Start"}
-            </div>
-            <div style={{ fontSize:12, color:"#7a9e88" }}>Hold any word to peek · اضغط على كلمة لمعاينتها</div>
-
-            <div onClick={isRecording?stopRecording:startRecording}
-              style={{ width:96, height:96, borderRadius:"50%", cursor:"pointer", transition:"all .2s",
-                background: isRecording?"#1a3d24":"#f0f4f0",
-                border:`2px solid ${isRecording?"#1a3d24":"#cbd5e0"}`,
-                display:"flex", alignItems:"center", justifyContent:"center",
-                boxShadow: isRecording?"0 4px 20px rgba(26,61,36,.3),0 0 0 10px rgba(26,61,36,.07)":"0 2px 8px rgba(0,0,0,.1)",
-              }}>
-              <div style={{ width:68, height:68, borderRadius:"50%", background:isRecording?"#276749":"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:28 }}>
-                {isRecording?"⏹":"🎙️"}
-              </div>
+            {/* Manual mode toggle */}
+            <div style={{ display:"flex", background:"#f8fafb", borderRadius:10, padding:3, border:"1px solid #e2e8f0", width:"100%" }}>
+              <button onClick={()=>setManualMode(false)}
+                style={{ flex:1, padding:"8px 0", borderRadius:8, border:"none", fontSize:12, fontWeight:manualMode?400:700, background:!manualMode?"#1a3d24":"transparent", color:!manualMode?"#fff":"#7a9e88" }}>
+                🎙️ Auto (Mic)
+              </button>
+              <button onClick={()=>setManualMode(true)}
+                style={{ flex:1, padding:"8px 0", borderRadius:8, border:"none", fontSize:12, fontWeight:manualMode?700:400, background:manualMode?"#1a3d24":"transparent", color:manualMode?"#fff":"#7a9e88" }}>
+                👆 Manual (Tap)
+              </button>
             </div>
 
-            <div style={{ fontSize:36, fontWeight:900, color:"#1a3d24", fontVariantNumeric:"tabular-nums", letterSpacing:3 }}>
-              {fmt(timer)}
+            {/* Mode description */}
+            <div style={{ fontSize:11, color:"#7a9e88", textAlign:"center" }}>
+              {manualMode
+                ? "Tap 'Reveal Next Word' as you recite each word · اضغط لكشف الكلمة التالية"
+                : "Mic will reveal words as you recite · المايك يكشف الكلمات أثناء التلاوة"}
             </div>
 
-            {isRecording && (
-              <div style={{ display:"flex", alignItems:"center", gap:3, height:38 }}>
-                {[16,24,12,30,18,34,14,26,10,22,32,16].map((h,i)=>(
-                  <div key={i} style={{ width:3, height:h, background:"#1a3d24", borderRadius:2, opacity:.5, animation:`wave 1.1s ease-in-out ${i*.09}s infinite` }} />
-                ))}
-              </div>
+            {!manualMode && (
+              <>
+                {/* Mic button */}
+                <div onClick={isRecording ? stopRecording : startRecording}
+                  style={{ width:96, height:96, borderRadius:"50%", cursor:"pointer", transition:"all .2s",
+                    background: isRecording?"#1a3d24":"#f0f4f0",
+                    border:`2px solid ${isRecording?"#1a3d24":"#cbd5e0"}`,
+                    display:"flex", alignItems:"center", justifyContent:"center",
+                    boxShadow: isRecording?"0 4px 20px rgba(26,61,36,.3),0 0 0 10px rgba(26,61,36,.07)":"0 2px 8px rgba(0,0,0,.1)",
+                  }}>
+                  <div style={{ width:68, height:68, borderRadius:"50%", background:isRecording?"#276749":"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:28 }}>
+                    {isRecording?"⏹":"🎙️"}
+                  </div>
+                </div>
+
+                <div style={{ fontSize:36, fontWeight:900, color:"#1a3d24", fontVariantNumeric:"tabular-nums", letterSpacing:3 }}>
+                  {fmt(timer)}
+                </div>
+
+                {isRecording && (
+                  <div style={{ display:"flex", alignItems:"center", gap:3, height:36 }}>
+                    {[16,24,12,30,18,34,14,26,10,22,32,16].map((h,i)=>(
+                      <div key={i} style={{ width:3, height:h, background:"#1a3d24", borderRadius:2, opacity:.5, animation:`wave 1.1s ease-in-out ${i*.09}s infinite` }} />
+                    ))}
+                  </div>
+                )}
+
+                {/* Transcript box — shows what mic hears */}
+                <div style={{ width:"100%", background: transcript ? "#f0fff4" : "#f8fafb", border:`1px solid ${transcript?"#9ae6b4":"#e2e8f0"}`, borderRadius:10, padding:"10px 14px", minHeight:48, transition:"all .3s" }}>
+                  {transcript ? (
+                    <div style={{ fontSize:18, fontWeight:700, color:"#1a3d24", textAlign:"right", direction:"rtl", fontFamily:"'Amiri Quran',serif", lineHeight:2 }}>
+                      {transcript}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize:12, fontWeight:600, color:"#7a9e88", textAlign:"center" }}>
+                      {isRecording ? "🎙️ Listening… recite now · ابدأ التلاوة الآن" : "Transcript appears here"}
+                    </div>
+                  )}
+                </div>
+              </>
             )}
 
-            {/* Always show this box while recording so user knows if mic is picking up */}
-            <div style={{ width:"100%", background: transcript ? "#f0fff4" : "#f8fafb", border:`1px solid ${transcript?"#9ae6b4":"#e2e8f0"}`, borderRadius:10, padding:"10px 14px", minHeight:50, transition:"all .3s" }}>
-              {transcript ? (
-                <div style={{ fontSize:18, fontWeight:700, color:"#1a3d24", textAlign:"right", direction:"rtl", fontFamily:"'Amiri Quran',serif", lineHeight:2 }}>
-                  {transcript}
+            {/* Manual mode: big tap button */}
+            {manualMode && (
+              <div style={{ width:"100%", display:"flex", flexDirection:"column", alignItems:"center", gap:12 }}>
+                <div style={{ fontSize:12, color:"#7a9e88", textAlign:"center" }}>
+                  Tap the button each time you say a word · اضغط مع كل كلمة تنطق بها
                 </div>
-              ) : (
-                <div style={{ fontSize:12, fontWeight:600, color:"#7a9e88", textAlign:"center" }}>
-                  {isRecording
-                    ? "🎙️ Listening… Start reciting الآن"
-                    : "Transcript will appear here as you recite"}
+                <div onClick={manualRevealNext}
+                  style={{ width:110, height:110, borderRadius:"50%", cursor:"pointer",
+                    background:"linear-gradient(135deg,#1a3d24,#276749)",
+                    display:"flex", flexDirection:"column" as const, alignItems:"center", justifyContent:"center",
+                    boxShadow:"0 4px 20px rgba(26,61,36,.3)",
+                    transition:"transform .1s", userSelect:"none" as const,
+                  }}
+                  onTouchStart={e => (e.currentTarget.style.transform = "scale(.95)")}
+                  onTouchEnd={e => (e.currentTarget.style.transform = "scale(1)")}>
+                  <div style={{ fontSize:28 }}>👆</div>
+                  <div style={{ fontSize:11, fontWeight:700, color:"#fff", marginTop:4 }}>Reveal</div>
+                  <div style={{ fontSize:10, color:"rgba(255,255,255,.7)" }}>Next Word</div>
                 </div>
-              )}
-            </div>
+                <div style={{ fontSize:13, color:"#276749", fontWeight:700 }}>
+                  Word {Math.min(wordPointerRef.current, ayahsRef.current[ayahIdxRef.current]?.words.length ?? 0)} / {ayahsRef.current[ayahIdxRef.current]?.words.length ?? 0}
+                </div>
+                {/* Manual timer */}
+                <div style={{ fontSize:30, fontWeight:900, color:"#1a3d24", fontVariantNumeric:"tabular-nums" }}>
+                  {fmt(timer)}
+                </div>
+                <div style={{ display:"flex", gap:8, width:"100%" }}>
+                  <button onClick={()=>{ if(!isRecording){isRecordingRef.current=true; setIsRecording(true); setTimer(0); wordPointerRef.current=0; } else stopRecording(); }}
+                    style={{ flex:1, padding:"11px 0", borderRadius:12, background:isRecording?"#fff5f5":"#f0f4f0", border:`1px solid ${isRecording?"#fca5a5":"#e2e8f0"}`, color:isRecording?"#c0392b":"#1a3d24", fontSize:13, fontWeight:700 }}>
+                    {isRecording ? "⏹ Stop" : "▶ Start Timer"}
+                  </button>
+                </div>
+              </div>
+            )}
 
             <div style={{ display:"flex", gap:10, width:"100%" }}>
-              <button onClick={stopRecording} disabled={!isRecording}
-                style={{ flex:1, padding:"12px 0", borderRadius:12, background:isRecording?"#fff5f5":"#f8fafb", border:`1px solid ${isRecording?"#fca5a5":"#e2e8f0"}`, color:isRecording?"#c0392b":"#7a9e88", fontSize:14, fontWeight:700, opacity:isRecording?1:.6 }}>
-                ⏹ Stop
-              </button>
-              <button onClick={()=>advanceAyah()}
+              {!manualMode && (
+                <button onClick={stopRecording} disabled={!isRecording}
+                  style={{ flex:1, padding:"12px 0", borderRadius:12, background:isRecording?"#fff5f5":"#f8fafb", border:`1px solid ${isRecording?"#fca5a5":"#e2e8f0"}`, color:isRecording?"#c0392b":"#7a9e88", fontSize:14, fontWeight:700, opacity:isRecording?1:.6 }}>
+                  ⏹ Stop
+                </button>
+              )}
+              <button onClick={() => advanceAyah()}
                 style={{ flex:1, padding:"12px 0", borderRadius:12, background:"#1a3d24", border:"none", color:"#fff", fontSize:14, fontWeight:700 }}>
                 Next Ayah →
               </button>
