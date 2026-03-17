@@ -141,33 +141,81 @@ export default function AudioPlayer({ userId }: Props) {
     setProgress(0);
   };
 
+  const [savingPersonal, setSavingPersonal] = useState(false);
+  const snapAyahIdx = useRef(0); // snapshot index at record time
+
   // Personal recording
   const startPersonalRec = async () => {
+    // Snapshot the current ayah index so onstop uses the right ayah
+    snapAyahIdx.current = ayahIdx;
+
+    const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+      ? "audio/webm;codecs=opus"
+      : MediaRecorder.isTypeSupported("audio/webm")
+      ? "audio/webm" : "";
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio:{ noiseSuppression:true, echoCancellation:true } });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { noiseSuppression: true, echoCancellation: true, autoGainControl: true }
+      });
       chunksRef.current = [];
-      const mr = new MediaRecorder(stream,{mimeType:"audio/webm"});
-      mr.ondataavailable = e=>chunksRef.current.push(e.data);
+      const mr = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+
+      mr.ondataavailable = e => { if (e.data && e.data.size > 0) chunksRef.current.push(e.data); };
+
       mr.onstop = async () => {
-        if (!userId||!selected||!ayahs[ayahIdx]) return;
-        const blob = new Blob(chunksRef.current,{type:"audio/webm"});
-        const path = `${userId}/personal_${selected.number}_${ayahs[ayahIdx].numberInSurah}_${Date.now()}.webm`;
-        const {data:up} = await supabase.storage.from("hifdh-recordings").upload(path,blob);
-        if (up) {
-          const {data:urlData} = supabase.storage.from("hifdh-recordings").getPublicUrl(path);
-          const url = urlData?.publicUrl??"";
-          setPersonalRecs(p=>({...p,[ayahs[ayahIdx].numberInSurah]:url}));
-          await supabase.from("hifdh_recordings").upsert({ student_id:userId, surah_num:selected.number, surah_name:selected.englishName, ayah_start:ayahs[ayahIdx].numberInSurah, audio_url:url, ai_score:0, status:"pending" });
-        }
-        stream.getTracks().forEach(t=>t.stop());
+        stream.getTracks().forEach(t => t.stop());
+        setSavingPersonal(true);
+        try {
+          if (!userId || !selected) return;
+          const idx = snapAyahIdx.current;
+          const ayah = ayahs[idx];
+          if (!ayah || chunksRef.current.length === 0) return;
+
+          const blob = new Blob(chunksRef.current, { type: mr.mimeType || "audio/webm" });
+          if (blob.size < 100) return; // empty blob guard
+
+          const path = `${userId}/personal_${selected.number}_${ayah.numberInSurah}_${Date.now()}.webm`;
+          const { data: up, error: upErr } = await supabase.storage
+            .from("hifdh-recordings")
+            .upload(path, blob, { contentType: mr.mimeType || "audio/webm" });
+
+          if (upErr || !up) { console.error("Upload failed:", upErr); return; }
+
+          const { data: urlData } = supabase.storage.from("hifdh-recordings").getPublicUrl(path);
+          const url = urlData?.publicUrl ?? "";
+          if (!url) return;
+
+          // Update UI immediately
+          setPersonalRecs(p => ({ ...p, [ayah.numberInSurah]: url }));
+
+          // Save to DB
+          await supabase.from("hifdh_recordings").upsert({
+            student_id: userId, surah_num: selected.number,
+            surah_name: selected.englishName,
+            ayah_start: ayah.numberInSurah, ayah_end: ayah.numberInSurah,
+            audio_url: url, ai_score: 0, status: "pending",
+          });
+        } catch (e) { console.error("Recording save error:", e); }
+        finally { setSavingPersonal(false); }
       };
-      mr.start(); mediaRecRef.current=mr; setIsRecording(true);
-    } catch(_){}
+
+      mr.start(250); // capture in 250ms chunks so data is not lost
+      mediaRecRef.current = mr;
+      setIsRecording(true);
+    } catch (err) {
+      console.error("Mic access error:", err);
+      alert("Microphone access denied. Please allow microphone permission and try again.");
+    }
   };
 
   const stopPersonalRec = () => {
-    if (mediaRecRef.current) { try{mediaRecRef.current.stop();}catch(_){} mediaRecRef.current=null; }
     setIsRecording(false);
+    if (!mediaRecRef.current) return;
+    // DO NOT null the ref here — onstop needs it to fire first
+    try { mediaRecRef.current.stop(); } catch(_) {}
+    // null it after a safe delay
+    setTimeout(() => { mediaRecRef.current = null; }, 2000);
   };
 
   const playPersonal = (idx: number) => {
@@ -418,8 +466,12 @@ export default function AudioPlayer({ userId }: Props) {
                   {isRecording?"⏹":"🎤"}
                 </div>
               </div>
-              <div style={{ textAlign:"center", fontSize:13, fontWeight:700, color:isRecording?"#c0392b":"#7a9e88", marginBottom:14 }}>
-                {isRecording?"● Recording… tap to stop":"Tap to record this ayah"}
+              <div style={{ textAlign:"center", fontSize:13, fontWeight:700, color:isRecording?"#c0392b":savingPersonal?"#b7791f":"#7a9e88", marginBottom:14 }}>
+                {savingPersonal
+                  ? "⏳ Saving recording… · جارٍ الحفظ"
+                  : isRecording
+                  ? "● Recording… tap to stop · جارٍ التسجيل"
+                  : "Tap to record this ayah"}
                 {isRecording && <div style={{ fontSize:11, fontWeight:400, marginTop:2 }}>Noise suppression active · تقليل الضوضاء</div>}
               </div>
 
