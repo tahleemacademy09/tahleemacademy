@@ -66,11 +66,21 @@ export default function AudioPlayer({ userId }: Props) {
       .then(r=>r.json()).then(d=>{ if(d.code===200) setAyahs(d.data.ayahs.map((a:any)=>({number:a.number,numberInSurah:a.numberInSurah,text:a.text}))); })
       .finally(()=>setLoading(false));
     if (userId) {
-      supabase.from("hifdh_recordings").select("*").eq("student_id", userId).eq("surah_num", selected.number)
+      supabase.from("hifdh_recordings")
+        .select("ayah_start, audio_url, created_at")
+        .eq("student_id", userId)
+        .eq("surah_num", selected.number)
+        .not("audio_url", "is", null)
+        .order("created_at", { ascending: false })
         .then(({ data }) => {
           if (!data) return;
-          const map: Record<number,string> = {};
-          data.forEach((r:any)=>{ if(r.audio_url) map[r.ayah_start]=r.audio_url; });
+          const map: Record<number, string> = {};
+          // Keep only latest recording per ayah
+          data.forEach((r: any) => {
+            if (r.audio_url && !map[r.ayah_start]) {
+              map[r.ayah_start] = r.audio_url;
+            }
+          });
           setPersonalRecs(map);
         });
     }
@@ -215,60 +225,44 @@ export default function AudioPlayer({ userId }: Props) {
         setSaveStatus(p => ({ ...p, [ayah.numberInSurah]: "saving" }));
         setSavingPersonal(true);
 
-        // ── Upload to Supabase in background ──
+        // ── Save directly to database as base64 — no storage bucket needed ──
         if (userId && selected) {
           try {
-            const ext  = actualMime.includes("ogg") ? "ogg" : actualMime.includes("mp4") ? "m4a" : "webm";
-            const path = `${userId}/${selected.number}_ayah${ayah.numberInSurah}_${Date.now()}.${ext}`;
+            setUploadError("");
 
-            setUploadError(""); // clear previous errors
+            // Convert blob to base64
+            const base64 = await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onloadend = () => resolve(reader.result as string);
+              reader.onerror  = reject;
+              reader.readAsDataURL(blob);
+            });
 
-            const { data: up, error: upErr } = await supabase.storage
-              .from("hifdh-recordings")
-              .upload(path, blob, { contentType: actualMime, upsert: true });
+            // Save base64 audio directly in the database
+            const { error: dbErr } = await supabase.from("hifdh_recordings").insert({
+              student_id: userId,
+              surah_num:  selected.number,
+              surah_name: selected.englishName,
+              ayah_start: ayah.numberInSurah,
+              ayah_end:   ayah.numberInSurah,
+              audio_url:  base64,   // stored as base64 data URL
+              ai_score:   0,
+              status:     "pending",
+            });
 
-            if (upErr) {
-              // Show the EXACT error on screen so user can report it
-              setUploadError(`Storage error: ${upErr.message}`);
+            if (dbErr) {
+              setUploadError(`DB error: ${dbErr.message}`);
               setSaveStatus(p => ({ ...p, [ayah.numberInSurah]: "error" }));
               setSavingPersonal(false);
               return;
             }
 
-            const { data: urlData } = supabase.storage
-              .from("hifdh-recordings")
-              .getPublicUrl(path);
-
-            const remoteUrl = urlData?.publicUrl ?? "";
-
-            if (remoteUrl) {
-              setPersonalRecs(p => ({ ...p, [ayah.numberInSurah]: remoteUrl }));
-              URL.revokeObjectURL(localUrl);
-
-              const { error: dbErr } = await supabase.from("hifdh_recordings").insert({
-                student_id: userId,
-                surah_num:  selected.number,
-                surah_name: selected.englishName,
-                ayah_start: ayah.numberInSurah,
-                ayah_end:   ayah.numberInSurah,
-                audio_url:  remoteUrl,
-                ai_score:   0,
-                status:     "pending",
-              });
-
-              if (dbErr) {
-                setUploadError(`DB error: ${dbErr.message}`);
-                setSaveStatus(p => ({ ...p, [ayah.numberInSurah]: "error" }));
-                setSavingPersonal(false);
-                return;
-              }
-            }
-
+            // Keep local blob URL for immediate playback — it already works
             setSaveStatus(p => ({ ...p, [ayah.numberInSurah]: "saved" }));
-            setUploadError(""); // clear on success
+            setUploadError("");
 
           } catch (err: any) {
-            setUploadError(`Unexpected error: ${err?.message ?? String(err)}`);
+            setUploadError(`Error: ${err?.message ?? String(err)}`);
             setSaveStatus(p => ({ ...p, [ayah.numberInSurah]: "error" }));
           }
         }
