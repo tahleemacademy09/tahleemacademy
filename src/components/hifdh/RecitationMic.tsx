@@ -72,49 +72,74 @@ export default function RecitationMic({ userId }: Props) {
 
   const fmt = (s:number) => `${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
 
-  // Word checking — fixed logic
+  // ── Core word reveal logic ──────────────────────────────
+  // Uses a sequential pointer: as transcript grows, reveal words one by one
+  const wordPointerRef = useRef(0); // how many words have been revealed so far
+
   const checkWords = useCallback((spoken: string) => {
     const idx = ayahIdxRef.current;
     const currentAyahs = ayahsRef.current;
     if (!currentAyahs[idx]) return;
-    const spokenWords = normalize(spoken).split(/\s+/).filter(Boolean);
 
-    setAyahs(prev => {
-      const updated = [...prev];
-      const ayah = { ...updated[idx], words: [...updated[idx].words] };
-      let allRevealed = true;
+    const spokenNorm  = normalize(spoken);
+    const spokenWords = spokenNorm.split(/\s+/).filter(Boolean);
+    const ayahWords   = currentAyahs[idx].words;
 
-      ayah.words = ayah.words.map((w, wi) => {
-        const sp = spokenWords[wi];
-        if (!sp) {
-          if (wi === spokenWords.length) return { ...w, state: "current" as const };
-          if (w.state === "correct" || w.state === "wrong") return w;
-          allRevealed = false;
-          return { ...w, state: "hidden" as const };
-        }
-        if (sp === w.normalized) return { ...w, state: "correct" as const };
-        // fuzzy match
-        const match = spokenWords.some(s =>
-          s === w.normalized ||
-          (w.normalized.length > 3 && s.startsWith(w.normalized.slice(0,3)))
-        );
-        return { ...w, state: match ? "correct" as const : "wrong" as const };
+    // ── Sequential matching: go through each ayah word in order ──
+    // For each ayah word, check if ANY spoken word closely matches it
+    // This handles out-of-order speech recognition results on Android
+
+    let newPointer = wordPointerRef.current;
+
+    // Try to extend the pointer forward as more words are recognized
+    while (newPointer < ayahWords.length) {
+      const target = ayahWords[newPointer].normalized;
+      if (!target) { newPointer++; continue; }
+
+      // Check if any spoken word matches this target
+      const matched = spokenWords.some(sw => {
+        if (!sw || sw.length < 2) return false;
+        if (sw === target) return true;
+        // Prefix match (first 3 chars) for partial recognition
+        const minLen = Math.min(3, Math.min(sw.length, target.length));
+        if (sw.slice(0, minLen) === target.slice(0, minLen)) return true;
+        // Check if target contains spoken word (partial recognition)
+        if (target.includes(sw) && sw.length >= 3) return true;
+        if (sw.includes(target) && target.length >= 3) return true;
+        return false;
       });
 
-      // Mark first unrevealed as current
-      const firstHidden = ayah.words.findIndex(w => w.state === "hidden");
-      if (firstHidden !== -1) {
-        ayah.words[firstHidden] = { ...ayah.words[firstHidden], state: "current" };
-        allRevealed = false;
+      if (matched) {
+        newPointer++;
+      } else {
+        break; // stop at first unmatched word
       }
+    }
+
+    wordPointerRef.current = newPointer;
+
+    // Now update word states based on pointer position
+    setAyahs(prev => {
+      const updated = [...prev];
+      const ayah    = { ...updated[idx], words: [...updated[idx].words] };
+
+      ayah.words = ayah.words.map((w, wi) => {
+        if (wi < newPointer) {
+          return { ...w, state: "correct" as const };
+        }
+        if (wi === newPointer) {
+          return { ...w, state: "current" as const }; // next word to recite
+        }
+        return { ...w, state: "hidden" as const };
+      });
 
       updated[idx] = ayah;
 
-      // Auto-advance when all words revealed
-      if (allRevealed && !countRef.current) {
-        const words = ayah.words;
-        setTimeout(() => triggerCountdown(words), 100);
+      // All words revealed → trigger auto-advance
+      if (newPointer >= ayah.words.length && !countRef.current) {
+        setTimeout(() => triggerCountdown(ayah.words), 300);
       }
+
       return updated;
     });
   }, []);
@@ -122,13 +147,18 @@ export default function RecitationMic({ userId }: Props) {
   const triggerCountdown = (words: Word[]) => {
     if (countRef.current) return;
     stopRecording();
-    let c = 3; setCountdown(c);
+    let c = 3;
+    setCountdown(c);
     countRef.current = setInterval(() => {
       c--;
       if (c <= 0) {
-        clearInterval(countRef.current!); countRef.current = null;
-        setCountdown(null); advanceAyah(words);
-      } else setCountdown(c);
+        clearInterval(countRef.current!);
+        countRef.current = null;
+        setCountdown(null);
+        advanceAyah(words);
+      } else {
+        setCountdown(c);
+      }
     }, 1000);
   };
 
@@ -145,6 +175,7 @@ export default function RecitationMic({ userId }: Props) {
     setSessionStats(s=>({correct:s.correct+sc.correct,wrong:s.wrong+sc.wrong}));
     await saveSession(sc.pct, words);
     const idx = ayahIdxRef.current;
+    wordPointerRef.current = 0; // reset for next ayah
     if (idx < ayahsRef.current.length-1) {
       setAyahIdx(idx+1); setTimer(0); setTranscript("");
     } else setSessionDone(true);
@@ -154,38 +185,67 @@ export default function RecitationMic({ userId }: Props) {
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SR) { setSpeechOk(false); return; }
 
-    // Start mic recording with noise suppression
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { noiseSuppression: true, echoCancellation: true, autoGainControl: true }
-      });
-      chunksRef.current = [];
-      const mr = new MediaRecorder(stream, { mimeType: "audio/webm" });
-      mr.ondataavailable = e => chunksRef.current.push(e.data);
-      mr.start(250);
-      mediaRecRef.current = mr;
-    } catch(_) {}
+    // Reset word pointer for this ayah
+    wordPointerRef.current = 0;
 
-    // Reset current ayah words
+    // Reset current ayah words to hidden
     setAyahs(prev => {
-      const u = [...prev];
+      const u   = [...prev];
       const idx = ayahIdxRef.current;
-      if (u[idx]) u[idx] = { ...u[idx], words: u[idx].words.map(w=>({...w,state:"hidden" as const})) };
+      if (u[idx]) u[idx] = { ...u[idx], words: u[idx].words.map(w => ({ ...w, state: "hidden" as const })) };
       return u;
     });
 
+    // Start audio recording — no hardcoded mimeType (crashes on Android)
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { noiseSuppression: false, echoCancellation: false, autoGainControl: true }
+      });
+      chunksRef.current = [];
+      const mr = new MediaRecorder(stream); // let browser pick best format
+      mr.ondataavailable = e => { if (e.data?.size > 0) chunksRef.current.push(e.data); };
+      mr.start(200);
+      mediaRecRef.current = mr;
+    } catch(_) {}
+
+    // Start speech recognition
     const rec = new SR();
-    rec.lang = "ar-SA"; rec.continuous = true; rec.interimResults = true; rec.maxAlternatives = 3;
+    rec.lang            = "ar-SA";
+    rec.continuous      = true;
+    rec.interimResults  = true;
+    rec.maxAlternatives = 5; // more alternatives = better matching on Android
+
     rec.onresult = (e: any) => {
-      let interim = "";
-      for (let i=e.resultIndex;i<e.results.length;i++) interim += e.results[i][0].transcript;
-      setTranscript(interim);
-      checkWords(interim);
+      // Collect ALL results (final + interim) into one string
+      let full = "";
+      for (let i = 0; i < e.results.length; i++) {
+        full += e.results[i][0].transcript + " ";
+      }
+      full = full.trim();
+      setTranscript(full);
+      checkWords(full);
     };
-    rec.onerror = (e: any) => { if(e.error!=="no-speech") stopRecording(); };
-    rec.onend   = () => { if(recogRef.current) { try{rec.start();}catch(_){} } };
+
+    rec.onerror = (e: any) => {
+      if (e.error === "no-speech") return; // ignore silence
+      if (e.error === "aborted")   return;
+      stopRecording();
+    };
+
+    // Auto-restart on Android (recognition stops after silence)
+    rec.onend = () => {
+      if (recogRef.current === rec && isRecording) {
+        try { rec.start(); } catch(_) {}
+      }
+    };
+
     recogRef.current = rec;
-    try { rec.start(); setIsRecording(true); setTimer(0); setTranscript(""); } catch(_){}
+    try {
+      rec.start();
+      setIsRecording(true);
+      setTimer(0);
+      setTranscript("");
+    } catch(_) {}
   };
 
   const stopRecording = () => {
@@ -402,7 +462,7 @@ export default function RecitationMic({ userId }: Props) {
 
             {/* Navigation */}
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"12px 16px", borderTop:"1px solid #e2e8f0", background:"#f8f4ec" }}>
-              <button onClick={()=>{stopRecording();if(ayahIdx>0){setAyahIdx(i=>i-1);setTimer(0);setTranscript("");}}} disabled={ayahIdx===0}
+              <button onClick={()=>{ stopRecording(); wordPointerRef.current=0; if(ayahIdx>0){setAyahIdx(i=>i-1);setTimer(0);setTranscript("");}}} disabled={ayahIdx===0}
                 style={{ padding:"9px 16px", borderRadius:10, background:"#f0f4f0", border:"1px solid #e2e8f0", fontSize:13, fontWeight:700, color:ayahIdx===0?"#7a9e88":"#1a3d24", opacity:ayahIdx===0?.5:1 }}>
                 ← Previous
               </button>
