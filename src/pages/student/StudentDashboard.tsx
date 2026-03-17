@@ -177,12 +177,12 @@ const StudentDashboard = () => {
           <div style={{ padding: "24px 22px 20px", position:"relative", zIndex:1 }}>
             {/* Top row: bismillah + hijri */}
             <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16 }}>
-              <span style={{ fontSize:10, color:"rgba(255,255,255,0.45)", letterSpacing:"0.25em", fontFamily:"'Amiri',serif" }}>
+              <span style={{ fontSize:13, color:"rgba(255,255,255,0.92)", fontFamily:"'Amiri',serif", fontWeight:700, letterSpacing:"0.1em" }}>
                 بسم الله الرحمن الرحيم
               </span>
-              <div style={{ background:"rgba(255,255,255,0.1)", backdropFilter:"blur(8px)", borderRadius:30, padding:"4px 12px", display:"flex", alignItems:"center", gap:5, border:"1px solid rgba(255,255,255,0.12)" }}>
-                <Calendar style={{ width:10, height:10, color:GOLD_LIGHT }} />
-                <span style={{ fontSize:10, color:"rgba(255,255,255,0.85)", fontFamily:"'Amiri',serif" }} dir="rtl">{hijri.full}</span>
+              <div style={{ background:GOLD, borderRadius:30, padding:"6px 14px", display:"flex", alignItems:"center", gap:6, boxShadow:`0 2px 10px ${GOLD}66` }}>
+                <Calendar style={{ width:12, height:12, color:DARK_GREEN }} />
+                <span style={{ fontSize:12, color:DARK_GREEN, fontFamily:"'Amiri',serif", fontWeight:900 }} dir="rtl">{hijri.full}</span>
               </div>
             </div>
 
@@ -203,36 +203,36 @@ const StudentDashboard = () => {
           {/* ── GOLD SPLICER DIVIDER ── */}
           <div style={{ position:"relative", zIndex:1, padding:"0 22px" }}>
             <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-              <div style={{ flex:1, height:"1px", background:`linear-gradient(90deg, transparent, ${GOLD}88, transparent)` }} />
-              <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                <div style={{ width:5, height:5, borderRadius:"50%", background:GOLD, opacity:0.6 }} />
-                <Star style={{ width:14, height:14, color:GOLD }} />
-                <div style={{ width:5, height:5, borderRadius:"50%", background:GOLD, opacity:0.6 }} />
+              <div style={{ flex:1, height:"1.5px", background:`linear-gradient(90deg, transparent, ${GOLD}, transparent)` }} />
+              <div style={{ display:"flex", alignItems:"center", gap:7 }}>
+                <div style={{ width:6, height:6, borderRadius:"50%", background:GOLD }} />
+                <Star style={{ width:16, height:16, color:GOLD, fill:GOLD }} />
+                <div style={{ width:6, height:6, borderRadius:"50%", background:GOLD }} />
               </div>
-              <div style={{ flex:1, height:"1px", background:`linear-gradient(90deg, transparent, ${GOLD}88, transparent)` }} />
+              <div style={{ flex:1, height:"1.5px", background:`linear-gradient(90deg, transparent, ${GOLD}, transparent)` }} />
             </div>
           </div>
 
           {/* ── BOTTOM: Daily Verse section ── */}
           <div style={{ padding:"18px 22px 24px", textAlign:"center", position:"relative", zIndex:1 }}>
             <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:8, marginBottom:14 }}>
-              <Star style={{ width:12, height:12, color:GOLD, opacity:0.7 }} />
-              <span style={{ fontSize:12, fontWeight:700, color:GOLD, fontFamily:"'Playfair Display',serif", letterSpacing:"0.05em" }}>
+              <Star style={{ width:14, height:14, color:GOLD, fill:GOLD }} />
+              <span style={{ fontSize:13, fontWeight:800, color:GOLD, fontFamily:"'Playfair Display',serif", letterSpacing:"0.05em" }}>
                 {t("Daily Quranic Reflection", "تأمل قرآني يومي")}
               </span>
-              <Star style={{ width:12, height:12, color:GOLD, opacity:0.7 }} />
+              <Star style={{ width:14, height:14, color:GOLD, fill:GOLD }} />
             </div>
 
             <p style={{ fontFamily:"'Amiri Quran',serif", fontSize:26, lineHeight:2.2, color:"#fff", margin:"0 0 12px", direction:"rtl" }}>
               {dailyVerse.ar}
             </p>
 
-            <div style={{ width:40, height:"1px", background:`${GOLD}55`, margin:"0 auto 10px" }} />
+            <div style={{ width:50, height:"1.5px", background:GOLD, margin:"0 auto 12px", borderRadius:2 }} />
 
-            <p style={{ fontSize:13, fontStyle:"italic", color:"rgba(255,255,255,0.7)", margin:"0 0 5px" }}>
+            <p style={{ fontSize:13, fontStyle:"italic", color:"rgba(255,255,255,0.8)", margin:"0 0 6px" }}>
               "{dailyVerse.en}"
             </p>
-            <p style={{ fontSize:11, fontWeight:700, color:GOLD, margin:0 }}>{dailyVerse.ref}</p>
+            <p style={{ fontSize:12, fontWeight:800, color:GOLD, margin:0, letterSpacing:"0.05em" }}>{dailyVerse.ref}</p>
           </div>
         </div>
 
