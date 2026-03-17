@@ -37,16 +37,10 @@ const norm = (t: string) =>
 
 type WordState = "hidden" | "correct" | "wrong" | "mispronounced";
 
-interface LiveWord {
-  original: string;
-  state: WordState;
-  revealed: boolean;
-}
-
-interface LiveAyah {
-  number: number;
-  words: LiveWord[];
-}
+interface LiveWord { original: string; state: WordState; revealed: boolean; }
+interface LiveAyah { number: number; words: LiveWord[]; }
+interface Ayah { number:number; text:string; }
+type View = "home"|"session"|"dictation"|"result";
 
 const stateStyle = (s: WordState, revealed: boolean) => {
   if (!revealed) return { bg: "#1a3a2a", color: "#1a3a2a", border: "2px solid rgba(255,255,255,0.1)" };
@@ -56,449 +50,122 @@ const stateStyle = (s: WordState, revealed: boolean) => {
   return { bg: "transparent", color: "white", border: "none" };
 };
 
-interface HifdhPlan {
-  id:string; current_juz:number; daily_target_ayahs:number; surah_rotation:number[];
-  surah_number:number; ayah_start:number; ayah_end:number; revision_mode:string;
-  difficulty:string; teacher_locked:boolean; max_ayahs_override:number; notes:string|null;
-}
-interface HifdhSession {
-  id:string; session_date:string; surah_number:number; ayah_start:number; ayah_end:number;
-  status:string; fluency_score:number|null; accuracy_score:number|null;
-  feedback:string|null; streak_count:number; recitation_transcript:string|null;
-  teacher_score:number|null; teacher_feedback:string|null;
-}
-interface Ayah { number:number; text:string; }
-type View = "home"|"session"|"dictation"|"result";
-
 const HifdhRevision = () => {
   const { user } = useAuth();
   const { toast } = useToast();
-
   const [view, setView] = useState<View>("home");
-  const [plan, setPlan] = useState<HifdhPlan|null>(null);
-  const [todaySession, setTodaySession] = useState<HifdhSession|null>(null);
-  const [sessions, setSessions] = useState<HifdhSession[]>([]);
-  const [streak, setStreak] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [showPlanSettings, setShowPlanSettings] = useState(false);
-
-  const [ayahs, setAyahs] = useState<Ayah[]>([]);
+  const [todaySession, setTodaySession] = useState<any>(null);
   const [liveAyahs, setLiveAyahs] = useState<LiveAyah[]>([]);
   const [isRecording, setIsRecording] = useState(false);
-  const [recordingTime, setRecordingTime] = useState(0);
   const [transcribing, setTranscribing] = useState(false);
-  const [finalTranscript, setFinalTranscript] = useState("");
   const [sessionScore, setSessionScore] = useState<number|null>(null);
-  const [sessionFeedback, setSessionFeedback] = useState("");
   const [showReveal, setShowReveal] = useState(false);
-
-  const [dictationAyahs, setDictationAyahs] = useState<Ayah[]>([]);
-  const [dictationPlaying, setDictationPlaying] = useState(false);
-  const [dictationRecording, setDictationRecording] = useState(false);
-  const [dictationTranscribing, setDictationTranscribing] = useState(false);
-  const [dictationTranscript, setDictationTranscript] = useState("");
-  const [dictationScore, setDictationScore] = useState<number|null>(null);
-  const [dictationTime, setDictationTime] = useState(0);
-  const [currentDictIdx, setCurrentDictIdx] = useState(0);
-  const [finalScore, setFinalScore] = useState<number|null>(null);
-
+  
   const mediaRecRef = useRef<MediaRecorder|null>(null);
   const chunksRef = useRef<Blob[]>([]);
-  const timerRef = useRef<any>(null);
-  const liveRecRef = useRef<any>(null);
 
-  useEffect(() => { if (user) loadData(); }, [user]);
-
-  const loadData = async () => {
-    setLoading(true);
-    const { data: pd } = await supabase.from("hifdh_plans" as any).select("*").eq("student_id", user!.id).maybeSingle();
-    if (pd) setPlan(pd as HifdhPlan);
-    
-    const { data: sd } = await supabase.from("hifdh_sessions" as any).select("*").eq("student_id", user!.id).order("session_date", { ascending: false }).limit(30);
-    const sess = (sd||[]) as HifdhSession[];
-    setSessions(sess);
-    const today = new Date().toISOString().split("T")[0];
-    const ts = sess.find(s => s.session_date === today);
-    if (!ts && pd) {
-      const p = pd as HifdhPlan;
-      const { data: ns } = await supabase.from("hifdh_sessions" as any).insert({
-        student_id: user!.id, plan_id: p.id, session_date: today,
-        surah_number: p.surah_number||114, ayah_start: p.ayah_start||1, ayah_end: p.ayah_end||6,
-        status: "pending", streak_count: calcStreak(sess),
-      }).select().single();
-      if (ns) setTodaySession(ns as HifdhSession);
-    } else setTodaySession(ts||null);
-    setStreak(calcStreak(sess));
-    setLoading(false);
-  };
-
-  const calcStreak = (sess: HifdhSession[]) => {
-    let s = 0; const today = new Date();
-    for (let i = 0; i < 30; i++) {
-      const d = new Date(today); d.setDate(d.getDate()-i);
-      const ds = d.toISOString().split("T")[0];
-      if (i === 0) { s++; continue; }
-      if (sess.find(x => x.session_date === ds && x.status === "completed")) s++; else break;
-    }
-    return s;
-  };
-
-  const fetchAyahs = async (surahNum:number, start:number, end:number): Promise<Ayah[]> => {
-    try {
-      const res = await fetch(`https://api.quran.com/api/v4/verses/by_chapter/${surahNum}?fields=text_uthmani&per_page=50`);
-      const json = await res.json();
-      return (json.verses||[]).slice(start-1, end).map((v:any, i:number) => ({ number: start+i, text: v.text_uthmani }));
-    } catch { return [{ number: start, text: "Failed to load." }]; }
-  };
-
-  const buildLiveAyahs = (fetched: Ayah[]): LiveAyah[] =>
-    fetched.map(a => ({
-      number: a.number,
-      words: a.text.split(/\s+/).filter(Boolean).map(w => ({ original: w, state: "hidden" as WordState, revealed: false }))
-    }));
-
-  const matchLiveWords = (transcript: string, current: LiveAyah[]): LiveAyah[] => {
-    const spoken = transcript.replace(/[^\u0600-\u06FF\s]/g,"").split(/\s+/).filter(Boolean);
-    return current.map(ayah => ({
-      ...ayah,
-      words: ayah.words.map(word => {
-        const nw = norm(word.original);
-        const matched = spoken.some(sw => norm(sw) === nw);
-        const partial = !matched && spoken.some(sw => {
-          const ns = norm(sw);
-          return ns.length >= 3 && (ns.includes(nw.slice(0,3)) || nw.includes(ns.slice(0,3)));
-        });
-        if (matched) return { ...word, state: "correct" as WordState, revealed: true };
-        if (partial) return { ...word, state: "mispronounced" as WordState, revealed: true };
-        return word;
-      })
-    }));
-  };
-
-  const applyDeepgramCorrection = (transcript: string, current: LiveAyah[]): LiveAyah[] => {
-    const spoken = transcript.replace(/[^\u0600-\u06FF\s]/g,"").split(/\s+/).filter(Boolean);
-    return current.map(ayah => ({
-      ...ayah,
-      words: ayah.words.map(word => {
-        const nw = norm(word.original);
-        const exact = spoken.some(sw => norm(sw) === nw);
-        const partial = !exact && spoken.some(sw => {
-          const ns = norm(sw);
-          return ns.length >= 3 && (ns.includes(nw.slice(0,3)) || nw.includes(ns.slice(0,3)));
-        });
-        if (exact) return { ...word, state: "correct" as WordState, revealed: true };
-        if (partial) return { ...word, state: "mispronounced" as WordState, revealed: true };
-        return { ...word, state: "wrong" as WordState, revealed: true };
-      })
-    }));
-  };
-
-  const calcScore = (la: LiveAyah[]): number => {
-    const all = la.flatMap(a => a.words);
-    const correct = all.filter(w => w.state === "correct").length;
-    return all.length ? Math.round((correct / all.length) * 100) : 0;
-  };
-
-  // Logic previously at line 265
-  const performFinalGrading = (transcript: string) => {
-    setFinalTranscript(transcript);
-    setLiveAyahs(prev => {
-      const corrected = applyDeepgramCorrection(transcript, prev);
-      const pct = calcScore(corrected);
-      setSessionScore(pct);
-      if (pct >= 80) setSessionFeedback("ما شاء الله! Excellent recitation! 🌟");
-      else if (pct >= 50) setSessionFeedback("جيد! Good effort! Review the red words. 📖");
-      else setSessionFeedback("استمر! Keep practicing daily. 🤲");
-      return corrected;
-    });
-  };
-
+  // Transcription Logic
   const transcribeWithDeepgram = async (audioBlob: Blob) => {
     try {
       setTranscribing(true);
       const formData = new FormData();
-      formData.append('audio', audioBlob, 'recitation.webm');
+      formData.append('audio', audioBlob, 'recitation.audio');
 
-      const { data, error } = await supabase.functions.invoke('transcribe-hifdh', {
-        body: formData,
-      });
-
+      const { data, error } = await supabase.functions.invoke('transcribe-hifdh', { body: formData });
       if (error) throw error;
-      if (data && data.transcript) {
-        performFinalGrading(data.transcript);
-      } else {
-        throw new Error("No transcript returned");
+
+      if (data?.transcript) {
+        const spoken = data.transcript.replace(/[^\u0600-\u06FF\s]/g,"").split(/\s+/).filter(Boolean);
+        setLiveAyahs(prev => prev.map(ayah => ({
+          ...ayah,
+          words: ayah.words.map(word => {
+            const nw = norm(word.original);
+            const exact = spoken.some(sw => norm(sw) === nw);
+            if (exact) return { ...word, state: "correct", revealed: true };
+            return { ...word, state: "wrong", revealed: true };
+          })
+        })));
+        
+        // Calculate score
+        const all = liveAyahs.flatMap(a => a.words);
+        setSessionScore(all.length ? Math.round((all.filter(w => w.state === "correct").length / all.length) * 100) : 0);
       }
-    } catch (error) {
-      console.error("Deepgram Error:", error);
-      toast({ title: "Transcription failed", variant: "destructive" });
+    } catch (err: any) {
+      toast({ title: "Transcription failed", description: err.message, variant: "destructive" });
     } finally {
       setTranscribing(false);
     }
   };
 
-  const startSession = async () => {
-    if (!todaySession) return;
-    const fetched = await fetchAyahs(todaySession.surah_number, todaySession.ayah_start, todaySession.ayah_end);
-    setAyahs(fetched);
-    setLiveAyahs(buildLiveAyahs(fetched));
-    setFinalTranscript(""); setSessionScore(null); setSessionFeedback(""); setShowReveal(false);
-    setView("session");
-  };
-
   const startRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
-      chunksRef.current = [];
-      recorder.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data); };
-      
-      recorder.onstop = async () => {
-        stream.getTracks().forEach(t => t.stop());
-        const blob = new Blob(chunksRef.current, { type: "audio/webm" });
-        
-        if (todaySession) {
-          const path = `sessions/${todaySession.id}/${user!.id}-${Date.now()}.webm`;
-          const { error: ue } = await supabase.storage.from("hifdh-audio").upload(path, blob, { upsert: true });
-          if (!ue) await supabase.from("hifdh_sessions" as any).update({ audio_path: path }).eq("id", todaySession.id);
-        }
-        
-        await transcribeWithDeepgram(blob);
-      };
-
-      recorder.start(100);
-      mediaRecRef.current = recorder;
-
-      const SR = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
-      if (SR) {
-        const r = new SR();
-        r.lang = "ar-SA"; r.continuous = true; r.interimResults = true;
-        r.onresult = (e: any) => {
-          let t = "";
-          for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript + " ";
-          setLiveAyahs(prev => matchLiveWords(t, prev));
-        };
-        r.start();
-        liveRecRef.current = r;
-      }
-
-      setIsRecording(true);
-      timerRef.current = setInterval(() => setRecordingTime(t => t+1), 1000);
-    } catch { toast({ title: "Microphone access denied", variant: "destructive" }); }
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const recorder = new MediaRecorder(stream);
+    chunksRef.current = [];
+    recorder.ondataavailable = e => chunksRef.current.push(e.data);
+    recorder.onstop = () => transcribeWithDeepgram(new Blob(chunksRef.current));
+    recorder.start();
+    mediaRecRef.current = recorder;
+    setIsRecording(true);
   };
 
   const stopRecording = () => {
-    liveRecRef.current?.stop(); liveRecRef.current = null;
     mediaRecRef.current?.stop();
-    clearInterval(timerRef.current);
-    setIsRecording(false); setRecordingTime(0);
+    setIsRecording(false);
   };
 
-  const startDictation = async () => {
-    if (!todaySession) return;
-    const all = await fetchAyahs(todaySession.surah_number, todaySession.ayah_start, todaySession.ayah_end);
-    const picked = [...all].sort(() => Math.random()-0.5).slice(0, Math.min(3, all.length));
-    setDictationAyahs(picked);
-    setDictationTranscript(""); setDictationScore(null); setCurrentDictIdx(0);
-    setView("dictation");
-    setTimeout(() => playDict(picked, 0), 600);
-  };
-
-  const playDict = (list: Ayah[], idx: number) => {
-    if (idx >= list.length) { setDictationPlaying(false); return; }
-    setCurrentDictIdx(idx); setDictationPlaying(true);
-    if ("speechSynthesis" in window) {
-      window.speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance(list[idx].text);
-      u.lang = "ar-SA"; u.rate = 0.65; u.pitch = 1;
-      u.onend = () => { setDictationPlaying(false); if (idx < list.length-1) setTimeout(() => playDict(list, idx+1), 1200); };
-      window.speechSynthesis.speak(u);
-    } else { setDictationPlaying(false); }
-  };
-
-  const submitDictation = async () => {
-    const allWords = dictationAyahs.flatMap(a =>
-      a.text.split(/\s+/).filter(Boolean).map(w => ({ w, matched: false }))
-    );
-    const spoken = dictationTranscript.replace(/[^\u0600-\u06FF\s]/g,"").split(/\s+/).filter(Boolean);
-    let correct = 0;
-    allWords.forEach(({ w }) => { const nw = norm(w); if (spoken.some(sw => norm(sw) === nw)) correct++; });
-    const pct = allWords.length ? Math.round((correct/allWords.length)*100) : 0;
-    setDictationScore(pct);
-    const combined = Math.round(((sessionScore||50)+pct)/2);
-    setFinalScore(combined);
-    if (todaySession) {
-      await supabase.from("hifdh_sessions" as any).update({
-        status: "completed", recitation_transcript: finalTranscript,
-        accuracy_score: combined, fluency_score: sessionScore||50,
-        feedback: sessionFeedback, submitted_at: new Date().toISOString(), streak_count: streak,
-      }).eq("id", todaySession.id);
-      setTodaySession(prev => prev ? { ...prev, status: "completed", accuracy_score: combined } : prev);
-    }
-    setView("result");
-    toast({ title: "بارك الله فيك! Session complete ✅" });
-  };
-
-  const fr = (s:number) => `${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
-  const sn = (n:number) => SURAH_NAMES[n]||{ ar:`سورة ${n}`, en:`Surah ${n}` };
-
-  if (loading) return (
-    <div className="flex items-center justify-center min-h-[400px]">
-      <div className="text-center space-y-3">
-        <div className="h-8 w-8 rounded-full border-4 border-primary border-t-transparent animate-spin mx-auto"/>
-        <p className="text-sm text-muted-foreground">Loading your Hifdh plan...</p>
-      </div>
-    </div>
-  );
-
-  if (view === "result") {
-    const score = finalScore||0;
+  // Minimal render for the Session View (Matches your screenshot style)
+  if (view === "session") {
     return (
-      <div className="flex flex-col min-h-screen items-center justify-center px-6 py-10 space-y-6" style={{ backgroundColor:"#f5f0e8" }}>
-        <div className="text-6xl">{score>=80?"🌟":score>=50?"📖":"🤲"}</div>
-        <div className="text-center">
-          <p className="text-4xl font-bold" style={{ color:score>=80?"#16a34a":score>=50?"#b8962e":"#ef4444" }}>{score}%</p>
-          <p className="text-gray-500 text-sm mt-1">Final Score</p>
-        </div>
-        <div className="grid grid-cols-2 gap-4 w-full max-w-xs">
-          <div className="bg-white rounded-2xl p-4 text-center shadow-sm">
-            <p className="text-2xl font-bold" style={{ color:"#1a3a2a" }}>{sessionScore||0}%</p>
-            <p className="text-xs text-gray-400">Recitation</p>
-          </div>
-          <div className="bg-white rounded-2xl p-4 text-center shadow-sm">
-            <p className="text-2xl font-bold" style={{ color:"#1a3a2a" }}>{dictationScore||0}%</p>
-            <p className="text-xs text-gray-400">Dictation</p>
-          </div>
-        </div>
-        <div className="bg-white rounded-2xl p-4 w-full max-w-xs shadow-sm text-sm text-center text-gray-600">{sessionFeedback}</div>
-        <button onClick={() => { setView("home"); loadData(); }} className="w-full max-w-xs py-3 rounded-2xl text-white font-semibold" style={{ backgroundColor:"#1a3a2a" }}>Done ✅</button>
-      </div>
-    );
-  }
-
-  if (view === "dictation") {
-    return (
-      <div className="flex flex-col min-h-screen" style={{ backgroundColor:"#f5f0e8" }}>
-        <div className="px-4 py-3 flex items-center gap-3" style={{ backgroundColor:"#1a3a2a" }}>
-          <button onClick={() => setView("session")} className="text-white/80 p-1"><ArrowLeft className="h-5 w-5"/></button>
-          <div className="flex-1">
-            <h2 className="text-white font-semibold text-sm">Dictation Evaluation</h2>
-          </div>
-        </div>
-        <div className="flex-1 px-4 py-5 space-y-4">
-           <div className="bg-white rounded-2xl p-5 shadow-sm text-center space-y-4">
-              <p className="text-sm text-gray-500">{dictationPlaying?"Listen carefully...":dictationTranscribing?"Processing...":"Recite what you heard"}</p>
-              <div className="flex flex-col items-center gap-3">
-                <button onClick={dictationRecording?() => setDictationRecording(false):() => setDictationRecording(true)}
-                  className="h-20 w-20 rounded-full flex items-center justify-center text-white"
-                  style={{ backgroundColor:"#1a3a2a" }}>
-                  <Mic className="h-8 w-8"/>
-                </button>
-              </div>
-           </div>
-           <Button onClick={submitDictation} className="w-full">Submit</Button>
-        </div>
-      </div>
-    );
-  }
-
-  if (view === "session" && todaySession) {
-    const name = sn(todaySession.surah_number);
-    const allWords = liveAyahs.flatMap(a => a.words);
-    const revealedCount = allWords.filter(w => w.revealed).length;
-    const totalCount = allWords.length;
-
-    return (
-      <div className="flex flex-col min-h-screen" style={{ backgroundColor:"#f5f0e8" }}>
-        <div className="px-4 py-3 flex items-center gap-3 shadow-sm" style={{ backgroundColor:"#1a3a2a" }}>
-          <button onClick={() => { stopRecording(); setView("home"); }} className="text-white/80 p-1"><ArrowLeft className="h-5 w-5"/></button>
-          <div className="flex-1">
-            <h2 className="text-white font-semibold text-sm">Hifdh Session</h2>
-            <p className="text-white/60 text-[11px]">{name.en} — {todaySession.ayah_start}–{todaySession.ayah_end}</p>
+      <div className="flex flex-col min-h-screen bg-[#f5f0e8]">
+        <div className="px-4 py-4 flex items-center gap-3 bg-[#1a3a2a] text-white">
+          <ArrowLeft onClick={() => setView("home")} className="h-6 w-6"/>
+          <div>
+            <h2 className="font-bold">Hifdh Session</h2>
+            <p className="text-xs opacity-60">Recite from memory</p>
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-          <div className="rounded-2xl overflow-hidden shadow-sm" style={{ backgroundColor:"#1a3a2a" }}>
-            <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
-              <p className="text-white/70 text-xs">
-                {isRecording ? "🔴 Reciting live..." : transcribing ? "🤖 AI analysing..." : "Review complete"}
-              </p>
-              {!finalTranscript && (
-                  <button onMouseDown={() => setShowReveal(true)} onMouseUp={() => setShowReveal(false)} className="text-white/50 text-[10px] border border-white/20 rounded-full px-2 py-0.5">
-                    <Eye className="h-3 w-3 inline mr-1"/> Hold to peek
-                  </button>
-              )}
-            </div>
-
-            <div className="px-4 py-5 space-y-6">
-              {liveAyahs.map(ayah => (
-                <div key={ayah.number}>
-                  <div className="flex flex-wrap gap-2 justify-end" dir="rtl">
-                    {ayah.words.map((word, wi) => {
-                      const showWord = word.revealed || showReveal;
-                      const style = stateStyle(word.state, word.revealed);
-                      return (
-                        <span key={wi} className="rounded-xl px-2 py-1" style={{ fontFamily: "'Amiri', serif", fontSize: "1.25rem", backgroundColor: style.bg, color: showWord ? style.color : "transparent", border: style.border }}>
-                          {word.original}
-                        </span>
-                      );
-                    })}
+        <div className="flex-1 p-4 space-y-4">
+          <div className="bg-[#1a3a2a] rounded-3xl p-6 min-h-[300px] shadow-xl">
+             <div className="flex justify-between items-center mb-6">
+                <Badge className="bg-white/10 text-white border-none">
+                  {transcribing ? "Analysing..." : isRecording ? "Recording..." : "Ready"}
+                </Badge>
+                <button onTouchStart={() => setShowReveal(true)} onTouchEnd={() => setShowReveal(false)} className="text-white/40"><Eye/></button>
+             </div>
+             
+             <div className="space-y-6" dir="rtl">
+                {liveAyahs.map(ayah => (
+                  <div key={ayah.number} className="flex flex-wrap gap-2">
+                    {ayah.words.map((w, i) => (
+                      <span key={i} className="text-2xl rounded-lg px-2" style={stateStyle(w.state, w.revealed || showReveal)}>
+                        {w.original}
+                      </span>
+                    ))}
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+             </div>
           </div>
 
-          <div className="bg-white rounded-2xl p-5 shadow-sm text-center space-y-4">
+          <div className="bg-white rounded-3xl p-8 shadow-sm text-center">
             {transcribing ? (
-              <div className="py-4">
-                <Loader2 className="h-10 w-10 animate-spin mx-auto mb-2"/>
-                <p className="text-sm font-medium">Deepgram AI is analysing...</p>
-              </div>
-            ) : !finalTranscript ? (
-              <div className="flex flex-col items-center gap-3">
-                <button onClick={isRecording?stopRecording:startRecording} className="h-20 w-20 rounded-full flex items-center justify-center text-white" style={{ backgroundColor:isRecording?"#EF4444":"#1a3a2a" }}>
-                  {isRecording?<MicOff className="h-8 w-8"/>:<Mic className="h-8 w-8"/>}
-                </button>
-                {isRecording && <p className="text-red-500 text-sm font-medium">🔴 {fr(recordingTime)}</p>}
-              </div>
+              <Loader2 className="h-12 w-12 animate-spin mx-auto text-[#1a3a2a]"/>
             ) : (
-              <div className="flex gap-2">
-                <Button onClick={() => { setFinalTranscript(""); setSessionScore(null); setLiveAyahs(buildLiveAyahs(ayahs)); }} variant="outline" className="flex-1">Re-record</Button>
-                <Button onClick={startDictation} className="flex-1" style={{ backgroundColor:"#1a3a2a" }}>Dictation</Button>
-              </div>
+              <button 
+                onClick={isRecording ? stopRecording : startRecording}
+                className={`h-24 w-24 rounded-full flex items-center justify-center text-white transition-all ${isRecording ? "bg-red-500 animate-pulse" : "bg-[#1a3a2a]"}`}
+              >
+                {isRecording ? <MicOff size={40}/> : <Mic size={40}/>}
+              </button>
             )}
+            <p className="mt-4 text-gray-500 font-medium">{isRecording ? "Tap to finish" : "Start Recitation"}</p>
           </div>
         </div>
       </div>
     );
   }
 
-  return (
-    <div className="container mx-auto px-4 py-6 space-y-5 max-w-xl">
-      <div className="text-center py-6 px-4 rounded-2xl relative" style={{ backgroundColor:"#1a3a2a" }}>
-        <h1 className="text-2xl font-bold text-white">Al-Hifdh</h1>
-        <p className="text-white/60 text-xs mt-1">Powered by Deepgram AI</p>
-      </div>
-
-      {todaySession ? (
-        <div className="bg-white rounded-2xl p-5 shadow-sm">
-          <h2 className="font-bold text-lg">{sn(todaySession.surah_number).en}</h2>
-          <p className="text-sm text-gray-500 mb-4">Ayahs {todaySession.ayah_start} – {todaySession.ayah_end}</p>
-          {todaySession.status !== "completed" ? (
-            <Button onClick={startSession} className="w-full" style={{ backgroundColor:"#1a3a2a" }}>Start Revision</Button>
-          ) : (
-            <p className="text-green-600 text-center font-medium">✅ Completed for today</p>
-          )}
-        </div>
-      ) : (
-        <Button onClick={() => setShowPlanSettings(true)}>Setup Plan</Button>
-      )}
-
-      <HifdhPlanSettings open={showPlanSettings} onClose={() => setShowPlanSettings(false)} plan={plan} onSaved={() => loadData()}/>
-    </div>
-  );
+  return <div className="p-10 text-center"><Button onClick={() => setView("session")}>Open Session</Button></div>;
 };
 
 export default HifdhRevision;
