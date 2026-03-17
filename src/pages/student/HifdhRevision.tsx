@@ -257,18 +257,38 @@ const HifdhRevision = () => {
           const { error: ue } = await supabase.storage.from("hifdh-audio").upload(path, blob, { upsert: true });
           if (!ue) await supabase.from("hifdh_sessions" as any).update({ audio_path: path }).eq("id", todaySession.id);
         }
-        const transcript = await transcribeWithGroq(blob);
-        setFinalTranscript(transcript);
-        // Apply Groq correction to live ayahs
-        setLiveAyahs(prev => {
-          const corrected = applyGroqCorrection(transcript, prev);
-          const pct = calcScore(corrected);
-          setSessionScore(pct);
-          if (pct >= 80) setSessionFeedback("ما شاء الله! Excellent recitation! 🌟");
-          else if (pct >= 50) setSessionFeedback("جيد! Good effort! Review the red words. 📖");
-          else setSessionFeedback("استمر! Keep practicing daily. 🤲");
-          return corrected;
-        });
+          const transcribeWithDeepgram = async (audioBlob: Blob) => {
+    try {
+      setIsAnalysing(true);
+      
+      const formData = new FormData();
+      formData.append('audio', audioBlob, 'recitation.webm');
+
+      // This calls your Supabase Edge Function we just updated
+      const { data, error } = await supabase.functions.invoke('transcribe-hifdh', {
+        body: formData,
+      });
+
+      if (error) throw error;
+
+      if (data && data.transcript) {
+        console.log("Deepgram Transcript:", data.transcript);
+        // This function will now compare the Deepgram text to the Quran text
+        performFinalGrading(data.transcript);
+      } else {
+        throw new Error("No transcript returned from Deepgram");
+      }
+    } catch (error) {
+      console.error("Transcription error:", error);
+      toast({
+        title: "Transcription Error",
+        description: "Could not analyze your recitation. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsAnalysing(false);
+    }
+  };
         setTranscribing(false);
       };
       recorder.start(100);
