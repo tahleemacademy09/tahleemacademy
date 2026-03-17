@@ -1,4 +1,4 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts"; // Fixed uppercase "Import"
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -7,80 +7,39 @@ const corsHeaders = {
 };
 
 serve(async (req) => {
-  // CORS preflight
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
-    // Validate environment variables
-    const groqApiKey = Deno.env.get("GROQ_API_KEY");
-    if (!groqApiKey) {
-      throw new Error("GROQ API key not set");
-    }
+    const apiKey = Deno.env.get("DEEPGRAM_API_KEY");
+    if (!apiKey) throw new Error("DEEPGRAM_API_KEY is not set");
 
-    // Process request
     const formData = await req.formData();
-    const audioFile = formData.get("audio");
+    const audioFile = formData.get("audio") as File;
 
-    // Type-safe form data validation
-    if (!(audioFile instanceof File)) {
-      return new Response(JSON.stringify({ 
-        error: "Invalid audio file in request" 
-      }), { 
-        status: 400, 
-        headers: { ...corsHeaders, "Content-Type": "application/json" }
-      });
-    }
+    if (!audioFile) throw new Error("No audio file provided");
 
-    // FIX 1: Reconstruct the audio file into a fresh Blob. 
-    // This prevents Deno from corrupting the stream when forwarding it.
+    // Convert File to ArrayBuffer for Deepgram
     const arrayBuffer = await audioFile.arrayBuffer();
-    const mimeType = audioFile.type || "audio/webm";
-    const audioBlob = new Blob([arrayBuffer], { type: mimeType });
 
-    // Create request to transcribe audio
-    const groqForm = new FormData();
-    groqForm.append("file", audioBlob, "recitation.webm");
-    groqForm.append("model", "whisper-large-v3");
-    groqForm.append("language", "ar");
-    groqForm.append("response_format", "json");
-    groqForm.append("prompt", "Quranic Arabic recitation. Transcribe in Arabic script with diacritics.");
-
-    const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+    const response = await fetch("https://api.deepgram.com/v1/listen?model=nova-3&language=ar&smart_format=true", {
       method: "POST",
-      headers: { 
-        Authorization: `Bearer ${groqApiKey}` 
-        // Note: Do NOT add 'Content-Type': 'multipart/form-data' here. 
-        // fetch will automatically set it with the correct boundary.
+      headers: {
+        "Authorization": `Token ${apiKey}`,
+        "Content-Type": audioFile.type,
       },
-      body: groqForm,
+      body: arrayBuffer,
     });
 
-    // FIX 2: Actually catch and throw Groq API errors
-    if (!res.ok) {
-      const errorData = await res.text();
-      console.error("Groq API Error Details:", errorData);
-      throw new Error(`Groq rejected the request (${res.status}): ${errorData}`);
-    }
+    const data = await response.json();
+    const transcript = data.results?.channels[0]?.alternatives[0]?.transcript || "";
 
-    // Handle transcription response
-    const data = await res.json();
-    return new Response(JSON.stringify({ 
-      transcript: data.text || "No transcription found" 
-    }), { 
-      headers: { ...corsHeaders, "Content-Type": "application/json" }
+    return new Response(JSON.stringify({ transcript }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
-
-  } catch (e) {
-    console.error(`Server error: ${e.message}`);
-    
-    // Better error handling that passes the actual error back to your frontend
-    return new Response(JSON.stringify({ 
-      error: e.message || "Internal server error" 
-    }), { 
-      status: e.message.includes("GROQ API key") ? 500 : 400,
-      headers: { ...corsHeaders, "Content-Type": "application/json" }
+  } catch (error) {
+    return new Response(JSON.stringify({ error: error.message }), {
+      status: 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 });
