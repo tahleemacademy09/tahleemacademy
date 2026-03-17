@@ -1,63 +1,30 @@
 /*
-  ╔══════════════════════════════════════════════════════╗
-  ║   HifdhRevision.tsx — Tahleem Academy                ║
-  ║   Full AI-Hifdh Page with:                           ║
-  ║   • Real mic (Web Speech API, Arabic)                ║
-  ║   • Word-by-word live checking                       ║
-  ║   • Working timer                                    ║
-  ║   • Surah switching (Quran Cloud API)                ║
-  ║   • Ayah navigation                                  ║
-  ║   • Audio playback (Alafasy)                         ║
-  ║   • Score saves to Supabase                          ║
-  ║   • Revision schedule from Supabase                  ║
-  ║   • Mistake highlighting                             ║
-  ╚══════════════════════════════════════════════════════╝
-
-  SUPABASE TABLES REQUIRED:
-  ─────────────────────────
-  1. hifdh_sessions
-     - id          uuid primary key default uuid_generate_v4()
-     - user_id     uuid references auth.users
-     - surah_num   int
-     - surah_name  text
-     - ayah_num    int
-     - score       int        (0–100)
-     - correct     int
-     - wrong       int
-     - duration    int        (seconds)
-     - created_at  timestamp default now()
-
-  2. hifdh_progress
-     - id            uuid primary key default uuid_generate_v4()
-     - user_id       uuid references auth.users
-     - surah_num     int
-     - surah_name    text
-     - last_reviewed timestamp default now()
-     - best_accuracy int
-     - times_reviewed int default 1
+  HifdhRevision.tsx \u2014 Tahleem Academy
+  Light cream design matching Revision Centre style
+  Full functionality: mic, word-check, timer, surah API, audio, Supabase
 */
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 
-// ─── Types ────────────────────────────────────────────
+// \u2500\u2500\u2500 Types \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 interface SurahMeta {
   number: number;
-  name: string;           // Arabic
+  name: string;
   englishName: string;
   numberOfAyahs: number;
 }
 
 interface AyahData {
-  number: number;         // global verse number
+  number: number;
   numberInSurah: number;
-  text: string;           // raw Arabic text
+  text: string;
   words: WordState[];
 }
 
 interface WordState {
-  raw: string;            // original with tashkeel
-  normalized: string;     // stripped for comparison
+  raw: string;
+  normalized: string;
   state: "idle" | "correct" | "wrong" | "current";
 }
 
@@ -70,27 +37,22 @@ interface RevisionEntry {
 
 type Mode = "memorize" | "recitation" | "revision";
 
-// ─── Arabic helpers ───────────────────────────────────
+// \u2500\u2500\u2500 Arabic helpers \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 const normalize = (t: string) =>
-  t
-    .replace(/[\u064B-\u065F\u0670]/g, "")   // strip tashkeel
-    .replace(/[أإآ]/g, "ا")                   // unify alef
-    .replace(/ة/g, "ه")                        // teh marbuta → ha
-    .replace(/ى/g, "ي")                        // alef maqsura → ya
-    .replace(/\s+/g, " ")
-    .trim();
+  t.replace(/[\u064B-\u065F\u0670]/g, "")
+   .replace(/[\u0623\u0625\u0622]/g, "\u0627")
+   .replace(/\u0629/g, "\u0647")
+   .replace(/\u0649/g, "\u064a")
+   .replace(/\s+/g, " ")
+   .trim();
 
 const toWords = (text: string): WordState[] =>
-  text
-    .replace(/﴿.*?﴾/g, "")                   // remove verse numbers
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((w) => ({ raw: w, normalized: normalize(w), state: "idle" as const }));
+  text.replace(/\ufd3f.*?\ufd3e/g, "").trim().split(/\s+/).filter(Boolean).map((w) => ({
+    raw: w, normalized: normalize(w), state: "idle" as const,
+  }));
 
-// ─── Main component ───────────────────────────────────
+// \u2500\u2500\u2500 Component \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 export default function HifdhRevision() {
-  // UI state
   const [mode, setMode] = useState<Mode>("recitation");
   const [surahs, setSurahs] = useState<SurahMeta[]>([]);
   const [selectedSurah, setSelectedSurah] = useState<SurahMeta | null>(null);
@@ -99,7 +61,6 @@ export default function HifdhRevision() {
   const [loadingAyahs, setLoadingAyahs] = useState(false);
   const [surahSearch, setSurahSearch] = useState("");
 
-  // Recording state
   const [isRecording, setIsRecording] = useState(false);
   const [timer, setTimer] = useState(0);
   const [transcript, setTranscript] = useState("");
@@ -107,38 +68,30 @@ export default function HifdhRevision() {
   const recognitionRef = useRef<any>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Audio
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
 
-  // Session score
   const [sessionCorrect, setSessionCorrect] = useState(0);
   const [sessionWrong, setSessionWrong] = useState(0);
   const [showSummary, setShowSummary] = useState(false);
 
-  // Supabase
   const [revisionSchedule, setRevisionSchedule] = useState<RevisionEntry[]>([]);
   const [savingSession, setSavingSession] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
 
-  // ── Get current user ──────────────────────────────
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
       if (data?.user) setUserId(data.user.id);
     });
   }, []);
 
-  // ── Fetch surahs list ─────────────────────────────
   useEffect(() => {
     fetch("https://api.alquran.cloud/v1/surah")
       .then((r) => r.json())
-      .then((d) => {
-        if (d.code === 200) setSurahs(d.data);
-      })
+      .then((d) => { if (d.code === 200) setSurahs(d.data); })
       .catch(() => {});
   }, []);
 
-  // ── Fetch ayahs when surah changes ────────────────
   useEffect(() => {
     if (!selectedSurah) return;
     setLoadingAyahs(true);
@@ -149,35 +102,27 @@ export default function HifdhRevision() {
       .then((r) => r.json())
       .then((d) => {
         if (d.code === 200) {
-          const parsed: AyahData[] = d.data.ayahs.map((a: any) => ({
-            number: a.number,
-            numberInSurah: a.numberInSurah,
-            text: a.text,
-            words: toWords(a.text),
-          }));
-          setAyahs(parsed);
+          setAyahs(d.data.ayahs.map((a: any) => ({
+            number: a.number, numberInSurah: a.numberInSurah,
+            text: a.text, words: toWords(a.text),
+          })));
         }
       })
       .catch(() => {})
       .finally(() => setLoadingAyahs(false));
   }, [selectedSurah]);
 
-  // ── Fetch revision schedule ───────────────────────
   useEffect(() => {
     if (!userId) return;
-    supabase
-      .from("hifdh_progress")
+    supabase.from("hifdh_progress")
       .select("surah_num,surah_name,last_reviewed,best_accuracy")
       .eq("user_id", userId)
       .order("last_reviewed", { ascending: true })
       .limit(5)
-      .then(({ data }) => {
-        if (data) setRevisionSchedule(data as RevisionEntry[]);
-      })
+      .then(({ data }) => { if (data) setRevisionSchedule(data as RevisionEntry[]); })
       .catch(() => {});
   }, [userId]);
 
-  // ── Timer ─────────────────────────────────────────
   useEffect(() => {
     if (isRecording) {
       timerRef.current = setInterval(() => setTimer((t) => t + 1), 1000);
@@ -190,609 +135,382 @@ export default function HifdhRevision() {
   const formatTimer = (s: number) =>
     `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 
-  // ── Speech Recognition ────────────────────────────
+  const checkWords = useCallback((spokenText: string) => {
+    if (!ayahs[ayahIndex]) return;
+    const spokenWords = normalize(spokenText).split(/\s+/).filter(Boolean);
+    setAyahs((prev) => {
+      const updated = [...prev];
+      const ayah = { ...updated[ayahIndex] };
+      const words = ayah.words.map((w, wi) => {
+        const spoken = spokenWords[wi];
+        if (!spoken) return wi === spokenWords.length ? { ...w, state: "current" as const } : { ...w, state: "idle" as const };
+        if (spoken === w.normalized) return { ...w, state: "correct" as const };
+        const isClose = spokenWords.some((sw) => sw === w.normalized || w.normalized.startsWith(sw.slice(0, 3)));
+        return { ...w, state: isClose ? "correct" as const : "wrong" as const };
+      });
+      const firstIdle = words.findIndex((w) => w.state === "idle");
+      if (firstIdle !== -1) words[firstIdle] = { ...words[firstIdle], state: "current" };
+      ayah.words = words;
+      updated[ayahIndex] = ayah;
+      return updated;
+    });
+  }, [ayahIndex, ayahs]);
+
   const initRecognition = useCallback(() => {
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SR) { setSpeechSupported(false); return null; }
-
     const rec = new SR();
-    rec.lang = "ar-SA";
-    rec.continuous = true;
-    rec.interimResults = true;
-    rec.maxAlternatives = 3;
-
+    rec.lang = "ar-SA"; rec.continuous = true; rec.interimResults = true;
     rec.onresult = (e: any) => {
       let interim = "";
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        interim += e.results[i][0].transcript;
-      }
+      for (let i = e.resultIndex; i < e.results.length; i++) interim += e.results[i][0].transcript;
       setTranscript(interim);
       checkWords(interim);
     };
-
-    rec.onerror = (e: any) => {
-      if (e.error !== "no-speech") stopRecording();
-    };
-
-    rec.onend = () => {
-      // auto-restart if still recording
-      if (recognitionRef.current && isRecording) {
-        try { rec.start(); } catch (_) {}
-      }
-    };
-
+    rec.onerror = (e: any) => { if (e.error !== "no-speech") stopRecording(); };
+    rec.onend = () => { if (recognitionRef.current && isRecording) { try { rec.start(); } catch (_) {} } };
     return rec;
-  }, [isRecording]);
+  }, [isRecording, checkWords]);
 
-  // ── Word-by-word checking ─────────────────────────
-  const checkWords = useCallback(
-    (spokenText: string) => {
-      if (!ayahs[ayahIndex]) return;
-      const spokenNorm = normalize(spokenText);
-      const spokenWords = spokenNorm.split(/\s+/).filter(Boolean);
-
-      setAyahs((prev) => {
-        const updated = [...prev];
-        const ayah = { ...updated[ayahIndex] };
-        const words = ayah.words.map((w, wi) => {
-          const spoken = spokenWords[wi];
-          if (!spoken) return wi === spokenWords.length ? { ...w, state: "current" as const } : { ...w, state: "idle" as const };
-          if (spoken === w.normalized) return { ...w, state: "correct" as const };
-          // check any alternative close match
-          const isClose = spokenWords.some(
-            (sw) => sw === w.normalized || w.normalized.startsWith(sw.slice(0, 3))
-          );
-          return { ...w, state: isClose ? "correct" as const : "wrong" as const };
-        });
-
-        // Mark current word
-        const firstIdle = words.findIndex((w) => w.state === "idle");
-        if (firstIdle !== -1) words[firstIdle] = { ...words[firstIdle], state: "current" };
-
-        ayah.words = words;
-        updated[ayahIndex] = ayah;
-        return updated;
-      });
-    },
-    [ayahIndex, ayahs]
-  );
-
-  // ── Start recording ───────────────────────────────
   const startRecording = () => {
     const rec = initRecognition();
     if (!rec) return;
     recognitionRef.current = rec;
     try {
-      rec.start();
-      setIsRecording(true);
-      setTimer(0);
-      setTranscript("");
-      // reset current ayah words to idle
+      rec.start(); setIsRecording(true); setTimer(0); setTranscript("");
       setAyahs((prev) => {
         const updated = [...prev];
-        if (updated[ayahIndex]) {
-          updated[ayahIndex] = {
-            ...updated[ayahIndex],
-            words: updated[ayahIndex].words.map((w) => ({ ...w, state: "idle" })),
-          };
-        }
+        if (updated[ayahIndex]) updated[ayahIndex] = { ...updated[ayahIndex], words: updated[ayahIndex].words.map((w) => ({ ...w, state: "idle" })) };
         return updated;
       });
     } catch (_) {}
   };
 
-  // ── Stop recording ────────────────────────────────
   const stopRecording = () => {
-    if (recognitionRef.current) {
-      try { recognitionRef.current.stop(); } catch (_) {}
-      recognitionRef.current = null;
-    }
+    if (recognitionRef.current) { try { recognitionRef.current.stop(); } catch (_) {} recognitionRef.current = null; }
     setIsRecording(false);
   };
 
-  // ── Calculate score for current ayah ─────────────
   const getAyahScore = () => {
     if (!ayahs[ayahIndex]) return { correct: 0, wrong: 0, total: 0, pct: 0 };
     const words = ayahs[ayahIndex].words;
     const correct = words.filter((w) => w.state === "correct").length;
     const wrong = words.filter((w) => w.state === "wrong").length;
     const total = words.length;
-    const pct = total > 0 ? Math.round((correct / total) * 100) : 0;
-    return { correct, wrong, total, pct };
+    return { correct, wrong, total, pct: total > 0 ? Math.round((correct / total) * 100) : 0 };
   };
 
-  // ── Next ayah ─────────────────────────────────────
-  const nextAyah = async () => {
-    stopRecording();
-    const score = getAyahScore();
-    setSessionCorrect((c) => c + score.correct);
-    setSessionWrong((w) => w + score.wrong);
-    await saveSessionToSupabase(score.pct);
-
-    if (ayahIndex < ayahs.length - 1) {
-      setAyahIndex((i) => i + 1);
-      setTimer(0);
-      setTranscript("");
-    } else {
-      setShowSummary(true);
-    }
-  };
-
-  const prevAyah = () => {
-    stopRecording();
-    if (ayahIndex > 0) {
-      setAyahIndex((i) => i - 1);
-      setTimer(0);
-      setTranscript("");
-    }
-  };
-
-  // ── Audio playback ────────────────────────────────
-  const playAyahAudio = () => {
-    if (!ayahs[ayahIndex]) return;
-    const verseNum = ayahs[ayahIndex].number;
-    const url = `https://cdn.islamic.network/quran/audio/128/ar.alafasy/${verseNum}.mp3`;
-
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.src = url;
-      audioRef.current.play()
-        .then(() => setIsPlaying(true))
-        .catch(() => setIsPlaying(false));
-      audioRef.current.onended = () => setIsPlaying(false);
-    }
-  };
-
-  // ── Save session to Supabase ──────────────────────
-  const saveSessionToSupabase = async (scorePct: number) => {
+  const saveSession = async (scorePct: number) => {
     if (!userId || !selectedSurah || !ayahs[ayahIndex]) return;
     setSavingSession(true);
     try {
-      // Save session record
+      const sc = getAyahScore();
       await supabase.from("hifdh_sessions").insert({
-        user_id: userId,
-        surah_num: selectedSurah.number,
-        surah_name: selectedSurah.englishName,
-        ayah_num: ayahs[ayahIndex].numberInSurah,
-        score: scorePct,
-        correct: getAyahScore().correct,
-        wrong: getAyahScore().wrong,
-        duration: timer,
+        student_id: userId, surah_number: selectedSurah.number,
+        surah_name: selectedSurah.englishName, ayah_start: ayahs[ayahIndex].numberInSurah,
+        accuracy_score: scorePct, correct: sc.correct, wrong: sc.wrong, duration: timer,
       });
-
-      // Upsert progress
-      const { data: existing } = await supabase
-        .from("hifdh_progress")
-        .select("id,times_reviewed,best_accuracy")
-        .eq("user_id", userId)
-        .eq("surah_num", selectedSurah.number)
-        .single();
-
-      if (existing) {
-        await supabase
-          .from("hifdh_progress")
-          .update({
-            last_reviewed: new Date().toISOString(),
-            best_accuracy: Math.max(existing.best_accuracy ?? 0, scorePct),
-            times_reviewed: (existing.times_reviewed ?? 0) + 1,
-          })
-          .eq("id", existing.id);
+      const { data: ex } = await supabase.from("hifdh_progress")
+        .select("id,times_reviewed,best_accuracy").eq("user_id", userId).eq("surah_num", selectedSurah.number).single();
+      if (ex) {
+        await supabase.from("hifdh_progress").update({
+          last_reviewed: new Date().toISOString(),
+          best_accuracy: Math.max(ex.best_accuracy ?? 0, scorePct),
+          times_reviewed: (ex.times_reviewed ?? 0) + 1,
+        }).eq("id", ex.id);
       } else {
         await supabase.from("hifdh_progress").insert({
-          user_id: userId,
-          surah_num: selectedSurah.number,
+          user_id: userId, surah_num: selectedSurah.number,
           surah_name: selectedSurah.englishName,
-          last_reviewed: new Date().toISOString(),
-          best_accuracy: scorePct,
-          times_reviewed: 1,
+          last_reviewed: new Date().toISOString(), best_accuracy: scorePct, times_reviewed: 1,
         });
       }
     } catch (_) {}
     setSavingSession(false);
   };
 
-  // ── Days since date ───────────────────────────────
-  const daysSince = (iso: string) => {
-    const diff = Date.now() - new Date(iso).getTime();
-    return Math.floor(diff / 86400000);
+  const nextAyah = async () => {
+    stopRecording();
+    const score = getAyahScore();
+    setSessionCorrect((c) => c + score.correct);
+    setSessionWrong((w) => w + score.wrong);
+    await saveSession(score.pct);
+    if (ayahIndex < ayahs.length - 1) { setAyahIndex((i) => i + 1); setTimer(0); setTranscript(""); }
+    else setShowSummary(true);
   };
 
-  const urgencyColor = (days: number) =>
-    days >= 10 ? "#eb5757" : days >= 5 ? "#f2c94c" : "#6fcf97";
+  const prevAyah = () => { stopRecording(); if (ayahIndex > 0) { setAyahIndex((i) => i - 1); setTimer(0); setTranscript(""); } };
 
-  const urgencyLabel = (days: number) =>
-    days >= 10 ? "Urgent · عاجل" : days >= 5 ? "Soon · قريباً" : "Good · بخير";
+  const playAyahAudio = () => {
+    if (!ayahs[ayahIndex]) return;
+    const url = `https://cdn.islamic.network/quran/audio/128/ar.alafasy/${ayahs[ayahIndex].number}.mp3`;
+    if (audioRef.current) {
+      audioRef.current.pause(); audioRef.current.src = url;
+      audioRef.current.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
+      audioRef.current.onended = () => setIsPlaying(false);
+    }
+  };
 
-  // ── Current ayah & score ──────────────────────────
+  const daysSince = (iso: string) => Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+  const urgencyColor = (d: number) => d >= 10 ? "#c0392b" : d >= 5 ? "#b7791f" : "#276749";
+  const urgencyBg = (d: number) => d >= 10 ? "#fff5f5" : d >= 5 ? "#fffbeb" : "#f0fff4";
+  const urgencyLabel = (d: number) => d >= 10 ? "Urgent \u00b7 \u0639\u0627\u062c\u0644" : d >= 5 ? "Soon \u00b7 \u0642\u0631\u064a\u0628\u0627\u064b" : "Good \u00b7 \u0628\u062e\u064a\u0631";
+
   const currentAyah = ayahs[ayahIndex];
   const score = getAyahScore();
-
   const filteredSurahs = surahs.filter(
-    (s) =>
-      s.englishName.toLowerCase().includes(surahSearch.toLowerCase()) ||
-      s.name.includes(surahSearch)
+    (s) => s.englishName.toLowerCase().includes(surahSearch.toLowerCase()) || s.name.includes(surahSearch)
   );
 
-  // ─── Styles ───────────────────────────────────────
-  const C = {
-    bg: "#0a1f13", mid: "#122b1a", border: "rgba(201,168,76,0.14)",
-    gold: "#c9a84c", goldLight: "#e4c36a", dim: "#7a9e88", text: "#e8f0eb",
-    green: "#6fcf97", red: "#eb5757", yellow: "#f2c94c",
-  };
+  const wordBg = (s: WordState["state"]) => ({ idle: "transparent", correct: "#f0fff4", wrong: "#fff5f5", current: "#fffbeb" }[s]);
+  const wordColor = (s: WordState["state"]) => ({ idle: "#1a3d24", correct: "#276749", wrong: "#c0392b", current: "#b7791f" }[s]);
+  const wordBorder = (s: WordState["state"]) => ({ idle: "transparent", correct: "#9ae6b4", wrong: "#feb2b2", current: "#f6e05e" }[s]);
 
-  const card = (extra?: React.CSSProperties): React.CSSProperties => ({
-    background: C.mid, border: `1px solid ${C.border}`,
-    borderRadius: 16, padding: "18px 18px", ...extra,
-  });
-
-  const wordColor = (s: WordState["state"]) => ({
-    idle: C.text, correct: C.green, wrong: C.red, current: C.gold,
-  }[s]);
-
-  // ─────────────────────────────────────────────────
   return (
-    <div style={{ fontFamily: "'Cairo',sans-serif", background: C.bg, minHeight: "100vh", color: C.text, overflowX: "hidden" }}>
+    <div style={{ fontFamily: "'Cairo', sans-serif", background: "#f5f0e8", minHeight: "100vh", color: "#1a3d24" }}>
 
-      {/* Hidden audio element */}
       <audio ref={audioRef} style={{ display: "none" }} />
 
-      {/* Geometric bg */}
-      <div style={{ position: "fixed", inset: 0, backgroundImage: "repeating-linear-gradient(60deg,transparent,transparent 40px,rgba(201,168,76,0.018) 40px,rgba(201,168,76,0.018) 41px),repeating-linear-gradient(-60deg,transparent,transparent 40px,rgba(201,168,76,0.018) 40px,rgba(201,168,76,0.018) 41px)", pointerEvents: "none", zIndex: 0 }} />
-
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Cairo:wght@300;400;600;700;900&display=swap');
-        @keyframes pulse  { 0%,100%{opacity:.7} 50%{opacity:1} }
-        @keyframes ring   { 0%,100%{box-shadow:0 0 0 0 rgba(201,168,76,.22)} 50%{box-shadow:0 0 0 18px rgba(201,168,76,.06),0 0 0 36px rgba(201,168,76,.02)} }
+        @import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Amiri:wght@400;700&family=Cairo:wght@300;400;600;700;900&display=swap');
+        @keyframes fadeIn { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
+        @keyframes pulse  { 0%,100%{opacity:.6} 50%{opacity:1} }
         @keyframes wave   { 0%,100%{transform:scaleY(.3)} 50%{transform:scaleY(1)} }
-        @keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+        @keyframes ring   { 0%,100%{box-shadow:0 0 0 0 rgba(26,61,36,.15)} 50%{box-shadow:0 0 0 14px rgba(26,61,36,.05)} }
         ::-webkit-scrollbar{width:4px;height:4px}
-        ::-webkit-scrollbar-thumb{background:rgba(201,168,76,.2);border-radius:2px}
+        ::-webkit-scrollbar-thumb{background:rgba(26,61,36,.15);border-radius:2px}
+        input::placeholder{color:#7a9e88}
       `}</style>
 
-      <div style={{ position: "relative", zIndex: 1, paddingBottom: 50 }}>
+      {/* \u2500\u2500 Page Header \u2500\u2500 */}
+      <div style={{ textAlign: "center", padding: "36px 20px 24px", borderBottom: "1px solid rgba(26,61,36,.1)" }}>
+        <h1 style={{ fontFamily: "'Amiri', serif", fontSize: 32, fontWeight: 700, color: "#1a3d24", margin: 0, letterSpacing: "-0.5px" }}>
+          AI-Hifdh Centre
+        </h1>
+        <p style={{ fontFamily: "'Amiri', serif", fontSize: 15, color: "#b7791f", margin: "6px 0 0", fontStyle: "italic" }}>
+          Smart memorization strengthens the heart \u2014 \u0627\u0644\u062d\u0650\u0641\u0638 \u0627\u0644\u0630\u0643\u064a \u064a\u064f\u062b\u0628\u0650\u0651\u062a \u0627\u0644\u0642\u0644\u0628
+        </p>
+        {savingSession && (
+          <span style={{ fontSize: 11, color: "#b7791f", animation: "pulse 1s infinite", display: "block", marginTop: 6 }}>
+            Saving session\u2026
+          </span>
+        )}
+      </div>
 
-        {/* ── Top Bar ── */}
-        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"16px 20px", borderBottom:`1px solid ${C.border}`, background:"rgba(10,31,19,.9)", backdropFilter:"blur(12px)", position:"sticky", top:0, zIndex:20 }}>
-          <div>
-            <div style={{ fontSize:17, fontWeight:700 }}>AI-<span style={{ color:C.gold }}>Hifdh</span></div>
-            <div style={{ fontSize:10, color:C.dim }}>الحِفظ الذكي · Smart Memorization</div>
-          </div>
-          <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-            {savingSession && <span style={{ fontSize:10, color:C.gold, animation:"pulse 1s infinite" }}>Saving…</span>}
-            <span style={{ background:"linear-gradient(135deg,#c9a84c,#8b6914)", color:"#0a1f13", fontSize:11, fontWeight:700, padding:"4px 11px", borderRadius:20 }}>🔥 7-Day Streak</span>
-          </div>
+      <div style={{ padding: "20px 16px", display: "flex", flexDirection: "column", gap: 20, maxWidth: 700, margin: "0 auto" }}>
+
+        {/* \u2500\u2500 Stats Row \u2500\u2500 */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          {[
+            { icon: "\ud83d\udcd6", val: "7.5", label: "Juz Memorized",  sub: "\u0623\u062c\u0632\u0627\u0621 \u0645\u062d\u0641\u0648\u0638\u0629" },
+            { icon: "\ud83d\udcca", val: `${score.pct}%`, label: "Live Accuracy", sub: "\u0627\u0644\u062f\u0642\u0629 \u0627\u0644\u0644\u062d\u0638\u064a\u0629" },
+            { icon: "\ud83d\udd25", val: "7",   label: "Day Streak",     sub: "\u0633\u0644\u0633\u0644\u0629 \u0627\u0644\u0623\u064a\u0627\u0645" },
+            { icon: "\ud83d\udd50", val: formatTimer(timer), label: "Session Time", sub: "\u0648\u0642\u062a \u0627\u0644\u062c\u0644\u0633\u0629" },
+          ].map((s, i) => (
+            <div key={i} style={{ background: "#fff", borderRadius: 16, padding: "18px 16px", border: "1px solid rgba(26,61,36,.1)", boxShadow: "0 1px 4px rgba(0,0,0,.06)", textAlign: "center" }}>
+              <div style={{ fontSize: 26, marginBottom: 6 }}>{s.icon}</div>
+              <div style={{ fontSize: 26, fontWeight: 900, color: "#1a3d24", lineHeight: 1 }}>{s.val}</div>
+              <div style={{ fontSize: 12, color: "#4a7c59", marginTop: 4, fontWeight: 600 }}>{s.label}</div>
+              <div style={{ fontSize: 10, color: "#7a9e88" }}>{s.sub}</div>
+            </div>
+          ))}
         </div>
 
-        <div style={{ padding:"20px 16px", display:"flex", flexDirection:"column", gap:18 }}>
-
-          {/* ── Mode Tabs ── */}
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8 }}>
+        {/* \u2500\u2500 Mode Selector \u2500\u2500 */}
+        <div style={{ background: "#fff", borderRadius: 16, padding: "18px 16px", border: "1px solid rgba(26,61,36,.1)", boxShadow: "0 1px 4px rgba(0,0,0,.06)" }}>
+          <div style={{ fontFamily: "'Amiri',serif", fontSize: 16, fontWeight: 700, color: "#1a3d24", marginBottom: 12 }}>
+            Select Mode \u00b7 \u0627\u062e\u062a\u0631 \u0627\u0644\u0648\u0636\u0639
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8 }}>
             {([
-              { k:"memorize",   e:"📖", en:"Memorize",   ar:"حِفظ" },
-              { k:"recitation", e:"🎙️", en:"Recitation", ar:"تلاوة" },
-              { k:"revision",   e:"🔄", en:"Revision",   ar:"مراجعة" },
+              { k: "memorize",   e: "\ud83d\udcd6", en: "Memorize",   ar: "\u062d\u0650\u0641\u0638 \u062c\u062f\u064a\u062f" },
+              { k: "recitation", e: "\ud83c\udf99\ufe0f", en: "Recitation", ar: "\u062a\u0644\u0627\u0648\u0629 \u0630\u0643\u064a\u0629" },
+              { k: "revision",   e: "\ud83d\udd04", en: "Revision",   ar: "\u0645\u0631\u0627\u062c\u0639\u0629" },
             ] as const).map((m) => (
               <div key={m.k} onClick={() => setMode(m.k)}
-                style={{ ...card({ padding:"12px 8px", cursor:"pointer", textAlign:"center", transition:"all .2s",
-                  background: mode===m.k ? "linear-gradient(135deg,rgba(201,168,76,.18),rgba(46,107,62,.2))" : C.mid,
-                  border: `1px solid ${mode===m.k ? "rgba(201,168,76,.45)" : C.border}`,
-                  boxShadow: mode===m.k ? "0 0 0 1px rgba(201,168,76,.2),0 4px 20px rgba(0,0,0,.3)" : "none",
-                }) }}>
-                <div style={{ fontSize:20, marginBottom:4 }}>{m.e}</div>
-                <div style={{ fontSize:12, fontWeight:700 }}>{m.en}</div>
-                <div style={{ fontSize:10, color:C.gold }}>{m.ar}</div>
-                {mode===m.k && <div style={{ marginTop:5, fontSize:9, color:C.gold }}>✨ Active</div>}
+                style={{ textAlign: "center", padding: "12px 8px", borderRadius: 12, cursor: "pointer", transition: "all .2s",
+                  background: mode === m.k ? "#1a3d24" : "#f5f0e8",
+                  border: `1.5px solid ${mode === m.k ? "#1a3d24" : "rgba(26,61,36,.15)"}`,
+                }}>
+                <div style={{ fontSize: 20, marginBottom: 5 }}>{m.e}</div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: mode === m.k ? "#fff" : "#1a3d24" }}>{m.en}</div>
+                <div style={{ fontSize: 10, color: mode === m.k ? "#b7791f" : "#7a9e88", marginTop: 2 }}>{m.ar}</div>
               </div>
             ))}
           </div>
+        </div>
 
-          {/* ── Surah Selector ── */}
-          <div style={card()}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
-              <div style={{ fontSize:13, fontWeight:700 }}>Surah · <span style={{ color:C.dim, fontWeight:400 }}>السورة</span></div>
-              {selectedSurah && <span style={{ fontSize:11, color:C.gold }}>{selectedSurah.englishName} · {selectedSurah.name}</span>}
+        {/* \u2500\u2500 Surah Selector \u2500\u2500 */}
+        <div style={{ background: "#fff", borderRadius: 16, padding: "18px 16px", border: "1px solid rgba(26,61,36,.1)", boxShadow: "0 1px 4px rgba(0,0,0,.06)" }}>
+          <div style={{ fontFamily: "'Amiri',serif", fontSize: 16, fontWeight: 700, color: "#1a3d24", marginBottom: 12 }}>
+            Select Surah \u00b7 \u0627\u062e\u062a\u0631 \u0627\u0644\u0633\u0648\u0631\u0629
+            {selectedSurah && <span style={{ fontSize: 13, color: "#b7791f", fontWeight: 400, marginRight: 8 }}> \u2014 {selectedSurah.englishName} \u00b7 {selectedSurah.name}</span>}
+          </div>
+          <input
+            value={surahSearch}
+            onChange={(e) => setSurahSearch(e.target.value)}
+            placeholder="Search surah\u2026 \u0627\u0628\u062d\u062b \u0639\u0646 \u0633\u0648\u0631\u0629"
+            style={{ width: "100%", background: "#f5f0e8", border: "1px solid rgba(26,61,36,.15)", borderRadius: 10, padding: "9px 13px", color: "#1a3d24", fontSize: 13, fontFamily: "'Cairo',sans-serif", outline: "none", marginBottom: 12, boxSizing: "border-box" as const }}
+          />
+          <div style={{ display: "flex", gap: 7, overflowX: "auto", paddingBottom: 4 }}>
+            {filteredSurahs.slice(0, 30).map((s) => (
+              <div key={s.number} onClick={() => { setSelectedSurah(s); setSurahSearch(""); }}
+                style={{ flexShrink: 0, padding: "6px 13px", borderRadius: 30, fontSize: 11, cursor: "pointer", whiteSpace: "nowrap",
+                  background: selectedSurah?.number === s.number ? "#1a3d24" : "#f5f0e8",
+                  color: selectedSurah?.number === s.number ? "#fff" : "#1a3d24",
+                  border: `1px solid ${selectedSurah?.number === s.number ? "#1a3d24" : "rgba(26,61,36,.2)"}`,
+                  fontWeight: selectedSurah?.number === s.number ? 700 : 400,
+                }}>
+                {s.englishName} \u00b7 {s.name}
+              </div>
+            ))}
+            {surahs.length === 0 && <div style={{ fontSize: 12, color: "#7a9e88" }}>Loading surahs\u2026</div>}
+          </div>
+        </div>
+
+        {/* \u2500\u2500 No surah \u2500\u2500 */}
+        {!selectedSurah && (
+          <div style={{ background: "#fff", borderRadius: 16, padding: "40px 20px", border: "1px solid rgba(26,61,36,.1)", textAlign: "center", boxShadow: "0 1px 4px rgba(0,0,0,.06)" }}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}>\ud83d\udcd6</div>
+            <div style={{ fontFamily: "'Amiri',serif", fontSize: 18, color: "#1a3d24", fontWeight: 700 }}>Select a Surah to Begin</div>
+            <div style={{ fontSize: 12, color: "#7a9e88", marginTop: 4 }}>\u0627\u062e\u062a\u0631 \u0633\u0648\u0631\u0629 \u0644\u0644\u0628\u062f\u0621 \u00b7 Choose from the list above</div>
+          </div>
+        )}
+
+        {/* \u2500\u2500 Loading \u2500\u2500 */}
+        {selectedSurah && loadingAyahs && (
+          <div style={{ background: "#fff", borderRadius: 16, padding: "40px 20px", border: "1px solid rgba(26,61,36,.1)", textAlign: "center" }}>
+            <div style={{ fontSize: 12, color: "#b7791f", animation: "pulse 1s infinite" }}>Loading ayahs\u2026 \u00b7 \u062c\u0627\u0631\u064d \u0627\u0644\u062a\u062d\u0645\u064a\u0644</div>
+          </div>
+        )}
+
+        {/* \u2500\u2500 Summary \u2500\u2500 */}
+        {showSummary && selectedSurah && (
+          <div style={{ background: "#fff", borderRadius: 16, padding: "32px 20px", border: "1px solid rgba(26,61,36,.1)", textAlign: "center", animation: "fadeIn .4s ease", boxShadow: "0 1px 4px rgba(0,0,0,.06)" }}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}>\ud83c\udf89</div>
+            <div style={{ fontFamily: "'Amiri',serif", fontSize: 22, color: "#1a3d24", fontWeight: 700 }}>Session Complete! \u00b7 \u0623\u062d\u0633\u0646\u062a</div>
+            <div style={{ fontSize: 13, color: "#b7791f", marginTop: 4, marginBottom: 20 }}>
+              {selectedSurah.englishName} \u00b7 {selectedSurah.name}
             </div>
-            <input
-              value={surahSearch}
-              onChange={(e) => setSurahSearch(e.target.value)}
-              placeholder="Search surah… ابحث عن سورة"
-              style={{ width:"100%", background:"rgba(255,255,255,.05)", border:`1px solid ${C.border}`, borderRadius:10, padding:"8px 12px", color:C.text, fontSize:12, fontFamily:"'Cairo',sans-serif", outline:"none", marginBottom:10 }}
-            />
-            <div style={{ display:"flex", gap:7, overflowX:"auto", paddingBottom:4 }}>
-              {filteredSurahs.slice(0, 30).map((s) => (
-                <div key={s.number}
-                  onClick={() => { setSelectedSurah(s); setSurahSearch(""); }}
-                  style={{ flexShrink:0, padding:"5px 12px", borderRadius:30, fontSize:11, cursor:"pointer", whiteSpace:"nowrap",
-                    background: selectedSurah?.number===s.number ? "linear-gradient(90deg,#c9a84c,#8b6914)" : "rgba(255,255,255,.04)",
-                    color: selectedSurah?.number===s.number ? "#0a1f13" : C.text,
-                    fontWeight: selectedSurah?.number===s.number ? 700 : 400,
-                    border: selectedSurah?.number===s.number ? "none" : `1px solid ${C.border}`,
-                  }}>
-                  {s.englishName} · {s.name}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 20 }}>
+              {[
+                { label: "Correct \u00b7 \u0635\u062d\u064a\u062d", val: sessionCorrect, color: "#276749", bg: "#f0fff4" },
+                { label: "Wrong \u00b7 \u062e\u0637\u0623",    val: sessionWrong,   color: "#c0392b", bg: "#fff5f5" },
+                { label: "Ayahs \u00b7 \u0622\u064a\u0627\u062a",   val: ayahs.length,   color: "#1a3d24", bg: "#f5f0e8" },
+              ].map((item, i) => (
+                <div key={i} style={{ background: item.bg, borderRadius: 12, padding: "14px 10px", border: `1px solid ${item.color}22` }}>
+                  <div style={{ fontSize: 24, fontWeight: 900, color: item.color }}>{item.val}</div>
+                  <div style={{ fontSize: 10, color: "#7a9e88", marginTop: 2 }}>{item.label}</div>
                 </div>
               ))}
-              {surahs.length === 0 && <div style={{ fontSize:12, color:C.dim }}>Loading surahs…</div>}
             </div>
+            <button
+              onClick={() => { setShowSummary(false); setAyahIndex(0); setSessionCorrect(0); setSessionWrong(0); }}
+              style={{ padding: "12px 28px", borderRadius: 12, background: "#1a3d24", border: "none", color: "#fff", fontFamily: "'Cairo',sans-serif", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
+              Start Again \u00b7 \u0623\u0639\u062f \u0627\u0644\u0645\u062d\u0627\u0648\u0644\u0629
+            </button>
           </div>
+        )}
 
-          {/* ── No Surah Selected ── */}
-          {!selectedSurah && (
-            <div style={{ ...card({ textAlign:"center", padding:"40px 20px" }) }}>
-              <div style={{ fontSize:36, marginBottom:12 }}>📖</div>
-              <div style={{ fontSize:15, fontWeight:700, marginBottom:4 }}>Select a Surah to Begin</div>
-              <div style={{ fontSize:12, color:C.dim }}>اختر سورة للبدء · Choose from the list above</div>
-            </div>
-          )}
-
-          {/* ── Loading ── */}
-          {selectedSurah && loadingAyahs && (
-            <div style={{ ...card({ textAlign:"center", padding:"40px 20px" }) }}>
-              <div style={{ fontSize:12, color:C.gold, animation:"pulse 1s infinite" }}>Loading ayahs… · جارٍ التحميل</div>
-            </div>
-          )}
-
-          {/* ── Session Summary ── */}
-          {showSummary && selectedSurah && (
-            <div style={{ ...card({ textAlign:"center", padding:"30px 20px", animation:"fadeIn .4s ease" }) }}>
-              <div style={{ fontSize:36, marginBottom:12 }}>🎉</div>
-              <div style={{ fontSize:17, fontWeight:700, marginBottom:4 }}>Session Complete! · أحسنت</div>
-              <div style={{ fontSize:12, color:C.dim, marginBottom:20 }}>
-                {selectedSurah.englishName} · {selectedSurah.name}
+        {/* \u2500\u2500 Quran Card \u2500\u2500 */}
+        {selectedSurah && !loadingAyahs && !showSummary && currentAyah && (
+          <>
+            <div style={{ background: "#fff", borderRadius: 16, border: "1px solid rgba(26,61,36,.1)", overflow: "hidden", boxShadow: "0 1px 4px rgba(0,0,0,.06)" }}>
+              {/* Header */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px", borderBottom: "1px solid rgba(26,61,36,.08)", background: "#f9f6f0" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ width: 36, height: 36, borderRadius: "50%", border: "1.5px solid #b7791f", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, color: "#b7791f", fontWeight: 700, background: "#fffbeb" }}>
+                    {selectedSurah.number}
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: "#1a3d24" }}>
+                      {selectedSurah.englishName} <span style={{ color: "#b7791f" }}>\u00b7 {selectedSurah.name}</span>
+                    </div>
+                    <div style={{ fontSize: 10, color: "#7a9e88" }}>
+                      Ayah {currentAyah.numberInSurah} of {selectedSurah.numberOfAyahs} \u00b7 \u0622\u064a\u0629 {currentAyah.numberInSurah}
+                    </div>
+                  </div>
+                </div>
+                <button onClick={playAyahAudio}
+                  style={{ display: "flex", alignItems: "center", gap: 5, padding: "7px 13px", borderRadius: 20, background: isPlaying ? "#1a3d24" : "#f5f0e8", border: "1px solid rgba(26,61,36,.2)", color: isPlaying ? "#fff" : "#1a3d24", fontFamily: "'Cairo',sans-serif", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
+                  {isPlaying ? "\u23f8 Playing" : "\ud83d\udd0a Listen \u00b7 \u0627\u0633\u062a\u0645\u0639"}
+                </button>
               </div>
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10, marginBottom:20 }}>
-                {[
-                  { label:"Correct · صحيح", val:sessionCorrect, color:C.green },
-                  { label:"Wrong · خطأ", val:sessionWrong, color:C.red },
-                  { label:"Ayahs · آيات", val:ayahs.length, color:C.gold },
-                ].map((item,i)=>(
-                  <div key={i} style={{ background:"rgba(255,255,255,.04)", borderRadius:10, padding:12 }}>
-                    <div style={{ fontSize:22, fontWeight:900, color:item.color }}>{item.val}</div>
-                    <div style={{ fontSize:10, color:C.dim, marginTop:2 }}>{item.label}</div>
+
+              {/* Word legend */}
+              <div style={{ display: "flex", gap: 12, padding: "8px 16px", background: "#fafaf8", borderBottom: "1px solid rgba(26,61,36,.06)", flexWrap: "wrap" as const }}>
+                {[["#276749","#f0fff4","Correct \u00b7 \u0635\u062d\u064a\u062d"],["#c0392b","#fff5f5","Error \u00b7 \u062e\u0637\u0623"],["#b7791f","#fffbeb","Current \u00b7 \u0627\u0644\u0622\u0646"],["#4a7c59","transparent","Pending \u00b7 \u0644\u0645 \u064a\u064f\u0642\u0631\u0623"]].map(([col,bg,label],i)=>(
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10, color: "#7a9e88" }}>
+                    <div style={{ width: 10, height: 10, borderRadius: 3, background: bg as string, border: `1px solid ${col}` }} />
+                    {label}
                   </div>
                 ))}
               </div>
-              <button
-                onClick={() => { setShowSummary(false); setAyahIndex(0); setSessionCorrect(0); setSessionWrong(0); }}
-                style={{ padding:"11px 28px", borderRadius:12, background:"linear-gradient(135deg,#c9a84c,#8b6914)", border:"none", color:"#0a1f13", fontFamily:"'Cairo',sans-serif", fontSize:13, fontWeight:700, cursor:"pointer" }}>
-                Start Again · أعد المحاولة
-              </button>
-            </div>
-          )}
 
-          {/* ── Quran Display + Controls ── */}
-          {selectedSurah && !loadingAyahs && !showSummary && currentAyah && (
-            <>
-              {/* Ayah Card */}
-              <div style={{ ...card({ padding:0, overflow:"hidden" }) }}>
-                {/* Header */}
-                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"12px 16px", borderBottom:`1px solid ${C.border}`, background:"rgba(0,0,0,.2)" }}>
-                  <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-                    <div style={{ width:34, height:34, borderRadius:"50%", border:`1.5px solid ${C.gold}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, color:C.gold, fontWeight:700 }}>
-                      {selectedSurah.number}
-                    </div>
-                    <div>
-                      <div style={{ fontSize:14, fontWeight:700 }}>{selectedSurah.englishName} <span style={{ color:C.gold }}>· {selectedSurah.name}</span></div>
-                      <div style={{ fontSize:10, color:C.dim }}>Ayah {currentAyah.numberInSurah} of {selectedSurah.numberOfAyahs} · آية {currentAyah.numberInSurah}</div>
-                    </div>
+              {/* Bismillah */}
+              {currentAyah.numberInSurah === 1 && selectedSurah.number !== 9 && (
+                <div style={{ textAlign: "center", padding: "18px 16px", borderBottom: "1px solid rgba(26,61,36,.06)", background: "#fffbf0" }}>
+                  <div style={{ fontFamily: "'Amiri Quran',serif", fontSize: 26, color: "#1a3d24", lineHeight: 2 }}>
+                    \u0628\u0650\u0633\u0652\u0645\u0650 \u0671\u0644\u0644\u064e\u0651\u0647\u0650 \u0671\u0644\u0631\u064e\u0651\u062d\u0652\u0645\u064e\u0670\u0646\u0650 \u0671\u0644\u0631\u064e\u0651\u062d\u0650\u064a\u0645\u0650
                   </div>
-                  {/* Listen button */}
-                  <button
-                    onClick={playAyahAudio}
-                    style={{ display:"flex", alignItems:"center", gap:5, padding:"6px 12px", borderRadius:20, background: isPlaying ? "rgba(201,168,76,.2)" : "rgba(255,255,255,.06)", border:`1px solid ${C.border}`, color: isPlaying ? C.gold : C.text, fontFamily:"'Cairo',sans-serif", fontSize:11, fontWeight:600, cursor:"pointer" }}>
-                    {isPlaying ? "⏸" : "🔊"} {isPlaying ? "Playing" : "Listen · استمع"}
-                  </button>
+                  <div style={{ fontSize: 11, color: "#7a9e88", marginTop: 2 }}>
+                    In the name of Allah, the Most Gracious, the Most Merciful
+                  </div>
                 </div>
+              )}
 
-                {/* Word legend */}
-                <div style={{ display:"flex", gap:14, padding:"8px 16px", background:"rgba(0,0,0,.12)", borderBottom:`1px solid ${C.border}` }}>
-                  {[[C.green,"Correct · صحيح"],[C.red,"Error · خطأ"],[C.gold,"Current · الآن"],[C.text,"Pending · لم يُقرأ"]].map(([col,label],i)=>(
-                    <div key={i} style={{ display:"flex", alignItems:"center", gap:4, fontSize:10, color:C.dim }}>
-                      <div style={{ width:7, height:7, borderRadius:"50%", background:col as string }} />{label}
-                    </div>
+              {/* Ayah text */}
+              <div style={{ padding: "22px 18px", direction: "rtl" }}>
+                <div style={{ fontFamily: "'Amiri Quran',serif", fontSize: 26, lineHeight: 2.6, textAlign: "right" }}>
+                  {currentAyah.words.map((w, wi) => (
+                    <span key={wi} style={{
+                      display: "inline", marginLeft: 6, cursor: "default",
+                      color: wordColor(w.state),
+                      background: wordBg(w.state),
+                      border: `1px solid ${wordBorder(w.state)}`,
+                      borderRadius: w.state !== "idle" ? "5px" : 0,
+                      padding: w.state !== "idle" ? "0 3px" : 0,
+                      animation: w.state === "current" ? "pulse 1.2s ease-in-out infinite" : "none",
+                    }}>{w.raw}</span>
                   ))}
-                </div>
-
-                {/* Bismillah */}
-                {currentAyah.numberInSurah === 1 && selectedSurah.number !== 9 && (
-                  <div style={{ textAlign:"center", padding:"16px", borderBottom:`1px solid ${C.border}` }}>
-                    <div style={{ fontFamily:"'Amiri Quran',serif", fontSize:24, color:C.goldLight, lineHeight:2 }}>
-                      بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ
-                    </div>
-                    <div style={{ fontSize:10, color:C.dim, marginTop:2 }}>In the name of Allah, the Most Gracious, the Most Merciful</div>
-                  </div>
-                )}
-
-                {/* Ayah text */}
-                <div style={{ padding:"20px 16px", direction:"rtl" }}>
-                  <div style={{ fontFamily:"'Amiri Quran',serif", fontSize:24, lineHeight:2.4, textAlign:"right" }}>
-                    {currentAyah.words.map((w, wi) => (
-                      <span key={wi}
-                        style={{ display:"inline", marginLeft:6, cursor:"default",
-                          color: wordColor(w.state),
-                          background: w.state==="wrong" ? "rgba(235,87,87,.12)" : w.state==="current" ? "rgba(201,168,76,.15)" : "transparent",
-                          borderRadius: w.state!=="idle" ? "4px" : 0,
-                          padding: w.state!=="idle" ? "0 2px" : 0,
-                          animation: w.state==="current" ? "pulse 1.2s ease-in-out infinite" : "none",
-                        }}>
-                        {w.raw}
-                      </span>
-                    ))}
-                    <span style={{ color:"rgba(201,168,76,.6)", fontSize:16 }}> ﴿{currentAyah.numberInSurah}﴾</span>
-                  </div>
-                </div>
-
-                {/* Ayah navigation */}
-                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"10px 16px", borderTop:`1px solid ${C.border}`, background:"rgba(0,0,0,.12)" }}>
-                  <button onClick={prevAyah} disabled={ayahIndex===0}
-                    style={{ padding:"7px 14px", borderRadius:10, background:"rgba(255,255,255,.06)", border:`1px solid ${C.border}`, color: ayahIndex===0 ? C.dim : C.text, fontFamily:"'Cairo',sans-serif", fontSize:12, cursor: ayahIndex===0 ? "not-allowed" : "pointer", opacity: ayahIndex===0 ? .5 : 1 }}>
-                    ← Prev · السابقة
-                  </button>
-                  <span style={{ fontSize:11, color:C.dim }}>{ayahIndex+1} / {ayahs.length}</span>
-                  <button onClick={nextAyah}
-                    style={{ padding:"7px 14px", borderRadius:10, background:"linear-gradient(90deg,#c9a84c,#8b6914)", border:"none", color:"#0a1f13", fontFamily:"'Cairo',sans-serif", fontSize:12, fontWeight:700, cursor:"pointer" }}>
-                    Next · التالية →
-                  </button>
+                  <span style={{ color: "#b7791f", fontSize: 16, opacity: 0.7 }}> \ufd3f{currentAyah.numberInSurah}\ufd3e</span>
                 </div>
               </div>
 
-              {/* ── Recording Panel ── */}
-              <div style={{ ...card({ display:"flex", flexDirection:"column", alignItems:"center", gap:16 }) }}>
-                {!speechSupported && (
-                  <div style={{ background:"rgba(235,87,87,.12)", border:"1px solid rgba(235,87,87,.3)", borderRadius:10, padding:"10px 14px", fontSize:12, color:C.red, textAlign:"center" }}>
-                    ⚠️ Speech recognition not supported in this browser. Try Chrome or Edge.
-                  </div>
-                )}
-
-                <div style={{ fontSize:13, color: isRecording ? C.gold : C.dim, fontWeight:600 }}>
-                  {isRecording ? "● Listening · جارٍ الاستماع…" : "Tap mic to start · اضغط للبدء"}
-                </div>
-
-                {/* Mic button */}
-                <div
-                  onClick={isRecording ? stopRecording : startRecording}
-                  style={{ width:96, height:96, borderRadius:"50%",
-                    background: isRecording ? "linear-gradient(135deg,rgba(201,168,76,.18),rgba(46,107,62,.22))" : "linear-gradient(135deg,rgba(255,255,255,.04),rgba(46,107,62,.1))",
-                    border:`1.5px solid ${isRecording ? "rgba(201,168,76,.4)" : C.border}`,
-                    display:"flex", alignItems:"center", justifyContent:"center",
-                    cursor: speechSupported ? "pointer" : "not-allowed",
-                    animation: isRecording ? "ring 2.5s ease-in-out infinite" : "none",
-                  }}>
-                  <div style={{ width:68, height:68, borderRadius:"50%", background:"linear-gradient(145deg,#1a3d24,#0d2818)", border:`1px solid ${isRecording ? "rgba(201,168,76,.35)" : C.border}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:26 }}>
-                    {isRecording ? "⏹" : "🎙️"}
-                  </div>
-                </div>
-
-                {/* Timer */}
-                <div style={{ fontSize:28, fontWeight:700, fontVariantNumeric:"tabular-nums", color: isRecording ? C.text : C.dim }}>
-                  {formatTimer(timer)}
-                </div>
-
-                {/* Waveform */}
-                {isRecording && (
-                  <div style={{ display:"flex", alignItems:"center", gap:3, height:38 }}>
-                    {[20,28,16,34,22,38,18,30,14,26,36,20].map((h,i)=>(
-                      <div key={i} style={{ width:3, height:h, background:"linear-gradient(180deg,#c9a84c,rgba(201,168,76,.25))", borderRadius:2, animation:`wave 1.1s ease-in-out ${i*.09}s infinite` }} />
-                    ))}
-                  </div>
-                )}
-
-                {/* Live transcript */}
-                {transcript.length > 0 && (
-                  <div style={{ width:"100%", background:"rgba(255,255,255,.04)", borderRadius:10, padding:"10px 14px", fontSize:14, color:C.dim, textAlign:"right", direction:"rtl", fontFamily:"'Amiri Quran',serif", lineHeight:1.8, maxHeight:80, overflowY:"auto" }}>
-                    {transcript}
-                  </div>
-                )}
-
-                {/* Action buttons */}
-                <div style={{ display:"flex", gap:10, width:"100%" }}>
-                  <button
-                    onClick={stopRecording}
-                    disabled={!isRecording}
-                    style={{ flex:1, padding:"10px 0", borderRadius:12, background:"rgba(235,87,87,.14)", border:"1px solid rgba(235,87,87,.28)", color:C.red, fontFamily:"'Cairo',sans-serif", fontSize:13, fontWeight:600, cursor: isRecording ? "pointer" : "not-allowed", opacity: isRecording ? 1 : .5 }}>
-                    ⏹ Stop · إيقاف
-                  </button>
-                  <button
-                    onClick={nextAyah}
-                    style={{ flex:1, padding:"10px 0", borderRadius:12, background:"linear-gradient(135deg,#c9a84c,#8b6914)", border:"none", color:"#0a1f13", fontFamily:"'Cairo',sans-serif", fontSize:13, fontWeight:700, cursor:"pointer" }}>
-                    Next Ayah · التالية →
-                  </button>
-                </div>
+              {/* Navigation */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderTop: "1px solid rgba(26,61,36,.08)", background: "#f9f6f0" }}>
+                <button onClick={prevAyah} disabled={ayahIndex === 0}
+                  style={{ padding: "8px 16px", borderRadius: 10, background: "#f5f0e8", border: "1px solid rgba(26,61,36,.2)", color: ayahIndex === 0 ? "#7a9e88" : "#1a3d24", fontFamily: "'Cairo',sans-serif", fontSize: 12, cursor: ayahIndex === 0 ? "not-allowed" : "pointer", opacity: ayahIndex === 0 ? .5 : 1 }}>
+                  \u2190 Prev \u00b7 \u0627\u0644\u0633\u0627\u0628\u0642\u0629
+                </button>
+                <span style={{ fontSize: 12, color: "#7a9e88", fontWeight: 600 }}>{ayahIndex + 1} / {ayahs.length}</span>
+                <button onClick={nextAyah}
+                  style={{ padding: "8px 16px", borderRadius: 10, background: "#1a3d24", border: "none", color: "#fff", fontFamily: "'Cairo',sans-serif", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                  Next \u00b7 \u0627\u0644\u062a\u0627\u0644\u064a\u0629 \u2192
+                </button>
               </div>
-
-              {/* ── Live Score ── */}
-              <div style={card()}>
-                <div style={{ fontSize:13, color:C.dim, fontWeight:700, marginBottom:14 }}>
-                  Live Score · التقييم اللحظي
-                </div>
-                <div style={{ display:"flex", alignItems:"center", gap:16, marginBottom:14 }}>
-                  {/* Score ring */}
-                  <div style={{ width:68, height:68, borderRadius:"50%", background:`conic-gradient(${C.gold} 0deg ${Math.round(score.pct*3.6)}deg,rgba(255,255,255,.07) ${Math.round(score.pct*3.6)}deg)`, display:"flex", alignItems:"center", justifyContent:"center", position:"relative", flexShrink:0 }}>
-                    <div style={{ position:"absolute", width:50, height:50, borderRadius:"50%", background:C.mid }} />
-                    <span style={{ position:"relative", fontSize:14, fontWeight:700, color:C.gold }}>{score.pct}%</span>
-                  </div>
-                  <div style={{ flex:1 }}>
-                    {([
-                      [`✅ Correct · صحيح`, score.correct, C.green],
-                      [`❌ Wrong · خطأ`,    score.wrong,   C.red],
-                      [`⏳ Left · متبقي`,   score.total - score.correct - score.wrong, C.yellow],
-                    ] as const).map(([label,val,col],i)=>(
-                      <div key={i} style={{ display:"flex", justifyContent:"space-between", fontSize:12, marginBottom:5 }}>
-                        <span style={{ color:C.dim }}>{label}</span>
-                        <span style={{ color:col, fontWeight:600 }}>{val} words</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <div style={{ height:4, borderRadius:2, background:"rgba(255,255,255,.07)", overflow:"hidden" }}>
-                  <div style={{ width:`${score.pct}%`, height:"100%", borderRadius:2, background:`linear-gradient(90deg,${C.gold},${C.green})`, transition:"width .5s ease" }} />
-                </div>
-                {/* Session totals */}
-                <div style={{ display:"flex", justifyContent:"space-between", marginTop:12, fontSize:11, color:C.dim }}>
-                  <span>Session correct · إجمالي الصحيح: <span style={{ color:C.green, fontWeight:700 }}>{sessionCorrect}</span></span>
-                  <span>Session wrong · إجمالي الخطأ: <span style={{ color:C.red, fontWeight:700 }}>{sessionWrong}</span></span>
-                </div>
-              </div>
-            </>
-          )}
-
-          {/* ── Stats ── */}
-          <div>
-            <div style={{ fontSize:11, color:C.dim, letterSpacing:1.2, marginBottom:10 }}>YOUR PROGRESS · تقدمك</div>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
-              {[
-                { icon:"📖", val:"7.5", en:"Juz Memorized",  ar:"أجزاء محفوظة", change:"↑ +0.5 this week" },
-                { icon:"🔥", val:"7",   en:"Day Streak",     ar:"سلسلة الأيام", change:"↑ Personal best!" },
-                { icon:"⭐", val:"92%", en:"Avg Accuracy",   ar:"متوسط الدقة",  change:"↑ +4% this week" },
-                { icon:"⏱️", val:"42",  en:"Mins Today",     ar:"دقيقة اليوم",  change:"Target: 60 mins" },
-              ].map((s,i)=>(
-                <div key={i} style={card({ padding:"14px 16px" })}>
-                  <div style={{ fontSize:20, marginBottom:7 }}>{s.icon}</div>
-                  <div style={{ fontSize:24, fontWeight:900, color:C.gold, lineHeight:1 }}>{s.val}</div>
-                  <div style={{ fontSize:12, fontWeight:600, marginTop:4 }}>{s.en}</div>
-                  <div style={{ fontSize:10, color:C.dim }}>{s.ar}</div>
-                  <div style={{ fontSize:11, color:C.green, marginTop:5 }}>{s.change}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* ── Revision Schedule (from Supabase) ── */}
-          <div style={card()}>
-            <div style={{ marginBottom:14 }}>
-              <div style={{ fontSize:13, fontWeight:700 }}>📅 Revision Schedule · جدول المراجعة</div>
-              <div style={{ fontSize:10, color:C.dim, marginTop:2 }}>Based on your last reviewed dates · بناءً على آخر مراجعة</div>
             </div>
 
-            {revisionSchedule.length === 0 ? (
-              <div style={{ fontSize:12, color:C.dim, textAlign:"center", padding:"16px 0" }}>
-                No revision data yet. Start reciting to track your progress!<br/>
-                <span style={{ fontSize:11 }}>ابدأ التلاوة لتتبع تقدمك</span>
+            {/* \u2500\u2500 Recording Card \u2500\u2500 */}
+            <div style={{ background: "#fff", borderRadius: 16, padding: "22px 18px", border: "1px solid rgba(26,61,36,.1)", boxShadow: "0 1px 4px rgba(0,0,0,.06)", display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
+              <div style={{ fontFamily: "'Amiri',serif", fontSize: 16, fontWeight: 700, color: "#1a3d24" }}>
+                Recitation \u00b7 \u0627\u0644\u062a\u0644\u0627\u0648\u0629
               </div>
-            ) : (
-              revisionSchedule.map((r, i) => {
-                const days = daysSince(r.last_reviewed);
-                const col = urgencyColor(days);
-                return (
-                  <div key={i} style={{ display:"flex", alignItems:"center", gap:12, padding:"11px 0", borderBottom: i < revisionSchedule.length-1 ? `1px solid rgba(255,255,255,.05)` : "none" }}>
-                    <div style={{ width:10, height:10, borderRadius:"50%", background:col, boxShadow:`0 0 6px ${col}55`, flexShrink:0 }} />
-                    <div style={{ flex:1 }}>
-                      <div style={{ fontSize:13, fontWeight:600 }}>Juz / {r.surah_name}</div>
-                      <div style={{ fontSize:11, color:C.dim }}>
-                        Last reviewed {days === 0 ? "today" : `${days} day${days>1?"s":""} ago`}
-                        {" · "} Best: <span style={{ color:C.gold }}>{r.best_accuracy}%</span>
-                      </div>
-                    </div>
-                    <div style={{ fontSize:10, padding:"3px 10px", borderRadius:10, fontWeight:700, background:`${col}22`, color:col, border:`1px solid ${col}44`, whiteSpace:"nowrap" as const }}>
-                      {urgencyLabel(days)}
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
 
-        </div>
-      </div>
-    </div>
-  );
-}
+              {!speechSupported && (
+                <div style={{ background: "#fff5f5", border: "1px solid #feb2b2", borderRadius: 10, padding: "10px 14px", fontSize: 12, color: "#c0392b", textAlign: "center", width: "100%" }}>
+                  \u26a0\ufe0f Speech recognition not supported. Please use Chrome or Edge.
+                </div>
+              )}
+
+              <div style={{ fontSize: 13, color: isRecording ? "#b7791f" : "#7a9e88", fontWeight: 600 }}>
+                {isRecording ? "\u25cf Listening \u00b7 \u062c\u0627\u0631\u064d \u0627\u0644\u0627\u0633\u062a\u0645\u0627\u0639\u2026" : "Tap mic to start \u00b7 \u0627\u0636\u063a\u0637 \u0644\u0644\u0628\u062f\u0621"}
+              </div>
+
+              {/* Mic button */}
+              <div onClick={isRecording ? stopRecording : startRecording}
+                style={{ width: 92, height: 92, borderRadius: "50%", cursor: speechSupported ? "pointer" : "not-allowed",
+                  background: isRecording ? "#1a3d24" : "#f5f0e8",
+                  border: `2px solid ${isRecording ? "#1a3d24" : "rgba(26,61,36,.25)"}`,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  animation: isRecording ? "ring 2
