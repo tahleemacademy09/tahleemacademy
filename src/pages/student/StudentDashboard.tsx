@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -10,7 +10,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import {
   BookOpen, ClipboardList, Bell, TrendingUp, Calendar, CheckCircle, XCircle,
-  GraduationCap, MessageCircle, ArrowRight, Video, Star, ChevronLeft, ChevronRight, AlertTriangle, Info
+  GraduationCap, MessageCircle, ArrowRight, Video, Star, ChevronLeft,
+  ChevronRight, AlertTriangle, Info, Mic
 } from "lucide-react";
 
 const toHijri = (date: Date) => {
@@ -23,7 +24,7 @@ const toHijri = (date: Date) => {
   const m = Math.floor((24 * l3) / 709);
   const d = l3 - Math.floor((709 * m) / 24);
   const y = 30 * n + j - 30;
-  const months = ["محرم", "صفر", "ربيع الأول", "ربيع الثاني", "جمادى الأولى", "جمادى الآخرة", "رجب", "شعبان", "رمضان", "شوال", "ذو القعدة", "ذو الحجة"];
+  const months = ["محرم","صفر","ربيع الأول","ربيع الثاني","جمادى الأولى","جمادى الآخرة","رجب","شعبان","رمضان","شوال","ذو القعدة","ذو الحجة"];
   return { day: d, month: months[m - 1], year: y, full: `${d} ${months[m - 1]} ${y} هـ` };
 };
 
@@ -35,23 +36,30 @@ const VERSES = [
   { ar: "فَاذْكُرُونِي أَذْكُرْكُمْ", en: "Remember Me; I will remember you.", ref: "Quran 2:152" },
   { ar: "وَلَسَوْفَ يُعْطِيكَ رَبُّكَ فَتَرْضَىٰ", en: "And your Lord is going to give you, and you will be satisfied.", ref: "Quran 93:5" },
   { ar: "إِنَّ اللَّهَ مَعَ الصَّابِرِينَ", en: "Indeed, Allah is with the patient.", ref: "Quran 2:153" },
-  { ar: "وَقُل رَّبِّ أَدْخِلْنِي مُدْخَلَ صِدْقٍ وَأَخْرِجْنِي مُخْرَجَ صِدْقٍ", en: "My Lord, cause me to enter a sound entrance and exit a sound exit.", ref: "Quran 17:80" },
   { ar: "وَعَسَىٰ أَن تَكْرَهُوا شَيْئًا وَهُوَ خَيْرٌ لَّكُمْ", en: "Perhaps you dislike something which is good for you.", ref: "Quran 2:216" },
   { ar: "إِنَّ اللَّهَ لَا يُغَيِّرُ مَا بِقَوْمٍ حَتَّىٰ يُغَيِّرُوا مَا بِأَنفُسِهِمْ", en: "Allah does not change a people until they change what is within themselves.", ref: "Quran 13:11" },
 ];
 
 const gradePoint = (pct: number): number => {
-  if (pct >= 85) return 4.0;
-  if (pct >= 75) return 3.5;
-  if (pct >= 65) return 3.0;
-  if (pct >= 55) return 2.0;
-  if (pct >= 45) return 1.0;
-  return 0.0;
+  if (pct >= 85) return 4.0; if (pct >= 75) return 3.5;
+  if (pct >= 65) return 3.0; if (pct >= 55) return 2.0;
+  if (pct >= 45) return 1.0; return 0.0;
 };
+
+const DARK_GREEN  = "#0f2d1f";
+const MID_GREEN   = "#1a4731";
+const GOLD        = "#c9a84c";
+const GOLD_LIGHT  = "#e4c36a";
+const CREAM       = "#faf6ee";
+const TEXT_DARK   = "#0f2d1f";
+const TEXT_MED    = "#4a7c59";
+const TEXT_LIGHT  = "#7a9e88";
+const BORDER      = "rgba(15,45,31,0.1)";
 
 const StudentDashboard = () => {
   const { t, language } = useLanguage();
   const { user, profile } = useAuth();
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({ enrollments: 0, attemptsDone: 0, avgScore: 0, pendingGrading: 0, cgpa: 0 });
   const [upcomingExams, setUpcomingExams] = useState<any[]>([]);
@@ -61,15 +69,18 @@ const StudentDashboard = () => {
   const [allExamsForCalendar, setAllExamsForCalendar] = useState<any[]>([]);
   const [subjectAssignments, setSubjectAssignments] = useState<any[]>([]);
   const [calendarMonth, setCalendarMonth] = useState(new Date());
+  const [showAllNotifs, setShowAllNotifs] = useState(false);
 
   const dayOfYear = Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0).getTime()) / 86400000);
   const dailyVerse = VERSES[dayOfYear % VERSES.length];
   const hijri = toHijri(new Date());
+  const today = new Date();
 
   useEffect(() => {
     if (!user) return;
     const fetchData = async () => {
-      const [enrollRes, gradedAttemptsRes, pendingAttemptsRes, notifsRes, assignmentsRes, recentRes, allAttemptsRes, subjectsRes, calendarExamsRes, subAssignmentsRes] = await Promise.all([
+      const [enrollRes, gradedAttemptsRes, pendingAttemptsRes, notifsRes, assignmentsRes,
+        recentRes, allAttemptsRes, subjectsRes, calendarExamsRes, subAssignmentsRes] = await Promise.all([
         supabase.from("enrollments").select("id").eq("user_id", user.id),
         supabase.from("exam_attempts").select("percentage").eq("user_id", user.id).eq("status", "graded"),
         supabase.from("exam_attempts").select("id").eq("user_id", user.id).eq("status", "submitted"),
@@ -81,20 +92,14 @@ const StudentDashboard = () => {
         supabase.from("exams").select("id, title, title_ar, start_date, end_date, time_limit_minutes").eq("is_published", true),
         supabase.from("subject_assignments").select("id, title, deadline, subject_id, subjects(title, title_ar)"),
       ]);
-
       const gradedAttempts = gradedAttemptsRes.data || [];
       const avg = gradedAttempts.length > 0 ? gradedAttempts.reduce((s, a) => s + (Number(a.percentage) || 0), 0) / gradedAttempts.length : 0;
       const totalGP = gradedAttempts.reduce((sum, a) => sum + gradePoint(Number(a.percentage) || 0), 0);
       const cgpa = gradedAttempts.length > 0 ? totalGP / gradedAttempts.length : 0;
-
       const attemptCounts: Record<string, number> = {};
-      (allAttemptsRes.data || []).forEach((a: any) => {
-        if (a.status !== "in_progress") attemptCounts[a.exam_id] = (attemptCounts[a.exam_id] || 0) + 1;
-      });
-
+      (allAttemptsRes.data || []).forEach((a: any) => { if (a.status !== "in_progress") attemptCounts[a.exam_id] = (attemptCounts[a.exam_id] || 0) + 1; });
       const allAssigned = (assignmentsRes.data || []).map((a: any) => a.exams).filter((e: any) => e && e.is_published);
       const upcoming = allAssigned.filter((e: any) => (attemptCounts[e.id] || 0) < (e.max_attempts || 1));
-
       setStats({ enrollments: enrollRes.data?.length || 0, attemptsDone: gradedAttempts.length, avgScore: Math.round(avg), pendingGrading: pendingAttemptsRes.data?.length || 0, cgpa });
       setUpcomingExams(upcoming.slice(0, 5));
       setRecentResults(recentRes.data || []);
@@ -107,343 +112,370 @@ const StudentDashboard = () => {
     fetchData();
   }, [user]);
 
-  const gaugePercent = (stats.cgpa / 4.0) * 100;
-  const circumference = 2 * Math.PI * 45;
-  const strokeDashoffset = circumference - (gaugePercent / 100) * circumference;
-
-  if (loading) {
-    return (
-      <div className="container mx-auto px-4 py-8">
-        <Skeleton className="h-20 w-full mb-6 rounded-2xl" />
-        <div className="grid gap-4 md:grid-cols-2 mb-6">
-          {[1, 2, 3, 4].map(i => <Skeleton key={i} className="h-24 rounded-xl" />)}
-        </div>
-      </div>
-    );
-  }
-
-  const markAsRead = async (id: string) => {
-    await supabase.from("notifications").update({ is_read: true }).eq("id", id);
-    setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
-  };
-
-  const unreadCount = notifications.filter(n => !n.is_read).length;
-
   const calendarYear = calendarMonth.getFullYear();
   const calendarMonthIdx = calendarMonth.getMonth();
   const daysInMonth = new Date(calendarYear, calendarMonthIdx + 1, 0).getDate();
   const firstDayOfWeek = new Date(calendarYear, calendarMonthIdx, 1).getDay();
-
   const getEventsForDay = (day: number) => {
     const dateStr = `${calendarYear}-${String(calendarMonthIdx + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-    const events: { type: 'exam' | 'assignment'; title: string; color: string }[] = [];
-    allExamsForCalendar.forEach(e => {
-      if (e.start_date && e.start_date.startsWith(dateStr)) {
-        events.push({ type: 'exam', title: e.title_ar || e.title, color: 'bg-destructive' });
-      }
-    });
-    subjectAssignments.forEach(a => {
-      if (a.deadline && a.deadline.startsWith(dateStr)) {
-        events.push({ type: 'assignment', title: a.title, color: 'bg-secondary' });
-      }
-    });
+    const events: { type: string; title: string; color: string }[] = [];
+    allExamsForCalendar.forEach(e => { if (e.start_date?.startsWith(dateStr)) events.push({ type: 'exam', title: e.title_ar || e.title, color: '#c0392b' }); });
+    subjectAssignments.forEach(a => { if (a.deadline?.startsWith(dateStr)) events.push({ type: 'assignment', title: a.title, color: GOLD }); });
     return events;
   };
-
   const prevMonth = () => setCalendarMonth(new Date(calendarYear, calendarMonthIdx - 1, 1));
   const nextMonth = () => setCalendarMonth(new Date(calendarYear, calendarMonthIdx + 1, 1));
+  const markAsRead = async (id: string) => {
+    await supabase.from("notifications").update({ is_read: true }).eq("id", id);
+    setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
+  };
+  const unreadCount = notifications.filter(n => !n.is_read).length;
+  const circumference = 2 * Math.PI * 45;
+  const strokeDashoffset = circumference - ((stats.cgpa / 4.0) * circumference);
 
-  const notifIcon = (type: string | null) => {
-    if (type === 'warning') return <AlertTriangle className="h-3 w-3 text-secondary" />;
-    if (type === 'exam') return <ClipboardList className="h-3 w-3 text-destructive" />;
-    return <Info className="h-3 w-3 text-primary" />;
+  const card: React.CSSProperties = {
+    background: "#fff", border: `1px solid ${BORDER}`,
+    borderRadius: 18, boxShadow: "0 2px 12px rgba(0,0,0,.06)", overflow: "hidden",
   };
 
-  const today = new Date();
+  const sectionTitle = (en: string, ar: string) => (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ fontSize: 16, fontWeight: 800, color: TEXT_DARK, fontFamily: "'Playfair Display', serif" }}>{t(en, ar)}</div>
+    </div>
+  );
+
+  if (loading) return (
+    <div className="container mx-auto px-4 py-8">
+      <Skeleton className="h-20 w-full mb-4 rounded-2xl" />
+      <div className="grid gap-4 grid-cols-2 mb-4">
+        {[1,2,3,4].map(i => <Skeleton key={i} className="h-24 rounded-xl" />)}
+      </div>
+      <Skeleton className="h-40 w-full rounded-2xl" />
+    </div>
+  );
 
   return (
-    <div className="container mx-auto px-4 py-6 md:py-8 space-y-5">
-      {/* WELCOME MESSAGE */}
-      <div className={language === "ar" ? "text-right" : "text-left"}>
-        <h1
-          className="text-2xl md:text-3xl font-bold"
-          style={{
-            color: '#1a3a2a',
-            fontFamily: language === "ar" ? "'Amiri', serif" : "'Playfair Display', serif",
-          }}
-          dir={language === "ar" ? "rtl" : "ltr"}
-        >
-          {language === "ar"
-            ? `مرحباً بك يا ${profile?.full_name || "طالب"}! 👋`
-            : `Marhaban, ${profile?.full_name || "Student"}! 👋`}
-        </h1>
-        <p className="text-base mt-1.5 font-medium" style={{ color: '#374151' }}>
-          {t("Here's your learning overview", "إليك نظرة عامة على مسارك التعليمي")}
-        </p>
-      </div>
+    <div style={{ background: CREAM, minHeight: "100vh", fontFamily: "'Cairo', sans-serif" }}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Amiri:wght@400;700&family=Cairo:wght@400;600;700;900&family=Playfair+Display:wght@500;700&display=swap');`}</style>
 
-      {/* HEADER: Greeting + Hijri Pill */}
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary via-primary to-emerald-mid p-5 md:p-7 text-primary-foreground geometric-pattern">
-        <div className="relative z-10">
-          <div className="flex items-center justify-between mb-3">
-            <p className="text-[10px] uppercase tracking-[0.25em] opacity-60">بسم الله الرحمن الرحيم</p>
-            <div className="bg-white/15 backdrop-blur-sm rounded-full px-3 py-1 flex items-center gap-1.5">
-              <Calendar className="h-3 w-3 opacity-70" />
-              <span className="text-[11px] font-medium font-arabic" dir="rtl">{hijri.full}</span>
+      <div style={{ maxWidth: 720, margin: "0 auto", padding: "20px 16px 40px", display: "flex", flexDirection: "column", gap: 18 }}>
+
+        {/* ── Hero Banner ── */}
+        <div style={{ background: `linear-gradient(135deg, ${DARK_GREEN} 0%, ${MID_GREEN} 60%, #1e5c35 100%)`, borderRadius: 20, padding: "22px 20px", position: "relative", overflow: "hidden" }}>
+          {/* Decorative circles */}
+          <div style={{ position:"absolute", top:-40, right:-40, width:140, height:140, borderRadius:"50%", background:"rgba(255,255,255,0.04)", pointerEvents:"none" }} />
+          <div style={{ position:"absolute", bottom:-30, left:-30, width:110, height:110, borderRadius:"50%", background:"rgba(255,255,255,0.04)", pointerEvents:"none" }} />
+          {/* Bismillah */}
+          <div style={{ textAlign:"center", fontSize:10, color:"rgba(255,255,255,0.5)", letterSpacing:"0.3em", marginBottom:12 }}>بسم الله الرحمن الرحيم</div>
+          {/* Hijri date pill */}
+          <div style={{ display:"flex", justifyContent:"center", marginBottom:14 }}>
+            <div style={{ background:"rgba(255,255,255,0.12)", backdropFilter:"blur(8px)", borderRadius:30, padding:"5px 14px", display:"flex", alignItems:"center", gap:6 }}>
+              <Calendar style={{ width:12, height:12, color:GOLD_LIGHT }} />
+              <span style={{ fontSize:11, color:"#fff", fontFamily:"'Amiri',serif" }} dir="rtl">{hijri.full}</span>
             </div>
           </div>
-          <div className="text-center">
-            <h1 className="text-2xl md:text-3xl font-bold mb-0.5" dir="rtl" style={{ fontFamily: "'Amiri', serif" }}>السلام عليكم</h1>
-            <p className="text-base md:text-lg opacity-90">{profile?.full_name || t("Student", "طالب")}</p>
-            <p className="text-[11px] opacity-50 mt-1">
-              {today.toLocaleDateString(language === "ar" ? "ar-SA" : "en-US", { weekday: 'long', month: 'long', day: 'numeric' })}
+          {/* Greeting */}
+          <div style={{ textAlign:"center" }}>
+            <h1 style={{ fontFamily:"'Amiri',serif", fontSize:28, fontWeight:700, color:"#fff", margin:"0 0 4px" }} dir="rtl">
+              السلام عليكم
+            </h1>
+            <p style={{ fontSize:16, fontWeight:700, color:"rgba(255,255,255,0.9)", margin:"0 0 4px" }}>
+              {t(`Marhaban, ${profile?.full_name || "Student"}! 👋`, `مرحباً، ${profile?.full_name || "طالب"}! 👋`)}
+            </p>
+            <p style={{ fontSize:11, color:"rgba(255,255,255,0.5)", margin:0 }}>
+              {today.toLocaleDateString(language === "ar" ? "ar-SA" : "en-US", { weekday:"long", month:"long", day:"numeric" })}
             </p>
           </div>
         </div>
-        <div className="absolute -top-10 -right-10 h-36 w-36 rounded-full bg-white/5" />
-        <div className="absolute -bottom-8 -left-8 h-28 w-28 rounded-full bg-white/5" />
-      </div>
 
-      {/* DAILY QURANIC REFLECTION */}
-      <div className="rounded-2xl p-5 md:p-6 text-center shadow-[0_4px_20px_rgba(0,0,0,0.05)]" style={{ background: '#064E3B' }}>
-        <div className="flex items-center justify-center gap-2 mb-3">
-          <Star className="h-4 w-4" style={{ color: '#D4AF37' }} />
-          <p className="text-sm font-medium" style={{ color: '#D4AF37', fontFamily: "'Playfair Display', serif" }}>
-            {t("Daily Quranic Reflection", "تأمل قرآني يومي")}
+        {/* ── Daily Verse ── */}
+        <div style={{ background:`linear-gradient(135deg, ${DARK_GREEN} 0%, #0d3b27 100%)`, borderRadius:18, padding:"20px 18px", textAlign:"center" }}>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:8, marginBottom:12 }}>
+            <Star style={{ width:14, height:14, color:GOLD }} />
+            <span style={{ fontSize:13, fontWeight:700, color:GOLD, fontFamily:"'Playfair Display',serif" }}>
+              {t("Daily Quranic Reflection", "تأمل قرآني يومي")}
+            </span>
+            <Star style={{ width:14, height:14, color:GOLD }} />
+          </div>
+          <div style={{ color:GOLD, opacity:0.4, marginBottom:10, fontSize:12 }}>✦ ─────── ✦</div>
+          <p style={{ fontFamily:"'Amiri Quran',serif", fontSize:24, lineHeight:2.2, color:"#fff", margin:"0 0 8px", direction:"rtl" }}>
+            {dailyVerse.ar}
           </p>
-          <Star className="h-4 w-4" style={{ color: '#D4AF37' }} />
+          <div style={{ color:GOLD, opacity:0.4, fontSize:12, marginBottom:8 }}>❖</div>
+          <p style={{ fontSize:13, fontStyle:"italic", color:"rgba(255,255,255,0.75)", margin:"0 0 4px" }}>"{dailyVerse.en}"</p>
+          <p style={{ fontSize:11, fontWeight:700, color:GOLD, margin:0 }}>{dailyVerse.ref}</p>
         </div>
-        <div className="my-1 opacity-30"><span style={{ color: '#D4AF37' }}>✦ ─────── ✦</span></div>
-        <p className="text-xl md:text-2xl leading-[2.2] mx-auto max-w-lg my-4 font-arabic" dir="rtl" style={{ color: '#FFFFFF', fontFamily: "'Amiri', serif", fontSize: '22px', lineHeight: '2' }}>
-          {dailyVerse.ar}
-        </p>
-        <div className="my-2 opacity-30"><span style={{ color: '#D4AF37' }}>❖</span></div>
-        <p className="text-sm italic max-w-md mx-auto mb-1" style={{ color: 'rgba(255,255,255,0.8)' }}>"{dailyVerse.en}"</p>
-        <p className="text-xs font-semibold" style={{ color: '#D4AF37' }}>{dailyVerse.ref}</p>
-      </div>
 
-      {/* ACADEMIC SNAPSHOT: CGPA + 4 Stats */}
-      <Card className="rounded-2xl shadow-[0_4px_20px_rgba(0,0,0,0.05)] border-0">
-        <CardContent className="p-5">
-          <div className="flex flex-col sm:flex-row items-center gap-5">
-            <div className="relative shrink-0">
-              <svg width="110" height="110" className="-rotate-90">
-                <circle cx="55" cy="55" r="45" stroke="hsl(var(--muted))" strokeWidth="9" fill="none" />
-                <circle cx="55" cy="55" r="45" stroke="#D4AF37" strokeWidth="9" fill="none" strokeLinecap="round" strokeDasharray={circumference} strokeDashoffset={strokeDashoffset} className="transition-all duration-1000" />
-              </svg>
-              <div className="absolute inset-0 flex flex-col items-center justify-center">
-                <span className="text-2xl font-bold" style={{ fontFamily: "'Playfair Display', serif" }}>{stats.cgpa.toFixed(2)}</span>
-                <span className="text-[10px] text-muted-foreground font-medium">{t("CGPA", "المعدل")}</span>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 flex-1 w-full">
-              {[
-                { icon: BookOpen, label: t("Enrollments", "التسجيلات"), value: stats.enrollments, color: "text-primary" },
-                { icon: ClipboardList, label: t("Graded", "مُصحّحة"), value: stats.attemptsDone, color: "text-secondary" },
-                { icon: TrendingUp, label: t("Avg Score", "المعدل"), value: `${stats.avgScore}%`, color: "text-primary" },
-                { icon: Bell, label: t("Pending", "بانتظار"), value: stats.pendingGrading, color: "text-destructive" },
-              ].map((s, i) => (
-                <div key={i} className="text-center rounded-xl bg-muted/40 p-3">
-                  <s.icon className={`h-5 w-5 mx-auto mb-1.5 ${s.color}`} />
-                  <div className="text-lg font-bold">{s.value}</div>
-                  <div className="text-[10px] text-muted-foreground">{s.label}</div>
-                </div>
-              ))}
+        {/* ── Academic Snapshot ── */}
+        <div style={card}>
+          <div style={{ padding:"18px 18px 0", borderBottom:`1px solid ${BORDER}`, paddingBottom:14 }}>
+            <div style={{ fontSize:15, fontWeight:800, color:TEXT_DARK, fontFamily:"'Playfair Display',serif" }}>
+              {t("Academic Snapshot", "نظرة أكاديمية")}
             </div>
           </div>
-        </CardContent>
-      </Card>
-
-      {/* QUICK ACTIONS */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {[
-          { to: "/student/exams", icon: ClipboardList, label: t("My Exams", "امتحاناتي") },
-          { to: "/student/transcripts", icon: GraduationCap, label: t("Transcripts", "الفجل") },
-          { to: "/student/live-classes", icon: Video, label: t("Live Classes", "الفصول الحية") },
-          { to: "/student/majlis", icon: MessageCircle, label: t("Al-Majlis", "المجلس") },
-        ].map((link, i) => (
-          <Link to={link.to} key={i}>
-            <Card className="rounded-2xl shadow-[0_4px_20px_rgba(0,0,0,0.05)] border-0 hover:scale-[1.05] transition-transform duration-200 cursor-pointer">
-              <CardContent className="flex flex-col items-center justify-center gap-2 p-4">
-                <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center">
-                  <link.icon className="h-5 w-5 text-primary" />
+          <div style={{ padding:"18px 16px" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:18, flexWrap:"wrap" as const }}>
+              {/* CGPA Ring */}
+              <div style={{ position:"relative", flexShrink:0 }}>
+                <svg width={110} height={110} style={{ transform:"rotate(-90deg)" }}>
+                  <circle cx={55} cy={55} r={45} stroke={BORDER} strokeWidth={9} fill="none" />
+                  <circle cx={55} cy={55} r={45} stroke={GOLD} strokeWidth={9} fill="none"
+                    strokeLinecap="round" strokeDasharray={circumference} strokeDashoffset={strokeDashoffset}
+                    style={{ transition:"stroke-dashoffset 1s ease" }} />
+                </svg>
+                <div style={{ position:"absolute", inset:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center" }}>
+                  <span style={{ fontSize:22, fontWeight:900, color:TEXT_DARK, fontFamily:"'Playfair Display',serif" }}>{stats.cgpa.toFixed(2)}</span>
+                  <span style={{ fontSize:10, fontWeight:600, color:TEXT_LIGHT }}>CGPA</span>
                 </div>
-                <span className="text-xs font-medium text-center">{link.label}</span>
-              </CardContent>
-            </Card>
-          </Link>
-        ))}
-      </div>
-
-      {/* NOTIFICATIONS */}
-      <Card className="rounded-2xl shadow-[0_4px_20px_rgba(0,0,0,0.05)] border-0 border-l-4 border-l-secondary">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm flex items-center gap-2" style={{ fontFamily: "'Playfair Display', serif" }}>
-            <Bell className="h-4 w-4 text-secondary" />
-            {t("Notifications", "الإشعارات")}
-            {unreadCount > 0 && <Badge variant="destructive" className="text-[10px]">{unreadCount}</Badge>}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="pt-0">
-          {notifications.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-4">{t("No notifications yet", "لا توجد إشعارات بعد")}</p>
-          ) : (
-            <div className="space-y-2 max-h-[300px] overflow-y-auto">
-              {notifications.map((n) => (
-                <div
-                  key={n.id}
-                  className={`rounded-xl p-3 flex items-start gap-3 transition-colors cursor-pointer ${n.is_read ? 'bg-muted/20' : 'bg-secondary/10 border border-secondary/20'}`}
-                  onClick={() => !n.is_read && markAsRead(n.id)}
-                >
-                  <div className={`h-7 w-7 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${n.is_read ? 'bg-muted/40' : 'bg-secondary/20'}`}>
-                    {notifIcon(n.type)}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <p className={`font-medium text-sm ${!n.is_read ? 'text-foreground' : 'text-muted-foreground'}`}>{n.title}</p>
-                      {!n.is_read && <div className="h-2 w-2 rounded-full bg-secondary shrink-0" />}
-                    </div>
-                    <p className="text-xs text-muted-foreground">{n.message}</p>
-                    <p className="text-[10px] text-muted-foreground mt-1">
-                      {new Date(n.created_at).toLocaleDateString(language === "ar" ? "ar-SA" : "en-US", { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* ACADEMIC CALENDAR */}
-      <Card className="rounded-2xl shadow-[0_4px_20px_rgba(0,0,0,0.05)] border-0">
-        <CardHeader className="pb-2">
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-sm flex items-center gap-2" style={{ fontFamily: "'Playfair Display', serif" }}>
-              <Calendar className="h-4 w-4 text-primary" />
-              {t("Academic Calendar", "التقويم الأكاديمي")}
-            </CardTitle>
-            <div className="flex items-center gap-1">
-              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={prevMonth}><ChevronLeft className="h-4 w-4" /></Button>
-              <div className="text-center">
-                <span className="text-sm font-medium block">{calendarMonth.toLocaleDateString(language === "ar" ? "ar-SA" : "en-US", { month: 'long', year: 'numeric' })}</span>
-                <span className="text-[10px] text-muted-foreground font-arabic" dir="rtl">
-                  {(() => { const h = toHijri(new Date(calendarYear, calendarMonthIdx, 15)); return `${h.month} ${h.year} هـ`; })()}
-                </span>
               </div>
-              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={nextMonth}><ChevronRight className="h-4 w-4" /></Button>
+              {/* Stats grid */}
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, flex:1 }}>
+                {[
+                  { icon:BookOpen, label:t("Enrollments","التسجيلات"), value:stats.enrollments, color:"#276749", bg:"#f0fff4", link:"/student/courses" },
+                  { icon:ClipboardList, label:t("Graded Exams","اختبارات مصححة"), value:stats.attemptsDone, color:"#b7791f", bg:"#fffbeb", link:"/student/exams" },
+                  { icon:TrendingUp, label:t("Avg Score","متوسط الدرجات"), value:`${stats.avgScore}%`, color:"#2b6cb0", bg:"#ebf8ff", link:"/student/transcripts" },
+                  { icon:Bell, label:t("Pending","بانتظار المراجعة"), value:stats.pendingGrading, color:"#c0392b", bg:"#fff5f5", link:"/student/exams" },
+                ].map((s,i) => (
+                  <div key={i} onClick={() => navigate(s.link)}
+                    style={{ textAlign:"center", borderRadius:12, background:s.bg, padding:"12px 8px", cursor:"pointer", transition:"transform .15s", border:`1px solid ${s.color}22` }}>
+                    <s.icon style={{ width:20, height:20, color:s.color, margin:"0 auto 6px" }} />
+                    <div style={{ fontSize:20, fontWeight:900, color:TEXT_DARK }}>{s.value}</div>
+                    <div style={{ fontSize:10, fontWeight:600, color:TEXT_LIGHT, marginTop:2 }}>{s.label}</div>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
-        </CardHeader>
-        <CardContent className="pt-0">
-          <div className="grid grid-cols-7 gap-1 mb-1">
-            {(language === "ar" ? ["أحد", "إثن", "ثلا", "أرب", "خمي", "جمع", "سبت"] : ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]).map(d => (
-              <div key={d} className="text-[10px] text-muted-foreground text-center font-medium py-1">{d}</div>
+        </div>
+
+        {/* ── Quick Actions ── */}
+        <div>
+          <div style={{ fontSize:15, fontWeight:800, color:TEXT_DARK, fontFamily:"'Playfair Display',serif", marginBottom:12 }}>
+            {t("Quick Actions", "الإجراءات السريعة")}
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:10 }}>
+            {[
+              { to:"/student/exams",        icon:ClipboardList, label:t("My Exams","امتحاناتي"),        ar:"امتحاناتي",    color:"#276749", bg:"#f0fff4" },
+              { to:"/student/transcripts",  icon:GraduationCap, label:t("Transcripts","السجلات"),        ar:"السجلات",      color:"#b7791f", bg:"#fffbeb" },
+              { to:"/student/live-classes", icon:Video,         label:t("Live Classes","الفصول الحية"), ar:"الفصول الحية", color:"#2b6cb0", bg:"#ebf8ff" },
+              { to:"/student/majlis",       icon:MessageCircle, label:t("Al-Majlis","المجلس"),           ar:"المجلس",       color:"#6b46c1", bg:"#faf5ff" },
+              { to:"/student/hifdh",        icon:Mic,           label:t("AI-Hifdh","الحِفظ الذكي"),     ar:"الحِفظ الذكي", color:DARK_GREEN, bg:"#f0fdf4" },
+              { to:"/student/courses",      icon:BookOpen,      label:t("Courses","الدروس"),             ar:"الدروس",       color:"#c0392b", bg:"#fff5f5" },
+            ].map((link,i) => (
+              <Link to={link.to} key={i} style={{ textDecoration:"none" }}>
+                <div style={{ ...card, display:"flex", alignItems:"center", gap:12, padding:"14px 14px", transition:"transform .15s, box-shadow .15s" }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform="translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow="0 6px 20px rgba(0,0,0,.1)"; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform="none"; (e.currentTarget as HTMLElement).style.boxShadow="0 2px 12px rgba(0,0,0,.06)"; }}>
+                  <div style={{ width:40, height:40, borderRadius:12, background:link.bg, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, border:`1px solid ${link.color}22` }}>
+                    <link.icon style={{ width:20, height:20, color:link.color }} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize:13, fontWeight:700, color:TEXT_DARK }}>{link.label}</div>
+                    <div style={{ fontSize:10, color:TEXT_LIGHT }}>{link.ar}</div>
+                  </div>
+                  <ArrowRight style={{ width:14, height:14, color:TEXT_LIGHT, marginLeft:"auto" }} />
+                </div>
+              </Link>
             ))}
           </div>
-          <div className="grid grid-cols-7 gap-1">
-            {Array.from({ length: firstDayOfWeek }).map((_, i) => <div key={`empty-${i}`} className="h-12" />)}
-            {Array.from({ length: daysInMonth }).map((_, i) => {
-              const day = i + 1;
-              const events = getEventsForDay(day);
-              const isToday = day === today.getDate() && calendarMonthIdx === today.getMonth() && calendarYear === today.getFullYear();
-              const hijriDay = toHijri(new Date(calendarYear, calendarMonthIdx, day));
-              return (
-                <div key={day} className={`h-12 rounded-lg flex flex-col items-center justify-center relative text-xs transition-colors ${isToday ? 'bg-primary text-primary-foreground font-bold' : 'hover:bg-muted/40'} ${events.length > 0 ? 'font-semibold' : ''}`} title={events.map(e => e.title).join(', ')}>
-                  <span className="leading-none">{day}</span>
-                  <span className={`text-[8px] leading-none mt-0.5 ${isToday ? 'text-primary-foreground/70' : 'text-muted-foreground/60'}`} dir="rtl">{hijriDay.day}</span>
-                  {events.length > 0 && (
-                    <div className="flex gap-0.5 absolute bottom-0.5">
-                      {events.slice(0, 3).map((e, ei) => <div key={ei} className={`h-1 w-1 rounded-full ${e.color}`} />)}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </CardContent>
-      </Card>
+        </div>
 
-      {/* ACTION AGENDA */}
-      <Card className="rounded-2xl shadow-[0_4px_20px_rgba(0,0,0,0.05)] border-0">
-        <Tabs defaultValue="classes" className="w-full">
-          <CardHeader className="pb-2">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-sm" style={{ fontFamily: "'Playfair Display', serif" }}>{t("Agenda", "الأجندة")}</CardTitle>
-              <TabsList className="h-8 bg-muted/50">
-                <TabsTrigger value="classes" className="text-[11px] px-2.5 h-6">{t("Classes", "الفصول")}</TabsTrigger>
-                <TabsTrigger value="exams" className="text-[11px] px-2.5 h-6">{t("Exams", "الامتحانات")}</TabsTrigger>
-                <TabsTrigger value="results" className="text-[11px] px-2.5 h-6">{t("Results", "النتائج")}</TabsTrigger>
-              </TabsList>
+        {/* ── Notifications ── */}
+        <div style={card}>
+          <div style={{ padding:"16px 18px", borderBottom:`1px solid ${BORDER}`, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+              <Bell style={{ width:16, height:16, color:GOLD }} />
+              <span style={{ fontSize:15, fontWeight:800, color:TEXT_DARK, fontFamily:"'Playfair Display',serif" }}>{t("Notifications","الإشعارات")}</span>
+              {unreadCount > 0 && (
+                <span style={{ fontSize:10, fontWeight:700, background:"#c0392b", color:"#fff", borderRadius:20, padding:"2px 8px" }}>{unreadCount}</span>
+              )}
             </div>
-          </CardHeader>
-          <CardContent className="pt-0">
-            <TabsContent value="classes" className="mt-0">
-              {liveSubjects.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-6">{t("No active classes", "لا توجد فصول نشطة")}</p>
-              ) : (
-                <div className="space-y-2">
-                  {liveSubjects.map((s: any) => (
-                    <Link to={`/student/subjects/${s.id}`} key={s.id}>
-                      <div className="rounded-xl bg-muted/20 p-3 hover:bg-accent/30 transition-colors flex items-center gap-3">
-                        <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0"><BookOpen className="h-4 w-4 text-primary" /></div>
-                        <div className="min-w-0 flex-1">
-                          <p className="font-medium text-sm truncate">{s.title}</p>
-                          {s.title_ar && <p className="text-xs text-muted-foreground font-arabic mt-0.5" dir="rtl">{s.title_ar}</p>}
+            {notifications.length > 3 && (
+              <button onClick={() => setShowAllNotifs(v=>!v)}
+                style={{ fontSize:11, fontWeight:600, color:GOLD, background:"none", border:"none", cursor:"pointer" }}>
+                {showAllNotifs ? t("Show less","عرض أقل") : t("View all","عرض الكل")}
+              </button>
+            )}
+          </div>
+          <div style={{ padding:"12px 16px" }}>
+            {notifications.length === 0 ? (
+              <div style={{ textAlign:"center", padding:"20px 0", fontSize:13, color:TEXT_LIGHT }}>
+                {t("No notifications yet","لا توجد إشعارات بعد")}
+              </div>
+            ) : (showAllNotifs ? notifications : notifications.slice(0,3)).map(n => (
+              <div key={n.id} onClick={() => !n.is_read && markAsRead(n.id)}
+                style={{ display:"flex", alignItems:"flex-start", gap:12, padding:"10px 10px", borderRadius:10, marginBottom:6, cursor:"pointer",
+                  background: n.is_read ? "#f8fafb" : "#fffbeb",
+                  border:`1px solid ${n.is_read ? BORDER : GOLD+"44"}`,
+                }}>
+                <div style={{ width:30, height:30, borderRadius:"50%", background:n.is_read?"#f0f4f0":"#fffbeb", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, border:`1px solid ${n.is_read?BORDER:GOLD+"44"}` }}>
+                  {n.type==="warning" ? <AlertTriangle style={{ width:12, height:12, color:GOLD }} /> :
+                   n.type==="exam"    ? <ClipboardList style={{ width:12, height:12, color:"#c0392b" }} /> :
+                   <Info style={{ width:12, height:12, color:MID_GREEN }} />}
+                </div>
+                <div style={{ flex:1 }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                    <p style={{ fontSize:13, fontWeight:n.is_read?400:700, color:TEXT_DARK, margin:0 }}>{n.title}</p>
+                    {!n.is_read && <div style={{ width:7, height:7, borderRadius:"50%", background:GOLD, flexShrink:0 }} />}
+                  </div>
+                  <p style={{ fontSize:11, color:TEXT_LIGHT, margin:"2px 0 0" }}>{n.message}</p>
+                  <p style={{ fontSize:10, color:TEXT_LIGHT, margin:"3px 0 0" }}>
+                    {new Date(n.created_at).toLocaleDateString(language==="ar"?"ar-SA":"en-US", { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" })}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* ── Academic Calendar ── */}
+        <div style={card}>
+          <div style={{ padding:"16px 18px", borderBottom:`1px solid ${BORDER}`, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+              <Calendar style={{ width:16, height:16, color:MID_GREEN }} />
+              <span style={{ fontSize:15, fontWeight:800, color:TEXT_DARK, fontFamily:"'Playfair Display',serif" }}>{t("Academic Calendar","التقويم الأكاديمي")}</span>
+            </div>
+            <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+              <button onClick={prevMonth} style={{ width:28, height:28, borderRadius:8, border:`1px solid ${BORDER}`, background:"#f8fafb", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                <ChevronLeft style={{ width:14, height:14, color:TEXT_MED }} />
+              </button>
+              <div style={{ textAlign:"center", minWidth:100 }}>
+                <div style={{ fontSize:12, fontWeight:700, color:TEXT_DARK }}>
+                  {calendarMonth.toLocaleDateString(language==="ar"?"ar-SA":"en-US", { month:"long", year:"numeric" })}
+                </div>
+                <div style={{ fontSize:9, color:TEXT_LIGHT }} dir="rtl">
+                  {(() => { const h=toHijri(new Date(calendarYear,calendarMonthIdx,15)); return `${h.month} ${h.year} هـ`; })()}
+                </div>
+              </div>
+              <button onClick={nextMonth} style={{ width:28, height:28, borderRadius:8, border:`1px solid ${BORDER}`, background:"#f8fafb", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                <ChevronRight style={{ width:14, height:14, color:TEXT_MED }} />
+              </button>
+            </div>
+          </div>
+          <div style={{ padding:"14px 14px" }}>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:4, marginBottom:6 }}>
+              {(language==="ar" ? ["أحد","إثن","ثلا","أرب","خمي","جمع","سبت"] : ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"]).map(d=>(
+                <div key={d} style={{ textAlign:"center", fontSize:10, fontWeight:600, color:TEXT_LIGHT, padding:"4px 0" }}>{d}</div>
+              ))}
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:4 }}>
+              {Array.from({length:firstDayOfWeek}).map((_,i)=><div key={`e${i}`} style={{ height:40 }} />)}
+              {Array.from({length:daysInMonth}).map((_,i)=>{
+                const day=i+1; const events=getEventsForDay(day);
+                const isToday=day===today.getDate()&&calendarMonthIdx===today.getMonth()&&calendarYear===today.getFullYear();
+                const hijriDay=toHijri(new Date(calendarYear,calendarMonthIdx,day));
+                return (
+                  <div key={day} title={events.map(e=>e.title).join(", ")}
+                    style={{ height:40, borderRadius:8, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", position:"relative",
+                      background:isToday?DARK_GREEN:events.length>0?"#f0fff4":"transparent",
+                      border: isToday?`1px solid ${DARK_GREEN}`:events.length>0?`1px solid #9ae6b4`:`1px solid transparent`,
+                    }}>
+                    <span style={{ fontSize:12, fontWeight:isToday||events.length>0?700:400, color:isToday?"#fff":TEXT_DARK, lineHeight:1 }}>{day}</span>
+                    <span style={{ fontSize:8, color:isToday?"rgba(255,255,255,0.6)":TEXT_LIGHT, lineHeight:1, marginTop:1 }} dir="rtl">{hijriDay.day}</span>
+                    {events.length>0 && (
+                      <div style={{ display:"flex", gap:2, position:"absolute", bottom:3 }}>
+                        {events.slice(0,3).map((e,ei)=><div key={ei} style={{ width:4, height:4, borderRadius:"50%", background:e.color }} />)}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            {/* Legend */}
+            <div style={{ display:"flex", gap:14, marginTop:12, flexWrap:"wrap" as const }}>
+              {[["#c0392b","Exam","امتحان"],[GOLD,"Assignment","واجب"],[DARK_GREEN,"Today","اليوم"]].map(([col,en,ar],i)=>(
+                <div key={i} style={{ display:"flex", alignItems:"center", gap:4, fontSize:10, color:TEXT_LIGHT }}>
+                  <div style={{ width:8, height:8, borderRadius:"50%", background:col }} />
+                  <span style={{ fontWeight:600, color:TEXT_DARK }}>{t(en,ar)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* ── Agenda Tabs ── */}
+        <div style={card}>
+          <div style={{ padding:"16px 18px 0", borderBottom:`1px solid ${BORDER}`, paddingBottom:0 }}>
+            <div style={{ fontSize:15, fontWeight:800, color:TEXT_DARK, fontFamily:"'Playfair Display',serif", marginBottom:12 }}>
+              {t("Agenda","الأجندة")}
+            </div>
+            <Tabs defaultValue="classes" className="w-full">
+              <TabsList className="w-full h-9 mb-0" style={{ background:"#f8fafb", borderRadius:"10px 10px 0 0" }}>
+                <TabsTrigger value="classes" className="flex-1 text-xs">{t("Classes","الفصول")}</TabsTrigger>
+                <TabsTrigger value="exams"   className="flex-1 text-xs">{t("Exams","الامتحانات")}</TabsTrigger>
+                <TabsTrigger value="results" className="flex-1 text-xs">{t("Results","النتائج")}</TabsTrigger>
+              </TabsList>
+              <div style={{ padding:"14px 4px" }}>
+                <TabsContent value="classes" className="mt-0">
+                  {liveSubjects.length===0 ? (
+                    <p style={{ textAlign:"center", padding:"20px 0", fontSize:13, color:TEXT_LIGHT }}>{t("No active classes","لا توجد فصول نشطة")}</p>
+                  ) : liveSubjects.map((s:any)=>(
+                    <Link to={`/student/subjects/${s.id}`} key={s.id} style={{ textDecoration:"none" }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 12px", borderRadius:10, marginBottom:6, background:"#f8fafb", border:`1px solid ${BORDER}` }}>
+                        <div style={{ width:36, height:36, borderRadius:10, background:"#f0fff4", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                          <BookOpen style={{ width:16, height:16, color:MID_GREEN }} />
                         </div>
-                        <ArrowRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                        <div style={{ flex:1 }}>
+                          <p style={{ fontSize:13, fontWeight:700, color:TEXT_DARK, margin:0 }}>{s.title}</p>
+                          {s.title_ar && <p style={{ fontSize:11, color:TEXT_LIGHT, margin:"2px 0 0" }} dir="rtl">{s.title_ar}</p>}
+                        </div>
+                        <ArrowRight style={{ width:14, height:14, color:TEXT_LIGHT }} />
                       </div>
                     </Link>
                   ))}
-                </div>
-              )}
-            </TabsContent>
-
-            <TabsContent value="exams" className="mt-0">
-              {upcomingExams.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-6">{t("No upcoming exams", "لا توجد امتحانات قادمة")}</p>
-              ) : (
-                <div className="space-y-2">
-                  {upcomingExams.map((exam) => (
-                    <div key={exam.id} className="flex items-center justify-between rounded-xl bg-muted/20 p-3">
-                      <div className="min-w-0">
-                        <div className="font-medium text-sm truncate" dir="auto">{language === "ar" ? exam.title_ar || exam.title : exam.title}</div>
-                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-0.5"><Calendar className="h-3 w-3" /> {exam.start_date ? new Date(exam.start_date).toLocaleDateString() : t("TBD", "غير محدد")}</div>
+                </TabsContent>
+                <TabsContent value="exams" className="mt-0">
+                  {upcomingExams.length===0 ? (
+                    <p style={{ textAlign:"center", padding:"20px 0", fontSize:13, color:TEXT_LIGHT }}>{t("No upcoming exams","لا توجد امتحانات قادمة")}</p>
+                  ) : upcomingExams.map(exam=>(
+                    <div key={exam.id} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 12px", borderRadius:10, marginBottom:6, background:"#fff5f5", border:"1px solid #fca5a522" }}>
+                      <div>
+                        <div style={{ fontSize:13, fontWeight:700, color:TEXT_DARK }} dir="auto">{language==="ar"?exam.title_ar||exam.title:exam.title}</div>
+                        <div style={{ display:"flex", alignItems:"center", gap:4, fontSize:11, color:TEXT_LIGHT, marginTop:2 }}>
+                          <Calendar style={{ width:10, height:10 }} />
+                          {exam.start_date ? new Date(exam.start_date).toLocaleDateString() : t("TBD","غير محدد")}
+                        </div>
                       </div>
-                      <Badge variant="secondary" className="shrink-0 text-[10px]">{exam.time_limit_minutes} {t("min", "د")}</Badge>
+                      <span style={{ fontSize:10, fontWeight:700, background:"#fff5f5", color:"#c0392b", border:"1px solid #fca5a5", borderRadius:10, padding:"3px 9px" }}>
+                        {exam.time_limit_minutes} {t("min","د")}
+                      </span>
                     </div>
                   ))}
-                </div>
-              )}
-            </TabsContent>
-
-            <TabsContent value="results" className="mt-0">
-              {recentResults.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-6">{t("No results yet", "لا توجد نتائج بعد")}</p>
-              ) : (
-                <div className="space-y-2">
-                  {recentResults.map((attempt) => (
-                    <div key={attempt.id} className="flex items-center justify-between rounded-xl bg-muted/20 p-3">
-                      <div className="min-w-0">
-                        <div className="font-medium text-sm truncate" dir="auto">{language === "ar" ? attempt.exams?.title_ar || attempt.exams?.title : attempt.exams?.title}</div>
-                        <div className="text-xs text-muted-foreground mt-0.5">{attempt.submitted_at ? new Date(attempt.submitted_at).toLocaleDateString() : ""}</div>
+                </TabsContent>
+                <TabsContent value="results" className="mt-0">
+                  {recentResults.length===0 ? (
+                    <p style={{ textAlign:"center", padding:"20px 0", fontSize:13, color:TEXT_LIGHT }}>{t("No results yet","لا توجد نتائج بعد")}</p>
+                  ) : recentResults.map(attempt=>(
+                    <div key={attempt.id} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 12px", borderRadius:10, marginBottom:6, background:"#f8fafb", border:`1px solid ${BORDER}` }}>
+                      <div>
+                        <div style={{ fontSize:13, fontWeight:700, color:TEXT_DARK }} dir="auto">{language==="ar"?attempt.exams?.title_ar||attempt.exams?.title:attempt.exams?.title}</div>
+                        <div style={{ fontSize:11, color:TEXT_LIGHT, marginTop:2 }}>{attempt.submitted_at ? new Date(attempt.submitted_at).toLocaleDateString() : ""}</div>
                       </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        {attempt.status === "graded" ? (
+                      <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                        {attempt.status==="graded" ? (
                           <>
-                            {attempt.passed ? <CheckCircle className="h-4 w-4 text-primary" /> : <XCircle className="h-4 w-4 text-destructive" />}
-                            <span className="font-semibold text-sm">{Math.round(attempt.percentage || 0)}%</span>
+                            {attempt.passed
+                              ? <CheckCircle style={{ width:16, height:16, color:"#276749" }} />
+                              : <XCircle style={{ width:16, height:16, color:"#c0392b" }} />}
+                            <span style={{ fontSize:14, fontWeight:900, color:attempt.passed?"#276749":"#c0392b" }}>
+                              {Math.round(attempt.percentage||0)}%
+                            </span>
                           </>
-                        ) : (<Badge variant="secondary" className="text-[10px]">{t("Awaiting", "بانتظار")}</Badge>)}
+                        ) : (
+                          <span style={{ fontSize:10, fontWeight:700, background:"#fffbeb", color:"#b7791f", border:"1px solid #f6d860", borderRadius:10, padding:"3px 9px" }}>
+                            {t("Awaiting","بانتظار")}
+                          </span>
+                        )}
                       </div>
                     </div>
                   ))}
-                </div>
-              )}
-            </TabsContent>
-          </CardContent>
-        </Tabs>
-      </Card>
+                </TabsContent>
+              </div>
+            </Tabs>
+          </div>
+        </div>
+
+      </div>
     </div>
   );
 };
