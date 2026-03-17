@@ -143,6 +143,7 @@ export default function AudioPlayer({ userId }: Props) {
 
   const [savingPersonal, setSavingPersonal] = useState(false);
   const [saveStatus, setSaveStatus]         = useState<Record<number, "saving"|"saved"|"error">>({});
+  const [uploadError, setUploadError]       = useState("");
   const snapAyahIdx   = useRef(0);
   const streamRef     = useRef<MediaStream|null>(null);
 
@@ -220,11 +221,19 @@ export default function AudioPlayer({ userId }: Props) {
             const ext  = actualMime.includes("ogg") ? "ogg" : actualMime.includes("mp4") ? "m4a" : "webm";
             const path = `${userId}/${selected.number}_ayah${ayah.numberInSurah}_${Date.now()}.${ext}`;
 
+            setUploadError(""); // clear previous errors
+
             const { data: up, error: upErr } = await supabase.storage
               .from("hifdh-recordings")
               .upload(path, blob, { contentType: actualMime, upsert: true });
 
-            if (upErr) throw upErr;
+            if (upErr) {
+              // Show the EXACT error on screen so user can report it
+              setUploadError(`Storage error: ${upErr.message}`);
+              setSaveStatus(p => ({ ...p, [ayah.numberInSurah]: "error" }));
+              setSavingPersonal(false);
+              return;
+            }
 
             const { data: urlData } = supabase.storage
               .from("hifdh-recordings")
@@ -233,27 +242,33 @@ export default function AudioPlayer({ userId }: Props) {
             const remoteUrl = urlData?.publicUrl ?? "";
 
             if (remoteUrl) {
-              // Swap local blob URL for permanent remote URL
               setPersonalRecs(p => ({ ...p, [ayah.numberInSurah]: remoteUrl }));
               URL.revokeObjectURL(localUrl);
 
-              // Save to DB — use insert not upsert to avoid constraint issues
-              await supabase.from("hifdh_recordings").insert({
-                student_id:   userId,
-                surah_num:    selected.number,
-                surah_name:   selected.englishName,
-                ayah_start:   ayah.numberInSurah,
-                ayah_end:     ayah.numberInSurah,
-                audio_url:    remoteUrl,
-                ai_score:     0,
-                status:       "pending",
+              const { error: dbErr } = await supabase.from("hifdh_recordings").insert({
+                student_id: userId,
+                surah_num:  selected.number,
+                surah_name: selected.englishName,
+                ayah_start: ayah.numberInSurah,
+                ayah_end:   ayah.numberInSurah,
+                audio_url:  remoteUrl,
+                ai_score:   0,
+                status:     "pending",
               });
+
+              if (dbErr) {
+                setUploadError(`DB error: ${dbErr.message}`);
+                setSaveStatus(p => ({ ...p, [ayah.numberInSurah]: "error" }));
+                setSavingPersonal(false);
+                return;
+              }
             }
 
             setSaveStatus(p => ({ ...p, [ayah.numberInSurah]: "saved" }));
+            setUploadError(""); // clear on success
+
           } catch (err: any) {
-            console.error("Upload error:", err?.message ?? err);
-            // Keep local URL so student can still play it this session
+            setUploadError(`Unexpected error: ${err?.message ?? String(err)}`);
             setSaveStatus(p => ({ ...p, [ayah.numberInSurah]: "error" }));
           }
         }
@@ -501,6 +516,22 @@ export default function AudioPlayer({ userId }: Props) {
             <div style={{ fontSize:13, color:"#b7791f" }}>سجّل صوتك</div>
             <div style={{ fontSize:12, color:"#7a9e88", marginTop:4 }}>Record each ayah and play it back like a reciter</div>
           </div>
+
+          {/* Visible error box */}
+          {uploadError !== "" && (
+            <div style={{ background:"#fff5f5", border:"1px solid #fca5a5", borderRadius:10, padding:"12px 14px", marginBottom:14 }}>
+              <div style={{ fontSize:13, fontWeight:700, color:"#c0392b", marginBottom:4 }}>
+                ⚠️ Upload Failed — send this message to support:
+              </div>
+              <div style={{ fontSize:12, color:"#c0392b", wordBreak:"break-all" as const, fontFamily:"monospace" }}>
+                {uploadError}
+              </div>
+              <button onClick={() => setUploadError("")}
+                style={{ marginTop:8, fontSize:11, color:"#7a9e88", background:"none", border:"none", cursor:"pointer", textDecoration:"underline" }}>
+                Dismiss
+              </button>
+            </div>
+          )}
 
           {!selected && (
             <div style={{ textAlign:"center", padding:"20px 0", fontSize:13, color:"#7a9e88" }}>
