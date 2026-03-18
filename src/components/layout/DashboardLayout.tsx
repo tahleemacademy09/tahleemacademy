@@ -1,3 +1,9 @@
+/*  src/components/layout/DashboardLayout.tsx
+    KEY FIX: When on /student/majlis the layout renders ONLY the Outlet
+    inside a position:fixed fullscreen div — no overflow-auto wrapper,
+    no sidebar competing for space. This is what caused Majlis to not
+    go truly fullscreen on mobile.
+*/
 import { useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
@@ -27,77 +33,40 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     revision: true,
     exams: true,
   });
-const isMajlis = location.pathname === "/student/majlis";
-if (isMajlis) {
-  return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 40 }}>
-      <Outlet />
-    </div>
-  );
-}
 
-/*  src/components/layout/DashboardLayout.tsx
-    ENHANCED NAV:
-    - "Courses" + "Live Classes" → "Learning Hub"  (/student/courses)
-    - "Revision" renamed → "Revision" with Al-Hifdh as sub-item
-    - "Transcripts" moved under "Exams" as sub-item
-    - Payment icon added in hamburger footer (student only)
-*/
-import { useState } from "react";
-import { Link, Outlet, useLocation } from "react-router-dom";
-import { Button } from "@/components/ui/button";
-import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
-import { useLanguage } from "@/contexts/LanguageContext";
-import { useAuth } from "@/contexts/AuthContext";
-import {
-  BookOpen, LayoutDashboard, ClipboardList, Users, LogOut, Globe,
-  CheckSquare, BarChart, UserCircle, Library, GraduationCap, MessageCircle,
-  Menu, Video, Mic, Settings, Shield, Layers, FileText, UserCheck, BookMarked,
-  CreditCard, Calendar, ChevronDown, ChevronRight, Wallet, BookOpenCheck,
-  RefreshCw, Headphones,
-} from "lucide-react";
-import { cn } from "@/lib/utils";
-import PaymentBanner from "./PaymentBanner";
-import HolidayBanner from "./HolidayBanner";
-import AdminPaymentIndicator from "./AdminPaymentIndicator";
-
-interface DashboardLayoutProps { role: "student" | "admin"; }
-
-const DashboardLayout = ({ role }: DashboardLayoutProps) => {
-  const { t, language, setLanguage, dir } = useLanguage();
-  const { signOut, profile } = useAuth();
-  const location = useLocation();
-  const [open, setOpen] = useState(false);
-  // Track which grouped nav sections are expanded
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({
-    revision: true,
-    exams: true,
-  });
+  // ── TRUE FULLSCREEN ESCAPE for Majlis ────────────────────────
+  // overflow-auto on the parent traps position:fixed on mobile.
+  // Solution: when on the majlis route, skip the entire wrapper
+  // and render the Outlet directly in a fixed fullscreen container.
+  const isMajlis = location.pathname === "/student/majlis";
+  if (isMajlis) {
+    return (
+      <div style={{ position: "fixed", inset: 0, zIndex: 40 }}>
+        <Outlet />
+      </div>
+    );
+  }
 
   const toggleSection = (key: string) =>
     setExpanded(prev => ({ ...prev, [key]: !prev[key] }));
 
-  // ── Check if any path in a group is active ──────────────────
   const isGroupActive = (paths: string[]) =>
     paths.some(p => location.pathname.startsWith(p));
 
-  // ── Student nav structure ────────────────────────────────────
-  // type: "link" = normal nav item
-  // type: "group" = collapsible group with children
   type NavItem =
     | { type: "link";  to: string; icon: any; label: string }
     | { type: "group"; key: string; icon: any; label: string; children: { to: string; icon: any; label: string }[] };
 
   const studentNav: NavItem[] = [
-    { type: "link",  to: "/student",         icon: LayoutDashboard, label: t("Dashboard",     "لوحة التحكم")     },
-    { type: "link",  to: "/student/courses",  icon: BookOpenCheck,   label: t("Learning Hub",  "مركز التعلم")     },
+    { type: "link",  to: "/student",         icon: LayoutDashboard, label: t("Dashboard",     "لوحة التحكم")    },
+    { type: "link",  to: "/student/courses",  icon: BookOpenCheck,   label: t("Learning Hub",  "مركز التعلم")    },
     {
       type: "group", key: "revision",
       icon: RefreshCw,
       label: t("Revision", "المراجعة"),
       children: [
         { to: "/student/revision", icon: BookMarked,  label: t("General Revision", "المراجعة العامة") },
-        { to: "/student/hifdh",    icon: Headphones,  label: t("Al-Hifdh",          "الحفظ")            },
+        { to: "/student/hifdh",    icon: Headphones,  label: t("Al-Hifdh",          "الحفظ")           },
       ],
     },
     {
@@ -105,34 +74,33 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
       icon: ClipboardList,
       label: t("Exams", "الامتحانات"),
       children: [
-        { to: "/student/exams",       icon: ClipboardList, label: t("My Exams",     "امتحاناتي")           },
-        { to: "/student/transcripts", icon: GraduationCap, label: t("Transcripts",  "السجل الأكاديمي")    },
+        { to: "/student/exams",       icon: ClipboardList, label: t("My Exams",    "امتحاناتي")        },
+        { to: "/student/transcripts", icon: GraduationCap, label: t("Transcripts", "السجل الأكاديمي") },
       ],
     },
-    { type: "link",  to: "/student/majlis",  icon: MessageCircle,  label: t("Al-Majlis",     "المجلس")           },
-    { type: "link",  to: "/student/profile", icon: UserCircle,     label: t("Settings",       "الإعدادات")        },
+    { type: "link", to: "/student/majlis",  icon: MessageCircle, label: t("Al-Majlis",  "المجلس")     },
+    { type: "link", to: "/student/profile", icon: UserCircle,    label: t("Settings",   "الإعدادات")  },
   ];
 
   const adminLinks = [
-    { to: "/admin",                     icon: LayoutDashboard, label: t("Dashboard",         "لوحة التحكم")     },
-    { to: "/admin/subjects",            icon: BookOpen,         label: t("Subjects",           "المواد")          },
-    { to: "/admin/courses",             icon: Layers,           label: t("Courses",            "الدورات")         },
-    { to: "/admin/syllabus",            icon: FileText,         label: t("Syllabus & Materials","المنهج والمواد") },
-    { to: "/admin/live-classes",        icon: Video,            label: t("Live Classes",       "الفصول الحية")    },
-    { to: "/admin/exams",               icon: ClipboardList,    label: t("Exams",              "الامتحانات")      },
-    { to: "/admin/question-bank",       icon: Library,          label: t("Question Bank",      "بنك الأسئلة")     },
-    { to: "/admin/students",            icon: Users,            label: t("Students",           "الطلاب")          },
-    { to: "/admin/grading",             icon: CheckSquare,      label: t("Grading",            "التصحيح")         },
-    { to: "/admin/private-sessions",    icon: UserCheck,        label: t("Private Sessions",   "الجلسات الخاصة")  },
-    { to: "/admin/proctoring",          icon: BarChart,         label: t("Proctoring",         "المراقبة")        },
-    { to: "/admin/entrance-exam",       icon: GraduationCap,    label: t("Entrance Exam",      "اختبار القبول")   },
-    { to: "/admin/payments",            icon: CreditCard,       label: t("Payments",           "المدفوعات")       },
-    { to: "/admin/calendar",            icon: Calendar,         label: t("Calendar",           "التقويم")         },
-    { to: "/admin/public-classes",      icon: Mic,              label: t("Public Classes",     "الدروس العامة")   },
-    { to: "/admin/majlis-moderation",   icon: MessageCircle,    label: t("Al-Majlis",          "المجلس")          },
+    { to: "/admin",                   icon: LayoutDashboard, label: t("Dashboard",           "لوحة التحكم")    },
+    { to: "/admin/subjects",          icon: BookOpen,         label: t("Subjects",             "المواد")         },
+    { to: "/admin/courses",           icon: Layers,           label: t("Courses",              "الدورات")        },
+    { to: "/admin/syllabus",          icon: FileText,         label: t("Syllabus & Materials", "المنهج والمواد") },
+    { to: "/admin/live-classes",      icon: Video,            label: t("Live Classes",         "الفصول الحية")   },
+    { to: "/admin/exams",             icon: ClipboardList,    label: t("Exams",                "الامتحانات")     },
+    { to: "/admin/question-bank",     icon: Library,          label: t("Question Bank",        "بنك الأسئلة")    },
+    { to: "/admin/students",          icon: Users,            label: t("Students",             "الطلاب")         },
+    { to: "/admin/grading",           icon: CheckSquare,      label: t("Grading",              "التصحيح")        },
+    { to: "/admin/private-sessions",  icon: UserCheck,        label: t("Private Sessions",     "الجلسات الخاصة") },
+    { to: "/admin/proctoring",        icon: BarChart,         label: t("Proctoring",           "المراقبة")       },
+    { to: "/admin/entrance-exam",     icon: GraduationCap,    label: t("Entrance Exam",        "اختبار القبول")  },
+    { to: "/admin/payments",          icon: CreditCard,       label: t("Payments",             "المدفوعات")      },
+    { to: "/admin/calendar",          icon: Calendar,         label: t("Calendar",             "التقويم")        },
+    { to: "/admin/public-classes",    icon: Mic,              label: t("Public Classes",       "الدروس العامة")  },
+    { to: "/admin/majlis-moderation", icon: MessageCircle,    label: t("Al-Majlis",            "المجلس")         },
   ];
 
-  // ── Sidebar content ──────────────────────────────────────────
   const SidebarContent = ({ onNavigate }: { onNavigate?: () => void }) => (
     <div className="flex h-full flex-col">
 
@@ -150,9 +118,8 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
       {/* Nav */}
       <nav className="flex-1 space-y-0.5 p-3 overflow-auto">
 
-        {/* ── STUDENT NAV ── */}
-        {role === "student" && studentNav.map((item, idx) => {
-
+        {/* Student */}
+        {role === "student" && studentNav.map((item) => {
           if (item.type === "link") {
             const isActive = item.to === "/student"
               ? location.pathname === "/student"
@@ -171,15 +138,11 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
             );
           }
 
-          // Group item
           const groupActive = isGroupActive(item.children.map(c => c.to));
           const isOpen = expanded[item.key];
-
           return (
             <div key={item.key}>
-              {/* Group header */}
-              <button
-                onClick={() => toggleSection(item.key)}
+              <button onClick={() => toggleSection(item.key)}
                 className={cn(
                   "w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
                   groupActive
@@ -188,12 +151,8 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                 )}>
                 <item.icon className="h-4 w-4 shrink-0" />
                 <span className="flex-1 text-left">{item.label}</span>
-                {isOpen
-                  ? <ChevronDown className="h-3.5 w-3.5 opacity-60" />
-                  : <ChevronRight className="h-3.5 w-3.5 opacity-60" />}
+                {isOpen ? <ChevronDown className="h-3.5 w-3.5 opacity-60" /> : <ChevronRight className="h-3.5 w-3.5 opacity-60" />}
               </button>
-
-              {/* Children */}
               {isOpen && (
                 <div className="ms-4 mt-0.5 space-y-0.5 border-l border-sidebar-border/50 ps-3">
                   {item.children.map(child => {
@@ -217,7 +176,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
           );
         })}
 
-        {/* ── ADMIN NAV ── */}
+        {/* Admin */}
         {role === "admin" && adminLinks.map(link => (
           <Link key={link.to} to={link.to} onClick={onNavigate}
             className={cn(
@@ -234,16 +193,12 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
 
       {/* Footer */}
       <div className="border-t border-sidebar-border p-3 space-y-1">
-
-        {/* Profile info */}
         {profile?.full_name && (
           <div className="px-3 py-2 mb-1">
             <p className="text-xs text-sidebar-foreground/50 truncate">{profile.full_name}</p>
             <p className="text-xs text-sidebar-foreground/40 truncate">{(profile as any).email}</p>
           </div>
         )}
-
-        {/* Payment link — students only */}
         {role === "student" && (
           <Link to="/student/payment" onClick={onNavigate}
             className={cn(
@@ -256,16 +211,12 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
             <span>{t("Payment", "الدفع")}</span>
           </Link>
         )}
-
-        {/* Language toggle */}
         <Button variant="ghost" size="sm"
           className="w-full justify-start text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/50"
           onClick={() => { setLanguage(language === "en" ? "ar" : "en"); onNavigate?.(); }}>
           <Globe className="h-4 w-4 me-2" />
           {t("العربية", "English")}
         </Button>
-
-        {/* Sign out */}
         <Button variant="ghost" size="sm"
           className="w-full justify-start text-sidebar-foreground/70 hover:text-destructive hover:bg-destructive/10"
           onClick={() => { signOut(); onNavigate?.(); }}>
@@ -276,18 +227,19 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     </div>
   );
 
+  // ── Normal dashboard layout ───────────────────────────────────
   return (
-    <div className="flex min-h-screen">
+    <div className="flex h-screen overflow-hidden">
+
       {/* Desktop sidebar */}
-      <aside className="hidden w-64 flex-col bg-sidebar md:flex">
+      <aside className="hidden w-64 flex-col bg-sidebar md:flex flex-shrink-0">
         <SidebarContent />
       </aside>
 
-      {/* Main content */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
 
-        {/* Mobile header */}
-        <div className="flex h-14 items-center border-b px-4 md:hidden">
+        {/* Mobile top bar */}
+        <div className="flex h-14 items-center border-b px-4 md:hidden flex-shrink-0">
           <Sheet open={open} onOpenChange={setOpen}>
             <SheetTrigger asChild>
               <Button variant="ghost" size="icon">
@@ -301,7 +253,6 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
             </SheetContent>
           </Sheet>
 
-          {/* Centre logo */}
           <div className="flex-1 flex items-center justify-center">
             <div className="flex items-center gap-2">
               <BookOpen className="h-4 w-4 text-primary" />
@@ -309,7 +260,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
             </div>
           </div>
 
-          {/* Payment shortcut in mobile header — student only */}
+          {/* Payment shortcut in mobile header */}
           {role === "student" && (
             <Link to="/student/payment">
               <Button variant="ghost" size="icon" title={t("Payment", "الدفع")}>
