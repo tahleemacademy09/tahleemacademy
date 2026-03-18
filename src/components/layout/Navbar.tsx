@@ -63,10 +63,11 @@ const Navbar = () => {
             variant="ghost"
             size="icon"
             onClick={() => setLanguage(language === "en" ? "ar" : "en")}
+            aria-label={t("Switch to Arabic", "Switch to English")}
             title={t("Switch to Arabic", "التبديل إلى الإنجليزية")}
             className="text-muted-foreground hover:text-foreground"
           >
-            <Globe className="h-4 w-4" />
+            <Globe className="h-4 w-4" aria-hidden="true" />
           </Button>
           {user ? (
             <>
@@ -85,8 +86,8 @@ const Navbar = () => {
               <Button variant="outline" size="sm" className="rounded-lg" onClick={() => navigate(getDashboardPath())}>
                 {t("Dashboard", "لوحة التحكم")}
               </Button>
-              <Button variant="ghost" size="icon" onClick={signOut} className="text-muted-foreground hover:text-foreground">
-                <LogOut className="h-4 w-4" />
+              <Button variant="ghost" size="icon" onClick={signOut} aria-label={t("Sign out", "تسجيل الخروج")} className="text-muted-foreground hover:text-foreground">
+                <LogOut className="h-4 w-4" aria-hidden="true" />
               </Button>
             </>
           ) : (
@@ -102,8 +103,15 @@ const Navbar = () => {
         </div>
 
         {/* Mobile hamburger */}
-        <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setOpen(!open)}>
-          {open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="md:hidden"
+          aria-label={open ? t("Close menu", "إغلاق القائمة") : t("Open menu", "فتح القائمة")}
+          aria-expanded={open}
+          onClick={() => setOpen(!open)}
+        >
+          {open ? <X className="h-5 w-5" aria-hidden="true" /> : <Menu className="h-5 w-5" aria-hidden="true" />}
         </Button>
       </div>
 
