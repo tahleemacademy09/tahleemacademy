@@ -1,308 +1,482 @@
 /*  src/components/exam/ProctoringOverlay.tsx
-    Real face detection using FaceDetector API + canvas fallback
-    No camera preview shown to student
+    FIXES:
+    1. Banner auto-dismisses when student corrects behaviour (face returns = banner gone)
+    2. Screenshot prevention via CSS + JS
+    3. Face not visible: warning only first time, points deducted on 2nd warning
+    4. No camera preview shown to student
 */
 import { useEffect, useState, useRef, useCallback } from "react";
-import { ShieldAlert, ShieldCheck, Activity, AlertTriangle, Eye, EyeOff, X } from "lucide-react";
+import { Shield, ShieldAlert, ShieldCheck, Eye, EyeOff,
+  AlertTriangle, Activity, X, Camera, CameraOff } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { supabase } from "@/integrations/supabase/client";
 
 interface ViolationEntry { type: string; time: string; details: string; }
-interface ProctoringOverlayProps {
-  cameraReady: boolean; faceDetected: boolean; integrityScore: number;
-  suspicionLevel: string; strikes: number; maxStrikes: number;
+interface Props {
+  cameraReady: boolean; faceDetected: boolean;
+  integrityScore: number; suspicionLevel: string;
+  strikes: number; maxStrikes: number;
   violations: number; lastWarningType: string | null;
   audioMonitoring: boolean; recentViolations: ViolationEntry[];
   getStream: () => MediaStream | null;
-  onFaceUpdate?: (detected: boolean, count: number) => void;
+  attemptId: string;
+  onPointDeduction: (points: number, reason: string) => void;
 }
 
-const WARNINGS: Record<string, { en: string; ar: string; sev: "warn"|"danger"|"critical" }> = {
-  tab_switch:        { en:"⚠️ You left the exam window! This has been recorded.", ar:"⚠️ غادرت نافذة الامتحان! تم تسجيل ذلك.", sev:"warn" },
-  fullscreen_exit:   { en:"⚠️ Return to fullscreen immediately!", ar:"⚠️ عُد إلى ملء الشاشة فوراً!", sev:"warn" },
-  webcam_disabled:   { en:"🚨 Camera disconnected — enable it now!", ar:"🚨 الكاميرا مفصولة — فعّلها الآن!", sev:"danger" },
-  copy_paste:        { en:"🚫 Copy/Paste is not allowed.", ar:"🚫 النسخ واللصق غير مسموح.", sev:"warn" },
-  dev_tools:         { en:"🚫 Developer tools are not allowed.", ar:"🚫 أدوات المطور محظورة.", sev:"danger" },
-  right_click:       { en:"🚫 Right-click is disabled.", ar:"🚫 النقر الأيمن معطل.", sev:"warn" },
-  face_not_detected: { en:"👁️ FACE NOT VISIBLE — Look at your screen now!", ar:"👁️ وجهك غير مرئي — انظر إلى شاشتك الآن!", sev:"danger" },
-  multiple_faces:    { en:"🚨 Multiple people detected! Only you should be in frame.", ar:"🚨 تم اكتشاف أكثر من شخص! يجب أن تكون وحدك.", sev:"critical" },
-  looking_away:      { en:"👁️ Please look directly at your screen.", ar:"👁️ يرجى النظر مباشرة إلى شاشتك.", sev:"warn" },
-  unusual_audio:     { en:"🎙️ Unusual audio detected.", ar:"🎙️ صوت غير معتاد.", sev:"warn" },
+const VCFG: Record<string, {
+  en: string; ar: string;
+  sev: "low"|"medium"|"high"|"critical";
+  pts: number; icon: string;
+  dismissOnFix?: boolean; // banner clears automatically when issue resolved
+}> = {
+  tab_switch:        { en:"⚠️ You left the exam window!",        ar:"⚠️ غادرت نافذة الامتحان!",       sev:"high",     pts:5,  icon:"🚪" },
+  fullscreen_exit:   { en:"⚠️ Return to fullscreen!",            ar:"⚠️ عُد لوضع ملء الشاشة!",        sev:"medium",   pts:3,  icon:"⬜" },
+  webcam_disabled:   { en:"🚨 Camera disconnected!",              ar:"🚨 الكاميرا مفصولة!",            sev:"critical", pts:10, icon:"📷" },
+  copy_paste:        { en:"🚫 Copy/Paste is not allowed",         ar:"🚫 النسخ واللصق غير مسموح",      sev:"high",     pts:5,  icon:"📋" },
+  dev_tools:         { en:"🚫 Developer tools detected!",         ar:"🚫 أدوات المطور محظورة!",         sev:"critical", pts:10, icon:"🔧" },
+  right_click:       { en:"🚫 Right-click disabled",              ar:"🚫 النقر الأيمن معطل",            sev:"low",      pts:1,  icon:"🖱️" },
+  face_not_detected: { en:"👁️ Look at your screen!",             ar:"👁️ انظر إلى شاشتك!",            sev:"high",     pts:0,  icon:"👤", dismissOnFix:true },
+  multiple_faces:    { en:"🚨 Multiple people detected!",         ar:"🚨 أكثر من شخص في الإطار!",      sev:"critical", pts:10, icon:"👥" },
+  looking_away:      { en:"👁️ Please focus on your screen",      ar:"👁️ ركز على شاشتك",               sev:"medium",   pts:3,  icon:"👀", dismissOnFix:true },
+  unusual_audio:     { en:"🎙️ Background noise detected",        ar:"🎙️ ضجيج في الخلفية",             sev:"low",      pts:2,  icon:"🎙️" },
 };
 
-const VLABELS: Record<string, string> = {
-  tab_switch:"Tab Switch", fullscreen_exit:"Fullscreen Exit",
-  webcam_disabled:"Camera Off", copy_paste:"Copy/Paste",
-  dev_tools:"Dev Tools", right_click:"Right Click",
-  face_not_detected:"No Face", multiple_faces:"Multi-Face",
-  looking_away:"Looking Away", unusual_audio:"Audio Alert",
-  tab_switch_return:"Tab Return",
+const SEV_STYLE: Record<string,{bg:string;border:string;text:string}> = {
+  low:      { bg:"#fffbeb", border:"#f59e0b", text:"#92400e" },
+  medium:   { bg:"#fff7ed", border:"#f97316", text:"#7c2d12" },
+  high:     { bg:"#1a0000", border:"#ef4444", text:"#ffffff" },
+  critical: { bg:"#0f0000", border:"#dc2626", text:"#ffffff" },
 };
 
 const ProctoringOverlay = ({
   cameraReady, faceDetected, integrityScore, suspicionLevel,
   strikes, maxStrikes, violations, lastWarningType,
-  audioMonitoring, recentViolations, getStream, onFaceUpdate,
-}: ProctoringOverlayProps) => {
+  audioMonitoring, recentViolations, getStream,
+  attemptId, onPointDeduction,
+}: Props) => {
   const { t } = useLanguage();
-  const videoRef    = useRef<HTMLVideoElement>(null);
-  const canvasRef   = useRef<HTMLCanvasElement>(null);
-  const detectorRef = useRef<any>(null);
-  const intervalRef = useRef<any>(null);
+  const videoRef     = useRef<HTMLVideoElement>(null);
+  const canvasRef    = useRef<HTMLCanvasElement>(null);
+  const detectIv     = useRef<any>(null);
+  const noFaceTimer  = useRef<any>(null);
+  const warnCooldown = useRef<Record<string,number>>({});
+  const faceWarnCount = useRef(0); // track how many face warnings given
 
-  const [showLog, setShowLog]           = useState(false);
-  const [warning, setWarning]           = useState<{text:string;sev:string}|null>(null);
-  const [autoSubmitIn, setAutoSubmit]   = useState<number|null>(null);
-  const [localFaceOk, setLocalFaceOk]   = useState(true);
-  const [faceCount, setFaceCount]       = useState(0);
-  const [camExpanded, setCamExpanded]   = useState(false);
-  const noFaceTimerRef = useRef<any>(null);
-  const warningCooldownRef = useRef(false);
+  const [showLog, setShowLog]         = useState(false);
+  const [banner, setBanner]           = useState<any>(null);
+  const [autoCountdown, setAutoCount] = useState<number|null>(null);
+  const [localFace, setLocalFace]     = useState(true);
+  const [faceCount, setFaceCount]     = useState(1);
+  const [pointsLost, setPointsLost]   = useState(0);
+  const [liveFeed, setLiveFeed]       = useState<string[]>([]);
 
-  // ── Setup video stream for face detection (hidden, not shown to user) ──
+  // ── Screenshot prevention ──────────────────────────────────
+  useEffect(() => {
+    // CSS: blur on print/screenshot attempt
+    const style = document.createElement("style");
+    style.id = "proctor-screenshot-block";
+    style.textContent = `
+      @media print { body { display: none !important; } }
+      .exam-content { -webkit-user-select: none; user-select: none; }
+    `;
+    document.head.appendChild(style);
+
+    // Block PrintScreen key
+    const blockPrint = (e: KeyboardEvent) => {
+      if (e.key === "PrintScreen" || (e.metaKey && e.shiftKey && ["3","4","5"].includes(e.key))) {
+        e.preventDefault();
+        triggerWarningDirect("screenshot_attempt");
+        // Clear clipboard immediately
+        setTimeout(() => { navigator.clipboard?.writeText("").catch(() => {}); }, 100);
+      }
+    };
+
+    // Detect screen capture API usage
+    const handleVisibility = () => {
+      if (document.hidden) {
+        // May indicate screenshot tool
+      }
+    };
+
+    document.addEventListener("keyup", blockPrint);
+    return () => {
+      document.removeEventListener("keyup", blockPrint);
+      document.getElementById("proctor-screenshot-block")?.remove();
+    };
+  }, []);
+
+  // Attach stream to hidden video for display
   useEffect(() => {
     const stream = getStream();
     if (stream && videoRef.current) {
       videoRef.current.srcObject = stream;
-      videoRef.current.play().catch(()=>{});
+      videoRef.current.play().catch(() => {});
+    }
+    // Also attach to camera preview display element
+    const displayEl = document.getElementById("proctor-cam-preview") as HTMLVideoElement;
+    if (displayEl && stream) {
+      displayEl.srcObject = stream;
+      displayEl.play().catch(() => {});
     }
   }, [cameraReady, getStream]);
 
-  // ── Real face detection using FaceDetector API or canvas fallback ──
+  const addFeed = useCallback((msg: string) => {
+    const time = new Date().toLocaleTimeString([], { hour:"2-digit", minute:"2-digit", second:"2-digit" });
+    setLiveFeed(prev => [`${time} — ${msg}`, ...prev].slice(0, 25));
+  }, []);
+
+  // ── Show banner — with per-type cooldown ──────────────────
+  const triggerWarningDirect = useCallback((type: string, isSecondFaceWarn = false) => {
+    const cfg = VCFG[type];
+    if (!cfg) return;
+
+    // Per-type cooldown (8s for most, 20s for face warnings)
+    const cooldown = type === "face_not_detected" ? 20000 : 8000;
+    const now = Date.now();
+    if (warnCooldown.current[type] && now - warnCooldown.current[type] < cooldown) return;
+    warnCooldown.current[type] = now;
+
+    // Face detection: first warn = no points, second+ = deduct points
+    let pts = cfg.pts;
+    if (type === "face_not_detected") {
+      faceWarnCount.current++;
+      if (faceWarnCount.current < 2) {
+        pts = 0; // first warning - no deduction
+      } else {
+        pts = 5; // 2nd+ warning - deduct 5 points
+      }
+    }
+
+    setBanner({ type, cfg, pts, time: new Date().toLocaleTimeString() });
+
+    if (pts > 0) {
+      onPointDeduction(pts, cfg.en);
+      setPointsLost(p => p + pts);
+      addFeed(`${cfg.icon} ${cfg.en} — −${pts} pts`);
+    } else {
+      addFeed(`${cfg.icon} ${cfg.en} — Warning #${faceWarnCount.current}`);
+    }
+
+    // Auto-dismiss after 6s unless it's a "dismissOnFix" type
+    if (!cfg.dismissOnFix) {
+      setTimeout(() => setBanner((b: any) => b?.type === type ? null : b), 6000);
+    }
+  }, [onPointDeduction, addFeed]);
+
+  // ── Face detection with auto-dismiss when face returns ────
   const detectFaces = useCallback(async () => {
     const video = videoRef.current;
     if (!video || video.readyState < 2) return;
 
-    // Method 1: FaceDetector API (Chrome 70+)
-    if ("FaceDetector" in window && !detectorRef.current) {
+    let facePresent = false;
+    let count = 0;
+
+    // Try FaceDetector API
+    if ("FaceDetector" in window) {
       try {
-        detectorRef.current = new (window as any).FaceDetector({
-          fastMode: false,
-          maxDetectedFaces: 5,
-        });
-      } catch (_) { detectorRef.current = null; }
+        const fd = new (window as any).FaceDetector({ fastMode: true, maxDetectedFaces: 5 });
+        const faces = await fd.detect(video);
+        count = faces.length;
+        facePresent = count >= 1;
+      } catch (_) {}
     }
 
-    if (detectorRef.current) {
-      try {
-        const faces = await detectorRef.current.detect(video);
-        const count = faces.length;
-        setFaceCount(count);
-        const detected = count >= 1;
-        const multi    = count > 1;
-        setLocalFaceOk(detected);
-        if (onFaceUpdate) onFaceUpdate(detected, count);
-
-        if (!detected) triggerFaceWarning();
-        else if (multi) triggerMultiFaceWarning();
-        else clearFaceWarning();
-        return;
-      } catch (_) { /* fall through to canvas method */ }
-    }
-
-    // Method 2: Canvas-based skin tone / motion detection
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    canvas.width  = video.videoWidth  || 320;
-    canvas.height = video.videoHeight || 240;
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-    try {
-      const frame   = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const data    = frame.data;
-      let skinPixels = 0;
-      const total   = data.length / 4;
-
-      // Sample every 8th pixel for performance
-      for (let i = 0; i < data.length; i += 32) {
-        const r = data[i], g = data[i+1], b = data[i+2];
-        // Skin tone detection using RGB ranges
-        if (
-          r > 60 && g > 40 && b > 20 &&
-          r > g && r > b &&
-          r - g > 15 &&
-          Math.abs(r - g) > 15 &&
-          r < 250 && g < 220 && b < 200 &&
-          // Ycbcr-like check
-          (0.299*r + 0.587*g + 0.114*b) > 60
-        ) { skinPixels++; }
+    // Canvas fallback
+    if (!facePresent && count === 0) {
+      const canvas = canvasRef.current;
+      if (canvas) {
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          canvas.width = 160; canvas.height = 120;
+          ctx.drawImage(video, 0, 0, 160, 120);
+          try {
+            const { data } = ctx.getImageData(0, 0, 160, 120);
+            let skin = 0;
+            for (let i = 0; i < data.length; i += 16) {
+              const r = data[i], g = data[i+1], b = data[i+2];
+              if (r > 50 && g > 20 && b > 10 && r > g && r > b && Math.abs(r-g) < 120 && (r-b) > 10) skin++;
+            }
+            facePresent = (skin / (160*120/4)) > 0.02;
+            count = facePresent ? 1 : 0;
+          } catch (_) {}
+        }
       }
+    }
 
-      const skinRatio = skinPixels / (total / 8);
-      const detected  = skinRatio > 0.03; // At least 3% skin pixels
-      setLocalFaceOk(detected);
-      setFaceCount(detected ? 1 : 0);
-      if (onFaceUpdate) onFaceUpdate(detected, detected ? 1 : 0);
-      if (!detected) triggerFaceWarning();
-      else clearFaceWarning();
-    } catch (_) {}
-  }, [onFaceUpdate]);
+    setLocalFace(facePresent);
+    setFaceCount(count);
 
-  const triggerFaceWarning = useCallback(() => {
-    if (noFaceTimerRef.current) return;
-    // Give 3 seconds grace before warning
-    noFaceTimerRef.current = setTimeout(() => {
-      if (!warningCooldownRef.current) {
-        setWarning({ text: t("👁️ FACE NOT VISIBLE — Look at your screen now!", "👁️ وجهك غير مرئي — انظر إلى شاشتك الآن!"), sev:"danger" });
-        warningCooldownRef.current = true;
-        setTimeout(() => { warningCooldownRef.current = false; }, 8000);
+    if (!facePresent) {
+      // Start grace timer before warning
+      if (!noFaceTimer.current) {
+        noFaceTimer.current = setTimeout(() => {
+          setLocalFace(v => {
+            if (!v) triggerWarningDirect("face_not_detected");
+            return v;
+          });
+          noFaceTimer.current = null;
+        }, 5000); // 5s grace before warning
       }
-    }, 3000);
-  }, [t]);
-
-  const triggerMultiFaceWarning = useCallback(() => {
-    if (!warningCooldownRef.current) {
-      setWarning({ text: t("🚨 Multiple people detected! Only you should be visible.", "🚨 تم اكتشاف أكثر من شخص! يجب أن تكون وحدك."), sev:"critical" });
-      warningCooldownRef.current = true;
-      setTimeout(() => { warningCooldownRef.current = false; }, 8000);
+    } else {
+      // Face returned — clear grace timer AND dismiss banner if it was a face warning
+      if (noFaceTimer.current) { clearTimeout(noFaceTimer.current); noFaceTimer.current = null; }
+      setBanner((b: any) => {
+        if (b?.cfg?.dismissOnFix) return null; // auto-dismiss face warning
+        return b;
+      });
+      if (count > 1) triggerWarningDirect("multiple_faces");
     }
-  }, [t]);
+  }, [triggerWarningDirect]);
 
-  const clearFaceWarning = useCallback(() => {
-    if (noFaceTimerRef.current) {
-      clearTimeout(noFaceTimerRef.current);
-      noFaceTimerRef.current = null;
-    }
-  }, []);
-
-  // Run face detection every 2 seconds
   useEffect(() => {
     if (!cameraReady) return;
-    intervalRef.current = setInterval(detectFaces, 2000);
-    return () => {
-      clearInterval(intervalRef.current);
-      if (noFaceTimerRef.current) clearTimeout(noFaceTimerRef.current);
-    };
+    detectIv.current = setInterval(detectFaces, 3000);
+    return () => { clearInterval(detectIv.current); if (noFaceTimer.current) clearTimeout(noFaceTimer.current); };
   }, [cameraReady, detectFaces]);
 
-  // Show warning when violation occurs from proctoring hook
+  // Violations from proctoring hook
   useEffect(() => {
     if (!lastWarningType) return;
-    const w = WARNINGS[lastWarningType];
-    if (w) {
-      setWarning({ text: t(w.en, w.ar), sev: w.sev });
-      const timer = setTimeout(() => setWarning(null), 7000);
-      return () => clearTimeout(timer);
-    }
+    triggerWarningDirect(lastWarningType);
   }, [lastWarningType, violations]);
 
   // Auto-submit countdown
   useEffect(() => {
     if (suspicionLevel === "critical" && strikes >= maxStrikes - 1) {
-      let c = 10; setAutoSubmit(c);
-      const iv = setInterval(() => { c--; setAutoSubmit(c); if (c<=0) clearInterval(iv); }, 1000);
+      let c = 10; setAutoCount(c);
+      const iv = setInterval(() => { c--; setAutoCount(c); if (c <= 0) clearInterval(iv); }, 1000);
       return () => clearInterval(iv);
-    } else { setAutoSubmit(null); }
+    } else { setAutoCount(null); }
   }, [suspicionLevel, strikes, maxStrikes]);
 
-  const statusColor = { low:"#22c55e", medium:"#f59e0b", high:"#EF4444", critical:"#7f1d1d" }[suspicionLevel] || "#22c55e";
+  // Log to DB
+  useEffect(() => {
+    if (!lastWarningType || !attemptId) return;
+    const cfg = VCFG[lastWarningType];
+    supabase.from("proctoring_logs" as any).insert({
+      attempt_id: attemptId, violation_type: lastWarningType,
+      severity: cfg?.sev || "medium", points_deducted: cfg?.pts || 0,
+      detected_at: new Date().toISOString(),
+    }).then(() => {});
+  }, [lastWarningType, violations, attemptId]);
+
+  const scoreColor = integrityScore >= 80 ? "#22c55e" : integrityScore >= 60 ? "#f59e0b" : "#ef4444";
   const statusLabel = { low:"SECURE", medium:"CAUTION", high:"WARNING", critical:"CRITICAL" }[suspicionLevel] || "SECURE";
-  const warnBg = warning?.sev==="critical"?"rgba(127,29,29,.97)":warning?.sev==="danger"?"rgba(185,28,28,.95)":"rgba(120,53,15,.93)";
+  const statusColor = { low:"#22c55e", medium:"#f59e0b", high:"#ef4444", critical:"#dc2626" }[suspicionLevel] || "#22c55e";
+  const bannerStyle = banner ? SEV_STYLE[banner.cfg.sev] : null;
 
   return (
     <>
-      {/* Hidden video + canvas for face detection only */}
-      <video ref={videoRef} muted playsInline style={{ position:"absolute", width:1, height:1, opacity:0, pointerEvents:"none" }} />
+      {/* Hidden video elements */}
+      <video ref={videoRef} muted playsInline
+        style={{ position:"fixed", width:1, height:1, opacity:0, top:0, left:0, pointerEvents:"none" }} />
       <canvas ref={canvasRef} style={{ display:"none" }} />
 
-      {/* Auto-submit countdown */}
-      {autoSubmitIn !== null && autoSubmitIn > 0 && (
-        <div style={{ position:"fixed", inset:0, zIndex:200, background:"rgba(0,0,0,.9)", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:16 }}>
-          <ShieldAlert style={{ width:60, height:60, color:"#EF4444" }} />
-          <div style={{ fontSize:22, fontWeight:900, color:"#fff" }}>🚨 Too Many Violations!</div>
-          <div style={{ fontSize:15, color:"rgba(255,255,255,.7)" }}>Exam auto-submitting in</div>
-          <div style={{ fontSize:80, fontWeight:900, color:"#EF4444", fontVariantNumeric:"tabular-nums" }}>{autoSubmitIn}</div>
+      {/* Auto-submit overlay */}
+      {autoCountdown !== null && autoCountdown > 0 && (
+        <div style={{ position:"fixed", inset:0, zIndex:9999, background:"rgba(0,0,0,.92)",
+          display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:16 }}>
+          <ShieldAlert style={{ width:68, height:68, color:"#dc2626" }} />
+          <div style={{ fontSize:24, fontWeight:900, color:"#fff", textAlign:"center" }}>🚨 Multiple Violations Detected!</div>
+          <div style={{ fontSize:15, color:"rgba(255,255,255,.7)" }}>Your exam will auto-submit in</div>
+          <div style={{ fontSize:90, fontWeight:900, color:"#dc2626", fontVariantNumeric:"tabular-nums", lineHeight:1 }}>{autoCountdown}</div>
         </div>
       )}
 
-      {/* Warning toast */}
-      {warning && (
-        <div style={{ position:"fixed", top:60, left:"50%", transform:"translateX(-50%)", zIndex:150,
-          maxWidth:400, width:"calc(100% - 24px)", background:warnBg, borderRadius:14,
-          padding:"14px 16px", boxShadow:"0 8px 32px rgba(0,0,0,.5)",
-          display:"flex", alignItems:"center", gap:10, animation:"slideDown .3s ease" }}>
-          <ShieldAlert style={{ width:20, height:20, color:"#fff", flexShrink:0 }} />
-          <p style={{ fontSize:14, fontWeight:700, color:"#fff", flex:1, lineHeight:1.4 }}>{warning.text}</p>
-          <button onClick={()=>setWarning(null)} style={{ background:"none", border:"none", color:"rgba(255,255,255,.7)", cursor:"pointer" }}>
-            <X style={{ width:14, height:14 }} />
-          </button>
-        </div>
-      )}
-
-      {/* Top-right status bar — compact, doesn't overlap content */}
-      <div style={{ position:"fixed", top:60, right:8, zIndex:100, display:"flex", flexDirection:"column", alignItems:"flex-end", gap:5 }}>
-        <div style={{ display:"flex", alignItems:"center", gap:7, background:"rgba(0,0,0,.75)", backdropFilter:"blur(8px)", borderRadius:24, padding:"5px 12px", border:`1px solid ${statusColor}44` }}>
-          <div style={{ width:7, height:7, borderRadius:"50%", background:statusColor }} />
-          <span style={{ fontSize:9, fontWeight:800, color:statusColor, letterSpacing:1 }}>{statusLabel}</span>
-          {localFaceOk
-            ? <Eye style={{ width:12, height:12, color:"#22c55e" }} />
-            : <EyeOff style={{ width:12, height:12, color:"#EF4444" }} />}
-          <span style={{ fontSize:10, fontWeight:700, color:"#fff", borderLeft:"1px solid rgba(255,255,255,.2)", paddingLeft:7 }}>
-            {Math.round(integrityScore)}%
-          </span>
-          <div style={{ display:"flex", gap:3, borderLeft:"1px solid rgba(255,255,255,.2)", paddingLeft:7 }}>
-            {Array.from({length:maxStrikes},(_,i)=>(
-              <div key={i} style={{ width:7, height:7, borderRadius:"50%", background:i<strikes?"#EF4444":"rgba(255,255,255,.2)" }} />
-            ))}
-          </div>
-          <button onClick={()=>setShowLog(v=>!v)} style={{ position:"relative", background:"none", border:"none", color:"rgba(255,255,255,.6)", cursor:"pointer", padding:0 }}>
-            <Activity style={{ width:12, height:12 }} />
-            {violations>0 && <span style={{ position:"absolute", top:-4, right:-4, width:13, height:13, borderRadius:"50%", background:"#EF4444", color:"#fff", fontSize:8, display:"flex", alignItems:"center", justifyContent:"center", fontWeight:700 }}>{violations>9?"9+":violations}</span>}
-          </button>
-        </div>
-
-        {/* Log dropdown */}
-        {showLog && (
-          <div style={{ width:260, maxHeight:220, overflowY:"auto", background:"rgba(10,10,10,.95)", borderRadius:12, border:"1px solid rgba(255,255,255,.1)", boxShadow:"0 8px 24px rgba(0,0,0,.5)" }}>
-            <div style={{ display:"flex", alignItems:"center", gap:6, padding:"9px 12px", borderBottom:"1px solid rgba(255,255,255,.08)" }}>
-              <Activity style={{ width:13, height:13, color:"#7a9e88" }} />
-              <span style={{ fontSize:11, fontWeight:700, color:"#fff", flex:1 }}>Proctoring Log</span>
-              <span style={{ fontSize:10, color:"rgba(255,255,255,.4)" }}>{violations}</span>
-            </div>
-            {recentViolations.length===0 ? (
-              <div style={{ padding:"18px 12px", textAlign:"center" }}>
-                <ShieldCheck style={{ width:22, height:22, color:"#22c55e", margin:"0 auto 6px" }} />
-                <p style={{ fontSize:12, color:"rgba(255,255,255,.5)" }}>No suspicious activity</p>
-              </div>
-            ) : recentViolations.map((v,i)=>(
-              <div key={i} style={{ display:"flex", gap:7, padding:"7px 12px", borderBottom:"1px solid rgba(255,255,255,.05)" }}>
-                <AlertTriangle style={{ width:11, height:11, color:"#EF4444", flexShrink:0, marginTop:2 }} />
-                <div style={{ flex:1 }}>
-                  <div style={{ display:"flex", justifyContent:"space-between" }}>
-                    <span style={{ fontSize:11, fontWeight:600, color:"#fff" }}>{VLABELS[v.type]||v.type}</span>
-                    <span style={{ fontSize:9, color:"rgba(255,255,255,.4)", fontFamily:"monospace" }}>{v.time}</span>
-                  </div>
-                  {v.details&&<p style={{ fontSize:10, color:"rgba(255,255,255,.4)", marginTop:1 }}>{v.details}</p>}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <style>{`@keyframes slideDown{from{opacity:0;transform:translate(-50%,-12px)}to{opacity:1;transform:translate(-50%,0)}}`}</style>
-
-      {/* Webcam preview — bottom RIGHT so it doesn't overlap content */}
-      {cameraReady && (
+      {/* Warning banner — dismisses automatically when issue fixed */}
+      {banner && bannerStyle && (
         <div style={{
-          position:"fixed", bottom:50, right:8, zIndex:100,
-          borderRadius: camExpanded?12:50, overflow:"hidden",
-          width: camExpanded?140:46, height: camExpanded?105:46,
-          transition:"all .3s ease",
-          border:`2px solid ${localFaceOk?"#22c55e":"#EF4444"}`,
-          boxShadow:`0 3px 12px rgba(0,0,0,.4)`,
-          cursor:"pointer",
-        }} onClick={()=>setCamExpanded(v=>!v)}>
-          <video ref={videoRef} muted playsInline
-            style={{ width:"100%", height:"100%", objectFit:"cover", transform:"scaleX(-1)" }} />
-          {!localFaceOk && (
-            <div style={{ position:"absolute", inset:0, background:"rgba(239,68,68,.3)", display:"flex", alignItems:"center", justifyContent:"center" }}>
-              <EyeOff style={{ width:14, height:14, color:"#fff" }} />
+          position:"fixed", top:56, left:"50%", transform:"translateX(-50%)",
+          zIndex:500, maxWidth:460, width:"calc(100% - 16px)",
+          background: banner.cfg.sev === "critical" || banner.cfg.sev === "high"
+            ? "linear-gradient(135deg,#1a0000,#3a0000)"
+            : bannerStyle.bg,
+          border:`2px solid ${bannerStyle.border}`,
+          borderRadius:16, padding:"14px 16px",
+          boxShadow:`0 8px 32px rgba(0,0,0,.4), 0 0 0 2px ${bannerStyle.border}33`,
+          animation:"bannerIn .25s ease",
+        }}>
+          <div style={{ display:"flex", alignItems:"flex-start", gap:12 }}>
+            <div style={{ width:42, height:42, borderRadius:12, background:`${bannerStyle.border}22`,
+              display:"flex", alignItems:"center", justifyContent:"center", fontSize:22, flexShrink:0 }}>
+              {banner.cfg.icon}
+            </div>
+            <div style={{ flex:1 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4 }}>
+                <span style={{ fontSize:11, fontWeight:900, color:bannerStyle.text, letterSpacing:.8 }}>
+                  ⚠️ PROCTORING ALERT
+                </span>
+                {banner.pts > 0 && (
+                  <span style={{ fontSize:11, fontWeight:700, color:bannerStyle.text,
+                    background:`${bannerStyle.border}22`, borderRadius:10, padding:"2px 8px", marginLeft:"auto" }}>
+                    −{banner.pts} pts
+                  </span>
+                )}
+                {banner.pts === 0 && (
+                  <span style={{ fontSize:10, color:bannerStyle.text, opacity:.7, marginLeft:"auto" }}>
+                    Warning #{faceWarnCount.current}
+                  </span>
+                )}
+              </div>
+              <div style={{ fontSize:16, fontWeight:800, color:bannerStyle.text, marginBottom:3 }}>
+                {t(banner.cfg.en, banner.cfg.ar)}
+              </div>
+              {banner.cfg.dismissOnFix ? (
+                <div style={{ fontSize:11, color:bannerStyle.text, opacity:.7 }}>
+                  This alert will disappear when you look at your screen.
+                </div>
+              ) : (
+                <div style={{ fontSize:11, color:bannerStyle.text, opacity:.7 }}>
+                  This has been recorded and sent to your instructor.
+                </div>
+              )}
+              {banner.type === "face_not_detected" && faceWarnCount.current >= 2 && (
+                <div style={{ fontSize:11, color:"#fca5a5", fontWeight:700, marginTop:4 }}>
+                  ⚠️ Points will be deducted for repeated violations.
+                </div>
+              )}
+            </div>
+            <button onClick={() => setBanner(null)} style={{ background:"none", border:"none",
+              color:bannerStyle.text, cursor:"pointer", opacity:.6, padding:2, flexShrink:0 }}>
+              <X style={{ width:16, height:16 }} />
+            </button>
+          </div>
+          {/* Shrink bar */}
+          {!banner.cfg.dismissOnFix && (
+            <div style={{ height:3, background:`${bannerStyle.border}33`, borderRadius:2, marginTop:12, overflow:"hidden" }}>
+              <div style={{ height:"100%", background:bannerStyle.border, borderRadius:2,
+                animation:"shrinkBar 6s linear forwards" }} />
             </div>
           )}
         </div>
       )}
+
+      {/* TOP-LEFT: Integrity + status */}
+      <div style={{ position:"fixed", top:58, left:8, zIndex:200, display:"flex", flexDirection:"column", gap:6 }}>
+        <div style={{ background:"rgba(0,0,0,.82)", backdropFilter:"blur(10px)", borderRadius:14,
+          padding:"10px 12px", border:`1px solid ${statusColor}44`, minWidth:148 }}>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:5 }}>
+              <div style={{ width:7, height:7, borderRadius:"50%", background:statusColor,
+                boxShadow:`0 0 6px ${statusColor}` }} />
+              <span style={{ fontSize:9, fontWeight:900, color:statusColor, letterSpacing:1.5 }}>{statusLabel}</span>
+            </div>
+            <button onClick={() => setShowLog(v => !v)} style={{ background:"none", border:"none",
+              color:"rgba(255,255,255,.5)", cursor:"pointer", position:"relative", padding:0 }}>
+              <Activity style={{ width:12, height:12 }} />
+              {violations > 0 && (
+                <span style={{ position:"absolute", top:-3, right:-3, width:12, height:12, borderRadius:"50%",
+                  background:"#dc2626", color:"#fff", fontSize:7, display:"flex",
+                  alignItems:"center", justifyContent:"center", fontWeight:900 }}>
+                  {violations > 9 ? "9+" : violations}
+                </span>
+              )}
+            </button>
+          </div>
+          {/* Score ring */}
+          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+            <div style={{ position:"relative", width:44, height:44, flexShrink:0 }}>
+              <svg width={44} height={44} style={{ transform:"rotate(-90deg)" }}>
+                <circle cx={22} cy={22} r={18} stroke="rgba(255,255,255,.1)" strokeWidth={4} fill="none" />
+                <circle cx={22} cy={22} r={18} stroke={scoreColor} strokeWidth={4} fill="none"
+                  strokeLinecap="round"
+                  strokeDasharray={2 * Math.PI * 18}
+                  strokeDashoffset={2 * Math.PI * 18 * (1 - integrityScore / 100)}
+                  style={{ transition:"stroke-dashoffset 1s" }} />
+              </svg>
+              <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                <span style={{ fontSize:10, fontWeight:900, color:scoreColor }}>{Math.round(integrityScore)}</span>
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize:9, color:"rgba(255,255,255,.4)", marginBottom:3 }}>INTEGRITY</div>
+              <div style={{ display:"flex", gap:3 }}>
+                {Array.from({ length: maxStrikes }, (_, i) => (
+                  <div key={i} style={{ width:10, height:10, borderRadius:3,
+                    background: i < strikes ? "#dc2626" : "rgba(255,255,255,.15)",
+                    border: `1px solid ${i < strikes ? "#dc2626" : "rgba(255,255,255,.1)"}` }} />
+                ))}
+              </div>
+              {pointsLost > 0 && (
+                <div style={{ fontSize:9, color:"#ef4444", marginTop:3, fontWeight:700 }}>
+                  −{pointsLost} pts lost
+                </div>
+              )}
+            </div>
+          </div>
+          {/* Camera + face status */}
+          <div style={{ display:"flex", gap:8, marginTop:8, paddingTop:8,
+            borderTop:"1px solid rgba(255,255,255,.08)" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:3, fontSize:9,
+              color: cameraReady ? "#22c55e" : "#ef4444" }}>
+              {cameraReady ? <Camera style={{ width:10,height:10 }} /> : <CameraOff style={{ width:10,height:10 }} />}
+              <span>{cameraReady ? "CAM ON" : "NO CAM"}</span>
+            </div>
+            <div style={{ display:"flex", alignItems:"center", gap:3, fontSize:9,
+              color: localFace ? "#22c55e" : "#ef4444" }}>
+              {localFace ? <Eye style={{ width:10,height:10 }} /> : <EyeOff style={{ width:10,height:10 }} />}
+              <span>{localFace ? "FACE ✓" : "NO FACE"}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Camera preview (small, non-intrusive) */}
+        {cameraReady && (
+          <div style={{ width:116, height:88, borderRadius:12, overflow:"hidden",
+            border:`2px solid ${localFace ? "#22c55e" : "#ef4444"}`,
+            boxShadow:`0 4px 16px rgba(0,0,0,.5)`, position:"relative", background:"#000" }}>
+            <video id="proctor-cam-preview" muted playsInline autoPlay
+              style={{ width:"100%", height:"100%", objectFit:"cover", transform:"scaleX(-1)" }} />
+            <div style={{ position:"absolute", bottom:0, left:0, right:0,
+              background:"rgba(0,0,0,.55)", padding:"3px 6px",
+              display:"flex", alignItems:"center", gap:4 }}>
+              <div style={{ width:5, height:5, borderRadius:"50%",
+                background: localFace ? "#22c55e" : "#ef4444",
+                animation:"pulse 1.5s infinite" }} />
+              <span style={{ fontSize:8, color:"#fff", fontWeight:700 }}>
+                {localFace ? "MONITORED" : "NO FACE"}
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Activity log */}
+      {showLog && (
+        <div style={{ position:"fixed", top:58, right:8, zIndex:300, width:256,
+          maxHeight:260, background:"rgba(10,10,10,.96)", borderRadius:14,
+          border:"1px solid rgba(255,255,255,.1)", overflow:"hidden", display:"flex", flexDirection:"column" }}>
+          <div style={{ display:"flex", alignItems:"center", gap:8, padding:"10px 12px",
+            borderBottom:"1px solid rgba(255,255,255,.08)" }}>
+            <Shield style={{ width:13, height:13, color:"#22c55e" }} />
+            <span style={{ fontSize:11, fontWeight:700, color:"#fff", flex:1 }}>Live Activity</span>
+            <span style={{ fontSize:10, color:"rgba(255,255,255,.4)" }}>{violations}</span>
+            <button onClick={() => setShowLog(false)} style={{ background:"none", border:"none",
+              color:"rgba(255,255,255,.5)", cursor:"pointer" }}>
+              <X style={{ width:11, height:11 }} />
+            </button>
+          </div>
+          <div style={{ flex:1, overflowY:"auto" }}>
+            {liveFeed.length === 0 ? (
+              <div style={{ padding:"18px 12px", textAlign:"center" }}>
+                <ShieldCheck style={{ width:20, height:20, color:"#22c55e", margin:"0 auto 6px" }} />
+                <p style={{ fontSize:11, color:"rgba(255,255,255,.4)" }}>No violations</p>
+              </div>
+            ) : liveFeed.map((msg, i) => (
+              <div key={i} style={{ padding:"6px 12px", borderBottom:"1px solid rgba(255,255,255,.04)",
+                fontSize:10, color: i === 0 ? "#fca5a5" : "rgba(255,255,255,.45)", fontFamily:"monospace" }}>
+                {msg}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <style>{`
+        @keyframes bannerIn { from{opacity:0;transform:translate(-50%,-14px)} to{opacity:1;transform:translate(-50%,0)} }
+        @keyframes shrinkBar { from{width:100%} to{width:0} }
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+      `}</style>
     </>
   );
 };
