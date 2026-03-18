@@ -196,31 +196,26 @@ export default function RecitationMic({ userId }: Props) {
 
   /* ══ Send audio chunk to Deepgram via Edge Function ══════════ */
   const sendChunkToDeepgram = useCallback(async (blob: Blob) => {
-    if (blob.size < 1000) return; // too small, skip
+    if (blob.size < 1000) return;
     setProcessing(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
+      // Convert blob → base64 so supabase.functions.invoke can send it
+      const arrayBuffer = await blob.arrayBuffer();
+      const uint8 = new Uint8Array(arrayBuffer);
+      let binary = "";
+      uint8.forEach(b => binary += String.fromCharCode(b));
+      const base64Audio = btoa(binary);
 
-      const res = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/transcribe-hifdh`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "audio/webm",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          body: blob,
-        }
-      );
+      const { data, error: fnError } = await supabase.functions.invoke("transcribe-hifdh", {
+        body: { audio: base64Audio, mimeType: blob.type || "audio/webm" },
+      });
 
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json = await res.json();
-      if (json.transcript) processTranscript(json.transcript);
+      if (fnError) throw new Error(fnError.message);
+      if (data?.transcript) processTranscript(data.transcript);
       setError("");
     } catch (e: any) {
-      // Non-fatal — just log it, keep recording
       console.warn("Transcription error:", e?.message);
+      setError("Transcription failed — ensure DEEPGRAM_API_KEY is set in Supabase secrets");
     } finally {
       setProcessing(false);
     }
