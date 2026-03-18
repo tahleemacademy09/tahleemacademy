@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Helmet } from "react-helmet-async";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -16,8 +17,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "@/hooks/use-toast";
 import { motion } from "framer-motion";
 import { BookOpen, Clock, Users, Plus, Edit, Trash2, Eye, EyeOff, GraduationCap } from "lucide-react";
-import quranTajweedImg from "@/assets/quran-tajweed.jpeg";
-import arabicLanguageImg from "@/assets/arabic-language.jpeg";
+// Images served from /public/images — no import needed, use absolute paths below
 
 const LEVELS = ["beginner", "intermediate", "advanced"];
 
@@ -34,8 +34,8 @@ const levelColor = (l: string) => {
 };
 
 const defaultImage = (category?: string | null) => {
-  if (category?.toLowerCase().includes("tajweed") || category?.toLowerCase().includes("quran")) return quranTajweedImg;
-  return arabicLanguageImg;
+  if (category?.toLowerCase().includes("tajweed") || category?.toLowerCase().includes("quran")) return "/images/quran-tajweed.jpeg";
+  return "/images/arabic-language.jpeg";
 };
 
 const emptyCourseForm = {
@@ -158,6 +158,10 @@ const Courses = () => {
 
   return (
     <div className="container mx-auto px-4 py-16">
+      <Helmet>
+        <title>Islamic Courses | Arabic, Tajweed &amp; Quran — Tahleem Academy</title>
+        <meta name="description" content="Browse Quran, Tajweed, Arabic Language, and Islamic Sciences courses at Tahleem Academy. Learn online with qualified scholars at every level." />
+      </Helmet>
       <div className="mb-10 text-center">
         <h1 className="mb-3 text-4xl font-bold">{t("Our Courses", "دوراتنا")}</h1>
         <p className="text-muted-foreground">{t("Choose your path to Arabic mastery", "اختر طريقك لإتقان العربية")}</p>
