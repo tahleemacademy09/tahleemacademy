@@ -48,6 +48,7 @@ const ExamTaking = () => {
   const [showNav,setShowNav]       = useState(false);
   const [deductedPoints,setDeducted] = useState(0);
   const [baseScore,setBaseScore]   = useState<number|null>(null);
+  const [showProcLog,setShowProcLog] = useState(false);
 
   const submittedRef = useRef(false);
   const answersRef   = useRef(answers);
@@ -332,31 +333,47 @@ const ExamTaking = () => {
       )}
 
       {/* ── HEADER (56px) ── */}
-      <div style={{height:56,background:G,display:"flex",alignItems:"center",padding:"0 14px",gap:10,flexShrink:0,zIndex:40,boxShadow:"0 2px 8px rgba(0,0,0,.3)"}}>
-        <BookOpen style={{width:16,height:16,color:GOLD,flexShrink:0}}/>
-        <span style={{fontSize:14,fontWeight:800,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>
+      <div style={{height:56,background:G,display:"flex",alignItems:"center",padding:"0 10px",gap:8,flexShrink:0,zIndex:40,boxShadow:"0 2px 8px rgba(0,0,0,.3)"}}>
+        <BookOpen style={{width:15,height:15,color:GOLD,flexShrink:0}}/>
+        <span style={{fontSize:13,fontWeight:800,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,minWidth:0}}>
           {language==="ar"?exam?.title_ar||exam?.title:exam?.title}
         </span>
         {/* Timer */}
-        <div style={{display:"flex",alignItems:"center",gap:5,background:timerBg,border:`1.5px solid ${timerColor}66`,borderRadius:22,padding:"5px 13px",flexShrink:0,animation:isTimeCrit?"pulseTimer 1s infinite":"none"}}>
-          <Clock style={{width:13,height:13,color:timerColor}}/>
-          <span style={{fontSize:15,fontWeight:900,color:timerColor,fontVariantNumeric:"tabular-nums",letterSpacing:1}}>{fmt(timeLeft)}</span>
+        <div style={{display:"flex",alignItems:"center",gap:4,background:timerBg,border:`1.5px solid ${timerColor}66`,borderRadius:20,padding:"4px 10px",flexShrink:0,animation:isTimeCrit?"pulseTimer 1s infinite":"none"}}>
+          <Clock style={{width:12,height:12,color:timerColor}}/>
+          <span style={{fontSize:14,fontWeight:900,color:timerColor,fontVariantNumeric:"tabular-nums"}}>{fmt(timeLeft)}</span>
         </div>
-        {/* Save */}
-        <div style={{fontSize:10,color:"rgba(255,255,255,.45)",display:"flex",alignItems:"center",gap:3,flexShrink:0}}>
-          {saving?<><div style={{width:8,height:8,border:"1px solid rgba(255,255,255,.3)",borderTopColor:"transparent",borderRadius:"50%",animation:"spin .8s linear infinite"}}/><span>Saving</span></>:lastSaved?<><div style={{width:6,height:6,borderRadius:"50%",background:"#22c55e"}}/><span>Saved</span></>:null}
+        {/* Save indicator */}
+        <div style={{fontSize:9,color:"rgba(255,255,255,.4)",display:"flex",alignItems:"center",gap:2,flexShrink:0}}>
+          {saving?<><div style={{width:7,height:7,border:"1px solid rgba(255,255,255,.3)",borderTopColor:"transparent",borderRadius:"50%",animation:"spin .8s linear infinite"}}/></>:lastSaved?<div style={{width:5,height:5,borderRadius:"50%",background:"#22c55e"}}/>:null}
         </div>
         {/* Q count */}
-        <span style={{fontSize:11,color:"rgba(255,255,255,.7)",background:"rgba(255,255,255,.12)",borderRadius:20,padding:"3px 10px",flexShrink:0,whiteSpace:"nowrap"}}>{answeredCount}/{questions.length}</span>
+        <span style={{fontSize:11,color:"rgba(255,255,255,.65)",background:"rgba(255,255,255,.1)",borderRadius:16,padding:"2px 8px",flexShrink:0,whiteSpace:"nowrap"}}>{answeredCount}/{questions.length}</span>
         {deductedPoints>0&&<span style={{fontSize:10,color:"#fca5a5",fontWeight:700,flexShrink:0}}>−{deductedPoints}pts</span>}
+
+        {/* ── PROCTORING PILL — lives inside header, zero overlap ── */}
+        {procEnabled && (
+          <div style={{display:"flex",alignItems:"center",gap:3,background:"rgba(0,0,0,.3)",borderRadius:16,padding:"3px 7px",flexShrink:0,cursor:"pointer"}}
+            onClick={()=>setShowProcLog(v=>!v)}>
+            <div style={{width:5,height:5,borderRadius:"50%",
+              background:proc.suspicionLevel==="low"?"#22c55e":proc.suspicionLevel==="medium"?"#f59e0b":"#ef4444"}}/>
+            <span style={{fontSize:9,fontWeight:700,color:"rgba(255,255,255,.7)",fontVariantNumeric:"tabular-nums"}}>
+              {Math.round(proc.integrityScore)}%
+            </span>
+            {proc.violations>0&&<span style={{fontSize:8,background:"#dc2626",color:"#fff",borderRadius:8,padding:"0 4px",fontWeight:900}}>{proc.violations}</span>}
+            {!proc.faceDetected&&<span style={{fontSize:9,color:"#fca5a5"}}>👁️</span>}
+            {!proc.cameraReady&&<span style={{fontSize:9,color:"#ef4444"}}>📷</span>}
+          </div>
+        )}
+
         {/* Mobile nav toggle */}
-        <button onClick={()=>setShowNav(v=>!v)} style={{background:"rgba(255,255,255,.12)",border:"none",color:"rgba(255,255,255,.8)",borderRadius:8,padding:"6px 8px",cursor:"pointer",flexShrink:0}} >
-          <Grid style={{width:14,height:14}}/>
+        <button onClick={()=>setShowNav(v=>!v)} style={{background:"rgba(255,255,255,.12)",border:"none",color:"rgba(255,255,255,.8)",borderRadius:8,padding:"5px 7px",cursor:"pointer",flexShrink:0}}>
+          <Grid style={{width:13,height:13}}/>
         </button>
         {/* Review */}
         <button onClick={()=>{saveAnswers(true);setPhase("review");}}
-          style={{background:"#dc2626",border:"none",color:"#fff",borderRadius:10,padding:"7px 14px",fontSize:12,fontWeight:800,cursor:"pointer",display:"flex",alignItems:"center",gap:5,fontFamily:"'Cairo',sans-serif",flexShrink:0,whiteSpace:"nowrap",boxShadow:"0 2px 8px rgba(220,38,38,.4)"}}>
-          <Eye style={{width:13,height:13}}/>{t("Review & Submit","مراجعة وتقديم")}
+          style={{background:"#dc2626",border:"none",color:"#fff",borderRadius:9,padding:"6px 10px",fontSize:11,fontWeight:800,cursor:"pointer",display:"flex",alignItems:"center",gap:4,fontFamily:"'Cairo',sans-serif",flexShrink:0,whiteSpace:"nowrap"}}>
+          <Eye style={{width:12,height:12}}/>{t("Submit","تقديم")}
         </button>
       </div>
 
@@ -400,10 +417,10 @@ const ExamTaking = () => {
         </div>}
 
         {/* CENTER: QUESTION (takes most of the space) */}
-        <div style={{flex:1,overflow:"auto",padding:"14px 14px 14px",display:"flex",flexDirection:"column"}}>
+        <div style={{flex:1,overflow:"auto",padding:"12px",display:"flex",flexDirection:"column"}}>
           {q&&(
-            <div style={{maxWidth:700,margin:"0 auto",width:"100%",flex:1,display:"flex",flexDirection:"column"}}>
-              <div style={{background:"#fff",borderRadius:18,boxShadow:"0 4px 20px rgba(0,0,0,.1)",overflow:"hidden",flex:1,display:"flex",flexDirection:"column"}}>
+            <div style={{maxWidth:700,margin:"0 auto",width:"100%"}}>
+              <div style={{background:"#fff",borderRadius:18,boxShadow:"0 4px 20px rgba(0,0,0,.1)",overflow:"hidden"}}>
 
                 {/* Question header */}
                 <div style={{background:`linear-gradient(135deg,${G} 0%,${GM} 100%)`,padding:"16px 20px",display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
@@ -420,7 +437,7 @@ const ExamTaking = () => {
                 </div>
 
                 {/* Question body — takes 60%+ of screen */}
-                <div style={{flex:1,padding:"24px 24px",overflow:"auto"}}>
+                <div style={{padding:"20px 20px"}}>
                   {/* Question text */}
                   <div style={{marginBottom:22}}>
                     {q.question_text&&(
