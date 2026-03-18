@@ -217,10 +217,10 @@ export default function RecitationMic({ userId }: Props) {
     }
 
     const rec = new SR();
-    rec.lang           = "ar-SA";
-    rec.continuous     = true;    // keep listening without stopping
-    rec.interimResults = true;    // get partial results as user speaks
-    rec.maxAlternatives = 3;
+    rec.lang            = "ar-SA";
+rec.continuous      = false;   // false is more reliable on Android/Kiwi
+rec.interimResults  = true;
+rec.maxAlternatives = 5;
 
     rec.onstart = () => {
       setMicStatus("on");
