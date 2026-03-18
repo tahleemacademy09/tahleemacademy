@@ -37,11 +37,7 @@ import ClassEndScreen from "./ClassEndScreen";
 import LiveQuizOverlay from "./LiveQuizOverlay";
 import { useIsMobile } from "@/hooks/use-mobile";
 
-// ── Lazy-load Excalidraw so it doesn't slow initial load ──
-import { lazy, Suspense } from "react";
-const Excalidraw = lazy(() =>
-  import("@excalidraw/excalidraw").then(m => ({ default: m.Excalidraw }))
-);
+import { useState, useEffect, useRef, useCallback } from "react";
 
 interface ClassroomViewProps { subject: any; onLeave: () => void; }
 
@@ -49,43 +45,102 @@ const DARK_GREEN = "#075E54";
 const TOOLBAR_H  = 64;
 
 /* ═══════════════════════════════════════════════════════
-   WHITEBOARD — synced via LiveKit data channel
+   WHITEBOARD — canvas-based, no external packages needed
+   Synced via LiveKit data channel
 ═══════════════════════════════════════════════════════ */
 const Whiteboard = ({ onClose, fullscreen, onToggleFullscreen, isTeacher }: {
   onClose: () => void; fullscreen: boolean;
   onToggleFullscreen: () => void; isTeacher: boolean;
 }) => {
   const room = useRoomContext();
-  const [elements, setElements] = useState<any[]>([]);
-  const excalidrawRef = useRef<any>(null);
-  const ignoreUpdateRef = useRef(false);
+  const canvasRef   = useRef<HTMLCanvasElement>(null);
+  const drawing     = useRef(false);
+  const lastPos     = useRef<{x:number;y:number}|null>(null);
+  const strokesRef  = useRef<any[]>([]); // all strokes for replay
+  const [color, setColor]     = useState("#1a1a1a");
+  const [lineWidth, setLineWidth] = useState(3);
+  const [tool, setTool]       = useState<"pen"|"eraser">("pen");
 
-  // Receive whiteboard updates from teacher
+  const redraw = useCallback(() => {
+    const canvas = canvasRef.current; if (!canvas) return;
+    const ctx = canvas.getContext("2d"); if (!ctx) return;
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+    for (const stroke of strokesRef.current) {
+      if (!stroke.points || stroke.points.length < 2) continue;
+      ctx.beginPath();
+      ctx.strokeStyle = stroke.color;
+      ctx.lineWidth   = stroke.lineWidth;
+      ctx.lineCap     = "round";
+      ctx.lineJoin    = "round";
+      ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
+      for (let i = 1; i < stroke.points.length; i++) ctx.lineTo(stroke.points[i].x, stroke.points[i].y);
+      ctx.stroke();
+    }
+  }, []);
+
+  // Receive whiteboard updates
   useEffect(() => {
     const handler = (payload: Uint8Array) => {
       try {
-        const text = new TextDecoder().decode(payload);
-        const msg = JSON.parse(text);
-        if (msg.type === "whiteboard") {
-          ignoreUpdateRef.current = true;
-          setElements(msg.elements);
-          setTimeout(() => { ignoreUpdateRef.current = false; }, 100);
+        const msg = JSON.parse(new TextDecoder().decode(payload));
+        if (msg.type === "wb_strokes") {
+          strokesRef.current = msg.strokes;
+          redraw();
+        } else if (msg.type === "wb_clear") {
+          strokesRef.current = [];
+          redraw();
         }
       } catch (_) {}
     };
     room.on(RoomEvent.DataReceived, handler);
     return () => { room.off(RoomEvent.DataReceived, handler); };
-  }, [room]);
+  }, [room, redraw]);
 
-  // Teacher broadcasts changes to all
-  const onChangeElements = useCallback((els: any[]) => {
-    if (!isTeacher || ignoreUpdateRef.current) return;
-    setElements(els);
+  const broadcast = useCallback((msg: object) => {
     try {
-      const data = new TextEncoder().encode(JSON.stringify({ type: "whiteboard", elements: els }));
+      const data = new TextEncoder().encode(JSON.stringify(msg));
       room.localParticipant.publishData(data, { reliable: true });
     } catch (_) {}
-  }, [isTeacher, room]);
+  }, [room]);
+
+  const getPos = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const rect = canvasRef.current!.getBoundingClientRect();
+    const scaleX = canvasRef.current!.width  / rect.width;
+    const scaleY = canvasRef.current!.height / rect.height;
+    return { x: (e.clientX - rect.left) * scaleX, y: (e.clientY - rect.top) * scaleY };
+  };
+
+  const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!isTeacher) return;
+    drawing.current = true;
+    const pos = getPos(e);
+    lastPos.current = pos;
+    strokesRef.current.push({ color: tool==="eraser"?"#fff":color, lineWidth: tool==="eraser"?20:lineWidth, points:[pos] });
+  };
+
+  const onPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!drawing.current || !isTeacher) return;
+    const pos = getPos(e);
+    const stroke = strokesRef.current[strokesRef.current.length-1];
+    if (stroke) { stroke.points.push(pos); redraw(); }
+    lastPos.current = pos;
+  };
+
+  const onPointerUp = () => {
+    if (!isTeacher) return;
+    drawing.current = false;
+    lastPos.current = null;
+    broadcast({ type:"wb_strokes", strokes:strokesRef.current });
+  };
+
+  const clearBoard = () => {
+    strokesRef.current = [];
+    redraw();
+    broadcast({ type:"wb_clear" });
+  };
+
+  const COLORS = ["#1a1a1a","#e53e3e","#2b6cb0","#276749","#b7791f","#553c9a","#ffffff"];
 
   return (
     <div style={{
@@ -94,47 +149,67 @@ const Whiteboard = ({ onClose, fullscreen, onToggleFullscreen, isTeacher }: {
       top: fullscreen ? 0 : 8,
       left: fullscreen ? 0 : 8,
       right: fullscreen ? 0 : 8,
-      bottom: fullscreen ? 0 : 8,
-      zIndex: 50,
+      bottom: fullscreen ? 0 : "auto",
+      height: fullscreen ? "100%" : "calc(100% - 16px)",
+      zIndex: 50, overflow:"hidden",
       borderRadius: fullscreen ? 0 : 16,
-      overflow: "hidden",
       boxShadow: "0 8px 32px rgba(0,0,0,.4)",
-      display: "flex",
-      flexDirection: "column",
-      background: "#fff",
+      display:"flex", flexDirection:"column",
+      background:"#fff",
     }}>
-      {/* Whiteboard header */}
+      {/* Header */}
       <div style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 12px", background:DARK_GREEN, flexShrink:0 }}>
         <PenTool style={{ width:16, height:16, color:"#fff" }} />
         <span style={{ fontSize:14, fontWeight:700, color:"#fff", flex:1 }}>
           Whiteboard · السبورة
-          {!isTeacher && <span style={{ fontSize:11, color:"rgba(255,255,255,0.6)", marginLeft:8 }}>View only</span>}
+          {!isTeacher && <span style={{ fontSize:11, color:"rgba(255,255,255,.6)", marginLeft:8 }}>View only</span>}
         </span>
-        <button onClick={onToggleFullscreen} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.8)", cursor:"pointer", padding:4 }}>
-          {fullscreen ? <Minimize style={{ width:16, height:16 }} /> : <Maximize style={{ width:16, height:16 }} />}
+        <button onClick={onToggleFullscreen} style={{ background:"none",border:"none",color:"rgba(255,255,255,.8)",cursor:"pointer",padding:4 }}>
+          {fullscreen ? <Minimize style={{width:16,height:16}}/> : <Maximize style={{width:16,height:16}}/>}
         </button>
-        <button onClick={onClose} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.8)", cursor:"pointer", padding:4 }}>
-          <X style={{ width:16, height:16 }} />
+        <button onClick={onClose} style={{ background:"none",border:"none",color:"rgba(255,255,255,.8)",cursor:"pointer",padding:4 }}>
+          <X style={{width:16,height:16}}/>
         </button>
       </div>
-      {/* Excalidraw canvas */}
-      <div style={{ flex:1, position:"relative" }}>
-        <Suspense fallback={<div style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"100%", color:"#999", fontSize:13 }}>Loading whiteboard…</div>}>
-          <Excalidraw
-            ref={excalidrawRef}
-            initialData={{ elements }}
-            onChange={(els) => onChangeElements(els as any[])}
-            viewModeEnabled={!isTeacher}
-            UIOptions={{
-              canvasActions: {
-                export: false,
-                loadScene: isTeacher,
-                saveToActiveFile: false,
-              },
-            }}
-          />
-        </Suspense>
-      </div>
+
+      {/* Toolbar (teacher only) */}
+      {isTeacher && (
+        <div style={{ display:"flex", alignItems:"center", gap:8, padding:"6px 10px", background:"#f8f8f8", borderBottom:"1px solid #e0e0e0", flexShrink:0, flexWrap:"wrap" as const }}>
+          {/* Tool */}
+          <div style={{ display:"flex", gap:4 }}>
+            {[{id:"pen",icon:"✏️"},{id:"eraser",icon:"⬜"}].map(t=>(
+              <button key={t.id} onClick={()=>setTool(t.id as any)}
+                style={{ padding:"4px 10px", borderRadius:8, border:"none", background:tool===t.id?"#1a3d24":"#e0e0e0", color:tool===t.id?"#fff":"#333", fontSize:13, cursor:"pointer" }}>
+                {t.icon}
+              </button>
+            ))}
+          </div>
+          {/* Colors */}
+          <div style={{ display:"flex", gap:4 }}>
+            {COLORS.map(c=>(
+              <button key={c} onClick={()=>{ setColor(c); setTool("pen"); }}
+                style={{ width:22, height:22, borderRadius:"50%", background:c, border:color===c&&tool==="pen"?"3px solid #1a3d24":"2px solid #ccc", cursor:"pointer" }} />
+            ))}
+          </div>
+          {/* Line width */}
+          <input type="range" min={1} max={20} value={lineWidth} onChange={e=>setLineWidth(+e.target.value)}
+            style={{ width:80 }} />
+          {/* Clear */}
+          <button onClick={clearBoard}
+            style={{ padding:"4px 12px", borderRadius:8, border:"none", background:"#EF4444", color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer" }}>
+            Clear
+          </button>
+        </div>
+      )}
+
+      {/* Canvas */}
+      <canvas ref={canvasRef} width={1200} height={800}
+        style={{ flex:1, width:"100%", height:"100%", cursor:isTeacher?(tool==="eraser"?"cell":"crosshair"):"default", touchAction:"none" }}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerLeave={onPointerUp}
+      />
     </div>
   );
 };
