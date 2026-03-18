@@ -2,12 +2,25 @@ import React, { createContext, useContext, useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { User, Session } from "@supabase/supabase-js";
 
+// ✅ Typed UserProfile — no more `any`
+export interface UserProfile {
+  id: string;
+  user_id: string;
+  full_name: string;
+  avatar_url?: string;
+  phone?: string;
+  onboarding_complete: boolean;
+  payment_status?: string;
+  course_level?: string;
+  [key: string]: unknown; // allow extra Supabase columns without breaking TS
+}
+
 interface AuthContextType {
   user: User | null;
   session: Session | null;
   loading: boolean;
   roles: string[];
-  profile: any;
+  profile: UserProfile | null;
   signUp: (email: string, password: string, fullName: string) => Promise<any>;
   signIn: (email: string, password: string) => Promise<any>;
   signOut: () => Promise<void>;
@@ -20,9 +33,10 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
+  // ✅ Single loading state — only false AFTER both auth session AND user data are loaded
   const [loading, setLoading] = useState(true);
   const [roles, setRoles] = useState<string[]>([]);
-  const [profile, setProfile] = useState<any>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
 
   const fetchUserData = async (userId: string) => {
     const [rolesRes, profileRes] = await Promise.all([
@@ -30,36 +44,49 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       supabase.from("profiles").select("*").eq("user_id", userId).maybeSingle(),
     ]);
     if (rolesRes.data) setRoles(rolesRes.data.map((r) => r.role));
-    if (profileRes.data) setProfile(profileRes.data);
+    if (profileRes.data) setProfile(profileRes.data as UserProfile);
   };
 
   const refreshProfile = async () => {
     if (!user) return;
     const { data } = await supabase.from("profiles").select("*").eq("user_id", user.id).maybeSingle();
-    if (data) setProfile(data);
+    if (data) setProfile(data as UserProfile);
   };
 
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    let mounted = true;
+
+    // ✅ Fix race condition: setLoading(false) only after data is fully loaded
+    const initAuth = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!mounted) return;
       setSession(session);
       setUser(session?.user ?? null);
       if (session?.user) {
-        setTimeout(() => fetchUserData(session.user.id), 0);
+        await fetchUserData(session.user.id);
+      }
+      if (mounted) setLoading(false);
+    };
+
+    initAuth();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (!mounted) return;
+      setSession(session);
+      setUser(session?.user ?? null);
+      if (session?.user) {
+        await fetchUserData(session.user.id);
       } else {
         setRoles([]);
         setProfile(null);
       }
-      setLoading(false);
+      if (mounted) setLoading(false);
     });
 
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      if (session?.user) fetchUserData(session.user.id);
-      setLoading(false);
-    });
-
-    return () => subscription.unsubscribe();
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   const signUp = async (email: string, password: string, fullName: string) => {
