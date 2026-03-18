@@ -6,8 +6,7 @@
     4. No camera preview shown to student
 */
 import { useEffect, useState, useRef, useCallback } from "react";
-import { Shield, ShieldAlert, ShieldCheck, Eye, EyeOff,
-  AlertTriangle, Activity, X } from "lucide-react";
+import { ShieldAlert, ShieldCheck, Eye, EyeOff, AlertTriangle, X } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -62,7 +61,6 @@ const ProctoringOverlay = ({
   const warnCooldown = useRef<Record<string,number>>({});
   const faceWarnCount = useRef(0); // track how many face warnings given
 
-  const [showLog, setShowLog]         = useState(false);
   const [banner, setBanner]           = useState<any>(null);
   const [autoCountdown, setAutoCount] = useState<number|null>(null);
   const [localFace, setLocalFace]     = useState(true);
@@ -351,68 +349,7 @@ const ProctoringOverlay = ({
         </div>
       )}
 
-      {/* ── TINY PROCTORING PILL — bottom-right, doesn't block content ── */}
-      <div style={{ position:"fixed", bottom:56, right:8, zIndex:200, display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4 }}>
-
-        {/* Main pill — very compact */}
-        <div style={{ display:"flex", alignItems:"center", gap:6, background:"rgba(0,0,0,.75)", backdropFilter:"blur(8px)", borderRadius:30, padding:"5px 10px", border:`1px solid ${statusColor}44`, cursor:"pointer" }}
-          onClick={() => setShowLog(v => !v)}>
-          {/* Status dot */}
-          <div style={{ width:6, height:6, borderRadius:"50%", background:statusColor, boxShadow:`0 0 4px ${statusColor}` }} />
-          {/* Score */}
-          <span style={{ fontSize:11, fontWeight:900, color:scoreColor }}>{Math.round(integrityScore)}%</span>
-          {/* Strikes dots */}
-          <div style={{ display:"flex", gap:2 }}>
-            {Array.from({ length: maxStrikes }, (_, i) => (
-              <div key={i} style={{ width:6, height:6, borderRadius:2, background: i < strikes ? "#dc2626" : "rgba(255,255,255,.2)" }} />
-            ))}
-          </div>
-          {/* Camera + face tiny icons */}
-          <div style={{ display:"flex", alignItems:"center", gap:3 }}>
-            {cameraReady
-              ? <div style={{ width:6, height:6, borderRadius:"50%", background:"#22c55e" }} />
-              : <div style={{ width:6, height:6, borderRadius:"50%", background:"#ef4444" }} />}
-            {localFace
-              ? <Eye style={{ width:10, height:10, color:"#22c55e" }} />
-              : <EyeOff style={{ width:10, height:10, color:"#ef4444" }} />}
-          </div>
-          {/* Violation count badge */}
-          {violations > 0 && (
-            <span style={{ fontSize:9, fontWeight:900, background:"#dc2626", color:"#fff", borderRadius:20, padding:"1px 5px" }}>
-              {violations}
-            </span>
-          )}
-        </div>
-
-        {/* Activity log dropdown — opens upward */}
-        {showLog && (
-          <div style={{ position:"absolute", bottom:"100%", right:0, marginBottom:6, width:250, maxHeight:220,
-            background:"rgba(10,10,10,.96)", borderRadius:12, border:"1px solid rgba(255,255,255,.1)",
-            boxShadow:"0 -4px 24px rgba(0,0,0,.5)", overflow:"hidden", display:"flex", flexDirection:"column" }}>
-            <div style={{ display:"flex", alignItems:"center", gap:8, padding:"9px 12px", borderBottom:"1px solid rgba(255,255,255,.08)" }}>
-              <Shield style={{ width:12, height:12, color:"#22c55e" }} />
-              <span style={{ fontSize:11, fontWeight:700, color:"#fff", flex:1 }}>Live Activity</span>
-              <button onClick={e => { e.stopPropagation(); setShowLog(false); }}
-                style={{ background:"none", border:"none", color:"rgba(255,255,255,.5)", cursor:"pointer" }}>
-                <X style={{ width:11, height:11 }} />
-              </button>
-            </div>
-            <div style={{ flex:1, overflowY:"auto" }}>
-              {liveFeed.length === 0 ? (
-                <div style={{ padding:"16px 12px", textAlign:"center" }}>
-                  <ShieldCheck style={{ width:18, height:18, color:"#22c55e", margin:"0 auto 5px" }} />
-                  <p style={{ fontSize:11, color:"rgba(255,255,255,.4)" }}>No violations</p>
-                </div>
-              ) : liveFeed.map((msg, i) => (
-                <div key={i} style={{ padding:"5px 12px", borderBottom:"1px solid rgba(255,255,255,.04)",
-                  fontSize:10, color: i === 0 ? "#fca5a5" : "rgba(255,255,255,.4)", fontFamily:"monospace" }}>
-                  {msg}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
+      {/* Proctoring status pill is rendered inside ExamTaking header — nothing here */}
 
       <style>{`
         @keyframes bannerIn { from{opacity:0;transform:translate(-50%,-14px)} to{opacity:1;transform:translate(-50%,0)} }
