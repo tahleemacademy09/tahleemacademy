@@ -1,3 +1,32 @@
+import { useState } from "react";
+import { Link, Outlet, useLocation } from "react-router-dom";
+import { Button } from "@/components/ui/button";
+import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import { useLanguage } from "@/contexts/LanguageContext";
+import { useAuth } from "@/contexts/AuthContext";
+import {
+  BookOpen, LayoutDashboard, ClipboardList, Users, LogOut, Globe,
+  CheckSquare, BarChart, UserCircle, Library, GraduationCap, MessageCircle,
+  Menu, Video, Mic, Layers, FileText, UserCheck, BookMarked,
+  CreditCard, Calendar, ChevronDown, ChevronRight, Wallet,
+  BookOpenCheck, RefreshCw, Headphones,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
+import PaymentBanner from "./PaymentBanner";
+import HolidayBanner from "./HolidayBanner";
+import AdminPaymentIndicator from "./AdminPaymentIndicator";
+
+interface DashboardLayoutProps { role: "student" | "admin"; }
+
+const DashboardLayout = ({ role }: DashboardLayoutProps) => {
+  const { t, language, setLanguage, dir } = useLanguage();
+  const { signOut, profile } = useAuth();
+  const location = useLocation();
+  const [open, setOpen] = useState(false);
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({
+    revision: true,
+    exams: true,
+  });
 const isMajlis = location.pathname === "/student/majlis";
 if (isMajlis) {
   return (
