@@ -180,7 +180,7 @@ export const useProctoring = (
       captureSnapshot(`violation_${type}`);
     }
 
-    // Strikes
+    // Strikes — only severity 2+ causes strikes and point deductions
     if (severity >= 2) {
       warningCount.current++;
       setState(prev => ({ ...prev, warnings: warningCount.current }));
@@ -193,6 +193,7 @@ export const useProctoring = (
         onAutoSubmit?.();
       }
     }
+    // severity 1 = warning banner shown but NO points deducted, NO strike
 
     // Refresh violations list
     try {
@@ -362,10 +363,13 @@ export const useProctoring = (
     };
   }, [enabled, config.attemptId]);
 
-  // ── Face detection — runs every 2.5s ─────────────────────────
+  // ── Face detection — runs every 3s, generous thresholds ──────
   useEffect(() => {
     if (!enabled) return;
     let consecutiveAbsent = 0;
+    const ABSENT_THRESHOLD = 8; // 8 consecutive fails (~24s) before warning
+    const FACE_WARN_COOLDOWN = 30000; // only warn once per 30s
+    let lastFaceWarn = 0;
 
     faceDetectIv.current = setInterval(async () => {
       if (!cameraReadyRef.current) return;
@@ -375,31 +379,39 @@ export const useProctoring = (
       // Try FaceDetector API first (Chrome/Android)
       if ("FaceDetector" in window) {
         try {
-          const fd    = new (window as any).FaceDetector({ maxDetectedFaces: 5, fastMode: false });
+          const fd    = new (window as any).FaceDetector({ maxDetectedFaces: 5, fastMode: true });
           const faces = await fd.detect(video);
           const count = faces.length;
 
           if (count === 0) {
             consecutiveAbsent++;
-            setState(prev => ({ ...prev, faceDetected: false }));
-            if (consecutiveAbsent === 3) {
-              logViolation("face_not_detected", 2, "Face not visible for extended period");
-              captureSnapshot("face_absent");
+            if (consecutiveAbsent >= ABSENT_THRESHOLD) {
+              setState(prev => ({ ...prev, faceDetected: false }));
+              const now = Date.now();
+              if (now - lastFaceWarn > FACE_WARN_COOLDOWN) {
+                lastFaceWarn = now;
+                // severity 1 = warning only, NO point deduction
+                logViolation("face_not_detected", 1, "Face not visible — please look at your screen");
+                captureSnapshot("face_absent");
+              }
             }
           } else {
             consecutiveAbsent = 0;
             setState(prev => ({ ...prev, faceDetected: true }));
-            if (faceAbsTimer.current) { clearTimeout(faceAbsTimer.current); faceAbsTimer.current = undefined; }
             if (count > 1) {
-              logViolation("multiple_faces", 3, `${count} faces detected in camera`);
-              captureSnapshot("multiple_faces");
+              const now = Date.now();
+              if (now - lastFaceWarn > FACE_WARN_COOLDOWN) {
+                lastFaceWarn = now;
+                logViolation("multiple_faces", 2, `${count} faces detected`);
+                captureSnapshot("multiple_faces");
+              }
             }
           }
           return;
-        } catch (_) { /* fall through */ }
+        } catch (_) { /* fall through to canvas */ }
       }
 
-      // Canvas skin-tone fallback
+      // Canvas skin-tone fallback — more generous ratio
       try {
         const canvas = document.createElement("canvas");
         canvas.width = 160; canvas.height = 120;
@@ -410,22 +422,29 @@ export const useProctoring = (
         let skin = 0;
         for (let i = 0; i < data.length; i += 16) {
           const r = data[i], g = data[i+1], b = data[i+2];
-          if (r > 60 && g > 30 && b > 15 && r > g && r > b && Math.abs(r-g) < 100 && (r-b) > 15) skin++;
+          // Wide skin range to support all skin tones
+          if (r > 50 && g > 20 && b > 10 && r > g && r > b &&
+              Math.abs(r-g) < 120 && (r-b) > 10 && r < 255) skin++;
         }
         const ratio = skin / (160 * 120 / 4);
-        const found = ratio > 0.04;
+        const found = ratio > 0.02; // lower threshold — more forgiving
+
         setState(prev => ({ ...prev, faceDetected: found }));
         if (!found) {
           consecutiveAbsent++;
-          if (consecutiveAbsent === 3) {
-            logViolation("face_not_detected", 2, "Face not visible (canvas detection)");
-            captureSnapshot("face_absent");
+          if (consecutiveAbsent >= ABSENT_THRESHOLD) {
+            const now = Date.now();
+            if (now - lastFaceWarn > FACE_WARN_COOLDOWN) {
+              lastFaceWarn = now;
+              logViolation("face_not_detected", 1, "Face not visible (canvas)");
+              captureSnapshot("face_absent");
+            }
           }
         } else {
           consecutiveAbsent = 0;
         }
       } catch (_) {}
-    }, 2500);
+    }, 3000);
 
     return () => { if (faceDetectIv.current) clearInterval(faceDetectIv.current); };
   }, [enabled, logViolation, captureSnapshot]);
@@ -459,11 +478,27 @@ export const useProctoring = (
     const h = () => {
       const isFS = !!document.fullscreenElement;
       setState(prev => ({ ...prev, fullscreenActive: isFS }));
-      if (!isFS) logViolation("fullscreen_exit", 2, "Exited fullscreen");
+      if (!isFS) {
+        // Exited fullscreen — log but DON'T kill camera
+        logViolation("fullscreen_exit", 2, "Exited fullscreen");
+      } else {
+        // Re-entered fullscreen — restart camera if it died
+        if (!cameraReadyRef.current) {
+          setTimeout(() => initCamera(), 500);
+        }
+        // Re-attach stream to display video
+        setTimeout(() => {
+          const displayEl = document.getElementById("proctor-display-video") as HTMLVideoElement;
+          if (displayEl && streamRef.current && !displayEl.srcObject) {
+            displayEl.srcObject = streamRef.current;
+            displayEl.play().catch(() => {});
+          }
+        }, 600);
+      }
     };
     document.addEventListener("fullscreenchange", h);
     return () => document.removeEventListener("fullscreenchange", h);
-  }, [enabled, config.fullscreen_required, logViolation]);
+  }, [enabled, config.fullscreen_required, logViolation, initCamera]);
 
   // ── Tab switch ────────────────────────────────────────────────
   useEffect(() => {
