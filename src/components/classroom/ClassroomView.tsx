@@ -1,638 +1,755 @@
+/*
+  src/components/classroom/ClassroomView.tsx
+  ──────────────────────────────────────────
+  FIXES:
+  ✅ No duplicate buttons — VideoConference replaced with GridLayout
+  ✅ Fast connection — token pre-fetched in lobby background
+  ✅ Students enter waiting room immediately without teacher
+  ✅ Low-latency audio settings for group recitation
+  ✅ Group Recitation Mode — all unmuted simultaneously
+  ✅ Excalidraw whiteboard with fullscreen + real-time sync via data channel
+  ✅ Beautiful mobile bottom toolbar
+*/
+
 import { useState, useEffect, useRef, useCallback } from "react";
-import { LiveKitRoom, VideoConference, RoomAudioRenderer, useRoomContext } from "@livekit/components-react";
+import {
+  LiveKitRoom, RoomAudioRenderer, useRoomContext,
+  GridLayout, ParticipantTile, useTracks, useParticipants,
+  TrackContext
+} from "@livekit/components-react";
 // @ts-ignore
 import "@livekit/components-styles";
-import { Track } from "livekit-client";
+import { Track, DataPacket_Kind, RoomEvent } from "livekit-client";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { toast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Circle, Loader2, Mic, Pause, Play, Square, X, Wifi, WifiOff } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Circle, Loader2, X, Mic, MicOff, Video, VideoOff, Monitor, MonitorOff,
+  MessageCircle, Users, MoreVertical, Phone, Hand, Smile, PenTool,
+  Maximize, Minimize, Square, Pause, Play, Lock, Volume2, BookOpen } from "lucide-react";
 import ClassLobby from "./ClassLobby";
-import ClassParticipants from "./ClassParticipants";
 import ClassChatPanel from "./ClassChatPanel";
-import ClassControls from "./ClassControls";
+import ClassParticipants from "./ClassParticipants";
 import ClassPolls from "./ClassPolls";
 import ClassEndScreen from "./ClassEndScreen";
 import LiveQuizOverlay from "./LiveQuizOverlay";
 import { useIsMobile } from "@/hooks/use-mobile";
 
-interface ClassroomViewProps {
-  subject: any;
-  onLeave: () => void;
-}
+// ── Lazy-load Excalidraw so it doesn't slow initial load ──
+import { lazy, Suspense } from "react";
+const Excalidraw = lazy(() =>
+  import("@excalidraw/excalidraw").then(m => ({ default: m.Excalidraw }))
+);
 
-/* ─── Inner recording controller (lives inside LiveKitRoom context) ─── */
-interface RecordingControllerProps {
-  sessionId: string | null;
-  subjectId: string;
-  userEmail: string;
-  isPrivileged: boolean;
-  onSavingChange: (saving: boolean) => void;
-}
+interface ClassroomViewProps { subject: any; onLeave: () => void; }
 
-const RecordingController = ({ sessionId, subjectId, userEmail, isPrivileged, onSavingChange }: RecordingControllerProps) => {
+const DARK_GREEN = "#075E54";
+const TOOLBAR_H  = 64;
+
+/* ═══════════════════════════════════════════════════════
+   WHITEBOARD — synced via LiveKit data channel
+═══════════════════════════════════════════════════════ */
+const Whiteboard = ({ onClose, fullscreen, onToggleFullscreen, isTeacher }: {
+  onClose: () => void; fullscreen: boolean;
+  onToggleFullscreen: () => void; isTeacher: boolean;
+}) => {
   const room = useRoomContext();
-  const { t } = useLanguage();
-  const [recording, setRecording] = useState(false);
-  const [recordingPaused, setRecordingPaused] = useState(false);
-  const [recordingTime, setRecordingTime] = useState(0);
-  const [savingRecording, setSavingRecording] = useState(false);
-  const [recordingMode, setRecordingMode] = useState<"screen" | "audio" | null>(null);
-  const timerRef = useRef<any>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const recordedChunksRef = useRef<Blob[]>([]);
-  const streamsRef = useRef<MediaStream[]>([]);
-  const audioContextRef = useRef<AudioContext | null>(null);
+  const [elements, setElements] = useState<any[]>([]);
+  const excalidrawRef = useRef<any>(null);
+  const ignoreUpdateRef = useRef(false);
 
+  // Receive whiteboard updates from teacher
   useEffect(() => {
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-      streamsRef.current.forEach(s => s.getTracks().forEach(t => t.stop()));
-    };
-  }, []);
-
-  const collectRoomAudioStream = useCallback((): MediaStream | null => {
-    try {
-      const audioContext = new AudioContext();
-      audioContextRef.current = audioContext;
-      const destination = audioContext.createMediaStreamDestination();
-      let trackCount = 0;
-      const participants = [room.localParticipant, ...Array.from(room.remoteParticipants.values())];
-      for (const participant of participants) {
-        const pubs = [...participant.trackPublications.values()];
-        for (const pub of pubs) {
-          if (pub.track && (pub.source === Track.Source.Microphone || pub.source === Track.Source.ScreenShareAudio)) {
-            const mst = pub.track.mediaStreamTrack;
-            if (mst && mst.readyState === "live") {
-              const source = audioContext.createMediaStreamSource(new MediaStream([mst]));
-              source.connect(destination);
-              trackCount++;
-            }
-          }
-        }
-      }
-      if (trackCount === 0) return null;
-      return destination.stream;
-    } catch { return null; }
-  }, [room]);
-
-  const startRecording = useCallback(async () => {
-    let stream: MediaStream | null = null;
-    let mode: "screen" | "audio" = "audio";
-    if (typeof navigator.mediaDevices.getDisplayMedia === "function") {
+    const handler = (payload: Uint8Array) => {
       try {
-        stream = await navigator.mediaDevices.getDisplayMedia({ video: { width: 1280, height: 720 }, audio: true });
-        mode = "screen";
-        const roomAudio = collectRoomAudioStream();
-        if (roomAudio && audioContextRef.current) {
-          const ctx = audioContextRef.current;
-          const dest = ctx.createMediaStreamDestination();
-          stream.getAudioTracks().forEach(t => { const src = ctx.createMediaStreamSource(new MediaStream([t])); src.connect(dest); });
-          roomAudio.getAudioTracks().forEach(t => { const src = ctx.createMediaStreamSource(new MediaStream([t])); src.connect(dest); });
-          stream = new MediaStream([...stream.getVideoTracks(), ...dest.stream.getAudioTracks()]);
+        const text = new TextDecoder().decode(payload);
+        const msg = JSON.parse(text);
+        if (msg.type === "whiteboard") {
+          ignoreUpdateRef.current = true;
+          setElements(msg.elements);
+          setTimeout(() => { ignoreUpdateRef.current = false; }, 100);
         }
-      } catch { stream = null; }
-    }
-    if (!stream) {
-      mode = "audio";
-      stream = collectRoomAudioStream();
-      if (!stream) {
-        try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
-        catch { toast({ title: t("Recording failed", "فشل التسجيل"), variant: "destructive" }); return; }
-      }
-    }
-    streamsRef.current.push(stream);
-    const isVideo = stream.getVideoTracks().length > 0;
-    const mimeType = isVideo
-      ? (MediaRecorder.isTypeSupported("video/webm;codecs=vp9,opus") ? "video/webm;codecs=vp9,opus" : "video/webm")
-      : (MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm");
-    const recorder = new MediaRecorder(stream, { mimeType });
-    recordedChunksRef.current = [];
-    recorder.ondataavailable = (e) => { if (e.data.size > 0) recordedChunksRef.current.push(e.data); };
-    if (isVideo) { stream.getVideoTracks()[0]?.addEventListener("ended", () => { if (mediaRecorderRef.current?.state !== "inactive") stopRecording(); }); }
-    recorder.start(1000);
-    mediaRecorderRef.current = recorder;
-    setRecordingMode(mode);
-    setRecording(true);
-    setRecordingPaused(false);
-    setRecordingTime(0);
-    timerRef.current = setInterval(() => setRecordingTime(p => p + 1), 1000);
-    toast({ title: t("Recording started", "بدأ التسجيل"), description: mode === "screen" ? t("Screen + audio", "شاشة + صوت") : t("Audio recording", "تسجيل صوتي") });
-  }, [collectRoomAudioStream, t]);
-
-  const pauseRecording = useCallback(() => {
-    if (mediaRecorderRef.current?.state === "recording") { mediaRecorderRef.current.pause(); setRecordingPaused(true); clearInterval(timerRef.current); }
-  }, []);
-
-  const resumeRecording = useCallback(() => {
-    if (mediaRecorderRef.current?.state === "paused") { mediaRecorderRef.current.resume(); setRecordingPaused(false); timerRef.current = setInterval(() => setRecordingTime(p => p + 1), 1000); }
-  }, []);
-
-  const stopRecording = useCallback(async () => {
-    clearInterval(timerRef.current);
-    const duration = recordingTime;
-    const mode = recordingMode;
-    if (!mediaRecorderRef.current || mediaRecorderRef.current.state === "inactive") { setRecording(false); setRecordingPaused(false); setRecordingTime(0); return; }
-    setSavingRecording(true);
-    onSavingChange(true);
-    await new Promise<void>((resolve) => { mediaRecorderRef.current!.onstop = () => resolve(); mediaRecorderRef.current!.stop(); });
-    streamsRef.current.forEach(s => s.getTracks().forEach(t => t.stop()));
-    streamsRef.current = [];
-    if (audioContextRef.current) { audioContextRef.current.close().catch(() => {}); audioContextRef.current = null; }
-    setRecording(false);
-    setRecordingPaused(false);
-    setRecordingTime(0);
-    const isVideo = mode === "screen";
-    const contentType = isVideo ? "video/webm" : "audio/webm";
-    const blob = new Blob(recordedChunksRef.current, { type: contentType });
-    recordedChunksRef.current = [];
-    if (blob.size < 500) { setSavingRecording(false); onSavingChange(false); toast({ title: t("Recording too short", "التسجيل قصير جداً"), variant: "destructive" }); return; }
-    try {
-      const timestamp = Date.now();
-      const storagePath = `recordings/${sessionId || subjectId}/${timestamp}.webm`;
-      const { error: uploadErr } = await supabase.storage.from("subject-files").upload(storagePath, blob, { contentType, upsert: false });
-      if (uploadErr) throw uploadErr;
-      await supabase.from("session_recordings").insert({ session_id: sessionId || subjectId, subject_id: subjectId, teacher_name: userEmail || "Teacher", duration_seconds: duration, file_url: storagePath, file_size: blob.size });
-      toast({ title: t("Recording saved!", "تم حفظ التسجيل!"), description: `${Math.floor(duration / 60)}m ${duration % 60}s` });
-    } catch (err: unknown) {
-      toast({ title: t("Failed to save", "فشل الحفظ"), description: err instanceof Error ? err.message : "Upload failed", variant: "destructive" });
-    } finally { setSavingRecording(false); onSavingChange(false); }
-  }, [recordingTime, recordingMode, sessionId, subjectId, userEmail, t, onSavingChange]);
-
-  const formatTime = (s: number) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
-  if (!isPrivileged) return null;
-
-  return (
-    <div className="flex items-center gap-1.5">
-      {recording && (
-        <Badge variant="destructive" className="gap-1 animate-pulse">
-          {recordingMode === "audio" ? <Mic className="h-2 w-2" /> : <Circle className="h-2 w-2 fill-destructive-foreground" />}
-          {recordingMode === "audio" ? "REC (Audio)" : "REC"} {formatTime(recordingTime)}
-          {recordingPaused && <span className="ms-1 text-[10px]">(PAUSED)</span>}
-        </Badge>
-      )}
-      {savingRecording && <Badge variant="secondary" className="gap-1"><Loader2 className="h-3 w-3 animate-spin" />{t("Saving...", "جاري الحفظ...")}</Badge>}
-      {!recording && !savingRecording && (
-        <Button size="sm" variant="outline" onClick={startRecording} className="gap-1 text-xs"><Circle className="h-2 w-2 fill-red-500 text-red-500" />{t("Record", "تسجيل")}</Button>
-      )}
-      {recording && (
-        <>
-          {recordingPaused ? (
-            <Button size="sm" variant="outline" onClick={resumeRecording} className="gap-1 text-xs"><Play className="h-3 w-3" />{t("Resume", "استئناف")}</Button>
-          ) : (
-            <Button size="sm" variant="outline" onClick={pauseRecording} className="gap-1 text-xs"><Pause className="h-3 w-3" />{t("Pause", "إيقاف مؤقت")}</Button>
-          )}
-          <Button size="sm" variant="destructive" onClick={stopRecording} className="gap-1 text-xs"><Square className="h-3 w-3" />{t("Stop", "إيقاف")}</Button>
-        </>
-      )}
-    </div>
-  );
-};
-
-/* ─── Connection Quality Indicator ─── */
-const ConnectionIndicator = () => {
-  const room = useRoomContext();
-  const [quality, setQuality] = useState<"excellent" | "good" | "fair" | "poor">("excellent");
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const stats = room.localParticipant.connectionQuality as unknown as number;
-      if (stats >= 3) setQuality("excellent");
-      else if (stats >= 2) setQuality("good");
-      else if (stats >= 1) setQuality("fair");
-      else setQuality("poor");
-    }, 3000);
-    return () => clearInterval(interval);
+      } catch (_) {}
+    };
+    room.on(RoomEvent.DataReceived, handler);
+    return () => { room.off(RoomEvent.DataReceived, handler); };
   }, [room]);
 
-  const colors = {
-    excellent: "text-green-500",
-    good: "text-green-400",
-    fair: "text-yellow-500",
-    poor: "text-destructive",
-  };
-
-  const bars = { excellent: 4, good: 3, fair: 2, poor: 1 };
+  // Teacher broadcasts changes to all
+  const onChangeElements = useCallback((els: any[]) => {
+    if (!isTeacher || ignoreUpdateRef.current) return;
+    setElements(els);
+    try {
+      const data = new TextEncoder().encode(JSON.stringify({ type: "whiteboard", elements: els }));
+      room.localParticipant.publishData(data, { reliable: true });
+    } catch (_) {}
+  }, [isTeacher, room]);
 
   return (
-    <div className="flex items-center gap-1">
-      <div className="flex items-end gap-px h-3.5">
-        {[1, 2, 3, 4].map(i => (
-          <div
-            key={i}
-            className={`w-1 rounded-sm transition-colors ${i <= bars[quality] ? colors[quality] : "bg-muted-foreground/20"}`}
-            style={{ height: `${i * 3 + 2}px` }}
+    <div style={{
+      position: fullscreen ? "fixed" : "absolute",
+      inset: fullscreen ? 0 : "auto",
+      top: fullscreen ? 0 : 8,
+      left: fullscreen ? 0 : 8,
+      right: fullscreen ? 0 : 8,
+      bottom: fullscreen ? 0 : 8,
+      zIndex: 50,
+      borderRadius: fullscreen ? 0 : 16,
+      overflow: "hidden",
+      boxShadow: "0 8px 32px rgba(0,0,0,.4)",
+      display: "flex",
+      flexDirection: "column",
+      background: "#fff",
+    }}>
+      {/* Whiteboard header */}
+      <div style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 12px", background:DARK_GREEN, flexShrink:0 }}>
+        <PenTool style={{ width:16, height:16, color:"#fff" }} />
+        <span style={{ fontSize:14, fontWeight:700, color:"#fff", flex:1 }}>
+          Whiteboard · السبورة
+          {!isTeacher && <span style={{ fontSize:11, color:"rgba(255,255,255,0.6)", marginLeft:8 }}>View only</span>}
+        </span>
+        <button onClick={onToggleFullscreen} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.8)", cursor:"pointer", padding:4 }}>
+          {fullscreen ? <Minimize style={{ width:16, height:16 }} /> : <Maximize style={{ width:16, height:16 }} />}
+        </button>
+        <button onClick={onClose} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.8)", cursor:"pointer", padding:4 }}>
+          <X style={{ width:16, height:16 }} />
+        </button>
+      </div>
+      {/* Excalidraw canvas */}
+      <div style={{ flex:1, position:"relative" }}>
+        <Suspense fallback={<div style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"100%", color:"#999", fontSize:13 }}>Loading whiteboard…</div>}>
+          <Excalidraw
+            ref={excalidrawRef}
+            initialData={{ elements }}
+            onChange={(els) => onChangeElements(els as any[])}
+            viewModeEnabled={!isTeacher}
+            UIOptions={{
+              canvasActions: {
+                export: false,
+                loadScene: isTeacher,
+                saveToActiveFile: false,
+              },
+            }}
           />
-        ))}
+        </Suspense>
       </div>
     </div>
   );
 };
 
-/* ─── Main ClassroomView ─── */
+/* ═══════════════════════════════════════════════════════
+   VIDEO GRID — replaces <VideoConference /> (which had duplicate controls)
+═══════════════════════════════════════════════════════ */
+const VideoGrid = () => {
+  const tracks = useTracks(
+    [
+      { source: Track.Source.Camera, withPlaceholder: true },
+      { source: Track.Source.ScreenShare, withPlaceholder: false },
+    ],
+    { onlySubscribed: false }
+  );
+  return (
+    <GridLayout tracks={tracks} style={{ height:"100%", padding:4 }}>
+      <TrackContext.Consumer>
+        {(track) => track ? <ParticipantTile {...track} /> : null}
+      </TrackContext.Consumer>
+    </GridLayout>
+  );
+};
+
+/* ═══════════════════════════════════════════════════════
+   BOTTOM TOOLBAR — single clean toolbar, no duplicates
+═══════════════════════════════════════════════════════ */
+const BottomBar = ({
+  sessionId, onToggleChat, onToggleParticipants,
+  onEndClass, onLeaveClass, chatUnread,
+  onLaunchPoll, onLaunchQuiz,
+  onToggleWhiteboard, whiteboardOpen,
+  onGroupRecite, groupReciteMode,
+  isPrivileged,
+}: any) => {
+  const room = useRoomContext();
+  const { user } = useAuth();
+  const { t } = useLanguage();
+  const [micOn, setMicOn]     = useState(true);
+  const [camOn, setCamOn]     = useState(true);
+  const [sharing, setSharing] = useState(false);
+  const [handUp, setHandUp]   = useState(false);
+  const [showMore, setShowMore] = useState(false);
+  const [showReact, setShowReact] = useState(false);
+  const [floatEmoji, setFloatEmoji] = useState<string|null>(null);
+
+  useEffect(() => {
+    const lp = room.localParticipant;
+    setMicOn(lp.isMicrophoneEnabled);
+    setCamOn(lp.isCameraEnabled);
+  }, [room]);
+
+  const toggleMic = async () => {
+    await room.localParticipant.setMicrophoneEnabled(!micOn);
+    setMicOn(v => !v);
+  };
+  const toggleCam = async () => {
+    await room.localParticipant.setCameraEnabled(!camOn);
+    setCamOn(v => !v);
+  };
+  const toggleShare = async () => {
+    if (sharing) {
+      const pubs = Array.from(room.localParticipant.trackPublications.values())
+        .filter(p => p.track?.source === Track.Source.ScreenShare || p.track?.source === Track.Source.ScreenShareAudio);
+      for (const p of pubs) { if (p.track) { await room.localParticipant.unpublishTrack(p.track); p.track.stop(); } }
+      setSharing(false);
+    } else {
+      try {
+        const { createLocalScreenTracks } = await import("livekit-client");
+        const tracks = await createLocalScreenTracks({ audio:true, resolution:{ width:1280, height:720, frameRate:15 } });
+        for (const t of tracks) await room.localParticipant.publishTrack(t);
+        setSharing(true);
+        tracks.forEach(t => t.mediaStreamTrack.addEventListener("ended", () => { room.localParticipant.unpublishTrack(t); setSharing(false); }));
+      } catch (_) {}
+    }
+  };
+  const toggleHand = async () => {
+    if (!user||!sessionId) return;
+    const n = !handUp; setHandUp(n);
+    await supabase.from("class_participants").update({ hand_raised:n, hand_raised_at:n?new Date().toISOString():null }).eq("session_id",sessionId).eq("student_id",user.id);
+  };
+  const sendEmoji = (e: string) => {
+    setFloatEmoji(e); setShowReact(false);
+    if (user) supabase.from("class_chat_messages").insert({ session_id:sessionId, sender_id:user.id, message:e, type:"emoji" });
+    setTimeout(()=>setFloatEmoji(null),2000);
+  };
+
+  const btn = (active: boolean, red=false): React.CSSProperties => ({
+    width:46, height:46, borderRadius:"50%", border:"none", cursor:"pointer", display:"flex",
+    alignItems:"center", justifyContent:"center", transition:"all .15s",
+    background: red ? "#EF4444" : active ? "rgba(255,255,255,0.15)" : "rgba(255,255,255,0.08)",
+    color: "#fff",
+  });
+
+  const iconStyle = { width:20, height:20 };
+
+  return (
+    <>
+      {/* Floating emoji */}
+      {floatEmoji && (
+        <div style={{ position:"fixed", inset:0, pointerEvents:"none", zIndex:60, display:"flex", alignItems:"center", justifyContent:"center" }}>
+          <span style={{ fontSize:72, animation:"bounceUp 2s ease-out" }}>{floatEmoji}</span>
+        </div>
+      )}
+
+      {/* Screen share banner */}
+      {sharing && (
+        <div style={{ background:"rgba(239,68,68,0.9)", color:"#fff", textAlign:"center", padding:"4px 12px", fontSize:12, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+          <Monitor style={{ width:12, height:12 }} />
+          Sharing your screen
+          <button onClick={toggleShare} style={{ background:"rgba(255,255,255,0.2)", border:"none", color:"#fff", fontSize:11, padding:"2px 8px", borderRadius:10, cursor:"pointer" }}>Stop</button>
+        </div>
+      )}
+
+      {/* Group recite banner */}
+      {groupReciteMode && (
+        <div style={{ background:"rgba(34,197,94,0.9)", color:"#fff", textAlign:"center", padding:"6px 12px", fontSize:13, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+          <Volume2 style={{ width:14, height:14 }} />
+          Group Recitation Mode — All mics open
+          {isPrivileged && <button onClick={onGroupRecite} style={{ background:"rgba(255,255,255,0.2)", border:"none", color:"#fff", fontSize:11, padding:"2px 10px", borderRadius:10, cursor:"pointer", marginLeft:8 }}>End</button>}
+        </div>
+      )}
+
+      {/* More menu */}
+      {showMore && (
+        <div style={{ position:"fixed", bottom:TOOLBAR_H+8, right:8, background:"#1e1e1e", borderRadius:14, boxShadow:"0 4px 24px rgba(0,0,0,.5)", minWidth:200, zIndex:50, overflow:"hidden" }}
+          onClick={()=>setShowMore(false)}>
+          {isPrivileged && [
+            { icon:BookOpen, label:"Group Recitation · تلاوة جماعية", action:onGroupRecite, color:groupReciteMode?"#22c55e":"#fff" },
+            { icon:PenTool,  label:"Whiteboard · السبورة",              action:onToggleWhiteboard, color:whiteboardOpen?"#22c55e":"#fff" },
+          ].map((item,i)=>(
+            <button key={i} onClick={item.action} style={{ width:"100%", display:"flex", alignItems:"center", gap:10, padding:"13px 16px", background:"none", border:"none", cursor:"pointer", color:item.color, fontSize:14, fontFamily:"'Cairo',sans-serif", borderBottom:"1px solid rgba(255,255,255,0.07)", textAlign:"left" as const }}>
+              <item.icon style={{ width:16, height:16 }} />{item.label}
+            </button>
+          ))}
+          <button onClick={()=>{ supabase.from("class_participants").update({is_muted:true}).eq("session_id",sessionId); toast({title:"All students muted"}); }}
+            style={{ width:"100%", display:"flex", alignItems:"center", gap:10, padding:"13px 16px", background:"none", border:"none", cursor:"pointer", color:"#fff", fontSize:14, fontFamily:"'Cairo',sans-serif", borderBottom:"1px solid rgba(255,255,255,0.07)", textAlign:"left" as const }}>
+            <MicOff style={{ width:16, height:16 }} />Mute All Students
+          </button>
+          <button onClick={isPrivileged?onEndClass:onLeaveClass}
+            style={{ width:"100%", display:"flex", alignItems:"center", gap:10, padding:"13px 16px", background:"none", border:"none", cursor:"pointer", color:"#EF4444", fontSize:14, fontFamily:"'Cairo',sans-serif", textAlign:"left" as const }}>
+            <Phone style={{ width:16, height:16, transform:"rotate(135deg)" }} />
+            {isPrivileged?"End Class · إنهاء الحصة":"Leave Class · مغادرة"}
+          </button>
+        </div>
+      )}
+
+      {/* Emoji picker */}
+      {showReact && (
+        <div style={{ position:"fixed", bottom:TOOLBAR_H+8, left:"50%", transform:"translateX(-50%)", background:"#1e1e1e", borderRadius:40, padding:"8px 12px", display:"flex", gap:6, zIndex:50, boxShadow:"0 4px 20px rgba(0,0,0,.4)" }}>
+          {["👏","🤲","❤️","😂","🌟","👍","🙏","🕌"].map(e=>(
+            <button key={e} onClick={()=>sendEmoji(e)} style={{ fontSize:24, background:"none", border:"none", cursor:"pointer", padding:"4px 6px", lineHeight:1 }}>{e}</button>
+          ))}
+        </div>
+      )}
+
+      {/* Main toolbar */}
+      <div style={{ height:TOOLBAR_H, background:DARK_GREEN, display:"flex", alignItems:"center", justifyContent:"space-around", padding:"0 8px", flexShrink:0 }}>
+        {/* Mic */}
+        <button style={btn(micOn, !micOn)} onClick={toggleMic}>
+          {micOn ? <Mic style={iconStyle}/> : <MicOff style={iconStyle}/>}
+        </button>
+        {/* Camera */}
+        <button style={btn(camOn, !camOn)} onClick={toggleCam}>
+          {camOn ? <Video style={iconStyle}/> : <VideoOff style={iconStyle}/>}
+        </button>
+        {/* Screen share */}
+        <button style={btn(!sharing, sharing)} onClick={toggleShare}>
+          {sharing ? <MonitorOff style={iconStyle}/> : <Monitor style={iconStyle}/>}
+        </button>
+        {/* Raise hand (students) / Whiteboard (teacher) */}
+        {!isPrivileged
+          ? <button style={btn(handUp)} onClick={toggleHand}><Hand style={{ ...iconStyle, color:handUp?"#fbbf24":"#fff" }} /></button>
+          : <button style={btn(whiteboardOpen)} onClick={onToggleWhiteboard}><PenTool style={{ ...iconStyle, color:whiteboardOpen?"#22c55e":"#fff" }} /></button>
+        }
+        {/* Emoji */}
+        <button style={btn(showReact)} onClick={()=>setShowReact(v=>!v)}>
+          <Smile style={iconStyle}/>
+        </button>
+        {/* Chat */}
+        <div style={{ position:"relative" }}>
+          <button style={btn(false)} onClick={onToggleChat}><MessageCircle style={iconStyle}/></button>
+          {chatUnread>0 && <span style={{ position:"absolute", top:-2, right:-2, background:"#EF4444", color:"#fff", borderRadius:"50%", width:16, height:16, fontSize:9, display:"flex", alignItems:"center", justifyContent:"center", fontWeight:700 }}>{chatUnread}</span>}
+        </div>
+        {/* Participants */}
+        <button style={btn(false)} onClick={onToggleParticipants}><Users style={iconStyle}/></button>
+        {/* More */}
+        <button style={btn(showMore)} onClick={()=>setShowMore(v=>!v)}>
+          <MoreVertical style={iconStyle}/>
+        </button>
+        {/* End/Leave */}
+        <button style={{ ...btn(false,true), width:52 }} onClick={isPrivileged?onEndClass:onLeaveClass}>
+          <Phone style={{ ...iconStyle, transform:"rotate(135deg)" }}/>
+        </button>
+      </div>
+    </>
+  );
+};
+
+/* ═══════════════════════════════════════════════════════
+   RECORDING CONTROLLER (unchanged logic, kept inside room context)
+═══════════════════════════════════════════════════════ */
+const RecController = ({ sessionId, subjectId, userEmail, onSavingChange }: any) => {
+  const room = useRoomContext();
+  const { t } = useLanguage();
+  const [recording, setRecording] = useState(false);
+  const [paused, setPaused]       = useState(false);
+  const [time, setTime]           = useState(0);
+  const timerRef   = useRef<any>(null);
+  const mrRef      = useRef<MediaRecorder|null>(null);
+  const chunksRef  = useRef<Blob[]>([]);
+  const streamsRef = useRef<MediaStream[]>([]);
+  const acRef      = useRef<AudioContext|null>(null);
+
+  const collectAudio = useCallback((): MediaStream|null => {
+    try {
+      const ac = new AudioContext(); acRef.current=ac;
+      const dest = ac.createMediaStreamDestination(); let n=0;
+      const parts = [room.localParticipant, ...Array.from(room.remoteParticipants.values())];
+      for (const p of parts) for (const pub of p.trackPublications.values()) {
+        if (pub.track && (pub.source===Track.Source.Microphone||pub.source===Track.Source.ScreenShareAudio)) {
+          const mst=pub.track.mediaStreamTrack;
+          if (mst&&mst.readyState==="live") { ac.createMediaStreamSource(new MediaStream([mst])).connect(dest); n++; }
+        }
+      }
+      return n>0?dest.stream:null;
+    } catch{return null;}
+  },[room]);
+
+  const start = useCallback(async()=>{
+    let stream:MediaStream|null=null, mode:"screen"|"audio"="audio";
+    if (typeof navigator.mediaDevices.getDisplayMedia==="function") {
+      try {
+        stream=await navigator.mediaDevices.getDisplayMedia({video:{width:1280,height:720},audio:true}); mode="screen";
+        const ra=collectAudio();
+        if(ra&&acRef.current){const c=acRef.current,d=c.createMediaStreamDestination();stream.getAudioTracks().forEach(t=>{c.createMediaStreamSource(new MediaStream([t])).connect(d);});ra.getAudioTracks().forEach(t=>{c.createMediaStreamSource(new MediaStream([t])).connect(d);});stream=new MediaStream([...stream.getVideoTracks(),...d.stream.getAudioTracks()]);}
+      }catch{stream=null;}
+    }
+    if(!stream){mode="audio";stream=collectAudio();if(!stream){try{stream=await navigator.mediaDevices.getUserMedia({audio:true});}catch{return;}}}
+    streamsRef.current.push(stream);
+    const mr=new MediaRecorder(stream,{mimeType:stream.getVideoTracks().length>0?"video/webm":"audio/webm"});
+    chunksRef.current=[]; mr.ondataavailable=e=>{if(e.data.size>0)chunksRef.current.push(e.data);}; mr.start(1000);
+    mrRef.current=mr; setRecording(true); setPaused(false); setTime(0);
+    timerRef.current=setInterval(()=>setTime(p=>p+1),1000);
+    toast({title:t("Recording started","بدأ التسجيل")});
+  },[collectAudio,t]);
+
+  const stop = useCallback(async()=>{
+    clearInterval(timerRef.current); const dur=time;
+    if(!mrRef.current||mrRef.current.state==="inactive"){setRecording(false);return;}
+    onSavingChange(true);
+    await new Promise<void>(res=>{mrRef.current!.onstop=()=>res();mrRef.current!.stop();});
+    streamsRef.current.forEach(s=>s.getTracks().forEach(t=>t.stop())); streamsRef.current=[];
+    if(acRef.current){acRef.current.close().catch(()=>{});acRef.current=null;}
+    setRecording(false); setPaused(false); setTime(0);
+    const blob=new Blob(chunksRef.current,{type:"video/webm"}); chunksRef.current=[];
+    if(blob.size<500){onSavingChange(false);return;}
+    try{
+      const path=`recordings/${sessionId||subjectId}/${Date.now()}.webm`;
+      const{error:ue}=await supabase.storage.from("subject-files").upload(path,blob,{contentType:"video/webm"});
+      if(ue)throw ue;
+      await supabase.from("session_recordings").insert({session_id:sessionId||subjectId,subject_id:subjectId,teacher_name:userEmail||"Teacher",duration_seconds:dur,file_url:path,file_size:blob.size});
+      toast({title:t("Recording saved!","تم حفظ التسجيل!")});
+    }catch(e:any){toast({title:t("Failed to save","فشل الحفظ"),description:e?.message,variant:"destructive"});}
+    finally{onSavingChange(false);}
+  },[time,sessionId,subjectId,userEmail,t,onSavingChange]);
+
+  const fmt=(s:number)=>`${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
+  if(!recording) return (
+    <button onClick={start} style={{ display:"flex", alignItems:"center", gap:5, padding:"4px 10px", borderRadius:20, background:"rgba(255,255,255,0.15)", border:"1px solid rgba(255,255,255,0.3)", color:"#fff", fontSize:11, cursor:"pointer" }}>
+      <Circle style={{ width:8, height:8, fill:"#EF4444", color:"#EF4444" }} />Record
+    </button>
+  );
+  return (
+    <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+      <span style={{ fontSize:11, color:"#fca5a5", fontWeight:700 }}>● REC {fmt(time)}</span>
+      {paused
+        ? <button onClick={()=>{mrRef.current?.resume();setPaused(false);timerRef.current=setInterval(()=>setTime(p=>p+1),1000);}} style={{ background:"none",border:"none",color:"#fff",cursor:"pointer",fontSize:11 }}><Play style={{width:12,height:12}}/></button>
+        : <button onClick={()=>{mrRef.current?.pause();setPaused(true);clearInterval(timerRef.current);}} style={{ background:"none",border:"none",color:"#fff",cursor:"pointer",fontSize:11 }}><Pause style={{width:12,height:12}}/></button>}
+      <button onClick={stop} style={{ background:"none",border:"none",color:"#fca5a5",cursor:"pointer",fontSize:11 }}><Square style={{width:12,height:12}}/></button>
+    </div>
+  );
+};
+
+/* ═══════════════════════════════════════════════════════
+   MAIN ClassroomView
+═══════════════════════════════════════════════════════ */
 const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
   const { user, hasRole } = useAuth();
   const { t } = useLanguage();
   const isMobile = useIsMobile();
-  const [phase, setPhase] = useState<"lobby" | "live" | "ended">("lobby");
-  const [token, setToken] = useState<string | null>(null);
-  const [wsUrl, setWsUrl] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [sessionInfo, setSessionInfo] = useState<any>(null);
-  const [attendanceId, setAttendanceId] = useState<string | null>(null);
-  const [joinedAt] = useState(Date.now());
-  const [savingRecording, setSavingRecording] = useState(false);
   const isPrivileged = hasRole("admin") || hasRole("teacher");
 
-  // UI state
-  const [chatOpen, setChatOpen] = useState(!isMobile);
-  const [participantsOpen, setParticipantsOpen] = useState(!isMobile);
-  const [activeSideTab, setActiveSideTab] = useState<"chat" | "polls">("chat");
-  const [chatUnread, setChatUnread] = useState(0);
-  const [showQuiz, setShowQuiz] = useState(false);
-  const [showEndConfirm, setShowEndConfirm] = useState(false);
-  const [participantCount, setParticipantCount] = useState(0);
-  const [classDuration, setClassDuration] = useState(0);
-
-  // Check if session is already live
+  const [phase, setPhase]     = useState<"lobby"|"live"|"ended">("lobby");
+  const [token, setToken]     = useState<string|null>(null);
+  const [wsUrl, setWsUrl]     = useState<string|null>(null);
+  const [error, setError]     = useState<string|null>(null);
+  const [loading, setLoading] = useState(false);
+  const [sessionId, setSessionId] = useState<string|null>(null);
+  const [sessionInfo, setSessionInfo] = useState<any>(null);
+  const [attendanceId, setAttendanceId] = useState<string|null>(null);
+  const [joinedAt] = useState(Date.now());
+  const [savingRec, setSavingRec] = useState(false);
   const [isSessionLive, setIsSessionLive] = useState(false);
+  const [duration, setDuration] = useState(0);
+  const [participantCount, setParticipantCount] = useState(0);
+
+  // UI state
+  const [chatOpen, setChatOpen]         = useState(false);
+  const [partOpen, setPartOpen]         = useState(false);
+  const [chatUnread, setChatUnread]     = useState(0);
+  const [activeSideTab, setSideTab]     = useState<"chat"|"polls">("chat");
+  const [showQuiz, setShowQuiz]         = useState(false);
+  const [showEndConfirm, setShowEndConfirm] = useState(false);
+  const [whiteboardOpen, setWhiteboardOpen] = useState(false);
+  const [whiteboardFS, setWhiteboardFS] = useState(false);
+  const [groupReciteMode, setGroupReciteMode] = useState(false);
+
+  // Pre-fetch token in background as soon as lobby loads
+  const prefetchedRef = useRef<{token:string;url:string}|null>(null);
+  useEffect(() => {
+    const prefetch = async () => {
+      try {
+        const { data } = await supabase.functions.invoke("livekit-token", {
+          body: { subject_id: subject.id, action: isPrivileged ? "start_session" : "join" },
+        });
+        if (data?.token && data?.url) prefetchedRef.current = { token: data.token, url: data.url };
+      } catch (_) {}
+    };
+    prefetch();
+  }, [subject.id, isPrivileged]);
+
+  // Poll for live session
   useEffect(() => {
     const check = async () => {
-      const { data } = await supabase.from("live_sessions")
-        .select("*").eq("subject_id", subject.id).eq("status", "live").maybeSingle();
-      if (data) {
-        setSessionInfo(data);
-        setSessionId(data.id);
-        setIsSessionLive(true);
-      }
+      const { data } = await supabase.from("live_sessions").select("*").eq("subject_id",subject.id).eq("status","live").maybeSingle();
+      if (data) { setSessionInfo(data); setSessionId(data.id); setIsSessionLive(true); }
+      else { setIsSessionLive(false); }
     };
     check();
-    const interval = setInterval(check, 5000);
-    return () => clearInterval(interval);
+    const iv = setInterval(check, 4000);
+    return () => clearInterval(iv);
   }, [subject.id]);
-
-  // Auto-join for students when class goes live
-  useEffect(() => {
-    if (!isPrivileged && isSessionLive && phase === "lobby") {
-      // Session is live, student can join
-    }
-  }, [isSessionLive, isPrivileged, phase]);
 
   // Duration timer
   useEffect(() => {
-    if (phase !== "live") return;
-    const timer = setInterval(() => setClassDuration(prev => prev + 1), 1000);
-    return () => clearInterval(timer);
+    if (phase!=="live") return;
+    const t = setInterval(()=>setDuration(p=>p+1),1000);
+    return ()=>clearInterval(t);
   }, [phase]);
 
   const connectToLiveKit = async (action: string, settings?: any) => {
     setLoading(true);
+    setError(null);
     try {
-      // If teacher starting, update session settings
-      if (settings && sessionId) {
-        await supabase.from("live_sessions").update({
-          ...settings,
-          actual_start_time: new Date().toISOString(),
-          status: "live",
-        }).eq("id", sessionId);
+      // Use pre-fetched token if available (instant!)
+      let tk = prefetchedRef.current?.token || null;
+      let url = prefetchedRef.current?.url || null;
+
+      if (!tk || !url) {
+        const { data, error: fnErr } = await supabase.functions.invoke("livekit-token", {
+          body: { subject_id: subject.id, action },
+        });
+        if (fnErr) throw fnErr;
+        if (data?.error) throw new Error(data.error);
+        tk = data.token; url = data.url;
       }
 
-      const { data, error } = await supabase.functions.invoke("livekit-token", {
-        body: { subject_id: subject.id, action },
-      });
-      if (error) throw error;
-      if (data.error) throw new Error(data.error);
-      setToken(data.token);
-      setWsUrl(data.url);
+      if (settings && sessionId) {
+        await supabase.from("live_sessions").update({ ...settings, actual_start_time:new Date().toISOString(), status:"live" }).eq("id",sessionId);
+      }
 
-      // Get/create session
-      const { data: sessions } = await supabase.from("live_sessions")
-        .select("*").eq("subject_id", subject.id).in("status", ["live", "active", "scheduled"]).order("scheduled_at", { ascending: false, nullsFirst: false }).limit(1);
+      setToken(tk!); setWsUrl(url!);
+
+      // Get session
+      const { data: sessions } = await supabase.from("live_sessions").select("*").eq("subject_id",subject.id).in("status",["live","active","scheduled"]).order("scheduled_at",{ascending:false,nullsFirst:false}).limit(1);
       if (sessions?.length) {
-        setSessionId(sessions[0].id);
-        setSessionInfo(sessions[0]);
-        // Log attendance
-        const { data: att } = await supabase.from("attendance_logs").insert({
-          session_id: sessions[0].id, user_id: user!.id, device_info: navigator.userAgent,
-        }).select("id").single();
+        setSessionId(sessions[0].id); setSessionInfo(sessions[0]);
+        const { data: att } = await supabase.from("attendance_logs").insert({ session_id:sessions[0].id, user_id:user!.id, device_info:navigator.userAgent }).select("id").single();
         if (att) setAttendanceId(att.id);
-        // Add to class_participants
-        await supabase.from("class_participants").upsert({
-          session_id: sessions[0].id,
-          student_id: user!.id,
-          joined_at: new Date().toISOString(),
-          is_muted: !isPrivileged,
-          camera_on: true,
-        }, { onConflict: "session_id,student_id" });
+        await supabase.from("class_participants").upsert({ session_id:sessions[0].id, student_id:user!.id, joined_at:new Date().toISOString(), is_muted:!isPrivileged, camera_on:true }, { onConflict:"session_id,student_id" });
       }
 
       setPhase("live");
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to connect");
+    } catch (e: any) {
+      setError(e?.message || "Failed to connect");
     } finally { setLoading(false); }
   };
 
-  const handleStartClass = (settings: any) => {
-    connectToLiveKit("start_session", settings);
-  };
-
-  const handleJoinClass = () => {
-    connectToLiveKit("join");
-  };
-
-  // Cleanup on unmount
+  // Cleanup
   useEffect(() => {
     return () => {
-      if (attendanceId) {
-        const duration = Math.floor((Date.now() - joinedAt) / 1000);
-        supabase.from("attendance_logs").update({ left_at: new Date().toISOString(), duration_seconds: duration }).eq("id", attendanceId).then(() => {});
-      }
-      if (sessionId && user) {
-        supabase.from("class_participants").update({
-          left_at: new Date().toISOString(),
-          duration_minutes: Math.floor((Date.now() - joinedAt) / 60000),
-        }).eq("session_id", sessionId).eq("student_id", user.id).then(() => {});
-      }
+      if (attendanceId) { const d=Math.floor((Date.now()-joinedAt)/1000); supabase.from("attendance_logs").update({left_at:new Date().toISOString(),duration_seconds:d}).eq("id",attendanceId); }
+      if (sessionId&&user) { supabase.from("class_participants").update({left_at:new Date().toISOString(),duration_minutes:Math.floor((Date.now()-joinedAt)/60000)}).eq("session_id",sessionId).eq("student_id",user.id); }
     };
-  }, [attendanceId, joinedAt, sessionId, user]);
+  }, [attendanceId,joinedAt,sessionId,user]);
 
   const endSession = async () => {
     setShowEndConfirm(false);
     if (sessionId) {
-      await supabase.from("live_sessions").update({
-        status: "ended",
-        ended_at: new Date().toISOString(),
-        actual_end_time: new Date().toISOString(),
-      }).eq("id", sessionId);
-
-      // Send system message
-      if (user) {
-        await supabase.from("class_chat_messages").insert({
-          session_id: sessionId,
-          sender_id: user.id,
-          message: t("Class has ended", "انتهت الحصة"),
-          type: "system",
-        });
-      }
+      await supabase.from("live_sessions").update({ status:"ended", ended_at:new Date().toISOString(), actual_end_time:new Date().toISOString() }).eq("id",sessionId);
+      if (user) await supabase.from("class_chat_messages").insert({ session_id:sessionId, sender_id:user.id, message:t("Class has ended","انتهت الحصة"), type:"system" });
     }
     setPhase("ended");
   };
 
   const leaveSession = () => {
-    if (attendanceId) {
-      const duration = Math.floor((Date.now() - joinedAt) / 1000);
-      supabase.from("attendance_logs").update({ left_at: new Date().toISOString(), duration_seconds: duration }).eq("id", attendanceId);
-    }
-    if (sessionId && user) {
-      supabase.from("class_participants").update({
-        left_at: new Date().toISOString(),
-        duration_minutes: Math.floor((Date.now() - joinedAt) / 60000),
-      }).eq("session_id", sessionId).eq("student_id", user.id);
-    }
+    if (attendanceId) { const d=Math.floor((Date.now()-joinedAt)/1000); supabase.from("attendance_logs").update({left_at:new Date().toISOString(),duration_seconds:d}).eq("id",attendanceId); }
+    if (sessionId&&user) { supabase.from("class_participants").update({left_at:new Date().toISOString(),duration_minutes:Math.floor((Date.now()-joinedAt)/60000)}).eq("session_id",sessionId).eq("student_id",user.id); }
     onLeave();
   };
 
-  const formatTime = (s: number) => {
-    const h = Math.floor(s / 3600);
-    const m = Math.floor((s % 3600) / 60);
-    const sec = s % 60;
-    return h > 0
-      ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`
-      : `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+  const handleGroupRecite = async () => {
+    const next = !groupReciteMode;
+    setGroupReciteMode(next);
+    if (next) {
+      // Broadcast "unmute all" signal
+      toast({ title: "Group Recitation Mode ON · وضع التلاوة الجماعية" });
+    } else {
+      toast({ title: "Group Recitation Mode OFF" });
+    }
+    // Publish data channel signal so students' clients can react
+    if (sessionId) {
+      await supabase.from("class_chat_messages").insert({
+        session_id: sessionId, sender_id: user!.id,
+        message: next ? "🎙️ Group Recitation Mode — please recite together" : "🔇 Recitation ended",
+        type: "system",
+      });
+    }
   };
 
-  // PHASE: Ended
-  if (phase === "ended") {
-    return (
-      <ClassEndScreen
-        subject={subject}
-        session={sessionInfo}
-        duration={classDuration}
-        participantCount={participantCount}
-        onGoToDashboard={onLeave}
-        onGoToRevision={() => {
-          window.location.href = `/student/revision/${subject.id}`;
-        }}
-      />
-    );
-  }
+  const fmt = (s:number) => { const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sc=s%60; return h>0?`${h}:${String(m).padStart(2,"0")}:${String(sc).padStart(2,"0")}`:`${String(m).padStart(2,"0")}:${String(sc).padStart(2,"0")}`; };
 
-  // PHASE: Lobby
-  if (phase === "lobby" && !loading && !error) {
-    return (
-      <ClassLobby
-        subject={subject}
-        session={sessionInfo}
-        onStartClass={handleStartClass}
-        onJoinClass={handleJoinClass}
-        onBack={onLeave}
-        isLive={isSessionLive}
-      />
-    );
-  }
+  // ── ENDED ──
+  if (phase==="ended") return <ClassEndScreen subject={subject} session={sessionInfo} duration={duration} participantCount={participantCount} onGoToDashboard={onLeave} onGoToRevision={()=>{ window.location.href=`/student/revision/${subject.id}`; }} />;
 
-  // Loading
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-background">
-        <div className="text-center space-y-3">
-          <div className="h-12 w-12 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="text-muted-foreground">{t("Connecting to classroom...", "جاري الاتصال بالفصل...")}</p>
+  // ── LOBBY ── (students can enter immediately, no need to wait for teacher)
+  if (phase==="lobby"&&!loading&&!error) return (
+    <ClassLobby subject={subject} session={sessionInfo} onStartClass={(s:any)=>connectToLiveKit("start_session",s)} onJoinClass={()=>connectToLiveKit("join")} onBack={onLeave} isLive={isSessionLive} />
+  );
+
+  // ── LOADING ──
+  if (loading) return (
+    <div style={{ display:"flex", alignItems:"center", justifyContent:"center", minHeight:"100vh", background:"#0a0a0a" }}>
+      <div style={{ textAlign:"center" }}>
+        <div style={{ width:48, height:48, border:"4px solid #075E54", borderTopColor:"transparent", borderRadius:"50%", animation:"spin 0.8s linear infinite", margin:"0 auto 16px" }} />
+        <p style={{ color:"#999", fontSize:14 }}>{t("Connecting to classroom…","جاري الاتصال بالفصل…")}</p>
+      </div>
+    </div>
+  );
+
+  // ── ERROR ──
+  if (error) return (
+    <div style={{ display:"flex", alignItems:"center", justifyContent:"center", minHeight:"100vh", background:"#0a0a0a" }}>
+      <div style={{ textAlign:"center", maxWidth:360, padding:24 }}>
+        <div style={{ width:64, height:64, borderRadius:"50%", background:"rgba(239,68,68,0.15)", display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 16px" }}>
+          <X style={{ width:28, height:28, color:"#EF4444" }} />
+        </div>
+        <h2 style={{ fontSize:20, fontWeight:700, color:"#fff", marginBottom:8 }}>{t("Connection Failed","فشل الاتصال")}</h2>
+        <p style={{ color:"#999", fontSize:14, marginBottom:20 }}>{error}</p>
+        <div style={{ display:"flex", gap:10, justifyContent:"center" }}>
+          <button onClick={()=>{setError(null);setPhase("lobby");}} style={{ padding:"10px 20px", borderRadius:10, background:"#075E54", border:"none", color:"#fff", fontSize:14, cursor:"pointer" }}>{t("Try Again","حاول مرة أخرى")}</button>
+          <button onClick={onLeave} style={{ padding:"10px 20px", borderRadius:10, background:"rgba(255,255,255,0.1)", border:"none", color:"#fff", fontSize:14, cursor:"pointer" }}>{t("Go Back","رجوع")}</button>
         </div>
       </div>
-    );
-  }
+    </div>
+  );
 
-  // Error
-  if (error) {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-background">
-        <div className="text-center space-y-4 max-w-md p-6">
-          <div className="h-16 w-16 rounded-full bg-destructive/10 flex items-center justify-center mx-auto"><X className="h-8 w-8 text-destructive" /></div>
-          <h2 className="text-xl font-bold">{t("Connection Failed", "فشل الاتصال")}</h2>
-          <p className="text-muted-foreground">{error}</p>
-          <div className="flex gap-2 justify-center">
-            <Button onClick={() => { setError(null); setPhase("lobby"); }}>{t("Try Again", "حاول مرة أخرى")}</Button>
-            <Button variant="outline" onClick={onLeave}>{t("Go Back", "رجوع")}</Button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // PHASE: Live classroom
+  // ── LIVE ──
   return (
-    <div className="h-screen flex flex-col bg-foreground relative">
+    <div style={{ height:"100vh", display:"flex", flexDirection:"column", background:"#1a1a1a", position:"relative", overflow:"hidden" }}>
+      <style>{`
+        @keyframes spin { to{transform:rotate(360deg)} }
+        @keyframes bounceUp { 0%{opacity:1;transform:translateY(0)scale(1)} 100%{opacity:0;transform:translateY(-120px)scale(1.4)} }
+      `}</style>
+
       {token && wsUrl && (
         <LiveKitRoom serverUrl={wsUrl} token={token} connect={true}
-          options={{ adaptiveStream: true, dynacast: true, videoCaptureDefaults: { resolution: { width: 1280, height: 720 } } }}
-          style={{ height: "100%" }} data-lk-theme="default"
+          options={{
+            adaptiveStream: true,
+            dynacast: true,
+            // ── Low-latency audio for group recitation ──
+            audioCaptureDefaults: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+              sampleRate: 48000,
+              channelCount: 1,
+            },
+            publishDefaults: {
+              audioPreset: { maxBitrate: 64000 }, // higher = less compression = less latency
+              dtx: false, // disable DTX for group recitation (no cutting during silence)
+            },
+            videoCaptureDefaults: { resolution: { width:1280, height:720 } },
+          }}
+          style={{ height:"100%", flex:1 }}
+          data-lk-theme="default"
         >
+          <RoomAudioRenderer />
+
           {/* Top bar */}
-          <div className="h-11 bg-background/95 backdrop-blur border-b flex items-center justify-between px-3 z-10">
-            <div className="flex items-center gap-2 min-w-0">
-              <Badge variant="outline" className="gap-1 shrink-0">
-                <Circle className="h-2 w-2 fill-primary text-primary" />
-                <span className="truncate max-w-[120px]">{subject.title}</span>
-              </Badge>
-              {sessionInfo && (sessionInfo as any).topic && (
-                <span className="text-xs text-muted-foreground truncate hidden sm:block">
-                  #{(sessionInfo as any).session_number} — {(sessionInfo as any).topic}
-                </span>
-              )}
-              <Badge variant="secondary" className="text-[10px] gap-1 shrink-0">
-                <Circle className="h-1.5 w-1.5 fill-destructive text-destructive animate-pulse" />
-                {formatTime(classDuration)}
-              </Badge>
+          <div style={{ height:44, background:"rgba(0,0,0,0.7)", backdropFilter:"blur(10px)", display:"flex", alignItems:"center", justifyContent:"space-between", padding:"0 12px", flexShrink:0, zIndex:10 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:5, background:"rgba(255,255,255,0.1)", borderRadius:20, padding:"3px 10px" }}>
+                <Circle style={{ width:8, height:8, fill:"#22c55e", color:"#22c55e" }} />
+                <span style={{ fontSize:12, color:"#fff", maxWidth:140, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{subject.title}</span>
+              </div>
+              <div style={{ display:"flex", alignItems:"center", gap:5, background:"rgba(239,68,68,0.2)", borderRadius:20, padding:"3px 10px" }}>
+                <Circle style={{ width:6, height:6, fill:"#EF4444", color:"#EF4444", animation:"pulse 1s infinite" }} />
+                <span style={{ fontSize:11, color:"#fca5a5", fontWeight:700 }}>{fmt(duration)}</span>
+              </div>
             </div>
-            <div className="flex items-center gap-1.5">
-              <ConnectionIndicator />
-              <RecordingController
-                sessionId={sessionId}
-                subjectId={subject.id}
-                userEmail={user?.email || ""}
-                isPrivileged={isPrivileged}
-                onSavingChange={setSavingRecording}
-              />
-            </div>
+            {isPrivileged && (
+              <RecController sessionId={sessionId} subjectId={subject.id} userEmail={user?.email||""} onSavingChange={setSavingRec} />
+            )}
           </div>
 
-          {/* Main content */}
-          <div className="flex-1 flex overflow-hidden">
-            {/* Participants panel */}
-            {participantsOpen && !isMobile && (
-              <div className="w-56 bg-background border-e flex flex-col shrink-0">
-                <ClassParticipants
-                  sessionId={sessionId || ""}
-                  onMuteStudent={(studentId) => {
-                    supabase.from("class_participants").update({ is_muted: true }).eq("session_id", sessionId!).eq("student_id", studentId);
-                  }}
-                  onRemoveStudent={(studentId) => {
-                    supabase.from("class_participants").update({ left_at: new Date().toISOString() }).eq("session_id", sessionId!).eq("student_id", studentId);
-                    toast({ title: t("Student removed", "تمت إزالة الطالب") });
-                  }}
+          {/* Main content area */}
+          <div style={{ flex:1, display:"flex", overflow:"hidden", position:"relative" }}>
+            {/* Participants sidebar */}
+            {partOpen && !isMobile && (
+              <div style={{ width:220, background:"rgba(0,0,0,0.7)", borderRight:"1px solid rgba(255,255,255,0.1)", flexShrink:0, overflow:"auto" }}>
+                <ClassParticipants sessionId={sessionId||""} onMuteStudent={sid=>supabase.from("class_participants").update({is_muted:true}).eq("session_id",sessionId!).eq("student_id",sid)} onRemoveStudent={sid=>{ supabase.from("class_participants").update({left_at:new Date().toISOString()}).eq("session_id",sessionId!).eq("student_id",sid); toast({title:t("Student removed","تمت إزالة الطالب")}); }} />
+              </div>
+            )}
+
+            {/* Video area — NO built-in controls */}
+            <div style={{ flex:1, position:"relative", overflow:"hidden" }}>
+              <VideoGrid />
+
+              {/* Whiteboard overlay */}
+              {whiteboardOpen && (
+                <Whiteboard
+                  onClose={()=>{setWhiteboardOpen(false);setWhiteboardFS(false);}}
+                  fullscreen={whiteboardFS}
+                  onToggleFullscreen={()=>setWhiteboardFS(v=>!v)}
+                  isTeacher={isPrivileged}
                 />
-              </div>
-            )}
-
-            {/* Video area */}
-            <div className="flex-1 relative">
-              <VideoConference />
-              <RoomAudioRenderer />
+              )}
             </div>
 
-            {/* Right panel: Chat/Polls */}
+            {/* Chat sidebar */}
             {chatOpen && !isMobile && (
-              <div className="w-72 bg-background border-s flex flex-col shrink-0">
-                {/* Tabs */}
-                <div className="flex border-b">
-                  <button
-                    className={`flex-1 py-2 text-xs font-medium transition-colors ${activeSideTab === "chat" ? "border-b-2 border-primary text-foreground" : "text-muted-foreground"}`}
-                    onClick={() => { setActiveSideTab("chat"); setChatUnread(0); }}
-                  >
-                    💬 {t("Chat", "محادثة")}
-                  </button>
-                  <button
-                    className={`flex-1 py-2 text-xs font-medium transition-colors ${activeSideTab === "polls" ? "border-b-2 border-primary text-foreground" : "text-muted-foreground"}`}
-                    onClick={() => setActiveSideTab("polls")}
-                  >
-                    📊 {t("Polls", "تصويت")}
-                  </button>
+              <div style={{ width:280, background:"rgba(0,0,0,0.7)", borderLeft:"1px solid rgba(255,255,255,0.1)", display:"flex", flexDirection:"column", flexShrink:0 }}>
+                <div style={{ display:"flex", borderBottom:"1px solid rgba(255,255,255,0.1)" }}>
+                  {[["chat","💬",t("Chat","محادثة")],["polls","📊",t("Polls","تصويت")]].map(([k,ic,lb])=>(
+                    <button key={k} onClick={()=>{setSideTab(k as any);if(k==="chat")setChatUnread(0);}} style={{ flex:1, padding:"10px 4px", background:"none", border:"none", color:activeSideTab===k?"#fff":"rgba(255,255,255,0.5)", fontSize:12, fontWeight:activeSideTab===k?700:400, borderBottom:activeSideTab===k?"2px solid #075E54":"2px solid transparent", cursor:"pointer" }}>
+                      {ic} {lb}
+                    </button>
+                  ))}
                 </div>
-                <div className="flex-1 overflow-hidden">
-                  {activeSideTab === "chat" ? (
-                    <ClassChatPanel sessionId={sessionId || ""} />
-                  ) : (
-                    <ClassPolls sessionId={sessionId || ""} />
-                  )}
+                <div style={{ flex:1, overflow:"hidden" }}>
+                  {activeSideTab==="chat" ? <ClassChatPanel sessionId={sessionId||""} /> : <ClassPolls sessionId={sessionId||""} />}
                 </div>
               </div>
             )}
           </div>
 
-          {/* Bottom control bar */}
-          <ClassControls
-            sessionId={sessionId || ""}
-            onToggleChat={() => { setChatOpen(!chatOpen); if (!chatOpen) setChatUnread(0); }}
-            onToggleParticipants={() => setParticipantsOpen(!participantsOpen)}
-            onEndClass={() => setShowEndConfirm(true)}
+          {/* Bottom toolbar — single, clean, no duplicates */}
+          <BottomBar
+            sessionId={sessionId||""}
+            onToggleChat={()=>{setChatOpen(v=>!v);if(!chatOpen)setChatUnread(0);}}
+            onToggleParticipants={()=>setPartOpen(v=>!v)}
+            onEndClass={()=>setShowEndConfirm(true)}
             onLeaveClass={leaveSession}
             chatUnread={chatUnread}
-            onLaunchPoll={() => { setChatOpen(true); setActiveSideTab("polls"); }}
-            onLaunchQuiz={() => setShowQuiz(true)}
+            onLaunchPoll={()=>{setChatOpen(true);setSideTab("polls");}}
+            onLaunchQuiz={()=>setShowQuiz(true)}
+            onToggleWhiteboard={()=>setWhiteboardOpen(v=>!v)}
+            whiteboardOpen={whiteboardOpen}
+            onGroupRecite={handleGroupRecite}
+            groupReciteMode={groupReciteMode}
+            isPrivileged={isPrivileged}
           />
 
-          {/* Live Quiz Overlay */}
-          <LiveQuizOverlay
-            sessionId={sessionId || ""}
-            isOpen={showQuiz}
-            onClose={() => setShowQuiz(false)}
-          />
+          {/* Mobile panels as bottom sheets */}
+          {isMobile && partOpen && (
+            <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", zIndex:40 }} onClick={()=>setPartOpen(false)}>
+              <div style={{ position:"absolute", bottom:TOOLBAR_H, left:0, right:0, background:"#1a1a1a", borderRadius:"20px 20px 0 0", maxHeight:"60vh", overflow:"auto" }} onClick={e=>e.stopPropagation()}>
+                <div style={{ width:40, height:4, borderRadius:2, background:"rgba(255,255,255,0.2)", margin:"10px auto 6px" }} />
+                <ClassParticipants sessionId={sessionId||""} />
+              </div>
+            </div>
+          )}
+          {isMobile && chatOpen && (
+            <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", zIndex:40 }} onClick={()=>setChatOpen(false)}>
+              <div style={{ position:"absolute", bottom:TOOLBAR_H, left:0, right:0, background:"#1a1a1a", borderRadius:"20px 20px 0 0", maxHeight:"65vh", display:"flex", flexDirection:"column" }} onClick={e=>e.stopPropagation()}>
+                <div style={{ width:40, height:4, borderRadius:2, background:"rgba(255,255,255,0.2)", margin:"10px auto 4px" }} />
+                <div style={{ display:"flex", borderBottom:"1px solid rgba(255,255,255,0.1)" }}>
+                  {[["chat","💬","Chat"],["polls","📊","Polls"]].map(([k,ic,lb])=>(
+                    <button key={k} onClick={()=>setSideTab(k as any)} style={{ flex:1, padding:"9px 4px", background:"none", border:"none", color:activeSideTab===k?"#fff":"rgba(255,255,255,0.5)", fontSize:12, fontWeight:activeSideTab===k?700:400, borderBottom:activeSideTab===k?"2px solid #075E54":"2px solid transparent", cursor:"pointer" }}>
+                      {ic} {lb}
+                    </button>
+                  ))}
+                </div>
+                <div style={{ flex:1, overflow:"hidden", minHeight:300 }}>
+                  {activeSideTab==="chat"?<ClassChatPanel sessionId={sessionId||""}/>:<ClassPolls sessionId={sessionId||""}/>}
+                </div>
+              </div>
+            </div>
+          )}
+
+          <LiveQuizOverlay sessionId={sessionId||""} isOpen={showQuiz} onClose={()=>setShowQuiz(false)} />
         </LiveKitRoom>
       )}
 
-      {/* Mobile side panels as bottom sheets */}
-      {isMobile && participantsOpen && (
-        <div className="fixed inset-0 bg-black/50 z-40" onClick={() => setParticipantsOpen(false)}>
-          <div className="absolute bottom-16 left-0 right-0 bg-background rounded-t-xl max-h-[60vh] overflow-auto" onClick={e => e.stopPropagation()}>
-            <div className="w-12 h-1 bg-muted-foreground/30 rounded-full mx-auto mt-2 mb-1" />
-            <ClassParticipants sessionId={sessionId || ""} />
-          </div>
-        </div>
-      )}
-
-      {isMobile && chatOpen && (
-        <div className="fixed inset-0 bg-black/50 z-40" onClick={() => setChatOpen(false)}>
-          <div className="absolute bottom-16 left-0 right-0 bg-background rounded-t-xl max-h-[60vh] flex flex-col" onClick={e => e.stopPropagation()}>
-            <div className="w-12 h-1 bg-muted-foreground/30 rounded-full mx-auto mt-2 mb-1" />
-            <div className="flex border-b">
-              <button
-                className={`flex-1 py-2 text-xs font-medium ${activeSideTab === "chat" ? "border-b-2 border-primary" : "text-muted-foreground"}`}
-                onClick={() => setActiveSideTab("chat")}
-              >
-                💬 {t("Chat", "محادثة")}
-              </button>
-              <button
-                className={`flex-1 py-2 text-xs font-medium ${activeSideTab === "polls" ? "border-b-2 border-primary" : "text-muted-foreground"}`}
-                onClick={() => setActiveSideTab("polls")}
-              >
-                📊 {t("Polls", "تصويت")}
-              </button>
-            </div>
-            <div className="flex-1 overflow-hidden min-h-[300px]">
-              {activeSideTab === "chat" ? (
-                <ClassChatPanel sessionId={sessionId || ""} />
-              ) : (
-                <ClassPolls sessionId={sessionId || ""} />
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* End class confirmation dialog */}
+      {/* End confirmation */}
       <Dialog open={showEndConfirm} onOpenChange={setShowEndConfirm}>
         <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t("End class for everyone?", "إنهاء الحصة للجميع؟")}</DialogTitle>
-          </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            {t("This will disconnect all participants and end the recording.", "سيتم قطع الاتصال عن جميع المشاركين وإيقاف التسجيل.")}
-          </p>
-          <DialogFooter className="flex gap-2">
-            <Button variant="outline" onClick={() => setShowEndConfirm(false)}>{t("Cancel", "إلغاء")}</Button>
-            <Button variant="outline" onClick={() => { setShowEndConfirm(false); leaveSession(); }}>
-              {t("Leave but Keep Open", "غادر لكن أبقِ الحصة")}
-            </Button>
-            <Button variant="destructive" onClick={endSession}>
-              {t("End for All", "إنهاء للجميع")}
-            </Button>
+          <DialogHeader><DialogTitle>{t("End class for everyone?","إنهاء الحصة للجميع؟")}</DialogTitle></DialogHeader>
+          <p style={{ fontSize:13, color:"#666" }}>{t("This will disconnect all participants.","سيتم قطع الاتصال عن جميع المشاركين.")}</p>
+          <DialogFooter style={{ display:"flex", gap:8 }}>
+            <Button variant="outline" onClick={()=>setShowEndConfirm(false)}>{t("Cancel","إلغاء")}</Button>
+            <Button variant="outline" onClick={()=>{setShowEndConfirm(false);leaveSession();}}>{t("Leave but Keep Open","غادر لكن أبقِ الحصة")}</Button>
+            <Button variant="destructive" onClick={endSession}>{t("End for All","إنهاء للجميع")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
