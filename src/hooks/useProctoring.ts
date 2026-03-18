@@ -363,88 +363,84 @@ export const useProctoring = (
     };
   }, [enabled, config.attemptId]);
 
-  // ── Face detection — runs every 3s, generous thresholds ──────
+  // ── Face detection — 1.5s interval, warns after 2 fails (~3s) ──
   useEffect(() => {
     if (!enabled) return;
     let consecutiveAbsent = 0;
-    const ABSENT_THRESHOLD = 8; // 8 consecutive fails (~24s) before warning
-    const FACE_WARN_COOLDOWN = 30000; // only warn once per 30s
+    const ABSENT_THRESHOLD = 2;   // 2 × 1.5s = 3 seconds to detect
+    const WARN_COOLDOWN    = 12000; // re-warn every 12s if still absent
     let lastFaceWarn = 0;
+    let fdInstance: any = null;
+
+    // Create FaceDetector once (reuse — creating per-frame is slow)
+    if ("FaceDetector" in window) {
+      try { fdInstance = new (window as any).FaceDetector({ maxDetectedFaces: 4, fastMode: true }); }
+      catch (_) {}
+    }
 
     faceDetectIv.current = setInterval(async () => {
       if (!cameraReadyRef.current) return;
       const video = videoElRef.current;
       if (!video || video.readyState < 2) return;
 
-      // Try FaceDetector API first (Chrome/Android)
-      if ("FaceDetector" in window) {
-        try {
-          const fd    = new (window as any).FaceDetector({ maxDetectedFaces: 5, fastMode: true });
-          const faces = await fd.detect(video);
-          const count = faces.length;
+      let facePresent = false;
+      let count = 0;
 
-          if (count === 0) {
-            consecutiveAbsent++;
-            if (consecutiveAbsent >= ABSENT_THRESHOLD) {
-              setState(prev => ({ ...prev, faceDetected: false }));
-              const now = Date.now();
-              if (now - lastFaceWarn > FACE_WARN_COOLDOWN) {
-                lastFaceWarn = now;
-                // severity 1 = warning only, NO point deduction
-                logViolation("face_not_detected", 1, "Face not visible — please look at your screen");
-                captureSnapshot("face_absent");
-              }
-            }
-          } else {
-            consecutiveAbsent = 0;
-            setState(prev => ({ ...prev, faceDetected: true }));
-            if (count > 1) {
-              const now = Date.now();
-              if (now - lastFaceWarn > FACE_WARN_COOLDOWN) {
-                lastFaceWarn = now;
-                logViolation("multiple_faces", 2, `${count} faces detected`);
-                captureSnapshot("multiple_faces");
-              }
-            }
-          }
-          return;
-        } catch (_) { /* fall through to canvas */ }
+      // Method 1: FaceDetector API
+      if (fdInstance) {
+        try {
+          const faces = await fdInstance.detect(video);
+          count = faces.length;
+          facePresent = count >= 1;
+        } catch (_) { fdInstance = null; } // fallback if crashes
       }
 
-      // Canvas skin-tone fallback — more generous ratio
-      try {
-        const canvas = document.createElement("canvas");
-        canvas.width = 160; canvas.height = 120;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) return;
-        ctx.drawImage(video, 0, 0, 160, 120);
-        const { data } = ctx.getImageData(0, 0, 160, 120);
-        let skin = 0;
-        for (let i = 0; i < data.length; i += 16) {
-          const r = data[i], g = data[i+1], b = data[i+2];
-          // Wide skin range to support all skin tones
-          if (r > 50 && g > 20 && b > 10 && r > g && r > b &&
-              Math.abs(r-g) < 120 && (r-b) > 10 && r < 255) skin++;
-        }
-        const ratio = skin / (160 * 120 / 4);
-        const found = ratio > 0.02; // lower threshold — more forgiving
-
-        setState(prev => ({ ...prev, faceDetected: found }));
-        if (!found) {
-          consecutiveAbsent++;
-          if (consecutiveAbsent >= ABSENT_THRESHOLD) {
-            const now = Date.now();
-            if (now - lastFaceWarn > FACE_WARN_COOLDOWN) {
-              lastFaceWarn = now;
-              logViolation("face_not_detected", 1, "Face not visible (canvas)");
-              captureSnapshot("face_absent");
+      // Method 2: Canvas skin-tone (fallback or combined)
+      if (!fdInstance) {
+        try {
+          const c = document.createElement("canvas");
+          c.width = 120; c.height = 90;
+          const ctx = c.getContext("2d");
+          if (ctx) {
+            ctx.drawImage(video, 0, 0, 120, 90);
+            const { data } = ctx.getImageData(0, 0, 120, 90);
+            let skin = 0;
+            for (let i = 0; i < data.length; i += 12) {
+              const r = data[i], g = data[i+1], b = data[i+2];
+              if (r > 50 && g > 20 && b > 10 && r > g && r > b &&
+                  Math.abs(r-g) < 130 && (r-b) > 8) skin++;
             }
+            facePresent = (skin / (120*90/3)) > 0.018;
+            count = facePresent ? 1 : 0;
           }
-        } else {
-          consecutiveAbsent = 0;
+        } catch (_) {}
+      }
+
+      setState(prev => ({ ...prev, faceDetected: facePresent }));
+
+      if (!facePresent) {
+        consecutiveAbsent++;
+        if (consecutiveAbsent >= ABSENT_THRESHOLD) {
+          const now = Date.now();
+          if (now - lastFaceWarn > WARN_COOLDOWN) {
+            lastFaceWarn = now;
+            consecutiveAbsent = 0;
+            logViolation("face_not_detected", 1, "Face not visible");
+            captureSnapshot("face_absent");
+          }
         }
-      } catch (_) {}
-    }, 3000);
+      } else {
+        consecutiveAbsent = 0;
+        if (count > 1) {
+          const now = Date.now();
+          if (now - lastFaceWarn > WARN_COOLDOWN) {
+            lastFaceWarn = now;
+            logViolation("multiple_faces", 3, `${count} faces detected`);
+            captureSnapshot("multiple_faces");
+          }
+        }
+      }
+    }, 1500); // ← 1.5 seconds — sharp and fast
 
     return () => { if (faceDetectIv.current) clearInterval(faceDetectIv.current); };
   }, [enabled, logViolation, captureSnapshot]);
