@@ -2,17 +2,18 @@ import React, { createContext, useContext, useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { User, Session } from "@supabase/supabase-js";
 
-// ✅ Typed UserProfile — no more `any`
 export interface UserProfile {
   id: string;
   user_id: string;
   full_name: string;
   avatar_url?: string;
   phone?: string;
-  onboarding_complete: boolean;
+  onboarding_complete?: boolean;
+  onboarding_completed?: boolean;
+  has_taken_entrance_exam?: boolean;
   payment_status?: string;
   course_level?: string;
-  [key: string]: unknown; // allow extra Supabase columns without breaking TS
+  [key: string]: unknown;
 }
 
 interface AuthContextType {
@@ -33,18 +34,21 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
-  // ✅ Single loading state — only false AFTER both auth session AND user data are loaded
   const [loading, setLoading] = useState(true);
   const [roles, setRoles] = useState<string[]>([]);
   const [profile, setProfile] = useState<UserProfile | null>(null);
 
   const fetchUserData = async (userId: string) => {
-    const [rolesRes, profileRes] = await Promise.all([
-      supabase.from("user_roles").select("role").eq("user_id", userId),
-      supabase.from("profiles").select("*").eq("user_id", userId).maybeSingle(),
-    ]);
-    if (rolesRes.data) setRoles(rolesRes.data.map((r) => r.role));
-    if (profileRes.data) setProfile(profileRes.data as UserProfile);
+    try {
+      const [rolesRes, profileRes] = await Promise.all([
+        supabase.from("user_roles").select("role").eq("user_id", userId),
+        supabase.from("profiles").select("*").eq("user_id", userId).maybeSingle(),
+      ]);
+      if (rolesRes.data) setRoles(rolesRes.data.map((r) => r.role));
+      if (profileRes.data) setProfile(profileRes.data as UserProfile);
+    } catch (err) {
+      console.error("AuthContext: failed to load user profile data", err);
+    }
   };
 
   const refreshProfile = async () => {
@@ -54,49 +58,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   useEffect(() => {
-    let mounted = true;
-
-    // ✅ Fix race condition: setLoading(false) only after data is fully loaded
-    const initAuth = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!mounted) return;
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       setUser(session?.user ?? null);
       if (session?.user) {
-        await fetchUserData(session.user.id);
-      }
-      if (mounted) setLoading(false);
-    };
-
-    initAuth();
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (!mounted) return;
-      setSession(session);
-      setUser(session?.user ?? null);
-      if (session?.user) {
-        await fetchUserData(session.user.id);
+        setTimeout(() => fetchUserData(session.user.id), 0);
       } else {
         setRoles([]);
         setProfile(null);
       }
-      if (mounted) setLoading(false);
+      setLoading(false);
     });
 
-    return () => {
-      mounted = false;
-      subscription.unsubscribe();
-    };
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setUser(session?.user ?? null);
+      if (session?.user) fetchUserData(session.user.id);
+      setLoading(false);
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
   const signUp = async (email: string, password: string, fullName: string) => {
     return supabase.auth.signUp({
       email,
       password,
-      options: {
-        emailRedirectTo: window.location.origin,
-        data: { full_name: fullName },
-      },
+      options: { emailRedirectTo: window.location.origin, data: { full_name: fullName } },
     });
   };
 
