@@ -1,24 +1,20 @@
-import { useState, useEffect } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { useState, useEffect, useCallback } from "react";
 import { Switch } from "@/components/ui/switch";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useLanguage } from "@/contexts/LanguageContext";
 import {
   DollarSign, Users, AlertTriangle, TrendingUp, Download,
-  CreditCard, Search, UserCheck, Bell, GraduationCap, Plus, Pencil, Trash2
+  CreditCard, Search, Bell, Plus, Pencil, Trash2,
+  CheckCircle, XCircle, Clock, ChevronDown, ChevronUp,
+  GraduationCap, Filter, RefreshCw, Send
 } from "lucide-react";
 import { format } from "date-fns";
+
+const G = "#0f2d1f", GM = "#1a4731", GOLD = "#c9a84c", BORDER = "rgba(15,45,31,0.12)";
 
 const EMPTY_PLAN = {
   name: "", name_ar: "", description: "", description_ar: "",
@@ -26,551 +22,786 @@ const EMPTY_PLAN = {
   duration_months: 3, is_active: true, paystack_plan_code: "",
 };
 
+const STATUS_CFG: Record<string, { label: string; bg: string; color: string; icon: any }> = {
+  paid:    { label: "Paid",    bg: "#f0fff4", color: "#22c55e", icon: CheckCircle },
+  unpaid:  { label: "Unpaid",  bg: "#fff5f5", color: "#ef4444", icon: XCircle },
+  grace:   { label: "Grace",   bg: "#fffbeb", color: "#f59e0b", icon: Clock },
+  exempt:  { label: "Exempt",  bg: "#f0f9ff", color: "#3b82f6", icon: GraduationCap },
+};
+
+const fmtAmt = (amt: number, currency = "NGN") => {
+  const sym = { NGN:"₦", USD:"$", GBP:"£", SAR:"﷼" }[currency] || "₦";
+  return `${sym}${(amt||0).toLocaleString()}`;
+};
+
+// ── Stat Card ─────────────────────────────────────────────────
+const StatCard = ({ icon: Icon, label, value, sub, color, bg }: any) => (
+  <div style={{ background:"#fff", borderRadius:16, padding:"16px 18px", border:`1px solid ${BORDER}`, boxShadow:"0 2px 8px rgba(0,0,0,.05)", display:"flex", alignItems:"center", gap:14 }}>
+    <div style={{ width:46, height:46, borderRadius:14, background:bg, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+      <Icon style={{ width:22, height:22, color }} />
+    </div>
+    <div style={{ minWidth:0 }}>
+      <div style={{ fontSize:11, color:"#7a9e88", fontWeight:600, marginBottom:2 }}>{label}</div>
+      <div style={{ fontSize:20, fontWeight:900, color:G, lineHeight:1 }}>{value}</div>
+      {sub && <div style={{ fontSize:10, color:"#7a9e88", marginTop:2 }}>{sub}</div>}
+    </div>
+  </div>
+);
+
+// ── Status Pill ───────────────────────────────────────────────
+const StatusPill = ({ status, exempt }: { status: string; exempt?: boolean }) => {
+  const key = exempt ? "exempt" : (status || "unpaid");
+  const cfg = STATUS_CFG[key] || STATUS_CFG.unpaid;
+  const Icon = cfg.icon;
+  return (
+    <span style={{ display:"inline-flex", alignItems:"center", gap:4, padding:"3px 10px", borderRadius:20, background:cfg.bg, color:cfg.color, fontSize:11, fontWeight:700, whiteSpace:"nowrap" }}>
+      <Icon style={{ width:10, height:10 }} />{cfg.label}
+    </span>
+  );
+};
+
 const PaymentManagement = () => {
   const { user } = useAuth();
   const { toast } = useToast();
   const { t } = useLanguage();
-  const [payments, setPayments] = useState<any[]>([]);
-  const [plans, setPlans] = useState<any[]>([]);
-  const [students, setStudents] = useState<any[]>([]);
+
+  const [payments, setPayments]         = useState<any[]>([]);
+  const [plans, setPlans]               = useState<any[]>([]);
+  const [students, setStudents]         = useState<any[]>([]);
   const [subscriptions, setSubscriptions] = useState<any[]>([]);
-  const [stats, setStats] = useState({ totalMonth: 0, totalAll: 0, active: 0, unpaid: 0, expiring: 0, failed: 0 });
-  const [filter, setFilter] = useState("all");
-  const [search, setSearch] = useState("");
-  const [manualDialogOpen, setManualDialogOpen] = useState(false);
-  const [manualForm, setManualForm] = useState({ student_id: "", plan_id: "", amount: 0, method: "bank_transfer", reference: "", notes: "", date: new Date().toISOString().split("T")[0] });
-  const [loading, setLoading] = useState(true);
-  const [planDialogOpen, setPlanDialogOpen] = useState(false);
-  const [editingPlan, setEditingPlan] = useState<any>(null);
-  const [planForm, setPlanForm] = useState<any>({ ...EMPTY_PLAN });
+  const [stats, setStats]               = useState({ totalMonth:0, totalAll:0, active:0, unpaid:0, expiring:0, failed:0, totalUSD:0, totalGBP:0, totalSAR:0, intlCount:0 });
+  const [intlRegion, setIntlRegion]     = useState("all"); // filter for international tab
+  const [filter, setFilter]             = useState("all");
+  const [search, setSearch]             = useState("");
+  const [activeTab, setActiveTab]       = useState<"students"|"transactions"|"plans"|"international">("students");
+  const [loading, setLoading]           = useState(true);
+  const [refreshing, setRefreshing]     = useState(false);
 
-  useEffect(() => { loadData(); }, []);
+  // Manual payment dialog
+  const [manualOpen, setManualOpen]     = useState(false);
+  const [manualForm, setManualForm]     = useState({ student_id:"", plan_id:"", amount:0, method:"bank_transfer", notes:"", date:new Date().toISOString().split("T")[0] });
+  const [manualLoading, setManualLoading] = useState(false);
 
-  const loadData = async () => {
-    const [paymentsRes, plansRes, studentsRes, subsRes] = await Promise.all([
-      supabase.from("payments" as any).select("*").order("created_at", { ascending: false }),
+  // Plan dialog
+  const [planOpen, setPlanOpen]         = useState(false);
+  const [editingPlan, setEditingPlan]   = useState<any>(null);
+  const [planForm, setPlanForm]         = useState<any>({ ...EMPTY_PLAN });
+  const [planLoading, setPlanLoading]   = useState(false);
+
+  // Transaction expand
+  const [expandedTx, setExpandedTx]     = useState<string|null>(null);
+
+  const loadData = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true); else setRefreshing(true);
+    const [pr, plr, sr, subr] = await Promise.all([
+      supabase.from("payments" as any).select("*").order("created_at", { ascending:false }),
       supabase.from("payment_plans" as any).select("*").order("amount"),
       supabase.from("profiles").select("*").order("full_name"),
       supabase.from("student_subscriptions" as any).select("*"),
     ]);
 
-    const payData = (paymentsRes.data || []) as any[];
-    const planData = (plansRes.data || []) as any[];
-    const studentData = (studentsRes.data || []) as any[];
-    const subData = (subsRes.data || []) as any[];
+    const pay  = (pr.data  || []) as any[];
+    const pln  = (plr.data || []) as any[];
+    const stu  = (sr.data  || []) as any[];
+    const sub  = (subr.data|| []) as any[];
 
-    setPayments(payData);
-    setPlans(planData);
-    setStudents(studentData);
-    setSubscriptions(subData);
+    setPayments(pay); setPlans(pln); setStudents(stu); setSubscriptions(sub);
 
-    // Calc stats
-    const now = new Date();
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const weekFromNow = new Date(now.getTime() + 7 * 86400000);
+    const now       = new Date();
+    const monthStart= new Date(now.getFullYear(), now.getMonth(), 1);
+    const week7     = new Date(now.getTime() + 7*86400000);
+    const success   = pay.filter((p:any) => p.status === "success");
+    const thisMonth = success.filter((p:any) => new Date(p.paid_at||p.created_at) >= monthStart);
 
-    const successPayments = payData.filter((p: any) => p.status === "success");
-    const monthPayments = successPayments.filter((p: any) => new Date(p.paid_at || p.created_at) >= monthStart);
+    // Per-currency totals — join with plan to get currency
+    const getPayCurrency = (p:any) => pln.find((pl:any)=>pl.id===p.plan_id)?.currency || "NGN";
+    const usdPay  = success.filter((p:any) => getPayCurrency(p)==="USD");
+    const gbpPay  = success.filter((p:any) => getPayCurrency(p)==="GBP");
+    const sarPay  = success.filter((p:any) => getPayCurrency(p)==="SAR");
+    const intlPay = success.filter((p:any) => getPayCurrency(p)!=="NGN");
 
     setStats({
-      totalMonth: monthPayments.reduce((s: number, p: any) => s + (p.amount || 0), 0),
-      totalAll: successPayments.reduce((s: number, p: any) => s + (p.amount || 0), 0),
-      active: subData.filter((s: any) => s.status === "active").length,
-      unpaid: studentData.filter((s: any) => s.payment_status === "unpaid" || !s.payment_status).length,
-      expiring: subData.filter((s: any) => s.end_date && new Date(s.end_date) <= weekFromNow && s.status === "active").length,
-      failed: payData.filter((p: any) => p.status === "failed").length,
+      totalMonth: thisMonth.filter((p:any)=>getPayCurrency(p)==="NGN").reduce((s:number,p:any)=>s+(p.amount||0),0),
+      totalAll:   success.filter((p:any)=>getPayCurrency(p)==="NGN").reduce((s:number,p:any)=>s+(p.amount||0),0),
+      active:     sub.filter((s:any) => s.status==="active").length,
+      unpaid:     stu.filter((s:any) => !s.payment_status||s.payment_status==="unpaid").length,
+      expiring:   sub.filter((s:any) => s.end_date && new Date(s.end_date)<=week7 && s.status==="active").length,
+      failed:     pay.filter((p:any) => p.status==="failed").length,
+      totalUSD:   usdPay.reduce((s:number,p:any)=>s+(p.amount||0),0),
+      totalGBP:   gbpPay.reduce((s:number,p:any)=>s+(p.amount||0),0),
+      totalSAR:   sarPay.reduce((s:number,p:any)=>s+(p.amount||0),0),
+      intlCount:  intlPay.length,
     });
 
-    setLoading(false);
-  };
+    setLoading(false); setRefreshing(false);
+  }, []);
 
-  const recordManualPayment = async () => {
+  useEffect(() => { loadData(); }, []);
+
+  // ── Record manual payment ───────────────────────────────────
+  const recordManual = async () => {
     if (!manualForm.student_id || !manualForm.plan_id || !manualForm.amount) {
-      toast({ title: "Fill all required fields", variant: "destructive" });
-      return;
+      toast({ title: t("Fill all required fields","امل جميع الحقول المطلوبة"), variant:"destructive" }); return;
     }
-
-    const plan = plans.find((p: any) => p.id === manualForm.plan_id);
-    const reference = `TAH-MANUAL-${Date.now()}`;
-
-    // Create payment
-    await supabase.from("payments" as any).insert({
-      student_id: manualForm.student_id,
-      plan_id: manualForm.plan_id,
-      amount: manualForm.amount,
-      status: "success",
-      type: "manual",
-      paystack_reference: reference,
-      payment_method: manualForm.method,
-      paid_at: manualForm.date,
-      notes: manualForm.notes,
-      recorded_by: user!.id,
-    });
-
-    // Update profile
+    setManualLoading(true);
+    const plan = plans.find((p:any) => p.id === manualForm.plan_id);
+    const ref  = `TAH-MANUAL-${Date.now()}`;
     const endDate = new Date(manualForm.date);
     endDate.setMonth(endDate.getMonth() + (plan?.duration_months || 3));
+    const endStr = endDate.toISOString().split("T")[0];
 
-    await supabase.from("profiles")
-      .update({ payment_status: "paid", subscription_end_date: endDate.toISOString().split("T")[0] } as any)
-      .eq("user_id", manualForm.student_id);
+    await Promise.all([
+      supabase.from("payments" as any).insert({
+        student_id:manualForm.student_id, plan_id:manualForm.plan_id,
+        amount:manualForm.amount, status:"success", type:"manual",
+        paystack_reference:ref, payment_method:manualForm.method,
+        paid_at:manualForm.date, notes:manualForm.notes, recorded_by:user!.id,
+      }),
+      supabase.from("profiles").update({ payment_status:"paid", subscription_end_date:endStr } as any).eq("user_id",manualForm.student_id),
+      supabase.from("student_subscriptions" as any).insert({
+        student_id:manualForm.student_id, plan_id:manualForm.plan_id,
+        status:"active", start_date:manualForm.date, end_date:endStr,
+      }),
+    ]);
 
-    // Create subscription
-    await supabase.from("student_subscriptions" as any).insert({
-      student_id: manualForm.student_id,
-      plan_id: manualForm.plan_id,
-      status: "active",
-      start_date: manualForm.date,
-      end_date: endDate.toISOString().split("T")[0],
-    });
-
-    toast({ title: "Manual payment recorded successfully ✅" });
-    setManualDialogOpen(false);
-    setManualForm({ student_id: "", plan_id: "", amount: 0, method: "bank_transfer", reference: "", notes: "", date: new Date().toISOString().split("T")[0] });
-    loadData();
+    toast({ title: t("Payment recorded ✅","تم تسجيل الدفعة ✅") });
+    setManualOpen(false);
+    setManualForm({ student_id:"", plan_id:"", amount:0, method:"bank_transfer", notes:"", date:new Date().toISOString().split("T")[0] });
+    loadData(true);
+    setManualLoading(false);
   };
 
+  // ── Toggle exempt ───────────────────────────────────────────
   const toggleExempt = async (studentId: string, exempt: boolean) => {
-    await supabase.from("profiles")
-      .update({ is_payment_exempt: exempt, payment_status: exempt ? "exempt" : "unpaid" } as any)
-      .eq("user_id", studentId);
-    toast({ title: exempt ? "Student marked as exempt 🎓" : "Exemption removed" });
-    loadData();
+    await supabase.from("profiles").update({ is_payment_exempt:exempt, payment_status:exempt?"exempt":"unpaid" } as any).eq("user_id",studentId);
+    toast({ title: exempt ? t("Marked as exempt 🎓","تم وضع علامة كمعفى 🎓") : t("Exemption removed","تمت إزالة الإعفاء") });
+    loadData(true);
   };
 
-  const openCreatePlan = () => {
-    setEditingPlan(null);
-    setPlanForm({ ...EMPTY_PLAN });
-    setPlanDialogOpen(true);
-  };
-
-  const openEditPlan = (plan: any) => {
-    setEditingPlan(plan);
-    setPlanForm({
-      name: plan.name || "", name_ar: plan.name_ar || "",
-      description: plan.description || "", description_ar: plan.description_ar || "",
-      amount: plan.amount || 0, currency: plan.currency || "NGN",
-      type: plan.type || "term", level: plan.level || "all",
-      duration_months: plan.duration_months || 3, is_active: plan.is_active ?? true,
-      paystack_plan_code: plan.paystack_plan_code || "",
+  // ── Send reminder ───────────────────────────────────────────
+  const sendReminder = async (student: any) => {
+    // Log the reminder action - email sending would be handled by edge function
+    await supabase.from("activity_logs").insert({
+      user_id: user!.id, action:"payment_reminder_sent",
+      entity_type:"profile", entity_id:student.user_id,
+      metadata:{ student_name:student.full_name, email:student.email },
     });
-    setPlanDialogOpen(true);
+    toast({ title: t(`Reminder sent to ${student.full_name}`,`تم إرسال تذكير إلى ${student.full_name}`) });
   };
 
+  // ── Save plan ───────────────────────────────────────────────
   const savePlan = async () => {
     if (!planForm.name || !planForm.amount) {
-      toast({ title: t("Plan name and amount are required", "اسم الخطة والمبلغ مطلوبان"), variant: "destructive" });
-      return;
+      toast({ title: t("Name and amount required","الاسم والمبلغ مطلوبان"), variant:"destructive" }); return;
     }
+    setPlanLoading(true);
     const payload = {
-      name: planForm.name, name_ar: planForm.name_ar || null,
-      description: planForm.description || null, description_ar: planForm.description_ar || null,
-      amount: Number(planForm.amount), currency: planForm.currency,
-      type: planForm.type, level: planForm.level === "all" ? null : planForm.level,
-      duration_months: Number(planForm.duration_months) || null,
-      is_active: planForm.is_active,
-      paystack_plan_code: planForm.paystack_plan_code || null,
+      name:planForm.name, name_ar:planForm.name_ar||null,
+      description:planForm.description||null, description_ar:planForm.description_ar||null,
+      amount:Number(planForm.amount), currency:planForm.currency,
+      type:planForm.type, level:planForm.level==="all"?null:planForm.level,
+      duration_months:Number(planForm.duration_months)||null,
+      is_active:planForm.is_active, paystack_plan_code:planForm.paystack_plan_code||null,
     };
     if (editingPlan) {
-      await supabase.from("payment_plans" as any).update(payload as any).eq("id", editingPlan.id);
-      toast({ title: t("Plan updated ✅", "تم تحديث الخطة ✅") });
+      await supabase.from("payment_plans" as any).update(payload as any).eq("id",editingPlan.id);
+      toast({ title: t("Plan updated ✅","تم تحديث الخطة ✅") });
     } else {
       await supabase.from("payment_plans" as any).insert(payload as any);
-      toast({ title: t("Plan created ✅", "تم إنشاء الخطة ✅") });
+      toast({ title: t("Plan created ✅","تم إنشاء الخطة ✅") });
     }
-    setPlanDialogOpen(false);
-    loadData();
+    setPlanOpen(false); setPlanLoading(false); loadData(true);
   };
 
-  const deletePlan = async (planId: string) => {
-    if (!confirm(t("Delete this plan? This cannot be undone.", "حذف هذه الخطة؟ لا يمكن التراجع."))) return;
-    await supabase.from("payment_plans" as any).delete().eq("id", planId);
-    toast({ title: t("Plan deleted", "تم حذف الخطة") });
-    loadData();
+  const deletePlan = async (id: string) => {
+    if (!confirm(t("Delete this plan?","حذف هذه الخطة?"))) return;
+    await supabase.from("payment_plans" as any).delete().eq("id",id);
+    toast({ title: t("Plan deleted","تم حذف الخطة") });
+    loadData(true);
   };
 
+  // ── Export CSV ──────────────────────────────────────────────
   const exportCSV = () => {
-    const headers = "Date,Student,Plan,Amount,Status,Method,Reference\n";
-    const rows = payments.map((p: any) => {
-      const student = students.find((s: any) => s.user_id === p.student_id);
-      const plan = plans.find((pl: any) => pl.id === p.plan_id);
-      return `${p.paid_at || p.created_at},${student?.full_name || ""},${plan?.name || ""},${p.amount},${p.status},${p.payment_method || ""},${p.paystack_reference || ""}`;
-    }).join("\n");
-    const blob = new Blob([headers + rows], { type: "text/csv" });
+    const rows = [
+      "Date,Student,Plan,Amount,Currency,Status,Method,Reference",
+      ...payments.map((p:any) => {
+        const s = students.find((x:any) => x.user_id===p.student_id);
+        const pl= plans.find((x:any)   => x.id===p.plan_id);
+        return [
+          p.paid_at||p.created_at, s?.full_name||"", pl?.name||"",
+          p.amount, pl?.currency||"NGN", p.status, p.payment_method||"", p.paystack_reference||""
+        ].join(",");
+      })
+    ].join("\n");
     const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
+    a.href = URL.createObjectURL(new Blob([rows], { type:"text/csv" }));
     a.download = `payments-${new Date().toISOString().split("T")[0]}.csv`;
     a.click();
   };
 
-  const filteredStudents = students.filter((s: any) => {
-    const matchSearch = !search || (s.full_name || "").toLowerCase().includes(search.toLowerCase());
-    const matchFilter = filter === "all" ||
-      (filter === "paid" && s.payment_status === "paid") ||
-      (filter === "unpaid" && (!s.payment_status || s.payment_status === "unpaid")) ||
-      (filter === "grace" && s.payment_status === "grace") ||
-      (filter === "exempt" && (s.is_payment_exempt || s.payment_status === "exempt"));
-    return matchSearch && matchFilter;
+  const filtered = students.filter((s:any) => {
+    const matchS = !search || (s.full_name||"").toLowerCase().includes(search.toLowerCase()) || (s.email||"").toLowerCase().includes(search.toLowerCase());
+    const st = s.is_payment_exempt ? "exempt" : (s.payment_status||"unpaid");
+    const matchF = filter==="all" || st===filter;
+    return matchS && matchF;
   });
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-      </div>
-    );
-  }
+  // Input style helper
+  const inp: React.CSSProperties = { width:"100%", padding:"9px 12px", borderRadius:10, border:`1.5px solid ${BORDER}`, fontSize:14, outline:"none", color:G, background:"#f8fafb", fontFamily:"'Cairo',sans-serif", boxSizing:"border-box" };
+  const lbl: React.CSSProperties = { fontSize:12, fontWeight:700, color:G, display:"block", marginBottom:5 };
+
+  if (loading) return (
+    <div style={{ display:"flex", alignItems:"center", justifyContent:"center", minHeight:"60vh" }}>
+      <div style={{ width:40, height:40, border:`4px solid ${G}`, borderTopColor:"transparent", borderRadius:"50%", animation:"spin .8s linear infinite" }} />
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+    </div>
+  );
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
-      <div className="flex items-center justify-between">
+    <div style={{ padding:"20px 16px", maxWidth:1200, margin:"0 auto", fontFamily:"'Cairo',sans-serif" }}>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}} input:focus,textarea:focus,select:focus{border-color:${GM}!important;box-shadow:0 0 0 3px ${GM}22}`}</style>
+
+      {/* ── PAGE HEADER ── */}
+      <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", marginBottom:24, flexWrap:"wrap", gap:12 }}>
         <div>
-          <h1 className="text-2xl font-bold">{t("Payment Management", "إدارة المدفوعات")}</h1>
-          <p className="text-sm text-muted-foreground">{t("Manage student payments and subscriptions", "إدارة مدفوعات واشتراكات الطلاب")}</p>
+          <h1 style={{ fontSize:24, fontWeight:900, color:G, margin:0 }}>{t("Payment Management","إدارة المدفوعات")}</h1>
+          <p style={{ fontSize:13, color:"#7a9e88", marginTop:3 }}>{t("Track fees, subscriptions and student payment status","تتبع الرسوم والاشتراكات وحالة دفع الطلاب")}</p>
         </div>
-        <div className="flex gap-2">
-          <Dialog open={manualDialogOpen} onOpenChange={setManualDialogOpen}>
-            <DialogTrigger asChild>
-              <Button><Plus className="h-4 w-4 mr-2" /> {t("Record Manual Payment", "تسجيل دفع يدوي")}</Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-md">
-              <DialogHeader>
-                <DialogTitle>{t("Record Manual Payment", "تسجيل دفع يدوي")}</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4">
-                <div>
-                  <Label>Student</Label>
-                  <Select value={manualForm.student_id} onValueChange={v => setManualForm(f => ({ ...f, student_id: v }))}>
-                    <SelectTrigger><SelectValue placeholder="Select student" /></SelectTrigger>
-                    <SelectContent>
-                      {students.map((s: any) => (
-                        <SelectItem key={s.user_id} value={s.user_id}>{s.full_name || s.email}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label>Plan</Label>
-                  <Select value={manualForm.plan_id} onValueChange={v => {
-                    const plan = plans.find((p: any) => p.id === v);
-                    setManualForm(f => ({ ...f, plan_id: v, amount: plan?.amount || 0 }));
-                  }}>
-                    <SelectTrigger><SelectValue placeholder="Select plan" /></SelectTrigger>
-                    <SelectContent>
-                      {plans.map((p: any) => (
-                        <SelectItem key={p.id} value={p.id}>{p.name} — ₦{p.amount?.toLocaleString()}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label>Amount (₦)</Label>
-                  <Input type="number" value={manualForm.amount} onChange={e => setManualForm(f => ({ ...f, amount: +e.target.value }))} />
-                </div>
-                <div>
-                  <Label>Method</Label>
-                  <Select value={manualForm.method} onValueChange={v => setManualForm(f => ({ ...f, method: v }))}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
-                      <SelectItem value="cash">Cash</SelectItem>
-                      <SelectItem value="other">Other</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label>Date</Label>
-                  <Input type="date" value={manualForm.date} onChange={e => setManualForm(f => ({ ...f, date: e.target.value }))} />
-                </div>
-                <div>
-                  <Label>Notes</Label>
-                  <Textarea value={manualForm.notes} onChange={e => setManualForm(f => ({ ...f, notes: e.target.value }))} />
-                </div>
-                <Button onClick={recordManualPayment} className="w-full">Record Payment</Button>
-              </div>
-            </DialogContent>
-          </Dialog>
-          <Button variant="outline" onClick={exportCSV}><Download className="h-4 w-4 mr-2" /> Export CSV</Button>
+        <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+          <button onClick={()=>loadData(true)} style={{ display:"flex", alignItems:"center", gap:5, padding:"8px 14px", borderRadius:10, background:"#f8fafb", border:`1px solid ${BORDER}`, color:G, fontSize:13, fontWeight:600, cursor:"pointer" }}>
+            <RefreshCw style={{ width:14, height:14, animation:refreshing?"spin .8s linear infinite":"none" }} />
+            {t("Refresh","تحديث")}
+          </button>
+          <button onClick={exportCSV} style={{ display:"flex", alignItems:"center", gap:5, padding:"8px 14px", borderRadius:10, background:"#f8fafb", border:`1px solid ${BORDER}`, color:G, fontSize:13, fontWeight:600, cursor:"pointer" }}>
+            <Download style={{ width:14, height:14 }} />{t("Export CSV","تصدير CSV")}
+          </button>
+          <button onClick={()=>{setManualOpen(true);}}
+            style={{ display:"flex", alignItems:"center", gap:5, padding:"8px 16px", borderRadius:10, background:G, border:"none", color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer" }}>
+            <Plus style={{ width:14, height:14 }} />{t("Record Payment","تسجيل دفعة")}
+          </button>
         </div>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-        {[
-          { icon: TrendingUp, label: "This Month", value: `₦${stats.totalMonth.toLocaleString()}`, color: "text-green-600" },
-          { icon: DollarSign, label: "All Time", value: `₦${stats.totalAll.toLocaleString()}`, color: "text-blue-600" },
-          { icon: Users, label: "Active Subs", value: stats.active, color: "text-emerald-600" },
-          { icon: AlertTriangle, label: "Unpaid", value: stats.unpaid, color: "text-red-600" },
-          { icon: Bell, label: "Expiring Soon", value: stats.expiring, color: "text-orange-600" },
-          { icon: CreditCard, label: "Failed", value: stats.failed, color: "text-red-500" },
-        ].map((s, i) => (
-          <Card key={i}>
-            <CardContent className="p-4 text-center">
-              <s.icon className={`h-5 w-5 mx-auto mb-1 ${s.color}`} />
-              <p className="text-xs text-muted-foreground">{s.label}</p>
-              <p className={`text-lg font-bold ${s.color}`}>{s.value}</p>
-            </CardContent>
-          </Card>
-        ))}
+      {/* ── STATS ── */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(175px,1fr))", gap:12, marginBottom:12 }}>
+        <StatCard icon={TrendingUp}     label={t("NGN This Month","هذا الشهر ₦")}  value={fmtAmt(stats.totalMonth)} sub={t("Nigeria Revenue","إيرادات نيجيريا")} color="#22c55e" bg="#f0fff4" />
+        <StatCard icon={DollarSign}     label={t("NGN All Time","إجمالي ₦")}       value={fmtAmt(stats.totalAll)}   sub={t("Total NGN","إجمالي نيرا")}           color="#3b82f6" bg="#eff6ff" />
+        <StatCard icon={Users}          label={t("Active Subs","اشتراكات نشطة")}   value={stats.active}             sub={t("Subscriptions","اشتراكات")}          color="#8b5cf6" bg="#f5f3ff" />
+        <StatCard icon={AlertTriangle}  label={t("Unpaid","غير مدفوع")}            value={stats.unpaid}             sub={t("Students","طلاب")}                   color="#ef4444" bg="#fff5f5" />
+        <StatCard icon={Bell}           label={t("Expiring","تنتهي قريباً")}       value={stats.expiring}           sub={t("Within 7 days","خلال 7 أيام")}       color="#f59e0b" bg="#fffbeb" />
+        <StatCard icon={CreditCard}     label={t("Failed","فاشلة")}                value={stats.failed}             sub={t("Transactions","معاملات")}            color="#ef4444" bg="#fff5f5" />
       </div>
 
-      <Tabs defaultValue="students">
-        <TabsList>
-          <TabsTrigger value="students">{t("Students", "الطلاب")}</TabsTrigger>
-          <TabsTrigger value="transactions">{t("Transactions", "المعاملات")}</TabsTrigger>
-          <TabsTrigger value="plans">{t("Plans", "الخطط")}</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="students" className="space-y-4">
-          <div className="flex gap-3 flex-wrap">
-            <div className="relative flex-1 min-w-[200px]">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="Search students..." value={search} onChange={e => setSearch(e.target.value)} className="pl-10" />
-            </div>
-            <Select value={filter} onValueChange={setFilter}>
-              <SelectTrigger className="w-[160px]"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All</SelectItem>
-                <SelectItem value="paid">Paid</SelectItem>
-                <SelectItem value="unpaid">Unpaid</SelectItem>
-                <SelectItem value="grace">Grace</SelectItem>
-                <SelectItem value="exempt">Exempt</SelectItem>
-              </SelectContent>
-            </Select>
+      {/* ── INTERNATIONAL REVENUE STRIP ── */}
+      {(stats.totalUSD > 0 || stats.totalGBP > 0 || stats.totalSAR > 0 || stats.intlCount > 0) && (
+        <div style={{ display:"flex", gap:10, marginBottom:20, flexWrap:"wrap" }}>
+          {/* Strip header */}
+          <div style={{ width:"100%", display:"flex", alignItems:"center", gap:8, marginBottom:4 }}>
+            <div style={{ height:1, flex:1, background:BORDER }} />
+            <span style={{ fontSize:11, fontWeight:700, color:"#7a9e88", letterSpacing:1 }}>🌍 INTERNATIONAL PAYMENTS</span>
+            <div style={{ height:1, flex:1, background:BORDER }} />
           </div>
+          {stats.totalUSD > 0 && <StatCard icon={DollarSign} label="USD Collected" value={`$${stats.totalUSD.toLocaleString()}`} sub="United States Dollar" color="#2563eb" bg="#eff6ff" />}
+          {stats.totalGBP > 0 && <StatCard icon={DollarSign} label="GBP Collected" value={`£${stats.totalGBP.toLocaleString()}`} sub="British Pound" color="#7c3aed" bg="#f5f3ff" />}
+          {stats.totalSAR > 0 && <StatCard icon={DollarSign} label="SAR Collected" value={`﷼${stats.totalSAR.toLocaleString()}`} sub="Saudi Riyal" color="#d97706" bg="#fffbeb" />}
+          <StatCard icon={Users} label="Intl Transactions" value={stats.intlCount} sub="Non-NGN payments" color="#0891b2" bg="#ecfeff" />
+        </div>
+      )}
 
-          <div className="rounded-lg border overflow-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Student</TableHead>
-                  <TableHead>Level</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>End Date</TableHead>
-                  <TableHead>Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredStudents.map((s: any) => (
-                  <TableRow key={s.user_id}>
-                    <TableCell>
-                      <p className="font-medium">{s.full_name || "—"}</p>
-                      <p className="text-xs text-muted-foreground">{s.email}</p>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline">{s.level || "—"}</Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={
-                        s.payment_status === "paid" || s.is_payment_exempt ? "default" :
-                        s.payment_status === "grace" ? "secondary" : "destructive"
-                      }>
-                        {s.is_payment_exempt ? "Exempt" : s.payment_status || "unpaid"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-sm">
-                      {s.subscription_end_date ? format(new Date(s.subscription_end_date), "dd MMM yyyy") : "—"}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex gap-1">
-                        <Button size="sm" variant="outline" onClick={() => {
-                          setManualForm(f => ({ ...f, student_id: s.user_id }));
-                          setManualDialogOpen(true);
-                        }}>💰</Button>
-                        <Button size="sm" variant="outline" onClick={() => toggleExempt(s.user_id, !s.is_payment_exempt)}>
-                          {s.is_payment_exempt ? "Remove" : "🎓"}
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
+      {/* ── TABS ── */}
+      <div style={{ background:"#fff", borderRadius:18, border:`1px solid ${BORDER}`, boxShadow:"0 2px 12px rgba(0,0,0,.06)", overflow:"hidden" }}>
+        {/* Tab bar */}
+        <div style={{ display:"flex", borderBottom:`1px solid ${BORDER}`, background:"#fafafa" }}>
+          {([
+            ["students",      t("Students","الطلاب"),           Users],
+            ["transactions",  t("Transactions","المعاملات"),    CreditCard],
+            ["international", t("International","دولي"),        DollarSign],
+            ["plans",         t("Plans","خطط الدفع"),           TrendingUp],
+          ] as any[]).map(([key, label, Icon]) => (
+            <button key={key} onClick={()=>setActiveTab(key)}
+              style={{ display:"flex", alignItems:"center", gap:6, padding:"13px 20px", background:"none", border:"none",
+                borderBottom:`3px solid ${activeTab===key?GOLD:"transparent"}`,
+                color:activeTab===key?G:"#7a9e88", fontSize:13, fontWeight:activeTab===key?800:500, cursor:"pointer", transition:"all .15s",
+                position:"relative" }}>
+              <Icon style={{ width:14, height:14 }} />{label}
+              {key==="international" && stats.intlCount > 0 && (
+                <span style={{ marginLeft:4, background:GOLD, color:"#fff", fontSize:9, fontWeight:900, borderRadius:10, padding:"1px 6px" }}>
+                  {stats.intlCount}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+
+        {/* ── STUDENTS TAB ── */}
+        {activeTab==="students" && (
+          <div style={{ padding:18 }}>
+            {/* Search + filter */}
+            <div style={{ display:"flex", gap:10, marginBottom:16, flexWrap:"wrap" }}>
+              <div style={{ position:"relative", flex:1, minWidth:200 }}>
+                <Search style={{ position:"absolute", left:11, top:"50%", transform:"translateY(-50%)", width:14, height:14, color:"#7a9e88" }} />
+                <input value={search} onChange={e=>setSearch(e.target.value)} placeholder={t("Search students…","بحث عن طالب…")}
+                  style={{ ...inp, paddingLeft:34 }} />
+              </div>
+              <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+                {["all","paid","unpaid","grace","exempt"].map(f => (
+                  <button key={f} onClick={()=>setFilter(f)}
+                    style={{ padding:"7px 14px", borderRadius:20, border:`1.5px solid ${filter===f?G:BORDER}`, background:filter===f?G:"#fff", color:filter===f?"#fff":G, fontSize:12, fontWeight:filter===f?700:500, cursor:"pointer", transition:"all .15s", textTransform:"capitalize" }}>
+                    {f==="all"?t("All","الكل"):f}
+                  </button>
                 ))}
-              </TableBody>
-            </Table>
-          </div>
-        </TabsContent>
+              </div>
+            </div>
 
-        <TabsContent value="transactions">
-          <div className="rounded-lg border overflow-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Date</TableHead>
-                  <TableHead>Student</TableHead>
-                  <TableHead>Amount</TableHead>
-                  <TableHead>Method</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Reference</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {payments.map((p: any) => {
-                  const student = students.find((s: any) => s.user_id === p.student_id);
+            {/* Count */}
+            <div style={{ fontSize:12, color:"#7a9e88", marginBottom:10 }}>
+              {t("Showing","عرض")} <strong style={{ color:G }}>{filtered.length}</strong> {t("of","من")} {students.length} {t("students","طلاب")}
+            </div>
+
+            {/* Table */}
+            <div style={{ borderRadius:12, border:`1px solid ${BORDER}`, overflow:"hidden" }}>
+              {/* Header */}
+              <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 1.2fr 1.5fr", background:"#f8fafb", padding:"10px 16px", gap:8 }}>
+                {[t("Student","الطالب"),t("Level","المستوى"),t("Status","الحالة"),t("Expires","انتهاء"),t("Actions","إجراءات")].map((h,i)=>(
+                  <span key={i} style={{ fontSize:10, fontWeight:800, color:"#7a9e88", letterSpacing:.8, textTransform:"uppercase" }}>{h}</span>
+                ))}
+              </div>
+              {/* Rows */}
+              {filtered.length===0 ? (
+                <div style={{ padding:"40px 20px", textAlign:"center", color:"#7a9e88", fontSize:14 }}>
+                  {t("No students found","لا يوجد طلاب")}
+                </div>
+              ) : filtered.map((s:any, i:number) => (
+                <div key={s.user_id} style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 1.2fr 1.5fr", padding:"12px 16px", gap:8, alignItems:"center", borderTop:i===0?"none":`1px solid ${BORDER}`, background:i%2===0?"#fff":"#fafcfb" }}>
+                  {/* Student */}
+                  <div>
+                    <div style={{ fontSize:14, fontWeight:700, color:G }}>{s.full_name||"—"}</div>
+                    <div style={{ fontSize:11, color:"#7a9e88" }}>{s.email}</div>
+                  </div>
+                  {/* Level */}
+                  <span style={{ fontSize:11, padding:"3px 10px", borderRadius:20, background:"rgba(15,45,31,.08)", color:G, fontWeight:600, display:"inline-block" }}>
+                    {s.level||"—"}
+                  </span>
+                  {/* Status */}
+                  <StatusPill status={s.payment_status} exempt={s.is_payment_exempt} />
+                  {/* Expiry */}
+                  <span style={{ fontSize:12, color: s.subscription_end_date && new Date(s.subscription_end_date)<new Date() ? "#ef4444" : "#7a9e88" }}>
+                    {s.subscription_end_date ? format(new Date(s.subscription_end_date),"dd MMM yyyy") : "—"}
+                  </span>
+                  {/* Actions */}
+                  <div style={{ display:"flex", gap:5, flexWrap:"wrap" }}>
+                    <button onClick={()=>{ setManualForm(f=>({...f,student_id:s.user_id})); setManualOpen(true); }}
+                      style={{ display:"flex", alignItems:"center", gap:4, padding:"5px 10px", borderRadius:8, background:G, border:"none", color:"#fff", fontSize:11, fontWeight:700, cursor:"pointer" }}>
+                      <DollarSign style={{ width:11, height:11 }} />{t("Pay","دفع")}
+                    </button>
+                    {(!s.is_payment_exempt && (s.payment_status==="unpaid"||!s.payment_status)) && (
+                      <button onClick={()=>sendReminder(s)}
+                        style={{ display:"flex", alignItems:"center", gap:4, padding:"5px 10px", borderRadius:8, background:"#fffbeb", border:`1px solid ${GOLD}`, color:"#92400e", fontSize:11, fontWeight:700, cursor:"pointer" }}>
+                        <Bell style={{ width:11, height:11 }} />{t("Remind","تذكير")}
+                      </button>
+                    )}
+                    <button onClick={()=>toggleExempt(s.user_id,!s.is_payment_exempt)}
+                      title={s.is_payment_exempt?t("Remove exemption","إزالة الإعفاء"):t("Mark exempt","وضع علامة كمعفى")}
+                      style={{ padding:"5px 8px", borderRadius:8, background:s.is_payment_exempt?"#fff5f5":"#f0f9ff", border:`1px solid ${s.is_payment_exempt?"#fca5a5":"#93c5fd"}`, color:s.is_payment_exempt?"#ef4444":"#3b82f6", fontSize:11, fontWeight:700, cursor:"pointer" }}>
+                      <GraduationCap style={{ width:12, height:12 }} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── TRANSACTIONS TAB ── */}
+        {activeTab==="transactions" && (
+          <div style={{ padding:18 }}>
+            <div style={{ fontSize:12, color:"#7a9e88", marginBottom:12 }}>
+              {payments.length} {t("transactions total","معاملة إجمالاً")} — {payments.filter((p:any)=>p.status==="success").length} {t("successful","ناجحة")}
+            </div>
+            <div style={{ borderRadius:12, border:`1px solid ${BORDER}`, overflow:"hidden" }}>
+              {/* Header */}
+              <div style={{ display:"grid", gridTemplateColumns:"1.2fr 1.5fr 1fr 1fr 0.8fr 1.5fr", background:"#f8fafb", padding:"10px 16px", gap:8 }}>
+                {[t("Date","التاريخ"),t("Student","الطالب"),t("Amount","المبلغ"),t("Method","الطريقة"),t("Status","الحالة"),t("Reference","المرجع")].map((h,i)=>(
+                  <span key={i} style={{ fontSize:10, fontWeight:800, color:"#7a9e88", letterSpacing:.8, textTransform:"uppercase" }}>{h}</span>
+                ))}
+              </div>
+              {payments.length===0 ? (
+                <div style={{ padding:"40px 20px", textAlign:"center", color:"#7a9e88" }}>{t("No transactions yet","لا توجد معاملات")}</div>
+              ) : payments.map((p:any, i:number) => {
+                const stu  = students.find((s:any)=>s.user_id===p.student_id);
+                const plan = plans.find((pl:any)=>pl.id===p.plan_id);
+                const isExpanded = expandedTx===p.id;
+                return (
+                  <div key={p.id}>
+                    <div style={{ display:"grid", gridTemplateColumns:"1.2fr 1.5fr 1fr 1fr 0.8fr 1.5fr", padding:"12px 16px", gap:8, alignItems:"center", borderTop:`1px solid ${BORDER}`, background:i%2===0?"#fff":"#fafcfb", cursor:"pointer" }}
+                      onClick={()=>setExpandedTx(isExpanded?null:p.id)}>
+                      <span style={{ fontSize:12, color:"#7a9e88" }}>{format(new Date(p.paid_at||p.created_at),"dd MMM yyyy")}</span>
+                      <div>
+                        <div style={{ fontSize:13, fontWeight:600, color:G }}>{stu?.full_name||"—"}</div>
+                        {plan&&<div style={{ fontSize:11, color:"#7a9e88" }}>{plan.name}</div>}
+                      </div>
+                      <span style={{ fontSize:14, fontWeight:800, color:G }}>{fmtAmt(p.amount, plan?.currency)}</span>
+                      <span style={{ fontSize:12, color:"#7a9e88", textTransform:"capitalize" }}>{p.payment_method||"—"}</span>
+                      <StatusPill status={p.status==="success"?"paid":p.status==="failed"?"unpaid":"grace"} />
+                      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+                        <span style={{ fontSize:10, fontFamily:"monospace", color:"#7a9e88", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:120 }}>
+                          {p.paystack_reference||"—"}
+                        </span>
+                        {isExpanded?<ChevronUp style={{width:13,height:13,color:"#7a9e88",flexShrink:0}}/>:<ChevronDown style={{width:13,height:13,color:"#7a9e88",flexShrink:0}}/>}
+                      </div>
+                    </div>
+                    {isExpanded && (
+                      <div style={{ padding:"12px 16px 14px", background:"#f8fafb", borderTop:`1px solid ${BORDER}` }}>
+                        <div style={{ display:"flex", gap:20, flexWrap:"wrap", fontSize:12, color:"#7a9e88" }}>
+                          {p.notes && <span><strong style={{ color:G }}>Notes:</strong> {p.notes}</span>}
+                          {p.type && <span><strong style={{ color:G }}>Type:</strong> {p.type}</span>}
+                          <span><strong style={{ color:G }}>Reference:</strong> {p.paystack_reference||"—"}</span>
+                          <span><strong style={{ color:G }}>Created:</strong> {format(new Date(p.created_at),"dd MMM yyyy HH:mm")}</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ── INTERNATIONAL TAB ── */}
+        {activeTab==="international" && (
+          <div style={{ padding:18 }}>
+            {/* Currency summary cards */}
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))", gap:12, marginBottom:20 }}>
+              {[
+                { currency:"USD", sym:"$", label:"US Dollar", flag:"🇺🇸", color:"#2563eb", bg:"#eff6ff" },
+                { currency:"GBP", sym:"£", label:"British Pound", flag:"🇬🇧", color:"#7c3aed", bg:"#f5f3ff" },
+                { currency:"SAR", sym:"﷼", label:"Saudi Riyal", flag:"🇸🇦", color:"#d97706", bg:"#fffbeb" },
+                { currency:"EUR", sym:"€", label:"Euro", flag:"🇪🇺", color:"#059669", bg:"#ecfdf5" },
+              ].map(({ currency, sym, label, flag, color, bg }) => {
+                const currPay = payments.filter((p:any) => {
+                  const plan = plans.find((pl:any) => pl.id===p.plan_id);
+                  return plan?.currency===currency && p.status==="success";
+                });
+                const total = currPay.reduce((s:number,p:any)=>s+(p.amount||0),0);
+                const intlPlans = plans.filter((pl:any)=>pl.currency===currency);
+                return (
+                  <div key={currency} style={{ background:"#fff", borderRadius:16, border:`1.5px solid ${total>0?color+"44":BORDER}`, padding:"16px", cursor:"pointer",
+                    boxShadow: total>0?"0 2px 12px rgba(0,0,0,.06)":"none",
+                    opacity: intlPlans.length===0?.5:1 }}
+                    onClick={()=>setIntlRegion(intlRegion===currency?"all":currency)}>
+                    <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10 }}>
+                      <span style={{ fontSize:22 }}>{flag}</span>
+                      <div>
+                        <div style={{ fontSize:13, fontWeight:800, color:G }}>{label}</div>
+                        <div style={{ fontSize:10, color:"#7a9e88" }}>{currency}</div>
+                      </div>
+                      {intlRegion===currency && <div style={{ marginLeft:"auto", width:8, height:8, borderRadius:"50%", background:color }} />}
+                    </div>
+                    <div style={{ fontSize:26, fontWeight:900, color: total>0?color:"#9ca3af" }}>
+                      {sym}{total.toLocaleString()}
+                    </div>
+                    <div style={{ fontSize:11, color:"#7a9e88", marginTop:4 }}>
+                      {currPay.length} {t("payments","دفعات")} · {intlPlans.length} {t("plans","خطط")}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Add international plan shortcut */}
+            <div style={{ background:"linear-gradient(135deg,#1e3a5f,#1e3a8a)", borderRadius:14, padding:"16px 20px", marginBottom:20, display:"flex", alignItems:"center", gap:14 }}>
+              <div style={{ fontSize:32 }}>🌍</div>
+              <div style={{ flex:1 }}>
+                <div style={{ fontSize:14, fontWeight:800, color:"#fff" }}>{t("Add International Payment Plan","إضافة خطة دفع دولية")}</div>
+                <div style={{ fontSize:12, color:"rgba(255,255,255,.65)", marginTop:2 }}>{t("Create USD, GBP or SAR plans for international students","أنشئ خططاً بالدولار أو الجنيه أو الريال للطلاب الدوليين")}</div>
+              </div>
+              <button onClick={()=>{ setPlanForm({...EMPTY_PLAN, currency:"USD"}); setEditingPlan(null); setPlanOpen(true); setActiveTab("plans"); }}
+                style={{ padding:"9px 18px", borderRadius:10, background:"rgba(255,255,255,.15)", border:"1px solid rgba(255,255,255,.3)", color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer", whiteSpace:"nowrap" }}>
+                <Plus style={{ width:13, height:13, display:"inline", marginRight:5 }} />{t("New Intl Plan","خطة دولية")}
+              </button>
+            </div>
+
+            {/* International transactions table */}
+            <div style={{ marginBottom:12, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+              <div style={{ fontSize:13, fontWeight:700, color:G }}>{t("International Transactions","المعاملات الدولية")}</div>
+              <div style={{ display:"flex", gap:6 }}>
+                {["all","USD","GBP","SAR","EUR"].map(c=>(
+                  <button key={c} onClick={()=>setIntlRegion(c)}
+                    style={{ padding:"5px 12px", borderRadius:20, border:`1.5px solid ${intlRegion===c?"#2563eb":BORDER}`, background:intlRegion===c?"#eff6ff":"#fff", color:intlRegion===c?"#2563eb":G, fontSize:11, fontWeight:700, cursor:"pointer" }}>
+                    {c==="all"?"All":c}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Table */}
+            <div style={{ borderRadius:12, border:`1px solid ${BORDER}`, overflow:"hidden" }}>
+              <div style={{ display:"grid", gridTemplateColumns:"1.2fr 1.5fr 1fr 0.8fr 1fr 1.2fr", background:"#f8fafb", padding:"10px 16px", gap:8 }}>
+                {["Date","Student","Amount","Currency","Method","Reference"].map((h,i)=>(
+                  <span key={i} style={{ fontSize:10, fontWeight:800, color:"#7a9e88", letterSpacing:.8, textTransform:"uppercase" }}>{h}</span>
+                ))}
+              </div>
+              {(() => {
+                const intlTx = payments.filter((p:any) => {
+                  const plan = plans.find((pl:any)=>pl.id===p.plan_id);
+                  const cur  = plan?.currency||"NGN";
+                  if (cur==="NGN") return false;
+                  if (intlRegion!=="all" && cur!==intlRegion) return false;
+                  return true;
+                });
+                if (intlTx.length===0) return (
+                  <div style={{ padding:"40px 20px", textAlign:"center", color:"#7a9e88", fontSize:14 }}>
+                    <div style={{ fontSize:40, marginBottom:10 }}>🌍</div>
+                    {t("No international transactions yet","لا توجد معاملات دولية بعد")}
+                  </div>
+                );
+                return intlTx.map((p:any, i:number) => {
+                  const stu  = students.find((s:any)=>s.user_id===p.student_id);
+                  const plan = plans.find((pl:any)=>pl.id===p.plan_id);
+                  const cur  = plan?.currency||"USD";
+                  const sym  = { USD:"$", GBP:"£", SAR:"﷼", EUR:"€" }[cur] || "$";
+                  const curColor = { USD:"#2563eb", GBP:"#7c3aed", SAR:"#d97706", EUR:"#059669" }[cur] || "#2563eb";
                   return (
-                    <TableRow key={p.id}>
-                      <TableCell className="text-sm">{p.paid_at ? format(new Date(p.paid_at), "dd MMM yyyy") : format(new Date(p.created_at), "dd MMM yyyy")}</TableCell>
-                      <TableCell>{student?.full_name || "—"}</TableCell>
-                      <TableCell className="font-medium">₦{p.amount?.toLocaleString()}</TableCell>
-                      <TableCell className="text-sm">{p.payment_method || "—"}</TableCell>
-                      <TableCell>
-                        <Badge variant={p.status === "success" ? "default" : p.status === "failed" ? "destructive" : "secondary"}>
-                          {p.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-xs font-mono">{p.paystack_reference || "—"}</TableCell>
-                    </TableRow>
+                    <div key={p.id} style={{ display:"grid", gridTemplateColumns:"1.2fr 1.5fr 1fr 0.8fr 1fr 1.2fr", padding:"12px 16px", gap:8, alignItems:"center", borderTop:`1px solid ${BORDER}`, background:i%2===0?"#fff":"#fafcfb" }}>
+                      <span style={{ fontSize:12, color:"#7a9e88" }}>{format(new Date(p.paid_at||p.created_at),"dd MMM yyyy")}</span>
+                      <div>
+                        <div style={{ fontSize:13, fontWeight:600, color:G }}>{stu?.full_name||"—"}</div>
+                        <div style={{ fontSize:10, color:"#7a9e88" }}>{stu?.email}</div>
+                      </div>
+                      <span style={{ fontSize:15, fontWeight:900, color:curColor }}>{sym}{(p.amount||0).toLocaleString()}</span>
+                      <span style={{ display:"inline-flex", alignItems:"center", gap:4, padding:"3px 9px", borderRadius:16, background:`${curColor}18`, color:curColor, fontSize:11, fontWeight:700 }}>
+                        {cur}
+                      </span>
+                      <span style={{ fontSize:12, color:"#7a9e88", textTransform:"capitalize" }}>{p.payment_method||"—"}</span>
+                      <span style={{ fontSize:10, fontFamily:"monospace", color:"#7a9e88", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{p.paystack_reference||"—"}</span>
+                    </div>
                   );
-                })}
-              </TableBody>
-            </Table>
-          </div>
-        </TabsContent>
+                });
+              })()}
+            </div>
 
-        <TabsContent value="plans" className="space-y-4">
-          <div className="flex justify-between items-center">
-            <p className="text-sm text-muted-foreground">{t("Create, edit and manage payment plans", "إنشاء وتعديل وإدارة خطط الدفع")}</p>
-            <Button onClick={openCreatePlan}><Plus className="h-4 w-4 mr-2" /> {t("New Plan", "خطة جديدة")}</Button>
+            {/* Record international payment button */}
+            <div style={{ marginTop:16 }}>
+              <button onClick={()=>setManualOpen(true)}
+                style={{ display:"flex", alignItems:"center", gap:6, padding:"10px 18px", borderRadius:12, background:G, border:"none", color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer" }}>
+                <Plus style={{ width:14, height:14 }} />{t("Record International Payment","تسجيل دفعة دولية")}
+              </button>
+            </div>
           </div>
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {plans.map((plan: any) => (
-              <Card key={plan.id} className={!plan.is_active ? "opacity-60" : ""}>
-                <CardHeader className="pb-3">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <CardTitle className="text-base">{plan.name}</CardTitle>
-                      {plan.name_ar && <p className="text-xs text-muted-foreground font-arabic">{plan.name_ar}</p>}
+        )}
+
+        {/* ── PLANS TAB ── */}
+        {activeTab==="plans" && (
+          <div style={{ padding:18 }}>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16 }}>
+              <p style={{ fontSize:13, color:"#7a9e88", margin:0 }}>{t("Create and manage payment plans","إنشاء وإدارة خطط الدفع")}</p>
+              <button onClick={()=>{ setEditingPlan(null); setPlanForm({...EMPTY_PLAN}); setPlanOpen(true); }}
+                style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 16px", borderRadius:10, background:G, border:"none", color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer" }}>
+                <Plus style={{ width:14, height:14 }} />{t("New Plan","خطة جديدة")}
+              </button>
+            </div>
+
+            {plans.length===0 ? (
+              <div style={{ textAlign:"center", padding:"50px 20px", color:"#7a9e88" }}>
+                <DollarSign style={{ width:40, height:40, margin:"0 auto 12px", opacity:.3 }} />
+                <p>{t("No payment plans yet","لا توجد خطط دفع بعد")}</p>
+              </div>
+            ) : (
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))", gap:14 }}>
+                {plans.map((plan:any) => (
+                  <div key={plan.id} style={{ background:"#fff", borderRadius:16, border:`1.5px solid ${plan.is_active?BORDER:"#e5e7eb"}`, overflow:"hidden", opacity:plan.is_active?1:.65, boxShadow:"0 2px 10px rgba(0,0,0,.06)" }}>
+                    {/* Plan header */}
+                    <div style={{ background:`linear-gradient(135deg,${G},${GM})`, padding:"14px 16px", display:"flex", alignItems:"flex-start", justifyContent:"space-between" }}>
+                      <div>
+                        <div style={{ fontSize:16, fontWeight:800, color:"#fff" }}>{plan.name}</div>
+                        {plan.name_ar && <div style={{ fontSize:13, color:"rgba(255,255,255,.65)", direction:"rtl" }}>{plan.name_ar}</div>}
+                      </div>
+                      <Switch checked={plan.is_active} onCheckedChange={async checked => {
+                        await supabase.from("payment_plans" as any).update({ is_active:checked }).eq("id",plan.id);
+                        loadData(true);
+                      }} />
                     </div>
-                    <div className="flex items-center gap-1">
-                      <Switch
-                        checked={plan.is_active}
-                        onCheckedChange={async (checked) => {
-                          await supabase.from("payment_plans" as any).update({ is_active: checked }).eq("id", plan.id);
-                          loadData();
-                        }}
-                      />
+                    {/* Plan body */}
+                    <div style={{ padding:"14px 16px" }}>
+                      <div style={{ fontSize:28, fontWeight:900, color:G, marginBottom:8 }}>
+                        {fmtAmt(plan.amount, plan.currency)}
+                      </div>
+                      {plan.description && <p style={{ fontSize:13, color:"#7a9e88", marginBottom:10, lineHeight:1.5 }}>{plan.description}</p>}
+                      <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:12 }}>
+                        {[plan.type, plan.level||"all levels", plan.duration_months&&`${plan.duration_months} months`, plan.currency].filter(Boolean).map((tag:any,i:number)=>(
+                          <span key={i} style={{ padding:"3px 10px", borderRadius:20, background:"rgba(15,45,31,.07)", color:G, fontSize:11, fontWeight:600, textTransform:"capitalize" }}>
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                      <div style={{ display:"flex", gap:8, paddingTop:10, borderTop:`1px solid ${BORDER}` }}>
+                        <button onClick={()=>{ setEditingPlan(plan); setPlanForm({ name:plan.name, name_ar:plan.name_ar||"", description:plan.description||"", description_ar:plan.description_ar||"", amount:plan.amount, currency:plan.currency||"NGN", type:plan.type||"term", level:plan.level||"all", duration_months:plan.duration_months||3, is_active:plan.is_active??true, paystack_plan_code:plan.paystack_plan_code||"" }); setPlanOpen(true); }}
+                          style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", gap:5, padding:"8px 0", borderRadius:10, background:"#f8fafb", border:`1px solid ${BORDER}`, color:G, fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                          <Pencil style={{ width:12, height:12 }} />{t("Edit","تعديل")}
+                        </button>
+                        <button onClick={()=>deletePlan(plan.id)}
+                          style={{ padding:"8px 12px", borderRadius:10, background:"#fff5f5", border:"1px solid #fca5a5", color:"#ef4444", fontSize:12, cursor:"pointer" }}>
+                          <Trash2 style={{ width:13, height:13 }} />
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <p className="text-2xl font-bold">{plan.currency === "USD" ? "$" : "₦"}{plan.amount?.toLocaleString()}</p>
-                  {plan.description && <p className="text-sm text-muted-foreground">{plan.description}</p>}
-                  <div className="flex gap-2 flex-wrap">
-                    <Badge variant="outline">{plan.type}</Badge>
-                    <Badge variant="outline">{plan.level || "all levels"}</Badge>
-                    {plan.duration_months && <Badge variant="outline">{plan.duration_months} {t("months", "شهور")}</Badge>}
-                    <Badge variant="outline">{plan.currency}</Badge>
-                  </div>
-                  <div className="flex gap-2 pt-2 border-t">
-                    <Button size="sm" variant="outline" className="flex-1" onClick={() => openEditPlan(plan)}>
-                      <Pencil className="h-3 w-3 mr-1" /> {t("Edit", "تعديل")}
-                    </Button>
-                    <Button size="sm" variant="outline" className="text-destructive hover:text-destructive" onClick={() => deletePlan(plan.id)}>
-                      <Trash2 className="h-3 w-3" />
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
+                ))}
+              </div>
+            )}
           </div>
-        </TabsContent>
-      </Tabs>
+        )}
+      </div>
 
-      {/* Plan Create/Edit Dialog */}
-      <Dialog open={planDialogOpen} onOpenChange={setPlanDialogOpen}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{editingPlan ? t("Edit Payment Plan", "تعديل خطة الدفع") : t("Create Payment Plan", "إنشاء خطة دفع")}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-3">
+      {/* ── MANUAL PAYMENT DIALOG ── */}
+      {manualOpen && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.5)", zIndex:100, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }} onClick={()=>setManualOpen(false)}>
+          <div style={{ background:"#fff", borderRadius:20, padding:24, width:"100%", maxWidth:480, maxHeight:"90vh", overflowY:"auto" }} onClick={e=>e.stopPropagation()}>
+            <div style={{ fontSize:18, fontWeight:800, color:G, marginBottom:20 }}>{t("Record Manual Payment","تسجيل دفعة يدوية")}</div>
+            <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+              {/* Student */}
               <div>
-                <Label>{t("Plan Name (English)", "اسم الخطة (إنجليزي)")}</Label>
-                <Input value={planForm.name} onChange={e => setPlanForm((f: any) => ({ ...f, name: e.target.value }))} placeholder="e.g. Term Fee" />
+                <label style={lbl}>{t("Student *","الطالب *")}</label>
+                <select value={manualForm.student_id} onChange={e=>setManualForm(f=>({...f,student_id:e.target.value}))} style={{ ...inp, appearance:"none" }}>
+                  <option value="">{t("Select student…","اختر طالباً…")}</option>
+                  {students.map((s:any)=><option key={s.user_id} value={s.user_id}>{s.full_name||s.email}</option>)}
+                </select>
               </div>
+              {/* Plan */}
               <div>
-                <Label>{t("Plan Name (Arabic)", "اسم الخطة (عربي)")}</Label>
-                <Input value={planForm.name_ar} onChange={e => setPlanForm((f: any) => ({ ...f, name_ar: e.target.value }))} placeholder="مثال: رسوم الفصل" dir="rtl" />
+                <label style={lbl}>{t("Plan *","الخطة *")}</label>
+                <select value={manualForm.plan_id} onChange={e=>{ const pl=plans.find((p:any)=>p.id===e.target.value); setManualForm(f=>({...f,plan_id:e.target.value,amount:pl?.amount||0})); }} style={{ ...inp, appearance:"none" }}>
+                  <option value="">{t("Select plan…","اختر خطة…")}</option>
+                  {plans.map((p:any)=><option key={p.id} value={p.id}>{p.name} — {fmtAmt(p.amount,p.currency)}</option>)}
+                </select>
               </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
+              {/* Amount */}
               <div>
-                <Label>{t("Amount", "المبلغ")}</Label>
-                <Input type="number" value={planForm.amount} onChange={e => setPlanForm((f: any) => ({ ...f, amount: +e.target.value }))} min={0} />
+                <label style={lbl}>{t("Amount *","المبلغ *")} {manualForm.plan_id && (() => { const pl=plans.find((p:any)=>p.id===manualForm.plan_id); const sym={NGN:"₦",USD:"$",GBP:"£",SAR:"﷼"}[pl?.currency||"NGN"]||"₦"; return <span style={{color:"#7a9e88",fontWeight:400}}>({sym} {pl?.currency||"NGN"})</span>; })()}</label>
+                <input type="number" value={manualForm.amount} onChange={e=>setManualForm(f=>({...f,amount:+e.target.value}))} style={inp} min={0} />
               </div>
+              {/* Method */}
               <div>
-                <Label>{t("Currency", "العملة")}</Label>
-                <Select value={planForm.currency} onValueChange={v => setPlanForm((f: any) => ({ ...f, currency: v }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="NGN">NGN (₦)</SelectItem>
-                    <SelectItem value="USD">USD ($)</SelectItem>
-                    <SelectItem value="GBP">GBP (£)</SelectItem>
-                    <SelectItem value="SAR">SAR (﷼)</SelectItem>
-                  </SelectContent>
-                </Select>
+                <label style={lbl}>{t("Payment Method","طريقة الدفع")}</label>
+                <select value={manualForm.method} onChange={e=>setManualForm(f=>({...f,method:e.target.value}))} style={{ ...inp, appearance:"none" }}>
+                  <option value="bank_transfer">Bank Transfer</option>
+                  <option value="cash">Cash</option>
+                  <option value="paystack">Paystack</option>
+                  <option value="other">Other</option>
+                </select>
               </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
+              {/* Date */}
               <div>
-                <Label>{t("Plan Type", "نوع الخطة")}</Label>
-                <Select value={planForm.type} onValueChange={v => setPlanForm((f: any) => ({ ...f, type: v }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="term">{t("Term", "فصل دراسي")}</SelectItem>
-                    <SelectItem value="monthly">{t("Monthly", "شهري")}</SelectItem>
-                    <SelectItem value="yearly">{t("Yearly", "سنوي")}</SelectItem>
-                    <SelectItem value="one_time">{t("One-Time", "مرة واحدة")}</SelectItem>
-                    <SelectItem value="private">{t("Private Session", "جلسة خاصة")}</SelectItem>
-                  </SelectContent>
-                </Select>
+                <label style={lbl}>{t("Payment Date","تاريخ الدفع")}</label>
+                <input type="date" value={manualForm.date} onChange={e=>setManualForm(f=>({...f,date:e.target.value}))} style={inp} />
               </div>
+              {/* Notes */}
               <div>
-                <Label>{t("Duration (months)", "المدة (بالأشهر)")}</Label>
-                <Input type="number" value={planForm.duration_months} onChange={e => setPlanForm((f: any) => ({ ...f, duration_months: +e.target.value }))} min={1} max={36} />
+                <label style={lbl}>{t("Notes","ملاحظات")}</label>
+                <textarea value={manualForm.notes} onChange={e=>setManualForm(f=>({...f,notes:e.target.value}))} rows={3} style={{ ...inp, resize:"vertical" }} placeholder={t("Optional notes…","ملاحظات اختيارية…")} />
               </div>
-            </div>
-
-            <div>
-              <Label>{t("Level", "المستوى")}</Label>
-              <Select value={planForm.level} onValueChange={v => setPlanForm((f: any) => ({ ...f, level: v }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">{t("All Levels", "جميع المستويات")}</SelectItem>
-                  <SelectItem value="beginner">{t("Beginner", "مبتدئ")}</SelectItem>
-                  <SelectItem value="intermediate">{t("Intermediate", "متوسط")}</SelectItem>
-                  <SelectItem value="advanced">{t("Advanced", "متقدم")}</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label>{t("Description (English)", "الوصف (إنجليزي)")}</Label>
-                <Textarea value={planForm.description} onChange={e => setPlanForm((f: any) => ({ ...f, description: e.target.value }))} rows={2} />
-              </div>
-              <div>
-                <Label>{t("Description (Arabic)", "الوصف (عربي)")}</Label>
-                <Textarea value={planForm.description_ar} onChange={e => setPlanForm((f: any) => ({ ...f, description_ar: e.target.value }))} rows={2} dir="rtl" />
+              {/* Actions */}
+              <div style={{ display:"flex", gap:10, marginTop:4 }}>
+                <button onClick={()=>setManualOpen(false)} style={{ flex:1, padding:"11px 0", borderRadius:12, background:"#f8fafb", border:`1px solid ${BORDER}`, color:G, fontSize:14, fontWeight:700, cursor:"pointer", fontFamily:"'Cairo',sans-serif" }}>
+                  {t("Cancel","إلغاء")}
+                </button>
+                <button onClick={recordManual} disabled={manualLoading} style={{ flex:2, padding:"11px 0", borderRadius:12, background:G, border:"none", color:"#fff", fontSize:14, fontWeight:700, cursor:"pointer", fontFamily:"'Cairo',sans-serif", opacity:manualLoading?.7:1 }}>
+                  {manualLoading ? t("Saving…","جاري الحفظ…") : t("Record Payment ✅","تسجيل الدفعة ✅")}
+                </button>
               </div>
             </div>
-
-            <div>
-              <Label>{t("Paystack Plan Code (optional)", "كود خطة Paystack (اختياري)")}</Label>
-              <Input value={planForm.paystack_plan_code} onChange={e => setPlanForm((f: any) => ({ ...f, paystack_plan_code: e.target.value }))} placeholder="PLN_xxxxx" />
-            </div>
-
-            <div className="flex items-center gap-2">
-              <Switch checked={planForm.is_active} onCheckedChange={v => setPlanForm((f: any) => ({ ...f, is_active: v }))} />
-              <Label>{t("Active", "نشط")}</Label>
-            </div>
-
-            <Button onClick={savePlan} className="w-full">
-              {editingPlan ? t("Update Plan", "تحديث الخطة") : t("Create Plan", "إنشاء الخطة")}
-            </Button>
           </div>
-        </DialogContent>
-      </Dialog>
+        </div>
+      )}
+
+      {/* ── PLAN DIALOG ── */}
+      {planOpen && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.5)", zIndex:100, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }} onClick={()=>setPlanOpen(false)}>
+          <div style={{ background:"#fff", borderRadius:20, padding:24, width:"100%", maxWidth:520, maxHeight:"90vh", overflowY:"auto" }} onClick={e=>e.stopPropagation()}>
+            <div style={{ fontSize:18, fontWeight:800, color:G, marginBottom:20 }}>
+              {editingPlan ? t("Edit Plan","تعديل الخطة") : t("Create Plan","إنشاء خطة")}
+            </div>
+            <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+                <div>
+                  <label style={lbl}>{t("Name (EN) *","الاسم (إنجليزي) *")}</label>
+                  <input value={planForm.name} onChange={e=>setPlanForm((f:any)=>({...f,name:e.target.value}))} style={inp} placeholder="e.g. Term Fee" />
+                </div>
+                <div>
+                  <label style={lbl}>{t("Name (AR)","الاسم (عربي)")}</label>
+                  <input value={planForm.name_ar} onChange={e=>setPlanForm((f:any)=>({...f,name_ar:e.target.value}))} style={{ ...inp, direction:"rtl" }} placeholder="مثال: رسوم الفصل" />
+                </div>
+              </div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+                <div>
+                  <label style={lbl}>{t("Amount *","المبلغ *")}</label>
+                  <input type="number" value={planForm.amount} onChange={e=>setPlanForm((f:any)=>({...f,amount:+e.target.value}))} style={inp} min={0} />
+                </div>
+                <div>
+                  <label style={lbl}>{t("Currency","العملة")}</label>
+                  <select value={planForm.currency} onChange={e=>setPlanForm((f:any)=>({...f,currency:e.target.value}))} style={{ ...inp, appearance:"none" }}>
+                    <option value="NGN">NGN (₦)</option>
+                    <option value="USD">USD ($)</option>
+                    <option value="GBP">GBP (£)</option>
+                    <option value="SAR">SAR (﷼)</option>
+                  </select>
+                </div>
+              </div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+                <div>
+                  <label style={lbl}>{t("Type","النوع")}</label>
+                  <select value={planForm.type} onChange={e=>setPlanForm((f:any)=>({...f,type:e.target.value}))} style={{ ...inp, appearance:"none" }}>
+                    <option value="term">Term</option>
+                    <option value="monthly">Monthly</option>
+                    <option value="yearly">Yearly</option>
+                    <option value="one_time">One-Time</option>
+                    <option value="private">Private</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={lbl}>{t("Duration (months)","المدة (أشهر)")}</label>
+                  <input type="number" value={planForm.duration_months} onChange={e=>setPlanForm((f:any)=>({...f,duration_months:+e.target.value}))} style={inp} min={1} max={36} />
+                </div>
+              </div>
+              <div>
+                <label style={lbl}>{t("Level","المستوى")}</label>
+                <select value={planForm.level} onChange={e=>setPlanForm((f:any)=>({...f,level:e.target.value}))} style={{ ...inp, appearance:"none" }}>
+                  <option value="all">All Levels</option>
+                  <option value="beginner">Beginner</option>
+                  <option value="intermediate">Intermediate</option>
+                  <option value="advanced">Advanced</option>
+                </select>
+              </div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+                <div>
+                  <label style={lbl}>{t("Description (EN)","الوصف (إنجليزي)")}</label>
+                  <textarea value={planForm.description} onChange={e=>setPlanForm((f:any)=>({...f,description:e.target.value}))} rows={2} style={{ ...inp, resize:"none" }} />
+                </div>
+                <div>
+                  <label style={lbl}>{t("Description (AR)","الوصف (عربي)")}</label>
+                  <textarea value={planForm.description_ar} onChange={e=>setPlanForm((f:any)=>({...f,description_ar:e.target.value}))} rows={2} style={{ ...inp, resize:"none", direction:"rtl" }} />
+                </div>
+              </div>
+              <div>
+                <label style={lbl}>{t("Paystack Plan Code","كود خطة Paystack")} <span style={{ fontWeight:400, color:"#7a9e88" }}>({t("optional","اختياري")})</span></label>
+                <input value={planForm.paystack_plan_code} onChange={e=>setPlanForm((f:any)=>({...f,paystack_plan_code:e.target.value}))} style={inp} placeholder="PLN_xxxxx" />
+              </div>
+              <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                <Switch checked={planForm.is_active} onCheckedChange={v=>setPlanForm((f:any)=>({...f,is_active:v}))} />
+                <span style={{ fontSize:13, fontWeight:600, color:G }}>{t("Active","نشط")}</span>
+              </div>
+              <div style={{ display:"flex", gap:10 }}>
+                <button onClick={()=>setPlanOpen(false)} style={{ flex:1, padding:"11px 0", borderRadius:12, background:"#f8fafb", border:`1px solid ${BORDER}`, color:G, fontSize:14, fontWeight:700, cursor:"pointer", fontFamily:"'Cairo',sans-serif" }}>
+                  {t("Cancel","إلغاء")}
+                </button>
+                <button onClick={savePlan} disabled={planLoading} style={{ flex:2, padding:"11px 0", borderRadius:12, background:G, border:"none", color:"#fff", fontSize:14, fontWeight:700, cursor:"pointer", fontFamily:"'Cairo',sans-serif", opacity:planLoading?.7:1 }}>
+                  {planLoading?"Saving…" : editingPlan ? t("Update Plan ✅","تحديث الخطة ✅") : t("Create Plan ✅","إنشاء الخطة ✅")}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
