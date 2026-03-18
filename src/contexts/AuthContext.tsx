@@ -1,3 +1,4 @@
+
 import React, { createContext, useContext, useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { User, Session } from "@supabase/supabase-js";
@@ -47,7 +48,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (rolesRes.data) setRoles(rolesRes.data.map((r) => r.role));
       if (profileRes.data) setProfile(profileRes.data as UserProfile);
     } catch (err) {
-      console.error("AuthContext: failed to load user profile data", err);
+      console.error("fetchUserData error:", err);
     }
   };
 
@@ -67,7 +68,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setRoles([]);
         setProfile(null);
       }
-      setLoading(false);
+      setLoading(false); // ← MUST stay here, never inside fetchUserData
     });
 
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -82,8 +83,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signUp = async (email: string, password: string, fullName: string) => {
     return supabase.auth.signUp({
-      email,
-      password,
+      email, password,
       options: { emailRedirectTo: window.location.origin, data: { full_name: fullName } },
     });
   };
@@ -94,10 +94,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signOut = async () => {
     await supabase.auth.signOut();
-    setUser(null);
-    setSession(null);
-    setRoles([]);
-    setProfile(null);
+    setUser(null); setSession(null); setRoles([]); setProfile(null);
   };
 
   const hasRole = (role: string) => roles.includes(role);
