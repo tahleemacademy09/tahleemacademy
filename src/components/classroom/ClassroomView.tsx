@@ -14,8 +14,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
   LiveKitRoom, RoomAudioRenderer, useRoomContext,
-  GridLayout, ParticipantTile, useTracks, useParticipants,
-  TrackContext
+  GridLayout, ParticipantTile, useTracks,
 } from "@livekit/components-react";
 // @ts-ignore
 import "@livekit/components-styles";
@@ -215,7 +214,7 @@ const Whiteboard = ({ onClose, fullscreen, onToggleFullscreen, isTeacher }: {
 };
 
 /* ═══════════════════════════════════════════════════════
-   VIDEO GRID — replaces <VideoConference /> (which had duplicate controls)
+   VIDEO GRID — replaces <VideoConference /> (no duplicate controls)
 ═══════════════════════════════════════════════════════ */
 const VideoGrid = () => {
   const tracks = useTracks(
@@ -227,9 +226,7 @@ const VideoGrid = () => {
   );
   return (
     <GridLayout tracks={tracks} style={{ height:"100%", padding:4 }}>
-      <TrackContext.Consumer>
-        {(track) => track ? <ParticipantTile {...track} /> : null}
-      </TrackContext.Consumer>
+      <ParticipantTile />
     </GridLayout>
   );
 };
