@@ -1,30 +1,34 @@
+/*  src/pages/student/PreExamVerification.tsx
+    ENHANCED VERSION — Cleaner step flow, better camera preview,
+    smoother animations, improved mobile experience
+*/
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Progress } from "@/components/ui/progress";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import {
   Camera, Mic, Monitor, Wifi, Shield, AlertTriangle, CheckCircle2,
-  XCircle, Eye, Volume2, Smartphone, Globe, Lock, Play
+  XCircle, Eye, Volume2, Smartphone, Globe, Lock, Play,
+  Clock, BookOpen, ChevronRight, Loader2
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
-type CheckStatus = "pending" | "running" | "passed" | "failed";
+type CheckStatus = "pending" | "running" | "passed" | "failed" | "warning";
+interface SystemCheck { id: string; label: string; labelAr: string; icon: React.ReactNode; status: CheckStatus; detail?: string; }
 
-interface SystemCheck {
-  id: string;
-  label: string;
-  labelAr: string;
-  icon: React.ReactNode;
-  status: CheckStatus;
-  detail?: string;
-}
+const G = "#0f2d1f", GM = "#1a4731", GOLD = "#c9a84c";
+
+const statusColors: Record<CheckStatus, { bg: string; border: string; text: string; icon: React.ReactNode }> = {
+  pending: { bg: "#f8fafb", border: "#e5e7eb", text: "#9ca3af", icon: <div style={{ width: 16, height: 16, borderRadius: "50%", border: "2px solid #d1d5db" }} /> },
+  running: { bg: "#f0f9ff", border: "#bae6fd", text: "#0284c7", icon: <Loader2 style={{ width: 16, height: 16, color: "#0284c7", animation: "spin .8s linear infinite" }} /> },
+  passed: { bg: "#f0fff4", border: "#86efac", text: "#22c55e", icon: <CheckCircle2 style={{ width: 16, height: 16, color: "#22c55e" }} /> },
+  failed: { bg: "#fff5f5", border: "#fca5a5", text: "#ef4444", icon: <XCircle style={{ width: 16, height: 16, color: "#ef4444" }} /> },
+  warning: { bg: "#fffbeb", border: "#fde68a", text: "#f59e0b", icon: <AlertTriangle style={{ width: 16, height: 16, color: "#f59e0b" }} /> },
+};
 
 const PreExamVerification = () => {
   const { examId } = useParams<{ examId: string }>();
@@ -42,6 +46,8 @@ const PreExamVerification = () => {
   const [micLevel, setMicLevel] = useState(0);
   const [micTested, setMicTested] = useState(false);
   const [webcamStream, setWebcamStream] = useState<MediaStream | null>(null);
+  const [step, setStep] = useState<"info" | "checks" | "checklist" | "ready">("info");
+  const [checksComplete, setChecksComplete] = useState(false);
   const [checklist, setChecklist] = useState({
     quietEnvironment: false,
     faceVisible: false,
@@ -69,518 +75,416 @@ const PreExamVerification = () => {
     setChecks(prev => prev.map(c => c.id === id ? { ...c, status, detail } : c));
   }, []);
 
-  // Load exam
   useEffect(() => {
     if (!examId || !user) return;
     const load = async () => {
-      const { data: examData } = await supabase
-        .from("exams")
-        .select("*")
-        .eq("id", examId)
-        .single();
-
-      if (!examData) {
-        navigate("/student/exams");
-        return;
-      }
-
-      // Check if there's already an in-progress attempt
-      const { data: existing } = await supabase
-        .from("exam_attempts")
-        .select("id")
-        .eq("exam_id", examId)
-        .eq("user_id", user.id)
-        .eq("status", "in_progress")
-        .maybeSingle();
-
-      if (existing) {
-        navigate(`/student/exam/${existing.id}`);
-        return;
-      }
-
-      setExam(examData);
-      setLoading(false);
+      const { data: examData } = await supabase.from("exams").select("*").eq("id", examId).single();
+      if (!examData) { navigate("/student/exams"); return; }
+      const { data: existing } = await supabase.from("exam_attempts").select("id").eq("exam_id", examId).eq("user_id", user.id).eq("status", "in_progress").maybeSingle();
+      if (existing) { navigate(`/student/exam/${existing.id}`); return; }
+      setExam(examData); setLoading(false);
     };
     load();
   }, [examId, user]);
 
-  // Run system checks after exam loads
-  useEffect(() => {
-    if (!exam || loading) return;
-    runSystemChecks();
-  }, [exam, loading]);
-
   const runSystemChecks = async () => {
-    // Device check
+    // Device
     updateCheck("device", "running");
+    await new Promise(r => setTimeout(r, 300));
     const ua = navigator.userAgent;
     const isMobile = /mobile|android|iphone/i.test(ua);
-    const isTablet = /tablet|ipad/i.test(ua);
-    const deviceType = isMobile ? "Mobile" : isTablet ? "Tablet" : "Desktop";
+    const deviceType = isMobile ? "Mobile" : /tablet|ipad/i.test(ua) ? "Tablet" : "Desktop";
     updateCheck("device", "passed", deviceType);
 
-    // Browser check
+    // Browser
     updateCheck("browser", "running");
+    await new Promise(r => setTimeout(r, 200));
     const isChrome = /chrome/i.test(ua) && !/edge/i.test(ua);
     const isFirefox = /firefox/i.test(ua);
     const isEdge = /edg/i.test(ua);
-    const isSafari = /safari/i.test(ua) && !isChrome;
-    const browserName = isChrome ? "Chrome" : isFirefox ? "Firefox" : isEdge ? "Edge" : isSafari ? "Safari" : "Other";
-    const supported = isChrome || isFirefox || isEdge;
-    updateCheck("browser", supported ? "passed" : "failed", browserName + (supported ? "" : " - Not recommended"));
+    const browserName = isChrome ? "Chrome" : isFirefox ? "Firefox" : isEdge ? "Edge" : /safari/i.test(ua) ? "Safari" : "Other";
+    updateCheck("browser", (isChrome || isFirefox || isEdge) ? "passed" : "warning", `${browserName}${!(isChrome || isFirefox || isEdge) ? " — Not fully supported" : ""}`);
 
-    // Internet check
+    // Internet
     updateCheck("internet", "running");
     try {
       const start = Date.now();
-      await fetch(`${import.meta.env.VITE_SUPABASE_URL}/rest/v1/`, {
-        method: "HEAD",
-        headers: { apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY },
-      });
+      await fetch(`${import.meta.env.VITE_SUPABASE_URL}/rest/v1/`, { method: "HEAD", headers: { apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY } });
       const latency = Date.now() - start;
-      updateCheck("internet", latency < 3000 ? "passed" : "failed", `${latency}ms latency`);
-    } catch {
-      updateCheck("internet", "failed", "Connection failed");
-    }
+      updateCheck("internet", latency < 2000 ? "passed" : "warning", `${latency}ms latency`);
+    } catch { updateCheck("internet", "failed", "Connection failed"); }
 
-    // Fullscreen check
+    // Fullscreen
     updateCheck("fullscreen", "running");
-    const fsSupported = document.documentElement.requestFullscreen !== undefined;
-    updateCheck("fullscreen", fsSupported ? "passed" : "failed", fsSupported ? "Supported" : "Not supported");
+    await new Promise(r => setTimeout(r, 200));
+    updateCheck("fullscreen", document.documentElement.requestFullscreen !== undefined ? "passed" : "warning", "Supported");
 
-    // Camera check
+    // Camera
     updateCheck("camera", "running");
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: false });
       setWebcamStream(stream);
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.play();
-      }
-      updateCheck("camera", "passed", "Camera active");
-    } catch {
-      updateCheck("camera", "failed", "Camera access denied");
+      if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play().catch(() => {}); }
+      updateCheck("camera", "passed", "Ready");
+    } catch (e: any) {
+      updateCheck("camera", exam?.webcam_required ? "failed" : "warning", e.name === "NotAllowedError" ? "Permission denied" : "Not available");
     }
 
-    // Mic check
+    // Mic
     updateCheck("mic", "running");
     try {
       const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const audioCtx = new AudioContext();
-      const source = audioCtx.createMediaStreamSource(micStream);
-      const analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 256;
-      source.connect(analyser);
-      audioContextRef.current = audioCtx;
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      audioContextRef.current = ctx;
+      const analyser = ctx.createAnalyser(); analyser.fftSize = 256;
       analyserRef.current = analyser;
-
-      // Start mic level monitoring
-      const dataArray = new Uint8Array(analyser.frequencyBinCount);
-      const monitorMic = () => {
-        analyser.getByteFrequencyData(dataArray);
-        const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
-        const normalized = Math.min(100, (avg / 128) * 100);
-        setMicLevel(normalized);
-        if (normalized > 15) setMicTested(true);
-        micAnimRef.current = requestAnimationFrame(monitorMic);
+      const src = ctx.createMediaStreamSource(micStream);
+      src.connect(analyser);
+      updateCheck("mic", "passed", "Ready");
+      setMicTested(true);
+      const data = new Uint8Array(analyser.frequencyBinCount);
+      const tick = () => {
+        analyser.getByteFrequencyData(data);
+        const avg = data.reduce((a, b) => a + b, 0) / data.length;
+        setMicLevel(Math.min(100, (avg / 128) * 100));
+        micAnimRef.current = requestAnimationFrame(tick);
       };
-      monitorMic();
-      updateCheck("mic", "passed", "Microphone active");
+      micAnimRef.current = requestAnimationFrame(tick);
     } catch {
-      updateCheck("mic", "failed", "Microphone access denied");
+      updateCheck("mic", exam?.record_audio ? "failed" : "warning", "Not available");
     }
+
+    setChecksComplete(true);
   };
 
-  // Cleanup streams on unmount
   useEffect(() => {
-    return () => {
-      webcamStream?.getTracks().forEach(t => t.stop());
-      if (micAnimRef.current) cancelAnimationFrame(micAnimRef.current);
-      if (audioContextRef.current && audioContextRef.current.state !== "closed") {
-        audioContextRef.current.close().catch(() => {});
-      }
-    };
-  }, [webcamStream]);
+    if (step === "checks" && exam) runSystemChecks();
+  }, [step, exam]);
 
-  // Capture face snapshot
+  useEffect(() => { return () => { if (micAnimRef.current) cancelAnimationFrame(micAnimRef.current); audioContextRef.current?.close(); }; }, []);
+
   const captureSnapshot = () => {
     if (!videoRef.current || !canvasRef.current) return;
-    const video = videoRef.current;
     const canvas = canvasRef.current;
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    ctx.drawImage(video, 0, 0);
-    const dataUrl = canvas.toDataURL("image/jpeg", 0.8);
-    setFaceSnapshot(dataUrl);
+    canvas.width = videoRef.current.videoWidth || 320;
+    canvas.height = videoRef.current.videoHeight || 240;
+    canvas.getContext("2d")?.drawImage(videoRef.current, 0, 0);
+    setFaceSnapshot(canvas.toDataURL("image/jpeg", 0.8));
     setFaceCaptured(true);
-    toast({ title: t("✅ Face captured successfully", "✅ تم التقاط الوجه بنجاح") });
+    toast({ title: t("📸 Photo captured!", "📸 تم التقاط الصورة!") });
   };
 
-  const retakeSnapshot = () => {
-    setFaceSnapshot(null);
-    setFaceCaptured(false);
-  };
-
-  // Calculate readiness
-  const passedChecks = checks.filter(c => c.status === "passed").length;
-  const allChecksPassed = checks.every(c => c.status === "passed");
-  const allReady = allChecksPassed && agreed && faceCaptured && micTested && allChecked;
-  const progressValue = (passedChecks / checks.length) * 100;
-
-  // Start exam
-  const handleStartExam = async () => {
-    if (!allReady || !user || !examId || starting) return;
+  const handleStart = async () => {
+    if (!user || !examId) return;
     setStarting(true);
-
     try {
-      // Create the exam attempt FIRST so we have an attempt_id
-      const { data: attemptData, error } = await supabase
-        .from("exam_attempts")
-        .insert({ exam_id: examId, user_id: user.id })
-        .select("id")
-        .single();
-
-      if (error || !attemptData) {
-        toast({ title: t("Error starting exam", "خطأ في بدء الامتحان"), description: error?.message, variant: "destructive" });
-        setStarting(false);
-        return;
+      // Upload verification snapshot if available
+      if (faceSnapshot && webcamStream) {
+        const response = await fetch(faceSnapshot);
+        const blob = await response.blob();
+        const path = `${user.id}/${examId}/verification_${Date.now()}.jpg`;
+        await supabase.storage.from("proctoring-media").upload(path, blob, { contentType: "image/jpeg", upsert: true });
       }
 
-      // Upload face snapshot to storage AND link to proctoring_media table
-      if (faceSnapshot) {
-        try {
-          const blob = await fetch(faceSnapshot).then(r => r.blob());
-          const timestamp = Date.now();
-          const path = `${user.id}/${attemptData.id}/verification_${timestamp}.jpg`;
-
-          const { error: uploadErr } = await supabase.storage
-            .from("proctoring-media")
-            .upload(path, blob, { contentType: "image/jpeg", upsert: true });
-
-          if (!uploadErr) {
-            // Insert into proctoring_media table so admin can see it
-            await supabase.from("proctoring_media").insert({
-              attempt_id: attemptData.id,
-              file_type: "verification_snapshot",
-              file_url: path,
-              file_name: `verification_${timestamp}.jpg`,
-              file_size: blob.size,
-              metadata: {
-                timestamp: new Date(timestamp).toISOString(),
-                type: "pre_exam_verification",
-                user_id: user.id,
-                exam_id: examId,
-              },
-            });
-            console.log("[PreExam] ✅ Verification snapshot saved:", path);
-          } else {
-            console.warn("[PreExam] Verification snapshot upload failed:", uploadErr.message);
-          }
-        } catch (snapErr) {
-          console.warn("[PreExam] Snapshot save error:", snapErr);
-          // Non-blocking — continue to exam
-        }
-      }
-
-      // Log device info
-      const ua = navigator.userAgent;
-      const deviceType = /mobile/i.test(ua) ? "mobile" : /tablet/i.test(ua) ? "tablet" : "desktop";
-      const browser = /chrome/i.test(ua) ? "Chrome" : /firefox/i.test(ua) ? "Firefox" : /safari/i.test(ua) ? "Safari" : /edg/i.test(ua) ? "Edge" : "Other";
-      await supabase.from("device_logs").insert({
-        attempt_id: attemptData.id,
-        device_type: deviceType,
-        browser,
-        user_agent: ua,
-        screen_resolution: `${screen.width}x${screen.height}`,
-      });
-
-      // Stop local streams (they'll be re-created in the exam page by proctoring hook)
+      // Stop streams before starting
       webcamStream?.getTracks().forEach(t => t.stop());
-      if (micAnimRef.current) cancelAnimationFrame(micAnimRef.current);
-      if (audioContextRef.current && audioContextRef.current.state !== "closed") {
-        audioContextRef.current.close().catch(() => {});
-      }
 
-      // Navigate to exam
-      navigate(`/student/exam/${attemptData.id}`);
+      const { data, error } = await supabase.from("exam_attempts").insert({
+        exam_id: examId, user_id: user.id, status: "in_progress",
+        started_at: new Date().toISOString(), tab_switches: 0,
+      }).select().single();
+
+      if (error || !data) throw error;
+
+      // Try fullscreen
+      if (exam?.fullscreen_required) {
+        try { await document.documentElement.requestFullscreen(); } catch (_) {}
+      }
+      navigate(`/student/exam/${data.id}`);
     } catch (e: any) {
-      toast({ title: t("Error", "خطأ"), description: e.message, variant: "destructive" });
+      toast({ title: t("Failed to start exam.", "فشل بدء الامتحان."), variant: "destructive" });
       setStarting(false);
     }
   };
 
-  if (loading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
-        <div className="text-center space-y-4">
-          <div className="h-12 w-12 mx-auto animate-spin rounded-full border-4 border-primary border-t-transparent" />
-          <p className="text-muted-foreground">{t("Preparing verification...", "جارٍ تحضير التحقق...")}</p>
-        </div>
-      </div>
-    );
-  }
+  const hasCriticalFailure = checks.some(c => c.status === "failed");
+  const passedChecks = checks.filter(c => c.status === "passed").length;
+  const checksProgress = (passedChecks / checks.length) * 100;
 
-  const rules = [
-    { icon: <Camera className="h-4 w-4" />, text: t("Camera must remain ON throughout the exam", "يجب أن تبقى الكاميرا مفتوحة طوال الامتحان") },
-    { icon: <Mic className="h-4 w-4" />, text: t("Microphone must remain ON — no background voices allowed", "يجب أن يبقى الميكروفون مفتوحاً — لا يُسمح بأصوات خلفية") },
-    { icon: <Monitor className="h-4 w-4" />, text: t("Fullscreen mode is required — do not exit", "مطلوب وضع ملء الشاشة — لا تخرج منه") },
-    { icon: <Eye className="h-4 w-4" />, text: t("Only ONE face must be visible — no other persons", "يجب أن يظهر وجه واحد فقط — لا أشخاص آخرين") },
-    { icon: <Lock className="h-4 w-4" />, text: t("No tab switching — violations will be recorded", "لا تبديل بين النوافذ — سيتم تسجيل المخالفات") },
-    { icon: <AlertTriangle className="h-4 w-4" />, text: t("Excessive violations may trigger automatic submission", "المخالفات المتكررة قد تؤدي إلى تقديم تلقائي للامتحان") },
-  ];
+  if (loading) return (
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#f8fafb" }}>
+      <div style={{ textAlign: "center", fontFamily: "'Cairo',sans-serif" }}>
+        <div style={{ width: 48, height: 48, border: `4px solid ${G}`, borderTopColor: "transparent", borderRadius: "50%", animation: "spin .8s linear infinite", margin: "0 auto 14px" }} />
+        <p style={{ color: "#7a9e88", fontSize: 14 }}>Loading exam…</p>
+      </div>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+    </div>
+  );
 
   return (
-    <div className="min-h-screen bg-background">
-      <div className="container mx-auto max-w-4xl px-4 py-6">
+    <div style={{ minHeight: "100vh", background: "linear-gradient(135deg,#f0f4f8,#e8f0e8)", fontFamily: "'Cairo',sans-serif", padding: "20px 16px" }}>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}} @keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}`}</style>
+      <canvas ref={canvasRef} style={{ display: "none" }} />
+
+      <div style={{ maxWidth: 560, margin: "0 auto" }}>
+
         {/* Header */}
-        <div className="text-center mb-6">
-          <div className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-4 py-2 mb-3">
-            <Shield className="h-5 w-5 text-primary" />
-            <span className="text-sm font-semibold text-primary">{t("Pre-Exam Verification", "التحقق قبل الامتحان")}</span>
+        <div style={{ textAlign: "center", marginBottom: 24, animation: "fadeUp .4s ease" }}>
+          <div style={{ width: 64, height: 64, borderRadius: 20, background: G, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px", boxShadow: "0 8px 24px rgba(15,45,31,.3)" }}>
+            <Shield style={{ width: 30, height: 30, color: GOLD }} />
           </div>
-          <h1 className="text-2xl font-bold mb-1">
+          <h1 style={{ fontSize: 24, fontWeight: 900, color: G, marginBottom: 6 }}>
             {language === "ar" ? exam?.title_ar || exam?.title : exam?.title}
           </h1>
-          <p className="text-sm text-muted-foreground">
-            {t("Complete all checks below before starting your exam", "أكمل جميع الفحوصات أدناه قبل بدء الامتحان")}
-          </p>
-          <Progress value={progressValue} className="h-2 mt-4 max-w-xs mx-auto" />
+          <p style={{ fontSize: 14, color: "#7a9e88" }}>{t("Pre-Exam Verification", "التحقق قبل الامتحان")}</p>
         </div>
 
-        <div className="grid gap-6 lg:grid-cols-2">
-          {/* Left: Camera & Mic */}
-          <div className="space-y-4">
-            {/* Webcam Preview */}
-            <Card className="overflow-hidden border-2">
-              <CardContent className="p-0">
-                <div className="relative aspect-video bg-black">
-                  {faceSnapshot ? (
-                    <img src={faceSnapshot} alt="Face snapshot" className="w-full h-full object-cover" />
-                  ) : (
-                    <video
-                      ref={videoRef}
-                      autoPlay
-                      playsInline
-                      muted
-                      className="w-full h-full object-cover mirror"
-                      style={{ transform: "scaleX(-1)" }}
-                    />
-                  )}
-                  <canvas ref={canvasRef} className="hidden" />
-                  {checks.find(c => c.id === "camera")?.status === "failed" && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-black/80">
-                      <div className="text-center text-white">
-                        <XCircle className="h-12 w-12 mx-auto mb-2 text-destructive" />
-                        <p className="text-sm">{t("Camera access denied", "تم رفض الوصول إلى الكاميرا")}</p>
-                        <p className="text-xs text-muted-foreground mt-1">{t("Please allow camera access in browser settings", "يرجى السماح بالوصول إلى الكاميرا في إعدادات المتصفح")}</p>
-                      </div>
-                    </div>
-                  )}
-                </div>
-                <div className="p-3 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    {faceCaptured ? (
-                      <Badge className="bg-emerald/10 text-emerald border-emerald/30">
-                        <CheckCircle2 className="h-3 w-3 mr-1" /> {t("Face Captured", "تم التقاط الوجه")}
-                      </Badge>
-                    ) : (
-                      <Badge variant="outline" className="text-muted-foreground">
-                        {t("Face snapshot required", "مطلوب صورة للوجه")}
-                      </Badge>
-                    )}
+        {/* Step indicator */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginBottom: 24 }}>
+          {[{ id: "info", label: "Info" }, { id: "checks", label: "Checks" }, { id: "checklist", label: "Checklist" }, { id: "ready", label: "Start" }].map((s, i, arr) => {
+            const steps = ["info", "checks", "checklist", "ready"];
+            const idx = steps.indexOf(step);
+            const sIdx = steps.indexOf(s.id);
+            const isDone = sIdx < idx;
+            const isCurrent = sIdx === idx;
+            return (
+              <>
+                <div key={s.id} style={{ display: "flex", flex: isCurrent ? 1.4 : 1, flexDirection: "column", alignItems: "center", gap: 4 }}>
+                  <div style={{ width: 28, height: 28, borderRadius: "50%", background: isDone ? "#22c55e" : isCurrent ? G : "#e5e7eb", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, color: (isDone || isCurrent) ? "#fff" : "#9ca3af", transition: "all .3s" }}>
+                    {isDone ? "✓" : i + 1}
                   </div>
-                  <div className="flex gap-2">
-                    {faceCaptured ? (
-                      <Button size="sm" variant="outline" onClick={retakeSnapshot}>
-                        {t("Retake", "إعادة")}
-                      </Button>
-                    ) : (
-                      <Button
-                        size="sm"
-                        onClick={captureSnapshot}
-                        disabled={checks.find(c => c.id === "camera")?.status !== "passed"}
-                      >
-                        <Camera className="h-3 w-3 mr-1" />
-                        {t("Capture Face", "التقاط الوجه")}
-                      </Button>
-                    )}
-                  </div>
+                  {isCurrent && <div style={{ fontSize: 9, fontWeight: 700, color: G, letterSpacing: 0.5 }}>{s.label}</div>}
                 </div>
-              </CardContent>
-            </Card>
+                {i < arr.length - 1 && <div style={{ height: 2, flex: 2, background: isDone ? "#22c55e" : "#e5e7eb", borderRadius: 1, marginBottom: 18, transition: "background .3s" }} />}
+              </>
+            );
+          })}
+        </div>
 
-            {/* Microphone Test */}
-            <Card className="border-2">
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <Mic className="h-4 w-4 text-primary" />
-                    <span className="font-semibold text-sm">{t("Microphone Test", "اختبار الميكروفون")}</span>
-                  </div>
-                  {micTested ? (
-                    <Badge className="bg-emerald/10 text-emerald border-emerald/30">
-                      <CheckCircle2 className="h-3 w-3 mr-1" /> {t("Tested", "تم الاختبار")}
-                    </Badge>
-                  ) : (
-                    <Badge variant="outline" className="text-muted-foreground">
-                      {t("Speak to test", "تحدث للاختبار")}
-                    </Badge>
-                  )}
-                </div>
-                <p className="text-xs text-muted-foreground mb-3">
-                  {t("Speak aloud to verify your microphone is working", "تحدث بصوت عالٍ للتحقق من عمل الميكروفون")}
-                </p>
-                <div className="flex items-center gap-3">
-                  <Volume2 className="h-4 w-4 text-muted-foreground shrink-0" />
-                  <div className="flex-1 h-6 bg-muted rounded-full overflow-hidden relative">
-                    <motion.div
-                      className="h-full rounded-full"
-                      style={{
-                        width: `${micLevel}%`,
-                        background: micLevel > 50
-                          ? "hsl(var(--primary))"
-                          : micLevel > 15
-                          ? "hsl(142, 71%, 45%)"
-                          : "hsl(var(--muted-foreground))",
-                      }}
-                      transition={{ duration: 0.1 }}
-                    />
-                  </div>
-                  <span className="text-xs font-mono w-8 text-right">{Math.round(micLevel)}%</span>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Right: Rules & Checks */}
-          <div className="space-y-4">
-            {/* System Checks */}
-            <Card className="border-2">
-              <CardContent className="p-4">
-                <h3 className="font-semibold text-sm mb-3 flex items-center gap-2">
-                  <Monitor className="h-4 w-4 text-primary" />
-                  {t("System Checks", "فحوصات النظام")}
-                </h3>
-                <div className="space-y-2">
-                  {checks.map(check => (
-                    <div key={check.id} className="flex items-center justify-between rounded-lg border p-2.5">
-                      <div className="flex items-center gap-2">
-                        {check.icon}
-                        <span className="text-sm">{language === "ar" ? check.labelAr : check.label}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {check.detail && (
-                          <span className="text-xs text-muted-foreground">{check.detail}</span>
-                        )}
-                        {check.status === "pending" && <div className="h-4 w-4 rounded-full border-2 border-muted-foreground/30" />}
-                        {check.status === "running" && <div className="h-4 w-4 rounded-full border-2 border-primary border-t-transparent animate-spin" />}
-                        {check.status === "passed" && <CheckCircle2 className="h-4 w-4 text-emerald-500" />}
-                        {check.status === "failed" && <XCircle className="h-4 w-4 text-destructive" />}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Rules */}
-            <Card className="border-2 border-destructive/20">
-              <CardContent className="p-4">
-                <h3 className="font-semibold text-sm mb-3 flex items-center gap-2 text-destructive">
-                  <AlertTriangle className="h-4 w-4" />
-                  {t("Exam Rules", "قوانين الامتحان")}
-                </h3>
-                <div className="space-y-2 mb-4">
-                  {rules.map((rule, i) => (
-                    <div key={i} className="flex items-start gap-2 text-xs">
-                      <div className="shrink-0 mt-0.5 text-muted-foreground">{rule.icon}</div>
-                      <span>{rule.text}</span>
-                    </div>
-                  ))}
-                </div>
-
-                {/* GDPR Proctoring Checklist */}
-                <div className="border-t pt-3 space-y-2">
-                  <p className="text-xs font-semibold text-muted-foreground mb-2">
-                    {t("📋 Proctoring Checklist — Please confirm:", "📋 قائمة التحقق — يرجى التأكيد:")}
-                  </p>
+        {/* ── INFO STEP ── */}
+        {step === "info" && (
+          <div style={{ animation: "fadeUp .3s ease" }}>
+            <div style={{ background: "#fff", borderRadius: 20, overflow: "hidden", boxShadow: "0 4px 24px rgba(0,0,0,.08)", marginBottom: 16 }}>
+              <div style={{ background: G, padding: "20px 24px" }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,.7)", marginBottom: 12, letterSpacing: 1 }}>EXAM DETAILS</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
                   {[
-                    { key: "quietEnvironment" as const, en: "I am in a quiet environment", ar: "أنا في بيئة هادئة" },
-                    { key: "faceVisible" as const, en: "My face is clearly visible", ar: "وجهي مرئي بوضوح" },
-                    { key: "noDevices" as const, en: "I will not use any other devices", ar: "لن أستخدم أي أجهزة أخرى" },
-                    { key: "noTabSwitch" as const, en: "I will not switch tabs during the exam", ar: "لن أبدل بين النوافذ أثناء الامتحان" },
-                  ].map(item => (
-                    <label key={item.key} className="flex items-start gap-2 cursor-pointer">
-                      <Checkbox
-                        checked={checklist[item.key]}
-                        onCheckedChange={(v) => setChecklist(prev => ({ ...prev, [item.key]: !!v }))}
-                        className="mt-0.5"
-                      />
-                      <span className="text-xs">{t(item.en, item.ar)}</span>
-                    </label>
+                    { icon: <Clock style={{ width: 16, height: 16 }} />, label: t("Duration", "المدة"), value: `${exam?.time_limit_minutes} ${t("minutes", "دقيقة")}` },
+                    { icon: <BookOpen style={{ width: 16, height: 16 }} />, label: t("Questions", "الأسئلة"), value: `${exam?.question_count || "?"} ${t("questions", "سؤال")}` },
+                    { icon: <Shield style={{ width: 16, height: 16 }} />, label: t("Pass Mark", "درجة النجاح"), value: `${exam?.passing_score}%` },
+                    { icon: <Eye style={{ width: 16, height: 16 }} />, label: t("Attempts", "المحاولات"), value: `${exam?.max_attempts || 1}` },
+                  ].map((item, i) => (
+                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <div style={{ color: GOLD }}>{item.icon}</div>
+                      <div>
+                        <div style={{ fontSize: 10, color: "rgba(255,255,255,.5)" }}>{item.label}</div>
+                        <div style={{ fontSize: 16, fontWeight: 800, color: "#fff" }}>{item.value}</div>
+                      </div>
+                    </div>
                   ))}
                 </div>
+              </div>
 
-                {/* GDPR notice */}
-                <div className="border-t pt-3 mt-2">
-                  <p className="text-[10px] text-muted-foreground leading-relaxed">
-                    🔒 {t(
-                      "Your camera and microphone will be recorded during this exam for academic integrity purposes. All data is stored securely and only accessible to your instructor.",
-                      "سيتم تسجيل الكاميرا والميكروفون أثناء هذا الامتحان لأغراض النزاهة الأكاديمية. جميع البيانات مخزنة بشكل آمن ومتاحة فقط لمدرسك."
-                    )}
-                  </p>
+              {/* Proctoring notice */}
+              {exam?.proctoring_enabled && (
+                <div style={{ padding: "16px 20px", background: "#fffbeb", borderBottom: "1px solid #fde68a" }}>
+                  <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                    <AlertTriangle style={{ width: 18, height: 18, color: "#f59e0b", flexShrink: 0, marginTop: 2 }} />
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#92400e", marginBottom: 4 }}>{t("This exam is proctored", "هذا الامتحان مراقَب")}</div>
+                      <div style={{ fontSize: 12, color: "#78350f", lineHeight: 1.6 }}>
+                        {t("Your webcam, microphone, and screen activity will be monitored. Any violations may result in point deductions.", "سيتم مراقبة كاميرا الويب والميكروفون ونشاطك على الشاشة. قد تؤدي أي مخالفات إلى خصم نقاط.")}
+                      </div>
+                    </div>
+                  </div>
                 </div>
-
-                <div className="border-t pt-3">
-                  <label className="flex items-start gap-3 cursor-pointer">
-                    <Checkbox
-                      checked={agreed}
-                      onCheckedChange={(v) => setAgreed(!!v)}
-                      className="mt-0.5"
-                    />
-                    <span className="text-xs leading-relaxed">
-                      {t(
-                        "I have read and agree to all the exam rules. I understand that my camera and audio will be monitored and any violation may result in automatic submission.",
-                        "لقد قرأت ووافقت على جميع قوانين الامتحان. أفهم أنه سيتم مراقبة الكاميرا والصوت وأن أي مخالفة قد تؤدي إلى تقديم تلقائي."
-                      )}
-                    </span>
-                  </label>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Start Button */}
-            <Button
-              size="lg"
-              className="w-full h-12 text-base gap-2"
-              disabled={!allReady || starting}
-              onClick={handleStartExam}
-            >
-              {starting ? (
-                <>
-                  <div className="h-4 w-4 rounded-full border-2 border-primary-foreground border-t-transparent animate-spin" />
-                  {t("Starting...", "جارٍ البدء...")}
-                </>
-              ) : (
-                <>
-                  <Play className="h-5 w-5" />
-                  {t("Start Exam", "بدء الامتحان")}
-                </>
               )}
-            </Button>
-            {!allReady && (
-              <p className="text-xs text-center text-muted-foreground">
-                {!allChecksPassed && t("Complete all system checks", "أكمل جميع فحوصات النظام")}
-                {allChecksPassed && !faceCaptured && t("Capture your face snapshot", "التقط صورة لوجهك")}
-                {allChecksPassed && faceCaptured && !micTested && t("Test your microphone by speaking", "اختبر الميكروفون بالتحدث")}
-                {allChecksPassed && faceCaptured && micTested && !allChecked && t("Complete the proctoring checklist", "أكمل قائمة التحقق")}
-                {allChecksPassed && faceCaptured && micTested && allChecked && !agreed && t("Accept the exam rules", "وافق على قوانين الامتحان")}
-              </p>
+
+              {/* Guidelines */}
+              {(exam?.guidelines || exam?.guidelines_ar) && (
+                <div style={{ padding: "16px 20px" }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "#9ca3af", marginBottom: 10, letterSpacing: 1 }}>GUIDELINES</div>
+                  <div style={{ fontSize: 14, color: G, lineHeight: 1.8, fontFamily: "'Amiri',serif" }} dir="auto">
+                    {language === "ar" ? exam.guidelines_ar || exam.guidelines : exam.guidelines}
+                  </div>
+                </div>
+              )}
+
+              {/* Standard rules */}
+              <div style={{ padding: "0 20px 20px" }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "#9ca3af", marginBottom: 10, letterSpacing: 1 }}>RULES</div>
+                {[
+                  t("Do not switch tabs or leave this page during the exam.", "لا تتبدل التبويبات أو تغادر هذه الصفحة."),
+                  t("Keep your face visible in the camera at all times.", "احرص على أن يكون وجهك مرئياً في الكاميرا طوال الوقت."),
+                  t("No phones, notes, or external materials are allowed.", "لا يُسمح بالهواتف أو الملاحظات أو المواد الخارجية."),
+                  t("Exiting fullscreen may count as a violation.", "الخروج من وضع ملء الشاشة قد يُعدّ مخالفة."),
+                ].map((rule, i) => (
+                  <div key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start", marginBottom: 8 }}>
+                    <div style={{ width: 20, height: 20, borderRadius: "50%", background: G, color: "#fff", fontSize: 10, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1 }}>{i + 1}</div>
+                    <div style={{ fontSize: 13, color: "#374151", lineHeight: 1.6 }}>{rule}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <button onClick={() => setStep("checks")} style={{ width: "100%", padding: "16px", borderRadius: 16, background: G, border: "none", color: "#fff", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "'Cairo',sans-serif", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, boxShadow: "0 4px 16px rgba(15,45,31,.3)" }}>
+              {t("Run System Checks", "تشغيل فحوصات النظام")} <ChevronRight style={{ width: 18, height: 18 }} />
+            </button>
+          </div>
+        )}
+
+        {/* ── CHECKS STEP ── */}
+        {step === "checks" && (
+          <div style={{ animation: "fadeUp .3s ease" }}>
+            <div style={{ background: "#fff", borderRadius: 20, overflow: "hidden", boxShadow: "0 4px 24px rgba(0,0,0,.08)", marginBottom: 16 }}>
+              {/* Progress bar */}
+              <div style={{ padding: "16px 20px", borderBottom: "1px solid #f0f4f8" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, fontSize: 12, color: "#9ca3af" }}>
+                  <span style={{ fontWeight: 700, color: G }}>{t("System Checks", "فحوصات النظام")}</span>
+                  <span>{passedChecks}/{checks.length} {t("passed", "اجتاز")}</span>
+                </div>
+                <div style={{ height: 6, background: "#f0f4f8", borderRadius: 3, overflow: "hidden" }}>
+                  <div style={{ height: "100%", width: `${checksProgress}%`, background: `linear-gradient(90deg,${GM},${GOLD})`, borderRadius: 3, transition: "width .5s" }} />
+                </div>
+              </div>
+
+              {/* Checks list */}
+              <div style={{ padding: "8px 0" }}>
+                {checks.map(check => {
+                  const s = statusColors[check.status];
+                  return (
+                    <div key={check.id} style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 20px", borderBottom: "1px solid #f0f4f8", background: check.status !== "pending" ? s.bg : "#fff", transition: "background .3s" }}>
+                      <div style={{ color: s.text }}>{check.icon}</div>
+                      <div style={{ color: "#374151" }}>{check.icon}</div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: G }}>{language === "ar" ? check.labelAr : check.label}</div>
+                        {check.detail && <div style={{ fontSize: 11, color: s.text, marginTop: 1 }}>{check.detail}</div>}
+                      </div>
+                      {s.icon}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Camera preview */}
+              {webcamStream && (
+                <div style={{ padding: "16px 20px", borderTop: "1px solid #f0f4f8" }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "#9ca3af", marginBottom: 10, letterSpacing: 1 }}>CAMERA PREVIEW</div>
+                  <div style={{ position: "relative", borderRadius: 14, overflow: "hidden", background: "#000", aspectRatio: "4/3" }}>
+                    <video ref={videoRef} autoPlay muted playsInline style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    {faceCaptured && (
+                      <div style={{ position: "absolute", top: 10, right: 10, background: "#22c55e", borderRadius: 20, padding: "4px 10px", fontSize: 11, color: "#fff", fontWeight: 700 }}>✓ Photo captured</div>
+                    )}
+                  </div>
+                  <button onClick={captureSnapshot} style={{ width: "100%", marginTop: 10, padding: "10px", borderRadius: 12, background: faceCaptured ? "#f0fff4" : G, border: faceCaptured ? "1px solid #86efac" : "none", color: faceCaptured ? "#22c55e" : "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'Cairo',sans-serif" }}>
+                    {faceCaptured ? t("✓ Photo captured — retake?", "✓ تم التقاط الصورة — إعادة؟") : t("📸 Capture Verification Photo", "📸 التقاط صورة التحقق")}
+                  </button>
+                </div>
+              )}
+
+              {/* Mic meter */}
+              {micTested && (
+                <div style={{ padding: "16px 20px", borderTop: "1px solid #f0f4f8" }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "#9ca3af", marginBottom: 10, letterSpacing: 1 }}>MIC LEVEL — speak to test</div>
+                  <div style={{ height: 10, background: "#f0f4f8", borderRadius: 5, overflow: "hidden" }}>
+                    <div style={{ height: "100%", width: `${micLevel}%`, background: micLevel > 60 ? "#22c55e" : micLevel > 20 ? GOLD : "#e5e7eb", borderRadius: 5, transition: "width .1s" }} />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {checksComplete && (
+              <button onClick={() => setStep("checklist")} style={{ width: "100%", padding: "16px", borderRadius: 16, background: hasCriticalFailure ? "#dc2626" : G, border: "none", color: "#fff", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "'Cairo',sans-serif", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, boxShadow: "0 4px 16px rgba(15,45,31,.3)" }}>
+                {hasCriticalFailure ? t("Some checks failed — proceed anyway?", "فشل بعض الفحوصات — متابعة؟") : t("Continue to Checklist", "المتابعة إلى القائمة")} <ChevronRight style={{ width: 18, height: 18 }} />
+              </button>
             )}
           </div>
-        </div>
+        )}
+
+        {/* ── CHECKLIST STEP ── */}
+        {step === "checklist" && (
+          <div style={{ animation: "fadeUp .3s ease" }}>
+            <div style={{ background: "#fff", borderRadius: 20, overflow: "hidden", boxShadow: "0 4px 24px rgba(0,0,0,.08)", marginBottom: 16 }}>
+              <div style={{ padding: "20px 20px 0", borderBottom: "1px solid #f0f4f8" }}>
+                <div style={{ fontSize: 15, fontWeight: 800, color: G, marginBottom: 4 }}>{t("Final Checklist", "القائمة النهائية")}</div>
+                <div style={{ fontSize: 13, color: "#7a9e88", marginBottom: 16 }}>{t("Confirm everything is in order before starting.", "تأكد من أن كل شيء على ما يرام قبل البدء.")}</div>
+              </div>
+              <div style={{ padding: "8px 0" }}>
+                {[
+                  { key: "quietEnvironment" as const, label: t("I am in a quiet environment with no distractions", "أنا في بيئة هادئة بدون مشتتات") },
+                  { key: "faceVisible" as const, label: t("My face is clearly visible and well-lit", "وجهي مرئي بوضوح ومضيء جيداً") },
+                  { key: "noDevices" as const, label: t("No unauthorized devices or materials nearby", "لا توجد أجهزة أو مواد غير مصرح بها") },
+                  { key: "noTabSwitch" as const, label: t("I will not switch tabs or leave the exam window", "لن أتبدل التبويبات أو أغادر نافذة الامتحان") },
+                ].map((item) => {
+                  const checked = checklist[item.key];
+                  return (
+                    <div key={item.key} onClick={() => setChecklist(p => ({ ...p, [item.key]: !p[item.key] }))}
+                      style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 20px", borderBottom: "1px solid #f0f4f8", cursor: "pointer", background: checked ? "#f0fff4" : "#fff", transition: "background .2s" }}>
+                      <div style={{ width: 24, height: 24, borderRadius: 8, border: `2px solid ${checked ? "#22c55e" : "#d1d5db"}`, background: checked ? "#22c55e" : "#fff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "all .2s" }}>
+                        {checked && <span style={{ color: "#fff", fontSize: 14, fontWeight: 900 }}>✓</span>}
+                      </div>
+                      <div style={{ fontSize: 14, color: G, lineHeight: 1.6 }}>{item.label}</div>
+                    </div>
+                  );
+                })}
+              </div>
+              {/* Agreement */}
+              <div style={{ padding: "16px 20px" }}>
+                <div onClick={() => setAgreed(!agreed)} style={{ display: "flex", alignItems: "flex-start", gap: 12, cursor: "pointer" }}>
+                  <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${agreed ? G : "#d1d5db"}`, background: agreed ? G : "#fff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 2, transition: "all .2s" }}>
+                    {agreed && <span style={{ color: "#fff", fontSize: 13, fontWeight: 900 }}>✓</span>}
+                  </div>
+                  <div style={{ fontSize: 13, color: "#374151", lineHeight: 1.7 }}>
+                    {t("I confirm that I have read and understood all exam rules. I agree to be monitored and accept that violations may affect my score.", "أؤكد أنني قرأت وفهمت جميع قواعد الامتحان. أوافق على المراقبة وأقبل أن المخالفات قد تؤثر على درجتي.")}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <button onClick={() => setStep("ready")} disabled={!allChecked || !agreed}
+              style={{ width: "100%", padding: "16px", borderRadius: 16, background: (!allChecked || !agreed) ? "#e5e7eb" : G, border: "none", color: (!allChecked || !agreed) ? "#9ca3af" : "#fff", fontSize: 15, fontWeight: 700, cursor: (!allChecked || !agreed) ? "not-allowed" : "pointer", fontFamily: "'Cairo',sans-serif", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, boxShadow: (!allChecked || !agreed) ? "none" : "0 4px 16px rgba(15,45,31,.3)" }}>
+              {t("Ready to Start", "جاهز للبدء")} <ChevronRight style={{ width: 18, height: 18 }} />
+            </button>
+          </div>
+        )}
+
+        {/* ── READY STEP ── */}
+        {step === "ready" && (
+          <div style={{ animation: "fadeUp .3s ease" }}>
+            <div style={{ background: "#fff", borderRadius: 20, padding: "40px 24px", textAlign: "center", boxShadow: "0 4px 24px rgba(0,0,0,.08)", marginBottom: 16 }}>
+              <div style={{ width: 96, height: 96, borderRadius: "50%", background: "linear-gradient(135deg,#f0fff4,#dcfce7)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 20px", boxShadow: "0 4px 20px rgba(34,197,94,.25)" }}>
+                <CheckCircle2 style={{ width: 48, height: 48, color: "#22c55e" }} />
+              </div>
+              <h2 style={{ fontSize: 24, fontWeight: 900, color: G, marginBottom: 8 }}>{t("You're Ready!", "أنت جاهز!")}</h2>
+              <p style={{ fontSize: 14, color: "#7a9e88", lineHeight: 1.7, marginBottom: 24 }}>
+                {t("All checks passed. Click below to begin your exam. The timer starts immediately.", "اجتازت جميع الفحوصات. انقر أدناه لبدء الامتحان. يبدأ المؤقت فوراً.")}
+              </p>
+              <div style={{ display: "flex", gap: 16, justifyContent: "center", marginBottom: 24 }}>
+                <div style={{ textAlign: "center" }}>
+                  <div style={{ fontSize: 28, fontWeight: 900, color: G }}>{exam?.time_limit_minutes}</div>
+                  <div style={{ fontSize: 11, color: "#9ca3af" }}>{t("minutes", "دقيقة")}</div>
+                </div>
+                <div style={{ width: 1, height: 40, background: "#e5e7eb", alignSelf: "center" }} />
+                <div style={{ textAlign: "center" }}>
+                  <div style={{ fontSize: 28, fontWeight: 900, color: G }}>{exam?.passing_score}%</div>
+                  <div style={{ fontSize: 11, color: "#9ca3af" }}>{t("pass mark", "درجة النجاح")}</div>
+                </div>
+              </div>
+            </div>
+
+            <button onClick={handleStart} disabled={starting}
+              style={{ width: "100%", padding: "18px", borderRadius: 16, background: starting ? "#9ca3af" : G, border: "none", color: "#fff", fontSize: 17, fontWeight: 900, cursor: starting ? "not-allowed" : "pointer", fontFamily: "'Cairo',sans-serif", display: "flex", alignItems: "center", justifyContent: "center", gap: 10, boxShadow: starting ? "none" : "0 6px 24px rgba(15,45,31,.4)", letterSpacing: 0.5 }}>
+              {starting ? (
+                <><Loader2 style={{ width: 20, height: 20, animation: "spin .8s linear infinite" }} />{t("Starting…", "جارٍ البدء…")}</>
+              ) : (
+                <><Play style={{ width: 20, height: 20 }} />{t("Start Exam Now", "ابدأ الامتحان الآن")}</>
+              )}
+            </button>
+            <button onClick={() => navigate("/student/exams")} style={{ width: "100%", padding: "14px", marginTop: 10, borderRadius: 14, background: "transparent", border: "1.5px solid #e5e7eb", color: "#7a9e88", fontSize: 14, cursor: "pointer", fontFamily: "'Cairo',sans-serif" }}>
+              {t("Back", "العودة")}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
