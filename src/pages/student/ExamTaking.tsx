@@ -319,6 +319,7 @@ const ExamTaking = () => {
         @keyframes spin{to{transform:rotate(360deg)}}
         @keyframes pulseTimer{0%,100%{opacity:1}50%{opacity:.5}}
         *{box-sizing:border-box}
+        @media print { body { display:none !important; } }
       `}</style>
 
       {procEnabled&&!submitted&&(
@@ -569,35 +570,68 @@ const ExamTaking = () => {
         </div>}
       </div>
 
-      {/* ── MOBILE BOTTOM NAV ── */}
-      {isMobile && <div style={{background:"#fff",borderTop:`1px solid ${BORDER}`,padding:"8px 10px",flexShrink:0,display:"flex"}}>
-        {showNav?(
-          <div style={{width:"100%"}}>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(36px,1fr))",gap:5,marginBottom:8}}>
-              {questions.map((qq,i)=>{const a=answers[qq.id];return(
-                <button key={qq.id} onClick={()=>{setIdx(i);setShowNav(false);}}
-                  style={{height:36,borderRadius:8,border:"none",fontSize:12,fontWeight:800,cursor:"pointer",
-                    background:i===currentIdx?G:a?.flagged?"#fffbeb":a?.text?"#f0fff4":"#f8fafb",
-                    color:i===currentIdx?"#fff":a?.flagged?GOLD:a?.text?"#22c55e":"#7a9e88"}}>
-                  {i+1}
-                </button>
-              );})}
+      {/* ── MOBILE BOTTOM NAV — shows ALL questions at once ── */}
+      {isMobile && (
+        <div style={{ background:"#fff", borderTop:`1px solid ${BORDER}`, flexShrink:0 }}>
+          {/* Toggle button to expand/collapse */}
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"6px 12px 0" }}>
+            <span style={{ fontSize:10, fontWeight:700, color:"#7a9e88" }}>
+              {answeredCount}/{questions.length} answered
+              {flaggedCount > 0 && ` · ${flaggedCount} flagged`}
+            </span>
+            <button onClick={() => setShowNav(v => !v)}
+              style={{ fontSize:10, fontWeight:700, color:G, background:"none", border:"none", cursor:"pointer" }}>
+              {showNav ? "▲ Hide" : "▼ All Questions"}
+            </button>
+          </div>
+
+          {showNav ? (
+            /* Expanded: full grid of all questions */
+            <div style={{ padding:"8px 10px 10px" }}>
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(34px,1fr))", gap:5 }}>
+                {questions.map((qq, i) => {
+                  const a = answers[qq.id];
+                  return (
+                    <button key={qq.id} onClick={() => { setIdx(i); setShowNav(false); }}
+                      style={{ height:34, borderRadius:8, border:"none", fontSize:11, fontWeight:800, cursor:"pointer",
+                        background: i===currentIdx ? G : a?.flagged ? "#fffbeb" : a?.text ? "#f0fff4" : "#f8fafb",
+                        color: i===currentIdx ? "#fff" : a?.flagged ? GOLD : a?.text ? "#22c55e" : "#7a9e88",
+                        outline: i===currentIdx ? `2px solid ${GOLD}` : "" }}>
+                      {i+1}
+                    </button>
+                  );
+                })}
+              </div>
+              {/* Legend */}
+              <div style={{ display:"flex", gap:12, marginTop:8, flexWrap:"wrap" as const }}>
+                {[["#f0fff4","#22c55e",`Answered (${answeredCount})`],["#fffbeb",GOLD,`Flagged (${flaggedCount})`],["#f8fafb","#7a9e88",`Unanswered (${questions.length-answeredCount})`]].map(([bg,c,lb],i)=>(
+                  <div key={i} style={{ display:"flex", alignItems:"center", gap:4, fontSize:9 }}>
+                    <div style={{ width:10, height:10, borderRadius:3, background:bg, border:`1px solid ${c}` }} />
+                    <span style={{ color:"#7a9e88" }}>{lb}</span>
+                  </div>
+                ))}
+              </div>
             </div>
-            <button onClick={()=>setShowNav(false)} style={{width:"100%",padding:"8px 0",borderRadius:10,background:"#f8fafb",border:`1px solid ${BORDER}`,fontSize:12,fontWeight:700,color:G,cursor:"pointer",fontFamily:"'Cairo',sans-serif"}}>Close</button>
-          </div>
-        ):(
-          <div style={{display:"flex",alignItems:"center",gap:5,overflowX:"auto",width:"100%"}}>
-            {questions.map((qq,i)=>{const a=answers[qq.id];return(
-              <button key={qq.id} onClick={()=>setIdx(i)}
-                style={{width:36,height:36,borderRadius:8,border:"none",fontSize:12,fontWeight:800,cursor:"pointer",flexShrink:0,
-                  background:i===currentIdx?G:a?.flagged?"#fffbeb":a?.text?"#f0fff4":"#f8fafb",
-                  color:i===currentIdx?"#fff":a?.flagged?GOLD:a?.text?"#22c55e":"#7a9e88"}}>
-                {i+1}
-              </button>
-            );})}
-          </div>
-        )}
-      </div>}
+          ) : (
+            /* Collapsed: show current ± nearby questions in a scroll row */
+            <div style={{ display:"flex", alignItems:"center", gap:4, padding:"6px 10px 8px", overflowX:"auto" }}>
+              {questions.map((qq, i) => {
+                const a = answers[qq.id];
+                return (
+                  <button key={qq.id} onClick={() => setIdx(i)}
+                    style={{ width:32, height:32, borderRadius:8, border:"none", fontSize:11, fontWeight:800,
+                      cursor:"pointer", flexShrink:0,
+                      background: i===currentIdx ? G : a?.flagged ? "#fffbeb" : a?.text ? "#f0fff4" : "#f8fafb",
+                      color: i===currentIdx ? "#fff" : a?.flagged ? GOLD : a?.text ? "#22c55e" : "#7a9e88",
+                      transform: i===currentIdx ? "scale(1.1)" : "scale(1)" }}>
+                    {i+1}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };
