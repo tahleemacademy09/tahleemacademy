@@ -396,7 +396,7 @@ const ExamTaking = () => {
             <div style={{display:"flex",justifyContent:"space-between",color:"#7a9e88"}}><span>Questions</span><span style={{fontWeight:800,color:G}}>{questions.length}</span></div>
             {deductedPoints>0&&<div style={{display:"flex",justifyContent:"space-between",color:"#ef4444"}}><span>Deducted</span><span style={{fontWeight:800}}>−{deductedPoints}pts</span></div>}
           </div>
-        </div>
+        </div>}
 
         {/* CENTER: QUESTION (takes most of the space) */}
         <div style={{flex:1,overflow:"auto",padding:"14px 14px 14px",display:"flex",flexDirection:"column"}}>
@@ -566,7 +566,7 @@ const ExamTaking = () => {
             <div style={{display:"flex",justifyContent:"space-between"}}><span>Pass Mark</span><span style={{fontWeight:700,color:G}}>{exam?.passing_score}%</span></div>
             <div style={{display:"flex",justifyContent:"space-between"}}><span>Total Qs</span><span style={{fontWeight:700,color:G}}>{questions.length}</span></div>
           </div>
-        </div>
+        </div>}
       </div>
 
       {/* ── MOBILE BOTTOM NAV ── */}
@@ -597,7 +597,7 @@ const ExamTaking = () => {
             );})}
           </div>
         )}
-      </div>
+      </div>}
     </div>
   );
 };
