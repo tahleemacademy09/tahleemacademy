@@ -6,53 +6,43 @@ const corsHeaders = {
 }
 
 serve(async (req) => {
-  // Handle CORS
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders })
-  }
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
 
   try {
     const DEEPGRAM_API_KEY = Deno.env.get('DEEPGRAM_API_KEY')
-    if (!DEEPGRAM_API_KEY) throw new Error("Missing DEEPGRAM_API_KEY")
+    if (!DEEPGRAM_API_KEY) throw new Error("Missing DEEPGRAM_API_KEY in Supabase secrets")
 
-    // Read the raw binary data from the request
-    const arrayBuffer = await req.arrayBuffer()
-    
-    if (!arrayBuffer || arrayBuffer.byteLength === 0) {
-      throw new Error('No audio data received')
-    }
+    const { audio, mimeType } = await req.json()
+    if (!audio) throw new Error('No audio data received')
 
-    console.log(`Processing audio: ${arrayBuffer.byteLength} bytes`)
+    const binary = atob(audio)
+    const bytes  = new Uint8Array(binary.length)
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
 
-    // Call Deepgram with Nova-2 for Arabic
-    const response = await fetch('https://api.deepgram.com/v1/listen?model=nova-2&language=ar&smart_format=true', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Token ${DEEPGRAM_API_KEY}`,
-        'Content-Type': 'audio/webm', // Deepgram auto-detects, but we provide a hint
-      },
-      body: arrayBuffer,
-    })
+    const response = await fetch(
+      'https://api.deepgram.com/v1/listen?model=nova-2&language=ar&smart_format=true',
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Token ${DEEPGRAM_API_KEY}`,
+          'Content-Type': mimeType || 'audio/webm',
+        },
+        body: bytes,
+      }
+    )
 
     const result = await response.json()
-
-    if (!response.ok) {
-      console.error("Deepgram Error:", result)
-      throw new Error(result.err_msg || 'Deepgram transcription failed')
-    }
+    if (!response.ok) throw new Error(result.err_msg || 'Deepgram failed')
 
     const transcript = result.results?.channels[0]?.alternatives[0]?.transcript || ""
-    
-    return new Response(
-      JSON.stringify({ transcript }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
-    )
+    return new Response(JSON.stringify({ transcript }), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200
+    })
 
   } catch (error) {
-    console.error("Function Error:", error.message)
-    return new Response(
-      JSON.stringify({ error: error.message }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
-    )
+    console.error("transcribe-hifdh error:", error.message)
+    return new Response(JSON.stringify({ error: error.message }), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400
+    })
   }
 })
