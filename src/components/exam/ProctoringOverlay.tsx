@@ -7,7 +7,7 @@
 */
 import { useEffect, useState, useRef, useCallback } from "react";
 import { Shield, ShieldAlert, ShieldCheck, Eye, EyeOff,
-  AlertTriangle, Activity, X, Camera, CameraOff } from "lucide-react";
+  AlertTriangle, Activity, X } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -37,8 +37,8 @@ const VCFG: Record<string, {
   right_click:       { en:"🚫 Right-click disabled",              ar:"🚫 النقر الأيمن معطل",            sev:"low",      pts:1,  icon:"🖱️" },
   face_not_detected: { en:"👁️ Look at your screen!",             ar:"👁️ انظر إلى شاشتك!",            sev:"high",     pts:0,  icon:"👤", dismissOnFix:true },
   multiple_faces:    { en:"🚨 Multiple people detected!",         ar:"🚨 أكثر من شخص في الإطار!",      sev:"critical", pts:10, icon:"👥" },
-  looking_away:      { en:"👁️ Please focus on your screen",      ar:"👁️ ركز على شاشتك",               sev:"medium",   pts:3,  icon:"👀", dismissOnFix:true },
-  unusual_audio:     { en:"🎙️ Background noise detected",        ar:"🎙️ ضجيج في الخلفية",             sev:"low",      pts:2,  icon:"🎙️" },
+  looking_away:      { en:"👁️ Please focus on your screen",      ar:"👁️ ركز على شاشتك",               sev:"low",      pts:0,  icon:"👀", dismissOnFix:true },
+  unusual_audio:     { en:"🎙️ Background noise detected",        ar:"🎙️ ضجيج في الخلفية",             sev:"low",      pts:0,  icon:"🎙️" },
 };
 
 const SEV_STYLE: Record<string,{bg:string;border:string;text:string}> = {
@@ -351,126 +351,68 @@ const ProctoringOverlay = ({
         </div>
       )}
 
-      {/* TOP-LEFT: Integrity + status */}
-      <div style={{ position:"fixed", top:58, left:8, zIndex:200, display:"flex", flexDirection:"column", gap:6 }}>
-        <div style={{ background:"rgba(0,0,0,.82)", backdropFilter:"blur(10px)", borderRadius:14,
-          padding:"10px 12px", border:`1px solid ${statusColor}44`, minWidth:148 }}>
-          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8 }}>
-            <div style={{ display:"flex", alignItems:"center", gap:5 }}>
-              <div style={{ width:7, height:7, borderRadius:"50%", background:statusColor,
-                boxShadow:`0 0 6px ${statusColor}` }} />
-              <span style={{ fontSize:9, fontWeight:900, color:statusColor, letterSpacing:1.5 }}>{statusLabel}</span>
-            </div>
-            <button onClick={() => setShowLog(v => !v)} style={{ background:"none", border:"none",
-              color:"rgba(255,255,255,.5)", cursor:"pointer", position:"relative", padding:0 }}>
-              <Activity style={{ width:12, height:12 }} />
-              {violations > 0 && (
-                <span style={{ position:"absolute", top:-3, right:-3, width:12, height:12, borderRadius:"50%",
-                  background:"#dc2626", color:"#fff", fontSize:7, display:"flex",
-                  alignItems:"center", justifyContent:"center", fontWeight:900 }}>
-                  {violations > 9 ? "9+" : violations}
-                </span>
-              )}
-            </button>
+      {/* ── TINY PROCTORING PILL — bottom-right, doesn't block content ── */}
+      <div style={{ position:"fixed", bottom:56, right:8, zIndex:200, display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4 }}>
+
+        {/* Main pill — very compact */}
+        <div style={{ display:"flex", alignItems:"center", gap:6, background:"rgba(0,0,0,.75)", backdropFilter:"blur(8px)", borderRadius:30, padding:"5px 10px", border:`1px solid ${statusColor}44`, cursor:"pointer" }}
+          onClick={() => setShowLog(v => !v)}>
+          {/* Status dot */}
+          <div style={{ width:6, height:6, borderRadius:"50%", background:statusColor, boxShadow:`0 0 4px ${statusColor}` }} />
+          {/* Score */}
+          <span style={{ fontSize:11, fontWeight:900, color:scoreColor }}>{Math.round(integrityScore)}%</span>
+          {/* Strikes dots */}
+          <div style={{ display:"flex", gap:2 }}>
+            {Array.from({ length: maxStrikes }, (_, i) => (
+              <div key={i} style={{ width:6, height:6, borderRadius:2, background: i < strikes ? "#dc2626" : "rgba(255,255,255,.2)" }} />
+            ))}
           </div>
-          {/* Score ring */}
-          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-            <div style={{ position:"relative", width:44, height:44, flexShrink:0 }}>
-              <svg width={44} height={44} style={{ transform:"rotate(-90deg)" }}>
-                <circle cx={22} cy={22} r={18} stroke="rgba(255,255,255,.1)" strokeWidth={4} fill="none" />
-                <circle cx={22} cy={22} r={18} stroke={scoreColor} strokeWidth={4} fill="none"
-                  strokeLinecap="round"
-                  strokeDasharray={2 * Math.PI * 18}
-                  strokeDashoffset={2 * Math.PI * 18 * (1 - integrityScore / 100)}
-                  style={{ transition:"stroke-dashoffset 1s" }} />
-              </svg>
-              <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center" }}>
-                <span style={{ fontSize:10, fontWeight:900, color:scoreColor }}>{Math.round(integrityScore)}</span>
-              </div>
-            </div>
-            <div>
-              <div style={{ fontSize:9, color:"rgba(255,255,255,.4)", marginBottom:3 }}>INTEGRITY</div>
-              <div style={{ display:"flex", gap:3 }}>
-                {Array.from({ length: maxStrikes }, (_, i) => (
-                  <div key={i} style={{ width:10, height:10, borderRadius:3,
-                    background: i < strikes ? "#dc2626" : "rgba(255,255,255,.15)",
-                    border: `1px solid ${i < strikes ? "#dc2626" : "rgba(255,255,255,.1)"}` }} />
-                ))}
-              </div>
-              {pointsLost > 0 && (
-                <div style={{ fontSize:9, color:"#ef4444", marginTop:3, fontWeight:700 }}>
-                  −{pointsLost} pts lost
-                </div>
-              )}
-            </div>
+          {/* Camera + face tiny icons */}
+          <div style={{ display:"flex", alignItems:"center", gap:3 }}>
+            {cameraReady
+              ? <div style={{ width:6, height:6, borderRadius:"50%", background:"#22c55e" }} />
+              : <div style={{ width:6, height:6, borderRadius:"50%", background:"#ef4444" }} />}
+            {localFace
+              ? <Eye style={{ width:10, height:10, color:"#22c55e" }} />
+              : <EyeOff style={{ width:10, height:10, color:"#ef4444" }} />}
           </div>
-          {/* Camera + face status */}
-          <div style={{ display:"flex", gap:8, marginTop:8, paddingTop:8,
-            borderTop:"1px solid rgba(255,255,255,.08)" }}>
-            <div style={{ display:"flex", alignItems:"center", gap:3, fontSize:9,
-              color: cameraReady ? "#22c55e" : "#ef4444" }}>
-              {cameraReady ? <Camera style={{ width:10,height:10 }} /> : <CameraOff style={{ width:10,height:10 }} />}
-              <span>{cameraReady ? "CAM ON" : "NO CAM"}</span>
-            </div>
-            <div style={{ display:"flex", alignItems:"center", gap:3, fontSize:9,
-              color: localFace ? "#22c55e" : "#ef4444" }}>
-              {localFace ? <Eye style={{ width:10,height:10 }} /> : <EyeOff style={{ width:10,height:10 }} />}
-              <span>{localFace ? "FACE ✓" : "NO FACE"}</span>
-            </div>
-          </div>
+          {/* Violation count badge */}
+          {violations > 0 && (
+            <span style={{ fontSize:9, fontWeight:900, background:"#dc2626", color:"#fff", borderRadius:20, padding:"1px 5px" }}>
+              {violations}
+            </span>
+          )}
         </div>
 
-        {/* Camera preview (small, non-intrusive) */}
-        {cameraReady && (
-          <div style={{ width:116, height:88, borderRadius:12, overflow:"hidden",
-            border:`2px solid ${localFace ? "#22c55e" : "#ef4444"}`,
-            boxShadow:`0 4px 16px rgba(0,0,0,.5)`, position:"relative", background:"#000" }}>
-            <video id="proctor-cam-preview" muted playsInline autoPlay
-              style={{ width:"100%", height:"100%", objectFit:"cover", transform:"scaleX(-1)" }} />
-            <div style={{ position:"absolute", bottom:0, left:0, right:0,
-              background:"rgba(0,0,0,.55)", padding:"3px 6px",
-              display:"flex", alignItems:"center", gap:4 }}>
-              <div style={{ width:5, height:5, borderRadius:"50%",
-                background: localFace ? "#22c55e" : "#ef4444",
-                animation:"pulse 1.5s infinite" }} />
-              <span style={{ fontSize:8, color:"#fff", fontWeight:700 }}>
-                {localFace ? "MONITORED" : "NO FACE"}
-              </span>
+        {/* Activity log dropdown — opens upward */}
+        {showLog && (
+          <div style={{ position:"absolute", bottom:"100%", right:0, marginBottom:6, width:250, maxHeight:220,
+            background:"rgba(10,10,10,.96)", borderRadius:12, border:"1px solid rgba(255,255,255,.1)",
+            boxShadow:"0 -4px 24px rgba(0,0,0,.5)", overflow:"hidden", display:"flex", flexDirection:"column" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:8, padding:"9px 12px", borderBottom:"1px solid rgba(255,255,255,.08)" }}>
+              <Shield style={{ width:12, height:12, color:"#22c55e" }} />
+              <span style={{ fontSize:11, fontWeight:700, color:"#fff", flex:1 }}>Live Activity</span>
+              <button onClick={e => { e.stopPropagation(); setShowLog(false); }}
+                style={{ background:"none", border:"none", color:"rgba(255,255,255,.5)", cursor:"pointer" }}>
+                <X style={{ width:11, height:11 }} />
+              </button>
+            </div>
+            <div style={{ flex:1, overflowY:"auto" }}>
+              {liveFeed.length === 0 ? (
+                <div style={{ padding:"16px 12px", textAlign:"center" }}>
+                  <ShieldCheck style={{ width:18, height:18, color:"#22c55e", margin:"0 auto 5px" }} />
+                  <p style={{ fontSize:11, color:"rgba(255,255,255,.4)" }}>No violations</p>
+                </div>
+              ) : liveFeed.map((msg, i) => (
+                <div key={i} style={{ padding:"5px 12px", borderBottom:"1px solid rgba(255,255,255,.04)",
+                  fontSize:10, color: i === 0 ? "#fca5a5" : "rgba(255,255,255,.4)", fontFamily:"monospace" }}>
+                  {msg}
+                </div>
+              ))}
             </div>
           </div>
         )}
       </div>
-
-      {/* Activity log */}
-      {showLog && (
-        <div style={{ position:"fixed", top:58, right:8, zIndex:300, width:256,
-          maxHeight:260, background:"rgba(10,10,10,.96)", borderRadius:14,
-          border:"1px solid rgba(255,255,255,.1)", overflow:"hidden", display:"flex", flexDirection:"column" }}>
-          <div style={{ display:"flex", alignItems:"center", gap:8, padding:"10px 12px",
-            borderBottom:"1px solid rgba(255,255,255,.08)" }}>
-            <Shield style={{ width:13, height:13, color:"#22c55e" }} />
-            <span style={{ fontSize:11, fontWeight:700, color:"#fff", flex:1 }}>Live Activity</span>
-            <span style={{ fontSize:10, color:"rgba(255,255,255,.4)" }}>{violations}</span>
-            <button onClick={() => setShowLog(false)} style={{ background:"none", border:"none",
-              color:"rgba(255,255,255,.5)", cursor:"pointer" }}>
-              <X style={{ width:11, height:11 }} />
-            </button>
-          </div>
-          <div style={{ flex:1, overflowY:"auto" }}>
-            {liveFeed.length === 0 ? (
-              <div style={{ padding:"18px 12px", textAlign:"center" }}>
-                <ShieldCheck style={{ width:20, height:20, color:"#22c55e", margin:"0 auto 6px" }} />
-                <p style={{ fontSize:11, color:"rgba(255,255,255,.4)" }}>No violations</p>
-              </div>
-            ) : liveFeed.map((msg, i) => (
-              <div key={i} style={{ padding:"6px 12px", borderBottom:"1px solid rgba(255,255,255,.04)",
-                fontSize:10, color: i === 0 ? "#fca5a5" : "rgba(255,255,255,.45)", fontFamily:"monospace" }}>
-                {msg}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       <style>{`
         @keyframes bannerIn { from{opacity:0;transform:translate(-50%,-14px)} to{opacity:1;transform:translate(-50%,0)} }
