@@ -1,4 +1,4 @@
-/*  src/pages/student/ExamTaking.tsx
+                  /*  src/pages/student/ExamTaking.tsx
     Professional exam interface with review screen,
     enhanced mobile nav, auto-save indicator, fullscreen lock
 */
@@ -382,87 +382,59 @@ const ExamTaking = () => {
 
   // ── EXAM SCREEN ──
   return (
-    <div style={{ height:"100vh", display:"flex", flexDirection:"column", background:"#f5f7fa", fontFamily:"'Cairo',sans-serif", userSelect:"none", WebkitUserSelect:"none" }} onContextMenu={e=>e.preventDefault()}>
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}} @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}`}</style>
+    <div style={{ height:"100vh", display:"flex", flexDirection:"column", background:"#f0f2f5", fontFamily:"'Cairo',sans-serif", userSelect:"none", WebkitUserSelect:"none", overflow:"hidden" }} onContextMenu={e=>e.preventDefault()}>
+      <style>{`
+        @keyframes spin{to{transform:rotate(360deg)}}
+        @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+        .opt-row:active{transform:scale(.98)}
+        ::-webkit-scrollbar{width:4px} ::-webkit-scrollbar-thumb{background:rgba(15,45,31,.2);border-radius:2px}
+      `}</style>
 
-      {/* Proctoring */}
       {proctoringEnabled&&!submitted&&(
         <ProctoringOverlay cameraReady={proctoring.cameraReady} faceDetected={proctoring.faceDetected} integrityScore={proctoring.integrityScore} suspicionLevel={proctoring.suspicionLevel} strikes={proctoring.strikes} maxStrikes={proctoring.maxStrikes} violations={proctoring.violations} lastWarningType={proctoring.lastWarningType} audioMonitoring={proctoring.audioMonitoring} recentViolations={proctoring.recentViolations} getStream={proctoring.getStream}/>
       )}
 
-      {/* ── TOP HEADER ── */}
-      <div style={{ background:G, padding:"0 14px", height:56, display:"flex", alignItems:"center", justifyContent:"space-between", flexShrink:0, zIndex:40 }}>
-        {/* Left: title */}
-        <div style={{ display:"flex", alignItems:"center", gap:8, minWidth:0, flex:1 }}>
-          <BookOpen style={{width:16,height:16,color:GOLD,flexShrink:0}}/>
-          <span style={{ fontSize:13, fontWeight:700, color:"#fff", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" as const }}>
-            {language==="ar"?exam?.title_ar||exam?.title:exam?.title}
-          </span>
+      {/* ── HEADER — clean single row, no overlap ── */}
+      <div style={{ background:G, height:50, display:"flex", alignItems:"center", paddingLeft:12, paddingRight:12, gap:8, flexShrink:0, zIndex:40 }}>
+        <BookOpen style={{width:14,height:14,color:GOLD,flexShrink:0}}/>
+        <span style={{ fontSize:12, fontWeight:700, color:"#fff", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" as const, flex:1, maxWidth:150 }}>
+          {language==="ar"?exam?.title_ar||exam?.title:exam?.title}
+        </span>
+        <div style={{ display:"flex", alignItems:"center", gap:4, background:timerBg, border:`1px solid ${timerColor}55`, borderRadius:16, padding:"4px 10px", flexShrink:0, animation:isTimeCritical?"pulse 1s infinite":"none" }}>
+          <Clock style={{width:12,height:12,color:timerColor}}/>
+          <span style={{ fontSize:13, fontWeight:900, color:timerColor, fontVariantNumeric:"tabular-nums" }}>{fmt(timeLeft)}</span>
         </div>
-
-        {/* Center: timer */}
-        <div style={{ display:"flex", alignItems:"center", gap:5, background:timerBg, border:`1px solid ${timerColor}44`, borderRadius:20, padding:"5px 12px", flexShrink:0, animation:isTimeCritical?"pulse 1s infinite":"none" }}>
-          <Clock style={{width:13,height:13,color:timerColor}}/>
-          <span style={{ fontSize:14, fontWeight:900, color:timerColor, fontVariantNumeric:"tabular-nums" }}>{fmt(timeLeft)}</span>
-        </div>
-
-        {/* Right: actions */}
-        <div style={{ display:"flex", alignItems:"center", gap:6, flexShrink:0, marginLeft:8 }}>
-          {/* Auto-save indicator */}
-          <div style={{ fontSize:10, color:"rgba(255,255,255,.5)", display:"flex", alignItems:"center", gap:3 }}>
-            {saving ? (
-              <><div style={{width:8,height:8,border:"1px solid rgba(255,255,255,.5)",borderTopColor:"transparent",borderRadius:"50%",animation:"spin .8s linear infinite"}}/> Saving</>
-            ) : lastSaved ? (
-              <><div style={{width:6,height:6,borderRadius:"50%",background:"#22c55e"}}/> Saved</>
-            ) : null}
-          </div>
-          {/* Progress */}
-          <div style={{ fontSize:11, color:"rgba(255,255,255,.7)", background:"rgba(255,255,255,.1)", borderRadius:20, padding:"3px 10px" }}>
-            {answeredCount}/{questions.length}
-          </div>
-          {/* Violations */}
-          {tabSwitches>0 && (
-            <div style={{ fontSize:10, color:"#fca5a5", display:"flex", alignItems:"center", gap:3 }}>
-              <AlertTriangle style={{width:11,height:11}}/>{tabSwitches}
-            </div>
-          )}
-          {/* Save manually */}
-          <button onClick={()=>saveAnswers(false)} style={{ background:"rgba(255,255,255,.12)", border:"none", color:"rgba(255,255,255,.8)", borderRadius:8, padding:"5px 8px", cursor:"pointer" }}>
-            <Save style={{width:13,height:13}}/>
-          </button>
-          {/* Nav toggle (mobile) */}
-          <button onClick={()=>setShowNav(v=>!v)} style={{ background:"rgba(255,255,255,.12)", border:"none", color:"rgba(255,255,255,.8)", borderRadius:8, padding:"5px 8px", cursor:"pointer" }} className="lg:hidden">
-            <Grid style={{width:13,height:13}}/>
-          </button>
-          {/* Submit */}
-          <button onClick={()=>{ saveAnswers(true); setPhase("review"); }}
-            style={{ background:"#EF4444", border:"none", color:"#fff", borderRadius:10, padding:"6px 14px", fontSize:12, fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", gap:5, fontFamily:"'Cairo',sans-serif" }}>
-            <Eye style={{width:13,height:13}}/><span>{t("Review","مراجعة")}</span>
-          </button>
-        </div>
+        <span style={{ fontSize:10, color:"rgba(255,255,255,.6)", background:"rgba(255,255,255,.1)", borderRadius:12, padding:"2px 7px", flexShrink:0 }}>{answeredCount}/{questions.length}</span>
+        <button onClick={()=>saveAnswers(false)} style={{ background:"rgba(255,255,255,.12)", border:"none", color:"rgba(255,255,255,.7)", borderRadius:7, padding:"4px 6px", cursor:"pointer", display:"flex", alignItems:"center", gap:2 }}>
+          <Save style={{width:11,height:11}}/>
+          {lastSaved&&!saving&&<span style={{fontSize:8,color:"#22c55e"}}>✓</span>}
+        </button>
+        <button onClick={()=>{ saveAnswers(true); setPhase("review"); }} style={{ background:"#EF4444", border:"none", color:"#fff", borderRadius:8, padding:"5px 10px", fontSize:11, fontWeight:700, cursor:"pointer", fontFamily:"'Cairo',sans-serif", display:"flex", alignItems:"center", gap:3, flexShrink:0 }}>
+          <Eye style={{width:11,height:11}}/>{t("Review","مراجعة")}
+        </button>
       </div>
 
       {/* Progress bar */}
-      <div style={{ height:3, background:"rgba(15,45,31,.1)", flexShrink:0 }}>
-        <div style={{ height:"100%", width:`${progressPct}%`, background:`linear-gradient(90deg,${GM},${GOLD})`, transition:"width .5s" }} />
+      <div style={{ height:3, background:"rgba(0,0,0,.08)", flexShrink:0 }}>
+        <div style={{ height:"100%", width:`${progressPct}%`, background:`linear-gradient(90deg,${GM},${GOLD})`, transition:"width .5s" }}/>
       </div>
 
-      {/* ── MAIN CONTENT ── */}
-      <div style={{ flex:1, display:"flex", overflow:"hidden", position:"relative" }}>
+      {/* ── BODY ── */}
+      <div style={{ flex:1, display:"flex", overflow:"hidden" }}>
 
-        {/* LEFT: Question navigator (desktop) */}
-        <div className="hidden lg:flex" style={{ width:200, background:"#fff", borderRight:`1px solid ${BORDER}`, flexDirection:"column", overflow:"hidden", flexShrink:0 }}>
-          <div style={{ padding:"12px 12px 8px", borderBottom:`1px solid ${BORDER}` }}>
-            <div style={{ fontSize:11, fontWeight:700, color:"#7a9e88", letterSpacing:1, marginBottom:8 }}>QUESTIONS</div>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:5 }}>
+        {/* Left nav — desktop */}
+        <div className="hidden lg:flex" style={{ width:170, background:"#fff", borderRight:`1px solid ${BORDER}`, flexDirection:"column", flexShrink:0 }}>
+          <div style={{ padding:"10px 8px 6px", borderBottom:`1px solid ${BORDER}` }}>
+            <div style={{ fontSize:9, fontWeight:700, color:"#7a9e88", letterSpacing:.8, marginBottom:7 }}>QUESTIONS</div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:4, overflowY:"auto", maxHeight:"calc(100vh - 220px)" }}>
               {questions.map((qq,i)=>{
                 const a=answers[qq.id];
                 return (
                   <button key={qq.id} onClick={()=>setCurrentIdx(i)}
-                    style={{ height:36, borderRadius:8, border:"none", fontSize:11, fontWeight:700, cursor:"pointer", transition:"all .15s",
+                    style={{ height:32, borderRadius:6, border:"none", fontSize:10, fontWeight:700, cursor:"pointer",
                       background:i===currentIdx?G:a?.flagged?"#fffbeb":a?.text?"#f0fff4":"#f8fafb",
                       color:i===currentIdx?"#fff":a?.flagged?GOLD:a?.text?"#22c55e":"#7a9e88",
-                      outline:i===currentIdx?`2px solid ${GOLD}`:""
+                      outline:i===currentIdx?`2px solid ${GOLD}80`:"none",
                     }}>
                     {i+1}
                   </button>
@@ -470,89 +442,170 @@ const ExamTaking = () => {
               })}
             </div>
           </div>
-          {/* Legend */}
-          <div style={{ padding:"10px 12px", fontSize:10, display:"flex", flexDirection:"column", gap:5 }}>
-            {[["#f0fff4","#9ae6b4","#22c55e",`Answered (${answeredCount})`],["#fffbeb",GOLD,GOLD,`Flagged (${flaggedCount})`],["#f8fafb",BORDER,"#7a9e88",`Unanswered (${questions.length-answeredCount})`]].map(([bg,bd,c,lb],i)=>(
-              <div key={i} style={{ display:"flex", alignItems:"center", gap:6 }}>
-                <div style={{ width:12,height:12,borderRadius:3,background:bg,border:`1px solid ${bd}`,flexShrink:0 }}/>
-                <span style={{ color:"#7a9e88" }}>{lb}</span>
+          <div style={{ padding:"8px", fontSize:9, display:"flex", flexDirection:"column", gap:4 }}>
+            {[[G,`2px solid ${GOLD}80`,"Current"],[`#f0fff4`,"1px solid #9ae6b4",`Answered (${answeredCount})`],[`#fffbeb`,`1px solid ${GOLD}`,`Flagged (${flaggedCount})`],[`#f8fafb`,`1px solid ${BORDER}`,`Unanswered (${questions.length-answeredCount})`]].map(([bg,bd,lb],i)=>(
+              <div key={i} style={{ display:"flex", alignItems:"center", gap:4, color:"#7a9e88" }}>
+                <div style={{ width:10,height:10,borderRadius:2,background:bg,border:bd,flexShrink:0 }}/>{lb}
               </div>
             ))}
           </div>
-          {/* Summary */}
-          <div style={{ marginTop:"auto", padding:"10px 12px", borderTop:`1px solid ${BORDER}`, fontSize:11, display:"flex", flexDirection:"column", gap:4 }}>
-            <div style={{ display:"flex", justifyContent:"space-between", color:"#7a9e88" }}>
-              <span>{t("Pass Mark","درجة النجاح")}</span><span style={{ fontWeight:700, color:G }}>{exam?.passing_score}%</span>
-            </div>
-            {exam?.guidelines && (
-              <div style={{ fontSize:10, color:"#7a9e88", background:"#f8fafb", borderRadius:8, padding:"6px 8px", lineHeight:1.4 }}>
-                {language==="ar"?exam.guidelines_ar||exam.guidelines:exam.guidelines}
-              </div>
-            )}
+          <div style={{ marginTop:"auto", padding:"8px", borderTop:`1px solid ${BORDER}`, fontSize:10, color:"#7a9e88" }}>
+            <div style={{ display:"flex", justifyContent:"space-between" }}><span>Pass</span><span style={{fontWeight:700,color:G}}>{exam?.passing_score}%</span></div>
           </div>
         </div>
 
-        {/* CENTER: Question card */}
-        <div style={{ flex:1, overflow:"auto", padding:"16px" }}>
+        {/* CENTER — question card, fixed height, no outer scroll */}
+        <div style={{ flex:1, display:"flex", flexDirection:"column", overflow:"hidden", padding:"8px 8px 0" }}>
           {q && (
-            <div style={{ maxWidth:680, margin:"0 auto" }}>
-              <div style={{ background:"#fff", borderRadius:18, boxShadow:"0 2px 16px rgba(0,0,0,.08)", overflow:"hidden" }}>
-                {/* Question header bar */}
-                <div style={{ background:`linear-gradient(135deg,${G},${GM})`, padding:"14px 18px", display:"flex", alignItems:"center", gap:10 }}>
-                  <div style={{ width:30, height:30, borderRadius:"50%", background:"rgba(255,255,255,.15)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontWeight:900, color:"#fff", flexShrink:0 }}>
-                    {currentIdx+1}
-                  </div>
-                  <div style={{ flex:1 }}>
-                    <div style={{ display:"flex", gap:6, flexWrap:"wrap" as const }}>
-                      <span style={{ fontSize:10, padding:"2px 8px", borderRadius:20, background:"rgba(255,255,255,.15)", color:"rgba(255,255,255,.9)", fontWeight:600 }}>
-                        {q.question_type?.replace("_"," ")}
-                      </span>
-                      {q.difficulty && (
-                        <span style={{ fontSize:10, padding:"2px 8px", borderRadius:20, background:q.difficulty==="hard"?"rgba(239,68,68,.3)":q.difficulty==="easy"?"rgba(34,197,94,.3)":"rgba(255,255,255,.15)", color:"#fff", fontWeight:600 }}>
-                          {q.difficulty}
-                        </span>
-                      )}
-                      <span style={{ fontSize:10, padding:"2px 8px", borderRadius:20, background:`rgba(201,168,76,.3)`, color:GOLD, fontWeight:700, marginLeft:"auto" }}>
-                        {q.points||1} {t("pts","نقطة")}
-                      </span>
-                    </div>
-                  </div>
-                  {/* Flag button */}
-                  <button onClick={()=>toggleFlag(q.id)}
-                    style={{ width:32, height:32, borderRadius:"50%", border:"none", background:answers[q.id]?.flagged?"#EF4444":"rgba(255,255,255,.15)", color:"#fff", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
-                    <Flag style={{width:14,height:14}}/>
-                  </button>
+            <div style={{ flex:1, display:"flex", flexDirection:"column", background:"#fff", borderRadius:14, boxShadow:"0 2px 10px rgba(0,0,0,.07)", overflow:"hidden", maxWidth:640, width:"100%", margin:"0 auto" }}>
+
+              {/* Q header */}
+              <div style={{ background:`linear-gradient(135deg,${G},${GM})`, padding:"10px 14px", display:"flex", alignItems:"center", gap:8, flexShrink:0 }}>
+                <div style={{ width:26,height:26,borderRadius:"50%",background:"rgba(255,255,255,.15)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:900,color:"#fff",flexShrink:0 }}>{currentIdx+1}</div>
+                <div style={{ display:"flex", gap:5, flex:1, flexWrap:"wrap" as const }}>
+                  <span style={{ fontSize:10,padding:"2px 7px",borderRadius:10,background:"rgba(255,255,255,.15)",color:"rgba(255,255,255,.9)",fontWeight:600 }}>{q.question_type?.replace("_"," ")}</span>
+                  {q.difficulty&&<span style={{ fontSize:10,padding:"2px 7px",borderRadius:10,background:q.difficulty==="hard"?"rgba(239,68,68,.35)":q.difficulty==="easy"?"rgba(34,197,94,.35)":"rgba(255,255,255,.15)",color:"#fff",fontWeight:600 }}>{q.difficulty}</span>}
+                  <span style={{ fontSize:10,padding:"2px 7px",borderRadius:10,background:"rgba(201,168,76,.3)",color:GOLD,fontWeight:700,marginLeft:"auto" }}>{q.points||1} {t("pts","نقطة")}</span>
+                </div>
+                <button onClick={()=>toggleFlag(q.id)} style={{ width:28,height:28,borderRadius:"50%",border:"none",background:answers[q.id]?.flagged?"#EF4444":"rgba(255,255,255,.15)",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0 }}>
+                  <Flag style={{width:13,height:13}}/>
+                </button>
+              </div>
+
+              {/* Scrollable body */}
+              <div style={{ flex:1, overflowY:"auto", padding:"14px 14px 8px" }}>
+                {/* Question text */}
+                <div style={{ marginBottom:14 }}>
+                  {q.question_text&&<div dir="auto" style={{ fontSize:16,fontWeight:600,color:G,lineHeight:1.9,marginBottom:q.question_text_ar?8:0,fontFamily:"'Cairo',sans-serif" }} dangerouslySetInnerHTML={{__html:sanitizeHtml(q.question_text)}}/>}
+                  {q.question_text_ar&&q.question_text_ar!==q.question_text&&(
+                    <div dir="rtl" style={{ fontSize:19,fontWeight:600,color:G,lineHeight:2.3,fontFamily:"'Amiri',serif",background:"rgba(15,45,31,.03)",borderRight:`3px solid ${GOLD}`,paddingRight:10,paddingTop:4,paddingBottom:4,borderRadius:"0 8px 8px 0" }} dangerouslySetInnerHTML={{__html:sanitizeHtml(q.question_text_ar)}}/>
+                  )}
+                  {!q.question_text&&!q.question_text_ar&&<p style={{color:"#7a9e88",fontStyle:"italic",fontSize:13}}>Question text missing.</p>}
+                  {q.media_url&&(q.question_type==="audio"||q.question_type==="dictation")&&<div style={{marginTop:10}}><AudioPlayer src={q.media_url} title={t("Listen carefully","استمع بعناية")} maxPlays={3}/></div>}
+                  {q.media_url&&q.question_type==="video"&&<div style={{marginTop:10,borderRadius:10,overflow:"hidden"}}><video controls src={q.media_url} style={{width:"100%",maxHeight:160,background:"#000"}}/></div>}
+                  {q.media_url&&isImageUrl(q.media_url)&&!["audio","dictation","video"].includes(q.question_type)&&<img src={q.media_url} alt="Q" style={{marginTop:10,maxHeight:160,borderRadius:10,objectFit:"contain",display:"block"}}/>}
                 </div>
 
-                <div style={{ padding:"20px 20px" }}>
-                  {/* Question text */}
-                  <div style={{ marginBottom:20, direction:exam?.rtl_mode?"rtl":"ltr" }}>
-                    {q.question_text && (
-                      <div className="font-medium leading-relaxed prose prose-sm max-w-none" dir="auto"
-                        style={{ fontSize:`${q.custom_format?.font_size||exam?.question_font_size||16}px`, fontFamily:exam?.question_font_family||"Cairo", lineHeight:exam?.question_line_height||1.7, fontWeight:q.custom_format?.bold||exam?.question_bold?"bold":"normal", color:q.custom_format?.color||exam?.question_color||G }}
-                        dangerouslySetInnerHTML={{__html:sanitizeHtml(q.question_text)}}/>
-                    )}
-                    {q.question_text_ar && q.question_text_ar!==q.question_text && (
-                      <div className="arabic-exam-text mt-2" style={{ fontSize:`${exam?.question_font_size||16}px`, lineHeight:exam?.question_line_height||1.7, color:G }}
-                        dangerouslySetInnerHTML={{__html:sanitizeHtml(q.question_text_ar)}}/>
-                    )}
-                    {!q.question_text&&!q.question_text_ar && <p style={{ color:"#7a9e88", fontStyle:"italic", fontSize:13 }}>Question text missing.</p>}
-
-                    {/* Media */}
-                    {q.media_url&&(q.question_type==="audio"||q.question_type==="dictation")&&<div style={{marginTop:12}}><AudioPlayer src={q.media_url} title={t("Listen carefully","استمع بعناية")} maxPlays={3}/></div>}
-                    {q.media_url&&q.question_type==="video"&&<div style={{marginTop:12,borderRadius:12,overflow:"hidden"}}><video controls src={q.media_url} style={{width:"100%",maxHeight:240,background:"#000"}}/></div>}
-                    {q.media_url&&isImageUrl(q.media_url)&&!["audio","dictation","video"].includes(q.question_type)&&<img src={q.media_url} alt="Q" style={{marginTop:12,maxHeight:240,borderRadius:10,objectFit:"contain"}}/>}
-                    {q.media_url&&!isImageUrl(q.media_url)&&!["audio","dictation","video"].includes(q.question_type)&&<div style={{marginTop:12}}><AudioPlayer src={q.media_url} title={t("Audio","صوت")}/></div>}
+                {/* MCQ */}
+                {(q.question_type==="mcq"||q.question_type==="image_mcq")&&q.options&&(
+                  <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                    {(q.options as any[]).map((opt:any,idx:number)=>{
+                      const sel=answers[q.id]?.text===opt.id;
+                      return (
+                        <div key={opt.id} className="opt-row" onClick={()=>setAnswer(q.id,opt.id)}
+                          style={{ display:"flex",alignItems:"center",gap:10,padding:"12px 13px",borderRadius:11,cursor:"pointer",transition:"all .15s",
+                            background:sel?"#f0fff4":"#f8fafb",border:`2px solid ${sel?"#22c55e":BORDER}`,
+                            boxShadow:sel?"0 2px 8px rgba(34,197,94,.12)":"none" }}>
+                          <div style={{ width:30,height:30,borderRadius:"50%",background:sel?GM:"rgba(15,45,31,.08)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:800,color:sel?"#fff":G,flexShrink:0 }}>{String.fromCharCode(65+idx)}</div>
+                          {opt.image_url&&<img src={opt.image_url} alt="" style={{height:52,borderRadius:7,objectFit:"contain"}}/>}
+                          <div style={{ flex:1 }}>
+                            <div dir="auto" style={{ fontSize:15,color:sel?G:"#374151",fontWeight:sel?700:500,lineHeight:1.7,fontFamily:"'Cairo',sans-serif" }} dangerouslySetInnerHTML={{__html:sanitizeHtml(opt.text||"")}}/>
+                            {opt.text_ar&&opt.text_ar!==opt.text&&<div dir="rtl" style={{ fontSize:16,color:sel?GM:"#6b7280",fontFamily:"'Amiri',serif",lineHeight:2.1,marginTop:2 }} dangerouslySetInnerHTML={{__html:sanitizeHtml(opt.text_ar)}}/>}
+                          </div>
+                          {sel&&<div style={{ width:20,height:20,borderRadius:"50%",background:"#22c55e",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:11,color:"#fff",fontWeight:700 }}>✓</div>}
+                        </div>
+                      );
+                    })}
                   </div>
+                )}
 
-                  {/* MCQ */}
-                  {(q.question_type==="mcq"||q.question_type==="image_mcq") && q.options && (
-                    <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-                      {(q.options as any[]).map((opt:any,idx:number)=>{
-                        const sel=answers[q.id]?.text===opt.id;
-                        return (
-                          <div key={opt.id} onClick={()=>setAnswer(q.id,opt.id)}
-                            style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 14px", borderRadius:12, cursor:"pointer", transition:"all .15s",
+                {/* True/False */}
+                {q.question_type==="true_false"&&(
+                  <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:12 }}>
+                    {[{v:"true",l:t("True","صح"),e:"✓",c:"#22c55e"},{v:"false",l:t("False","خطأ"),e:"✗",c:"#EF4444"}].map(opt=>{
+                      const sel=answers[q.id]?.text===opt.v;
+                      return (
+                        <div key={opt.v} className="opt-row" onClick={()=>setAnswer(q.id,opt.v)}
+                          style={{ display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"20px 12px",borderRadius:13,cursor:"pointer",transition:"all .15s",
+                            background:sel?opt.c+"18":"#f8fafb",border:`2px solid ${sel?opt.c:BORDER}` }}>
+                          <span style={{fontSize:30,marginBottom:6}}>{opt.e}</span>
+                          <span style={{fontSize:17,fontWeight:700,color:sel?opt.c:G}}>{opt.l}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {q.question_type==="fill_blank"&&<input placeholder={t("Type your answer…","اكتب إجابتك هنا…")} value={answers[q.id]?.text||""} onChange={e=>setAnswer(q.id,e.target.value)} dir="auto" style={{ width:"100%",padding:"13px 14px",borderRadius:11,border:`2px solid ${BORDER}`,fontSize:16,outline:"none",color:G,background:"#f8fafb",boxSizing:"border-box" as const,fontFamily:"'Cairo',sans-serif" }} onFocus={e=>(e.target.style.borderColor=GM)} onBlur={e=>(e.target.style.borderColor=BORDER)}/>}
+
+                {(q.question_type==="short_answer"||q.question_type==="essay")&&<textarea rows={q.question_type==="essay"?5:3} placeholder={t("Write your answer…","اكتب إجابتك هنا…")} value={answers[q.id]?.text||""} onChange={e=>setAnswer(q.id,e.target.value)} dir="auto" style={{ width:"100%",padding:"12px 14px",borderRadius:11,border:`2px solid ${BORDER}`,fontSize:15,outline:"none",color:G,background:"#f8fafb",resize:"none" as const,lineHeight:1.8,fontFamily:"'Cairo',sans-serif",boxSizing:"border-box" as const }} onFocus={e=>(e.target.style.borderColor=GM)} onBlur={e=>(e.target.style.borderColor=BORDER)}/>}
+
+                {(q.question_type==="audio"||q.question_type==="dictation")&&(
+                  <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                    <textarea rows={3} placeholder={t("Write what you heard…","اكتب ما سمعته…")} value={answers[q.id]?.text||""} onChange={e=>setAnswer(q.id,e.target.value)} style={{padding:"12px 14px",borderRadius:11,border:`2px solid ${BORDER}`,fontSize:15,outline:"none",color:G,background:"#f8fafb",resize:"none" as const,fontFamily:"'Cairo',sans-serif",boxSizing:"border-box" as const,width:"100%"}}/>
+                    <AudioRecorder onRecordingComplete={async(blob,url)=>{
+                      if(!blob.size){toast({title:t("Recording is empty.","التسجيل فارغ."),variant:"destructive"});return;}
+                      const path=`student-answers/${user!.id}/${attemptId}_${q.id}.webm`;
+                      const{error}=await supabase.storage.from("exam-media").upload(path,blob,{upsert:true});
+                      if(!error){const{data:ud}=await supabase.storage.from("exam-media").createSignedUrl(path,3600);setAnswer(q.id,answers[q.id]?.text||"[audio_recorded]",{audioUrl:ud?.signedUrl||url,fileType:"audio"});}
+                      else setAnswer(q.id,answers[q.id]?.text||"[audio_recorded]",{audioUrl:url,fileType:"audio"});
+                    }} existingUrl={answers[q.id]?.data?.audioUrl}/>
+                  </div>
+                )}
+              </div>
+
+              {/* Nav footer — always visible */}
+              <div style={{ padding:"9px 12px",borderTop:`1px solid ${BORDER}`,display:"flex",alignItems:"center",gap:8,flexShrink:0,background:"#fff" }}>
+                <button onClick={()=>setCurrentIdx(p=>Math.max(0,p-1))} disabled={currentIdx===0}
+                  style={{ display:"flex",alignItems:"center",gap:4,padding:"8px 12px",borderRadius:9,background:"#f8fafb",border:`1px solid ${BORDER}`,color:currentIdx===0?"#cbd5e0":G,fontSize:13,fontWeight:700,cursor:currentIdx===0?"not-allowed":"pointer",opacity:currentIdx===0?.5:1,fontFamily:"'Cairo',sans-serif",flexShrink:0 }}>
+                  <ChevronLeft style={{width:13,height:13}}/>{t("Prev","السابق")}
+                </button>
+                <span style={{ flex:1,textAlign:"center",fontSize:12,color:"#7a9e88",fontWeight:600 }}>{currentIdx+1} / {questions.length}</span>
+                {currentIdx===questions.length-1?(
+                  <button onClick={()=>{saveAnswers(true);setPhase("review");}} style={{ display:"flex",alignItems:"center",gap:4,padding:"8px 12px",borderRadius:9,background:"#EF4444",border:"none",color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"'Cairo',sans-serif",flexShrink:0 }}>
+                    <Eye style={{width:13,height:13}}/>{t("Review","مراجعة")}
+                  </button>
+                ):(
+                  <button onClick={()=>setCurrentIdx(p=>Math.min(questions.length-1,p+1))} style={{ display:"flex",alignItems:"center",gap:4,padding:"8px 12px",borderRadius:9,background:G,border:"none",color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"'Cairo',sans-serif",flexShrink:0 }}>
+                    {t("Next","التالي")}<ChevronRight style={{width:13,height:13}}/>
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Right stats — desktop */}
+        <div className="hidden lg:flex" style={{ width:150,background:"#fff",borderLeft:`1px solid ${BORDER}`,flexDirection:"column",flexShrink:0,padding:10,gap:10 }}>
+          <div style={{ textAlign:"center",background:timerBg,borderRadius:11,padding:"10px 6px",border:`1px solid ${timerColor}33` }}>
+            <div style={{fontSize:9,fontWeight:700,color:"#7a9e88",letterSpacing:.8,marginBottom:3}}>TIME</div>
+            <div style={{fontSize:22,fontWeight:900,color:timerColor,fontVariantNumeric:"tabular-nums"}}>{fmt(timeLeft)}</div>
+          </div>
+          <div style={{ background:"#f8fafb",borderRadius:11,padding:"9px",display:"flex",flexDirection:"column",gap:6 }}>
+            {[{l:t("Answered","مُجاب"),v:answeredCount,c:"#22c55e"},{l:t("Flagged","مُعلّم"),v:flaggedCount,c:GOLD},{l:t("Left","متبقي"),v:questions.length-answeredCount,c:"#EF4444"}].map((s,i)=>(
+              <div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:11}}><span style={{color:"#7a9e88"}}>{s.l}</span><span style={{fontWeight:800,color:s.c}}>{s.v}</span></div>
+            ))}
+            <div style={{height:4,borderRadius:2,background:"#f0f4f0",overflow:"hidden",marginTop:2}}>
+              <div style={{height:"100%",width:`${progressPct}%`,background:`linear-gradient(90deg,${GM},${GOLD})`,transition:"width .5s"}}/>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Mobile bottom — scrollable compact number row */}
+      <div style={{ background:"#fff",borderTop:`1px solid ${BORDER}`,padding:"5px 8px",flexShrink:0,display:"flex",alignItems:"center",gap:4 }} className="lg:hidden">
+        <div style={{ flex:1,display:"flex",gap:4,overflowX:"auto",alignItems:"center" }}>
+          {questions.map((qq,i)=>{
+            const a=answers[qq.id];
+            return (
+              <button key={qq.id} onClick={()=>setCurrentIdx(i)}
+                style={{ width:28,height:28,borderRadius:6,border:"none",fontSize:10,fontWeight:700,cursor:"pointer",flexShrink:0,
+                  background:i===currentIdx?G:a?.flagged?"#fffbeb":a?.text?"#f0fff4":"#f8fafb",
+                  color:i===currentIdx?"#fff":a?.flagged?GOLD:a?.text?"#22c55e":"#7a9e88",
+                  outline:i===currentIdx?`2px solid ${GOLD}80`:"none" }}>
+                {i+1}
+              </button>
+            );
+          })}
+        </div>
+        <div style={{fontSize:10,color:"#7a9e88",flexShrink:0,background:"#f8fafb",borderRadius:9,padding:"2px 7px",border:`1px solid ${BORDER}`}}>{answeredCount}/{questions.length}</div>
+      </div>
+    </div>
+  );
+};
+
+export default ExamTaking;
+          style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 14px", borderRadius:12, cursor:"pointer", transition:"all .15s",
                               background:sel?"#f0fff4":"#f8fafb",
                               border:`2px solid ${sel?"#22c55e":BORDER}`,
                               boxShadow:sel?"0 2px 8px rgba(34,197,94,.15)":"none",
