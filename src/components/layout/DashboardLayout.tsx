@@ -1,3 +1,12 @@
+const isMajlis = location.pathname === "/student/majlis";
+if (isMajlis) {
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 40 }}>
+      <Outlet />
+    </div>
+  );
+}
+
 /*  src/components/layout/DashboardLayout.tsx
     ENHANCED NAV:
     - "Courses" + "Live Classes" → "Learning Hub"  (/student/courses)
