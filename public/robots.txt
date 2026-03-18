@@ -1,14 +1,18 @@
-User-agent: Googlebot
-Allow: /
-
-User-agent: Bingbot
-Allow: /
-
-User-agent: Twitterbot
-Allow: /
-
-User-agent: facebookexternalhit
-Allow: /
+# Tahleem Academy — robots.txt
+# Allow public-facing pages; block all private dashboards and admin routes
 
 User-agent: *
 Allow: /
+Allow: /courses
+Allow: /about
+Allow: /contact
+Allow: /live
+Disallow: /admin
+Disallow: /admin-secure
+Disallow: /student
+Disallow: /teacher
+Disallow: /onboarding
+Disallow: /reset-password
+Disallow: /recordings
+
+Sitemap: https://tahleemacademy.vercel.app/sitemap.xml
