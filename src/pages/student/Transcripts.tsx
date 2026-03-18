@@ -1,17 +1,32 @@
+
+/*  src/pages/student/Transcripts.tsx
+    ENHANCED — Animated CGPA ring, performance trend chart,
+    per-term tabs, grade letter badges, improved PDF design
+*/
 import { useEffect, useState, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
-import { Download, GraduationCap, Eye } from "lucide-react";
+import {
+  Download, GraduationCap, TrendingUp, Award,
+  CheckCircle, XCircle, BarChart2, BookOpen, Star
+} from "lucide-react";
 import tahleemStamp from "@/assets/tahleem-stamp.png";
 import { useToast } from "@/hooks/use-toast";
-import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  LineChart, Line, CartesianGrid, Cell
+} from "recharts";
+
+const G = "#0f2d1f", GM = "#1a4731", GOLD = "#c9a84c";
 
 interface GradedExam {
   exam_id: string;
+  attempt_id: string;
   title: string;
   title_ar: string | null;
   score: number;
@@ -20,523 +35,606 @@ interface GradedExam {
   passed: boolean;
   submitted_at: string;
   course_title?: string;
+  term: string;
+  type: string;
 }
 
-const gradePoint = (pct: number): number => {
-  if (pct >= 85) return 4.0;
-  if (pct >= 75) return 3.5;
-  if (pct >= 65) return 3.0;
-  if (pct >= 55) return 2.0;
-  if (pct >= 45) return 1.0;
-  return 0.0;
+const gradePoint = (pct: number) =>
+  pct >= 85 ? 4.0 : pct >= 75 ? 3.5 : pct >= 65 ? 3.0 : pct >= 55 ? 2.0 : pct >= 45 ? 1.0 : 0.0;
+
+const getLetterGrade = (pct: number) => {
+  if (pct >= 90) return { letter: "A+", color: "#22c55e", bg: "#f0fff4", label: "Excellent",    labelAr: "ممتاز"   };
+  if (pct >= 80) return { letter: "A",  color: "#16a34a", bg: "#dcfce7", label: "Very Good",   labelAr: "جيد جداً" };
+  if (pct >= 70) return { letter: "B",  color: "#2563eb", bg: "#eff6ff", label: "Good",        labelAr: "جيد"     };
+  if (pct >= 60) return { letter: "C",  color: GOLD,      bg: "#fffbeb", label: "Satisfactory",labelAr: "مقبول"   };
+  if (pct >= 50) return { letter: "D",  color: "#ea580c", bg: "#fff7ed", label: "Pass",        labelAr: "ناجح"    };
+  return               { letter: "F",   color: "#ef4444", bg: "#fff5f5", label: "Fail",        labelAr: "راسب"    };
 };
 
-const gradeLabel = (gp: number): string => {
-  if (gp >= 4.0) return "ممتاز";
-  if (gp >= 3.5) return "جيد جداً";
-  if (gp >= 3.0) return "جيد";
-  if (gp >= 2.0) return "مقبول";
-  if (gp >= 1.0) return "ناجح";
-  return "راسب";
+const toArabicNum = (n: number | string) =>
+  String(n).replace(/[0-9]/g, d => "٠١٢٣٤٥٦٧٨٩"[parseInt(d)]);
+
+// ── Animated CGPA Ring ────────────────────────────────────────────
+const CGPARing = ({ cgpa }: { cgpa: number }) => {
+  const r = 54, circ = 2 * Math.PI * r;
+  const [dash, setDash] = useState(0);
+  useEffect(() => {
+    const timer = setTimeout(() => setDash((cgpa / 4) * circ), 200);
+    return () => clearTimeout(timer);
+  }, [cgpa, circ]);
+  const color = cgpa >= 3.5 ? "#22c55e" : cgpa >= 2.0 ? GOLD : "#ef4444";
+  const grade = getLetterGrade((cgpa / 4) * 100);
+  return (
+    <div style={{ position: "relative", width: 140, height: 140, margin: "0 auto" }}>
+      <svg width={140} height={140} style={{ transform: "rotate(-90deg)" }}>
+        <circle cx={70} cy={70} r={r} fill="none" stroke="#f0f4f8" strokeWidth={12} />
+        <circle cx={70} cy={70} r={r} fill="none" stroke={color} strokeWidth={12}
+          strokeDasharray={`${dash} ${circ}`} strokeLinecap="round"
+          style={{ transition: "stroke-dasharray 1.4s cubic-bezier(.4,0,.2,1)" }} />
+      </svg>
+      <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ fontSize: 28, fontWeight: 900, color: G, lineHeight: 1 }}>{cgpa.toFixed(2)}</div>
+        <div style={{ fontSize: 10, color: "#9ca3af", marginTop: 2 }}>/ 4.00</div>
+        <div style={{ fontSize: 16, fontWeight: 900, color, marginTop: 2 }}>{grade.letter}</div>
+      </div>
+    </div>
+  );
 };
 
-const gradeLabelEn = (gp: number): string => {
-  if (gp >= 4.0) return "Excellent";
-  if (gp >= 3.5) return "Very Good";
-  if (gp >= 3.0) return "Good";
-  if (gp >= 2.0) return "Satisfactory";
-  if (gp >= 1.0) return "Pass";
-  return "Fail";
+// ── Per-Term Table ────────────────────────────────────────────────
+const TermTable = ({ exams, termLabel, language }: {
+  exams: GradedExam[]; termLabel: string; language: string;
+}) => {
+  const subjectMap = new Map<string, { title: string; title_ar: string; test: number; exam: number }>();
+  exams.forEach(e => {
+    const key = e.title;
+    if (!subjectMap.has(key))
+      subjectMap.set(key, { title: e.title, title_ar: e.title_ar || e.title, test: 0, exam: 0 });
+    const entry = subjectMap.get(key)!;
+    if (e.type === "test") entry.test = Math.max(entry.test, Math.round(e.percentage * 0.3));
+    else entry.exam = Math.max(entry.exam, Math.round(e.percentage * 0.7));
+  });
+  const rows = Array.from(subjectMap.values());
+  const termGPA = rows.length > 0
+    ? rows.reduce((s, r) => s + gradePoint(r.test + r.exam), 0) / rows.length
+    : 0;
+
+  if (rows.length === 0) return (
+    <div style={{ textAlign: "center", padding: "40px 20px", color: "#9ca3af", fontSize: 14 }}>
+      <GraduationCap style={{ width: 40, height: 40, margin: "0 auto 12px", opacity: 0.4 }} />
+      No results for {termLabel} yet.
+    </div>
+  );
+
+  return (
+    <div style={{ overflowX: "auto" }}>
+      {/* Term header bar */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderBottom: "1px solid #f0f4f8", background: "#fafafa" }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: G }}>{termLabel}</div>
+        <div style={{ display: "flex", gap: 14, fontSize: 12, color: "#7a9e88" }}>
+          <span>Term GPA: <strong style={{ color: G }}>{termGPA.toFixed(2)}</strong></span>
+          <span>{rows.filter(r => r.test + r.exam >= 50).length}/{rows.length} passed</span>
+        </div>
+      </div>
+
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+        <thead>
+          <tr style={{ background: "#f8fafb" }}>
+            {["Subject", "Test (30)", "Exam (70)", "Total", "%", "GP", "Grade", "Result"].map(h => (
+              <th key={h} style={{ padding: "10px 14px", textAlign: "center", fontSize: 11, fontWeight: 700, color: "#6b7280", borderBottom: "1px solid #e5e7eb", whiteSpace: "nowrap" }}>
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, i) => {
+            const total = row.test + row.exam;
+            const gp = gradePoint(total);
+            const grade = getLetterGrade(total);
+            return (
+              <tr key={i} style={{ borderBottom: "1px solid #f0f4f8", background: i % 2 === 0 ? "#fff" : "#fafafa" }}>
+                <td style={{ padding: "12px 16px", fontWeight: 600, color: G, fontFamily: "'Amiri',serif", fontSize: 15 }}>
+                  {language === "ar" ? row.title_ar : row.title}
+                </td>
+                <td style={{ padding: "10px 14px", textAlign: "center", color: "#374151" }}>{row.test || "—"}</td>
+                <td style={{ padding: "10px 14px", textAlign: "center", color: "#374151" }}>{row.exam || "—"}</td>
+                <td style={{ padding: "10px 14px", textAlign: "center", fontWeight: 900, color: G, fontSize: 16 }}>{total}</td>
+                <td style={{ padding: "10px 14px", textAlign: "center", color: "#374151" }}>{total}%</td>
+                <td style={{ padding: "10px 14px", textAlign: "center", fontWeight: 700, color: G }}>{gp.toFixed(1)}</td>
+                <td style={{ padding: "10px 14px", textAlign: "center" }}>
+                  <span style={{ padding: "4px 12px", borderRadius: 20, background: grade.bg, color: grade.color, fontWeight: 800, fontSize: 13, display: "inline-block" }}>
+                    {grade.letter}
+                  </span>
+                </td>
+                <td style={{ padding: "10px 14px", textAlign: "center" }}>
+                  {total >= 50
+                    ? <span style={{ color: "#22c55e", fontWeight: 700, display: "flex", alignItems: "center", gap: 4, justifyContent: "center" }}>
+                        <CheckCircle style={{ width: 14, height: 14 }} />Pass
+                      </span>
+                    : <span style={{ color: "#ef4444", fontWeight: 700, display: "flex", alignItems: "center", gap: 4, justifyContent: "center" }}>
+                        <XCircle style={{ width: 14, height: 14 }} />Fail
+                      </span>}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
 };
 
-const toArabicNum = (n: number | string): string => {
-  return String(n).replace(/[0-9]/g, (d) => "٠١٢٣٤٥٦٧٨٩"[parseInt(d)]);
-};
-
+// ══════════════════════════════════════════════════════════════════
 const Transcripts = () => {
   const { t, language } = useLanguage();
   const { user, profile } = useAuth();
   const { toast } = useToast();
   const [exams, setExams] = useState<GradedExam[]>([]);
   const [loading, setLoading] = useState(true);
-  const transcriptRef = useRef<HTMLDivElement>(null);
-  const [showPreview, setShowPreview] = useState(false);
+  const [activeTab, setActiveTab] = useState("overview");
 
   useEffect(() => {
     if (!user) return;
-    const fetch = async () => {
+    const load = async () => {
       const { data } = await supabase
         .from("exam_attempts")
-        .select("exam_id, score, total_points, percentage, passed, submitted_at, exams(title, title_ar, course_id, courses(title))")
+        .select("id, exam_id, score, total_points, percentage, passed, submitted_at, exams(title, title_ar, type, term, course_id, courses(title))")
         .eq("user_id", user.id)
         .eq("status", "graded")
         .order("submitted_at", { ascending: true });
 
-      const mapped = (data || []).map((a: any) => ({
-        exam_id: a.exam_id,
-        title: a.exams?.title || "Exam",
-        title_ar: a.exams?.title_ar,
-        score: Number(a.score) || 0,
-        total_points: Number(a.total_points) || 0,
-        percentage: Number(a.percentage) || 0,
-        passed: a.passed,
-        submitted_at: a.submitted_at,
-        course_title: a.exams?.courses?.title,
-      }));
-      setExams(mapped);
+      setExams((data || []).map((a: any) => ({
+        exam_id:       a.exam_id,
+        attempt_id:    a.id,
+        title:         a.exams?.title || "Exam",
+        title_ar:      a.exams?.title_ar,
+        score:         Number(a.score) || 0,
+        total_points:  Number(a.total_points) || 0,
+        percentage:    Number(a.percentage) || 0,
+        passed:        a.passed,
+        submitted_at:  a.submitted_at,
+        course_title:  a.exams?.courses?.title,
+        term:          a.exams?.term || "first",
+        type:          a.exams?.type || "exam",
+      })));
       setLoading(false);
     };
-    fetch();
+    load();
   }, [user]);
 
-  const totalGP = exams.reduce((sum, e) => sum + gradePoint(e.percentage), 0);
-  const cgpa = exams.length > 0 ? totalGP / exams.length : 0;
+  // ── Derived stats ─────────────────────────────────────────────
+  const totalGP  = exams.reduce((s, e) => s + gradePoint(e.percentage), 0);
+  const cgpa     = exams.length > 0 ? totalGP / exams.length : 0;
+  const avgScore = exams.length > 0 ? exams.reduce((s, e) => s + e.percentage, 0) / exams.length : 0;
+  const cgpaGrade = getLetterGrade((cgpa / 4) * 100);
 
-  const status = cgpa >= 3.5 ? "Good Standing" : cgpa >= 2.0 ? "Probation Warning" : cgpa > 0 ? "Academic Probation" : "No Data";
-  const statusAr = cgpa >= 3.5 ? "وضع جيد" : cgpa >= 2.0 ? "تحذير أكاديمي" : cgpa > 0 ? "إنذار أكاديمي" : "لا توجد بيانات";
-  const statusColor = cgpa >= 3.5 ? "default" : cgpa >= 2.0 ? "secondary" : "destructive";
+  const status   = cgpa >= 3.5 ? "Good Standing" : cgpa >= 2.0 ? "Probation Warning" : cgpa > 0 ? "Academic Probation" : "No Data";
+  const statusAr = cgpa >= 3.5 ? "وضع جيد"       : cgpa >= 2.0 ? "تحذير أكاديمي"    : cgpa > 0 ? "إنذار أكاديمي"       : "لا توجد بيانات";
 
-  // Split exams evenly into 3 terms — each exam belongs to exactly one term
-  const splitIntoTerms = (items: GradedExam[]): [GradedExam[], GradedExam[], GradedExam[]] => {
-    const t1: GradedExam[] = [];
-    const t2: GradedExam[] = [];
-    const t3: GradedExam[] = [];
-    items.forEach((item, idx) => {
-      const termIdx = idx % 3;
-      if (termIdx === 0) t1.push(item);
-      else if (termIdx === 1) t2.push(item);
-      else t3.push(item);
-    });
-    return [t1, t2, t3];
-  };
-  const [term1, term2, term3] = splitIntoTerms(exams);
+  const term1 = exams.filter(e => e.term === "first");
+  const term2 = exams.filter(e => e.term === "second");
+  const term3 = exams.filter(e => e.term === "third");
 
-  const termNames = ["الفترة الأولى", "الفترة الثانية", "الفترة الثالثة"];
-  const termNamesEn = ["First Term", "Second Term", "Third Term"];
-  const terms = [term1, term2, term3];
+  // Chart data
+  const trendData = exams.slice(-12).map((e, i) => ({
+    name:  `Q${i + 1}`,
+    score: Math.round(e.percentage),
+  }));
+
+  const termBarData = [
+    { name: t("Term 1", "الفترة 1"), avg: term1.length > 0 ? Math.round(term1.reduce((s, e) => s + e.percentage, 0) / term1.length) : 0 },
+    { name: t("Term 2", "الفترة 2"), avg: term2.length > 0 ? Math.round(term2.reduce((s, e) => s + e.percentage, 0) / term2.length) : 0 },
+    { name: t("Term 3", "الفترة 3"), avg: term3.length > 0 ? Math.round(term3.reduce((s, e) => s + e.percentage, 0) / term3.length) : 0 },
+  ];
 
   const currentYear = new Date().getFullYear();
-  const hijriYear = currentYear - 579;
+  const hijriYear   = currentYear - 579;
 
+  // ── PDF download ──────────────────────────────────────────────
   const downloadPDF = async () => {
-    // Convert stamp to base64 for the print window
-    const stampBase64 = await new Promise<string>((resolve) => {
+    const stampBase64 = await new Promise<string>(resolve => {
       const img = new Image();
       img.crossOrigin = "anonymous";
       img.onload = () => {
-        const canvas = document.createElement("canvas");
-        canvas.width = img.width;
-        canvas.height = img.height;
-        const ctx = canvas.getContext("2d")!;
-        ctx.drawImage(img, 0, 0);
-        resolve(canvas.toDataURL("image/png"));
+        const c = document.createElement("canvas");
+        c.width = img.width; c.height = img.height;
+        c.getContext("2d")!.drawImage(img, 0, 0);
+        resolve(c.toDataURL("image/png"));
       };
       img.src = tahleemStamp;
     });
 
-    const printWindow = window.open("", "_blank");
-    if (!printWindow) {
-      toast({ title: t("Please allow popups to download PDF", "يرجى السماح بالنوافذ المنبثقة لتحميل PDF"), variant: "destructive" });
-      return;
-    }
+    const pw = window.open("", "_blank");
+    if (!pw) { toast({ title: t("Allow popups to download PDF", "السماح بالنوافذ المنبثقة"), variant: "destructive" }); return; }
 
-    const totalObtainable = exams.length * 100;
-    const totalObtained = exams.reduce((s, e) => s + Math.round(e.percentage), 0);
-    const levelText = profile?.level === "beginner" ? "المبتدئة / Beginner" : profile?.level === "intermediate" ? "المتوسطة / Intermediate" : profile?.level || "---";
-    const statusText = cgpa >= 2.0 ? "منتظمة / Regular" : "تحت المراقبة / Probation";
-    const commentText = exams.length > 0 ? (cgpa >= 3.5 ? "طالب(ة) متميز(ة) / Outstanding" : cgpa >= 2.0 ? "طالب(ة) مجتهد(ة) / Hardworking" : "يحتاج تحسين / Needs improvement") : "";
+    const levelText = profile?.level === "beginner"     ? "المبتدئة / Beginner"
+                    : profile?.level === "intermediate"  ? "المتوسطة / Intermediate"
+                    : profile?.level || "---";
+    const cgpaComment = cgpa >= 3.5 ? "طالب(ة) متميز(ة) / Outstanding"
+                      : cgpa >= 2.0 ? "طالب(ة) مجتهد(ة) / Hardworking"
+                      : "يحتاج تحسين / Needs Improvement";
 
-    const buildTermRows = (termExams: GradedExam[]) => {
-      const rows = termExams.map((e) => {
-        const cw = Math.round(e.percentage * 0.3);
-        const fe = Math.round(e.percentage * 0.7);
-        const total = cw + fe;
-        const gp = gradePoint(e.percentage);
-        const result = e.passed ? "Pass ✓" : "Fail ✗";
-        const resultColor = e.passed ? "#2a7a2a" : "#c0392b";
+    const buildTermSection = (termExams: GradedExam[], nameAr: string, nameEn: string) => {
+      const subMap = new Map<string, { title_ar: string; test: number; exam: number }>();
+      termExams.forEach(e => {
+        const key = e.title;
+        if (!subMap.has(key)) subMap.set(key, { title_ar: e.title_ar || e.title, test: 0, exam: 0 });
+        const entry = subMap.get(key)!;
+        if (e.type === "test") entry.test = Math.max(entry.test, Math.round(e.percentage * 0.3));
+        else entry.exam = Math.max(entry.exam, Math.round(e.percentage * 0.7));
+      });
+      const rows = Array.from(subMap.values());
+      if (rows.length === 0) return "";
+
+      const termObtained   = rows.reduce((s, r) => s + r.test + r.exam, 0);
+      const termObtainable = rows.length * 100;
+      const termGPA        = rows.reduce((s, r) => s + gradePoint(r.test + r.exam), 0) / rows.length;
+
+      const tRows = rows.map(r => {
+        const total = r.test + r.exam;
+        const gp    = gradePoint(total);
+        const g     = getLetterGrade(total);
         return `<tr>
-          <td>${e.title_ar || e.title}</td>
-          <td>${cw}</td><td>${fe}</td><td style="font-weight:700">${total}</td>
-          <td>${total}%</td><td>${gp.toFixed(1)}</td>
-          <td style="color:${resultColor};font-weight:700">${result}</td>
+          <td>${r.title_ar}</td>
+          <td>${r.test || "—"}</td>
+          <td>${r.exam || "—"}</td>
+          <td style="font-weight:800">${total}</td>
+          <td>${total}%</td>
+          <td>${gp.toFixed(1)}</td>
+          <td style="font-weight:800;color:${g.color}">${g.letter}</td>
+          <td style="color:${total >= 50 ? "#22c55e" : "#ef4444"};font-weight:700">${total >= 50 ? "Pass ✓" : "Fail ✗"}</td>
         </tr>`;
       }).join("");
-      const empty = Array.from({ length: Math.max(0, 5 - termExams.length) })
-        .map(() => `<tr>${"<td>&nbsp;</td>".repeat(7)}</tr>`).join("");
-      return rows + empty;
-    };
+      const empties = Array.from({ length: Math.max(0, 5 - rows.length) })
+        .map(() => `<tr>${"<td>&nbsp;</td>".repeat(8)}</tr>`).join("");
 
-    const tableHeader = `<thead><tr>
-      <th><span class="ar">المواد</span><span class="en">Subject</span></th>
-      <th><span class="ar">التمرينات (٣٠)</span><span class="en">Test</span></th>
-      <th><span class="ar">الإمتحانات (٧٠)</span><span class="en">Exam</span></th>
-      <th><span class="ar">المجموع الكلي (١٠٠)</span><span class="en">Total</span></th>
-      <th><span class="ar">%</span><span class="en">%</span></th>
-      <th><span class="ar">GP</span><span class="en">GP</span></th>
-      <th><span class="ar">النتيجة</span><span class="en">Result</span></th>
-    </tr></thead>`;
-
-    const buildTermPage = (termExams: GradedExam[], termName: string, termNameEn: string, isFirst: boolean) => {
-      const termObtainable = termExams.length * 100;
-      const termObtained = termExams.reduce((s, e) => s + Math.round(e.percentage), 0);
-      const termGP = termExams.reduce((s, e) => s + gradePoint(e.percentage), 0);
-      const termCgpa = termExams.length > 0 ? termGP / termExams.length : 0;
-      const termComment = termExams.length > 0 ? (termCgpa >= 3.5 ? "طالب(ة) متميز(ة) / Outstanding" : termCgpa >= 2.0 ? "طالب(ة) مجتهد(ة) / Hardworking" : "يحتاج تحسين / Needs improvement") : "";
       return `
-      <div class="term-page${isFirst ? '' : ' page-break'}">
-        <div class="watermark-inner">TAHLEEM ACADEMY</div>
-        <div class="header">
-          <div class="ar">أكاديمية التعليم</div>
-          <div class="en">TAHLEEM ACADEMY</div>
-        </div>
-        <div class="title-box"><span>كشف نتائج الطلبة</span><span>Student Report Sheet.</span></div>
-        <div class="info-grid">
-          <div class="info-row">
-            <div class="info-field"><label>اسم الطالب(ة)</label><span class="val">${profile?.full_name || "---"}</span></div>
-            <div class="info-field"><label>العام الدراسي</label><span class="val">${hijriYear} هـ / ${currentYear} م</span></div>
-          </div>
-          <div class="info-row">
-            <div class="info-field"><label>المرحلة</label><span class="val">${levelText}</span></div>
-            <div class="info-field"><label>عدد المواد</label><span class="val">${termExams.length}</span></div>
-          </div>
-          <div class="info-row">
-            <div class="info-field"><label>التاريخ</label><span class="val">${new Date().toLocaleDateString("ar-SA")}</span></div>
-            <div class="info-field"><label>الحالة</label><span class="val">${statusText}</span></div>
-          </div>
-        </div>
-        <div class="term-title">${termName} — ${termNameEn}</div>
-        <table class="main">${tableHeader}<tbody>${buildTermRows(termExams)}</tbody></table>
-        <table class="summary">
-          <tr><td class="lbl">Marks Obtainable</td><td style="text-align:center">${termObtainable || ""}</td><td class="lbl">Marks Obtained</td><td style="text-align:center">${termObtained || ""}</td></tr>
-          <tr><td class="lbl">Cgpa</td><td style="text-align:center">${termExams.length > 0 ? termCgpa.toFixed(2) : ""}</td><td class="lbl">Status</td><td style="text-align:center">${termExams.length > 0 ? (termCgpa >= 1.0 ? "Pass ✓" : "Fail ✗") : ""}</td></tr>
-          <tr><td class="lbl">Comment</td><td style="text-align:center">${termComment}</td><td class="lbl">Signature</td><td class="stamp-cell"><img src="${stampBase64}" alt="Stamp" /></td></tr>
-        </table>
-      </div>`;
+        <div class="term-section">
+          <div class="term-header">${nameAr} — ${nameEn}</div>
+          <table class="main">
+            <thead><tr>
+              <th>المادة / Subject</th>
+              <th>التمرينات (٣٠)</th>
+              <th>الامتحانات (٧٠)</th>
+              <th>المجموع (١٠٠)</th>
+              <th>%</th><th>GP</th><th>Grade</th><th>النتيجة</th>
+            </tr></thead>
+            <tbody>${tRows}${empties}</tbody>
+          </table>
+          <table class="summary">
+            <tr>
+              <td class="lbl">Obtainable</td><td>${termObtainable}</td>
+              <td class="lbl">Obtained</td><td>${termObtained}</td>
+            </tr>
+            <tr>
+              <td class="lbl">Term GPA</td><td>${termGPA.toFixed(2)}</td>
+              <td class="lbl">Status</td>
+              <td style="color:${termGPA >= 1.0 ? "#22c55e" : "#ef4444"};font-weight:700">
+                ${termGPA >= 1.0 ? "Pass ✓" : "Fail ✗"}
+              </td>
+            </tr>
+          </table>
+        </div>`;
     };
 
-    const termPages = terms.map((t, i) => buildTermPage(t, termNames[i], termNamesEn[i], i === 0)).join("");
+    const totalObtained   = exams.reduce((s, e) => s + Math.round(e.percentage), 0);
+    const totalObtainable = exams.length * 100;
 
     const html = `<!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<title>Transcript - ${profile?.full_name || "Student"}</title>
+<title>Transcript — ${profile?.full_name || "Student"}</title>
 <link href="https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:'Cairo','Amiri',sans-serif;background:#fff;padding:30px 40px;position:relative}
-.watermark{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-30deg);font-size:90px;font-weight:700;color:#064E3B;opacity:0.04;white-space:nowrap;letter-spacing:8px;font-family:'Cairo',sans-serif;pointer-events:none;z-index:0}
-.content{position:relative;z-index:1}
-.header{text-align:center;margin-bottom:10px}
-.header .ar{font-family:'Amiri',serif;font-size:22px;font-weight:700}
-.header .en{font-size:14px;font-weight:700;letter-spacing:3px}
-.title-box{border:2px solid #2a7a2a;border-radius:4px;padding:6px 20px;margin:14px auto;width:fit-content;display:flex;gap:30px;align-items:center;justify-content:center}
-.title-box span{font-size:14px;font-weight:600}
-.term-title{border:2px solid #2a7a2a;border-radius:4px;padding:4px 16px;margin:8px auto;width:fit-content;font-family:'Amiri',serif;font-size:16px;font-weight:700;text-align:center}
-.term-page{position:relative;padding:10px 0}
-.page-break{page-break-before:always;break-before:page}
-.watermark-inner{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-30deg);font-size:80px;font-weight:700;color:#064E3B;opacity:0.04;white-space:nowrap;letter-spacing:8px;font-family:'Cairo',sans-serif;pointer-events:none;z-index:0}
-.info-grid{margin:16px 0}
-.info-row{display:flex;justify-content:space-between;margin-bottom:8px;gap:24px}
+body{font-family:'Cairo','Amiri',sans-serif;padding:24px 32px;color:#1a1a1a;background:#fff}
+.watermark{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-28deg);
+  font-size:80px;font-weight:800;color:#064E3B;opacity:0.035;white-space:nowrap;
+  pointer-events:none;font-family:'Cairo',sans-serif;z-index:0}
+.page-header{text-align:center;margin-bottom:14px;border-bottom:3px solid #0f3122;padding-bottom:12px}
+.page-header .ar{font-family:'Amiri',serif;font-size:24px;font-weight:700;color:#0f3122}
+.page-header .en{font-size:13px;font-weight:700;letter-spacing:3px;color:#0f3122}
+.title-box{border:2.5px solid #0f3122;border-radius:6px;padding:8px 24px;margin:14px auto;
+  width:fit-content;display:flex;gap:32px;font-size:14px;font-weight:700}
+.info-grid{margin:16px 0;display:flex;flex-direction:column;gap:8px}
+.info-row{display:flex;justify-content:space-between;gap:24px}
 .info-field{display:flex;align-items:baseline;flex:1;gap:4px}
-.info-field label{font-weight:700;font-size:13px;white-space:nowrap}
-.info-field .val{flex:1;border-bottom:1px solid #333;font-size:12px;text-align:right;padding:0 4px 1px}
-table.main{width:100%;border-collapse:collapse;direction:rtl;margin-bottom:10px}
-table.main th,table.main td{border:1.5px solid #333;padding:3px 4px;text-align:center;font-size:10px;vertical-align:middle}
-table.main th .ar{display:block;font-family:'Amiri',serif;font-size:11px;font-weight:700}
-table.main th .en{display:block;font-size:9px;font-weight:700}
-table.main td{height:22px}
-table.summary{width:100%;border-collapse:collapse;direction:ltr;margin-top:14px}
-table.summary td{border:1.5px solid #333;padding:5px 8px;font-size:12px}
-table.summary td.lbl{font-weight:700;width:18%}
-.stamp-cell img{width:90px;height:90px;opacity:0.8;display:block;margin:0 auto}
-@media print{body{padding:15px 20px}.watermark{position:fixed}@page{size:A4;margin:8mm}}
+.info-field label{font-weight:700;font-size:12px;white-space:nowrap;color:#374151}
+.info-field .val{flex:1;border-bottom:1.5px solid #374151;font-size:12px;
+  text-align:right;padding:0 6px 2px;min-width:60px}
+.term-section{margin-bottom:20px}
+.term-header{border:2.5px solid #0f3122;border-radius:6px;padding:5px 20px;margin:12px auto;
+  width:fit-content;font-weight:700;font-size:14px;text-align:center;
+  font-family:'Amiri',serif;color:#0f3122}
+table.main{width:100%;border-collapse:collapse;margin-bottom:10px}
+table.main th,table.main td{border:1.5px solid #374151;padding:4px 6px;
+  text-align:center;font-size:11px;vertical-align:middle}
+table.main th{background:#f0f4f0;font-weight:800;font-size:11px}
+table.main td{height:24px}
+table.summary{width:100%;border-collapse:collapse;direction:ltr;margin-top:10px}
+table.summary td{border:1.5px solid #374151;padding:6px 10px;font-size:12px}
+table.summary .lbl{font-weight:700;background:#f8fafb;width:18%}
+.stamp-cell img{width:88px;height:88px;opacity:0.82;display:block;margin:0 auto}
+.footer{text-align:center;margin-top:20px;font-size:10px;color:#9ca3af;
+  border-top:1px solid #e5e7eb;padding-top:10px}
+@media print{body{padding:14px 20px}@page{size:A4;margin:8mm}}
 </style>
 </head>
 <body>
-${termPages}
-<script>
-  window.onload = function() {
-    setTimeout(function() { window.print(); }, 500);
-  };
-</script>
+<div class="watermark">TAHLEEM ACADEMY</div>
+
+<div class="page-header">
+  <div class="ar">أكاديمية التعليم</div>
+  <div class="en">TAHLEEM ACADEMY</div>
+</div>
+
+<div class="title-box">
+  <span>كشف نتائج الطلبة</span>
+  <span>Student Academic Transcript</span>
+</div>
+
+<div class="info-grid">
+  <div class="info-row">
+    <div class="info-field"><label>اسم الطالب(ة)</label><span class="val">${profile?.full_name || "—"}</span></div>
+    <div class="info-field"><label>العام الدراسي</label><span class="val">${hijriYear} هـ / ${currentYear} م</span></div>
+  </div>
+  <div class="info-row">
+    <div class="info-field"><label>المرحلة</label><span class="val">${levelText}</span></div>
+    <div class="info-field"><label>عدد المواد</label><span class="val">${exams.length}</span></div>
+  </div>
+  <div class="info-row">
+    <div class="info-field"><label>التاريخ</label><span class="val">${new Date().toLocaleDateString("ar-SA")}</span></div>
+    <div class="info-field"><label>الحالة الأكاديمية</label>
+      <span class="val">${cgpa >= 2.0 ? "منتظمة / Regular" : "تحت المراقبة / Probation"}</span>
+    </div>
+  </div>
+</div>
+
+${term1.length > 0 ? buildTermSection(term1, "الفترة الأولى",  "First Term")  : ""}
+${term2.length > 0 ? buildTermSection(term2, "الفترة الثانية", "Second Term") : ""}
+${term3.length > 0 ? buildTermSection(term3, "الفترة الثالثة","Third Term")  : ""}
+
+<table class="summary" style="margin-top:20px">
+  <tr>
+    <td class="lbl">Total Obtainable</td><td style="text-align:center">${totalObtainable}</td>
+    <td class="lbl">Total Obtained</td><td style="text-align:center">${totalObtained}</td>
+  </tr>
+  <tr>
+    <td class="lbl">Cumulative GPA</td>
+    <td style="text-align:center;font-weight:800;font-size:15px">${cgpa.toFixed(2)}</td>
+    <td class="lbl">Overall Result</td>
+    <td style="text-align:center;font-weight:700;color:${cgpa >= 1.0 ? "#22c55e" : "#ef4444"}">
+      ${cgpa >= 1.0 ? "Pass ✓" : "Fail ✗"}
+    </td>
+  </tr>
+  <tr>
+    <td class="lbl">Comment</td>
+    <td style="text-align:center">${cgpaComment}</td>
+    <td class="lbl">Official Stamp</td>
+    <td class="stamp-cell"><img src="${stampBase64}" alt="Stamp" /></td>
+  </tr>
+</table>
+
+<div class="footer">
+  Official Academic Transcript — Tahleem Academy — ${new Date().toLocaleDateString("en-GB")}
+</div>
+
+<script>window.onload = function(){ setTimeout(function(){ window.print(); }, 600); }</script>
 </body>
 </html>`;
 
-    printWindow.document.write(html);
-    printWindow.document.close();
+    pw.document.write(html);
+    pw.document.close();
     toast({ title: t("Print dialog opened — save as PDF", "تم فتح نافذة الطباعة — احفظ كـ PDF") });
   };
 
-  // CGPA gauge
-  const gaugePercent = (cgpa / 4.0) * 100;
-  const circumference = 2 * Math.PI * 60;
-  const strokeDashoffset = circumference - (gaugePercent / 100) * circumference;
+  // ── Loading ───────────────────────────────────────────────────
+  if (loading) return (
+    <div className="flex min-h-[400px] items-center justify-center">
+      <div className="h-10 w-10 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+    </div>
+  );
 
-  // Transcript preview component
-  const TranscriptPreview = () => {
-    const totalObtainable = exams.length * 100;
-    const totalObtained = exams.reduce((s, e) => s + Math.round(e.percentage), 0);
-
-    return (
-      <div ref={transcriptRef} className="bg-white p-8 md:p-10 min-h-[800px] relative overflow-hidden" dir="rtl" style={{ fontFamily: "'Cairo', 'Amiri', sans-serif" }}>
-        {/* Watermark background */}
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none" style={{ opacity: 0.04, transform: 'rotate(-30deg)' }}>
-          <span className="text-[120px] font-bold whitespace-nowrap tracking-widest" style={{ fontFamily: "'Cairo', sans-serif", color: '#064E3B' }}>TAHLEEM ACADEMY</span>
-        </div>
-        {/* Header */}
-        <div className="text-center mb-4">
-          <h2 className="text-2xl font-bold" style={{ fontFamily: "'Amiri', serif" }}>أكاديمية التعليم</h2>
-          <p className="text-lg font-bold tracking-widest">TAHLEEM ACADEMY</p>
-        </div>
-
-        {/* Title box */}
-        <div className="border-2 border-[#2a7a2a] rounded px-6 py-2 mx-auto w-fit flex gap-10 items-center justify-center mb-5">
-          <span className="text-base font-semibold">كشف نتائج الطلبة</span>
-          <span className="text-base font-semibold">Student Report Sheet.</span>
-        </div>
-
-        {/* Info grid */}
-        <div className="mb-5 space-y-2">
-          <div className="flex justify-between gap-8">
-            <div className="flex items-baseline gap-1 flex-1">
-              <span className="font-bold text-sm whitespace-nowrap">اسم الطالب(ة)</span>
-              <span className="flex-1 border-b border-black text-sm text-center">{profile?.full_name || "---"}</span>
-            </div>
-            <div className="flex items-baseline gap-1 flex-1">
-              <span className="font-bold text-sm whitespace-nowrap">العام الدراسي</span>
-              <span className="flex-1 border-b border-black text-sm text-center">{toArabicNum(hijriYear)} هـ / {toArabicNum(currentYear)} م</span>
-            </div>
-          </div>
-          <div className="flex justify-between gap-8">
-            <div className="flex items-baseline gap-1 flex-1">
-              <span className="font-bold text-sm whitespace-nowrap">المرحلة</span>
-              <span className="flex-1 border-b border-black text-sm text-center">{profile?.level === "beginner" ? "المبتدئة / Beginner" : profile?.level === "intermediate" ? "المتوسطة / Intermediate" : profile?.level || "---"}</span>
-            </div>
-            <div className="flex items-baseline gap-1 flex-1">
-              <span className="font-bold text-sm whitespace-nowrap">عدد المواد</span>
-              <span className="flex-1 border-b border-black text-sm text-center">{toArabicNum(exams.length)}</span>
-            </div>
-          </div>
-          <div className="flex justify-between gap-8">
-            <div className="flex items-baseline gap-1 flex-1">
-              <span className="font-bold text-sm whitespace-nowrap">التاريخ</span>
-              <span className="flex-1 border-b border-black text-sm text-center">{new Date().toLocaleDateString("ar-SA")}</span>
-            </div>
-            <div className="flex items-baseline gap-1 flex-1">
-              <span className="font-bold text-sm whitespace-nowrap">الحالة</span>
-              <span className="flex-1 border-b border-black text-sm text-center">{cgpa >= 2.0 ? "منتظمة / Regular" : "تحت المراقبة / Probation"}</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Term tables */}
-        {terms.map((termExams, termIdx) => (
-          <div key={termIdx} className={termIdx > 0 ? "mt-8 pt-6 border-t-2 border-dashed border-[#ccc]" : ""}>
-            {/* Repeat header for each term */}
-            <div className="text-center mb-3">
-              <h2 className="text-xl font-bold" style={{ fontFamily: "'Amiri', serif" }}>أكاديمية التعليم</h2>
-              <p className="text-sm font-bold tracking-widest">TAHLEEM ACADEMY</p>
-            </div>
-            <h4 className="text-lg font-bold text-center mb-3 border-2 border-[#2a7a2a] rounded px-4 py-1 mx-auto w-fit" style={{ fontFamily: "'Amiri', serif" }}>
-              {termNames[termIdx]} — {termNamesEn[termIdx]}
-            </h4>
-            <table className="w-full border-collapse mb-4" dir="rtl" style={{ borderColor: "#333" }}>
-              <thead>
-                <tr>
-                  <th className="border-[1.5px] border-[#333] p-1 text-center text-xs">
-                    <span className="block" style={{ fontFamily: "'Amiri', serif", fontWeight: 700 }}>المواد</span>
-                    <span className="block text-[10px] font-bold">Subject</span>
-                  </th>
-                  <th className="border-[1.5px] border-[#333] p-1 text-center text-xs">
-                    <span className="block" style={{ fontFamily: "'Amiri', serif", fontWeight: 700 }}>التمرينات (٣٠)</span>
-                    <span className="block text-[10px] font-bold">Test</span>
-                  </th>
-                  <th className="border-[1.5px] border-[#333] p-1 text-center text-xs">
-                    <span className="block" style={{ fontFamily: "'Amiri', serif", fontWeight: 700 }}>الإمتحانات (٧٠)</span>
-                    <span className="block text-[10px] font-bold">Exam</span>
-                  </th>
-                  <th className="border-[1.5px] border-[#333] p-1 text-center text-xs">
-                    <span className="block" style={{ fontFamily: "'Amiri', serif", fontWeight: 700 }}>المجموع (١٠٠)</span>
-                    <span className="block text-[10px] font-bold">Total</span>
-                  </th>
-                  <th className="border-[1.5px] border-[#333] p-1 text-center text-xs">
-                    <span className="block" style={{ fontFamily: "'Amiri', serif", fontWeight: 700 }}>%</span>
-                    <span className="block text-[10px] font-bold">%</span>
-                  </th>
-                  <th className="border-[1.5px] border-[#333] p-1 text-center text-xs">
-                    <span className="block" style={{ fontFamily: "'Amiri', serif", fontWeight: 700 }}>GP</span>
-                    <span className="block text-[10px] font-bold">GP</span>
-                  </th>
-                  <th className="border-[1.5px] border-[#333] p-1 text-center text-xs">
-                    <span className="block" style={{ fontFamily: "'Amiri', serif", fontWeight: 700 }}>النتيجة</span>
-                    <span className="block text-[10px] font-bold">Result</span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {termExams.map((e) => {
-                  const coursework = Math.round(e.percentage * 0.3);
-                  const finalExam = Math.round(e.percentage * 0.7);
-                  const total = coursework + finalExam;
-                  const gp = gradePoint(e.percentage);
-                  return (
-                    <tr key={e.exam_id + e.submitted_at}>
-                      <td className="border-[1.5px] border-[#333] p-1 text-center text-xs">{e.title_ar || e.title}</td>
-                      <td className="border-[1.5px] border-[#333] p-1 text-center text-xs">{coursework}</td>
-                      <td className="border-[1.5px] border-[#333] p-1 text-center text-xs">{finalExam}</td>
-                      <td className="border-[1.5px] border-[#333] p-1 text-center text-xs font-bold">{total}</td>
-                      <td className="border-[1.5px] border-[#333] p-1 text-center text-xs">{total}%</td>
-                      <td className="border-[1.5px] border-[#333] p-1 text-center text-xs">{gp.toFixed(1)}</td>
-                      <td className={`border-[1.5px] border-[#333] p-1 text-center text-xs font-bold ${e.passed ? "text-[#2a7a2a]" : "text-destructive"}`}>
-                        {e.passed ? "Pass ✓" : "Fail ✗"}
-                      </td>
-                    </tr>
-                  );
-                })}
-                {Array.from({ length: Math.max(0, 5 - termExams.length) }).map((_, i) => (
-                  <tr key={`empty-${termIdx}-${i}`}>
-                    {Array.from({ length: 7 }).map((_, j) => (
-                      <td key={j} className="border-[1.5px] border-[#333] p-1 h-6" />
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ))}
-
-        {/* Summary table */}
-        <table className="w-full border-collapse mt-6" dir="ltr">
-          <tbody>
-            <tr>
-              <td className="border-[1.5px] border-[#333] p-2 font-bold text-sm w-[18%]">Marks Obtainable</td>
-              <td className="border-[1.5px] border-[#333] p-2 text-sm text-center">{totalObtainable || ""}</td>
-              <td className="border-[1.5px] border-[#333] p-2 font-bold text-sm w-[18%]">Marks Obtained</td>
-              <td className="border-[1.5px] border-[#333] p-2 text-sm text-center">{totalObtained || ""}</td>
-            </tr>
-            <tr>
-              <td className="border-[1.5px] border-[#333] p-2 font-bold text-sm">Cgpa</td>
-              <td className="border-[1.5px] border-[#333] p-2 text-sm text-center">{exams.length > 0 ? cgpa.toFixed(2) : ""}</td>
-              <td className="border-[1.5px] border-[#333] p-2 font-bold text-sm">Status</td>
-              <td className="border-[1.5px] border-[#333] p-2 text-sm text-center">{exams.length > 0 ? (cgpa >= 1.0 ? "Pass ✓" : "Fail ✗") : ""}</td>
-            </tr>
-            <tr>
-              <td className="border-[1.5px] border-[#333] p-2 font-bold text-sm">Comment</td>
-              <td className="border-[1.5px] border-[#333] p-2 text-sm text-center">
-                {exams.length > 0 ? (cgpa >= 3.5 ? "طالب(ة) متميز(ة) / Outstanding" : cgpa >= 2.0 ? "طالب(ة) مجتهد(ة) / Hardworking" : "يحتاج تحسين / Needs improvement") : ""}
-              </td>
-              <td className="border-[1.5px] border-[#333] p-2 font-bold text-sm">Signature</td>
-              <td className="border-[1.5px] border-[#333] p-2 text-center relative">
-                <img src={tahleemStamp} alt="Tahleem Academy Stamp" className="w-24 h-24 opacity-80 mx-auto" />
-              </td>
-            </tr>
-           </tbody>
-        </table>
+  // ── Empty state ───────────────────────────────────────────────
+  if (exams.length === 0) return (
+    <div className="container mx-auto px-4 py-16 max-w-5xl">
+      <div className="flex flex-col items-center justify-center py-24 text-muted-foreground">
+        <GraduationCap className="h-20 w-20 mb-6 opacity-20" />
+        <p className="text-xl font-semibold">{t("No graded exams yet", "لا توجد امتحانات مصححة بعد")}</p>
+        <p className="text-sm mt-2">{t("Results will appear here once your teacher grades them.", "ستظهر النتائج هنا بعد تصحيح المعلم.")}</p>
       </div>
-    );
-  };
+    </div>
+  );
 
+  // ── Main render ───────────────────────────────────────────────
   return (
-    <div className="container mx-auto px-4 py-8">
+    <div className="container mx-auto px-4 py-8 max-w-5xl">
+      <style>{`@keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}`}</style>
+
+      {/* Header */}
       <div className="mb-8 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-3xl font-bold">{t("Academic Transcript", "السجل الأكاديمي")}</h1>
-          <p className="text-muted-foreground">{t("Your complete academic record", "سجلك الأكاديمي الكامل")}</p>
+          <p className="text-sm text-muted-foreground mt-1">
+            {t("Your complete academic record", "سجلك الأكاديمي الكامل")}
+          </p>
         </div>
-        <div className="flex gap-2">
-          <Dialog>
-            <DialogTrigger asChild>
-              <Button variant="outline" disabled={exams.length === 0}>
-                <Eye className="mr-2 h-4 w-4" />
-                {t("Preview", "معاينة")}
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-4xl max-h-[90vh] overflow-auto p-0">
-              <TranscriptPreview />
-            </DialogContent>
-          </Dialog>
-          <Button onClick={downloadPDF} disabled={exams.length === 0}>
-            <Download className="mr-2 h-4 w-4" />
-            {t("Download PDF", "تحميل PDF")}
-          </Button>
-        </div>
+        <Button onClick={downloadPDF} className="gap-2">
+          <Download className="h-4 w-4" />
+          {t("Download PDF", "تحميل PDF")}
+        </Button>
       </div>
 
-      {/* CGPA Gauge + Status */}
-      <div className="mb-8 grid gap-6 md:grid-cols-3">
-        <Card className="md:col-span-1 flex flex-col items-center justify-center p-6">
-          <div className="relative">
-            <svg width="140" height="140" className="-rotate-90">
-              <circle cx="70" cy="70" r="60" stroke="hsl(var(--muted))" strokeWidth="10" fill="none" />
-              <circle cx="70" cy="70" r="60" stroke="hsl(var(--primary))" strokeWidth="10" fill="none" strokeLinecap="round"
-                strokeDasharray={circumference} strokeDashoffset={strokeDashoffset} className="transition-all duration-1000" />
-            </svg>
-            <div className="absolute inset-0 flex flex-col items-center justify-center">
-              <span className="text-3xl font-bold">{cgpa.toFixed(2)}</span>
-              <span className="text-xs text-muted-foreground">/4.00</span>
-            </div>
-          </div>
-          <div className="mt-3 text-center">
-            <p className="font-semibold">{t("CGPA", "المعدل التراكمي")}</p>
-            <Badge variant={statusColor as any} className="mt-1">
+      {/* Summary row */}
+      <div className="grid gap-4 md:grid-cols-4 mb-8" style={{ animation: "fadeUp .4s ease" }}>
+
+        {/* CGPA Ring card */}
+        <div className="bg-white rounded-2xl shadow-sm border p-6 flex flex-col items-center gap-4 md:col-span-1">
+          <CGPARing cgpa={cgpa} />
+          <div className="text-center">
+            <div className="font-bold text-sm">{t("Cumulative GPA", "المعدل التراكمي")}</div>
+            <span
+              className="inline-block mt-2 px-3 py-1 rounded-full text-xs font-bold"
+              style={{ background: cgpaGrade.bg, color: cgpaGrade.color }}
+            >
               {language === "ar" ? statusAr : status}
-            </Badge>
+            </span>
           </div>
-        </Card>
+        </div>
 
-        <Card className="md:col-span-2">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <GraduationCap className="h-5 w-5" />
-              {t("Grade Summary", "ملخص الدرجات")}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-              <div className="text-center">
-                <div className="text-2xl font-bold text-primary">{exams.length}</div>
-                <div className="text-xs text-muted-foreground">{t("Exams Graded", "امتحانات مصححة")}</div>
-              </div>
-              <div className="text-center">
-                <div className="text-2xl font-bold text-primary">{exams.filter(e => e.passed).length}</div>
-                <div className="text-xs text-muted-foreground">{t("Passed", "ناجح")}</div>
-              </div>
-              <div className="text-center">
-                <div className="text-2xl font-bold text-destructive">{exams.filter(e => !e.passed).length}</div>
-                <div className="text-xs text-muted-foreground">{t("Failed", "راسب")}</div>
-              </div>
-              <div className="text-center">
-                <div className="text-2xl font-bold">
-                  {exams.length > 0 ? (exams.reduce((s, e) => s + e.percentage, 0) / exams.length).toFixed(1) : 0}%
-                </div>
-                <div className="text-xs text-muted-foreground">{t("Average", "المعدل")}</div>
-              </div>
+        {/* Stat cards */}
+        <div className="md:col-span-3 grid grid-cols-2 gap-4 sm:grid-cols-4">
+          {[
+            { icon: <BookOpen className="h-5 w-5" />, label: t("Total Exams", "الامتحانات"),   value: exams.length,                                     color: G       },
+            { icon: <CheckCircle className="h-5 w-5" />, label: t("Passed", "ناجح"),           value: exams.filter(e => e.passed).length,               color: "#22c55e" },
+            { icon: <XCircle className="h-5 w-5" />,    label: t("Failed", "راسب"),            value: exams.filter(e => !e.passed).length,              color: "#ef4444" },
+            { icon: <Star className="h-5 w-5" />,       label: t("Average Score", "معدل الدرجات"), value: `${avgScore.toFixed(1)}%`,                   color: GOLD    },
+          ].map((stat, i) => (
+            <div key={i} className="bg-white rounded-2xl shadow-sm border p-5 flex flex-col gap-2">
+              <div style={{ color: stat.color }}>{stat.icon}</div>
+              <div style={{ fontSize: 30, fontWeight: 900, color: stat.color, lineHeight: 1 }}>{stat.value}</div>
+              <div className="text-xs text-muted-foreground">{stat.label}</div>
             </div>
-          </CardContent>
-        </Card>
+          ))}
+        </div>
       </div>
 
-      {/* Islamic Transcript Preview Card — hidden behind View button */}
-      <Card className="overflow-hidden">
-        <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle>{t("Islamic Academic Result Sheet", "صحيفة النتائج الأكاديمية")}</CardTitle>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setShowPreview(prev => !prev)}
-            disabled={exams.length === 0}
-          >
-            <Eye className="mr-2 h-4 w-4" />
-            {showPreview ? t("Hide", "إخفاء") : t("View", "عرض")}
-          </Button>
-        </CardHeader>
-        {showPreview && (
-          <CardContent className="p-0">
-            <TranscriptPreview />
-          </CardContent>
-        )}
-      </Card>
+      {/* Tabs */}
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList className="mb-6 w-full justify-start overflow-x-auto">
+          <TabsTrigger value="overview">{t("All Terms", "جميع الفترات")}</TabsTrigger>
+          <TabsTrigger value="term1">
+            {t("Term 1", "الفترة الأولى")}
+            {term1.length > 0 && <span className="ml-1 opacity-60">({term1.length})</span>}
+          </TabsTrigger>
+          <TabsTrigger value="term2">
+            {t("Term 2", "الفترة الثانية")}
+            {term2.length > 0 && <span className="ml-1 opacity-60">({term2.length})</span>}
+          </TabsTrigger>
+          <TabsTrigger value="term3">
+            {t("Term 3", "الفترة الثالثة")}
+            {term3.length > 0 && <span className="ml-1 opacity-60">({term3.length})</span>}
+          </TabsTrigger>
+          <TabsTrigger value="analytics">{t("Analytics", "التحليل")}</TabsTrigger>
+        </TabsList>
+
+        {/* All terms overview */}
+        <TabsContent value="overview">
+          <div className="space-y-4">
+            {[
+              { termExams: term1, label: t("First Term",  "الفترة الأولى")  },
+              { termExams: term2, label: t("Second Term", "الفترة الثانية") },
+              { termExams: term3, label: t("Third Term",  "الفترة الثالثة") },
+            ].map(({ termExams, label }) =>
+              termExams.length > 0 && (
+                <div key={label} className="bg-white rounded-2xl shadow-sm border overflow-hidden">
+                  <TermTable exams={termExams} termLabel={label} language={language} />
+                </div>
+              )
+            )}
+          </div>
+        </TabsContent>
+
+        {/* Individual term tabs */}
+        {[
+          { key: "term1", termExams: term1, label: t("First Term",  "الفترة الأولى")  },
+          { key: "term2", termExams: term2, label: t("Second Term", "الفترة الثانية") },
+          { key: "term3", termExams: term3, label: t("Third Term",  "الفترة الثالثة") },
+        ].map(({ key, termExams, label }) => (
+          <TabsContent key={key} value={key}>
+            <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
+              <TermTable exams={termExams} termLabel={label} language={language} />
+            </div>
+          </TabsContent>
+        ))}
+
+        {/* Analytics tab */}
+        <TabsContent value="analytics">
+          <div className="grid gap-6 md:grid-cols-2">
+
+            {/* Score trend line chart */}
+            {trendData.length > 1 && (
+              <div className="bg-white rounded-2xl shadow-sm border p-6">
+                <div className="flex items-center gap-2 mb-4">
+                  <TrendingUp className="h-4 w-4" style={{ color: GOLD }} />
+                  <span className="font-bold text-sm" style={{ color: G }}>
+                    {t("Score Trend", "مسار الدرجات")}
+                  </span>
+                </div>
+                <ResponsiveContainer width="100%" height={180}>
+                  <LineChart data={trendData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f4f8" />
+                    <XAxis dataKey="name" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+                    <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} axisLine={false} tickLine={false}
+                      tickFormatter={v => `${v}%`} />
+                    <Tooltip formatter={(v: any) => `${v}%`}
+                      contentStyle={{ borderRadius: 10, fontSize: 12, fontFamily: "'Cairo',sans-serif" }} />
+                    <Line dataKey="score" stroke={G} strokeWidth={2.5}
+                      dot={{ fill: G, r: 4 }} activeDot={{ r: 6 }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
+            {/* Term average comparison bar chart */}
+            <div className="bg-white rounded-2xl shadow-sm border p-6">
+              <div className="flex items-center gap-2 mb-4">
+                <BarChart2 className="h-4 w-4" style={{ color: GOLD }} />
+                <span className="font-bold text-sm" style={{ color: G }}>
+                  {t("Term Comparison", "مقارنة الفترات")}
+                </span>
+              </div>
+              <ResponsiveContainer width="100%" height={180}>
+                <BarChart data={termBarData} barSize={36}>
+                  <XAxis dataKey="name" tick={{ fontSize: 12 }} axisLine={false} tickLine={false} />
+                  <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} axisLine={false} tickLine={false}
+                    tickFormatter={v => `${v}%`} />
+                  <Tooltip formatter={(v: any) => `${v}%`}
+                    contentStyle={{ borderRadius: 10, fontSize: 12 }} />
+                  <Bar dataKey="avg" radius={[8, 8, 0, 0]}>
+                    {termBarData.map((_, i) => (
+                      <Cell key={i} fill={[G, GOLD, GM][i]} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Grade distribution grid */}
+            <div className="bg-white rounded-2xl shadow-sm border p-6 md:col-span-2">
+              <div className="flex items-center gap-2 mb-5">
+                <Award className="h-4 w-4" style={{ color: GOLD }} />
+                <span className="font-bold text-sm" style={{ color: G }}>
+                  {t("Grade Distribution", "توزيع الدرجات")}
+                </span>
+              </div>
+              <div className="grid grid-cols-3 gap-3 sm:grid-cols-6">
+                {(["A+", "A", "B", "C", "D", "F"] as const).map(letter => {
+                  const thresholds: Record<string, [number, number]> = {
+                    "A+": [90, 101], "A": [80, 90], "B": [70, 80],
+                    "C": [60, 70],  "D": [50, 60], "F": [0, 50],
+                  };
+                  const [lo, hi] = thresholds[letter];
+                  const count = exams.filter(e => e.percentage >= lo && e.percentage < hi).length;
+                  const grade = getLetterGrade(lo + (letter === "A+" ? 0 : 1));
+                  return (
+                    <div key={letter} style={{ background: grade.bg, border: `1px solid ${grade.color}33`, borderRadius: 16, padding: "16px 8px", textAlign: "center" }}>
+                      <div style={{ fontSize: 24, fontWeight: 900, color: grade.color }}>{letter}</div>
+                      <div style={{ fontSize: 26, fontWeight: 900, color: G, marginTop: 4 }}>{count}</div>
+                      <div style={{ fontSize: 10, color: "#9ca3af", marginTop: 4 }}>
+                        {lo}–{letter === "A+" ? 100 : hi - 1}%
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+          </div>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 };
