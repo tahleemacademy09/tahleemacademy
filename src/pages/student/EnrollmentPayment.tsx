@@ -35,6 +35,8 @@ interface Enrollment {
   admin_override: boolean;
   admin_override_until: string | null;
   created_at: string;
+  registration_paid: boolean;
+  registration_paid_at: string | null;
 }
 
 interface PaymentRecord {
@@ -126,6 +128,7 @@ const EnrollmentPayment = () => {
   const accessStatus   = getAccessStatus(enrollment);
   const graceRemaining = daysLeft(enrollment?.grace_end_date || null);
   const amountDue      = selectedPlan === "monthly" ? fees.monthly : fees.term;
+  const regPaid        = enrollment?.registration_paid ?? false;
 
   // ── Load ──────────────────────────────────────────────────────
   const loadEnrollment = useCallback(async () => {
