@@ -662,18 +662,21 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
       @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
       @keyframes slideUp { from { transform:translateY(100%); } to { transform:translateY(0); } }
       @keyframes slideIn { from { transform:translateX(-100%); } to { transform:translateX(0); } }
-      .majlis-wrap { display:flex; height:100vh; overflow:hidden; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; }
-      .majlis-sidebar { width:100%; max-width:380px; display:flex; flex-direction:column; border-right:1px solid #e0e0e0; background:#fff; flex-shrink:0; }
-      .majlis-chat { flex:1; display:flex; flex-direction:column; min-width:0; }
+      .majlis-wrap { display:flex; height:100dvh; overflow:hidden; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; }
+      .majlis-sidebar { width:100%; max-width:380px; display:flex; flex-direction:column; border-right:1px solid #e0e0e0; background:#fff; flex-shrink:0; height:100dvh; }
+      .majlis-chat { flex:1; display:flex; flex-direction:column; min-width:0; height:100dvh; overflow:hidden; }
       @media(max-width:767px) {
         .majlis-sidebar { max-width:100%; flex:1; }
-        .majlis-chat { position:fixed; inset:0; z-index:50; }
+        .majlis-chat { position:fixed !important; inset:0; z-index:50; height:100dvh !important; }
       }
       .msg-bubble { animation: fadeIn .15s ease; }
-      .ch-row { transition: transform .2s; }
-      .ch-row:hover { background: rgba(0,0,0,0.03); }
-      .ch-row.swiped { transform: translateX(-160px); }
-      .sheet { animation: slideUp .22s ease; }
+      .ch-row-wrap { overflow:hidden; position:relative; }
+      .ch-row-inner { display:flex; transition:transform .25s cubic-bezier(.25,.46,.45,.94); will-change:transform; }
+      .ch-row-inner.swiped { transform:translateX(-160px); }
+      .ch-row-content { flex:0 0 100%; display:flex; align-items:center; gap:12px; padding:10px 16px; cursor:pointer; }
+      .ch-row-actions { flex:0 0 160px; display:flex; }
+      .ch-row-action-btn { width:80px; display:flex; flex-direction:column; align-items:center; justify-content:center; border:none; cursor:pointer; font-size:11px; gap:4px; color:#fff; font-weight:600; }
+      @media(min-width:768px) { .majlis-chat { display:flex !important; } .majlis-sidebar { display:flex !important; } }
       .hamburger-drawer { animation: slideIn .22s ease; }
       .settings-panel { animation: slideUp .22s ease; }
       ::-webkit-scrollbar { width:4px; } ::-webkit-scrollbar-thumb { background:#ccc; border-radius:4px; }
@@ -745,74 +748,91 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
     const isSwiped  = swipedChannel === ch.id;
     const unread    = unreadCounts[ch.id] || 0;
     const nm        = getCN(ch);
-    const lastMsg   = (ch as any).last_message || "Tap to chat";
+    const lastMsg   = (ch as any).last_message || "";
     const lastTime  = (ch as any).last_message_at ? ft((ch as any).last_message_at) : "";
-    const memberCt  = memberCounts[ch.id] || 0;
-    const isOnline  = false;
-
-    const rowStyle: React.CSSProperties = {
-      position: "relative", display: "flex", alignItems: "center", gap: 12, padding: "10px 16px",
-      cursor: "pointer", background: isActive ? (isDark ? "#2a3942" : "#f0f2f5") : sidebarBg,
-      borderBottom: `1px solid ${divider}`, userSelect: "none",
-      transform: isSwiped ? "translateX(-160px)" : "none", transition: "transform .2s",
-    };
 
     return (
-      <div key={ch.id} style={{ position: "relative", overflow: "hidden" }}>
-        {/* Swipe actions */}
-        <div style={{ position: "absolute", right: 0, top: 0, bottom: 0, display: "flex", zIndex: 1 }}>
-          <button onClick={() => toggleMuteCh(ch.id)} style={{ width: 80, background: "#E67E22", border: "none", color: "#fff", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: 10, gap: 3 }}>
-            {isMuted ? <Volume2 size={16} /> : <VolumeX size={16} />}{isMuted ? "Unmute" : "Mute"}
-          </button>
-          <button onClick={() => { leaveChannel(ch.id); setSwipedChannel(null); }} style={{ width: 80, background: "#E74C3C", border: "none", color: "#fff", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: 10, gap: 3 }}>
-            <X size={16} />Leave
-          </button>
-        </div>
-
+      <div key={ch.id} className="ch-row-wrap" style={{ borderBottom: `1px solid ${divider}` }}>
+        {/* Sliding inner: content + hidden action buttons in one flex row */}
         <div
-          style={rowStyle}
-          onClick={() => { if (isSwiped) { setSwipedChannel(null); return; } selectChannel(ch.id); }}
-          onContextMenu={e => { e.preventDefault(); setChannelMenu(ch.id); }}
+          className={`ch-row-inner${isSwiped ? " swiped" : ""}`}
           onTouchStart={e => {
             const sx = e.touches[0].clientX;
-            const onMove = (me: TouchEvent) => { if (sx - me.touches[0].clientX > 50) setSwipedChannel(ch.id); else if (me.touches[0].clientX - sx > 20) setSwipedChannel(null); };
+            const startY = e.touches[0].clientY;
+            let moved = false;
+            const onMove = (me: TouchEvent) => {
+              const dx = sx - me.touches[0].clientX;
+              const dy = Math.abs(me.touches[0].clientY - startY);
+              if (dy > 10 && !moved) return; // vertical scroll, ignore
+              if (dx > 40) { moved = true; setSwipedChannel(ch.id); }
+              else if (me.touches[0].clientX - sx > 20) { moved = true; setSwipedChannel(null); }
+            };
             const onEnd = () => { document.removeEventListener("touchmove", onMove); document.removeEventListener("touchend", onEnd); };
-            document.addEventListener("touchmove", onMove); document.addEventListener("touchend", onEnd);
+            document.addEventListener("touchmove", onMove, { passive: true });
+            document.addEventListener("touchend", onEnd);
           }}
         >
-          {chAvatarEl(ch, 48)}
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                {isPinned && <Pin style={{ width: 12, height: 12, color: "#667" }} />}
-                <span style={{ fontWeight: 600, fontSize: 15, color: textMain, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 160 }}>{nm}</span>
-                {isMuted && <VolumeX style={{ width: 12, height: 12, color: textSub }} />}
+          {/* Main row content */}
+          <div
+            className="ch-row-content"
+            style={{ background: isActive ? (isDark ? "#2a3942" : "#f0f2f5") : sidebarBg, cursor: "pointer", userSelect: "none" as const }}
+            onClick={() => { if (isSwiped) { setSwipedChannel(null); return; } selectChannel(ch.id); }}
+            onContextMenu={e => { e.preventDefault(); setChannelMenu(ch.id); }}
+          >
+            {chAvatarEl(ch, 48)}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  {isPinned && <Pin style={{ width: 12, height: 12, color: textSub }} />}
+                  <span style={{ fontWeight: 600, fontSize: 15, color: textMain, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, maxWidth: 165 }}>{nm}</span>
+                  {isMuted && <VolumeX style={{ width: 12, height: 12, color: textSub }} />}
+                </div>
+                <span style={{ fontSize: 11, color: unread > 0 && !isMuted ? "#25D366" : textSub, flexShrink: 0, marginLeft: 4 }}>{lastTime}</span>
               </div>
-              <span style={{ fontSize: 11, color: unread > 0 ? "#25D366" : textSub, flexShrink: 0 }}>{lastTime}</span>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 3 }}>
+                <span style={{ fontSize: 13, color: textSub, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, maxWidth: 210 }}>{lastMsg || "Tap to chat"}</span>
+                {unread > 0 && !isMuted && <span className="unread-badge">{unread > 99 ? "99+" : unread}</span>}
+                {unread > 0 && isMuted && <span className="unread-badge" style={{ background: "#8696a0" }}>{unread}</span>}
+              </div>
             </div>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 2 }}>
-              <span style={{ fontSize: 13, color: textSub, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 200 }}>{lastMsg}</span>
-              {unread > 0 && !isMuted && <span className="unread-badge">{unread > 99 ? "99+" : unread}</span>}
-              {unread > 0 && isMuted && <span className="unread-badge" style={{ background: "#8696a0" }}>{unread}</span>}
-            </div>
+          </div>
+
+          {/* Action buttons — only visible when swiped (flex layout pushes them right) */}
+          <div className="ch-row-actions">
+            <button
+              className="ch-row-action-btn"
+              onClick={e => { e.stopPropagation(); toggleMuteCh(ch.id); }}
+              style={{ background: "#E67E22" }}
+            >
+              {isMuted ? <Volume2 size={18} /> : <VolumeX size={18} />}
+              {isMuted ? "Unmute" : "Mute"}
+            </button>
+            <button
+              className="ch-row-action-btn"
+              onClick={e => { e.stopPropagation(); leaveChannel(ch.id); setSwipedChannel(null); }}
+              style={{ background: "#E74C3C" }}
+            >
+              <X size={18} />Leave
+            </button>
           </div>
         </div>
 
-        {/* Channel context menu */}
+        {/* Channel context menu (long-press) */}
         {channelMenu === ch.id && (
-          <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)", background: isDark ? "#233138" : "#fff", borderRadius: 12, boxShadow: "0 8px 32px rgba(0,0,0,.3)", zIndex: 400, minWidth: 200, overflow: "hidden" }} onClick={e => e.stopPropagation()}>
+          <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%,-50%)", background: isDark ? "#233138" : "#fff", borderRadius: 16, boxShadow: "0 8px 40px rgba(0,0,0,.35)", zIndex: 400, minWidth: 220, overflow: "hidden" }} onClick={e => e.stopPropagation()}>
+            <div style={{ padding: "14px 18px", borderBottom: `1px solid ${divider}`, fontWeight: 700, fontSize: 14, color: textMain }}>{nm}</div>
             {[
-              { icon: <Pin size={16} />, label: isPinned ? "Unpin" : "Pin", fn: () => togglePinCh(ch.id) },
-              { icon: isMuted ? <Volume2 size={16} /> : <VolumeX size={16} />, label: isMuted ? "Unmute" : "Mute", fn: () => toggleMuteCh(ch.id) },
-              { icon: <Archive size={16} />, label: "Archive", fn: () => toggleArchive(ch.id) },
-              { icon: <Bell size={16} />, label: "Mark as unread", fn: () => { setUnreadCounts(p => ({ ...p, [ch.id]: 1 })); setChannelMenu(null); } },
-              { icon: <X size={16} />, label: "Leave", fn: () => { leaveChannel(ch.id); setChannelMenu(null); } },
+              { icon: <Pin size={16} />,    label: isPinned ? "Unpin chat" : "Pin chat",       fn: () => togglePinCh(ch.id) },
+              { icon: isMuted ? <Volume2 size={16} /> : <VolumeX size={16} />, label: isMuted ? "Unmute" : "Mute notifications", fn: () => toggleMuteCh(ch.id) },
+              { icon: <Archive size={16} />, label: "Archive chat",           fn: () => toggleArchive(ch.id) },
+              { icon: <Bell size={16} />,   label: "Mark as unread",          fn: () => { setUnreadCounts(p => ({ ...p, [ch.id]: 1 })); setChannelMenu(null); } },
+              { icon: <X size={16} />,      label: "Exit group",              fn: () => { leaveChannel(ch.id); setChannelMenu(null); }, danger: true },
             ].map((item, i) => (
-              <button key={i} onClick={item.fn} style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "13px 18px", background: "none", border: "none", cursor: "pointer", color: textMain, fontSize: 14 }}>
-                <span style={{ color: WA_GREEN }}>{item.icon}</span>{item.label}
+              <button key={i} onClick={item.fn} style={{ width: "100%", display: "flex", alignItems: "center", gap: 14, padding: "14px 18px", background: "none", border: "none", cursor: "pointer", color: (item as any).danger ? "#E74C3C" : textMain, fontSize: 14, borderBottom: `1px solid ${divider}` }}>
+                <span style={{ color: (item as any).danger ? "#E74C3C" : WA_GREEN }}>{item.icon}</span>{item.label}
               </button>
             ))}
-            <button onClick={() => setChannelMenu(null)} style={{ width: "100%", padding: "13px 18px", background: "none", border: "none", cursor: "pointer", color: "#E74C3C", fontSize: 14, borderTop: `1px solid ${divider}` }}>Cancel</button>
+            <button onClick={() => setChannelMenu(null)} style={{ width: "100%", padding: "14px", background: "none", border: "none", cursor: "pointer", color: textSub, fontSize: 14, textAlign: "center" as const }}>Cancel</button>
           </div>
         )}
       </div>
@@ -1260,7 +1280,7 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
       </div>
 
       {/* ═══ CHAT AREA ═══════════════════════════════════════ */}
-      <div className="majlis-chat" style={{ display: (mobileShowChat || window.innerWidth >= 768) ? "flex" : "none", flexDirection: "column", ...getBgStyle(), position: "relative" }}>
+      <div className="majlis-chat" style={{ display: mobileShowChat ? "flex" : "none", flexDirection: "column", ...getBgStyle() }} data-desktop-visible>
         {!activeChannel ? (
           <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, background: isDark ? "#0d1117" : "#f8f8f8" }}>
             <div style={{ width: 80, height: 80, borderRadius: "50%", background: WA_GREEN, display: "flex", alignItems: "center", justifyContent: "center" }}>
