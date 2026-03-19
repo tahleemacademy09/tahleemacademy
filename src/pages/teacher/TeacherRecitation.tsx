@@ -62,7 +62,7 @@ export default function TeacherRecitation() {
     setLoading(true); setAyahIdx(0); setAyahs([]); audioManager.stop();
     fetch(`https://api.alquran.cloud/v1/surah/${selected.number}/ar.uthmani`)
       .then(r=>r.json()).then(d=>{ if(d.code===200) setAyahs(d.data.ayahs.map((a:any)=>({number:a.number,numberInSurah:a.numberInSurah,text:a.text}))); }).finally(()=>setLoading(false));
-    supabase.from("teacher_recitations").select("ayah_num,audio_url").eq("teacher_id",teacherId).eq("surah_num",selected.number)
+    supabase.from("teacher_recitations" as any).select("ayah_num,audio_url").eq("teacher_id",teacherId).eq("surah_num",selected.number)
       .then(({data})=>{
         if (!data) return;
         const map:Record<number,string>={};
@@ -92,7 +92,7 @@ export default function TeacherRecitation() {
       if (up) {
         const {data:urlData} = supabase.storage.from("hifdh-recordings").getPublicUrl(path);
         const url = urlData?.publicUrl??"";
-        await supabase.from("teacher_recitations").upsert({ teacher_id:teacherId, teacher_name:teacherName, surah_num:selected.number, surah_name:selected.englishName, ayah_num:ayahs[ayahIdx].numberInSurah, audio_url:url }, { onConflict:"teacher_id,surah_num,ayah_num" });
+        await supabase.from("teacher_recitations" as any).upsert({ teacher_id:teacherId, teacher_name:teacherName, surah_num:selected.number, surah_name:selected.englishName, ayah_num:ayahs[ayahIdx].numberInSurah, audio_url:url }, { onConflict:"teacher_id,surah_num,ayah_num" });
         setMyRecs(p=>{ const n={...p,[ayahs[ayahIdx].numberInSurah]:url}; setRecordedCount(Object.keys(n).length); return n; });
       }
       setSaving(false);
