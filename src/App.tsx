@@ -200,7 +200,7 @@ const App = () => (
                   <Route path="/admin/subjects" element={<SubjectManagement />} />
                   <Route path="/admin/courses" element={<CourseManagement />} />
                   <Route path="/admin/syllabus" element={<SyllabusManager />} />
-                  <Route path="/admin/live-classes" element={<LiveClasses />} />
+                  <Route path="/admin/live-classes" element={<LiveClassManagement />} />
                   <Route path="/admin/exams" element={<ExamManager />} />
                   <Route path="/admin/exams/create" element={<ExamEditor />} />
                   <Route path="/admin/exams/:examId/edit" element={<ExamEditor />} />
