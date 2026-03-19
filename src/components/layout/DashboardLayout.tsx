@@ -35,9 +35,6 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   });
 
   // ── TRUE FULLSCREEN ESCAPE for Majlis ────────────────────────
-  // overflow-auto on the parent traps position:fixed on mobile.
-  // Solution: when on the majlis route, skip the entire wrapper
-  // and render the Outlet directly in a fixed fullscreen container.
   const isMajlis = location.pathname === "/student/majlis";
   if (isMajlis) {
     return (
@@ -58,15 +55,15 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     | { type: "group"; key: string; icon: any; label: string; children: { to: string; icon: any; label: string }[] };
 
   const studentNav: NavItem[] = [
-    { type: "link",  to: "/student",         icon: LayoutDashboard, label: t("Dashboard",     "لوحة التحكم")    },
-    { type: "link",  to: "/student/courses",  icon: BookOpenCheck,   label: t("Learning Hub",  "مركز التعلم")    },
+    { type: "link", to: "/student",                   icon: LayoutDashboard, label: t("Dashboard",            "لوحة التحكم")    },
+    { type: "link", to: "/student/courses",            icon: BookOpenCheck,   label: t("Learning Hub",         "مركز التعلم")    },
     {
       type: "group", key: "revision",
       icon: RefreshCw,
       label: t("Revision", "المراجعة"),
       children: [
-        { to: "/student/revision", icon: BookMarked,  label: t("General Revision", "المراجعة العامة") },
-        { to: "/student/hifdh",    icon: Headphones,  label: t("Al-Hifdh",          "الحفظ")           },
+        { to: "/student/revision", icon: BookMarked, label: t("General Revision", "المراجعة العامة") },
+        { to: "/student/hifdh",    icon: Headphones, label: t("Al-Hifdh",          "الحفظ")           },
       ],
     },
     {
@@ -78,27 +75,28 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
         { to: "/student/transcripts", icon: GraduationCap, label: t("Transcripts", "السجل الأكاديمي") },
       ],
     },
-    { type: "link", to: "/student/majlis",  icon: MessageCircle, label: t("Al-Majlis",  "المجلس")     },
-    { type: "link", to: "/student/profile", icon: UserCircle,    label: t("Settings",   "الإعدادات")  },
+    { type: "link", to: "/student/majlis",             icon: MessageCircle, label: t("Al-Majlis",            "المجلس")         },
+    { type: "link", to: "/student/enrollment-payment", icon: CreditCard,    label: t("Enrollment & Payment", "التسجيل والدفع") },
+    { type: "link", to: "/student/profile",            icon: UserCircle,    label: t("Settings",             "الإعدادات")      },
   ];
 
   const adminLinks = [
     { to: "/admin",                   icon: LayoutDashboard, label: t("Dashboard",           "لوحة التحكم")    },
-    { to: "/admin/subjects",          icon: BookOpen,         label: t("Subjects",             "المواد")         },
-    { to: "/admin/courses",           icon: Layers,           label: t("Courses",              "الدورات")        },
-    { to: "/admin/syllabus",          icon: FileText,         label: t("Syllabus & Materials", "المنهج والمواد") },
-    { to: "/admin/live-classes",      icon: Video,            label: t("Live Classes",         "الفصول الحية")   },
-    { to: "/admin/exams",             icon: ClipboardList,    label: t("Exams",                "الامتحانات")     },
-    { to: "/admin/question-bank",     icon: Library,          label: t("Question Bank",        "بنك الأسئلة")    },
-    { to: "/admin/students",          icon: Users,            label: t("Students",             "الطلاب")         },
-    { to: "/admin/grading",           icon: CheckSquare,      label: t("Grading",              "التصحيح")        },
-    { to: "/admin/private-sessions",  icon: UserCheck,        label: t("Private Sessions",     "الجلسات الخاصة") },
-    { to: "/admin/proctoring",        icon: BarChart,         label: t("Proctoring",           "المراقبة")       },
-    { to: "/admin/entrance-exam",     icon: GraduationCap,    label: t("Entrance Exam",        "اختبار القبول")  },
-    { to: "/admin/payments",          icon: CreditCard,       label: t("Payments",             "المدفوعات")      },
-    { to: "/admin/calendar",          icon: Calendar,         label: t("Calendar",             "التقويم")        },
-    { to: "/admin/public-classes",    icon: Mic,              label: t("Public Classes",       "الدروس العامة")  },
-    { to: "/admin/majlis-moderation", icon: MessageCircle,    label: t("Al-Majlis",            "المجلس")         },
+    { to: "/admin/subjects",          icon: BookOpen,        label: t("Subjects",             "المواد")         },
+    { to: "/admin/courses",           icon: Layers,          label: t("Courses",              "الدورات")        },
+    { to: "/admin/syllabus",          icon: FileText,        label: t("Syllabus & Materials", "المنهج والمواد") },
+    { to: "/admin/live-classes",      icon: Video,           label: t("Live Classes",         "الفصول الحية")   },
+    { to: "/admin/exams",             icon: ClipboardList,   label: t("Exams",                "الامتحانات")     },
+    { to: "/admin/question-bank",     icon: Library,         label: t("Question Bank",        "بنك الأسئلة")    },
+    { to: "/admin/students",          icon: Users,           label: t("Students",             "الطلاب")         },
+    { to: "/admin/grading",           icon: CheckSquare,     label: t("Grading",              "التصحيح")        },
+    { to: "/admin/private-sessions",  icon: UserCheck,       label: t("Private Sessions",     "الجلسات الخاصة") },
+    { to: "/admin/proctoring",        icon: BarChart,        label: t("Proctoring",           "المراقبة")       },
+    { to: "/admin/entrance-exam",     icon: GraduationCap,   label: t("Entrance Exam",        "اختبار القبول")  },
+    { to: "/admin/payments",          icon: CreditCard,      label: t("Payments",             "المدفوعات")      },
+    { to: "/admin/calendar",          icon: Calendar,        label: t("Calendar",             "التقويم")        },
+    { to: "/admin/public-classes",    icon: Mic,             label: t("Public Classes",       "الدروس العامة")  },
+    { to: "/admin/majlis-moderation", icon: MessageCircle,   label: t("Al-Majlis",            "المجلس")         },
   ];
 
   const SidebarContent = ({ onNavigate }: { onNavigate?: () => void }) => (
@@ -118,7 +116,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
       {/* Nav */}
       <nav className="flex-1 space-y-0.5 p-3 overflow-auto">
 
-        {/* Student */}
+        {/* Student nav */}
         {role === "student" && studentNav.map((item) => {
           if (item.type === "link") {
             const isActive = item.to === "/student"
@@ -151,7 +149,9 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                 )}>
                 <item.icon className="h-4 w-4 shrink-0" />
                 <span className="flex-1 text-left">{item.label}</span>
-                {isOpen ? <ChevronDown className="h-3.5 w-3.5 opacity-60" /> : <ChevronRight className="h-3.5 w-3.5 opacity-60" />}
+                {isOpen
+                  ? <ChevronDown className="h-3.5 w-3.5 opacity-60" />
+                  : <ChevronRight className="h-3.5 w-3.5 opacity-60" />}
               </button>
               {isOpen && (
                 <div className="ms-4 mt-0.5 space-y-0.5 border-l border-sidebar-border/50 ps-3">
@@ -176,7 +176,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
           );
         })}
 
-        {/* Admin */}
+        {/* Admin nav */}
         {role === "admin" && adminLinks.map(link => (
           <Link key={link.to} to={link.to} onClick={onNavigate}
             className={cn(
@@ -200,15 +200,15 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
           </div>
         )}
         {role === "student" && (
-          <Link to="/student/payment" onClick={onNavigate}
+          <Link to="/student/enrollment-payment" onClick={onNavigate}
             className={cn(
               "w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
-              location.pathname === "/student/payment"
+              location.pathname === "/student/enrollment-payment"
                 ? "bg-sidebar-accent text-sidebar-accent-foreground"
                 : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground"
             )}>
             <Wallet className="h-4 w-4 shrink-0 text-yellow-400" />
-            <span>{t("Payment", "الدفع")}</span>
+            <span>{t("Enrollment & Payment", "التسجيل والدفع")}</span>
           </Link>
         )}
         <Button variant="ghost" size="sm"
@@ -260,10 +260,10 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
             </div>
           </div>
 
-          {/* Payment shortcut in mobile header */}
+          {/* Enrollment & Payment shortcut in mobile header */}
           {role === "student" && (
-            <Link to="/student/payment">
-              <Button variant="ghost" size="icon" title={t("Payment", "الدفع")}>
+            <Link to="/student/enrollment-payment">
+              <Button variant="ghost" size="icon" title={t("Enrollment & Payment", "التسجيل والدفع")}>
                 <Wallet className="h-5 w-5 text-yellow-500" />
               </Button>
             </Link>
