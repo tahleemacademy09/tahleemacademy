@@ -121,6 +121,9 @@ const EnrollmentPayment = () => {
   const [payingReg, setPayingReg]           = useState(false);
   const [selectedPlan, setSelectedPlan]     = useState<"monthly"|"term">("monthly");
   const [loadingHistory, setLoadingHistory] = useState(false);
+  // Tracks if this student had an enrollment row before this page loaded.
+  // Existing students predate the registration fee — they skip the fee card entirely.
+  const [isExistingStudent, setIsExistingStudent] = useState(false);
 
   const isAdmin        = hasRole("admin");
   const level          = ((profile as any)?.level || "beginner").toLowerCase();
@@ -128,7 +131,8 @@ const EnrollmentPayment = () => {
   const accessStatus   = getAccessStatus(enrollment);
   const graceRemaining = daysLeft(enrollment?.grace_end_date || null);
   const amountDue      = selectedPlan === "monthly" ? fees.monthly : fees.term;
-  const regPaid        = enrollment?.registration_paid ?? false;
+  // regPaid is true if DB says paid OR if student predates the fee system
+  const regPaid        = (enrollment?.registration_paid === true) || isExistingStudent;
 
   // ── Load ──────────────────────────────────────────────────────
   const loadEnrollment = useCallback(async () => {
@@ -151,16 +155,18 @@ const EnrollmentPayment = () => {
           .insert({ user_id: user.id, level, plan_type: "monthly", amount: fees.monthly, status: "grace", grace_end_date: graceEnd, admin_override: false, registration_paid: false, registration_paid_at: null })
           .select().single();
         enr = created;
-      }
-
-      // Any existing enrollment with registration_paid=false is a student
-      // who predates the registration fee — auto-mark them as paid
-      if (enr && !enr.registration_paid && !isNewEnrollment) {
-        const paidAt = enr.paid_at || enr.created_at || new Date().toISOString();
-        await supabase.from("enrollments" as any)
-          .update({ registration_paid: true, registration_paid_at: paidAt })
-          .eq("id", enr.id);
-        enr = { ...enr, registration_paid: true, registration_paid_at: paidAt };
+      } else {
+        // Enrollment row already existed — student predates the registration fee system
+        setIsExistingStudent(true);
+        // Also patch the DB column so future loads are consistent (best-effort)
+        if (!enr.registration_paid) {
+          const paidAt = enr.paid_at || enr.created_at || new Date().toISOString();
+          supabase.from("enrollments" as any)
+            .update({ registration_paid: true, registration_paid_at: paidAt })
+            .eq("id", enr.id)
+            .then(() => {});
+          enr = { ...enr, registration_paid: true, registration_paid_at: paidAt };
+        }
       }
 
       if (enr && enr.status === "grace" && enr.grace_end_date && new Date(enr.grace_end_date) < new Date()) {
