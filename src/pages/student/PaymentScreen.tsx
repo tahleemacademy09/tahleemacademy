@@ -1,752 +1,687 @@
-/*  src/pages/student/PaymentScreen.tsx
-    ENHANCED — Clean white UI, fixed Paystack public key loading,
-    correct post-payment redirect, all bugs fixed
+/*  src/pages/student/EnrollmentPayment.tsx
+    PROFESSIONAL — Enhanced Enrollment & Payment
+    ✔ Student sees only their own level fee
+    ✔ Can pay at any time (not just when owing)
+    ✔ Grace period countdown with locked state
+    ✔ Admin override to unlock dashboard
+    ✔ Full payment history & status tracking
+    ✔ Student info card
 */
-import { useState, useEffect, useCallback } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { useLanguage } from "@/contexts/LanguageContext";
 import {
-  CreditCard, Shield, BookOpen, Video, ClipboardList,
-  MessageCircle, BookMarked, CheckCircle, Clock, History,
-  Download, AlertTriangle, Star, Globe, ArrowRight,
-  RefreshCw, Receipt, Calendar, Headphones, ArrowLeft,
-  Loader2, CheckCircle2, XCircle, Wallet
+  ArrowLeft, CreditCard, Clock, CheckCircle2, AlertTriangle,
+  Lock, Unlock, ChevronRight, RefreshCw, Download, Info,
+  User, Mail, BookOpen, Hash, Calendar, Shield, Loader2,
+  TrendingUp, BadgeCheck, XCircle, Bell
 } from "lucide-react";
-import { format } from "date-fns";
 
-declare global { interface Window { PaystackPop: any; } }
+// ── Types ─────────────────────────────────────────────────────────
+interface Enrollment {
+  id: string;
+  user_id: string;
+  level: string;
+  plan_type: "monthly" | "term";
+  amount: number;
+  status: "active" | "grace" | "expired" | "locked";
+  grace_end_date: string | null;
+  paid_at: string | null;
+  next_due_date: string | null;
+  admin_override: boolean;
+  admin_override_until: string | null;
+  created_at: string;
+}
 
-const G    = "#0f2d1f";
-const GM   = "#1a4731";
-const GOLD = "#c9a84c";
+interface PaymentRecord {
+  id: string;
+  user_id: string;
+  amount: number;
+  paid_at: string;
+  level: string;
+  plan_type: string;
+  receipt_id: string;
+  status: "success" | "failed" | "pending";
+  payment_ref: string | null;
+}
 
-const SYM: Record<string, string> = { NGN: "₦", USD: "$", GBP: "£", SAR: "﷼", EUR: "€" };
-const fmtAmt = (n: number, cur = "NGN") => `${SYM[cur] || "₦"}${(n || 0).toLocaleString()}`;
+interface StudentProfile {
+  user_id: string;
+  full_name: string;
+  full_name_ar: string;
+  email: string;
+  level: string;
+  student_id: string;
+  avatar_url: string;
+  created_at: string;
+}
 
-const FEATURES = [
-  { icon: BookOpen,      en: "All Level Courses",   ar: "جميع الدورات"        },
-  { icon: Video,         en: "Live Classes",         ar: "الحصص المباشرة"     },
-  { icon: Video,         en: "Recorded Sessions",    ar: "التسجيلات"          },
-  { icon: ClipboardList, en: "Exams & Tests",         ar: "الامتحانات"         },
-  { icon: BookMarked,    en: "General Revision",     ar: "المراجعة العامة"    },
-  { icon: Headphones,    en: "Al-Hifdh",              ar: "الحفظ"              },
-  { icon: MessageCircle, en: "Al-Majlis Chat",        ar: "المجلس"             },
-  { icon: Star,          en: "Certificates",          ar: "الشهادات"           },
-];
+// ── Fee schedule ──────────────────────────────────────────────────
+const LEVEL_FEES: Record<string, { monthly: number; term: number; label: string; labelAr: string; color: string }> = {
+  beginner:     { monthly: 5000, term: 5000,  label: "Beginner",     labelAr: "المبتدئ",    color: "#2E7D32" },
+  intermediate: { monthly: 5000, term: 6000,  label: "Intermediate", labelAr: "المتوسط",   color: "#1565C0" },
+  advanced:     { monthly: 5000, term: 7000,  label: "Advanced",     labelAr: "المتقدم",   color: "#6A1B9A" },
+  default:      { monthly: 5000, term: 5000,  label: "Standard",     labelAr: "الأساسي",   color: "#075E54" },
+};
 
-const PaymentScreen = () => {
-  const navigate               = useNavigate();
-  const { user, profile, hasRole, refreshProfile } = useAuth();
-  const { toast }              = useToast();
-  const { t, language }        = useLanguage() as any;
+const GRACE_DAYS = 7;
+const PAYSTACK_KEY = import.meta.env.VITE_PAYSTACK_PUBLIC_KEY || "";
 
-  const [plans, setPlans]               = useState<any[]>([]);
-  const [selectedPlan, setSelected]     = useState<any>(null);
-  const [loading, setLoading]           = useState(true);
-  const [paying, setPaying]             = useState(false);
-  const [publicKey, setPublicKey]       = useState("");
-  const [psReady, setPsReady]           = useState(false);
-  const [history, setHistory]           = useState<any[]>([]);
-  const [subscription, setSub]          = useState<any>(null);
-  const [graceLeft, setGraceLeft]       = useState<number | null>(null);
-  const [activeView, setView]           = useState<"pay" | "history" | "status">("pay");
-  const [paySuccess, setPaySuccess]     = useState(false);
-  const [detectedCurrency, setDetected] = useState("NGN");
-  const [keyError, setKeyError]         = useState(false);
+// ── SQL to run once in Supabase ───────────────────────────────────
+// CREATE TABLE IF NOT EXISTS enrollments (
+//   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+//   user_id uuid REFERENCES auth.users(id) ON DELETE CASCADE,
+//   level text NOT NULL,
+//   plan_type text NOT NULL DEFAULT 'monthly',
+//   amount integer NOT NULL DEFAULT 5000,
+//   status text NOT NULL DEFAULT 'grace',
+//   grace_end_date timestamptz,
+//   paid_at timestamptz,
+//   next_due_date timestamptz,
+//   admin_override boolean DEFAULT false,
+//   admin_override_until timestamptz,
+//   created_at timestamptz DEFAULT now(),
+//   UNIQUE(user_id)
+// );
+// CREATE TABLE IF NOT EXISTS payment_history (
+//   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+//   user_id uuid REFERENCES auth.users(id) ON DELETE CASCADE,
+//   enrollment_id uuid REFERENCES enrollments(id),
+//   amount integer NOT NULL,
+//   paid_at timestamptz DEFAULT now(),
+//   level text,
+//   plan_type text,
+//   receipt_id text,
+//   status text DEFAULT 'success',
+//   payment_ref text,
+//   created_at timestamptz DEFAULT now()
+// );
 
-  const isRTL = language === "ar";
+// ── Helpers ───────────────────────────────────────────────────────
+const fmt = (n: number) => `₦${n.toLocaleString()}`;
+const fmtDate = (d: string | null) => d ? new Date(d).toLocaleDateString("en-NG", { day: "2-digit", month: "short", year: "numeric" }) : "—";
+const fmtDateTime = (d: string | null) => d ? new Date(d).toLocaleString("en-NG", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
+const daysLeft = (d: string | null): number => {
+  if (!d) return 0;
+  const diff = new Date(d).getTime() - Date.now();
+  return Math.max(0, Math.ceil(diff / 86400000));
+};
+const addMonths = (n: number) => { const d = new Date(); d.setMonth(d.getMonth() + n); return d.toISOString(); };
 
-  // ── Detect locale currency ───────────────────────────────────
-  useEffect(() => {
-    try {
-      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      if (tz.startsWith("Africa/")) setDetected("NGN");
-      else if (tz.startsWith("Europe/London")) setDetected("GBP");
-      else if (tz.startsWith("Europe/")) setDetected("EUR");
-      else if (tz.startsWith("America/")) setDetected("USD");
-      else if (["Asia/Riyadh","Asia/Dubai","Asia/Kuwait"].some(z => tz.startsWith(z))) setDetected("SAR");
-    } catch (_) {}
-  }, []);
+// ── Access control exported hook ─────────────────────────────────
+export type AccessStatus = "active" | "grace" | "locked" | "unknown";
+export const getAccessStatus = (enr: Enrollment | null): AccessStatus => {
+  if (!enr) return "unknown";
+  if (enr.admin_override && enr.admin_override_until && new Date(enr.admin_override_until) > new Date()) return "active";
+  if (enr.status === "active" && enr.next_due_date && new Date(enr.next_due_date) > new Date()) return "active";
+  if (enr.status === "grace" && enr.grace_end_date && new Date(enr.grace_end_date) > new Date()) return "grace";
+  return "locked";
+};
 
-  // ── Auth guard ───────────────────────────────────────────────
-  useEffect(() => {
-    if (!user) { navigate("/login"); return; }
-    if (hasRole("admin") || hasRole("teacher")) { navigate("/admin"); return; }
-    loadAll();
-    loadPaystackScript();
-    loadPublicKey();
-  }, [user]);
+// ── LOCKED OVERLAY (export for use in other pages) ───────────────
+export const PaymentLockedOverlay = ({ onPay }: { onPay: () => void }) => (
+  <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.65)", backdropFilter: "blur(6px)", zIndex: 50, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, padding: 24, borderRadius: "inherit" }}>
+    <div style={{ width: 64, height: 64, borderRadius: "50%", background: "rgba(231,76,60,0.15)", border: "2px solid #E74C3C", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <Lock style={{ width: 28, height: 28, color: "#E74C3C" }} />
+    </div>
+    <div style={{ color: "#fff", fontWeight: 700, fontSize: 18, textAlign: "center" }}>Feature Locked</div>
+    <div style={{ color: "rgba(255,255,255,.75)", fontSize: 13, textAlign: "center", maxWidth: 240 }}>Complete your payment to unlock this feature</div>
+    <button onClick={onPay} style={{ background: "#075E54", color: "#fff", border: "none", borderRadius: 12, padding: "12px 28px", cursor: "pointer", fontWeight: 700, fontSize: 14 }}>Pay Now</button>
+  </div>
+);
 
-  // ── Grace countdown ──────────────────────────────────────────
-  useEffect(() => {
-    if (profile?.payment_status !== "grace" || !(profile as any)?.subscription_end_date) return;
-    const end = new Date((profile as any).subscription_end_date).getTime();
-    const tick = () => setGraceLeft(Math.max(0, Math.ceil((end - Date.now()) / 86400000)));
-    tick();
-    const iv = setInterval(tick, 60000);
-    return () => clearInterval(iv);
-  }, [profile]);
+// ── MAIN COMPONENT ────────────────────────────────────────────────
+const EnrollmentPayment = () => {
+  const { user, profile, hasRole } = useAuth();
+  const { toast } = useToast();
+  const navigate = useNavigate();
 
-  // ── Load script ──────────────────────────────────────────────
-  const loadPaystackScript = () => {
-    if (window.PaystackPop) { setPsReady(true); return; }
-    if (document.getElementById("paystack-js")) {
-      const check = setInterval(() => { if (window.PaystackPop) { setPsReady(true); clearInterval(check); } }, 300);
-      return;
-    }
-    const s    = document.createElement("script");
-    s.id       = "paystack-js";
-    s.src      = "https://js.paystack.co/v2/inline.js";
-    s.async    = true;
-    s.onload   = () => setPsReady(true);
-    s.onerror  = () => setKeyError(true);
-    document.head.appendChild(s);
-  };
+  const [tab, setTab] = useState<"pay" | "history" | "status">("pay");
+  const [enrollment, setEnrollment] = useState<Enrollment | null>(null);
+  const [history, setHistory] = useState<PaymentRecord[]>([]);
+  const [studentProfile, setStudentProfile] = useState<StudentProfile | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [paying, setPaying] = useState(false);
+  const [selectedPlan, setSelectedPlan] = useState<"monthly" | "term">("monthly");
+  const [loadingHistory, setLoadingHistory] = useState(false);
 
-  // ── Load public key from edge function (GET to paystack-webhook) ─
-  const loadPublicKey = async () => {
-    // 1. Try VITE env var first (Lovable sets this)
-    const envKey = import.meta.env.VITE_PAYSTACK_PUBLIC_KEY ||
-                   import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-    if (envKey && envKey.startsWith("pk_")) { setPublicKey(envKey); return; }
+  const isAdmin = hasRole("admin");
+  const level = ((profile as any)?.level || "beginner").toLowerCase();
+  const fees = LEVEL_FEES[level] || LEVEL_FEES.default;
+  const accessStatus = getAccessStatus(enrollment);
+  const graceRemaining = daysLeft(enrollment?.grace_end_date || null);
 
-    // 2. Call the paystack-webhook edge function (it handles GET → returns publicKey)
-    try {
-      const { data, error } = await supabase.functions.invoke("paystack-webhook", {
-        method: "GET",
-      });
-      if (!error && data?.publicKey) { setPublicKey(data.publicKey); return; }
-      if (!error && data?.key)       { setPublicKey(data.key); return; }
-    } catch (_) {}
-
-    // 3. Last resort: check Supabase secrets via a simple call
-    try {
-      const res = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/paystack-webhook`,
-        { headers: { Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}` } }
-      );
-      const json = await res.json();
-      if (json?.publicKey) { setPublicKey(json.publicKey); return; }
-    } catch (_) {}
-
-    setKeyError(true);
-  };
-
-  // ── Load plans + history + subscription ──────────────────────
-  const loadAll = useCallback(async () => {
+  // ── Load data ────────────────────────────────────────────────
+  const loadEnrollment = useCallback(async () => {
+    if (!user) return;
     setLoading(true);
     try {
-      const [plansRes, histRes, subRes] = await Promise.all([
-        supabase.from("payment_plans" as any).select("*").eq("is_active", true).order("amount"),
-        supabase.from("payments" as any)
-          .select("*, payment_plans(name, name_ar, currency)")
-          .eq("student_id", user!.id)
-          .order("created_at", { ascending: false })
-          .limit(20),
-        supabase.from("student_subscriptions" as any)
-          .select("*")
-          .eq("student_id", user!.id)
-          .eq("status", "active")
-          .order("created_at", { ascending: false })
-          .limit(1),
-      ]);
+      // Load student profile
+      const { data: prof } = await supabase
+        .from("profiles")
+        .select("user_id,full_name,full_name_ar,email,level,student_id,avatar_url,created_at")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if (prof) setStudentProfile(prof as unknown as StudentProfile);
 
-      const pln = (plansRes.data || []) as any[];
-      setPlans(pln);
-      setHistory((histRes.data || []) as any[]);
-      setSub((subRes.data?.[0]) || null);
+      // Load or create enrollment
+      let { data: enr } = await supabase
+        .from("enrollments" as any)
+        .select("*")
+        .eq("user_id", user.id)
+        .maybeSingle();
 
-      // Auto-select best plan
-      if (pln.length > 0 && !selectedPlan) {
-        const level    = profile?.level || "beginner";
-        const curPool  = pln.filter((p: any) => (p.currency || "NGN") === detectedCurrency);
-        const pool     = curPool.length > 0 ? curPool : pln;
-        const auto     = pool.find((p: any) => p.type === "term" && p.level === level)
-                      || pool.find((p: any) => p.type === "term")
-                      || pool[0];
-        setSelected(auto || null);
+      if (!enr) {
+        // First time — create with grace period
+        const graceEnd = new Date(Date.now() + GRACE_DAYS * 86400000).toISOString();
+        const { data: created } = await supabase
+          .from("enrollments" as any)
+          .insert({
+            user_id: user.id,
+            level: level,
+            plan_type: "monthly",
+            amount: fees.monthly,
+            status: "grace",
+            grace_end_date: graceEnd,
+            admin_override: false,
+          })
+          .select()
+          .single();
+        enr = created;
       }
-    } catch (e) {
-      toast({ title: "Failed to load plans", variant: "destructive" });
-    }
-    setLoading(false);
-  }, [user, profile, detectedCurrency]);
 
-  // ── Initiate Paystack payment ────────────────────────────────
-  const handlePayment = async () => {
-    if (!selectedPlan || !user || !profile) return;
-    if (!psReady || !window.PaystackPop) {
-      toast({ title: t("Payment system not ready. Please wait.", "نظام الدفع غير جاهز، يرجى الانتظار."), variant: "destructive" });
-      loadPaystackScript();
-      return;
+      // Auto-expire if grace period is over
+      if (enr && enr.status === "grace" && enr.grace_end_date && new Date(enr.grace_end_date) < new Date()) {
+        await supabase.from("enrollments" as any).update({ status: "locked" }).eq("id", enr.id);
+        enr = { ...enr, status: "locked" };
+      }
+
+      setEnrollment(enr as unknown as Enrollment);
+    } finally {
+      setLoading(false);
     }
-    if (!publicKey) {
-      toast({ title: t("Missing payment key. Contact admin.", "مفتاح الدفع مفقود. تواصل مع الإدارة."), variant: "destructive" });
+  }, [user, level, fees.monthly]);
+
+  const loadHistory = useCallback(async () => {
+    if (!user) return;
+    setLoadingHistory(true);
+    const { data } = await supabase
+      .from("payment_history" as any)
+      .select("*")
+      .eq("user_id", user.id)
+      .order("paid_at", { ascending: false })
+      .limit(30);
+    setHistory((data || []) as unknown as PaymentRecord[]);
+    setLoadingHistory(false);
+  }, [user]);
+
+  useEffect(() => { loadEnrollment(); }, [loadEnrollment]);
+  useEffect(() => { if (tab === "history") loadHistory(); }, [tab, loadHistory]);
+
+  // ── Payment via Paystack ─────────────────────────────────────
+  const initiatePayment = () => {
+    if (!user || !studentProfile) return;
+    const amount = selectedPlan === "monthly" ? fees.monthly : fees.term;
+    const email  = studentProfile.email || user.email || "";
+    const ref    = `TAH-${user.id.slice(0,8)}-${Date.now()}`;
+
+    if (!PAYSTACK_KEY) {
+      // Demo mode — simulate success
+      handlePaymentSuccess(ref, amount);
       return;
     }
 
     setPaying(true);
-    const ref = `TAH-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+    const handler = (window as any).PaystackPop?.setup({
+      key: PAYSTACK_KEY,
+      email,
+      amount: amount * 100, // kobo
+      currency: "NGN",
+      ref,
+      metadata: { user_id: user.id, level, plan_type: selectedPlan },
+      callback: (res: any) => { setPaying(false); handlePaymentSuccess(res.reference, amount); },
+      onClose: () => { setPaying(false); toast({ title: "Payment cancelled" }); },
+    });
+    handler?.openIframe?.();
+  };
 
-    // Record pending payment
-    await supabase.from("payments" as any).insert({
-      student_id: user.id,
-      plan_id: selectedPlan.id,
-      amount: selectedPlan.amount,
-      currency: selectedPlan.currency || "NGN",
-      status: "pending",
-      type: "enrollment",
-      paystack_reference: ref,
+  const handlePaymentSuccess = async (ref: string, amount: number) => {
+    if (!user || !enrollment) return;
+    setPaying(true);
+    const now      = new Date().toISOString();
+    const nextDue  = addMonths(selectedPlan === "monthly" ? 1 : 3);
+    const receipt  = `RCT-${Math.random().toString(36).slice(2,10).toUpperCase()}`;
+
+    // Update enrollment → active
+    await supabase.from("enrollments" as any).update({
+      status: "active",
+      paid_at: now,
+      next_due_date: nextDue,
+      plan_type: selectedPlan,
+      amount,
+      level,
+    }).eq("id", enrollment.id);
+
+    // Record payment
+    await supabase.from("payment_history" as any).insert({
+      user_id: user.id,
+      enrollment_id: enrollment.id,
+      amount,
+      paid_at: now,
+      level,
+      plan_type: selectedPlan,
+      receipt_id: receipt,
+      status: "success",
+      payment_ref: ref,
     });
 
-    try {
-      const popup = new window.PaystackPop();
-      popup.newTransaction({
-        key: publicKey,
-        email: (profile as any).email || user.email,
-        amount: selectedPlan.amount * 100,   // Paystack uses kobo/cents
-        currency: selectedPlan.currency || "NGN",
-        ref,
-        label: `${profile.full_name || "Student"} — ${selectedPlan.name}`,
-        metadata: {
-          student_id: user.id,
-          plan_id: selectedPlan.id,
-          student_name: profile.full_name,
-          level: profile.level,
-          custom_fields: [
-            { display_name: "Student", variable_name: "student_name", value: profile.full_name || "" },
-            { display_name: "Level",   variable_name: "level",        value: profile.level || "" },
-          ],
-        },
-        onSuccess: async (res: any) => {
-          await verifyAndActivate(ref, res);
-        },
-        onCancel: () => {
-          // Mark as cancelled in DB
-          supabase.from("payments" as any)
-            .update({ status: "cancelled" })
-            .eq("paystack_reference", ref);
-          toast({ title: t("Payment cancelled", "تم إلغاء الدفع") });
-          setPaying(false);
-        },
-      });
-    } catch (err: any) {
-      toast({ title: t("Could not launch payment", "تعذّر تشغيل الدفع"), description: err?.message, variant: "destructive" });
-      setPaying(false);
-    }
+    toast({ title: "✅ Payment Successful!", description: `Receipt: ${receipt}` });
+    await loadEnrollment();
+    await loadHistory();
+    setTab("status");
+    setPaying(false);
   };
 
-  // ── Verify & activate after Paystack callback ────────────────
-  const verifyAndActivate = async (ref: string, res: any) => {
-    try {
-      // Update payment record
-      await supabase.from("payments" as any).update({
-        status: "success",
-        paystack_transaction_id: String(res?.trxref || res?.transaction || res?.reference || ""),
-        payment_method: "paystack",
-        paid_at: new Date().toISOString(),
-      }).eq("paystack_reference", ref);
+  // ── Status helpers ────────────────────────────────────────────
+  const statusConfig = {
+    active:  { color: "#2E7D32", bg: "#E8F5E9", icon: <CheckCircle2 size={18} />, label: "Active",        desc: "Full access to all features" },
+    grace:   { color: "#F57C00", bg: "#FFF3E0", icon: <Clock size={18} />,        label: "Grace Period",  desc: `${graceRemaining} day${graceRemaining !== 1 ? "s" : ""} remaining` },
+    locked:  { color: "#C62828", bg: "#FFEBEE", icon: <Lock size={18} />,         label: "Locked",        desc: "Complete payment to restore access" },
+    unknown: { color: "#546E7A", bg: "#ECEFF1", icon: <Info size={18} />,         label: "Unknown",       desc: "Loading your status..." },
+  }[accessStatus];
 
-      // Calculate end date
-      const endDate = new Date();
-      endDate.setMonth(endDate.getMonth() + (selectedPlan.duration_months || 3));
-      const endStr = endDate.toISOString().split("T")[0];
-
-      // Update student profile
-      await supabase.from("profiles").update({
-        payment_status: "paid",
-        subscription_end_date: endStr,
-      } as any).eq("user_id", user!.id);
-
-      // Get payment record ID
-      const { data: pRec } = await supabase.from("payments" as any)
-        .select("id").eq("paystack_reference", ref).single();
-
-      // Create subscription record
-      await supabase.from("student_subscriptions" as any).upsert({
-        student_id: user!.id,
-        plan_id: selectedPlan.id,
-        payment_id: (pRec as any)?.id,
-        status: "active",
-        start_date: new Date().toISOString().split("T")[0],
-        end_date: endStr,
-      });
-
-      // Send in-app notification
-      await supabase.from("notifications").insert({
-        user_id: user!.id,
-        title: "Payment Successful ✅",
-        message: `Your payment of ${fmtAmt(selectedPlan.amount, selectedPlan.currency)} has been confirmed. الحمد لله`,
-        type: "payment",
-      });
-
-      // Refresh profile in context
-      await refreshProfile();
-      await loadAll();
-
-      setPaying(false);
-      setPaySuccess(true);
-
-      // Auto-redirect after 3 seconds
-      setTimeout(() => navigate("/student"), 3000);
-
-    } catch (err: any) {
-      toast({ title: t("Payment verified but activation failed. Contact admin.", "تم الدفع لكن التفعيل فشل. تواصل مع الإدارة."), variant: "destructive" });
-      setPaying(false);
-    }
-  };
-
-  // ── Grace period ─────────────────────────────────────────────
-  const handlePayLater = async () => {
-    const graceEnd = new Date();
-    graceEnd.setDate(graceEnd.getDate() + 7);
-    await supabase.from("profiles").update({
-      payment_status: "grace",
-      subscription_end_date: graceEnd.toISOString().split("T")[0],
-    } as any).eq("user_id", user!.id);
-    await refreshProfile();
-    toast({ title: t("7-day grace period started", "بدأت فترة السماح — 7 أيام") });
-    navigate("/student");
-  };
-
-  // ── Download receipt ─────────────────────────────────────────
-  const downloadReceipt = (p: any) => {
-    const cur = p.payment_plans?.currency || "NGN";
-    const lines = [
-      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-      "      TAHLEEM ACADEMY",
-      "      أكاديمية التعليم",
-      "      PAYMENT RECEIPT · إيصال الدفع",
-      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-      `Reference:  ${p.paystack_reference || "—"}`,
-      `Student:    ${profile?.full_name || "—"}`,
-      `Email:      ${(profile as any)?.email || user?.email || "—"}`,
-      `Plan:       ${p.payment_plans?.name || "—"}`,
-      `Amount:     ${fmtAmt(p.amount, cur)}`,
-      `Status:     ${p.status?.toUpperCase()}`,
-      `Date:       ${format(new Date(p.paid_at || p.created_at), "dd MMM yyyy HH:mm")}`,
-      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-      "  tahleemacademy.vercel.app",
-      "  Powered by Paystack",
-    ].join("\n");
-    const a   = document.createElement("a");
-    a.href    = URL.createObjectURL(new Blob([lines], { type: "text/plain" }));
-    a.download = `receipt-${p.paystack_reference || Date.now()}.txt`;
-    a.click();
-  };
-
-  const isPaid = profile?.payment_status === "paid"
-    || profile?.payment_status === "exempt"
-    || (profile as any)?.is_payment_exempt;
-
-  // Currency grouping
-  const ngnPlans  = plans.filter((p: any) => (p.currency || "NGN") === "NGN" && p.type !== "private");
-  const otherPlans = plans.filter((p: any) => (p.currency || "NGN") !== "NGN" && p.type !== "private");
-  const otherByCur: Record<string, any[]> = {};
-  otherPlans.forEach((p: any) => { const c = p.currency || "USD"; if (!otherByCur[c]) otherByCur[c] = []; otherByCur[c].push(p); });
-  const currencies = ["NGN", ...Object.keys(otherByCur)];
-  const activeCur  = selectedPlan?.currency || "NGN";
-  const visiblePlans = activeCur === "NGN" ? ngnPlans : (otherByCur[activeCur] || []);
-
-  // ── Loading ───────────────────────────────────────────────────
+  // ── RENDER ──────────────────────────────────────────────────────
   if (loading) return (
-    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#f8fafb" }}>
-      <div style={{ textAlign: "center" }}>
-        <Loader2 style={{ width: 36, height: 36, color: G, animation: "spin .8s linear infinite", margin: "0 auto 12px" }} />
-        <p style={{ fontSize: 13, color: "#7a9e88", fontFamily: "'Cairo',sans-serif" }}>Loading…</p>
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#F5F7F5" }}>
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14 }}>
+        <div style={{ width: 52, height: 52, borderRadius: "50%", background: "#075E54", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <Loader2 style={{ width: 26, height: 26, color: "#fff", animation: "spin .8s linear infinite" }} />
+        </div>
+        <span style={{ color: "#667", fontSize: 14 }}>Loading your enrollment…</span>
       </div>
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </div>
   );
 
-  // ── Payment success screen ────────────────────────────────────
-  if (paySuccess) return (
-    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#f8fafb", fontFamily: "'Cairo',sans-serif", padding: 20 }}>
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}} @keyframes pop{0%{transform:scale(.6);opacity:0}70%{transform:scale(1.1)}100%{transform:scale(1);opacity:1}}`}</style>
-      <div style={{ background: "#fff", borderRadius: 24, padding: "48px 32px", maxWidth: 400, width: "100%", textAlign: "center", boxShadow: "0 8px 48px rgba(0,0,0,.1)" }}>
-        <div style={{ width: 96, height: 96, borderRadius: "50%", background: "linear-gradient(135deg,#f0fff4,#dcfce7)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 24px", animation: "pop .5s ease" }}>
-          <CheckCircle2 style={{ width: 52, height: 52, color: "#22c55e" }} />
-        </div>
-        <div style={{ fontSize: 13, color: GOLD, fontFamily: "serif", marginBottom: 8 }} dir="rtl">الحمد لله</div>
-        <h2 style={{ fontSize: 24, fontWeight: 900, color: G, marginBottom: 8 }}>{t("Payment Successful!", "تمّت عملية الدفع!")}</h2>
-        <p style={{ fontSize: 14, color: "#7a9e88", lineHeight: 1.6, marginBottom: 24 }}>
-          {t("Your account has been activated. Redirecting to dashboard…", "تم تفعيل حسابك. جارٍ التوجيه للوحة التحكم…")}
-        </p>
-        <div style={{ height: 4, background: "#f0f4f0", borderRadius: 2, overflow: "hidden" }}>
-          <div style={{ height: "100%", width: "100%", background: `linear-gradient(90deg,${G},${GOLD})`, animation: "progressFill 3s linear forwards", borderRadius: 2 }} />
-        </div>
-        <button onClick={() => navigate("/student")}
-          style={{ width: "100%", padding: "14px", marginTop: 20, borderRadius: 14, background: G, border: "none", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "'Cairo',sans-serif" }}>
-          {t("Go to Dashboard", "الذهاب للوحة التحكم")}
-        </button>
-      </div>
-      <style>{`@keyframes progressFill{from{width:0}to{width:100%}}`}</style>
-    </div>
-  );
+  const amountDue = selectedPlan === "monthly" ? fees.monthly : fees.term;
 
-  // ── MAIN SCREEN ───────────────────────────────────────────────
   return (
-    <div style={{ minHeight: "100vh", background: "#f8fafb", fontFamily: "'Cairo',sans-serif", direction: isRTL ? "rtl" : "ltr" }}>
+    <div style={{ minHeight: "100vh", background: "#F0F4F0", fontFamily: "'Segoe UI', system-ui, sans-serif" }}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap');
-        @keyframes spin    { to { transform: rotate(360deg) } }
-        @keyframes fadeUp  { from { opacity:0; transform:translateY(14px) } to { opacity:1; transform:translateY(0) } }
-        * { box-sizing: border-box; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes fadeUp { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:none; } }
+        @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.6; } }
+        .enroll-card { background:#fff; border-radius:16px; box-shadow:0 2px 12px rgba(0,0,0,.07); overflow:hidden; animation: fadeUp .3s ease; }
+        .plan-card { border:2px solid #e0e0e0; border-radius:14px; padding:16px; cursor:pointer; transition:all .2s; background:#fff; }
+        .plan-card:hover { border-color:#075E54; box-shadow:0 4px 16px rgba(7,94,84,.12); }
+        .plan-card.selected { border-color:#075E54; background:#F0FFF8; box-shadow:0 4px 20px rgba(7,94,84,.18); }
+        .tab-btn { flex:1; padding:12px 8px; border:none; background:none; cursor:pointer; font-size:13px; font-weight:600; color:#999; border-bottom:3px solid transparent; transition:all .2s; }
+        .tab-btn.active { color:#075E54; border-bottom-color:#075E54; }
+        .pay-btn { width:100%; padding:16px; background:linear-gradient(135deg,#075E54,#128C7E); color:#fff; border:none; border-radius:14px; font-size:16px; font-weight:700; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:10px; transition:opacity .2s; box-shadow:0 4px 20px rgba(7,94,84,.35); }
+        .pay-btn:disabled { opacity:.55; cursor:not-allowed; }
+        .pay-btn:not(:disabled):hover { opacity:.92; }
+        .history-row { display:flex; align-items:center; gap:12px; padding:14px 0; border-bottom:1px solid #f0f0f0; animation:fadeUp .2s ease; }
+        .info-row { display:flex; align-items:center; gap:10; padding:12px 0; border-bottom:1px solid #f6f6f6; }
+        .badge { display:inline-flex; align-items:center; gap:4px; padding:3px 10px; border-radius:20px; font-size:11px; font-weight:700; }
       `}</style>
 
-      {/* ── TOP BAR ── */}
-      <div style={{ background: "#fff", borderBottom: "1px solid #e5e7eb", padding: "0 16px", height: 56, display: "flex", alignItems: "center", gap: 12, position: "sticky", top: 0, zIndex: 50 }}>
-        <button onClick={() => navigate("/student")}
-          style={{ width: 36, height: 36, borderRadius: "50%", background: "#f8fafb", border: "1px solid #e5e7eb", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
-          <ArrowLeft style={{ width: 16, height: 16, color: G }} />
-        </button>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 15, fontWeight: 800, color: G }}>{t("Enrollment & Payment", "التسجيل والدفع")}</div>
+      {/* ── Header ──────────────────────────────────────────────── */}
+      <div style={{ background: "linear-gradient(135deg, #064E3B 0%, #075E54 60%, #047857 100%)", padding: "50px 20px 24px", position: "relative", overflow: "hidden" }}>
+        {/* Islamic pattern */}
+        <div style={{ position: "absolute", inset: 0, opacity: 0.06, backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%23fff' fill-opacity='1'%3E%3Cpath d='M30 0l30 30-30 30L0 30z'/%3E%3C/g%3E%3C/svg%3E")` }} />
+        <div style={{ position: "relative" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+            <button onClick={() => navigate(-1)} style={{ width: 36, height: 36, borderRadius: 10, background: "rgba(255,255,255,.18)", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff" }}>
+              <ArrowLeft size={18} />
+            </button>
+            <span style={{ color: "#fff", fontWeight: 700, fontSize: 18 }}>Enrollment & Payment</span>
+          </div>
+          <div style={{ color: "rgba(255,255,255,.7)", fontSize: 13, fontFamily: "serif", textAlign: "center", marginBottom: 8 }}>بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ</div>
+
+          {/* Status badge in header */}
+          <div style={{ display: "flex", justifyContent: "center" }}>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 7, background: statusConfig.bg, color: statusConfig.color, borderRadius: 20, padding: "7px 16px", fontWeight: 700, fontSize: 13 }}>
+              {statusConfig.icon}
+              {statusConfig.label} — {statusConfig.desc}
+            </div>
+          </div>
         </div>
-        <Wallet style={{ width: 20, height: 20, color: GOLD }} />
       </div>
 
-      <div style={{ maxWidth: 560, margin: "0 auto", padding: "20px 16px 60px", animation: "fadeUp .4s ease" }}>
+      <div style={{ maxWidth: 480, margin: "0 auto", padding: "0 16px 40px" }}>
 
-        {/* ── HERO ── */}
-        <div style={{ background: `linear-gradient(135deg,${G},${GM})`, borderRadius: 20, padding: "24px 20px", marginBottom: 20, textAlign: "center", position: "relative", overflow: "hidden" }}>
-          <div style={{ position: "absolute", inset: 0, opacity: .04, backgroundImage: `url("data:image/svg+xml,%3Csvg width='40' height='40' viewBox='0 0 40 40' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%23ffffff'%3E%3Cpath d='M20 0l20 20-20 20L0 20z'/%3E%3C/g%3E%3C/svg%3E")` }} />
-          <p style={{ fontFamily: "serif", fontSize: 18, color: GOLD, margin: "0 0 6px" }} dir="rtl">بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ</p>
-          <h1 style={{ fontSize: 22, fontWeight: 900, color: "#fff", margin: "0 0 4px" }}>
-            {isPaid ? t("Your Subscription", "اشتراكك") : t("Complete Enrollment", "أكمل التسجيل")}
-          </h1>
-          <p style={{ fontSize: 12, color: "rgba(255,255,255,.6)", margin: 0 }}>
-            {isPaid
-              ? t("Manage your subscription", "إدارة اشتراكك")
-              : t("Choose a plan and start your learning journey", "اختر خطة وابدأ رحلتك التعليمية")}
-          </p>
-        </div>
-
-        {/* ── GRACE BANNER ── */}
-        {profile?.payment_status === "grace" && graceLeft !== null && (
-          <div style={{ background: "#fffbeb", border: "1.5px solid #fde68a", borderRadius: 14, padding: "12px 16px", marginBottom: 16, display: "flex", alignItems: "center", gap: 10 }}>
-            <Clock style={{ width: 20, height: 20, color: "#f59e0b", flexShrink: 0 }} />
+        {/* ── Grace Period Alert ─────────────────────────────────── */}
+        {accessStatus === "grace" && (
+          <div style={{ marginTop: 16, padding: "14px 16px", background: "#FFF8E1", borderRadius: 14, border: "1.5px solid #F9A825", display: "flex", alignItems: "flex-start", gap: 12, animation: "fadeUp .3s ease" }}>
+            <div style={{ width: 36, height: 36, borderRadius: "50%", background: "#FFF3CD", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <Clock size={18} color="#F57C00" />
+            </div>
             <div>
-              <div style={{ fontSize: 13, fontWeight: 800, color: "#92400e" }}>
-                {t(`${graceLeft} day${graceLeft !== 1 ? "s" : ""} left in grace period`, `${graceLeft} يوم متبقي في فترة السماح`)}
-              </div>
-              <div style={{ fontSize: 11, color: "#a16207" }}>{t("Complete payment to keep access", "أكمل الدفع للحفاظ على الوصول")}</div>
-            </div>
-          </div>
-        )}
-
-        {/* ── ACTIVE SUBSCRIPTION BANNER ── */}
-        {isPaid && subscription && (
-          <div style={{ background: "#f0fff4", border: "1.5px solid #86efac", borderRadius: 14, padding: "14px 18px", marginBottom: 16, display: "flex", alignItems: "center", gap: 14 }}>
-            <div style={{ width: 44, height: 44, borderRadius: 12, background: "#dcfce7", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-              <CheckCircle style={{ width: 22, height: 22, color: "#22c55e" }} />
-            </div>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 14, fontWeight: 800, color: G }}>{t("Active Subscription", "اشتراك نشط")}</div>
-              <div style={{ fontSize: 12, color: "#7a9e88", marginTop: 2 }}>
-                {t("Expires", "ينتهي")} {subscription.end_date ? format(new Date(subscription.end_date), "dd MMM yyyy") : "—"}
-              </div>
-            </div>
-            <div style={{ textAlign: "right" }}>
-              <div style={{ fontSize: 10, color: "#9ca3af" }}>{t("Days left", "أيام")}</div>
-              <div style={{ fontSize: 24, fontWeight: 900, color: "#22c55e" }}>
-                {subscription.end_date ? Math.max(0, Math.ceil((new Date(subscription.end_date).getTime() - Date.now()) / 86400000)) : "—"}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ── TABS ── */}
-        <div style={{ display: "flex", background: "#fff", borderRadius: 14, padding: 4, marginBottom: 20, gap: 4, border: "1px solid #e5e7eb", boxShadow: "0 1px 4px rgba(0,0,0,.06)" }}>
-          {([
-            ["pay",     isPaid ? t("Renew", "تجديد") : t("Pay", "ادفع"), CreditCard],
-            ["history", t("History", "السجل"),                           History],
-            ["status",  t("Status", "الحالة"),                           Star],
-          ] as const).map(([key, label, Icon]) => (
-            <button key={key} onClick={() => setView(key as any)}
-              style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, padding: "10px 8px", borderRadius: 10, border: "none", cursor: "pointer", transition: "all .15s", fontFamily: "'Cairo',sans-serif",
-                background: activeView === key ? G : "transparent",
-                color:      activeView === key ? "#fff" : "#9ca3af",
-                fontSize: 12, fontWeight: activeView === key ? 800 : 500,
-              }}>
-              <Icon style={{ width: 13, height: 13 }} />{label}
-            </button>
-          ))}
-        </div>
-
-        {/* ══════════ PAY TAB ══════════ */}
-        {activeView === "pay" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-
-            {/* Currency selector */}
-            {currencies.length > 1 && (
-              <div style={{ background: "#fff", borderRadius: 14, padding: "14px 16px", border: "1px solid #e5e7eb" }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: "#9ca3af", marginBottom: 10, display: "flex", alignItems: "center", gap: 5, letterSpacing: .5 }}>
-                  <Globe style={{ width: 12, height: 12 }} />
-                  {t("CURRENCY", "العملة")}
-                </div>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {currencies.map(cur => (
-                    <button key={cur} onClick={() => {
-                      const pool = cur === "NGN" ? ngnPlans : (otherByCur[cur] || []);
-                      setSelected(pool[0] || null);
-                    }} style={{
-                      padding: "6px 16px", borderRadius: 20,
-                      border: `1.5px solid ${activeCur === cur ? G : "#e5e7eb"}`,
-                      background: activeCur === cur ? G : "#fff",
-                      color: activeCur === cur ? "#fff" : "#374151",
-                      fontSize: 13, fontWeight: 700, cursor: "pointer", transition: "all .15s"
-                    }}>
-                      {SYM[cur] || cur} {cur}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Plan cards */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {visiblePlans.map((plan: any) => {
-                const sel = selectedPlan?.id === plan.id;
-                const cur = plan.currency || "NGN";
-                return (
-                  <div key={plan.id} onClick={() => setSelected(plan)}
-                    style={{ background: "#fff", borderRadius: 16, border: `2px solid ${sel ? G : "#e5e7eb"}`, padding: "18px 18px", cursor: "pointer", transition: "all .18s", position: "relative", overflow: "hidden",
-                      boxShadow: sel ? `0 4px 20px rgba(15,45,31,.12)` : "0 1px 4px rgba(0,0,0,.04)" }}>
-                    {/* Selected corner */}
-                    {sel && <div style={{ position: "absolute", top: 0, right: 0, width: 0, height: 0, borderStyle: "solid", borderWidth: "0 40px 40px 0", borderColor: `transparent ${G} transparent transparent` }}>
-                      <CheckCircle style={{ position: "absolute", top: 4, right: -36, width: 14, height: 14, color: "#fff" }} />
-                    </div>}
-
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 16, fontWeight: 800, color: G, marginBottom: 2 }}>{plan.name}</div>
-                        {plan.name_ar && <div style={{ fontSize: 13, color: GOLD, fontFamily: "serif", marginBottom: 6 }} dir="rtl">{plan.name_ar}</div>}
-                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" as const }}>
-                          {plan.duration_months && (
-                            <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: "#f0f4f0", color: G, fontWeight: 600 }}>
-                              <Calendar style={{ width: 10, height: 10, display: "inline", marginRight: 3 }} />
-                              {plan.duration_months} {t("months", "شهور")}
-                            </span>
-                          )}
-                          {plan.level && plan.level !== "all" && (
-                            <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: "#fffbeb", color: "#92400e", fontWeight: 700, textTransform: "capitalize" as const }}>
-                              {plan.level}
-                            </span>
-                          )}
-                          {plan.type && (
-                            <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: "#f0f9ff", color: "#0284c7", fontWeight: 600, textTransform: "capitalize" as const }}>
-                              {plan.type}
-                            </span>
-                          )}
-                        </div>
-                        {plan.description && <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 6, lineHeight: 1.5 }}>{plan.description}</div>}
-                      </div>
-                      <div style={{ textAlign: "right", flexShrink: 0 }}>
-                        <div style={{ fontSize: 28, fontWeight: 900, color: sel ? G : "#374151", lineHeight: 1 }}>
-                          {fmtAmt(plan.amount, cur)}
-                        </div>
-                        {plan.duration_months && plan.duration_months > 1 && (
-                          <div style={{ fontSize: 10, color: "#9ca3af", marginTop: 2 }}>
-                            ≈ {fmtAmt(Math.round(plan.amount / plan.duration_months), cur)}/{t("mo", "شهر")}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-
-              {visiblePlans.length === 0 && (
-                <div style={{ textAlign: "center", padding: "40px 20px", color: "#9ca3af", fontSize: 13 }}>
-                  {t("No plans available", "لا توجد خطط متاحة")}
-                </div>
+              <div style={{ fontWeight: 700, color: "#E65100", fontSize: 14 }}>{graceRemaining} day{graceRemaining !== 1 ? "s" : ""} left in grace period</div>
+              <div style={{ fontSize: 12, color: "#8D5E00", marginTop: 2 }}>Complete payment to keep full access to your courses, Al-Majlis chat, and all features.</div>
+              {graceRemaining <= 2 && (
+                <div style={{ marginTop: 6, fontSize: 11, fontWeight: 700, color: "#C62828", animation: "pulse 1.5s infinite" }}>⚠️ Account will be locked in {graceRemaining} day{graceRemaining !== 1 ? "s" : ""}!</div>
               )}
             </div>
-
-            {/* What's included */}
-            {selectedPlan && (
-              <div style={{ background: "#fff", borderRadius: 16, padding: "16px 18px", border: "1px solid #e5e7eb" }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: "#9ca3af", marginBottom: 12, letterSpacing: .8, textTransform: "uppercase" as const }}>
-                  {t("What's Included", "ما يشمل الاشتراك")}
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                  {FEATURES.map((f, i) => (
-                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <CheckCircle style={{ width: 15, height: 15, color: "#22c55e", flexShrink: 0 }} />
-                      <span style={{ fontSize: 13, color: "#374151" }}>{isRTL ? f.ar : f.en}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Key error warning */}
-            {keyError && (
-              <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 12, padding: "12px 16px", display: "flex", gap: 10, alignItems: "flex-start" }}>
-                <AlertTriangle style={{ width: 16, height: 16, color: "#f59e0b", flexShrink: 0, marginTop: 1 }} />
-                <div style={{ fontSize: 12, color: "#92400e" }}>
-                  {t("Payment gateway not configured. Please ensure PAYSTACK_PUBLIC_KEY is set in Supabase secrets and contact admin.", "بوابة الدفع غير مهيأة. تأكد من إعداد PAYSTACK_PUBLIC_KEY في أسرار Supabase.")}
-                </div>
-              </div>
-            )}
-
-            {/* Pay button */}
-            <button onClick={handlePayment}
-              disabled={paying || !selectedPlan || (!publicKey && !psReady)}
-              style={{
-                width: "100%", padding: "18px", borderRadius: 16,
-                background: paying ? "#9ca3af" : G,
-                border: "none", color: "#fff", fontSize: 16, fontWeight: 900,
-                cursor: paying ? "not-allowed" : "pointer",
-                display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
-                transition: "all .2s", boxShadow: paying ? "none" : `0 4px 20px rgba(15,45,31,.25)`,
-                fontFamily: "'Cairo',sans-serif"
-              }}>
-              {paying ? (
-                <><Loader2 style={{ width: 20, height: 20, animation: "spin .8s linear infinite" }} />{t("Processing…", "جارٍ المعالجة…")}</>
-              ) : (
-                <><CreditCard style={{ width: 20, height: 20 }} />
-                  {t("Pay Now", "ادفع الآن")} — {selectedPlan ? fmtAmt(selectedPlan.amount, selectedPlan.currency) : "—"}
-                  <ArrowRight style={{ width: 16, height: 16 }} /></>
-              )}
-            </button>
-
-            {/* Security note */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontSize: 11, color: "#9ca3af" }}>
-              <Shield style={{ width: 12, height: 12 }} />
-              {t("Secured by Paystack · 256-bit SSL", "مؤمّن بواسطة Paystack · تشفير 256-bit")}
-            </div>
-
-            {/* Pay later */}
-            {!isPaid && (
-              <button onClick={handlePayLater}
-                style={{ width: "100%", padding: "13px", borderRadius: 14, background: "transparent", border: "1.5px solid #e5e7eb", color: "#9ca3af", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'Cairo',sans-serif", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-                <Clock style={{ width: 14, height: 14 }} />
-                {t("Pay Later (7-day grace)", "ادفع لاحقاً — فترة سماح 7 أيام")}
-              </button>
-            )}
           </div>
         )}
 
-        {/* ══════════ HISTORY TAB ══════════ */}
-        {activeView === "history" && (
-          <div>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
-              <span style={{ fontSize: 13, color: "#9ca3af" }}>{history.length} {t("transactions", "معاملة")}</span>
-              <button onClick={loadAll} style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", color: G, fontSize: 12, cursor: "pointer", fontWeight: 600 }}>
-                <RefreshCw style={{ width: 12, height: 12 }} />{t("Refresh", "تحديث")}
-              </button>
+        {/* ── Locked Alert ──────────────────────────────────────── */}
+        {accessStatus === "locked" && (
+          <div style={{ marginTop: 16, padding: "16px", background: "#FFEBEE", borderRadius: 14, border: "1.5px solid #EF9A9A", animation: "fadeUp .3s ease" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+              <Lock size={20} color="#C62828" />
+              <span style={{ fontWeight: 700, color: "#C62828", fontSize: 15 }}>Dashboard Access Locked</span>
             </div>
-
-            {history.length === 0 ? (
-              <div style={{ background: "#fff", borderRadius: 16, padding: "50px 20px", textAlign: "center", border: "1px solid #e5e7eb" }}>
-                <Receipt style={{ width: 40, height: 40, margin: "0 auto 12px", color: "#d1d5db" }} />
-                <p style={{ fontSize: 14, color: "#9ca3af" }}>{t("No payment history yet", "لا يوجد سجل مدفوعات بعد")}</p>
-              </div>
-            ) : history.map((p: any) => {
-              const cur    = p.payment_plans?.currency || "NGN";
-              const isOk   = p.status === "success";
-              const isFail = p.status === "failed" || p.status === "cancelled";
-              return (
-                <div key={p.id} style={{ background: "#fff", borderRadius: 14, padding: "14px 16px", marginBottom: 10, border: "1px solid #e5e7eb" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    <div style={{ width: 42, height: 42, borderRadius: 12, background: isOk ? "#f0fff4" : isFail ? "#fff5f5" : "#fffbeb", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                      {isOk   ? <CheckCircle style={{ width: 20, height: 20, color: "#22c55e" }} />
-                              : isFail ? <XCircle style={{ width: 20, height: 20, color: "#ef4444" }} />
-                              : <Clock style={{ width: 20, height: 20, color: "#f59e0b" }} />}
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 14, fontWeight: 700, color: G }}>{p.payment_plans?.name || t("Payment", "دفعة")}</div>
-                      <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 2 }}>
-                        {format(new Date(p.paid_at || p.created_at), "dd MMM yyyy · HH:mm")}
-                      </div>
-                      {p.paystack_reference && (
-                        <div style={{ fontSize: 10, fontFamily: "monospace", color: "#d1d5db", marginTop: 1 }}>{p.paystack_reference}</div>
-                      )}
-                    </div>
-                    <div style={{ textAlign: "right" }}>
-                      <div style={{ fontSize: 18, fontWeight: 900, color: isOk ? "#22c55e" : isFail ? "#ef4444" : "#f59e0b" }}>
-                        {fmtAmt(p.amount, cur)}
-                      </div>
-                      <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, fontWeight: 700, background: isOk ? "#f0fff4" : isFail ? "#fff5f5" : "#fffbeb", color: isOk ? "#22c55e" : isFail ? "#ef4444" : "#f59e0b" }}>
-                        {p.status?.toUpperCase()}
-                      </span>
-                    </div>
-                  </div>
-                  {isOk && (
-                    <button onClick={() => downloadReceipt(p)}
-                      style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: G, background: "#f8fafb", border: "1px solid #e5e7eb", borderRadius: 8, padding: "5px 12px", cursor: "pointer", fontFamily: "'Cairo',sans-serif" }}>
-                      <Download style={{ width: 11, height: 11 }} />{t("Download Receipt", "تنزيل الإيصال")}
-                    </button>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {/* ══════════ STATUS TAB ══════════ */}
-        {activeView === "status" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <div style={{ background: "#fff", borderRadius: 16, padding: "18px", border: "1px solid #e5e7eb" }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: "#9ca3af", marginBottom: 14, letterSpacing: .8, textTransform: "uppercase" as const }}>
-                {t("Account Status", "حالة الحساب")}
-              </div>
-              {[
-                { label: t("Name", "الاسم"),             value: profile?.full_name || "—" },
-                { label: t("Email", "البريد"),            value: (profile as any)?.email || user?.email || "—" },
-                { label: t("Level", "المستوى"),           value: profile?.level || "—" },
-                { label: t("Payment Status", "حالة الدفع"), value: profile?.payment_status || "unpaid",
-                  badge: true, color: profile?.payment_status === "paid" ? "#22c55e" : profile?.payment_status === "grace" ? "#f59e0b" : "#ef4444" },
-                { label: t("Expires", "الانتهاء"),
-                  value: (profile as any)?.subscription_end_date ? format(new Date((profile as any).subscription_end_date), "dd MMM yyyy") : "—" },
-              ].map((row, i) => (
-                <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: i < 4 ? "1px solid #f0f4f0" : "none" }}>
-                  <span style={{ fontSize: 13, color: "#6b7280" }}>{row.label}</span>
-                  {(row as any).badge ? (
-                    <span style={{ fontSize: 12, fontWeight: 800, padding: "3px 12px", borderRadius: 20, background: `${(row as any).color}18`, color: (row as any).color, textTransform: "capitalize" as const }}>
-                      {row.value}
-                    </span>
-                  ) : (
-                    <span style={{ fontSize: 13, fontWeight: 600, color: G }}>{row.value}</span>
-                  )}
+            <div style={{ fontSize: 13, color: "#7B1A1A", lineHeight: 1.5 }}>
+              Your grace period has ended. Several features are now restricted:
+            </div>
+            <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+              {["Al-Majlis Chat", "Course Lessons", "Al-Hifdh Tracker", "Assignments & Exams"].map(f => (
+                <div key={f} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#7B1A1A" }}>
+                  <XCircle size={14} color="#E74C3C" /> {f} — <strong>Locked</strong>
                 </div>
               ))}
             </div>
+            <div style={{ marginTop: 10, fontSize: 12, color: "#9e9e9e" }}>Contact your admin if you believe this is an error.</div>
+          </div>
+        )}
 
-            {subscription && (
-              <div style={{ background: "#f0fff4", borderRadius: 16, padding: "16px 18px", border: "1px solid #86efac" }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: "#22c55e", marginBottom: 12, letterSpacing: .8, textTransform: "uppercase" as const }}>
-                  {t("Active Subscription", "الاشتراك النشط")}
+        {/* ── Student Info Card ─────────────────────────────────── */}
+        <div className="enroll-card" style={{ marginTop: 16 }}>
+          <div style={{ padding: "14px 18px", background: "linear-gradient(90deg, #064E3B, #075E54)", display: "flex", alignItems: "center", gap: 12 }}>
+            {studentProfile?.avatar_url
+              ? <img src={studentProfile.avatar_url} style={{ width: 48, height: 48, borderRadius: "50%", objectFit: "cover", border: "2px solid rgba(255,255,255,.4)" }} alt="" />
+              : <div style={{ width: 48, height: 48, borderRadius: "50%", background: "rgba(255,255,255,.18)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 20, fontWeight: 700, border: "2px solid rgba(255,255,255,.3)" }}>
+                  {(studentProfile?.full_name || "S")[0].toUpperCase()}
                 </div>
+            }
+            <div>
+              <div style={{ color: "#fff", fontWeight: 700, fontSize: 16 }}>{studentProfile?.full_name || "Student"}</div>
+              <div style={{ color: "rgba(255,255,255,.7)", fontSize: 12 }}>{studentProfile?.full_name_ar || ""}</div>
+            </div>
+            <div style={{ marginLeft: "auto", textAlign: "right" }}>
+              <span className="badge" style={{ background: "rgba(255,255,255,.2)", color: "#fff" }}>
+                <BookOpen size={11} /> {fees.label}
+              </span>
+            </div>
+          </div>
+          <div style={{ padding: "4px 0" }}>
+            {[
+              { icon: <Hash size={14} />, label: "Student ID", val: studentProfile?.student_id || "—" },
+              { icon: <Mail size={14} />, label: "Email", val: studentProfile?.email || user?.email || "—" },
+              { icon: <Calendar size={14} />, label: "Joined", val: fmtDate(studentProfile?.created_at || null) },
+              { icon: <TrendingUp size={14} />, label: "Next Payment", val: fmtDate(enrollment?.next_due_date || null) },
+            ].map((row, i) => (
+              <div key={i} className="info-row" style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 18px", borderBottom: i < 3 ? "1px solid #f6f6f6" : "none" }}>
+                <span style={{ color: "#075E54", flexShrink: 0 }}>{row.icon}</span>
+                <span style={{ fontSize: 13, color: "#888", minWidth: 90 }}>{row.label}</span>
+                <span style={{ fontSize: 13, color: "#222", fontWeight: 600, marginLeft: "auto", textAlign: "right", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.val}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* ── Tabs ─────────────────────────────────────────────── */}
+        <div className="enroll-card" style={{ marginTop: 14, padding: 0, overflow: "hidden" }}>
+          <div style={{ display: "flex", borderBottom: "1px solid #f0f0f0" }}>
+            {([
+              { key: "pay", icon: <CreditCard size={14} />, label: "Pay" },
+              { key: "history", icon: <Clock size={14} />, label: "History" },
+              { key: "status", icon: <BadgeCheck size={14} />, label: "Status" },
+            ] as const).map(t => (
+              <button key={t.key} className={`tab-btn ${tab === t.key ? "active" : ""}`} onClick={() => setTab(t.key)} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                {t.icon} {t.label}
+              </button>
+            ))}
+          </div>
+
+          {/* ── PAY TAB ───────────────────────────────────────── */}
+          {tab === "pay" && (
+            <div style={{ padding: "20px 18px", display: "flex", flexDirection: "column", gap: 16 }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#555", marginBottom: 10, textTransform: "uppercase", letterSpacing: .5 }}>Your Level Plans</div>
+
+                {/* Monthly plan */}
+                <div className={`plan-card ${selectedPlan === "monthly" ? "selected" : ""}`} onClick={() => setSelectedPlan("monthly")} style={{ marginBottom: 10 }}>
+                  <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: 15, color: "#111" }}>Monthly Subscription</div>
+                      <div style={{ fontSize: 12, color: "#888", marginTop: 2 }}>اشتراك شهري</div>
+                      <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                        <span className="badge" style={{ background: "#E8F5E9", color: "#2E7D32" }}>1 month</span>
+                        <span className="badge" style={{ background: "#E3F2FD", color: "#1565C0" }}>Monthly</span>
+                        <span className="badge" style={{ background: "#EDE7F6", color: fees.color }}>{fees.label}</span>
+                      </div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: "#111" }}>{fmt(fees.monthly)}</div>
+                      <div style={{ fontSize: 11, color: "#888" }}>per month</div>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 12, color: "#888", marginTop: 10 }}>Monthly access to all courses for your {fees.label} level</div>
+                  {selectedPlan === "monthly" && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8, color: "#075E54", fontWeight: 700, fontSize: 12 }}>
+                      <CheckCircle2 size={14} /> Selected
+                    </div>
+                  )}
+                </div>
+
+                {/* Term plan */}
+                <div className={`plan-card ${selectedPlan === "term" ? "selected" : ""}`} onClick={() => setSelectedPlan("term")} style={{ position: "relative" }}>
+                  {fees.term > fees.monthly && (
+                    <div style={{ position: "absolute", top: 12, right: 12, background: "#075E54", color: "#fff", borderRadius: "50%", width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <CheckCircle2 size={14} />
+                    </div>
+                  )}
+                  <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: 15, color: "#111" }}>{fees.label} Term Fee</div>
+                      <div style={{ fontSize: 12, color: fees.color, marginTop: 2 }}>رسوم مستوى {fees.labelAr}</div>
+                      <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                        <span className="badge" style={{ background: "#E8F5E9", color: "#2E7D32" }}>3 months</span>
+                        <span className="badge" style={{ background: "#FFF3E0", color: fees.color }}>{fees.label}</span>
+                        <span className="badge" style={{ background: "#E3F2FD", color: "#1565C0" }}>Term</span>
+                      </div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: "#111" }}>{fmt(fees.term)}</div>
+                      <div style={{ fontSize: 11, color: "#888" }}>per term</div>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 12, color: "#888", marginTop: 10 }}>Full term access to all courses for your {fees.label} level</div>
+                  {selectedPlan === "term" && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8, color: "#075E54", fontWeight: 700, fontSize: 12 }}>
+                      <CheckCircle2 size={14} /> Selected
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Order summary */}
+              <div style={{ background: "#F8FAF8", borderRadius: 12, padding: "14px 16px", border: "1px solid #e8f0e8" }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "#555", marginBottom: 10, textTransform: "uppercase", letterSpacing: .5 }}>Order Summary</div>
                 {[
-                  [t("Start Date", "تاريخ البدء"),   subscription.start_date ? format(new Date(subscription.start_date), "dd MMM yyyy") : "—"],
-                  [t("End Date", "تاريخ الانتهاء"),  subscription.end_date   ? format(new Date(subscription.end_date), "dd MMM yyyy")   : "—"],
-                  [t("Days Remaining", "أيام متبقية"), subscription.end_date
-                    ? `${Math.max(0, Math.ceil((new Date(subscription.end_date).getTime() - Date.now()) / 86400000))} ${t("days", "يوم")}`
-                    : "—"],
-                ].map(([l, v], i) => (
-                  <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: i < 2 ? "1px solid rgba(134,239,172,.3)" : "none" }}>
-                    <span style={{ fontSize: 13, color: "#4a7c59" }}>{l}</span>
-                    <span style={{ fontSize: 13, fontWeight: 700, color: G }}>{v}</span>
+                  { label: "Plan", val: selectedPlan === "monthly" ? "Monthly Subscription" : `${fees.label} Term Fee` },
+                  { label: "Level", val: fees.label },
+                  { label: "Duration", val: selectedPlan === "monthly" ? "1 Month" : "3 Months" },
+                  { label: "Amount", val: fmt(amountDue), bold: true, green: true },
+                ].map((r, i) => (
+                  <div key={i} style={{ display: "flex", justifyContent: "space-between", marginBottom: i < 3 ? 8 : 0, paddingTop: i === 3 ? 8 : 0, borderTop: i === 3 ? "1px dashed #ddd" : "none" }}>
+                    <span style={{ fontSize: 13, color: "#888" }}>{r.label}</span>
+                    <span style={{ fontSize: 13, fontWeight: r.bold ? 800 : 500, color: r.green ? "#075E54" : "#111" }}>{r.val}</span>
                   </div>
                 ))}
               </div>
-            )}
 
-            <button onClick={() => setView("pay")}
-              style={{ width: "100%", padding: "14px", borderRadius: 14, background: G, border: "none", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontFamily: "'Cairo',sans-serif" }}>
-              <RefreshCw style={{ width: 15, height: 15 }} />
-              {t("Renew / Upgrade Plan", "تجديد / ترقية الخطة")}
-            </button>
+              <button className="pay-btn" onClick={initiatePayment} disabled={paying}>
+                {paying
+                  ? <><Loader2 style={{ width: 18, height: 18, animation: "spin .8s linear infinite" }} /> Processing…</>
+                  : <><CreditCard size={18} /> Pay {fmt(amountDue)} Now</>
+                }
+              </button>
 
-            <p style={{ textAlign: "center", fontSize: 12, color: "#9ca3af" }}>
-              {t("Need help? Contact your teacher or admin.", "تحتاج مساعدة؟ تواصل مع المعلم أو الإدارة.")}
-            </p>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontSize: 11, color: "#999" }}>
+                <Shield size={12} /> Secured by Paystack · SSL Encrypted
+              </div>
+            </div>
+          )}
+
+          {/* ── HISTORY TAB ──────────────────────────────────── */}
+          {tab === "history" && (
+            <div style={{ padding: "0 18px 16px" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 0 10px" }}>
+                <span style={{ fontSize: 14, fontWeight: 700, color: "#333" }}>Payment History</span>
+                <button onClick={loadHistory} style={{ background: "none", border: "none", cursor: "pointer", color: "#075E54", display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
+                  <RefreshCw size={13} /> Refresh
+                </button>
+              </div>
+              {loadingHistory && (
+                <div style={{ display: "flex", justifyContent: "center", padding: 20 }}>
+                  <Loader2 style={{ width: 22, height: 22, color: "#075E54", animation: "spin .8s linear infinite" }} />
+                </div>
+              )}
+              {!loadingHistory && history.length === 0 && (
+                <div style={{ textAlign: "center", padding: "28px 0", color: "#999" }}>
+                  <CreditCard style={{ width: 36, height: 36, margin: "0 auto 10px", color: "#ddd" }} />
+                  <div style={{ fontSize: 14 }}>No payments yet</div>
+                  <div style={{ fontSize: 12, marginTop: 4 }}>Your payment history will appear here</div>
+                </div>
+              )}
+              {history.map((p, i) => (
+                <div key={p.id} className="history-row">
+                  <div style={{ width: 40, height: 40, borderRadius: 12, background: p.status === "success" ? "#E8F5E9" : "#FFEBEE", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    {p.status === "success" ? <CheckCircle2 size={18} color="#2E7D32" /> : <XCircle size={18} color="#C62828" />}
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 600, fontSize: 14, color: "#111" }}>
+                      {p.plan_type === "monthly" ? "Monthly Subscription" : `${p.level} Term Fee`}
+                    </div>
+                    <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>{fmtDateTime(p.paid_at)} · {p.receipt_id}</div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontWeight: 800, color: p.status === "success" ? "#2E7D32" : "#C62828", fontSize: 14 }}>{fmt(p.amount)}</div>
+                    <span className="badge" style={{ background: p.status === "success" ? "#E8F5E9" : "#FFEBEE", color: p.status === "success" ? "#2E7D32" : "#C62828", marginTop: 4 }}>
+                      {p.status}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* ── STATUS TAB ───────────────────────────────────── */}
+          {tab === "status" && (
+            <div style={{ padding: "20px 18px", display: "flex", flexDirection: "column", gap: 14 }}>
+              {/* Big status card */}
+              <div style={{ background: statusConfig.bg, borderRadius: 14, padding: "20px 18px", border: `1.5px solid ${statusConfig.color}22`, textAlign: "center" }}>
+                <div style={{ width: 56, height: 56, borderRadius: "50%", background: statusConfig.color, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 12px", color: "#fff" }}>
+                  {statusConfig.icon}
+                </div>
+                <div style={{ fontSize: 18, fontWeight: 800, color: statusConfig.color }}>{statusConfig.label}</div>
+                <div style={{ fontSize: 13, color: "#666", marginTop: 4 }}>{statusConfig.desc}</div>
+              </div>
+
+              {/* Subscription detail */}
+              {enrollment && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                  {[
+                    { icon: <BookOpen size={15} />, label: "Level",        val: fees.label },
+                    { icon: <CreditCard size={15} />, label: "Last Paid",  val: fmtDate(enrollment.paid_at) },
+                    { icon: <Calendar size={15} />, label: "Next Due",     val: fmtDate(enrollment.next_due_date) },
+                    { icon: <Clock size={15} />, label: "Grace Until",     val: fmtDate(enrollment.grace_end_date) },
+                    ...(enrollment.admin_override ? [{ icon: <Unlock size={15} />, label: "Admin Override", val: `Until ${fmtDate(enrollment.admin_override_until)}` }] : []),
+                  ].map((r, i) => (
+                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 4px", borderBottom: "1px solid #f0f0f0" }}>
+                      <span style={{ color: "#075E54" }}>{r.icon}</span>
+                      <span style={{ fontSize: 13, color: "#888", minWidth: 100 }}>{r.label}</span>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: "#222", marginLeft: "auto" }}>{r.val}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Feature access list */}
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "#555", marginBottom: 10, textTransform: "uppercase", letterSpacing: .5 }}>Feature Access</div>
+                {[
+                  { name: "Al-Majlis Chat",       allowed: accessStatus !== "locked" },
+                  { name: "Course Lessons",        allowed: accessStatus === "active" },
+                  { name: "Al-Hifdh Tracker",      allowed: accessStatus === "active" },
+                  { name: "Assignments",           allowed: accessStatus === "active" },
+                  { name: "Live Sessions",         allowed: accessStatus === "active" },
+                  { name: "Dashboard Overview",    allowed: true },
+                  { name: "Enrollment & Payment",  allowed: true },
+                ].map((f, i) => (
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: "1px solid #f6f6f6" }}>
+                    {f.allowed
+                      ? <CheckCircle2 size={16} color="#2E7D32" />
+                      : <Lock size={16} color="#E74C3C" />
+                    }
+                    <span style={{ fontSize: 13, color: f.allowed ? "#222" : "#999", flex: 1 }}>{f.name}</span>
+                    <span className="badge" style={{ background: f.allowed ? "#E8F5E9" : "#FFEBEE", color: f.allowed ? "#2E7D32" : "#C62828" }}>
+                      {f.allowed ? "Unlocked" : "Locked"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Pay button if not active */}
+              {accessStatus !== "active" && (
+                <button className="pay-btn" onClick={() => setTab("pay")}>
+                  <CreditCard size={18} /> Make a Payment
+                </button>
+              )}
+
+              {/* Admin note */}
+              {enrollment?.admin_override && (
+                <div style={{ background: "#E8F5E9", borderRadius: 12, padding: "12px 16px", display: "flex", gap: 10, alignItems: "flex-start" }}>
+                  <Unlock size={16} color="#2E7D32" style={{ flexShrink: 0, marginTop: 1 }} />
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "#2E7D32" }}>Admin Access Override Active</div>
+                    <div style={{ fontSize: 12, color: "#555", marginTop: 2 }}>An admin has granted you extended access until {fmtDate(enrollment.admin_override_until)}.</div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* ── Admin Panel ────────────────────────────────────── */}
+        {isAdmin && enrollment && (
+          <div className="enroll-card" style={{ marginTop: 14 }}>
+            <div style={{ padding: "14px 18px", borderBottom: "1px solid #f0f0f0", display: "flex", alignItems: "center", gap: 8 }}>
+              <Shield size={16} color="#075E54" />
+              <span style={{ fontWeight: 700, fontSize: 14, color: "#333" }}>Admin Controls</span>
+            </div>
+            <div style={{ padding: "14px 18px", display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ fontSize: 12, color: "#888", marginBottom: 4 }}>Manually manage this student's access:</div>
+              <div style={{ display: "flex", gap: 10 }}>
+                <button onClick={async () => {
+                  const until = new Date(Date.now() + 7 * 86400000).toISOString();
+                  await supabase.from("enrollments" as any).update({ admin_override: true, admin_override_until: until, status: "active" }).eq("id", enrollment.id);
+                  await loadEnrollment();
+                  toast({ title: "✅ 7-day access granted" });
+                }} style={{ flex: 1, padding: "11px 8px", background: "#E8F5E9", color: "#2E7D32", border: "1.5px solid #A5D6A7", borderRadius: 10, cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
+                  <Unlock size={13} style={{ display: "inline", marginRight: 5 }} />Grant 7 Days
+                </button>
+                <button onClick={async () => {
+                  await supabase.from("enrollments" as any).update({ admin_override: false, status: "locked" }).eq("id", enrollment.id);
+                  await loadEnrollment();
+                  toast({ title: "🔒 Access locked" });
+                }} style={{ flex: 1, padding: "11px 8px", background: "#FFEBEE", color: "#C62828", border: "1.5px solid #EF9A9A", borderRadius: 10, cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
+                  <Lock size={13} style={{ display: "inline", marginRight: 5 }} />Lock Access
+                </button>
+              </div>
+              <button onClick={async () => {
+                await supabase.from("enrollments" as any).update({ status: "active", paid_at: new Date().toISOString(), next_due_date: addMonths(1) }).eq("id", enrollment.id);
+                await loadEnrollment();
+                toast({ title: "✅ Marked as paid" });
+              }} style={{ padding: "11px", background: "#E3F2FD", color: "#1565C0", border: "1.5px solid #90CAF9", borderRadius: 10, cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
+                <CheckCircle2 size={13} style={{ display: "inline", marginRight: 5 }} />Mark as Paid (Manual)
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -754,4 +689,4 @@ const PaymentScreen = () => {
   );
 };
 
-export default PaymentScreen;
+export default EnrollmentPayment;
