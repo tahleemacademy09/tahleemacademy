@@ -1,366 +1,380 @@
-import { useState, useEffect } from "react";
+/*  src/pages/student/Onboarding.tsx
+    4-step onboarding form after registration payment.
+    Step 1: Personal details
+    Step 2: Quran background
+    Step 3: Arabic & Islamic knowledge
+    Step 4: Goals & schedule → then start entrance exam
+*/
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Checkbox } from "@/components/ui/checkbox";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Label } from "@/components/ui/label";
-import { Progress } from "@/components/ui/progress";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { motion, AnimatePresence } from "framer-motion";
-import { BookOpen, Clock, FileText, ChevronRight, Star, Sparkles } from "lucide-react";
-import StandaloneNav from "@/components/layout/StandaloneNav";
+import {
+  BookOpen, ArrowRight, ArrowLeft, CheckCircle2,
+  Loader2, ChevronDown
+} from "lucide-react";
 
-const ENTRANCE_EXAM_ID = "36ef6492-2515-44ea-b086-67c9cee02475";
+const G    = "#064E3B";
+const GM   = "#075E54";
+const GOLD = "#D4A843";
+const TOTAL = 4;
+
+const inputSt = (focused: boolean): React.CSSProperties => ({
+  width: "100%", padding: "12px 14px", borderRadius: 12,
+  border: `2px solid ${focused ? GM : "#e5e7eb"}`,
+  fontSize: 14, outline: "none", color: "#111", background: "#fafafa",
+  transition: "border-color .2s, box-shadow .2s", boxSizing: "border-box" as const,
+  boxShadow: focused ? "0 0 0 4px rgba(6,78,59,.08)" : "none",
+  fontFamily: "inherit",
+});
+
+const selSt: React.CSSProperties = {
+  width: "100%", padding: "12px 14px", borderRadius: 12,
+  border: "2px solid #e5e7eb", fontSize: 14, outline: "none",
+  color: "#111", background: "#fafafa", fontFamily: "inherit",
+  appearance: "none" as any, cursor: "pointer",
+  boxSizing: "border-box" as const,
+};
+
+const lbl: React.CSSProperties = {
+  fontSize: 13, fontWeight: 700, color: "#374151",
+  marginBottom: 6, display: "block",
+};
+
+const Radio = ({ name, val, checked, label, onChange }: any) => (
+  <label style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 14px", borderRadius:10, border:`2px solid ${checked ? GM : "#e5e7eb"}`, background: checked ? "#F0FDF4" : "#fafafa", cursor:"pointer", fontSize:13, color:"#333", transition:"all .15s" }}>
+    <input type="radio" name={name} value={val} checked={checked} onChange={onChange} style={{ display:"none" }} />
+    <div style={{ width:18, height:18, borderRadius:"50%", border:`2px solid ${checked ? GM : "#d1d5db"}`, background: checked ? GM : "#fff", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+      {checked && <div style={{ width:6, height:6, borderRadius:"50%", background:"#fff" }} />}
+    </div>
+    {label}
+  </label>
+);
+
+const Chip = ({ label, sel, onClick }: { label: string; sel: boolean; onClick: () => void }) => (
+  <button type="button" onClick={onClick}
+    style={{ padding:"7px 14px", borderRadius:20, border:`2px solid ${sel ? GM : "#e5e7eb"}`, background: sel ? "#F0FDF4" : "#fafafa", color: sel ? G : "#666", fontSize:12, fontWeight: sel ? 700 : 500, cursor:"pointer", transition:"all .15s", display:"flex", alignItems:"center", gap:6 }}>
+    {sel && <CheckCircle2 size={11} color={GM} />}{label}
+  </button>
+);
+
+const Sel = ({ val, onChange, opts, placeholder }: { val: string; onChange: (v: string) => void; opts: string[]; placeholder?: string }) => (
+  <div style={{ position:"relative" }}>
+    <select value={val} onChange={e => onChange(e.target.value)} style={selSt}>
+      <option value="">{placeholder || "Select…"}</option>
+      {opts.map(o => <option key={o} value={o}>{o}</option>)}
+    </select>
+    <ChevronDown size={14} style={{ position:"absolute", right:12, top:"50%", transform:"translateY(-50%)", color:"#666", pointerEvents:"none" }} />
+  </div>
+);
+
+const ProgBar = ({ step }: { step: number }) => (
+  <div style={{ marginBottom:24 }}>
+    <div style={{ display:"flex", justifyContent:"space-between", marginBottom:8 }}>
+      <span style={{ fontSize:12, fontWeight:700, color:GM }}>Step {step} of {TOTAL}</span>
+      <span style={{ fontSize:12, color:"#9ca3af" }}>{Math.round((step/TOTAL)*100)}% complete</span>
+    </div>
+    <div style={{ height:6, background:"#e5e7eb", borderRadius:6, overflow:"hidden" }}>
+      <div style={{ height:"100%", width:`${(step/TOTAL)*100}%`, background:`linear-gradient(90deg,${G},${GM})`, borderRadius:6, transition:"width .4s ease" }} />
+    </div>
+  </div>
+);
 
 const Onboarding = () => {
-  const navigate = useNavigate();
-  const { user, profile, hasRole } = useAuth();
+  const { user } = useAuth();
   const { toast } = useToast();
+  const navigate = useNavigate();
+
   const [step, setStep] = useState(1);
-  const [ageGroup, setAgeGroup] = useState("");
-  const [language, setLanguage] = useState("");
-  const [goals, setGoals] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
+  const [foc, setFoc] = useState<string|null>(null);
+  const f = (n: string) => ({ onFocus: () => setFoc(n), onBlur: () => setFoc(null) });
 
-  // Redirect if already completed or if admin/teacher
-  useEffect(() => {
-    if (!user) { navigate("/login"); return; }
-    if (hasRole("admin") || hasRole("teacher")) { navigate("/admin"); return; }
-    if (profile?.onboarding_completed || profile?.has_taken_entrance_exam) {
-      navigate("/student"); return;
-    }
-  }, [user, profile, hasRole]);
+  // Step 1
+  const [phone, setPhone] = useState("");
+  const [dob, setDob] = useState("");
+  const [gender, setGender] = useState("");
+  const [country, setCountry] = useState("");
+  const [city, setCity] = useState("");
+  const [occupation, setOccupation] = useState("");
 
-  const toggleGoal = (goal: string) => {
-    setGoals((prev) =>
-      prev.includes(goal) ? prev.filter((g) => g !== goal) : [...prev, goal]
-    );
-  };
+  // Step 2
+  const [quranLevel, setQuranLevel] = useState("");
+  const [memorized, setMemorized] = useState<string[]>([]);
+  const [yearsStudy, setYearsStudy] = useState("");
+  const [tajweed, setTajweed] = useState("");
+  const [prevTeacher, setPrevTeacher] = useState("");
 
-  const saveBasicInfo = async () => {
-    if (!ageGroup || !language) {
-      toast({ title: "Please fill all fields", variant: "destructive" });
-      return;
-    }
+  // Step 3
+  const [arabic, setArabic] = useState("");
+  const [islamic, setIslamic] = useState("");
+  const [subjects, setSubjects] = useState<string[]>([]);
+
+  // Step 4
+  const [goals, setGoals] = useState<string[]>([]);
+  const [hours, setHours] = useState("");
+  const [timePrefer, setTimePrefer] = useState("");
+  const [device, setDevice] = useState("");
+  const [heardFrom, setHeardFrom] = useState("");
+  const [notes, setNotes] = useState("");
+
+  const tog = (arr: string[], v: string, set: (a: string[]) => void) =>
+    set(arr.includes(v) ? arr.filter(x => x !== v) : [...arr, v]);
+
+  const submit = async () => {
+    if (!user) return;
     setSaving(true);
-    await supabase
-      .from("profiles")
-      .update({
-        age_group: ageGroup,
-        learning_goal: goals.join(","),
-        preferred_language: language === "both" ? "both" : language === "arabic" ? "ar" : "en",
-      } as any)
-      .eq("user_id", user!.id);
-    setSaving(false);
-    setStep(3);
+    try {
+      await supabase.from("onboarding_forms" as any).upsert({
+        user_id: user.id,
+        phone, dob, gender, country, city, occupation,
+        quran_level: quranLevel, memorized_surahs: memorized,
+        years_studying: yearsStudy, tajweed_knowledge: tajweed,
+        previous_teacher: prevTeacher, arabic_level: arabic,
+        islamic_knowledge: islamic, preferred_subjects: subjects,
+        learning_goals: goals, hours_per_day: hours,
+        preferred_time: timePrefer, preferred_device: device,
+        heard_from: heardFrom, extra_notes: notes,
+        completed_at: new Date().toISOString(),
+      }, { onConflict: "user_id" });
+      await supabase.from("profiles").update({ onboarding_completed: true } as any).eq("user_id", user.id);
+      toast({ title: "✅ Onboarding complete!", description: "Starting your entrance exam…" });
+      navigate("/student/entrance-exam/start");
+    } catch (e: any) {
+      toast({ title: "Error saving form", description: e.message, variant: "destructive" });
+    } finally { setSaving(false); }
   };
 
-  const startEntranceExam = async () => {
-    setSaving(true);
-    // Check for existing in-progress attempt
-    const { data: existing } = await supabase
-      .from("exam_attempts")
-      .select("id")
-      .eq("exam_id", ENTRANCE_EXAM_ID)
-      .eq("user_id", user!.id)
-      .eq("status", "in_progress")
-      .maybeSingle();
-
-    if (existing) {
-      navigate(`/student/entrance-exam/${existing.id}`);
-      return;
+  const next = () => {
+    if (step === 1 && (!phone || !dob || !gender || !country)) {
+      toast({ title: "Fill all required fields (*)", variant: "destructive" }); return;
     }
-
-    // Create new attempt
-    const { data: attempt, error } = await supabase
-      .from("exam_attempts")
-      .insert({
-        exam_id: ENTRANCE_EXAM_ID,
-        user_id: user!.id,
-        status: "in_progress",
-        started_at: new Date().toISOString(),
-      })
-      .select("id")
-      .single();
-
-    if (error || !attempt) {
-      toast({ title: "Failed to start exam", description: error?.message, variant: "destructive" });
-      setSaving(false);
-      return;
+    if (step === 2 && !quranLevel) {
+      toast({ title: "Please select your Quran level", variant: "destructive" }); return;
     }
-
-    navigate(`/student/entrance-exam/${attempt.id}`);
+    if (step < TOTAL) setStep(s => s + 1);
+    else submit();
   };
 
-  const skipExam = async () => {
-    setSaving(true);
-    await supabase
-      .from("profiles")
-      .update({
-        level: "beginner",
-        has_taken_entrance_exam: true,
-        entrance_completed_at: new Date().toISOString(),
-        onboarding_completed: true,
-      } as any)
-      .eq("user_id", user!.id);
-
-    // Auto-enrol in beginner courses
-    const { data: levelCourses } = await supabase
-      .from("level_courses" as any)
-      .select("subject_id")
-      .eq("level", "beginner");
-
-    if (levelCourses && levelCourses.length > 0) {
-      // Get courses for these subjects
-      const subjectIds = (levelCourses as any[]).map((lc: any) => lc.subject_id);
-      const { data: courses } = await supabase
-        .from("courses")
-        .select("id")
-        .in("subject_id", subjectIds)
-        .eq("is_published", true);
-
-      if (courses) {
-        for (const course of courses) {
-          await supabase
-            .from("enrollments")
-            .insert({ user_id: user!.id, course_id: course.id })
-            .select()
-            .maybeSingle();
-        }
-      }
-    }
-
-    toast({ title: "Welcome! You've been placed in the Beginner Programme." });
-    setSaving(false);
-    navigate("/student");
-  };
-
-  const goalOptions = [
-    { id: "quran", label: "Learn Quran & Tajweed", labelAr: "تعلم القرآن والتجويد" },
-    { id: "arabic", label: "Master Arabic Language", labelAr: "إتقان اللغة العربية" },
-    { id: "islamic", label: "Islamic Sciences", labelAr: "العلوم الإسلامية" },
-    { id: "all", label: "All of the above", labelAr: "كل ما سبق" },
+  const STEP_TITLES = [
+    ["Personal Information",    "Tell us about yourself"],
+    ["Quran Background",        "Your Quran journey so far"],
+    ["Arabic & Islamic Studies","Your knowledge background"],
+    ["Goals & Schedule",        "Help us find the best plan for you"],
   ];
+  const [title, subtitle] = STEP_TITLES[step - 1];
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 pt-20" style={{ background: "linear-gradient(135deg, #0f3122 0%, #1a4a35 50%, #0f3122 100%)" }}>
-      <StandaloneNav />
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&family=Cairo:wght@400;600;700&family=Cormorant+Garamond:wght@400;600;700&display=swap');
-        .onboarding-card { font-family: 'Cairo', sans-serif; }
-        .amiri { font-family: 'Amiri', serif; }
-        .cormorant { font-family: 'Cormorant Garamond', serif; }
-        .gold-btn { background: #c9973a; color: #fff; border: none; font-weight: 700; font-family: 'Cairo', sans-serif; }
-        .gold-btn:hover { background: #e8c070; color: #0f3122; }
-        .gold-text { color: #c9973a; }
-        .dark-green { color: #0f3122; }
-      `}</style>
+    <div style={{ minHeight:"100vh", background:`linear-gradient(160deg,${G},${GM},#0a1f12)`, display:"flex", flexDirection:"column", fontFamily:"'Segoe UI', system-ui, sans-serif" }}>
+      <style>{"@keyframes fadeUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}} @keyframes spin{to{transform:rotate(360deg)}}"}</style>
 
-      <motion.div
-        key={step}
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, y: -20 }}
-        transition={{ duration: 0.4 }}
-        className="w-full max-w-lg"
-      >
-        {/* Progress */}
-        <div className="mb-6 flex items-center justify-center gap-3">
-          {[1, 2, 3].map((s) => (
-            <div key={s} className="flex items-center gap-2">
-              <div
-                className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition-all"
-                style={{
-                  background: step >= s ? "#c9973a" : "rgba(255,255,255,0.15)",
-                  color: step >= s ? "#fff" : "rgba(255,255,255,0.4)",
-                }}
-              >
-                {s}
-              </div>
-              {s < 3 && (
-                <div className="w-12 h-0.5" style={{ background: step > s ? "#c9973a" : "rgba(255,255,255,0.15)" }} />
-              )}
-            </div>
-          ))}
+      {/* Header */}
+      <div style={{ padding:"20px 20px 0", display:"flex", alignItems:"center", gap:12, maxWidth:560, margin:"0 auto", width:"100%" }}>
+        <div style={{ width:40, height:40, borderRadius:12, background:"rgba(255,255,255,.1)", display:"flex", alignItems:"center", justifyContent:"center" }}>
+          <BookOpen style={{ width:20, height:20, color:GOLD }} />
         </div>
+        <div>
+          <div style={{ color:"#fff", fontWeight:800, fontSize:16 }}>Tahleem Academy</div>
+          <div style={{ color:"rgba(255,255,255,.6)", fontSize:12 }}>Student Onboarding</div>
+        </div>
+        <div style={{ marginLeft:"auto", fontSize:11, color:"rgba(255,255,255,.5)", fontFamily:"serif" }}>بِسْمِ اللَّهِ</div>
+      </div>
 
-        <Card className="onboarding-card border-0 shadow-2xl" style={{ background: "#fdf8f0" }}>
-          <CardContent className="p-8">
-            <AnimatePresence mode="wait">
-              {/* STEP 1 — WELCOME */}
-              {step === 1 && (
-                <motion.div key="s1" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="text-center space-y-6">
-                  <div className="amiri text-3xl gold-text leading-relaxed" dir="rtl">
-                    بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ
+      <div style={{ flex:1, display:"flex", alignItems:"flex-start", justifyContent:"center", padding:"20px 16px 40px" }}>
+        <div style={{ width:"100%", maxWidth:560, background:"#fff", borderRadius:24, boxShadow:"0 24px 80px rgba(0,0,0,.3)", overflow:"hidden", animation:"fadeUp .4s ease" }}>
+
+          {/* Banner */}
+          <div style={{ background:`linear-gradient(135deg,${G},${GM})`, padding:"20px 24px" }}>
+            <div style={{ fontSize:11, color:"rgba(255,255,255,.5)", textTransform:"uppercase", letterSpacing:1, marginBottom:4 }}>{title}</div>
+            <div style={{ fontSize:20, fontWeight:800, color:"#fff" }}>{title}</div>
+            <div style={{ fontSize:13, color:"rgba(255,255,255,.6)", marginTop:4 }}>{subtitle}</div>
+          </div>
+
+          <div style={{ padding:"24px 24px 28px" }}>
+            <ProgBar step={step} />
+
+            {/* STEP 1 */}
+            {step === 1 && (
+              <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+                  <div>
+                    <label style={lbl}>Phone <span style={{color:"#ef4444"}}>*</span></label>
+                    <input value={phone} onChange={e=>setPhone(e.target.value)} {...f("phone")} style={inputSt(foc==="phone")} placeholder="+234 800 000 0000" type="tel" />
                   </div>
-                  <div className="w-16 h-0.5 mx-auto" style={{ background: "#c9973a" }} />
-                  <h1 className="cormorant text-2xl font-bold dark-green">
-                    Ahlan wa Sahlan, {profile?.full_name || "Student"}!
-                  </h1>
-                  <p className="amiri text-lg gold-text" dir="rtl">أهلاً وسهلاً</p>
-                  <p className="text-sm leading-relaxed" style={{ color: "#4a4a4a" }}>
-                    Welcome to Tahleem Academy. We will ask you a few quick questions then give you a short entrance exam to place you in the right programme.
-                  </p>
-                  <Button
-                    onClick={() => setStep(2)}
-                    className="gold-btn w-full py-6 text-base rounded-xl"
-                  >
-                    Begin Setup <ChevronRight className="ml-2 h-4 w-4" />
-                  </Button>
-                </motion.div>
+                  <div>
+                    <label style={lbl}>Date of Birth <span style={{color:"#ef4444"}}>*</span></label>
+                    <input value={dob} onChange={e=>setDob(e.target.value)} {...f("dob")} style={inputSt(foc==="dob")} type="date" />
+                  </div>
+                </div>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+                  <div>
+                    <label style={lbl}>Gender <span style={{color:"#ef4444"}}>*</span></label>
+                    <Sel val={gender} onChange={setGender} opts={["Male","Female"]} />
+                  </div>
+                  <div>
+                    <label style={lbl}>Occupation</label>
+                    <Sel val={occupation} onChange={setOccupation} opts={["Student","Working professional","Business owner","Homemaker","Retired","Other"]} />
+                  </div>
+                </div>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+                  <div>
+                    <label style={lbl}>Country <span style={{color:"#ef4444"}}>*</span></label>
+                    <input value={country} onChange={e=>setCountry(e.target.value)} {...f("country")} style={inputSt(foc==="country")} placeholder="e.g. Nigeria" />
+                  </div>
+                  <div>
+                    <label style={lbl}>City / State</label>
+                    <input value={city} onChange={e=>setCity(e.target.value)} {...f("city")} style={inputSt(foc==="city")} placeholder="e.g. Lagos" />
+                  </div>
+                </div>
+                <div style={{ background:"#F0FDF4", borderRadius:12, padding:"12px 16px", border:"1px solid #86EFAC", fontSize:12, color:"#166534", lineHeight:1.6 }}>
+                  <strong>Privacy note:</strong> Your information is private and only visible to Tahleem Academy administrators.
+                </div>
+              </div>
+            )}
+
+            {/* STEP 2 */}
+            {step === 2 && (
+              <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
+                <div>
+                  <label style={lbl}>Current Quran Reading Level <span style={{color:"#ef4444"}}>*</span></label>
+                  <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                    {[
+                      ["none",       "Cannot read Arabic letters yet"],
+                      ["letters",    "Know the letters but cannot read words"],
+                      ["qaida",      "On Noorani Qaida / basic reader"],
+                      ["slow",       "Can read Quran slowly with mistakes"],
+                      ["fluent",     "Can read Quran fluently with Tajweed"],
+                      ["memorising", "Currently memorising (Hifz)"],
+                      ["hafiz",      "Already a Hafiz (memorised full Quran)"],
+                    ].map(([v,l]) => <Radio key={v} name="quran" val={v} checked={quranLevel===v} onChange={() => setQuranLevel(v)} label={l} />)}
+                  </div>
+                </div>
+                <div>
+                  <label style={lbl}>Surahs memorised (select all)</label>
+                  <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+                    {["Al-Fatiha","Al-Ikhlas","Al-Falaq","An-Nas","Al-Kawthar","Al-Asr","Al-Fil","Al-Quraish","Al-Maun","Al-Masad","An-Nasr","Al-Zalzalah","Al-Bayyinah","Al-Alaq","Al-Tin","Ad-Duha","Al-Layl","Al-Ghashiyah","Al-Fajr","More than 30","Full Quran"].map(s => (
+                      <Chip key={s} label={s} sel={memorized.includes(s)} onClick={() => tog(memorized, s, setMemorized)} />
+                    ))}
+                  </div>
+                </div>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+                  <div>
+                    <label style={lbl}>Years studying Quran</label>
+                    <Sel val={yearsStudy} onChange={setYearsStudy} opts={["Less than 1 year","1–2 years","3–5 years","5–10 years","More than 10 years"]} />
+                  </div>
+                  <div>
+                    <label style={lbl}>Tajweed knowledge</label>
+                    <Sel val={tajweed} onChange={setTajweed} opts={["None","Basic rules only","Intermediate","Advanced / Formal study"]} />
+                  </div>
+                </div>
+                <div>
+                  <label style={lbl}>Previous teacher / institute (if any)</label>
+                  <input value={prevTeacher} onChange={e=>setPrevTeacher(e.target.value)} {...f("prev")} style={inputSt(foc==="prev")} placeholder="e.g. Sheikh Abdullahi, Al-Noor Institute" />
+                </div>
+              </div>
+            )}
+
+            {/* STEP 3 */}
+            {step === 3 && (
+              <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
+                <div>
+                  <label style={lbl}>Arabic Language Level</label>
+                  <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                    {[
+                      ["none","No Arabic knowledge"],
+                      ["letters","Know letters and basic sounds"],
+                      ["beginner","Can read but don't understand meaning"],
+                      ["intermediate","Basic grammar (Nahw/Sarf) understanding"],
+                      ["advanced","Advanced — can read and understand texts"],
+                    ].map(([v,l]) => <Radio key={v} name="arabic" val={v} checked={arabic===v} onChange={() => setArabic(v)} label={l} />)}
+                  </div>
+                </div>
+                <div>
+                  <label style={lbl}>Islamic Studies Knowledge</label>
+                  <Sel val={islamic} onChange={setIslamic} opts={["Very basic — pillars only","Intermediate — some Fiqh & Aqeedah","Advanced — studied with a scholar","Self-taught — read extensively"]} />
+                </div>
+                <div>
+                  <label style={lbl}>Subjects you are most interested in (select all)</label>
+                  <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+                    {["Quran Recitation","Quran Memorisation (Hifz)","Tajweed Rules","Arabic Grammar","Arabic Vocabulary","Fiqh (Jurisprudence)","Aqeedah (Creed)","Quran Tafseer","Hadith","Seerah","Islamic History"].map(s => (
+                      <Chip key={s} label={s} sel={subjects.includes(s)} onClick={() => tog(subjects, s, setSubjects)} />
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* STEP 4 */}
+            {step === 4 && (
+              <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
+                <div>
+                  <label style={lbl}>Your main learning goals (select all)</label>
+                  <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+                    {["Read Quran correctly","Memorise the full Quran","Learn Tajweed","Understand Arabic","Deepen Islamic knowledge","Learn Fiqh","Teach my children","Improve my Salah","Prepare to teach","General Islamic education"].map(g => (
+                      <Chip key={g} label={g} sel={goals.includes(g)} onClick={() => tog(goals, g, setGoals)} />
+                    ))}
+                  </div>
+                </div>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+                  <div>
+                    <label style={lbl}>Study hours per day</label>
+                    <Sel val={hours} onChange={setHours} opts={["Less than 30 min","30 min – 1 hour","1–2 hours","2–3 hours","More than 3 hours"]} />
+                  </div>
+                  <div>
+                    <label style={lbl}>Preferred time to learn</label>
+                    <Sel val={timePrefer} onChange={setTimePrefer} opts={["Early morning (Fajr)","Morning","Afternoon","Evening","Night (after Isha)","Flexible"]} />
+                  </div>
+                </div>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+                  <div>
+                    <label style={lbl}>Primary device</label>
+                    <Sel val={device} onChange={setDevice} opts={["Mobile phone","Tablet","Laptop / PC","Multiple devices"]} />
+                  </div>
+                  <div>
+                    <label style={lbl}>How did you hear about us?</label>
+                    <Sel val={heardFrom} onChange={setHeardFrom} opts={["Social media","Friend / Family","WhatsApp","Google","Mosque / Islamic centre","Other"]} />
+                  </div>
+                </div>
+                <div>
+                  <label style={lbl}>Anything else for your teacher to know?</label>
+                  <textarea value={notes} onChange={e=>setNotes(e.target.value)} rows={3} {...f("notes")}
+                    style={{ ...inputSt(foc==="notes"), resize:"none", lineHeight:1.5 }}
+                    placeholder="Health conditions, learning difficulties, special requests…" />
+                </div>
+                <div style={{ background:"#FFF8E1", borderRadius:12, padding:"14px 16px", border:"1px solid #F9D46A" }}>
+                  <div style={{ fontSize:12, fontWeight:700, color:"#92400E", marginBottom:8 }}>After submitting, you will:</div>
+                  {["Take a written entrance exam (~15 min)","Submit a recitation audio of Surah Al-Fatiha","Attend a live evaluation with a teacher (10–15 min)","Receive your level assignment from the admin"].map((s,i) => (
+                    <div key={i} style={{ display:"flex", alignItems:"flex-start", gap:8, marginBottom:i<3?6:0, fontSize:12, color:"#78350F" }}>
+                      <div style={{ width:18, height:18, borderRadius:"50%", background:GOLD, color:"#fff", fontSize:10, fontWeight:800, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, marginTop:1 }}>{i+1}</div>
+                      {s}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Nav buttons */}
+            <div style={{ display:"flex", gap:10, marginTop:24 }}>
+              {step > 1 && (
+                <button type="button" onClick={() => setStep(s => s-1)}
+                  style={{ padding:"13px 20px", borderRadius:14, border:"2px solid #e5e7eb", background:"#fff", color:"#555", fontSize:14, fontWeight:600, cursor:"pointer", display:"flex", alignItems:"center", gap:8 }}>
+                  <ArrowLeft size={16} /> Back
+                </button>
               )}
-
-              {/* STEP 2 — BASIC INFO */}
-              {step === 2 && (
-                <motion.div key="s2" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="space-y-6">
-                  <div className="text-center">
-                    <h2 className="cormorant text-xl font-bold dark-green">Tell Us About Yourself</h2>
-                    <p className="text-sm" style={{ color: "#888" }}>Step 2 of 3</p>
-                  </div>
-
-                  {/* Age Group */}
-                  <div className="space-y-3">
-                    <Label className="font-semibold dark-green text-sm">Age Group</Label>
-                    <RadioGroup value={ageGroup} onValueChange={setAgeGroup} className="grid grid-cols-3 gap-2">
-                      {[
-                        { value: "child", label: "Child", sub: "6-12" },
-                        { value: "teen", label: "Teen", sub: "13-17" },
-                        { value: "adult", label: "Adult", sub: "18+" },
-                      ].map((opt) => (
-                        <Label
-                          key={opt.value}
-                          className="flex flex-col items-center p-3 rounded-lg border-2 cursor-pointer transition-all text-center"
-                          style={{
-                            borderColor: ageGroup === opt.value ? "#c9973a" : "#e5e5e5",
-                            background: ageGroup === opt.value ? "rgba(201,151,58,0.08)" : "#fff",
-                          }}
-                        >
-                          <RadioGroupItem value={opt.value} className="sr-only" />
-                          <span className="font-semibold text-sm dark-green">{opt.label}</span>
-                          <span className="text-xs" style={{ color: "#888" }}>{opt.sub}</span>
-                        </Label>
-                      ))}
-                    </RadioGroup>
-                  </div>
-
-                  {/* Language */}
-                  <div className="space-y-3">
-                    <Label className="font-semibold dark-green text-sm">Preferred Language</Label>
-                    <RadioGroup value={language} onValueChange={setLanguage} className="grid grid-cols-3 gap-2">
-                      {[
-                        { value: "arabic", label: "العربية", sub: "Arabic" },
-                        { value: "english", label: "English", sub: "إنجليزي" },
-                        { value: "both", label: "Both", sub: "كلاهما" },
-                      ].map((opt) => (
-                        <Label
-                          key={opt.value}
-                          className="flex flex-col items-center p-3 rounded-lg border-2 cursor-pointer transition-all text-center"
-                          style={{
-                            borderColor: language === opt.value ? "#c9973a" : "#e5e5e5",
-                            background: language === opt.value ? "rgba(201,151,58,0.08)" : "#fff",
-                          }}
-                        >
-                          <RadioGroupItem value={opt.value} className="sr-only" />
-                          <span className="font-semibold text-sm dark-green">{opt.label}</span>
-                          <span className="text-xs" style={{ color: "#888" }}>{opt.sub}</span>
-                        </Label>
-                      ))}
-                    </RadioGroup>
-                  </div>
-
-                  {/* Goals */}
-                  <div className="space-y-3">
-                    <Label className="font-semibold dark-green text-sm">Your Goals</Label>
-                    <div className="space-y-2">
-                      {goalOptions.map((g) => (
-                        <label
-                          key={g.id}
-                          className="flex items-center gap-3 p-3 rounded-lg border-2 cursor-pointer transition-all"
-                          style={{
-                            borderColor: goals.includes(g.id) ? "#c9973a" : "#e5e5e5",
-                            background: goals.includes(g.id) ? "rgba(201,151,58,0.08)" : "#fff",
-                          }}
-                        >
-                          <Checkbox
-                            checked={goals.includes(g.id)}
-                            onCheckedChange={() => toggleGoal(g.id)}
-                          />
-                          <div>
-                            <span className="text-sm font-medium dark-green">{g.label}</span>
-                            <span className="text-xs gold-text ml-2 amiri">{g.labelAr}</span>
-                          </div>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-
-                  <Button
-                    onClick={saveBasicInfo}
-                    disabled={saving}
-                    className="gold-btn w-full py-6 text-base rounded-xl"
-                  >
-                    {saving ? "Saving..." : "Continue"} <ChevronRight className="ml-2 h-4 w-4" />
-                  </Button>
-                </motion.div>
-              )}
-
-              {/* STEP 3 — ENTRANCE EXAM INTRO */}
-              {step === 3 && (
-                <motion.div key="s3" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="space-y-6">
-                  <div className="text-center">
-                    <div className="text-4xl mb-2">📝</div>
-                    <h2 className="cormorant text-xl font-bold dark-green">Entrance Exam</h2>
-                    <p className="amiri text-lg gold-text" dir="rtl">اختبار القبول</p>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="p-4 rounded-xl text-center" style={{ background: "rgba(15,49,34,0.06)" }}>
-                      <Clock className="h-5 w-5 mx-auto mb-1 gold-text" />
-                      <div className="text-lg font-bold dark-green">15 min</div>
-                      <div className="text-xs" style={{ color: "#888" }}>Duration</div>
-                    </div>
-                    <div className="p-4 rounded-xl text-center" style={{ background: "rgba(15,49,34,0.06)" }}>
-                      <FileText className="h-5 w-5 mx-auto mb-1 gold-text" />
-                      <div className="text-lg font-bold dark-green">20</div>
-                      <div className="text-xs" style={{ color: "#888" }}>Questions</div>
-                    </div>
-                  </div>
-
-                  <div className="p-4 rounded-xl" style={{ background: "rgba(201,151,58,0.08)", border: "1px solid rgba(201,151,58,0.2)" }}>
-                    <div className="flex items-start gap-2">
-                      <Sparkles className="h-4 w-4 mt-0.5 gold-text flex-shrink-0" />
-                      <p className="text-sm" style={{ color: "#4a4a4a" }}>
-                        Topics: Arabic, Quran, Tajweed, Islamic Knowledge. <strong>Don't worry — this just helps us place you in the right level. There are no wrong answers!</strong>
-                      </p>
-                    </div>
-                  </div>
-
-                  <Button
-                    onClick={startEntranceExam}
-                    disabled={saving}
-                    className="gold-btn w-full py-6 text-base rounded-xl"
-                  >
-                    {saving ? "Starting..." : "Start Exam →"}
-                  </Button>
-
-                  <button
-                    onClick={skipExam}
-                    disabled={saving}
-                    className="w-full text-center text-sm py-2 transition-colors"
-                    style={{ color: "#999", background: "none", border: "none", cursor: "pointer" }}
-                  >
-                    Skip — place me in Beginner level
-                  </button>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </CardContent>
-        </Card>
-      </motion.div>
+              <button type="button" onClick={next} disabled={saving}
+                style={{ flex:1, padding:"13px 0", borderRadius:14, border:"none", background:saving?"#9ca3af":`linear-gradient(135deg,${G},${GM})`, color:"#fff", fontSize:15, fontWeight:800, cursor:saving?"not-allowed":"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8, boxShadow:"0 4px 16px rgba(6,78,59,.25)", transition:"all .2s" }}>
+                {saving
+                  ? <><Loader2 style={{ width:18, height:18, animation:"spin .8s linear infinite" }} /> Saving…</>
+                  : step === TOTAL
+                  ? <><CheckCircle2 size={18} /> Submit &amp; Start Exam</>
+                  : <>Next Step <ArrowRight size={16} /></>
+                }
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 };
