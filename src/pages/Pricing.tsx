@@ -178,7 +178,7 @@ const Pricing = () => {
             </div>
           </div>
           <button onClick={() => navigate("/register")} style={{ background: GOLD, color: "#fff", border: "none", borderRadius: 12, padding: "12px 22px", fontWeight: 800, fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-            Register Now <ArrowRight size={16} />
+            Register & Pay ₦5,000 <ArrowRight size={16} />
           </button>
         </div>
       </div>
@@ -236,7 +236,7 @@ const Pricing = () => {
                 </div>
                 <button onClick={() => navigate("/register")}
                   style={{ marginTop: 24, width: "100%", padding: "13px", borderRadius: 12, border: `2px solid ${lv.color}`, background: lv.id === "intermediate" ? lv.color : "transparent", color: lv.id === "intermediate" ? "#fff" : lv.color, fontWeight: 700, fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, transition: "all .2s" }}>
-                  Get Started — {lv.name} <ArrowRight size={15} />
+                  Register & Pay ₦5,000 <ArrowRight size={15} />
                 </button>
               </div>
             </div>
@@ -370,7 +370,7 @@ const Pricing = () => {
           <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" as const }}>
             <button onClick={() => navigate("/register")}
               style={{ background: GOLD, color: "#fff", border: "none", borderRadius: 14, padding: "14px 28px", fontWeight: 800, fontSize: 15, cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}>
-              Register & Pay ₦5,000 <ArrowRight size={17} />
+              Register & Pay ₦5,000 Registration Fee <ArrowRight size={17} />
             </button>
             <button onClick={() => navigate("/login")}
               style={{ background: "rgba(255,255,255,.12)", color: "#fff", border: "2px solid rgba(255,255,255,.3)", borderRadius: 14, padding: "14px 28px", fontWeight: 700, fontSize: 15, cursor: "pointer" }}>
