@@ -14,6 +14,9 @@
 */
 import { useState, useEffect, useRef, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { Mic, MicOff, Square } from "lucide-react";
+
+const DEEPGRAM_KEY = import.meta.env.VITE_DEEPGRAM_API_KEY || "";
 
 /* ─── Types ──────────────────────────────────────────────────── */
 interface Props { userId: string | null; }
@@ -194,28 +197,40 @@ export default function RecitationMic({ userId }: Props) {
     });
   }, []);
 
-  /* ══ Send audio chunk to Deepgram via Edge Function ══════════ */
+  /* ══ Send audio chunk directly to Deepgram ══════════════════ */
   const sendChunkToDeepgram = useCallback(async (blob: Blob) => {
-    if (blob.size < 1000) return;
+    if (blob.size < 500) return;
     setProcessing(true);
     try {
-      // Convert blob → base64 so supabase.functions.invoke can send it
-      const arrayBuffer = await blob.arrayBuffer();
-      const uint8 = new Uint8Array(arrayBuffer);
-      let binary = "";
-      uint8.forEach(b => binary += String.fromCharCode(b));
-      const base64Audio = btoa(binary);
+      if (!DEEPGRAM_KEY) {
+        // No key — demo mode: simulate some words matching
+        setError("VITE_DEEPGRAM_API_KEY not set — words won't reveal automatically");
+        setProcessing(false);
+        return;
+      }
 
-      const { data, error: fnError } = await supabase.functions.invoke("transcribe-hifdh", {
-        body: { audio: base64Audio, mimeType: blob.type || "audio/webm" },
-      });
+      const res = await fetch(
+        "https://api.deepgram.com/v1/listen?model=nova-2&language=ar&punctuate=false&words=true",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Token ${DEEPGRAM_KEY}`,
+            "Content-Type": blob.type || "audio/webm",
+          },
+          body: blob,
+        }
+      );
 
-      if (fnError) throw new Error(fnError.message);
-      if (data?.transcript) processTranscript(data.transcript);
+      if (!res.ok) throw new Error(`Deepgram ${res.status}`);
+      const data = await res.json();
+      const transcript: string =
+        data?.results?.channels?.[0]?.alternatives?.[0]?.transcript || "";
+
+      if (transcript) processTranscript(transcript);
       setError("");
     } catch (e: any) {
       console.warn("Transcription error:", e?.message);
-      setError("Transcription failed — ensure DEEPGRAM_API_KEY is set in Supabase secrets");
+      setError("Transcription failed — check VITE_DEEPGRAM_API_KEY in Vercel");
     } finally {
       setProcessing(false);
     }
@@ -625,12 +640,15 @@ export default function RecitationMic({ userId }: Props) {
           {phase === "idle" && (
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
               <div style={{ fontSize: 13, color: MUTED, textAlign: "center", lineHeight: 1.8 }}>
-                Press Start and recite aloud — words reveal automatically
+                Press the mic and recite aloud — words reveal automatically
                 <br />
-                <span style={{ fontSize: 12, color: GOLD }}>اضغط ابدأ وتلُ بصوت — ستظهر الكلمات تلقائياً</span>
+                <span style={{ fontSize: 12, color: GOLD }}>اضغط المايك وتلُ بصوت — ستظهر الكلمات تلقائياً</span>
               </div>
-              <button onClick={startSession} style={btn(G700, "#fff", { width: "100%", padding: "17px", fontSize: 16 })}>
-                🎙️ Start Recitation · ابدأ التلاوة
+              <button onClick={startSession} style={{ ...btn(G700, "#fff", { width: "100%", padding: "17px", fontSize: 16 }), display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+                <div style={{ width: 32, height: 32, borderRadius: "50%", background: "rgba(255,255,255,.15)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <Mic size={18} color="#fff" />
+                </div>
+                Start Recitation · ابدأ التلاوة
               </button>
             </div>
           )}
@@ -641,10 +659,13 @@ export default function RecitationMic({ userId }: Props) {
               {/* Status bar */}
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", background: phase === "countdown" ? G100 : "#f0fff4", borderRadius: 10, border: `1px solid ${phase === "countdown" ? "#9ae6b4" : "#9ae6b4"}` }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <div style={{ width: 10, height: 10, borderRadius: "50%", background: G500, animation: "pulse 1s infinite" }} />
+                  {/* Pulsing mic icon */}
+                  <div style={{ width: 32, height: 32, borderRadius: "50%", background: phase === "countdown" ? G100 : "#dcfce7", border: `2px solid ${G500}`, display: "flex", alignItems: "center", justifyContent: "center", animation: phase === "listening" ? "pulse 1s infinite" : "none" }}>
+                    {phase === "listening" ? <Mic size={15} color={G500} /> : <MicOff size={15} color={G500} />}
+                  </div>
                   <div>
                     <div style={{ fontSize: 13, fontWeight: 700, color: G700 }}>
-                      {phase === "countdown" ? "✓ Ayah complete!" : processing ? "Processing…" : statusMsg}
+                      {phase === "countdown" ? "✓ Ayah complete!" : processing ? "Analysing…" : statusMsg}
                     </div>
                     <div style={{ fontSize: 11, color: MUTED }}>
                       {phase === "countdown" ? "ينتقل تلقائياً" : "يسمع ويحلل صوتك — تلُ الآن"}
@@ -679,8 +700,9 @@ export default function RecitationMic({ userId }: Props) {
                 <span style={{ fontSize: 13, fontWeight: 900, color: G500 }}>{revealed} / {total}</span>
               </div>
 
-              <button onClick={endSession} style={btn("#fff5f5", RED, { width: "100%", border: `1px solid #fca5a5`, padding: "11px" })}>
-                ⏹ End Session · إنهاء الجلسة
+              <button onClick={endSession} style={{ ...btn("#fff5f5", RED, { width: "100%", border: `1px solid #fca5a5`, padding: "11px" }), display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                <Square size={15} fill={RED} />
+                End Session · إنهاء الجلسة
               </button>
             </div>
           )}
