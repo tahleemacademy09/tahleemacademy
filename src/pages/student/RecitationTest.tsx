@@ -292,14 +292,16 @@ const RecitationTest = () => {
         status: "awaiting_teacher",
       }).eq("user_id", user.id);
 
-      // Notify admin (insert to notifications table)
-      await supabase.from("admin_notifications" as any).insert({
-        type: "recitation_booking",
-        user_id: user.id,
-        message: `${(profile as any)?.full_name || "Student"} has requested a live recitation session on ${sessionDate} at ${sessionTime}`,
-        created_at: new Date().toISOString(),
-        read: false,
-      }).catch(() => {}); // non-critical
+      // Notify admin (non-critical — wrap in try/catch)
+      try {
+        await supabase.from("admin_notifications" as any).insert({
+          type: "recitation_booking",
+          user_id: user.id,
+          message: `${(profile as any)?.full_name || "Student"} has requested a live recitation session on ${sessionDate} at ${sessionTime}`,
+          created_at: new Date().toISOString(),
+          read: false,
+        });
+      } catch (_) { /* non-critical — ignore if table doesn't exist */ }
 
       setBookingDone(true);
       toast({ title: "✅ Session booked!", description: "A teacher will confirm your session within 24 hours." });
