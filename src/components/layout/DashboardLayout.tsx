@@ -13,8 +13,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import {
   BookOpen, LayoutDashboard, ClipboardList, Users, LogOut, Globe,
   CheckSquare, BarChart, UserCircle, Library, GraduationCap, MessageCircle,
-  Menu, Video, Mic, Layers, FileText, UserCheck, BookMarked,
-  CreditCard, Calendar, ChevronDown, ChevronRight, Wallet,  // Wallet kept for mobile header icon
+  Menu, Video, Mic, Layers, FileText, UserCheck, BookMarked, Settings,
+  CreditCard, Calendar, ChevronDown, ChevronRight, Wallet,
   BookOpenCheck, RefreshCw, Headphones,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -92,7 +92,8 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     { to: "/admin/private-sessions",  icon: UserCheck,       label: t("Private Sessions",     "الجلسات الخاصة") },
     { to: "/admin/proctoring",        icon: BarChart,        label: t("Proctoring",           "المراقبة")       },
     { to: "/admin/entrance-exam",     icon: GraduationCap,   label: t("Entrance Exam",        "اختبار القبول")  },
-    { to: "/admin/recitation-review", icon: Mic,             label: t("Recitation Review",    "مراجعة التلاوة") },
+    { to: "/admin/recitation-review",        icon: Mic,             label: t("Recitation Review",    "مراجعة التلاوة") },
+    { to: "/admin/recitation-test-settings", icon: Settings,        label: t("Recitation Settings",  "إعدادات التلاوة") },
     { to: "/admin/payments",          icon: CreditCard,      label: t("Payments",             "المدفوعات")      },
     { to: "/admin/calendar",          icon: Calendar,        label: t("Calendar",             "التقويم")        },
     { to: "/admin/public-classes",    icon: Globe,           label: t("Public Classes",       "الدروس العامة")  },
