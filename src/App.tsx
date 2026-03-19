@@ -63,6 +63,7 @@ const HifdhRevision = lazy(() => import("./pages/student/HifdhRevision"));
 const RevisionRoom = lazy(() => import("./pages/student/RevisionRoom"));
 const PaymentScreen = lazy(() => import("./pages/student/PaymentScreen"));
 const RecordingPlayer = lazy(() => import("./pages/student/RecordingPlayer"));
+const EnrollmentPayment = lazy(() => import("./pages/student/EnrollmentPayment"));
 
 // ─── Admin Pages (lazy) ───────────────────────────────────────────────────────
 const AdminDashboard = lazy(() => import("./pages/admin/AdminDashboard"));
@@ -152,6 +153,7 @@ const App = () => (
                   <Route path="/student/hifdh" element={<HifdhRevision />} />
                   <Route path="/student/revision/:subjectId" element={<RevisionRoom />} />
                   <Route path="/student/profile" element={<ProfileSettings />} />
+                  <Route path="/student/enrollment-payment" element={<EnrollmentPayment />} />
                 </Route>
 
                 {/* Exam taking (no sidebar) */}
