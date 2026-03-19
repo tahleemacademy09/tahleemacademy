@@ -1,45 +1,42 @@
 import { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Checkbox } from "@/components/ui/checkbox";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { lovable } from "@/integrations/lovable/index";
-import { BookOpen, Loader2, Mail, Lock, Eye, EyeOff, Check, Globe } from "lucide-react";
+import { Loader2, Mail, Lock, Eye, EyeOff, Check, Globe, BookOpen } from "lucide-react";
 import { motion } from "framer-motion";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
+
+const G    = "#064E3B";
+const GOLD = "#C9973A";
+const GOLD2= "#E8C070";
 
 const Login = () => {
   const { t, language, setLanguage } = useLanguage();
   const { signIn, user } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [loading, setLoading] = useState(false);
+
+  const [email, setEmail]           = useState("");
+  const [password, setPassword]     = useState("");
+  const [loading, setLoading]       = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
   const [emailValid, setEmailValid] = useState<boolean | null>(null);
   const [forgotOpen, setForgotOpen] = useState(false);
   const [resetEmail, setResetEmail] = useState("");
   const [resetLoading, setResetLoading] = useState(false);
-  const [resetSent, setResetSent] = useState(false);
+  const [resetSent, setResetSent]   = useState(false);
+  const [focusedField, setFocusedField] = useState<string | null>(null);
 
-  // Auto-redirect if already logged in
   useEffect(() => {
     if (user) {
-      // Check role to redirect appropriately
       supabase.from("user_roles").select("role").eq("user_id", user.id).then(({ data: roles }) => {
-        const isAdmin = roles?.some(r => r.role === "admin");
+        const isAdmin   = roles?.some(r => r.role === "admin");
         const isTeacher = roles?.some(r => r.role === "teacher");
         if (isAdmin) navigate("/admin", { replace: true });
         else if (isTeacher) navigate("/teacher/dashboard", { replace: true });
@@ -61,30 +58,20 @@ const Login = () => {
     if (error) {
       toast({
         title: t("Login Failed", "فشل تسجيل الدخول"),
-        description: t(
-          "Incorrect email or password. Please try again.",
-          "البريد الإلكتروني أو كلمة المرور غير صحيحة. يرجى المحاولة مرة أخرى."
-        ),
+        description: t("Incorrect email or password. Please try again.", "البريد الإلكتروني أو كلمة المرور غير صحيحة."),
         variant: "destructive",
       });
     } else {
-      const { data: roles } = await supabase
-        .from("user_roles")
-        .select("role")
-        .eq("user_id", data.user?.id);
-      const isAdmin = roles?.some((r) => r.role === "admin");
-      const isTeacher = roles?.some((r) => r.role === "teacher");
+      const { data: roles } = await supabase.from("user_roles").select("role").eq("user_id", data.user?.id);
+      const isAdmin   = roles?.some(r => r.role === "admin");
+      const isTeacher = roles?.some(r => r.role === "teacher");
       navigate(isAdmin ? "/admin" : isTeacher ? "/teacher/dashboard" : "/student");
     }
   };
 
   const handleGoogleSignIn = async () => {
-    const { error } = await lovable.auth.signInWithOAuth("google", {
-      redirect_uri: window.location.origin,
-    });
-    if (error) {
-      toast({ title: t("Error", "خطأ"), description: error.message, variant: "destructive" });
-    }
+    const { error } = await lovable.auth.signInWithOAuth("google", { redirect_uri: window.location.origin });
+    if (error) toast({ title: t("Error", "خطأ"), description: error.message, variant: "destructive" });
   };
 
   const handleForgotPassword = async (e: React.FormEvent) => {
@@ -102,231 +89,401 @@ const Login = () => {
   };
 
   return (
-    <div className="flex min-h-screen w-full">
-      {/* Left panel - Desktop only */}
-      <motion.div
-        initial={{ opacity: 0, x: -40 }}
-        animate={{ opacity: 1, x: 0 }}
-        transition={{ duration: 0.7 }}
-        className="relative hidden w-1/2 flex-col items-center justify-center overflow-hidden bg-primary lg:flex"
-      >
-        {/* Islamic geometric overlay */}
-        <div className="absolute inset-0 opacity-[0.06]" style={{
-          backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='1'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`,
-        }} />
-        
-        <div className="relative z-10 flex flex-col items-center px-12 text-center">
-          <div className="mb-8 flex h-20 w-20 items-center justify-center rounded-2xl bg-white/10 backdrop-blur-sm ring-2 ring-white/20">
-            <BookOpen className="h-10 w-10 text-primary-foreground" />
-          </div>
-          <h1 className="mb-4 font-display text-4xl font-bold text-primary-foreground">
-            Tahleem <span className="text-secondary">Academy</span>
-          </h1>
-          <p className="mb-6 font-arabic text-2xl leading-relaxed text-primary-foreground/90" style={{ direction: "rtl" }}>
-            بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ
-          </p>
-          <p className="mb-2 text-lg font-medium text-primary-foreground/90">
-            Begin Your Journey of Knowledge
-          </p>
-          <p className="font-arabic text-xl text-secondary" style={{ direction: "rtl" }}>
-            ابدأ رحلتك في طلب العلم
-          </p>
-        </div>
+    <>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Amiri:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap');
 
-        {/* Decorative bottom arc */}
-        <div className="absolute -bottom-24 -left-24 h-48 w-48 rounded-full bg-secondary/10" />
-        <div className="absolute -top-16 -right-16 h-32 w-32 rounded-full bg-white/5" />
-      </motion.div>
+        @keyframes fadeUp   { from{opacity:0;transform:translateY(18px)} to{opacity:1;transform:none} }
+        @keyframes shimmer  { 0%{background-position:200% center} 100%{background-position:-200% center} }
+        @keyframes float    { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-8px)} }
+        @keyframes spin-slow { to{transform:rotate(360deg)} }
+        @keyframes pulse-gold { 0%,100%{box-shadow:0 0 0 0 rgba(201,151,58,.35)} 50%{box-shadow:0 0 0 10px rgba(201,151,58,0)} }
 
-      {/* Right panel - Form */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6, delay: 0.2 }}
-        className="flex w-full flex-col items-center justify-center bg-background px-4 py-8 lg:w-1/2"
-      >
-        {/* Mobile header banner */}
-        <div className="mb-8 flex flex-col items-center lg:hidden">
-          <div className="mb-4 flex w-full items-center justify-center gap-3 rounded-2xl bg-primary px-6 py-5">
-            <BookOpen className="h-7 w-7 text-primary-foreground" />
-            <span className="font-display text-xl font-bold text-primary-foreground">
-              Tahleem <span className="text-secondary">Academy</span>
-            </span>
-          </div>
-          <p className="font-arabic text-base text-muted-foreground" style={{ direction: "rtl" }}>
-            ابدأ رحلتك في طلب العلم
-          </p>
-        </div>
+        .login-root { font-family:'DM Sans',sans-serif; }
 
-        <div className="w-full max-w-md">
-          {/* Language toggle */}
-          <div className="mb-6 flex justify-end">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setLanguage(language === "en" ? "ar" : "en")}
-              className="text-muted-foreground hover:text-foreground"
-            >
-              <Globe className="mr-1.5 h-4 w-4" />
-              {language === "en" ? "العربية" : "English"}
-            </Button>
-          </div>
+        .gold-input {
+          width:100%; height:52px;
+          border: 1.5px solid #E5E0D8;
+          border-radius: 14px;
+          background: #FAFAF8;
+          padding: 0 16px 0 48px;
+          font-size: 14px;
+          font-family: 'DM Sans', sans-serif;
+          color: #1a1a1a;
+          outline: none;
+          transition: border-color .2s, box-shadow .2s, background .2s;
+        }
+        .gold-input:focus {
+          border-color: ${GOLD};
+          background: #fff;
+          box-shadow: 0 0 0 4px rgba(201,151,58,.12);
+        }
+        .gold-input::placeholder { color: #B0A898; }
 
-          {/* Welcome */}
-          <div className="mb-8 text-center">
-            <h2 className="mb-1 font-display text-2xl font-bold text-foreground">
-              {t("Ahlan wa Sahlan!", "أهلاً وسهلاً!")}
-              <span className="font-arabic text-lg text-muted-foreground lg:hidden"> {t("أهلاً وسهلاً", "")}</span>
-            </h2>
-            <p className="hidden text-lg text-muted-foreground lg:block font-arabic" style={{ direction: "rtl" }}>
-              أهلاً وسهلاً
-            </p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {t("Sign in to continue your learning journey", "سجّل الدخول لمتابعة رحلتك التعليمية")}
-            </p>
-          </div>
+        .sign-btn {
+          width:100%; height:52px;
+          background: linear-gradient(135deg, ${G} 0%, #075E54 100%);
+          color: #fff;
+          border: none;
+          border-radius: 14px;
+          font-size: 15px;
+          font-weight: 600;
+          font-family: 'DM Sans', sans-serif;
+          cursor: pointer;
+          display: flex; align-items:center; justify-content:center; gap:8px;
+          transition: opacity .2s, transform .15s;
+          box-shadow: 0 4px 20px rgba(6,78,59,.3);
+          letter-spacing:.3px;
+        }
+        .sign-btn:hover:not(:disabled) { opacity:.93; transform:translateY(-1px); box-shadow:0 6px 26px rgba(6,78,59,.38); }
+        .sign-btn:disabled { opacity:.6; cursor:not-allowed; }
 
-          {/* Form */}
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Email */}
-            <div className="relative">
-              <Mail className="absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                type="email"
-                placeholder={t("Email", "البريد الإلكتروني")}
-                value={email}
-                onChange={(e) => { setEmail(e.target.value); validateEmail(e.target.value); }}
-                required
-                className="h-12 ps-10 pe-10"
-              />
-              {emailValid === true && (
-                <Check className="absolute end-3 top-1/2 h-4 w-4 -translate-y-1/2 text-green-600" />
-              )}
-            </div>
+        .google-btn {
+          width:100%; height:52px;
+          background: #fff;
+          border: 1.5px solid #E5E0D8;
+          border-radius: 14px;
+          font-size: 14px;
+          font-weight: 500;
+          font-family: 'DM Sans', sans-serif;
+          cursor: pointer;
+          display: flex; align-items:center; justify-content:center; gap:10px;
+          color: #333;
+          transition: border-color .2s, box-shadow .2s, transform .15s;
+        }
+        .google-btn:hover { border-color: #C9973A; box-shadow:0 4px 14px rgba(201,151,58,.12); transform:translateY(-1px); }
 
-            {/* Password */}
-            <div>
-              <div className="relative">
-                <Lock className="absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  type={showPassword ? "text" : "password"}
-                  placeholder={t("Password", "كلمة المرور")}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  className="h-12 ps-10 pe-10"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute end-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                >
-                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
-              </div>
-              <div className="mt-2 flex items-center justify-between">
-                <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-                  <Checkbox
-                    checked={rememberMe}
-                    onCheckedChange={(v) => setRememberMe(!!v)}
-                  />
-                  {t("Remember me", "تذكرني")}
-                </label>
-                <button
-                  type="button"
-                  onClick={() => { setForgotOpen(true); setResetSent(false); setResetEmail(""); }}
-                  className="text-sm font-medium text-secondary hover:underline"
-                >
-                  {t("Forgot Password?", "نسيت كلمة المرور؟")}
-                </button>
-              </div>
-            </div>
+        .remember-check {
+          width:18px; height:18px; border-radius:5px;
+          border:1.5px solid #D5CEC5; cursor:pointer;
+          appearance:none; -webkit-appearance:none;
+          background:#fff; transition:.15s; flex-shrink:0;
+        }
+        .remember-check:checked {
+          background: ${GOLD};
+          border-color: ${GOLD};
+          background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 12 12' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M2 6l3 3 5-5' stroke='white' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+          background-repeat: no-repeat; background-position:center; background-size:12px;
+        }
 
-            <Button type="submit" className="h-12 w-full text-base transition-transform hover:scale-[1.01]" disabled={loading}>
-              {loading && <Loader2 className="me-2 h-4 w-4 animate-spin" />}
-              {t("Sign In", "تسجيل الدخول")}
-            </Button>
-          </form>
+        .geo-bg {
+          position:absolute; inset:0; opacity:.045;
+          background-image: url("data:image/svg+xml,%3Csvg width='80' height='80' viewBox='0 0 80 80' xmlns='http://www.w3.org/2000/svg'%3E%3Cpolygon points='40,4 76,22 76,58 40,76 4,58 4,22' fill='none' stroke='%23C9973A' stroke-width='1.2'/%3E%3Cpolygon points='40,14 66,28 66,52 40,66 14,52 14,28' fill='none' stroke='%23C9973A' stroke-width='.6'/%3E%3Ccircle cx='40' cy='40' r='12' fill='none' stroke='%23C9973A' stroke-width='.6'/%3E%3C/svg%3E");
+        }
+      `}</style>
 
-          {/* Divider */}
-          <div className="my-6 flex items-center gap-3">
-            <div className="h-px flex-1 bg-border" />
-            <span className="text-xs text-muted-foreground">{t("or", "أو")}</span>
-            <div className="h-px flex-1 bg-border" />
-          </div>
+      <div className="login-root" style={{ minHeight:"100vh", background:"#FDFCF9", display:"flex", flexDirection:"column" }}>
 
-          {/* Google */}
-          <Button
-            variant="outline"
-            className="h-12 w-full gap-2 text-sm"
-            onClick={handleGoogleSignIn}
+        {/* ── DESKTOP SPLIT LAYOUT ──────────────────────────────── */}
+        <div style={{ display:"flex", minHeight:"100vh" }}>
+
+          {/* LEFT PANEL — desktop only */}
+          <motion.div
+            initial={{ opacity:0, x:-30 }}
+            animate={{ opacity:1, x:0 }}
+            transition={{ duration:.7 }}
+            style={{
+              display:"none",
+              width:"42%", flexShrink:0,
+              background:`linear-gradient(160deg, #042E22 0%, ${G} 50%, #075E54 100%)`,
+              position:"relative", overflow:"hidden",
+              flexDirection:"column", alignItems:"center", justifyContent:"center",
+              padding:"60px 48px",
+            }}
+            className="lg-panel"
           >
-            <svg className="h-5 w-5" viewBox="0 0 24 24">
-              <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" />
-              <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-              <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
-              <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
-            </svg>
-            {t("Continue with Google", "المتابعة مع جوجل")}
-          </Button>
+            <style>{`@media(min-width:900px){ .lg-panel{ display:flex!important } }`}</style>
 
-          {/* Register link */}
-          <p className="mt-6 text-center text-sm text-muted-foreground">
-            {t("Don't have an account?", "ليس لديك حساب؟")}{" "}
-            <Link to="/register" className="font-semibold text-secondary hover:underline">
-              {t("Register", "التسجيل")}
-            </Link>
-          </p>
+            {/* Geometric bg */}
+            <div className="geo-bg" />
+
+            {/* Decorative circles */}
+            <div style={{ position:"absolute", top:-60, right:-60, width:220, height:220, borderRadius:"50%", border:`1px solid rgba(201,151,58,.15)` }} />
+            <div style={{ position:"absolute", top:-30, right:-30, width:140, height:140, borderRadius:"50%", border:`1px solid rgba(201,151,58,.1)` }} />
+            <div style={{ position:"absolute", bottom:-80, left:-80, width:280, height:280, borderRadius:"50%", border:`1px solid rgba(201,151,58,.1)` }} />
+
+            {/* Spinning ring */}
+            <div style={{ position:"absolute", top:40, left:40, width:80, height:80, borderRadius:"50%", border:`1px dashed rgba(201,151,58,.3)`, animation:"spin-slow 20s linear infinite" }} />
+
+            <div style={{ position:"relative", zIndex:2, textAlign:"center" }}>
+              {/* Logo mark */}
+              <motion.div
+                animate={{ y:[0,-8,0] }}
+                transition={{ duration:4, repeat:Infinity, ease:"easeInOut" }}
+                style={{ width:90, height:90, borderRadius:24, background:"rgba(255,255,255,.08)", border:"1.5px solid rgba(201,151,58,.3)", display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 32px", backdropFilter:"blur(8px)" }}
+              >
+                <BookOpen style={{ width:42, height:42, color:GOLD }} />
+              </motion.div>
+
+              {/* Bismillah */}
+              <div style={{ fontFamily:"'Amiri',serif", fontSize:22, color:"rgba(232,192,112,.85)", marginBottom:24, direction:"rtl", letterSpacing:1, lineHeight:1.8 }}>
+                بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ
+              </div>
+
+              {/* Name */}
+              <h1 style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:42, fontWeight:700, color:"#fff", lineHeight:1.1, marginBottom:8 }}>
+                Tahleem<br />
+                <span style={{ color:GOLD }}>Academy</span>
+              </h1>
+              <div style={{ fontFamily:"'Amiri',serif", fontSize:16, color:"rgba(232,192,112,.7)", marginBottom:32, direction:"rtl" }}>
+                أكاديمية تعليم
+              </div>
+
+              {/* Divider */}
+              <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:28 }}>
+                <div style={{ flex:1, height:1, background:`linear-gradient(to right,transparent,rgba(201,151,58,.4))` }} />
+                <span style={{ color:GOLD, fontSize:12 }}>◆</span>
+                <div style={{ flex:1, height:1, background:`linear-gradient(to left,transparent,rgba(201,151,58,.4))` }} />
+              </div>
+
+              {/* Hadith */}
+              <p style={{ fontFamily:"'Amiri',serif", fontSize:18, color:"rgba(255,255,255,.7)", lineHeight:1.8, direction:"rtl", marginBottom:10 }}>
+                طَلَبُ الْعِلْمِ فَرِيضَةٌ عَلَى كُلِّ مُسْلِمٍ
+              </p>
+              <p style={{ fontSize:12, color:"rgba(255,255,255,.4)", letterSpacing:.5, fontStyle:"italic" }}>
+                "Seeking knowledge is an obligation upon every Muslim"
+              </p>
+
+              {/* Feature pills */}
+              <div style={{ display:"flex", flexDirection:"column", gap:10, marginTop:40 }}>
+                {[
+                  { icon:"📖", text:"Quran & Tajweed" },
+                  { icon:"🌙", text:"Islamic Sciences" },
+                  { icon:"🔤", text:"Arabic Language" },
+                ].map(f => (
+                  <div key={f.text} style={{ display:"flex", alignItems:"center", gap:12, background:"rgba(255,255,255,.05)", border:"1px solid rgba(201,151,58,.15)", borderRadius:12, padding:"10px 16px" }}>
+                    <span style={{ fontSize:18 }}>{f.icon}</span>
+                    <span style={{ fontSize:13, color:"rgba(255,255,255,.75)", fontWeight:500 }}>{f.text}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </motion.div>
+
+          {/* RIGHT PANEL — form */}
+          <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"32px 20px", background:"#FDFCF9", overflowY:"auto" }}>
+            <motion.div
+              initial={{ opacity:0, y:20 }}
+              animate={{ opacity:1, y:0 }}
+              transition={{ duration:.55, delay:.15 }}
+              style={{ width:"100%", maxWidth:420 }}
+            >
+              {/* ── MOBILE TOP BRAND ── */}
+              <div style={{ marginBottom:28, textAlign:"center" }} className="mobile-brand">
+                <style>{`@media(min-width:900px){ .mobile-brand{ display:none!important } }`}</style>
+
+                {/* Brand pill */}
+                <div style={{ display:"inline-flex", alignItems:"center", gap:10, background:G, borderRadius:16, padding:"12px 20px", marginBottom:12, boxShadow:`0 4px 20px rgba(6,78,59,.25)` }}>
+                  <div style={{ width:36, height:36, borderRadius:10, background:GOLD, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                    <BookOpen style={{ width:18, height:18, color:"#fff" }} />
+                  </div>
+                  <span style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:20, fontWeight:700, color:"#fff", letterSpacing:.5 }}>
+                    Tahleem <span style={{ color:GOLD2 }}>Academy</span>
+                  </span>
+                </div>
+
+                {/* Arabic tagline */}
+                <div style={{ fontFamily:"'Amiri',serif", fontSize:15, color:"#9a8c7c", direction:"rtl", letterSpacing:.5 }}>
+                  ابدأ رحلتك في طلب العلم
+                </div>
+              </div>
+
+              {/* ── GOLDEN ORNAMENT DIVIDER ── */}
+              <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:28 }}>
+                <div style={{ flex:1, height:1, background:`linear-gradient(to right,transparent,rgba(201,151,58,.3))` }} />
+                <div style={{ display:"flex", gap:5 }}>
+                  <span style={{ color:GOLD, fontSize:8 }}>◆</span>
+                  <span style={{ color:GOLD, fontSize:12 }}>◆</span>
+                  <span style={{ color:GOLD, fontSize:8 }}>◆</span>
+                </div>
+                <div style={{ flex:1, height:1, background:`linear-gradient(to left,transparent,rgba(201,151,58,.3))` }} />
+              </div>
+
+              {/* ── WELCOME HEADING ── */}
+              <div style={{ textAlign:"center", marginBottom:28 }}>
+                <h2 style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:32, fontWeight:700, color:G, lineHeight:1.1, marginBottom:6 }}>
+                  {t("Welcome Back", "أهلاً وسهلاً")}
+                  {language === "en" && <span style={{ fontFamily:"'Amiri',serif", fontSize:22, color:GOLD, display:"block", marginTop:2 }}>أهلاً وسهلاً</span>}
+                </h2>
+                <p style={{ fontSize:13.5, color:"#8a7d70", lineHeight:1.6 }}>
+                  {t("Sign in to continue your learning journey", "سجّل الدخول لمتابعة رحلتك التعليمية")}
+                </p>
+              </div>
+
+              {/* ── LANGUAGE TOGGLE ── */}
+              <div style={{ display:"flex", justifyContent:"flex-end", marginBottom:20 }}>
+                <button
+                  onClick={() => setLanguage(language === "en" ? "ar" : "en")}
+                  style={{ display:"flex", alignItems:"center", gap:6, background:"rgba(201,151,58,.08)", border:"1px solid rgba(201,151,58,.25)", borderRadius:20, padding:"5px 12px", fontSize:12, color:GOLD, fontWeight:600, cursor:"pointer", fontFamily:"'DM Sans',sans-serif" }}
+                >
+                  <Globe size={13} />
+                  {language === "en" ? "العربية" : "English"}
+                </button>
+              </div>
+
+              {/* ── FORM ── */}
+              <form onSubmit={handleSubmit} style={{ display:"flex", flexDirection:"column", gap:14 }}>
+
+                {/* Email */}
+                <div style={{ position:"relative" }}>
+                  <Mail size={16} style={{ position:"absolute", left:16, top:"50%", transform:"translateY(-50%)", color: focusedField==="email" ? GOLD : "#B0A898", transition:".2s" }} />
+                  <input
+                    className="gold-input"
+                    type="email"
+                    placeholder={t("Email address", "البريد الإلكتروني")}
+                    value={email}
+                    onChange={e => { setEmail(e.target.value); validateEmail(e.target.value); }}
+                    onFocus={() => setFocusedField("email")}
+                    onBlur={() => setFocusedField(null)}
+                    required
+                    style={{ paddingRight: emailValid === true ? 44 : 16 }}
+                  />
+                  {emailValid === true && (
+                    <div style={{ position:"absolute", right:14, top:"50%", transform:"translateY(-50%)", width:22, height:22, borderRadius:"50%", background:"#E8F5E9", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                      <Check size={13} color="#2E7D32" />
+                    </div>
+                  )}
+                </div>
+
+                {/* Password */}
+                <div style={{ position:"relative" }}>
+                  <Lock size={16} style={{ position:"absolute", left:16, top:"50%", transform:"translateY(-50%)", color: focusedField==="password" ? GOLD : "#B0A898", transition:".2s" }} />
+                  <input
+                    className="gold-input"
+                    type={showPassword ? "text" : "password"}
+                    placeholder={t("Password", "كلمة المرور")}
+                    value={password}
+                    onChange={e => setPassword(e.target.value)}
+                    onFocus={() => setFocusedField("password")}
+                    onBlur={() => setFocusedField(null)}
+                    required
+                    style={{ paddingRight:44 }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    style={{ position:"absolute", right:14, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", cursor:"pointer", color:"#B0A898", display:"flex", alignItems:"center" }}
+                  >
+                    {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+
+                {/* Remember + Forgot */}
+                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+                  <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", fontSize:13, color:"#7a6e64", userSelect:"none" }}>
+                    <input
+                      type="checkbox"
+                      className="remember-check"
+                      checked={rememberMe}
+                      onChange={e => setRememberMe(e.target.checked)}
+                    />
+                    {t("Remember me", "تذكرني")}
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => { setForgotOpen(true); setResetSent(false); setResetEmail(""); }}
+                    style={{ background:"none", border:"none", cursor:"pointer", fontSize:13, color:GOLD, fontWeight:600, fontFamily:"'DM Sans',sans-serif" }}
+                  >
+                    {t("Forgot Password?", "نسيت كلمة المرور؟")}
+                  </button>
+                </div>
+
+                {/* Sign In button */}
+                <button className="sign-btn" type="submit" disabled={loading} style={{ marginTop:4 }}>
+                  {loading
+                    ? <><Loader2 size={17} style={{ animation:"spin .7s linear infinite" }} /> {t("Signing in…", "جارٍ الدخول…")}</>
+                    : t("Sign In", "تسجيل الدخول")
+                  }
+                </button>
+              </form>
+
+              {/* ── DIVIDER ── */}
+              <div style={{ display:"flex", alignItems:"center", gap:12, margin:"22px 0" }}>
+                <div style={{ flex:1, height:1, background:"#EDE7DC" }} />
+                <span style={{ fontSize:12, color:"#C0B4A6", letterSpacing:.5 }}>{t("or continue with", "أو تابع مع")}</span>
+                <div style={{ flex:1, height:1, background:"#EDE7DC" }} />
+              </div>
+
+              {/* ── GOOGLE ── */}
+              <button className="google-btn" onClick={handleGoogleSignIn}>
+                <svg width="18" height="18" viewBox="0 0 24 24">
+                  <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" />
+                  <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                  <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" />
+                  <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
+                </svg>
+                {t("Continue with Google", "المتابعة مع جوجل")}
+              </button>
+
+              {/* ── REGISTER LINK ── */}
+              <p style={{ textAlign:"center", marginTop:24, fontSize:13.5, color:"#9a8c7c" }}>
+                {t("Don't have an account?", "ليس لديك حساب؟")}{" "}
+                <Link to="/register" style={{ color:GOLD, fontWeight:700, textDecoration:"none" }}>
+                  {t("Register now", "سجّل الآن")} →
+                </Link>
+              </p>
+
+              {/* ── BOTTOM ORNAMENT ── */}
+              <div style={{ textAlign:"center", marginTop:32 }}>
+                <div style={{ display:"flex", alignItems:"center", gap:8, justifyContent:"center", marginBottom:8 }}>
+                  <div style={{ width:30, height:1, background:`linear-gradient(to right,transparent,rgba(201,151,58,.4))` }} />
+                  <span style={{ fontSize:8, color:GOLD }}>◆</span>
+                  <div style={{ width:30, height:1, background:`linear-gradient(to left,transparent,rgba(201,151,58,.4))` }} />
+                </div>
+                <p style={{ fontFamily:"'Amiri',serif", fontSize:14, color:"rgba(201,151,58,.6)", direction:"rtl" }}>
+                  وَقُل رَّبِّ زِدْنِي عِلْمًا
+                </p>
+              </div>
+            </motion.div>
+          </div>
         </div>
-      </motion.div>
+      </div>
 
-      {/* Forgot Password Modal */}
+      {/* ── FORGOT PASSWORD DIALOG ── */}
       <Dialog open={forgotOpen} onOpenChange={setForgotOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent style={{ borderRadius:20, border:`1.5px solid rgba(201,151,58,.2)`, fontFamily:"'DM Sans',sans-serif" }}>
           <DialogHeader>
-            <DialogTitle>{t("Reset Password", "إعادة تعيين كلمة المرور")}</DialogTitle>
-            <DialogDescription>
-              {t(
-                "Enter your email and we'll send you a reset link.",
-                "أدخل بريدك الإلكتروني وسنرسل لك رابط إعادة التعيين."
-              )}
+            <DialogTitle style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:22, color:G }}>
+              {t("Reset Password", "إعادة تعيين كلمة المرور")}
+            </DialogTitle>
+            <DialogDescription style={{ fontSize:13, color:"#8a7d70" }}>
+              {t("Enter your email and we'll send you a reset link.", "أدخل بريدك الإلكتروني وسنرسل لك رابط إعادة التعيين.")}
             </DialogDescription>
           </DialogHeader>
           {resetSent ? (
-            <div className="py-6 text-center">
-              <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-green-100">
-                <Check className="h-7 w-7 text-green-600" />
+            <div style={{ padding:"20px 0", textAlign:"center" }}>
+              <div style={{ width:60, height:60, borderRadius:"50%", background:"#E8F5E9", border:"2px solid #A5D6A7", display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 16px", animation:"pulse-gold 2s infinite" }}>
+                <Check size={26} color="#2E7D32" />
               </div>
-              <p className="text-sm text-foreground">
-                {t(
-                  "A reset link has been sent to your email.",
-                  "تم إرسال رابط إعادة التعيين إلى بريدك الإلكتروني."
-                )}
+              <p style={{ fontSize:14, color:"#333", marginBottom:6 }}>
+                {t("A reset link has been sent to your email.", "تم إرسال رابط إعادة التعيين إلى بريدك الإلكتروني.")}
               </p>
-              <p className="mt-1 font-arabic text-sm text-secondary">بارك الله فيك</p>
+              <p style={{ fontFamily:"'Amiri',serif", fontSize:15, color:GOLD }}>بارك الله فيك</p>
             </div>
           ) : (
-            <form onSubmit={handleForgotPassword} className="space-y-4">
-              <div className="relative">
-                <Mail className="absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
+            <form onSubmit={handleForgotPassword} style={{ display:"flex", flexDirection:"column", gap:14 }}>
+              <div style={{ position:"relative" }}>
+                <Mail size={15} style={{ position:"absolute", left:14, top:"50%", transform:"translateY(-50%)", color:"#B0A898" }} />
+                <input
+                  className="gold-input"
                   type="email"
-                  placeholder={t("Email", "البريد الإلكتروني")}
+                  placeholder={t("Your email address", "بريدك الإلكتروني")}
                   value={resetEmail}
-                  onChange={(e) => setResetEmail(e.target.value)}
+                  onChange={e => setResetEmail(e.target.value)}
                   required
-                  className="h-12 ps-10"
                 />
               </div>
-              <Button type="submit" className="h-12 w-full" disabled={resetLoading}>
-                {resetLoading && <Loader2 className="me-2 h-4 w-4 animate-spin" />}
-                {t("Send Reset Link", "إرسال رابط إعادة التعيين")}
-              </Button>
+              <button className="sign-btn" type="submit" disabled={resetLoading}>
+                {resetLoading
+                  ? <><Loader2 size={16} style={{ animation:"spin .7s linear infinite" }} /> {t("Sending…", "جارٍ الإرسال…")}</>
+                  : t("Send Reset Link", "إرسال رابط إعادة التعيين")
+                }
+              </button>
             </form>
           )}
         </DialogContent>
       </Dialog>
-    </div>
+    </>
   );
 };
 
