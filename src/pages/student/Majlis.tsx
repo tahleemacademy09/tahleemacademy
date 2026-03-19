@@ -4,6 +4,7 @@
     date separators, search, hamburger, online presence, dark mode, and more
 */
 import { useEffect, useState, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
@@ -14,7 +15,7 @@ import {
   Copy, Camera, Check, Download, Loader2, Forward,
   Edit2, CheckSquare, Square, AtSign, ChevronRight,
   Menu, Settings, User, Bell, HelpCircle, Bookmark,
-  ChevronDown, Archive, Eye, Moon
+  ChevronDown, Archive, Eye, Moon, LayoutDashboard, Users
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import CreateChannelDialog from "@/components/majlis/CreateChannelDialog";
@@ -63,6 +64,56 @@ const WALLPAPERS = [
 ];
 
 const FONT_SIZES: Record<string, string> = { small: "12px", medium: "14px", large: "16px" };
+
+// ── Sound Engine — WhatsApp-style sounds via Web Audio API ─────
+const createSound = (type: "send"|"receive"|"notification"|"open"|"error") => {
+  try {
+    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const g = ctx.createGain();
+    g.connect(ctx.destination);
+
+    const playTone = (freq: number, start: number, dur: number, vol: number, wave: OscillatorType = "sine") => {
+      const o = ctx.createOscillator();
+      const gNode = ctx.createGain();
+      o.connect(gNode); gNode.connect(ctx.destination);
+      o.type = wave; o.frequency.value = freq;
+      gNode.gain.setValueAtTime(0, ctx.currentTime + start);
+      gNode.gain.linearRampToValueAtTime(vol, ctx.currentTime + start + 0.01);
+      gNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + start + dur);
+      o.start(ctx.currentTime + start);
+      o.stop(ctx.currentTime + start + dur + 0.05);
+    };
+
+    if (type === "send") {
+      // WhatsApp send: quick ascending double tone
+      playTone(880, 0,    0.08, 0.15);
+      playTone(1320, 0.09, 0.08, 0.12);
+    } else if (type === "receive") {
+      // WhatsApp receive: descending two-tone
+      playTone(1046, 0,    0.1, 0.18);
+      playTone(784,  0.11, 0.1, 0.15);
+    } else if (type === "notification") {
+      // Short ping
+      playTone(1200, 0, 0.15, 0.2);
+      playTone(900,  0.16, 0.1, 0.1);
+    } else if (type === "open") {
+      // Subtle click/open sound
+      playTone(600, 0, 0.06, 0.08);
+    } else if (type === "error") {
+      playTone(200, 0, 0.2, 0.15, "square");
+    }
+
+    setTimeout(() => ctx.close(), 2000);
+  } catch (_) {}
+};
+
+const playSound = (type: "send"|"receive"|"notification"|"open"|"error", enabled = true) => {
+  if (!enabled) return;
+  // Only play in user gesture context or via small delay
+  createSound(type);
+};
+
+
 
 interface MajlisProps { adminMode?: boolean; onBroadcast?: () => void; onCreateChannel?: () => void; }
 
@@ -286,6 +337,7 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
   const { language }           = useLanguage();
   const { user, profile, hasRole } = useAuth();
   const { toast }              = useToast();
+  const navigate               = useNavigate();
 
   // ── Settings (localStorage) ────────────────────────────────
   const [settings, setSettings] = useState<AppSettings>(() => {
@@ -348,6 +400,9 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
   const [showForwardSheet, setShowForwardSheet]     = useState(false);
   const [showCreateDialog, setShowCreateDialog]     = useState(false);
   const [showBrowseChannels, setShowBrowseChannels] = useState(false);
+  const [showNewSheet, setShowNewSheet]             = useState(false);
+  const [newDmSearch, setNewDmSearch]               = useState("");
+  const [activeFilter, setActiveFilter]             = useState<"all"|"unread"|"groups"|"announcements">("all");
   const [showGroupInfo, setShowGroupInfo]           = useState(false);
   const [selectedMember, setSelectedMember]         = useState<any>(null);
   const [showStudentProfile, setShowStudentProfile] = useState(false);
@@ -424,14 +479,22 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
     ? sortedChannels.filter(c => getCN(c).toLowerCase().includes(sidebarSearch.toLowerCase()))
     : sortedChannels;
 
+  // Apply active filter chip to channel list
+  const filterChannels = (chList: ChatChannel[]) => {
+    if (activeFilter === "all") return chList;
+    if (activeFilter === "unread") return chList.filter(c => (unreadCounts[c.id] || 0) > 0);
+    if (activeFilter === "groups") return chList.filter(c => c.type === "group");
+    if (activeFilter === "announcements") return chList.filter(c => c.type === "announcement");
+    return chList;
+  };
+
   const grouped = {
-    pinned: filteredForSidebar.filter(c => pinnedChannels.has(c.id)),
-    groups: filteredForSidebar.filter(c => c.type === "group" && !pinnedChannels.has(c.id)),
-    // Only show the level channel matching this student's level
-    level:  filteredForSidebar.filter(c => c.type === "level" && !pinnedChannels.has(c.id) && (
+    pinned: filterChannels(filteredForSidebar.filter(c => pinnedChannels.has(c.id))),
+    groups: filterChannels(filteredForSidebar.filter(c => c.type === "group" && !pinnedChannels.has(c.id))),
+    level:  filterChannels(filteredForSidebar.filter(c => c.type === "level" && !pinnedChannels.has(c.id) && (
       !profile?.level || getCN(c).toLowerCase().includes((profile.level || "").toLowerCase())
-    )),
-    anns:   filteredForSidebar.filter(c => c.type === "announcement" && !pinnedChannels.has(c.id)),
+    ))),
+    anns:   filterChannels(filteredForSidebar.filter(c => c.type === "announcement" && !pinnedChannels.has(c.id))),
   };
 
   const contactResults = allStudents.filter(s => sidebarSearch && (
@@ -471,6 +534,7 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
       // Close topmost visible layer first
       if (showMessageMenu) { setShowMessageMenu(null); window.history.pushState({ layer: "chat" }, "", window.location.href); return; }
       if (showDeleteSheet) { setShowDeleteSheet(null); window.history.pushState({ layer: "chat" }, "", window.location.href); return; }
+      if (showNewSheet) { setShowNewSheet(false); window.history.pushState({ layer: "sidebar" }, "", window.location.href); return; }
       if (showStudentProfile) { setShowStudentProfile(false); window.history.pushState({ layer: "chat" }, "", window.location.href); return; }
       if (showGroupInfo) { setShowGroupInfo(false); window.history.pushState({ layer: "chat" }, "", window.location.href); return; }
       if (showSettings) { setShowSettings(false); window.history.pushState({ layer: mobileShowChat ? "chat" : "sidebar" }, "", window.location.href); return; }
@@ -485,10 +549,10 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
         // Go back to sidebar
         setMobileShowChat(false);
         setActiveChannelId(null);
-        // Don't push — let the browser pop naturally back to the sidebar state
         return;
       }
-      // Nothing open — let the browser navigate back normally (to previous page)
+      // Nothing open — go to dashboard
+      navigate("/student");
     };
 
     // Push initial sidebar state once on mount
@@ -499,7 +563,7 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
     window.addEventListener("popstate", onBack);
     return () => window.removeEventListener("popstate", onBack);
   }, [
-    showMessageMenu, showDeleteSheet, showStudentProfile, showGroupInfo,
+    showMessageMenu, showDeleteSheet, showNewSheet, showStudentProfile, showGroupInfo,
     showSettings, showHamburger, showForwardSheet, selectMode,
     editingMsg, replyTo, showChatSearch, showHeaderMenu, mobileShowChat
   ]);
@@ -622,6 +686,12 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
         if (p.eventType === "INSERT") {
           const nm = p.new as unknown as ChatMessage;
           setMessages(prev => prev.find(m => m.id === nm.id) ? prev : [...prev, nm]);
+          // Play receive sound only for messages from others
+          if (nm.user_id !== user?.id) {
+            playSound("receive", settings.notifSound);
+            if (navigator.vibrate && settings.notifVibration) navigator.vibrate(100);
+            setUnreadCounts(prev => ({ ...prev, [nm.channel_id]: (prev[nm.channel_id] || 0) + 1 }));
+          }
           if (!profiles[nm.user_id])
             supabase.from("profiles").select("user_id,full_name,full_name_ar,avatar_url,level").eq("user_id", nm.user_id).maybeSingle()
               .then(({ data }) => { if (data) setProfiles(prev => ({ ...prev, [(data as any).user_id]: data as unknown as UserProfile })); });
@@ -698,8 +768,9 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
     if (disappearTimer > 0) msgData.expires_at = new Date(Date.now() + disappearTimer * 60 * 1000).toISOString();
 
     const { data: inserted, error } = await supabase.from("chat_messages").insert(msgData).select().single();
-    if (error) { setMessages(prev => prev.filter(m => m.id !== tempId)); toast({ title: "Failed to send", variant: "destructive" }); }
+    if (error) { setMessages(prev => prev.filter(m => m.id !== tempId)); playSound("error"); toast({ title: "Failed to send", variant: "destructive" }); }
     else {
+      playSound("send", settings.notifSound);
       setMessages(prev => prev.map(m => m.id === tempId ? inserted as unknown as ChatMessage : m));
       const preview = contentType === "text" ? (text || "").slice(0, 100) : `📎 ${contentType}`;
       await supabase.from("chat_channels" as any).update({ last_message: preview, last_message_at: new Date().toISOString() }).eq("id", activeChannelId);
@@ -915,6 +986,7 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
     setMobileShowChat(true);
     setEditingChannel(false);
     setUnreadCounts(prev => ({ ...prev, [id]: 0 }));
+    playSound("open", settings.notifSound);
     window.history.pushState({ layer: "chat" }, "", window.location.href);
   };
   const handleChannelCreated = async (id: string) => {
@@ -957,7 +1029,7 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
       .settings-panel { animation: slideUp .22s ease; }
       ::-webkit-scrollbar { width:4px; } ::-webkit-scrollbar-thumb { background:#ccc; border-radius:4px; }
       input:focus, textarea:focus { outline:none; }
-      .unread-badge { background:#25D366; color:#fff; border-radius:50%; min-width:18px; height:18px; font-size:10px; display:flex; align-items:center; justify-content:center; font-weight:700; padding:0 4px; }
+      .unread-badge { background:#25D366; color:#fff; border-radius:50%; min-width:20px; height:20px; font-size:11px; display:flex; align-items:center; justify-content:center; font-weight:800; padding:0 5px; box-shadow: 0 1px 4px rgba(37,211,102,.4); }
     `;
     document.head.appendChild(s);
   }, []);
@@ -987,11 +1059,41 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
 
   const renderTicks = (m: ChatMessage) => {
     if (m.user_id !== user?.id) return null;
-    const status = (m as any).status || "sent";
-    if (status === "sending") return <Check style={{ width: 12, height: 12, color: "#9e9e9e" }} />;
-    if (status === "delivered") return <CheckCheck style={{ width: 12, height: 12, color: "#9e9e9e" }} />;
-    return <CheckCheck style={{ width: 12, height: 12, color: "#4FC3F7" }} />;
+    const seenBy: string[] = (m as any).seen_by || [];
+    const othersSeen = seenBy.filter((id: string) => id !== user?.id).length > 0;
+    // Optimistic temp message still sending
+    if (m.id.startsWith("temp-")) {
+      return <Check style={{ width: 12, height: 12, color: "#9e9e9e" }} />;
+    }
+    // Message has been read by at least one other member
+    if (othersSeen) {
+      return <CheckCheck style={{ width: 13, height: 13, color: "#53BDEB" }} />;
+    }
+    // Message delivered (in DB) but not yet read
+    return <CheckCheck style={{ width: 13, height: 13, color: "#9e9e9e" }} />;
   };
+
+  // Mark messages as seen when user opens chat
+  useEffect(() => {
+    if (!activeChannelId || !user || messages.length === 0) return;
+    const unread = messages.filter(m =>
+      m.user_id !== user.id &&
+      !((m as any).seen_by || []).includes(user.id)
+    );
+    if (unread.length === 0) return;
+    // Update seen_by for each unread message in batch
+    const updateSeen = async () => {
+      for (const m of unread) {
+        const currentSeen: string[] = (m as any).seen_by || [];
+        if (!currentSeen.includes(user.id)) {
+          await supabase.from("chat_messages")
+            .update({ seen_by: [...currentSeen, user.id] } as any)
+            .eq("id", m.id);
+        }
+      }
+    };
+    updateSeen();
+  }, [activeChannelId, messages.length]);
 
   const QUICK_EMOJIS = ["👍","❤️","😂","😮","😢","🙏","🔥","✅"];
 
@@ -1061,17 +1163,25 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                   {isPinned && <Pin style={{ width: 12, height: 12, color: textSub }} />}
-                  <span style={{ fontWeight: 600, fontSize: 15, color: textMain, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, maxWidth: 165 }}>{nm}</span>
+                  <span style={{ fontWeight: unread > 0 ? 700 : 600, fontSize: 15, color: textMain, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, maxWidth: 165 }}>{nm}</span>
                   {isMuted && <VolumeX style={{ width: 12, height: 12, color: textSub }} />}
                 </div>
-                <span style={{ fontSize: 11, color: unread > 0 && !isMuted ? "#25D366" : textSub, flexShrink: 0, marginLeft: 4 }}>{lastTime}</span>
+                <span style={{ fontSize: 11, color: unread > 0 && !isMuted ? "#25D366" : textSub, flexShrink: 0, marginLeft: 4, fontWeight: unread > 0 ? 700 : 400 }}>{lastTime}</span>
               </div>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 3 }}>
-                <span style={{ fontSize: 13, color: textSub, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, maxWidth: 210 }}>
+                <span style={{ fontSize: 13, color: unread > 0 ? textMain : textSub, fontWeight: unread > 0 ? 600 : 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, maxWidth: 210 }}>
                   {lastMsg || (memberPreview ? memberPreview : "Tap to chat")}
                 </span>
-                {unread > 0 && !isMuted && <span className="unread-badge">{unread > 99 ? "99+" : unread}</span>}
-                {unread > 0 && isMuted && <span className="unread-badge" style={{ background: "#8696a0" }}>{unread}</span>}
+                <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+                  {unread > 0 && !isMuted && (
+                    <span className="unread-badge" style={{ animation: unread > 0 ? "none" : undefined }}>
+                      {unread > 99 ? "99+" : unread}
+                    </span>
+                  )}
+                  {unread > 0 && isMuted && (
+                    <span className="unread-badge" style={{ background: "#8696a0" }}>{unread > 99 ? "99+" : unread}</span>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -1477,7 +1587,7 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
             <button onClick={() => setShowBrowseChannels(true)} style={{ background: "none", border: "none", color: "#fff", cursor: "pointer", padding: 6, borderRadius: 8 }}>
               <Search size={18} />
             </button>
-            <button onClick={() => setShowCreateDialog(true)} style={{ background: "rgba(255,255,255,0.15)", border: "none", color: "#fff", cursor: "pointer", padding: "6px 10px", borderRadius: 8, fontSize: 13, fontWeight: 600 }}>
+            <button onClick={() => { setShowNewSheet(true); window.history.pushState({ layer: "newSheet" }, "", window.location.href); }} style={{ background: "rgba(255,255,255,0.15)", border: "none", color: "#fff", cursor: "pointer", padding: "6px 10px", borderRadius: 8, fontSize: 13, fontWeight: 600 }}>
               + New
             </button>
             <button onClick={() => { setShowSettings(true); window.history.pushState({ layer: "settings" }, "", window.location.href); }} style={{ background: "none", border: "none", color: "#fff", cursor: "pointer", padding: 6, borderRadius: 8 }}>
@@ -1495,27 +1605,23 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
           </div>
         </div>
 
-        {/* WhatsApp-style filter chips */}
+        {/* WhatsApp-style filter chips — actually filter the list */}
         {!sidebarSearch && (
           <div style={{ display: "flex", gap: 8, padding: "6px 12px 8px", overflowX: "auto", background: isDark ? "#111b21" : "#fff" }}>
-            {(["All", "Unread", "Groups", "Announcements"] as const).map(chip => {
-              const chipActive = chip === "All"
-                ? !searchTab || searchTab === "contacts"
-                : chip === "Unread"
-                ? searchTab === "messages"
-                : chip === "Groups"
-                ? searchTab === "groups"
-                : searchTab === "groups";
+            {(["all","unread","groups","announcements"] as const).map(chip => {
+              const isActive = activeFilter === chip;
+              const label = chip === "all" ? "All" : chip === "unread" ? "Unread" : chip === "groups" ? "Groups" : "Announcements";
+              const unreadTotal = Object.values(unreadCounts).reduce((a, b) => a + b, 0);
               return (
-                <button key={chip} onClick={() => setSearchTab(chip === "All" ? "contacts" : chip === "Unread" ? "messages" : "groups")}
-                  style={{ padding: "5px 14px", borderRadius: 20, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" as const, flexShrink: 0,
-                    background: chip === "All" ? WA_GREEN : inputBg,
-                    color: chip === "All" ? "#fff" : textSub,
+                <button key={chip} onClick={() => setActiveFilter(chip)}
+                  style={{ padding: "5px 14px", borderRadius: 20, border: isActive ? "none" : `1px solid ${divider}`, cursor: "pointer", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" as const, flexShrink: 0, transition: "all .15s",
+                    background: isActive ? WA_GREEN : (isDark ? "#2a3942" : "#f0f2f5"),
+                    color: isActive ? "#fff" : textSub,
                   }}>
-                  {chip}
-                  {chip === "Unread" && Object.values(unreadCounts).reduce((a, b) => a + b, 0) > 0 && (
-                    <span style={{ marginLeft: 4, background: "#25D366", color: "#fff", borderRadius: 10, padding: "0 5px", fontSize: 10 }}>
-                      {Object.values(unreadCounts).reduce((a, b) => a + b, 0)}
+                  {label}
+                  {chip === "unread" && unreadTotal > 0 && (
+                    <span style={{ marginLeft: 5, background: isActive ? "rgba(255,255,255,.3)" : "#25D366", color: "#fff", borderRadius: 10, padding: "0 5px", fontSize: 10 }}>
+                      {unreadTotal}
                     </span>
                   )}
                 </button>
@@ -1907,6 +2013,7 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
             </div>
             {/* Menu items */}
             {[
+              { icon: <LayoutDashboard size={20} />, label: "Dashboard", fn: () => { setShowHamburger(false); navigate("/student"); } },
               { icon: <MessageCircle size={20} />, label: "Chats", fn: () => setShowHamburger(false) },
               { icon: <User size={20} />, label: "My Profile", fn: () => { setSettingsTab("profile"); setShowSettings(true); setShowHamburger(false); window.history.pushState({ layer: "settings" }, "", window.location.href); } },
               { icon: <Settings size={20} />, label: "Settings", fn: () => { setShowSettings(true); setShowHamburger(false); window.history.pushState({ layer: "settings" }, "", window.location.href); } },
@@ -1919,6 +2026,73 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
                 <span style={{ color: WA_GREEN }}>{item.icon}</span>{item.label}
               </button>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* + New Sheet — create group or start DM */}
+      {showNewSheet && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 500, background: "rgba(0,0,0,.5)" }} onClick={() => setShowNewSheet(false)}>
+          <div className="sheet" style={{ position: "absolute", bottom: 0, left: 0, right: 0, maxWidth: 480, margin: "0 auto", background: isDark ? "#111b21" : "#fff", borderRadius: "20px 20px 0 0", maxHeight: "90vh", display: "flex", flexDirection: "column", overflow: "hidden" }} onClick={e => e.stopPropagation()}>
+            {/* Header */}
+            <div style={{ background: WA_GREEN, padding: "16px 20px", display: "flex", alignItems: "center", gap: 12 }}>
+              <button onClick={() => setShowNewSheet(false)} style={{ background: "none", border: "none", color: "#fff", cursor: "pointer" }}><ArrowLeft size={20} /></button>
+              <span style={{ color: "#fff", fontWeight: 700, fontSize: 17 }}>New Conversation</span>
+            </div>
+            {/* Options */}
+            <div style={{ borderBottom: `1px solid ${divider}` }}>
+              <div onClick={() => { setShowNewSheet(false); setShowCreateDialog(true); }} style={{ display: "flex", alignItems: "center", gap: 14, padding: "16px 20px", cursor: "pointer" }}>
+                <div style={{ width: 46, height: 46, borderRadius: "50%", background: WA_GREEN, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <Users size={20} color="#fff" />
+                </div>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 15, color: textMain }}>New Group</div>
+                  <div style={{ fontSize: 12, color: textSub }}>Create a new group chat</div>
+                </div>
+              </div>
+              <div onClick={() => { setShowNewSheet(false); setShowBrowseChannels(true); }} style={{ display: "flex", alignItems: "center", gap: 14, padding: "16px 20px", cursor: "pointer", borderTop: `1px solid ${divider}` }}>
+                <div style={{ width: 46, height: 46, borderRadius: "50%", background: "#128C7E", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <Search size={20} color="#fff" />
+                </div>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 15, color: textMain }}>Browse Channels</div>
+                  <div style={{ fontSize: 12, color: textSub }}>Join existing groups & channels</div>
+                </div>
+              </div>
+            </div>
+            {/* Search contacts for DM */}
+            <div style={{ padding: "10px 16px", background: isDark ? "#111b21" : "#fff" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, background: inputBg, borderRadius: 24, padding: "8px 14px" }}>
+                <Search size={15} color={textSub} />
+                <input value={newDmSearch} onChange={e => setNewDmSearch(e.target.value)} placeholder="Search for a student to message…" style={{ border: "none", background: "transparent", flex: 1, fontSize: 14, color: textMain, outline: "none" }} autoFocus />
+                {newDmSearch && <button onClick={() => setNewDmSearch("")} style={{ background: "none", border: "none", cursor: "pointer" }}><X size={14} color={textSub} /></button>}
+              </div>
+            </div>
+            {/* Contact list */}
+            <div style={{ flex: 1, overflowY: "auto" }}>
+              {(newDmSearch
+                ? allStudents.filter(s => s.user_id !== user?.id && (s.full_name || "").toLowerCase().includes(newDmSearch.toLowerCase()))
+                : allStudents.filter(s => s.user_id !== user?.id).slice(0, 20)
+              ).map(s => (
+                <div key={s.user_id} onClick={() => {
+                  setSelectedMember(s);
+                  setShowStudentProfile(true);
+                  setShowNewSheet(false);
+                  window.history.pushState({ layer: "profile" }, "", window.location.href);
+                  playSound("open", settings.notifSound);
+                }} style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 20px", cursor: "pointer", borderBottom: `1px solid ${divider}` }}>
+                  {avatarEl(s.user_id, 46)}
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 600, fontSize: 15, color: textMain }}>{s.full_name || "Student"}</div>
+                    <div style={{ fontSize: 12, color: WA_GREEN }}>{(s as any).level || "Student"}</div>
+                  </div>
+                  <MessageCircle size={18} color={textSub} />
+                </div>
+              ))}
+              {newDmSearch && allStudents.filter(s => s.user_id !== user?.id && (s.full_name || "").toLowerCase().includes(newDmSearch.toLowerCase())).length === 0 && (
+                <div style={{ padding: 30, textAlign: "center", color: textSub, fontSize: 14 }}>No students found</div>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -1936,6 +2110,7 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
           </div>
         </div>
       )}
+
 
       {/* Forward Sheet */}
       {showForwardSheet && (
