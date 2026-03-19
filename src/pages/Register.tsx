@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
@@ -64,20 +64,6 @@ const Register = () => {
   const { toast }  = useToast();
   const navigate   = useNavigate();
 
-  // Load Paystack inline script on mount
-  useEffect(() => {
-    if (document.getElementById("paystack-inline")) return; // already loaded
-    const script = document.createElement("script");
-    script.id  = "paystack-inline";
-    script.src = "https://js.paystack.co/v1/inline.js";
-    script.async = true;
-    document.body.appendChild(script);
-    return () => {
-      const el = document.getElementById("paystack-inline");
-      if (el) document.body.removeChild(el);
-    };
-  }, []);
-
   // Step 1 state
   const [fullName, setFullName]   = useState("");
   const [email, setEmail]         = useState("");
@@ -120,33 +106,56 @@ const Register = () => {
 
   // ── Step 2 → pay via Paystack then create account ────────────
   const handlePayment = () => {
-    setPaying(true);
     const ref = `TAH-REG-${Date.now()}`;
 
-    // Demo mode (no Paystack key configured)
+    // No Paystack key — demo mode
     if (!PAYSTACK_KEY) {
-      setTimeout(() => { setPaying(false); setPayRef(ref); createAccount(ref); }, 1200);
+      toast({ title: "⚠️ Demo mode — no Paystack key configured", description: "Simulating payment..." });
+      setPaying(true);
+      setTimeout(() => { setPaying(false); setPayRef(ref); createAccount(ref); }, 1500);
       return;
     }
 
-    const handler = (window as any).PaystackPop?.setup({
-      key:      PAYSTACK_KEY,
-      email,
-      amount:   REGISTRATION_FEE * 100,
-      currency: "NGN",
-      ref,
-      metadata: { full_name: fullName, type: "registration" },
-      callback: (res: any) => {
-        setPaying(false);
-        setPayRef(res.reference);
-        createAccount(res.reference);
-      },
-      onClose: () => {
-        setPaying(false);
-        toast({ title: "Payment cancelled. You can try again." });
-      },
-    });
-    handler?.openIframe?.();
+    // Paystack script not loaded yet
+    const PaystackPop = (window as any).PaystackPop;
+    if (!PaystackPop) {
+      toast({
+        title: "Payment system not ready",
+        description: "Please wait a moment and try again.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setPaying(true);
+
+    try {
+      const handler = PaystackPop.setup({
+        key:      PAYSTACK_KEY,
+        email,
+        amount:   REGISTRATION_FEE * 100, // kobo
+        currency: "NGN",
+        ref,
+        metadata: { full_name: fullName, type: "registration" },
+        callback: (res: any) => {
+          setPaying(false);
+          setPayRef(res.reference);
+          createAccount(res.reference);
+        },
+        onClose: () => {
+          setPaying(false);
+          toast({ title: "Payment cancelled", description: "You can try again when you're ready." });
+        },
+      });
+      handler.openIframe();
+    } catch (err: any) {
+      setPaying(false);
+      toast({
+        title: "Payment failed to launch",
+        description: err?.message || "Please check your internet connection and try again.",
+        variant: "destructive",
+      });
+    }
   };
 
   // ── Create account after payment ─────────────────────────────
