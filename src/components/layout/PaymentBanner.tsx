@@ -32,7 +32,7 @@ const PaymentBanner = () => {
       </div>
       <Button
         size="sm"
-        onClick={() => navigate("/student/payment")}
+        onClick={() => navigate("/student/enrollment-payment")}
         className="text-xs whitespace-nowrap"
         style={{ background: "#c9973a", color: "#fff" }}
       >
