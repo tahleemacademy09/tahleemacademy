@@ -105,6 +105,8 @@ const TeacherTranscript = lazy(() => import("./pages/teacher/TeacherTranscript")
 const TeacherAttendance = lazy(() => import("./pages/teacher/TeacherAttendance"));
 const TeacherAnnouncements = lazy(() => import("./pages/teacher/TeacherAnnouncements"));
 const TeacherSettings = lazy(() => import("./pages/teacher/TeacherSettings"));
+const HifdhAdminReview = lazy(() => import("./pages/admin/HifdhAdminReview"));
+const TeacherRecitation = lazy(() => import("./pages/teacher/TeacherRecitation"));
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -189,6 +191,7 @@ const App = () => (
                   <Route path="/teacher/announcements" element={<TeacherAnnouncements />} />
                   <Route path="/teacher/settings" element={<TeacherSettings />} />
                   <Route path="/teacher/public-classes" element={<PublicClassManagement />} />
+                  <Route path="/teacher/recitation" element={<TeacherRecitation />} />
                 </Route>
 
                 {/* Admin dashboard */}
@@ -212,6 +215,7 @@ const App = () => (
                   <Route path="/admin/majlis-moderation" element={<MajlisModeration />} />
                   <Route path="/admin/notifications" element={<NotificationManagement />} />
                   <Route path="/admin/entrance-exam" element={<EntranceExamAdmin />} />
+                  <Route path="/admin/recitation-review" element={<HifdhAdminReview />} />
                   <Route path="/admin/transcripts" element={<TranscriptManagement />} />
                   <Route path="/admin/attendance" element={<AttendanceManagement />} />
                   <Route path="/admin/payments" element={<PaymentManagement />} />
