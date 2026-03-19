@@ -34,8 +34,6 @@ interface Enrollment {
   next_due_date: string | null;
   admin_override: boolean;
   admin_override_until: string | null;
-  registration_paid: boolean;
-  registration_paid_at: string | null;
   created_at: string;
 }
 
@@ -127,7 +125,6 @@ const EnrollmentPayment = () => {
   const fees           = LEVEL_FEES[level] || LEVEL_FEES.default;
   const accessStatus   = getAccessStatus(enrollment);
   const graceRemaining = daysLeft(enrollment?.grace_end_date || null);
-  const regPaid        = enrollment?.registration_paid === true;
   const amountDue      = selectedPlan === "monthly" ? fees.monthly : fees.term;
 
   // ── Load ──────────────────────────────────────────────────────
