@@ -7,7 +7,7 @@ import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   BookOpen, Menu, X, CreditCard, LogIn, UserPlus,
-  ChevronRight, Star, FileText, GraduationCap, Mic,
+  ChevronRight, ChevronDown, Star, FileText, GraduationCap, Mic,
   Video, CheckCircle2, ArrowRight, Globe, Home,
   Info, Phone, Clock, Shield, AlertCircle
 } from "lucide-react";
@@ -184,12 +184,13 @@ const EnrollPanel = ({ onClose, onRegister, mobile }: { onClose: () => void; onR
 const PublicNav = () => {
   const location  = useLocation();
   const navigate  = useNavigate();
-  const [panel, setPanel] = useState<Panel>(null);
+  const [panel, setPanel]           = useState<Panel>(null);
+  const [enrollOpen, setEnrollOpen] = useState(false);
 
   const isActive = (path: string) =>
     path === "/" ? location.pathname === "/" : location.pathname.startsWith(path);
 
-  const close = () => setPanel(null);
+  const close = () => { setPanel(null); setEnrollOpen(false); };
 
   return (
     <>
@@ -280,17 +281,31 @@ const PublicNav = () => {
 
             {/* ── ENROLL SECTION ──────────────────────────── */}
             <div style={{ margin:"0 16px 16px", borderRadius:16, border:`2px solid ${GOLD}`, overflow:"hidden" }}>
-              {/* Gold header */}
-              <div style={{ background:`linear-gradient(135deg,${GOLD},#B8860B)`, padding:"14px 18px", display:"flex", alignItems:"center", gap:10 }}>
+              {/* Gold header — tap to collapse/expand */}
+              <button
+                onClick={() => setEnrollOpen(o => !o)}
+                style={{ width:"100%", background:`linear-gradient(135deg,${GOLD},#B8860B)`, padding:"14px 18px", display:"flex", alignItems:"center", gap:10, border:"none", cursor:"pointer", textAlign:"left" }}
+              >
                 <div style={{ width:36, height:36, borderRadius:"50%", background:"rgba(255,255,255,.2)", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
                   <Star size={18} color="#fff" fill="#fff" />
                 </div>
-                <div>
+                <div style={{ flex:1 }}>
                   <div style={{ color:"#fff", fontWeight:800, fontSize:16 }}>How to Enroll</div>
-                  <div style={{ color:"rgba(255,255,255,.8)", fontSize:12 }}>Everything you need to know before starting</div>
+                  <div style={{ color:"rgba(255,255,255,.8)", fontSize:12 }}>
+                    {enrollOpen ? "Tap to collapse" : "Tap to see the full enrolment guide"}
+                  </div>
                 </div>
-              </div>
-              <EnrollPanel onClose={close} onRegister={() => { close(); navigate("/register"); }} mobile />
+                <div style={{ width:32, height:32, borderRadius:"50%", background:"rgba(255,255,255,.15)", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, transition:"transform .25s", transform: enrollOpen ? "rotate(180deg)" : "rotate(0deg)" }}>
+                  <ChevronDown size={18} color="#fff" />
+                </div>
+              </button>
+
+              {/* Collapsible body */}
+              {enrollOpen && (
+                <div style={{ animation:"slideDown .2s ease" }}>
+                  <EnrollPanel onClose={close} onRegister={() => { close(); navigate("/register"); }} mobile />
+                </div>
+              )}
             </div>
 
             {/* Auth buttons */}
