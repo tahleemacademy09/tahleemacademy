@@ -26,133 +26,7 @@ const NAV_LINKS = [
 
 type Panel = null | "enroll" | "menu";
 
-const PublicNav = () => {
-  const location  = useLocation();
-  const navigate  = useNavigate();
-  const [panel, setPanel] = useState<Panel>(null);
-
-  const isActive = (path: string) =>
-    path === "/" ? location.pathname === "/" : location.pathname.startsWith(path);
-
-  const close = () => setPanel(null);
-
-  return (
-    <>
-      <style>{`
-        @keyframes slideDown { from{opacity:0;transform:translateY(-8px)} to{opacity:1;transform:none} }
-        @keyframes slideUp   { from{opacity:0;transform:translateY(20px)} to{opacity:1;transform:none} }
-        @keyframes fadeIn    { from{opacity:0} to{opacity:1} }
-        @keyframes glow      { 0%,100%{box-shadow:0 0 0 0 rgba(212,168,67,.4)} 50%{box-shadow:0 0 0 10px rgba(212,168,67,0)} }
-        .nav-link-desktop:hover { color:${GOLD} !important; }
-        .mob-row:hover { background:rgba(6,78,59,.04) !important; }
-        .enroll-step { transition: background .15s; }
-        .enroll-step:hover { background: rgba(6,78,59,.03); }
-        @media(min-width:769px){ .mobile-only{ display:none!important } }
-        @media(max-width:768px){ .desktop-only{ display:none!important } }
-      `}</style>
-
-      <header style={{ position:"sticky", top:0, zIndex:200, background:"#fff", borderBottom:"1px solid rgba(6,78,59,.1)", boxShadow:"0 1px 8px rgba(6,78,59,.06)" }}>
-        <div style={{ maxWidth:1200, margin:"0 auto", padding:"0 20px", height:64, display:"flex", alignItems:"center", justifyContent:"space-between", gap:16 }}>
-
-          {/* Logo */}
-          <Link to="/" onClick={close} style={{ textDecoration:"none", display:"flex", alignItems:"center", gap:10, flexShrink:0 }}>
-            <div style={{ width:38, height:38, borderRadius:10, background:G, display:"flex", alignItems:"center", justifyContent:"center" }}>
-              <BookOpen style={{ width:19, height:19, color:GOLD }} />
-            </div>
-            <div>
-              <div style={{ fontSize:16, fontWeight:900, color:G, lineHeight:1 }}>Tahleem <span style={{ color:GOLD }}>Academy</span></div>
-              <div style={{ fontSize:10, color:"#7a9e88", direction:"rtl" }}>أكاديمية تعليم</div>
-            </div>
-          </Link>
-
-          {/* Desktop nav */}
-          <nav className="desktop-only" style={{ display:"flex", alignItems:"center", gap:2 }}>
-            {NAV_LINKS.map(link => (
-              <Link key={link.to} to={link.to} className="nav-link-desktop"
-                style={{ padding:"6px 14px", borderRadius:8, textDecoration:"none", fontSize:14, fontWeight:isActive(link.to)?700:500, color:isActive(link.to)?G:"#555", background:isActive(link.to)?"#F0FDF4":"transparent", transition:"color .15s" }}>
-                {link.label}
-              </Link>
-            ))}
-          </nav>
-
-          {/* Desktop CTAs */}
-          <div className="desktop-only" style={{ display:"flex", alignItems:"center", gap:8 }}>
-            <button onClick={() => setPanel(p => p === "enroll" ? null : "enroll")}
-              style={{ padding:"8px 18px", borderRadius:10, fontSize:13, fontWeight:700, color:"#fff", background:`linear-gradient(135deg,${GOLD},#B8860B)`, border:"none", cursor:"pointer", display:"flex", alignItems:"center", gap:6, boxShadow:"0 2px 8px rgba(212,168,67,.3)", animation:"glow 3s infinite" }}>
-              <Star size={13} fill="currentColor" /> How to Enroll
-            </button>
-            <Link to="/login" style={{ padding:"8px 16px", borderRadius:10, textDecoration:"none", fontSize:13, fontWeight:600, color:G, border:`1.5px solid rgba(6,78,59,.2)`, display:"flex", alignItems:"center", gap:6 }}>
-              <LogIn size={14} /> Sign In
-            </Link>
-            <Link to="/register" style={{ padding:"8px 18px", borderRadius:10, textDecoration:"none", fontSize:13, fontWeight:700, color:"#fff", background:`linear-gradient(135deg,${G},${GM})`, display:"flex", alignItems:"center", gap:6, boxShadow:"0 2px 8px rgba(6,78,59,.25)" }}>
-              <UserPlus size={14} /> Register
-            </Link>
-          </div>
-
-          {/* Mobile hamburger */}
-          <button className="mobile-only" onClick={() => setPanel(p => p === "menu" ? null : "menu")}
-            style={{ background:"none", border:"none", cursor:"pointer", color:G, padding:6, display:"flex", alignItems:"center", justifyContent:"center" }}>
-            {panel === "menu" ? <X size={24} /> : <Menu size={24} />}
-          </button>
-        </div>
-
-        {/* ── DESKTOP ENROLL PANEL ──────────────────────────────── */}
-        {panel === "enroll" && (
-          <div style={{ position:"fixed", inset:0, zIndex:300, background:"rgba(0,0,0,.5)", animation:"fadeIn .2s ease" }} onClick={close}>
-            <div style={{ position:"absolute", top:64, right:20, width:380, background:"#fff", borderRadius:20, boxShadow:"0 20px 60px rgba(0,0,0,.2)", overflow:"hidden", animation:"slideDown .22s ease" }} onClick={e => e.stopPropagation()}>
-              <EnrollPanel onClose={close} onRegister={() => { close(); navigate("/register"); }} />
-            </div>
-          </div>
-        )}
-      </header>
-
-      {/* ── MOBILE DRAWER ─────────────────────────────────────── */}
-      {panel === "menu" && (
-        <div style={{ position:"fixed", inset:0, zIndex:190, background:"rgba(0,0,0,.5)", animation:"fadeIn .2s ease" }} onClick={close}>
-          <div style={{ position:"absolute", top:64, left:0, right:0, background:"#fff", maxHeight:"calc(100vh - 64px)", overflowY:"auto", animation:"slideDown .22s ease" }} onClick={e => e.stopPropagation()}>
-
-            {/* Nav links */}
-            <div style={{ padding:"8px 0" }}>
-              {NAV_LINKS.map(link => (
-                <Link key={link.to} to={link.to} className="mob-row" onClick={close}
-                  style={{ display:"flex", alignItems:"center", gap:14, padding:"14px 24px", textDecoration:"none", fontSize:15, fontWeight:isActive(link.to)?700:500, color:isActive(link.to)?G:"#333", background:isActive(link.to)?"#F0FDF4":"transparent", borderBottom:"1px solid rgba(6,78,59,.06)" }}>
-                  <span style={{ color:isActive(link.to)?G:"#9ca3af" }}>{link.icon}</span>
-                  {link.label}
-                  {isActive(link.to) && <ChevronRight size={14} color={G} style={{ marginLeft:"auto" }} />}
-                </Link>
-              ))}
-            </div>
-
-            {/* ── ENROLL SECTION ──────────────────────────── */}
-            <div style={{ margin:"0 16px 16px", borderRadius:16, border:`2px solid ${GOLD}`, overflow:"hidden" }}>
-              {/* Gold header */}
-              <div style={{ background:`linear-gradient(135deg,${GOLD},#B8860B)`, padding:"14px 18px", display:"flex", alignItems:"center", gap:10 }}>
-                <div style={{ width:36, height:36, borderRadius:"50%", background:"rgba(255,255,255,.2)", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
-                  <Star size={18} color="#fff" fill="#fff" />
-                </div>
-                <div>
-                  <div style={{ color:"#fff", fontWeight:800, fontSize:16 }}>How to Enroll</div>
-                  <div style={{ color:"rgba(255,255,255,.8)", fontSize:12 }}>Everything you need to know before starting</div>
-                </div>
-              </div>
-              <EnrollPanel onClose={close} onRegister={() => { close(); navigate("/register"); }} mobile />
-            </div>
-
-            {/* Auth buttons */}
-            <div style={{ display:"flex", flexDirection:"column", gap:10, padding:"0 16px 24px" }}>
-              <Link to="/login" onClick={close}
-                style={{ padding:"13px", borderRadius:12, textDecoration:"none", fontSize:14, fontWeight:600, color:G, border:`1.5px solid rgba(6,78,59,.2)`, textAlign:"center", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
-                <LogIn size={16} /> Sign In to Existing Account
-              </Link>
-            </div>
-          </div>
-        </div>
-      )}
-    </>
-  );
-};
-
-// ── ENROLL PANEL CONTENT ─────────────────────────────────────────
+// ── ENROLL PANEL CONTENT (defined before PublicNav so const is in scope) ──
 const EnrollPanel = ({ onClose, onRegister, mobile }: { onClose: () => void; onRegister: () => void; mobile?: boolean }) => (
   <div style={{ padding: mobile ? "0 0 4px" : undefined }}>
 
@@ -306,5 +180,131 @@ const EnrollPanel = ({ onClose, onRegister, mobile }: { onClose: () => void; onR
     </div>
   </div>
 );
+
+const PublicNav = () => {
+  const location  = useLocation();
+  const navigate  = useNavigate();
+  const [panel, setPanel] = useState<Panel>(null);
+
+  const isActive = (path: string) =>
+    path === "/" ? location.pathname === "/" : location.pathname.startsWith(path);
+
+  const close = () => setPanel(null);
+
+  return (
+    <>
+      <style>{`
+        @keyframes slideDown { from{opacity:0;transform:translateY(-8px)} to{opacity:1;transform:none} }
+        @keyframes slideUp   { from{opacity:0;transform:translateY(20px)} to{opacity:1;transform:none} }
+        @keyframes fadeIn    { from{opacity:0} to{opacity:1} }
+        @keyframes glow      { 0%,100%{box-shadow:0 0 0 0 rgba(212,168,67,.4)} 50%{box-shadow:0 0 0 10px rgba(212,168,67,0)} }
+        .nav-link-desktop:hover { color:${GOLD} !important; }
+        .mob-row:hover { background:rgba(6,78,59,.04) !important; }
+        .enroll-step { transition: background .15s; }
+        .enroll-step:hover { background: rgba(6,78,59,.03); }
+        @media(min-width:769px){ .mobile-only{ display:none!important } }
+        @media(max-width:768px){ .desktop-only{ display:none!important } }
+      `}</style>
+
+      <header style={{ position:"sticky", top:0, zIndex:200, background:"#fff", borderBottom:"1px solid rgba(6,78,59,.1)", boxShadow:"0 1px 8px rgba(6,78,59,.06)" }}>
+        <div style={{ maxWidth:1200, margin:"0 auto", padding:"0 20px", height:64, display:"flex", alignItems:"center", justifyContent:"space-between", gap:16 }}>
+
+          {/* Logo */}
+          <Link to="/" onClick={close} style={{ textDecoration:"none", display:"flex", alignItems:"center", gap:10, flexShrink:0 }}>
+            <div style={{ width:38, height:38, borderRadius:10, background:G, display:"flex", alignItems:"center", justifyContent:"center" }}>
+              <BookOpen style={{ width:19, height:19, color:GOLD }} />
+            </div>
+            <div>
+              <div style={{ fontSize:16, fontWeight:900, color:G, lineHeight:1 }}>Tahleem <span style={{ color:GOLD }}>Academy</span></div>
+              <div style={{ fontSize:10, color:"#7a9e88", direction:"rtl" }}>أكاديمية تعليم</div>
+            </div>
+          </Link>
+
+          {/* Desktop nav */}
+          <nav className="desktop-only" style={{ display:"flex", alignItems:"center", gap:2 }}>
+            {NAV_LINKS.map(link => (
+              <Link key={link.to} to={link.to} className="nav-link-desktop"
+                style={{ padding:"6px 14px", borderRadius:8, textDecoration:"none", fontSize:14, fontWeight:isActive(link.to)?700:500, color:isActive(link.to)?G:"#555", background:isActive(link.to)?"#F0FDF4":"transparent", transition:"color .15s" }}>
+                {link.label}
+              </Link>
+            ))}
+          </nav>
+
+          {/* Desktop CTAs */}
+          <div className="desktop-only" style={{ display:"flex", alignItems:"center", gap:8 }}>
+            <button onClick={() => setPanel(p => p === "enroll" ? null : "enroll")}
+              style={{ padding:"8px 18px", borderRadius:10, fontSize:13, fontWeight:700, color:"#fff", background:`linear-gradient(135deg,${GOLD},#B8860B)`, border:"none", cursor:"pointer", display:"flex", alignItems:"center", gap:6, boxShadow:"0 2px 8px rgba(212,168,67,.3)", animation:"glow 3s infinite" }}>
+              <Star size={13} fill="currentColor" /> How to Enroll
+            </button>
+            <Link to="/login" style={{ padding:"8px 16px", borderRadius:10, textDecoration:"none", fontSize:13, fontWeight:600, color:G, border:`1.5px solid rgba(6,78,59,.2)`, display:"flex", alignItems:"center", gap:6 }}>
+              <LogIn size={14} /> Sign In
+            </Link>
+            <Link to="/register" style={{ padding:"8px 18px", borderRadius:10, textDecoration:"none", fontSize:13, fontWeight:700, color:"#fff", background:`linear-gradient(135deg,${G},${GM})`, display:"flex", alignItems:"center", gap:6, boxShadow:"0 2px 8px rgba(6,78,59,.25)" }}>
+              <UserPlus size={14} /> Register
+            </Link>
+          </div>
+
+          {/* Mobile hamburger */}
+          <button className="mobile-only" onClick={() => setPanel(p => p === "menu" ? null : "menu")}
+            style={{ background:"none", border:"none", cursor:"pointer", color:G, padding:6, display:"flex", alignItems:"center", justifyContent:"center" }}>
+            {panel === "menu" ? <X size={24} /> : <Menu size={24} />}
+          </button>
+        </div>
+
+        {/* ── DESKTOP ENROLL PANEL ──────────────────────────────── */}
+        {panel === "enroll" && (
+          <div style={{ position:"fixed", inset:0, zIndex:300, background:"rgba(0,0,0,.5)", animation:"fadeIn .2s ease" }} onClick={close}>
+            <div style={{ position:"absolute", top:64, right:20, width:380, background:"#fff", borderRadius:20, boxShadow:"0 20px 60px rgba(0,0,0,.2)", overflow:"hidden", animation:"slideDown .22s ease" }} onClick={e => e.stopPropagation()}>
+              <EnrollPanel onClose={close} onRegister={() => { close(); navigate("/register"); }} />
+            </div>
+          </div>
+        )}
+      </header>
+
+      {/* ── MOBILE DRAWER ─────────────────────────────────────── */}
+      {panel === "menu" && (
+        <div style={{ position:"fixed", inset:0, zIndex:190, background:"rgba(0,0,0,.5)", animation:"fadeIn .2s ease" }} onClick={close}>
+          <div style={{ position:"absolute", top:64, left:0, right:0, background:"#fff", maxHeight:"calc(100vh - 64px)", overflowY:"auto", animation:"slideDown .22s ease" }} onClick={e => e.stopPropagation()}>
+
+            {/* Nav links */}
+            <div style={{ padding:"8px 0" }}>
+              {NAV_LINKS.map(link => (
+                <Link key={link.to} to={link.to} className="mob-row" onClick={close}
+                  style={{ display:"flex", alignItems:"center", gap:14, padding:"14px 24px", textDecoration:"none", fontSize:15, fontWeight:isActive(link.to)?700:500, color:isActive(link.to)?G:"#333", background:isActive(link.to)?"#F0FDF4":"transparent", borderBottom:"1px solid rgba(6,78,59,.06)" }}>
+                  <span style={{ color:isActive(link.to)?G:"#9ca3af" }}>{link.icon}</span>
+                  {link.label}
+                  {isActive(link.to) && <ChevronRight size={14} color={G} style={{ marginLeft:"auto" }} />}
+                </Link>
+              ))}
+            </div>
+
+            {/* ── ENROLL SECTION ──────────────────────────── */}
+            <div style={{ margin:"0 16px 16px", borderRadius:16, border:`2px solid ${GOLD}`, overflow:"hidden" }}>
+              {/* Gold header */}
+              <div style={{ background:`linear-gradient(135deg,${GOLD},#B8860B)`, padding:"14px 18px", display:"flex", alignItems:"center", gap:10 }}>
+                <div style={{ width:36, height:36, borderRadius:"50%", background:"rgba(255,255,255,.2)", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                  <Star size={18} color="#fff" fill="#fff" />
+                </div>
+                <div>
+                  <div style={{ color:"#fff", fontWeight:800, fontSize:16 }}>How to Enroll</div>
+                  <div style={{ color:"rgba(255,255,255,.8)", fontSize:12 }}>Everything you need to know before starting</div>
+                </div>
+              </div>
+              <EnrollPanel onClose={close} onRegister={() => { close(); navigate("/register"); }} mobile />
+            </div>
+
+            {/* Auth buttons */}
+            <div style={{ display:"flex", flexDirection:"column", gap:10, padding:"0 16px 24px" }}>
+              <Link to="/login" onClick={close}
+                style={{ padding:"13px", borderRadius:12, textDecoration:"none", fontSize:14, fontWeight:600, color:G, border:`1.5px solid rgba(6,78,59,.2)`, textAlign:"center", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+                <LogIn size={16} /> Sign In to Existing Account
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+};
 
 export default PublicNav;
