@@ -33,7 +33,7 @@ export default function HifdhAdminReview() {
   const loadRecordings = async () => {
     setLoading(true);
     try {
-      const {data} = await supabase.from("hifdh_recordings").select("*").order("created_at",{ascending:false}).limit(100);
+      const {data} = await supabase.from("hifdh_recordings" as any).select("*").order("created_at",{ascending:false}).limit(100);
       if (!data){setLoading(false);return;}
       const ids=[...new Set(data.map((r:any)=>r.student_id))];
       const {data:profiles} = await supabase.from("profiles").select("user_id,full_name,email").in("user_id",ids);
@@ -59,7 +59,7 @@ export default function HifdhAdminReview() {
     setSaving(rec.id);
     try {
       const newScore=parseInt(ov.score);
-      await supabase.from("hifdh_recordings").update({ admin_score:newScore, admin_feedback:ov.feedback, admin_id:adminId, admin_reviewed_at:new Date().toISOString(), status:newScore!==rec.ai_score||ov.feedback?"overridden":"reviewed" }).eq("id",rec.id);
+      await supabase.from("hifdh_recordings" as any).update({ admin_score:newScore, admin_feedback:ov.feedback, admin_id:adminId, admin_reviewed_at:new Date().toISOString(), status:newScore!==rec.ai_score||ov.feedback?"overridden":"reviewed" }).eq("id",rec.id);
       setRecordings(prev=>prev.map(r=>r.id===rec.id?{...r,admin_score:newScore,admin_feedback:ov.feedback,status:newScore!==rec.ai_score?"overridden":"reviewed"}:r));
     }catch(_){}
     setSaving(null);
