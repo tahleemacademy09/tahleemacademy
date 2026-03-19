@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
@@ -17,37 +17,66 @@ const checkPassword = (pw: string) => ({
 });
 
 // ── Step indicator ────────────────────────────────────────────────
-const Steps = ({ current }: { current: 1 | 2 | 3 }) => (
-  <div style={{ display: "flex", alignItems: "center", gap: 0, marginBottom: 28 }}>
-    {[
-      { n: 1, label: "Details" },
-      { n: 2, label: "Pay ₦5,000" },
-      { n: 3, label: "Done!" },
-    ].map((s, i) => (
-      <div key={s.n} style={{ display: "flex", alignItems: "center", flex: i < 2 ? 1 : undefined }}>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-          <div style={{
-            width: 30, height: 30, borderRadius: "50%",
-            background: current >= s.n ? (current === s.n ? G : "#22c55e") : "#e5e7eb",
-            color: "#fff", fontSize: 12, fontWeight: 800,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            transition: "all .3s",
-          }}>
-            {current > s.n ? <CheckCircle2 size={16} /> : s.n}
+// ── Full 5-step enrollment journey stepper ───────────────────────
+const EnrollmentSteps = ({ activeStep }: { activeStep: number }) => {
+  const steps = [
+    { n: 1, label: "Create Account",  sub: "Name, email & password" },
+    { n: 2, label: "Pay ₦5,000",      sub: "One-time registration" },
+    { n: 3, label: "Onboarding",      sub: "Tell us about yourself" },
+    { n: 4, label: "Entrance Exam",   sub: "Written placement test" },
+    { n: 5, label: "Recitation",      sub: "Audio + live evaluation" },
+  ];
+  return (
+    <div style={{ marginBottom: 24 }}>
+      <div style={{ display: "flex", alignItems: "center" }}>
+        {steps.map((s, i) => (
+          <div key={s.n} style={{ display: "flex", alignItems: "center", flex: i < 4 ? 1 : undefined }}>
+            <div style={{
+              width: 26, height: 26, borderRadius: "50%", flexShrink: 0,
+              background: activeStep > s.n ? "#22c55e" : activeStep === s.n ? G : "#e5e7eb",
+              color: "#fff", fontSize: 10, fontWeight: 800,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              transition: "all .3s", boxShadow: activeStep === s.n ? `0 0 0 3px rgba(6,78,59,.2)` : "none",
+            }}>
+              {activeStep > s.n ? <CheckCircle2 size={13} /> : s.n}
+            </div>
+            {i < 4 && <div style={{ flex: 1, height: 2, background: activeStep > s.n ? "#22c55e" : "#e5e7eb", transition: "background .4s" }} />}
           </div>
-          <span style={{ fontSize: 10, fontWeight: 600, color: current >= s.n ? G : "#9ca3af", whiteSpace: "nowrap" as const }}>{s.label}</span>
-        </div>
-        {i < 2 && <div style={{ flex: 1, height: 2, background: current > s.n + 0 ? "#22c55e" : "#e5e7eb", marginBottom: 16, transition: "background .3s" }} />}
+        ))}
       </div>
-    ))}
-  </div>
-);
+      <div style={{ marginTop: 10, textAlign: "center" }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: G, textTransform: "uppercase" as const, letterSpacing: .6 }}>
+          Step {activeStep} of 5 — {steps[activeStep - 1]?.label}
+        </div>
+        <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 2 }}>
+          {activeStep < 3
+            ? "Complete here on this page"
+            : "Continues after email verification & login"}
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const Register = () => {
   const { t, language, setLanguage } = useLanguage() as any;
   const { signUp } = useAuth();
   const { toast }  = useToast();
   const navigate   = useNavigate();
+
+  // Load Paystack inline script on mount
+  useEffect(() => {
+    if (document.getElementById("paystack-inline")) return; // already loaded
+    const script = document.createElement("script");
+    script.id  = "paystack-inline";
+    script.src = "https://js.paystack.co/v1/inline.js";
+    script.async = true;
+    document.body.appendChild(script);
+    return () => {
+      const el = document.getElementById("paystack-inline");
+      if (el) document.body.removeChild(el);
+    };
+  }, []);
 
   // Step 1 state
   const [fullName, setFullName]   = useState("");
@@ -243,7 +272,7 @@ const Register = () => {
           {/* ── STEP 1: FORM ──────────────────────────────── */}
           {step === 1 && (
             <>
-              <Steps current={1} />
+              <EnrollmentSteps activeStep={1} />
               <div style={{ marginBottom:24,direction:isRTL?"rtl":"ltr" }}>
                 <h2 style={{ fontSize:22,fontWeight:900,color:G,margin:"0 0 6px" }}>{t("Create your account","أنشئ حسابك")}</h2>
                 <p style={{ fontSize:13,color:"#7a9e88",margin:0 }}>{t("Fill in your details, then pay the registration fee","أدخل بياناتك ثم ادفع رسوم التسجيل")}</p>
@@ -320,7 +349,7 @@ const Register = () => {
           {/* ── STEP 2: PAY REGISTRATION FEE ─────────────── */}
           {step === 2 && (
             <>
-              <Steps current={2} />
+              <EnrollmentSteps activeStep={2} />
               <div style={{ textAlign:"center",marginBottom:24 }}>
                 <div style={{ width:60,height:60,borderRadius:"50%",background:"linear-gradient(135deg,#D4A843,#B8860B)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 14px" }}>
                   <Star size={28} color="#fff" fill="#fff" />
@@ -383,33 +412,36 @@ const Register = () => {
             </>
           )}
 
-          {/* ── STEP 3: SUCCESS ───────────────────────────── */}
           {step === 3 && (
             <div style={{ textAlign:"center",padding:"10px 0" }}>
+              <EnrollmentSteps activeStep={3} />
               <div style={{ width:72,height:72,borderRadius:"50%",background:"#E8F5E9",border:"3px solid #22c55e",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 20px",animation:"fadeUp .4s ease" }}>
                 <CheckCircle2 size={36} color="#22c55e" />
               </div>
-              <h2 style={{ fontSize:24,fontWeight:900,color:G,margin:"0 0 8px" }}>You're registered! 🎉</h2>
-              <p style={{ fontSize:14,color:"#7a9e88",lineHeight:1.6,margin:"0 0 24px" }}>
+              <h2 style={{ fontSize:24,fontWeight:900,color:G,margin:"0 0 8px" }}>Steps 1 & 2 Complete! 🎉</h2>
+              <p style={{ fontSize:14,color:"#7a9e88",lineHeight:1.6,margin:"0 0 20px" }}>
                 Registration fee paid. Your account is being set up.<br/>
-                <strong style={{ color:G }}>Check your email</strong> to verify your account, then log in to start the entrance exam.
+                <strong style={{ color:G }}>Check your email</strong> to verify, then log in to continue steps 3–5.
               </p>
 
+              {/* Remaining steps */}
               <div style={{ background:"#F0FDF4",borderRadius:14,padding:"14px 18px",border:"1px solid #86EFAC",marginBottom:20,textAlign:"left" }}>
-                <div style={{ fontSize:12,fontWeight:700,color:"#166534",marginBottom:10,textTransform:"uppercase",letterSpacing:.5 }}>Next Steps</div>
+                <div style={{ fontSize:12,fontWeight:700,color:"#166534",marginBottom:10,textTransform:"uppercase" as const,letterSpacing:.5 }}>Remaining Steps After Login</div>
                 {[
-                  "Check your email and verify your account",
-                  "Log in to your new account",
-                  "Complete the onboarding form",
-                  "Take the written entrance exam",
-                  "Submit your recitation audio",
-                  "Attend the live teacher session",
+                  { n:3, icon:<FileText size={13} color="#2563EB" />,      label:"Complete the onboarding form" },
+                  { n:4, icon:<GraduationCap size={13} color="#7C3AED" />, label:"Take the written entrance exam" },
+                  { n:5, icon:<Mic size={13} color="#16A34A" />,           label:"Submit recitation audio + live teacher session" },
                 ].map((s,i)=>(
-                  <div key={i} style={{ display:"flex",alignItems:"center",gap:8,fontSize:12,color:"#166534",marginBottom:i<5?7:0 }}>
-                    <div style={{ width:18,height:18,borderRadius:"50%",background:"#22c55e",color:"#fff",fontSize:10,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0 }}>{i+1}</div>
-                    {s}
+                  <div key={i} style={{ display:"flex",alignItems:"center",gap:10,fontSize:12,color:"#166534",marginBottom:i<2?9:0 }}>
+                    <div style={{ width:22,height:22,borderRadius:"50%",background:"rgba(6,78,59,.12)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontWeight:800,fontSize:10,color:G }}>{s.n}</div>
+                    <span style={{ display:"flex",alignItems:"center",gap:6 }}>{s.icon} {s.label}</span>
                   </div>
                 ))}
+              </div>
+
+              {/* First check email */}
+              <div style={{ background:"#FFF8E1",borderRadius:12,padding:"11px 16px",border:"1px solid #F9D46A",marginBottom:20,fontSize:12,color:"#92400E",textAlign:"left" }}>
+                <strong>📧 First:</strong> Check your inbox for a verification email from Tahleem Academy and click the link before logging in.
               </div>
 
               <button onClick={()=>navigate("/login")}
