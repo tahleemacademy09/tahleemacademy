@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
@@ -63,6 +63,17 @@ const Register = () => {
   const { signUp } = useAuth();
   const { toast }  = useToast();
   const navigate   = useNavigate();
+
+  // Ensure Paystack script is loaded (backup in case index.html script blocked)
+  useEffect(() => {
+    if ((window as any).PaystackPop) return; // already loaded
+    if (document.getElementById("paystack-script")) return;
+    const s = document.createElement("script");
+    s.id = "paystack-script";
+    s.src = "https://js.paystack.co/v1/inline.js";
+    s.async = true;
+    document.body.appendChild(s);
+  }, []);
 
   // Step 1 state
   const [fullName, setFullName]   = useState("");
