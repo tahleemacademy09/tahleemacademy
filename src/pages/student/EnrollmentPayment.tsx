@@ -151,6 +151,15 @@ const EnrollmentPayment = () => {
         enr = created;
       }
 
+      // ── Existing students: if they already have active/grace status but
+      //    registration_paid is false, they pre-date the reg fee system → auto-mark paid
+      if (enr && !enr.registration_paid && (enr.status === "active" || enr.status === "grace") && enr.paid_at) {
+        await supabase.from("enrollments" as any)
+          .update({ registration_paid: true, registration_paid_at: enr.paid_at })
+          .eq("id", enr.id);
+        enr = { ...enr, registration_paid: true, registration_paid_at: enr.paid_at };
+      }
+
       if (enr && enr.status === "grace" && enr.grace_end_date && new Date(enr.grace_end_date) < new Date()) {
         await supabase.from("enrollments" as any).update({ status: "locked" }).eq("id", enr.id);
         enr = { ...enr, status: "locked" };
@@ -173,17 +182,48 @@ const EnrollmentPayment = () => {
   useEffect(() => { if (tab === "history") loadHistory(); }, [tab, loadHistory]);
 
   // ── Paystack wrapper ──────────────────────────────────────────
-  const runPaystack = (amount: number, onSuccess: (ref: string) => void) => {
+  const runPaystack = (amount: number, onSuccess: (ref: string) => void, onCancel?: () => void) => {
     const email = studentProfile?.email || user?.email || "";
     const ref   = `TAH-${(user?.id || "").slice(0, 8)}-${Date.now()}`;
-    if (!PAYSTACK_KEY) { onSuccess(ref); return; }
-    const h = (window as any).PaystackPop?.setup({
-      key: PAYSTACK_KEY, email, amount: amount * 100, currency: "NGN", ref,
-      metadata: { user_id: user?.id, level },
-      callback: (res: any) => onSuccess(res.reference),
-      onClose: () => toast({ title: "Payment cancelled" }),
-    });
-    h?.openIframe?.();
+
+    // No key configured — demo mode
+    if (!PAYSTACK_KEY) {
+      toast({ title: "⚠️ Demo mode", description: "No Paystack key — simulating payment." });
+      setTimeout(() => onSuccess(ref), 1000);
+      return;
+    }
+
+    // Script not loaded
+    const PaystackPop = (window as any).PaystackPop;
+    if (!PaystackPop) {
+      toast({
+        title: "Payment system not ready",
+        description: "Please refresh the page and try again.",
+        variant: "destructive",
+      });
+      onCancel?.();
+      return;
+    }
+
+    try {
+      const h = PaystackPop.setup({
+        key: PAYSTACK_KEY,
+        email,
+        amount: amount * 100,
+        currency: "NGN",
+        ref,
+        metadata: { user_id: user?.id, level },
+        callback: (res: any) => onSuccess(res.reference),
+        onClose: () => {
+          toast({ title: "Payment cancelled" });
+          onCancel?.();
+        },
+      });
+      h.openIframe();
+    } catch (err: any) {
+      toast({ title: "Payment failed to open", description: err?.message || "Please try again.", variant: "destructive" });
+      onCancel?.();
+    }
   };
 
   // ── Pay registration ──────────────────────────────────────────
@@ -198,7 +238,7 @@ const EnrollmentPayment = () => {
       toast({ title: "✅ Registration Fee Paid!", description: `Receipt: ${rcpt}. You may now proceed to the entrance exam.` });
       await loadEnrollment();
       setPayingReg(false);
-    });
+    }, () => setPayingReg(false));
   };
 
   // ── Pay subscription ──────────────────────────────────────────
@@ -215,7 +255,7 @@ const EnrollmentPayment = () => {
       await loadHistory();
       setTab("status");
       setPaying(false);
-    });
+    }, () => setPaying(false));
   };
 
   const statusConfig = {
