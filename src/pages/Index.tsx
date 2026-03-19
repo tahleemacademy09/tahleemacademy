@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import PublicNav from "@/components/layout/PublicNav";
 
 const Index = () => {
   const navigate = useNavigate();
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [liveClass, setLiveClass] = useState<{ title: string; room_code: string } | null>(null);
 
   useEffect(() => {
@@ -31,41 +31,6 @@ const Index = () => {
         color: #1a1a1a;
         overflow-x: hidden;
       }
-      /* NAVBAR */
-      .ta-nav {
-        position:fixed; top:0; width:100%; z-index:100;
-        display:flex; justify-content:space-between; align-items:center;
-        padding:16px 40px;
-        background:rgba(15,49,34,0.92);
-        backdrop-filter:blur(12px);
-        border-bottom:1px solid rgba(201,151,58,0.3);
-      }
-      .ta-nav-logo { display:flex; align-items:center; gap:10px; }
-      .ta-nav-logo .ta-icon { width:36px; height:36px; background:#c9973a; border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:18px; }
-      .ta-nav-logo span { color:#fff; font-family:'Cormorant Garamond',serif; font-size:20px; font-weight:600; letter-spacing:1px; }
-      .ta-nav-logo span em { color:#c9973a; font-style:normal; }
-      .ta-nav-links { display:flex; gap:28px; list-style:none; }
-      .ta-nav-links a { color:rgba(255,255,255,0.8); text-decoration:none; font-size:14px; transition:0.2s; cursor:pointer; }
-      .ta-nav-links a:hover { color:#e8c070; }
-      .ta-nav-cta { display:flex; gap:12px; }
-      .ta-nav-hamburger { display:block; background:none; border:none; cursor:pointer; padding:4px; }
-      .ta-nav-hamburger svg { width:28px; height:28px; color:#c9973a; }
-      .ta-btn-outline { padding:8px 20px; border:1px solid #c9973a; color:#c9973a; background:transparent; border-radius:6px; cursor:pointer; font-family:'Cairo',sans-serif; font-size:13px; transition:0.2s; }
-      .ta-btn-outline:hover { background:#c9973a; color:#fff; }
-      .ta-btn-solid { padding:8px 20px; background:#c9973a; color:#fff; border:none; border-radius:6px; cursor:pointer; font-family:'Cairo',sans-serif; font-size:13px; font-weight:700; transition:0.2s; }
-      .ta-btn-solid:hover { background:#e8c070; color:#0f3122; }
-
-      /* MOBILE MENU */
-      .ta-mobile-menu {
-        display:none; position:fixed; top:0; left:0; right:0; bottom:0; z-index:99;
-        background:rgba(10,30,20,0.97); flex-direction:column; align-items:center; justify-content:center; gap:24px;
-      }
-      .ta-mobile-menu.open { display:flex; }
-      .ta-mobile-menu a, .ta-mobile-menu button { font-size:18px; }
-      .ta-mobile-menu a { color:rgba(255,255,255,0.85); text-decoration:none; cursor:pointer; font-family:'Cairo',sans-serif; transition:0.2s; }
-      .ta-mobile-menu a:hover { color:#e8c070; }
-      .ta-mobile-close { position:absolute; top:18px; right:20px; background:none; border:none; cursor:pointer; }
-      .ta-mobile-close svg { width:32px; height:32px; color:#c9973a; }
 
       /* HERO */
       .ta-hero { min-height:100vh; position:relative; display:flex; align-items:center; overflow:hidden; }
@@ -84,7 +49,7 @@ const Index = () => {
       }
       .ta-hero-content {
         position:relative; z-index:2;
-        max-width:1200px; margin:0 auto; padding:120px 40px 80px; text-align:center;
+        max-width:1200px; margin:0 auto; padding:60px 40px 80px; text-align:center;
         display:grid; grid-template-columns:1fr 1fr; gap:60px; align-items:center; width:100%;
       }
       .ta-hero-badge {
@@ -262,10 +227,7 @@ const Index = () => {
 
       /* RESPONSIVE */
       @media(max-width:768px){
-        .ta-nav { padding:14px 20px; }
-        .ta-nav-links, .ta-nav-cta { display:none; }
-        .ta-nav-hamburger { display:block; }
-        .ta-hero-content { grid-template-columns:1fr; padding:100px 20px 60px; }
+        .ta-hero-content { grid-template-columns:1fr; padding:60px 20px 60px; }
         .ta-hero-right { display:none; }
         .ta-why-grid, .ta-courses-grid, .ta-why6-grid { grid-template-columns:1fr; }
         .ta-stats-grid { grid-template-columns:1fr 1fr; }
@@ -287,39 +249,7 @@ const Index = () => {
   return (
     <div className="ta-root">
 
-      {/* NAVBAR */}
-      <nav className="ta-nav">
-        <div className="ta-nav-logo">
-          <div className="ta-icon">📖</div>
-          <span>Tahleem <em>Academy</em></span>
-        </div>
-        <ul className="ta-nav-links">
-          <li><a onClick={() => navigate("/")} style={{cursor:"pointer"}}>Home</a></li>
-          <li><a onClick={() => navigate("/courses")} style={{cursor:"pointer"}}>Courses</a></li>
-          <li><a onClick={() => navigate("/about")} style={{cursor:"pointer"}}>About</a></li>
-          <li><a onClick={() => navigate("/contact")} style={{cursor:"pointer"}}>Contact</a></li>
-        </ul>
-        <div className="ta-nav-cta">
-          <button className="ta-btn-outline" onClick={() => navigate("/login")}>Sign In</button>
-          <button className="ta-btn-solid" onClick={() => navigate("/register")}>Register Free</button>
-        </div>
-        <button className="ta-nav-hamburger" onClick={() => setMobileMenuOpen(true)}>
-          <svg fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
-        </button>
-      </nav>
-
-      {/* MOBILE MENU OVERLAY */}
-      <div className={`ta-mobile-menu ${mobileMenuOpen ? 'open' : ''}`}>
-        <button className="ta-mobile-close" onClick={() => setMobileMenuOpen(false)}>
-          <svg fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" d="M6 18L18 6M6 6l12 12"/></svg>
-        </button>
-        <a onClick={() => { navigate("/"); setMobileMenuOpen(false); }}>Home</a>
-        <a onClick={() => { navigate("/courses"); setMobileMenuOpen(false); }}>Courses</a>
-        <a onClick={() => { navigate("/about"); setMobileMenuOpen(false); }}>About</a>
-        <a onClick={() => { navigate("/contact"); setMobileMenuOpen(false); }}>Contact</a>
-        <button className="ta-btn-outline" onClick={() => { navigate("/login"); setMobileMenuOpen(false); }}>Sign In</button>
-        <button className="ta-btn-solid" onClick={() => { navigate("/register"); setMobileMenuOpen(false); }}>Register Free</button>
-      </div>
+      <PublicNav />
 
       {/* LIVE NOW BANNER */}
       {liveClass && (
@@ -328,7 +258,7 @@ const Index = () => {
           borderBottom: "2px solid #c9973a",
           padding: "12px 24px",
           display: "flex", alignItems: "center", justifyContent: "center", gap: "12px",
-          cursor: "pointer", position: "fixed", top: "65px", left: 0, right: 0, zIndex: 90,
+          cursor: "pointer",
         }}>
           <span style={{ width: "10px", height: "10px", background: "#ef4444", borderRadius: "50%", animation: "pulse 1.5s infinite" }} />
           <span style={{ color: "white", fontWeight: 600, fontSize: "14px" }}>
