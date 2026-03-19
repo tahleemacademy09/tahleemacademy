@@ -95,7 +95,8 @@ const RecitationTest = () => {
 
   const stopRec = () => {
     mediaRef.current?.stop();
-    setSubstage("uploading");
+    // substage will be set to "recorded" inside mr.onstop once blob is ready
+    // Don't set "uploading" here — that skips the review step
   };
 
   const cancelRec = () => {
@@ -458,7 +459,21 @@ const RecitationTest = () => {
                   <div>
                     <div style={{ background:"#F0FDF4", borderRadius:14, padding:"16px", border:"1px solid #86EFAC", marginBottom:16 }}>
                       <div style={{ fontSize:13, fontWeight:700, color:G, marginBottom:10 }}>Review your recording:</div>
-                      <audio controls src={audioUrl} style={{ width:"100%", height:40 }} />
+                      {/* Native audio — works on all browsers */}
+                      <audio
+                        controls
+                        src={audioUrl}
+                        style={{ width:"100%", height:48, borderRadius:8 }}
+                        preload="auto"
+                      />
+                      {/* Fallback download link if audio element fails */}
+                      <a
+                        href={audioUrl}
+                        download="my-recitation.webm"
+                        style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:6, marginTop:8, fontSize:11, color:"#9ca3af", textDecoration:"none" }}
+                      >
+                        ↓ Download to listen if player doesn't work
+                      </a>
                     </div>
                     <div style={{ display:"flex", gap:10 }}>
                       <button onClick={retake}
