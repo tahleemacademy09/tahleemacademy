@@ -128,17 +128,44 @@ const ImageMsg = ({ path, text }: { path?: string | null; text?: string | null }
   const [url, setUrl] = useState<string | null>(null);
   const [err, setErr] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [fullscreen, setFullscreen] = useState(false);
+
   useEffect(() => {
+    // Priority: base64 data URL in text, then full http URL in path, then storage path
+    if (text?.startsWith("data:image")) { setUrl(text); setLoading(false); return; }
     const src = path || text || "";
     if (!src) { setErr(true); setLoading(false); return; }
-    resolveMedia(src).then(u => {
-      if (u) setUrl(u); else if (text?.startsWith("data:image")) setUrl(text); else setErr(true);
-      setLoading(false);
-    });
+    // Already a full URL — use directly without signing
+    if (src.startsWith("http")) { setUrl(src); setLoading(false); return; }
+    // Storage path — create signed URL
+    resolveMedia(src).then(u => { u ? setUrl(u) : setErr(true); setLoading(false); });
   }, [path, text]);
-  if (loading) return <div style={{ width: 180, height: 120, borderRadius: 8, background: "#e0e0e0", display: "flex", alignItems: "center", justifyContent: "center" }}><Loader2 style={{ width: 20, height: 20, color: "#999", animation: "spin .8s linear infinite" }} /></div>;
-  if (err || !url) return <div style={{ width: 140, height: 80, borderRadius: 8, background: "#f0f0f0", display: "flex", alignItems: "center", justifyContent: "center" }}><Image style={{ width: 20, height: 20, color: "#bbb" }} /></div>;
-  return <img src={url} style={{ maxWidth: 220, maxHeight: 260, borderRadius: 8, cursor: "pointer", display: "block", objectFit: "cover" }} alt="" loading="lazy" onClick={() => window.open(url, "_blank")} />;
+
+  if (loading) return (
+    <div style={{ width: 200, height: 140, borderRadius: 10, background: "#e8e8e8", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <Loader2 style={{ width: 22, height: 22, color: "#aaa", animation: "spin .8s linear infinite" }} />
+    </div>
+  );
+  if (err || !url) return (
+    <div style={{ width: 160, height: 100, borderRadius: 10, background: "#f0f0f0", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6 }}>
+      <Image style={{ width: 24, height: 24, color: "#bbb" }} />
+      <span style={{ fontSize: 10, color: "#bbb" }}>Image unavailable</span>
+    </div>
+  );
+  return (
+    <>
+      <img src={url} style={{ maxWidth: 240, maxHeight: 280, borderRadius: 10, cursor: "pointer", display: "block", objectFit: "cover", width: "100%" }} alt="" loading="lazy"
+        onClick={() => setFullscreen(true)}
+        onError={() => setErr(true)}
+      />
+      {fullscreen && (
+        <div onClick={() => setFullscreen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.95)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <img src={url} style={{ maxWidth: "100vw", maxHeight: "100vh", objectFit: "contain" }} alt="" />
+          <button onClick={() => setFullscreen(false)} style={{ position: "absolute", top: 16, right: 16, background: "rgba(255,255,255,.2)", border: "none", borderRadius: "50%", width: 40, height: 40, color: "#fff", fontSize: 22, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
+        </div>
+      )}
+    </>
+  );
 };
 
 // ── FileMsg ───────────────────────────────────────────────────────
@@ -302,7 +329,10 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
   const grouped = {
     pinned: filteredForSidebar.filter(c => pinnedChannels.has(c.id)),
     groups: filteredForSidebar.filter(c => c.type === "group" && !pinnedChannels.has(c.id)),
-    level:  filteredForSidebar.filter(c => c.type === "level" && !pinnedChannels.has(c.id)),
+    // Only show the level channel matching this student's level
+    level:  filteredForSidebar.filter(c => c.type === "level" && !pinnedChannels.has(c.id) && (
+      !profile?.level || getCN(c).toLowerCase().includes((profile.level || "").toLowerCase())
+    )),
     anns:   filteredForSidebar.filter(c => c.type === "announcement" && !pinnedChannels.has(c.id)),
   };
 
@@ -381,6 +411,18 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
     if (!activeChannelId) return;
     setLoadingMessages(true); setMessages([]); setSelectMode(false); setSelectedIds(new Set());
     const load = async () => {
+      // Fetch ALL channel member profiles first (fixes "Unknown" issue)
+      const { data: memData } = await supabase.from("chat_members" as any).select("user_id").eq("channel_id", activeChannelId);
+      if (memData && memData.length > 0) {
+        const memberUids = [...new Set((memData as any[]).map((m: any) => m.user_id))];
+        const { data: memberProfs } = await supabase.from("profiles").select("user_id,full_name,full_name_ar,avatar_url,level,email,student_id").in("user_id", memberUids);
+        if (memberProfs) {
+          const map: Record<string, UserProfile> = {};
+          (memberProfs as any[]).forEach((p: any) => { map[p.user_id] = p; });
+          setProfiles(prev => ({ ...prev, ...map }));
+        }
+      }
+
       const { data } = await supabase.from("chat_messages").select("*")
         .eq("channel_id", activeChannelId).order("created_at", { ascending: false }).limit(80);
       const msgs = ((data || []) as unknown as ChatMessage[]).reverse();
@@ -518,21 +560,34 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mr = new MediaRecorder(stream);
+      // Use supported mime type for mobile
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+        ? "audio/webm;codecs=opus"
+        : MediaRecorder.isTypeSupported("audio/webm")
+        ? "audio/webm"
+        : MediaRecorder.isTypeSupported("audio/mp4")
+        ? "audio/mp4"
+        : "";
+      const mr = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
       chunksRef.current = [];
-      mr.ondataavailable = e => chunksRef.current.push(e.data);
+      mr.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data); };
       mr.onstop = async () => {
-        const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+        const ext = mimeType.includes("mp4") ? "mp4" : "webm";
+        const blob = new Blob(chunksRef.current, { type: mimeType || "audio/webm" });
         stream.getTracks().forEach(t => t.stop());
         clearInterval(recTimerRef.current); setRecordingTime(0);
-        const path = `voice/${activeChannelId}/${user!.id}/${Date.now()}.webm`;
-        const { error } = await supabase.storage.from(BUCKET).upload(path, blob);
+        if (blob.size === 0) { toast({ title: "Recording was empty", variant: "destructive" }); return; }
+        const path = `voice/${activeChannelId}/${user!.id}/${Date.now()}.${ext}`;
+        const { error } = await supabase.storage.from(BUCKET).upload(path, blob, { contentType: mimeType || "audio/webm" });
         if (!error) await sendMessage("audio", path);
         else toast({ title: "Voice upload failed", variant: "destructive" });
       };
-      mr.start(); mediaRecRef.current = mr; setIsRecording(true);
+      mr.start(250); // collect in 250ms chunks for mobile compatibility
+      mediaRecRef.current = mr; setIsRecording(true);
       recTimerRef.current = setInterval(() => setRecordingTime(t => t + 1), 1000);
-    } catch { toast({ title: "Microphone denied", variant: "destructive" }); }
+    } catch (e: any) {
+      toast({ title: "Microphone denied", description: "Please allow microphone access", variant: "destructive" });
+    }
   };
   const stopRecording = () => { mediaRecRef.current?.stop(); setIsRecording(false); };
 
@@ -865,7 +920,26 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
         {selectMode && <div style={{ display: "flex", alignItems: "center", marginBottom: 4 }}>{isSelected ? <CheckSquare style={{ width: 18, height: 18, color: "#25D366" }} /> : <Square style={{ width: 18, height: 18, color: "#999" }} />}</div>}
 
         {!isMe && !selectMode && (
-          <div style={{ cursor: "pointer" }} onClick={() => { setSelectedMember({ ...p, user_id: m.user_id }); setShowStudentProfile(true); }}>
+          <div style={{ cursor: "pointer" }} onClick={() => {
+            const memberProfile = profiles[m.user_id];
+            if (memberProfile) {
+              setSelectedMember({ ...memberProfile, user_id: m.user_id });
+            } else {
+              // Fetch profile on demand if not loaded
+              supabase.from("profiles").select("user_id,full_name,full_name_ar,avatar_url,level,email,student_id").eq("user_id", m.user_id).maybeSingle()
+                .then(({ data }) => {
+                  if (data) {
+                    setProfiles(prev => ({ ...prev, [m.user_id]: data as unknown as UserProfile }));
+                    setSelectedMember({ ...(data as any), user_id: m.user_id });
+                  } else {
+                    setSelectedMember({ user_id: m.user_id, full_name: "Student", avatar_url: "" });
+                  }
+                  setShowStudentProfile(true);
+                });
+              return;
+            }
+            setShowStudentProfile(true);
+          }}>
             {avatarEl(m.user_id, 28)}
           </div>
         )}
@@ -1192,11 +1266,40 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
           </div>
         </div>
 
+        {/* WhatsApp-style filter chips */}
+        {!sidebarSearch && (
+          <div style={{ display: "flex", gap: 8, padding: "6px 12px 8px", overflowX: "auto", background: isDark ? "#111b21" : "#fff" }}>
+            {(["All", "Unread", "Groups", "Announcements"] as const).map(chip => {
+              const chipActive = chip === "All"
+                ? !searchTab || searchTab === "contacts"
+                : chip === "Unread"
+                ? searchTab === "messages"
+                : chip === "Groups"
+                ? searchTab === "groups"
+                : searchTab === "groups";
+              return (
+                <button key={chip} onClick={() => setSearchTab(chip === "All" ? "contacts" : chip === "Unread" ? "messages" : "groups")}
+                  style={{ padding: "5px 14px", borderRadius: 20, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" as const, flexShrink: 0,
+                    background: chip === "All" ? WA_GREEN : inputBg,
+                    color: chip === "All" ? "#fff" : textSub,
+                  }}>
+                  {chip}
+                  {chip === "Unread" && Object.values(unreadCounts).reduce((a, b) => a + b, 0) > 0 && (
+                    <span style={{ marginLeft: 4, background: "#25D366", color: "#fff", borderRadius: 10, padding: "0 5px", fontSize: 10 }}>
+                      {Object.values(unreadCounts).reduce((a, b) => a + b, 0)}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         {/* Search tabs when searching */}
         {sidebarSearch && (
           <div style={{ display: "flex", borderBottom: `1px solid ${divider}`, background: isDark ? "#202c33" : "#f8f8f8" }}>
             {(["contacts","messages","groups"] as const).map(tab => (
-              <button key={tab} onClick={() => setSearchTab(tab)} style={{ flex: 1, padding: "10px 6px", background: "none", border: "none", cursor: "pointer", fontSize: 12, fontWeight: searchTab === tab ? 700 : 400, color: searchTab === tab ? WA_GREEN : textSub, borderBottom: searchTab === tab ? `2px solid ${WA_GREEN}` : "2px solid transparent", textTransform: "capitalize" }}>
+              <button key={tab} onClick={() => setSearchTab(tab)} style={{ flex: 1, padding: "10px 6px", background: "none", border: "none", cursor: "pointer", fontSize: 12, fontWeight: searchTab === tab ? 700 : 400, color: searchTab === tab ? WA_GREEN : textSub, borderBottom: searchTab === tab ? `2px solid ${WA_GREEN}` : "2px solid transparent", textTransform: "capitalize" as const }}>
                 {tab}
               </button>
             ))}
@@ -1443,46 +1546,51 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
             )}
 
             {/* Input toolbar */}
-            <div style={{ background: isDark ? "#202c33" : "#f0f2f5", padding: "8px 8px", display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
-              <button onClick={() => setShowEmojiBar(p => !p)} style={{ background: "none", border: "none", cursor: "pointer", padding: 6, color: textSub, display: "flex" }}>
+            <div style={{ background: isDark ? "#202c33" : "#f0f2f5", padding: "8px 8px", display: "flex", alignItems: "flex-end", gap: 6, flexShrink: 0 }}>
+              <button onClick={() => setShowEmojiBar(p => !p)} style={{ background: "none", border: "none", cursor: "pointer", padding: 6, color: textSub, display: "flex", marginBottom: 4 }}>
                 <Smile size={22} />
               </button>
-              <div style={{ flex: 1, background: isDark ? "#2a3942" : "#fff", borderRadius: 24, display: "flex", alignItems: "center", padding: "4px 14px", gap: 6 }}>
-                <input
-                  ref={inputRef}
+              <div style={{ flex: 1, background: isDark ? "#2a3942" : "#fff", borderRadius: 20, display: "flex", alignItems: "flex-end", padding: "6px 12px", gap: 6, minHeight: 44 }}>
+                <textarea
+                  ref={inputRef as any}
                   value={input}
-                  onChange={e => handleInputChange(e.target.value)}
+                  onChange={e => { handleInputChange(e.target.value); e.target.style.height = "auto"; e.target.style.height = Math.min(e.target.scrollHeight, 100) + "px"; }}
                   onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && settings.enterSends) { e.preventDefault(); sendMessage(); } }}
                   placeholder={canSend() ? "Type a message…" : activeChannel.type === "announcement" ? "Only admins can post" : "Channel locked"}
                   disabled={!canSend()}
-                  style={{ flex: 1, border: "none", background: "transparent", fontSize: msgFontSz, color: textMain, outline: "none", padding: "4px 0" }}
+                  rows={1}
+                  style={{ flex: 1, border: "none", background: "transparent", fontSize: msgFontSz, color: textMain, outline: "none", resize: "none", lineHeight: "1.4", maxHeight: 100, overflow: "auto", paddingTop: 2, fontFamily: "inherit" }}
                 />
-                <button onClick={() => imageInputRef.current?.click()} disabled={!canSend()} style={{ background: "none", border: "none", cursor: "pointer", color: textSub, padding: "2px 4px", display: "flex" }}>
-                  <Image size={18} />
-                </button>
-                <button onClick={() => fileInputRef.current?.click()} disabled={!canSend()} style={{ background: "none", border: "none", cursor: "pointer", color: textSub, padding: "2px 4px", display: "flex" }}>
-                  <Paperclip size={18} />
-                </button>
+                <div style={{ display: "flex", gap: 2, marginBottom: 2, flexShrink: 0 }}>
+                  <button onClick={() => imageInputRef.current?.click()} disabled={!canSend()} style={{ background: "none", border: "none", cursor: "pointer", color: textSub, padding: "3px 4px", display: "flex" }}>
+                    <Image size={20} />
+                  </button>
+                  <button onClick={() => fileInputRef.current?.click()} disabled={!canSend()} style={{ background: "none", border: "none", cursor: "pointer", color: textSub, padding: "3px 4px", display: "flex" }}>
+                    <Paperclip size={20} />
+                  </button>
+                </div>
               </div>
               {/* Send or mic */}
               {input.trim() ? (
-                <button onClick={() => sendMessage()} style={{ width: 44, height: 44, borderRadius: "50%", background: WA_GREEN, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <button onClick={() => sendMessage()} style={{ width: 46, height: 46, borderRadius: "50%", background: WA_GREEN, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: "0 2px 8px rgba(7,94,84,.3)" }}>
                   {uploading ? <Loader2 style={{ width: 18, height: 18, color: "#fff", animation: "spin .8s linear infinite" }} /> : <Send style={{ width: 18, height: 18, color: "#fff" }} />}
                 </button>
               ) : (
                 <button
-                  onMouseDown={startRecording} onMouseUp={stopRecording}
-                  onTouchStart={startRecording} onTouchEnd={stopRecording}
-                  style={{ width: 44, height: 44, borderRadius: "50%", background: isRecording ? "#E74C3C" : WA_GREEN, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
+                  onMouseDown={e => { e.preventDefault(); startRecording(); }}
+                  onMouseUp={e => { e.preventDefault(); stopRecording(); }}
+                  onTouchStart={e => { e.preventDefault(); startRecording(); }}
+                  onTouchEnd={e => { e.preventDefault(); stopRecording(); }}
+                  style={{ width: 46, height: 46, borderRadius: "50%", background: isRecording ? "#E74C3C" : WA_GREEN, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: isRecording ? "0 0 0 6px rgba(231,76,60,.25)" : "0 2px 8px rgba(7,94,84,.3)", transition: "all .2s" }}
                 >
-                  {isRecording ? <span style={{ color: "#fff", fontSize: 11, fontWeight: 700 }}>{fr(recordingTime)}</span> : <Mic style={{ width: 18, height: 18, color: "#fff" }} />}
+                  {isRecording ? <span style={{ color: "#fff", fontSize: 11, fontWeight: 700 }}>{fr(recordingTime)}</span> : <Mic style={{ width: 20, height: 20, color: "#fff" }} />}
                 </button>
               )}
             </div>
 
             {/* Hidden file inputs */}
             <input ref={fileInputRef} type="file" style={{ display: "none" }} onChange={e => e.target.files?.[0] && handleFileUpload(e.target.files[0], "file")} />
-            <input ref={imageInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={e => e.target.files?.[0] && handleFileUpload(e.target.files[0], "image")} />
+            <input ref={imageInputRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={e => e.target.files?.[0] && handleFileUpload(e.target.files[0], "image")} />
             <input ref={avatarInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={e => e.target.files?.[0] && handleAvatarUpload(e.target.files[0])} />
           </>
         )}
