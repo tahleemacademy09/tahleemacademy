@@ -76,7 +76,6 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
       ],
     },
     { type: "link", to: "/student/majlis",             icon: MessageCircle, label: t("Al-Majlis",            "المجلس")         },
-    { type: "link", to: "/student/enrollment-payment", icon: CreditCard,    label: t("Enrollment & Payment", "التسجيل والدفع") },
     { type: "link", to: "/student/profile",            icon: UserCircle,    label: t("Settings",             "الإعدادات")      },
   ];
 
@@ -198,6 +197,19 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
             <p className="text-xs text-sidebar-foreground/50 truncate">{profile.full_name}</p>
             <p className="text-xs text-sidebar-foreground/40 truncate">{(profile as any).email}</p>
           </div>
+        )}
+
+        {role === "student" && (
+          <Link to="/student/enrollment-payment" onClick={onNavigate}
+            className={cn(
+              "w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
+              location.pathname === "/student/enrollment-payment"
+                ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground"
+            )}>
+            <Wallet className="h-4 w-4 shrink-0 text-yellow-400" />
+            <span>{t("Enrollment & Payment", "التسجيل والدفع")}</span>
+          </Link>
         )}
 
         <Button variant="ghost" size="sm"
