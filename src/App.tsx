@@ -52,6 +52,7 @@ const ExamResults = lazy(() => import("./pages/student/ExamResults"));
 const PreExamVerification = lazy(() => import("./pages/student/PreExamVerification"));
 const Transcripts = lazy(() => import("./pages/student/Transcripts"));
 const Majlis = lazy(() => import("./pages/student/Majlis"));
+const RecitationTest = lazy(() => import("./pages/student/RecitationTest"));
 const LiveClasses = lazy(() => import("./pages/student/LiveClasses"));
 const LearningHub = lazy(() => import("./pages/student/LearningHub"));
 const CourseView = lazy(() => import("./pages/student/CourseView"));
@@ -165,6 +166,7 @@ const App = () => (
 
                 {/* Onboarding, Entrance Exam & Payment (no sidebar) */}
                 <Route path="/onboarding" element={<ProtectedRoute skipOnboardingCheck><Onboarding /></ProtectedRoute>} />
+                <Route path="/student/recitation-test" element={<ProtectedRoute skipOnboardingCheck><RecitationTest /></ProtectedRoute>} />
                 <Route path="/student/entrance-exam/:attemptId" element={<ProtectedRoute skipOnboardingCheck><EntranceExamTaking /></ProtectedRoute>} />
                 <Route path="/student/entrance-results/:attemptId" element={<ProtectedRoute skipOnboardingCheck><EntranceResults /></ProtectedRoute>} />
                 <Route path="/student/payment" element={<ProtectedRoute skipOnboardingCheck><PaymentScreen /></ProtectedRoute>} />
