@@ -1,3 +1,4 @@
+
 /*  src/pages/student/Majlis.tsx
     PROFESSIONAL — Complete WhatsApp-grade implementation
     All 47 features: settings, wallpaper, member counts, swipe, long-press,
@@ -20,8 +21,6 @@ import { useToast } from "@/hooks/use-toast";
 import CreateChannelDialog from "@/components/majlis/CreateChannelDialog";
 import BrowseChannelsDialog from "@/components/majlis/BrowseChannelsDialog";
 import GroupInfoPanel from "@/components/majlis/GroupInfoPanel";
-import StudentProfileSheet from "@/components/majlis/StudentProfileSheet";
-import MessageReactions from "@/components/majlis/MessageReactions";
 import type { ChatChannel, ChatMessage, UserProfile } from "@/components/majlis/types";
 
 // ── Constants ─────────────────────────────────────────────────────
@@ -107,18 +106,32 @@ const DateSep = ({ date }: { date: string }) => {
 };
 
 // ── AudioMsg ──────────────────────────────────────────────────────
-const AudioMsg = ({ path }: { path: string }) => {
+const AudioMsg = ({ path, text }: { path?: string | null; text?: string | null }) => {
   const [url, setUrl] = useState<string | null>(null);
   const [err, setErr] = useState(false);
-  useEffect(() => { resolveMedia(path).then(u => u ? setUrl(u) : setErr(true)); }, [path]);
-  if (err)  return <span style={{ fontSize: 11, opacity: .6 }}>Audio unavailable</span>;
-  if (!url) return <span style={{ fontSize: 11, opacity: .6 }}>Loading…</span>;
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 180 }}>
+  useEffect(() => {
+    // base64 audio stored in text field
+    if (text?.startsWith("data:audio")) { setUrl(text); return; }
+    const src = path || "";
+    if (!src) { setErr(true); return; }
+    if (src.startsWith("http")) { setUrl(src); return; }
+    resolveMedia(src).then(u => u ? setUrl(u) : setErr(true));
+  }, [path, text]);
+  if (err) return <span style={{ fontSize: 11, opacity: .6, fontStyle: "italic" }}>Audio unavailable</span>;
+  if (!url) return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 180, opacity: .6 }}>
       <div style={{ width: 30, height: 30, borderRadius: "50%", background: WA_GREEN, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <Loader2 style={{ width: 14, height: 14, color: "#fff", animation: "spin .8s linear infinite" }} />
+      </div>
+      <span style={{ fontSize: 11 }}>Loading audio…</span>
+    </div>
+  );
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 200 }}>
+      <div style={{ width: 32, height: 32, borderRadius: "50%", background: WA_GREEN, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
         <Mic style={{ width: 14, height: 14, color: "#fff" }} />
       </div>
-      <audio controls src={url} style={{ height: 30, flex: 1, maxWidth: 160 }} />
+      <audio controls src={url} style={{ height: 32, flex: 1, maxWidth: 180 }} />
     </div>
   );
 };
@@ -277,10 +290,11 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
   const [editProfileName, setEditProfileName]       = useState("");
   const [editProfileAr, setEditProfileAr]           = useState("");
   const [savingProfile, setSavingProfile]           = useState(false);
+  const [channelMemberNames, setChannelMemberNames] = useState<Record<string, string>>({});
 
   // ── Refs ────────────────────────────────────────────────────
   const scrollRef        = useRef<HTMLDivElement>(null);
-  const inputRef         = useRef<HTMLInputElement>(null);
+  const inputRef         = useRef<HTMLTextAreaElement>(null);
   const fileInputRef     = useRef<HTMLInputElement>(null);
   const imageInputRef    = useRef<HTMLInputElement>(null);
   const avatarInputRef   = useRef<HTMLInputElement>(null);
@@ -350,11 +364,34 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
   // ── Effects ────────────────────────────────────────────────
   useEffect(() => {
     supabase.storage.getBucket(BUCKET).then(({ error }) => {
-      if (error) supabase.storage.createBucket(BUCKET, { public: false }).catch(() => {});
+      if (error) supabase.storage.createBucket(BUCKET, { public: true }).catch(() => {});
     });
     supabase.from("profiles").select("user_id,full_name,full_name_ar,avatar_url,level,email,student_id")
-      .then(({ data }) => { if (data) setAllStudents(data as unknown as UserProfile[]); });
+      .then(({ data }) => {
+        if (data) {
+          setAllStudents(data as unknown as UserProfile[]);
+          // Seed profiles state immediately from all students
+          const map: Record<string, UserProfile> = {};
+          (data as any[]).forEach((p: any) => { map[p.user_id] = p; });
+          setProfiles(prev => ({ ...prev, ...map }));
+        }
+      });
   }, []);
+
+  // Android back button — go back to sidebar instead of dashboard
+  useEffect(() => {
+    const onBack = (e: PopStateEvent) => {
+      if (mobileShowChat) {
+        e.preventDefault();
+        setMobileShowChat(false);
+        setActiveChannelId(null);
+        window.history.pushState(null, "", window.location.href);
+      }
+    };
+    window.history.pushState(null, "", window.location.href);
+    window.addEventListener("popstate", onBack);
+    return () => window.removeEventListener("popstate", onBack);
+  }, [mobileShowChat]);
 
   useEffect(() => {
     if (!user) return;
@@ -383,13 +420,31 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
 
       setChannels(all);
 
-      // Actual member counts
+      // Actual member counts + member name previews for sidebar
       const counts: Record<string, number> = {};
+      const memberNames: Record<string, string> = {};
       await Promise.all(all.map(async ch => {
-        const { count } = await supabase.from("chat_members" as any).select("*", { count: "exact", head: true }).eq("channel_id", ch.id);
-        counts[ch.id] = count || 0;
+        const { data: memRows } = await supabase.from("chat_members" as any)
+          .select("user_id").eq("channel_id", ch.id).limit(5);
+        counts[ch.id] = memRows?.length || 0;
+        if (memRows && memRows.length > 0) {
+          const uids = (memRows as any[]).map((m: any) => m.user_id);
+          const { data: pData } = await supabase.from("profiles")
+            .select("user_id,full_name").in("user_id", uids);
+          if (pData) {
+            const names = (pData as any[])
+              .map((p: any) => p.user_id === user!.id ? "You" : (p.full_name || "").split(" ")[0])
+              .filter(Boolean).slice(0, 3);
+            memberNames[ch.id] = names.join(", ");
+            // Also seed profiles
+            const map: Record<string, UserProfile> = {};
+            (pData as any[]).forEach((p: any) => { map[p.user_id] = p as unknown as UserProfile; });
+            setProfiles(prev => ({ ...prev, ...map }));
+          }
+        }
       }));
       setMemberCounts(counts);
+      setChannelMemberNames(memberNames);
 
       // Unread counts
       const unread: Record<string, number> = {};
@@ -497,7 +552,7 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
   const insertMention = (p: UserProfile) => {
     setInput(input.replace(/@\w*$/, `@${p.full_name} `));
     setMentionQuery(null); setMentionList([]);
-    inputRef.current?.focus();
+    setTimeout(() => inputRef.current?.focus(), 50);
   };
 
   const startLongPress = (id: string) => { lpTimerRef.current = setTimeout(() => { setShowMessageMenu(id); setShowDeleteSheet(null); }, LP_DELAY); };
@@ -540,53 +595,75 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
     if (!activeChannelId || !user) return;
     if (file.size > 25 * 1024 * 1024) { toast({ title: "Max 25MB", variant: "destructive" }); return; }
     setUploading(true);
-    const ext = file.name.split(".").pop() || "bin";
-    const path = `${type}s/${activeChannelId}/${user.id}/${Date.now()}.${ext}`;
     try {
+      const ext = file.name.split(".").pop() || "bin";
+      const path = `${type}s/${activeChannelId}/${user.id}/${Date.now()}.${ext}`;
       const { error: upErr } = await supabase.storage.from(BUCKET).upload(path, file, { upsert: true, contentType: file.type });
-      if (!upErr) { await sendMessage(type, path, type === "file" ? file.name : null); }
-      else if (type === "image") {
-        const b64 = await new Promise<string>(res => { const r = new FileReader(); r.onloadend = () => res(r.result as string); r.readAsDataURL(file); });
-        const tempId = `temp-${Date.now()}`;
-        setMessages(prev => [...prev, { id: tempId, channel_id: activeChannelId, user_id: user.id, content_type: "image", text: b64, media_path: null, created_at: new Date().toISOString() } as any]);
-        const { data: ins, error: insE } = await supabase.from("chat_messages").insert({ class_level_id: activeChannelId, channel_id: activeChannelId, user_id: user.id, content_type: "image", text: b64 }).select().single();
-        if (insE) { setMessages(prev => prev.filter(m => m.id !== tempId)); }
-        else setMessages(prev => prev.map(m => m.id === tempId ? ins as unknown as ChatMessage : m));
-      } else { toast({ title: "Upload failed", variant: "destructive" }); }
-    } catch (e: any) { toast({ title: "Upload error", description: e.message, variant: "destructive" }); }
-    finally { setUploading(false); }
+      if (!upErr) {
+        await sendMessage(type, path, type === "file" ? file.name : null);
+      } else {
+        // Storage failed — use base64 fallback for images, skip for files
+        if (type === "image") {
+          const b64 = await new Promise<string>(res => { const r = new FileReader(); r.onloadend = () => res(r.result as string); r.readAsDataURL(file); });
+          const tempId = `temp-${Date.now()}`;
+          setMessages(prev => [...prev, { id: tempId, channel_id: activeChannelId, user_id: user.id, content_type: "image", text: b64, media_path: null, created_at: new Date().toISOString() } as any]);
+          const { data: ins, error: insE } = await supabase.from("chat_messages").insert({ class_level_id: activeChannelId, channel_id: activeChannelId, user_id: user.id, content_type: "image", text: b64 }).select().single();
+          if (insE) setMessages(prev => prev.filter(m => m.id !== tempId));
+          else setMessages(prev => prev.map(m => m.id === tempId ? ins as unknown as ChatMessage : m));
+        } else {
+          toast({ title: "File upload failed", description: "Storage unavailable", variant: "destructive" });
+        }
+      }
+    } catch (e: any) {
+      toast({ title: "Upload error", description: e.message, variant: "destructive" });
+    } finally {
+      setUploading(false);
+    }
   };
 
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      // Use supported mime type for mobile
-      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-        ? "audio/webm;codecs=opus"
-        : MediaRecorder.isTypeSupported("audio/webm")
-        ? "audio/webm"
-        : MediaRecorder.isTypeSupported("audio/mp4")
-        ? "audio/mp4"
-        : "";
+      const mimeType = ["audio/webm;codecs=opus","audio/webm","audio/mp4","audio/ogg"].find(t => {
+        try { return MediaRecorder.isTypeSupported(t); } catch { return false; }
+      }) || "";
       const mr = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
       chunksRef.current = [];
-      mr.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+      mr.ondataavailable = e => { if (e.data && e.data.size > 0) chunksRef.current.push(e.data); };
       mr.onstop = async () => {
-        const ext = mimeType.includes("mp4") ? "mp4" : "webm";
-        const blob = new Blob(chunksRef.current, { type: mimeType || "audio/webm" });
         stream.getTracks().forEach(t => t.stop());
         clearInterval(recTimerRef.current); setRecordingTime(0);
+        const blob = new Blob(chunksRef.current, { type: mimeType || "audio/webm" });
         if (blob.size === 0) { toast({ title: "Recording was empty", variant: "destructive" }); return; }
+        const ext = mimeType.includes("mp4") ? "mp4" : mimeType.includes("ogg") ? "ogg" : "webm";
         const path = `voice/${activeChannelId}/${user!.id}/${Date.now()}.${ext}`;
-        const { error } = await supabase.storage.from(BUCKET).upload(path, blob, { contentType: mimeType || "audio/webm" });
-        if (!error) await sendMessage("audio", path);
-        else toast({ title: "Voice upload failed", variant: "destructive" });
+        // Try storage first
+        const { error } = await supabase.storage.from(BUCKET).upload(path, blob, { contentType: mimeType || "audio/webm", upsert: true });
+        if (!error) {
+          await sendMessage("audio", path);
+        } else {
+          // Fallback: store as base64 data URL in message text
+          const reader = new FileReader();
+          reader.onloadend = async () => {
+            const b64 = reader.result as string;
+            await supabase.from("chat_messages").insert({
+              class_level_id: activeChannelId, channel_id: activeChannelId,
+              user_id: user!.id, content_type: "audio", text: b64, media_path: null
+            });
+            toast({ title: "Voice note sent" });
+          };
+          reader.readAsDataURL(blob);
+        }
       };
-      mr.start(250); // collect in 250ms chunks for mobile compatibility
+      mr.start(200);
       mediaRecRef.current = mr; setIsRecording(true);
       recTimerRef.current = setInterval(() => setRecordingTime(t => t + 1), 1000);
     } catch (e: any) {
-      toast({ title: "Microphone denied", description: "Please allow microphone access", variant: "destructive" });
+      if (e.name === "NotAllowedError" || e.name === "PermissionDeniedError") {
+        toast({ title: "Microphone permission denied", description: "Please allow mic access in your browser settings", variant: "destructive" });
+      } else {
+        toast({ title: "Recording failed", description: e.message, variant: "destructive" });
+      }
     }
   };
   const stopRecording = () => { mediaRecRef.current?.stop(); setIsRecording(false); };
@@ -697,7 +774,14 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
   const handleBgImageUpload = (file: File) => {
     const r = new FileReader(); r.onloadend = () => { localStorage.setItem("majlis-custom-bg", r.result as string); saveSetting("wallpaper", "custom"); }; r.readAsDataURL(file);
   };
-  const selectChannel = (id: string) => { setActiveChannelId(id); setMobileShowChat(true); setEditingChannel(false); setUnreadCounts(prev => ({ ...prev, [id]: 0 })); };
+  const selectChannel = (id: string) => {
+    setActiveChannelId(id);
+    setMobileShowChat(true);
+    setEditingChannel(false);
+    setUnreadCounts(prev => ({ ...prev, [id]: 0 }));
+    // Push state so Android back button returns to sidebar
+    window.history.pushState({ chatOpen: true }, "", window.location.href);
+  };
   const handleChannelCreated = async (id: string) => {
     const { data } = await supabase.from("chat_channels" as any).select("*").eq("id", id).single();
     if (data) setChannels(prev => prev.find(c => c.id === id) ? prev : [data as unknown as ChatChannel, ...prev]);
@@ -805,6 +889,7 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
     const nm        = getCN(ch);
     const lastMsg   = (ch as any).last_message || "";
     const lastTime  = (ch as any).last_message_at ? ft((ch as any).last_message_at) : "";
+    const memberPreview = channelMemberNames[ch.id] || "";
 
     return (
       <div key={ch.id} className="ch-row-wrap" style={{ borderBottom: `1px solid ${divider}` }}>
@@ -845,7 +930,9 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
                 <span style={{ fontSize: 11, color: unread > 0 && !isMuted ? "#25D366" : textSub, flexShrink: 0, marginLeft: 4 }}>{lastTime}</span>
               </div>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 3 }}>
-                <span style={{ fontSize: 13, color: textSub, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, maxWidth: 210 }}>{lastMsg || "Tap to chat"}</span>
+                <span style={{ fontSize: 13, color: textSub, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, maxWidth: 210 }}>
+                  {lastMsg || (memberPreview ? memberPreview : "Tap to chat")}
+                </span>
                 {unread > 0 && !isMuted && <span className="unread-badge">{unread > 99 ? "99+" : unread}</span>}
                 {unread > 0 && isMuted && <span className="unread-badge" style={{ background: "#8696a0" }}>{unread}</span>}
               </div>
@@ -955,7 +1042,10 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
           <div style={{ background: bubbleBg, borderRadius: isMe ? "10px 2px 10px 10px" : "2px 10px 10px 10px", padding: "6px 10px 4px 10px", boxShadow: "0 1px 2px rgba(0,0,0,.1)", position: "relative" }}>
             {/* Sender name (group) */}
             {!isMe && activeChannel?.type !== "dm" && (
-              <div style={{ fontSize: 12, fontWeight: 700, color: WA_GREEN, marginBottom: 2 }}>{nm}</div>
+              <div onClick={() => {
+                const mp = profiles[m.user_id];
+                if (mp) { setSelectedMember({ ...mp, user_id: m.user_id }); setShowStudentProfile(true); }
+              }} style={{ fontSize: 12, fontWeight: 700, color: WA_GREEN, marginBottom: 2, cursor: "pointer" }}>{nm}</div>
             )}
             {/* Reply preview */}
             {(m as any).reply_to_id && (
@@ -971,7 +1061,7 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
 
             {/* Content */}
             {m.content_type === "image" && <ImageMsg path={m.media_path} text={m.text} />}
-            {m.content_type === "audio" && m.media_path && <AudioMsg path={m.media_path} />}
+            {m.content_type === "audio" && <AudioMsg path={m.media_path} text={m.text} />}
             {m.content_type === "file" && m.media_path && <FileMsg path={m.media_path} text={m.text} />}
             {(m.content_type === "text" || !m.content_type) && m.text && <FormattedText text={m.text} sz={msgFontSz} />}
 
@@ -1552,7 +1642,7 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
               </button>
               <div style={{ flex: 1, background: isDark ? "#2a3942" : "#fff", borderRadius: 20, display: "flex", alignItems: "flex-end", padding: "6px 12px", gap: 6, minHeight: 44 }}>
                 <textarea
-                  ref={inputRef as any}
+                  ref={inputRef}
                   value={input}
                   onChange={e => { handleInputChange(e.target.value); e.target.style.height = "auto"; e.target.style.height = Math.min(e.target.scrollHeight, 100) + "px"; }}
                   onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && settings.enterSends) { e.preventDefault(); sendMessage(); } }}
@@ -1685,13 +1775,62 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
         />
       )}
       {showStudentProfile && selectedMember && (
-        <StudentProfileSheet member={selectedMember} onClose={() => setShowStudentProfile(false)} currentUserId={user?.id || ""}
-          onMessage={(uid: string) => {
-            const dm = channels.find(c => c.type === "dm" && (c as any).participants?.includes(uid));
-            if (dm) { selectChannel(dm.id); setShowStudentProfile(false); }
-            else toast({ title: "Open DM feature coming soon!" });
-          }}
-        />
+        <div style={{ position: "fixed", inset: 0, zIndex: 500, background: "rgba(0,0,0,.5)" }} onClick={() => setShowStudentProfile(false)}>
+          <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, maxWidth: 480, margin: "0 auto", background: isDark ? "#111b21" : "#fff", borderRadius: "20px 20px 0 0", maxHeight: "85vh", overflowY: "auto" }} onClick={e => e.stopPropagation()}>
+            {/* Header */}
+            <div style={{ background: `linear-gradient(135deg, ${WA_GREEN}, #128C7E)`, padding: "32px 20px 20px", display: "flex", flexDirection: "column", alignItems: "center", gap: 10, position: "relative" }}>
+              <button onClick={() => setShowStudentProfile(false)} style={{ position: "absolute", top: 12, right: 12, background: "rgba(255,255,255,.15)", border: "none", borderRadius: "50%", width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#fff" }}>
+                <X size={16} />
+              </button>
+              {selectedMember.avatar_url
+                ? <img src={selectedMember.avatar_url} style={{ width: 80, height: 80, borderRadius: "50%", objectFit: "cover", border: "3px solid rgba(255,255,255,.3)" }} alt="" />
+                : <div style={{ width: 80, height: 80, borderRadius: "50%", background: "rgba(255,255,255,.2)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 32, fontWeight: 700 }}>
+                    {(selectedMember.full_name || "S")[0].toUpperCase()}
+                  </div>
+              }
+              <div style={{ color: "#fff", fontWeight: 700, fontSize: 18 }}>{selectedMember.full_name || "Student"}</div>
+              {selectedMember.full_name_ar && <div style={{ color: "rgba(255,255,255,.7)", fontSize: 13 }} dir="rtl">{selectedMember.full_name_ar}</div>}
+              {onlineUsers.has(selectedMember.user_id)
+                ? <span style={{ fontSize: 11, color: "#25D366", background: "rgba(37,211,102,.15)", padding: "2px 10px", borderRadius: 20, fontWeight: 700 }}>● Online</span>
+                : <span style={{ fontSize: 11, color: "rgba(255,255,255,.5)" }}>Offline</span>
+              }
+            </div>
+            {/* Details */}
+            <div style={{ padding: "0 0 16px" }}>
+              {[
+                { label: "Level",      val: (selectedMember as any).level || "—" },
+                { label: "Student ID", val: (selectedMember as any).student_id || "—" },
+                { label: "Email",      val: (selectedMember as any).email || "—" },
+                { label: "About",      val: "Available" },
+              ].map((row, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", padding: "14px 20px", borderBottom: `1px solid ${divider}` }}>
+                  <span style={{ fontSize: 13, color: textSub, minWidth: 90 }}>{row.label}</span>
+                  <span style={{ fontSize: 14, color: textMain, fontWeight: 500 }}>{row.val}</span>
+                </div>
+              ))}
+              {/* Mutual groups */}
+              <div style={{ padding: "14px 20px", borderBottom: `1px solid ${divider}` }}>
+                <div style={{ fontSize: 13, color: textSub, marginBottom: 6 }}>Groups in common</div>
+                <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 6 }}>
+                  {channels.filter(c => c.type !== "dm").slice(0, 4).map(c => (
+                    <span key={c.id} style={{ fontSize: 12, background: inputBg, color: textMain, padding: "3px 10px", borderRadius: 20 }}>{getCN(c)}</span>
+                  ))}
+                </div>
+              </div>
+              {/* Actions */}
+              <div style={{ padding: "14px 20px", display: "flex", gap: 12 }}>
+                {selectedMember.user_id !== user?.id && (
+                  <button onClick={() => {
+                    setShowStudentProfile(false);
+                    toast({ title: "DM coming soon!" });
+                  }} style={{ flex: 1, padding: "12px", borderRadius: 12, background: WA_GREEN, border: "none", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                    <MessageCircle size={16} /> Message
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Edit channel name sheet */}
