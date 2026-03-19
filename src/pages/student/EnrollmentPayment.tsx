@@ -60,10 +60,10 @@ interface StudentProfile {
 
 // ── Fee schedule ──────────────────────────────────────────────────
 const LEVEL_FEES: Record<string, { monthly: number; term: number; label: string; labelAr: string; color: string }> = {
-  beginner:     { monthly: 5000, term: 5000,  label: "Beginner",     labelAr: "المبتدئ",    color: "#2E7D32" },
-  intermediate: { monthly: 5000, term: 6000,  label: "Intermediate", labelAr: "المتوسط",   color: "#1565C0" },
-  advanced:     { monthly: 5000, term: 7000,  label: "Advanced",     labelAr: "المتقدم",   color: "#6A1B9A" },
-  default:      { monthly: 5000, term: 5000,  label: "Standard",     labelAr: "الأساسي",   color: "#075E54" },
+  beginner:     { monthly: 5000, term: 15000, label: "Beginner",     labelAr: "المبتدئ",    color: "#2E7D32" },
+  intermediate: { monthly: 6000, term: 18000, label: "Intermediate", labelAr: "المتوسط",   color: "#1565C0" },
+  advanced:     { monthly: 7000, term: 21000, label: "Advanced",     labelAr: "المتقدم",   color: "#6A1B9A" },
+  default:      { monthly: 5000, term: 15000, label: "Standard",     labelAr: "الأساسي",   color: "#075E54" },
 };
 
 const GRACE_DAYS = 7;
