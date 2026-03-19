@@ -1,6 +1,8 @@
+
 /*  src/pages/student/LearningHub.tsx
     REDESIGNED — Clean white cards, grid/list toggle,
     uncluttered layout, beautiful subject cards with image support
+    CHANGE: Grid is now default view, grid button shown first
 */
 import { useState, useEffect } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
@@ -54,7 +56,7 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
   const [inClass, setInClass]                 = useState(false);
   const [showRejoin, setShowRejoin]           = useState(false);
   const [activeLesson, setActiveLesson]       = useState<string | null>(null);
-  const [viewMode, setViewMode]               = useState<"list" | "grid">("list");
+  const [viewMode, setViewMode]               = useState<"list" | "grid">("grid"); // ← GRID DEFAULT
 
   const studentLevel = profile?.level || "beginner";
   const lv = (l: string) => ({ beginner: "Beginner", intermediate: "Intermediate", advanced: "Advanced" }[l] || l);
@@ -204,18 +206,17 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
     const live = isLive(selectedSubject.id);
 
     const TABS = [
-      { id: "courses",       icon: BookOpen,      label: t("Courses", "الدورات"),        count: subCourses.length },
-      { id: "recordings",    icon: Video,         label: t("Recordings", "التسجيلات"),  count: null },
-      { id: "syllabus",      icon: Calendar,      label: t("Syllabus", "المنهج"),       count: null },
-      { id: "materials",     icon: FileText,      label: t("Materials", "المواد"),      count: null },
-      { id: "assignments",   icon: ClipboardList, label: t("Tasks", "الواجبات"),        count: null },
-      { id: "announcements", icon: Megaphone,     label: t("News", "الإعلانات"),        count: null },
+      { id: "courses",       icon: BookOpen,      label: t("Courses", "الدورات"),       count: subCourses.length },
+      { id: "recordings",    icon: Video,         label: t("Recordings", "التسجيلات"), count: null },
+      { id: "syllabus",      icon: Calendar,      label: t("Syllabus", "المنهج"),      count: null },
+      { id: "materials",     icon: FileText,      label: t("Materials", "المواد"),     count: null },
+      { id: "assignments",   icon: ClipboardList, label: t("Tasks", "الواجبات"),       count: null },
+      { id: "announcements", icon: Megaphone,     label: t("News", "الإعلانات"),       count: null },
     ];
 
     return (
       <div style={{ fontFamily: "'Cairo',sans-serif", background: "#f8fafb", minHeight: "100vh" }}>
         <style>{`@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap');@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}`}</style>
-
         <div style={{ background: subjectImg ? `linear-gradient(rgba(0,0,0,.45),rgba(0,0,0,.6)),url(${subjectImg}) center/cover` : `linear-gradient(135deg,${c1},${c2})`, padding: "14px 16px 0" }}>
           <button onClick={() => { setSelectedSubject(null); setShowRejoin(false); }}
             style={{ display: "flex", alignItems: "center", gap: 6, color: "rgba(255,255,255,.8)", background: "rgba(255,255,255,.12)", border: "none", borderRadius: 20, padding: "6px 14px", cursor: "pointer", fontSize: 12, marginBottom: 14, fontFamily: "'Cairo',sans-serif" }}>
@@ -250,7 +251,6 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
             ))}
           </div>
         </div>
-
         <div style={{ padding: "16px", maxWidth: 720, margin: "0 auto" }}>
           {subjectTab === "courses" && (
             subCourses.length === 0 ? (
@@ -355,17 +355,17 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
             </div>
           </div>
 
-          {/* Grid/List toggle */}
+          {/* Grid/List toggle — GRID FIRST ← */}
           <div style={{ display: "flex", background: "rgba(255,255,255,.12)", borderRadius: 11, padding: 3, gap: 2, marginTop: 4 }}>
-            <button onClick={() => setViewMode("list")}
-              title="List view"
-              style={{ width: 36, height: 36, borderRadius: 8, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", background: viewMode === "list" ? "#fff" : "transparent", color: viewMode === "list" ? G : "rgba(255,255,255,.6)", transition: "all .15s" }}>
-              <List style={{ width: 17, height: 17 }} />
-            </button>
             <button onClick={() => setViewMode("grid")}
               title="Grid view"
               style={{ width: 36, height: 36, borderRadius: 8, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", background: viewMode === "grid" ? "#fff" : "transparent", color: viewMode === "grid" ? G : "rgba(255,255,255,.6)", transition: "all .15s" }}>
               <LayoutGrid style={{ width: 17, height: 17 }} />
+            </button>
+            <button onClick={() => setViewMode("list")}
+              title="List view"
+              style={{ width: 36, height: 36, borderRadius: 8, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", background: viewMode === "list" ? "#fff" : "transparent", color: viewMode === "list" ? G : "rgba(255,255,255,.6)", transition: "all .15s" }}>
+              <List style={{ width: 17, height: 17 }} />
             </button>
           </div>
         </div>
@@ -398,8 +398,6 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
                 return (
                   <div key={subject.id} className="sc"
                     style={{ background: "#fff", borderRadius: 18, border: "1px solid #e5e7eb", overflow: "hidden", cursor: "pointer", boxShadow: "0 2px 8px rgba(0,0,0,.05)" }}>
-
-                    {/* Image / gradient hero */}
                     <div onClick={() => { setSelectedSubject(subject); setSubjectTab("courses"); }}
                       style={{ height: 110, position: "relative", overflow: "hidden" }}>
                       {img ? (
@@ -409,7 +407,6 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
                           <BookOpen style={{ width: 30, height: 30, color: "rgba(255,255,255,.3)" }} />
                         </div>
                       )}
-                      {/* Dark overlay + title at bottom */}
                       <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to top,rgba(0,0,0,.65) 0%,transparent 55%)" }} />
                       {live && <span style={{ position: "absolute", top: 8, left: 8, fontSize: 9, fontWeight: 800, padding: "3px 7px", borderRadius: 20, background: "#ef4444", color: "#fff", animation: "pulse 1.5s infinite" }}>● LIVE</span>}
                       <div style={{ position: "absolute", bottom: 8, left: 10, right: 10 }}>
@@ -418,8 +415,6 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
                         </div>
                       </div>
                     </div>
-
-                    {/* Body */}
                     <div style={{ padding: "10px 12px 12px" }}>
                       {subject.title_ar && subject.title_ar !== subject.title && language !== "ar" && (
                         <div style={{ fontSize: 10, color: GOLD, marginBottom: 5, fontFamily: "serif" }} dir="rtl">{subject.title_ar}</div>
@@ -454,14 +449,8 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
               return (
                 <div key={subject.id} className="sc"
                   style={{ background: "#fff", borderRadius: 18, border: "1px solid #e5e7eb", overflow: "hidden", boxShadow: "0 2px 8px rgba(0,0,0,.05)" }}>
-
-                  {/* Hero */}
                   <div onClick={() => { setSelectedSubject(subject); setSubjectTab("courses"); }}
-                    style={{
-                      background: img ? `linear-gradient(rgba(0,0,0,.38),rgba(0,0,0,.52)),url(${img}) center/cover` : `linear-gradient(135deg,${c1},${c2})`,
-                      padding: "18px 18px 16px",
-                      cursor: "pointer",
-                    }}>
+                    style={{ background: img ? `linear-gradient(rgba(0,0,0,.38),rgba(0,0,0,.52)),url(${img}) center/cover` : `linear-gradient(135deg,${c1},${c2})`, padding: "18px 18px 16px", cursor: "pointer" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                       {!img && (
                         <div style={{ width: 44, height: 44, borderRadius: 12, background: "rgba(255,255,255,.15)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
@@ -492,23 +481,19 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
                       </div>
                     )}
                   </div>
-
-                  {/* Body */}
                   <div style={{ padding: "12px 16px 14px" }}>
                     {subject.description && (
                       <p style={{ fontSize: 12, color: "#6b7280", margin: "0 0 12px", lineHeight: 1.6, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as any, overflow: "hidden" }}>
                         {subject.description}
                       </p>
                     )}
-
-                    {/* Quick access chips */}
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" as const, marginBottom: 12 }}>
                       {[
-                        { icon: Video,        label: t("Recordings", "تسجيلات"), tab: "recordings" },
-                        { icon: Calendar,     label: t("Syllabus", "المنهج"),    tab: "syllabus" },
-                        { icon: FileText,     label: t("Materials", "مواد"),     tab: "materials" },
-                        { icon: ClipboardList,label: t("Tasks", "واجبات"),       tab: "assignments" },
-                        { icon: Megaphone,    label: t("News", "إعلانات"),       tab: "announcements" },
+                        { icon: Video,         label: t("Recordings", "تسجيلات"), tab: "recordings" },
+                        { icon: Calendar,      label: t("Syllabus", "المنهج"),    tab: "syllabus" },
+                        { icon: FileText,      label: t("Materials", "مواد"),     tab: "materials" },
+                        { icon: ClipboardList, label: t("Tasks", "واجبات"),       tab: "assignments" },
+                        { icon: Megaphone,     label: t("News", "إعلانات"),       tab: "announcements" },
                       ].map((item, i) => (
                         <button key={i} className="chip" onClick={() => { setSelectedSubject(subject); setSubjectTab(item.tab); }}
                           style={{ display: "flex", alignItems: "center", gap: 4, padding: "5px 10px", borderRadius: 20, border: "1px solid #e5e7eb", background: "#f9fafb", fontSize: 11, fontWeight: 600, color: "#374151", cursor: "pointer" }}>
@@ -516,8 +501,6 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
                         </button>
                       ))}
                     </div>
-
-                    {/* CTA buttons */}
                     <div style={{ display: "flex", gap: 8 }}>
                       <button onClick={() => { setSelectedSubject(subject); setSubjectTab("courses"); setShowRejoin(false); }}
                         style={{ flex: 1, padding: "11px 0", borderRadius: 11, background: G, border: "none", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontFamily: "'Cairo',sans-serif", boxShadow: "0 2px 8px rgba(15,45,31,.2)" }}>
