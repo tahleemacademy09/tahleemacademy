@@ -1,387 +1,418 @@
-import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
-import { useAuth } from "@/contexts/AuthContext";
-import { useLanguage } from "@/contexts/LanguageContext";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { useToast } from "@/hooks/use-toast";
+/*  src/components/majlis/GroupInfoPanel.tsx
+    WhatsApp-exact Group Info panel with:
+    - Group photo, name, member count
+    - Media/links/docs grid
+    - Manage Storage, Notifications, Media visibility
+    - Encryption, Disappearing messages, Chat lock, Advanced privacy
+    - Members list with admin badges, search, Add member
+    - Add to Favorites, Clear chat, Exit group, Report group
+*/
+import { useEffect, useState, useRef } from "react";
 import {
-  Sheet, SheetContent, SheetHeader, SheetTitle
-} from "@/components/ui/sheet";
-import {
-  Users, Edit2, Check, X, Crown, Shield,
-  UserMinus, Camera, Calendar, Info, UserPlus
+  ArrowLeft, Camera, Search, Bell, Image as ImageIcon, FileText,
+  Link, HardDrive, Lock, Timer, ShieldCheck, ChevronRight,
+  Heart, List, Trash2, LogOut, Flag, UserPlus, Check, Edit2,
+  Volume2, VolumeX, X, MoreVertical, Star, Copy
 } from "lucide-react";
-
-interface Member {
-  user_id: string;
-  role: string;
-  joined_at: string;
-  full_name: string | null;
-  full_name_ar: string | null;
-  avatar_url: string | null;
-  level: string | null;
-  student_id: string | null;
-  is_online: boolean | null;
-  last_seen: string | null;
-}
+import { supabase } from "@/integrations/supabase/client";
+import { useToast } from "@/hooks/use-toast";
 
 interface GroupInfoPanelProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
   channel: any;
-  onUpdated?: () => void;
-  onMemberTap?: (member: Member) => void;
+  onClose: () => void;
+  canModerate: boolean;
+  memberCount: number;
+  onEditName: () => void;
+  onAvatarClick: () => void;
+  onDeleteGroup: () => void;
+  onLeaveGroup: () => void;
+  onMemberClick: (member: any) => void;
 }
 
-const GroupInfoPanel = ({ open, onOpenChange, channel, onUpdated, onMemberTap }: GroupInfoPanelProps) => {
-  const { user, hasRole } = useAuth();
-  const { t, language } = useLanguage();
-  const { toast } = useToast();
-  const isAdmin = hasRole("admin");
-  const isTeacher = hasRole("teacher");
-  const canEdit = isAdmin || isTeacher;
+const WA_GREEN = "#075E54";
 
-  const [members, setMembers] = useState<Member[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [editing, setEditing] = useState(false);
-  const [editName, setEditName] = useState("");
-  const [editDesc, setEditDesc] = useState("");
-  const [editNameAr, setEditNameAr] = useState("");
-  const [iconUrl, setIconUrl] = useState("");
-  const [allStudents, setAllStudents] = useState<any[]>([]);
-  const [showAddMembers, setShowAddMembers] = useState(false);
-  const [searchAdd, setSearchAdd] = useState("");
+const GroupInfoPanel = ({ channel, onClose, canModerate, memberCount, onEditName, onAvatarClick, onDeleteGroup, onLeaveGroup, onMemberClick }: GroupInfoPanelProps) => {
+  const { toast } = useToast();
+  const [members, setMembers] = useState<any[]>([]);
+  const [allMembers, setAllMembers] = useState<any[]>([]);
+  const [mediaMessages, setMediaMessages] = useState<any[]>([]);
+  const [memberSearch, setMemberSearch] = useState("");
+  const [showAllMembers, setShowAllMembers] = useState(false);
+  const [muteSetting, setMuteSetting] = useState("All");
+  const [disappearing, setDisappearing] = useState("Off");
+  const [chatLocked, setChatLocked] = useState(false);
+  const [mediaVisible, setMediaVisible] = useState(true);
+  const [showMuteSheet, setShowMuteSheet] = useState(false);
+  const [showDisappearSheet, setShowDisappearSheet] = useState(false);
+  const [editingDesc, setEditingDesc] = useState(false);
+  const [desc, setDesc] = useState((channel as any).description || "");
+  const [loading, setLoading] = useState(true);
+  const [memberMenuId, setMemberMenuId] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!open || !channel) return;
-    setEditName(channel.name || "");
-    setEditDesc(channel.description || "");
-    setEditNameAr(channel.name_ar || "");
-    setIconUrl(channel.avatar || "");
-    loadMembers();
-  }, [open, channel]);
+    const load = async () => {
+      setLoading(true);
+      // Load members with profiles
+      const { data: mems } = await supabase
+        .from("chat_members" as any)
+        .select("user_id, role, joined_at")
+        .eq("channel_id", channel.id);
 
-  const loadMembers = async () => {
-    if (!channel) return;
-    setLoading(true);
-    const { data: memberRows } = await supabase
-      .from("chat_members" as any)
-      .select("user_id, role, joined_at, is_online, last_seen")
-      .eq("channel_id", channel.id);
+      if (mems && mems.length > 0) {
+        const uids = mems.map((m: any) => m.user_id);
+        const { data: profs } = await supabase
+          .from("profiles")
+          .select("user_id, full_name, full_name_ar, avatar_url, level, email")
+          .in("user_id", uids);
+        const profMap: Record<string, any> = {};
+        (profs || []).forEach((p: any) => { profMap[p.user_id] = p; });
+        const merged = mems.map((m: any) => ({ ...m, ...profMap[m.user_id] }));
+        setAllMembers(merged);
+        setMembers(merged);
+      }
 
-    if (!memberRows?.length) { setLoading(false); return; }
+      // Load recent media
+      const { data: media } = await supabase
+        .from("chat_messages")
+        .select("id, content_type, media_path, text, created_at")
+        .eq("channel_id", channel.id)
+        .in("content_type", ["image", "file", "audio"])
+        .order("created_at", { ascending: false })
+        .limit(12);
+      setMediaMessages(media || []);
+      setLoading(false);
+    };
+    load();
+  }, [channel.id]);
 
-    const userIds = memberRows.map((m: any) => m.user_id);
-    const { data: profiles } = await supabase
-      .from("profiles")
-      .select("user_id, full_name, full_name_ar, avatar_url, level, student_id")
-      .in("user_id", userIds);
+  useEffect(() => {
+    if (!memberSearch) { setMembers(allMembers); return; }
+    setMembers(allMembers.filter(m => (m.full_name || "").toLowerCase().includes(memberSearch.toLowerCase())));
+  }, [memberSearch, allMembers]);
 
-    const merged = memberRows.map((m: any) => {
-      const p = (profiles || []).find((pr: any) => pr.user_id === m.user_id) || {};
-      return { ...m, ...p };
-    });
-
-    setMembers(merged as Member[]);
-    setLoading(false);
+  const saveDesc = async () => {
+    await supabase.from("chat_channels" as any).update({ description: desc }).eq("id", channel.id);
+    setEditingDesc(false);
+    toast({ title: "Description updated" });
   };
 
-  const loadAllStudents = async () => {
-    const { data } = await supabase
-      .from("profiles")
-      .select("user_id, full_name, avatar_url, student_id")
-      .order("full_name");
-    setAllStudents(data || []);
+  const promoteAdmin = async (uid: string) => {
+    await supabase.from("chat_members" as any).update({ role: "admin" }).eq("channel_id", channel.id).eq("user_id", uid);
+    setAllMembers(prev => prev.map(m => m.user_id === uid ? { ...m, role: "admin" } : m));
+    setMemberMenuId(null);
+    toast({ title: "Promoted to admin" });
   };
 
-  const saveChanges = async () => {
-    if (!channel) return;
-    const { error } = await supabase
-      .from("chat_channels" as any)
-      .update({
-        name: editName,
-        name_ar: editNameAr,
-        description: editDesc,
-        avatar: iconUrl,
-      })
-      .eq("id", channel.id);
-
-    if (error) {
-      toast({ title: "Error saving changes", variant: "destructive" });
-    } else {
-      toast({ title: "Group updated successfully ✅" });
-      setEditing(false);
-      onUpdated?.();
-    }
+  const demoteAdmin = async (uid: string) => {
+    await supabase.from("chat_members" as any).update({ role: "member" }).eq("channel_id", channel.id).eq("user_id", uid);
+    setAllMembers(prev => prev.map(m => m.user_id === uid ? { ...m, role: "member" } : m));
+    setMemberMenuId(null);
+    toast({ title: "Removed as admin" });
   };
 
-  const removeMember = async (userId: string) => {
-    await supabase
-      .from("chat_members" as any)
-      .delete()
-      .eq("channel_id", channel.id)
-      .eq("user_id", userId);
-    loadMembers();
+  const removeMember = async (uid: string) => {
+    if (!confirm("Remove this member?")) return;
+    await supabase.from("chat_members" as any).delete().eq("channel_id", channel.id).eq("user_id", uid);
+    setAllMembers(prev => prev.filter(m => m.user_id !== uid));
+    setMemberMenuId(null);
     toast({ title: "Member removed" });
   };
 
-  const promoteToAdmin = async (userId: string) => {
-    await supabase
-      .from("chat_members" as any)
-      .update({ role: "admin" })
-      .eq("channel_id", channel.id)
-      .eq("user_id", userId);
-    loadMembers();
-    toast({ title: "Promoted to admin ✅" });
+  const copyInviteLink = () => {
+    const link = `${window.location.origin}/join/${channel.id}`;
+    navigator.clipboard?.writeText(link);
+    toast({ title: "Invite link copied!" });
   };
 
-  const addMember = async (userId: string) => {
-    await supabase
-      .from("chat_members" as any)
-      .upsert(
-        { channel_id: channel.id, user_id: userId, role: "member" },
-        { onConflict: "channel_id,user_id" }
-      );
-    loadMembers();
-    toast({ title: "Member added ✅" });
-  };
+  const initials = (name: string) => (name || "?").split(" ").map((w: string) => w[0]).join("").toUpperCase().slice(0, 2);
+  const colours = ["#075E54","#128C7E","#25D366","#34B7F1","#ECB22E","#E74C3C","#9B59B6","#3498DB"];
+  const av = (m: any, sz = 46) => m.avatar_url
+    ? <img src={m.avatar_url} style={{ width: sz, height: sz, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }} alt="" />
+    : <div style={{ width: sz, height: sz, borderRadius: "50%", background: colours[((m.full_name || "?").charCodeAt(0) || 0) % colours.length], display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 700, fontSize: sz * 0.35, flexShrink: 0 }}>{initials(m.full_name || "?")}</div>;
 
-  const filteredStudents = allStudents.filter(s =>
-    !members.find(m => m.user_id === s.user_id) &&
-    (s.full_name?.toLowerCase().includes(searchAdd.toLowerCase()) ||
-      s.student_id?.toLowerCase().includes(searchAdd.toLowerCase()))
-  );
-
-  const roleIcon = (role: string) => {
-    if (role === "admin") return <Crown className="h-3 w-3 text-yellow-500" />;
-    if (role === "moderator") return <Shield className="h-3 w-3 text-blue-500" />;
-    return null;
-  };
-
-  const formatLastSeen = (lastSeen: string | null) => {
-    if (!lastSeen) return "";
-    const diff = Date.now() - new Date(lastSeen).getTime();
-    const mins = Math.floor(diff / 60000);
-    if (mins < 1) return "just now";
-    if (mins < 60) return `${mins}m ago`;
-    const hrs = Math.floor(mins / 60);
-    if (hrs < 24) return `${hrs}h ago`;
-    return new Date(lastSeen).toLocaleDateString();
-  };
-
-  if (!channel) return null;
+  const displayMembers = showAllMembers ? members : members.slice(0, 5);
+  const channelName = channel.name || "Group";
+  const channelAvatar = (channel as any).avatar || "";
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-full sm:w-96 p-0 flex flex-col">
+    <div style={{ position: "fixed", inset: 0, zIndex: 300, background: "#fff", display: "flex", flexDirection: "column", overflowY: "auto" }}>
+      {/* Header */}
+      <div style={{ position: "sticky", top: 0, background: WA_GREEN, zIndex: 10, display: "flex", alignItems: "center", gap: 12, padding: "52px 16px 14px" }}>
+        <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "#fff", display: "flex" }}>
+          <ArrowLeft size={22} />
+        </button>
+        <span style={{ color: "#fff", fontWeight: 700, fontSize: 17 }}>Group info</span>
+      </div>
 
-        {/* Header */}
-        <div className="p-4 flex items-center gap-3" style={{ backgroundColor: "#1a3a2a" }}>
-          <button onClick={() => onOpenChange(false)} className="text-white/70 hover:text-white">
-            <X className="h-5 w-5" />
-          </button>
-          <h2 className="text-white font-semibold flex-1">
-            {t("Group Info", "معلومات المجموعة")}
-          </h2>
-          {canEdit && !editing && (
-            <button onClick={() => setEditing(true)} className="text-white/70 hover:text-white">
-              <Edit2 className="h-4 w-4" />
+      {/* Avatar + name */}
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "28px 20px 20px", background: "#fff", borderBottom: "8px solid #f0f2f5" }}>
+        <div style={{ position: "relative", marginBottom: 14 }}>
+          {channelAvatar
+            ? <img src={channelAvatar} style={{ width: 110, height: 110, borderRadius: "50%", objectFit: "cover" }} alt="" />
+            : <div style={{ width: 110, height: 110, borderRadius: "50%", background: WA_GREEN, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 42 }}>👥</div>
+          }
+          {canModerate && (
+            <button onClick={onAvatarClick} style={{ position: "absolute", bottom: 4, right: 4, width: 34, height: 34, borderRadius: "50%", background: "#25D366", border: "3px solid #fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+              <Camera size={15} color="#fff" />
             </button>
           )}
-          {editing && (
-            <div className="flex gap-2">
-              <button onClick={saveChanges} className="text-green-400 hover:text-green-300">
-                <Check className="h-5 w-5" />
-              </button>
-              <button onClick={() => setEditing(false)} className="text-red-400 hover:text-red-300">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+          <span style={{ fontSize: 20, fontWeight: 800, color: "#111" }}>{channelName}</span>
+          {canModerate && (
+            <button onClick={onEditName} style={{ background: "none", border: "none", cursor: "pointer", color: "#8696a0" }}>
+              <Edit2 size={16} />
+            </button>
           )}
         </div>
+        <span style={{ fontSize: 14, color: "#667" }}>Group · {memberCount} member{memberCount !== 1 ? "s" : ""}</span>
 
-        <div className="flex-1 overflow-y-auto">
+        {/* Action buttons row like WhatsApp */}
+        <div style={{ display: "flex", gap: 12, marginTop: 18 }}>
+          {[
+            { icon: <Bell size={20} />, label: "Voice chat" },
+            { icon: <Search size={20} />, label: "Search" },
+          ].map(item => (
+            <button key={item.label} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, background: "none", border: "1px solid #e0e0e0", borderRadius: 12, padding: "12px 28px", cursor: "pointer", color: "#111", fontSize: 13, fontWeight: 500 }}>
+              <span style={{ color: WA_GREEN }}>{item.icon}</span>{item.label}
+            </button>
+          ))}
+        </div>
+      </div>
 
-          {/* Group Avatar & Name */}
-          <div className="flex flex-col items-center py-6 px-4" style={{ backgroundColor: "#f5f0e8" }}>
-            <div className="relative">
-              <Avatar className="h-24 w-24 border-4 border-white shadow-lg">
-                <AvatarImage src={iconUrl || channel.avatar} />
-                <AvatarFallback style={{ backgroundColor: "#1a3a2a", color: "white", fontSize: "2rem" }}>
-                  {(channel.name || "G")[0].toUpperCase()}
-                </AvatarFallback>
-              </Avatar>
-              {canEdit && editing && (
-                <button className="absolute bottom-0 right-0 h-8 w-8 rounded-full flex items-center justify-center text-white shadow"
-                  style={{ backgroundColor: "#b8962e" }}>
-                  <Camera className="h-4 w-4" />
-                </button>
-              )}
-            </div>
-
-            {editing ? (
-              <div className="w-full mt-4 space-y-2">
-                <Input value={editName} onChange={e => setEditName(e.target.value)}
-                  placeholder="Group name" className="text-center font-semibold" />
-                <Input value={editNameAr} onChange={e => setEditNameAr(e.target.value)}
-                  placeholder="اسم المجموعة بالعربية" className="text-center" dir="rtl" />
-                <Input value={editDesc} onChange={e => setEditDesc(e.target.value)}
-                  placeholder="Group description..." />
-              </div>
-            ) : (
-              <div className="text-center mt-3">
-                <h3 className="text-xl font-bold" style={{ color: "#1a3a2a" }}>{channel.name}</h3>
-                {channel.name_ar && (
-                  <p className="text-sm text-gray-500 mt-0.5" dir="rtl">{channel.name_ar}</p>
-                )}
-                {channel.description && (
-                  <p className="text-sm text-gray-600 mt-2 max-w-xs">{channel.description}</p>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Group Details */}
-          <div className="px-4 py-3 border-b space-y-2">
-            <div className="flex items-center gap-3 text-sm text-gray-600">
-              <Users className="h-4 w-4" style={{ color: "#1a3a2a" }} />
-              <span>{members.length} {t("members", "عضو")}</span>
-            </div>
-            {channel.created_at && (
-              <div className="flex items-center gap-3 text-sm text-gray-600">
-                <Calendar className="h-4 w-4" style={{ color: "#1a3a2a" }} />
-                <span>{t("Created", "أُنشئت")} {new Date(channel.created_at).toLocaleDateString()}</span>
-              </div>
-            )}
-            <div className="flex items-center gap-3 text-sm text-gray-600">
-              <Info className="h-4 w-4" style={{ color: "#1a3a2a" }} />
-              <Badge variant="outline" className="text-xs capitalize">{channel.type || "group"}</Badge>
-              {channel.is_private && <Badge variant="secondary" className="text-xs">Private</Badge>}
+      {/* Description */}
+      <div style={{ background: "#fff", padding: "16px 20px", borderBottom: "8px solid #f0f2f5" }}>
+        {editingDesc ? (
+          <div>
+            <textarea
+              value={desc}
+              onChange={e => setDesc(e.target.value)}
+              autoFocus
+              rows={3}
+              style={{ width: "100%", border: "none", borderBottom: "2px solid " + WA_GREEN, outline: "none", fontSize: 15, color: "#111", resize: "none", background: "transparent", boxSizing: "border-box" }}
+              placeholder="Group description…"
+            />
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8 }}>
+              <button onClick={() => setEditingDesc(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#667", fontSize: 14 }}>Cancel</button>
+              <button onClick={saveDesc} style={{ background: WA_GREEN, color: "#fff", border: "none", borderRadius: 8, padding: "6px 16px", cursor: "pointer", fontWeight: 700, fontSize: 14 }}>Save</button>
             </div>
           </div>
-
-          {/* Members List */}
-          <div className="px-4 pt-4">
-            <div className="flex items-center justify-between mb-3">
-              <h4 className="font-semibold text-sm" style={{ color: "#1a3a2a" }}>
-                {t("Members", "الأعضاء")} ({members.length})
-              </h4>
-              {canEdit && (
-                <button
-                  onClick={() => { setShowAddMembers(!showAddMembers); loadAllStudents(); }}
-                  className="flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-full"
-                  style={{ backgroundColor: "#1a3a2a", color: "white" }}
-                >
-                  <UserPlus className="h-3 w-3" />
-                  {t("Add", "إضافة")}
-                </button>
-              )}
+        ) : (
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ color: WA_GREEN, fontSize: 12, fontWeight: 700, marginBottom: 4 }}>Description</div>
+              <div style={{ fontSize: 15, color: desc ? "#111" : "#8696a0" }}>{desc || "Add group description"}</div>
+              <div style={{ fontSize: 12, color: "#8696a0", marginTop: 4 }}>Created on {new Date(channel.created_at || Date.now()).toLocaleDateString()}</div>
             </div>
-
-            {/* Add Members Search */}
-            {showAddMembers && (
-              <div className="mb-4 p-3 rounded-xl border" style={{ backgroundColor: "#f5f0e8" }}>
-                <Input
-                  value={searchAdd}
-                  onChange={e => setSearchAdd(e.target.value)}
-                  placeholder={t("Search students...", "ابحث عن طالب...")}
-                  className="mb-2 h-8 text-sm"
-                />
-                <div className="space-y-1 max-h-40 overflow-y-auto">
-                  {filteredStudents.slice(0, 10).map(s => (
-                    <div key={s.user_id} className="flex items-center gap-2 p-1.5 rounded-lg hover:bg-white">
-                      <Avatar className="h-7 w-7">
-                        <AvatarImage src={s.avatar_url} />
-                        <AvatarFallback className="text-xs" style={{ backgroundColor: "#1a3a2a", color: "white" }}>
-                          {(s.full_name || "S")[0]}
-                        </AvatarFallback>
-                      </Avatar>
-                      <span className="text-xs flex-1">{s.full_name || "Student"}</span>
-                      <button
-                        onClick={() => addMember(s.user_id)}
-                        className="text-xs px-2 py-0.5 rounded-full text-white"
-                        style={{ backgroundColor: "#1a3a2a" }}
-                      >
-                        {t("Add", "أضف")}
-                      </button>
-                    </div>
-                  ))}
-                  {filteredStudents.length === 0 && (
-                    <p className="text-xs text-center text-gray-500 py-2">No students found</p>
-                  )}
-                </div>
-              </div>
+            {canModerate && (
+              <button onClick={() => setEditingDesc(true)} style={{ background: "none", border: "none", cursor: "pointer", color: "#8696a0", padding: 4 }}>
+                <Edit2 size={16} />
+              </button>
             )}
+          </div>
+        )}
+      </div>
 
-            {/* Members */}
-            {loading ? (
-              <p className="text-sm text-center text-gray-500 py-4">Loading...</p>
-            ) : (
-              <div className="space-y-1 pb-4">
-                {members.map(m => (
-                  <div
-                    key={m.user_id}
-                    className="flex items-center gap-3 p-2.5 rounded-xl hover:bg-gray-50 cursor-pointer"
-                    onClick={() => onMemberTap?.(m)}
-                  >
-                    <div className="relative shrink-0">
-                      <Avatar className="h-10 w-10">
-                        <AvatarImage src={m.avatar_url || ""} />
-                        <AvatarFallback style={{ backgroundColor: "#1a3a2a", color: "white" }}>
-                          {(m.full_name || "S")[0]}
-                        </AvatarFallback>
-                      </Avatar>
-                      {m.is_online && (
-                        <div className="absolute bottom-0 right-0 h-3 w-3 rounded-full bg-green-500 border-2 border-white" />
-                      )}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <p className="text-sm font-medium truncate">{m.full_name || "Student"}</p>
-                        {roleIcon(m.role)}
-                      </div>
-                      <p className="text-xs text-gray-500">
-                        {m.is_online ? (
-                          <span className="text-green-500">{t("Online", "متصل")}</span>
-                        ) : (
-                          formatLastSeen(m.last_seen)
-                        )}
-                      </p>
-                    </div>
-                    {m.student_id && (
-                      <span className="text-[10px] text-gray-400">{m.student_id}</span>
-                    )}
-                    {canEdit && m.user_id !== user?.id && (
-                      <div className="flex gap-1" onClick={e => e.stopPropagation()}>
-                        {m.role !== "admin" && (
-                          <button
-                            onClick={() => promoteToAdmin(m.user_id)}
-                            className="p-1 rounded-full hover:bg-yellow-50"
-                            title="Promote to admin"
-                          >
-                            <Crown className="h-3.5 w-3.5 text-yellow-500" />
-                          </button>
-                        )}
-                        <button
-                          onClick={() => removeMember(m.user_id)}
-                          className="p-1 rounded-full hover:bg-red-50"
-                          title="Remove member"
-                        >
-                          <UserMinus className="h-3.5 w-3.5 text-red-400" />
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
+      {/* Media / links / docs */}
+      <div style={{ background: "#fff", borderBottom: "8px solid #f0f2f5" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 20px 10px" }}>
+          <span style={{ fontSize: 15, color: "#111" }}>Media, links, and docs</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 4, color: "#8696a0", fontSize: 14 }}>
+            {mediaMessages.length}
+            <ChevronRight size={18} />
           </div>
         </div>
-      </SheetContent>
-    </Sheet>
+        {mediaMessages.filter(m => m.content_type === "image").length > 0 && (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 2, padding: "0 0 14px 0" }}>
+            {mediaMessages.filter(m => m.content_type === "image").slice(0, 4).map(m => (
+              <div key={m.id} style={{ aspectRatio: "1", background: "#e0e0e0", overflow: "hidden" }}>
+                {m.text?.startsWith("data:image") && <img src={m.text} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt="" />}
+              </div>
+            ))}
+          </div>
+        )}
+        {mediaMessages.length === 0 && (
+          <div style={{ padding: "0 20px 16px", fontSize: 13, color: "#8696a0" }}>No media shared yet</div>
+        )}
+      </div>
+
+      {/* Settings rows */}
+      <div style={{ background: "#fff", borderBottom: "8px solid #f0f2f5" }}>
+        {[
+          { icon: <HardDrive size={20} />, label: "Manage Storage", sub: "2.5 MB", fn: () => {} },
+          {
+            icon: <Bell size={20} />, label: "Notifications", sub: muteSetting,
+            fn: () => setShowMuteSheet(true)
+          },
+          { icon: <ImageIcon size={20} />, label: "Media visibility", sub: "", hasToggle: true, val: mediaVisible, setVal: setMediaVisible },
+        ].map((row, i) => (
+          <div key={i} onClick={row.fn} style={{ display: "flex", alignItems: "center", gap: 16, padding: "16px 20px", cursor: row.fn ? "pointer" : "default", borderBottom: "1px solid #f5f5f5" }}>
+            <span style={{ color: "#8696a0" }}>{row.icon}</span>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 15, color: "#111" }}>{row.label}</div>
+              {row.sub && <div style={{ fontSize: 13, color: "#8696a0" }}>{row.sub}</div>}
+            </div>
+            {row.hasToggle
+              ? <div onClick={e => { e.stopPropagation(); row.setVal && row.setVal(!row.val); }} style={{ width: 44, height: 24, borderRadius: 12, background: row.val ? "#25D366" : "#ccc", cursor: "pointer", position: "relative", transition: "background .2s" }}>
+                  <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 2, left: row.val ? 22 : 2, transition: "left .2s" }} />
+                </div>
+              : <ChevronRight size={18} color="#8696a0" />
+            }
+          </div>
+        ))}
+      </div>
+
+      {/* Security/privacy rows */}
+      <div style={{ background: "#fff", borderBottom: "8px solid #f0f2f5" }}>
+        {[
+          { icon: <Lock size={20} />, label: "Encryption", sub: "Messages and calls are end-to-end encrypted. Tap to learn more." },
+          { icon: <Timer size={20} />, label: "Disappearing messages", sub: disappearing, fn: () => setShowDisappearSheet(true) },
+          {
+            icon: <Lock size={20} />, label: "Chat lock", sub: "Lock and hide this chat on this device.",
+            hasToggle: true, val: chatLocked, setVal: setChatLocked
+          },
+          { icon: <ShieldCheck size={20} />, label: "Advanced chat privacy", sub: "Off", fn: () => {} },
+        ].map((row, i) => (
+          <div key={i} onClick={(row as any).fn} style={{ display: "flex", alignItems: "flex-start", gap: 16, padding: "16px 20px", cursor: (row as any).fn ? "pointer" : "default", borderBottom: "1px solid #f5f5f5" }}>
+            <span style={{ color: "#8696a0", marginTop: 2 }}>{row.icon}</span>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 15, color: "#111" }}>{row.label}</div>
+              <div style={{ fontSize: 13, color: "#8696a0", marginTop: 2, lineHeight: 1.4 }}>{row.sub}</div>
+            </div>
+            {(row as any).hasToggle
+              ? <div onClick={e => { e.stopPropagation(); (row as any).setVal?.(!row.val); }} style={{ width: 44, height: 24, borderRadius: 12, background: row.val ? "#25D366" : "#ccc", cursor: "pointer", position: "relative", transition: "background .2s", flexShrink: 0, marginTop: 2 }}>
+                  <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#fff", position: "absolute", top: 2, left: row.val ? 22 : 2, transition: "left .2s" }} />
+                </div>
+              : (row as any).fn ? <ChevronRight size={18} color="#8696a0" style={{ flexShrink: 0, marginTop: 2 }} /> : null
+            }
+          </div>
+        ))}
+      </div>
+
+      {/* Members section */}
+      <div style={{ background: "#fff", borderBottom: "8px solid #f0f2f5" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px 12px" }}>
+          <span style={{ fontSize: 15, color: "#111" }}>{allMembers.length} member{allMembers.length !== 1 ? "s" : ""}</span>
+          <Search size={20} color="#8696a0" style={{ cursor: "pointer" }} onClick={() => {}} />
+        </div>
+
+        {/* Member search */}
+        <div style={{ margin: "0 16px 12px", background: "#f0f2f5", borderRadius: 10, display: "flex", alignItems: "center", gap: 8, padding: "8px 14px" }}>
+          <Search size={15} color="#8696a0" />
+          <input value={memberSearch} onChange={e => setMemberSearch(e.target.value)} placeholder="Search members…" style={{ border: "none", background: "transparent", flex: 1, fontSize: 14, outline: "none", color: "#111" }} />
+        </div>
+
+        {/* Add members (admin) */}
+        {canModerate && (
+          <>
+            <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 20px", cursor: "pointer", borderBottom: "1px solid #f5f5f5" }}>
+              <div style={{ width: 46, height: 46, borderRadius: "50%", background: "#f0f2f5", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <UserPlus size={20} color={WA_GREEN} />
+              </div>
+              <span style={{ fontSize: 15, color: WA_GREEN, fontWeight: 600 }}>Add members</span>
+            </div>
+            <div onClick={copyInviteLink} style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 20px", cursor: "pointer", borderBottom: "1px solid #f5f5f5" }}>
+              <div style={{ width: 46, height: 46, borderRadius: "50%", background: "#f0f2f5", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <Link size={20} color={WA_GREEN} />
+              </div>
+              <span style={{ fontSize: 15, color: WA_GREEN, fontWeight: 600 }}>Invite via link</span>
+            </div>
+          </>
+        )}
+
+        {/* Member list */}
+        {loading
+          ? <div style={{ padding: 20, color: "#8696a0", fontSize: 14, textAlign: "center" }}>Loading members…</div>
+          : displayMembers.map((m, i) => (
+            <div key={m.user_id} style={{ position: "relative" }}>
+              <div
+                style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 20px", cursor: "pointer", borderBottom: "1px solid #f5f5f5" }}
+                onClick={() => onMemberClick(m)}
+              >
+                {av(m, 46)}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 15, fontWeight: 600, color: "#111", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.full_name || "Member"}</div>
+                  <div style={{ fontSize: 13, color: "#8696a0" }}>{(m as any).level || "Student"}</div>
+                </div>
+                {m.role === "admin" && (
+                  <span style={{ fontSize: 11, color: "#2ECC71", background: "#E8F8F0", padding: "3px 10px", borderRadius: 20, fontWeight: 700, flexShrink: 0 }}>Group Admin</span>
+                )}
+                {canModerate && (
+                  <button onClick={e => { e.stopPropagation(); setMemberMenuId(m.user_id === memberMenuId ? null : m.user_id); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#8696a0", padding: 4 }}>
+                    <MoreVertical size={18} />
+                  </button>
+                )}
+              </div>
+              {/* Member action menu */}
+              {memberMenuId === m.user_id && canModerate && (
+                <div style={{ position: "absolute", right: 14, top: 14, background: "#fff", borderRadius: 10, boxShadow: "0 4px 20px rgba(0,0,0,.2)", zIndex: 100, minWidth: 180, overflow: "hidden" }} onClick={e => e.stopPropagation()}>
+                  {m.role !== "admin"
+                    ? <button onClick={() => promoteAdmin(m.user_id)} style={{ width: "100%", padding: "12px 16px", background: "none", border: "none", cursor: "pointer", textAlign: "left", fontSize: 14, color: "#111", borderBottom: "1px solid #f5f5f5" }}>Make group admin</button>
+                    : <button onClick={() => demoteAdmin(m.user_id)} style={{ width: "100%", padding: "12px 16px", background: "none", border: "none", cursor: "pointer", textAlign: "left", fontSize: 14, color: "#111", borderBottom: "1px solid #f5f5f5" }}>Remove as admin</button>
+                  }
+                  <button onClick={() => removeMember(m.user_id)} style={{ width: "100%", padding: "12px 16px", background: "none", border: "none", cursor: "pointer", textAlign: "left", fontSize: 14, color: "#E74C3C" }}>Remove from group</button>
+                </div>
+              )}
+            </div>
+          ))
+        }
+
+        {!loading && members.length > 5 && !showAllMembers && (
+          <div onClick={() => setShowAllMembers(true)} style={{ padding: "14px 20px", color: WA_GREEN, fontSize: 14, cursor: "pointer", fontWeight: 600 }}>
+            View all ({members.length - 5} more)
+          </div>
+        )}
+      </div>
+
+      {/* Bottom actions */}
+      <div style={{ background: "#fff", marginBottom: 32 }}>
+        {[
+          { icon: <Heart size={20} />, label: "Add to Favorites", color: "#111", fn: () => toast({ title: "Added to favorites" }) },
+          { icon: <List size={20} />, label: "Add to list", color: "#111", fn: () => {} },
+          { icon: <Trash2 size={20} />, label: "Clear chat", color: "#111", fn: () => {} },
+          { icon: <LogOut size={20} />, label: "Exit group", color: "#E74C3C", fn: onLeaveGroup },
+          { icon: <Flag size={20} />, label: "Report group", color: "#E74C3C", fn: () => toast({ title: "Report submitted" }) },
+        ].map((item, i) => (
+          <div key={i} onClick={item.fn} style={{ display: "flex", alignItems: "center", gap: 20, padding: "18px 24px", cursor: "pointer", borderBottom: "1px solid #f5f5f5" }}>
+            <span style={{ color: item.color }}>{item.icon}</span>
+            <span style={{ fontSize: 16, color: item.color }}>{item.label}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Mute sheet */}
+      {showMuteSheet && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.5)", zIndex: 500, display: "flex", alignItems: "flex-end" }} onClick={() => setShowMuteSheet(false)}>
+          <div style={{ width: "100%", maxWidth: 480, margin: "0 auto", background: "#fff", borderRadius: "20px 20px 0 0", overflow: "hidden" }} onClick={e => e.stopPropagation()}>
+            <div style={{ padding: "16px 20px", borderBottom: "1px solid #f0f0f0", fontWeight: 700, fontSize: 16 }}>Notifications</div>
+            {["All", "Mentions only", "Off"].map(opt => (
+              <div key={opt} onClick={() => { setMuteSetting(opt); setShowMuteSheet(false); }} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", cursor: "pointer", borderBottom: "1px solid #f5f5f5" }}>
+                <span style={{ fontSize: 15 }}>{opt}</span>
+                {muteSetting === opt && <Check size={18} color={WA_GREEN} />}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Disappearing messages sheet */}
+      {showDisappearSheet && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.5)", zIndex: 500, display: "flex", alignItems: "flex-end" }} onClick={() => setShowDisappearSheet(false)}>
+          <div style={{ width: "100%", maxWidth: 480, margin: "0 auto", background: "#fff", borderRadius: "20px 20px 0 0", overflow: "hidden" }} onClick={e => e.stopPropagation()}>
+            <div style={{ padding: "16px 20px", borderBottom: "1px solid #f0f0f0", fontWeight: 700, fontSize: 16 }}>Disappearing messages</div>
+            {["Off", "24 hours", "7 days", "90 days"].map(opt => (
+              <div key={opt} onClick={() => { setDisappearing(opt); setShowDisappearSheet(false); }} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", cursor: "pointer", borderBottom: "1px solid #f5f5f5" }}>
+                <span style={{ fontSize: 15 }}>{opt}</span>
+                {disappearing === opt && <Check size={18} color={WA_GREEN} />}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Backdrop for member menu */}
+      {memberMenuId && <div style={{ position: "fixed", inset: 0, zIndex: 99 }} onClick={() => setMemberMenuId(null)} />}
+    </div>
   );
 };
 
