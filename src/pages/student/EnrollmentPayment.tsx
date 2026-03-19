@@ -143,7 +143,9 @@ const EnrollmentPayment = () => {
       let { data: enr } = await supabase.from("enrollments" as any)
         .select("*").eq("user_id", user.id).maybeSingle();
 
+      let isNewEnrollment = false;
       if (!enr) {
+        isNewEnrollment = true;
         const graceEnd = new Date(Date.now() + GRACE_DAYS * 86400000).toISOString();
         const { data: created } = await supabase.from("enrollments" as any)
           .insert({ user_id: user.id, level, plan_type: "monthly", amount: fees.monthly, status: "grace", grace_end_date: graceEnd, admin_override: false, registration_paid: false, registration_paid_at: null })
@@ -151,13 +153,14 @@ const EnrollmentPayment = () => {
         enr = created;
       }
 
-      // ── Existing students: if they already have active/grace status but
-      //    registration_paid is false, they pre-date the reg fee system → auto-mark paid
-      if (enr && !enr.registration_paid && (enr.status === "active" || enr.status === "grace") && enr.paid_at) {
+      // Any existing enrollment with registration_paid=false is a student
+      // who predates the registration fee — auto-mark them as paid
+      if (enr && !enr.registration_paid && !isNewEnrollment) {
+        const paidAt = enr.paid_at || enr.created_at || new Date().toISOString();
         await supabase.from("enrollments" as any)
-          .update({ registration_paid: true, registration_paid_at: enr.paid_at })
+          .update({ registration_paid: true, registration_paid_at: paidAt })
           .eq("id", enr.id);
-        enr = { ...enr, registration_paid: true, registration_paid_at: enr.paid_at };
+        enr = { ...enr, registration_paid: true, registration_paid_at: paidAt };
       }
 
       if (enr && enr.status === "grace" && enr.grace_end_date && new Date(enr.grace_end_date) < new Date()) {
