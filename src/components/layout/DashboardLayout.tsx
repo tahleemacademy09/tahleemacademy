@@ -95,7 +95,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     { to: "/admin/recitation-review", icon: Mic,             label: t("Recitation Review",    "مراجعة التلاوة") },
     { to: "/admin/payments",          icon: CreditCard,      label: t("Payments",             "المدفوعات")      },
     { to: "/admin/calendar",          icon: Calendar,        label: t("Calendar",             "التقويم")        },
-    { to: "/admin/public-classes",    icon: Mic,             label: t("Public Classes",       "الدروس العامة")  },
+    { to: "/admin/public-classes",    icon: Globe,           label: t("Public Classes",       "الدروس العامة")  },
     { to: "/admin/majlis-moderation", icon: MessageCircle,   label: t("Al-Majlis",            "المجلس")         },
   ];
 
