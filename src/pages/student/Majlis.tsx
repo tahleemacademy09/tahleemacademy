@@ -1,4 +1,3 @@
-
 /*  src/pages/student/Majlis.tsx
     PROFESSIONAL — Complete WhatsApp-grade implementation
     All 47 features: settings, wallpaper, member counts, swipe, long-press,
@@ -105,33 +104,96 @@ const DateSep = ({ date }: { date: string }) => {
   );
 };
 
-// ── AudioMsg ──────────────────────────────────────────────────────
+// ── AudioMsg — WhatsApp-style player ─────────────────────────────
 const AudioMsg = ({ path, text }: { path?: string | null; text?: string | null }) => {
-  const [url, setUrl] = useState<string | null>(null);
-  const [err, setErr] = useState(false);
+  const [url, setUrl]         = useState<string | null>(null);
+  const [err, setErr]         = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [speed, setSpeed]     = useState(1);
+  const [listened, setListened] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
   useEffect(() => {
-    // base64 audio stored in text field
     if (text?.startsWith("data:audio")) { setUrl(text); return; }
     const src = path || "";
     if (!src) { setErr(true); return; }
     if (src.startsWith("http")) { setUrl(src); return; }
     resolveMedia(src).then(u => u ? setUrl(u) : setErr(true));
   }, [path, text]);
-  if (err) return <span style={{ fontSize: 11, opacity: .6, fontStyle: "italic" }}>Audio unavailable</span>;
+
+  useEffect(() => {
+    if (!url) return;
+    const a = new Audio(url);
+    audioRef.current = a;
+    a.onloadedmetadata = () => setDuration(a.duration || 0);
+    a.ontimeupdate = () => setProgress(a.duration ? (a.currentTime / a.duration) * 100 : 0);
+    a.onended = () => { setPlaying(false); setProgress(0); setListened(true); };
+    return () => { a.pause(); a.src = ""; };
+  }, [url]);
+
+  const toggle = () => {
+    const a = audioRef.current; if (!a) return;
+    if (playing) { a.pause(); setPlaying(false); }
+    else { a.playbackRate = speed; a.play(); setPlaying(true); setListened(true); }
+  };
+  const cycleSpeed = () => {
+    const next = speed === 1 ? 1.5 : speed === 1.5 ? 2 : 1;
+    setSpeed(next);
+    if (audioRef.current) audioRef.current.playbackRate = next;
+  };
+  const fmt = (s: number) => `${String(Math.floor(s / 60)).padStart(2,"0")}:${String(Math.floor(s % 60)).padStart(2,"0")}`;
+  const barColor = listened ? "#53BDEB" : WA_GREEN;
+
+  if (err) return <span style={{ fontSize: 11, opacity:.6, fontStyle:"italic" }}>Audio unavailable</span>;
   if (!url) return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 180, opacity: .6 }}>
-      <div style={{ width: 30, height: 30, borderRadius: "50%", background: WA_GREEN, display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <Loader2 style={{ width: 14, height: 14, color: "#fff", animation: "spin .8s linear infinite" }} />
+    <div style={{ display:"flex", alignItems:"center", gap:8, minWidth:200, opacity:.6 }}>
+      <div style={{ width:36, height:36, borderRadius:"50%", background:WA_GREEN, display:"flex", alignItems:"center", justifyContent:"center" }}>
+        <Loader2 style={{ width:16, height:16, color:"#fff", animation:"spin .8s linear infinite" }} />
       </div>
-      <span style={{ fontSize: 11 }}>Loading audio…</span>
+      <span style={{ fontSize:12 }}>Loading…</span>
     </div>
   );
+
+  // Simulated waveform bars
+  const bars = Array.from({ length: 28 }, (_, i) => {
+    const h = [3,5,8,12,16,10,7,14,18,12,8,5,10,15,9,6,13,17,11,7,4,9,14,10,6,8,12,5][i] || 8;
+    const filled = progress > 0 && (i / 28) * 100 < progress;
+    return (
+      <div key={i} style={{ width:2.5, height:h*1.8, borderRadius:2, background: filled ? barColor : (isDark ? "#555" : "#ccc"), flexShrink:0, transition:"background .1s" }} />
+    );
+  });
+
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 200 }}>
-      <div style={{ width: 32, height: 32, borderRadius: "50%", background: WA_GREEN, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-        <Mic style={{ width: 14, height: 14, color: "#fff" }} />
+    <div style={{ display:"flex", alignItems:"center", gap:8, minWidth:220, maxWidth:260 }}>
+      <button onClick={toggle} style={{ width:38, height:38, borderRadius:"50%", background:WA_GREEN, border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+        {playing
+          ? <div style={{ display:"flex", gap:2 }}><div style={{ width:3, height:14, background:"#fff", borderRadius:2 }} /><div style={{ width:3, height:14, background:"#fff", borderRadius:2 }} /></div>
+          : <div style={{ width:0, height:0, borderTop:"7px solid transparent", borderBottom:"7px solid transparent", borderLeft:"12px solid #fff", marginLeft:3 }} />
+        }
+      </button>
+      <div style={{ flex:1, minWidth:0 }}>
+        {/* Waveform bar + progress scrubber */}
+        <div
+          style={{ display:"flex", alignItems:"center", gap:1, height:24, cursor:"pointer" }}
+          onClick={e => {
+            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+            const pct = (e.clientX - rect.left) / rect.width;
+            if (audioRef.current) { audioRef.current.currentTime = pct * (audioRef.current.duration || 0); setProgress(pct * 100); }
+          }}
+        >
+          {bars}
+        </div>
+        <div style={{ display:"flex", justifyContent:"space-between", marginTop:2 }}>
+          <span style={{ fontSize:10, color: isDark ? "#8696a0" : "#999" }}>
+            {playing || progress > 0 ? fmt((progress / 100) * duration) : fmt(duration)}
+          </span>
+          <button onClick={cycleSpeed} style={{ background:"none", border:`1px solid ${isDark?"#555":"#ddd"}`, borderRadius:10, padding:"0 5px", fontSize:9, cursor:"pointer", color: isDark?"#8696a0":"#888", fontWeight:700 }}>
+            {speed}×
+          </button>
+        </div>
       </div>
-      <audio controls src={url} style={{ height: 32, flex: 1, maxWidth: 180 }} />
     </div>
   );
 };
@@ -252,6 +314,8 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
   const [editingMsg, setEditingMsg]   = useState<ChatMessage | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
+  const [recordingLocked, setRecordingLocked] = useState(false);
+  const [recordingCancelled, setRecordingCancelled] = useState(false);
   const [mentionList, setMentionList] = useState<UserProfile[]>([]);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [disappearTimer, setDisappearTimer] = useState(0);
@@ -555,7 +619,13 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
     setTimeout(() => inputRef.current?.focus(), 50);
   };
 
-  const startLongPress = (id: string) => { lpTimerRef.current = setTimeout(() => { setShowMessageMenu(id); setShowDeleteSheet(null); }, LP_DELAY); };
+  const startLongPress = (id: string) => {
+    lpTimerRef.current = setTimeout(() => {
+      setShowMessageMenu(id); setShowDeleteSheet(null);
+      // Haptic feedback
+      if (navigator.vibrate) navigator.vibrate(50);
+    }, LP_DELAY);
+  };
   const cancelLongPress = () => { if (lpTimerRef.current) { clearTimeout(lpTimerRef.current); lpTimerRef.current = null; } };
 
   const sendMessage = async (contentType = "text", mediaPath?: string, extraText?: string) => {
@@ -621,8 +691,19 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
     }
   };
 
+  const cancelRecording = () => {
+    if (mediaRecRef.current && mediaRecRef.current.state !== "inactive") {
+      setRecordingCancelled(true);
+      mediaRecRef.current.stop();
+    }
+    clearInterval(recTimerRef.current);
+    setIsRecording(false); setRecordingLocked(false); setRecordingTime(0);
+    if (navigator.vibrate) navigator.vibrate([30, 30]);
+  };
+
   const startRecording = async () => {
     try {
+      setRecordingCancelled(false);
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mimeType = ["audio/webm;codecs=opus","audio/webm","audio/mp4","audio/ogg"].find(t => {
         try { return MediaRecorder.isTypeSupported(t); } catch { return false; }
@@ -632,17 +713,17 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
       mr.ondataavailable = e => { if (e.data && e.data.size > 0) chunksRef.current.push(e.data); };
       mr.onstop = async () => {
         stream.getTracks().forEach(t => t.stop());
-        clearInterval(recTimerRef.current); setRecordingTime(0);
+        clearInterval(recTimerRef.current); setRecordingTime(0); setRecordingLocked(false);
+        // Check if cancelled via ref to avoid stale closure
+        if ((mediaRecRef as any)._cancelled) { (mediaRecRef as any)._cancelled = false; return; }
         const blob = new Blob(chunksRef.current, { type: mimeType || "audio/webm" });
         if (blob.size === 0) { toast({ title: "Recording was empty", variant: "destructive" }); return; }
         const ext = mimeType.includes("mp4") ? "mp4" : mimeType.includes("ogg") ? "ogg" : "webm";
         const path = `voice/${activeChannelId}/${user!.id}/${Date.now()}.${ext}`;
-        // Try storage first
         const { error } = await supabase.storage.from(BUCKET).upload(path, blob, { contentType: mimeType || "audio/webm", upsert: true });
         if (!error) {
           await sendMessage("audio", path);
         } else {
-          // Fallback: store as base64 data URL in message text
           const reader = new FileReader();
           reader.onloadend = async () => {
             const b64 = reader.result as string;
@@ -650,23 +731,29 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
               class_level_id: activeChannelId, channel_id: activeChannelId,
               user_id: user!.id, content_type: "audio", text: b64, media_path: null
             });
-            toast({ title: "Voice note sent" });
           };
           reader.readAsDataURL(blob);
         }
       };
       mr.start(200);
       mediaRecRef.current = mr; setIsRecording(true);
+      if (navigator.vibrate) navigator.vibrate(50);
       recTimerRef.current = setInterval(() => setRecordingTime(t => t + 1), 1000);
     } catch (e: any) {
       if (e.name === "NotAllowedError" || e.name === "PermissionDeniedError") {
-        toast({ title: "Microphone permission denied", description: "Please allow mic access in your browser settings", variant: "destructive" });
+        toast({ title: "Microphone permission denied", description: "Allow mic access in browser settings", variant: "destructive" });
       } else {
         toast({ title: "Recording failed", description: e.message, variant: "destructive" });
       }
     }
   };
-  const stopRecording = () => { mediaRecRef.current?.stop(); setIsRecording(false); };
+
+  const stopRecording = () => {
+    if (mediaRecRef.current && mediaRecRef.current.state !== "inactive") {
+      mediaRecRef.current.stop();
+    }
+    setIsRecording(false);
+  };
 
   const forwardToChannel = async (targetId: string) => {
     if (!user) return;
@@ -801,6 +888,8 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
       @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
       @keyframes slideUp { from { transform:translateY(100%); } to { transform:translateY(0); } }
       @keyframes slideIn { from { transform:translateX(-100%); } to { transform:translateX(0); } }
+      @keyframes waveBar { from { transform:scaleY(0.4); } to { transform:scaleY(1); } }
+      @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:.4;} }
       .majlis-wrap { display:flex; height:100dvh; overflow:hidden; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; }
       .majlis-sidebar { width:100%; max-width:380px; display:flex; flex-direction:column; border-right:1px solid #e0e0e0; background:#fff; flex-shrink:0; height:100dvh; }
       .majlis-chat { flex:1; display:flex; flex-direction:column; min-width:0; height:100dvh; overflow:hidden; }
@@ -1495,32 +1584,48 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
               <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }} onClick={() => setShowGroupInfo(true)}>
                 <div style={{ color: "#fff", fontWeight: 700, fontSize: 16, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{getCN(activeChannel)}</div>
                 <div style={{ color: "rgba(255,255,255,.75)", fontSize: 11 }}>
-                  {typingUsers.length > 0 ? `${typingUsers[0]} is typing...` : `${memberCounts[activeChannel.id] || 0} members`}
+                  {typingUsers.length > 0
+                    ? `${typingUsers[0]} is typing…`
+                    : (() => {
+                        const total = memberCounts[activeChannel.id] || 0;
+                        const online = Object.values(profiles).filter(p =>
+                          onlineUsers.has(p.user_id)
+                        ).length;
+                        return online > 0
+                          ? `${total} members, ${online} online`
+                          : `${total} members`;
+                      })()
+                  }
                 </div>
               </div>
               <div style={{ display: "flex", gap: 4 }}>
                 <button onClick={() => { setShowChatSearch(p => !p); setChatSearchQuery(""); }} style={{ background: "none", border: "none", color: "#fff", cursor: "pointer", padding: 6 }}><Search size={18} /></button>
                 <button onClick={() => setShowHeaderMenu(p => !p)} style={{ background: "none", border: "none", color: "#fff", cursor: "pointer", padding: 6 }}><MoreVertical size={18} /></button>
               </div>
-              {/* Header dropdown menu */}
+              {/* Header dropdown → now opens bottom sheet */}
               {showHeaderMenu && (
-                <div style={{ position: "absolute", top: 56, right: 10, background: isDark ? "#233138" : "#fff", borderRadius: 10, boxShadow: "0 4px 20px rgba(0,0,0,.25)", zIndex: 200, minWidth: 200, overflow: "hidden" }} onClick={e => e.stopPropagation()}>
-                  {[
-                    { label: "Group Info", fn: () => { setShowGroupInfo(true); setShowHeaderMenu(false); } },
-                    { label: "Select Messages", fn: () => { setSelectMode(true); setShowHeaderMenu(false); } },
-                    { label: "Search Messages", fn: () => { setShowChatSearch(true); setShowHeaderMenu(false); } },
-                    { label: "Starred Messages", fn: () => { setShowHeaderMenu(false); toast({ title: `${starredMessages.size} starred message(s)` }); } },
-                    { label: "Mute Notifications", fn: () => { toggleMuteCh(activeChannel.id); setShowHeaderMenu(false); } },
-                    { label: "Wallpaper & Sound", fn: () => { setSettingsTab("chats"); setShowSettings(true); setShowHeaderMenu(false); } },
-                    { label: "Export Chat", fn: () => { exportChat(); setShowHeaderMenu(false); } },
-                    ...(canModerate ? [
-                      { label: "Clear Messages", fn: () => { clearChat(); setShowHeaderMenu(false); }, danger: true },
-                      { label: "Delete Group", fn: () => { deleteGroup(); setShowHeaderMenu(false); }, danger: true },
-                    ] : []),
-                    { label: "Leave Group", fn: () => { leaveChannel(activeChannel.id); setShowHeaderMenu(false); }, danger: true },
-                  ].map((item, i) => (
-                    <button key={i} onClick={item.fn} style={{ width: "100%", padding: "12px 16px", background: "none", border: "none", cursor: "pointer", textAlign: "left", fontSize: 14, color: (item as any).danger ? "#E74C3C" : textMain, borderBottom: `1px solid ${divider}` }}>{item.label}</button>
-                  ))}
+                <div style={{ position: "fixed", inset: 0, zIndex: 400, background: "rgba(0,0,0,.5)" }} onClick={() => setShowHeaderMenu(false)}>
+                  <div className="sheet" style={{ position: "absolute", bottom: 0, left: 0, right: 0, maxWidth: 480, margin: "0 auto", background: isDark ? "#202c33" : "#fff", borderRadius: "20px 20px 0 0", overflow: "hidden" }} onClick={e => e.stopPropagation()}>
+                    <div style={{ width: 36, height: 4, borderRadius: 2, background: isDark ? "#444" : "#ddd", margin: "10px auto 14px" }} />
+                    {[
+                      { icon: "ℹ️", label: "Group Info",          fn: () => { setShowGroupInfo(true); setShowHeaderMenu(false); } },
+                      { icon: "🔍", label: "Search Messages",      fn: () => { setShowChatSearch(true); setShowHeaderMenu(false); } },
+                      { icon: "⭐", label: "Starred Messages",     fn: () => { setShowHeaderMenu(false); toast({ title: `${starredMessages.size} starred` }); } },
+                      { icon: "🔕", label: mutedChannels.has(activeChannel.id) ? "Unmute" : "Mute Notifications", fn: () => { toggleMuteCh(activeChannel.id); setShowHeaderMenu(false); } },
+                      { icon: "🖼️", label: "Wallpaper & Sound",   fn: () => { setSettingsTab("chats"); setShowSettings(true); setShowHeaderMenu(false); } },
+                      { icon: "📤", label: "Export Chat",          fn: () => { exportChat(); setShowHeaderMenu(false); } },
+                      ...(canModerate ? [
+                        { icon: "🗑️", label: "Clear Chat",        fn: () => { clearChat(); setShowHeaderMenu(false); }, danger: true },
+                        { icon: "💥", label: "Delete Group",       fn: () => { deleteGroup(); setShowHeaderMenu(false); }, danger: true },
+                      ] : []),
+                      { icon: "🚪", label: "Leave Group",          fn: () => { leaveChannel(activeChannel.id); setShowHeaderMenu(false); }, danger: true },
+                    ].map((item, i) => (
+                      <button key={i} onClick={item.fn} style={{ width: "100%", display: "flex", alignItems: "center", gap: 14, padding: "15px 20px", background: "none", border: "none", cursor: "pointer", textAlign: "left" as const, fontSize: 15, color: (item as any).danger ? "#E74C3C" : textMain, borderBottom: `1px solid ${divider}` }}>
+                        <span style={{ fontSize: 18 }}>{item.icon}</span>{item.label}
+                      </button>
+                    ))}
+                    <div style={{ height: 16 }} />
+                  </div>
                 </div>
               )}
             </div>
@@ -1636,7 +1741,67 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
             )}
 
             {/* Input toolbar */}
-            <div style={{ background: isDark ? "#202c33" : "#f0f2f5", padding: "8px 8px", display: "flex", alignItems: "flex-end", gap: 6, flexShrink: 0 }}>
+            <div style={{ background: isDark ? "#202c33" : "#f0f2f5", padding: "8px 8px", display: "flex", alignItems: "flex-end", gap: 6, flexShrink: 0, position: "relative" }}>
+
+              {/* RECORDING OVERLAY — slide to cancel / lock */}
+              {isRecording && !recordingLocked && (
+                <div style={{ position: "absolute", inset: 0, background: isDark ? "#202c33" : "#f0f2f5", display: "flex", alignItems: "center", paddingLeft: 14, paddingRight: 8, gap: 10, zIndex: 5 }}>
+                  {/* Animated waveform */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 2, flex: 1 }}>
+                    <div style={{ width: 10, height: 10, borderRadius: "50%", background: "#E74C3C", animation: "pulse 1s infinite" }} />
+                    <span style={{ fontSize: 13, fontWeight: 700, color: "#E74C3C", minWidth: 40 }}>{fr(recordingTime)}</span>
+                    <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 1.5, height: 28 }}>
+                      {Array.from({ length: 20 }, (_, i) => (
+                        <div key={i} style={{
+                          width: 2.5, borderRadius: 2,
+                          height: `${Math.random() * 18 + 6}px`,
+                          background: "#E74C3C",
+                          animation: `waveBar ${0.4 + Math.random() * 0.4}s ease-in-out infinite alternate`,
+                          animationDelay: `${i * 0.05}s`
+                        }} />
+                      ))}
+                    </div>
+                  </div>
+                  {/* Slide to cancel */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, color: textSub, fontSize: 12 }}
+                    onTouchStart={e => {
+                      const sx = e.touches[0].clientX;
+                      const onMove = (me: TouchEvent) => {
+                        if (sx - me.touches[0].clientX > 80) cancelRecording();
+                        if (me.touches[0].clientY - e.touches[0].clientY < -60) setRecordingLocked(true);
+                      };
+                      document.addEventListener("touchmove", onMove, { passive: true });
+                      document.addEventListener("touchend", () => document.removeEventListener("touchmove", onMove), { once: true });
+                    }}
+                  >
+                    <span>◀ Slide to cancel</span>
+                  </div>
+                  <button onClick={cancelRecording} style={{ background: "none", border: "none", cursor: "pointer", color: "#E74C3C", padding: 6 }}>
+                    <Trash2 size={18} />
+                  </button>
+                </div>
+              )}
+
+              {/* LOCKED RECORDING — hands free */}
+              {isRecording && recordingLocked && (
+                <div style={{ position: "absolute", inset: 0, background: isDark ? "#202c33" : "#f0f2f5", display: "flex", alignItems: "center", paddingLeft: 14, paddingRight: 8, gap: 10, zIndex: 5 }}>
+                  <div style={{ width: 10, height: 10, borderRadius: "50%", background: "#E74C3C", animation: "pulse 1s infinite" }} />
+                  <span style={{ fontSize: 13, fontWeight: 700, color: "#E74C3C", minWidth: 40 }}>{fr(recordingTime)}</span>
+                  <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 1.5, height: 28 }}>
+                    {Array.from({ length: 24 }, (_, i) => (
+                      <div key={i} style={{ width: 2.5, borderRadius: 2, height: `${Math.random() * 18 + 6}px`, background: "#E74C3C", animation: `waveBar ${0.4 + Math.random() * 0.4}s ease-in-out infinite alternate`, animationDelay: `${i * 0.04}s` }} />
+                    ))}
+                  </div>
+                  <button onClick={cancelRecording} style={{ width: 36, height: 36, borderRadius: "50%", background: "#f0f0f0", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <Trash2 size={16} color="#E74C3C" />
+                  </button>
+                  <button onClick={stopRecording} style={{ width: 36, height: 36, borderRadius: "50%", background: WA_GREEN, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <Send size={16} color="#fff" />
+                  </button>
+                </div>
+              )}
+
+              {/* Normal input row */}
               <button onClick={() => setShowEmojiBar(p => !p)} style={{ background: "none", border: "none", cursor: "pointer", padding: 6, color: textSub, display: "flex", marginBottom: 4 }}>
                 <Smile size={22} />
               </button>
@@ -1653,27 +1818,38 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
                 />
                 <div style={{ display: "flex", gap: 2, marginBottom: 2, flexShrink: 0 }}>
                   <button onClick={() => imageInputRef.current?.click()} disabled={!canSend()} style={{ background: "none", border: "none", cursor: "pointer", color: textSub, padding: "3px 4px", display: "flex" }}>
-                    <Image size={20} />
+                    <Camera size={20} />
                   </button>
                   <button onClick={() => fileInputRef.current?.click()} disabled={!canSend()} style={{ background: "none", border: "none", cursor: "pointer", color: textSub, padding: "3px 4px", display: "flex" }}>
                     <Paperclip size={20} />
                   </button>
                 </div>
               </div>
-              {/* Send or mic */}
+
+              {/* Send or Mic */}
               {input.trim() ? (
                 <button onClick={() => sendMessage()} style={{ width: 46, height: 46, borderRadius: "50%", background: WA_GREEN, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: "0 2px 8px rgba(7,94,84,.3)" }}>
                   {uploading ? <Loader2 style={{ width: 18, height: 18, color: "#fff", animation: "spin .8s linear infinite" }} /> : <Send style={{ width: 18, height: 18, color: "#fff" }} />}
                 </button>
               ) : (
                 <button
-                  onMouseDown={e => { e.preventDefault(); startRecording(); }}
-                  onMouseUp={e => { e.preventDefault(); stopRecording(); }}
-                  onTouchStart={e => { e.preventDefault(); startRecording(); }}
-                  onTouchEnd={e => { e.preventDefault(); stopRecording(); }}
-                  style={{ width: 46, height: 46, borderRadius: "50%", background: isRecording ? "#E74C3C" : WA_GREEN, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: isRecording ? "0 0 0 6px rgba(231,76,60,.25)" : "0 2px 8px rgba(7,94,84,.3)", transition: "all .2s" }}
+                  onMouseDown={e => { e.preventDefault(); if (!isRecording) startRecording(); }}
+                  onMouseUp={e => { e.preventDefault(); if (isRecording && !recordingLocked) stopRecording(); }}
+                  onTouchStart={e => {
+                    e.preventDefault();
+                    if (!isRecording) startRecording();
+                  }}
+                  onTouchMove={e => {
+                    if (!isRecording) return;
+                    const t = e.touches[0];
+                    const btn = e.currentTarget.getBoundingClientRect();
+                    if (btn.left - t.clientX > 80) cancelRecording();
+                    if (btn.top - t.clientY > 60) setRecordingLocked(true);
+                  }}
+                  onTouchEnd={e => { e.preventDefault(); if (isRecording && !recordingLocked) stopRecording(); }}
+                  style={{ width: 46, height: 46, borderRadius: "50%", background: isRecording ? "#E74C3C" : WA_GREEN, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: isRecording ? "0 0 0 8px rgba(231,76,60,.2)" : "0 2px 8px rgba(7,94,84,.3)", transition: "all .2s" }}
                 >
-                  {isRecording ? <span style={{ color: "#fff", fontSize: 11, fontWeight: 700 }}>{fr(recordingTime)}</span> : <Mic style={{ width: 20, height: 20, color: "#fff" }} />}
+                  <Mic style={{ width: 20, height: 20, color: "#fff" }} />
                 </button>
               )}
             </div>
@@ -1757,8 +1933,8 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
       )}
 
       {/* Overlays (close on backdrop click) */}
-      {(showHeaderMenu || channelMenu) && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 199 }} onClick={() => { setShowHeaderMenu(false); setChannelMenu(null); }} />
+      {channelMenu && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 199 }} onClick={() => { setChannelMenu(null); }} />
       )}
 
       {/* Settings Panel */}
