@@ -101,7 +101,7 @@ export default function RecitationMic({ userId }: Props) {
   /* refs */
   const mediaRecRef  = useRef<MediaRecorder | null>(null);
   const streamRef    = useRef<MediaStream | null>(null);
-  const chunkBufRef  = useRef<Blob[]>([]);
+  const initChunkRef = useRef<Blob | null>(null);   // WebM header blob (first data event)
   const fullAudioRef = useRef<Blob[]>([]);
   const timerRef     = useRef<ReturnType<typeof setInterval> | null>(null);
   const ayahIdxRef   = useRef(0);
@@ -253,29 +253,45 @@ export default function RecitationMic({ userId }: Props) {
     }
   }, [processTranscript]);
 
-  /* ══ 4-second chunk loop ════════════════════════════════════ */
-  const spawnChunk = useCallback((stream: MediaStream) => {
+  /* ══ Single MediaRecorder with timeslice ════════════════════
+     WHY: Creating a new MediaRecorder every 4 s means only the
+     first instance writes WebM container headers (EBML + Tracks).
+     Subsequent instances produce header-less blobs that Deepgram
+     cannot decode → 4xx → catch → "Transcription failed".
+     FIX: One MediaRecorder, timeslice=4000. Save the first data
+     event as the init blob and prepend it to every later chunk so
+     every blob sent to Deepgram is a complete decodable file.
+  ════════════════════════════════════════════════════════════ */
+  const startRecording = useCallback((stream: MediaStream) => {
     if (!recordingRef.current) return;
-    chunkBufRef.current = [];
+    initChunkRef.current = null;
 
-    const mr = new MediaRecorder(stream, mimeRef.current ? { mimeType: mimeRef.current } : {});
+    const mr = new MediaRecorder(
+      stream,
+      mimeRef.current ? { mimeType: mimeRef.current } : {},
+    );
 
     mr.ondataavailable = e => {
-      if (e.data?.size > 0) {
-        chunkBufRef.current.push(e.data);
-        fullAudioRef.current.push(e.data);
+      if (!e.data?.size || e.data.size === 0) return;
+      fullAudioRef.current.push(e.data);
+
+      if (!initChunkRef.current) {
+        // First event: WebM headers + first 4 s of audio — store & send directly.
+        initChunkRef.current = e.data;
+        if (e.data.size >= 500) sendToDeepgram(e.data);
+        return;
       }
+
+      // Subsequent events: prepend init header so Deepgram can decode.
+      const blob = new Blob(
+        [initChunkRef.current, e.data],
+        { type: mimeRef.current || "audio/webm" },
+      );
+      if (blob.size >= 500) sendToDeepgram(blob);
     };
 
-    mr.onstop = () => {
-      const blob = new Blob(chunkBufRef.current, { type: mimeRef.current || "audio/webm" });
-      sendToDeepgram(blob);
-      if (recordingRef.current) spawnChunk(stream); // next chunk
-    };
-
-    mr.start();
+    mr.start(4000); // fires ondataavailable every 4 s, single instance
     mediaRecRef.current = mr;
-    setTimeout(() => { if (mr.state === "recording") mr.stop(); }, 4000);
   }, [sendToDeepgram]);
 
   /* ══ Kill mic entirely ══════════════════════════════════════ */
@@ -311,7 +327,7 @@ export default function RecitationMic({ userId }: Props) {
       mimeRef.current      = getBestMimeType();
       recordingRef.current = true;
       setRecording(true);
-      spawnChunk(stream);
+      startRecording(stream);
     } catch {
       setError("Microphone access denied. Please allow mic and try again.");
     }
