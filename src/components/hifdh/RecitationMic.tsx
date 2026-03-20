@@ -229,8 +229,31 @@ export default function RecitationMic({ userId }: Props) {
   }, [advanceAyah]);
 
   /* ══ Transcribe: Deepgram → Groq fallback ══════════════════ */
+  /* ── Check if blob has real speech energy (avoids Whisper hallucination) ── */
+  const hasSpeech = useCallback(async (blob: Blob): Promise<boolean> => {
+    try {
+      const arrayBuf = await blob.arrayBuffer();
+      const ctx      = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
+      const audio    = await ctx.decodeAudioData(arrayBuf);
+      ctx.close();
+      const data = audio.getChannelData(0);
+      // RMS energy — if below threshold it's silence/noise
+      let sum = 0;
+      for (let i = 0; i < data.length; i++) sum += data[i] * data[i];
+      const rms = Math.sqrt(sum / data.length);
+      return rms > 0.01; // empirically good threshold for speech vs silence
+    } catch {
+      return true; // if we can't decode, send it anyway
+    }
+  }, []);
+
   const sendToDeepgram = useCallback(async (blob: Blob) => {
     if (blob.size < 500) return;
+
+    // Skip silent chunks — prevents Whisper hallucinating "الحمد لله" on noise
+    const speechDetected = await hasSpeech(blob);
+    if (!speechDetected) { console.log("[transcribe] silent chunk, skipping"); return; }
+
     setProcessing(true);
     try {
       let text = "";
@@ -253,25 +276,29 @@ export default function RecitationMic({ userId }: Props) {
           const data = await res.json();
           text = data?.results?.channels?.[0]?.alternatives?.[0]?.transcript || "";
         } catch (dgErr: any) {
-          console.warn("Deepgram failed, trying Groq fallback:", dgErr?.message);
+          console.warn("Deepgram failed, trying Groq:", dgErr?.message);
         }
       }
 
-      /* ── Groq fallback ── */
+      /* ── Groq fallback (whisper-large-v3-turbo = higher RPM on free tier) ── */
       if (!text && GROQ_KEY) {
         const ext  = (mimeRef.current || "audio/webm").includes("mp4") ? "mp4"
                    : (mimeRef.current || "").includes("ogg") ? "ogg" : "webm";
         const file = new File([blob], `audio.${ext}`, { type: mimeRef.current || "audio/webm" });
         const fd   = new FormData();
-        fd.append("file",          file);
-        fd.append("model",         "whisper-large-v3");
-        fd.append("language",      "ar");
+        fd.append("file",            file);
+        fd.append("model",           "whisper-large-v3-turbo");
+        fd.append("language",        "ar");
         fd.append("response_format", "json");
+        // Anchor Whisper to Quranic Arabic — drastically reduces hallucination
+        fd.append("prompt",          "بسم الله الرحمن الرحيم");
         const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
           method:  "POST",
           headers: { Authorization: `Bearer ${GROQ_KEY}` },
           body:    fd,
         });
+        // 429 = rate limited — silently skip this chunk, do not show error
+        if (res.status === 429) { console.warn("[transcribe] Groq rate limited, skipping chunk"); return; }
         if (!res.ok) throw new Error(`Groq ${res.status}: ${await res.text().catch(() => "")}`);
         const data = await res.json();
         text = data?.text || "";
@@ -291,7 +318,7 @@ export default function RecitationMic({ userId }: Props) {
     } finally {
       setProcessing(false);
     }
-  }, [processTranscript]);
+  }, [processTranscript, hasSpeech]);
 
   /* ══ Single MediaRecorder with timeslice ════════════════════
      WHY: Creating a new MediaRecorder every 4 s means only the
@@ -330,7 +357,7 @@ export default function RecitationMic({ userId }: Props) {
       if (blob.size >= 500) sendToDeepgram(blob);
     };
 
-    mr.start(1500); // fires ondataavailable every 1.5 s for fast feedback
+    mr.start(3000); // 3 s chunks = ~20 RPM, within Groq free tier limit
     mediaRecRef.current = mr;
   }, [sendToDeepgram]);
 
