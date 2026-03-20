@@ -24,15 +24,28 @@ interface Ayah { number: number; numberInSurah: number; text: string; words: Wor
 
 /* ── Arabic normalization ─────────────────────────────────── */
 const stripNoise = (t: string) =>
-  // Remove Latin, digits, punctuation — keep only Arabic script + spaces
-  t.replace(/[^\u0600-\u06FF\s]/g, " ").replace(/\s+/g, " ").trim();
+  // Keep only Arabic Unicode block + spaces; strip Latin, digits, punctuation
+  t.replace(/[^\u0600-\u06FF\uFB50-\uFDFF\uFE70-\uFEFF\s]/g, " ")
+   .replace(/\s+/g, " ").trim();
 
 const nrm = (t: string) =>
-  t.replace(/[\u064B-\u065F\u0670\u0671]/g, "") // all diacritics + wasl
-   .replace(/[أإآٱ]/g, "ا")
-   .replace(/ة/g, "ه")
-   .replace(/ى/g, "ي")
-   .replace(/\u0640/g, "")   // tatweel
+  t
+   // Strip ALL Arabic diacritics / harakat
+   .replace(/[\u064B-\u065F\u0610-\u061A\u0670\u0671]/g, "")
+   // Normalize alef variants → bare alef
+   .replace(/[\u0622\u0623\u0625\u0627\u0671\u0672\u0673\u0675]/g, "ا")
+   // ٱ (alef wasla)
+   .replace(/\u0671/g, "ا")
+   // tah marbuta → hah
+   .replace(/\u0629/g, "ه")
+   // alef maqsura → ya
+   .replace(/\u0649/g, "ي")
+   // tatweel
+   .replace(/\u0640/g, "")
+   // Lam-alef ligatures (presentation forms) → ل + ا
+   .replace(/[\uFEFB\uFEFC\uFEF7\uFEF8\uFEF5\uFEF6]/g, "لا")
+   // Strip remaining non-letter Arabic (punctuation, decorations)
+   .replace(/[\u0600-\u060F\u061B-\u061F\u06D4\u06DD\u06DE]/g, "")
    .replace(/\s+/g, " ").trim();
 
 const toWords = (text: string): Word[] =>
@@ -67,20 +80,29 @@ const wordMatch = (spoken: string, target: string): boolean => {
 };
 
 /*
-  Core matching — runs against full accumulated buffer.
-  Scans greedily: for each target word (starting at ptr=0),
-  find the first token that matches it, then advance both.
-  Returns the furthest word index reached.
-  We then take max(result, currentPtr) so it never goes back.
+  matchChunk — matches a NEW transcript chunk against ayah words
+  starting from `startPtr` (current position). Never rewinds.
+
+  Algorithm:
+  - Walk chunk tokens left→right
+  - For each token, try to match against words[ptr], words[ptr+1], words[ptr+2]
+    (small lookahead handles reordering / missed words)
+  - On match, advance ptr
+  - Return highest ptr reached (never < startPtr)
 */
-const matchBuffer = (bufTokens: string[], words: Word[], startPtr: number): number => {
-  let ptr = 0;  // scan full buffer from 0
-  let ti  = 0;
-  while (ptr < words.length && ti < bufTokens.length) {
-    if (wordMatch(bufTokens[ti], words[ptr].norm)) { ptr++; ti++; }
-    else { ti++; }
+const matchChunk = (tokens: string[], words: Word[], startPtr: number): number => {
+  let ptr = startPtr;
+  const LOOKAHEAD = 3; // allow skipping up to 3 words for Deepgram gaps
+  for (let ti = 0; ti < tokens.length && ptr < words.length; ti++) {
+    // Try to match token against the next few words (lookahead)
+    for (let la = 0; la < LOOKAHEAD && ptr + la < words.length; la++) {
+      if (wordMatch(tokens[ti], words[ptr + la].norm)) {
+        ptr = ptr + la + 1; // advance past matched word (and any skipped ones)
+        break;
+      }
+    }
   }
-  return Math.max(ptr, startPtr); // never go backwards
+  return ptr; // always >= startPtr since we never decrement
 };
 
 /* ── Audio helpers ────────────────────────────────────────── */
@@ -274,20 +296,21 @@ export default function RecitationMic({ userId }: Props) {
     const clean = stripNoise(raw);
     if (!clean) return;
 
-    // Append new text to accumulation buffer
-    bufRef.current = (bufRef.current + " " + clean).trim();
-
     const idx   = idxRef.current;
     const words = ayahsRef.current[idx]?.words;
     if (!words || words.length === 0) return;
 
-    // Tokenize entire accumulated buffer, normalize each token
-    const bufTokens = bufRef.current.split(/\s+/).filter(Boolean).map(nrm).filter(Boolean);
-    if (bufTokens.length === 0) return;
+    // Tokenize only the NEW chunk — match against words from current pointer
+    const tokens = clean.split(/\s+/).filter(Boolean).map(nrm).filter(Boolean);
+    if (tokens.length === 0) return;
 
-    // Run greedy match — never backtrack past current pointer
-    const newPtr = matchBuffer(bufTokens, words, ptrRef.current);
-    if (newPtr === ptrRef.current) return;
+    console.log("[Hifdh] chunk:", clean, "| tokens:", tokens, "| ptr:", ptrRef.current, "| target:", words[ptrRef.current]?.norm);
+
+    const newPtr = matchChunk(tokens, words, ptrRef.current);
+
+    console.log("[Hifdh] newPtr:", newPtr, "oldPtr:", ptrRef.current);
+
+    if (newPtr === ptrRef.current) return; // nothing matched
     ptrRef.current = newPtr;
 
     setAyahs(prev => {
@@ -303,7 +326,7 @@ export default function RecitationMic({ userId }: Props) {
       u[idx] = ayah;
       if (newPtr >= ayah.words.length) {
         setStats(s => ({ ...s, correct: s.correct + ayah.words.length }));
-        setTimeout(() => advanceAyah(idx), 150); // small delay so final word shows green
+        setTimeout(() => advanceAyah(idx), 150);
       }
       return u;
     });
