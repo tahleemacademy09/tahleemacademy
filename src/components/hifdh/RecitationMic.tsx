@@ -116,6 +116,7 @@ export default function RecitationMic({ userId }: Props) {
   const chunksRef  = useRef<Blob[]>([]);
   const initRef    = useRef<Blob|null>(null);
   const liveRef    = useRef("");
+  const revBlobRef = useRef<Blob|null>(null);
   const timerRef   = useRef<ReturnType<typeof setInterval>|null>(null);
   const audioEl    = useRef<HTMLAudioElement|null>(null);
   const [playing,  setPlaying] = useState(false);
@@ -252,17 +253,23 @@ export default function RecitationMic({ userId }: Props) {
     setMemRecState("idle");
 
     if (phase === "shown") {
-      setMemPhase("hidden"); setMemTotalReps(COUNT_HIDDEN); memTotalRef.current = COUNT_HIDDEN; memPhaseRef.current="hidden";
+      memPhaseRef.current="hidden"; memTotalRef.current=COUNT_HIDDEN;
+      memPhraseRef.current = selAyahs[verseIdx]?.text||"";
+      setMemPhase("hidden"); setMemTotalReps(COUNT_HIDDEN);
     } else if (phase === "hidden") {
-      setMemPhase("cumulative"); setMemTotalReps(CUMULATIVE_REPS); memTotalRef.current = CUMULATIVE_REPS; memPhaseRef.current="cumulative";
+      memPhaseRef.current="cumulative"; memTotalRef.current=CUMULATIVE_REPS;
+      memPhraseRef.current = selAyahs.slice(0,verseIdx+1).map(a=>a.text).join(" ");
+      setMemPhase("cumulative"); setMemTotalReps(CUMULATIVE_REPS);
     } else {
       const nextIdx = verseIdx + 1;
       if (nextIdx >= selAyahs.length) {
         setAppMode("home");
-        setTimeout(()=>alert("🎉 Memorisation complete! Masha'Allah!"), 100);
+        setTimeout(()=>alert("\u{1F389} Memorisation complete! Masha'Allah!"), 100);
       } else {
-        setMemVerseIdx(nextIdx); memVerseRef.current = nextIdx;
-        setMemPhase("shown"); setMemTotalReps(COUNT_SHOWN); memTotalRef.current = COUNT_SHOWN; memPhaseRef.current="shown";
+        memPhaseRef.current="shown"; memTotalRef.current=COUNT_SHOWN; memVerseRef.current=nextIdx;
+        memPhraseRef.current = selAyahs[nextIdx]?.text||"";
+        setMemVerseIdx(nextIdx);
+        setMemPhase("shown"); setMemTotalReps(COUNT_SHOWN);
       }
     }
   }, [selAyahs.length]);
@@ -276,6 +283,12 @@ export default function RecitationMic({ userId }: Props) {
       memTotalRef.current  = memTotalReps;
       memPhaseRef.current  = memPhase;
       memVerseRef.current  = memVerseIdx;
+      // Set phrase BEFORE async gap so callbacks have correct ref
+      if(memPhase==="cumulative"){
+        memPhraseRef.current = selAyahs.slice(0,memVerseIdx+1).map(a=>a.text).join(" ");
+      } else {
+        memPhraseRef.current = selAyahs[memVerseIdx]?.text || "";
+      }
       setMemCompCount(0); setMemLiveText("");
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -305,55 +318,28 @@ export default function RecitationMic({ userId }: Props) {
   const memStopRec = () => { memMrRef.current?.stop(); };
 
   /* ═══════════════════════════════════════════════════════════
-     REVISE — record full portion, then evaluate with Claude
+     REVISE — record whole passage as one blob, no live chunking.
+     Eliminates "Failed to fetch" race between in-flight chunk
+     requests and the post-stop full-blob transcription.
   ═══════════════════════════════════════════════════════════ */
-  const revSendChunk = useCallback(async(blob:Blob)=>{
-    if(!DEEPGRAM_KEY&&!GROQ_KEY) return;
-    try{
-      if(DEEPGRAM_KEY){
-        const r=await fetch("https://api.deepgram.com/v1/listen?model=nova-2&language=ar&punctuate=false&filler_words=false",
-          {method:"POST",headers:{Authorization:`Token ${DEEPGRAM_KEY}`,"Content-Type":blob.type||"audio/webm"},body:blob});
-        if(r.ok){const tx=(await r.json())?.results?.channels?.[0]?.alternatives?.[0]?.transcript||"";if(tx){liveRef.current=(liveRef.current+" "+tx).trim();setLiveTranscript(liveRef.current);}}
-      }else if(GROQ_KEY){
-        const ext=blob.type.includes("mp4")?"mp4":blob.type.includes("ogg")?"ogg":"webm";
-        const fd=new FormData();fd.append("file",new File([blob],`c.${ext}`,{type:blob.type}));fd.append("model","whisper-large-v3");fd.append("language","ar");fd.append("response_format","json");fd.append("temperature","0");fd.append("prompt","بسم الله الرحمن الرحيم الحمد لله رب العالمين");
-        const r=await fetch("https://api.groq.com/openai/v1/audio/transcriptions",{method:"POST",headers:{Authorization:`Bearer ${GROQ_KEY}`},body:fd});
-        if(r.ok){const tx=(await r.json())?.text||"";if(tx){liveRef.current=(liveRef.current+" "+tx).trim();setLiveTranscript(liveRef.current);}}
-      }
-    }catch(_){}
-  },[]);
-
   const revStartRec=async()=>{
     try{
-      liveRef.current=""; initRef.current=null; chunksRef.current=[];
-      setLiveTranscript(""); setRevErr(""); setRevRecState("recording");
+      liveRef.current=""; chunksRef.current=[]; revBlobRef.current=null;
+      setLiveTranscript(""); setRevErr("");
       const stream=await navigator.mediaDevices.getUserMedia({audio:true});
       const mime=getMime();
       const mr=new MediaRecorder(stream,mime?{mimeType:mime}:{});
-
-      mr.ondataavailable=e=>{
-        if(!e.data?.size) return;
-        chunksRef.current.push(e.data);
-        // Live preview: stream chunks to show transcript while recording
-        if(!initRef.current){ initRef.current=e.data; revSendChunk(e.data); return; }
-        revSendChunk(new Blob([initRef.current,e.data],{type:mime||"audio/webm"}));
-      };
-
+      // Collect all chunks — NO live API calls during recording
+      mr.ondataavailable=e=>{ if(e.data?.size) chunksRef.current.push(e.data); };
       mr.onstop=()=>{
-        // Synchronous only — no async/fetch here (gets aborted on mobile when stream closes)
         stream.getTracks().forEach(t=>t.stop());
         clearInterval(timerRef.current!);
         const blob=new Blob(chunksRef.current,{type:mime||"audio/webm"});
-        if(blob.size < 500){
-          setRevErr("Recording too short — please speak for at least 2 seconds.");
-          setRevRecState("idle"); return;
-        }
-        setRevAudioBlob(blob);           // triggers the useEffect below
-        setRevRecState("transcribing" as any);
+        if(blob.size<500){ setRevErr("Too short — speak for at least 2 seconds."); setRevRecState("idle"); return; }
+        revBlobRef.current=blob;
+        setRevRecState("transcribing" as any); // triggers useEffect below
       };
-
-      mr.start(500); // 500ms chunks for smoother live preview
-      mrRef.current=mr;
+      mr.start(200); mrRef.current=mr; setRevRecState("recording");
       timerRef.current=setInterval(()=>setRevRecTime(t=>t+1),1000);
     }catch{ alert("Microphone access denied."); }
   };
@@ -363,68 +349,45 @@ export default function RecitationMic({ userId }: Props) {
     mrRef.current?.stop();
   };
 
-  /* ── Transcribe rev blob via useEffect (safe on mobile — not inside onstop) ── */
+  /* Transcription useEffect — fires when recording stops */
   useEffect(()=>{
-    const blob = revAudioBlob;
-    if(!blob||(revRecState as string)!=="transcribing") return;
-    let cancelled = false;
-
+    if((revRecState as string)!=="transcribing") return;
+    const blob=revBlobRef.current;
+    if(!blob){ setRevRecState("done"); return; }
+    let dead=false;
     (async()=>{
       try{
         let tx="";
-
         if(DEEPGRAM_KEY){
-          try{
-            const r=await fetch(
-              "https://api.deepgram.com/v1/listen?model=nova-2&language=ar&punctuate=false&filler_words=false",
-              {method:"POST",headers:{Authorization:`Token ${DEEPGRAM_KEY}`,"Content-Type":blob.type||"audio/webm"},body:blob}
-            );
-            if(r.ok){
-              const data=await r.json();
-              tx=data?.results?.channels?.[0]?.alternatives?.[0]?.transcript||"";
-            } else {
-              console.warn("Deepgram",r.status);
-            }
-          }catch(e:any){ console.warn("Deepgram fetch error:",e?.message); }
+          const r=await fetch(
+            "https://api.deepgram.com/v1/listen?model=nova-2&language=ar&punctuate=false&filler_words=false",
+            {method:"POST",headers:{Authorization:"Token "+DEEPGRAM_KEY,"Content-Type":blob.type||"audio/webm"},body:blob}
+          );
+          if(r.ok) tx=(await r.json())?.results?.channels?.[0]?.alternatives?.[0]?.transcript||"";
         }
-
         if(!tx&&GROQ_KEY){
-          try{
-            const ext=blob.type.includes("mp4")?"mp4":blob.type.includes("ogg")?"ogg":"webm";
-            const fd=new FormData();
-            fd.append("file",new File([blob],`rev.${ext}`,{type:blob.type}));
-            fd.append("model","whisper-large-v3");
-            fd.append("language","ar");
-            fd.append("response_format","json");
-            fd.append("temperature","0");
-            fd.append("prompt","بسم الله الرحمن الرحيم الحمد لله رب العالمين الرحمن الرحيم مالك يوم الدين إياك نعبد وإياك نستعين");
-            const r=await fetch("https://api.groq.com/openai/v1/audio/transcriptions",
-              {method:"POST",headers:{Authorization:`Bearer ${GROQ_KEY}`},body:fd});
-            if(r.status===429){ setRevErr("Rate limited — please wait a moment and try again."); }
-            else if(r.ok){ tx=(await r.json())?.text||""; }
-            else { console.warn("Groq",r.status); }
-          }catch(e:any){ console.warn("Groq fetch error:",e?.message); }
+          const ext=blob.type.includes("mp4")?"mp4":blob.type.includes("ogg")?"ogg":"webm";
+          const fd=new FormData();
+          fd.append("file",new File([blob],"r."+ext,{type:blob.type}));
+          fd.append("model","whisper-large-v3"); fd.append("language","ar");
+          fd.append("response_format","json"); fd.append("temperature","0");
+          fd.append("prompt","بسم الله الرحمن الرحيم الحمد لله رب العالمين");
+          const r=await fetch("https://api.groq.com/openai/v1/audio/transcriptions",
+            {method:"POST",headers:{Authorization:"Bearer "+GROQ_KEY},body:fd});
+          if(r.status===429){ if(!dead) setRevErr("Rate limited — wait a moment."); }
+          else if(r.ok) tx=(await r.json())?.text||"";
         }
-
-        if(cancelled) return;
-
-        if(tx){
-          liveRef.current=tx;
-          setLiveTranscript(tx);
-          setRevErr("");
-        } else if(!revErr) {
-          setRevErr("Could not transcribe — speak clearly and try again.");
-        }
+        if(dead) return;
+        if(tx){ liveRef.current=tx; setLiveTranscript(tx); setRevErr(""); }
+        else if(!revErr) setRevErr("Could not transcribe — please speak clearly and try again.");
       }catch(e:any){
-        if(!cancelled) setRevErr(e?.message||"Transcription failed");
-      } finally {
-        if(!cancelled) setRevRecState("done");
+        if(!dead) setRevErr(e?.message||"Transcription error");
+      }finally{
+        if(!dead) setRevRecState("done");
       }
     })();
-
-    return ()=>{ cancelled=true; };
-  },[revAudioBlob]);   // only re-run when a new blob arrives
-
+    return ()=>{ dead=true; };
+  },[revRecState]);
   /* ── Evaluate revision with Claude ── */
   const evaluateRevision=useCallback(async()=>{
     const tx=liveRef.current.trim()||liveTranscript.trim()||revTranscript.trim();
@@ -671,6 +634,12 @@ Rules:
   }
 
   /* ─── MEMORISE SESSION ─────────────────────────────────── */
+  if(appMode==="mem-session"&&!currentAyah){
+    return(<div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100svh",flexDirection:"column",gap:16,background:"#fdfaf4"}}>
+      <div style={{fontSize:13,color:MUTED}}>Session data not found. Please go back and try again.</div>
+      <button onClick={()=>setAppMode("mem-setup")} style={{padding:"11px 22px",borderRadius:11,border:"none",background:G,color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer"}}>← Back to Setup</button>
+    </div>);
+  }
   if(appMode==="mem-session"&&currentAyah){
     const isShown    = memPhase==="shown";
     const isHidden   = memPhase==="hidden";
