@@ -1,8 +1,7 @@
-/*  src/components/layout/DashboardLayout.tsx
-    KEY FIX: When on /student/majlis the layout renders ONLY the Outlet
-    inside a position:fixed fullscreen div — no overflow-auto wrapper,
-    no sidebar competing for space. This is what caused Majlis to not
-    go truly fullscreen on mobile.
+/* src/components/layout/DashboardLayout.tsx
+   KEY FIX: When on /student/majlis the layout renders ONLY the Outlet
+   inside a position:fixed fullscreen div — no overflow-auto wrapper,
+   no sidebar competing for space.
 */
 import { useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
@@ -51,19 +50,19 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     paths.some(p => location.pathname.startsWith(p));
 
   type NavItem =
-    | { type: "link";  to: string; icon: any; label: string }
+    | { type: "link"; to: string; icon: any; label: string }
     | { type: "group"; key: string; icon: any; label: string; children: { to: string; icon: any; label: string }[] };
 
   const studentNav: NavItem[] = [
-    { type: "link", to: "/student",                   icon: LayoutDashboard, label: t("Dashboard",            "لوحة التحكم")    },
-    { type: "link", to: "/student/courses",            icon: BookOpenCheck,   label: t("Learning Hub",         "مركز التعلم")    },
+    { type: "link", to: "/student", icon: LayoutDashboard, label: t("Dashboard", "لوحة التحكم") },
+    { type: "link", to: "/student/courses", icon: BookOpenCheck, label: t("Learning Hub", "مركز التعلم") },
     {
       type: "group", key: "revision",
       icon: RefreshCw,
       label: t("Revision", "المراجعة"),
       children: [
         { to: "/student/revision", icon: BookMarked, label: t("General Revision", "المراجعة العامة") },
-        { to: "/student/hifdh",    icon: Headphones, label: t("Al-Hifdh",          "الحفظ")           },
+        { to: "/student/hifdh",    icon: Headphones,  label: t("Al-Hifdh", "الحفظ") },
       ],
     },
     {
@@ -71,34 +70,34 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
       icon: ClipboardList,
       label: t("Exams", "الامتحانات"),
       children: [
-        { to: "/student/exams",       icon: ClipboardList, label: t("My Exams",    "امتحاناتي")        },
-        { to: "/student/transcripts", icon: GraduationCap, label: t("Transcripts", "السجل الأكاديمي") },
+        { to: "/student/exams",       icon: ClipboardList,  label: t("My Exams", "امتحاناتي") },
+        { to: "/student/transcripts", icon: GraduationCap,  label: t("Transcripts", "السجل الأكاديمي") },
       ],
     },
-    { type: "link", to: "/student/majlis",             icon: MessageCircle, label: t("Al-Majlis",            "المجلس")         },
-    { type: "link", to: "/student/profile",            icon: UserCircle,    label: t("Settings",             "الإعدادات")      },
+    { type: "link", to: "/student/majlis",  icon: MessageCircle, label: t("Al-Majlis", "المجلس") },
+    { type: "link", to: "/student/profile", icon: UserCircle,    label: t("Settings", "الإعدادات") },
   ];
 
   const adminLinks = [
-{ to: "/admin/level-assignment", label: "Level Assignment" }
-    { to: "/admin",                   icon: LayoutDashboard, label: t("Dashboard",           "لوحة التحكم")    },
-    { to: "/admin/subjects",          icon: BookOpen,        label: t("Subjects",             "المواد")         },
-    { to: "/admin/courses",           icon: Layers,          label: t("Courses",              "الدورات")        },
-    { to: "/admin/syllabus",          icon: FileText,        label: t("Syllabus & Materials", "المنهج والمواد") },
-    { to: "/admin/live-classes",      icon: Video,           label: t("Live Classes",         "الفصول الحية")   },
-    { to: "/admin/exams",             icon: ClipboardList,   label: t("Exams",                "الامتحانات")     },
-    { to: "/admin/question-bank",     icon: Library,         label: t("Question Bank",        "بنك الأسئلة")    },
-    { to: "/admin/students",          icon: Users,           label: t("Students",             "الطلاب")         },
-    { to: "/admin/grading",           icon: CheckSquare,     label: t("Grading",              "التصحيح")        },
-    { to: "/admin/private-sessions",  icon: UserCheck,       label: t("Private Sessions",     "الجلسات الخاصة") },
-    { to: "/admin/proctoring",        icon: BarChart,        label: t("Proctoring",           "المراقبة")       },
-    { to: "/admin/entrance-exam",     icon: GraduationCap,   label: t("Entrance Exam",        "اختبار القبول")  },
-    { to: "/admin/recitation-review",        icon: Mic,             label: t("Recitation Review",    "مراجعة التلاوة") },
-    { to: "/admin/recitation-test-settings", icon: Settings,        label: t("Recitation Settings",  "إعدادات التلاوة") },
-    { to: "/admin/payments",          icon: CreditCard,      label: t("Payments",             "المدفوعات")      },
-    { to: "/admin/calendar",          icon: Calendar,        label: t("Calendar",             "التقويم")        },
-    { to: "/admin/public-classes",    icon: Globe,           label: t("Public Classes",       "الدروس العامة")  },
-    { to: "/admin/majlis-moderation", icon: MessageCircle,   label: t("Al-Majlis",            "المجلس")         },
+    { to: "/admin/level-assignment",         icon: GraduationCap,   label: t("Level Assignment", "تحديد المستوى") },
+    { to: "/admin",                           icon: LayoutDashboard, label: t("Dashboard", "لوحة التحكم") },
+    { to: "/admin/subjects",                  icon: BookOpen,        label: t("Subjects", "المواد") },
+    { to: "/admin/courses",                   icon: Layers,          label: t("Courses", "الدورات") },
+    { to: "/admin/syllabus",                  icon: FileText,        label: t("Syllabus & Materials", "المنهج والمواد") },
+    { to: "/admin/live-classes",              icon: Video,           label: t("Live Classes", "الفصول الحية") },
+    { to: "/admin/exams",                     icon: ClipboardList,   label: t("Exams", "الامتحانات") },
+    { to: "/admin/question-bank",             icon: Library,         label: t("Question Bank", "بنك الأسئلة") },
+    { to: "/admin/students",                  icon: Users,           label: t("Students", "الطلاب") },
+    { to: "/admin/grading",                   icon: CheckSquare,     label: t("Grading", "التصحيح") },
+    { to: "/admin/private-sessions",          icon: UserCheck,       label: t("Private Sessions", "الجلسات الخاصة") },
+    { to: "/admin/proctoring",                icon: BarChart,        label: t("Proctoring", "المراقبة") },
+    { to: "/admin/entrance-exam",             icon: GraduationCap,   label: t("Entrance Exam", "اختبار القبول") },
+    { to: "/admin/recitation-review",         icon: Mic,             label: t("Recitation Review", "مراجعة التلاوة") },
+    { to: "/admin/recitation-test-settings",  icon: Settings,        label: t("Recitation Settings", "إعدادات التلاوة") },
+    { to: "/admin/payments",                  icon: CreditCard,      label: t("Payments", "المدفوعات") },
+    { to: "/admin/calendar",                  icon: Calendar,        label: t("Calendar", "التقويم") },
+    { to: "/admin/public-classes",            icon: Globe,           label: t("Public Classes", "الدروس العامة") },
+    { to: "/admin/majlis-moderation",         icon: MessageCircle,   label: t("Al-Majlis", "المجلس") },
   ];
 
   const SidebarContent = ({ onNavigate }: { onNavigate?: () => void }) => (
@@ -191,6 +190,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
             <span>{link.label}</span>
           </Link>
         ))}
+
       </nav>
 
       {/* Footer */}
@@ -221,6 +221,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
           <Globe className="h-4 w-4 me-2" />
           {t("العربية", "English")}
         </Button>
+
         <Button variant="ghost" size="sm"
           className="w-full justify-start text-sidebar-foreground/70 hover:text-destructive hover:bg-destructive/10"
           onClick={() => { signOut(); onNavigate?.(); }}>
@@ -276,7 +277,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
 
         <HolidayBanner />
         {role === "student" && <PaymentBanner />}
-        {role === "admin"   && <AdminPaymentIndicator />}
+        {role === "admin" && <AdminPaymentIndicator />}
 
         <main className="flex-1 overflow-auto">
           <Outlet />
