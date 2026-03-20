@@ -140,7 +140,7 @@ const Onboarding = () => {
       }, { onConflict: "user_id" });
       await supabase.from("profiles").update({ onboarding_completed: true } as any).eq("user_id", user.id);
       toast({ title: "✅ Onboarding complete!", description: "Starting your entrance exam…" });
-      navigate("/student/entrance-exam/start");
+      navigate("/student/entrance-exam");
     } catch (e: any) {
       toast({ title: "Error saving form", description: e.message, variant: "destructive" });
     } finally { setSaving(false); }
