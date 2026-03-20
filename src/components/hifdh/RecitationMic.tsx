@@ -1,17 +1,17 @@
 /*
   src/components/hifdh/RecitationMic.tsx
   ─────────────────────────────────────────────────────────────────
-  Fully automatic Hifdh recitation — uses Deepgram (via the existing
-  `transcribe-hifdh` Supabase Edge Function) instead of the broken
-  Android Web Speech API.
+  Hifdh recitation — uses Deepgram REST API directly.
+  Requires VITE_DEEPGRAM_API_KEY set in Vercel environment variables.
 
   Flow:
   1. User taps Start
   2. MediaRecorder records audio in 4-second chunks
-  3. Each chunk is sent to transcribe-hifdh → Deepgram → Arabic text
+  3. Each chunk is sent directly to Deepgram → Arabic transcript
   4. Transcript is matched against ayah words → revealed automatically
   5. When all words revealed → 3s countdown → next ayah auto-loads
 */
+
 import { useState, useEffect, useRef, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Mic, MicOff, Square } from "lucide-react";
@@ -22,16 +22,16 @@ const DEEPGRAM_KEY = import.meta.env.VITE_DEEPGRAM_API_KEY || "";
 interface Props { userId: string | null; }
 interface SurahMeta { number: number; name: string; englishName: string; numberOfAyahs: number; }
 type WordState = "hidden" | "correct" | "current";
-interface Word  { raw: string; norm: string; state: WordState; }
-interface Ayah  { number: number; numberInSurah: number; text: string; words: Word[]; }
+interface Word { raw: string; norm: string; state: WordState; }
+interface Ayah { number: number; numberInSurah: number; text: string; words: Word[]; }
 
 /* ─── Arabic normaliser ──────────────────────────────────────── */
 const normalise = (t: string) =>
-  t.replace(/[\u064B-\u065F\u0670]/g, "")  // strip harakat
-   .replace(/[أإآٱ]/g, "ا")                 // alef variants
-   .replace(/ة/g, "ه")                       // ta marbuta
-   .replace(/ى/g, "ي")                       // alef maqsura
-   .replace(/\u0640/g, "")                   // tatweel
+  t.replace(/[\u064B-\u065F\u0670]/g, "")
+   .replace(/[أإآٱ]/g, "ا")
+   .replace(/ة/g, "ه")
+   .replace(/ى/g, "ي")
+   .replace(/\u0640/g, "")
    .replace(/\s+/g, " ").trim();
 
 const toWords = (text: string): Word[] =>
@@ -63,21 +63,43 @@ const wordMatches = (spoken: string, target: string): boolean => {
   return lev(s, t) <= maxDist;
 };
 
+/* ─── Pick best supported mime type (Android-safe) ──────────── */
+const getBestMimeType = (): string => {
+  const candidates = [
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/mp4",                  // Android Chrome primary format
+    "audio/ogg;codecs=opus",
+    "",                           // browser default
+  ];
+  for (const t of candidates) {
+    if (!t || MediaRecorder.isTypeSupported(t)) return t;
+  }
+  return "";
+};
+
+/* Map mime type → Deepgram-accepted Content-Type */
+const toDeepgramContentType = (mimeType: string): string => {
+  if (mimeType.includes("mp4"))  return "audio/mp4";
+  if (mimeType.includes("ogg"))  return "audio/ogg";
+  if (mimeType.includes("webm")) return "audio/webm";
+  return "audio/webm"; // safe default
+};
+
 /* ─── Helpers ────────────────────────────────────────────────── */
 const fmt = (s: number) =>
   `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 
 /* ─── Colours ────────────────────────────────────────────────── */
-const G700  = "#1a3d24", G500 = "#276749", G100 = "#f0fff4";
-const GOLD  = "#b7791f", GOLD_LT = "#fffbeb";
-const RED   = "#c0392b", RED_LT  = "#fff5f5";
-const MUTED = "#7a9e88", BORDER  = "#e2e8f0", CREAM = "#fffdf5";
+const G700 = "#1a3d24", G500 = "#276749", G100 = "#f0fff4";
+const GOLD = "#b7791f", GOLD_LT = "#fffbeb";
+const RED  = "#c0392b", RED_LT  = "#fff5f5";
+const MUTED = "#7a9e88", BORDER = "#e2e8f0", CREAM = "#fffdf5";
 
 /* ═══════════════════════════════════════════════════════════════
    COMPONENT
-═══════════════════════════════════════════════════════════════ */
+   ═══════════════════════════════════════════════════════════════ */
 export default function RecitationMic({ userId }: Props) {
-
   const [surahs,       setSurahs]       = useState<SurahMeta[]>([]);
   const [search,       setSearch]       = useState("");
   const [selected,     setSelected]     = useState<SurahMeta | null>(null);
@@ -99,20 +121,21 @@ export default function RecitationMic({ userId }: Props) {
   /* refs */
   const mediaRecRef   = useRef<MediaRecorder | null>(null);
   const streamRef     = useRef<MediaStream | null>(null);
-  const chunkBufRef   = useRef<Blob[]>([]);      // current recording chunk
-  const fullAudioRef  = useRef<Blob[]>([]);      // full session audio
+  const chunkBufRef   = useRef<Blob[]>([]);
+  const fullAudioRef  = useRef<Blob[]>([]);
   const timerRef      = useRef<ReturnType<typeof setInterval> | null>(null);
   const countRef      = useRef<ReturnType<typeof setInterval> | null>(null);
-  const chunkTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const ayahIdxRef    = useRef(0);
   const ayahsRef      = useRef<Ayah[]>([]);
   const pointerRef    = useRef(0);
   const phaseRef      = useRef<Phase>("idle");
-  const fullTransRef  = useRef("");   // cumulative transcript for this ayah
+  const fullTransRef  = useRef("");
+  const mimeTypeRef   = useRef("");          // ← persists mime across chunks
+  const activeRecRef  = useRef(false);       // ← guards chunk restart race
 
-  useEffect(() => { ayahIdxRef.current = ayahIdx; }, [ayahIdx]);
-  useEffect(() => { ayahsRef.current   = ayahs;   }, [ayahs]);
-  useEffect(() => { phaseRef.current   = phase;   }, [phase]);
+  useEffect(() => { ayahIdxRef.current = ayahIdx; },  [ayahIdx]);
+  useEffect(() => { ayahsRef.current   = ayahs;   },  [ayahs]);
+  useEffect(() => { phaseRef.current   = phase;   },  [phase]);
 
   /* ── Load surah list ─────────────────────────────────────────── */
   useEffect(() => {
@@ -151,41 +174,35 @@ export default function RecitationMic({ userId }: Props) {
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [phase]);
 
-  /* ══ Process transcript from Deepgram ════════════════════════
-     Advances the word pointer as spoken words are matched
-  ════════════════════════════════════════════════════════════════ */
+  /* ══ Process transcript ════════════════════════════════════════ */
   const processTranscript = useCallback((newText: string) => {
     if (!newText.trim() || phaseRef.current !== "listening") return;
 
-    // Accumulate into full transcript for this ayah
     fullTransRef.current = (fullTransRef.current + " " + newText).trim();
     setTranscript(fullTransRef.current);
 
-    const idx    = ayahIdxRef.current;
-    const words  = ayahsRef.current[idx]?.words;
+    const idx   = ayahIdxRef.current;
+    const words = ayahsRef.current[idx]?.words;
     if (!words) return;
 
     const spokenTokens = fullTransRef.current.split(/\s+/).filter(Boolean);
     let ptr = pointerRef.current;
 
-    // Sequential matching: advance pointer for each matched word
     while (ptr < words.length) {
-      const target  = words[ptr].norm;
-      const matched = spokenTokens.some(tok => wordMatches(tok, target));
-      if (matched) ptr++;
+      if (spokenTokens.some(tok => wordMatches(tok, words[ptr].norm))) ptr++;
       else break;
     }
 
-    if (ptr === pointerRef.current) return; // nothing new
+    if (ptr === pointerRef.current) return;
     pointerRef.current = ptr;
 
     setAyahs(prev => {
       const updated = [...prev];
       const ayah    = { ...updated[idx], words: [...updated[idx].words] };
       ayah.words = ayah.words.map((w, wi) => {
-        if (wi < ptr)  return { ...w, state: "correct" as WordState };
+        if (wi < ptr)  return { ...w, state: "correct"  as WordState };
         if (wi === ptr) return { ...w, state: "current" as WordState };
-        return { ...w, state: "hidden" as WordState };
+        return             { ...w, state: "hidden"  as WordState };
       });
       updated[idx] = ayah;
 
@@ -197,36 +214,40 @@ export default function RecitationMic({ userId }: Props) {
     });
   }, []);
 
-  /* ══ Send audio chunk directly to Deepgram ══════════════════ */
+  /* ══ Send chunk to Deepgram ════════════════════════════════════ */
   const sendChunkToDeepgram = useCallback(async (blob: Blob) => {
     if (blob.size < 500) return;
     setProcessing(true);
     try {
       if (!DEEPGRAM_KEY) {
-        // No key — demo mode: simulate some words matching
-        setError("VITE_DEEPGRAM_API_KEY not set — words won't reveal automatically");
-        setProcessing(false);
+        setError("VITE_DEEPGRAM_API_KEY is not set in Vercel environment variables");
         return;
       }
 
+      const contentType = toDeepgramContentType(mimeTypeRef.current || blob.type);
+
       const res = await fetch(
-        "https://api.deepgram.com/v1/listen?model=nova-2&language=ar&punctuate=false&words=true",
+        "https://api.deepgram.com/v1/listen?model=nova-2&language=ar&punctuate=false",
         {
-          method: "POST",
+          method:  "POST",
           headers: {
-            Authorization: `Token ${DEEPGRAM_KEY}`,
-            "Content-Type": blob.type || "audio/webm",
+            Authorization:  `Token ${DEEPGRAM_KEY}`,
+            "Content-Type": contentType,
           },
           body: blob,
         }
       );
 
-      if (!res.ok) throw new Error(`Deepgram ${res.status}`);
+      if (!res.ok) {
+        const errBody = await res.text().catch(() => "");
+        throw new Error(`Deepgram ${res.status}: ${errBody}`);
+      }
+
       const data = await res.json();
-      const transcript: string =
+      const text: string =
         data?.results?.channels?.[0]?.alternatives?.[0]?.transcript || "";
 
-      if (transcript) processTranscript(transcript);
+      if (text) processTranscript(text);
       setError("");
     } catch (e: any) {
       console.warn("Transcription error:", e?.message);
@@ -236,45 +257,45 @@ export default function RecitationMic({ userId }: Props) {
     }
   }, [processTranscript]);
 
-  /* ══ Recording: slice audio every 4 seconds and send ════════ */
+  /* ══ Chunk recording loop ══════════════════════════════════════ */
   const startChunkRecording = useCallback((stream: MediaStream) => {
-    // Determine supported mime type
-    const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-      ? "audio/webm;codecs=opus"
-      : MediaRecorder.isTypeSupported("audio/webm")
-      ? "audio/webm"
-      : "audio/ogg;codecs=opus";
+    if (!activeRecRef.current) return;   // safety guard
 
-    const startNewChunk = () => {
-      if (phaseRef.current !== "listening") return;
+    chunkBufRef.current = [];
 
-      chunkBufRef.current = [];
-      const mr = new MediaRecorder(stream, { mimeType });
-      mr.ondataavailable = e => {
-        if (e.data?.size > 0) {
-          chunkBufRef.current.push(e.data);
-          fullAudioRef.current.push(e.data); // also keep full audio
-        }
-      };
-      mr.onstop = () => {
-        const blob = new Blob(chunkBufRef.current, { type: mimeType });
-        sendChunkToDeepgram(blob);
-        // Start next chunk immediately
-        if (phaseRef.current === "listening") startNewChunk();
-      };
-      mr.start();
-      mediaRecRef.current = mr;
+    const mr = new MediaRecorder(stream, {
+      ...(mimeTypeRef.current ? { mimeType: mimeTypeRef.current } : {}),
+    });
 
-      // Stop after 4 seconds → triggers onstop → sends chunk → restarts
-      setTimeout(() => {
-        if (mr.state === "recording") mr.stop();
-      }, 4000);
+    mr.ondataavailable = e => {
+      if (e.data?.size > 0) {
+        chunkBufRef.current.push(e.data);
+        fullAudioRef.current.push(e.data);
+      }
     };
 
-    startNewChunk();
+    mr.onstop = () => {
+      const blob = new Blob(chunkBufRef.current, {
+        type: mimeTypeRef.current || "audio/webm",
+      });
+      sendChunkToDeepgram(blob);
+
+      // Restart only if still actively listening
+      if (activeRecRef.current && phaseRef.current === "listening") {
+        startChunkRecording(stream);
+      }
+    };
+
+    mr.start();
+    mediaRecRef.current = mr;
+
+    // Stop after 4 s → triggers onstop → sends chunk → restarts
+    setTimeout(() => {
+      if (mr.state === "recording") mr.stop();
+    }, 4000);
   }, [sendChunkToDeepgram]);
 
-  /* ══ Start session ══════════════════════════════════════════ */
+  /* ══ Start session ══════════════════════════════════════════════ */
   const startSession = async () => {
     setError("");
     setStatusMsg("Starting mic…");
@@ -289,6 +310,11 @@ export default function RecitationMic({ userId }: Props) {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current   = stream;
       fullAudioRef.current = [];
+
+      // Detect best mime type once for the whole session
+      mimeTypeRef.current = getBestMimeType();
+      activeRecRef.current = true;
+
       setPhase("listening");
       setStatusMsg("Listening — recite now");
       startChunkRecording(stream);
@@ -298,8 +324,9 @@ export default function RecitationMic({ userId }: Props) {
     }
   };
 
-  /* ── Hard stop all recording ─────────────────────────────── */
+  /* ── Hard stop ──────────────────────────────────────────────── */
   const hardStop = () => {
+    activeRecRef.current = false;   // prevent any chunk restart
     if (mediaRecRef.current) {
       try { mediaRecRef.current.stop(); } catch (_) {}
       mediaRecRef.current = null;
@@ -308,12 +335,11 @@ export default function RecitationMic({ userId }: Props) {
       streamRef.current.getTracks().forEach(t => t.stop());
       streamRef.current = null;
     }
-    if (timerRef.current)    { clearInterval(timerRef.current);    timerRef.current    = null; }
-    if (countRef.current)    { clearInterval(countRef.current);    countRef.current    = null; }
-    if (chunkTimerRef.current){ clearInterval(chunkTimerRef.current); chunkTimerRef.current = null; }
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    if (countRef.current)  { clearInterval(countRef.current);  countRef.current = null; }
   };
 
-  /* ── Reset word states ────────────────────────────────────── */
+  /* ── Reset word states ───────────────────────────────────────── */
   const resetWords = (idx: number) => {
     setAyahs(prev => {
       const u = [...prev];
@@ -322,13 +348,17 @@ export default function RecitationMic({ userId }: Props) {
     });
   };
 
-  /* ── Countdown 3-2-1 then advance ───────────────────────── */
+  /* ── Countdown 3-2-1 then advance ───────────────────────────── */
   const beginCountdown = () => {
     if (countRef.current || phaseRef.current !== "listening") return;
     setPhase("countdown");
 
-    // Stop recording during countdown
-    if (mediaRecRef.current) { try { mediaRecRef.current.stop(); } catch (_) {} mediaRecRef.current = null; }
+    // Stop current recorder but keep stream alive for next ayah
+    activeRecRef.current = false;
+    if (mediaRecRef.current) {
+      try { mediaRecRef.current.stop(); } catch (_) {}
+      mediaRecRef.current = null;
+    }
 
     let c = 3; setCountdown(c);
     countRef.current = setInterval(() => {
@@ -341,7 +371,7 @@ export default function RecitationMic({ userId }: Props) {
     }, 1000);
   };
 
-  /* ── Advance to next ayah ────────────────────────────────── */
+  /* ── Advance to next ayah ────────────────────────────────────── */
   const doAdvance = () => {
     const idx = ayahIdxRef.current;
     saveAyah(idx);
@@ -356,7 +386,10 @@ export default function RecitationMic({ userId }: Props) {
       setTimer(0);
       resetWords(next);
       setPhase("listening");
-      if (streamRef.current) startChunkRecording(streamRef.current);
+      if (streamRef.current) {
+        activeRecRef.current = true;
+        startChunkRecording(streamRef.current);
+      }
     } else {
       setPhase("done");
       hardStop();
@@ -375,20 +408,22 @@ export default function RecitationMic({ userId }: Props) {
     setStatusMsg("");
   };
 
-  /* ── Save ayah result to Supabase ───────────────────────── */
+  /* ── Save ayah result to Supabase ───────────────────────────── */
   const saveAyah = async (idx: number) => {
     if (!userId || !selected) return;
     const ayah = ayahsRef.current[idx];
     if (!ayah) return;
     setSaving(true);
     try {
-      const correct  = ayah.words.filter(w => w.state === "correct").length;
-      const scorePct = ayah.words.length > 0 ? Math.round((correct / ayah.words.length) * 100) : 0;
+      const correct   = ayah.words.filter(w => w.state === "correct").length;
+      const scorePct  = ayah.words.length > 0 ? Math.round((correct / ayah.words.length) * 100) : 0;
+      let   audioUrl  = "";
 
-      let audioUrl = "";
       if (fullAudioRef.current.length > 0) {
-        const blob = new Blob(fullAudioRef.current, { type: "audio/webm" });
-        const path = `${userId}/${selected.number}_${ayah.numberInSurah}_${Date.now()}.webm`;
+        const blob = new Blob(fullAudioRef.current, { type: mimeTypeRef.current || "audio/webm" });
+        const ext  = mimeTypeRef.current.includes("mp4") ? "mp4"
+                   : mimeTypeRef.current.includes("ogg") ? "ogg" : "webm";
+        const path = `${userId}/${selected.number}_${ayah.numberInSurah}_${Date.now()}.${ext}`;
         const { data: up } = await supabase.storage.from("hifdh-recordings").upload(path, blob);
         if (up) {
           const { data: u } = supabase.storage.from("hifdh-recordings").getPublicUrl(path);
@@ -399,32 +434,47 @@ export default function RecitationMic({ userId }: Props) {
 
       await Promise.all([
         supabase.from("hifdh_recordings").insert({
-          student_id: userId, surah_num: selected.number, surah_name: selected.englishName,
-          ayah_start: ayah.numberInSurah, ayah_end: ayah.numberInSurah,
-          audio_url: audioUrl, ai_score: scorePct, status: "pending",
-          transcript: fullTransRef.current,
+          student_id:   userId,
+          surah_num:    selected.number,
+          surah_name:   selected.englishName,
+          ayah_start:   ayah.numberInSurah,
+          ayah_end:     ayah.numberInSurah,
+          audio_url:    audioUrl,
+          ai_score:     scorePct,
+          status:       "pending",
+          transcript:   fullTransRef.current,
           word_results: ayah.words.map(x => ({ word: x.raw, result: x.state })),
         }),
         supabase.from("hifdh_sessions").insert({
-          student_id: userId, surah_number: selected.number, surah_name: selected.englishName,
-          ayah_start: ayah.numberInSurah, accuracy_score: scorePct,
-          correct, wrong: 0, duration: timer,
+          student_id:     userId,
+          surah_number:   selected.number,
+          surah_name:     selected.englishName,
+          ayah_start:     ayah.numberInSurah,
+          accuracy_score: scorePct,
+          correct,
+          wrong:          0,
+          duration:       timer,
         }),
       ]);
 
       const { data: ex } = await supabase.from("hifdh_progress")
         .select("id,best_accuracy,times_reviewed")
         .eq("user_id", userId).eq("surah_num", selected.number).single();
+
       if (ex) {
         await supabase.from("hifdh_progress").update({
-          last_reviewed: new Date().toISOString(),
-          best_accuracy: Math.max(ex.best_accuracy ?? 0, scorePct),
+          last_reviewed:  new Date().toISOString(),
+          best_accuracy:  Math.max(ex.best_accuracy ?? 0, scorePct),
           times_reviewed: (ex.times_reviewed ?? 0) + 1,
         }).eq("id", ex.id);
       } else {
         await supabase.from("hifdh_progress").insert({
-          user_id: userId, surah_num: selected.number, surah_name: selected.englishName,
-          last_reviewed: new Date().toISOString(), best_accuracy: scorePct, times_reviewed: 1,
+          user_id:        userId,
+          surah_num:      selected.number,
+          surah_name:     selected.englishName,
+          last_reviewed:  new Date().toISOString(),
+          best_accuracy:  scorePct,
+          times_reviewed: 1,
         });
       }
     } catch (_) {}
@@ -470,8 +520,8 @@ export default function RecitationMic({ userId }: Props) {
               onClick={() => { if (phase === "idle" || phase === "done") { setSelected(s); setSearch(""); } }}
               style={{ flexShrink: 0, padding: "6px 13px", borderRadius: 20, fontSize: 12, cursor: "pointer", whiteSpace: "nowrap",
                 background: selected?.number === s.number ? G700 : "#f8fafb",
-                color: selected?.number === s.number ? "#fff" : G700,
-                border: `1px solid ${selected?.number === s.number ? G700 : BORDER}`,
+                color:      selected?.number === s.number ? "#fff" : G700,
+                border:     `1px solid ${selected?.number === s.number ? G700 : BORDER}`,
                 fontWeight: selected?.number === s.number ? 700 : 400 }}>
               {s.englishName}<br />
               <span style={{ fontSize: 10, fontFamily: "'Amiri',serif", opacity: .8 }}>{s.name}</span>
@@ -503,9 +553,9 @@ export default function RecitationMic({ userId }: Props) {
           <div style={{ fontSize: 13, color: GOLD, marginTop: 4, marginBottom: 20 }}>أحسنت — Well done!</div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 20 }}>
             {[
-              { l: "Words",  v: sessionStats.correct, bg: G100,    c: G500 },
-              { l: "Ayahs",  v: sessionStats.ayahs,   bg: GOLD_LT, c: GOLD },
-              { l: "Time",   v: fmt(timer),            bg: "#f8fafb", c: G700 },
+              { l: "Words", v: sessionStats.correct, bg: G100,    c: G500 },
+              { l: "Ayahs", v: sessionStats.ayahs,   bg: GOLD_LT, c: GOLD },
+              { l: "Time",  v: fmt(timer),            bg: "#f8fafb", c: G700 },
             ].map((x, i) => (
               <div key={i} style={{ background: x.bg, borderRadius: 12, padding: "14px 8px" }}>
                 <div style={{ fontSize: 22, fontWeight: 900, color: x.c }}>{x.v}</div>
@@ -615,7 +665,7 @@ export default function RecitationMic({ userId }: Props) {
                 const i = ayahIdxRef.current; if (i === 0) return;
                 pointerRef.current = 0; fullTransRef.current = "";
                 setAyahIdx(i - 1); setTimer(0); resetWords(i - 1);
-                if (streamRef.current) startChunkRecording(streamRef.current);
+                if (streamRef.current) { activeRecRef.current = true; startChunkRecording(streamRef.current); }
               }}
               style={btn("#f0f4f0", ayahIdx === 0 ? MUTED : G700, { opacity: ayahIdx === 0 ? .4 : 1, padding: "9px 14px", fontSize: 13 })}>
               ← Prev
@@ -630,7 +680,6 @@ export default function RecitationMic({ userId }: Props) {
 
         {/* Controls card */}
         <div style={card({ padding: "20px 18px" })}>
-
           {error && (
             <div style={{ background: RED_LT, border: `1px solid #fca5a5`, borderRadius: 10, padding: "12px 14px", marginBottom: 12 }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: RED }}>⚠️ {error}</div>
@@ -657,9 +706,8 @@ export default function RecitationMic({ userId }: Props) {
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
 
               {/* Status bar */}
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", background: phase === "countdown" ? G100 : "#f0fff4", borderRadius: 10, border: `1px solid ${phase === "countdown" ? "#9ae6b4" : "#9ae6b4"}` }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", background: phase === "countdown" ? G100 : "#f0fff4", borderRadius: 10, border: `1px solid #9ae6b4` }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  {/* Pulsing mic icon */}
                   <div style={{ width: 32, height: 32, borderRadius: "50%", background: phase === "countdown" ? G100 : "#dcfce7", border: `2px solid ${G500}`, display: "flex", alignItems: "center", justifyContent: "center", animation: phase === "listening" ? "pulse 1s infinite" : "none" }}>
                     {phase === "listening" ? <Mic size={15} color={G500} /> : <MicOff size={15} color={G500} />}
                   </div>
@@ -711,4 +759,3 @@ export default function RecitationMic({ userId }: Props) {
     </div>
   );
 }
-
