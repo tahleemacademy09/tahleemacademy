@@ -420,32 +420,77 @@ export default function RecitationMic({ userId }: Props) {
     setProcessing(true);
     try {
       let text = "";
-      if (DEEPGRAM_KEY) {
-        const res = await fetch(
-          "https://api.deepgram.com/v1/listen?model=nova-2&language=ar&punctuate=false&filler_words=false",
-          { method:"POST", headers:{ Authorization:`Token ${DEEPGRAM_KEY}`, "Content-Type":dgCT(mimeRef.current||blob.type) }, body:blob }
-        );
-        if (res.ok) text = (await res.json())?.results?.channels?.[0]?.alternatives?.[0]?.transcript || "";
-        else console.warn("DG:", res.status, await res.text().catch(()=>""));
-      }
-      if (!text && GROQ_KEY) {
-        const ext = (mimeRef.current||"").includes("mp4")?"mp4":(mimeRef.current||"").includes("ogg")?"ogg":"webm";
+
+      /* ── PRIMARY: Groq whisper-large-v3 ──────────────────
+         Full large-v3 (NOT turbo) — significantly more accurate
+         for Quranic Arabic. Turbo sacrifices Arabic quality for speed.
+         Prompt anchors Whisper to Quranic vocabulary so it doesn't
+         hallucinate modern Arabic words for classical ones.
+      ─────────────────────────────────────────────────────── */
+      if (GROQ_KEY) {
+        const ext = (mimeRef.current||"").includes("mp4") ? "mp4"
+                  : (mimeRef.current||"").includes("ogg") ? "ogg" : "webm";
         const fd = new FormData();
-        fd.append("file", new File([blob], `a.${ext}`, { type: mimeRef.current||"audio/webm" }));
-        fd.append("model","whisper-large-v3-turbo");
-        fd.append("language","ar");
-        fd.append("response_format","json");
-        fd.append("prompt","بسم الله الرحمن الرحيم الحمد لله رب العالمين الرحمن الرحيم");
-        fd.append("temperature","0");
-        const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions",
-          { method:"POST", headers:{ Authorization:`Bearer ${GROQ_KEY}` }, body:fd });
-        if (r.status !== 429 && r.ok) text = (await r.json())?.text || "";
+        fd.append("file", new File([blob], `recitation.${ext}`, { type: mimeRef.current||"audio/webm" }));
+        fd.append("model", "whisper-large-v3");          // full model, NOT turbo
+        fd.append("language", "ar");
+        fd.append("response_format", "verbose_json");    // gives word-level confidence
+        fd.append("temperature", "0");
+        // Long Quranic prompt — primes the model with the opening surahs
+        // so it stays in Quranic register and handles tajweed variants
+        fd.append("prompt",
+          "بسم الله الرحمن الرحيم الحمد لله رب العالمين الرحمن الرحيم مالك يوم الدين " +
+          "إياك نعبد وإياك نستعين اهدنا الصراط المستقيم صراط الذين أنعمت عليهم " +
+          "غير المغضوب عليهم ولا الضالين"
+        );
+        try {
+          const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${GROQ_KEY}` },
+            body: fd,
+          });
+          if (r.status === 429) {
+            console.warn("Groq rate limited — falling back to Deepgram");
+          } else if (r.ok) {
+            const data = await r.json();
+            text = data?.text || "";
+            // Filter low-confidence segments (Whisper hallucination signal)
+            if (data?.segments) {
+              const goodSegs = data.segments.filter((s: any) =>
+                typeof s.no_speech_prob === "number" ? s.no_speech_prob < 0.6 : true
+              );
+              if (goodSegs.length > 0) {
+                text = goodSegs.map((s: any) => s.text).join(" ").trim();
+              } else {
+                text = ""; // all segments were likely silence/noise
+              }
+            }
+          } else {
+            console.warn("Groq error:", r.status);
+          }
+        } catch(e: any) { console.warn("Groq fetch error:", e?.message); }
       }
+
+      /* ── FALLBACK: Deepgram nova-2 ────────────────────────
+         Used only if Groq fails/rate-limits. nova-2 is fast
+         but less accurate for Classical Quranic Arabic.
+      ─────────────────────────────────────────────────────── */
+      if (!text && DEEPGRAM_KEY) {
+        try {
+          const res = await fetch(
+            "https://api.deepgram.com/v1/listen?model=nova-2&language=ar&punctuate=false&filler_words=false",
+            { method:"POST", headers:{ Authorization:`Token ${DEEPGRAM_KEY}`, "Content-Type":dgCT(mimeRef.current||blob.type) }, body:blob }
+          );
+          if (res.ok) {
+            text = (await res.json())?.results?.channels?.[0]?.alternatives?.[0]?.transcript || "";
+          }
+        } catch(e: any) { console.warn("DG fallback error:", e?.message); }
+      }
+
       if (text) processTranscript(text);
       setError("");
     } catch(e: any) {
       console.error("Transcribe:", e?.message);
-      setError(e?.message || "Transcription error");
     } finally { setProcessing(false); }
   }, [processTranscript]);
 
@@ -459,7 +504,7 @@ export default function RecitationMic({ userId }: Props) {
       if (!initRef.current) { initRef.current = e.data; transcribe(e.data); return; }
       transcribe(new Blob([initRef.current, e.data], { type: mimeRef.current || "audio/webm" }));
     };
-    mr.start(1500);
+    mr.start(2000); // 2s chunks — large-v3 needs more audio context
     mrRef.current = mr;
   }, [transcribe]);
 
