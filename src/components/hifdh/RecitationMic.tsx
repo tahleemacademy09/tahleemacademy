@@ -121,6 +121,7 @@ export default function RecitationMic({ userId }: Props) {
   const [playing,  setPlaying] = useState(false);
 
   /* ── Mem recording — continuous auto-count ── */
+  const [memTotalReps, setMemTotalReps] = useState(COUNT_SHOWN); // display total for current phase
   const [memRecState,  setMemRecState]  = useState<"idle"|"recording"|"done">("idle");
   const [memRecTime,   setMemRecTime]   = useState(0);
   const [memCompCount, setMemCompCount] = useState(0);  // reps completed this phase
@@ -338,52 +339,17 @@ export default function RecitationMic({ userId }: Props) {
         revSendChunk(new Blob([initRef.current,e.data],{type:mime||"audio/webm"}));
       };
 
-      mr.onstop=async()=>{
+      mr.onstop=()=>{
+        // Synchronous only — no async/fetch here (gets aborted on mobile when stream closes)
         stream.getTracks().forEach(t=>t.stop());
         clearInterval(timerRef.current!);
-        // Don't reset revRecTime to 0 here — keep it so "X:XX recorded" shows correctly
         const blob=new Blob(chunksRef.current,{type:mime||"audio/webm"});
-        setRevAudioBlob(blob);
-
-        // ── RELIABLE FULL-BLOB TRANSCRIPTION ──
-        // The live streaming gives a preview, but for evaluation we re-transcribe
-        // the ENTIRE recording as one blob. This is guaranteed to have all audio.
         if(blob.size < 500){
-          setRevErr("Recording too short — please try again.");
+          setRevErr("Recording too short — please speak for at least 2 seconds.");
           setRevRecState("idle"); return;
         }
-
+        setRevAudioBlob(blob);           // triggers the useEffect below
         setRevRecState("transcribing" as any);
-        try{
-          let tx="";
-          if(DEEPGRAM_KEY){
-            const r=await fetch(
-              "https://api.deepgram.com/v1/listen?model=nova-2&language=ar&punctuate=false&filler_words=false",
-              {method:"POST",headers:{Authorization:`Token ${DEEPGRAM_KEY}`,"Content-Type":blob.type||"audio/webm"},body:blob}
-            );
-            if(r.ok) tx=(await r.json())?.results?.channels?.[0]?.alternatives?.[0]?.transcript||"";
-          }
-          if(!tx&&GROQ_KEY){
-            const ext=blob.type.includes("mp4")?"mp4":blob.type.includes("ogg")?"ogg":"webm";
-            const fd=new FormData();
-            fd.append("file",new File([blob],`rev.${ext}`,{type:blob.type}));
-            fd.append("model","whisper-large-v3");
-            fd.append("language","ar"); fd.append("response_format","json"); fd.append("temperature","0");
-            fd.append("prompt","بسم الله الرحمن الرحيم الحمد لله رب العالمين الرحمن الرحيم مالك يوم الدين إياك نعبد وإياك نستعين");
-            const r=await fetch("https://api.groq.com/openai/v1/audio/transcriptions",
-              {method:"POST",headers:{Authorization:`Bearer ${GROQ_KEY}`},body:fd});
-            if(r.ok) tx=(await r.json())?.text||"";
-          }
-          if(tx){
-            liveRef.current=tx;
-            setLiveTranscript(tx);
-          } else {
-            setRevErr("Could not transcribe — please speak clearly and try again.");
-          }
-        }catch(e:any){
-          setRevErr(e?.message||"Transcription error");
-        }
-        setRevRecState("done");
       };
 
       mr.start(500); // 500ms chunks for smoother live preview
@@ -393,9 +359,71 @@ export default function RecitationMic({ userId }: Props) {
   };
 
   const revStopRec=()=>{
-    clearInterval(timerRef.current!); // stop timer now so display freezes
+    clearInterval(timerRef.current!);
     mrRef.current?.stop();
   };
+
+  /* ── Transcribe rev blob via useEffect (safe on mobile — not inside onstop) ── */
+  useEffect(()=>{
+    const blob = revAudioBlob;
+    if(!blob||(revRecState as string)!=="transcribing") return;
+    let cancelled = false;
+
+    (async()=>{
+      try{
+        let tx="";
+
+        if(DEEPGRAM_KEY){
+          try{
+            const r=await fetch(
+              "https://api.deepgram.com/v1/listen?model=nova-2&language=ar&punctuate=false&filler_words=false",
+              {method:"POST",headers:{Authorization:`Token ${DEEPGRAM_KEY}`,"Content-Type":blob.type||"audio/webm"},body:blob}
+            );
+            if(r.ok){
+              const data=await r.json();
+              tx=data?.results?.channels?.[0]?.alternatives?.[0]?.transcript||"";
+            } else {
+              console.warn("Deepgram",r.status);
+            }
+          }catch(e:any){ console.warn("Deepgram fetch error:",e?.message); }
+        }
+
+        if(!tx&&GROQ_KEY){
+          try{
+            const ext=blob.type.includes("mp4")?"mp4":blob.type.includes("ogg")?"ogg":"webm";
+            const fd=new FormData();
+            fd.append("file",new File([blob],`rev.${ext}`,{type:blob.type}));
+            fd.append("model","whisper-large-v3");
+            fd.append("language","ar");
+            fd.append("response_format","json");
+            fd.append("temperature","0");
+            fd.append("prompt","بسم الله الرحمن الرحيم الحمد لله رب العالمين الرحمن الرحيم مالك يوم الدين إياك نعبد وإياك نستعين");
+            const r=await fetch("https://api.groq.com/openai/v1/audio/transcriptions",
+              {method:"POST",headers:{Authorization:`Bearer ${GROQ_KEY}`},body:fd});
+            if(r.status===429){ setRevErr("Rate limited — please wait a moment and try again."); }
+            else if(r.ok){ tx=(await r.json())?.text||""; }
+            else { console.warn("Groq",r.status); }
+          }catch(e:any){ console.warn("Groq fetch error:",e?.message); }
+        }
+
+        if(cancelled) return;
+
+        if(tx){
+          liveRef.current=tx;
+          setLiveTranscript(tx);
+          setRevErr("");
+        } else if(!revErr) {
+          setRevErr("Could not transcribe — speak clearly and try again.");
+        }
+      }catch(e:any){
+        if(!cancelled) setRevErr(e?.message||"Transcription failed");
+      } finally {
+        if(!cancelled) setRevRecState("done");
+      }
+    })();
+
+    return ()=>{ cancelled=true; };
+  },[revAudioBlob]);   // only re-run when a new blob arrives
 
   /* ── Evaluate revision with Claude ── */
   const evaluateRevision=useCallback(async()=>{
