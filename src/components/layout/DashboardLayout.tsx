@@ -80,6 +80,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   ];
 
   const adminLinks = [
+{ to: "/admin/level-assignment", label: "Level Assignment" }
     { to: "/admin",                   icon: LayoutDashboard, label: t("Dashboard",           "لوحة التحكم")    },
     { to: "/admin/subjects",          icon: BookOpen,        label: t("Subjects",             "المواد")         },
     { to: "/admin/courses",           icon: Layers,          label: t("Courses",              "الدورات")        },
