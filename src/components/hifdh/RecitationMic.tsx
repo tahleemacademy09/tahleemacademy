@@ -884,18 +884,4 @@ export default function RecitationMic({ userId }: Props) {
   );
 
   return null;
-
-  /* ── Grade Button ── */
-  function GradeBtn({label,color,icon:Icon,q,hint}:{label:string;color:string;icon:any;q:0|1|2|3;hint:string}){
-    return(
-      <button onClick={()=>gradeAndAdvance(q)} title={hint} style={{
-        flex:1,padding:"11px 6px",borderRadius:12,
-        border:`2px solid ${color}22`,background:`${color}10`,
-        cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:4,
-      }}>
-        <Icon size={18} color={color}/>
-        <span style={{fontSize:11,fontWeight:700,color}}>{label}</span>
-      </button>
-    );
-  }
 }
