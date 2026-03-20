@@ -11,10 +11,10 @@
   ✅ Beautiful mobile bottom toolbar
 */
 
-import { useState, useEffect, useRef, useCallback } from "react";
 import {
   LiveKitRoom, RoomAudioRenderer, useRoomContext,
   GridLayout, ParticipantTile, useTracks,
+  useParticipants, useLocalParticipant,
 } from "@livekit/components-react";
 // @ts-ignore
 import "@livekit/components-styles";
@@ -214,20 +214,252 @@ const Whiteboard = ({ onClose, fullscreen, onToggleFullscreen, isTeacher }: {
 };
 
 /* ═══════════════════════════════════════════════════════
-   VIDEO GRID — replaces <VideoConference /> (no duplicate controls)
+   MEET-STYLE VIDEO GRID
+   - 1 participant: full screen
+   - 2 participants: side by side (like Zoom / Google Meet)
+   - 3-4: 2x2 grid
+   - 5+: spotlight (largest tile) + strip of others
+   Uses LiveKit hooks directly — no GridLayout overhead
 ═══════════════════════════════════════════════════════ */
-const VideoGrid = () => {
-  const tracks = useTracks(
-    [
-      { source: Track.Source.Camera, withPlaceholder: true },
-      { source: Track.Source.ScreenShare, withPlaceholder: false },
-    ],
-    { onlySubscribed: false }
-  );
+const ParticipantVideo = ({ participant, size = "normal", isLocal = false }: {
+  participant: any; size?: "normal" | "spotlight" | "strip"; isLocal?: boolean;
+}) => {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [hasVideo, setHasVideo] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+
+  useEffect(() => {
+    const update = () => {
+      const camPub = participant.getTrackPublication?.(Track.Source.Camera)
+                  || participant.trackPublications?.get(Track.Source.Camera);
+      const track = camPub?.videoTrack || camPub?.track;
+      if (track && videoRef.current && track.mediaStreamTrack?.readyState === "live") {
+        const ms = new MediaStream([track.mediaStreamTrack]);
+        videoRef.current.srcObject = ms;
+        videoRef.current.play().catch(() => {});
+        setHasVideo(true);
+      } else {
+        setHasVideo(false);
+        if (videoRef.current) videoRef.current.srcObject = null;
+      }
+    };
+    update();
+    participant.on?.("trackSubscribed", update);
+    participant.on?.("trackUnsubscribed", update);
+    participant.on?.("trackMuted", update);
+    participant.on?.("trackUnmuted", update);
+    participant.on?.("isSpeakingChanged", (v: boolean) => setIsSpeaking(v));
+    return () => {
+      participant.off?.("trackSubscribed", update);
+      participant.off?.("trackUnsubscribed", update);
+      participant.off?.("trackMuted", update);
+      participant.off?.("trackUnmuted", update);
+    };
+  }, [participant]);
+
+  const camPub = participant.getTrackPublication?.(Track.Source.Camera)
+              || participant.trackPublications?.get(Track.Source.Camera);
+  const micPub = participant.getTrackPublication?.(Track.Source.Microphone)
+              || participant.trackPublications?.get(Track.Source.Microphone);
+  const micMuted = micPub?.isMuted ?? !participant.isMicrophoneEnabled;
+  const displayName = participant.name || participant.identity || "Participant";
+  const initials = displayName.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase();
+
+  const tileH = size === "strip" ? 90 : "100%";
+  const tileW = size === "strip" ? 120 : "100%";
+  const avatarSize = size === "strip" ? 36 : size === "spotlight" ? 72 : 52;
+  const fontSize  = size === "strip" ? 13 : size === "spotlight" ? 26 : 18;
+
   return (
-    <GridLayout tracks={tracks} style={{ height:"100%", padding:4 }}>
-      <ParticipantTile />
-    </GridLayout>
+    <div style={{
+      position: "relative",
+      width: tileW, height: tileH,
+      background: "#1c2128",
+      borderRadius: size === "strip" ? 10 : 12,
+      overflow: "hidden",
+      border: isSpeaking ? "2px solid #22c55e" : "2px solid transparent",
+      transition: "border .2s",
+      flexShrink: 0,
+    }}>
+      {/* Video */}
+      <video
+        ref={videoRef}
+        autoPlay playsInline muted={isLocal}
+        style={{
+          width: "100%", height: "100%",
+          objectFit: "cover",
+          display: hasVideo ? "block" : "none",
+          transform: isLocal ? "scaleX(-1)" : "none",
+        }}
+      />
+
+      {/* Avatar fallback */}
+      {!hasVideo && (
+        <div style={{
+          position: "absolute", inset: 0,
+          display: "flex", flexDirection: "column",
+          alignItems: "center", justifyContent: "center",
+          background: "linear-gradient(135deg,#1e3a2f,#0f2318)",
+        }}>
+          <div style={{
+            width: avatarSize, height: avatarSize, borderRadius: "50%",
+            background: "#075E54",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize, fontWeight: 700, color: "#fff",
+            border: isSpeaking ? "3px solid #22c55e" : "3px solid rgba(255,255,255,.15)",
+            transition: "border .2s",
+          }}>
+            {initials}
+          </div>
+        </div>
+      )}
+
+      {/* Bottom info strip */}
+      <div style={{
+        position: "absolute", bottom: 0, left: 0, right: 0,
+        padding: size === "strip" ? "4px 6px" : "8px 10px",
+        background: "linear-gradient(transparent, rgba(0,0,0,.7))",
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+      }}>
+        <span style={{
+          fontSize: size === "strip" ? 9 : 12, fontWeight: 600,
+          color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+          maxWidth: size === "strip" ? 70 : "auto",
+        }}>
+          {displayName}{isLocal ? " (You)" : ""}
+        </span>
+        {micMuted && (
+          <div style={{
+            background: "rgba(239,68,68,.85)", borderRadius: "50%",
+            width: size === "strip" ? 14 : 20, height: size === "strip" ? 14 : 20,
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>
+            <MicOff style={{ width: size === "strip" ? 8 : 11, height: size === "strip" ? 8 : 11, color: "#fff" }} />
+          </div>
+        )}
+      </div>
+
+      {/* Speaking indicator */}
+      {isSpeaking && (
+        <div style={{
+          position: "absolute", top: 8, left: 8,
+          background: "rgba(34,197,94,.9)", borderRadius: 20,
+          padding: "2px 8px", fontSize: 10, color: "#fff", fontWeight: 700,
+        }}>
+          ● Speaking
+        </div>
+      )}
+    </div>
+  );
+};
+
+const VideoGrid = () => {
+  const { localParticipant } = useLocalParticipant();
+  const remoteParticipants   = useParticipants();
+  // useParticipants returns ALL including local — filter out local
+  const remotes = remoteParticipants.filter(p => p.identity !== localParticipant?.identity);
+  const all = localParticipant ? [localParticipant, ...remotes] : remotes;
+  const count = all.length;
+
+  // Screen share: find any participant publishing a screen track
+  const screensharer = all.find(p => {
+    const pub = p.getTrackPublication?.(Track.Source.ScreenShare)
+             || p.trackPublications?.get(Track.Source.ScreenShare);
+    return pub?.track && !pub.isMuted;
+  });
+
+  if (screensharer) {
+    // Screen share layout: big screen + small participant strips
+    return (
+      <div style={{ width: "100%", height: "100%", display: "flex", gap: 6, padding: 8, boxSizing: "border-box" }}>
+        {/* Screen share takes 80% */}
+        <div style={{ flex: 1, borderRadius: 12, overflow: "hidden", background: "#111" }}>
+          <ParticipantTile participant={screensharer as any} source={Track.Source.ScreenShare}
+            style={{ width: "100%", height: "100%" }} />
+        </div>
+        {/* Participants strip */}
+        <div style={{ width: 130, display: "flex", flexDirection: "column", gap: 6, overflowY: "auto" }}>
+          {all.map((p, i) => (
+            <ParticipantVideo
+              key={p.identity} participant={p}
+              size="strip" isLocal={p.identity === localParticipant?.identity}
+            />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // 1 person (only me) — full screen centered
+  if (count <= 1) {
+    return (
+      <div style={{ width: "100%", height: "100%", padding: 8, boxSizing: "border-box" }}>
+        <ParticipantVideo
+          participant={all[0] || localParticipant}
+          isLocal size="spotlight"
+        />
+      </div>
+    );
+  }
+
+  // 2 people — side by side, equal halves (Google Meet style)
+  if (count === 2) {
+    return (
+      <div style={{
+        width: "100%", height: "100%",
+        display: "grid",
+        gridTemplateColumns: "1fr 1fr",
+        gap: 6, padding: 8, boxSizing: "border-box",
+      }}>
+        {all.map((p, i) => (
+          <ParticipantVideo
+            key={p.identity} participant={p} size="normal"
+            isLocal={p.identity === localParticipant?.identity}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  // 3-4 people — 2x2 grid
+  if (count <= 4) {
+    return (
+      <div style={{
+        width: "100%", height: "100%",
+        display: "grid",
+        gridTemplateColumns: "1fr 1fr",
+        gridTemplateRows: count <= 2 ? "1fr" : count === 3 ? "1fr 1fr" : "1fr 1fr",
+        gap: 6, padding: 8, boxSizing: "border-box",
+      }}>
+        {all.map(p => (
+          <ParticipantVideo
+            key={p.identity} participant={p} size="normal"
+            isLocal={p.identity === localParticipant?.identity}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  // 5+ people — spotlight (first/active speaker) + strip of others
+  const [spotlight, ...others] = all;
+  return (
+    <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", gap: 6, padding: 8, boxSizing: "border-box" }}>
+      <div style={{ flex: 1 }}>
+        <ParticipantVideo
+          participant={spotlight} size="spotlight"
+          isLocal={spotlight?.identity === localParticipant?.identity}
+        />
+      </div>
+      <div style={{ height: 96, display: "flex", gap: 6, overflowX: "auto" }}>
+        {others.map(p => (
+          <ParticipantVideo
+            key={p.identity} participant={p} size="strip"
+            isLocal={p.identity === localParticipant?.identity}
+          />
+        ))}
+      </div>
+    </div>
   );
 };
 
@@ -686,9 +918,10 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
       {token && wsUrl && (
         <LiveKitRoom serverUrl={wsUrl} token={token} connect={true}
           options={{
-            adaptiveStream: true,
+            adaptiveStream: { pixelDensity: "screen" },
             dynacast: true,
-            // ── Low-latency audio for group recitation ──
+            disconnectOnPageLeave: true,
+            // Audio: low latency, echo-cancelled
             audioCaptureDefaults: {
               echoCancellation: true,
               noiseSuppression: true,
@@ -697,10 +930,19 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
               channelCount: 1,
             },
             publishDefaults: {
-              audioPreset: { maxBitrate: 64000 }, // higher = less compression = less latency
-              dtx: false, // disable DTX for group recitation (no cutting during silence)
+              // 32kbps is fine for voice — lower = less bandwidth = less lag
+              audioPreset: { maxBitrate: 32000 },
+              dtx: true,             // silence suppression = saves bandwidth
+              red: false,            // disable redundancy = lower latency
+              stopMicTrackOnMute: false, // don't stop track on mute (faster resume)
+              // Video: 640x480 is plenty for classroom tiles
+              videoEncoding: { maxBitrate: 700_000, maxFramerate: 20 },
+              backupCodec: true,
             },
-            videoCaptureDefaults: { resolution: { width:1280, height:720 } },
+            videoCaptureDefaults: {
+              resolution: { width: 640, height: 480, frameRate: 20 },
+              facingMode: "user",
+            },
           }}
           style={{ height:"100%", flex:1 }}
           data-lk-theme="default"
