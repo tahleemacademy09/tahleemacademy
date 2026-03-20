@@ -126,6 +126,7 @@ export default function RecitationMic({ userId }: Props) {
   const streamRef    = useRef<MediaStream | null>(null);
   const initChunkRef = useRef<Blob | null>(null);
   const fullAudioRef = useRef<Blob[]>([]);
+  const lastChunkRef = useRef<string>("");  // dedup Whisper hallucinations
   const timerRef     = useRef<ReturnType<typeof setInterval> | null>(null);
   const ayahIdxRef   = useRef(0);
   const ayahsRef     = useRef<Ayah[]>([]);
@@ -187,6 +188,7 @@ export default function RecitationMic({ userId }: Props) {
     saveAyah(idx);
     setSessionStats(s=>({ ...s, ayahs: s.ayahs+1 }));
     fullTransRef.current = "";
+    lastChunkRef.current = "";
     pointerRef.current   = 0;
     setTranscript("");
 
@@ -221,7 +223,16 @@ export default function RecitationMic({ userId }: Props) {
     const arabicText = arabicOnly(newText);
     if (!arabicText) return;
 
-    fullTransRef.current = (fullTransRef.current+" "+arabicText).trim();
+    // Skip chunks that are identical/near-identical to last chunk (Whisper hallucination)
+    const newNorm = normalise(arabicText);
+    const lastNorm = normalise(lastChunkRef.current);
+    if (newNorm && lastNorm && newNorm === lastNorm) return;
+    lastChunkRef.current = arabicText;
+
+    // Keep fullTrans bounded — if > 120 chars, trim to last 60 chars to avoid
+    // token flood from hallucinations confusing the sequential matcher
+    const combined = (fullTransRef.current+" "+arabicText).trim();
+    fullTransRef.current = combined.length > 120 ? combined.slice(-60) : combined;
     setTranscript(fullTransRef.current);
 
     const idx   = ayahIdxRef.current;
@@ -533,13 +544,8 @@ export default function RecitationMic({ userId }: Props) {
                   const isDone   = ayah.words.every(w=>w.state==="revealed");
                   return (
                     <span key={ayah.numberInSurah}
-                      ref={isActive ? (el)=>{ activeAyahEl.current=el; } : undefined}
-                      style={{
-                        display:"inline",
-                        background: isDone ? "rgba(39,103,73,.06)" : isActive ? "rgba(183,121,31,.07)" : "transparent",
-                        borderRadius:6, padding:isActive||isDone?"0 3px":0,
-                        transition:"background .4s",
-                      }}>
+                      ref={isActive ? (el:any)=>{ activeAyahEl.current=el; } : undefined}
+                      style={{ display:"inline" }}>
                       {ayah.words.map((w,wi)=>{
                         const isRevealed=w.state==="revealed";
                         const isCurrent =w.state==="current";
@@ -552,13 +558,18 @@ export default function RecitationMic({ userId }: Props) {
                               color:G500,
                             }:isCurrent?{
                               color:GOLD,
-                              textShadow:`0 0 8px ${GOLD}88`,
+                              background:GOLD_LT,
+                              borderRadius:4,
+                              padding:"0 2px",
+                              border:`1.5px solid ${GOLD}`,
+                              textShadow:`0 0 6px ${GOLD}66`,
                               animation:"wordPulse .7s ease-in-out infinite",
                             }:{
-                              color:"transparent", background:"#d4d4d4",
+                              color:"transparent",
+                              background: isActive ? "#c8c8c8" : "#dedede",
                               borderRadius:3,
-                              minWidth:`${Math.max(w.raw.length*11,24)}px`,
-                              height:"0.65em", verticalAlign:"middle",
+                              minWidth:`${Math.max(w.raw.length*9,20)}px`,
+                              height:"0.6em", verticalAlign:"middle",
                               display:"inline-block",
                             })
                           }}>
@@ -567,7 +578,11 @@ export default function RecitationMic({ userId }: Props) {
                         );
                       })}
                       {/* Ayah number ornament */}
-                      <span style={{ color:"rgba(183,121,31,.5)", fontSize:18, margin:"0 4px", fontFamily:"'Amiri',serif" }}>
+                      <span style={{
+                        color: isDone ? G500 : isActive ? GOLD : "rgba(183,121,31,.45)",
+                        fontSize:18, margin:"0 4px", fontFamily:"'Amiri',serif",
+                        fontWeight: isActive ? 900 : 400,
+                      }}>
                         ﴿{ayah.numberInSurah}﴾
                       </span>
                     </span>
