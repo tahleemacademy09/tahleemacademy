@@ -223,6 +223,7 @@ export default function RecitationMic({ userId }: Props) {
   /* ══ Send blob to Deepgram ══════════════════════════════════ */
   const sendToDeepgram = useCallback(async (blob: Blob) => {
     if (blob.size < 500) return;
+    console.log(`[DG] Sending blob: size=${blob.size} type=${blob.type} mime=${mimeRef.current} keyLen=${DEEPGRAM_KEY?.length ?? 0}`);
     setProcessing(true);
     try {
       if (!DEEPGRAM_KEY) {
@@ -246,8 +247,9 @@ export default function RecitationMic({ userId }: Props) {
       if (text) processTranscript(text);
       setError("");
     } catch (e: any) {
-      console.warn("Deepgram error:", e?.message);
-      setError("Transcription failed — check VITE_DEEPGRAM_API_KEY");
+      const msg = e?.message || "Unknown error";
+      console.error("Deepgram error:", msg);
+      setError(`Transcription failed: ${msg}`);
     } finally {
       setProcessing(false);
     }
