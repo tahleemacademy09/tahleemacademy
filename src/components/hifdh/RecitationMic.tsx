@@ -100,8 +100,6 @@ export default function RecitationMic({ userId }: Props) {
   /* ── MEMORISE session state ── */
   const [memVerseIdx,  setMemVerseIdx]  = useState(0);   // index into selected ayahs
   const [memPhase,     setMemPhase]     = useState<MemPhase>("shown");
-  const [memRep,       setMemRep]       = useState(1);    // current rep (1-based)
-  const [memTotalReps, setMemTotalReps] = useState(COUNT_SHOWN);
 
   /* ── REVISE session state ── */
   const [revRecState,  setRevRecState]  = useState<RecState>("idle");
@@ -122,15 +120,20 @@ export default function RecitationMic({ userId }: Props) {
   const audioEl    = useRef<HTMLAudioElement|null>(null);
   const [playing,  setPlaying] = useState(false);
 
-  /* ── Mem recording (per repetition) ── */
-  const [memRecState, setMemRecState] = useState<RecState>("idle");
-  const [memRecTime,  setMemRecTime]  = useState(0);
-  const [memScore,    setMemScore]    = useState<number|null>(null);
-  const memMrRef   = useRef<MediaRecorder|null>(null);
-  const memChunks  = useRef<Blob[]>([]);
-  const memInitRef = useRef<Blob|null>(null);
-  const memLiveRef = useRef("");
-  const memTimer   = useRef<ReturnType<typeof setInterval>|null>(null);
+  /* ── Mem recording — continuous auto-count ── */
+  const [memRecState,  setMemRecState]  = useState<"idle"|"recording"|"done">("idle");
+  const [memRecTime,   setMemRecTime]   = useState(0);
+  const [memCompCount, setMemCompCount] = useState(0);  // reps completed this phase
+  const [memLiveText,  setMemLiveText]  = useState(""); // live transcript display
+  const memMrRef     = useRef<MediaRecorder|null>(null);
+  const memInitRef   = useRef<Blob|null>(null);
+  const memCountRef  = useRef(0);         // sync count for async callbacks
+  const memPhraseRef = useRef<string>(""); // current reference phrase (sync)
+  const memTotalRef  = useRef(COUNT_SHOWN);// sync total for async callbacks
+  const memPhaseRef  = useRef<MemPhase>("shown");
+  const memVerseRef  = useRef(0);
+  const memWindowRef = useRef<string[]>([]); // rolling token window
+  const memTimer     = useRef<ReturnType<typeof setInterval>|null>(null);
 
   /* Load surah list */
   useEffect(()=>{
@@ -168,97 +171,137 @@ export default function RecitationMic({ userId }: Props) {
   },[playing]);
 
   /* ═══════════════════════════════════════════════════════════
-     MEMORISE — recording logic (per repetition)
-     Sends 1.5s chunks live to Deepgram, accumulates transcript.
-     On stop: score immediately from live transcript.
+     MEMORISE — continuous auto-count recording
+     
+     Single tap starts. User recites the verse repeatedly.
+     Each 1.5s chunk is transcribed. Rolling token window checked
+     against reference. When ≥60% of ref words are matched in
+     the window → count one rep, reset window, increment counter.
+     When count reaches target → auto-advance phase.
   ═══════════════════════════════════════════════════════════ */
-  const memSendChunk = useCallback(async(blob:Blob)=>{
-    if(!DEEPGRAM_KEY&&!GROQ_KEY) return;
-    try{
-      if(DEEPGRAM_KEY){
-        const r=await fetch("https://api.deepgram.com/v1/listen?model=nova-2&language=ar&punctuate=false&filler_words=false",
-          {method:"POST",headers:{Authorization:`Token ${DEEPGRAM_KEY}`,"Content-Type":blob.type||"audio/webm"},body:blob});
-        if(r.ok){const tx=(await r.json())?.results?.channels?.[0]?.alternatives?.[0]?.transcript||"";if(tx)memLiveRef.current=(memLiveRef.current+" "+tx).trim();}
-      }else if(GROQ_KEY){
-        const ext=blob.type.includes("mp4")?"mp4":blob.type.includes("ogg")?"ogg":"webm";
-        const fd=new FormData();fd.append("file",new File([blob],`c.${ext}`,{type:blob.type}));fd.append("model","whisper-large-v3");fd.append("language","ar");fd.append("response_format","json");fd.append("temperature","0");fd.append("prompt","بسم الله الرحمن الرحيم الحمد لله رب العالمين");
-        const r=await fetch("https://api.groq.com/openai/v1/audio/transcriptions",{method:"POST",headers:{Authorization:`Bearer ${GROQ_KEY}`},body:fd});
-        if(r.ok){const tx=(await r.json())?.text||"";if(tx)memLiveRef.current=(memLiveRef.current+" "+tx).trim();}
-      }
-    }catch(_){}
-  },[]);
+  const memCheckWindow = useCallback((newTx: string) => {
+    if (!newTx.trim()) return;
 
-  const memStartRec = async()=>{
-    try{
-      memLiveRef.current=""; memInitRef.current=null; memChunks.current=[];
-      const stream=await navigator.mediaDevices.getUserMedia({audio:true});
-      const mime=getMime();
-      const mr=new MediaRecorder(stream,mime?{mimeType:mime}:{});
-      mr.ondataavailable=e=>{
-        if(!e.data?.size)return;
-        memChunks.current.push(e.data);
-        if(!memInitRef.current){memInitRef.current=e.data;memSendChunk(e.data);return;}
-        memSendChunk(new Blob([memInitRef.current,e.data],{type:mime||"audio/webm"}));
-      };
-      mr.onstop=()=>{
-        stream.getTracks().forEach(t=>t.stop());
-        clearInterval(memTimer.current!); setMemRecTime(0);
-        // Score using live transcript
-        const refText = memPhase==="cumulative"
-          ? cumulativeAyahs.map(a=>a.text).join(" ")
-          : currentAyah?.text||"";
-        const tx=memLiveRef.current.trim();
-        if(tx){
-          const r=scoreVsRef(tx,refText);
-          setMemScore(r.score);
-        } else {
-          setMemScore(0);
-        }
-        setMemRecState("done");
-      };
-      mr.start(1500); memMrRef.current=mr; setMemRecState("recording");
-      memTimer.current=setInterval(()=>setMemRecTime(t=>t+1),1000);
-    }catch{alert("Microphone access denied.");}
-  };
+    // Append new tokens to window
+    const newToks = newTx.replace(/[^؀-ۿ\s]/g," ").trim().split(/\s+/).filter(Boolean);
+    memWindowRef.current = [...memWindowRef.current, ...newToks].slice(-40); // keep last 40 tokens
 
-  const memStopRec=()=>{memMrRef.current?.stop();};
+    const ref     = memPhraseRef.current;
+    const refWords = ref.replace(/﴿[^﴾]*﴾/g,"").trim().split(/\s+/).filter(Boolean);
+    if (refWords.length === 0) return;
 
-  /* ── Advance memorise session after each rep ── */
-  const memAdvance=useCallback(()=>{
-    setMemScore(null);
-    setMemRecState("idle");
+    // Score window vs reference
+    const result = scoreVsRef(memWindowRef.current.join(" "), ref);
 
-    if(memPhase==="shown"){
-      if(memRep<COUNT_SHOWN){
-        setMemRep(r=>r+1);
-      } else {
-        // Move to hidden phase
-        setMemPhase("hidden"); setMemRep(1); setMemTotalReps(COUNT_HIDDEN);
-      }
-    } else if(memPhase==="hidden"){
-      if(memRep<COUNT_HIDDEN){
-        setMemRep(r=>r+1);
-      } else {
-        // Move to cumulative phase
-        setMemPhase("cumulative"); setMemRep(1); setMemTotalReps(CUMULATIVE_REPS);
-      }
-    } else if(memPhase==="cumulative"){
-      if(memRep<CUMULATIVE_REPS){
-        setMemRep(r=>r+1);
-      } else {
-        // Move to next verse
-        const nextIdx=memVerseIdx+1;
-        if(nextIdx>=selAyahs.length){
-          // All done
-          setAppMode("home");
-          alert("🎉 Memorisation complete! Masha'Allah!");
-        } else {
-          setMemVerseIdx(nextIdx);
-          setMemPhase("shown"); setMemRep(1); setMemTotalReps(COUNT_SHOWN);
-        }
+    // Update live display
+    setMemLiveText(memWindowRef.current.slice(-8).join(" "));
+
+    // If ≥60% matched → count one completed recitation
+    if (result.score >= 60) {
+      const newCount = memCountRef.current + 1;
+      memCountRef.current = newCount;
+      memWindowRef.current = []; // reset window for next recitation
+      setMemCompCount(newCount);
+      setMemLiveText(""); // clear display
+
+      const total = memTotalRef.current;
+
+      if (newCount >= total) {
+        // Phase complete — stop recording and advance
+        memMrRef.current?.stop();
       }
     }
-  },[memPhase,memRep,memVerseIdx,selAyahs.length]);
+  }, []);
+
+  const memChunkSend = useCallback(async (blob: Blob) => {
+    if (!DEEPGRAM_KEY && !GROQ_KEY) return;
+    try {
+      if (DEEPGRAM_KEY) {
+        const r = await fetch(
+          "https://api.deepgram.com/v1/listen?model=nova-2&language=ar&punctuate=false&filler_words=false",
+          { method:"POST", headers:{ Authorization:`Token ${DEEPGRAM_KEY}`, "Content-Type":blob.type||"audio/webm" }, body:blob }
+        );
+        if (r.ok) {
+          const tx = (await r.json())?.results?.channels?.[0]?.alternatives?.[0]?.transcript || "";
+          if (tx) memCheckWindow(tx);
+        }
+      } else if (GROQ_KEY) {
+        const ext = blob.type.includes("mp4")?"mp4":blob.type.includes("ogg")?"ogg":"webm";
+        const fd = new FormData();
+        fd.append("file", new File([blob],`c.${ext}`,{type:blob.type}));
+        fd.append("model","whisper-large-v3"); fd.append("language","ar");
+        fd.append("response_format","json"); fd.append("temperature","0");
+        fd.append("prompt","بسم الله الرحمن الرحيم الحمد لله رب العالمين");
+        const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions",
+          {method:"POST", headers:{Authorization:`Bearer ${GROQ_KEY}`}, body:fd});
+        if (r.ok) {
+          const tx = (await r.json())?.text || "";
+          if (tx) memCheckWindow(tx);
+        }
+      }
+    } catch(_) {}
+  }, [memCheckWindow]);
+
+  /* Advance to next phase/verse — called when recording stops after phase completes */
+  const memAdvancePhase = useCallback((phase: MemPhase, verseIdx: number) => {
+    memCountRef.current  = 0;
+    memWindowRef.current = [];
+    setMemCompCount(0);
+    setMemLiveText("");
+    setMemRecState("idle");
+
+    if (phase === "shown") {
+      setMemPhase("hidden"); setMemTotalReps(COUNT_HIDDEN); memTotalRef.current = COUNT_HIDDEN; memPhaseRef.current="hidden";
+    } else if (phase === "hidden") {
+      setMemPhase("cumulative"); setMemTotalReps(CUMULATIVE_REPS); memTotalRef.current = CUMULATIVE_REPS; memPhaseRef.current="cumulative";
+    } else {
+      const nextIdx = verseIdx + 1;
+      if (nextIdx >= selAyahs.length) {
+        setAppMode("home");
+        setTimeout(()=>alert("🎉 Memorisation complete! Masha'Allah!"), 100);
+      } else {
+        setMemVerseIdx(nextIdx); memVerseRef.current = nextIdx;
+        setMemPhase("shown"); setMemTotalReps(COUNT_SHOWN); memTotalRef.current = COUNT_SHOWN; memPhaseRef.current="shown";
+      }
+    }
+  }, [selAyahs.length]);
+
+  const memStartRec = async () => {
+    try {
+      // Sync refs for async chunk callbacks
+      memCountRef.current  = 0;
+      memWindowRef.current = [];
+      memInitRef.current   = null;
+      memTotalRef.current  = memTotalReps;
+      memPhaseRef.current  = memPhase;
+      memVerseRef.current  = memVerseIdx;
+      setMemCompCount(0); setMemLiveText("");
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mime   = getMime();
+      const mr     = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
+
+      mr.ondataavailable = e => {
+        if (!e.data?.size) return;
+        if (!memInitRef.current) { memInitRef.current = e.data; memChunkSend(e.data); return; }
+        memChunkSend(new Blob([memInitRef.current, e.data], { type: mime||"audio/webm" }));
+      };
+
+      mr.onstop = () => {
+        stream.getTracks().forEach(t => t.stop());
+        clearInterval(memTimer.current!); setMemRecTime(0);
+        // Advance phase using snapshot refs (not stale closure state)
+        memAdvancePhase(memPhaseRef.current, memVerseRef.current);
+      };
+
+      mr.start(1500);
+      memMrRef.current = mr;
+      setMemRecState("recording");
+      memTimer.current = setInterval(() => setMemRecTime(t => t + 1), 1000);
+    } catch { alert("Microphone access denied."); }
+  };
+
+  const memStopRec = () => { memMrRef.current?.stop(); };
 
   /* ═══════════════════════════════════════════════════════════
      REVISE — record full portion, then evaluate with Claude
@@ -282,34 +325,82 @@ export default function RecitationMic({ userId }: Props) {
   const revStartRec=async()=>{
     try{
       liveRef.current=""; initRef.current=null; chunksRef.current=[];
-      setLiveTranscript(""); setRevErr("");
+      setLiveTranscript(""); setRevErr(""); setRevRecState("recording");
       const stream=await navigator.mediaDevices.getUserMedia({audio:true});
       const mime=getMime();
       const mr=new MediaRecorder(stream,mime?{mimeType:mime}:{});
+
       mr.ondataavailable=e=>{
-        if(!e.data?.size)return;
+        if(!e.data?.size) return;
         chunksRef.current.push(e.data);
-        if(!initRef.current){initRef.current=e.data;revSendChunk(e.data);return;}
+        // Live preview: stream chunks to show transcript while recording
+        if(!initRef.current){ initRef.current=e.data; revSendChunk(e.data); return; }
         revSendChunk(new Blob([initRef.current,e.data],{type:mime||"audio/webm"}));
       };
-      mr.onstop=()=>{
+
+      mr.onstop=async()=>{
         stream.getTracks().forEach(t=>t.stop());
-        clearInterval(timerRef.current!); setRevRecTime(0);
+        clearInterval(timerRef.current!);
+        // Don't reset revRecTime to 0 here — keep it so "X:XX recorded" shows correctly
         const blob=new Blob(chunksRef.current,{type:mime||"audio/webm"});
         setRevAudioBlob(blob);
+
+        // ── RELIABLE FULL-BLOB TRANSCRIPTION ──
+        // The live streaming gives a preview, but for evaluation we re-transcribe
+        // the ENTIRE recording as one blob. This is guaranteed to have all audio.
+        if(blob.size < 500){
+          setRevErr("Recording too short — please try again.");
+          setRevRecState("idle"); return;
+        }
+
+        setRevRecState("transcribing" as any);
+        try{
+          let tx="";
+          if(DEEPGRAM_KEY){
+            const r=await fetch(
+              "https://api.deepgram.com/v1/listen?model=nova-2&language=ar&punctuate=false&filler_words=false",
+              {method:"POST",headers:{Authorization:`Token ${DEEPGRAM_KEY}`,"Content-Type":blob.type||"audio/webm"},body:blob}
+            );
+            if(r.ok) tx=(await r.json())?.results?.channels?.[0]?.alternatives?.[0]?.transcript||"";
+          }
+          if(!tx&&GROQ_KEY){
+            const ext=blob.type.includes("mp4")?"mp4":blob.type.includes("ogg")?"ogg":"webm";
+            const fd=new FormData();
+            fd.append("file",new File([blob],`rev.${ext}`,{type:blob.type}));
+            fd.append("model","whisper-large-v3");
+            fd.append("language","ar"); fd.append("response_format","json"); fd.append("temperature","0");
+            fd.append("prompt","بسم الله الرحمن الرحيم الحمد لله رب العالمين الرحمن الرحيم مالك يوم الدين إياك نعبد وإياك نستعين");
+            const r=await fetch("https://api.groq.com/openai/v1/audio/transcriptions",
+              {method:"POST",headers:{Authorization:`Bearer ${GROQ_KEY}`},body:fd});
+            if(r.ok) tx=(await r.json())?.text||"";
+          }
+          if(tx){
+            liveRef.current=tx;
+            setLiveTranscript(tx);
+          } else {
+            setRevErr("Could not transcribe — please speak clearly and try again.");
+          }
+        }catch(e:any){
+          setRevErr(e?.message||"Transcription error");
+        }
         setRevRecState("done");
       };
-      mr.start(1500); mrRef.current=mr; setRevRecState("recording");
+
+      mr.start(500); // 500ms chunks for smoother live preview
+      mrRef.current=mr;
       timerRef.current=setInterval(()=>setRevRecTime(t=>t+1),1000);
-    }catch{alert("Microphone access denied.");}
+    }catch{ alert("Microphone access denied."); }
   };
 
-  const revStopRec=()=>{mrRef.current?.stop();};
+  const revStopRec=()=>{
+    clearInterval(timerRef.current!); // stop timer now so display freezes
+    mrRef.current?.stop();
+  };
 
   /* ── Evaluate revision with Claude ── */
   const evaluateRevision=useCallback(async()=>{
-    const tx=liveRef.current.trim()||revTranscript.trim();
-    if(!tx){setRevErr("No transcript available. Try recording again.");return;}
+    const tx=liveRef.current.trim()||liveTranscript.trim()||revTranscript.trim();
+    if(!tx){setRevErr("No transcript yet — please record first.");return;}
     setRevEvaluating(true); setRevErr("");
 
     const refText=selAyahs.map(a=>`[Ayah ${a.numberInSurah}]: ${a.text}`).join("\n");
@@ -531,8 +622,8 @@ Rules:
 
           <button disabled={!canStart} onClick={()=>{
             if(isMem){
-              setMemVerseIdx(0); setMemPhase("shown"); setMemRep(1); setMemTotalReps(COUNT_SHOWN);
-              setMemRecState("idle"); setMemScore(null);
+              setMemVerseIdx(0); setMemPhase("shown"); setMemTotalReps(COUNT_SHOWN); memTotalRef.current=COUNT_SHOWN; memPhaseRef.current="shown";
+              setMemRecState("idle"); setMemCompCount(0);
               setAppMode("mem-session");
             } else {
               setRevRecState("idle"); setRevAudioBlob(null); setRevResult(null);
@@ -573,7 +664,7 @@ Rules:
             <div style={{flex:1}}>
               <div style={{fontSize:13,fontWeight:800,color:"#fff"}}>{selSurah?.englishName} · Verse {currentAyah.numberInSurah}</div>
               <div style={{fontSize:11,color:"rgba(255,255,255,.65)"}}>
-                Verse {memVerseIdx+1}/{selAyahs.length} · Rep {memRep}/{memTotalReps}
+                Verse {memVerseIdx+1}/{selAyahs.length} · {memCompCount}/{memTotalReps} recitations
               </div>
             </div>
           </div>
@@ -585,7 +676,7 @@ Rules:
                 color:memPhase===ph?"#fff":"rgba(255,255,255,.45)",
                 border:`1px solid ${memPhase===ph?"rgba(255,255,255,.4)":"transparent"}`,
               }}>
-                {lb} {memPhase===ph?`${memRep}/${tot}`:""}
+                {lb} {memPhase===ph?`${memCompCount}/${tot}`:""}
               </div>
             ))}
           </div>
@@ -596,18 +687,45 @@ Rules:
           <div style={{width:`${((memVerseIdx*3+(memPhase==="shown"?0:memPhase==="hidden"?1:2))/selAyahs.length/3)*100}%`,height:"100%",background:"#4ade80",transition:"width .4s"}}/>
         </div>
 
-        <div style={{flex:1,overflowY:"auto",padding:"16px 14px 120px"}}>
-          {/* Phase badge */}
-          <div style={{background:"#fff",border:`1px solid ${BORDER}`,borderRadius:12,padding:"10px 14px",marginBottom:12,display:"flex",alignItems:"center",gap:10}}>
-            <div style={{fontSize:20}}>{isShown?"📖":isHidden?"🙈":"🔁"}</div>
-            <div>
-              <div style={{fontSize:13,fontWeight:700,color:TEXT}}>{phaseLabel}</div>
-              <div style={{fontSize:11,color:MUTED}}>{phaseDesc}</div>
+        <div style={{flex:1,overflowY:"auto",padding:"16px 14px 150px"}}>
+
+          {/* ── BIG REP COUNTER (the main focus) ── */}
+          <div style={{background:"#fff",border:`1px solid ${BORDER}`,borderRadius:16,padding:"16px 20px",marginBottom:12,textAlign:"center",boxShadow:"0 2px 12px rgba(0,0,0,.05)"}}>
+            <div style={{fontSize:12,fontWeight:700,color:MUTED,marginBottom:8,textTransform:"uppercase",letterSpacing:.8}}>
+              {phaseLabel} — recite {memTotalReps}× continuously
             </div>
+            {/* Rep dots */}
+            <div style={{display:"flex",gap:6,flexWrap:"wrap",justifyContent:"center",marginBottom:10}}>
+              {Array.from({length:memTotalReps},(_,i)=>(
+                <div key={i} style={{
+                  width:28,height:28,borderRadius:"50%",
+                  background:i<memCompCount?"#16a34a":i===memCompCount&&memRecState==="recording"?"#fde68a":"#f3f4f6",
+                  border:`2px solid ${i<memCompCount?"#16a34a":i===memCompCount&&memRecState==="recording"?GOLD:BORDER}`,
+                  display:"flex",alignItems:"center",justifyContent:"center",
+                  fontSize:11,fontWeight:700,
+                  color:i<memCompCount?"#fff":i===memCompCount&&memRecState==="recording"?"#92400e":MUTED,
+                  transition:"all .3s",
+                }}>
+                  {i<memCompCount?"✓":i+1}
+                </div>
+              ))}
+            </div>
+            <div style={{fontSize:22,fontWeight:900,color:memCompCount>=memTotalReps?"#16a34a":G}}>
+              {memCompCount}/{memTotalReps}
+              <span style={{fontSize:13,fontWeight:400,color:MUTED,marginLeft:8}}>
+                {memCompCount>=memTotalReps?"✅ Phase complete!":memRecState==="recording"?"keep going…":"tap mic to start"}
+              </span>
+            </div>
+            {/* Live transcript hint */}
+            {memRecState==="recording"&&memLiveText&&(
+              <div style={{marginTop:8,fontSize:12,direction:"rtl",fontFamily:"'Amiri',serif",color:MUTED,background:"#f9fafb",borderRadius:8,padding:"5px 10px"}}>
+                {memLiveText}
+              </div>
+            )}
           </div>
 
           {/* Ayah card */}
-          <div style={{background:"#fff",borderRadius:16,border:`1px solid ${BORDER}`,overflow:"hidden",boxShadow:"0 2px 12px rgba(0,0,0,.06)",marginBottom:12}}>
+          <div style={{background:"#fff",borderRadius:16,border:`1px solid ${BORDER}`,overflow:"hidden",boxShadow:"0 2px 12px rgba(0,0,0,.06)"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 14px",background:GOLDLT,borderBottom:"1px solid #fde68a"}}>
               <span style={{fontSize:12,fontWeight:700,color:"#92400e"}}>
                 {isCumul?`Verses ${selAyahs[0].numberInSurah}–${currentAyah.numberInSurah}`:`Verse ${currentAyah.numberInSurah}`}
@@ -620,13 +738,11 @@ Rules:
               {displayAyahs.map((a,i)=>(
                 <div key={a.numberInSurah} style={{marginBottom:i<displayAyahs.length-1?12:0}}>
                   {isHidden?(
-                    // Hidden: full blur
                     <div style={{direction:"rtl",fontFamily:"'Amiri Quran','Amiri',serif",fontSize:24,lineHeight:3,textAlign:"right",filter:"blur(7px)",userSelect:"none",color:G,opacity:.7}}>
                       {a.text.replace(/﴿[^﴾]*﴾/g,"")}
                       <span style={{color:GOLD,fontSize:16,margin:"0 4px"}}>﴿{a.numberInSurah}﴾</span>
                     </div>
                   ):(
-                    // Shown / cumulative: full text visible
                     <div style={{direction:"rtl",fontFamily:"'Amiri Quran','Amiri',serif",fontSize:24,lineHeight:3,textAlign:"right",color:G}}>
                       {a.text.replace(/﴿[^﴾]*﴾/g,"")}
                       <span style={{color:GOLD,fontSize:16,margin:"0 4px"}}>﴿{a.numberInSurah}﴾</span>
@@ -636,62 +752,48 @@ Rules:
               ))}
             </div>
           </div>
-
-          {/* Score feedback after recording */}
-          {memRecState==="done"&&memScore!==null&&(
-            <div style={{background:"#fff",border:`1px solid ${memScore>=70?"#86efac":RED+"44"}`,borderRadius:12,padding:"14px",textAlign:"center",animation:"pop .3s ease",marginBottom:12}}>
-              <div style={{fontSize:28,fontWeight:900,color:scoreCol(memScore),marginBottom:4}}>{memScore}%</div>
-              <div style={{fontSize:12,color:MUTED,marginBottom:12}}>
-                {memScore>=80?"✅ Great!":memScore>=50?"🔄 Keep practising":"❌ Try again"}
-              </div>
-              <div style={{display:"flex",gap:8,justifyContent:"center"}}>
-                <button onClick={()=>{setMemRecState("idle");setMemScore(null);}} style={{padding:"9px 16px",borderRadius:10,border:`1px solid ${BORDER}`,background:"#fff",color:TEXT,fontSize:12,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",gap:5}}>
-                  <RotateCcw size={13}/> Retry
-                </button>
-                <button onClick={memAdvance} style={{padding:"9px 20px",borderRadius:10,border:"none",background:G,color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer"}}>
-                  Next {memRep<memTotalReps?`(${memRep+1}/${memTotalReps})`:"→"} 
-                </button>
-              </div>
-            </div>
-          )}
         </div>
 
-        {/* Mic bar */}
-        {memRecState!=="done"&&(
-          <div style={{position:"absolute",bottom:0,left:0,right:0,background:"rgba(255,255,255,.97)",backdropFilter:"blur(12px)",borderTop:`1px solid ${BORDER}`,padding:"12px 16px 22px",display:"flex",alignItems:"center",gap:12}}>
-            <button onClick={memRecState==="idle"?memStartRec:memStopRec} style={{
-              width:56,height:56,borderRadius:"50%",border:"none",cursor:"pointer",flexShrink:0,
-              background:memRecState==="recording"?RED:G,
-              boxShadow:memRecState==="recording"?`0 0 0 4px ${RED}44,0 0 0 8px ${RED}11`:`0 4px 16px rgba(6,79,58,.3)`,
-              display:"flex",alignItems:"center",justifyContent:"center",transition:"all .2s",
-            }}>
-              {memRecState==="recording"?<Square size={22} fill="#fff" color="#fff"/>:<Mic size={22} color="#fff"/>}
-            </button>
-            <div style={{flex:1}}>
-              {memRecState==="recording"?(
-                <>
-                  <div style={{display:"flex",gap:2,height:20,marginBottom:2}}>
-                    {[4,9,6,16,8,13,5,11,18,7].map((h,i)=>(
-                      <div key={i} style={{width:3,height:h,borderRadius:2,background:RED,opacity:.8,animation:`wave .8s ease-in-out ${i*.07}s infinite alternate`}}/>
-                    ))}
-                    <span style={{fontSize:13,fontWeight:800,color:RED,marginLeft:6}}>{fmtSec(memRecTime)}</span>
-                  </div>
-                  <div style={{fontSize:11,color:MUTED}}>Recording… tap stop when done</div>
-                </>
-              ):(
-                <>
-                  <div style={{fontSize:13,fontWeight:700,color:G,marginBottom:2}}>Tap mic to recite</div>
-                  <div style={{fontSize:11,color:MUTED}}>
-                    Rep {memRep} of {memTotalReps} · {phaseLabel}
-                  </div>
-                </>
-              )}
-            </div>
-            <button onClick={memAdvance} style={{padding:"8px 12px",borderRadius:10,border:`1px solid ${BORDER}`,background:"#fff",color:MUTED,fontSize:11,fontWeight:600,cursor:"pointer"}}>
-              Skip
-            </button>
+        {/* ── FIXED MIC BAR ── */}
+        <div style={{position:"absolute",bottom:0,left:0,right:0,background:"rgba(255,255,255,.97)",backdropFilter:"blur(12px)",borderTop:`1px solid ${BORDER}`,padding:"12px 16px 22px",display:"flex",alignItems:"center",gap:12}}>
+          {/* Mic button */}
+          <button onClick={memRecState==="idle"?memStartRec:memStopRec} style={{
+            width:60,height:60,borderRadius:"50%",border:"none",cursor:"pointer",flexShrink:0,
+            background:memRecState==="recording"?RED:G,
+            boxShadow:memRecState==="recording"?`0 0 0 5px ${RED}44,0 0 0 10px ${RED}11`:`0 4px 16px rgba(6,79,58,.3)`,
+            display:"flex",alignItems:"center",justifyContent:"center",transition:"all .2s",
+          }}>
+            {memRecState==="recording"?<Square size={24} fill="#fff" color="#fff"/>:<Mic size={24} color="#fff"/>}
+          </button>
+
+          <div style={{flex:1}}>
+            {memRecState==="recording"?(
+              <>
+                <div style={{display:"flex",gap:2,height:20,marginBottom:3,alignItems:"center"}}>
+                  {[4,9,6,16,8,13,5,11,18,7].map((h,i)=>(
+                    <div key={i} style={{width:3,height:h,borderRadius:2,background:RED,opacity:.8,animation:`wave .8s ease-in-out ${i*.07}s infinite alternate`}}/>
+                  ))}
+                  <span style={{fontSize:12,fontWeight:800,color:RED,marginLeft:6}}>{fmtSec(memRecTime)}</span>
+                </div>
+                <div style={{fontSize:11,color:MUTED}}>
+                  Recite the verse repeatedly — AI counts each time · {memCompCount}/{memTotalReps} ✓
+                </div>
+              </>
+            ):(
+              <>
+                <div style={{fontSize:13,fontWeight:700,color:G,marginBottom:2}}>
+                  {memCompCount>=memTotalReps?"Phase complete! Loading next…":"Tap mic to start reciting"}
+                </div>
+                <div style={{fontSize:11,color:MUTED}}>{phaseLabel} · recite {memTotalReps}× without stopping</div>
+              </>
+            )}
           </div>
-        )}
+
+          {/* Manual skip */}
+          <button onClick={()=>memAdvancePhase(memPhase,memVerseIdx)} style={{padding:"8px 12px",borderRadius:10,border:`1px solid ${BORDER}`,background:"#fff",color:MUTED,fontSize:11,fontWeight:600,cursor:"pointer"}}>
+            Skip
+          </button>
+        </div>
       </div>
     );
   }
@@ -735,17 +837,33 @@ Rules:
             </div>
           )}
 
+          {/* Transcribing state */}
+          {(revRecState as string)==="transcribing"&&(
+            <div style={{background:"#fff",border:`1px solid ${BORDER}`,borderRadius:14,padding:"20px",textAlign:"center"}}>
+              <Loader2 size={32} color={GOLD} style={{display:"block",margin:"0 auto 10px",animation:"spin .8s linear infinite"}}/>
+              <div style={{fontSize:14,fontWeight:700,color:GOLD}}>Transcribing recording…</div>
+              <div style={{fontSize:11,color:MUTED,marginTop:4}}>Just a moment</div>
+            </div>
+          )}
+
           {revRecState==="done"&&!revEvaluating&&(
             <div style={{background:"#fff",border:`1px solid ${BORDER}`,borderRadius:14,padding:"16px",textAlign:"center"}}>
               <Check size={36} color="#16a34a" style={{display:"block",margin:"0 auto 10px"}}/>
               <div style={{fontSize:15,fontWeight:800,color:G,marginBottom:4}}>Recording Complete!</div>
-              <div style={{fontSize:12,color:MUTED,marginBottom:14}}>{fmtSec(revRecTime)} recorded · {liveTranscript?`${liveTranscript.split(" ").length} words heard`:"tap evaluate"}</div>
-              {revErr&&<div style={{fontSize:12,color:RED,marginBottom:10,background:REDLT,padding:"8px 12px",borderRadius:8}}>{revErr}</div>}
+              <div style={{fontSize:12,color:MUTED,marginBottom:liveTranscript?10:14}}>
+                {fmtSec(revRecTime)}s recorded · {liveTranscript?`${liveTranscript.trim().split(/\s+/).length} words heard`:"ready to evaluate"}
+              </div>
+              {liveTranscript&&(
+                <div style={{background:"#f9fafb",borderRadius:8,padding:"8px 10px",marginBottom:12,textAlign:"right",direction:"rtl",fontFamily:"'Amiri',serif",fontSize:13,color:TEXT,lineHeight:1.8,maxHeight:80,overflowY:"auto"}}>
+                  {liveTranscript}
+                </div>
+              )}
+              {revErr&&<div style={{fontSize:12,color:RED,marginBottom:10,background:REDLT,padding:"8px 12px",borderRadius:8,textAlign:"left"}}>{revErr}</div>}
               <div style={{display:"flex",gap:8}}>
-                <button onClick={()=>{setRevRecState("idle");setLiveTranscript("");liveRef.current="";}} style={{flex:1,padding:"11px",borderRadius:11,border:`1px solid ${BORDER}`,background:"#fff",color:TEXT,fontSize:13,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+                <button onClick={()=>{setRevRecState("idle");setLiveTranscript("");liveRef.current="";setRevRecTime(0);}} style={{flex:1,padding:"11px",borderRadius:11,border:`1px solid ${BORDER}`,background:"#fff",color:TEXT,fontSize:13,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
                   <RotateCcw size={13}/> Re-record
                 </button>
-                <button onClick={evaluateRevision} style={{flex:2,padding:"11px",borderRadius:11,border:"none",background:`linear-gradient(135deg,${GOLD},#b45309)`,color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                <button onClick={evaluateRevision} disabled={!liveTranscript} style={{flex:2,padding:"11px",borderRadius:11,border:"none",background:liveTranscript?`linear-gradient(135deg,${GOLD},#b45309)`:"#e5e7eb",color:liveTranscript?"#fff":"#9ca3af",fontSize:13,fontWeight:700,cursor:liveTranscript?"pointer":"not-allowed",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
                   <Star size={15}/> Evaluate with AI
                 </button>
               </div>
@@ -762,7 +880,7 @@ Rules:
         </div>
 
         {/* Mic bar */}
-        {(revRecState==="idle"||revRecState==="recording")&&(
+        {(revRecState==="idle"||revRecState==="recording")&&(revRecState as string)!=="transcribing"&&(
           <div style={{position:"absolute",bottom:0,left:0,right:0,background:"rgba(255,255,255,.97)",backdropFilter:"blur(12px)",borderTop:`1px solid ${BORDER}`,padding:"12px 16px 22px",display:"flex",alignItems:"center",gap:12}}>
             <button onClick={revRecState==="idle"?revStartRec:revStopRec} style={{
               width:60,height:60,borderRadius:"50%",border:"none",cursor:"pointer",flexShrink:0,
