@@ -47,9 +47,10 @@ const TOOLBAR_H  = 64;
    WHITEBOARD — canvas-based, no external packages needed
    Synced via LiveKit data channel
 ═══════════════════════════════════════════════════════ */
-const Whiteboard = ({ onClose, fullscreen, onToggleFullscreen, isTeacher }: {
+const Whiteboard = ({ onClose, fullscreen, onToggleFullscreen, isTeacher, initialStrokes }: {
   onClose: () => void; fullscreen: boolean;
   onToggleFullscreen: () => void; isTeacher: boolean;
+  initialStrokes?: any[] | null;
 }) => {
   const room = useRoomContext();
   const canvasRef   = useRef<HTMLCanvasElement>(null);
@@ -57,6 +58,15 @@ const Whiteboard = ({ onClose, fullscreen, onToggleFullscreen, isTeacher }: {
   const lastPos     = useRef<{x:number;y:number}|null>(null);
   const strokesRef  = useRef<any[]>([]); // all strokes for replay
   const [color, setColor]     = useState("#1a1a1a");
+
+  // Replay any strokes that arrived before this component mounted
+  useEffect(() => {
+    if (initialStrokes && initialStrokes.length > 0) {
+      strokesRef.current = initialStrokes;
+      // Defer until canvas is painted
+      setTimeout(() => redraw(), 50);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [lineWidth, setLineWidth] = useState(3);
   const [tool, setTool]       = useState<"pen"|"eraser">("pen");
 
@@ -211,6 +221,39 @@ const Whiteboard = ({ onClose, fullscreen, onToggleFullscreen, isTeacher }: {
       />
     </div>
   );
+};
+
+/* ═══════════════════════════════════════════════════════
+   ROOM DATA LISTENER — always mounted inside LiveKitRoom
+   Handles wb_open / wb_close signals from teacher so students
+   auto-open the whiteboard. Also buffers incoming strokes so
+   Whiteboard receives them even if it just mounted.
+═══════════════════════════════════════════════════════ */
+const RoomDataListener = ({
+  onWbOpen, onWbClose, strokesBuffer,
+}: {
+  onWbOpen: () => void;
+  onWbClose: () => void;
+  strokesBuffer: React.MutableRefObject<any[] | null>;
+}) => {
+  const room = useRoomContext();
+
+  useEffect(() => {
+    const handler = (payload: Uint8Array) => {
+      try {
+        const msg = JSON.parse(new TextDecoder().decode(payload));
+        if (msg.type === "wb_open")  { onWbOpen(); }
+        if (msg.type === "wb_close") { onWbClose(); }
+        // Buffer strokes so Whiteboard can replay on mount
+        if (msg.type === "wb_strokes") { strokesBuffer.current = msg.strokes; }
+        if (msg.type === "wb_clear")   { strokesBuffer.current = []; }
+      } catch (_) {}
+    };
+    room.on(RoomEvent.DataReceived, handler);
+    return () => { room.off(RoomEvent.DataReceived, handler); };
+  }, [room, onWbOpen, onWbClose, strokesBuffer]);
+
+  return null;
 };
 
 /* ═══════════════════════════════════════════════════════
@@ -568,7 +611,16 @@ const BottomBar = ({
           onClick={()=>setShowMore(false)}>
           {isPrivileged && [
             { icon:BookOpen, label:"Group Recitation · تلاوة جماعية", action:onGroupRecite, color:groupReciteMode?"#22c55e":"#fff" },
-            { icon:PenTool,  label:"Whiteboard · السبورة",              action:onToggleWhiteboard, color:whiteboardOpen?"#22c55e":"#fff" },
+            { icon:PenTool,  label:"Whiteboard · السبورة", color:whiteboardOpen?"#22c55e":"#fff",
+              action:()=>{
+                const next = !whiteboardOpen;
+                onToggleWhiteboard();
+                try {
+                  const msg = new TextEncoder().encode(JSON.stringify({ type: next ? "wb_open" : "wb_close" }));
+                  room.localParticipant.publishData(msg, { reliable: true });
+                } catch(_) {}
+              }
+            },
           ].map((item,i)=>(
             <button key={i} onClick={item.action} style={{ width:"100%", display:"flex", alignItems:"center", gap:10, padding:"13px 16px", background:"none", border:"none", cursor:"pointer", color:item.color, fontSize:14, fontFamily:"'Cairo',sans-serif", borderBottom:"1px solid rgba(255,255,255,0.07)", textAlign:"left" as const }}>
               <item.icon style={{ width:16, height:16 }} />{item.label}
@@ -612,7 +664,14 @@ const BottomBar = ({
         {/* Raise hand (students) / Whiteboard (teacher) */}
         {!isPrivileged
           ? <button style={btn(handUp)} onClick={toggleHand}><Hand style={{ ...iconStyle, color:handUp?"#fbbf24":"#fff" }} /></button>
-          : <button style={btn(whiteboardOpen)} onClick={onToggleWhiteboard}><PenTool style={{ ...iconStyle, color:whiteboardOpen?"#22c55e":"#fff" }} /></button>
+          : <button style={btn(whiteboardOpen)} onClick={()=>{
+              const next = !whiteboardOpen;
+              onToggleWhiteboard();
+              try {
+                const msg = new TextEncoder().encode(JSON.stringify({ type: next ? "wb_open" : "wb_close" }));
+                room.localParticipant.publishData(msg, { reliable: true });
+              } catch(_) {}
+            }}><PenTool style={{ ...iconStyle, color:whiteboardOpen?"#22c55e":"#fff" }} /></button>
         }
         {/* Emoji */}
         <button style={btn(showReact)} onClick={()=>setShowReact(v=>!v)}>
@@ -754,7 +813,8 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
   const [showQuiz, setShowQuiz]         = useState(false);
   const [showEndConfirm, setShowEndConfirm] = useState(false);
   const [whiteboardOpen, setWhiteboardOpen] = useState(false);
-  const [whiteboardFS, setWhiteboardFS] = useState(false);
+  const [whiteboardFS, setWhiteboardFS]     = useState(false);
+  const wbStrokesBuffer = useRef<any[] | null>(null); // strokes received before Whiteboard mounts
   const [groupReciteMode, setGroupReciteMode] = useState(false);
 
   // Pre-fetch token in background as soon as lobby loads
@@ -949,6 +1009,13 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
         >
           <RoomAudioRenderer />
 
+          {/* Always-on data listener: handles wb_open/close signals */}
+          <RoomDataListener
+            onWbOpen={()=>setWhiteboardOpen(true)}
+            onWbClose={()=>{ setWhiteboardOpen(false); setWhiteboardFS(false); }}
+            strokesBuffer={wbStrokesBuffer}
+          />
+
           {/* Top bar */}
           <div style={{ height:44, background:"rgba(0,0,0,0.7)", backdropFilter:"blur(10px)", display:"flex", alignItems:"center", justifyContent:"space-between", padding:"0 12px", flexShrink:0, zIndex:10 }}>
             <div style={{ display:"flex", alignItems:"center", gap:8 }}>
@@ -982,10 +1049,17 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
               {/* Whiteboard overlay */}
               {whiteboardOpen && (
                 <Whiteboard
-                  onClose={()=>{setWhiteboardOpen(false);setWhiteboardFS(false);}}
+                  onClose={()=>{
+                    setWhiteboardOpen(false); setWhiteboardFS(false);
+                    try {
+                      const msg = new TextEncoder().encode(JSON.stringify({ type: "wb_close" }));
+                      room?.localParticipant?.publishData(msg, { reliable: true });
+                    } catch (_) {}
+                  }}
                   fullscreen={whiteboardFS}
                   onToggleFullscreen={()=>setWhiteboardFS(v=>!v)}
                   isTeacher={isPrivileged}
+                  initialStrokes={wbStrokesBuffer.current}
                 />
               )}
             </div>
