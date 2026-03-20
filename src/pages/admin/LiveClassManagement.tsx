@@ -25,6 +25,7 @@ import SubjectMaterials from "@/components/classroom/SubjectMaterials";
 import SubjectSyllabus from "@/components/classroom/SubjectSyllabus";
 import SubjectAssignments from "@/components/classroom/SubjectAssignments";
 import SubjectAnnouncements from "@/components/classroom/SubjectAnnouncements";
+import ClassroomView from "@/components/classroom/ClassroomView";
 
 const LiveClassManagement = () => {
   const { t } = useLanguage();
@@ -63,6 +64,9 @@ const LiveClassManagement = () => {
   const [manualAttendance, setManualAttendance] = useState<any[]>([]);
   const [students, setStudents] = useState<any[]>([]);
   const [editAttendance, setEditAttendance] = useState<Record<string, string>>({});
+
+  // Active classroom (when admin goes live)
+  const [activeClassroom, setActiveClassroom] = useState<any | null>(null);
 
   // Subject detail view
   const [selectedSubjectId, setSelectedSubjectId] = useState<string | null>(null);
@@ -171,42 +175,32 @@ const LiveClassManagement = () => {
   };
 
   const goLiveAndJoin = async (session: any) => {
-    // Update status to live
-    await supabase.from("live_sessions").update({
-      status: "live",
-      actual_start_time: new Date().toISOString(),
-      started_at: new Date().toISOString(),
-    }).eq("id", session.id);
-
-    // Get LiveKit token
     try {
-      const authSession = await supabase.auth.getSession();
-      const accessToken = authSession.data.session?.access_token;
-      const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
+      // 1. Mark session as live
+      await supabase.from("live_sessions").update({
+        status: "live",
+        actual_start_time: new Date().toISOString(),
+        started_at: new Date().toISOString(),
+      }).eq("id", session.id);
 
-      const res = await fetch(`https://${projectId}.supabase.co/functions/v1/livekit-token`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "apikey": import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
-          "Authorization": `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({ subject_id: session.subject_id, action: "start_session" }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        toast({ title: "Error", description: data.error, variant: "destructive" });
+      // 2. Find the subject object so ClassroomView gets what it needs
+      const subject = subjects.find(s => s.id === session.subject_id);
+      if (!subject) {
+        toast({ title: "Error", description: "Subject not found", variant: "destructive" });
         return;
       }
-      // Navigate to subject view which has classroom
-      navigate(`/dashboard/subjects/${session.subject_id}`);
-    } catch {
-      toast({ title: "Error", description: "Failed to connect", variant: "destructive" });
+
+      // 3. Open ClassroomView inline — no navigation, no 404
+      setActiveClassroom(subject);
+    } catch (e: any) {
+      toast({ title: "Error", description: e?.message || "Failed to start class", variant: "destructive" });
     }
   };
 
   const previewClass = (session: any) => {
-    navigate(`/dashboard/subjects/${session.subject_id}`);
+    const subject = subjects.find(s => s.id === session.subject_id);
+    if (subject) setActiveClassroom(subject);
+    else navigate(`/admin/live-classes`);
   };
 
   // Attendance
@@ -281,6 +275,16 @@ const LiveClassManagement = () => {
     };
     return <Badge className={variants[status] || ""}>{status === "live" && "🔴 "}{status}</Badge>;
   };
+
+  // ── Active classroom (full-screen takeover) ──
+  if (activeClassroom) {
+    return (
+      <ClassroomView
+        subject={activeClassroom}
+        onLeave={() => { setActiveClassroom(null); fetchData(); }}
+      />
+    );
+  }
 
   if (loading) return <div className="flex items-center justify-center min-h-[400px]"><div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" /></div>;
 
