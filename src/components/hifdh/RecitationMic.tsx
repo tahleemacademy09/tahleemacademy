@@ -191,13 +191,20 @@ export default function RecitationMic({ userId }: Props) {
     const words = ayahsRef.current[idx]?.words;
     if (!words) return;
 
-    const tokens = fullTransRef.current.split(/\s+/).filter(Boolean);
-    let ptr = pointerRef.current;
+    // Greedy sequential scan: walk through transcript tokens in order,
+    // matching them against ayah words in order. Unlike tokens.some(),
+    // this handles gaps and out-of-order tokens without getting stuck.
+    const tokens = fullTransRef.current.split(/\s+/).filter(Boolean).map(normalise);
+    let ptr = 0;   // ayah word pointer — always restart from 0 on each call
+    let ti  = 0;   // transcript token pointer
 
-    // Advance pointer for every matched word
-    while (ptr < words.length) {
-      if (tokens.some(tok => wordMatches(tok, words[ptr].norm))) ptr++;
-      else break;
+    while (ptr < words.length && ti < tokens.length) {
+      if (wordMatches(tokens[ti], words[ptr].norm)) {
+        ptr++;  // this ayah word is matched, advance to next
+        ti++;
+      } else {
+        ti++;   // unmatched token — skip it, try next token against same word
+      }
     }
 
     if (ptr === pointerRef.current) return;
@@ -323,7 +330,7 @@ export default function RecitationMic({ userId }: Props) {
       if (blob.size >= 500) sendToDeepgram(blob);
     };
 
-    mr.start(4000); // fires ondataavailable every 4 s, single instance
+    mr.start(1500); // fires ondataavailable every 1.5 s for fast feedback
     mediaRecRef.current = mr;
   }, [sendToDeepgram]);
 
