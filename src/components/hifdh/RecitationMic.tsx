@@ -12,6 +12,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Mic, MicOff, Square } from "lucide-react";
 
 const DEEPGRAM_KEY = import.meta.env.VITE_DEEPGRAM_API_KEY || "";
+const GROQ_KEY     = import.meta.env.VITE_GROQ_API_KEY     || "";
 
 /* ─── Types ─────────────────────────────────────────────────── */
 interface Props { userId: string | null; }
@@ -220,35 +221,65 @@ export default function RecitationMic({ userId }: Props) {
     });
   }, [advanceAyah]);
 
-  /* ══ Send blob to Deepgram ══════════════════════════════════ */
+  /* ══ Transcribe: Deepgram → Groq fallback ══════════════════ */
   const sendToDeepgram = useCallback(async (blob: Blob) => {
     if (blob.size < 500) return;
-    console.log(`[DG] Sending blob: size=${blob.size} type=${blob.type} mime=${mimeRef.current} keyLen=${DEEPGRAM_KEY?.length ?? 0}`);
     setProcessing(true);
     try {
-      if (!DEEPGRAM_KEY) {
-        setError("VITE_DEEPGRAM_API_KEY not set in Vercel environment variables");
+      let text = "";
+
+      /* ── Try Deepgram ── */
+      if (DEEPGRAM_KEY) {
+        try {
+          const res = await fetch(
+            "https://api.deepgram.com/v1/listen?model=nova-2&language=ar&punctuate=false",
+            {
+              method:  "POST",
+              headers: {
+                Authorization:  `Token ${DEEPGRAM_KEY}`,
+                "Content-Type": toDeepgramCT(mimeRef.current || blob.type),
+              },
+              body: blob,
+            }
+          );
+          if (!res.ok) throw new Error(`Deepgram ${res.status}`);
+          const data = await res.json();
+          text = data?.results?.channels?.[0]?.alternatives?.[0]?.transcript || "";
+        } catch (dgErr: any) {
+          console.warn("Deepgram failed, trying Groq fallback:", dgErr?.message);
+        }
+      }
+
+      /* ── Groq fallback ── */
+      if (!text && GROQ_KEY) {
+        const ext  = (mimeRef.current || "audio/webm").includes("mp4") ? "mp4"
+                   : (mimeRef.current || "").includes("ogg") ? "ogg" : "webm";
+        const file = new File([blob], `audio.${ext}`, { type: mimeRef.current || "audio/webm" });
+        const fd   = new FormData();
+        fd.append("file",          file);
+        fd.append("model",         "whisper-large-v3");
+        fd.append("language",      "ar");
+        fd.append("response_format", "json");
+        const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+          method:  "POST",
+          headers: { Authorization: `Bearer ${GROQ_KEY}` },
+          body:    fd,
+        });
+        if (!res.ok) throw new Error(`Groq ${res.status}: ${await res.text().catch(() => "")}`);
+        const data = await res.json();
+        text = data?.text || "";
+      }
+
+      if (!DEEPGRAM_KEY && !GROQ_KEY) {
+        setError("No transcription key found (VITE_DEEPGRAM_API_KEY or VITE_GROQ_API_KEY).");
         return;
       }
-      const res = await fetch(
-        "https://api.deepgram.com/v1/listen?model=nova-2&language=ar&punctuate=false",
-        {
-          method:  "POST",
-          headers: {
-            Authorization:  `Token ${DEEPGRAM_KEY}`,
-            "Content-Type": toDeepgramCT(mimeRef.current || blob.type),
-          },
-          body: blob,
-        }
-      );
-      if (!res.ok) throw new Error(`Deepgram ${res.status}: ${await res.text().catch(() => "")}`);
-      const data = await res.json();
-      const text: string = data?.results?.channels?.[0]?.alternatives?.[0]?.transcript || "";
+
       if (text) processTranscript(text);
       setError("");
     } catch (e: any) {
       const msg = e?.message || "Unknown error";
-      console.error("Deepgram error:", msg);
+      console.error("Transcription error:", msg);
       setError(`Transcription failed: ${msg}`);
     } finally {
       setProcessing(false);
