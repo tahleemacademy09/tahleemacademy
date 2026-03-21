@@ -158,6 +158,8 @@ export default function RecitationMic({ userId }: Props) {
 
   /* Derived: selected ayahs slice */
   const selAyahs = ayahs.filter(a=>a.numberInSurah>=fromVerse&&a.numberInSurah<=toVerse);
+  const selAyahsRef = useRef<typeof selAyahs>([]);
+  selAyahsRef.current = selAyahs; // always current, safe in async callbacks
   const currentAyah = selAyahs[memVerseIdx];
   const cumulativeAyahs = selAyahs.slice(0, memVerseIdx+1);
   const filteredSurahs  = surahs.filter(s=>s.englishName.toLowerCase().includes(search.toLowerCase())||s.name.includes(search));
@@ -188,7 +190,8 @@ export default function RecitationMic({ userId }: Props) {
     const newToks = newTx.replace(/[^؀-ۿ\s]/g," ").trim().split(/\s+/).filter(Boolean);
     memWindowRef.current = [...memWindowRef.current, ...newToks].slice(-40); // keep last 40 tokens
 
-    const ref     = memPhraseRef.current;
+    const ref      = memPhraseRef.current;
+    if (!ref) return; // phrase not set yet
     const refWords = ref.replace(/﴿[^﴾]*﴾/g,"").trim().split(/\s+/).filter(Boolean);
     if (refWords.length === 0) return;
 
@@ -254,25 +257,25 @@ export default function RecitationMic({ userId }: Props) {
 
     if (phase === "shown") {
       memPhaseRef.current="hidden"; memTotalRef.current=COUNT_HIDDEN;
-      memPhraseRef.current = selAyahs[verseIdx]?.text||"";
+      memPhraseRef.current = selAyahsRef.current[verseIdx]?.text||"";
       setMemPhase("hidden"); setMemTotalReps(COUNT_HIDDEN);
     } else if (phase === "hidden") {
       memPhaseRef.current="cumulative"; memTotalRef.current=CUMULATIVE_REPS;
-      memPhraseRef.current = selAyahs.slice(0,verseIdx+1).map(a=>a.text).join(" ");
+      memPhraseRef.current = selAyahsRef.current.slice(0,verseIdx+1).map(a=>a.text).join(" ");
       setMemPhase("cumulative"); setMemTotalReps(CUMULATIVE_REPS);
     } else {
       const nextIdx = verseIdx + 1;
-      if (nextIdx >= selAyahs.length) {
+      if (nextIdx >= selAyahsRef.current.length) {
         setAppMode("home");
         setTimeout(()=>alert("\u{1F389} Memorisation complete! Masha'Allah!"), 100);
       } else {
         memPhaseRef.current="shown"; memTotalRef.current=COUNT_SHOWN; memVerseRef.current=nextIdx;
-        memPhraseRef.current = selAyahs[nextIdx]?.text||"";
+        memPhraseRef.current = selAyahsRef.current[nextIdx]?.text||"";
         setMemVerseIdx(nextIdx);
         setMemPhase("shown"); setMemTotalReps(COUNT_SHOWN);
       }
     }
-  }, [selAyahs.length]);
+  }, []);
 
   const memStartRec = async () => {
     try {
@@ -285,9 +288,9 @@ export default function RecitationMic({ userId }: Props) {
       memVerseRef.current  = memVerseIdx;
       // Set phrase BEFORE async gap so callbacks have correct ref
       if(memPhase==="cumulative"){
-        memPhraseRef.current = selAyahs.slice(0,memVerseIdx+1).map(a=>a.text).join(" ");
+        memPhraseRef.current = selAyahsRef.current.slice(0,memVerseIdx+1).map(a=>a.text).join(" ");
       } else {
-        memPhraseRef.current = selAyahs[memVerseIdx]?.text || "";
+        memPhraseRef.current = selAyahsRef.current[memVerseIdx]?.text || "";
       }
       setMemCompCount(0); setMemLiveText("");
 
@@ -613,12 +616,31 @@ Rules:
 
           <button disabled={!canStart} onClick={()=>{
             if(isMem){
-              setMemVerseIdx(0); setMemPhase("shown"); setMemTotalReps(COUNT_SHOWN); memTotalRef.current=COUNT_SHOWN; memPhaseRef.current="shown";
-              setMemRecState("idle"); setMemCompCount(0);
+              // Set ALL refs before state change so first render of mem-session is correct
+              memTotalRef.current  = COUNT_SHOWN;
+              memPhaseRef.current  = "shown";
+              memVerseRef.current  = 0;
+              memCountRef.current  = 0;
+              memWindowRef.current = [];
+              memPhraseRef.current = selAyahsRef.current[0]?.text || "";
+              setMemVerseIdx(0);
+              setMemPhase("shown");
+              setMemTotalReps(COUNT_SHOWN);
+              setMemRecState("idle");
+              setMemCompCount(0);
+              setMemLiveText("");
               setAppMode("mem-session");
             } else {
-              setRevRecState("idle"); setRevAudioBlob(null); setRevResult(null);
-              setRevTranscript(""); setLiveTranscript(""); setRevErr(""); setRevEvaluating(false);
+              liveRef.current    = "";
+              revBlobRef.current = null;
+              setRevRecState("idle");
+              setRevAudioBlob(null);
+              setRevResult(null);
+              setRevTranscript("");
+              setLiveTranscript("");
+              setRevErr("");
+              setRevEvaluating(false);
+              setRevRecTime(0);
               setAppMode("rev-session");
             }
           }} style={{
