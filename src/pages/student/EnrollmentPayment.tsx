@@ -27,6 +27,7 @@ interface Plan {
   duration_months: number;
   is_active: boolean;
   paystack_plan_code?: string;
+  level?: string | null;
 }
 interface Payment {
   id: string; amount: number; status: string;
@@ -109,19 +110,23 @@ const EnrollmentPayment = () => {
     if (!user) return;
     setLoading(true);
     try {
-      const [profRes, plansRes] = await Promise.all([
-        supabase.from("profiles").select("*").eq("user_id", user.id).maybeSingle(),
-        supabase.from("payment_plans" as any).select("*").eq("is_active", true).order("amount"),
-      ]);
+      const profRes = await supabase.from("profiles").select("*").eq("user_id", user.id).maybeSingle();
+      if (profRes.data) setProfile(profRes.data as unknown as StudentProfile);
 
-      if (profRes.data) {
-        setProfile(profRes.data as unknown as StudentProfile);
-      }
+      // Fetch all active plans, then filter to match student's level or "all" (null level)
+      const studentLevel = ((profRes.data as any)?.level || "beginner").toLowerCase();
+      const plansRes = await supabase.from("payment_plans" as any)
+        .select("*").eq("is_active", true).order("amount");
 
-      const activePlans = (plansRes.data || []) as Plan[];
+      const allPlans = (plansRes.data || []) as Plan[];
+      // Show plans where level matches student level OR level is null/empty (applies to all)
+      const filteredPlans = allPlans.filter(p =>
+        !p.level || p.level === "all" || p.level?.toLowerCase() === studentLevel
+      );
+      // Fallback: if no matching plans found, show all active plans
+      const activePlans = filteredPlans.length > 0 ? filteredPlans : allPlans;
       setPlans(activePlans);
 
-      // Default: pick first plan or monthly-named plan
       if (activePlans.length > 0 && !selectedPlan) {
         const monthly = activePlans.find(p => p.duration_months === 1) || activePlans[0];
         setSelectedPlan(monthly);
