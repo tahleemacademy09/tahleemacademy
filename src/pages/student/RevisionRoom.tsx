@@ -259,7 +259,7 @@ Rules:
 - Return ONLY valid JSON array, no markdown:
 [{"front":"<question or term>","front_ar":"<Arabic>","back":"<answer>","back_ar":"<Arabic answer>","topic":"<topic from text>"}]`
         );
-        const cards = JSON.parse(raw.replace(/\`\`\`json\s*/gi,"").replace(/\`\`\`\s*/g,"").trim()) as any[];
+        const cards = JSON.parse(raw.replace(/```json\s*/gi,"").replace(/```\s*/g,"").trim()) as any[];
         let inserted = 0;
         for (const card of cards) {
           const { error } = await supabase.from("revision_flashcards" as any).insert({
@@ -273,15 +273,15 @@ Rules:
           if (!error) inserted++;
         }
         qc.invalidateQueries({ queryKey: ["revision-flashcards", subjectId] });
-        toast({ title: \`✅ \${inserted} flashcards generated from material!\` });
+        toast({ title: `✅ ${inserted} flashcards generated from material!` });
 
       } else {
         // quiz mode
         const raw = await callClaude(
-          \`You are an expert educator. Based on the following content from "\${selMaterial.title}" (${subjectName}), create \${numQuestions} multiple-choice quiz questions.
+          `You are an expert educator. Based on the following content from "${selMaterial.title}" (${subjectName}), create ${numQuestions} multiple-choice quiz questions.
 
 CONTENT:
-\${contextText.slice(0, 6000)}
+${contextText.slice(0, 6000)}
 
 Rules:
 - Questions must be DIRECTLY based on the provided content
@@ -289,10 +289,10 @@ Rules:
 - Each question should have 4 clear options with one correct answer
 - Include a brief explanation referencing the material
 - Return ONLY valid JSON array:
-[{"question":"<question>","options":["A","B","C","D"],"answer":"<exact option text>","explanation":"<why this is correct, referencing the text>"}]\`
+[{"question":"<question>","options":["A","B","C","D"],"answer":"<exact option text>","explanation":"<why this is correct, referencing the text>"}]`
         );
-        const qs = (JSON.parse(raw.replace(/\`\`\`json\s*/gi,"").replace(/\`\`\`\s*/g,"").trim()) as any[]).map((q,i) => ({
-          id: \`mat-\${i}\`, question:q.question, answer:q.answer,
+        const qs = (JSON.parse(raw.replace(/```json\s*/gi,"").replace(/```\s*/g,"").trim()) as any[]).map((q,i) => ({
+          id: `mat-${i}`, question:q.question, answer:q.answer,
           options: q.options, explanation:q.explanation, source:"ai" as const,
         }));
         setQuizQs(qs); setQuizIdx(0); setQuizAnswers({}); setQuizDone(false);
