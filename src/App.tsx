@@ -137,6 +137,9 @@ const App = () => (
                 <Route path="/admin-secure"            element={<AdminLogin />} />
                 <Route path="/reset-password"          element={<ResetPassword />} />
 
+                {/* ── Al-Musabaqah Live Quiz (all logged-in users) ── */}
+                <Route path="/live-quiz" element={<ProtectedRoute skipOnboardingCheck><LiveQuiz /></ProtectedRoute>} />
+
                 {/* Student dashboard */}
                 <Route element={<ProtectedRoute><DashboardLayout role="student" /></ProtectedRoute>}>
                   <Route path="/student"                       element={<StudentDashboard />} />
