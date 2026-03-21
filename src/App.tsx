@@ -12,6 +12,7 @@ import DashboardLayout from "@/components/layout/DashboardLayout";
 import TeacherLayout from "@/components/layout/TeacherLayout";
 import ProtectedRoute from "@/components/layout/ProtectedRoute";
 import MuallimOverlay from "@/components/majlis/MuallimOverlay";
+import LiveQuiz from "@/pages/LiveQuiz";
 
 const PageLoader = () => (
   <div className="container mx-auto px-4 py-8 space-y-4">
