@@ -64,13 +64,15 @@ async function resolveUrl(fileUrl: string): Promise<string> {
 
 /* ── PDF.js viewer — renders PDF as canvas, works on all mobile browsers ── */
 function PDFJsViewer({ url }: { url: string }) {
-  const canvasRef  = useRef<HTMLCanvasElement>(null);
-  const [numPages, setNumPages]   = useState(0);
-  const [page,     setPage]       = useState(1);
-  const [loading,  setLoading]    = useState(true);
-  const [error,    setError]      = useState("");
-  const pdfDocRef  = useRef<any>(null);
-  const renderTask = useRef<any>(null);
+  const canvasRef    = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [numPages, setNumPages] = useState(0);
+  const [page,     setPage]     = useState(1);
+  const [loading,  setLoading]  = useState(true);
+  const [error,    setError]    = useState("");
+  const pdfDocRef   = useRef<any>(null);
+  const renderTask  = useRef<any>(null);
+  const widthRef    = useRef(0); // measured container width after mount
 
   const CDNBASE = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174";
 
@@ -89,29 +91,42 @@ function PDFJsViewer({ url }: { url: string }) {
     });
   }, []);
 
-  const renderPage = useCallback(async (pdfDoc: any, pageNum: number) => {
+  const renderPage = useCallback(async (pdfDoc: any, pageNum: number, width: number) => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas || width <= 0) return;
     if (renderTask.current) { try { renderTask.current.cancel(); } catch(_) {} }
-    const pg = await pdfDoc.getPage(pageNum);
-    // Get container width to fit page exactly to screen
-    const container = canvas.parentElement;
-    const containerWidth = container ? container.clientWidth - 16 : window.innerWidth - 16;
-    const devicePixelRatio = window.devicePixelRatio || 1;
-    // Calculate scale so page fits container width
-    const baseViewport = pg.getViewport({ scale: 1 });
-    const scale = (containerWidth / baseViewport.width) * devicePixelRatio;
-    const vp = pg.getViewport({ scale });
-    // Set canvas internal resolution
-    canvas.width  = vp.width;
-    canvas.height = vp.height;
-    // Set CSS size to container width (devicePixelRatio compensated)
-    canvas.style.width  = containerWidth + "px";
-    canvas.style.height = Math.floor(vp.height / devicePixelRatio) + "px";
+    const pg  = await pdfDoc.getPage(pageNum);
+    const dpr = window.devicePixelRatio || 1;
+    // Scale so the PDF page exactly fills the measured container width
+    const base  = pg.getViewport({ scale: 1 });
+    const scale = (width / base.width) * dpr;
+    const vp    = pg.getViewport({ scale });
+    // Internal canvas resolution = physical pixels
+    canvas.width  = Math.floor(vp.width);
+    canvas.height = Math.floor(vp.height);
+    // CSS size = logical pixels (fits screen)
+    canvas.style.width  = width + "px";
+    canvas.style.height = Math.floor(vp.height / dpr) + "px";
     const ctx = canvas.getContext("2d")!;
     renderTask.current = pg.render({ canvasContext: ctx, viewport: vp });
     try { await renderTask.current.promise; } catch(_) {}
   }, []);
+
+  // Measure container AFTER mount using ResizeObserver
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const obs = new ResizeObserver(entries => {
+      const w = Math.floor(entries[0].contentRect.width);
+      if (w > 0 && w !== widthRef.current) {
+        widthRef.current = w;
+        // Re-render current page at new width
+        if (pdfDocRef.current) renderPage(pdfDocRef.current, page, w);
+      }
+    });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [page, renderPage]);
 
   useEffect(() => {
     if (!url) return;
@@ -121,7 +136,9 @@ function PDFJsViewer({ url }: { url: string }) {
       .then(async (doc: any) => {
         pdfDocRef.current = doc;
         setNumPages(doc.numPages);
-        await renderPage(doc, 1);
+        // Use measured width or fallback to viewport
+        const w = widthRef.current > 0 ? widthRef.current : window.innerWidth;
+        await renderPage(doc, 1, w);
         setLoading(false);
       })
       .catch((e: any) => {
@@ -131,32 +148,27 @@ function PDFJsViewer({ url }: { url: string }) {
   }, [url, loadPdfJs, renderPage]);
 
   useEffect(() => {
-    if (pdfDocRef.current && !loading) renderPage(pdfDocRef.current, page);
+    if (pdfDocRef.current && !loading) {
+      const w = widthRef.current > 0 ? widthRef.current : window.innerWidth;
+      renderPage(pdfDocRef.current, page, w);
+    }
   }, [page, loading, renderPage]);
 
   return (
-    <div style={{ background:"#525659", minHeight:"70vh", display:"flex", flexDirection:"column" }}>
+    <div style={{ background:"#525659", display:"flex", flexDirection:"column", height:"75vh" }}>
       {/* Toolbar */}
       <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:12, padding:"8px 16px", background:"#3d4043", flexShrink:0 }}>
-        <button
-          disabled={page <= 1}
-          onClick={() => setPage(p => Math.max(1, p-1))}
-          style={{ width:32, height:32, borderRadius:8, border:"1px solid rgba(255,255,255,.2)", background:"rgba(255,255,255,.1)", color:"#fff", cursor:"pointer", fontSize:16, display:"flex", alignItems:"center", justifyContent:"center", opacity: page<=1 ? 0.4 : 1 }}>
-          ‹
-        </button>
-        <span style={{ color:"#fff", fontSize:13, fontWeight:600, minWidth:80, textAlign:"center" }}>
+        <button disabled={page<=1} onClick={() => setPage(p=>Math.max(1,p-1))}
+          style={{ width:36, height:36, borderRadius:8, border:"1px solid rgba(255,255,255,.2)", background:"rgba(255,255,255,.1)", color:"#fff", cursor:"pointer", fontSize:18, display:"flex", alignItems:"center", justifyContent:"center", opacity:page<=1?.4:1 }}>‹</button>
+        <span style={{ color:"#fff", fontSize:13, fontWeight:600, minWidth:72, textAlign:"center" }}>
           {loading ? "Loading…" : `${page} / ${numPages}`}
         </span>
-        <button
-          disabled={page >= numPages}
-          onClick={() => setPage(p => Math.min(numPages, p+1))}
-          style={{ width:32, height:32, borderRadius:8, border:"1px solid rgba(255,255,255,.2)", background:"rgba(255,255,255,.1)", color:"#fff", cursor:"pointer", fontSize:16, display:"flex", alignItems:"center", justifyContent:"center", opacity: page>=numPages ? 0.4 : 1 }}>
-          ›
-        </button>
+        <button disabled={page>=numPages} onClick={() => setPage(p=>Math.min(numPages,p+1))}
+          style={{ width:36, height:36, borderRadius:8, border:"1px solid rgba(255,255,255,.2)", background:"rgba(255,255,255,.1)", color:"#fff", cursor:"pointer", fontSize:18, display:"flex", alignItems:"center", justifyContent:"center", opacity:page>=numPages?.4:1 }}>›</button>
       </div>
 
-      {/* Canvas area */}
-      <div style={{ flex:1, overflow:"auto", display:"flex", alignItems:"flex-start", justifyContent:"center", padding:8 }}>
+      {/* Canvas area — ref measured here */}
+      <div ref={containerRef} style={{ flex:1, overflowY:"auto", overflowX:"hidden", background:"#525659" }}>
         {loading && (
           <div style={{ display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:12, padding:64, color:"#fff" }}>
             <div style={{ width:36, height:36, border:"3px solid rgba(255,255,255,.2)", borderTopColor:"#fff", borderRadius:"50%", animation:"spin .8s linear infinite" }} />
@@ -173,7 +185,7 @@ function PDFJsViewer({ url }: { url: string }) {
           </div>
         )}
         {!error && (
-          <canvas ref={canvasRef} style={{ maxWidth:"100%", boxShadow:"0 4px 24px rgba(0,0,0,.5)", display: loading ? "none" : "block" }} />
+          <canvas ref={canvasRef} style={{ display: loading ? "none" : "block" }} />
         )}
       </div>
     </div>
