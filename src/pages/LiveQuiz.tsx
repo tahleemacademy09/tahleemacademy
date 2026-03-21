@@ -146,6 +146,18 @@ const LiveQuiz = () => {
   const [playerName,   setPlayerName]   = useState("");
   const [settings,     setSettings]     = useState({ topic:"All Topics", numQ:10, timeQ:20 });
 
+  // ── Missing state declarations (caused blank screen crash) ──
+  const [customQs,     setCustomQs]     = useState<Omit<Question,"id">[]>([]);
+  const [bankExams,    setBankExams]    = useState<{id:string;title:string}[]>([]);
+  const [bankQs,       setBankQs]       = useState<Omit<Question,"id">[]>([]);
+  const [selBankExam,  setSelBankExam]  = useState<string>("");
+  const [aiTopic,      setAiTopic]      = useState<string>("");
+  const [aiLoading,    setAiLoading]    = useState<boolean>(false);
+  const [uploadError,  setUploadError]  = useState<string>("");
+  const [manualQ,      setManualQ]      = useState<{question:string;optA:string;optB:string;optC:string;optD:string;correct:string;explanation:string}>(
+    { question:"", optA:"", optB:"", optC:"", optD:"", correct:"A", explanation:"" }
+  );
+
   const timerRef  = useRef<any>(null);
   const channelRef= useRef<any>(null);
 
