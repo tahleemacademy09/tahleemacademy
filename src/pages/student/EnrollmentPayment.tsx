@@ -55,22 +55,27 @@ export type AccessStatus = "active" | "grace" | "locked" | "unknown";
 export const getAccessStatus = (profile: StudentProfile | null): AccessStatus => {
   if (!profile) return "unknown";
   if (profile.is_payment_exempt) return "active";
-  if (profile.payment_status === "paid" && profile.subscription_end_date) {
+
+  const now = new Date();
+
+  // If there's a subscription end date, trust it first regardless of payment_status
+  if (profile.subscription_end_date) {
     const end = new Date(profile.subscription_end_date);
-    if (end > new Date()) return "active";
-    // Within 7 days after expiry = grace
+    if (end > now) return "active";
+    // Within 7 days after expiry = grace period
     const graceCutoff = new Date(end.getTime() + 7 * 86400000);
-    if (graceCutoff > new Date()) return "grace";
+    if (graceCutoff > now) return "grace";
     return "locked";
   }
-  if (profile.payment_status === "paid") return "active"; // paid but no end date
-  if (!profile.payment_status || profile.payment_status === "unpaid") {
-    // Check if newly joined (within 7 days) → grace
-    const joined = new Date(profile.created_at);
-    const grace  = new Date(joined.getTime() + 7 * 86400000);
-    if (grace > new Date()) return "grace";
-    return "locked";
-  }
+
+  // No end date — fall back to payment_status field
+  if (profile.payment_status === "paid") return "active";
+
+  // New students get 7-day grace from join date
+  const joined = new Date(profile.created_at);
+  const graceEnd = new Date(joined.getTime() + 7 * 86400000);
+  if (graceEnd > now) return "grace";
+
   return "locked";
 };
 
@@ -121,26 +126,16 @@ const EnrollmentPayment = () => {
       const allPlans = (plansRes.data || []) as Plan[];
       const hasPrivate = !!(profRes.data as any)?.private_session_rate || (profRes.data as any)?.student_type === "private";
 
-      const filteredPlans = allPlans.filter(p => {
-        // 1. Must match student's level or be "all"/null level
-        const levelOk = !p.level || p.level === "all" || p.level?.toLowerCase() === studentLevel;
-        // 2. Hide monthly plans (duration = 1 month) — students pay by term only
-        const notMonthly = (p.duration_months || 1) > 1;
-        // 3. Hide private session plans unless student is enrolled in private
+      // Only hide private plans from students not enrolled in private sessions.
+      // Show ALL other active plans regardless of level field —
+      // admin controls visibility by activating/deactivating plans in the admin panel.
+      const activePlans = allPlans.filter(p => {
         const isPrivatePlan = p.name?.toLowerCase().includes("private");
-        const privateOk = !isPrivatePlan || hasPrivate;
-        return levelOk && notMonthly && privateOk;
+        return !isPrivatePlan || hasPrivate;
       });
 
-      // Fallback: if no matching plans, show non-monthly non-private plans
-      const activePlans = filteredPlans.length > 0
-        ? filteredPlans
-        : allPlans.filter(p => (p.duration_months || 1) > 1 && !p.name?.toLowerCase().includes("private"));
       setPlans(activePlans);
-
-      if (activePlans.length > 0) {
-        setSelectedPlan(activePlans[0]);
-      }
+      if (activePlans.length > 0) setSelectedPlan(activePlans[0]);
     } finally {
       setLoading(false);
     }
