@@ -1,10 +1,10 @@
 /*
   EnrollmentPayment.tsx — Tahleem Academy
-  Payment & Renewal page for all students (new and existing).
-  - No enrollment/registration flow
-  - Pay Monthly or Term via Paystack
-  - Payment history
-  - Account status & feature access
+  Uses the ACTUAL database tables:
+    - profiles          → payment_status, subscription_end_date, level
+    - payment_plans     → available plans (fetched live from DB)
+    - payments          → payment history
+    - student_subscriptions → active subscriptions
 */
 import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
@@ -19,51 +19,57 @@ import {
 } from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────────
-interface Enrollment {
-  id: string; user_id: string; level: string;
-  plan_type: "monthly" | "term"; amount: number;
-  status: "active" | "grace" | "expired" | "locked";
-  grace_end_date: string | null; paid_at: string | null;
-  next_due_date: string | null; admin_override: boolean;
-  admin_override_until: string | null; created_at: string;
+interface Plan {
+  id: string;
+  name: string;
+  amount: number;
+  currency: string;
+  duration_months: number;
+  is_active: boolean;
+  paystack_plan_code?: string;
 }
-interface PaymentRecord {
-  id: string; amount: number; paid_at: string;
-  level: string; plan_type: string; receipt_id: string;
-  status: "success" | "failed" | "pending"; payment_ref: string | null;
-  payment_type?: string;
+interface Payment {
+  id: string; amount: number; status: string;
+  created_at: string; plan_id: string;
+  paystack_reference?: string; payment_method?: string;
+  type?: string;
 }
 interface StudentProfile {
-  user_id: string; full_name: string; full_name_ar: string;
-  email: string; level: string; student_id: string;
-  avatar_url: string; created_at: string;
+  user_id: string; full_name: string; full_name_ar?: string;
+  email?: string; level?: string; student_id?: string;
+  avatar_url?: string; created_at: string;
+  payment_status?: string; subscription_end_date?: string;
+  is_payment_exempt?: boolean;
 }
 
-// ── Fee schedule ───────────────────────────────────────────────────
-const LEVEL_FEES: Record<string, { monthly: number; term: number; label: string; color: string; bg: string }> = {
-  beginner:     { monthly: 5000, term: 14000, label: "Beginner",     color: "#2E7D32", bg: "#E8F5E9" },
-  intermediate: { monthly: 6000, term: 17000, label: "Intermediate", color: "#1565C0", bg: "#E3F2FD" },
-  advanced:     { monthly: 7000, term: 20000, label: "Advanced",     color: "#6A1B9A", bg: "#EDE7F6" },
-  default:      { monthly: 5000, term: 14000, label: "Standard",     color: "#075E54", bg: "#E0F2F1" },
-};
-const GRACE_DAYS   = 7;
 const PAYSTACK_KEY = import.meta.env.VITE_PAYSTACK_PUBLIC_KEY || "";
 
-// ── Helpers ────────────────────────────────────────────────────────
-const fmt      = (n: number) => `₦${n.toLocaleString()}`;
-const fmtDate  = (d: string | null) => d ? new Date(d).toLocaleDateString("en-NG", { day:"2-digit", month:"short", year:"numeric" }) : "—";
-const fmtDT    = (d: string | null) => d ? new Date(d).toLocaleString("en-NG", { day:"2-digit", month:"short", year:"numeric", hour:"2-digit", minute:"2-digit" }) : "—";
-const daysLeft = (d: string | null) => { if (!d) return 0; return Math.max(0, Math.ceil((new Date(d).getTime() - Date.now()) / 86400000)); };
-const addMonths= (n: number) => { const d = new Date(); d.setMonth(d.getMonth() + n); return d.toISOString(); };
-const mkReceipt= () => `RCT-${Math.random().toString(36).slice(2, 10).toUpperCase()}`;
+const fmt     = (n: number, cur = "NGN") => cur === "NGN" ? `₦${n.toLocaleString()}` : `${cur} ${n.toLocaleString()}`;
+const fmtDate = (d: string | null | undefined) => d ? new Date(d).toLocaleDateString("en-NG", { day:"2-digit", month:"short", year:"numeric" }) : "—";
+const fmtDT   = (d: string | null | undefined) => d ? new Date(d).toLocaleString("en-NG", { day:"2-digit", month:"short", year:"numeric", hour:"2-digit", minute:"2-digit" }) : "—";
+const daysLeft= (d: string | null | undefined) => { if (!d) return 0; return Math.max(0, Math.ceil((new Date(d).getTime() - Date.now()) / 86400000)); };
 
-// ── Exported helpers ───────────────────────────────────────────────
+// ── Access status derived from profile ────────────────────────────
 export type AccessStatus = "active" | "grace" | "locked" | "unknown";
-export const getAccessStatus = (enr: Enrollment | null): AccessStatus => {
-  if (!enr) return "unknown";
-  if (enr.admin_override && enr.admin_override_until && new Date(enr.admin_override_until) > new Date()) return "active";
-  if (enr.status === "active" && enr.next_due_date && new Date(enr.next_due_date) > new Date()) return "active";
-  if (enr.status === "grace" && enr.grace_end_date && new Date(enr.grace_end_date) > new Date()) return "grace";
+export const getAccessStatus = (profile: StudentProfile | null): AccessStatus => {
+  if (!profile) return "unknown";
+  if (profile.is_payment_exempt) return "active";
+  if (profile.payment_status === "paid" && profile.subscription_end_date) {
+    const end = new Date(profile.subscription_end_date);
+    if (end > new Date()) return "active";
+    // Within 7 days after expiry = grace
+    const graceCutoff = new Date(end.getTime() + 7 * 86400000);
+    if (graceCutoff > new Date()) return "grace";
+    return "locked";
+  }
+  if (profile.payment_status === "paid") return "active"; // paid but no end date
+  if (!profile.payment_status || profile.payment_status === "unpaid") {
+    // Check if newly joined (within 7 days) → grace
+    const joined = new Date(profile.created_at);
+    const grace  = new Date(joined.getTime() + 7 * 86400000);
+    if (grace > new Date()) return "grace";
+    return "locked";
+  }
   return "locked";
 };
 
@@ -72,184 +78,178 @@ export const PaymentLockedOverlay = ({ onPay }: { onPay: () => void }) => (
     <div style={{ width:64, height:64, borderRadius:"50%", background:"rgba(231,76,60,0.15)", border:"2px solid #E74C3C", display:"flex", alignItems:"center", justifyContent:"center" }}>
       <Lock style={{ width:28, height:28, color:"#E74C3C" }}/>
     </div>
-    <div style={{ color:"#fff", fontWeight:700, fontSize:18, textAlign:"center" }}>Feature Locked</div>
-    <div style={{ color:"rgba(255,255,255,.75)", fontSize:13, textAlign:"center", maxWidth:240 }}>Complete your payment to unlock this feature</div>
+    <p style={{ color:"#fff", fontWeight:700, fontSize:18, textAlign:"center", margin:0 }}>Feature Locked</p>
+    <p style={{ color:"rgba(255,255,255,.75)", fontSize:13, textAlign:"center", maxWidth:240, margin:0 }}>Complete your payment to unlock this feature</p>
     <button onClick={onPay} style={{ background:"#075E54", color:"#fff", border:"none", borderRadius:12, padding:"12px 28px", cursor:"pointer", fontWeight:700, fontSize:14 }}>Pay Now</button>
   </div>
 );
 
 // ══════════════════════════════════════════════════════════════════
 const EnrollmentPayment = () => {
-  const { user, profile, hasRole } = useAuth();
-  const { toast }                  = useToast();
-  const navigate                   = useNavigate();
+  const { user, profile: authProfile, hasRole } = useAuth();
+  const { toast }   = useToast();
+  const navigate    = useNavigate();
 
-  const [tab, setTab]                       = useState<"pay"|"history"|"status">("pay");
-  const [enrollment, setEnrollment]         = useState<Enrollment | null>(null);
-  const [history, setHistory]               = useState<PaymentRecord[]>([]);
-  const [studentProfile, setStudentProfile] = useState<StudentProfile | null>(null);
-  const [loading, setLoading]               = useState(true);
-  const [paying, setPaying]                 = useState(false);
-  const [selectedPlan, setSelectedPlan]     = useState<"monthly"|"term">("monthly");
+  const [tab, setTab]                     = useState<"pay"|"history"|"status">("pay");
+  const [profile, setProfile]             = useState<StudentProfile | null>(null);
+  const [plans, setPlans]                 = useState<Plan[]>([]);
+  const [payments, setPayments]           = useState<Payment[]>([]);
+  const [selectedPlan, setSelectedPlan]   = useState<Plan | null>(null);
+  const [loading, setLoading]             = useState(true);
+  const [paying, setPaying]               = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
 
   const isAdmin   = hasRole("admin");
-  const level     = ((profile as any)?.level || "beginner").toLowerCase();
-  const fees      = LEVEL_FEES[level] || LEVEL_FEES.default;
-  const accStatus = getAccessStatus(enrollment);
-  const graceLeft = daysLeft(enrollment?.grace_end_date || null);
-  const amountDue = selectedPlan === "monthly" ? fees.monthly : fees.term;
-  const termSave  = fees.monthly * 3 - fees.term;
+  const accStatus = getAccessStatus(profile);
+  const subEnd    = profile?.subscription_end_date;
+  const graceLeft = accStatus === "grace" ? daysLeft(subEnd ? new Date(new Date(subEnd).getTime() + 7*86400000).toISOString() : profile?.created_at ? new Date(new Date(profile.created_at).getTime() + 7*86400000).toISOString() : null) : 0;
 
-  // ── Load / create enrollment row ─────────────────────────────
-  const loadEnrollment = useCallback(async () => {
+  // ── Load data ─────────────────────────────────────────────────
+  const loadData = useCallback(async () => {
     if (!user) return;
     setLoading(true);
     try {
-      // Profile
-      const { data: prof } = await supabase.from("profiles")
-        .select("user_id,full_name,full_name_ar,email,level,student_id,avatar_url,created_at")
-        .eq("user_id", user.id).maybeSingle();
-      if (prof) setStudentProfile(prof as unknown as StudentProfile);
+      const [profRes, plansRes] = await Promise.all([
+        supabase.from("profiles").select("*").eq("user_id", user.id).maybeSingle(),
+        supabase.from("payment_plans" as any).select("*").eq("is_active", true).order("amount"),
+      ]);
 
-      // Enrollment — always ensure a row exists
-      let { data: enr } = await supabase.from("enrollments" as any)
-        .select("*").eq("user_id", user.id).maybeSingle();
-
-      if (!enr) {
-        const graceEnd = new Date(Date.now() + GRACE_DAYS * 86400000).toISOString();
-        const { data: created, error: ce } = await supabase.from("enrollments" as any)
-          .insert({
-            user_id: user.id, level, plan_type: "monthly",
-            amount: fees.monthly, status: "grace",
-            grace_end_date: graceEnd, admin_override: false,
-          })
-          .select().single();
-        if (ce) {
-          // Row may have been created by a race — try fetching again
-          const { data: retry } = await supabase.from("enrollments" as any)
-            .select("*").eq("user_id", user.id).maybeSingle();
-          enr = retry;
-        } else {
-          enr = created;
-        }
+      if (profRes.data) {
+        setProfile(profRes.data as unknown as StudentProfile);
       }
 
-      // Auto-lock if grace expired
-      if (enr && enr.status === "grace" && enr.grace_end_date && new Date(enr.grace_end_date) < new Date()) {
-        await supabase.from("enrollments" as any).update({ status:"locked" }).eq("id", enr.id);
-        enr = { ...enr, status:"locked" };
-      }
+      const activePlans = (plansRes.data || []) as Plan[];
+      setPlans(activePlans);
 
-      setEnrollment(enr as unknown as Enrollment);
+      // Default: pick first plan or monthly-named plan
+      if (activePlans.length > 0 && !selectedPlan) {
+        const monthly = activePlans.find(p => p.duration_months === 1) || activePlans[0];
+        setSelectedPlan(monthly);
+      }
     } finally {
       setLoading(false);
     }
-  }, [user, level, fees.monthly]);
+  }, [user]);
 
   const loadHistory = useCallback(async () => {
     if (!user) return;
     setLoadingHistory(true);
-    const { data } = await supabase.from("payment_history" as any)
-      .select("*").eq("user_id", user.id).order("paid_at", { ascending:false }).limit(50);
-    setHistory((data || []) as unknown as PaymentRecord[]);
+    const { data } = await supabase.from("payments" as any)
+      .select("*").eq("student_id", user.id)
+      .order("created_at", { ascending: false }).limit(50);
+    setPayments((data || []) as Payment[]);
     setLoadingHistory(false);
   }, [user]);
 
-  useEffect(() => { loadEnrollment(); }, [loadEnrollment]);
+  useEffect(() => { loadData(); }, [loadData]);
   useEffect(() => { if (tab === "history") loadHistory(); }, [tab, loadHistory]);
 
-  // ── Paystack ─────────────────────────────────────────────────
-  const runPaystack = (
-    amount: number,
-    enrId: string,
-    onSuccess: (ref: string) => void,
-    onCancel: () => void,
-  ) => {
-    const email = studentProfile?.email || user?.email || "";
-    const ref   = `TAH-${(user?.id || "").slice(0,8)}-${Date.now()}`;
+  // ── Paystack payment ──────────────────────────────────────────
+  const initiatePayment = async () => {
+    if (!user || !selectedPlan) {
+      toast({ title:"Please select a plan", variant:"destructive" }); return;
+    }
+    if (!profile) {
+      toast({ title:"Profile not loaded. Please refresh.", variant:"destructive" }); return;
+    }
 
-    // Demo mode — no Paystack key
+    const email = (profile as any).email || user.email || "";
+    const ref   = `TAH-${user.id.slice(0,8)}-${Date.now()}`;
+    const amount = selectedPlan.amount;
+
+    // Demo mode
     if (!PAYSTACK_KEY) {
-      toast({ title:"⚠️ Demo mode", description:"No Paystack key — simulating success." });
-      setTimeout(() => onSuccess(ref), 800);
+      toast({ title:"⚠️ Demo mode", description:"No Paystack key configured — simulating success." });
+      await handlePaymentSuccess(ref, amount, selectedPlan);
       return;
     }
 
     const PaystackPop = (window as any).PaystackPop;
     if (!PaystackPop) {
-      toast({
-        title: "Payment system not ready",
-        description: "Paystack script not loaded. Please refresh the page.",
-        variant: "destructive",
-      });
-      onCancel();
-      return;
-    }
-
-    try {
-      const handler = PaystackPop.setup({
-        key:      PAYSTACK_KEY,
-        email,
-        amount:   amount * 100,   // kobo
-        currency: "NGN",
-        ref,
-        metadata: { user_id: user?.id, level, enrollment_id: enrId },
-        callback: (res: any) => onSuccess(res.reference || ref),
-        onClose:  () => { toast({ title:"Payment cancelled" }); onCancel(); },
-      });
-      handler.openIframe();
-    } catch (err: any) {
-      toast({ title:"Could not open payment", description: err?.message || "Please try again.", variant:"destructive" });
-      onCancel();
-    }
-  };
-
-  // ── Pay subscription ─────────────────────────────────────────
-  const initiatePayment = async () => {
-    if (!user) { toast({ title:"Please log in first", variant:"destructive" }); return; }
-
-    // Ensure enrollment row exists before paying
-    let enr = enrollment;
-    if (!enr) {
-      const graceEnd = new Date(Date.now() + GRACE_DAYS * 86400000).toISOString();
-      const { data } = await supabase.from("enrollments" as any)
-        .insert({ user_id:user.id, level, plan_type:"monthly", amount:fees.monthly, status:"grace", grace_end_date:graceEnd, admin_override:false })
-        .select().single();
-      if (data) { enr = data as unknown as Enrollment; setEnrollment(enr); }
-    }
-    if (!enr) {
-      toast({ title:"Could not load your account", description:"Please refresh and try again.", variant:"destructive" });
+      // Script not loaded yet — load it now
+      const script = document.createElement("script");
+      script.src = "https://js.paystack.co/v1/inline.js";
+      script.onload = () => initiatePayment();
+      document.head.appendChild(script);
+      toast({ title:"Loading payment system…", description:"Please try again in a moment." });
       return;
     }
 
     setPaying(true);
-    runPaystack(amountDue, enr.id, async (ref) => {
-      const now    = new Date().toISOString();
-      const rcpt   = mkReceipt();
-      const months = selectedPlan === "monthly" ? 1 : 3;
-
-      await supabase.from("enrollments" as any)
-        .update({
-          status: "active", paid_at: now,
-          next_due_date: addMonths(months),
-          plan_type: selectedPlan, amount: amountDue, level,
-        })
-        .eq("id", enr!.id);
-
-      await supabase.from("payment_history" as any).insert({
-        user_id: user.id, enrollment_id: enr!.id,
-        amount: amountDue, paid_at: now, level,
-        plan_type: selectedPlan, receipt_id: rcpt,
-        status: "success", payment_ref: ref, payment_type: "subscription",
+    try {
+      const handler = PaystackPop.setup({
+        key:      PAYSTACK_KEY,
+        email,
+        amount:   amount * 100,  // kobo
+        currency: selectedPlan.currency || "NGN",
+        ref,
+        plan:     selectedPlan.paystack_plan_code || undefined,
+        metadata: {
+          user_id:   user.id,
+          plan_id:   selectedPlan.id,
+          plan_name: selectedPlan.name,
+        },
+        callback: async (res: any) => {
+          await handlePaymentSuccess(res.reference || ref, amount, selectedPlan);
+        },
+        onClose: () => {
+          toast({ title: "Payment cancelled" });
+          setPaying(false);
+        },
       });
+      handler.openIframe();
+    } catch (err: any) {
+      toast({ title:"Could not open payment", description: err?.message || "Please try again.", variant:"destructive" });
+      setPaying(false);
+    }
+  };
 
-      toast({ title:"✅ Payment Successful!", description:`Receipt: ${rcpt}` });
-      await loadEnrollment();
+  const handlePaymentSuccess = async (ref: string, amount: number, plan: Plan) => {
+    if (!user || !profile) return;
+    try {
+      const now      = new Date();
+      const end      = new Date(now);
+      end.setMonth(end.getMonth() + (plan.duration_months || 1));
+      const endStr   = end.toISOString().split("T")[0];
+      const startStr = now.toISOString().split("T")[0];
+
+      await Promise.all([
+        // Update profile payment status
+        supabase.from("profiles").update({
+          payment_status: "paid",
+          subscription_end_date: endStr,
+        } as any).eq("user_id", user.id),
+
+        // Record payment
+        supabase.from("payments" as any).insert({
+          student_id: user.id,
+          plan_id: plan.id,
+          amount,
+          status: "success",
+          type: "paystack",
+          paystack_reference: ref,
+          payment_method: "card",
+        }),
+
+        // Record subscription
+        supabase.from("student_subscriptions" as any).insert({
+          student_id: user.id,
+          plan_id: plan.id,
+          status: "active",
+          start_date: startStr,
+          end_date: endStr,
+        }),
+      ]);
+
+      toast({ title:"✅ Payment Successful!", description:`Ref: ${ref} · Active until ${fmtDate(endStr)}` });
+      await loadData();
       await loadHistory();
       setTab("status");
+    } catch (err: any) {
+      toast({ title:"Payment recorded but profile update failed", description:"Contact admin with ref: " + ref, variant:"destructive" });
+    } finally {
       setPaying(false);
-    }, () => setPaying(false));
+    }
   };
 
   // ── Status config ─────────────────────────────────────────────
@@ -257,7 +257,7 @@ const EnrollmentPayment = () => {
     active:  { color:"#2E7D32", bg:"#E8F5E9", icon:<CheckCircle2 size={18}/>, label:"Active",       desc:"Full access to all features" },
     grace:   { color:"#F57C00", bg:"#FFF3E0", icon:<Clock size={18}/>,        label:"Grace Period", desc:`${graceLeft} day${graceLeft!==1?"s":""} remaining` },
     locked:  { color:"#C62828", bg:"#FFEBEE", icon:<Lock size={18}/>,         label:"Locked",       desc:"Renew to restore access" },
-    unknown: { color:"#546E7A", bg:"#ECEFF1", icon:<Loader2 size={18}/>,      label:"Loading…",     desc:"" },
+    unknown: { color:"#546E7A", bg:"#ECEFF1", icon:<Shield size={18}/>,       label:"Pending",      desc:"Pay to activate your account" },
   }[accStatus];
 
   // ── CSS ───────────────────────────────────────────────────────
@@ -271,14 +271,13 @@ const EnrollmentPayment = () => {
     .ep-pcard.sel { border-color:#075E54; background:#F0FFF8; box-shadow:0 4px 20px rgba(7,94,84,.18); }
     .ep-tab { flex:1; padding:14px 6px; border:none; background:none; cursor:pointer; font-size:13px; font-weight:700; color:#aaa; border-bottom:3px solid transparent; transition:all .2s; display:flex; align-items:center; justify-content:center; gap:6px; }
     .ep-tab.on { color:#064E3B; border-bottom-color:#064E3B; }
-    .ep-pbtn { width:100%; padding:18px; background:linear-gradient(135deg,#064E3B,#075E54); color:#fff; border:none; border-radius:14px; font-size:17px; font-weight:800; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:10px; box-shadow:0 6px 24px rgba(7,94,84,.4); transition:opacity .15s; letter-spacing:.3px; }
+    .ep-pbtn { width:100%; padding:18px; background:linear-gradient(135deg,#064E3B,#075E54); color:#fff; border:none; border-radius:14px; font-size:17px; font-weight:800; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:10px; box-shadow:0 6px 24px rgba(7,94,84,.4); transition:opacity .15s; }
     .ep-pbtn:disabled { opacity:.5; cursor:not-allowed; }
-    .ep-pbtn:not(:disabled):active { opacity:.85; transform:scale(.99); }
+    .ep-pbtn:not(:disabled):active { opacity:.85; }
     .ep-hrow { display:flex; align-items:center; gap:12px; padding:14px 0; border-bottom:1px solid #f0f0f0; }
     .ep-bdg  { display:inline-flex; align-items:center; gap:4px; padding:3px 10px; border-radius:20px; font-size:11px; font-weight:700; }
   `;
 
-  // ── Loading screen ────────────────────────────────────────────
   if (loading) return (
     <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:"#F5F7F5" }}>
       <style>{CSS}</style>
@@ -291,7 +290,10 @@ const EnrollmentPayment = () => {
     </div>
   );
 
-  // ══════════════════════════════════════════════════════════════
+  // ── Level label from profile ──────────────────────────────────
+  const levelLabel = ((profile as any)?.level || (authProfile as any)?.level || "beginner");
+  const levelDisplay = levelLabel.charAt(0).toUpperCase() + levelLabel.slice(1);
+
   return (
     <div style={{ minHeight:"100vh", background:"#EFF4EF", fontFamily:"'Segoe UI',system-ui,sans-serif" }}>
       <style>{CSS}</style>
@@ -309,6 +311,7 @@ const EnrollmentPayment = () => {
           <div style={{ color:"rgba(255,255,255,.6)", fontSize:13, fontFamily:"serif", textAlign:"center" as const, marginBottom:12 }}>
             بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ
           </div>
+          {/* Status pill — always shows real status, never "Loading..." */}
           <div style={{ display:"flex", justifyContent:"center" }}>
             <div style={{ display:"inline-flex", alignItems:"center", gap:8, background:statusCfg.bg, color:statusCfg.color, borderRadius:22, padding:"8px 18px", fontWeight:700, fontSize:13 }}>
               {statusCfg.icon} {statusCfg.label}{statusCfg.desc ? ` — ${statusCfg.desc}` : ""}
@@ -319,7 +322,7 @@ const EnrollmentPayment = () => {
 
       <div style={{ maxWidth:490, margin:"0 auto", padding:"0 16px 48px" }}>
 
-        {/* ── Status alerts ── */}
+        {/* ── Status banners ── */}
         {accStatus === "grace" && (
           <div style={{ marginTop:16, padding:"14px 16px", background:"#FFF8E1", borderRadius:14, border:"1.5px solid #F9A825", display:"flex", gap:12 }}>
             <div style={{ width:38, height:38, borderRadius:"50%", background:"#FFF3CD", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
@@ -328,7 +331,7 @@ const EnrollmentPayment = () => {
             <div>
               <p style={{ fontWeight:700, color:"#E65100", fontSize:14, margin:"0 0 2px" }}>{graceLeft} day{graceLeft!==1?"s":""} left in your grace period</p>
               <p style={{ fontSize:12, color:"#8D5E00", margin:0 }}>Pay your subscription below to keep full access to all features.</p>
-              {graceLeft <= 2 && <p style={{ marginTop:5, fontSize:11, fontWeight:700, color:"#C62828", animation:"pulse 1.5s infinite" }}>⚠️ Account locks in {graceLeft} day{graceLeft!==1?"s":""}!</p>}
+              {graceLeft <= 2 && <p style={{ marginTop:5, fontSize:11, fontWeight:700, color:"#C62828", animation:"pulse 1.5s infinite", margin:"5px 0 0" }}>⚠️ Account locks in {graceLeft} day{graceLeft!==1?"s":""}!</p>}
             </div>
           </div>
         )}
@@ -339,7 +342,7 @@ const EnrollmentPayment = () => {
               <Lock size={20} color="#C62828"/>
               <span style={{ fontWeight:700, color:"#C62828", fontSize:15 }}>Account Access Locked</span>
             </div>
-            <p style={{ fontSize:13, color:"#7B1A1A", margin:"0 0 10px" }}>Your subscription has expired. Renew now to restore access to:</p>
+            <p style={{ fontSize:13, color:"#7B1A1A", margin:"0 0 10px" }}>Your subscription has expired. Renew to restore access to all features.</p>
             <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
               {["Al-Majlis Chat","Course Lessons","Al-Hifdh Tracker","Assignments & Exams","Live Sessions"].map(f => (
                 <div key={f} style={{ display:"flex", alignItems:"center", gap:8, fontSize:12, color:"#7B1A1A" }}>
@@ -350,40 +353,47 @@ const EnrollmentPayment = () => {
           </div>
         )}
 
-        {accStatus === "active" && (
+        {accStatus === "active" && !profile?.is_payment_exempt && (
           <div style={{ marginTop:16, padding:"13px 16px", background:"#E8F5E9", borderRadius:14, border:"1.5px solid #A5D6A7", display:"flex", alignItems:"center", gap:12 }}>
             <CheckCircle2 size={20} color="#2E7D32"/>
             <div style={{ flex:1 }}>
               <p style={{ fontWeight:700, fontSize:13, color:"#2E7D32", margin:"0 0 1px" }}>Subscription Active</p>
-              <p style={{ fontSize:12, color:"#388E3C", margin:0 }}>Next payment due: <strong>{fmtDate(enrollment?.next_due_date||null)}</strong></p>
+              <p style={{ fontSize:12, color:"#388E3C", margin:0 }}>Active until: <strong>{fmtDate(subEnd)}</strong></p>
             </div>
             <span style={{ fontSize:12, fontWeight:700, color:"#2E7D32", background:"#C8E6C9", padding:"4px 10px", borderRadius:20 }}>✓ Active</span>
+          </div>
+        )}
+
+        {profile?.is_payment_exempt && (
+          <div style={{ marginTop:16, padding:"13px 16px", background:"#E3F2FD", borderRadius:14, border:"1.5px solid #90CAF9", display:"flex", alignItems:"center", gap:12 }}>
+            <Shield size={20} color="#1565C0"/>
+            <p style={{ fontWeight:700, fontSize:13, color:"#1565C0", margin:0 }}>🎓 Payment Exempt — Full access granted by admin</p>
           </div>
         )}
 
         {/* ── Student profile card ── */}
         <div className="ep-card" style={{ marginTop:16 }}>
           <div style={{ padding:"15px 18px", background:"linear-gradient(90deg,#064E3B,#075E54)", display:"flex", alignItems:"center", gap:13 }}>
-            {studentProfile?.avatar_url
-              ? <img src={studentProfile.avatar_url} style={{ width:50, height:50, borderRadius:"50%", objectFit:"cover", border:"2px solid rgba(255,255,255,.4)" }} alt=""/>
+            {profile?.avatar_url
+              ? <img src={profile.avatar_url} style={{ width:50, height:50, borderRadius:"50%", objectFit:"cover", border:"2px solid rgba(255,255,255,.4)" }} alt=""/>
               : <div style={{ width:50, height:50, borderRadius:"50%", background:"rgba(255,255,255,.18)", display:"flex", alignItems:"center", justifyContent:"center", color:"#fff", fontSize:20, fontWeight:700, border:"2px solid rgba(255,255,255,.3)", flexShrink:0 }}>
-                  {(studentProfile?.full_name || user?.email || "S")[0].toUpperCase()}
+                  {(profile?.full_name || user?.email || "S")[0].toUpperCase()}
                 </div>
             }
             <div style={{ flex:1, minWidth:0 }}>
-              <p style={{ color:"#fff", fontWeight:700, fontSize:16, margin:"0 0 2px", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" as const }}>{studentProfile?.full_name || "Student"}</p>
-              {studentProfile?.full_name_ar && <p style={{ color:"rgba(255,255,255,.65)", fontSize:12, margin:0 }}>{studentProfile.full_name_ar}</p>}
+              <p style={{ color:"#fff", fontWeight:700, fontSize:16, margin:"0 0 2px", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" as const }}>{profile?.full_name || "Student"}</p>
+              {profile?.full_name_ar && <p style={{ color:"rgba(255,255,255,.65)", fontSize:12, margin:0 }}>{profile.full_name_ar}</p>}
             </div>
             <span className="ep-bdg" style={{ background:"rgba(255,255,255,.2)", color:"#fff", flexShrink:0 }}>
-              <BookOpen size={11}/> {fees.label}
+              <BookOpen size={11}/> {levelDisplay}
             </span>
           </div>
           <div>
             {[
-              { icon:<Hash size={14}/>,      label:"Student ID",   val: studentProfile?.student_id || "—" },
-              { icon:<Mail size={14}/>,       label:"Email",        val: studentProfile?.email || user?.email || "—" },
-              { icon:<Calendar size={14}/>,   label:"Joined",       val: fmtDate(studentProfile?.created_at||null) },
-              { icon:<TrendingUp size={14}/>, label:"Next Payment", val: fmtDate(enrollment?.next_due_date||null) },
+              { icon:<Hash size={14}/>,      label:"Student ID",    val: (profile as any)?.student_id || "—" },
+              { icon:<Mail size={14}/>,       label:"Email",         val: (profile as any)?.email || user?.email || "—" },
+              { icon:<Calendar size={14}/>,   label:"Joined",        val: fmtDate(profile?.created_at) },
+              { icon:<TrendingUp size={14}/>, label:"Active Until",  val: fmtDate(subEnd) },
             ].map((row, i) => (
               <div key={i} style={{ display:"flex", alignItems:"center", gap:12, padding:"11px 18px", borderBottom:i<3?"1px solid #f6f6f6":"none" }}>
                 <span style={{ color:"#075E54", flexShrink:0 }}>{row.icon}</span>
@@ -418,100 +428,103 @@ const EnrollmentPayment = () => {
                     <RotateCcw size={13}/> Early Renewal Available
                   </p>
                   <p style={{ fontSize:12, color:"#4CAF50", margin:0 }}>
-                    Active until <strong>{fmtDate(enrollment?.next_due_date||null)}</strong>. Renewing now extends your access from that date.
+                    Active until <strong>{fmtDate(subEnd)}</strong>. Renewing now extends your subscription from that date.
                   </p>
                 </div>
               )}
 
-              <p style={{ fontSize:11, fontWeight:700, color:"#aaa", textTransform:"uppercase" as const, letterSpacing:.6, margin:0 }}>
-                {fees.label} Level — Choose Your Plan
-              </p>
-
-              {/* Monthly */}
-              <div className={`ep-pcard ${selectedPlan==="monthly"?"sel":""}`} onClick={() => setSelectedPlan("monthly")}>
-                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
-                  <div>
-                    <p style={{ fontWeight:800, fontSize:16, color:"#111", margin:"0 0 2px" }}>Monthly</p>
-                    <p style={{ fontSize:12, color:"#aaa", margin:"0 0 10px", fontFamily:"serif" }}>اشتراك شهري</p>
-                    <div style={{ display:"flex", flexWrap:"wrap" as const, gap:6 }}>
-                      <span className="ep-bdg" style={{ background:"#E8F5E9", color:"#2E7D32" }}>1 Month</span>
-                      <span className="ep-bdg" style={{ background:fees.bg, color:fees.color }}>{fees.label}</span>
-                      <span className="ep-bdg" style={{ background:"#F3F4F6", color:"#666" }}>Flexible</span>
-                    </div>
-                  </div>
-                  <div style={{ textAlign:"right" as const }}>
-                    <p style={{ fontSize:26, fontWeight:900, color:"#111", margin:"0 0 2px" }}>{fmt(fees.monthly)}</p>
-                    <p style={{ fontSize:11, color:"#aaa", margin:0 }}>/ month</p>
-                  </div>
+              {plans.length === 0 ? (
+                <div style={{ textAlign:"center" as const, padding:"28px 0", color:"#bbb" }}>
+                  <CreditCard style={{ width:36, height:36, margin:"0 auto 10px", color:"#ddd" }}/>
+                  <p style={{ fontSize:14, color:"#aaa", margin:0 }}>No payment plans available</p>
+                  <p style={{ fontSize:12, color:"#bbb", margin:"4px 0 0" }}>Contact admin to set up plans</p>
                 </div>
-                {selectedPlan === "monthly" && (
-                  <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:12, color:"#075E54", fontWeight:700, fontSize:12 }}>
-                    <CheckCircle2 size={14}/> Selected
-                  </div>
-                )}
-              </div>
+              ) : (
+                <>
+                  <p style={{ fontSize:11, fontWeight:700, color:"#aaa", textTransform:"uppercase" as const, letterSpacing:.6, margin:0 }}>
+                    {levelDisplay} Level — Choose Your Plan
+                  </p>
 
-              {/* Term */}
-              <div className={`ep-pcard ${selectedPlan==="term"?"sel":""}`} onClick={() => setSelectedPlan("term")} style={{ position:"relative" }}>
-                {termSave > 0 && (
-                  <div style={{ position:"absolute", top:-10, right:14, background:"linear-gradient(135deg,#064E3B,#075E54)", color:"#fff", borderRadius:20, padding:"3px 12px", fontSize:11, fontWeight:800 }}>
-                    Save {fmt(termSave)}
-                  </div>
-                )}
-                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
-                  <div>
-                    <p style={{ fontWeight:800, fontSize:16, color:"#111", margin:"0 0 2px" }}>Term — 3 Months</p>
-                    <p style={{ fontSize:12, color:"#aaa", margin:"0 0 10px", fontFamily:"serif" }}>رسوم الفصل الدراسي</p>
-                    <div style={{ display:"flex", flexWrap:"wrap" as const, gap:6 }}>
-                      <span className="ep-bdg" style={{ background:"#E8F5E9", color:"#2E7D32" }}>3 Months</span>
-                      <span className="ep-bdg" style={{ background:fees.bg, color:fees.color }}>{fees.label}</span>
-                      {termSave > 0 && <span className="ep-bdg" style={{ background:"#E3F2FD", color:"#1565C0" }}>Best Value</span>}
+                  {plans.map(plan => (
+                    <div
+                      key={plan.id}
+                      className={`ep-pcard ${selectedPlan?.id===plan.id?"sel":""}`}
+                      onClick={() => setSelectedPlan(plan)}
+                      style={{ position:"relative" }}
+                    >
+                      {plan.duration_months >= 3 && (
+                        <div style={{ position:"absolute", top:-10, right:14, background:"linear-gradient(135deg,#064E3B,#075E54)", color:"#fff", borderRadius:20, padding:"3px 12px", fontSize:11, fontWeight:800 }}>
+                          Best Value
+                        </div>
+                      )}
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+                        <div>
+                          <p style={{ fontWeight:800, fontSize:16, color:"#111", margin:"0 0 2px" }}>{plan.name}</p>
+                          <p style={{ fontSize:12, color:"#aaa", margin:"0 0 10px" }}>
+                            {plan.duration_months === 1 ? "اشتراك شهري" : "رسوم الفصل الدراسي"}
+                          </p>
+                          <div style={{ display:"flex", flexWrap:"wrap" as const, gap:6 }}>
+                            <span className="ep-bdg" style={{ background:"#E8F5E9", color:"#2E7D32" }}>
+                              {plan.duration_months} Month{plan.duration_months!==1?"s":""}
+                            </span>
+                            <span className="ep-bdg" style={{ background:"#F3F4F6", color:"#666" }}>
+                              {plan.duration_months === 1 ? "Flexible" : "Term"}
+                            </span>
+                          </div>
+                        </div>
+                        <div style={{ textAlign:"right" as const }}>
+                          <p style={{ fontSize:26, fontWeight:900, color:"#111", margin:"0 0 2px" }}>
+                            {fmt(plan.amount, plan.currency)}
+                          </p>
+                          <p style={{ fontSize:11, color:"#aaa", margin:0 }}>
+                            {plan.duration_months === 1 ? "/ month" : `/ ${plan.duration_months} months`}
+                          </p>
+                        </div>
+                      </div>
+                      {selectedPlan?.id === plan.id && (
+                        <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:12, color:"#075E54", fontWeight:700, fontSize:12 }}>
+                          <CheckCircle2 size={14}/> Selected
+                        </div>
+                      )}
                     </div>
-                  </div>
-                  <div style={{ textAlign:"right" as const }}>
-                    <p style={{ fontSize:26, fontWeight:900, color:"#111", margin:"0 0 2px" }}>{fmt(fees.term)}</p>
-                    <p style={{ fontSize:11, color:"#aaa", margin:0 }}>≈ {fmt(Math.round(fees.term/3))}/mo</p>
-                  </div>
-                </div>
-                {selectedPlan === "term" && (
-                  <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:12, color:"#075E54", fontWeight:700, fontSize:12 }}>
-                    <CheckCircle2 size={14}/> Selected
-                  </div>
-                )}
-              </div>
+                  ))}
 
-              {/* Order summary */}
-              <div style={{ background:"#F8FAF8", borderRadius:13, padding:"15px 16px", border:"1px solid #E0EDE0" }}>
-                <p style={{ fontSize:11, fontWeight:700, color:"#aaa", marginBottom:12, textTransform:"uppercase" as const, letterSpacing:.5 }}>Order Summary</p>
-                {[
-                  { label:"Plan",     val: selectedPlan==="monthly" ? "Monthly Subscription" : "Term Subscription (3 Months)" },
-                  { label:"Level",    val: fees.label },
-                  { label:"Duration", val: selectedPlan==="monthly" ? "1 Month" : "3 Months" },
-                  { label:"Total",    val: fmt(amountDue), bold:true, green:true },
-                ].map((r, i) => (
-                  <div key={i} style={{ display:"flex", justifyContent:"space-between", marginBottom:i<3?9:0, paddingTop:i===3?10:0, borderTop:i===3?"1px dashed #ddd":"none" }}>
-                    <span style={{ fontSize:13, color:"#999" }}>{r.label}</span>
-                    <span style={{ fontSize:13, fontWeight:r.bold?800:500, color:r.green?"#064E3B":"#111" }}>{r.val}</span>
+                  {/* Order summary */}
+                  {selectedPlan && (
+                    <div style={{ background:"#F8FAF8", borderRadius:13, padding:"15px 16px", border:"1px solid #E0EDE0" }}>
+                      <p style={{ fontSize:11, fontWeight:700, color:"#aaa", marginBottom:12, textTransform:"uppercase" as const, letterSpacing:.5 }}>Order Summary</p>
+                      {[
+                        { label:"Plan",     val: selectedPlan.name },
+                        { label:"Level",    val: levelDisplay },
+                        { label:"Duration", val: `${selectedPlan.duration_months} Month${selectedPlan.duration_months!==1?"s":""}` },
+                        { label:"Total",    val: fmt(selectedPlan.amount, selectedPlan.currency), bold:true, green:true },
+                      ].map((r, i) => (
+                        <div key={i} style={{ display:"flex", justifyContent:"space-between", marginBottom:i<3?9:0, paddingTop:i===3?10:0, borderTop:i===3?"1px dashed #ddd":"none" }}>
+                          <span style={{ fontSize:13, color:"#999" }}>{r.label}</span>
+                          <span style={{ fontSize:13, fontWeight:r.bold?800:500, color:r.green?"#064E3B":"#111" }}>{r.val}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* PAY BUTTON */}
+                  <button
+                    className="ep-pbtn"
+                    type="button"
+                    onClick={initiatePayment}
+                    disabled={paying || !selectedPlan}
+                  >
+                    {paying
+                      ? <><Loader2 style={{ width:20, height:20, animation:"spin .8s linear infinite" }}/> Processing…</>
+                      : <><CreditCard size={20}/> Pay {selectedPlan ? fmt(selectedPlan.amount, selectedPlan.currency) : "—"}</>
+                    }
+                  </button>
+
+                  <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:6, fontSize:11, color:"#bbb" }}>
+                    <Shield size={12}/> Secured by Paystack · SSL Encrypted
                   </div>
-                ))}
-              </div>
-
-              {/* PAY BUTTON */}
-              <button
-                className="ep-pbtn"
-                onClick={initiatePayment}
-                disabled={paying}
-                type="button"
-              >
-                {paying
-                  ? <><Loader2 style={{ width:20, height:20, animation:"spin .8s linear infinite" }}/> Processing…</>
-                  : <><CreditCard size={20}/> Pay {fmt(amountDue)}</>
-                }
-              </button>
-
-              <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:6, fontSize:11, color:"#bbb" }}>
-                <Shield size={12}/> Secured by Paystack · SSL Encrypted
-              </div>
+                </>
+              )}
             </div>
           )}
 
@@ -529,36 +542,39 @@ const EnrollmentPayment = () => {
                   <Loader2 style={{ width:24, height:24, color:"#075E54", animation:"spin .8s linear infinite" }}/>
                 </div>
               )}
-              {!loadingHistory && history.length === 0 && (
+              {!loadingHistory && payments.length === 0 && (
                 <div style={{ textAlign:"center" as const, padding:"32px 0" }}>
                   <Receipt style={{ width:38, height:38, margin:"0 auto 10px", color:"#ddd" }}/>
                   <p style={{ fontSize:14, color:"#aaa", margin:0 }}>No payments yet</p>
-                  <p style={{ fontSize:12, color:"#ccc", margin:"4px 0 0" }}>Your payment history will appear here after your first payment</p>
+                  <p style={{ fontSize:12, color:"#ccc", margin:"4px 0 0" }}>Your payment history will appear here</p>
                 </div>
               )}
-              {history.map(p => (
-                <div key={p.id} className="ep-hrow">
-                  <div style={{ width:42, height:42, borderRadius:13, background:p.status==="success"?"#E8F5E9":"#FFEBEE", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
-                    {p.status==="success" ? <CheckCircle2 size={18} color="#2E7D32"/> : <XCircle size={18} color="#C62828"/>}
+              {payments.map(p => {
+                const plan = plans.find(pl => pl.id === p.plan_id);
+                return (
+                  <div key={p.id} className="ep-hrow">
+                    <div style={{ width:42, height:42, borderRadius:13, background:p.status==="success"?"#E8F5E9":"#FFEBEE", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                      {p.status==="success" ? <CheckCircle2 size={18} color="#2E7D32"/> : <XCircle size={18} color="#C62828"/>}
+                    </div>
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <p style={{ fontWeight:700, fontSize:14, color:"#111", margin:"0 0 2px", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" as const }}>
+                        {plan ? `📅 ${plan.name}` : "📅 Subscription Payment"}
+                      </p>
+                      <p style={{ fontSize:11, color:"#bbb", margin:0 }}>
+                        {fmtDT(p.created_at)} {p.paystack_reference ? `· ${p.paystack_reference}` : ""}
+                      </p>
+                    </div>
+                    <div style={{ textAlign:"right" as const, flexShrink:0 }}>
+                      <p style={{ fontWeight:800, color:p.status==="success"?"#2E7D32":"#C62828", fontSize:14, margin:"0 0 4px" }}>
+                        {fmt(p.amount, plan?.currency)}
+                      </p>
+                      <span className="ep-bdg" style={{ background:p.status==="success"?"#E8F5E9":"#FFEBEE", color:p.status==="success"?"#2E7D32":"#C62828" }}>
+                        {p.status}
+                      </span>
+                    </div>
                   </div>
-                  <div style={{ flex:1, minWidth:0 }}>
-                    <p style={{ fontWeight:700, fontSize:14, color:"#111", margin:"0 0 2px", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" as const }}>
-                      {p.payment_type === "registration"
-                        ? "🌟 Registration Fee"
-                        : p.plan_type === "monthly"
-                          ? "📅 Monthly Subscription"
-                          : "📆 Term Subscription"}
-                    </p>
-                    <p style={{ fontSize:11, color:"#bbb", margin:0 }}>{fmtDT(p.paid_at)} · {p.receipt_id}</p>
-                  </div>
-                  <div style={{ textAlign:"right" as const, flexShrink:0 }}>
-                    <p style={{ fontWeight:800, color:p.status==="success"?"#2E7D32":"#C62828", fontSize:14, margin:"0 0 4px" }}>{fmt(p.amount)}</p>
-                    <span className="ep-bdg" style={{ background:p.status==="success"?"#E8F5E9":"#FFEBEE", color:p.status==="success"?"#2E7D32":"#C62828" }}>
-                      {p.status}
-                    </span>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
@@ -573,18 +589,17 @@ const EnrollmentPayment = () => {
                 <p style={{ fontSize:13, color:"#777", margin:0 }}>{statusCfg.desc}</p>
               </div>
 
-              {enrollment && (
+              {profile && (
                 <div>
                   {[
-                    { icon:<BookOpen size={15}/>,   label:"Level",       val: fees.label },
-                    { icon:<CreditCard size={15}/>, label:"Last Paid",   val: fmtDate(enrollment.paid_at) },
-                    { icon:<Calendar size={15}/>,   label:"Next Due",    val: fmtDate(enrollment.next_due_date) },
-                    { icon:<Clock size={15}/>,      label:"Grace Until", val: fmtDate(enrollment.grace_end_date) },
-                    ...(enrollment.admin_override ? [{ icon:<Unlock size={15}/>, label:"Admin Override", val:`Until ${fmtDate(enrollment.admin_override_until)}` }] : []),
+                    { icon:<BookOpen size={15}/>,   label:"Level",          val: levelDisplay },
+                    { icon:<CreditCard size={15}/>, label:"Payment Status", val: (profile.payment_status || "unpaid").charAt(0).toUpperCase() + (profile.payment_status || "unpaid").slice(1) },
+                    { icon:<Calendar size={15}/>,   label:"Active Until",   val: fmtDate(subEnd) },
+                    { icon:<Clock size={15}/>,      label:"Joined",         val: fmtDate(profile.created_at) },
                   ].map((r, i, arr) => (
                     <div key={i} style={{ display:"flex", alignItems:"center", gap:12, padding:"13px 4px", borderBottom:i<arr.length-1?"1px solid #f0f0f0":"none" }}>
                       <span style={{ color:"#075E54" }}>{r.icon}</span>
-                      <span style={{ fontSize:13, color:"#aaa", minWidth:108 }}>{r.label}</span>
+                      <span style={{ fontSize:13, color:"#aaa", minWidth:120 }}>{r.label}</span>
                       <span style={{ fontSize:13, fontWeight:600, color:"#222", marginLeft:"auto" }}>{r.val}</span>
                     </div>
                   ))}
@@ -615,25 +630,15 @@ const EnrollmentPayment = () => {
 
               {accStatus !== "active" && (
                 <button className="ep-pbtn" type="button" onClick={() => setTab("pay")}>
-                  <CreditCard size={18}/> {accStatus === "locked" ? "Renew Subscription" : "Make a Payment"}
+                  <CreditCard size={18}/> {accStatus==="locked" ? "Renew Subscription" : "Make a Payment"}
                 </button>
-              )}
-
-              {enrollment?.admin_override && (
-                <div style={{ background:"#E8F5E9", borderRadius:12, padding:"13px 16px", display:"flex", gap:10 }}>
-                  <Unlock size={16} color="#2E7D32" style={{ flexShrink:0, marginTop:1 }}/>
-                  <div>
-                    <p style={{ fontSize:13, fontWeight:700, color:"#2E7D32", margin:"0 0 2px" }}>Admin Override Active</p>
-                    <p style={{ fontSize:12, color:"#555", margin:0 }}>Extended access granted until {fmtDate(enrollment.admin_override_until)}.</p>
-                  </div>
-                </div>
               )}
             </div>
           )}
         </div>
 
         {/* ── ADMIN CONTROLS ── */}
-        {isAdmin && enrollment && (
+        {isAdmin && profile && (
           <div className="ep-card" style={{ marginTop:14 }}>
             <div style={{ padding:"14px 18px", borderBottom:"1px solid #f0f0f0", display:"flex", alignItems:"center", gap:8 }}>
               <Shield size={16} color="#075E54"/>
@@ -643,28 +648,19 @@ const EnrollmentPayment = () => {
               <p style={{ fontSize:12, color:"#aaa", margin:0 }}>Manually manage this student's access:</p>
               <div style={{ display:"flex", gap:10 }}>
                 <button type="button" onClick={async () => {
-                  const until = new Date(Date.now() + 7*86400000).toISOString();
-                  await supabase.from("enrollments" as any).update({ admin_override:true, admin_override_until:until, status:"active" }).eq("id", enrollment.id);
-                  await loadEnrollment(); toast({ title:"✅ 7-day access granted" });
+                  const end = new Date(); end.setMonth(end.getMonth() + 1);
+                  await supabase.from("profiles").update({ payment_status:"paid", subscription_end_date:end.toISOString().split("T")[0] } as any).eq("user_id", user!.id);
+                  await loadData(); toast({ title:"✅ 1 month access granted" });
                 }} style={{ flex:1, padding:"11px 8px", background:"#E8F5E9", color:"#2E7D32", border:"1.5px solid #A5D6A7", borderRadius:10, cursor:"pointer", fontWeight:700, fontSize:13 }}>
-                  <Unlock size={13} style={{ display:"inline", marginRight:5 }}/>Grant 7 Days
+                  <Unlock size={13} style={{ display:"inline", marginRight:5 }}/>Grant 1 Month
                 </button>
                 <button type="button" onClick={async () => {
-                  await supabase.from("enrollments" as any).update({ admin_override:false, status:"locked" }).eq("id", enrollment.id);
-                  await loadEnrollment(); toast({ title:"🔒 Access locked" });
+                  await supabase.from("profiles").update({ payment_status:"unpaid" } as any).eq("user_id", user!.id);
+                  await loadData(); toast({ title:"🔒 Access locked" });
                 }} style={{ flex:1, padding:"11px 8px", background:"#FFEBEE", color:"#C62828", border:"1.5px solid #EF9A9A", borderRadius:10, cursor:"pointer", fontWeight:700, fontSize:13 }}>
                   <Lock size={13} style={{ display:"inline", marginRight:5 }}/>Lock Access
                 </button>
               </div>
-              <button type="button" onClick={async () => {
-                const now = new Date().toISOString();
-                await supabase.from("enrollments" as any)
-                  .update({ status:"active", paid_at:now, next_due_date:addMonths(1) })
-                  .eq("id", enrollment.id);
-                await loadEnrollment(); toast({ title:"✅ Marked as paid (1 month)" });
-              }} style={{ padding:"11px", background:"#E3F2FD", color:"#1565C0", border:"1.5px solid #90CAF9", borderRadius:10, cursor:"pointer", fontWeight:700, fontSize:13 }}>
-                <CheckCircle2 size={13} style={{ display:"inline", marginRight:5 }}/>Mark as Paid (1 Month)
-              </button>
             </div>
           </div>
         )}
