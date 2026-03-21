@@ -462,36 +462,7 @@ const SubjectView = () => {
 
         {/* ═══ TAB 4: Materials ═══ */}
         <TabsContent value="materials" className="mt-4">
-          {materials.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-8">{t("No materials available", "لا توجد مواد")}</p>
-          ) : (
-            <div className="space-y-2">
-              {materials.map((mat: any) => {
-                const session = mat.session_id ? sessions.find((s: any) => s.id === mat.session_id) : null;
-                const typeIcons: Record<string, any> = { PDF: FileText, Video: Video, Audio: Mic, Link: LinkIcon, Text: StickyNote };
-                const Icon = typeIcons[mat.material_type] || FileText;
-                return (
-                  <Card key={mat.id}>
-                    <CardContent className="p-4 flex items-center gap-4">
-                      <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0"><Icon className="h-5 w-5 text-primary" /></div>
-                      <div className="flex-1 min-w-0">
-                        <h4 className="font-medium text-sm truncate">{mat.title}</h4>
-                        <p className="text-xs text-muted-foreground">
-                          {mat.material_type || "File"}
-                          {session ? ` • ${t("Session", "حصة")} #${(session as any).session_number}` : ""}
-                        </p>
-                      </div>
-                      {mat.file_url && (
-                        <a href={mat.file_url} target="_blank" rel="noopener noreferrer">
-                          <Button size="sm" variant="outline"><ExternalLink className="h-3 w-3 me-1" />{t("Open", "فتح")}</Button>
-                        </a>
-                      )}
-                    </CardContent>
-                  </Card>
-                );
-              })}
-            </div>
-          )}
+          <MaterialsViewer materials={materials} sessions={sessions} />
         </TabsContent>
 
         {/* ═══ TAB 5: Exams & Tests ═══ */}
