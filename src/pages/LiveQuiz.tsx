@@ -127,7 +127,7 @@ const LiveQuiz = () => {
   type View =
     | "hub" | "creating" | "joining"
     | "lobby-host" | "question-host" | "reveal-host" | "results-host"
-    | "lobby-player" | "question-player" | "reveal-player" | "results-player";
+    | "lobby-player" | "countdown-player" | "question-player" | "reveal-player" | "results-player";
 
   const [view,         setView]         = useState<View>("hub");
   const [room,         setRoom]         = useState<Room|null>(null);
@@ -139,6 +139,7 @@ const LiveQuiz = () => {
   const [answerCounts, setAnswerCounts] = useState<Record<string,number>>({});
   const [numAnswered,  setNumAnswered]  = useState(0);
   const [loading,      setLoading]      = useState(false);
+  const [countdown,    setCountdown]    = useState(3);
   const [joinCode,     setJoinCode]     = useState("");
   const [playerName,   setPlayerName]   = useState("");
   const [settings,     setSettings]     = useState({ topic:"All Topics", numQ:10, timeQ:20 });
@@ -154,7 +155,7 @@ const LiveQuiz = () => {
         const r = p.new as Room;
         setRoom(r);
         if (!isHost) {
-          if (r.status === "question") { loadCurrentQ(r.current_question_index); setView("question-player"); setSelectedAns(null); }
+          if (r.status === "question") { loadCurrentQ(r.current_question_index); setSelectedAns(null); setCountdown(3); setView("countdown-player"); }
           if (r.status === "reveal")   setView("reveal-player");
           if (r.status === "finished") { loadParticipants(); setView("results-player"); }
         }
@@ -180,6 +181,24 @@ const LiveQuiz = () => {
     }
     return () => clearInterval(timerRef.current);
   }, [view, currentQ]);
+
+
+  /* ── Countdown 3-2-1 for players ── */
+  useEffect(() => {
+    if (view !== "countdown-player") return;
+    setCountdown(3);
+    const interval = setInterval(() => {
+      setCountdown(c => {
+        if (c <= 1) {
+          clearInterval(interval);
+          setView("question-player");
+          return 0;
+        }
+        return c - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [view]);
 
   /* ── Data loaders ── */
   const loadParticipants = async () => {
@@ -659,6 +678,55 @@ const LiveQuiz = () => {
     </div>
   );
 
+  /* ══ COUNTDOWN PLAYER ════════════════════════════ */
+  if (view === "countdown-player") return (
+    <div style={{...pageStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"20px"}}>
+      <IslamicBg opacity={0.08}/>
+      <div style={{position:"relative",zIndex:1,textAlign:"center"}}>
+        <p style={{fontSize:14,color:GOLD,fontWeight:700,letterSpacing:2,textTransform:"uppercase",marginBottom:32}}>
+          Get Ready!
+        </p>
+        {/* Giant countdown number */}
+        <div style={{
+          width:180,height:180,borderRadius:"50%",
+          background:`conic-gradient(${GOLD} ${(countdown/3)*360}deg, rgba(255,255,255,0.06) 0deg)`,
+          display:"flex",alignItems:"center",justifyContent:"center",
+          margin:"0 auto 28px",
+          boxShadow:`0 0 60px rgba(201,146,42,${countdown===3?0.6:countdown===2?0.4:0.7})`,
+          animation:"pulse-ring 1s ease-in-out",
+        }}>
+          <div style={{width:150,height:150,borderRadius:"50%",background:"#021F16",display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <span style={{
+              fontSize:88,fontWeight:900,color:GOLD,
+              fontFamily:"'Playfair Display',serif",
+              lineHeight:1,
+              animation:"countdown-pop .3s ease",
+              display:"block",
+            }}>{countdown}</span>
+          </div>
+        </div>
+        <p style={{fontSize:16,color:"rgba(255,255,255,0.45)",fontWeight:600}}>
+          {countdown === 3 ? "📖 Read the question…" : countdown === 2 ? "🤔 Think carefully…" : "⚡ Almost time!"}
+        </p>
+        {/* Progress dots */}
+        <div style={{display:"flex",gap:10,justifyContent:"center",marginTop:24}}>
+          {[3,2,1].map(n => (
+            <div key={n} style={{
+              width:12,height:12,borderRadius:"50%",
+              background:countdown>=n?GOLD:"rgba(255,255,255,0.15)",
+              transition:"background .3s",
+              boxShadow:countdown>=n?`0 0 8px ${GOLD}`:"none",
+            }}/>
+          ))}
+        </div>
+      </div>
+      <style>{`
+        @keyframes countdown-pop{0%{transform:scale(1.4);opacity:0}100%{transform:scale(1);opacity:1}}
+        @keyframes pulse-ring{0%{transform:scale(0.9)}50%{transform:scale(1.02)}100%{transform:scale(1)}}
+      `}</style>
+    </div>
+  );
+
   /* ══ QUESTION PLAYER ══════════════════════════════ */
   if (view === "question-player" && currentQ) return (
     <div style={{...pageStyle, padding:"18px 16px"}}>
@@ -770,27 +838,61 @@ const LiveQuiz = () => {
   /* ══ REVEAL PLAYER ════════════════════════════════ */
   if (view === "reveal-player" && currentQ) {
     const correct = selectedAns === currentQ.correct_answer;
+    const myRank  = participants.findIndex(p => p.id === participant?.id) + 1;
     return (
-      <div style={{...pageStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"30px 20px"}}>
+      <div style={{...pageStyle, padding:"24px 18px", overflowY:"auto"}}>
         <IslamicBg opacity={0.06}/>
-        <div style={{position:"relative",zIndex:1,textAlign:"center",maxWidth:400}}>
-          <div style={{fontSize:72,marginBottom:12,animation:"bounce .6s ease"}}>{correct?"🌟":"😔"}</div>
-          <h2 style={{fontFamily:"'Playfair Display',serif",fontWeight:900,fontSize:32,color:correct?GOLD:"#EF4444",margin:"0 0 8px"}}>
+        <div style={{position:"relative",zIndex:1,maxWidth:420,margin:"0 auto",textAlign:"center"}}>
+
+          {/* Result */}
+          <div style={{fontSize:64,marginBottom:8,animation:"bounce .6s ease"}}>{correct?"🌟":"😔"}</div>
+          <h2 style={{fontFamily:"'Playfair Display',serif",fontWeight:900,fontSize:28,color:correct?GOLD:"#EF4444",margin:"0 0 6px"}}>
             {correct ? "Correct!" : "Wrong!"}
           </h2>
-          <p style={{fontSize:14,color:"rgba(255,255,255,0.6)",margin:"0 0 20px"}}>
-            {correct ? `+${500} points` : `Correct: ${currentQ.correct_answer}`}
+          <p style={{fontSize:14,color:"rgba(255,255,255,0.55)",margin:"0 0 16px"}}>
+            {correct ? "+500 points" : `Correct: ${currentQ.correct_answer}`}
           </p>
+
+          {/* Explanation */}
           {currentQ.explanation && (
-            <div style={{...glassCard, marginBottom:20, textAlign:"left"}}>
+            <div style={{...glassCard, marginBottom:14, textAlign:"left"}}>
               <p style={{fontSize:13,color:"rgba(255,255,255,0.6)",margin:0,fontStyle:"italic"}}>📖 {currentQ.explanation}</p>
             </div>
           )}
-          <div style={{background:`rgba(201,146,42,0.12)`,border:`1.5px solid rgba(201,146,42,0.35)`,borderRadius:16,padding:"16px 24px"}}>
-            <p style={{fontSize:11,color:"rgba(255,255,255,0.45)",margin:"0 0 2px",letterSpacing:1,textTransform:"uppercase"}}>Your Score</p>
-            <p style={{fontSize:40,fontWeight:900,color:GOLD,margin:0}}>{participant?.score||0}</p>
+
+          {/* Score + Rank row */}
+          <div style={{display:"flex",gap:10,marginBottom:16}}>
+            <div style={{flex:1,background:"rgba(201,146,42,0.12)",border:"1.5px solid rgba(201,146,42,0.35)",borderRadius:14,padding:"14px 10px"}}>
+              <p style={{fontSize:10,color:"rgba(255,255,255,0.45)",margin:"0 0 2px",letterSpacing:1,textTransform:"uppercase"}}>Your Score</p>
+              <p style={{fontSize:32,fontWeight:900,color:GOLD,margin:0}}>{participant?.score||0}</p>
+            </div>
+            {myRank > 0 && (
+              <div style={{flex:1,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:14,padding:"14px 10px"}}>
+                <p style={{fontSize:10,color:"rgba(255,255,255,0.45)",margin:"0 0 2px",letterSpacing:1,textTransform:"uppercase"}}>Your Rank</p>
+                <p style={{fontSize:32,fontWeight:900,color:"#fff",margin:0}}>#{myRank}</p>
+              </div>
+            )}
           </div>
-          <p style={{fontSize:13,color:"rgba(255,255,255,0.35)",marginTop:16}}>⏳ Waiting for next question…</p>
+
+          {/* Leaderboard */}
+          {participants.length > 0 && (
+            <div style={{...glassCard, textAlign:"left", marginBottom:16}}>
+              <h4 style={{fontWeight:800,fontSize:12,color:GOLD,margin:"0 0 12px",letterSpacing:1.5,textTransform:"uppercase",display:"flex",alignItems:"center",gap:8}}>
+                <Trophy size={13}/> Leaderboard
+              </h4>
+              {participants.slice(0,5).map((p,i) => (
+                <div key={p.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px",borderRadius:10,marginBottom:2,background:p.id===participant?.id?"rgba(201,146,42,0.12)":"transparent",border:p.id===participant?.id?"1px solid rgba(201,146,42,0.3)":"1px solid transparent"}}>
+                  <span style={{fontSize:16,minWidth:24}}>{["🥇","🥈","🥉","4️⃣","5️⃣"][i]}</span>
+                  <span style={{flex:1,fontSize:13,fontWeight:700,color:p.id===participant?.id?GOLD:"#fff"}}>
+                    {p.player_name}{p.id===participant?.id?" (You)":""}
+                  </span>
+                  <span style={{fontSize:14,fontWeight:900,color:GOLD}}>{p.score}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <p style={{fontSize:12,color:"rgba(255,255,255,0.3)"}}>⏳ Waiting for next question…</p>
         </div>
         <style>{`@keyframes bounce{0%,100%{transform:scale(1)}50%{transform:scale(1.2)}}`}</style>
       </div>
