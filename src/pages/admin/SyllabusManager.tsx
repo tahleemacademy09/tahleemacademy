@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -6,70 +6,131 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { toast } from "@/hooks/use-toast";
-import { Plus, Trash2, Edit, BookOpen, FileText, Download, Upload, ExternalLink, Music, Video, Type } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
+import { toast } from "@/hooks/use-toast";
+import {
+  Plus, Trash2, Edit, BookOpen, FileText, Upload, ExternalLink,
+  Music, Video, Type, ChevronDown, ChevronUp, GripVertical,
+  Save, X, Eye, Download, File, Image, FileSpreadsheet,
+  Calendar, Layers, FolderOpen, Check, AlertCircle, Loader2
+} from "lucide-react";
 
-const LEVELS = ["beginner", "intermediate", "advanced"];
-const MATERIAL_TYPES = ["PDF", "Video", "Audio", "Link", "Text"];
+const LEVELS = ["beginner", "intermediate", "advanced"] as const;
+const MATERIAL_TYPES = ["PDF", "Video", "Audio", "Link", "Text", "Image", "Document"] as const;
 
+type Level = typeof LEVELS[number];
+type MatType = typeof MATERIAL_TYPES[number];
+
+// ── Helpers ─────────────────────────────────────────────
+const levelColors: Record<Level, { bg: string; text: string; border: string; dot: string }> = {
+  beginner:     { bg: "#F0FDF4", text: "#166534", border: "#86EFAC", dot: "#22C55E" },
+  intermediate: { bg: "#EFF6FF", text: "#1E40AF", border: "#93C5FD", dot: "#3B82F6" },
+  advanced:     { bg: "#FDF4FF", text: "#6B21A8", border: "#D8B4FE", dot: "#A855F7" },
+};
+
+const weekColors = [
+  { bg: "#EFF6FF", border: "#BFDBFE", badge: "#1D4ED8", light: "#DBEAFE" },
+  { bg: "#F0FDF4", border: "#BBF7D0", badge: "#15803D", light: "#DCFCE7" },
+  { bg: "#FDF4FF", border: "#E9D5FF", badge: "#7C3AED", light: "#F3E8FF" },
+  { bg: "#FFF7ED", border: "#FED7AA", badge: "#C2410C", light: "#FFEDD5" },
+  { bg: "#FFF1F2", border: "#FECDD3", badge: "#BE123C", light: "#FFE4E6" },
+  { bg: "#F0FDFA", border: "#99F6E4", badge: "#0F766E", light: "#CCFBF1" },
+];
+
+const matTypeConfig: Record<MatType, { icon: React.ElementType; bg: string; text: string; border: string }> = {
+  PDF:      { icon: FileText,      bg: "#FEF2F2", text: "#DC2626", border: "#FECACA" },
+  Video:    { icon: Video,         bg: "#F0FDF4", text: "#16A34A", border: "#BBF7D0" },
+  Audio:    { icon: Music,         bg: "#FDF4FF", text: "#9333EA", border: "#E9D5FF" },
+  Link:     { icon: ExternalLink,  bg: "#F0FDFA", text: "#0D9488", border: "#99F6E4" },
+  Text:     { icon: Type,          bg: "#FFFBEB", text: "#B45309", border: "#FDE68A" },
+  Image:    { icon: Image,         bg: "#EFF6FF", text: "#2563EB", border: "#BFDBFE" },
+  Document: { icon: FileSpreadsheet, bg: "#EFF6FF", text: "#1D4ED8", border: "#BFDBFE" },
+};
+
+const formatSize = (bytes?: number) => {
+  if (!bytes) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1048576) return `${(bytes/1024).toFixed(0)} KB`;
+  return `${(bytes/1048576).toFixed(1)} MB`;
+};
+
+// ════════════════════════════════════════════════════════
 const SyllabusManager = () => {
   const { t } = useLanguage();
   const { user } = useAuth();
   const qc = useQueryClient();
 
   const [selectedSubject, setSelectedSubject] = useState<string | null>(null);
-  const [levelFilter, setLevelFilter] = useState("beginner");
+  const [levelFilter, setLevelFilter]         = useState<Level>("beginner");
+  const [activeTab, setActiveTab]             = useState<"syllabus"|"materials">("syllabus");
 
-  // Syllabus dialog
-  const [syllOpen, setSyllOpen] = useState(false);
-  const [editSyllId, setEditSyllId] = useState<string | null>(null);
-  const [syllForm, setSyllForm] = useState({ title: "", description: "", level: "beginner", week_number: 1 });
+  // Syllabus state
+  const [syllOpen,   setSyllOpen]   = useState(false);
+  const [editSyllId, setEditSyllId] = useState<string|null>(null);
+  const [syllForm,   setSyllForm]   = useState({ title: "", description: "", objectives: "", week_number: 1 });
+  const [expanded,   setExpanded]   = useState<Set<string>>(new Set());
 
-  // Materials dialog
-  const [matOpen, setMatOpen] = useState(false);
-  const [editMatId, setEditMatId] = useState<string | null>(null);
-  const [matForm, setMatForm] = useState({ title: "", material_type: "PDF", file_url: "", content: "", is_downloadable: true, level: "beginner", sort_order: 0 });
+  // Materials state
+  const [matOpen,    setMatOpen]    = useState(false);
+  const [editMatId,  setEditMatId]  = useState<string|null>(null);
+  const [uploadFile, setUploadFile] = useState<File|null>(null);
+  const [uploading,  setUploading]  = useState(false);
+  const [dragOver,   setDragOver]   = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [matForm, setMatForm] = useState({
+    title: "", material_type: "PDF" as MatType,
+    file_url: "", content: "", is_downloadable: true, sort_order: 0,
+  });
 
-  const { data: subjects } = useQuery({
+  // ── Queries ──────────────────────────────────────────
+  const { data: subjects = [] } = useQuery({
     queryKey: ["subjects"],
     queryFn: async () => {
       const { data, error } = await supabase.from("subjects").select("*").order("title");
       if (error) throw error;
-      return data;
+      return data as any[];
     },
   });
 
-  const { data: syllabusItems } = useQuery({
+  const { data: syllabusItems = [], isLoading: syllLoading } = useQuery({
     queryKey: ["admin-syllabus", selectedSubject, levelFilter],
     enabled: !!selectedSubject,
     queryFn: async () => {
-      const { data, error } = await supabase.from("subject_syllabus").select("*").eq("subject_id", selectedSubject!).eq("level", levelFilter).order("week_number");
+      const { data, error } = await supabase.from("subject_syllabus")
+        .select("*").eq("subject_id", selectedSubject!).order("week_number");
       if (error) throw error;
-      return data;
+      return data as any[];
     },
   });
 
-  const { data: materialItems } = useQuery({
-    queryKey: ["admin-materials", selectedSubject, levelFilter],
+  const { data: materialItems = [], isLoading: matLoading } = useQuery({
+    queryKey: ["admin-materials", selectedSubject],
     enabled: !!selectedSubject,
     queryFn: async () => {
-      const { data, error } = await supabase.from("subject_materials").select("*").eq("subject_id", selectedSubject!).eq("level", levelFilter).order("sort_order");
+      const { data, error } = await supabase.from("subject_materials")
+        .select("*").eq("subject_id", selectedSubject!).order("sort_order").order("created_at", { ascending: false });
       if (error) throw error;
-      return data;
+      return data as any[];
     },
   });
 
-  // Syllabus mutations
+  const selectedSubjectData = subjects.find((s: any) => s.id === selectedSubject);
+
+  // ── Syllabus mutations ───────────────────────────────
   const saveSyllabus = useMutation({
-    mutationFn: async (values: typeof syllForm) => {
-      const payload = { ...values, subject_id: selectedSubject! };
+    mutationFn: async () => {
+      const payload = {
+        subject_id: selectedSubject!,
+        week_number: syllForm.week_number,
+        title: syllForm.title,
+        description: syllForm.description || null,
+        level: levelFilter,
+        objectives: syllForm.objectives ? syllForm.objectives.split("\n").filter(Boolean) : null,
+      };
       if (editSyllId) {
         const { error } = await supabase.from("subject_syllabus").update(payload).eq("id", editSyllId);
         if (error) throw error;
@@ -80,10 +141,10 @@ const SyllabusManager = () => {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["admin-syllabus"] });
-      setSyllOpen(false);
-      setEditSyllId(null);
-      setSyllForm({ title: "", description: "", level: levelFilter, week_number: 1 });
-      toast({ title: t("Syllabus saved", "تم حفظ المنهج") });
+      qc.invalidateQueries({ queryKey: ["syllabus"] });
+      setSyllOpen(false); setEditSyllId(null);
+      setSyllForm({ title: "", description: "", objectives: "", week_number: syllabusItems.length + 2 });
+      toast({ title: t("Saved", "تم الحفظ") });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -95,214 +156,514 @@ const SyllabusManager = () => {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["admin-syllabus"] });
-      toast({ title: t("Deleted", "تم الحذف") });
+      qc.invalidateQueries({ queryKey: ["syllabus"] });
     },
   });
 
-  // Materials mutations
+  // ── Material mutations ───────────────────────────────
+  const handleFileUpload = async (file: File): Promise<string> => {
+    const ext  = file.name.split(".").pop();
+    const path = `materials/${selectedSubject}/${crypto.randomUUID()}.${ext}`;
+    const { error } = await supabase.storage.from("subject-files").upload(path, file);
+    if (error) throw error;
+    return path;
+  };
+
   const saveMaterial = useMutation({
-    mutationFn: async (values: typeof matForm) => {
-      const payload = { ...values, subject_id: selectedSubject!, uploaded_by: user!.id };
+    mutationFn: async () => {
+      if (!user) throw new Error("Not authenticated");
+      setUploading(true);
+      let fileUrl = matForm.file_url;
+      let fileType = "";
+      let fileSize = 0;
+
+      if (uploadFile) {
+        fileUrl  = await handleFileUpload(uploadFile);
+        fileType = uploadFile.type;
+        fileSize = uploadFile.size;
+      }
+
+      const payload: any = {
+        subject_id:      selectedSubject!,
+        title:           matForm.title,
+        material_type:   matForm.material_type,
+        file_url:        fileUrl || null,
+        content:         matForm.content || null,
+        is_downloadable: matForm.is_downloadable,
+        sort_order:      matForm.sort_order,
+        level:           levelFilter,
+        ...(fileType ? { file_type: fileType } : {}),
+        ...(fileSize ? { file_size: fileSize } : {}),
+      };
+
       if (editMatId) {
-        const { uploaded_by, ...updatePayload } = payload;
-        const { error } = await supabase.from("subject_materials").update(updatePayload).eq("id", editMatId);
+        const { error } = await supabase.from("subject_materials").update(payload).eq("id", editMatId);
         if (error) throw error;
       } else {
+        payload.uploaded_by = user.id;
         const { error } = await supabase.from("subject_materials").insert(payload);
         if (error) throw error;
       }
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["admin-materials"] });
-      setMatOpen(false);
-      setEditMatId(null);
-      setMatForm({ title: "", material_type: "PDF", file_url: "", content: "", is_downloadable: true, level: levelFilter, sort_order: 0 });
+      qc.invalidateQueries({ queryKey: ["subject-materials-all"] });
+      qc.invalidateQueries({ queryKey: ["materials"] });
+      setMatOpen(false); setEditMatId(null); setUploadFile(null); setUploading(false);
+      setMatForm({ title: "", material_type: "PDF", file_url: "", content: "", is_downloadable: true, sort_order: 0 });
       toast({ title: t("Material saved", "تم حفظ المادة") });
     },
-    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+    onError: (e: any) => { setUploading(false); toast({ title: "Error", description: e.message, variant: "destructive" }); },
   });
 
   const deleteMaterial = useMutation({
-    mutationFn: async (id: string) => {
-      const { error } = await supabase.from("subject_materials").delete().eq("id", id);
+    mutationFn: async (mat: any) => {
+      if (mat.file_url && !mat.file_url.startsWith("http")) {
+        await supabase.storage.from("subject-files").remove([mat.file_url]);
+      }
+      const { error } = await supabase.from("subject_materials").delete().eq("id", mat.id);
       if (error) throw error;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["admin-materials"] });
+      qc.invalidateQueries({ queryKey: ["subject-materials-all"] });
+      qc.invalidateQueries({ queryKey: ["materials"] });
       toast({ title: t("Deleted", "تم الحذف") });
     },
   });
 
-  const materialTypeIcon: Record<string, any> = { PDF: FileText, Video: Video, Audio: Music, Link: ExternalLink, Text: Type };
+  const openSignedUrl = async (path: string) => {
+    if (path.startsWith("http")) { window.open(path, "_blank"); return; }
+    const { data } = await supabase.storage.from("subject-files").createSignedUrl(path, 300);
+    if (data?.signedUrl) window.open(data.signedUrl, "_blank");
+  };
 
+  const lc = levelColors[levelFilter];
+
+  // ════════════════════════════════════════════════════
   return (
-    <div className="p-6 space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">{t("Syllabus & Materials", "المنهج والمواد")}</h1>
-        <p className="text-muted-foreground text-sm">{t("Manage syllabus and learning materials per subject and level", "إدارة المنهج والمواد التعليمية حسب المادة والمستوى")}</p>
-      </div>
-
-      {/* Subject selector + Level filter */}
-      <div className="flex flex-wrap gap-3">
-        <div className="w-64">
-          <Label>{t("Subject", "المادة")}</Label>
-          <Select value={selectedSubject || ""} onValueChange={setSelectedSubject}>
-            <SelectTrigger><SelectValue placeholder={t("Select subject", "اختر المادة")} /></SelectTrigger>
-            <SelectContent>
-              {(subjects || []).map((s: any) => <SelectItem key={s.id} value={s.id}>{s.title}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="w-48">
-          <Label>{t("Level", "المستوى")}</Label>
-          <Select value={levelFilter} onValueChange={setLevelFilter}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {LEVELS.map(l => <SelectItem key={l} value={l}>{l.charAt(0).toUpperCase() + l.slice(1)}</SelectItem>)}
-            </SelectContent>
-          </Select>
+    <div className="min-h-screen bg-gray-50/50">
+      {/* ── Page Header ─────────────────────────────── */}
+      <div className="bg-white border-b px-6 py-5">
+        <div className="flex items-center gap-3 mb-1">
+          <div className="w-9 h-9 rounded-xl bg-emerald-100 flex items-center justify-center">
+            <BookOpen className="h-5 w-5 text-emerald-700" />
+          </div>
+          <div>
+            <h1 className="text-xl font-bold text-gray-900">{t("Syllabus & Materials", "المنهج والمواد")}</h1>
+            <p className="text-sm text-gray-500">{t("Manage weekly content and learning files", "إدارة المحتوى الأسبوعي والملفات التعليمية")}</p>
+          </div>
         </div>
       </div>
 
-      {selectedSubject ? (
-        <Tabs defaultValue="syllabus">
-          <TabsList>
-            <TabsTrigger value="syllabus">{t("Syllabus", "المنهج")}</TabsTrigger>
-            <TabsTrigger value="materials">{t("Materials", "المواد")}</TabsTrigger>
-          </TabsList>
+      <div className="p-6 space-y-5 max-w-5xl mx-auto">
 
-          {/* SYLLABUS TAB */}
-          <TabsContent value="syllabus" className="space-y-4 mt-4">
-            <div className="flex justify-end">
-              <Dialog open={syllOpen} onOpenChange={(v) => { setSyllOpen(v); if (!v) { setEditSyllId(null); setSyllForm({ title: "", description: "", level: levelFilter, week_number: 1 }); } }}>
-                <DialogTrigger asChild>
-                  <Button size="sm"><Plus className="h-4 w-4 me-1" />{t("Add Syllabus Item", "إضافة عنصر منهج")}</Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader><DialogTitle>{editSyllId ? t("Edit", "تعديل") : t("New Syllabus Item", "عنصر منهج جديد")}</DialogTitle></DialogHeader>
-                  <div className="space-y-4">
-                    <div><Label>{t("Title", "العنوان")}</Label><Input value={syllForm.title} onChange={(e) => setSyllForm({ ...syllForm, title: e.target.value })} placeholder="e.g. Week 1: Arabic Alphabet" /></div>
-                    <div><Label>{t("Description", "الوصف")}</Label><Textarea value={syllForm.description} onChange={(e) => setSyllForm({ ...syllForm, description: e.target.value })} /></div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <Label>{t("Level", "المستوى")}</Label>
-                        <Select value={syllForm.level} onValueChange={(v) => setSyllForm({ ...syllForm, level: v })}>
-                          <SelectTrigger><SelectValue /></SelectTrigger>
-                          <SelectContent>{LEVELS.map(l => <SelectItem key={l} value={l}>{l.charAt(0).toUpperCase() + l.slice(1)}</SelectItem>)}</SelectContent>
-                        </Select>
+        {/* ── Subject + Level selectors ─────────────── */}
+        <div className="bg-white rounded-2xl border p-5 shadow-sm">
+          <p className="text-xs font-bold uppercase tracking-wide text-gray-400 mb-3">Select Subject & Level</p>
+          <div className="flex flex-wrap gap-4">
+            <div className="flex-1 min-w-[200px]">
+              <Label className="text-xs font-semibold text-gray-600 mb-1.5 block">
+                <FolderOpen className="h-3.5 w-3.5 inline mr-1" />Subject
+              </Label>
+              <Select value={selectedSubject || ""} onValueChange={v => setSelectedSubject(v)}>
+                <SelectTrigger className="rounded-xl h-11">
+                  <SelectValue placeholder="Choose a subject…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {subjects.map((s: any) => (
+                    <SelectItem key={s.id} value={s.id}>
+                      <span className="font-medium">{s.title}</span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="w-52">
+              <Label className="text-xs font-semibold text-gray-600 mb-1.5 block">
+                <Layers className="h-3.5 w-3.5 inline mr-1" />Level
+              </Label>
+              <Select value={levelFilter} onValueChange={v => setLevelFilter(v as Level)}>
+                <SelectTrigger className="rounded-xl h-11">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {LEVELS.map(l => (
+                    <SelectItem key={l} value={l}>
+                      <div className="flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full" style={{ background: levelColors[l].dot }} />
+                        {l.charAt(0).toUpperCase() + l.slice(1)}
                       </div>
-                      <div><Label>{t("Week Number", "رقم الأسبوع")}</Label><Input type="number" value={syllForm.week_number} onChange={(e) => setSyllForm({ ...syllForm, week_number: parseInt(e.target.value) || 1 })} /></div>
-                    </div>
-                    <Button className="w-full" onClick={() => saveSyllabus.mutate(syllForm)} disabled={!syllForm.title || saveSyllabus.isPending}>
-                      {t("Save", "حفظ")}
-                    </Button>
-                  </div>
-                </DialogContent>
-              </Dialog>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </div>
+
+        {!selectedSubject ? (
+          <div className="bg-white rounded-2xl border p-16 text-center shadow-sm">
+            <div className="w-16 h-16 rounded-2xl bg-gray-100 flex items-center justify-center mx-auto mb-4">
+              <BookOpen className="h-8 w-8 text-gray-300" />
+            </div>
+            <p className="font-semibold text-gray-500">Select a subject to get started</p>
+            <p className="text-sm text-gray-400 mt-1">Choose from the dropdown above</p>
+          </div>
+        ) : (
+          <>
+            {/* ── Subject info strip ─────────────────── */}
+            <div className="rounded-2xl border p-4 flex items-center gap-3" style={{ background: lc.bg, borderColor: lc.border }}>
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center font-bold text-sm text-white" style={{ background: lc.dot }}>
+                {selectedSubjectData?.title?.[0] || "S"}
+              </div>
+              <div className="flex-1">
+                <p className="font-bold text-sm" style={{ color: lc.text }}>{selectedSubjectData?.title}</p>
+                <p className="text-xs" style={{ color: lc.text, opacity: 0.7 }}>{selectedSubjectData?.title_ar}</p>
+              </div>
+              <span className="text-xs font-bold px-3 py-1 rounded-full text-white" style={{ background: lc.dot }}>
+                {levelFilter.charAt(0).toUpperCase() + levelFilter.slice(1)}
+              </span>
             </div>
 
-            {(syllabusItems || []).length === 0 ? (
-              <p className="text-center text-muted-foreground py-8">{t("No syllabus items", "لا توجد عناصر منهج")}</p>
-            ) : (
-              <div className="space-y-2">
-                {(syllabusItems || []).map((item: any) => (
-                  <Card key={item.id}>
-                    <CardContent className="p-4 flex items-center gap-4">
-                      <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center text-sm font-bold text-primary shrink-0">{item.week_number || "—"}</div>
-                      <div className="flex-1 min-w-0">
-                        <p className="font-medium text-sm">{item.title}</p>
-                        {item.description && <p className="text-xs text-muted-foreground truncate">{item.description}</p>}
-                      </div>
-                      <Button size="sm" variant="ghost" onClick={() => { setEditSyllId(item.id); setSyllForm({ title: item.title, description: item.description || "", level: item.level || levelFilter, week_number: item.week_number || 1 }); setSyllOpen(true); }}><Edit className="h-3 w-3" /></Button>
-                      <Button size="sm" variant="ghost" className="text-destructive" onClick={() => deleteSyllabus.mutate(item.id)}><Trash2 className="h-3 w-3" /></Button>
-                    </CardContent>
-                  </Card>
+            {/* ── Tab switcher ─────────────────────── */}
+            <div className="bg-white rounded-2xl border shadow-sm overflow-hidden">
+              <div className="flex border-b">
+                {(["syllabus", "materials"] as const).map(tab => (
+                  <button key={tab} onClick={() => setActiveTab(tab)}
+                    className="flex-1 flex items-center justify-center gap-2 py-4 text-sm font-semibold transition-all"
+                    style={{
+                      color: activeTab === tab ? "#064E3B" : "#6B7280",
+                      borderBottom: activeTab === tab ? "2px solid #064E3B" : "2px solid transparent",
+                      background: activeTab === tab ? "#F0FDF4" : "transparent",
+                    }}>
+                    {tab === "syllabus" ? <Calendar className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
+                    {tab === "syllabus" ? t("Syllabus", "المنهج") : t("Materials", "المواد")}
+                    <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: activeTab === tab ? "#D1FAE5" : "#F3F4F6", color: activeTab === tab ? "#065F46" : "#9CA3AF" }}>
+                      {tab === "syllabus" ? syllabusItems.length : materialItems.length}
+                    </span>
+                  </button>
                 ))}
               </div>
-            )}
-          </TabsContent>
 
-          {/* MATERIALS TAB */}
-          <TabsContent value="materials" className="space-y-4 mt-4">
-            <div className="flex justify-end">
-              <Dialog open={matOpen} onOpenChange={(v) => { setMatOpen(v); if (!v) { setEditMatId(null); setMatForm({ title: "", material_type: "PDF", file_url: "", content: "", is_downloadable: true, level: levelFilter, sort_order: 0 }); } }}>
-                <DialogTrigger asChild>
-                  <Button size="sm"><Plus className="h-4 w-4 me-1" />{t("Add Material", "إضافة مادة")}</Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader><DialogTitle>{editMatId ? t("Edit", "تعديل") : t("New Material", "مادة جديدة")}</DialogTitle></DialogHeader>
+              <div className="p-5">
+
+                {/* ══════ SYLLABUS TAB ══════ */}
+                {activeTab === "syllabus" && (
                   <div className="space-y-4">
-                    <div><Label>{t("Title", "العنوان")}</Label><Input value={matForm.title} onChange={(e) => setMatForm({ ...matForm, title: e.target.value })} /></div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <Label>{t("Type", "النوع")}</Label>
-                        <Select value={matForm.material_type} onValueChange={(v) => setMatForm({ ...matForm, material_type: v })}>
-                          <SelectTrigger><SelectValue /></SelectTrigger>
-                          <SelectContent>{MATERIAL_TYPES.map(mt => <SelectItem key={mt} value={mt}>{mt}</SelectItem>)}</SelectContent>
-                        </Select>
-                      </div>
-                      <div>
-                        <Label>{t("Level", "المستوى")}</Label>
-                        <Select value={matForm.level} onValueChange={(v) => setMatForm({ ...matForm, level: v })}>
-                          <SelectTrigger><SelectValue /></SelectTrigger>
-                          <SelectContent>{LEVELS.map(l => <SelectItem key={l} value={l}>{l.charAt(0).toUpperCase() + l.slice(1)}</SelectItem>)}</SelectContent>
-                        </Select>
-                      </div>
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm text-gray-500">{syllabusItems.length} weeks configured</p>
+                      <Button size="sm" className="gap-2 rounded-xl"
+                        onClick={() => { setEditSyllId(null); setSyllForm({ title: "", description: "", objectives: "", week_number: syllabusItems.length + 1 }); setSyllOpen(true); }}>
+                        <Plus className="h-4 w-4" /> Add Week
+                      </Button>
                     </div>
-                    <div><Label>{t("File URL", "رابط الملف")}</Label><Input value={matForm.file_url} onChange={(e) => setMatForm({ ...matForm, file_url: e.target.value })} placeholder="https://..." /></div>
-                    {matForm.material_type === "Text" && (
-                      <div><Label>{t("Content", "المحتوى")}</Label><Textarea value={matForm.content} onChange={(e) => setMatForm({ ...matForm, content: e.target.value })} /></div>
+
+                    {syllLoading ? (
+                      <div className="space-y-3">{[1,2,3].map(i=><div key={i} className="h-16 bg-gray-100 animate-pulse rounded-xl"/>)}</div>
+                    ) : syllabusItems.length === 0 ? (
+                      <div className="text-center py-12">
+                        <Calendar className="h-10 w-10 text-gray-200 mx-auto mb-3" />
+                        <p className="text-gray-400 font-medium">No weeks added yet</p>
+                        <p className="text-sm text-gray-300 mt-1">Click "Add Week" to build your syllabus</p>
+                      </div>
+                    ) : (
+                      <div className="relative">
+                        <div className="absolute left-[21px] top-8 bottom-8 w-0.5 bg-gradient-to-b from-emerald-200 to-transparent" />
+                        <div className="space-y-3">
+                          {syllabusItems.map((s, idx) => {
+                            const wc   = weekColors[idx % weekColors.length];
+                            const isEx = expanded.has(s.id);
+                            const hasDetail = s.description || (s.objectives && (s.objectives as string[]).length > 0);
+                            return (
+                              <div key={s.id} className="flex gap-3">
+                                <div className="relative z-10 shrink-0">
+                                  <div className="w-11 h-11 rounded-full flex items-center justify-center font-black text-xs text-white shadow-sm"
+                                    style={{ background: wc.badge }}>
+                                    W{s.week_number}
+                                  </div>
+                                </div>
+                                <div className="flex-1 rounded-2xl border overflow-hidden shadow-sm"
+                                  style={{ background: wc.bg, borderColor: wc.border }}>
+                                  <div className="flex items-center gap-2 p-3.5">
+                                    <div className="flex-1 min-w-0 cursor-pointer" onClick={() => hasDetail && setExpanded(prev => { const n=new Set(prev); n.has(s.id)?n.delete(s.id):n.add(s.id); return n; })}>
+                                      <p className="font-bold text-sm" style={{ color: wc.badge }}>{s.title}</p>
+                                      {!isEx && s.description && (
+                                        <p className="text-xs mt-0.5 truncate" style={{ color: wc.badge, opacity: 0.65 }}>{s.description}</p>
+                                      )}
+                                    </div>
+                                    <div className="flex items-center gap-1 shrink-0">
+                                      <Button size="icon" variant="ghost" className="h-7 w-7 rounded-lg"
+                                        onClick={() => { setEditSyllId(s.id); setSyllForm({ title: s.title, description: s.description||"", objectives: s.objectives?(s.objectives as string[]).join("\n"):"", week_number: s.week_number }); setSyllOpen(true); }}>
+                                        <Edit className="h-3.5 w-3.5" />
+                                      </Button>
+                                      <Button size="icon" variant="ghost" className="h-7 w-7 rounded-lg text-red-400"
+                                        onClick={() => deleteSyllabus.mutate(s.id)}>
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                      </Button>
+                                      {hasDetail && (
+                                        <button className="h-7 w-7 flex items-center justify-center" style={{ color: wc.badge }}
+                                          onClick={() => setExpanded(prev => { const n=new Set(prev); n.has(s.id)?n.delete(s.id):n.add(s.id); return n; })}>
+                                          {isEx ? <ChevronUp className="h-4 w-4"/> : <ChevronDown className="h-4 w-4"/>}
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+                                  {isEx && hasDetail && (
+                                    <div className="px-4 pb-4 pt-1 space-y-3 border-t" style={{ borderColor: wc.border }}>
+                                      {s.description && <p className="text-sm leading-relaxed" style={{ color: wc.badge, opacity: 0.85 }}>{s.description}</p>}
+                                      {s.objectives && (s.objectives as string[]).length > 0 && (
+                                        <div>
+                                          <p className="text-xs font-bold uppercase tracking-wide mb-2" style={{ color: wc.badge }}>Objectives</p>
+                                          <div className="space-y-1.5">
+                                            {(s.objectives as string[]).map((obj, i) => (
+                                              <div key={i} className="flex items-start gap-2">
+                                                <div className="w-5 h-5 rounded-full flex items-center justify-center shrink-0 text-white text-xs font-bold mt-0.5" style={{ background: wc.badge }}>{i+1}</div>
+                                                <span className="text-sm" style={{ color: wc.badge, opacity: 0.9 }}>{obj}</span>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
                     )}
-                    <div className="flex items-center gap-3">
-                      <div className="flex items-center gap-2">
-                        <Switch checked={matForm.is_downloadable} onCheckedChange={(v) => setMatForm({ ...matForm, is_downloadable: v })} />
-                        <Label>{t("Downloadable", "قابل للتحميل")}</Label>
-                      </div>
-                      <div className="flex-1"><Label>{t("Order", "الترتيب")}</Label><Input type="number" value={matForm.sort_order} onChange={(e) => setMatForm({ ...matForm, sort_order: parseInt(e.target.value) || 0 })} /></div>
-                    </div>
-                    <Button className="w-full" onClick={() => saveMaterial.mutate(matForm)} disabled={!matForm.title || saveMaterial.isPending}>
-                      {t("Save", "حفظ")}
-                    </Button>
                   </div>
-                </DialogContent>
-              </Dialog>
+                )}
+
+                {/* ══════ MATERIALS TAB ══════ */}
+                {activeTab === "materials" && (
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm text-gray-500">{materialItems.length} materials</p>
+                      <Button size="sm" className="gap-2 rounded-xl"
+                        onClick={() => { setEditMatId(null); setUploadFile(null); setMatForm({ title: "", material_type: "PDF", file_url: "", content: "", is_downloadable: true, sort_order: materialItems.length }); setMatOpen(true); }}>
+                        <Upload className="h-4 w-4" /> Upload Material
+                      </Button>
+                    </div>
+
+                    {matLoading ? (
+                      <div className="space-y-3">{[1,2,3].map(i=><div key={i} className="h-16 bg-gray-100 animate-pulse rounded-xl"/>)}</div>
+                    ) : materialItems.length === 0 ? (
+                      <div className="text-center py-12">
+                        <File className="h-10 w-10 text-gray-200 mx-auto mb-3" />
+                        <p className="text-gray-400 font-medium">No materials yet</p>
+                        <p className="text-sm text-gray-300 mt-1">Upload files or paste links for students</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {materialItems.map((mat: any) => {
+                          const type = (mat.material_type || "PDF") as MatType;
+                          const cfg  = matTypeConfig[type] || matTypeConfig["PDF"];
+                          const Icon = cfg.icon;
+                          return (
+                            <div key={mat.id} className="flex items-center gap-3 p-3.5 rounded-2xl border transition-all hover:shadow-sm"
+                              style={{ background: cfg.bg, borderColor: cfg.border }}>
+                              <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: `${cfg.text}18` }}>
+                                <Icon className="h-5 w-5" style={{ color: cfg.text }} />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="font-semibold text-sm truncate">{mat.title}</p>
+                                <div className="flex items-center gap-2 mt-0.5">
+                                  <span className="text-xs font-medium px-1.5 py-0.5 rounded" style={{ background: `${cfg.text}18`, color: cfg.text }}>{type}</span>
+                                  {mat.file_size && <span className="text-xs text-gray-400">{formatSize(mat.file_size)}</span>}
+                                  {mat.is_downloadable && <span className="text-xs text-gray-400">• Downloadable</span>}
+                                  <span className="text-xs text-gray-300">{new Date(mat.created_at).toLocaleDateString()}</span>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-1 shrink-0">
+                                {mat.file_url && (
+                                  <Button size="icon" variant="ghost" className="h-8 w-8 rounded-lg"
+                                    onClick={() => openSignedUrl(mat.file_url)}>
+                                    <Eye className="h-3.5 w-3.5 text-gray-500" />
+                                  </Button>
+                                )}
+                                <Button size="icon" variant="ghost" className="h-8 w-8 rounded-lg"
+                                  onClick={() => { setEditMatId(mat.id); setUploadFile(null); setMatForm({ title: mat.title, material_type: mat.material_type||"PDF", file_url: mat.file_url||"", content: mat.content||"", is_downloadable: mat.is_downloadable??true, sort_order: mat.sort_order||0 }); setMatOpen(true); }}>
+                                  <Edit className="h-3.5 w-3.5 text-gray-500" />
+                                </Button>
+                                <Button size="icon" variant="ghost" className="h-8 w-8 rounded-lg"
+                                  onClick={() => deleteMaterial.mutate(mat)}>
+                                  <Trash2 className="h-3.5 w-3.5 text-red-400" />
+                                </Button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* ══ SYLLABUS DIALOG ══════════════════════════════ */}
+      <Dialog open={syllOpen} onOpenChange={v => { setSyllOpen(v); if (!v) setEditSyllId(null); }}>
+        <DialogContent className="max-w-lg rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Calendar className="h-5 w-5 text-emerald-600" />
+              {editSyllId ? "Edit Week" : "Add Week"}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 mt-2">
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <Label className="text-xs font-semibold text-gray-600">Week #</Label>
+                <Input type="number" className="mt-1 rounded-xl" value={syllForm.week_number}
+                  onChange={e => setSyllForm({ ...syllForm, week_number: parseInt(e.target.value)||1 })} />
+              </div>
+              <div className="col-span-2">
+                <Label className="text-xs font-semibold text-gray-600">Title *</Label>
+                <Input className="mt-1 rounded-xl" value={syllForm.title}
+                  onChange={e => setSyllForm({ ...syllForm, title: e.target.value })}
+                  placeholder="e.g. Surah Al-Fatiha (1–7)" />
+              </div>
+            </div>
+            <div>
+              <Label className="text-xs font-semibold text-gray-600">Description</Label>
+              <Textarea className="mt-1 rounded-xl" rows={3} value={syllForm.description}
+                onChange={e => setSyllForm({ ...syllForm, description: e.target.value })}
+                placeholder="What will students learn this week?" />
+            </div>
+            <div>
+              <Label className="text-xs font-semibold text-gray-600">Learning Objectives <span className="font-normal text-gray-400">(one per line)</span></Label>
+              <Textarea className="mt-1 rounded-xl font-mono text-sm" rows={4} value={syllForm.objectives}
+                onChange={e => setSyllForm({ ...syllForm, objectives: e.target.value })}
+                placeholder={"Listen to the ayah 5 times\nRecite each ayah 10 times"} />
+            </div>
+            <Button className="w-full rounded-xl h-11 gap-2" onClick={() => saveSyllabus.mutate()}
+              disabled={!syllForm.title || saveSyllabus.isPending}>
+              {saveSyllabus.isPending ? <Loader2 className="h-4 w-4 animate-spin"/> : <Save className="h-4 w-4"/>}
+              {editSyllId ? "Save Changes" : "Add Week"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ══ MATERIAL DIALOG ══════════════════════════════ */}
+      <Dialog open={matOpen} onOpenChange={v => { setMatOpen(v); if (!v) { setEditMatId(null); setUploadFile(null); } }}>
+        <DialogContent className="max-w-lg rounded-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Upload className="h-5 w-5 text-emerald-600" />
+              {editMatId ? "Edit Material" : "Upload Material"}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 mt-2">
+            <div>
+              <Label className="text-xs font-semibold text-gray-600">Title *</Label>
+              <Input className="mt-1 rounded-xl" value={matForm.title}
+                onChange={e => setMatForm({ ...matForm, title: e.target.value })}
+                placeholder="e.g. Week 1 Worksheet" />
             </div>
 
-            {(materialItems || []).length === 0 ? (
-              <p className="text-center text-muted-foreground py-8">{t("No materials", "لا توجد مواد")}</p>
-            ) : (
-              <div className="space-y-2">
-                {(materialItems || []).map((mat: any) => {
-                  const Icon = materialTypeIcon[mat.material_type] || FileText;
+            <div>
+              <Label className="text-xs font-semibold text-gray-600 block mb-2">Type</Label>
+              <div className="grid grid-cols-4 gap-2">
+                {MATERIAL_TYPES.map(mt => {
+                  const cfg = matTypeConfig[mt];
+                  const Icon = cfg.icon;
+                  const sel  = matForm.material_type === mt;
                   return (
-                    <Card key={mat.id}>
-                      <CardContent className="p-4 flex items-center gap-4">
-                        <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-                          <Icon className="h-5 w-5 text-primary" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="font-medium text-sm">{mat.title}</p>
-                          <div className="flex gap-2 text-xs text-muted-foreground">
-                            <span>{mat.material_type}</span>
-                            {mat.is_downloadable && <Badge variant="outline" className="text-[10px]">📥</Badge>}
-                          </div>
-                        </div>
-                        <Button size="sm" variant="ghost" onClick={() => { setEditMatId(mat.id); setMatForm({ title: mat.title, material_type: mat.material_type || "PDF", file_url: mat.file_url || "", content: mat.content || "", is_downloadable: mat.is_downloadable ?? true, level: mat.level || levelFilter, sort_order: mat.sort_order || 0 }); setMatOpen(true); }}><Edit className="h-3 w-3" /></Button>
-                        <Button size="sm" variant="ghost" className="text-destructive" onClick={() => deleteMaterial.mutate(mat.id)}><Trash2 className="h-3 w-3" /></Button>
-                      </CardContent>
-                    </Card>
+                    <button key={mt} onClick={() => setMatForm({ ...matForm, material_type: mt })}
+                      className="flex flex-col items-center gap-1.5 p-2.5 rounded-xl border-2 transition-all text-xs font-semibold"
+                      style={{ borderColor: sel ? cfg.text : "#E5E7EB", background: sel ? cfg.bg : "#fff", color: sel ? cfg.text : "#6B7280" }}>
+                      <Icon className="h-4 w-4" />
+                      {mt}
+                    </button>
                   );
                 })}
               </div>
+            </div>
+
+            {/* File upload drop zone */}
+            {matForm.material_type !== "Link" && matForm.material_type !== "Text" && (
+              <div>
+                <Label className="text-xs font-semibold text-gray-600 block mb-2">File Upload</Label>
+                <div
+                  className="relative border-2 border-dashed rounded-2xl p-6 text-center transition-all cursor-pointer"
+                  style={{ borderColor: dragOver ? "#064E3B" : "#D1D5DB", background: dragOver ? "#F0FDF4" : "#FAFAFA" }}
+                  onClick={() => fileRef.current?.click()}
+                  onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+                  onDragLeave={() => setDragOver(false)}
+                  onDrop={e => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files[0]; if (f) { setUploadFile(f); if (!matForm.title) setMatForm(p => ({ ...p, title: f.name.replace(/\.[^/.]+$/, "") })); } }}>
+                  <input ref={fileRef} type="file" className="hidden" accept="*/*"
+                    onChange={e => { const f = e.target.files?.[0]; if (f) { setUploadFile(f); if (!matForm.title) setMatForm(p => ({ ...p, title: f.name.replace(/\.[^/.]+$/, "") })); } }} />
+                  {uploadFile ? (
+                    <div className="flex items-center justify-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center">
+                        <Check className="h-5 w-5 text-emerald-600" />
+                      </div>
+                      <div className="text-left">
+                        <p className="font-semibold text-sm text-gray-700 truncate max-w-[200px]">{uploadFile.name}</p>
+                        <p className="text-xs text-gray-400">{formatSize(uploadFile.size)}</p>
+                      </div>
+                      <Button size="icon" variant="ghost" className="h-8 w-8 shrink-0"
+                        onClick={e => { e.stopPropagation(); setUploadFile(null); }}>
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ) : (
+                    <>
+                      <Upload className="h-8 w-8 text-gray-300 mx-auto mb-2" />
+                      <p className="text-sm font-medium text-gray-500">Drop a file here or click to browse</p>
+                      <p className="text-xs text-gray-400 mt-1">PDF, Word, Excel, Images, Audio, Video — all formats supported</p>
+                    </>
+                  )}
+                </div>
+                <p className="text-xs text-gray-400 mt-2 text-center">— or paste a URL below —</p>
+                <Input className="mt-2 rounded-xl" value={matForm.file_url}
+                  onChange={e => setMatForm({ ...matForm, file_url: e.target.value })}
+                  placeholder="https://..." />
+              </div>
             )}
-          </TabsContent>
-        </Tabs>
-      ) : (
-        <div className="text-center py-16 text-muted-foreground">
-          <BookOpen className="h-12 w-12 mx-auto mb-4 opacity-30" />
-          <p>{t("Select a subject to manage its syllabus and materials", "اختر مادة لإدارة المنهج والمواد")}</p>
-        </div>
-      )}
+
+            {matForm.material_type === "Link" && (
+              <div>
+                <Label className="text-xs font-semibold text-gray-600">URL *</Label>
+                <Input className="mt-1 rounded-xl" value={matForm.file_url}
+                  onChange={e => setMatForm({ ...matForm, file_url: e.target.value })}
+                  placeholder="https://..." />
+              </div>
+            )}
+
+            {matForm.material_type === "Text" && (
+              <div>
+                <Label className="text-xs font-semibold text-gray-600">Content</Label>
+                <Textarea className="mt-1 rounded-xl" rows={5} value={matForm.content}
+                  onChange={e => setMatForm({ ...matForm, content: e.target.value })} />
+              </div>
+            )}
+
+            <div className="flex items-center justify-between p-3.5 rounded-xl bg-gray-50 border">
+              <div>
+                <p className="text-sm font-semibold text-gray-700">Allow Download</p>
+                <p className="text-xs text-gray-400">Students can download this file</p>
+              </div>
+              <Switch checked={matForm.is_downloadable}
+                onCheckedChange={v => setMatForm({ ...matForm, is_downloadable: v })} />
+            </div>
+
+            <Button className="w-full rounded-xl h-11 gap-2" onClick={() => saveMaterial.mutate()}
+              disabled={!matForm.title || saveMaterial.isPending || uploading}>
+              {(saveMaterial.isPending || uploading)
+                ? <><Loader2 className="h-4 w-4 animate-spin"/> Uploading…</>
+                : <><Upload className="h-4 w-4"/> {editMatId ? "Save Changes" : "Upload Material"}</>
+              }
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
