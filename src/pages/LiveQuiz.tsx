@@ -223,15 +223,117 @@ const LiveQuiz = () => {
     setNumAnswered(data.length);
   };
 
+  /* ── Load exams for question bank ── */
+  const loadBankExams = async () => {
+    const { data } = await supabase.from("exams").select("id,title").eq("is_published", true);
+    setBankExams(data||[]);
+  };
+
+  const loadBankQs = async (examId: string) => {
+    setSelBankExam(examId);
+    const { data } = await supabase.from("exam_questions").select("*")
+      .eq("exam_id", examId).eq("question_type","mcq");
+    const qs = (data||[]).filter((q:any)=>q.options?.length>=2).map((q:any):Omit<Question,"id"> => ({
+      question: q.question_text,
+      options: (q.options as any[]).map((o:any)=>typeof o==="string"?o:o.text||o.value||""),
+      correct_answer: q.correct_answer,
+      explanation: q.explanation||"",
+      time_limit: settings.timeQ,
+      topic: "Question Bank",
+    }));
+    setBankQs(qs);
+  };
+
+  /* ── AI generate questions ── */
+  const generateAiQs = async () => {
+    if (!aiTopic.trim()) return;
+    setAiLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("ai-generate", {
+        body: { prompt: `Create ${settings.numQ} multiple-choice quiz questions about "${aiTopic}" for Islamic education students.
+Return ONLY valid JSON array, no markdown:
+[{"question":"...","options":["A","B","C","D"],"correct_answer":"exact option text","explanation":"brief explanation","topic":"${aiTopic}"}]
+Make questions educational and clearly worded.` },
+      });
+      if (error) throw new Error(error.message);
+      const text = data?.text || "";
+      const clean = text.replace(/\`\`\`json\s*/gi,"").replace(/\`\`\`\s*/g,"").trim();
+      const parsed = JSON.parse(clean) as any[];
+      const qs: Omit<Question,"id">[] = parsed.map(q => ({
+        question: q.question, options: q.options,
+        correct_answer: q.correct_answer, explanation: q.explanation||"",
+        time_limit: settings.timeQ, topic: aiTopic,
+      }));
+      setCustomQs(qs);
+      setView("q-preview");
+    } catch(e:any) {
+      alert("AI Error: " + e.message);
+    } finally { setAiLoading(false); }
+  };
+
+  /* ── Parse uploaded CSV/JSON ── */
+  const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadError("");
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const text = ev.target?.result as string;
+        let parsed: any[] = [];
+        if (file.name.endsWith(".json")) {
+          parsed = JSON.parse(text);
+        } else {
+          // CSV: question,optA,optB,optC,optD,correct_answer,explanation
+          const lines = text.split("
+").filter(l=>l.trim());
+          const header = lines[0].toLowerCase();
+          const start = header.includes("question") ? 1 : 0;
+          parsed = lines.slice(start).map(line => {
+            const cols = line.split(",").map(c=>c.trim().replace(/^"|"$/g,""));
+            return { question:cols[0], options:[cols[1],cols[2],cols[3],cols[4]], correct_answer:cols[5], explanation:cols[6]||"" };
+          });
+        }
+        const qs: Omit<Question,"id">[] = parsed.map(q => ({
+          question: q.question, options: q.options||[q.optA,q.optB,q.optC,q.optD],
+          correct_answer: q.correct_answer||q.answer, explanation: q.explanation||"",
+          time_limit: settings.timeQ, topic: q.topic||"Uploaded",
+        })).filter(q=>q.question&&q.options?.length>=2&&q.correct_answer);
+        if (!qs.length) throw new Error("No valid questions found");
+        setCustomQs(qs);
+        setView("q-preview");
+      } catch(err:any) {
+        setUploadError("Parse error: " + err.message);
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  /* ── Add manual question ── */
+  const addManualQ = () => {
+    const { question, optA, optB, optC, optD, correct, explanation } = manualQ;
+    if (!question.trim()||!optA.trim()||!optB.trim()) return;
+    const opts = [optA,optB,optC,optD].filter(o=>o.trim());
+    const correctText = correct==="A"?optA:correct==="B"?optB:correct==="C"?optC:optD;
+    setCustomQs(prev=>[...prev,{ question, options:opts, correct_answer:correctText, explanation, time_limit:settings.timeQ, topic:"Manual" }]);
+    setManualQ({ question:"", optA:"", optB:"", optC:"", optD:"", correct:"A", explanation:"" });
+  };
+
   /* ── Actions ── */
   const createRoom = async () => {
     if (!user) return;
     setLoading(true);
     try {
       const code = genCode();
-      let pool = settings.topic === "All Topics" ? POOL : POOL.filter(q => q.topic === settings.topic);
-      if (pool.length < settings.numQ) pool = POOL;
-      const selected = [...pool].sort(() => Math.random()-0.5).slice(0, settings.numQ);
+      let selected: Omit<Question,"id">[] = [];
+
+      if (customQs.length > 0) {
+        selected = customQs.slice(0, settings.numQ).map(q=>({...q, time_limit:settings.timeQ}));
+      } else {
+        let pool = settings.topic === "All Topics" ? POOL : POOL.filter(q => q.topic === settings.topic);
+        if (pool.length < settings.numQ) pool = POOL;
+        selected = [...pool].sort(() => Math.random()-0.5).slice(0, settings.numQ);
+      }
 
       const { data: rd, error } = await supabase.from("live_quiz_rooms" as any).insert({
         code, host_id: user.id, status: "waiting",
@@ -453,70 +555,362 @@ const LiveQuiz = () => {
     </div>
   );
 
-  /* ══ CREATING ═════════════════════════════════════ */
+  /* ══ CREATING — Step 1: Settings ═════════════════ */
   if (view === "creating") return (
     <div style={{...pageStyle, padding:"28px 18px", overflowY:"auto"}}>
       <IslamicBg opacity={0.08}/>
       <div style={{position:"relative",zIndex:1,maxWidth:440,margin:"0 auto"}}>
         <button onClick={()=>setView("hub")} style={backBtn}>← Back</button>
-        <h2 style={{fontFamily:"'Playfair Display',serif",fontWeight:900,fontSize:28,color:"#fff",margin:"0 0 4px"}}>Create Quiz Room</h2>
-        <p style={{fontSize:13,color:"rgba(255,255,255,0.45)",marginBottom:22}}>Configure your live session</p>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4}}>
+          <div style={{width:28,height:28,borderRadius:"50%",background:GOLD,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:900,color:"#fff",flexShrink:0}}>1</div>
+          <h2 style={{fontFamily:"'Playfair Display',serif",fontWeight:900,fontSize:26,color:"#fff",margin:0}}>Quiz Settings</h2>
+        </div>
+        <p style={{fontSize:13,color:"rgba(255,255,255,0.4)",marginBottom:22,paddingLeft:38}}>Configure your live session</p>
 
-        <div style={{...glassCard, display:"flex", flexDirection:"column", gap:22}}>
-
-          {/* Topic */}
+        <div style={{...glassCard, display:"flex", flexDirection:"column", gap:20}}>
           <div>
             <label style={{fontSize:11,fontWeight:700,color:GOLD,display:"block",marginBottom:10,letterSpacing:1.5,textTransform:"uppercase"}}>Topic</label>
             <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
               {TOPICS.map(t => (
                 <button key={t} onClick={()=>setSettings(p=>({...p,topic:t}))}
-                  style={{padding:"8px 14px",borderRadius:20,border:`1.5px solid ${settings.topic===t?GOLD:"rgba(255,255,255,0.15)"}`,background:settings.topic===t?`rgba(201,146,42,0.18)`:"transparent",color:settings.topic===t?GOLD:"rgba(255,255,255,0.55)",cursor:"pointer",fontSize:12,fontWeight:700,transition:"all .15s"}}>
+                  style={{padding:"8px 14px",borderRadius:20,border:`1.5px solid ${settings.topic===t?GOLD:"rgba(255,255,255,0.15)"}`,background:settings.topic===t?"rgba(201,146,42,0.18)":"transparent",color:settings.topic===t?GOLD:"rgba(255,255,255,0.55)",cursor:"pointer",fontSize:12,fontWeight:700,transition:"all .15s"}}>
                   {t}
                 </button>
               ))}
             </div>
           </div>
-
-          {/* Num questions */}
           <div>
             <label style={{fontSize:11,fontWeight:700,color:GOLD,display:"block",marginBottom:10,letterSpacing:1.5,textTransform:"uppercase"}}>Number of Questions</label>
             <div style={{display:"flex",gap:8}}>
               {[5,8,10,15].map(n=>(
                 <button key={n} onClick={()=>setSettings(p=>({...p,numQ:n}))}
-                  style={{flex:1,padding:"11px",borderRadius:10,border:`1.5px solid ${settings.numQ===n?GOLD:"rgba(255,255,255,0.15)"}`,background:settings.numQ===n?`rgba(201,146,42,0.18)`:"transparent",color:settings.numQ===n?GOLD:"rgba(255,255,255,0.55)",cursor:"pointer",fontWeight:800,fontSize:15,transition:"all .15s"}}>
+                  style={{flex:1,padding:"11px",borderRadius:10,border:`1.5px solid ${settings.numQ===n?GOLD:"rgba(255,255,255,0.15)"}`,background:settings.numQ===n?"rgba(201,146,42,0.18)":"transparent",color:settings.numQ===n?GOLD:"rgba(255,255,255,0.55)",cursor:"pointer",fontWeight:800,fontSize:15,transition:"all .15s"}}>
                   {n}
                 </button>
               ))}
             </div>
           </div>
-
-          {/* Time per Q */}
           <div>
             <label style={{fontSize:11,fontWeight:700,color:GOLD,display:"block",marginBottom:10,letterSpacing:1.5,textTransform:"uppercase"}}>Time Per Question</label>
             <div style={{display:"flex",gap:8}}>
               {[10,15,20,30].map(n=>(
                 <button key={n} onClick={()=>setSettings(p=>({...p,timeQ:n}))}
-                  style={{flex:1,padding:"11px",borderRadius:10,border:`1.5px solid ${settings.timeQ===n?GOLD:"rgba(255,255,255,0.15)"}`,background:settings.timeQ===n?`rgba(201,146,42,0.18)`:"transparent",color:settings.timeQ===n?GOLD:"rgba(255,255,255,0.55)",cursor:"pointer",fontWeight:800,fontSize:15,transition:"all .15s"}}>
+                  style={{flex:1,padding:"11px",borderRadius:10,border:`1.5px solid ${settings.timeQ===n?GOLD:"rgba(255,255,255,0.15)"}`,background:settings.timeQ===n?"rgba(201,146,42,0.18)":"transparent",color:settings.timeQ===n?GOLD:"rgba(255,255,255,0.55)",cursor:"pointer",fontWeight:800,fontSize:15,transition:"all .15s"}}>
                   {n}s
                 </button>
               ))}
             </div>
           </div>
-
-          {/* Summary */}
-          <div style={{background:`rgba(201,146,42,0.1)`,borderRadius:12,padding:"12px 16px",border:`1px solid rgba(201,146,42,0.2)`}}>
-            <p style={{fontSize:12,color:"rgba(255,255,255,0.6)",margin:0}}>
-              📋 <strong style={{color:"#fff"}}>{settings.numQ} questions</strong> · <strong style={{color:"#fff"}}>{settings.topic}</strong> · <strong style={{color:"#fff"}}>{settings.timeQ}s</strong> each
-            </p>
-          </div>
-
-          <button onClick={createRoom} disabled={loading} style={{...goldBtn,marginTop:4}}>
-            {loading ? "Creating…" : <><Zap size={18}/> Create Room</>}
+          <button onClick={()=>{ setCustomQs([]); setView("q-source"); }} style={goldBtn}>
+            Next: Choose Questions →
           </button>
         </div>
       </div>
     </div>
   );
+
+  /* ══ Q-SOURCE — Step 2: Pick question method ══════ */
+  if (view === "q-source") return (
+    <div style={{...pageStyle, padding:"28px 18px", overflowY:"auto"}}>
+      <IslamicBg opacity={0.08}/>
+      <div style={{position:"relative",zIndex:1,maxWidth:440,margin:"0 auto"}}>
+        <button onClick={()=>setView("creating")} style={backBtn}>← Back</button>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4}}>
+          <div style={{width:28,height:28,borderRadius:"50%",background:GOLD,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:900,color:"#fff",flexShrink:0}}>2</div>
+          <h2 style={{fontFamily:"'Playfair Display',serif",fontWeight:900,fontSize:26,color:"#fff",margin:0}}>Question Source</h2>
+        </div>
+        <p style={{fontSize:13,color:"rgba(255,255,255,0.4)",marginBottom:22,paddingLeft:38}}>How do you want to add questions?</p>
+
+        <div style={{display:"flex",flexDirection:"column",gap:10}}>
+          {[
+            { id:"builtin", icon:"🕌", label:"Built-in Islamic Pool", desc:"15+ ready-made Islamic questions", action:()=>{ setCustomQs([]); setView("q-preview"); } },
+            { id:"ai",      icon:"🤖", label:"AI Generated",          desc:"Generate by topic using Claude AI", action:()=>setView("q-ai") },
+            { id:"bank",    icon:"🏦", label:"Question Bank",         desc:"Import from your existing exam questions", action:()=>{ loadBankExams(); setView("q-bank"); } },
+            { id:"upload",  icon:"📁", label:"Upload File",           desc:"CSV or JSON file of questions", action:()=>setView("q-upload") },
+            { id:"manual",  icon:"✍️", label:"Manual Entry",          desc:"Type questions one by one", action:()=>{ setCustomQs([]); setView("q-manual"); } },
+          ].map(s=>(
+            <button key={s.id} onClick={s.action}
+              style={{...glassCard, display:"flex", alignItems:"center", gap:14, cursor:"pointer", border:`1.5px solid ${qSource===s.id?GOLD:"rgba(201,146,42,0.2)"}`, background:qSource===s.id?"rgba(201,146,42,0.1)":"rgba(255,255,255,0.03)", textAlign:"left", padding:"16px 18px"}}
+              onMouseEnter={e=>{(e.currentTarget as any).style.borderColor=GOLD;}}
+              onMouseLeave={e=>{(e.currentTarget as any).style.borderColor=qSource===s.id?GOLD:"rgba(201,146,42,0.2)";}}>
+              <span style={{fontSize:28,flexShrink:0}}>{s.icon}</span>
+              <div style={{flex:1}}>
+                <p style={{fontSize:14,fontWeight:800,color:"#fff",margin:"0 0 2px"}}>{s.label}</p>
+                <p style={{fontSize:12,color:"rgba(255,255,255,0.45)",margin:0}}>{s.desc}</p>
+              </div>
+              <ArrowRight size={16} color="rgba(255,255,255,0.3)"/>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+
+  /* ══ Q-AI — AI question generator ════════════════ */
+  if (view === "q-ai") return (
+    <div style={{...pageStyle, padding:"28px 18px", overflowY:"auto"}}>
+      <IslamicBg opacity={0.08}/>
+      <div style={{position:"relative",zIndex:1,maxWidth:440,margin:"0 auto"}}>
+        <button onClick={()=>setView("q-source")} style={backBtn}>← Back</button>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4}}>
+          <span style={{fontSize:24}}>🤖</span>
+          <h2 style={{fontFamily:"'Playfair Display',serif",fontWeight:900,fontSize:26,color:"#fff",margin:0}}>AI Generator</h2>
+        </div>
+        <p style={{fontSize:13,color:"rgba(255,255,255,0.4)",marginBottom:22}}>Claude AI will create {settings.numQ} questions instantly</p>
+        <div style={{...glassCard, display:"flex", flexDirection:"column", gap:16}}>
+          <div>
+            <label style={{fontSize:11,fontWeight:700,color:GOLD,display:"block",marginBottom:8,letterSpacing:1.5,textTransform:"uppercase"}}>Topic or concept</label>
+            <input value={aiTopic} onChange={e=>setAiTopic(e.target.value)}
+              placeholder="e.g. Noon Sakin rules, Arabic vocabulary, Pillars of Islam…"
+              style={{width:"100%",padding:"13px 16px",borderRadius:12,border:`1.5px solid rgba(201,146,42,0.3)`,background:"rgba(255,255,255,0.06)",color:"#fff",fontSize:14,outline:"none",boxSizing:"border-box",fontFamily:"inherit"}}/>
+          </div>
+          <div style={{background:"rgba(201,146,42,0.08)",borderRadius:12,padding:"12px 14px",border:"1px solid rgba(201,146,42,0.2)"}}>
+            <p style={{fontSize:12,color:GOLD,fontWeight:700,margin:"0 0 6px"}}>💡 Tips for better questions:</p>
+            <p style={{fontSize:11,color:"rgba(255,255,255,0.5)",margin:0,lineHeight:1.8}}>
+              • Be specific: "Noon Sakin rules" not "Tajweed"<br/>
+              • Add level: "beginner Arabic vocabulary"<br/>
+              • Reference topic: "Surah Al-Baqarah themes"
+            </p>
+          </div>
+          <button onClick={generateAiQs} disabled={!aiTopic.trim()||aiLoading}
+            style={{...goldBtn, opacity:aiTopic.trim()?1:0.4, cursor:aiTopic.trim()?"pointer":"not-allowed"}}>
+            {aiLoading ? <><span style={{animation:"spin .8s linear infinite",display:"inline-block"}}>⏳</span> Generating…</> : <><Sparkles size={16}/> Generate {settings.numQ} Questions</>}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  /* ══ Q-BANK — Import from Question Bank ══════════ */
+  if (view === "q-bank") return (
+    <div style={{...pageStyle, padding:"28px 18px", overflowY:"auto"}}>
+      <IslamicBg opacity={0.08}/>
+      <div style={{position:"relative",zIndex:1,maxWidth:480,margin:"0 auto"}}>
+        <button onClick={()=>setView("q-source")} style={backBtn}>← Back</button>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4}}>
+          <span style={{fontSize:24}}>🏦</span>
+          <h2 style={{fontFamily:"'Playfair Display',serif",fontWeight:900,fontSize:26,color:"#fff",margin:0}}>Question Bank</h2>
+        </div>
+        <p style={{fontSize:13,color:"rgba(255,255,255,0.4)",marginBottom:20}}>Import MCQ questions from your published exams</p>
+
+        {/* Exam picker */}
+        <div style={{...glassCard, marginBottom:14}}>
+          <label style={{fontSize:11,fontWeight:700,color:GOLD,display:"block",marginBottom:10,letterSpacing:1.5,textTransform:"uppercase"}}>Select Exam</label>
+          {bankExams.length === 0 ? (
+            <p style={{fontSize:13,color:"rgba(255,255,255,0.35)",margin:0,textAlign:"center",padding:"12px 0"}}>No published exams found</p>
+          ) : (
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              {bankExams.map(e=>(
+                <button key={e.id} onClick={()=>loadBankQs(e.id)}
+                  style={{padding:"11px 14px",borderRadius:10,border:`1.5px solid ${selBankExam===e.id?GOLD:"rgba(255,255,255,0.1)"}`,background:selBankExam===e.id?"rgba(201,146,42,0.12)":"rgba(255,255,255,0.03)",color:selBankExam===e.id?GOLD:"rgba(255,255,255,0.7)",cursor:"pointer",fontWeight:700,fontSize:13,textAlign:"left",transition:"all .15s"}}>
+                  📋 {e.title}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Questions from selected exam */}
+        {bankQs.length > 0 && (
+          <div style={{...glassCard, marginBottom:14}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+              <p style={{fontSize:12,color:GOLD,fontWeight:700,margin:0,letterSpacing:1,textTransform:"uppercase"}}>{bankQs.length} MCQ questions found</p>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:200,overflowY:"auto"}}>
+              {bankQs.slice(0,8).map((q,i)=>(
+                <div key={i} style={{padding:"8px 12px",borderRadius:8,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.06)"}}>
+                  <p style={{fontSize:12,color:"rgba(255,255,255,0.7)",margin:0,lineHeight:1.4}}>{i+1}. {q.question.slice(0,80)}{q.question.length>80?"…":""}</p>
+                </div>
+              ))}
+              {bankQs.length > 8 && <p style={{fontSize:11,color:"rgba(255,255,255,0.3)",textAlign:"center",margin:"4px 0 0"}}>+{bankQs.length-8} more questions</p>}
+            </div>
+            <button onClick={()=>{ setCustomQs(bankQs.slice(0,settings.numQ)); setView("q-preview"); }}
+              style={{...goldBtn, marginTop:12}}>
+              Use These {Math.min(bankQs.length,settings.numQ)} Questions →
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  /* ══ Q-UPLOAD — Upload CSV/JSON ══════════════════ */
+  if (view === "q-upload") return (
+    <div style={{...pageStyle, padding:"28px 18px", overflowY:"auto"}}>
+      <IslamicBg opacity={0.08}/>
+      <div style={{position:"relative",zIndex:1,maxWidth:440,margin:"0 auto"}}>
+        <button onClick={()=>setView("q-source")} style={backBtn}>← Back</button>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4}}>
+          <span style={{fontSize:24}}>📁</span>
+          <h2 style={{fontFamily:"'Playfair Display',serif",fontWeight:900,fontSize:26,color:"#fff",margin:0}}>Upload Questions</h2>
+        </div>
+        <p style={{fontSize:13,color:"rgba(255,255,255,0.4)",marginBottom:22}}>Upload a CSV or JSON file</p>
+
+        <div style={{...glassCard, display:"flex", flexDirection:"column", gap:16}}>
+          {/* Drop zone */}
+          <label style={{display:"block",cursor:"pointer"}}>
+            <div style={{border:`2px dashed rgba(201,146,42,0.4)`,borderRadius:16,padding:"32px 20px",textAlign:"center",background:"rgba(201,146,42,0.04)",transition:"all .2s"}}>
+              <div style={{fontSize:40,marginBottom:10}}>📤</div>
+              <p style={{fontSize:14,fontWeight:700,color:"#fff",margin:"0 0 4px"}}>Tap to select file</p>
+              <p style={{fontSize:12,color:"rgba(255,255,255,0.4)",margin:0}}>Supports .csv and .json files</p>
+            </div>
+            <input type="file" accept=".csv,.json" onChange={handleUpload} style={{display:"none"}}/>
+          </label>
+
+          {uploadError && (
+            <div style={{background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.3)",borderRadius:10,padding:"10px 14px"}}>
+              <p style={{fontSize:12,color:"#EF4444",margin:0}}>⚠️ {uploadError}</p>
+            </div>
+          )}
+
+          {/* CSV template */}
+          <div style={{background:"rgba(255,255,255,0.03)",borderRadius:12,padding:"14px",border:"1px solid rgba(255,255,255,0.08)"}}>
+            <p style={{fontSize:11,color:GOLD,fontWeight:700,margin:"0 0 8px",letterSpacing:1.5,textTransform:"uppercase"}}>CSV Format</p>
+            <code style={{fontSize:10,color:"rgba(255,255,255,0.5)",lineHeight:1.8,display:"block",whiteSpace:"pre-wrap"}}>{"question,optA,optB,optC,optD,correct_answer,explanation
+How many Surahs?,110,112,114,116,114,The Quran has 114 Surahs"}</code>
+          </div>
+
+          {/* JSON template */}
+          <div style={{background:"rgba(255,255,255,0.03)",borderRadius:12,padding:"14px",border:"1px solid rgba(255,255,255,0.08)"}}>
+            <p style={{fontSize:11,color:GOLD,fontWeight:700,margin:"0 0 8px",letterSpacing:1.5,textTransform:"uppercase"}}>JSON Format</p>
+            <code style={{fontSize:10,color:"rgba(255,255,255,0.5)",lineHeight:1.8,display:"block",whiteSpace:"pre-wrap"}}>{'[{"question":"...","options":["A","B","C","D"],"correct_answer":"A","explanation":"..."}]'}</code>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  /* ══ Q-MANUAL — Manual question entry ════════════ */
+  if (view === "q-manual") return (
+    <div style={{...pageStyle, padding:"28px 18px", overflowY:"auto"}}>
+      <IslamicBg opacity={0.08}/>
+      <div style={{position:"relative",zIndex:1,maxWidth:480,margin:"0 auto"}}>
+        <button onClick={()=>setView("q-source")} style={backBtn}>← Back</button>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <span style={{fontSize:24}}>✍️</span>
+            <h2 style={{fontFamily:"'Playfair Display',serif",fontWeight:900,fontSize:26,color:"#fff",margin:0}}>Manual Entry</h2>
+          </div>
+          <span style={{fontSize:13,fontWeight:800,color:GOLD,background:"rgba(201,146,42,0.15)",padding:"4px 12px",borderRadius:20}}>{customQs.length} added</span>
+        </div>
+        <p style={{fontSize:13,color:"rgba(255,255,255,0.4)",marginBottom:20}}>Add questions one by one</p>
+
+        {/* Added questions list */}
+        {customQs.length > 0 && (
+          <div style={{...glassCard, marginBottom:14}}>
+            <p style={{fontSize:11,color:GOLD,fontWeight:700,margin:"0 0 10px",letterSpacing:1.5,textTransform:"uppercase"}}>Added Questions</p>
+            <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:160,overflowY:"auto"}}>
+              {customQs.map((q,i)=>(
+                <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",borderRadius:8,background:"rgba(255,255,255,0.04)"}}>
+                  <span style={{fontSize:11,color:GOLD,fontWeight:700,minWidth:20}}>#{i+1}</span>
+                  <p style={{fontSize:12,color:"rgba(255,255,255,0.7)",margin:0,flex:1,lineHeight:1.3}}>{q.question.slice(0,60)}{q.question.length>60?"…":""}</p>
+                  <button onClick={()=>setCustomQs(prev=>prev.filter((_,j)=>j!==i))}
+                    style={{background:"none",border:"none",cursor:"pointer",color:"rgba(239,68,68,0.7)",fontSize:16,padding:"2px"}}>✕</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Add question form */}
+        <div style={{...glassCard, display:"flex", flexDirection:"column", gap:12}}>
+          <p style={{fontSize:11,color:GOLD,fontWeight:700,margin:0,letterSpacing:1.5,textTransform:"uppercase"}}>New Question</p>
+          <input value={manualQ.question} onChange={e=>setManualQ(p=>({...p,question:e.target.value}))}
+            placeholder="Question text *"
+            style={{width:"100%",padding:"11px 14px",borderRadius:10,border:"1.5px solid rgba(201,146,42,0.3)",background:"rgba(255,255,255,0.05)",color:"#fff",fontSize:13,outline:"none",boxSizing:"border-box",fontFamily:"inherit"}}/>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            {["A","B","C","D"].map((lbl,idx)=>{
+              const key = (["optA","optB","optC","optD"] as const)[idx];
+              return (
+                <input key={lbl} value={manualQ[key]} onChange={e=>setManualQ(p=>({...p,[key]:e.target.value}))}
+                  placeholder={`Option ${lbl}${idx<2?" *":""}`}
+                  style={{padding:"9px 12px",borderRadius:9,border:`1.5px solid ${manualQ.correct===lbl?"rgba(34,197,94,0.6)":"rgba(255,255,255,0.1)"}`,background:"rgba(255,255,255,0.04)",color:"#fff",fontSize:12,outline:"none",fontFamily:"inherit"}}/>
+              );
+            })}
+          </div>
+          <div>
+            <label style={{fontSize:11,color:"rgba(255,255,255,0.5)",display:"block",marginBottom:6}}>Correct Answer</label>
+            <div style={{display:"flex",gap:8}}>
+              {["A","B","C","D"].map(lbl=>(
+                <button key={lbl} onClick={()=>setManualQ(p=>({...p,correct:lbl}))}
+                  style={{flex:1,padding:"9px",borderRadius:9,border:`1.5px solid ${manualQ.correct===lbl?"#22C55E":"rgba(255,255,255,0.12)"}`,background:manualQ.correct===lbl?"rgba(34,197,94,0.15)":"transparent",color:manualQ.correct===lbl?"#22C55E":"rgba(255,255,255,0.55)",cursor:"pointer",fontWeight:800,fontSize:14}}>
+                  {lbl}
+                </button>
+              ))}
+            </div>
+          </div>
+          <input value={manualQ.explanation} onChange={e=>setManualQ(p=>({...p,explanation:e.target.value}))}
+            placeholder="Explanation (optional)"
+            style={{width:"100%",padding:"11px 14px",borderRadius:10,border:"1.5px solid rgba(255,255,255,0.1)",background:"rgba(255,255,255,0.04)",color:"#fff",fontSize:13,outline:"none",boxSizing:"border-box",fontFamily:"inherit"}}/>
+          <button onClick={addManualQ} disabled={!manualQ.question.trim()||!manualQ.optA.trim()||!manualQ.optB.trim()}
+            style={{...outlineBtn, opacity:manualQ.question.trim()&&manualQ.optA.trim()&&manualQ.optB.trim()?1:0.4}}>
+            <PlusCircle size={16}/> Add Question
+          </button>
+        </div>
+
+        {customQs.length > 0 && (
+          <button onClick={()=>setView("q-preview")} style={{...goldBtn, marginTop:14}}>
+            Preview {customQs.length} Questions →
+          </button>
+        )}
+      </div>
+    </div>
+  );
+
+  /* ══ Q-PREVIEW — Review before creating room ══════ */
+  if (view === "q-preview") {
+    const previewList = customQs.length > 0 ? customQs : 
+      (settings.topic==="All Topics"?POOL:POOL.filter(q=>q.topic===settings.topic))
+        .sort(()=>Math.random()-0.5).slice(0,settings.numQ);
+    return (
+      <div style={{...pageStyle, padding:"24px 18px", overflowY:"auto"}}>
+        <IslamicBg opacity={0.08}/>
+        <div style={{position:"relative",zIndex:1,maxWidth:480,margin:"0 auto"}}>
+          <button onClick={()=>setView("q-source")} style={backBtn}>← Back</button>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>
+            <div>
+              <h2 style={{fontFamily:"'Playfair Display',serif",fontWeight:900,fontSize:24,color:"#fff",margin:"0 0 2px"}}>Preview Questions</h2>
+              <p style={{fontSize:13,color:"rgba(255,255,255,0.4)",margin:0}}>{previewList.length} questions · {settings.timeQ}s each</p>
+            </div>
+            <div style={{textAlign:"center",background:"rgba(201,146,42,0.12)",border:"1px solid rgba(201,146,42,0.3)",borderRadius:12,padding:"8px 14px"}}>
+              <p style={{fontSize:24,fontWeight:900,color:GOLD,margin:0}}>{previewList.length}</p>
+              <p style={{fontSize:10,color:"rgba(255,255,255,0.4)",margin:0}}>Qs</p>
+            </div>
+          </div>
+
+          <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:20}}>
+            {previewList.slice(0,5).map((q,i)=>(
+              <div key={i} style={{...glassCard, padding:"14px 16px"}}>
+                <div style={{display:"flex",alignItems:"flex-start",gap:10}}>
+                  <span style={{fontSize:12,fontWeight:800,color:GOLD,minWidth:22,marginTop:1}}>#{i+1}</span>
+                  <div style={{flex:1}}>
+                    <p style={{fontSize:13,fontWeight:700,color:"#fff",margin:"0 0 6px",lineHeight:1.4}}>{q.question}</p>
+                    <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
+                      {q.options.map((opt,oi)=>(
+                        <span key={oi} style={{fontSize:11,padding:"2px 8px",borderRadius:20,background:opt===q.correct_answer?"rgba(34,197,94,0.2)":"rgba(255,255,255,0.06)",color:opt===q.correct_answer?"#22C55E":"rgba(255,255,255,0.5)",border:opt===q.correct_answer?"1px solid rgba(34,197,94,0.4)":"1px solid transparent",fontWeight:opt===q.correct_answer?700:400}}>
+                          {opt===q.correct_answer?"✓ ":""}{opt.slice(0,24)}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+            {previewList.length > 5 && (
+              <div style={{textAlign:"center",padding:"10px",background:"rgba(255,255,255,0.03)",borderRadius:10,border:"1px solid rgba(255,255,255,0.06)"}}>
+                <p style={{fontSize:12,color:"rgba(255,255,255,0.35)",margin:0}}>+{previewList.length-5} more questions in the quiz</p>
+              </div>
+            )}
+          </div>
+
+          <button onClick={()=>{ if(customQs.length===0) setCustomQs(previewList); createRoom(); }}
+            disabled={loading} style={{...goldBtn, fontSize:17, padding:18}}>
+            {loading ? "Creating Room…" : <><Play size={20}/> Launch Quiz Room!</>}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   /* ══ LOBBY HOST ═══════════════════════════════════ */
   if (view === "lobby-host" && room) return (
