@@ -29,9 +29,14 @@ import {
 const DEEPGRAM_KEY = import.meta.env.VITE_DEEPGRAM_API_KEY || "";
 const GROQ_KEY     = import.meta.env.VITE_GROQ_API_KEY     || "";
 
-const COUNT_SHOWN      = 10;   // repetitions per verse while VISIBLE
-const COUNT_HIDDEN     = 10;   // repetitions per verse while HIDDEN
-const CUMULATIVE_REPS  = 5;    // repetitions of cumulative review block
+const MIN_REPS = 7;   // minimum allowed repetitions
+
+// Default repetition counts — overridable by user in settings
+const DEFAULT_SHOWN     = 10;
+const DEFAULT_HIDDEN    = 10;
+const DEFAULT_CUMUL     = 5;
+const SILENCE_MS        = 2000; // ms of silence = end of one recitation attempt
+const MATCH_THRESHOLD   = 55;   // % of words needed to count as a complete recitation
 
 /* ─── Types ───────────────────────────────────────────────── */
 interface Props { userId: string | null; }
@@ -127,6 +132,12 @@ export default function RecitationMic({ userId }: Props) {
   const [memRecTime,   setMemRecTime]   = useState(0);
   const [memCompCount, setMemCompCount] = useState(0);  // reps completed this phase
   const [memLiveText,  setMemLiveText]  = useState(""); // live transcript display
+  // User-configurable repetition counts
+  const [repsShown,  setRepsShown]  = useState(DEFAULT_SHOWN);
+  const [repsHidden, setRepsHidden] = useState(DEFAULT_HIDDEN);
+  const [repsCumul,  setRepsCumul]  = useState(DEFAULT_CUMUL);
+  const [showRepSettings, setShowRepSettings] = useState(false);
+
   const memMrRef     = useRef<MediaRecorder|null>(null);
   const memInitRef   = useRef<Blob|null>(null);
   const memCountRef  = useRef(0);         // sync count for async callbacks
@@ -134,8 +145,9 @@ export default function RecitationMic({ userId }: Props) {
   const memTotalRef  = useRef(COUNT_SHOWN);// sync total for async callbacks
   const memPhaseRef  = useRef<MemPhase>("shown");
   const memVerseRef  = useRef(0);
-  const memWindowRef = useRef<string[]>([]); // rolling token window
-  const memTimer     = useRef<ReturnType<typeof setInterval>|null>(null);
+  const memWindowRef  = useRef<string[]>([]); // buffer for current recitation attempt
+  const memSilRef     = useRef<ReturnType<typeof setTimeout>|null>(null); // silence detection timer
+  const memTimer      = useRef<ReturnType<typeof setInterval>|null>(null);
 
   /* Load surah list */
   useEffect(()=>{
@@ -160,6 +172,12 @@ export default function RecitationMic({ userId }: Props) {
   const selAyahs = ayahs.filter(a=>a.numberInSurah>=fromVerse&&a.numberInSurah<=toVerse);
   const selAyahsRef = useRef<typeof selAyahs>([]);
   selAyahsRef.current = selAyahs; // always current, safe in async callbacks
+  const repsShownRef = useRef(DEFAULT_SHOWN);
+  repsShownRef.current = repsShown;
+  const repsHiddenRef = useRef(DEFAULT_HIDDEN);
+  repsHiddenRef.current = repsHidden;
+  const repsCumulRef  = useRef(DEFAULT_CUMUL);
+  repsCumulRef.current = repsCumul;
   const currentAyah = selAyahs[memVerseIdx];
   const cumulativeAyahs = selAyahs.slice(0, memVerseIdx+1);
   const filteredSurahs  = surahs.filter(s=>s.englishName.toLowerCase().includes(search.toLowerCase())||s.name.includes(search));
@@ -175,48 +193,60 @@ export default function RecitationMic({ userId }: Props) {
   },[playing]);
 
   /* ═══════════════════════════════════════════════════════════
-     MEMORISE — continuous auto-count recording
+     MEMORISE — silence-detection auto-counting
      
-     Single tap starts. User recites the verse repeatedly.
-     Each 1.5s chunk is transcribed. Rolling token window checked
-     against reference. When ≥60% of ref words are matched in
-     the window → count one rep, reset window, increment counter.
-     When count reaches target → auto-advance phase.
+     Algorithm:
+     1. Every 1.5s chunk is transcribed and appended to memWindowRef
+     2. A 2s silence timer resets on every new transcription
+     3. When 2s of silence detected → score the accumulated buffer
+     4. If score ≥ MATCH_THRESHOLD → count as 1 complete recitation
+     5. Clear buffer, wait for next recitation
+     6. When count hits target → auto-advance phase
+     
+     This means the AI waits for you to finish saying the ayah
+     naturally (pause = done) rather than cutting off mid-word.
   ═══════════════════════════════════════════════════════════ */
-  const memCheckWindow = useCallback((newTx: string) => {
-    if (!newTx.trim()) return;
 
-    // Append new tokens to window
-    const newToks = newTx.replace(/[^؀-ۿ\s]/g," ").trim().split(/\s+/).filter(Boolean);
-    memWindowRef.current = [...memWindowRef.current, ...newToks].slice(-40); // keep last 40 tokens
+  /* Called after SILENCE_MS of no new tokens — score the attempt */
+  const memScoreAttempt = useCallback(() => {
+    const buf = memWindowRef.current.join(" ").trim();
+    const ref = memPhraseRef.current;
+    if (!buf || !ref) return;
 
-    const ref      = memPhraseRef.current;
-    if (!ref) return; // phrase not set yet
-    const refWords = ref.replace(/﴿[^﴾]*﴾/g,"").trim().split(/\s+/).filter(Boolean);
-    if (refWords.length === 0) return;
+    const result = scoreVsRef(buf, ref);
+    memWindowRef.current = []; // always clear buffer for next attempt
+    setMemLiveText("");
 
-    // Score window vs reference
-    const result = scoreVsRef(memWindowRef.current.join(" "), ref);
-
-    // Update live display
-    setMemLiveText(memWindowRef.current.slice(-8).join(" "));
-
-    // If ≥60% matched → count one completed recitation
-    if (result.score >= 60) {
+    if (result.score >= MATCH_THRESHOLD) {
+      // ✅ Counted as one complete recitation
       const newCount = memCountRef.current + 1;
       memCountRef.current = newCount;
-      memWindowRef.current = []; // reset window for next recitation
       setMemCompCount(newCount);
-      setMemLiveText(""); // clear display
 
-      const total = memTotalRef.current;
-
-      if (newCount >= total) {
-        // Phase complete — stop recording and advance
+      if (newCount >= memTotalRef.current) {
+        // Phase complete — stop mic, advance phase
         memMrRef.current?.stop();
       }
     }
+    // If score too low: buffer cleared, user just tries again — no penalty shown
   }, []);
+
+  /* Called for every Deepgram/Groq chunk result */
+  const memOnTranscript = useCallback((tx: string) => {
+    if (!tx.trim() || !memPhraseRef.current) return;
+
+    // Append new Arabic tokens to buffer
+    const toks = tx.replace(/[^؀-ۿ\s]/g," ").trim().split(/\s+/).filter(Boolean);
+    if (toks.length === 0) return;
+    memWindowRef.current = [...memWindowRef.current, ...toks];
+    setMemLiveText(memWindowRef.current.slice(-6).join(" "));
+
+    // Reset silence timer — 2s after last token = attempt complete
+    if (memSilRef.current) clearTimeout(memSilRef.current);
+    memSilRef.current = setTimeout(() => {
+      memScoreAttempt();
+    }, SILENCE_MS);
+  }, [memScoreAttempt]);
 
   const memChunkSend = useCallback(async (blob: Blob) => {
     if (!DEEPGRAM_KEY && !GROQ_KEY) return;
@@ -228,7 +258,7 @@ export default function RecitationMic({ userId }: Props) {
         );
         if (r.ok) {
           const tx = (await r.json())?.results?.channels?.[0]?.alternatives?.[0]?.transcript || "";
-          if (tx) memCheckWindow(tx);
+          if (tx) memOnTranscript(tx);
         }
       } else if (GROQ_KEY) {
         const ext = blob.type.includes("mp4")?"mp4":blob.type.includes("ogg")?"ogg":"webm";
@@ -241,38 +271,39 @@ export default function RecitationMic({ userId }: Props) {
           {method:"POST", headers:{Authorization:`Bearer ${GROQ_KEY}`}, body:fd});
         if (r.ok) {
           const tx = (await r.json())?.text || "";
-          if (tx) memCheckWindow(tx);
+          if (tx) memOnTranscript(tx);
         }
       }
     } catch(_) {}
-  }, [memCheckWindow]);
+  }, [memOnTranscript]);
 
   /* Advance to next phase/verse — called when recording stops after phase completes */
   const memAdvancePhase = useCallback((phase: MemPhase, verseIdx: number) => {
     memCountRef.current  = 0;
     memWindowRef.current = [];
+    if (memSilRef.current) { clearTimeout(memSilRef.current); memSilRef.current = null; }
     setMemCompCount(0);
     setMemLiveText("");
     setMemRecState("idle");
 
     if (phase === "shown") {
-      memPhaseRef.current="hidden"; memTotalRef.current=COUNT_HIDDEN;
+      memPhaseRef.current="hidden"; memTotalRef.current=repsHiddenRef.current;
       memPhraseRef.current = selAyahsRef.current[verseIdx]?.text||"";
-      setMemPhase("hidden"); setMemTotalReps(COUNT_HIDDEN);
+      setMemPhase("hidden"); setMemTotalReps(repsHiddenRef.current);
     } else if (phase === "hidden") {
-      memPhaseRef.current="cumulative"; memTotalRef.current=CUMULATIVE_REPS;
+      memPhaseRef.current="cumulative"; memTotalRef.current=repsCumulRef.current;
       memPhraseRef.current = selAyahsRef.current.slice(0,verseIdx+1).map(a=>a.text).join(" ");
-      setMemPhase("cumulative"); setMemTotalReps(CUMULATIVE_REPS);
+      setMemPhase("cumulative"); setMemTotalReps(repsCumulRef.current);
     } else {
       const nextIdx = verseIdx + 1;
       if (nextIdx >= selAyahsRef.current.length) {
         setAppMode("home");
         setTimeout(()=>alert("\u{1F389} Memorisation complete! Masha'Allah!"), 100);
       } else {
-        memPhaseRef.current="shown"; memTotalRef.current=COUNT_SHOWN; memVerseRef.current=nextIdx;
+        memPhaseRef.current="shown"; memTotalRef.current=repsShownRef.current; memVerseRef.current=nextIdx;
         memPhraseRef.current = selAyahsRef.current[nextIdx]?.text||"";
         setMemVerseIdx(nextIdx);
-        setMemPhase("shown"); setMemTotalReps(COUNT_SHOWN);
+        setMemPhase("shown"); setMemTotalReps(repsShownRef.current);
       }
     }
   }, []);
@@ -283,9 +314,13 @@ export default function RecitationMic({ userId }: Props) {
       memCountRef.current  = 0;
       memWindowRef.current = [];
       memInitRef.current   = null;
-      memTotalRef.current  = memTotalReps;
       memPhaseRef.current  = memPhase;
       memVerseRef.current  = memVerseIdx;
+      // Use user-configured reps
+      const phaseTotal = memPhase==="shown" ? repsShown : memPhase==="hidden" ? repsHidden : repsCumul;
+      memTotalRef.current = phaseTotal;
+      setMemTotalReps(phaseTotal);
+      if (memSilRef.current) clearTimeout(memSilRef.current);
       // Set phrase BEFORE async gap so callbacks have correct ref
       if(memPhase==="cumulative"){
         memPhraseRef.current = selAyahsRef.current.slice(0,memVerseIdx+1).map(a=>a.text).join(" ");
@@ -499,6 +534,45 @@ Rules:
           <ChevronRight size={18} color={MUTED} style={{marginLeft:"auto",flexShrink:0,marginTop:4}}/>
         </button>
 
+        {/* Repetition settings */}
+        <div style={{background:"#fff",border:`1px solid ${BORDER}`,borderRadius:14,padding:14}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:showRepSettings?12:0}}>
+            <p style={{fontSize:12,fontWeight:700,color:G,margin:0}}>⚙️ Repetition Settings</p>
+            <button onClick={()=>setShowRepSettings(v=>!v)} style={{background:"none",border:"none",fontSize:11,color:MUTED,cursor:"pointer",padding:"2px 6px",borderRadius:6,background:"#f3f4f6"}}>
+              {showRepSettings?"▲ Hide":"▼ Edit"}
+            </button>
+          </div>
+          {showRepSettings&&(
+            <div style={{display:"flex",flexDirection:"column",gap:10,paddingTop:4}}>
+              {[
+                {label:"Shown × (verse visible)",val:repsShown,set:setRepsShown},
+                {label:"Hidden × (from memory)",val:repsHidden,set:setRepsHidden},
+                {label:"Cumulative review ×",val:repsCumul,set:setRepsCumul},
+              ].map(({label,val,set},i)=>(
+                <div key={i}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                    <span style={{fontSize:11,color:TEXT}}>{label}</span>
+                    <span style={{fontSize:13,fontWeight:800,color:G,minWidth:24,textAlign:"center"}}>{val}×</span>
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <button onClick={()=>set(v=>Math.max(MIN_REPS,v-1))} style={{width:28,height:28,borderRadius:8,border:`1px solid ${BORDER}`,background:"#f9fafb",fontSize:16,fontWeight:700,color:G,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>−</button>
+                    <input type="range" min={MIN_REPS} max={30} value={val}
+                      onChange={e=>set(Math.max(MIN_REPS,parseInt(e.target.value)))}
+                      style={{flex:1,accentColor:G}}/>
+                    <button onClick={()=>set(v=>Math.min(30,v+1))} style={{width:28,height:28,borderRadius:8,border:`1px solid ${BORDER}`,background:"#f9fafb",fontSize:16,fontWeight:700,color:G,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
+                  </div>
+                </div>
+              ))}
+              <div style={{fontSize:10,color:MUTED,paddingTop:2}}>Minimum {MIN_REPS}× · Maximum 30×</div>
+            </div>
+          )}
+          {!showRepSettings&&(
+            <div style={{fontSize:11,color:MUTED,marginTop:4}}>
+              Shown: {repsShown}× · Hidden: {repsHidden}× · Cumulative: {repsCumul}×
+            </div>
+          )}
+        </div>
+
         <div style={{background:"#fff",border:`1px solid ${BORDER}`,borderRadius:14,padding:14}}>
           <p style={{fontSize:12,fontWeight:700,color:G,margin:"0 0 8px"}}>How each mode works</p>
           {[["🧠 Memorise","Verse shown 10× → hidden 10× → then all verses so far 5×, repeat"],
@@ -607,8 +681,8 @@ Rules:
               {selAyahs.map((a,i)=>(
                 <div key={i} style={{fontSize:11,color:MUTED,marginBottom:3,display:"flex",gap:6}}>
                   <span style={{fontWeight:700,color:TEXT}}>Verse {a.numberInSurah}:</span>
-                  {COUNT_SHOWN}× shown + {COUNT_HIDDEN}× hidden
-                  {i>0&&<span>+ review verses {selAyahs[0].numberInSurah}–{a.numberInSurah} ({CUMULATIVE_REPS}×)</span>}
+                  {repsShown}× shown + {repsHidden}× hidden
+                  {i>0&&<span>+ review verses {selAyahs[0].numberInSurah}–{a.numberInSurah} ({repsCumul}×)</span>}
                 </div>
               ))}
             </div>
@@ -617,15 +691,16 @@ Rules:
           <button disabled={!canStart} onClick={()=>{
             if(isMem){
               // Set ALL refs before state change so first render of mem-session is correct
-              memTotalRef.current  = COUNT_SHOWN;
+              memTotalRef.current  = repsShown;
               memPhaseRef.current  = "shown";
               memVerseRef.current  = 0;
               memCountRef.current  = 0;
               memWindowRef.current = [];
+              if (memSilRef.current) clearTimeout(memSilRef.current);
               memPhraseRef.current = selAyahsRef.current[0]?.text || "";
               setMemVerseIdx(0);
               setMemPhase("shown");
-              setMemTotalReps(COUNT_SHOWN);
+              setMemTotalReps(repsShown);
               setMemRecState("idle");
               setMemCompCount(0);
               setMemLiveText("");
@@ -689,7 +764,7 @@ Rules:
           </div>
           {/* Phase + progress pills */}
           <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-            {([["shown","📖 Shown",COUNT_SHOWN],["hidden","🧠 Hidden",COUNT_HIDDEN],["cumulative","🔁 Cumulative",CUMULATIVE_REPS]] as const).map(([ph,lb,tot])=>(
+            {([["shown","📖 Shown",repsShown],["hidden","🧠 Hidden",repsHidden],["cumulative","🔁 Cumulative",repsCumul]] as [MemPhase,string,number][]).map(([ph,lb,tot])=>(
               <div key={ph} style={{fontSize:10,padding:"3px 9px",borderRadius:20,fontWeight:700,
                 background:memPhase===ph?"rgba(255,255,255,.25)":"rgba(255,255,255,.08)",
                 color:memPhase===ph?"#fff":"rgba(255,255,255,.45)",
@@ -795,7 +870,7 @@ Rules:
                   <span style={{fontSize:12,fontWeight:800,color:RED,marginLeft:6}}>{fmtSec(memRecTime)}</span>
                 </div>
                 <div style={{fontSize:11,color:MUTED}}>
-                  Recite the verse repeatedly — AI counts each time · {memCompCount}/{memTotalReps} ✓
+                  Recite → pause 2s → AI counts · {memCompCount}/{memTotalReps} done
                 </div>
               </>
             ):(
@@ -803,7 +878,7 @@ Rules:
                 <div style={{fontSize:13,fontWeight:700,color:G,marginBottom:2}}>
                   {memCompCount>=memTotalReps?"Phase complete! Loading next…":"Tap mic to start reciting"}
                 </div>
-                <div style={{fontSize:11,color:MUTED}}>{phaseLabel} · recite {memTotalReps}× without stopping</div>
+                <div style={{fontSize:11,color:MUTED}}>{phaseLabel} · recite, pause 2s after each — AI auto-counts</div>
               </>
             )}
           </div>
