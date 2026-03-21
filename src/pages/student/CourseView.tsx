@@ -125,8 +125,18 @@ const CourseView = () => {
           {course.level && <Badge variant="secondary">{course.level}</Badge>}
           {subjectTitle && <Badge variant="outline">{subjectTitle}</Badge>}
         </div>
-        {course.description && (
-          <p className="text-sm text-muted-foreground">{language === "ar" ? course.description_ar || course.description : course.description}</p>
+        {(course.description || course.description_ar) && (
+          <div className="mt-1 space-y-1">
+            {course.description && (
+              <p className="text-sm text-muted-foreground leading-relaxed">{course.description}</p>
+            )}
+            {course.description_ar && (
+              <p className="text-sm text-muted-foreground leading-relaxed text-right"
+                 style={{ fontFamily: "'Noto Naskh Arabic', 'Scheherazade New', 'Amiri', serif", fontSize: "0.95rem", direction: "rtl" }}>
+                {course.description_ar}
+              </p>
+            )}
+          </div>
         )}
         <div className="mt-3 flex items-center gap-4">
           <Progress value={progressPct} className="flex-1 h-2 max-w-xs" />
