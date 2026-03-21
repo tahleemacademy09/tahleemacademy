@@ -291,7 +291,19 @@ const SubjectView = () => {
             <Card>
               <CardContent className="p-5 space-y-3">
                 <h3 className="font-semibold">{t("Subject Info", "معلومات المادة")}</h3>
-                {subject.description && <p className="text-sm text-muted-foreground">{language === "ar" ? subject.description_ar || subject.description : subject.description}</p>}
+                {(subject.description || (subject as any).description_ar) && (
+                  <div className="space-y-1">
+                    {subject.description && (
+                      <p className="text-sm text-muted-foreground leading-relaxed">{subject.description}</p>
+                    )}
+                    {(subject as any).description_ar && (
+                      <p className="text-sm text-muted-foreground leading-relaxed text-right"
+                         style={{ fontFamily: "'Noto Naskh Arabic', 'Scheherazade New', 'Amiri', serif", fontSize: "0.95rem", direction: "rtl" }}>
+                        {(subject as any).description_ar}
+                      </p>
+                    )}
+                  </div>
+                )}
                 {(subject as any).course_syllabus && <p className="text-sm text-muted-foreground mt-2">{language === "ar" ? (subject as any).course_syllabus_ar || (subject as any).course_syllabus : (subject as any).course_syllabus}</p>}
                 <div className="grid grid-cols-2 gap-2 text-sm">
                   <div className="flex items-center gap-2"><Calendar className="h-4 w-4 text-muted-foreground" />{(subject as any).session_day || t("TBD", "غير محدد")}</div>
