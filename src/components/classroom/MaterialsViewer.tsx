@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -59,6 +59,116 @@ async function resolveUrl(fileUrl: string): Promise<string> {
     .from("subject-files")
     .createSignedUrl(fileUrl, 3600);
   return data?.signedUrl || "";
+}
+
+
+/* ── PDF.js viewer — renders PDF as canvas, works on all mobile browsers ── */
+function PDFJsViewer({ url }: { url: string }) {
+  const canvasRef  = useRef<HTMLCanvasElement>(null);
+  const [numPages, setNumPages]   = useState(0);
+  const [page,     setPage]       = useState(1);
+  const [loading,  setLoading]    = useState(true);
+  const [error,    setError]      = useState("");
+  const pdfDocRef  = useRef<any>(null);
+  const renderTask = useRef<any>(null);
+
+  const CDNBASE = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174";
+
+  const loadPdfJs = useCallback((): Promise<any> => {
+    return new Promise((resolve, reject) => {
+      if ((window as any).pdfjsLib) { resolve((window as any).pdfjsLib); return; }
+      const s = document.createElement("script");
+      s.src = `${CDNBASE}/pdf.min.js`;
+      s.onload = () => {
+        const lib = (window as any).pdfjsLib;
+        lib.GlobalWorkerOptions.workerSrc = `${CDNBASE}/pdf.worker.min.js`;
+        resolve(lib);
+      };
+      s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }, []);
+
+  const renderPage = useCallback(async (pdfDoc: any, pageNum: number) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    if (renderTask.current) { try { renderTask.current.cancel(); } catch(_) {} }
+    const pg  = await pdfDoc.getPage(pageNum);
+    const vp  = pg.getViewport({ scale: window.devicePixelRatio > 1 ? 1.8 : 1.4 });
+    canvas.height = vp.height;
+    canvas.width  = vp.width;
+    canvas.style.width  = "100%";
+    canvas.style.height = "auto";
+    const ctx = canvas.getContext("2d")!;
+    renderTask.current = pg.render({ canvasContext: ctx, viewport: vp });
+    try { await renderTask.current.promise; } catch(_) {}
+  }, []);
+
+  useEffect(() => {
+    if (!url) return;
+    setLoading(true); setError(""); setPage(1);
+    loadPdfJs()
+      .then(lib => lib.getDocument({ url, withCredentials: false }).promise)
+      .then(async (doc: any) => {
+        pdfDocRef.current = doc;
+        setNumPages(doc.numPages);
+        await renderPage(doc, 1);
+        setLoading(false);
+      })
+      .catch((e: any) => {
+        setError("Could not load PDF — " + (e?.message || "unknown error"));
+        setLoading(false);
+      });
+  }, [url, loadPdfJs, renderPage]);
+
+  useEffect(() => {
+    if (pdfDocRef.current && !loading) renderPage(pdfDocRef.current, page);
+  }, [page, loading, renderPage]);
+
+  return (
+    <div style={{ background:"#525659", minHeight:"70vh", display:"flex", flexDirection:"column" }}>
+      {/* Toolbar */}
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:12, padding:"8px 16px", background:"#3d4043", flexShrink:0 }}>
+        <button
+          disabled={page <= 1}
+          onClick={() => setPage(p => Math.max(1, p-1))}
+          style={{ width:32, height:32, borderRadius:8, border:"1px solid rgba(255,255,255,.2)", background:"rgba(255,255,255,.1)", color:"#fff", cursor:"pointer", fontSize:16, display:"flex", alignItems:"center", justifyContent:"center", opacity: page<=1 ? 0.4 : 1 }}>
+          ‹
+        </button>
+        <span style={{ color:"#fff", fontSize:13, fontWeight:600, minWidth:80, textAlign:"center" }}>
+          {loading ? "Loading…" : `${page} / ${numPages}`}
+        </span>
+        <button
+          disabled={page >= numPages}
+          onClick={() => setPage(p => Math.min(numPages, p+1))}
+          style={{ width:32, height:32, borderRadius:8, border:"1px solid rgba(255,255,255,.2)", background:"rgba(255,255,255,.1)", color:"#fff", cursor:"pointer", fontSize:16, display:"flex", alignItems:"center", justifyContent:"center", opacity: page>=numPages ? 0.4 : 1 }}>
+          ›
+        </button>
+      </div>
+
+      {/* Canvas area */}
+      <div style={{ flex:1, overflow:"auto", display:"flex", alignItems:"flex-start", justifyContent:"center", padding:8 }}>
+        {loading && (
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:12, padding:64, color:"#fff" }}>
+            <div style={{ width:36, height:36, border:"3px solid rgba(255,255,255,.2)", borderTopColor:"#fff", borderRadius:"50%", animation:"spin .8s linear infinite" }} />
+            <span style={{ fontSize:13, opacity:.7 }}>Rendering PDF…</span>
+          </div>
+        )}
+        {error && (
+          <div style={{ textAlign:"center", padding:48, color:"#fff" }}>
+            <p style={{ fontSize:13, opacity:.8, marginBottom:16 }}>{error}</p>
+            <a href={url} target="_blank" rel="noopener noreferrer"
+              style={{ display:"inline-flex", alignItems:"center", gap:8, padding:"10px 20px", borderRadius:10, background:"rgba(255,255,255,.15)", color:"#fff", textDecoration:"none", fontSize:13, fontWeight:600 }}>
+              Open in browser ↗
+            </a>
+          </div>
+        )}
+        {!error && (
+          <canvas ref={canvasRef} style={{ maxWidth:"100%", boxShadow:"0 4px 24px rgba(0,0,0,.5)", display: loading ? "none" : "block" }} />
+        )}
+      </div>
+    </div>
+  );
 }
 
 /* ════════════════════════════════════════════════════════
@@ -138,11 +248,7 @@ function FileViewer({ mat, kind, onClose }: { mat: any; kind: FileKind; onClose:
         {!loading && !error && url && (
           <>
             {kind === "pdf" && (
-              <iframe
-                src={`https://docs.google.com/gviewer?url=${encodeURIComponent(url)}&embedded=true`}
-                style={{ width:"100%", height:"75vh", border:"none", display:"block" }}
-                title={mat.title}
-              />
+              <PDFJsViewer url={url} />
             )}
             {kind === "image" && (
               <div style={{ display:"flex", alignItems:"center", justifyContent:"center", padding:16, minHeight:300 }}>
