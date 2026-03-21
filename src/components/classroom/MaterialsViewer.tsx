@@ -93,12 +93,21 @@ function PDFJsViewer({ url }: { url: string }) {
     const canvas = canvasRef.current;
     if (!canvas) return;
     if (renderTask.current) { try { renderTask.current.cancel(); } catch(_) {} }
-    const pg  = await pdfDoc.getPage(pageNum);
-    const vp  = pg.getViewport({ scale: window.devicePixelRatio > 1 ? 1.8 : 1.4 });
-    canvas.height = vp.height;
+    const pg = await pdfDoc.getPage(pageNum);
+    // Get container width to fit page exactly to screen
+    const container = canvas.parentElement;
+    const containerWidth = container ? container.clientWidth - 16 : window.innerWidth - 16;
+    const devicePixelRatio = window.devicePixelRatio || 1;
+    // Calculate scale so page fits container width
+    const baseViewport = pg.getViewport({ scale: 1 });
+    const scale = (containerWidth / baseViewport.width) * devicePixelRatio;
+    const vp = pg.getViewport({ scale });
+    // Set canvas internal resolution
     canvas.width  = vp.width;
-    canvas.style.width  = "100%";
-    canvas.style.height = "auto";
+    canvas.height = vp.height;
+    // Set CSS size to container width (devicePixelRatio compensated)
+    canvas.style.width  = containerWidth + "px";
+    canvas.style.height = Math.floor(vp.height / devicePixelRatio) + "px";
     const ctx = canvas.getContext("2d")!;
     renderTask.current = pg.render({ canvasContext: ctx, viewport: vp });
     try { await renderTask.current.promise; } catch(_) {}
