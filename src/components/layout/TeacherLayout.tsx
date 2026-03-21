@@ -7,7 +7,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import {
   BookOpen, LayoutDashboard, Users, LogOut, Globe, Menu,
   Video, Mic, Settings, ClipboardList, GraduationCap,
-  UserCheck, Calendar, Megaphone, FileText, BarChart,
+  UserCheck, Calendar, Megaphone, FileText, BarChart, Trophy,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Separator } from "@/components/ui/separator";
@@ -50,9 +50,10 @@ const TeacherLayout = () => {
     {
       title: t("Tools", "الأدوات"),
       links: [
-        { to: "/teacher/attendance", icon: Calendar, label: t("Attendance", "الحضور") },
-        { to: "/teacher/announcements", icon: Megaphone, label: t("Announcements", "الإعلانات") },
-        { to: "/teacher/settings", icon: Settings, label: t("Settings", "الإعدادات") },
+        { to: "/live-quiz",              icon: Trophy,    label: t("Al-Musabaqah 🏆", "المسابقة الحية 🏆") },
+        { to: "/teacher/attendance",     icon: Calendar,  label: t("Attendance", "الحضور") },
+        { to: "/teacher/announcements",  icon: Megaphone, label: t("Announcements", "الإعلانات") },
+        { to: "/teacher/settings",       icon: Settings,  label: t("Settings", "الإعدادات") },
       ],
     },
   ];
