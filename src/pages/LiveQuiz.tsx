@@ -310,8 +310,7 @@ Make questions educational and clearly worded.` },
           parsed = JSON.parse(text);
         } else {
           // CSV: question,optA,optB,optC,optD,correct_answer,explanation
-          const lines = text.split("
-").filter(l=>l.trim());
+          const lines = text.split("\n").filter(l=>l.trim());
           const header = lines[0].toLowerCase();
           const start = header.includes("question") ? 1 : 0;
           parsed = lines.slice(start).map(line => {
