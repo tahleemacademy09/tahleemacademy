@@ -14,7 +14,7 @@ import {
   CheckSquare, BarChart, UserCircle, Library, GraduationCap, MessageCircle,
   Menu, Video, Mic, Layers, FileText, UserCheck, BookMarked, Settings,
   CreditCard, Calendar, ChevronDown, ChevronRight, Wallet,
-  BookOpenCheck, RefreshCw, Headphones,
+  BookOpenCheck, RefreshCw, Headphones, Trophy,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import PaymentBanner from "./PaymentBanner";
@@ -75,6 +75,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
       ],
     },
     { type: "link", to: "/student/majlis",  icon: MessageCircle, label: t("Al-Majlis", "المجلس") },
+    { type: "link", to: "/live-quiz",       icon: Trophy,        label: t("Al-Musabaqah 🏆", "المسابقة الحية 🏆") },
     { type: "link", to: "/student/profile", icon: UserCircle,    label: t("Settings", "الإعدادات") },
   ];
 
@@ -98,6 +99,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     { to: "/admin/calendar",                  icon: Calendar,        label: t("Calendar", "التقويم") },
     { to: "/admin/public-classes",            icon: Globe,           label: t("Public Classes", "الدروس العامة") },
     { to: "/admin/majlis-moderation",         icon: MessageCircle,   label: t("Al-Majlis", "المجلس") },
+    { to: "/live-quiz",                        icon: Trophy,          label: t("Al-Musabaqah 🏆", "المسابقة الحية 🏆") },
   ];
 
   const SidebarContent = ({ onNavigate }: { onNavigate?: () => void }) => (
