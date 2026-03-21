@@ -11,6 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   Trophy, Users, Play, ArrowRight, Star,
   Crown, Zap, RotateCcw, X,
+  BookOpen, Eye, PlusCircle, Sparkles,
 } from "lucide-react";
 
 /* ── Brand Colors ─────────────────────────────────────── */
@@ -126,6 +127,7 @@ const LiveQuiz = () => {
 
   type View =
     | "hub" | "creating" | "joining"
+    | "q-source" | "q-preview" | "q-ai" | "q-bank" | "q-upload" | "q-manual"
     | "lobby-host" | "countdown-host" | "question-host" | "reveal-host" | "results-host"
     | "lobby-player" | "countdown-player" | "question-player" | "reveal-player" | "results-player";
 
