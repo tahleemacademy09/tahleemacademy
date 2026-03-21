@@ -22,8 +22,7 @@ const MIN_REPS      = 7;
 const DEFAULT_SHOWN = 10;
 const DEFAULT_HIDDEN= 10;
 const DEFAULT_CUMUL = 5;
-const SILENCE_MS    = 2000;
-const MATCH_THR     = 55;
+const SILENCE_MS    = 1500; // 1.5s pause = done reciting one ayah
 
 /* ── Types ─────────────────────────────────────────────── */
 interface Props { userId: string | null; }
@@ -224,21 +223,26 @@ export default function RecitationMic({ userId }: Props) {
     audioElRef.current.play().catch(() => setPlaying(false));
   }, [playing]);
 
-  // Mem: score accumulated buffer after silence
+  // Mem: called after SILENCE_MS with no new speech — count the attempt
+  // In memorise mode we count ANY Arabic speech attempt (not accuracy)
+  // Accuracy scoring is only for Revision mode
   const memScoreAttempt = useCallback(() => {
     const buf = memWindowRef.current.join(" ").trim();
-    const ref = memPhraseRef.current;
-    if (!buf || !ref) return;
-    const result = scoreVsRef(buf, ref);
-    memWindowRef.current = [];
+    memWindowRef.current = []; // always clear buffer
+    memSilRef.current = null;
     setMemLiveText("");
-    if (result.score >= MATCH_THR) {
-      const n = memCountRef.current + 1;
-      memCountRef.current = n;
-      setMemCompCount(n);
-      if (n >= memTotalRef.current) {
-        memMrRef.current?.stop();
-      }
+
+    // Need at least 2 Arabic tokens to count (avoids counting noise/coughs)
+    const arabicTokens = buf.replace(/[^؀-ۿ\s]/g," ").trim().split(/\s+/).filter(Boolean);
+    if (arabicTokens.length < 2) return; // too short — ignore
+
+    const n = memCountRef.current + 1;
+    memCountRef.current = n;
+    setMemCompCount(n);
+
+    if (n >= memTotalRef.current) {
+      // Phase complete — stop mic
+      setTimeout(() => memMrRef.current?.stop(), 200);
     }
   }, []);
 
