@@ -24,7 +24,7 @@ interface Room {
   id: string;
   code: string;
   host_id: string;
-  status: "waiting" | "active" | "question" | "reveal" | "finished";
+  status: "waiting" | "active" | "countdown" | "question" | "reveal" | "finished";
   current_question_index: number;
   total_questions: number;
   topic: string;
@@ -126,7 +126,7 @@ const LiveQuiz = () => {
 
   type View =
     | "hub" | "creating" | "joining"
-    | "lobby-host" | "question-host" | "reveal-host" | "results-host"
+    | "lobby-host" | "countdown-host" | "question-host" | "reveal-host" | "results-host"
     | "lobby-player" | "countdown-player" | "question-player" | "reveal-player" | "results-player";
 
   const [view,         setView]         = useState<View>("hub");
@@ -155,7 +155,8 @@ const LiveQuiz = () => {
         const r = p.new as Room;
         setRoom(r);
         if (!isHost) {
-          if (r.status === "question") { loadCurrentQ(r.current_question_index); setSelectedAns(null); setCountdown(3); setView("countdown-player"); }
+          if (r.status === "countdown") { loadCurrentQ(r.current_question_index); setSelectedAns(null); setCountdown(3); setView("countdown-player"); }
+          if (r.status === "question") { setView("question-player"); }
           if (r.status === "reveal")   setView("reveal-player");
           if (r.status === "finished") { loadParticipants(); setView("results-player"); }
         }
@@ -182,6 +183,30 @@ const LiveQuiz = () => {
     return () => clearInterval(timerRef.current);
   }, [view, currentQ]);
 
+
+  /* ── Countdown 3-2-1 for HOST — after 3s push status to "question" ── */
+  useEffect(() => {
+    if (view !== "countdown-host") return;
+    setCountdown(3);
+    const interval = setInterval(() => {
+      setCountdown(c => {
+        if (c <= 1) {
+          clearInterval(interval);
+          // Push "question" status — this triggers students to show the question
+          if (room) {
+            supabase.from("live_quiz_rooms" as any)
+              .update({ status: "question" } as any)
+              .eq("id", room.id)
+              .then(() => {});
+          }
+          setView("question-host");
+          return 0;
+        }
+        return c - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [view]);
 
   /* ── Countdown 3-2-1 for players ── */
   useEffect(() => {
@@ -378,8 +403,8 @@ Make questions educational and clearly worded.` },
   const startQuiz = async () => {
     if (!room) return;
     await loadCurrentQ(0);
-    await supabase.from("live_quiz_rooms" as any).update({ status:"question", current_question_index:0 } as any).eq("id", room.id);
-    setView("question-host"); setSelectedAns(null); setAnswerCounts({}); setNumAnswered(0);
+    await supabase.from("live_quiz_rooms" as any).update({ status:"countdown", current_question_index:0 } as any).eq("id", room.id);
+    setCountdown(3); setView("countdown-host"); setSelectedAns(null); setAnswerCounts({}); setNumAnswered(0);
   };
 
   const handleReveal = async () => {
@@ -399,8 +424,8 @@ Make questions educational and clearly worded.` },
       setView("results-host");
     } else {
       await loadCurrentQ(next);
-      await supabase.from("live_quiz_rooms" as any).update({ status:"question", current_question_index:next } as any).eq("id", room.id);
-      setView("question-host"); setAnswerCounts({}); setNumAnswered(0);
+      await supabase.from("live_quiz_rooms" as any).update({ status:"countdown", current_question_index:next } as any).eq("id", room.id);
+      setCountdown(3); setView("countdown-host"); setAnswerCounts({}); setNumAnswered(0);
     }
   };
 
@@ -555,93 +580,136 @@ Make questions educational and clearly worded.` },
     </div>
   );
 
-  /* ══ CREATING — Step 1: Settings ═════════════════ */
-  if (view === "creating") return (
-    <div style={{...pageStyle, padding:"28px 18px", overflowY:"auto"}}>
+  /* ══ CREATING — Combined Setup (Questions + Settings) ══ */
+  if (view === "creating" || view === "q-source") return (
+    <div style={{...pageStyle, padding:"0 0 40px", overflowY:"auto"}}>
       <IslamicBg opacity={0.08}/>
-      <div style={{position:"relative",zIndex:1,maxWidth:440,margin:"0 auto"}}>
-        <button onClick={()=>setView("hub")} style={backBtn}>← Back</button>
-        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4}}>
-          <div style={{width:28,height:28,borderRadius:"50%",background:GOLD,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:900,color:"#fff",flexShrink:0}}>1</div>
-          <h2 style={{fontFamily:"'Playfair Display',serif",fontWeight:900,fontSize:26,color:"#fff",margin:0}}>Quiz Settings</h2>
-        </div>
-        <p style={{fontSize:13,color:"rgba(255,255,255,0.4)",marginBottom:22,paddingLeft:38}}>Configure your live session</p>
 
-        <div style={{...glassCard, display:"flex", flexDirection:"column", gap:20}}>
-          <div>
-            <label style={{fontSize:11,fontWeight:700,color:GOLD,display:"block",marginBottom:10,letterSpacing:1.5,textTransform:"uppercase"}}>Topic</label>
-            <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
-              {TOPICS.map(t => (
-                <button key={t} onClick={()=>setSettings(p=>({...p,topic:t}))}
-                  style={{padding:"8px 14px",borderRadius:20,border:`1.5px solid ${settings.topic===t?GOLD:"rgba(255,255,255,0.15)"}`,background:settings.topic===t?"rgba(201,146,42,0.18)":"transparent",color:settings.topic===t?GOLD:"rgba(255,255,255,0.55)",cursor:"pointer",fontSize:12,fontWeight:700,transition:"all .15s"}}>
-                  {t}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div>
-            <label style={{fontSize:11,fontWeight:700,color:GOLD,display:"block",marginBottom:10,letterSpacing:1.5,textTransform:"uppercase"}}>Number of Questions</label>
-            <div style={{display:"flex",gap:8}}>
-              {[5,8,10,15].map(n=>(
-                <button key={n} onClick={()=>setSettings(p=>({...p,numQ:n}))}
-                  style={{flex:1,padding:"11px",borderRadius:10,border:`1.5px solid ${settings.numQ===n?GOLD:"rgba(255,255,255,0.15)"}`,background:settings.numQ===n?"rgba(201,146,42,0.18)":"transparent",color:settings.numQ===n?GOLD:"rgba(255,255,255,0.55)",cursor:"pointer",fontWeight:800,fontSize:15,transition:"all .15s"}}>
-                  {n}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div>
-            <label style={{fontSize:11,fontWeight:700,color:GOLD,display:"block",marginBottom:10,letterSpacing:1.5,textTransform:"uppercase"}}>Time Per Question</label>
-            <div style={{display:"flex",gap:8}}>
-              {[10,15,20,30].map(n=>(
-                <button key={n} onClick={()=>setSettings(p=>({...p,timeQ:n}))}
-                  style={{flex:1,padding:"11px",borderRadius:10,border:`1.5px solid ${settings.timeQ===n?GOLD:"rgba(255,255,255,0.15)"}`,background:settings.timeQ===n?"rgba(201,146,42,0.18)":"transparent",color:settings.timeQ===n?GOLD:"rgba(255,255,255,0.55)",cursor:"pointer",fontWeight:800,fontSize:15,transition:"all .15s"}}>
-                  {n}s
-                </button>
-              ))}
-            </div>
-          </div>
-          <button onClick={()=>{ setCustomQs([]); setView("q-source"); }} style={goldBtn}>
-            Next: Choose Questions →
-          </button>
+      {/* Sticky header */}
+      <div style={{position:"sticky",top:0,zIndex:10,background:"rgba(6,20,14,0.95)",backdropFilter:"blur(12px)",borderBottom:"1px solid rgba(201,146,42,0.2)",padding:"14px 18px",display:"flex",alignItems:"center",gap:12}}>
+        <button onClick={()=>setView("hub")} style={{...backBtn,margin:0}}>← Back</button>
+        <div style={{flex:1,textAlign:"center"}}>
+          <h2 style={{fontFamily:"'Playfair Display',serif",fontWeight:900,fontSize:20,color:"#fff",margin:0}}>Setup Quiz</h2>
         </div>
+        <div style={{width:50}}/>
       </div>
-    </div>
-  );
 
-  /* ══ Q-SOURCE — Step 2: Pick question method ══════ */
-  if (view === "q-source") return (
-    <div style={{...pageStyle, padding:"28px 18px", overflowY:"auto"}}>
-      <IslamicBg opacity={0.08}/>
-      <div style={{position:"relative",zIndex:1,maxWidth:440,margin:"0 auto"}}>
-        <button onClick={()=>setView("creating")} style={backBtn}>← Back</button>
-        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4}}>
-          <div style={{width:28,height:28,borderRadius:"50%",background:GOLD,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:900,color:"#fff",flexShrink:0}}>2</div>
-          <h2 style={{fontFamily:"'Playfair Display',serif",fontWeight:900,fontSize:26,color:"#fff",margin:0}}>Question Source</h2>
+      <div style={{position:"relative",zIndex:1,maxWidth:460,margin:"0 auto",padding:"20px 18px",display:"flex",flexDirection:"column",gap:20}}>
+
+        {/* ── SECTION 1: Question Source ── */}
+        <div>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
+            <div style={{width:32,height:32,borderRadius:10,background:`linear-gradient(135deg,${GOLD},${GOLD2})`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:`0 4px 12px rgba(201,146,42,0.4)`}}>
+              <BookOpen size={16} color="#fff"/>
+            </div>
+            <div>
+              <p style={{fontSize:16,fontWeight:900,color:"#fff",margin:0}}>Questions</p>
+              <p style={{fontSize:11,color:"rgba(255,255,255,0.4)",margin:0}}>Choose how to add your questions</p>
+            </div>
+            {customQs.length > 0 && (
+              <span style={{marginLeft:"auto",fontSize:12,fontWeight:800,color:GOLD,background:"rgba(201,146,42,0.15)",padding:"4px 12px",borderRadius:20,border:`1px solid rgba(201,146,42,0.3)`}}>
+                ✓ {customQs.length} ready
+              </span>
+            )}
+          </div>
+
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {[
+              { id:"builtin", icon:"🕌", label:"Built-in Islamic Pool",  desc:"15+ ready-made questions",           action:()=>{ setCustomQs([]); setView("q-preview"); } },
+              { id:"ai",      icon:"🤖", label:"AI Generated",            desc:"Claude AI generates by topic",       action:()=>setView("q-ai") },
+              { id:"bank",    icon:"🏦", label:"Question Bank",           desc:"Import from your published exams",   action:()=>{ loadBankExams(); setView("q-bank"); } },
+              { id:"upload",  icon:"📁", label:"Upload CSV / JSON",       desc:"Upload a file of questions",         action:()=>setView("q-upload") },
+              { id:"manual",  icon:"✍️", label:"Type Manually",           desc:"Add questions one by one",           action:()=>{ setCustomQs([]); setView("q-manual"); } },
+            ].map(s=>(
+              <button key={s.id} onClick={s.action}
+                style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:14,border:`1.5px solid rgba(201,146,42,0.25)`,background:"rgba(255,255,255,0.04)",cursor:"pointer",textAlign:"left" as const,transition:"all .15s",width:"100%"}}
+                onMouseEnter={e=>{(e.currentTarget as any).style.borderColor=GOLD;(e.currentTarget as any).style.background="rgba(201,146,42,0.1)";}}
+                onMouseLeave={e=>{(e.currentTarget as any).style.borderColor="rgba(201,146,42,0.25)";(e.currentTarget as any).style.background="rgba(255,255,255,0.04)";}}>
+                <span style={{fontSize:26,flexShrink:0,width:36,textAlign:"center" as const}}>{s.icon}</span>
+                <div style={{flex:1}}>
+                  <p style={{fontSize:14,fontWeight:800,color:"#fff",margin:"0 0 2px"}}>{s.label}</p>
+                  <p style={{fontSize:11,color:"rgba(255,255,255,0.4)",margin:0}}>{s.desc}</p>
+                </div>
+                <ArrowRight size={14} color={GOLD}/>
+              </button>
+            ))}
+          </div>
         </div>
-        <p style={{fontSize:13,color:"rgba(255,255,255,0.4)",marginBottom:22,paddingLeft:38}}>How do you want to add questions?</p>
 
-        <div style={{display:"flex",flexDirection:"column",gap:10}}>
-          {[
-            { id:"builtin", icon:"🕌", label:"Built-in Islamic Pool", desc:"15+ ready-made Islamic questions", action:()=>{ setCustomQs([]); setView("q-preview"); } },
-            { id:"ai",      icon:"🤖", label:"AI Generated",          desc:"Generate by topic using Claude AI", action:()=>setView("q-ai") },
-            { id:"bank",    icon:"🏦", label:"Question Bank",         desc:"Import from your existing exam questions", action:()=>{ loadBankExams(); setView("q-bank"); } },
-            { id:"upload",  icon:"📁", label:"Upload File",           desc:"CSV or JSON file of questions", action:()=>setView("q-upload") },
-            { id:"manual",  icon:"✍️", label:"Manual Entry",          desc:"Type questions one by one", action:()=>{ setCustomQs([]); setView("q-manual"); } },
-          ].map(s=>(
-            <button key={s.id} onClick={s.action}
-              style={{...glassCard, display:"flex", alignItems:"center", gap:14, cursor:"pointer", border:`1.5px solid ${qSource===s.id?GOLD:"rgba(201,146,42,0.2)"}`, background:qSource===s.id?"rgba(201,146,42,0.1)":"rgba(255,255,255,0.03)", textAlign:"left", padding:"16px 18px"}}
-              onMouseEnter={e=>{(e.currentTarget as any).style.borderColor=GOLD;}}
-              onMouseLeave={e=>{(e.currentTarget as any).style.borderColor=qSource===s.id?GOLD:"rgba(201,146,42,0.2)";}}>
-              <span style={{fontSize:28,flexShrink:0}}>{s.icon}</span>
-              <div style={{flex:1}}>
-                <p style={{fontSize:14,fontWeight:800,color:"#fff",margin:"0 0 2px"}}>{s.label}</p>
-                <p style={{fontSize:12,color:"rgba(255,255,255,0.45)",margin:0}}>{s.desc}</p>
+        {/* Divider */}
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <div style={{flex:1,height:1,background:"rgba(201,146,42,0.15)"}}/>
+          <Star size={10} color={GOLD} fill={GOLD}/>
+          <div style={{flex:1,height:1,background:"rgba(201,146,42,0.15)"}}/>
+        </div>
+
+        {/* ── SECTION 2: Settings ── */}
+        <div>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
+            <div style={{width:32,height:32,borderRadius:10,background:"rgba(255,255,255,0.08)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,border:"1px solid rgba(255,255,255,0.12)"}}>
+              <Zap size={15} color={GOLD}/>
+            </div>
+            <div>
+              <p style={{fontSize:16,fontWeight:900,color:"#fff",margin:0}}>Settings</p>
+              <p style={{fontSize:11,color:"rgba(255,255,255,0.4)",margin:0}}>Adjust timing and topic</p>
+            </div>
+          </div>
+
+          <div style={{...glassCard, display:"flex", flexDirection:"column", gap:18}}>
+            {/* Topic */}
+            <div>
+              <label style={{fontSize:11,fontWeight:700,color:GOLD,display:"block",marginBottom:8,letterSpacing:1.5,textTransform:"uppercase" as const}}>Topic</label>
+              <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                {TOPICS.map(t=>(
+                  <button key={t} onClick={()=>setSettings(p=>({...p,topic:t}))}
+                    style={{padding:"7px 12px",borderRadius:20,border:`1.5px solid ${settings.topic===t?GOLD:"rgba(255,255,255,0.12)"}`,background:settings.topic===t?"rgba(201,146,42,0.18)":"transparent",color:settings.topic===t?GOLD:"rgba(255,255,255,0.5)",cursor:"pointer",fontSize:12,fontWeight:700,transition:"all .15s"}}>
+                    {t}
+                  </button>
+                ))}
               </div>
-              <ArrowRight size={16} color="rgba(255,255,255,0.3)"/>
-            </button>
-          ))}
+            </div>
+
+            {/* Questions count */}
+            <div>
+              <label style={{fontSize:11,fontWeight:700,color:GOLD,display:"block",marginBottom:8,letterSpacing:1.5,textTransform:"uppercase" as const}}>Number of Questions</label>
+              <div style={{display:"flex",gap:8}}>
+                {[5,8,10,15].map(n=>(
+                  <button key={n} onClick={()=>setSettings(p=>({...p,numQ:n}))}
+                    style={{flex:1,padding:"10px",borderRadius:10,border:`1.5px solid ${settings.numQ===n?GOLD:"rgba(255,255,255,0.12)"}`,background:settings.numQ===n?"rgba(201,146,42,0.18)":"transparent",color:settings.numQ===n?GOLD:"rgba(255,255,255,0.5)",cursor:"pointer",fontWeight:800,fontSize:15,transition:"all .15s"}}>
+                    {n}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Time per Q */}
+            <div>
+              <label style={{fontSize:11,fontWeight:700,color:GOLD,display:"block",marginBottom:8,letterSpacing:1.5,textTransform:"uppercase" as const}}>Time Per Question</label>
+              <div style={{display:"flex",gap:8}}>
+                {[10,15,20,30].map(n=>(
+                  <button key={n} onClick={()=>setSettings(p=>({...p,timeQ:n}))}
+                    style={{flex:1,padding:"10px",borderRadius:10,border:`1.5px solid ${settings.timeQ===n?GOLD:"rgba(255,255,255,0.12)"}`,background:settings.timeQ===n?"rgba(201,146,42,0.18)":"transparent",color:settings.timeQ===n?GOLD:"rgba(255,255,255,0.5)",cursor:"pointer",fontWeight:800,fontSize:14,transition:"all .15s"}}>
+                    {n}s
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
         </div>
+
+        {/* ── Summary + Go to Preview (only when custom questions loaded) ── */}
+        {customQs.length > 0 && (
+          <div>
+            <div style={{background:"rgba(201,146,42,0.1)",borderRadius:14,padding:"14px 16px",border:`1px solid rgba(201,146,42,0.3)`,marginBottom:12}}>
+              <p style={{fontSize:13,color:"rgba(255,255,255,0.7)",margin:0}}>
+                ✅ <strong style={{color:GOLD}}>{customQs.length} questions</strong> ready · <strong style={{color:"#fff"}}>{settings.topic}</strong> · <strong style={{color:"#fff"}}>{settings.timeQ}s</strong> each
+              </p>
+            </div>
+            <button onClick={()=>setView("q-preview")} style={goldBtn}>
+              <Eye size={18}/> Preview & Launch →
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -651,7 +719,7 @@ Make questions educational and clearly worded.` },
     <div style={{...pageStyle, padding:"28px 18px", overflowY:"auto"}}>
       <IslamicBg opacity={0.08}/>
       <div style={{position:"relative",zIndex:1,maxWidth:440,margin:"0 auto"}}>
-        <button onClick={()=>setView("q-source")} style={backBtn}>← Back</button>
+        <button onClick={()=>setView("creating")} style={backBtn}>← Back</button>
         <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4}}>
           <span style={{fontSize:24}}>🤖</span>
           <h2 style={{fontFamily:"'Playfair Display',serif",fontWeight:900,fontSize:26,color:"#fff",margin:0}}>AI Generator</h2>
@@ -686,7 +754,7 @@ Make questions educational and clearly worded.` },
     <div style={{...pageStyle, padding:"28px 18px", overflowY:"auto"}}>
       <IslamicBg opacity={0.08}/>
       <div style={{position:"relative",zIndex:1,maxWidth:480,margin:"0 auto"}}>
-        <button onClick={()=>setView("q-source")} style={backBtn}>← Back</button>
+        <button onClick={()=>setView("creating")} style={backBtn}>← Back</button>
         <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4}}>
           <span style={{fontSize:24}}>🏦</span>
           <h2 style={{fontFamily:"'Playfair Display',serif",fontWeight:900,fontSize:26,color:"#fff",margin:0}}>Question Bank</h2>
@@ -739,7 +807,7 @@ Make questions educational and clearly worded.` },
     <div style={{...pageStyle, padding:"28px 18px", overflowY:"auto"}}>
       <IslamicBg opacity={0.08}/>
       <div style={{position:"relative",zIndex:1,maxWidth:440,margin:"0 auto"}}>
-        <button onClick={()=>setView("q-source")} style={backBtn}>← Back</button>
+        <button onClick={()=>setView("creating")} style={backBtn}>← Back</button>
         <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4}}>
           <span style={{fontSize:24}}>📁</span>
           <h2 style={{fontFamily:"'Playfair Display',serif",fontWeight:900,fontSize:26,color:"#fff",margin:0}}>Upload Questions</h2>
@@ -785,7 +853,7 @@ How many Surahs?,110,112,114,116,114,The Quran has 114 Surahs"}</code>
     <div style={{...pageStyle, padding:"28px 18px", overflowY:"auto"}}>
       <IslamicBg opacity={0.08}/>
       <div style={{position:"relative",zIndex:1,maxWidth:480,margin:"0 auto"}}>
-        <button onClick={()=>setView("q-source")} style={backBtn}>← Back</button>
+        <button onClick={()=>setView("creating")} style={backBtn}>← Back</button>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             <span style={{fontSize:24}}>✍️</span>
@@ -866,7 +934,7 @@ How many Surahs?,110,112,114,116,114,The Quran has 114 Surahs"}</code>
       <div style={{...pageStyle, padding:"24px 18px", overflowY:"auto"}}>
         <IslamicBg opacity={0.08}/>
         <div style={{position:"relative",zIndex:1,maxWidth:480,margin:"0 auto"}}>
-          <button onClick={()=>setView("q-source")} style={backBtn}>← Back</button>
+          <button onClick={()=>setView("creating")} style={backBtn}>← Back</button>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>
             <div>
               <h2 style={{fontFamily:"'Playfair Display',serif",fontWeight:900,fontSize:24,color:"#fff",margin:"0 0 2px"}}>Preview Questions</h2>
@@ -1069,6 +1137,60 @@ How many Surahs?,110,112,114,116,114,The Quran has 114 Surahs"}</code>
 
         <button onClick={handleReveal} style={outlineBtn}>Reveal Answer →</button>
       </div>
+    </div>
+  );
+
+  /* ══ COUNTDOWN HOST ══════════════════════════════ */
+  if (view === "countdown-host") return (
+    <div style={{...pageStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"20px"}}>
+      <IslamicBg opacity={0.08}/>
+      <div style={{position:"relative",zIndex:1,textAlign:"center"}}>
+        <p style={{fontSize:11,color:"rgba(255,255,255,0.5)",fontWeight:700,letterSpacing:2,textTransform:"uppercase",marginBottom:6}}>
+          Question {(room?.current_question_index||0)+1} of {room?.total_questions}
+        </p>
+        <p style={{fontSize:14,color:GOLD,fontWeight:700,letterSpacing:2,textTransform:"uppercase",marginBottom:28}}>
+          Launching in…
+        </p>
+        {/* Giant countdown ring */}
+        <div style={{
+          width:180,height:180,borderRadius:"50%",
+          background:`conic-gradient(${GOLD} ${(countdown/3)*360}deg, rgba(255,255,255,0.06) 0deg)`,
+          display:"flex",alignItems:"center",justifyContent:"center",
+          margin:"0 auto 28px",
+          boxShadow:`0 0 60px rgba(201,146,42,${countdown===3?0.6:countdown===2?0.4:0.7})`,
+        }}>
+          <div style={{width:150,height:150,borderRadius:"50%",background:"#021F16",display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <span style={{
+              fontSize:88,fontWeight:900,color:GOLD,
+              fontFamily:"'Playfair Display',serif",
+              lineHeight:1,
+              animation:"countdown-pop .3s ease",
+              display:"block",
+            }}>{countdown}</span>
+          </div>
+        </div>
+
+        {/* Info */}
+        <div style={{...glassCard, padding:"12px 24px", marginBottom:20, display:"inline-block"}}>
+          <p style={{fontSize:13,color:"rgba(255,255,255,0.6)",margin:"0 0 2px"}}>Students are getting ready…</p>
+          <p style={{fontSize:12,color:"rgba(255,255,255,0.35)",margin:0}}>{participants.length} player{participants.length!==1?"s":""} in the room</p>
+        </div>
+
+        {/* Progress dots */}
+        <div style={{display:"flex",gap:10,justifyContent:"center"}}>
+          {[3,2,1].map(n => (
+            <div key={n} style={{
+              width:12,height:12,borderRadius:"50%",
+              background:countdown>=n?GOLD:"rgba(255,255,255,0.15)",
+              transition:"background .3s",
+              boxShadow:countdown>=n?`0 0 8px ${GOLD}`:"none",
+            }}/>
+          ))}
+        </div>
+      </div>
+      <style>{`
+        @keyframes countdown-pop{0%{transform:scale(1.4);opacity:0}100%{transform:scale(1);opacity:1}}
+      `}</style>
     </div>
   );
 
