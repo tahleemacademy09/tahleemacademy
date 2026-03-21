@@ -682,7 +682,7 @@ Make questions educational and progressively challenging.`
                   📚 From Material
                 </button>
                 <button onClick={()=>setShowAiCard(true)}
-                  style={{ display:"flex", alignItems:"center", gap:6, padding:"9px 16px", borderRadius:10, border:"none", background:"#B45309", color:"#fff", cursor:"pointer", fontSize:13, fontWeight:700 }}>
+                  style={{ display:"flex", alignItems:"center", gap:6, padding:"9px 16px", borderRadius:10, border:"none", background:"#C9922A", color:"#fff", cursor:"pointer", fontSize:13, fontWeight:700 }}>
                   <Sparkles size={14}/> AI Topic
                 </button>
                 <button onClick={()=>setShowAddCard(true)}
@@ -698,7 +698,7 @@ Make questions educational and progressively challenging.`
                 <p style={{ fontWeight:700, color:"#374151", marginBottom:6 }}>No flashcards yet</p>
                 <p style={{ fontSize:13, color:"#9CA3AF", marginBottom:20 }}>Generate from a topic using AI or add manually</p>
                 <div style={{ display:"flex", gap:10, justifyContent:"center" }}>
-                  <button onClick={()=>setShowAiCard(true)} style={{ display:"flex", alignItems:"center", gap:6, padding:"10px 18px", borderRadius:11, border:"none", background:"#B45309", color:"#fff", cursor:"pointer", fontWeight:700, fontSize:13 }}>
+                  <button onClick={()=>setShowAiCard(true)} style={{ display:"flex", alignItems:"center", gap:6, padding:"10px 18px", borderRadius:11, border:"none", background:"#C9922A", color:"#fff", cursor:"pointer", fontWeight:700, fontSize:13 }}>
                     <Sparkles size={14}/> Generate with AI
                   </button>
                   <button onClick={()=>setShowAddCard(true)} style={{ display:"flex", alignItems:"center", gap:6, padding:"10px 18px", borderRadius:11, border:"1.5px solid #E5E7EB", background:"#fff", cursor:"pointer", fontWeight:700, fontSize:13, color:"#374151" }}>
@@ -772,7 +772,7 @@ Make questions educational and progressively challenging.`
               )}
 
             {/* AI Topic Quiz */}
-              <div style={{ background:"linear-gradient(135deg,#B45309,#92400E)", borderRadius:16, padding:"18px 20px" }}>
+              <div style={{ background:"linear-gradient(135deg,#C9922A,#A67C1E)", borderRadius:16, padding:"18px 20px" }}>
                 <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
                   <div style={{ display:"flex", alignItems:"center", gap:10 }}>
                     <span style={{ fontSize:28 }}>🤖</span>
@@ -867,7 +867,7 @@ Make questions educational and progressively challenging.`
                     <h4 style={{ fontWeight:700, fontSize:14, color:"#111", margin:0 }}>{language==="ar"?s.title_ar||s.title:s.title}</h4>
                     <div style={{ display:"flex", gap:6 }}>
                       {s.topic && <span style={{ fontSize:10, padding:"2px 8px", borderRadius:20, background:"#EFF6FF", color:"#1D4ED8" }}>{s.topic}</span>}
-                      {s.is_ai_generated && <span style={{ fontSize:10, padding:"2px 8px", borderRadius:20, background:"#FEF3C7", color:"#B45309" }}>AI</span>}
+                      {s.is_ai_generated && <span style={{ fontSize:10, padding:"2px 8px", borderRadius:20, background:"#FEF3C7", color:"#C9922A" }}>AI</span>}
                     </div>
                   </div>
                   <p style={{ fontSize:13, color:"#6B7280", lineHeight:1.7, margin:0, display:"-webkit-box", WebkitLineClamp:4, WebkitBoxOrient:"vertical", overflow:"hidden" } as any}>
@@ -917,7 +917,7 @@ Make questions educational and progressively challenging.`
               {[
                 {label:"Cards Mastered",value:`${knownCount}/${flashcards.length}`,icon:"🃏",color:"#F0FDF4",text:"#166534"},
                 {label:"Quiz Average",  value:`${quizAvg}%`,                       icon:"📝",color:"#EFF6FF",text:"#1D4ED8"},
-                {label:"Quizzes Taken", value:quizHistory.length,                  icon:"🏆",color:"#FDF4FF",text:"#B45309"},
+                {label:"Quizzes Taken", value:quizHistory.length,                  icon:"🏆",color:"#FDF4FF",text:"#C9922A"},
                 {label:"Notes Written", value:notes.length,                        icon:"📓",color:"#FFF7ED",text:"#C2410C"},
               ].map((s,i)=>(
                 <div key={i} style={{ background:s.color, borderRadius:16, padding:"18px 16px" }}>
@@ -1058,7 +1058,7 @@ Make questions educational and progressively challenging.`
                     ))}
                   </div>
                   <div style={{ padding:"10px 12px", background:"#FFF7ED", borderRadius:10, border:"1px solid #FDE68A", marginTop:8 }}>
-                    <p style={{ fontSize:11, color:"#92400E", margin:0 }}>
+                    <p style={{ fontSize:11, color:"#A67C1E", margin:0 }}>
                       ⚠️ <strong>Note:</strong> Only text-based PDFs work. Scanned/image PDFs cannot be read. Limit to 10–15 pages for best results.
                     </p>
                   </div>
@@ -1103,7 +1103,7 @@ Make questions educational and progressively challenging.`
       {/* ══ AI FLASHCARD DIALOG ══ */}
       <Dialog open={showAiCard} onOpenChange={setShowAiCard}>
         <DialogContent style={{ maxWidth:440, borderRadius:20, padding:0 }}>
-          <div style={{ background:"linear-gradient(135deg,#B45309,#92400E)", padding:"18px 20px", borderRadius:"20px 20px 0 0", display:"flex", alignItems:"center", gap:10 }}>
+          <div style={{ background:"linear-gradient(135deg,#C9922A,#A67C1E)", padding:"18px 20px", borderRadius:"20px 20px 0 0", display:"flex", alignItems:"center", gap:10 }}>
             <Sparkles size={20} color="#fff"/>
             <h2 style={{ fontWeight:800, fontSize:16, color:"#fff", margin:0 }}>AI Flashcard Generator</h2>
           </div>
@@ -1118,14 +1118,14 @@ Make questions educational and progressively challenging.`
               <div style={{ display:"flex", gap:8 }}>
                 {[5,10,15,20].map(n=>(
                   <button key={n} onClick={()=>setAiCardCount(n)}
-                    style={{ flex:1, padding:"9px", borderRadius:9, border:`2px solid ${aiCardCount===n?"#B45309":"#E5E7EB"}`, background:aiCardCount===n?"#FEF3C7":"#fff", color:aiCardCount===n?"#B45309":"#374151", cursor:"pointer", fontWeight:700, fontSize:13 }}>
+                    style={{ flex:1, padding:"9px", borderRadius:9, border:`2px solid ${aiCardCount===n?"#C9922A":"#E5E7EB"}`, background:aiCardCount===n?"#FEF3C7":"#fff", color:aiCardCount===n?"#C9922A":"#374151", cursor:"pointer", fontWeight:700, fontSize:13 }}>
                     {n}
                   </button>
                 ))}
               </div>
             </div>
             <button onClick={generateAiFlashcards} disabled={!aiCardTopic.trim()||aiCardLoading}
-              style={{ padding:"13px", borderRadius:12, border:"none", background:aiCardTopic.trim()?"#B45309":"#E5E7EB", color:aiCardTopic.trim()?"#fff":"#9CA3AF", cursor:aiCardTopic.trim()?"pointer":"not-allowed", fontWeight:700, fontSize:14, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+              style={{ padding:"13px", borderRadius:12, border:"none", background:aiCardTopic.trim()?"#C9922A":"#E5E7EB", color:aiCardTopic.trim()?"#fff":"#9CA3AF", cursor:aiCardTopic.trim()?"pointer":"not-allowed", fontWeight:700, fontSize:14, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
               {aiCardLoading?<><Loader2 size={16} style={{ animation:"spin .8s linear infinite" }}/> Generating…</>:<><Sparkles size={15}/> Generate {aiCardCount} Flashcards</>}
             </button>
           </div>
@@ -1171,7 +1171,7 @@ Make questions educational and progressively challenging.`
       {/* ══ AI QUIZ DIALOG ══ */}
       <Dialog open={showAiQuiz} onOpenChange={setShowAiQuiz}>
         <DialogContent style={{ maxWidth:440, borderRadius:20, padding:0 }}>
-          <div style={{ background:"linear-gradient(135deg,#B45309,#92400E)", padding:"18px 20px", borderRadius:"20px 20px 0 0", display:"flex", alignItems:"center", gap:10 }}>
+          <div style={{ background:"linear-gradient(135deg,#C9922A,#A67C1E)", padding:"18px 20px", borderRadius:"20px 20px 0 0", display:"flex", alignItems:"center", gap:10 }}>
             <Brain size={20} color="#fff"/>
             <h2 style={{ fontWeight:800, fontSize:16, color:"#fff", margin:0 }}>AI Quiz Generator</h2>
           </div>
@@ -1182,15 +1182,15 @@ Make questions educational and progressively challenging.`
               <p style={{ fontSize:11, color:"#9CA3AF", marginTop:4 }}>AI generates 10 multiple-choice questions instantly</p>
             </div>
             <div style={{ background:"#FEF3C7", borderRadius:12, padding:"12px 14px", border:"1px solid #FCD34D" }}>
-              <p style={{ fontSize:12, fontWeight:600, color:"#92400E", margin:0 }}>💡 Tips for better questions:</p>
-              <ul style={{ fontSize:11, color:"#B45309", margin:"6px 0 0 0", paddingLeft:16, lineHeight:1.8 }}>
+              <p style={{ fontSize:12, fontWeight:600, color:"#A67C1E", margin:0 }}>💡 Tips for better questions:</p>
+              <ul style={{ fontSize:11, color:"#C9922A", margin:"6px 0 0 0", paddingLeft:16, lineHeight:1.8 }}>
                 <li>Be specific: "Noon Sakin rules" not just "Tajweed"</li>
                 <li>Name the level: "beginner Arabic vocabulary"</li>
                 <li>Reference the material: "lessons 1-5 topics"</li>
               </ul>
             </div>
             <button onClick={generateAiQuiz} disabled={!aiQuizTopic.trim()||quizLoading}
-              style={{ padding:"13px", borderRadius:12, border:"none", background:aiQuizTopic.trim()?"#B45309":"#E5E7EB", color:aiQuizTopic.trim()?"#fff":"#9CA3AF", cursor:aiQuizTopic.trim()?"pointer":"not-allowed", fontWeight:700, fontSize:14, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+              style={{ padding:"13px", borderRadius:12, border:"none", background:aiQuizTopic.trim()?"#C9922A":"#E5E7EB", color:aiQuizTopic.trim()?"#fff":"#9CA3AF", cursor:aiQuizTopic.trim()?"pointer":"not-allowed", fontWeight:700, fontSize:14, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
               {quizLoading?<><Loader2 size={16} style={{ animation:"spin .8s linear infinite" }}/> Generating…</>:<><Zap size={15}/> Generate Quiz</>}
             </button>
           </div>
