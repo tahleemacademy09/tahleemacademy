@@ -17,6 +17,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import ClassroomView from "@/components/classroom/ClassroomView";
+import MaterialsViewer from "@/components/classroom/MaterialsViewer";
+import SubjectSyllabus from "@/components/classroom/SubjectSyllabus";
 import {
   ArrowLeft, BookOpen, FileText, Download, Play, ExternalLink, Video, Clock,
   Calendar, CheckCircle, XCircle, AlertCircle, Plus, Upload, Eye, BarChart3,
