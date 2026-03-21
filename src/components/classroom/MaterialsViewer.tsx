@@ -1,303 +1,316 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import {
   FileText, Video, Music, Link as LinkIcon, Image, Download,
-  File, ExternalLink, Play, Eye, X
+  File, ExternalLink, Play, Eye, X, Loader2
 } from "lucide-react";
 
-interface Props {
-  materials: any[];
-  sessions?: any[];
-}
+interface Props { materials: any[]; sessions?: any[]; }
 
-/* Detect file type from URL or material_type */
-type FileKind = "pdf" | "image" | "video" | "audio" | "youtube" | "link" | "office" | "other";
+type FileKind = "pdf"|"image"|"video"|"audio"|"youtube"|"link"|"office"|"text"|"other";
 
+/* ── Detect kind ───────────────────────────────────────── */
 function detectKind(mat: any): FileKind {
-  const url: string = mat.file_url || "";
-  const type: string = (mat.material_type || "").toLowerCase();
-  const ext = url.split("?")[0].split(".").pop()?.toLowerCase() || "";
+  const url: string  = mat.file_url || "";
+  const type: string = (mat.material_type || mat.file_type || "").toLowerCase();
+  const rawExt = url.split("?")[0].split(".").pop()?.toLowerCase() || "";
 
-  if (type === "video" || ["mp4", "webm", "ogg", "mov"].includes(ext)) return "video";
-  if (type === "audio" || ["mp3", "wav", "ogg", "m4a", "aac"].includes(ext)) return "audio";
-  if (type === "pdf" || ext === "pdf") return "pdf";
-  if (["jpg", "jpeg", "png", "gif", "webp", "svg", "bmp"].includes(ext)) return "image";
-  if (url.includes("youtube.com") || url.includes("youtu.be")) return "youtube";
-  if (url.includes("drive.google.com") || url.includes("docs.google.com")) return "office";
-  if (["doc", "docx", "ppt", "pptx", "xls", "xlsx"].includes(ext)) return "office";
-  if (type === "link") return "link";
+  // Storage path — extract real filename extension
+  const filename = url.split("/").pop()?.split("?")[0] || "";
+  // UUID-prefixed: "uuid.pdf" → ext = "pdf"
+  const ext = filename.includes(".") ? filename.split(".").pop()?.toLowerCase() || rawExt : rawExt;
+
+  if (url.includes("youtube.com") || url.includes("youtu.be"))                    return "youtube";
+  if (url.includes("drive.google.com") || url.includes("docs.google.com"))         return "office";
+  if (type.includes("video") || ["mp4","webm","ogg","mov","m4v"].includes(ext))    return "video";
+  if (type.includes("audio") || ["mp3","wav","ogg","m4a","aac","opus"].includes(ext)) return "audio";
+  if (type.includes("pdf") || ext === "pdf")                                        return "pdf";
+  if (type.includes("image") || ["jpg","jpeg","png","gif","webp","svg","bmp","avif"].includes(ext)) return "image";
+  if (["doc","docx","ppt","pptx","xls","xlsx","odt","ods","odp"].includes(ext))    return "office";
+  if (type === "link")                                                               return "link";
+  if (type === "text" || mat.content)                                               return "text";
   return "other";
 }
 
-/* Icon for each type */
-function KindIcon({ kind, className }: { kind: FileKind; className?: string }) {
-  const map: Record<FileKind, React.ElementType> = {
-    pdf: FileText, image: Image, video: Video, audio: Music,
-    youtube: Play, link: LinkIcon, office: FileText, other: File,
-  };
-  const Icon = map[kind];
-  return <Icon className={className} />;
+/* ── Visual config ─────────────────────────────────────── */
+const K: Record<FileKind, { icon: React.ElementType; bg: string; border: string; color: string; label: string }> = {
+  pdf:     { icon: FileText,     bg:"#FEF2F2", border:"#FECACA", color:"#DC2626", label:"PDF"      },
+  image:   { icon: Image,        bg:"#EFF6FF", border:"#BFDBFE", color:"#2563EB", label:"Image"    },
+  video:   { icon: Video,        bg:"#F0FDF4", border:"#BBF7D0", color:"#16A34A", label:"Video"    },
+  audio:   { icon: Music,        bg:"#FDF4FF", border:"#E9D5FF", color:"#9333EA", label:"Audio"    },
+  youtube: { icon: Play,         bg:"#FFF7ED", border:"#FED7AA", color:"#EA580C", label:"YouTube"  },
+  link:    { icon: LinkIcon,     bg:"#F0FDFA", border:"#99F6E4", color:"#0D9488", label:"Link"     },
+  office:  { icon: FileText,     bg:"#EFF6FF", border:"#BFDBFE", color:"#1D4ED8", label:"Document" },
+  text:    { icon: FileText,     bg:"#FFFBEB", border:"#FDE68A", color:"#B45309", label:"Text"     },
+  other:   { icon: File,         bg:"#F9FAFB", border:"#E5E7EB", color:"#6B7280", label:"File"     },
+};
+
+const fmtSize = (b?: number) => !b ? "" : b < 1048576 ? `${(b/1024).toFixed(0)} KB` : `${(b/1048576).toFixed(1)} MB`;
+
+/* ── Resolve URL (handles Supabase storage paths) ──────── */
+async function resolveUrl(fileUrl: string): Promise<string> {
+  if (!fileUrl) return "";
+  if (fileUrl.startsWith("http")) return fileUrl;   // already absolute
+  // Storage path — get a 1-hour signed URL
+  const { data } = await supabase.storage
+    .from("subject-files")
+    .createSignedUrl(fileUrl, 3600);
+  return data?.signedUrl || "";
 }
 
-/* Colour scheme per type */
-const kindStyle: Record<FileKind, { bg: string; border: string; icon: string; badge: string }> = {
-  pdf:     { bg: "#FEF2F2", border: "#FECACA", icon: "#DC2626", badge: "bg-red-100 text-red-700" },
-  image:   { bg: "#EFF6FF", border: "#BFDBFE", icon: "#2563EB", badge: "bg-blue-100 text-blue-700" },
-  video:   { bg: "#F0FDF4", border: "#BBF7D0", icon: "#16A34A", badge: "bg-green-100 text-green-700" },
-  audio:   { bg: "#FDF4FF", border: "#E9D5FF", icon: "#9333EA", badge: "bg-purple-100 text-purple-700" },
-  youtube: { bg: "#FFF7ED", border: "#FED7AA", icon: "#EA580C", badge: "bg-orange-100 text-orange-700" },
-  link:    { bg: "#F0FDFA", border: "#99F6E4", icon: "#0D9488", badge: "bg-teal-100 text-teal-700" },
-  office:  { bg: "#EFF6FF", border: "#BFDBFE", icon: "#1D4ED8", badge: "bg-blue-100 text-blue-700" },
-  other:   { bg: "#F9FAFB", border: "#E5E7EB", icon: "#6B7280", badge: "bg-gray-100 text-gray-600" },
-};
-
-const kindLabel: Record<FileKind, string> = {
-  pdf: "PDF", image: "Image", video: "Video", audio: "Audio",
-  youtube: "YouTube", link: "Link", office: "Document", other: "File",
-};
-
-/* ── Inline viewer ─────────────────────────────────────── */
+/* ════════════════════════════════════════════════════════
+   INLINE FILE VIEWER (shown inside Dialog)
+════════════════════════════════════════════════════════ */
 function FileViewer({ mat, kind, onClose }: { mat: any; kind: FileKind; onClose: () => void }) {
-  const url: string = mat.file_url || "";
+  const [url,     setUrl]     = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error,   setError]   = useState("");
 
-  // Resolve to absolute URL
-  const resolveUrl = (u: string) => {
-    if (!u) return "";
-    if (u.startsWith("http")) return u;
-    return `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/subject-files/${u}`;
-  };
-  const absUrl = resolveUrl(url);
+  useEffect(() => {
+    setLoading(true); setError("");
+    resolveUrl(mat.file_url || "")
+      .then(u => { setUrl(u); setLoading(false); })
+      .catch(() => { setError("Could not load file."); setLoading(false); });
+  }, [mat.file_url]);
 
-  // YouTube embed
   const ytEmbed = (u: string) => {
     const m = u.match(/(?:v=|youtu\.be\/|embed\/)([A-Za-z0-9_-]{11})/);
-    return m ? `https://www.youtube.com/embed/${m[1]}?autoplay=1` : u;
+    return m ? `https://www.youtube.com/embed/${m[1]}?autoplay=1&rel=0` : u;
   };
+  const officeEmbed = (u: string) =>
+    u.includes("docs.google.com") || u.includes("drive.google.com")
+      ? u.replace("/view", "/preview")
+      : `https://docs.google.com/gviewer?url=${encodeURIComponent(u)}&embedded=true`;
 
-  // Google Docs/Drive viewer for office files
-  const officeEmbed = (u: string) => {
-    if (u.includes("docs.google.com") || u.includes("drive.google.com")) return u;
-    return `https://docs.google.com/gviewer?url=${encodeURIComponent(u)}&embedded=true`;
-  };
+  const cfg = K[kind];
+  const Icon = cfg.icon;
 
   return (
-    <div className="flex flex-col" style={{ maxHeight: "80vh" }}>
-      <div className="flex items-center justify-between p-4 border-b">
-        <div>
-          <h3 className="font-bold text-base">{mat.title}</h3>
-          <span className={`inline-block text-xs font-semibold px-2 py-0.5 rounded-full mt-1 ${kindStyle[kind].badge}`}>
-            {kindLabel[kind]}
-          </span>
+    <div style={{ display:"flex", flexDirection:"column", maxHeight:"92vh" }}>
+
+      {/* Header */}
+      <div style={{ display:"flex", alignItems:"center", gap:12, padding:"14px 16px", borderBottom:"1px solid #e5e7eb", flexShrink:0 }}>
+        <div style={{ width:36, height:36, borderRadius:10, background:cfg.bg, border:`1px solid ${cfg.border}`, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+          <Icon size={18} style={{ color:cfg.color }} />
         </div>
-        <div className="flex items-center gap-2">
-          <a href={absUrl} download target="_blank" rel="noopener noreferrer">
-            <Button size="sm" variant="outline" className="gap-1.5">
-              <Download className="h-3.5 w-3.5" /> Download
-            </Button>
-          </a>
-          <Button size="icon" variant="ghost" onClick={onClose} className="h-8 w-8">
-            <X className="h-4 w-4" />
+        <div style={{ flex:1, minWidth:0 }}>
+          <p style={{ fontWeight:700, fontSize:14, color:"#111", margin:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{mat.title}</p>
+          <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:2 }}>
+            <span style={{ fontSize:11, fontWeight:600, padding:"1px 7px", borderRadius:20, background:cfg.bg, color:cfg.color, border:`1px solid ${cfg.border}` }}>{cfg.label}</span>
+            {mat.file_size && <span style={{ fontSize:11, color:"#9ca3af" }}>{fmtSize(mat.file_size)}</span>}
+          </div>
+        </div>
+        <div style={{ display:"flex", gap:6, flexShrink:0 }}>
+          {url && mat.is_downloadable !== false && (
+            <a href={url} download target="_blank" rel="noopener noreferrer">
+              <Button size="sm" variant="outline" style={{ borderRadius:10, fontSize:12 }}>
+                <Download size={13} style={{ marginRight:4 }} /> Download
+              </Button>
+            </a>
+          )}
+          <Button size="icon" variant="ghost" onClick={onClose} style={{ width:32, height:32, borderRadius:8 }}>
+            <X size={16} />
           </Button>
         </div>
       </div>
 
-      <div className="flex-1 overflow-auto">
-        {kind === "pdf" && (
-          <iframe
-            src={absUrl}
-            className="w-full"
-            style={{ height: "70vh", border: "none" }}
-            title={mat.title}
-          />
-        )}
-        {kind === "image" && (
-          <div className="flex items-center justify-center p-4 bg-muted/30" style={{ minHeight: 300 }}>
-            <img src={absUrl} alt={mat.title} className="max-w-full max-h-96 rounded-xl object-contain shadow-md" />
+      {/* Content area */}
+      <div style={{ flex:1, overflow:"auto", background:"#f9fafb" }}>
+        {loading && (
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:12, padding:48 }}>
+            <Loader2 size={32} style={{ color:"#064E3B", animation:"spin .8s linear infinite" }} />
+            <p style={{ fontSize:13, color:"#6b7280" }}>Loading…</p>
           </div>
         )}
-        {kind === "video" && (
-          <div className="bg-black">
-            <video
-              src={absUrl}
-              controls
-              autoPlay
-              className="w-full"
-              style={{ maxHeight: "60vh" }}
-            />
+        {error && (
+          <div style={{ textAlign:"center", padding:48 }}>
+            <p style={{ fontSize:13, color:"#dc2626", marginBottom:12 }}>{error}</p>
+            {mat.file_url && (
+              <a href={url||mat.file_url} target="_blank" rel="noopener noreferrer">
+                <Button variant="outline"><ExternalLink size={14} style={{ marginRight:6 }} /> Open in new tab</Button>
+              </a>
+            )}
           </div>
         )}
-        {kind === "audio" && (
-          <div className="p-8 flex flex-col items-center gap-6">
-            <div className="w-20 h-20 rounded-full bg-purple-100 flex items-center justify-center">
-              <Music className="h-10 w-10 text-purple-600" />
-            </div>
-            <audio src={absUrl} controls className="w-full" />
-          </div>
-        )}
-        {kind === "youtube" && (
-          <div className="aspect-video">
-            <iframe
-              src={ytEmbed(absUrl)}
-              className="w-full h-full"
-              allowFullScreen
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-              title={mat.title}
-            />
-          </div>
-        )}
-        {kind === "office" && (
-          <iframe
-            src={officeEmbed(absUrl)}
-            className="w-full"
-            style={{ height: "70vh", border: "none" }}
-            title={mat.title}
-          />
-        )}
-        {kind === "link" && (
-          <div className="p-8 text-center">
-            <LinkIcon className="h-12 w-12 text-teal-500 mx-auto mb-4" />
-            <p className="text-sm text-muted-foreground mb-4 break-all">{absUrl}</p>
-            <a href={absUrl} target="_blank" rel="noopener noreferrer">
-              <Button className="gap-2"><ExternalLink className="h-4 w-4" /> Open Link</Button>
-            </a>
-          </div>
-        )}
-        {kind === "other" && (
-          <div className="p-8 text-center">
-            <File className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-            <p className="text-sm text-muted-foreground mb-4">Preview not available for this file type.</p>
-            <a href={absUrl} download target="_blank" rel="noopener noreferrer">
-              <Button className="gap-2"><Download className="h-4 w-4" /> Download File</Button>
-            </a>
-          </div>
+        {!loading && !error && url && (
+          <>
+            {kind === "pdf" && (
+              <iframe src={url} style={{ width:"100%", height:"75vh", border:"none", display:"block" }} title={mat.title} />
+            )}
+            {kind === "image" && (
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"center", padding:16, minHeight:300 }}>
+                <img src={url} alt={mat.title} style={{ maxWidth:"100%", maxHeight:"70vh", borderRadius:12, objectFit:"contain", boxShadow:"0 4px 24px rgba(0,0,0,.12)" }} />
+              </div>
+            )}
+            {kind === "video" && (
+              <video src={url} controls autoPlay playsInline style={{ width:"100%", maxHeight:"72vh", display:"block", background:"#000" }} />
+            )}
+            {kind === "audio" && (
+              <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:40, gap:20 }}>
+                <div style={{ width:80, height:80, borderRadius:"50%", background:"#F3E8FF", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                  <Music size={36} style={{ color:"#9333EA" }} />
+                </div>
+                <p style={{ fontSize:14, fontWeight:600, color:"#374151" }}>{mat.title}</p>
+                <audio src={url} controls style={{ width:"100%", maxWidth:400 }} />
+              </div>
+            )}
+            {kind === "youtube" && (
+              <div style={{ position:"relative", paddingBottom:"56.25%", height:0 }}>
+                <iframe src={ytEmbed(url)} style={{ position:"absolute", top:0, left:0, width:"100%", height:"100%", border:"none" }}
+                  allowFullScreen allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" title={mat.title} />
+              </div>
+            )}
+            {kind === "office" && (
+              <iframe src={officeEmbed(url)} style={{ width:"100%", height:"75vh", border:"none", display:"block" }} title={mat.title} />
+            )}
+            {kind === "text" && (
+              <div style={{ padding:24, maxWidth:720, margin:"0 auto" }}>
+                <div style={{ background:"#fff", borderRadius:14, padding:24, border:"1px solid #e5e7eb", fontSize:14, lineHeight:1.8, color:"#374151", whiteSpace:"pre-wrap" }}>
+                  {mat.content || "No content."}
+                </div>
+              </div>
+            )}
+            {kind === "link" && (
+              <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:48, gap:16 }}>
+                <div style={{ width:64, height:64, borderRadius:16, background:"#F0FDFA", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                  <LinkIcon size={28} style={{ color:"#0D9488" }} />
+                </div>
+                <p style={{ fontSize:13, color:"#6b7280", wordBreak:"break-all", maxWidth:400, textAlign:"center" }}>{url}</p>
+                <a href={url} target="_blank" rel="noopener noreferrer">
+                  <Button style={{ borderRadius:12, gap:8 }}><ExternalLink size={15} /> Open Link</Button>
+                </a>
+              </div>
+            )}
+            {kind === "other" && (
+              <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:48, gap:16 }}>
+                <div style={{ width:64, height:64, borderRadius:16, background:"#F3F4F6", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                  <File size={28} style={{ color:"#6B7280" }} />
+                </div>
+                <p style={{ fontSize:13, color:"#6b7280" }}>Preview not available for this file type.</p>
+                <a href={url} download target="_blank" rel="noopener noreferrer">
+                  <Button style={{ borderRadius:12, gap:8 }}><Download size={15} /> Download File</Button>
+                </a>
+              </div>
+            )}
+          </>
         )}
       </div>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </div>
   );
 }
 
-/* ── Main component ─────────────────────────────────────── */
+/* ════════════════════════════════════════════════════════
+   MAIN COMPONENT
+════════════════════════════════════════════════════════ */
 const MaterialsViewer = ({ materials, sessions = [] }: Props) => {
   const { t } = useLanguage();
-  const [viewing, setViewing] = useState<any | null>(null);
-  const viewingKind = viewing ? detectKind(viewing) : "other";
+  const [viewing, setViewing] = useState<any|null>(null);
+  const viewKind = viewing ? detectKind(viewing) : "other";
 
-  if (materials.length === 0) {
-    return (
-      <div className="text-center py-16">
-        <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mx-auto mb-4">
-          <FileText className="h-8 w-8 text-muted-foreground/40" />
-        </div>
-        <p className="font-medium text-muted-foreground">{t("No materials yet", "لا توجد مواد بعد")}</p>
-        <p className="text-sm text-muted-foreground mt-1">{t("Your teacher will upload files here.", "سيرفع المعلم الملفات هنا.")}</p>
+  if (materials.length === 0) return (
+    <div style={{ textAlign:"center", padding:"64px 24px" }}>
+      <div style={{ width:64, height:64, borderRadius:20, background:"#F3F4F6", display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 16px" }}>
+        <FileText size={28} style={{ color:"#D1D5DB" }} />
       </div>
-    );
-  }
+      <p style={{ fontWeight:600, color:"#9CA3AF", margin:0 }}>{t("No materials yet", "لا توجد مواد بعد")}</p>
+      <p style={{ fontSize:12, color:"#D1D5DB", marginTop:4 }}>{t("Your teacher will upload files here.", "سيرفع المعلم الملفات هنا.")}</p>
+    </div>
+  );
 
-  // Group by session
-  const sessioned   = materials.filter((m: any) => m.session_id);
+  /* Group by session */
+  const sessioned   = materials.filter((m: any) =>  m.session_id);
   const unsessioned = materials.filter((m: any) => !m.session_id);
 
-  const renderMat = (mat: any) => {
+  const renderCard = (mat: any) => {
     const kind = detectKind(mat);
-    const st   = kindStyle[kind];
+    const cfg  = K[kind];
+    const Icon = cfg.icon;
     const session = mat.session_id ? sessions.find((s: any) => s.id === mat.session_id) : null;
-    const canPreview = !!mat.file_url;
+    const canOpen = !!(mat.file_url || mat.content);
 
     return (
-      <div
-        key={mat.id}
-        className="flex items-center gap-3 rounded-2xl p-3.5 border transition-all hover:shadow-md cursor-pointer"
-        style={{ background: st.bg, borderColor: st.border }}
-        onClick={() => canPreview && setViewing(mat)}
-      >
+      <div key={mat.id}
+        onClick={() => canOpen && setViewing(mat)}
+        style={{
+          display:"flex", alignItems:"center", gap:12, padding:"12px 14px",
+          borderRadius:14, border:`1.5px solid ${cfg.border}`,
+          background:cfg.bg, cursor: canOpen ? "pointer" : "default",
+          transition:"all .15s", boxShadow:"0 1px 4px rgba(0,0,0,.04)",
+        }}
+        onMouseEnter={e => { if(canOpen) (e.currentTarget as HTMLElement).style.boxShadow="0 4px 16px rgba(0,0,0,.1)"; }}
+        onMouseLeave={e => { (e.currentTarget as HTMLElement).style.boxShadow="0 1px 4px rgba(0,0,0,.04)"; }}>
+
         {/* Icon */}
-        <div
-          className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0"
-          style={{ background: `${st.icon}18` }}
-        >
-          <KindIcon kind={kind} className="h-5 w-5" style={{ color: st.icon } as any} />
+        <div style={{ width:44, height:44, borderRadius:12, background:`${cfg.color}15`, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+          <Icon size={20} style={{ color:cfg.color }} />
         </div>
 
         {/* Info */}
-        <div className="flex-1 min-w-0">
-          <p className="font-semibold text-sm truncate">{mat.title}</p>
-          <div className="flex items-center gap-2 mt-0.5">
-            <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${st.badge}`}>
-              {kindLabel[kind]}
+        <div style={{ flex:1, minWidth:0 }}>
+          <p style={{ fontWeight:700, fontSize:14, color:"#111827", margin:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+            {mat.title}
+          </p>
+          <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:3, flexWrap:"wrap" }}>
+            <span style={{ fontSize:11, fontWeight:600, padding:"1px 8px", borderRadius:20, background:`${cfg.color}15`, color:cfg.color }}>
+              {cfg.label}
             </span>
-            {session && (
-              <span className="text-xs text-muted-foreground">
-                Session #{(session as any).session_number}
-              </span>
-            )}
-            {mat.created_at && (
-              <span className="text-xs text-muted-foreground">
-                {new Date(mat.created_at).toLocaleDateString()}
-              </span>
-            )}
+            {mat.file_size && <span style={{ fontSize:11, color:"#9CA3AF" }}>{fmtSize(mat.file_size)}</span>}
+            {session && <span style={{ fontSize:11, color:"#9CA3AF" }}>Session #{(session as any).session_number}</span>}
+            {mat.created_at && <span style={{ fontSize:11, color:"#D1D5DB" }}>{new Date(mat.created_at).toLocaleDateString()}</span>}
           </div>
         </div>
 
-        {/* Action */}
-        {canPreview ? (
-          <Button size="sm" variant="ghost" className="gap-1.5 rounded-xl text-xs font-semibold shrink-0" style={{ color: st.icon }}>
-            <Eye className="h-3.5 w-3.5" />
-            {t("View", "عرض")}
-          </Button>
-        ) : (
-          <a href={mat.file_url} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}>
-            <Button size="sm" variant="ghost" className="gap-1.5 rounded-xl text-xs shrink-0">
-              <ExternalLink className="h-3.5 w-3.5" />
-            </Button>
-          </a>
+        {/* Open button */}
+        {canOpen && (
+          <div style={{ display:"flex", alignItems:"center", gap:6, shrink:0 } as any}>
+            <div style={{ display:"flex", alignItems:"center", gap:5, fontSize:12, fontWeight:700, color:cfg.color, padding:"6px 12px", borderRadius:20, background:`${cfg.color}12`, border:`1px solid ${cfg.color}30` }}>
+              <Eye size={13} /> Open
+            </div>
+          </div>
         )}
       </div>
     );
   };
 
+  /* Group sessions */
+  const bySession: Record<string, any[]> = {};
+  sessioned.forEach((m: any) => { if (!bySession[m.session_id]) bySession[m.session_id]=[]; bySession[m.session_id].push(m); });
+
   return (
-    <div className="space-y-5">
+    <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
       {/* General materials */}
       {unsessioned.length > 0 && (
         <div>
           {sessioned.length > 0 && (
-            <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-3">
-              {t("General", "عام")}
+            <p style={{ fontSize:11, fontWeight:700, textTransform:"uppercase", letterSpacing:1, color:"#9CA3AF", marginBottom:10 }}>
+              General
             </p>
           )}
-          <div className="space-y-2">{unsessioned.map(renderMat)}</div>
+          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>{unsessioned.map(renderCard)}</div>
         </div>
       )}
 
-      {/* Session-grouped materials */}
-      {sessioned.length > 0 && (() => {
-        const bySession: Record<string, any[]> = {};
-        sessioned.forEach((m: any) => {
-          if (!bySession[m.session_id]) bySession[m.session_id] = [];
-          bySession[m.session_id].push(m);
-        });
-        return Object.entries(bySession).map(([sid, mats]) => {
-          const sess = sessions.find((s: any) => s.id === sid);
-          return (
-            <div key={sid}>
-              <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-3">
-                {t("Session", "الحصة")} #{(sess as any)?.session_number || "?"} — {(sess as any)?.topic || ""}
-              </p>
-              <div className="space-y-2">{mats.map(renderMat)}</div>
-            </div>
-          );
-        });
-      })()}
+      {/* Session-grouped */}
+      {Object.entries(bySession).map(([sid, mats]) => {
+        const sess = sessions.find((s: any) => s.id === sid);
+        return (
+          <div key={sid}>
+            <p style={{ fontSize:11, fontWeight:700, textTransform:"uppercase", letterSpacing:1, color:"#9CA3AF", marginBottom:10 }}>
+              Session #{(sess as any)?.session_number || "?"}{(sess as any)?.topic ? ` — ${(sess as any).topic}` : ""}
+            </p>
+            <div style={{ display:"flex", flexDirection:"column", gap:8 }}>{mats.map(renderCard)}</div>
+          </div>
+        );
+      })}
 
-      {/* Viewer dialog */}
+      {/* Viewer modal */}
       <Dialog open={!!viewing} onOpenChange={v => !v && setViewing(null)}>
-        <DialogContent className="max-w-4xl p-0 overflow-hidden rounded-2xl">
-          {viewing && (
-            <FileViewer mat={viewing} kind={viewingKind} onClose={() => setViewing(null)} />
-          )}
+        <DialogContent style={{ maxWidth:"92vw", width:"860px", padding:0, borderRadius:20, overflow:"hidden" }}>
+          {viewing && <FileViewer mat={viewing} kind={viewKind} onClose={() => setViewing(null)} />}
         </DialogContent>
       </Dialog>
     </div>
