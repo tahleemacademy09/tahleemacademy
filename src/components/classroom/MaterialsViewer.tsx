@@ -138,7 +138,11 @@ function FileViewer({ mat, kind, onClose }: { mat: any; kind: FileKind; onClose:
         {!loading && !error && url && (
           <>
             {kind === "pdf" && (
-              <iframe src={url} style={{ width:"100%", height:"75vh", border:"none", display:"block" }} title={mat.title} />
+              <iframe
+                src={`https://docs.google.com/gviewer?url=${encodeURIComponent(url)}&embedded=true`}
+                style={{ width:"100%", height:"75vh", border:"none", display:"block" }}
+                title={mat.title}
+              />
             )}
             {kind === "image" && (
               <div style={{ display:"flex", alignItems:"center", justifyContent:"center", padding:16, minHeight:300 }}>
@@ -164,7 +168,11 @@ function FileViewer({ mat, kind, onClose }: { mat: any; kind: FileKind; onClose:
               </div>
             )}
             {kind === "office" && (
-              <iframe src={officeEmbed(url)} style={{ width:"100%", height:"75vh", border:"none", display:"block" }} title={mat.title} />
+              <iframe
+                src={officeEmbed(url)}
+                style={{ width:"100%", height:"75vh", border:"none", display:"block" }}
+                title={mat.title}
+              />
             )}
             {kind === "text" && (
               <div style={{ padding:24, maxWidth:720, margin:"0 auto" }}>
@@ -318,4 +326,3 @@ const MaterialsViewer = ({ materials, sessions = [] }: Props) => {
 };
 
 export default MaterialsViewer;
-
