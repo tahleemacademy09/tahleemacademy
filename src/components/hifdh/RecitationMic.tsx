@@ -149,6 +149,12 @@ export default function RecitationMic({ userId }: Props) {
   const memSilRef     = useRef<ReturnType<typeof setTimeout>|null>(null); // silence detection timer
   const memTimer      = useRef<ReturnType<typeof setInterval>|null>(null);
 
+  // These refs shadow-track derived/state values so async callbacks always get current values
+  const selAyahsRef   = useRef<AyahData[]>([]);
+  const repsShownRef  = useRef(DEFAULT_SHOWN);
+  const repsHiddenRef = useRef(DEFAULT_HIDDEN);
+  const repsCumulRef  = useRef(DEFAULT_CUMUL);
+
   /* Load surah list */
   useEffect(()=>{
     setLoadingSurahs(true);
@@ -170,17 +176,14 @@ export default function RecitationMic({ userId }: Props) {
 
   /* Derived: selected ayahs slice */
   const selAyahs = ayahs.filter(a=>a.numberInSurah>=fromVerse&&a.numberInSurah<=toVerse);
-  const selAyahsRef = useRef<typeof selAyahs>([]);
-  selAyahsRef.current = selAyahs; // always current, safe in async callbacks
-  const repsShownRef = useRef(DEFAULT_SHOWN);
-  repsShownRef.current = repsShown;
-  const repsHiddenRef = useRef(DEFAULT_HIDDEN);
-  repsHiddenRef.current = repsHidden;
-  const repsCumulRef  = useRef(DEFAULT_CUMUL);
-  repsCumulRef.current = repsCumul;
   const currentAyah = selAyahs[memVerseIdx];
   const cumulativeAyahs = selAyahs.slice(0, memVerseIdx+1);
   const filteredSurahs  = surahs.filter(s=>s.englishName.toLowerCase().includes(search.toLowerCase())||s.name.includes(search));
+  // Keep refs updated every render (assignments, not hook calls — safe here)
+  selAyahsRef.current   = selAyahs;
+  repsShownRef.current  = repsShown;
+  repsHiddenRef.current = repsHidden;
+  repsCumulRef.current  = repsCumul;
 
   /* ── Play reference audio ── */
   const playAudio = useCallback((globalNum: number)=>{
