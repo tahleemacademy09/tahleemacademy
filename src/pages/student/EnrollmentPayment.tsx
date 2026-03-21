@@ -119,17 +119,27 @@ const EnrollmentPayment = () => {
         .select("*").eq("is_active", true).order("amount");
 
       const allPlans = (plansRes.data || []) as Plan[];
-      // Show plans where level matches student level OR level is null/empty (applies to all)
-      const filteredPlans = allPlans.filter(p =>
-        !p.level || p.level === "all" || p.level?.toLowerCase() === studentLevel
-      );
-      // Fallback: if no matching plans found, show all active plans
-      const activePlans = filteredPlans.length > 0 ? filteredPlans : allPlans;
+      const hasPrivate = !!(profRes.data as any)?.private_session_rate || (profRes.data as any)?.student_type === "private";
+
+      const filteredPlans = allPlans.filter(p => {
+        // 1. Must match student's level or be "all"/null level
+        const levelOk = !p.level || p.level === "all" || p.level?.toLowerCase() === studentLevel;
+        // 2. Hide monthly plans (duration = 1 month) — students pay by term only
+        const notMonthly = (p.duration_months || 1) > 1;
+        // 3. Hide private session plans unless student is enrolled in private
+        const isPrivatePlan = p.name?.toLowerCase().includes("private");
+        const privateOk = !isPrivatePlan || hasPrivate;
+        return levelOk && notMonthly && privateOk;
+      });
+
+      // Fallback: if no matching plans, show non-monthly non-private plans
+      const activePlans = filteredPlans.length > 0
+        ? filteredPlans
+        : allPlans.filter(p => (p.duration_months || 1) > 1 && !p.name?.toLowerCase().includes("private"));
       setPlans(activePlans);
 
-      if (activePlans.length > 0 && !selectedPlan) {
-        const monthly = activePlans.find(p => p.duration_months === 1) || activePlans[0];
-        setSelectedPlan(monthly);
+      if (activePlans.length > 0) {
+        setSelectedPlan(activePlans[0]);
       }
     } finally {
       setLoading(false);
@@ -194,8 +204,10 @@ const EnrollmentPayment = () => {
           plan_id:   selectedPlan.id,
           plan_name: selectedPlan.name,
         },
-        callback: async (res: any) => {
-          await handlePaymentSuccess(res.reference || ref, amount, selectedPlan);
+        // IMPORTANT: callback must NOT be async — Paystack breaks if it is
+        callback: (res: any) => {
+          const reference = res.reference || ref;
+          handlePaymentSuccess(reference, amount, selectedPlan);
         },
         onClose: () => {
           toast({ title: "Payment cancelled" });
