@@ -289,16 +289,18 @@ const LiveQuiz = () => {
     setAiLoading(true);
     try {
       const { data, error } = await supabase.functions.invoke("ai-generate", {
-        body: { prompt: `Create ${settings.numQ} multiple-choice quiz questions about "${aiTopic}" for Islamic education students.
-Return ONLY valid JSON array, no markdown:
+        body: {
+          prompt: `Create ${settings.numQ} multiple-choice quiz questions about "${aiTopic}" for Islamic education students.
+Return ONLY valid JSON array, no markdown, no explanation, nothing else:
 [{"question":"...","options":["A","B","C","D"],"correct_answer":"exact option text","explanation":"brief explanation","topic":"${aiTopic}"}]
-Make questions educational and clearly worded.` },
+Make questions educational, clearly worded, and accurate.`
+        },
       });
       if (error) throw new Error(error.message);
-      const text = data?.text || "";
-      const clean = text.replace(/\`\`\`json\s*/gi,"").replace(/\`\`\`\s*/g,"").trim();
+      const text = data?.text || data?.content || "";
+      const clean = text.replace(/```json\s*/gi,"").replace(/```\s*/g,"").trim();
       const parsed = JSON.parse(clean) as any[];
-      const qs: Omit<Question,"id">[] = parsed.map(q => ({
+      const qs: Omit<Question,"id">[] = parsed.map((q: any) => ({
         question: q.question, options: q.options,
         correct_answer: q.correct_answer, explanation: q.explanation||"",
         time_limit: settings.timeQ, topic: aiTopic,
@@ -629,7 +631,7 @@ Make questions educational and clearly worded.` },
           <div style={{display:"flex",flexDirection:"column",gap:8}}>
             {[
               { id:"builtin", icon:"🕌", label:"Built-in Islamic Pool",  desc:"15+ ready-made questions",           action:()=>{ setCustomQs([]); setView("q-preview"); } },
-              { id:"ai",      icon:"🤖", label:"AI Generated",            desc:"Claude AI generates by topic",       action:()=>setView("q-ai") },
+              { id:"ai",      icon:"🤖", label:"AI Generated",            desc:"AI generates by topic",       action:()=>setView("q-ai") },
               { id:"bank",    icon:"🏦", label:"Question Bank",           desc:"Import from your published exams",   action:()=>{ loadBankExams(); setView("q-bank"); } },
               { id:"upload",  icon:"📁", label:"Upload CSV / JSON",       desc:"Upload a file of questions",         action:()=>setView("q-upload") },
               { id:"manual",  icon:"✍️", label:"Type Manually",           desc:"Add questions one by one",           action:()=>{ setCustomQs([]); setView("q-manual"); } },
@@ -685,14 +687,21 @@ Make questions educational and clearly worded.` },
             {/* Questions count */}
             <div>
               <label style={{fontSize:11,fontWeight:700,color:GOLD,display:"block",marginBottom:8,letterSpacing:1.5,textTransform:"uppercase" as const}}>Number of Questions</label>
-              <div style={{display:"flex",gap:8}}>
-                {[5,8,10,15].map(n=>(
+              <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                {[5,10,15,20].map(n=>(
                   <button key={n} onClick={()=>setSettings(p=>({...p,numQ:n}))}
                     style={{flex:1,padding:"10px",borderRadius:10,border:`1.5px solid ${settings.numQ===n?GOLD:"rgba(255,255,255,0.12)"}`,background:settings.numQ===n?"rgba(201,146,42,0.18)":"transparent",color:settings.numQ===n?GOLD:"rgba(255,255,255,0.5)",cursor:"pointer",fontWeight:800,fontSize:15,transition:"all .15s"}}>
                     {n}
                   </button>
                 ))}
+                <input
+                  type="number" min={1} max={100}
+                  value={settings.numQ}
+                  onChange={e=>{const v=parseInt(e.target.value)||1; setSettings(p=>({...p,numQ:Math.max(1,v)}));}}
+                  style={{width:64,padding:"10px 8px",borderRadius:10,border:`1.5px solid rgba(201,146,42,0.4)`,background:"rgba(255,255,255,0.07)",color:GOLD,fontWeight:800,fontSize:15,outline:"none",textAlign:"center",fontFamily:"inherit"}}
+                />
               </div>
+              <p style={{fontSize:11,color:"rgba(255,255,255,0.3)",margin:"6px 0 0"}}>Or type any number in the box →</p>
             </div>
 
             {/* Time per Q */}
@@ -737,7 +746,7 @@ Make questions educational and clearly worded.` },
           <span style={{fontSize:24}}>🤖</span>
           <h2 style={{fontFamily:"'Playfair Display',serif",fontWeight:900,fontSize:26,color:"#fff",margin:0}}>AI Generator</h2>
         </div>
-        <p style={{fontSize:13,color:"rgba(255,255,255,0.4)",marginBottom:22}}>Claude AI will create {settings.numQ} questions instantly</p>
+        <p style={{fontSize:13,color:"rgba(255,255,255,0.4)",marginBottom:22}}>AI will create {settings.numQ} questions instantly</p>
         <div style={{...glassCard, display:"flex", flexDirection:"column", gap:16}}>
           <div>
             <label style={{fontSize:11,fontWeight:700,color:GOLD,display:"block",marginBottom:8,letterSpacing:1.5,textTransform:"uppercase"}}>Topic or concept</label>
