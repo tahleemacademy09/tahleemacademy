@@ -538,7 +538,7 @@ Rules:
         <div style={{background:"#fff",border:`1px solid ${BORDER}`,borderRadius:14,padding:14}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:showRepSettings?12:0}}>
             <p style={{fontSize:12,fontWeight:700,color:G,margin:0}}>⚙️ Repetition Settings</p>
-            <button onClick={()=>setShowRepSettings(v=>!v)} style={{background:"none",border:"none",fontSize:11,color:MUTED,cursor:"pointer",padding:"2px 6px",borderRadius:6,background:"#f3f4f6"}}>
+            <button onClick={()=>setShowRepSettings(v=>!v)} style={{background:"#f3f4f6",border:"1px solid #e5e7eb",fontSize:11,color:MUTED,cursor:"pointer",padding:"2px 8px",borderRadius:6}}>
               {showRepSettings?"▲ Hide":"▼ Edit"}
             </button>
           </div>
