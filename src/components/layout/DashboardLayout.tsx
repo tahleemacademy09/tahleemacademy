@@ -213,7 +213,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                 : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground"
             )}>
             <Wallet className="h-4 w-4 shrink-0 text-yellow-400" />
-            <span>{t("Enrollment & Payment", "التسجيل والدفع")}</span>
+            <span>{t("Payment", "الدفع")}</span>
           </Link>
         )}
 
@@ -270,7 +270,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
           {/* Enrollment & Payment shortcut in mobile header */}
           {role === "student" && (
             <Link to="/student/enrollment-payment">
-              <Button variant="ghost" size="icon" title={t("Enrollment & Payment", "التسجيل والدفع")}>
+              <Button variant="ghost" size="icon" title={t("Payment", "الدفع")}>
                 <Wallet className="h-5 w-5 text-yellow-500" />
               </Button>
             </Link>
