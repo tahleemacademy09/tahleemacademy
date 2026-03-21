@@ -318,3 +318,4 @@ const MaterialsViewer = ({ materials, sessions = [] }: Props) => {
 };
 
 export default MaterialsViewer;
+
