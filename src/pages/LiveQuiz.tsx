@@ -833,8 +833,7 @@ Make questions educational and clearly worded.` },
           {/* CSV template */}
           <div style={{background:"rgba(255,255,255,0.03)",borderRadius:12,padding:"14px",border:"1px solid rgba(255,255,255,0.08)"}}>
             <p style={{fontSize:11,color:GOLD,fontWeight:700,margin:"0 0 8px",letterSpacing:1.5,textTransform:"uppercase"}}>CSV Format</p>
-            <code style={{fontSize:10,color:"rgba(255,255,255,0.5)",lineHeight:1.8,display:"block",whiteSpace:"pre-wrap"}}>{"question,optA,optB,optC,optD,correct_answer,explanation
-How many Surahs?,110,112,114,116,114,The Quran has 114 Surahs"}</code>
+            <code style={{fontSize:10,color:"rgba(255,255,255,0.5)",lineHeight:1.8,display:"block",whiteSpace:"pre-wrap"}}>{"question,optA,optB,optC,optD,correct_answer,explanation\nHow many Surahs?,110,112,114,116,114,The Quran has 114 Surahs"}</code>
           </div>
 
           {/* JSON template */}
