@@ -169,17 +169,24 @@ const LiveQuiz = () => {
         const r = p.new as Room;
         setRoom(r);
         if (!isHost) {
-          // Always fetch the question fresh for BOTH countdown and question events
-          if (r.status === "countdown" || r.status === "question") {
+          // "countdown" → fetch the question at the correct index, then start countdown
+          // We NEVER handle "question" status here — the countdown-player useEffect
+          // transitions to question-player automatically after 3 seconds.
+          // Handling "question" here caused two bugs:
+          //   1. It interrupted the student's countdown mid-way
+          //   2. "question" DB update doesn't include current_question_index in p.new,
+          //      so r.current_question_index was undefined → always fetched Q index 0
+          if (r.status === "countdown") {
+            const idx = r.current_question_index ?? 0;
             const { data: qd } = await supabase
               .from("live_quiz_questions" as any).select("*")
-              .eq("room_id", room.id)
-              .eq("order_index", r.current_question_index)
+              .eq("room_id", r.id)
+              .eq("order_index", idx)
               .single();
             if (qd) setCurrentQ({ ...qd, options: qd.options as string[] } as Question);
             setSelectedAns(null);
-            if (r.status === "countdown") { setCountdown(3); setView("countdown-player"); }
-            else { setView("question-player"); }
+            setCountdown(3);
+            setView("countdown-player");
           }
           if (r.status === "reveal")   { await loadParticipants(); setView("reveal-player"); }
           if (r.status === "finished") { await loadParticipants(); setView("results-player"); }
