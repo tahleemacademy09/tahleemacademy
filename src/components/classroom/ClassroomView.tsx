@@ -1230,24 +1230,7 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
             <div style={{ flex:1, position:"relative", overflow:"hidden" }}>
               <VideoGrid />
 
-              {/* Whiteboard overlay */}
-              {whiteboardOpen && (
-                <Whiteboard
-                  onClose={()=>{
-                    setWhiteboardOpen(false);
-                    setWhiteboardFS(false);
-                    if (isPrivileged) {
-                      try {
-                        const msg = new TextEncoder().encode(JSON.stringify({ type: "wb_close" }));
-                        room?.localParticipant?.publishData(msg, { reliable: true });
-                      } catch (_) {}
-                    }
-                  }}
-                  isTeacher={isPrivileged}
-                  initialStrokes={wbStrokesBuffer.current}
-                  subjectId={subject.id}
-                />
-              )}
+              {/* Whiteboard rendered at top level to avoid overflow:hidden clipping — see below */}
 
               {/* Shared Material fullscreen overlay — teacher pushes, everyone sees */}
               {sharedMaterial && (
@@ -1314,6 +1297,26 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
             groupReciteMode={groupReciteMode}
             isPrivileged={isPrivileged}
           />
+
+          {/* Whiteboard — rendered here (top level inside LiveKitRoom) so position:fixed
+               is NOT clipped by inner overflow:hidden containers */}
+          {whiteboardOpen && (
+            <Whiteboard
+              onClose={()=>{
+                setWhiteboardOpen(false);
+                setWhiteboardFS(false);
+                if (isPrivileged) {
+                  try {
+                    const msg = new TextEncoder().encode(JSON.stringify({ type: "wb_close" }));
+                    room?.localParticipant?.publishData(msg, { reliable: true });
+                  } catch (_) {}
+                }
+              }}
+              isTeacher={isPrivileged}
+              initialStrokes={wbStrokesBuffer.current}
+              subjectId={subject.id}
+            />
+          )}
 
           {/* Mobile panels as bottom sheets */}
           {isMobile && partOpen && (
