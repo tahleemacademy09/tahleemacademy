@@ -22,11 +22,12 @@ const ClassParticipants = ({ sessionId, onMuteStudent, onRemoveStudent }: ClassP
 
   useEffect(() => {
     const load = async () => {
+      if (!sessionId) return;
       const { data } = await supabase
         .from("class_participants")
         .select("*, profiles:student_id(full_name, avatar_url, level)")
         .eq("session_id", sessionId)
-        .is("left_at", null)
+        .is("left_at", null)   // actively in session
         .order("joined_at");
       setParticipants(data || []);
     };
