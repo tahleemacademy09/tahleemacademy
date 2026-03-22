@@ -51,10 +51,11 @@ const CSS   = `
    WHITEBOARD — portal at document.body
    Completely outside LiveKit transforms
 ══════════════════════════════════════════ */
-const Whiteboard = ({ room, onClose, isTeacher, initialStrokes, subjectId }: {
+const Whiteboard = ({ room, onClose, isTeacher, initialStrokes, subjectId, canStudentWrite }: {
   room: any; onClose: () => void; isTeacher: boolean;
-  initialStrokes?: any[] | null; subjectId: string;
+  initialStrokes?: any[] | null; subjectId: string; canStudentWrite?: boolean;
 }) => {
+  const canDraw = isTeacher || canStudentWrite;
   const canvasRef  = useRef<HTMLCanvasElement>(null);
   const drawing    = useRef(false);
   const strokesRef = useRef<any[]>([]);
@@ -92,7 +93,7 @@ const Whiteboard = ({ room, onClose, isTeacher, initialStrokes, subjectId }: {
   }, []); // eslint-disable-line
 
   const save = useCallback(() => {
-    if (!isTeacher) return;
+    if (!canDraw) return;
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
       try { await supabase.from("subject_whiteboard" as any).upsert({ subject_id: subjectId, strokes: strokesRef.current, updated_at: new Date().toISOString() }, { onConflict: "subject_id" }); } catch {}
@@ -121,20 +122,20 @@ const Whiteboard = ({ room, onClose, isTeacher, initialStrokes, subjectId }: {
     return { x: (e.clientX - r.left) * (canvasRef.current!.width / r.width), y: (e.clientY - r.top) * (canvasRef.current!.height / r.height) };
   };
   const onDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!isTeacher) return; drawing.current = true;
+    if (!canDraw) return; drawing.current = true;
     (e.target as any).setPointerCapture(e.pointerId);
     strokesRef.current.push({ color: tool === "eraser" ? "#fff" : color, lineWidth: tool === "eraser" ? 28 : lineWidth, points: [getPos(e)] });
   };
   const onMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!drawing.current || !isTeacher) return;
+    if (!drawing.current || !canDraw) return;
     const s = strokesRef.current[strokesRef.current.length - 1];
     if (s) { s.points.push(getPos(e)); redraw(); }
   };
   const onUp = () => {
-    if (!isTeacher || !drawing.current) return;
+    if (!canDraw || !drawing.current) return;
     drawing.current = false; broadcast({ type: "wb_strokes", strokes: strokesRef.current }); save();
   };
-  const clearBoard = () => { strokesRef.current = []; redraw(); broadcast({ type: "wb_clear" }); save(); };
+  const clearBoard = () => { if(!canDraw) return; strokesRef.current = []; redraw(); broadcast({ type: "wb_clear" }); save(); };
 
   const COLORS = ["#1a1a1a","#EF4444","#3B82F6","#22C55E","#F59E0B","#8B5CF6","#EC4899","#ffffff"];
 
@@ -142,26 +143,35 @@ const Whiteboard = ({ room, onClose, isTeacher, initialStrokes, subjectId }: {
     <div style={{ position:"fixed", inset:0, zIndex:9999, background:"#f8f8f8", display:"flex", flexDirection:"column" }}>
       <style>{`@keyframes wb-spin { to { transform:rotate(360deg); } }`}</style>
 
-      {/* Header */}
-      <div style={{ background:`linear-gradient(135deg,${G2},${G})`, display:"flex", alignItems:"center", gap:10, padding:"10px 14px", flexShrink:0, boxShadow:"0 2px 14px rgba(0,0,0,.35)" }}>
-        <button onClick={onClose} style={{ display:"flex", alignItems:"center", gap:7, background:"rgba(255,255,255,.18)", border:"none", borderRadius:12, padding:"8px 16px", color:"#fff", fontWeight:800, fontSize:14, cursor:"pointer" }}>
-          <ArrowLeft style={{ width:16, height:16 }}/> Back to Class
+      {/* Header — single row: X | title | tools (if can draw) */}
+      <div style={{ background:`linear-gradient(135deg,${G2},${G})`, display:"flex", alignItems:"center", gap:8, padding:"8px 10px", flexShrink:0, boxShadow:"0 2px 12px rgba(0,0,0,.35)", overflowX:"auto" as const }}>
+        {/* X close button */}
+        <button onClick={onClose} style={{ width:34, height:34, borderRadius:10, background:"rgba(255,255,255,.18)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", color:"#fff", flexShrink:0 }}>
+          <X style={{ width:16, height:16 }}/>
         </button>
-        <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
-          <PenTool style={{ width:16, height:16, color:"rgba(255,255,255,.7)" }}/>
-          <span style={{ fontSize:15, fontWeight:800, color:"#fff" }}>Whiteboard{!isTeacher && <span style={{ fontSize:11, fontWeight:400, opacity:.55, marginLeft:8 }}>View only</span>}</span>
-        </div>
-        {isTeacher && (
-          <div style={{ display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" as const }}>
-            {[{id:"pen",label:"✏️"},{id:"eraser",label:"⬜"}].map(t=>(
-              <button key={t.id} onClick={()=>setTool(t.id as any)} style={{ padding:"5px 12px", borderRadius:10, border:"none", background:tool===t.id?"rgba(255,255,255,.3)":"rgba(255,255,255,.1)", color:"#fff", fontSize:13, cursor:"pointer", fontWeight:tool===t.id?700:400 }}>{t.label}</button>
+        {/* Title */}
+        <PenTool style={{ width:14, height:14, color:"rgba(255,255,255,.6)", flexShrink:0 }}/>
+        <span style={{ fontSize:13, fontWeight:700, color:"#fff", flexShrink:0, marginRight:4 }}>
+          Whiteboard{!canDraw && <span style={{ fontSize:10, opacity:.5, marginLeft:6 }}>View only</span>}
+        </span>
+        {/* Drawing tools — only if allowed to draw */}
+        {canDraw && (
+          <>
+            {/* Pen / Eraser */}
+            {[{id:"pen",icon:"✏️"},{id:"eraser",icon:"⬜"}].map(t=>(
+              <button key={t.id} onClick={()=>setTool(t.id as any)} style={{ width:30, height:30, borderRadius:8, border:"none", background:tool===t.id?"rgba(255,255,255,.3)":"rgba(255,255,255,.1)", fontSize:14, cursor:"pointer", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center" }}>{t.icon}</button>
             ))}
-            {COLORS.map(c=>(
-              <button key={c} onClick={()=>{setColor(c);setTool("pen");}} style={{ width:22, height:22, borderRadius:"50%", background:c, border:color===c&&tool==="pen"?"3px solid #fff":"2px solid rgba(255,255,255,.3)", cursor:"pointer", flexShrink:0 }}/>
+            {/* Color dots */}
+            {COLORS.map(col=>(
+              <button key={col} onClick={()=>{setColor(col);setTool("pen");}} style={{ width:20, height:20, borderRadius:"50%", background:col, border:color===col&&tool==="pen"?"3px solid #fff":"2px solid rgba(255,255,255,.25)", cursor:"pointer", flexShrink:0 }}/>
             ))}
-            <input type="range" min={1} max={24} value={lineWidth} onChange={e=>setLineWidth(+e.target.value)} style={{ width:64, accentColor:"#fff" }}/>
-            <button onClick={clearBoard} style={{ padding:"5px 14px", borderRadius:10, border:"none", background:"#EF4444", color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer" }}>Clear</button>
-          </div>
+            {/* Thickness */}
+            <input type="range" min={1} max={24} value={lineWidth} onChange={e=>setLineWidth(+e.target.value)} style={{ width:52, accentColor:"#fff", flexShrink:0 }}/>
+            {/* Clear — teacher only */}
+            {isTeacher && (
+              <button onClick={clearBoard} style={{ height:28, padding:"0 10px", borderRadius:8, border:"none", background:"#EF4444", color:"#fff", fontSize:11, fontWeight:700, cursor:"pointer", flexShrink:0 }}>✕</button>
+            )}
+          </>
         )}
       </div>
 
@@ -169,7 +179,7 @@ const Whiteboard = ({ room, onClose, isTeacher, initialStrokes, subjectId }: {
       <div style={{ flex:1, position:"relative", overflow:"hidden", background:"#fff" }}>
         {busy && <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", background:"#fff", zIndex:5 }}><Loader2 style={{ width:32, height:32, color:G, animation:"wb-spin .8s linear infinite" }}/></div>}
         <canvas ref={canvasRef} width={1600} height={1000}
-          style={{ width:"100%", height:"100%", display:"block", cursor:isTeacher?(tool==="eraser"?"cell":"crosshair"):"default", touchAction:"none" }}
+          style={{ width:"100%", height:"100%", display:"block", cursor:canDraw?(tool==="eraser"?"cell":"crosshair"):"default", touchAction:"none" }}
           onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerLeave={onUp} onPointerCancel={onUp}
         />
       </div>
@@ -181,31 +191,34 @@ const Whiteboard = ({ room, onClose, isTeacher, initialStrokes, subjectId }: {
 /* ══════════════════════════════════════════
    WHITEBOARD BRIDGE — reads room context then renders portal
 ══════════════════════════════════════════ */
-const WhiteboardBridge = ({ onClose, isTeacher, initialStrokes, subjectId }: {
-  onClose: ()=>void; isTeacher: boolean; initialStrokes: any[]|null; subjectId: string;
+const WhiteboardBridge = ({ onClose, isTeacher, initialStrokes, subjectId, canStudentWrite }: {
+  onClose: ()=>void; isTeacher: boolean; initialStrokes: any[]|null; subjectId: string; canStudentWrite?: boolean;
 }) => {
   const room = useRoomContext();
-  return <Whiteboard room={room} onClose={onClose} isTeacher={isTeacher} initialStrokes={initialStrokes} subjectId={subjectId}/>;
+  return <Whiteboard room={room} onClose={onClose} isTeacher={isTeacher} initialStrokes={initialStrokes} subjectId={subjectId} canStudentWrite={canStudentWrite}/>;
 };
 
 /* ══════════════════════════════════════════
    ROOM DATA LISTENER
 ══════════════════════════════════════════ */
-const RoomDataListener = ({ onWbOpen, onWbClose, strokesBuffer, onMatOpen, onMatClose }: {
+const RoomDataListener = ({ onWbOpen, onWbClose, strokesBuffer, onMatOpen, onMatClose, onWbAllowWrite, onRecAllowed }: {
   onWbOpen:()=>void; onWbClose:()=>void; strokesBuffer: React.MutableRefObject<any[]|null>;
   onMatOpen?:(mat:any)=>void; onMatClose?:()=>void;
+  onWbAllowWrite?:(allow:boolean)=>void; onRecAllowed?:(allow:boolean)=>void;
 }) => {
   const room = useRoomContext();
   useEffect(() => {
     const h = (payload: Uint8Array) => {
       try {
         const msg = JSON.parse(new TextDecoder().decode(payload));
-        if (msg.type==="wb_open")    onWbOpen();
-        if (msg.type==="wb_close")   onWbClose();
-        if (msg.type==="wb_strokes") strokesBuffer.current = msg.strokes;
-        if (msg.type==="wb_clear")   strokesBuffer.current = [];
-        if (msg.type==="mat_open")   onMatOpen?.(msg.material);
-        if (msg.type==="mat_close")  onMatClose?.();
+        if (msg.type==="wb_open")         onWbOpen();
+        if (msg.type==="wb_close")        onWbClose();
+        if (msg.type==="wb_strokes")      strokesBuffer.current = msg.strokes;
+        if (msg.type==="wb_clear")        strokesBuffer.current = [];
+        if (msg.type==="mat_open")        onMatOpen?.(msg.material);
+        if (msg.type==="mat_close")       onMatClose?.();
+        if (msg.type==="wb_allow_write")  onWbAllowWrite?.(msg.allow);
+        if (msg.type==="rec_allowed")     onRecAllowed?.(msg.allow);
       } catch {}
     };
     room.on(RoomEvent.DataReceived, h);
@@ -388,6 +401,7 @@ const BottomBar = ({
   onToggleWhiteboard, whiteboardOpen,
   onGroupRecite, groupReciteMode,
   onShareMaterial, isPrivileged,
+  canStudentRec, canStudentWriteProp, canStudentRecProp, onPermChange,
 }: any) => {
   const room = useRoomContext();
   const { user } = useAuth();
@@ -395,9 +409,12 @@ const BottomBar = ({
   // Read ACTUAL LiveKit state — avoids the double-tap bug
   const [micOn,  setMicOn]  = useState(() => room.localParticipant.isMicrophoneEnabled);
   const [camOn,  setCamOn]  = useState(() => room.localParticipant.isCameraEnabled);
-  const [handUp, setHandUp] = useState(false);
-  const [menu,   setMenu]   = useState(false);
-  const [emojis, setEmojis] = useState(false);
+  const [handUp,  setHandUp]  = useState(false);
+  const [menu,    setMenu]    = useState(false);
+  const [emojis,  setEmojis]  = useState(false);
+  const [stuRec,  setStuRec]  = useState(false);
+  const stuMrRef  = useRef<MediaRecorder|null>(null);
+  const stuChunks = useRef<Blob[]>([]);
 
   useEffect(() => {
     const sync = () => { setMicOn(room.localParticipant.isMicrophoneEnabled); setCamOn(room.localParticipant.isCameraEnabled); };
@@ -412,6 +429,29 @@ const BottomBar = ({
     if (!user||!sessionId) return; const n=!handUp; setHandUp(n);
     await supabase.from("class_participants").update({ hand_raised:n, hand_raised_at:n?new Date().toISOString():null }).eq("session_id",sessionId).eq("student_id",user.id);
   };
+  const toggleStuRecord = async () => {
+    if (stuRec) {
+      // Stop and save locally
+      stuMrRef.current?.stop();
+      stuMrRef.current!.onstop = () => {
+        const blob = new Blob(stuChunks.current, { type:"audio/webm" });
+        const url  = URL.createObjectURL(blob);
+        const a    = document.createElement("a");
+        a.href = url; a.download = `class-recording-${Date.now()}.webm`; a.click();
+        URL.revokeObjectURL(url);
+        stuChunks.current = [];
+      };
+      setStuRec(false);
+    } else {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio:true });
+        const mr = new MediaRecorder(stream, { mimeType:"audio/webm" });
+        stuChunks.current = [];
+        mr.ondataavailable = e => { if(e.data.size>0) stuChunks.current.push(e.data); };
+        mr.start(1000); stuMrRef.current = mr; setStuRec(true);
+      } catch { toast({ title:"Microphone access denied" }); }
+    }
+  };
   const sendEmoji = (e:string) => {
     setEmojis(false);
     if (user&&sessionId) supabase.from("class_chat_messages").insert({ session_id:sessionId, sender_id:user.id, message:e, type:"emoji" });
@@ -421,10 +461,9 @@ const BottomBar = ({
     try { room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ type:next?"wb_open":"wb_close" })), { reliable:true }); } catch {}
   };
 
-  const Btn = ({ children, active=false, danger=false, label="", onClick }: any) => (
-    <button onClick={onClick} style={{ width:50, height:52, borderRadius:14, border:"none", cursor:"pointer", display:"flex", flexDirection:"column" as const, alignItems:"center", justifyContent:"center", gap:2, background:danger?"rgba(239,68,68,.18)":active?"rgba(255,255,255,.2)":"rgba(255,255,255,.07)", color:danger?"#EF4444":"#fff", transition:"all .15s" }}>
+  const Btn = ({ children, active=false, danger=false, onClick }: any) => (
+    <button onClick={onClick} style={{ width:50, height:52, borderRadius:14, border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", background:danger?"rgba(239,68,68,.18)":active?"rgba(255,255,255,.2)":"rgba(255,255,255,.07)", color:danger?"#EF4444":"#fff", transition:"all .15s" }}>
       {children}
-      {label && <span style={{ fontSize:9, color:"rgba(255,255,255,.5)", letterSpacing:.3, fontWeight:600 }}>{label}</span>}
     </button>
   );
   const IS = { width:20, height:20 };
@@ -446,6 +485,12 @@ const BottomBar = ({
           {isPrivileged && [
             { icon:Volume2, label:groupReciteMode?"End Group Recitation":"Group Recitation", color:groupReciteMode?"#22c55e":"#fff", fn:onGroupRecite },
             { icon:BookOpen, label:"Share Material", color:"#fff", fn:onShareMaterial },
+            { icon:PenTool,  label:canStudentWriteProp?"Revoke Write Access":"Allow Students to Write", color:canStudentWriteProp?"#22c55e":"#fff",
+              fn:()=>{ const n=!canStudentWriteProp; onPermChange?.("write",n); }
+            },
+            { icon:Circle,   label:canStudentRecProp?"Revoke Record Permission":"Allow Students to Record", color:canStudentRecProp?"#22c55e":"#fff",
+              fn:()=>{ const n=!canStudentRecProp; onPermChange?.("rec",n); }
+            },
           ].map((item,i)=>(
             <button key={i} onClick={item.fn} style={{ width:"100%", display:"flex", alignItems:"center", gap:12, padding:"14px 18px", background:"none", border:"none", cursor:"pointer", color:item.color, fontSize:14, borderBottom:"1px solid rgba(255,255,255,.07)", textAlign:"left" as const }}>
               <item.icon style={{ width:17, height:17 }}/> {item.label}
@@ -472,7 +517,7 @@ const BottomBar = ({
         </Btn>
 
         {isPrivileged ? (
-          <Btn active={whiteboardOpen} label="Board" onClick={openBoard}>
+          <Btn active={whiteboardOpen} onClick={openBoard}>
             <PenTool style={{ ...IS, color:whiteboardOpen?"#22c55e":"#fff" }}/>
           </Btn>
         ) : (
@@ -482,13 +527,13 @@ const BottomBar = ({
         )}
 
         <div style={{ position:"relative" }}>
-          <Btn label="Chat" onClick={onToggleChat}><span style={{ fontSize:20 }}>💬</span></Btn>
+          <Btn onClick={onToggleChat}><span style={{ fontSize:20 }}>💬</span></Btn>
           {chatUnread>0 && <span style={{ position:"absolute", top:4, right:4, background:"#EF4444", color:"#fff", borderRadius:"50%", width:16, height:16, fontSize:9, display:"flex", alignItems:"center", justifyContent:"center", fontWeight:700 }}>{chatUnread}</span>}
         </div>
 
-        <Btn label="React" onClick={()=>setEmojis(v=>!v)}><Smile style={IS}/></Btn>
+        <Btn onClick={()=>setEmojis(v=>!v)}><Smile style={IS}/></Btn>
 
-        <Btn label="More" onClick={()=>setMenu(v=>!v)}><MoreVertical style={IS}/></Btn>
+        <Btn onClick={()=>setMenu(v=>!v)}><MoreVertical style={IS}/></Btn>
 
         {/* Red leave button */}
         <button onClick={isPrivileged?onEndClass:onLeaveClass}
@@ -546,7 +591,9 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
   const [wbOpen,    setWbOpen]    = useState(false);
   const [matOpen,   setMatOpen]   = useState<any>(null); // shared material
   const [matPicker, setMatPicker] = useState(false);
-  const [groupRecite,setGroupRecite] = useState(false);
+  const [groupRecite,    setGroupRecite]     = useState(false);
+  const [canStudentWrite, setCanStudentWrite] = useState(false); // admin toggles
+  const [canStudentRec,   setCanStudentRec]   = useState(false); // admin toggles
   const wbBuffer = useRef<any[]|null>(null);
   const prefetch = useRef<{token:string;url:string}|null>(null);
 
@@ -599,6 +646,18 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
     if(attendanceId){const d=Math.floor((Date.now()-joinedAt)/1000);supabase.from("attendance_logs").update({left_at:new Date().toISOString(),duration_seconds:d}).eq("id",attendanceId);}
     if(sessionId&&user)supabase.from("class_participants").update({left_at:new Date().toISOString(),duration_minutes:Math.floor((Date.now()-joinedAt)/60000)}).eq("session_id",sessionId).eq("student_id",user.id);
     onLeave();
+  };
+
+  const handlePermChange = (type:"write"|"rec", allow:boolean, room:any) => {
+    if (type === "write") {
+      setCanStudentWrite(allow);
+      try { room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({ type:"wb_allow_write", allow })), { reliable:true }); } catch {}
+      toast({ title: allow ? "✅ Students can now write on the board" : "🔒 Student write access revoked" });
+    } else {
+      setCanStudentRec(allow);
+      try { room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({ type:"rec_allowed", allow })), { reliable:true }); } catch {}
+      toast({ title: allow ? "✅ Students can now record" : "🔒 Student record permission revoked" });
+    }
   };
 
   const handleGroupRecite = async () => {
@@ -662,6 +721,8 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
             strokesBuffer={wbBuffer}
             onMatOpen={(mat)=>setMatOpen(mat)}
             onMatClose={()=>setMatOpen(null)}
+            onWbAllowWrite={(allow)=>setCanStudentWrite(allow)}
+            onRecAllowed={(allow)=>setCanStudentRec(allow)}
           />
 
           {/* Top bar */}
@@ -701,10 +762,11 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
           {/* Whiteboard — rendered inside LiveKit context so it can use useRoomContext() */}
           {wbOpen && (
             <WhiteboardBridge
-              onClose={()=>{ setWbOpen(false); if(isPrivileged){try{/*room.localParticipant.publishData handled in BottomBar*/}catch{}} }}
+              onClose={()=>{ setWbOpen(false); if(isPrivileged){try{const r=room;r?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"wb_close"})),{reliable:true});}catch{}} }}
               isTeacher={isPrivileged}
               initialStrokes={wbBuffer.current}
               subjectId={subject.id}
+              canStudentWrite={canStudentWrite}
             />
           )}
 
@@ -721,6 +783,10 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
             groupReciteMode={groupRecite}
             onShareMaterial={()=>setMatPicker(true)}
             isPrivileged={isPrivileged}
+            canStudentRec={canStudentRec}
+            canStudentWriteProp={canStudentWrite}
+            canStudentRecProp={canStudentRec}
+            onPermChange={handlePermChange}
           />
 
           {isMobile && chatOpen && (
@@ -787,7 +853,10 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
 /* ── Bridge components that use room context ── */
 const BottomBarBridge = (props:any) => {
   const room = useRoomContext();
-  return <BottomBar {...props} room={room}/>;
+  const handlePermChange = (type:"write"|"rec", allow:boolean) => {
+    props.onPermChange?.(type, allow, room);
+  };
+  return <BottomBar {...props} room={room} onPermChange={handlePermChange}/>;
 };
 
 const MaterialShareBridge = ({ subjectId, onShare, onClose }:any) => {
