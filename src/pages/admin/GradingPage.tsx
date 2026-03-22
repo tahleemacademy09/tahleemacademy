@@ -290,7 +290,7 @@ const GradingPage = () => {
                         }
                       </div>
                     );
-                  })() : (
+                  })() : null}
 
                   {q.correct_answer && (
                     <p className="mb-2 text-xs text-emerald">
