@@ -1,573 +1,460 @@
 import { useEffect, useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import {
-  Shield, AlertTriangle, Search, Eye, Trash2, Monitor,
-  User, Activity, ShieldAlert, ShieldCheck, Camera, Image, Download
+  Shield, AlertTriangle, Search, Eye, Trash2, Monitor, Download,
+  User, Activity, ShieldAlert, ShieldCheck, Camera, RefreshCw,
+  ChevronRight, X,
 } from "lucide-react";
 
-const severityColor = (level: string) => {
-  switch (level) {
-    case "critical": return "bg-destructive text-destructive-foreground";
-    case "high": return "bg-destructive/80 text-destructive-foreground";
-    case "medium": return "bg-secondary text-secondary-foreground";
-    default: return "bg-muted text-muted-foreground";
-  }
-};
+/* ── Brand tokens ─────────────────── */
+const G = "#0f2d1f", GM = "#1a4731", GOLD = "#c9a84c";
+const CREAM = "#faf6ee", BORDER = "rgba(15,45,31,0.1)", TL = "#7a9e88";
 
-const integrityColor = (score: number) => {
-  if (score >= 80) return "text-emerald";
-  if (score >= 50) return "text-secondary";
-  return "text-destructive";
-};
+const sCol = (lvl: string) => ({
+  low:      { bg:"#f0fff4", text:"#065f46", border:"#86efac" },
+  medium:   { bg:"#fffbeb", text:"#92400e", border:"#fde68a" },
+  high:     { bg:"#fff5f5", text:"#991b1b", border:"#fca5a5" },
+  critical: { bg:"#1a0000", text:"#fff",    border:"#dc2626" },
+}[lvl] || { bg:"#f8fafb", text:TL, border:"#e5e7eb" });
 
-// Thumbnail component with signed URL loading
-const MediaThumbnail = ({ media, onDownload }: { media: any; onDownload?: (url: string, name: string) => void }) => {
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState(false);
-  const [loadError, setLoadError] = useState(false);
+const iCol = (score: number) =>
+  score >= 80 ? "#22c55e" : score >= 50 ? "#f59e0b" : "#ef4444";
 
+/* ── Snapshot thumbnail ───────────── */
+const Thumb = ({ media, onClick }: { media: any; onClick: () => void }) => {
+  const [url, setUrl] = useState<string|null>(null);
+  const [err, setErr] = useState(false);
   useEffect(() => {
-    const loadUrl = async () => {
-      const { data, error } = await supabase.storage
-        .from("proctoring-media")
-        .createSignedUrl(media.file_url, 3600);
-      if (data?.signedUrl) {
-        setImageUrl(data.signedUrl);
-      } else {
-        setLoadError(true);
-      }
-    };
-    loadUrl();
+    supabase.storage.from("proctoring-media").createSignedUrl(media.file_url, 3600)
+      .then(({ data }) => data?.signedUrl ? setUrl(data.signedUrl) : setErr(true))
+      .catch(() => setErr(true));
   }, [media.file_url]);
-
-  const typeLabel = media.file_type === "face_snapshot" ? "Face" :
-    media.file_type === "verification_snapshot" ? "Verification" :
-    media.file_type === "screen_capture" ? "Screen" : media.file_type;
-
-  const typeColor = media.file_type === "face_snapshot" ? "bg-primary/10 text-primary" :
-    media.file_type === "screen_capture" ? "bg-secondary/20 text-secondary-foreground" :
-    "bg-accent text-accent-foreground";
-
+  const typeLabel = { face_snapshot:"Face", verification_snapshot:"ID", screen_capture:"Screen" }[media.file_type as string] || media.file_type;
+  const typeColor = media.file_type === "face_snapshot" ? "#065f46" : media.file_type === "screen_capture" ? "#0369a1" : "#92400e";
   return (
-    <>
-      <div
-        className="relative group cursor-pointer rounded-lg overflow-hidden border bg-muted aspect-square"
-        onClick={() => !loadError && setExpanded(true)}
-      >
-        {imageUrl && !loadError ? (
-          <img src={imageUrl} alt={typeLabel} className="w-full h-full object-cover" onError={() => setLoadError(true)} />
-        ) : loadError ? (
-          <div className="flex items-center justify-center h-full text-xs text-muted-foreground">
-            <User className="h-6 w-6 opacity-40" />
-          </div>
-        ) : (
-          <div className="flex items-center justify-center h-full">
-            <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-          </div>
-        )}
-        {/* Type badge */}
-        <div className={`absolute top-1 left-1 text-[9px] px-1.5 py-0.5 rounded font-medium ${typeColor}`}>
-          {typeLabel}
-        </div>
-        <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[10px] px-1.5 py-0.5 truncate">
-          {new Date(media.created_at).toLocaleTimeString()}
-        </div>
-        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
-          <Eye className="h-5 w-5 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
-        </div>
+    <div onClick={onClick} style={{ position:"relative", borderRadius:10, overflow:"hidden", aspectRatio:"1", background:"#111", cursor:"pointer", border:"1.5px solid "+BORDER }}>
+      {url && !err
+        ? <img src={url} style={{ width:"100%", height:"100%", objectFit:"cover" }} onError={()=>setErr(true)}/>
+        : err
+        ? <div style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"100%", color:TL }}><User style={{width:20,height:20,opacity:.3}}/></div>
+        : <div style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"100%" }}>
+            <div style={{ width:18,height:18,borderRadius:"50%",border:"3px solid "+GOLD,borderTopColor:"transparent",animation:"spin .8s linear infinite" }}/>
+          </div>}
+      <div style={{ position:"absolute", top:4, left:4, background:typeColor, color:"#fff", fontSize:9, fontWeight:800, padding:"2px 6px", borderRadius:6 }}>{typeLabel}</div>
+      <div style={{ position:"absolute", bottom:0, left:0, right:0, background:"rgba(0,0,0,.65)", color:"#fff", fontSize:9, padding:"3px 6px" }}>
+        {new Date(media.created_at).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}
       </div>
-
-      <Dialog open={expanded} onOpenChange={setExpanded}>
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
-            <DialogTitle className="text-sm flex items-center gap-2">
-              {media.file_type === "screen_capture" ? <Monitor className="h-4 w-4" /> : <User className="h-4 w-4" />}
-              {typeLabel} Capture — {new Date(media.created_at).toLocaleString()}
-            </DialogTitle>
-          </DialogHeader>
-          {imageUrl && (
-            <>
-              <img src={imageUrl} alt={`${typeLabel} capture full`} className="w-full rounded-lg" />
-              <div className="flex justify-end">
-                <Button variant="outline" size="sm" asChild>
-                  <a href={imageUrl} download={media.file_name || `capture_${media.id}.jpg`} target="_blank" rel="noopener noreferrer">
-                    <Download className="h-3 w-3 mr-1" /> Download
-                  </a>
-                </Button>
-              </div>
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
-    </>
+      <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", background:"rgba(0,0,0,0)", transition:"background .2s" }}>
+        <Eye style={{width:16,height:16,color:"#fff",opacity:0}}/>
+      </div>
+    </div>
   );
 };
 
 const ProctoringDashboard = () => {
   const { t, language } = useLanguage();
   const { toast } = useToast();
-  const [sessions, setSessions] = useState<any[]>([]);
-  const [selectedSession, setSelectedSession] = useState<any>(null);
-  const [violations, setViolations] = useState<any[]>([]);
-  const [deviceLogs, setDeviceLogs] = useState<any[]>([]);
-  const [media, setMedia] = useState<any[]>([]);
-  const [searchFilter, setSearchFilter] = useState("");
-  const [suspicionFilter, setSuspicionFilter] = useState("all");
-  const [examFilter, setExamFilter] = useState("all");
-  const [examsList, setExamsList] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [mediaTab, setMediaTab] = useState("all");
+  const [sessions, setSessions]           = useState<any[]>([]);
+  const [selected, setSelected]           = useState<any>(null);
+  const [violations, setViolations]       = useState<any[]>([]);
+  const [deviceLogs, setDeviceLogs]       = useState<any[]>([]);
+  const [media, setMedia]                 = useState<any[]>([]);
+  const [search, setSearch]               = useState("");
+  const [suspFilter, setSuspFilter]       = useState("all");
+  const [examFilter, setExamFilter]       = useState("all");
+  const [examsList, setExamsList]         = useState<any[]>([]);
+  const [loading, setLoading]             = useState(true);
+  const [mediaTab, setMediaTab]           = useState("all");
+  const [previewMedia, setPreviewMedia]   = useState<any>(null);
+  const [previewUrl, setPreviewUrl]       = useState<string|null>(null);
 
   const fetchSessions = async () => {
     setLoading(true);
-    const [sessionsRes, profilesRes, examsRes, attemptsRes] = await Promise.all([
-      supabase.from("proctoring_sessions").select("*").order("started_at", { ascending: false }),
-      supabase.from("profiles").select("user_id, full_name, email"),
-      supabase.from("exams").select("id, title, title_ar"),
-      supabase.from("exam_attempts").select("id, exam_id, user_id, status, suspicion_level, integrity_score"),
+    const [sRes, pRes, eRes, aRes] = await Promise.all([
+      supabase.from("proctoring_sessions").select("*").order("started_at",{ascending:false}),
+      supabase.from("profiles").select("user_id,full_name,email"),
+      supabase.from("exams").select("id,title,title_ar"),
+      supabase.from("exam_attempts").select("id,exam_id,user_id,status,suspicion_level,integrity_score"),
     ]);
-
-    const profiles = profilesRes.data || [];
-    const exams = examsRes.data || [];
-    const attempts = attemptsRes.data || [];
-    setExamsList(exams);
-
-    const merged = (sessionsRes.data || []).map((s: any) => {
-      const attempt = attempts.find((a) => a.id === s.attempt_id) || {};
-      const profile = profiles.find((p) => p.user_id === (attempt as any).user_id) || {};
-      const exam = exams.find((e) => e.id === (attempt as any).exam_id) || {};
-      return { ...s, attempt, profile, exam };
+    setExamsList(eRes.data||[]);
+    const merged = (sRes.data||[]).map((s:any)=>{
+      const attempt = (aRes.data||[]).find((a:any)=>a.id===s.attempt_id)||{};
+      const profile = (pRes.data||[]).find((p:any)=>p.user_id===(attempt as any).user_id)||{};
+      const exam    = (eRes.data||[]).find((e:any)=>e.id===(attempt as any).exam_id)||{};
+      return {...s,attempt,profile,exam};
     });
-
-    setSessions(merged);
-    setLoading(false);
+    setSessions(merged); setLoading(false);
   };
 
-  useEffect(() => { fetchSessions(); }, []);
+  useEffect(()=>{ fetchSessions(); const iv=setInterval(fetchSessions,30000); return()=>clearInterval(iv); },[]);
 
-  // Auto-refresh every 30s for near real-time
-  useEffect(() => {
-    const interval = setInterval(fetchSessions, 30000);
-    return () => clearInterval(interval);
-  }, []);
+  const loadDetail = async (session:any) => {
+    setSelected(session); setMedia([]); setViolations([]); setDeviceLogs([]);
+    const [vRes,dRes,mRes] = await Promise.all([
+      supabase.from("violations").select("*").eq("attempt_id",session.attempt_id).order("timestamp",{ascending:true}),
+      supabase.from("device_logs").select("*").eq("attempt_id",session.attempt_id),
+      supabase.from("proctoring_media").select("*").eq("attempt_id",session.attempt_id).order("created_at",{ascending:true}),
+    ]);
+    setViolations(vRes.data||[]); setDeviceLogs(dRes.data||[]); setMedia(mRes.data||[]);
+  };
 
-  const filteredSessions = sessions.filter((s) => {
-    if (suspicionFilter !== "all" && s.suspicion_level !== suspicionFilter) return false;
-    if (examFilter !== "all" && (s.attempt as any)?.exam_id !== examFilter) return false;
-    if (searchFilter) {
-      const name = ((s.profile as any)?.full_name || "").toLowerCase();
-      const email = ((s.profile as any)?.email || "").toLowerCase();
-      if (!name.includes(searchFilter.toLowerCase()) && !email.includes(searchFilter.toLowerCase())) return false;
+  const openPreview = async (m:any) => {
+    setPreviewMedia(m); setPreviewUrl(null);
+    const { data } = await supabase.storage.from("proctoring-media").createSignedUrl(m.file_url,3600);
+    if (data?.signedUrl) setPreviewUrl(data.signedUrl);
+  };
+
+  const deleteSession = async (sessionId:string, attemptId:string) => {
+    await Promise.all([
+      supabase.from("violations").delete().eq("attempt_id",attemptId),
+      supabase.from("device_logs").delete().eq("attempt_id",attemptId),
+      supabase.from("proctoring_media").delete().eq("attempt_id",attemptId),
+      supabase.from("proctoring_sessions").delete().eq("id",sessionId),
+    ]);
+    toast({ title: t("Session deleted","تم حذف الجلسة") });
+    fetchSessions(); setSelected(null); setMedia([]);
+  };
+
+  const getVerdict = (s:any) => {
+    const i=Number(s.integrity_score)||100, v=s.total_violations||0, sl=s.suspicion_level||"low";
+    if(sl==="critical"||i<30||v>=8) return {label:"FLAGGED", labelAr:"مُعلّم", bg:"#fff5f5", text:"#991b1b", border:"#fca5a5"};
+    if(sl==="high"||i<60||v>=4)     return {label:"REVIEW", labelAr:"مراجعة", bg:"#fffbeb", text:"#92400e", border:"#fde68a"};
+    return {label:"CLEAR", labelAr:"واضح", bg:"#f0fff4", text:"#065f46", border:"#86efac"};
+  };
+
+  const filtered = sessions.filter(s=>{
+    if(suspFilter!=="all"&&s.suspicion_level!==suspFilter) return false;
+    if(examFilter!=="all"&&(s.attempt as any)?.exam_id!==examFilter) return false;
+    if(search){
+      const n=((s.profile as any)?.full_name||"").toLowerCase();
+      const e=((s.profile as any)?.email||"").toLowerCase();
+      if(!n.includes(search.toLowerCase())&&!e.includes(search.toLowerCase())) return false;
     }
     return true;
   });
 
-  const loadSessionDetails = async (session: any) => {
-    setSelectedSession(session);
-    const [violationsRes, deviceRes, mediaRes] = await Promise.all([
-      supabase.from("violations").select("*").eq("attempt_id", session.attempt_id).order("timestamp", { ascending: true }),
-      supabase.from("device_logs").select("*").eq("attempt_id", session.attempt_id),
-      supabase.from("proctoring_media").select("*").eq("attempt_id", session.attempt_id).order("created_at", { ascending: true }),
-    ]);
-    setViolations(violationsRes.data || []);
-    setDeviceLogs(deviceRes.data || []);
-    setMedia(mediaRes.data || []);
-  };
+  const totalSessions  = sessions.length;
+  const activeSessions = sessions.filter(s=>!s.ended_at).length;
+  const criticalCount  = sessions.filter(s=>["critical","high"].includes(s.suspicion_level)).length;
+  const avgIntegrity   = sessions.length ? Math.round(sessions.reduce((s,ss)=>s+(Number(ss.integrity_score)||100),0)/sessions.length) : 100;
 
-  // Auto-refresh detail media every 15s
-  useEffect(() => {
-    if (!selectedSession) return;
-    const interval = setInterval(() => {
-      loadSessionDetails(selectedSession);
-    }, 15000);
-    return () => clearInterval(interval);
-  }, [selectedSession]);
-
-  const deleteSession = async (sessionId: string, attemptId: string) => {
-    await Promise.all([
-      supabase.from("violations").delete().eq("attempt_id", attemptId),
-      supabase.from("device_logs").delete().eq("attempt_id", attemptId),
-      supabase.from("proctoring_media").delete().eq("attempt_id", attemptId),
-      supabase.from("proctoring_sessions").delete().eq("id", sessionId),
-    ]);
-    toast({ title: t("Session deleted", "تم حذف الجلسة") });
-    fetchSessions();
-    setSelectedSession(null);
-  };
-
-  // Stats
-  const totalSessions = sessions.length;
-  const criticalCount = sessions.filter(s => s.suspicion_level === "critical" || s.suspicion_level === "high").length;
-  const avgIntegrity = sessions.length > 0 ? Math.round(sessions.reduce((s, ss) => s + (Number(ss.integrity_score) || 100), 0) / sessions.length) : 100;
-  const activeSessions = sessions.filter(s => !s.ended_at).length;
-
-  // Filtered media for tabs
-  const faceMedia = media.filter(m => m.file_type === "face_snapshot" || m.file_type === "verification_snapshot");
-  const screenMedia = media.filter(m => m.file_type === "screen_capture");
-  const otherMedia = media.filter(m => !["face_snapshot", "verification_snapshot", "screen_capture"].includes(m.file_type));
-  const allMedia = media;
-
-  // Verdict calculation
-  const getVerdict = (session: any) => {
-    const integrity = Number(session.integrity_score) || 100;
-    const violations = session.total_violations || 0;
-    const suspicion = session.suspicion_level || "low";
-    if (suspicion === "critical" || integrity < 30 || violations >= 8) return { label: "FLAGGED", labelAr: "مُعلّم", color: "bg-destructive text-destructive-foreground" };
-    if (suspicion === "high" || integrity < 60 || violations >= 4) return { label: "REVIEW NEEDED", labelAr: "يحتاج مراجعة", color: "bg-secondary text-secondary-foreground" };
-    return { label: "CLEAR", labelAr: "واضح", color: "bg-emerald-500/10 text-emerald-600 border border-emerald-500/30" };
-  };
-
-  // Detail view
-  if (selectedSession) {
-    const s = selectedSession;
-    const device = deviceLogs[0];
-    const studentName = (s.profile as any)?.full_name || (s.profile as any)?.email || "Unknown";
-    const studentEmail = (s.profile as any)?.email || "";
-    const examTitle = language === "ar" ? (s.exam as any)?.title_ar || (s.exam as any)?.title : (s.exam as any)?.title;
+  /* ═══ DETAIL VIEW ══════════════════════════════════════════ */
+  if (selected) {
+    const s = selected;
+    const name  = (s.profile as any)?.full_name || (s.profile as any)?.email || "Unknown";
+    const email = (s.profile as any)?.email || "";
+    const exam  = language==="ar" ? (s.exam as any)?.title_ar||(s.exam as any)?.title : (s.exam as any)?.title;
     const verdict = getVerdict(s);
-    const examDuration = s.ended_at
-      ? Math.round((new Date(s.ended_at).getTime() - new Date(s.started_at).getTime()) / 60000)
-      : null;
+    const dur = s.ended_at ? Math.round((new Date(s.ended_at).getTime()-new Date(s.started_at).getTime())/60000) : null;
+    const device = deviceLogs[0];
+    const faceMedia   = media.filter(m=>["face_snapshot","verification_snapshot"].includes(m.file_type));
+    const screenMedia = media.filter(m=>m.file_type==="screen_capture");
+    const curMedia    = mediaTab==="face" ? faceMedia : mediaTab==="screen" ? screenMedia : media;
 
     return (
-      <div className="container mx-auto px-4 py-6 max-w-5xl">
-        <div className="mb-4 flex items-center justify-between flex-wrap gap-3">
-          <div>
-            <h1 className="text-xl font-bold flex items-center gap-2">
-              <Shield className="h-5 w-5 text-primary" />
-              {t("Proctoring Details", "تفاصيل المراقبة")}
-            </h1>
-            <p className="text-sm text-muted-foreground">{studentName} • {examTitle}</p>
-          </div>
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={() => { setSelectedSession(null); setMedia([]); }}>{t("Back", "رجوع")}</Button>
-            <Button variant="destructive" size="sm" onClick={() => deleteSession(s.id, s.attempt_id)}>
-              <Trash2 className="h-3 w-3 mr-1" />{t("Delete", "حذف")}
-            </Button>
+      <div style={{ background:CREAM, minHeight:"100vh", fontFamily:"'Cairo',sans-serif" }}>
+        <style>{"@keyframes spin{to{transform:rotate(360deg)}}"}</style>
+
+        {/* Sticky top bar */}
+        <div style={{ background:`linear-gradient(135deg,${G},${GM})`, padding:"14px 18px", position:"sticky", top:0, zIndex:50, boxShadow:"0 2px 16px rgba(15,45,31,.3)" }}>
+          <div style={{ maxWidth:720, margin:"0 auto", display:"flex", alignItems:"center", gap:12 }}>
+            <button onClick={()=>{setSelected(null);setMedia([]);}} style={{ background:"rgba(255,255,255,.15)", border:"none", borderRadius:10, padding:"7px 14px", color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", gap:5 }}>
+              ← {t("Back","رجوع")}
+            </button>
+            <div style={{ flex:1, minWidth:0 }}>
+              <p style={{ fontSize:10, color:"rgba(255,255,255,.55)", fontWeight:700, letterSpacing:1, margin:0, textTransform:"uppercase" as const }}>Proctoring Detail</p>
+              <p style={{ fontSize:14, fontWeight:800, color:"#fff", margin:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" as const }}>{name} · {exam}</p>
+            </div>
+            <button onClick={()=>deleteSession(s.id,s.attempt_id)}
+              style={{ background:"rgba(239,68,68,.2)", border:"1px solid rgba(239,68,68,.4)", borderRadius:10, padding:"7px 14px", color:"#fca5a5", fontSize:12, fontWeight:700, cursor:"pointer" }}>
+              🗑 {t("Delete","حذف")}
+            </button>
           </div>
         </div>
 
-        {/* Student info card */}
-        <Card className="mb-4">
-          <CardContent className="p-4 flex items-center gap-4">
-            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary text-primary-foreground font-bold text-lg">
-              {studentName.charAt(0).toUpperCase()}
-            </div>
-            <div className="flex-1">
-              <p className="font-semibold">{studentName}</p>
-              <p className="text-xs text-muted-foreground">{studentEmail}</p>
-              <p className="text-xs text-muted-foreground">{t("User ID", "معرف المستخدم")}: {(s.attempt as any)?.user_id?.slice(0, 8)}...</p>
-            </div>
-            <div className="text-right">
-              <p className="text-sm font-medium">{examTitle}</p>
-              <p className="text-xs text-muted-foreground">{t("Exam ID", "معرف الامتحان")}: {(s.attempt as any)?.exam_id?.slice(0, 8)}...</p>
-              <Badge className={`text-xs mt-1 ${!s.ended_at ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"}`}>
-                {!s.ended_at ? t("Active", "نشط") : t("Ended", "منتهي")}
-              </Badge>
-            </div>
-          </CardContent>
-        </Card>
+        <div style={{ maxWidth:720, margin:"0 auto", padding:"18px 16px 48px" }}>
 
-        {/* Summary cards */}
-        <div className="grid gap-3 md:grid-cols-4 mb-4">
-          <Card>
-            <CardContent className="p-3 text-center">
-              <p className="text-xs text-muted-foreground">{t("Integrity Score", "درجة النزاهة")}</p>
-              <p className={`text-2xl font-bold ${integrityColor(Number(s.integrity_score) || 100)}`}>{Math.round(Number(s.integrity_score) || 100)}%</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-3 text-center">
-              <p className="text-xs text-muted-foreground">{t("Suspicion Level", "مستوى الاشتباه")}</p>
-              <Badge className={severityColor(s.suspicion_level || "low")}>{s.suspicion_level || "low"}</Badge>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-3 text-center">
-              <p className="text-xs text-muted-foreground">{t("Total Violations", "إجمالي المخالفات")}</p>
-              <p className="text-2xl font-bold text-destructive">{s.total_violations || 0}</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-3 text-center">
-              <p className="text-xs text-muted-foreground">{t("Warnings", "التحذيرات")}</p>
-              <p className="text-2xl font-bold text-secondary">{s.warnings_issued || 0}/{s.max_warnings || 3}</p>
-            </CardContent>
-          </Card>
-        </div>
+          {/* Student card */}
+          <div style={{ background:"#fff", borderRadius:18, padding:"16px", marginBottom:14, border:`1px solid ${BORDER}`, boxShadow:"0 2px 12px rgba(15,45,31,.07)" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:14 }}>
+              <div style={{ width:46, height:46, borderRadius:"50%", background:`linear-gradient(135deg,${G},${GM})`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:20, fontWeight:900, color:GOLD, flexShrink:0 }}>
+                {name.charAt(0).toUpperCase()}
+              </div>
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontSize:15, fontWeight:800, color:G, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" as const }}>{name}</div>
+                <div style={{ fontSize:11, color:TL }}>{email}</div>
+                <div style={{ fontSize:11, color:TL }}>{exam}</div>
+              </div>
+              <div style={{ textAlign:"right", flexShrink:0 }}>
+                <div style={{ padding:"4px 10px", borderRadius:10, fontSize:11, fontWeight:700, background:!s.ended_at?"#f0fff4":"#f8fafb", color:!s.ended_at?"#065f46":TL, border:`1px solid ${!s.ended_at?"#86efac":BORDER}`, marginBottom:4 }}>
+                  {!s.ended_at ? "● "+t("Active","نشط") : t("Ended","منتهي")}
+                </div>
+                {dur && <div style={{ fontSize:11, color:TL }}>{dur} {t("min","دق")}</div>}
+              </div>
+            </div>
+          </div>
 
-        {/* Verdict & Duration */}
-        <Card className="mb-4">
-          <CardContent className="p-4 flex items-center justify-between flex-wrap gap-3">
-            <div className="flex items-center gap-3">
+          {/* Stats grid */}
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10, marginBottom:14 }}>
+            {[
+              { lbl:t("Integrity","النزاهة"), val:`${Math.round(Number(s.integrity_score)||100)}%`, color:iCol(Number(s.integrity_score)||100) },
+              { lbl:t("Violations","المخالفات"), val:String(s.total_violations||0), color:"#ef4444" },
+              { lbl:t("Warnings","تحذيرات"), val:`${s.warnings_issued||0}/${s.max_warnings||3}`, color:"#f59e0b" },
+              { lbl:t("Media","وسائط"), val:String(media.length), color:GOLD },
+            ].map((stat,i)=>(
+              <div key={i} style={{ background:"#fff", borderRadius:14, padding:"12px 8px", textAlign:"center", border:`1px solid ${BORDER}` }}>
+                <div style={{ fontSize:9, color:TL, fontWeight:700, marginBottom:4 }}>{stat.lbl}</div>
+                <div style={{ fontSize:20, fontWeight:900, color:stat.color, lineHeight:1 }}>{stat.val}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Verdict + suspicion */}
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:14 }}>
+            <div style={{ background:verdict.bg, borderRadius:14, padding:"14px", border:`1px solid ${verdict.border}`, display:"flex", alignItems:"center", gap:10 }}>
+              <Shield style={{width:22,height:22,color:verdict.text,flexShrink:0}}/>
               <div>
-                <p className="text-xs text-muted-foreground mb-1">{t("Final Verdict", "الحكم النهائي")}</p>
-                <Badge className={`text-sm px-3 py-1 ${verdict.color}`}>
-                  {language === "ar" ? verdict.labelAr : verdict.label}
-                </Badge>
+                <div style={{ fontSize:9, color:verdict.text, fontWeight:700, opacity:.7 }}>VERDICT</div>
+                <div style={{ fontSize:16, fontWeight:900, color:verdict.text }}>{language==="ar" ? verdict.labelAr : verdict.label}</div>
               </div>
             </div>
-            {examDuration && (
-              <div className="text-right">
-                <p className="text-xs text-muted-foreground">{t("Exam Duration", "مدة الامتحان")}</p>
-                <p className="text-lg font-bold">{examDuration} {t("min", "دقيقة")}</p>
+            <div style={{ background:sCol(s.suspicion_level||"low").bg, borderRadius:14, padding:"14px", border:`1px solid ${sCol(s.suspicion_level||"low").border}`, display:"flex", alignItems:"center", gap:10 }}>
+              <AlertTriangle style={{width:22,height:22,color:sCol(s.suspicion_level||"low").text,flexShrink:0}}/>
+              <div>
+                <div style={{ fontSize:9, color:sCol(s.suspicion_level||"low").text, fontWeight:700, opacity:.7 }}>SUSPICION</div>
+                <div style={{ fontSize:16, fontWeight:900, color:sCol(s.suspicion_level||"low").text, textTransform:"capitalize" as const }}>{s.suspicion_level||"low"}</div>
               </div>
-            )}
-            <div className="text-right">
-              <p className="text-xs text-muted-foreground">{t("Started", "بدأ في")}</p>
-              <p className="text-sm">{new Date(s.started_at).toLocaleString()}</p>
             </div>
-          </CardContent>
-        </Card>
+          </div>
 
-        {device && (
-          <Card className="mb-4">
-            <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><Monitor className="h-4 w-4" />{t("Device Information", "معلومات الجهاز")}</CardTitle></CardHeader>
-            <CardContent className="grid gap-2 md:grid-cols-3 text-sm">
-              <div><span className="text-muted-foreground">{t("Device", "الجهاز")}:</span> {device.device_type}</div>
-              <div><span className="text-muted-foreground">{t("Browser", "المتصفح")}:</span> {device.browser}</div>
-              <div><span className="text-muted-foreground">{t("Resolution", "الدقة")}:</span> {device.screen_resolution}</div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Violations timeline */}
-        <Card className="mb-4">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center gap-2">
-              <AlertTriangle className="h-4 w-4 text-destructive" />
-              {t("Flagged Violations", "المخالفات المرصودة")} ({violations.length})
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {violations.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-4">{t("No violations recorded", "لم يتم تسجيل مخالفات")}</p>
-            ) : (
-              <div className="space-y-2 max-h-[400px] overflow-y-auto">
-                {violations.map((v, i) => (
-                  <div key={v.id} className="flex items-start gap-3 rounded-lg border p-3">
-                    <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-destructive/10 text-xs font-bold text-destructive">{i + 1}</div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <Badge variant="outline" className="text-xs">{v.violation_type.replace(/_/g, " ")}</Badge>
-                        <Badge className={`text-xs ${v.severity_score >= 3 ? "bg-destructive text-destructive-foreground" : v.severity_score >= 2 ? "bg-secondary text-secondary-foreground" : "bg-muted text-muted-foreground"}`}>
-                          {t("Severity", "الخطورة")}: {v.severity_score}
-                        </Badge>
-                        <span className="text-xs text-muted-foreground">{new Date(v.timestamp).toLocaleString()}</span>
-                      </div>
-                      {v.details && <p className="text-xs text-muted-foreground mt-1">{v.details}</p>}
-                    </div>
+          {/* Device info */}
+          {device && (
+            <div style={{ background:"#fff", borderRadius:16, padding:"14px 16px", marginBottom:14, border:`1px solid ${BORDER}` }}>
+              <div style={{ fontSize:11, fontWeight:700, color:TL, marginBottom:10, letterSpacing:1 }}>📱 DEVICE</div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+                {[["Device",device.device_type],["Browser",device.browser],["OS",device.os],["Resolution",device.screen_resolution]].filter(([,v])=>v).map(([lbl,val])=>(
+                  <div key={lbl} style={{ fontSize:12 }}>
+                    <span style={{ color:TL }}>{lbl}: </span>
+                    <span style={{ fontWeight:700, color:G }}>{val}</span>
                   </div>
                 ))}
               </div>
-            )}
-          </CardContent>
-        </Card>
+            </div>
+          )}
 
-        {/* Media — Tabbed: All / Face / Screen / Other */}
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center gap-2">
-              <Camera className="h-4 w-4" />
-              {t("Captured Media", "الوسائط الملتقطة")} ({allMedia.length})
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <Tabs value={mediaTab} onValueChange={setMediaTab} className="w-full">
-              <TabsList className="mb-3">
-                <TabsTrigger value="all">{t("All", "الكل")} ({allMedia.length})</TabsTrigger>
-                <TabsTrigger value="face">{t("Face Snapshots", "صور الوجه")} ({faceMedia.length})</TabsTrigger>
-                <TabsTrigger value="screen">{t("Screen Captures", "لقطات الشاشة")} ({screenMedia.length})</TabsTrigger>
-                {otherMedia.length > 0 && <TabsTrigger value="other">{t("Other", "أخرى")} ({otherMedia.length})</TabsTrigger>}
-              </TabsList>
-
-              {["all", "face", "screen", "other"].map(tab => {
-                const items = tab === "all" ? allMedia : tab === "face" ? faceMedia : tab === "screen" ? screenMedia : otherMedia;
-                return (
-                  <TabsContent key={tab} value={tab}>
-                    {items.length === 0 ? (
-                      <p className="text-sm text-muted-foreground text-center py-6">{t("No media captured", "لا توجد وسائط")}</p>
-                    ) : (
-                      <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-                        {items.map((m) => (
-                          <MediaThumbnail key={m.id} media={m} />
-                        ))}
+          {/* Violations timeline */}
+          <div style={{ background:"#fff", borderRadius:16, marginBottom:14, border:`1px solid ${BORDER}`, overflow:"hidden" }}>
+            <div style={{ padding:"14px 16px 12px", borderBottom:`1px solid ${BORDER}`, display:"flex", alignItems:"center", gap:8 }}>
+              <AlertTriangle style={{width:14,height:14,color:"#ef4444"}}/>
+              <span style={{ fontSize:13, fontWeight:800, color:G }}>{t("Violations","المخالفات")} ({violations.length})</span>
+            </div>
+            <div style={{ maxHeight:320, overflowY:"auto" }}>
+              {violations.length === 0
+                ? <div style={{ textAlign:"center", padding:"24px", fontSize:13, color:TL }}>{t("No violations recorded","لم تُسجَّل مخالفات")}</div>
+                : violations.map((v,i)=>{
+                    const sc = v.severity_score >= 3 ? {bg:"#fff5f5",text:"#991b1b",border:"#fca5a5"} : v.severity_score >= 2 ? {bg:"#fffbeb",text:"#92400e",border:"#fde68a"} : {bg:"#f8fafb",text:TL,border:BORDER};
+                    return (
+                      <div key={v.id} style={{ display:"flex", alignItems:"flex-start", gap:12, padding:"12px 16px", borderBottom:`1px solid ${BORDER}`, background:sc.bg }}>
+                        <div style={{ width:24,height:24,borderRadius:8,background:sc.border+"44",border:`1px solid ${sc.border}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:900,color:sc.text,flexShrink:0 }}>{i+1}</div>
+                        <div style={{ flex:1, minWidth:0 }}>
+                          <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" as const, marginBottom:3 }}>
+                            <span style={{ fontSize:12,fontWeight:800,color:sc.text,textTransform:"capitalize" as const }}>{v.violation_type.replace(/_/g," ")}</span>
+                            <span style={{ fontSize:10,fontWeight:700,padding:"2px 7px",borderRadius:8,background:sc.border+"33",color:sc.text }}>Severity {v.severity_score}</span>
+                          </div>
+                          {v.details && <div style={{ fontSize:11, color:TL }}>{v.details}</div>}
+                          <div style={{ fontSize:10, color:TL, marginTop:2 }}>{new Date(v.timestamp||v.created_at).toLocaleString()}</div>
+                        </div>
                       </div>
-                    )}
-                  </TabsContent>
-                );
-              })}
-            </Tabs>
-          </CardContent>
-        </Card>
+                    );
+                  })
+              }
+            </div>
+          </div>
+
+          {/* Media gallery */}
+          <div style={{ background:"#fff", borderRadius:16, border:`1px solid ${BORDER}`, overflow:"hidden" }}>
+            <div style={{ padding:"14px 16px 0", borderBottom:`1px solid ${BORDER}` }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10 }}>
+                <Camera style={{width:14,height:14,color:GOLD}}/>
+                <span style={{ fontSize:13, fontWeight:800, color:G }}>{t("Captured Media","الوسائط")} ({media.length})</span>
+              </div>
+              {/* Tab pills */}
+              <div style={{ display:"flex", gap:6, paddingBottom:12 }}>
+                {[["all",t("All","الكل"),media.length],["face",t("Face","وجه"),faceMedia.length],["screen",t("Screen","شاشة"),screenMedia.length]].map(([key,lbl,cnt])=>(
+                  <button key={key} onClick={()=>setMediaTab(key as string)} style={{
+                    padding:"5px 12px", borderRadius:16, fontSize:11, fontWeight:700, cursor:"pointer", border:"none",
+                    background: mediaTab===key ? G : "#f8fafb",
+                    color: mediaTab===key ? "#fff" : TL,
+                  }}>{lbl} {cnt ? `(${cnt})` : ""}</button>
+                ))}
+              </div>
+            </div>
+            <div style={{ padding:"14px 16px" }}>
+              {curMedia.length === 0
+                ? <div style={{ textAlign:"center", padding:"24px", fontSize:13, color:TL }}>{t("No media","لا توجد وسائط")}</div>
+                : <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8 }}>
+                    {curMedia.map((m:any)=><Thumb key={m.id} media={m} onClick={()=>openPreview(m)}/>)}
+                  </div>
+              }
+            </div>
+          </div>
+        </div>
+
+        {/* Full preview dialog */}
+        <Dialog open={!!previewMedia} onOpenChange={()=>{ setPreviewMedia(null); setPreviewUrl(null); }}>
+          <DialogContent style={{ maxWidth:560 }}>
+            <DialogHeader>
+              <DialogTitle style={{ fontSize:13 }}>
+                {previewMedia?.file_type?.replace(/_/g," ")} — {previewMedia ? new Date(previewMedia.created_at).toLocaleString() : ""}
+              </DialogTitle>
+            </DialogHeader>
+            {previewUrl
+              ? <>
+                  <img src={previewUrl} style={{ width:"100%", borderRadius:10 }}/>
+                  <a href={previewUrl} download={previewMedia?.file_name||"capture.jpg"} target="_blank" rel="noopener noreferrer"
+                    style={{ display:"flex", alignItems:"center", gap:6, padding:"9px 16px", borderRadius:10, background:G, color:"#fff", fontSize:13, fontWeight:700, textDecoration:"none", justifyContent:"center" }}>
+                    <Download style={{width:14,height:14}}/> {t("Download","تحميل")}
+                  </a>
+                </>
+              : <div style={{ display:"flex", justifyContent:"center", padding:32 }}>
+                  <div style={{ width:32,height:32,borderRadius:"50%",border:`4px solid ${G}`,borderTopColor:"transparent",animation:"spin .8s linear infinite" }}/>
+                </div>
+            }
+          </DialogContent>
+        </Dialog>
       </div>
     );
   }
 
-  // List view
+  /* ═══ LIST VIEW ════════════════════════════════════════════ */
   return (
-    <div className="container mx-auto px-4 py-6">
-      <div className="mb-6 flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Shield className="h-6 w-6 text-primary" />
-            {t("Proctoring Dashboard", "لوحة المراقبة")}
-          </h1>
-          <p className="text-sm text-muted-foreground">{t("Monitor exam integrity and review violations", "مراقبة نزاهة الامتحان ومراجعة المخالفات")}</p>
-        </div>
-        <Button variant="outline" size="sm" onClick={fetchSessions}>
-          {t("Refresh", "تحديث")}
-        </Button>
-      </div>
+    <div style={{ background:CREAM, minHeight:"100vh", fontFamily:"'Cairo',sans-serif" }}>
+      <style>{"@keyframes spin{to{transform:rotate(360deg)}}"}</style>
 
-      {/* Stats */}
-      <div className="grid gap-4 md:grid-cols-4 mb-6">
-        <Card>
-          <CardContent className="flex items-center gap-4 p-4">
-            <Activity className="h-8 w-8 text-primary" />
-            <div>
-              <div className="text-2xl font-bold">{totalSessions}</div>
-              <div className="text-xs text-muted-foreground">{t("Total Sessions", "إجمالي الجلسات")}</div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="flex items-center gap-4 p-4">
-            <Shield className="h-8 w-8 text-primary" />
-            <div>
-              <div className="text-2xl font-bold text-primary">{activeSessions}</div>
-              <div className="text-xs text-muted-foreground">{t("Active Now", "نشط الآن")}</div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="flex items-center gap-4 p-4">
-            <ShieldAlert className="h-8 w-8 text-destructive" />
-            <div>
-              <div className="text-2xl font-bold text-destructive">{criticalCount}</div>
-              <div className="text-xs text-muted-foreground">{t("High/Critical Cases", "حالات عالية/حرجة")}</div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="flex items-center gap-4 p-4">
-            <ShieldCheck className="h-8 w-8 text-emerald" />
-            <div>
-              <div className={`text-2xl font-bold ${integrityColor(avgIntegrity)}`}>{avgIntegrity}%</div>
-              <div className="text-xs text-muted-foreground">{t("Average Integrity", "متوسط النزاهة")}</div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      <div style={{ maxWidth:720, margin:"0 auto", padding:"20px 16px 48px" }}>
 
-      {/* Filters */}
-      <div className="mb-4 flex flex-wrap items-end gap-3">
-        <div>
-          <Label className="text-xs mb-1 block">{t("Search Student", "البحث عن طالب")}</Label>
-          <div className="relative">
-            <Search className="absolute left-2.5 top-2 h-4 w-4 text-muted-foreground" />
-            <Input className="pl-8 h-9 text-sm w-[200px]" placeholder={t("Name or email...", "الاسم أو البريد...")} value={searchFilter} onChange={(e) => setSearchFilter(e.target.value)} />
-          </div>
-        </div>
-        <div>
-          <Label className="text-xs mb-1 block">{t("Suspicion Level", "مستوى الاشتباه")}</Label>
-          <Select value={suspicionFilter} onValueChange={setSuspicionFilter}>
-            <SelectTrigger className="w-[150px] h-9 text-sm"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">{t("All", "الكل")}</SelectItem>
-              <SelectItem value="low">{t("Low", "منخفض")}</SelectItem>
-              <SelectItem value="medium">{t("Medium", "متوسط")}</SelectItem>
-              <SelectItem value="high">{t("High", "عالي")}</SelectItem>
-              <SelectItem value="critical">{t("Critical", "حرج")}</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div>
-          <Label className="text-xs mb-1 block">{t("Exam", "الامتحان")}</Label>
-          <Select value={examFilter} onValueChange={setExamFilter}>
-            <SelectTrigger className="w-[200px] h-9 text-sm"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">{t("All Exams", "جميع الامتحانات")}</SelectItem>
-              {examsList.map((e) => (
-                <SelectItem key={e.id} value={e.id}>{language === "ar" ? e.title_ar || e.title : e.title}</SelectItem>
+        {/* Hero header */}
+        <div style={{ background:`linear-gradient(135deg,${G},${GM})`, borderRadius:22, padding:"22px 20px 18px", marginBottom:18, boxShadow:"0 8px 32px rgba(15,45,31,.25)", position:"relative", overflow:"hidden" }}>
+          <div style={{ position:"absolute", top:-40, right:-40, width:120, height:120, borderRadius:"50%", background:"rgba(255,255,255,.03)", pointerEvents:"none" }}/>
+          <div style={{ position:"relative", zIndex:1 }}>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16 }}>
+              <div>
+                <p style={{ fontSize:10, color:"rgba(255,255,255,.55)", fontWeight:700, letterSpacing:1, margin:0, textTransform:"uppercase" as const }}>Admin</p>
+                <h1 style={{ fontSize:22, fontWeight:900, color:"#fff", margin:0 }}>🛡 {t("Proctoring Dashboard","لوحة المراقبة")}</h1>
+              </div>
+              <button onClick={fetchSessions} style={{ background:"rgba(255,255,255,.15)", border:"none", borderRadius:10, padding:"8px 14px", color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", gap:5 }}>
+                <RefreshCw style={{width:13,height:13}}/> {t("Refresh","تحديث")}
+              </button>
+            </div>
+            {/* Stats */}
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8 }}>
+              {[
+                {icon:<Activity style={{width:13,height:13}}/>,  val:String(totalSessions),  lbl:t("Total","إجمالي")},
+                {icon:<Shield style={{width:13,height:13}}/>,    val:String(activeSessions), lbl:t("Active","نشط")},
+                {icon:<ShieldAlert style={{width:13,height:13}}/>,val:String(criticalCount), lbl:t("Flagged","مُعلّم")},
+                {icon:<ShieldCheck style={{width:13,height:13}}/>,val:`${avgIntegrity}%`,  lbl:t("Avg Integrity","معدل النزاهة")},
+              ].map((s,i)=>(
+                <div key={i} style={{ textAlign:"center", background:"rgba(255,255,255,.1)", borderRadius:12, padding:"10px 4px" }}>
+                  <div style={{ display:"flex", justifyContent:"center", color:"rgba(255,255,255,.6)", marginBottom:3 }}>{s.icon}</div>
+                  <div style={{ fontSize:18, fontWeight:900, color:"#fff", lineHeight:1 }}>{s.val}</div>
+                  <div style={{ fontSize:9, color:"rgba(255,255,255,.5)", fontWeight:600, marginTop:2 }}>{s.lbl}</div>
+                </div>
               ))}
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
-
-      {/* Sessions table */}
-      {loading ? (
-        <div className="flex justify-center py-12">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-        </div>
-      ) : filteredSessions.length === 0 ? (
-        <Card><CardContent className="p-8 text-center text-muted-foreground">{t("No proctoring sessions found", "لم يتم العثور على جلسات مراقبة")}</CardContent></Card>
-      ) : (
-        <Card>
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{t("Student", "الطالب")}</TableHead>
-                  <TableHead>{t("Exam", "الامتحان")}</TableHead>
-                  <TableHead>{t("Status", "الحالة")}</TableHead>
-                  <TableHead>{t("Integrity", "النزاهة")}</TableHead>
-                  <TableHead>{t("Suspicion", "الاشتباه")}</TableHead>
-                   <TableHead>{t("Violations", "المخالفات")}</TableHead>
-                   <TableHead>{t("Verdict", "الحكم")}</TableHead>
-                   <TableHead>{t("Date", "التاريخ")}</TableHead>
-                   <TableHead>{t("Actions", "إجراءات")}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredSessions.map((s) => (
-                  <TableRow key={s.id} className="cursor-pointer hover:bg-accent/50" onClick={() => loadSessionDetails(s)}>
-                    <TableCell>
-                      <div>
-                        <p className="font-medium text-sm">{(s.profile as any)?.full_name || "Unknown"}</p>
-                        <p className="text-xs text-muted-foreground">{(s.profile as any)?.email || ""}</p>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-sm">{language === "ar" ? (s.exam as any)?.title_ar || (s.exam as any)?.title : (s.exam as any)?.title}</TableCell>
-                    <TableCell>
-                      <Badge className={`text-xs ${!s.ended_at ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"}`}>
-                        {!s.ended_at ? t("Active", "نشط") : t("Ended", "منتهي")}
-                      </Badge>
-                    </TableCell>
-                    <TableCell><span className={`font-bold ${integrityColor(Number(s.integrity_score) || 100)}`}>{Math.round(Number(s.integrity_score) || 100)}%</span></TableCell>
-                    <TableCell><Badge className={`text-xs ${severityColor(s.suspicion_level || "low")}`}>{s.suspicion_level || "low"}</Badge></TableCell>
-                    <TableCell className="font-bold text-destructive">{s.total_violations || 0}</TableCell>
-                    <TableCell>
-                      {(() => {
-                        const v = getVerdict(s);
-                        return <Badge className={`text-[10px] ${v.color}`}>{language === "ar" ? v.labelAr : v.label}</Badge>;
-                      })()}
-                    </TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{new Date(s.started_at).toLocaleDateString()}</TableCell>
-                    <TableCell>
-                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); loadSessionDetails(s); }}>
-                        <Eye className="h-4 w-4" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            </div>
           </div>
-        </Card>
-      )}
+        </div>
+
+        {/* Filters */}
+        <div style={{ background:"#fff", borderRadius:16, padding:"14px 16px", marginBottom:16, border:`1px solid ${BORDER}` }}>
+          {/* Search */}
+          <div style={{ position:"relative", marginBottom:10 }}>
+            <Search style={{ position:"absolute", left:10, top:"50%", transform:"translateY(-50%)", width:14, height:14, color:TL }}/>
+            <input value={search} onChange={e=>setSearch(e.target.value)} placeholder={t("Search by name or email…","ابحث باسم أو بريد…")}
+              style={{ width:"100%", padding:"10px 10px 10px 32px", borderRadius:12, border:`1.5px solid ${BORDER}`, fontSize:13, color:G, outline:"none", fontFamily:"'Cairo',sans-serif", boxSizing:"border-box" as const }}/>
+          </div>
+          {/* Filter chips */}
+          <div style={{ display:"flex", gap:6, flexWrap:"wrap" as const, marginBottom:8 }}>
+            <span style={{ fontSize:11, fontWeight:700, color:TL, alignSelf:"center" }}>{t("Suspicion:","الاشتباه:")}</span>
+            {["all","low","medium","high","critical"].map(v=>(
+              <button key={v} onClick={()=>setSuspFilter(v)} style={{
+                padding:"5px 12px", borderRadius:16, fontSize:11, fontWeight:700, border:"none", cursor:"pointer",
+                background: suspFilter===v ? G : "#f8fafb", color: suspFilter===v ? "#fff" : TL,
+              }}>{v==="all" ? t("All","الكل") : v}</button>
+            ))}
+          </div>
+          {examsList.length > 0 && (
+            <div style={{ display:"flex", gap:6, flexWrap:"wrap" as const }}>
+              <span style={{ fontSize:11, fontWeight:700, color:TL, alignSelf:"center" }}>{t("Exam:","امتحان:")}</span>
+              <button onClick={()=>setExamFilter("all")} style={{ padding:"5px 12px", borderRadius:16, fontSize:11, fontWeight:700, border:"none", cursor:"pointer", background:examFilter==="all"?G:"#f8fafb", color:examFilter==="all"?"#fff":TL }}>
+                {t("All","الكل")}
+              </button>
+              {examsList.map(e=>(
+                <button key={e.id} onClick={()=>setExamFilter(e.id)} style={{ padding:"5px 12px", borderRadius:16, fontSize:11, fontWeight:700, border:"none", cursor:"pointer", background:examFilter===e.id?G:"#f8fafb", color:examFilter===e.id?"#fff":TL, maxWidth:140, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" as const }}>
+                  {language==="ar" ? e.title_ar||e.title : e.title}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Session cards */}
+        {loading
+          ? <div style={{ display:"flex", justifyContent:"center", padding:48 }}>
+              <div style={{ width:44,height:44,border:`4px solid ${G}`,borderTopColor:"transparent",borderRadius:"50%",animation:"spin .8s linear infinite" }}/>
+            </div>
+          : filtered.length === 0
+          ? <div style={{ textAlign:"center", padding:"48px 20px", background:"#fff", borderRadius:18, border:`1px dashed ${BORDER}` }}>
+              <div style={{ fontSize:40, marginBottom:12, opacity:.4 }}>🛡</div>
+              <p style={{ fontSize:14, color:TL, margin:0 }}>{t("No sessions found","لا توجد جلسات")}</p>
+            </div>
+          : filtered.map(s=>{
+              const name    = (s.profile as any)?.full_name || (s.profile as any)?.email || "Unknown";
+              const exam    = language==="ar" ? (s.exam as any)?.title_ar||(s.exam as any)?.title : (s.exam as any)?.title;
+              const verdict = getVerdict(s);
+              const sc      = sCol(s.suspicion_level||"low");
+              const integ   = Math.round(Number(s.integrity_score)||100);
+              return (
+                <div key={s.id} onClick={()=>loadDetail(s)} style={{ background:"#fff", borderRadius:18, marginBottom:10, border:`1.5px solid ${BORDER}`, boxShadow:"0 2px 12px rgba(15,45,31,.07)", cursor:"pointer", overflow:"hidden" }}>
+                  <div style={{ height:3, background: s.suspicion_level==="critical"?"#dc2626" : s.suspicion_level==="high"?"#ef4444" : s.suspicion_level==="medium"?"#f59e0b" : "#22c55e" }}/>
+                  <div style={{ padding:"14px 16px" }}>
+                    <div style={{ display:"flex", alignItems:"flex-start", gap:12 }}>
+                      {/* Avatar */}
+                      <div style={{ width:40,height:40,borderRadius:"50%",background:`linear-gradient(135deg,${G},${GM})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,fontWeight:900,color:GOLD,flexShrink:0 }}>
+                        {name.charAt(0).toUpperCase()}
+                      </div>
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:2, flexWrap:"wrap" as const }}>
+                          <span style={{ fontSize:14, fontWeight:800, color:G }}>{name}</span>
+                          <span style={{ fontSize:10, padding:"2px 8px", borderRadius:8, fontWeight:700, background:!s.ended_at?"#f0fff4":"#f8fafb", color:!s.ended_at?"#065f46":TL, border:`1px solid ${!s.ended_at?"#86efac":BORDER}` }}>
+                            {!s.ended_at ? "●"+t("Live","نشط") : t("Ended","منتهي")}
+                          </span>
+                        </div>
+                        <div style={{ fontSize:11, color:TL, marginBottom:8 }}>{exam} · {new Date(s.started_at).toLocaleDateString()}</div>
+                        {/* Metrics row */}
+                        <div style={{ display:"flex", gap:10, flexWrap:"wrap" as const }}>
+                          <div style={{ display:"flex", alignItems:"center", gap:4, fontSize:11 }}>
+                            <span style={{ color:TL }}>Integrity:</span>
+                            <span style={{ fontWeight:900, color:iCol(integ) }}>{integ}%</span>
+                          </div>
+                          <div style={{ display:"flex", alignItems:"center", gap:4, fontSize:11 }}>
+                            <span style={{ color:TL }}>Violations:</span>
+                            <span style={{ fontWeight:900, color: (s.total_violations||0)>0?"#ef4444":TL }}>{s.total_violations||0}</span>
+                          </div>
+                          <div style={{ padding:"2px 8px", borderRadius:8, fontSize:10, fontWeight:700, background:sc.bg, color:sc.text, border:`1px solid ${sc.border}`, textTransform:"capitalize" as const }}>{s.suspicion_level||"low"}</div>
+                          <div style={{ padding:"2px 8px", borderRadius:8, fontSize:10, fontWeight:700, background:verdict.bg, color:verdict.text, border:`1px solid ${verdict.border}` }}>{language==="ar"?verdict.labelAr:verdict.label}</div>
+                        </div>
+                      </div>
+                      <ChevronRight style={{width:16,height:16,color:TL,flexShrink:0,marginTop:4}}/>
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+        }
+      </div>
     </div>
   );
 };
