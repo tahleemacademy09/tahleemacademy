@@ -165,14 +165,24 @@ const LiveQuiz = () => {
   useEffect(() => {
     if (!room) return;
     const ch = supabase.channel(`lq-${room.id}`)
-      .on("postgres_changes",{ event:"*", schema:"public", table:"live_quiz_rooms",    filter:`id=eq.${room.id}` }, (p:any) => {
+      .on("postgres_changes",{ event:"*", schema:"public", table:"live_quiz_rooms",    filter:`id=eq.${room.id}` }, async (p:any) => {
         const r = p.new as Room;
         setRoom(r);
         if (!isHost) {
-          if (r.status === "countdown") { loadCurrentQ(r.current_question_index); setSelectedAns(null); setCountdown(3); setView("countdown-player"); }
-          if (r.status === "question") { setView("question-player"); }
-          if (r.status === "reveal")   setView("reveal-player");
-          if (r.status === "finished") { loadParticipants(); setView("results-player"); }
+          // Always fetch the question fresh for BOTH countdown and question events
+          if (r.status === "countdown" || r.status === "question") {
+            const { data: qd } = await supabase
+              .from("live_quiz_questions" as any).select("*")
+              .eq("room_id", room.id)
+              .eq("order_index", r.current_question_index)
+              .single();
+            if (qd) setCurrentQ({ ...qd, options: qd.options as string[] } as Question);
+            setSelectedAns(null);
+            if (r.status === "countdown") { setCountdown(3); setView("countdown-player"); }
+            else { setView("question-player"); }
+          }
+          if (r.status === "reveal")   { await loadParticipants(); setView("reveal-player"); }
+          if (r.status === "finished") { await loadParticipants(); setView("results-player"); }
         }
       })
       .on("postgres_changes",{ event:"*", schema:"public", table:"live_quiz_participants", filter:`room_id=eq.${room.id}` }, () => loadParticipants())
@@ -1279,11 +1289,19 @@ Make questions educational, clearly worded, and accurate.`
   );
 
   /* ══ QUESTION PLAYER ══════════════════════════════ */
-  if (view === "question-player" && currentQ) return (
+  if (view === "question-player") return (
     <div style={{...pageStyle, padding:"18px 16px"}}>
       <IslamicBg opacity={0.05}/>
       <div style={{position:"relative",zIndex:1,maxWidth:480,margin:"0 auto"}}>
 
+        {!currentQ && (
+          <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:"70vh",gap:16}}>
+            <div style={{width:44,height:44,borderRadius:"50%",border:`4px solid ${GOLD}`,borderTopColor:"transparent",animation:"lqspin .8s linear infinite"}}/>
+            <p style={{fontSize:14,color:"rgba(255,255,255,0.5)",margin:0}}>Loading question…</p>
+            <style>{`@keyframes lqspin{to{transform:rotate(360deg)}}`}</style>
+          </div>
+        )}
+        {currentQ && (<>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
           <div>
             <p style={{fontSize:13,color:"rgba(255,255,255,0.45)",margin:0}}>Q{(room?.current_question_index||0)+1}</p>
@@ -1317,6 +1335,7 @@ Make questions educational, clearly worded, and accurate.`
             <p style={{fontSize:13,color:"rgba(255,255,255,0.5)",margin:0}}>⏳ Answer locked — waiting for host…</p>
           </div>
         )}
+        </>)}
       </div>
     </div>
   );
@@ -1387,7 +1406,14 @@ Make questions educational, clearly worded, and accurate.`
   );
 
   /* ══ REVEAL PLAYER ════════════════════════════════ */
-  if (view === "reveal-player" && currentQ) {
+  if (view === "reveal-player") {
+    if (!currentQ) return (
+      <div style={{...pageStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:16}}>
+        <div style={{width:44,height:44,borderRadius:"50%",border:`4px solid ${GOLD}`,borderTopColor:"transparent",animation:"lqspin .8s linear infinite"}}/>
+        <p style={{fontSize:14,color:"rgba(255,255,255,0.5)",margin:0}}>Loading results…</p>
+        <style>{`@keyframes lqspin{to{transform:rotate(360deg)}}`}</style>
+      </div>
+    );
     const correct = selectedAns === currentQ.correct_answer;
     const myRank  = participants.findIndex(p => p.id === participant?.id) + 1;
     return (
