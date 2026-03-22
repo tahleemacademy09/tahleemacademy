@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { supabase } from "@/integrations/supabase/client";
@@ -68,13 +68,13 @@ const ProctoringDashboard = () => {
   const [examsList, setExamsList]         = useState<any[]>([]);
   const [loading, setLoading]             = useState(true);
   const [mediaTab, setMediaTab]           = useState("all");
-  const curMediaRef = { current: [] as any[] }; // updated each render
   const [previewIdx, setPreviewIdx]       = useState<number>(-1);
+  const [previewList, setPreviewList]     = useState<any[]>([]); // stable list for lightbox
   const [urlCache, setUrlCache]           = useState<Record<string,string>>({});
   const [touchStartX, setTouchStartX]     = useState<number|null>(null);
 
-  // Computed from current media list and previewIdx
-  const previewMedia = previewIdx >= 0 && previewIdx < curMediaRef.current.length ? curMediaRef.current[previewIdx] : null;
+  // Computed from stable previewList — never empty when lightbox is open
+  const previewMedia = previewIdx >= 0 && previewIdx < previewList.length ? previewList[previewIdx] : null;
   const previewUrl   = previewMedia ? (urlCache[previewMedia.file_url] || null) : null;
 
   const fetchSessions = async () => {
@@ -118,20 +118,21 @@ const ProctoringDashboard = () => {
   };
 
   const openPreview = async (idx: number, mediaList: any[]) => {
+    setPreviewList(mediaList);   // store stable copy
     setPreviewIdx(idx);
-    // Prefetch current + neighbours
+    // Prefetch current + neighbours immediately
     const toLoad = [idx - 1, idx, idx + 1].filter(i => i >= 0 && i < mediaList.length);
     for (const i of toLoad) resolveUrl(mediaList[i].file_url);
   };
 
-  const navPreview = (dir: 1 | -1, mediaList: any[]) => {
+  const navPreview = (dir: 1 | -1) => {
+    const list = previewList;
     const next = previewIdx + dir;
-    if (next >= 0 && next < mediaList.length) {
+    if (next >= 0 && next < list.length) {
       setPreviewIdx(next);
-      resolveUrl(mediaList[next].file_url);
-      // Prefetch further
+      resolveUrl(list[next].file_url);
       const further = next + dir;
-      if (further >= 0 && further < mediaList.length) resolveUrl(mediaList[further].file_url);
+      if (further >= 0 && further < list.length) resolveUrl(list[further].file_url);
     }
   };
 
@@ -324,7 +325,7 @@ const ProctoringDashboard = () => {
               {curMedia.length === 0
                 ? <div style={{ textAlign:"center", padding:"24px", fontSize:13, color:TL }}>{t("No media","لا توجد وسائط")}</div>
                 : <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8 }}>
-                    {curMedia.map((m:any,i:number)=>{ curMediaRef.current=curMedia; return <Thumb key={m.id} media={m} onClick={()=>openPreview(i,curMedia)}/>; })}
+                    {curMedia.map((m:any,i:number)=><Thumb key={m.id} media={m} onClick={()=>openPreview(i,curMedia)}/>)}
                   </div>
               }
             </div>
@@ -339,7 +340,7 @@ const ProctoringDashboard = () => {
             onTouchEnd={e => {
               if (touchStartX === null) return;
               const dx = e.changedTouches[0].clientX - touchStartX;
-              if (Math.abs(dx) > 50) navPreview(dx < 0 ? 1 : -1, curMediaRef.current);
+              if (Math.abs(dx) > 50) navPreview(dx < 0 ? 1 : -1);
               setTouchStartX(null);
             }}
           >
@@ -349,7 +350,7 @@ const ProctoringDashboard = () => {
                 {previewMedia?.file_type?.replace(/_/g," ")} · {previewMedia ? new Date(previewMedia.created_at).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}) : ""}
               </div>
               <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-                <span style={{ fontSize:12, color:"rgba(255,255,255,.5)", fontWeight:700 }}>{previewIdx+1} / {curMediaRef.current.length}</span>
+                <span style={{ fontSize:12, color:"rgba(255,255,255,.5)", fontWeight:700 }}>{previewIdx+1} / {previewList.length}</span>
                 <button onClick={() => setPreviewIdx(-1)} style={{ background:"rgba(255,255,255,.15)", border:"none", borderRadius:"50%", width:34, height:34, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", color:"#fff" }}>
                   ✕
                 </button>
@@ -360,7 +361,7 @@ const ProctoringDashboard = () => {
             <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", position:"relative", minHeight:0 }}>
               {/* Prev arrow */}
               {previewIdx > 0 && (
-                <button onClick={() => navPreview(-1, curMediaRef.current)} style={{ position:"absolute", left:10, zIndex:10, background:"rgba(255,255,255,.15)", border:"none", borderRadius:"50%", width:40, height:40, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", color:"#fff", fontSize:20 }}>
+                <button onClick={() => navPreview(-1)} style={{ position:"absolute", left:10, zIndex:10, background:"rgba(255,255,255,.15)", border:"none", borderRadius:"50%", width:40, height:40, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", color:"#fff", fontSize:20 }}>
                   ‹
                 </button>
               )}
@@ -374,8 +375,8 @@ const ProctoringDashboard = () => {
               }
 
               {/* Next arrow */}
-              {previewIdx < curMediaRef.current.length - 1 && (
-                <button onClick={() => navPreview(1, curMediaRef.current)} style={{ position:"absolute", right:10, zIndex:10, background:"rgba(255,255,255,.15)", border:"none", borderRadius:"50%", width:40, height:40, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", color:"#fff", fontSize:20 }}>
+              {previewIdx < previewList.length - 1 && (
+                <button onClick={() => navPreview(1)} style={{ position:"absolute", right:10, zIndex:10, background:"rgba(255,255,255,.15)", border:"none", borderRadius:"50%", width:40, height:40, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", color:"#fff", fontSize:20 }}>
                   ›
                 </button>
               )}
@@ -383,7 +384,7 @@ const ProctoringDashboard = () => {
 
             {/* Dot indicators */}
             <div style={{ padding:"12px 16px", display:"flex", justifyContent:"center", gap:6, flexShrink:0 }}>
-              {curMediaRef.current.slice(Math.max(0,previewIdx-4), Math.min(curMediaRef.current.length,previewIdx+5)).map((_,i) => {
+              {previewList.slice(Math.max(0,previewIdx-4), Math.min(previewList.length,previewIdx+5)).map((_,i) => {
                 const realIdx = Math.max(0,previewIdx-4)+i;
                 return <div key={realIdx} style={{ width:realIdx===previewIdx?20:6, height:6, borderRadius:3, background:realIdx===previewIdx?GOLD:"rgba(255,255,255,.3)", transition:"all .2s" }}/>;
               })}
