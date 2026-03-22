@@ -1,3 +1,4 @@
+
 /*
   EnrollmentPayment.tsx — Tahleem Academy
   Uses the ACTUAL database tables:
@@ -104,6 +105,7 @@ const EnrollmentPayment = () => {
   const [loading, setLoading]             = useState(true);
   const [paying, setPaying]               = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [selectedTerms, setSelectedTerms]   = useState<Record<string,number>>({});
 
   const isAdmin   = hasRole("admin");
   const accStatus = getAccessStatus(profile);
@@ -126,13 +128,26 @@ const EnrollmentPayment = () => {
       const allPlans = (plansRes.data || []) as Plan[];
       const hasPrivate = !!(profRes.data as any)?.private_session_rate || (profRes.data as any)?.student_type === "private";
 
-      // Only hide private plans from students not enrolled in private sessions.
-      // Show ALL other active plans regardless of level field —
-      // admin controls visibility by activating/deactivating plans in the admin panel.
-      const activePlans = allPlans.filter(p => {
+      // Match plan to student's level:
+      // 1. plan.level field matches student level, OR
+      // 2. plan.level is null/all (applies to everyone), OR
+      // 3. plan name contains the student's level word (e.g. "Beginner Term Fee")
+      const levelPlans = allPlans.filter(p => {
         const isPrivatePlan = p.name?.toLowerCase().includes("private");
-        return !isPrivatePlan || hasPrivate;
+        if (isPrivatePlan && !hasPrivate) return false;
+        const planLevel = (p.level || "").toLowerCase();
+        const planName  = (p.name  || "").toLowerCase();
+        if (!planLevel || planLevel === "all") return true;
+        return planLevel === studentLevel || planName.includes(studentLevel);
       });
+
+      // Fallback: if nothing matches, show all non-private active plans
+      const activePlans = levelPlans.length > 0
+        ? levelPlans
+        : allPlans.filter(p => {
+            const isPrivate = p.name?.toLowerCase().includes("private");
+            return !isPrivate || hasPrivate;
+          });
 
       setPlans(activePlans);
       if (activePlans.length > 0) setSelectedPlan(activePlans[0]);
@@ -165,12 +180,16 @@ const EnrollmentPayment = () => {
 
     const email = (profile as any).email || user.email || "";
     const ref   = `TAH-${user.id.slice(0,8)}-${Date.now()}`;
-    const amount = selectedPlan.amount;
+    const activeTerm  = selectedTerms[selectedPlan.id] ?? 1;
+    const baseAmount  = selectedPlan.amount;
+    const termAmounts: Record<number,number> = { 1: baseAmount, 2: baseAmount*2, 3: Math.round(baseAmount*3*0.9) };
+    const amount      = termAmounts[activeTerm] || baseAmount;
+    const termMonths  = activeTerm * 3;
 
     // Demo mode
     if (!PAYSTACK_KEY) {
       toast({ title:"⚠️ Demo mode", description:"No Paystack key configured — simulating success." });
-      await handlePaymentSuccess(ref, amount, selectedPlan);
+      await handlePaymentSuccess(ref, amount, selectedPlan, termMonths);
       return;
     }
 
@@ -202,7 +221,7 @@ const EnrollmentPayment = () => {
         // IMPORTANT: callback must NOT be async — Paystack breaks if it is
         callback: (res: any) => {
           const reference = res.reference || ref;
-          handlePaymentSuccess(reference, amount, selectedPlan);
+          handlePaymentSuccess(reference, amount, selectedPlan, termMonths);
         },
         onClose: () => {
           toast({ title: "Payment cancelled" });
@@ -216,12 +235,12 @@ const EnrollmentPayment = () => {
     }
   };
 
-  const handlePaymentSuccess = async (ref: string, amount: number, plan: Plan) => {
+  const handlePaymentSuccess = async (ref: string, amount: number, plan: Plan, termMonthsParam = 3) => {
     if (!user || !profile) return;
     try {
       const now      = new Date();
       const end      = new Date(now);
-      end.setMonth(end.getMonth() + (plan.duration_months || 1));
+      end.setMonth(end.getMonth() + (termMonthsParam || plan.duration_months || 3));
       const endStr   = end.toISOString().split("T")[0];
       const startStr = now.toISOString().split("T")[0];
 
@@ -457,67 +476,92 @@ const EnrollmentPayment = () => {
                     {levelDisplay} Level — Choose Your Plan
                   </p>
 
-                  {plans.map(plan => (
-                    <div
-                      key={plan.id}
-                      className={`ep-pcard ${selectedPlan?.id===plan.id?"sel":""}`}
-                      onClick={() => setSelectedPlan(plan)}
-                      style={{ position:"relative" }}
-                    >
-                      {plan.duration_months >= 3 && (
-                        <div style={{ position:"absolute", top:-10, right:14, background:"linear-gradient(135deg,#064E3B,#075E54)", color:"#fff", borderRadius:20, padding:"3px 12px", fontSize:11, fontWeight:800 }}>
-                          Best Value
-                        </div>
-                      )}
-                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
-                        <div>
-                          <p style={{ fontWeight:800, fontSize:16, color:"#111", margin:"0 0 2px" }}>{plan.name}</p>
-                          <p style={{ fontSize:12, color:"#aaa", margin:"0 0 10px" }}>
-                            {plan.duration_months === 1 ? "اشتراك شهري" : "رسوم الفصل الدراسي"}
-                          </p>
-                          <div style={{ display:"flex", flexWrap:"wrap" as const, gap:6 }}>
-                            <span className="ep-bdg" style={{ background:"#E8F5E9", color:"#2E7D32" }}>
-                              {plan.duration_months} Month{plan.duration_months!==1?"s":""}
-                            </span>
-                            <span className="ep-bdg" style={{ background:"#F3F4F6", color:"#666" }}>
-                              {plan.duration_months === 1 ? "Flexible" : "Term"}
-                            </span>
+                  {/* Show one card per plan with term selector: 1, 2, or 3 terms */}
+                  {plans.map(plan => {
+                    const baseAmount = plan.amount;
+                    const currency   = plan.currency || "NGN";
+                    const terms = [
+                      { n:1, label:"1 Term",  months:3,  amount: baseAmount,     save: 0 },
+                      { n:2, label:"2 Terms", months:6,  amount: baseAmount * 2, save: 0 },
+                      { n:3, label:"3 Terms", months:9,  amount: Math.round(baseAmount * 3 * 0.9), save: Math.round(baseAmount * 3 * 0.1) },
+                    ];
+                    const activeTerm = selectedTerms[plan.id] ?? 1;
+                    const chosen = terms.find(t => t.n === activeTerm) || terms[0];
+                    return (
+                      <div key={plan.id} className="ep-pcard sel" style={{ display:"flex", flexDirection:"column", gap:14 }}>
+                        {/* Plan header */}
+                        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+                          <div>
+                            <p style={{ fontWeight:800, fontSize:16, color:"#111", margin:"0 0 2px" }}>{plan.name}</p>
+                            <p style={{ fontSize:12, color:"#aaa", margin:0, fontFamily:"serif" }}>رسوم الفصل الدراسي</p>
+                          </div>
+                          <div style={{ textAlign:"right" as const }}>
+                            <p style={{ fontSize:26, fontWeight:900, color:"#064E3B", margin:"0 0 2px" }}>{fmt(chosen.amount, currency)}</p>
+                            <p style={{ fontSize:11, color:"#aaa", margin:0 }}>{chosen.months} months</p>
                           </div>
                         </div>
-                        <div style={{ textAlign:"right" as const }}>
-                          <p style={{ fontSize:26, fontWeight:900, color:"#111", margin:"0 0 2px" }}>
-                            {fmt(plan.amount, plan.currency)}
-                          </p>
-                          <p style={{ fontSize:11, color:"#aaa", margin:0 }}>
-                            {plan.duration_months === 1 ? "/ month" : `/ ${plan.duration_months} months`}
-                          </p>
+                        {/* Term selector */}
+                        <div>
+                          <p style={{ fontSize:11, fontWeight:700, color:"#aaa", textTransform:"uppercase" as const, letterSpacing:.5, margin:"0 0 8px" }}>How many terms?</p>
+                          <div style={{ display:"flex", gap:8 }}>
+                            {terms.map(t => (
+                              <button key={t.n} type="button"
+                                onClick={() => { setSelectedTerms(prev => ({...prev, [plan.id]: t.n})); setSelectedPlan(plan); }}
+                                style={{ flex:1, padding:"10px 6px", borderRadius:10, border:`2px solid ${activeTerm===t.n?"#064E3B":"#e0e0e0"}`, background:activeTerm===t.n?"#064E3B":"#fff", color:activeTerm===t.n?"#fff":"#555", fontWeight:800, fontSize:13, cursor:"pointer", transition:"all .15s", position:"relative" as const }}>
+                                {t.label}
+                                {t.save > 0 && (
+                                  <span style={{ position:"absolute", top:-8, right:-4, background:"#C9922A", color:"#fff", borderRadius:10, padding:"1px 6px", fontSize:9, fontWeight:800 }}>
+                                    -10%
+                                  </span>
+                                )}
+                              </button>
+                            ))}
+                          </div>
+                          {chosen.save > 0 && (
+                            <p style={{ fontSize:11, color:"#C9922A", fontWeight:700, margin:"6px 0 0" }}>
+                              🎉 You save {fmt(chosen.save, currency)} by paying 3 terms upfront!
+                            </p>
+                          )}
                         </div>
+                        {/* Activate this plan */}
+                        {selectedPlan?.id !== plan.id && (
+                          <button type="button" onClick={() => { setSelectedPlan(plan); setSelectedTerms(prev => ({...prev, [plan.id]: activeTerm})); }}
+                            style={{ padding:"8px", background:"#f5f5f5", border:"none", borderRadius:8, fontSize:12, fontWeight:700, color:"#555", cursor:"pointer" }}>
+                            Select this plan
+                          </button>
+                        )}
+                        {selectedPlan?.id === plan.id && (
+                          <div style={{ display:"flex", alignItems:"center", gap:6, color:"#075E54", fontWeight:700, fontSize:12 }}>
+                            <CheckCircle2 size={14}/> Selected — {chosen.label} · {fmt(chosen.amount, currency)}
+                          </div>
+                        )}
                       </div>
-                      {selectedPlan?.id === plan.id && (
-                        <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:12, color:"#075E54", fontWeight:700, fontSize:12 }}>
-                          <CheckCircle2 size={14}/> Selected
-                        </div>
-                      )}
-                    </div>
-                  ))}
+                    );
+                  })}
 
                   {/* Order summary */}
-                  {selectedPlan && (
-                    <div style={{ background:"#F8FAF8", borderRadius:13, padding:"15px 16px", border:"1px solid #E0EDE0" }}>
-                      <p style={{ fontSize:11, fontWeight:700, color:"#aaa", marginBottom:12, textTransform:"uppercase" as const, letterSpacing:.5 }}>Order Summary</p>
-                      {[
-                        { label:"Plan",     val: selectedPlan.name },
-                        { label:"Level",    val: levelDisplay },
-                        { label:"Duration", val: `${selectedPlan.duration_months} Month${selectedPlan.duration_months!==1?"s":""}` },
-                        { label:"Total",    val: fmt(selectedPlan.amount, selectedPlan.currency), bold:true, green:true },
-                      ].map((r, i) => (
-                        <div key={i} style={{ display:"flex", justifyContent:"space-between", marginBottom:i<3?9:0, paddingTop:i===3?10:0, borderTop:i===3?"1px dashed #ddd":"none" }}>
-                          <span style={{ fontSize:13, color:"#999" }}>{r.label}</span>
-                          <span style={{ fontSize:13, fontWeight:r.bold?800:500, color:r.green?"#064E3B":"#111" }}>{r.val}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  {selectedPlan && (() => {
+                    const st = selectedTerms[selectedPlan.id] ?? 1;
+                    const ba = selectedPlan.amount;
+                    const ta: Record<number,number> = { 1:ba, 2:ba*2, 3:Math.round(ba*3*0.9) };
+                    const totalAmt = ta[st] || ba;
+                    return (
+                      <div style={{ background:"#F8FAF8", borderRadius:13, padding:"15px 16px", border:"1px solid #E0EDE0" }}>
+                        <p style={{ fontSize:11, fontWeight:700, color:"#aaa", marginBottom:12, textTransform:"uppercase" as const, letterSpacing:.5 }}>Order Summary</p>
+                        {[
+                          { label:"Plan",     val: selectedPlan.name },
+                          { label:"Terms",    val: `${st} Term${st>1?"s":""} (${st*3} months)` },
+                          { label:"Level",    val: levelDisplay },
+                          { label:"Total",    val: fmt(totalAmt, selectedPlan.currency), bold:true, green:true },
+                        ].map((r, i) => (
+                          <div key={i} style={{ display:"flex", justifyContent:"space-between", marginBottom:i<3?9:0, paddingTop:i===3?10:0, borderTop:i===3?"1px dashed #ddd":"none" }}>
+                            <span style={{ fontSize:13, color:"#999" }}>{r.label}</span>
+                            <span style={{ fontSize:13, fontWeight:r.bold?800:500, color:r.green?"#064E3B":"#111" }}>{r.val}</span>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
 
                   {/* PAY BUTTON */}
                   <button
@@ -528,7 +572,7 @@ const EnrollmentPayment = () => {
                   >
                     {paying
                       ? <><Loader2 style={{ width:20, height:20, animation:"spin .8s linear infinite" }}/> Processing…</>
-                      : <><CreditCard size={20}/> Pay {selectedPlan ? fmt(selectedPlan.amount, selectedPlan.currency) : "—"}</>
+                      : <><CreditCard size={20}/> Pay {selectedPlan ? fmt((() => { const st=selectedTerms[selectedPlan.id]??1; const ba=selectedPlan.amount; return {1:ba,2:ba*2,3:Math.round(ba*3*0.9)}[st]||ba; })(), selectedPlan.currency) : "—"}</>
                     }
                   </button>
 
