@@ -12,6 +12,7 @@ import {
   Trophy, Users, Play, ArrowRight, Star,
   Crown, Zap, RotateCcw, X,
   BookOpen, Eye, PlusCircle, Sparkles,
+  Copy, Share2, Check,
 } from "lucide-react";
 
 /* ── Brand Colors ─────────────────────────────────────── */
@@ -158,36 +159,38 @@ const LiveQuiz = () => {
     { question:"", optA:"", optB:"", optC:"", optD:"", correct:"A", explanation:"" }
   );
 
-  const timerRef  = useRef<any>(null);
-  const channelRef= useRef<any>(null);
+  const timerRef    = useRef<any>(null);
+  const channelRef  = useRef<any>(null);
+  const broadcastRef= useRef<any>(null);
+  const [copiedCode, setCopiedCode] = useState(false);
 
   /* ── Realtime subscription ── */
   useEffect(() => {
     if (!room) return;
-    const ch = supabase.channel(`lq-${room.id}`)
-      .on("postgres_changes",{ event:"*", schema:"public", table:"live_quiz_rooms",    filter:`id=eq.${room.id}` }, async (p:any) => {
+
+    // Shared broadcast channel — host pushes question data directly to students.
+    // This bypasses RLS on live_quiz_questions entirely.
+    const bc = supabase.channel(`lq-broadcast-${room.id}`)
+      .on("broadcast", { event: "question" }, ({ payload }: any) => {
+        // Students receive full question object from host
+        if (!isHost && payload?.q) {
+          setCurrentQ(payload.q as Question);
+          setSelectedAns(null);
+          setCountdown(3);
+          setView("countdown-player");
+        }
+      })
+      .subscribe();
+    broadcastRef.current = bc;
+
+    // Postgres changes — room status events for reveal/finished
+    const ch = supabase.channel(`lq-db-${room.id}`)
+      .on("postgres_changes",{ event:"*", schema:"public", table:"live_quiz_rooms", filter:`id=eq.${room.id}` }, async (p:any) => {
         const r = p.new as Room;
         setRoom(r);
         if (!isHost) {
-          // "countdown" → fetch the question at the correct index, then start countdown
-          // We NEVER handle "question" status here — the countdown-player useEffect
-          // transitions to question-player automatically after 3 seconds.
-          // Handling "question" here caused two bugs:
-          //   1. It interrupted the student's countdown mid-way
-          //   2. "question" DB update doesn't include current_question_index in p.new,
-          //      so r.current_question_index was undefined → always fetched Q index 0
-          if (r.status === "countdown") {
-            const idx = r.current_question_index ?? 0;
-            const { data: qd } = await supabase
-              .from("live_quiz_questions" as any).select("*")
-              .eq("room_id", r.id)
-              .eq("order_index", idx)
-              .single();
-            if (qd) setCurrentQ({ ...qd, options: qd.options as string[] } as Question);
-            setSelectedAns(null);
-            setCountdown(3);
-            setView("countdown-player");
-          }
+          // Students rely on broadcast for question data (no RLS issues)
+          // Only handle reveal and finished from DB events
           if (r.status === "reveal")   { await loadParticipants(); setView("reveal-player"); }
           if (r.status === "finished") { await loadParticipants(); setView("results-player"); }
         }
@@ -196,7 +199,11 @@ const LiveQuiz = () => {
       .on("postgres_changes",{ event:"*", schema:"public", table:"live_quiz_answers",      filter:`room_id=eq.${room.id}` }, () => loadAnswerCounts())
       .subscribe();
     channelRef.current = ch;
-    return () => { supabase.removeChannel(ch); };
+
+    return () => {
+      supabase.removeChannel(bc);
+      supabase.removeChannel(ch);
+    };
   }, [room?.id]);
 
   /* ── Timer ── */
@@ -432,11 +439,27 @@ Make questions educational, clearly worded, and accurate.`
     } finally { setLoading(false); }
   };
 
+  /* ── Broadcast question to all students via Realtime Broadcast ── */
+  const broadcastQuestion = (q: Question) => {
+    try {
+      broadcastRef.current?.send({
+        type: "broadcast",
+        event: "question",
+        payload: { q },
+      });
+    } catch (_) {}
+  };
+
   const startQuiz = async () => {
     if (!room) return;
-    // Load question FIRST and wait for it before transitioning
+    // Load Q0 on host side
     const { data: qData } = await supabase.from("live_quiz_questions" as any).select("*").eq("room_id", room.id).eq("order_index", 0).single();
-    if (qData) setCurrentQ({ ...qData, options: qData.options as string[] } as Question);
+    const q = qData ? { ...qData, options: qData.options as string[] } as Question : null;
+    if (q) {
+      setCurrentQ(q);
+      // Broadcast full question object to students — bypasses RLS
+      broadcastQuestion(q);
+    }
     await supabase.from("live_quiz_rooms" as any).update({ status:"countdown", current_question_index:0 } as any).eq("id", room.id);
     setCountdown(3); setView("countdown-host"); setSelectedAns(null); setAnswerCounts({}); setNumAnswered(0);
   };
@@ -457,9 +480,15 @@ Make questions educational, clearly worded, and accurate.`
       await loadParticipants();
       setView("results-host");
     } else {
-      // Load question synchronously before transitioning so view never blanks
       const { data: qData } = await supabase.from("live_quiz_questions" as any).select("*").eq("room_id", room.id).eq("order_index", next).single();
-      if (qData) setCurrentQ({ ...qData, options: qData.options as string[] } as Question);
+      const q = qData ? { ...qData, options: qData.options as string[] } as Question : null;
+      if (q) {
+        setCurrentQ(q);
+        // Broadcast to students BEFORE updating DB so they have data when countdown starts
+        broadcastQuestion(q);
+        // Small delay so broadcast reaches students before DB status change fires
+        await new Promise(res => setTimeout(res, 150));
+      }
       await supabase.from("live_quiz_rooms" as any).update({ status:"countdown", current_question_index:next } as any).eq("id", room.id);
       setCountdown(3); setView("countdown-host"); setAnswerCounts({}); setNumAnswered(0);
     }
@@ -1034,7 +1063,33 @@ Make questions educational, clearly worded, and accurate.`
           <div style={{background:`rgba(201,146,42,0.12)`,border:`2px solid ${GOLD}`,borderRadius:22,padding:"20px 36px",display:"inline-block",boxShadow:`0 8px 32px rgba(201,146,42,0.25)`}}>
             <span style={{fontSize:52,fontWeight:900,color:GOLD,letterSpacing:10,fontFamily:"'Courier New',monospace"}}>{room.code}</span>
           </div>
-          <p style={{fontSize:12,color:"rgba(255,255,255,0.4)",marginTop:8}}>Students enter this at tahleemacademy.vercel.app</p>
+          <p style={{fontSize:12,color:"rgba(255,255,255,0.4)",marginTop:8,marginBottom:12}}>Students enter this at tahleemacademy.vercel.app</p>
+          {/* Copy + Share buttons */}
+          <div style={{display:"flex",gap:10,justifyContent:"center"}}>
+            <button
+              onClick={()=>{
+                navigator.clipboard.writeText(room.code).then(()=>{
+                  setCopiedCode(true); setTimeout(()=>setCopiedCode(false),2000);
+                });
+              }}
+              style={{display:"flex",alignItems:"center",gap:7,padding:"9px 20px",borderRadius:12,border:`1px solid ${GOLD}`,background:"rgba(201,146,42,0.1)",color:GOLD,fontWeight:700,fontSize:13,cursor:"pointer"}}>
+              {copiedCode ? <><Check size={14}/> Copied!</> : <><Copy size={14}/> Copy Code</>}
+            </button>
+            {navigator.share && (
+              <button
+                onClick={()=>{
+                  navigator.share({
+                    title:"Join Al-Musabaqah Quiz!",
+                    text:`Join my Tahleem Academy quiz! Room code: ${room.code}
+Go to: tahleemacademy.vercel.app/live-quiz`,
+                    url:`${window.location.origin}/live-quiz`,
+                  }).catch(()=>{});
+                }}
+                style={{display:"flex",alignItems:"center",gap:7,padding:"9px 20px",borderRadius:12,border:`1px solid rgba(255,255,255,0.2)`,background:"rgba(255,255,255,0.06)",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer"}}>
+                <Share2 size={14}/> Share
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Player list */}
