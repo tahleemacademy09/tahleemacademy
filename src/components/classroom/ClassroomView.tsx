@@ -230,11 +230,13 @@ const Whiteboard = ({ onClose, fullscreen, onToggleFullscreen, isTeacher, initia
    Whiteboard receives them even if it just mounted.
 ═══════════════════════════════════════════════════════ */
 const RoomDataListener = ({
-  onWbOpen, onWbClose, strokesBuffer,
+  onWbOpen, onWbClose, strokesBuffer, onMatOpen, onMatClose,
 }: {
   onWbOpen: () => void;
   onWbClose: () => void;
   strokesBuffer: React.MutableRefObject<any[] | null>;
+  onMatOpen?: (mat: any) => void;
+  onMatClose?: () => void;
 }) => {
   const room = useRoomContext();
 
@@ -242,11 +244,12 @@ const RoomDataListener = ({
     const handler = (payload: Uint8Array) => {
       try {
         const msg = JSON.parse(new TextDecoder().decode(payload));
-        if (msg.type === "wb_open")  { onWbOpen(); }
+        if (msg.type === "wb_open")  { onWbOpen(); }   // auto-fullscreen handled in parent
         if (msg.type === "wb_close") { onWbClose(); }
-        // Buffer strokes so Whiteboard can replay on mount
         if (msg.type === "wb_strokes") { strokesBuffer.current = msg.strokes; }
         if (msg.type === "wb_clear")   { strokesBuffer.current = []; }
+        if (msg.type === "mat_open")  { onMatOpen?.(msg.material); }
+        if (msg.type === "mat_close") { onMatClose?.(); }
       } catch (_) {}
     };
     room.on(RoomEvent.DataReceived, handler);
@@ -254,6 +257,152 @@ const RoomDataListener = ({
   }, [room, onWbOpen, onWbClose, strokesBuffer]);
 
   return null;
+};
+
+/* ═══════════════════════════════════════════════════════
+   SHARED MATERIAL VIEWER — fullscreen overlay for all participants
+═══════════════════════════════════════════════════════ */
+const SharedMaterialViewer = ({ material, isTeacher, onClose }: { material: any; isTeacher: boolean; onClose: () => void }) => {
+  const url: string = material.file_url || material.url || "";
+  const title: string = material.title || material.name || "Material";
+  const isYoutube = url.includes("youtube.com") || url.includes("youtu.be");
+  const isPdf     = url.toLowerCase().includes(".pdf") || (material.material_type||"").includes("pdf");
+  const isImage   = /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(url);
+  const isVideo   = /\.(mp4|webm|ogg|mov)$/i.test(url);
+  const isOffice  = url.includes("drive.google.com") || url.includes("docs.google.com");
+
+  const getYtEmbed = (u: string) => {
+    const m = u.match(/(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([\w-]+)/);
+    return m ? `https://www.youtube.com/embed/${m[1]}?autoplay=1` : "";
+  };
+
+  return (
+    <div style={{ position:"fixed", inset:0, zIndex:60, background:"#000", display:"flex", flexDirection:"column" }}>
+      {/* Header */}
+      <div style={{ height:48, background:"rgba(7,94,84,.97)", display:"flex", alignItems:"center", padding:"0 14px", gap:10, flexShrink:0 }}>
+        <BookOpen style={{ width:18, height:18, color:"#fff" }}/>
+        <span style={{ color:"#fff", fontWeight:700, fontSize:15, flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{title}</span>
+        {!isTeacher && <span style={{ fontSize:11, color:"rgba(255,255,255,.5)", marginRight:8 }}>Shared by teacher</span>}
+        <button onClick={onClose}
+          style={{ width:32, height:32, borderRadius:8, background:"rgba(255,255,255,.15)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", color:"#fff" }}>
+          <X style={{ width:16, height:16 }}/>
+        </button>
+      </div>
+
+      {/* Content */}
+      <div style={{ flex:1, overflow:"hidden", position:"relative" }}>
+        {isYoutube && (
+          <iframe src={getYtEmbed(url)} style={{ width:"100%", height:"100%", border:"none" }} allow="autoplay; fullscreen" allowFullScreen/>
+        )}
+        {isPdf && !isYoutube && (
+          <iframe src={`https://docs.google.com/viewer?url=${encodeURIComponent(url)}&embedded=true`}
+            style={{ width:"100%", height:"100%", border:"none" }} />
+        )}
+        {isImage && (
+          <div style={{ width:"100%", height:"100%", display:"flex", alignItems:"center", justifyContent:"center", background:"#111" }}>
+            <img src={url} alt={title} style={{ maxWidth:"100%", maxHeight:"100%", objectFit:"contain" }}/>
+          </div>
+        )}
+        {isVideo && (
+          <video src={url} controls autoPlay style={{ width:"100%", height:"100%", background:"#000" }}/>
+        )}
+        {isOffice && !isPdf && (
+          <iframe src={`${url.replace("/view","/preview")}`}
+            style={{ width:"100%", height:"100%", border:"none" }} allow="autoplay"/>
+        )}
+        {!isYoutube && !isPdf && !isImage && !isVideo && !isOffice && (
+          <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", height:"100%", gap:16, color:"#fff" }}>
+            <BookOpen style={{ width:48, height:48, color:"rgba(255,255,255,.4)" }}/>
+            <p style={{ fontSize:16, fontWeight:700 }}>{title}</p>
+            <a href={url} target="_blank" rel="noreferrer"
+              style={{ background:"#075E54", color:"#fff", padding:"12px 24px", borderRadius:12, textDecoration:"none", fontWeight:700 }}>
+              Open File ↗
+            </a>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+/* ═══════════════════════════════════════════════════════
+   MATERIAL PICKER BUTTON — teacher taps to share a material
+═══════════════════════════════════════════════════════ */
+const MaterialPickerButton = ({ subjectId, onOpen }: { subjectId: string; onOpen: (mat: any) => void }) => {
+  const [open, setOpen] = useState(false);
+  const [materials, setMaterials] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    const { data } = await supabase.from("subject_materials").select("*").eq("subject_id", subjectId).order("created_at", { ascending: false });
+    setMaterials(data || []);
+    setLoading(false);
+  };
+
+  return (
+    <>
+      {/* Floating button */}
+      <button
+        onClick={() => { setOpen(true); load(); }}
+        style={{ position:"absolute", bottom:12, left:12, zIndex:30, display:"flex", alignItems:"center", gap:8,
+          background:"rgba(7,94,84,.92)", border:"none", borderRadius:12, padding:"10px 16px",
+          color:"#fff", fontWeight:700, fontSize:13, cursor:"pointer", backdropFilter:"blur(8px)",
+          boxShadow:"0 4px 16px rgba(0,0,0,.4)" }}>
+        <BookOpen style={{ width:16, height:16 }}/> Open Material for Class
+      </button>
+
+      {/* Picker panel */}
+      {open && (
+        <div style={{ position:"fixed", inset:0, zIndex:55, background:"rgba(0,0,0,.7)", backdropFilter:"blur(4px)", display:"flex", alignItems:"flex-end" }}
+          onClick={()=>setOpen(false)}>
+          <div style={{ width:"100%", background:"#1a1a1a", borderRadius:"20px 20px 0 0", maxHeight:"70vh", display:"flex", flexDirection:"column" }}
+            onClick={e=>e.stopPropagation()}>
+            <div style={{ padding:"14px 18px", borderBottom:"1px solid rgba(255,255,255,.1)", display:"flex", alignItems:"center", gap:10 }}>
+              <BookOpen style={{ width:18, height:18, color:"#075E54" }}/>
+              <span style={{ color:"#fff", fontWeight:700, fontSize:16, flex:1 }}>Share Material with Class</span>
+              <button onClick={()=>setOpen(false)} style={{ background:"none", border:"none", color:"rgba(255,255,255,.5)", cursor:"pointer" }}>
+                <X style={{ width:18, height:18 }}/>
+              </button>
+            </div>
+            <div style={{ flex:1, overflowY:"auto", padding:"8px 0" }}>
+              {loading && (
+                <div style={{ display:"flex", justifyContent:"center", padding:28 }}>
+                  <Loader2 style={{ width:24, height:24, color:"#075E54", animation:"spin .8s linear infinite" }}/>
+                </div>
+              )}
+              {!loading && materials.length === 0 && (
+                <div style={{ textAlign:"center", padding:"28px", color:"rgba(255,255,255,.4)", fontSize:14 }}>
+                  No materials uploaded for this subject yet
+                </div>
+              )}
+              {materials.map(mat => (
+                <button key={mat.id} onClick={() => { onOpen(mat); setOpen(false); }}
+                  style={{ width:"100%", display:"flex", alignItems:"center", gap:12, padding:"14px 18px",
+                    background:"none", border:"none", cursor:"pointer", textAlign:"left" as const,
+                    borderBottom:"1px solid rgba(255,255,255,.07)" }}>
+                  <div style={{ width:40, height:40, borderRadius:10, background:"rgba(7,94,84,.4)", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                    <BookOpen style={{ width:18, height:18, color:"#4ade80" }}/>
+                  </div>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <p style={{ color:"#fff", fontWeight:600, fontSize:14, margin:"0 0 3px", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" as const }}>
+                      {mat.title || mat.name || "Untitled"}
+                    </p>
+                    <p style={{ color:"rgba(255,255,255,.4)", fontSize:11, margin:0, textTransform:"capitalize" as const }}>
+                      {mat.material_type || "file"} · Tap to share fullscreen
+                    </p>
+                  </div>
+                  <span style={{ fontSize:11, color:"#075E54", fontWeight:700, background:"rgba(7,94,84,.2)", padding:"3px 10px", borderRadius:20, flexShrink:0 }}>
+                    Share →
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
 };
 
 /* ═══════════════════════════════════════════════════════
@@ -814,7 +963,8 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
   const [showEndConfirm, setShowEndConfirm] = useState(false);
   const [whiteboardOpen, setWhiteboardOpen] = useState(false);
   const [whiteboardFS, setWhiteboardFS]     = useState(false);
-  const wbStrokesBuffer = useRef<any[] | null>(null); // strokes received before Whiteboard mounts
+  const wbStrokesBuffer = useRef<any[] | null>(null);
+  const [sharedMaterial, setSharedMaterial] = useState<any>(null); // material teacher is showing
   const [groupReciteMode, setGroupReciteMode] = useState(false);
 
   // Pre-fetch token in background as soon as lobby loads
@@ -1011,9 +1161,11 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
 
           {/* Always-on data listener: handles wb_open/close signals */}
           <RoomDataListener
-            onWbOpen={()=>setWhiteboardOpen(true)}
+            onWbOpen={()=>{ setWhiteboardOpen(true); if(!isPrivileged) setWhiteboardFS(true); }}
             onWbClose={()=>{ setWhiteboardOpen(false); setWhiteboardFS(false); }}
             strokesBuffer={wbStrokesBuffer}
+            onMatOpen={(mat)=>setSharedMaterial(mat)}
+            onMatClose={()=>setSharedMaterial(null)}
           />
 
           {/* Top bar */}
@@ -1051,15 +1203,48 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
                 <Whiteboard
                   onClose={()=>{
                     setWhiteboardOpen(false); setWhiteboardFS(false);
-                    try {
-                      const msg = new TextEncoder().encode(JSON.stringify({ type: "wb_close" }));
-                      room?.localParticipant?.publishData(msg, { reliable: true });
-                    } catch (_) {}
+                    if (isPrivileged) {
+                      try {
+                        const msg = new TextEncoder().encode(JSON.stringify({ type: "wb_close" }));
+                        room?.localParticipant?.publishData(msg, { reliable: true });
+                      } catch (_) {}
+                    }
                   }}
                   fullscreen={whiteboardFS}
                   onToggleFullscreen={()=>setWhiteboardFS(v=>!v)}
                   isTeacher={isPrivileged}
                   initialStrokes={wbStrokesBuffer.current}
+                />
+              )}
+
+              {/* Shared Material fullscreen overlay — teacher pushes, everyone sees */}
+              {sharedMaterial && (
+                <SharedMaterialViewer
+                  material={sharedMaterial}
+                  isTeacher={isPrivileged}
+                  onClose={()=>{
+                    setSharedMaterial(null);
+                    if (isPrivileged) {
+                      try {
+                        const msg = new TextEncoder().encode(JSON.stringify({ type: "mat_close" }));
+                        room?.localParticipant?.publishData(msg, { reliable: true });
+                      } catch (_) {}
+                    }
+                  }}
+                />
+              )}
+
+              {/* Material picker — teacher only button to open material for everyone */}
+              {isPrivileged && !sharedMaterial && (
+                <MaterialPickerButton
+                  subjectId={subject.id}
+                  onOpen={(mat: any) => {
+                    setSharedMaterial(mat);
+                    try {
+                      const msg = new TextEncoder().encode(JSON.stringify({ type: "mat_open", material: mat }));
+                      room?.localParticipant?.publishData(msg, { reliable: true });
+                    } catch (_) {}
+                  }}
                 />
               )}
             </div>
