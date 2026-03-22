@@ -1,6 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -9,72 +8,97 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import {
-  Plus, Trash2, Download, Calendar, Users, Clock, Edit, Video, Eye, Radio,
-  BookOpen, FileText, ClipboardList, Megaphone, ExternalLink, Play, Search
+  Plus, Trash2, Download, Calendar, Users, Clock, Edit, Video, Eye,
+  BookOpen, FileText, ClipboardList, Megaphone, Play, Search,
+  Radio, ChevronRight, Mic, CheckCircle, XCircle, AlertCircle,
+  ArrowLeft, Filter, MoreVertical,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
-import SubjectRecordings from "@/components/classroom/SubjectRecordings";
-import SubjectMaterials from "@/components/classroom/SubjectMaterials";
-import SubjectSyllabus from "@/components/classroom/SubjectSyllabus";
-import SubjectAssignments from "@/components/classroom/SubjectAssignments";
+import SubjectRecordings    from "@/components/classroom/SubjectRecordings";
+import SubjectMaterials     from "@/components/classroom/SubjectMaterials";
+import SubjectSyllabus      from "@/components/classroom/SubjectSyllabus";
+import SubjectAssignments   from "@/components/classroom/SubjectAssignments";
 import SubjectAnnouncements from "@/components/classroom/SubjectAnnouncements";
-import ClassroomView from "@/components/classroom/ClassroomView";
+import ClassroomView        from "@/components/classroom/ClassroomView";
 
+/* ── helpers ── */
+const G    = "hsl(155,55%,15%)";
+const GOLD = "hsl(42,52%,55%)";
+
+const statusConfig: Record<string, { label: string; color: string; bg: string; dot: string }> = {
+  live:      { label: "Live",      color: "#ef4444", bg: "rgba(239,68,68,.12)",   dot: "#ef4444" },
+  scheduled: { label: "Scheduled", color: "#3b82f6", bg: "rgba(59,130,246,.12)",  dot: "#3b82f6" },
+  completed: { label: "Completed", color: "#22c55e", bg: "rgba(34,197,94,.12)",   dot: "#22c55e" },
+  ended:     { label: "Ended",     color: "#6b7280", bg: "rgba(107,114,128,.12)", dot: "#6b7280" },
+  cancelled: { label: "Cancelled", color: "#ef4444", bg: "rgba(239,68,68,.08)",   dot: "#ef4444" },
+};
+const StatusBadge = ({ status }: { status: string }) => {
+  const cfg = statusConfig[status] || statusConfig.scheduled;
+  return (
+    <span style={{ display:"inline-flex", alignItems:"center", gap:5, padding:"3px 10px", borderRadius:20, background:cfg.bg, fontSize:11, fontWeight:700, color:cfg.color, letterSpacing:.3 }}>
+      {status === "live" && <span style={{ width:6, height:6, borderRadius:"50%", background:cfg.dot, display:"inline-block", animation:"lc-pulse 1s infinite" }}/>}
+      {cfg.label}
+    </span>
+  );
+};
+
+const fmtDate = (d: string | null) => d ? format(new Date(d), "MMM d, h:mm a") : "—";
+const fmtDur  = (s: number | null) => s ? `${Math.round(s / 60)}m` : "—";
+
+const CSS = `
+  @keyframes lc-pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+  @keyframes lc-spin   { to { transform:rotate(360deg); } }
+  .lc-card { background:#fff; border-radius:16px; box-shadow:0 1px 6px rgba(0,0,0,.07); overflow:hidden; }
+  .lc-card:hover { box-shadow:0 4px 16px rgba(0,0,0,.1); }
+  .lc-btn { display:inline-flex; align-items:center; gap:6px; border:none; border-radius:10px; padding:8px 14px; font-size:13px; font-weight:700; cursor:pointer; transition:all .15s; }
+  .lc-btn:active { transform:scale(.97); }
+  .lc-chip { display:inline-flex; align-items:center; gap:4px; padding:2px 10px; border-radius:20px; font-size:11px; font-weight:600; }
+`;
+
+/* ═══════════════════════════════════════════════════════
+   MAIN COMPONENT
+═══════════════════════════════════════════════════════ */
 const LiveClassManagement = () => {
   const { t } = useLanguage();
   const { user } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
 
-  const [sessions, setSessions] = useState<any[]>([]);
-  const [subjects, setSubjects] = useState<any[]>([]);
-  const [subjectFilter, setSubjectFilter] = useState("all");
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [loading, setLoading] = useState(true);
-
-  // Create/Edit dialog
-  const [showCreate, setShowCreate] = useState(false);
+  const [sessions,       setSessions]       = useState<any[]>([]);
+  const [subjects,       setSubjects]       = useState<any[]>([]);
+  const [loading,        setLoading]        = useState(true);
+  const [searchQuery,    setSearchQuery]    = useState("");
+  const [statusFilter,   setStatusFilter]   = useState("all");
+  const [subjectFilter,  setSubjectFilter]  = useState("all");
+  const [showFilters,    setShowFilters]    = useState(false);
+  const [showCreate,     setShowCreate]     = useState(false);
   const [editingSession, setEditingSession] = useState<any>(null);
-  const [form, setForm] = useState({
-    subject_id: "",
-    topic: "",
-    topic_ar: "",
-    scheduled_at: "",
-    duration_minutes: 60,
-    recording_enabled: true,
-    chat_enabled: true,
-    hand_raise_enabled: true,
-    waiting_room_enabled: true,
-    whiteboard_enabled: false,
-    homework: "",
-    homework_ar: "",
-  });
-
-  // Attendance dialog
-  const [attendanceSession, setAttendanceSession] = useState<any>(null);
+  const [activeClassroom, setActiveClassroom] = useState<any>(null);
+  const [selectedSubjectId, setSelectedSubjectId] = useState<string | null>(null);
+  const [attendanceView, setAttendanceView] = useState<any>(null);
   const [attendanceLogs, setAttendanceLogs] = useState<any[]>([]);
   const [manualAttendance, setManualAttendance] = useState<any[]>([]);
-  const [students, setStudents] = useState<any[]>([]);
-  const [editAttendance, setEditAttendance] = useState<Record<string, string>>({});
+  const [students,    setStudents]    = useState<any[]>([]);
+  const [editAtt,     setEditAtt]     = useState<Record<string, string>>({});
+  const [sessionMenu, setSessionMenu] = useState<string | null>(null);
 
-  // Active classroom (when admin goes live)
-  const [activeClassroom, setActiveClassroom] = useState<any | null>(null);
-
-  // Subject detail view
-  const [selectedSubjectId, setSelectedSubjectId] = useState<string | null>(null);
+  const [form, setForm] = useState({
+    subject_id:"", topic:"", topic_ar:"", scheduled_at:"",
+    duration_minutes:60, recording_enabled:true, chat_enabled:true,
+    hand_raise_enabled:true, waiting_room_enabled:true, whiteboard_enabled:false,
+    homework:"", homework_ar:"",
+  });
 
   const fetchData = useCallback(async () => {
     const [{ data: subs }, { data: sess }] = await Promise.all([
-      supabase.from("subjects").select("id, title, title_ar, teacher_id, is_active, livekit_room_name"),
-      supabase.from("live_sessions").select("*, subjects(title, title_ar)").order("created_at", { ascending: false }),
+      supabase.from("subjects").select("id,title,title_ar,teacher_id,is_active,livekit_room_name"),
+      supabase.from("live_sessions").select("*,subjects(title,title_ar)").order("scheduled_at",{ascending:false}),
     ]);
     setSubjects(subs || []);
     setSessions(sess || []);
@@ -83,559 +107,632 @@ const LiveClassManagement = () => {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  // Live poll every 15s
+  useEffect(() => {
+    const iv = setInterval(fetchData, 15000);
+    return () => clearInterval(iv);
+  }, [fetchData]);
+
   const filtered = sessions.filter(s => {
     if (subjectFilter !== "all" && s.subject_id !== subjectFilter) return false;
-    if (statusFilter !== "all" && s.status !== statusFilter) return false;
+    if (statusFilter  !== "all" && s.status !== statusFilter)      return false;
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
-      const subTitle = s.subjects?.title?.toLowerCase() || "";
-      const topic = s.topic?.toLowerCase() || "";
-      if (!subTitle.includes(q) && !topic.includes(q)) return false;
+      if (!(s.subjects?.title||"").toLowerCase().includes(q) &&
+          !(s.topic||"").toLowerCase().includes(q)) return false;
     }
     return true;
   });
 
   const resetForm = () => setForm({
-    subject_id: "", topic: "", topic_ar: "", scheduled_at: "",
-    duration_minutes: 60, recording_enabled: true, chat_enabled: true,
-    hand_raise_enabled: true, waiting_room_enabled: true, whiteboard_enabled: false,
-    homework: "", homework_ar: "",
+    subject_id:"", topic:"", topic_ar:"", scheduled_at:"",
+    duration_minutes:60, recording_enabled:true, chat_enabled:true,
+    hand_raise_enabled:true, waiting_room_enabled:true, whiteboard_enabled:false,
+    homework:"", homework_ar:"",
   });
 
-  const openCreate = () => {
-    resetForm();
-    setEditingSession(null);
-    setShowCreate(true);
-  };
-
-  const openEdit = (s: any) => {
-    setEditingSession(s);
+  const openCreate = () => { resetForm(); setEditingSession(null); setShowCreate(true); };
+  const openEdit   = (s: any) => {
     setForm({
-      subject_id: s.subject_id || "",
-      topic: s.topic || "",
-      topic_ar: s.topic_ar || "",
-      scheduled_at: s.scheduled_at ? s.scheduled_at.slice(0, 16) : "",
+      subject_id: s.subject_id || "", topic: s.topic || "", topic_ar: s.topic_ar || "",
+      scheduled_at: s.scheduled_at ? s.scheduled_at.slice(0,16) : "",
       duration_minutes: s.duration_minutes || 60,
-      recording_enabled: s.recording_enabled ?? true,
-      chat_enabled: s.chat_enabled ?? true,
-      hand_raise_enabled: s.hand_raise_enabled ?? true,
+      recording_enabled:    s.recording_enabled    ?? true,
+      chat_enabled:         s.chat_enabled         ?? true,
+      hand_raise_enabled:   s.hand_raise_enabled   ?? true,
       waiting_room_enabled: s.waiting_room_enabled ?? true,
-      whiteboard_enabled: s.whiteboard_enabled ?? false,
-      homework: s.homework || "",
-      homework_ar: s.homework_ar || "",
+      whiteboard_enabled:   s.whiteboard_enabled   ?? false,
+      homework: s.homework || "", homework_ar: s.homework_ar || "",
     });
-    setShowCreate(true);
+    setEditingSession(s); setShowCreate(true);
   };
 
   const handleSave = async () => {
-    if (!form.subject_id || !user) return;
-    const sub = subjects.find(s => s.id === form.subject_id);
+    if (!form.subject_id) { toast({ title:"Please select a subject", variant:"destructive" }); return; }
     const payload = {
       subject_id: form.subject_id,
-      host_id: sub?.teacher_id || user.id,
-      topic: form.topic || null,
-      topic_ar: form.topic_ar || null,
+      topic: form.topic || null, topic_ar: form.topic_ar || null,
       scheduled_at: form.scheduled_at || null,
-      duration_minutes: form.duration_minutes || 60,
-      recording_enabled: form.recording_enabled,
-      chat_enabled: form.chat_enabled,
-      hand_raise_enabled: form.hand_raise_enabled,
+      duration_minutes: form.duration_minutes,
+      recording_enabled:    form.recording_enabled,
+      chat_enabled:         form.chat_enabled,
+      hand_raise_enabled:   form.hand_raise_enabled,
       waiting_room_enabled: form.waiting_room_enabled,
-      whiteboard_enabled: form.whiteboard_enabled,
-      homework: form.homework || null,
-      homework_ar: form.homework_ar || null,
+      whiteboard_enabled:   form.whiteboard_enabled,
+      homework: form.homework || null, homework_ar: form.homework_ar || null,
     };
-
     if (editingSession) {
       await supabase.from("live_sessions").update(payload).eq("id", editingSession.id);
-      toast({ title: t("Class updated", "تم تحديث الحصة") });
+      toast({ title:t("Class updated","تم تحديث الحصة") });
     } else {
-      await supabase.from("live_sessions").insert({ ...payload, status: "scheduled" });
-      toast({ title: t("Class scheduled", "تم جدولة الحصة") });
+      await supabase.from("live_sessions").insert({ ...payload, status:"scheduled" });
+      toast({ title:t("Class scheduled","تم جدولة الحصة") });
     }
-    setShowCreate(false);
-    fetchData();
+    setShowCreate(false); fetchData();
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm(t("Delete this class session?", "حذف هذه الحصة؟"))) return;
+    if (!confirm(t("Delete this class?","حذف هذه الحصة؟"))) return;
     await supabase.from("live_sessions").delete().eq("id", id);
-    setSessions(prev => prev.filter(s => s.id !== id));
-    toast({ title: t("Class deleted", "تم حذف الحصة") });
+    setSessions(p => p.filter(s => s.id !== id));
+    toast({ title:t("Deleted","تم الحذف") });
   };
 
   const updateStatus = async (id: string, status: string) => {
-    const updates: Record<string, unknown> = { status };
-    if (status === "live") updates.actual_start_time = new Date().toISOString();
-    if (status === "completed" || status === "ended") updates.actual_end_time = new Date().toISOString();
-    if (status === "cancelled") updates.ended_at = new Date().toISOString();
-    await supabase.from("live_sessions").update(updates).eq("id", id);
-    toast({ title: t(`Class ${status}`, `الحصة ${status}`) });
+    const u: any = { status };
+    if (status === "live")      u.actual_start_time = new Date().toISOString();
+    if (["completed","ended"].includes(status)) u.actual_end_time = new Date().toISOString();
+    await supabase.from("live_sessions").update(u).eq("id", id);
     fetchData();
   };
 
-  const goLiveAndJoin = async (session: any) => {
-    try {
-      // 1. Mark session as live
-      await supabase.from("live_sessions").update({
-        status: "live",
-        actual_start_time: new Date().toISOString(),
-        started_at: new Date().toISOString(),
-      }).eq("id", session.id);
-
-      // 2. Find the subject object so ClassroomView gets what it needs
-      const subject = subjects.find(s => s.id === session.subject_id);
-      if (!subject) {
-        toast({ title: "Error", description: "Subject not found", variant: "destructive" });
-        return;
-      }
-
-      // 3. Open ClassroomView inline — no navigation, no 404
-      setActiveClassroom(subject);
-    } catch (e: any) {
-      toast({ title: "Error", description: e?.message || "Failed to start class", variant: "destructive" });
-    }
-  };
-
-  const previewClass = (session: any) => {
+  const goLive = async (session: any) => {
     const subject = subjects.find(s => s.id === session.subject_id);
-    if (subject) setActiveClassroom(subject);
-    else navigate(`/admin/live-classes`);
+    if (!subject) { toast({ title:"Subject not found", variant:"destructive" }); return; }
+    await supabase.from("live_sessions").update({ status:"live", actual_start_time:new Date().toISOString(), started_at:new Date().toISOString() }).eq("id", session.id);
+    setActiveClassroom(subject);
   };
 
-  // Attendance
   const viewAttendance = async (session: any) => {
-    setAttendanceSession(session);
+    setAttendanceView(session);
     const [{ data: logs }, { data: manual }] = await Promise.all([
-      supabase.from("attendance_logs").select("*, profiles:user_id(full_name)").eq("session_id", session.id),
-      supabase.from("manual_attendance").select("*, profiles:student_id(full_name)").eq("session_id", session.id),
+      supabase.from("attendance_logs").select("*,profiles:user_id(full_name)").eq("session_id", session.id),
+      supabase.from("manual_attendance").select("*,profiles:student_id(full_name)").eq("session_id", session.id),
     ]);
     setAttendanceLogs(logs || []);
     setManualAttendance(manual || []);
-
     const { data: courses } = await supabase.from("courses").select("id").eq("subject_id", session.subject_id);
-    const courseIds = (courses || []).map((c: any) => c.id);
-    if (courseIds.length > 0) {
-      const { data: enrollments } = await supabase.from("enrollments").select("user_id").in("course_id", courseIds);
-      const userIds = [...new Set((enrollments || []).map(e => e.user_id))];
-      if (userIds.length > 0) {
-        const { data } = await supabase.from("profiles").select("user_id, full_name").in("user_id", userIds);
-        setStudents(data || []);
-        const map: Record<string, string> = {};
-        (manual || []).forEach((m: any) => { map[m.student_id] = m.status; });
-        (data || []).forEach(s => { if (!map[s.user_id]) map[s.user_id] = "absent"; });
-        setEditAttendance(map);
+    const cids = (courses||[]).map((c:any)=>c.id);
+    if (cids.length > 0) {
+      const { data: enr } = await supabase.from("enrollments").select("user_id").in("course_id", cids);
+      const uids = [...new Set((enr||[]).map((e:any)=>e.user_id))];
+      if (uids.length > 0) {
+        const { data } = await supabase.from("profiles").select("user_id,full_name").in("user_id", uids);
+        setStudents(data||[]);
+        const map: Record<string,string> = {};
+        (manual||[]).forEach((m:any) => { map[m.student_id] = m.status; });
+        (data||[]).forEach((s:any) => { if (!map[s.user_id]) map[s.user_id] = "absent"; });
+        setEditAtt(map);
       }
     }
   };
 
   const saveAttendance = async () => {
-    if (!attendanceSession || !user) return;
-    await supabase.from("manual_attendance").delete().eq("session_id", attendanceSession.id);
-    const records = Object.entries(editAttendance).map(([student_id, status]) => ({
-      session_id: attendanceSession.id,
-      student_id,
-      subject_id: attendanceSession.subject_id,
-      teacher_id: user.id,
-      status,
-      date: attendanceSession.created_at?.split("T")[0] || new Date().toISOString().split("T")[0],
+    if (!attendanceView || !user) return;
+    await supabase.from("manual_attendance").delete().eq("session_id", attendanceView.id);
+    const records = Object.entries(editAtt).map(([student_id, status]) => ({
+      session_id: attendanceView.id, student_id,
+      subject_id: attendanceView.subject_id, teacher_id: user.id,
+      status, date: (attendanceView.created_at||new Date().toISOString()).split("T")[0],
     }));
     await supabase.from("manual_attendance").insert(records);
-    toast({ title: t("Attendance saved", "تم حفظ الحضور") });
+    toast({ title:t("Attendance saved","تم حفظ الحضور") });
   };
 
-  const exportAttendanceCSV = () => {
-    const rows = [["Student", "Status", "Joined At", "Left At", "Duration (min)"].join(",")];
-    attendanceLogs.forEach(l => {
-      rows.push([
-        (l as any).profiles?.full_name || l.user_id,
-        "auto-logged",
-        l.joined_at ? new Date(l.joined_at).toLocaleString() : "",
-        l.left_at ? new Date(l.left_at).toLocaleString() : "",
-        l.duration_seconds ? Math.round(l.duration_seconds / 60).toString() : "",
-      ].join(","));
-    });
-    manualAttendance.forEach(m => {
-      rows.push([
-        (m as any).profiles?.full_name || m.student_id,
-        m.status, "", "", "",
-      ].join(","));
-    });
-    const blob = new Blob([rows.join("\n")], { type: "text/csv" });
-    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "attendance.csv"; a.click();
+  const exportCSV = () => {
+    const rows = [["Student","Status","Joined","Left","Duration"].join(",")];
+    attendanceLogs.forEach((l:any) => rows.push([
+      (l.profiles?.full_name||l.user_id), "auto",
+      l.joined_at ? new Date(l.joined_at).toLocaleString() : "",
+      l.left_at   ? new Date(l.left_at).toLocaleString()   : "",
+      fmtDur(l.duration_seconds),
+    ].join(",")));
+    manualAttendance.forEach((m:any) => rows.push([(m.profiles?.full_name||m.student_id), m.status,"","",""].join(",")));
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([rows.join("\n")], { type:"text/csv" }));
+    a.download = "attendance.csv"; a.click();
   };
 
-  const statusBadge = (status: string) => {
-    const variants: Record<string, string> = {
-      live: "bg-red-500 text-white",
-      scheduled: "bg-blue-500/10 text-blue-600 border-blue-200",
-      completed: "bg-muted text-muted-foreground",
-      ended: "bg-muted text-muted-foreground",
-      cancelled: "bg-destructive/10 text-destructive",
-    };
-    return <Badge className={variants[status] || ""}>{status === "live" && "🔴 "}{status}</Badge>;
-  };
-
-  // ── Active classroom (full-screen takeover) ──
+  /* ── Active classroom takeover ── */
   if (activeClassroom) {
-    return (
-      <ClassroomView
-        subject={activeClassroom}
-        onLeave={() => { setActiveClassroom(null); fetchData(); }}
-      />
-    );
+    return <ClassroomView subject={activeClassroom} onLeave={() => { setActiveClassroom(null); fetchData(); }}/>;
   }
 
-  if (loading) return <div className="flex items-center justify-center min-h-[400px]"><div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" /></div>;
+  /* ── Loading ── */
+  if (loading) return (
+    <div style={{ display:"flex", alignItems:"center", justifyContent:"center", minHeight:300 }}>
+      <style>{CSS}</style>
+      <div style={{ width:32, height:32, borderRadius:"50%", border:`3px solid ${G}`, borderTopColor:"transparent", animation:"lc-spin .8s linear infinite" }}/>
+    </div>
+  );
 
-  // ---- Subject Detail View with Tabs ----
+  /* ── Attendance View ── */
+  if (attendanceView) return (
+    <div style={{ minHeight:"100vh", background:"hsl(var(--muted)/0.4)", padding:"16px 16px 40px" }}>
+      <style>{CSS}</style>
+
+      {/* Header */}
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:20, gap:12 }}>
+        <button onClick={() => setAttendanceView(null)} className="lc-btn" style={{ background:"hsl(var(--muted))", color:"hsl(var(--foreground))" }}>
+          <ArrowLeft style={{ width:15, height:15 }}/> Back
+        </button>
+        <button onClick={exportCSV} className="lc-btn" style={{ background:"hsl(var(--muted))", color:"hsl(var(--foreground))" }}>
+          <Download style={{ width:14, height:14 }}/> CSV
+        </button>
+      </div>
+
+      <h2 style={{ fontSize:18, fontWeight:800, marginBottom:4 }}>{t("Attendance","الحضور")}</h2>
+      <p style={{ fontSize:13, color:"hsl(var(--muted-foreground))", marginBottom:20 }}>
+        {attendanceView.subjects?.title || attendanceView.topic || "Session"}
+      </p>
+
+      {/* Auto-logged */}
+      {attendanceLogs.length > 0 && (
+        <div className="lc-card" style={{ marginBottom:16 }}>
+          <div style={{ padding:"14px 16px", borderBottom:"1px solid hsl(var(--border))", fontWeight:700, fontSize:13 }}>
+            🤖 {t("Auto-Logged","التلقائي")} · {attendanceLogs.length}
+          </div>
+          <div>
+            {attendanceLogs.map((l:any) => (
+              <div key={l.id} style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 16px", borderBottom:"1px solid hsl(var(--border)/0.5)" }}>
+                <div style={{ width:34, height:34, borderRadius:"50%", background:`${G}20`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:14, fontWeight:700, flexShrink:0 }}>
+                  {(l.profiles?.full_name||"S")[0].toUpperCase()}
+                </div>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <p style={{ fontSize:13, fontWeight:600, margin:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                    {l.profiles?.full_name || "Student"}
+                  </p>
+                  <p style={{ fontSize:11, color:"hsl(var(--muted-foreground))", margin:0 }}>
+                    {l.joined_at ? new Date(l.joined_at).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}) : ""} 
+                    {l.left_at ? ` → ${new Date(l.left_at).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}` : ""}
+                  </p>
+                </div>
+                <span style={{ fontSize:11, fontWeight:700, color:"#22c55e" }}>{fmtDur(l.duration_seconds)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Manual attendance */}
+      {students.length > 0 && (
+        <div className="lc-card" style={{ marginBottom:16 }}>
+          <div style={{ padding:"14px 16px", borderBottom:"1px solid hsl(var(--border))", fontWeight:700, fontSize:13 }}>
+            ✏️ {t("Manual Attendance","الحضور اليدوي")} · {students.length}
+          </div>
+          <div>
+            {students.map((s:any) => (
+              <div key={s.user_id} style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 16px", borderBottom:"1px solid hsl(var(--border)/0.5)" }}>
+                <div style={{ width:32, height:32, borderRadius:"50%", background:`${G}20`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontWeight:700, flexShrink:0 }}>
+                  {(s.full_name||"S")[0].toUpperCase()}
+                </div>
+                <span style={{ flex:1, fontSize:13, fontWeight:500, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{s.full_name}</span>
+                <div style={{ display:"flex", gap:4 }}>
+                  {(["present","late","absent"] as const).map(st => (
+                    <button key={st} onClick={() => setEditAtt(p => ({...p, [s.user_id]:st}))}
+                      style={{ padding:"4px 10px", borderRadius:8, border:"none", cursor:"pointer", fontSize:11, fontWeight:700, transition:"all .1s",
+                        background: editAtt[s.user_id]===st ? (st==="present"?"#22c55e":st==="late"?"#f59e0b":"#ef4444") : "hsl(var(--muted))",
+                        color: editAtt[s.user_id]===st ? "#fff" : "hsl(var(--muted-foreground))" }}>
+                      {st==="present"?"✓":st==="late"?"~":"✗"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <button onClick={saveAttendance} className="lc-btn" style={{ width:"100%", justifyContent:"center", background:G, color:"#fff", padding:"14px" }}>
+        <CheckCircle style={{ width:16, height:16 }}/> {t("Save Attendance","حفظ الحضور")}
+      </button>
+    </div>
+  );
+
+  /* ── Subject Detail View ── */
   if (selectedSubjectId) {
     const sub = subjects.find(s => s.id === selectedSubjectId);
-    const subSessions = sessions.filter(s => s.subject_id === selectedSubjectId);
+    const subSess = sessions.filter(s => s.subject_id === selectedSubjectId);
+    const liveSess = subSess.filter(s => s.status === "live");
     return (
-      <div className="p-4 md:p-6 space-y-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <Button variant="ghost" size="sm" onClick={() => setSelectedSubjectId(null)} className="mb-2">← {t("Back to All Classes", "العودة لكل الحصص")}</Button>
-            <h1 className="text-2xl font-bold">{sub?.title || "Subject"}</h1>
-            {sub?.title_ar && <p className="text-muted-foreground">{sub.title_ar}</p>}
-          </div>
-          <Button onClick={() => { setForm(f => ({ ...f, subject_id: selectedSubjectId })); setEditingSession(null); setShowCreate(true); }}>
-            <Plus className="h-4 w-4 mr-2" />{t("Schedule Class", "جدولة حصة")}
-          </Button>
-        </div>
+      <div style={{ minHeight:"100vh", background:"hsl(var(--muted)/0.4)", paddingBottom:40 }}>
+        <style>{CSS}</style>
 
-        {/* Sessions for this subject */}
-        <Card>
-          <CardHeader><CardTitle className="text-sm">{t("Sessions", "الحصص")} ({subSessions.length})</CardTitle></CardHeader>
-          <CardContent className="p-0">
-            <Table>
-              <TableHeader><TableRow>
-                <TableHead>{t("Topic", "الموضوع")}</TableHead>
-                <TableHead>{t("Status", "الحالة")}</TableHead>
-                <TableHead>{t("Scheduled", "الموعد")}</TableHead>
-                <TableHead>{t("Duration", "المدة")}</TableHead>
-                <TableHead>{t("Participants", "المشاركين")}</TableHead>
-                <TableHead>{t("Actions", "الإجراءات")}</TableHead>
-              </TableRow></TableHeader>
-              <TableBody>
-                {subSessions.map(s => (
-                  <TableRow key={s.id}>
-                    <TableCell>{s.topic || <span className="text-muted-foreground italic">No topic</span>}</TableCell>
-                    <TableCell>{statusBadge(s.status)}</TableCell>
-                    <TableCell>{s.scheduled_at ? format(new Date(s.scheduled_at), "MMM d, h:mm a") : "-"}</TableCell>
-                    <TableCell>{s.duration_minutes ? `${s.duration_minutes} min` : "-"}</TableCell>
-                    <TableCell>{s.total_participants || s.participant_count || 0}</TableCell>
-                    <TableCell>
-                      <div className="flex gap-1 flex-wrap">
-                        {s.status === "scheduled" && (
-                          <Button size="sm" onClick={() => goLiveAndJoin(s)} className="bg-green-600 hover:bg-green-700 text-white">
-                            <Video className="h-3 w-3 mr-1" /> {t("Go Live", "ابدأ")}
-                          </Button>
-                        )}
-                        {s.status === "live" && (
-                          <Button size="sm" onClick={() => previewClass(s)} className="bg-green-600 hover:bg-green-700 text-white">
-                            <Play className="h-3 w-3 mr-1" /> {t("Join", "انضم")}
-                          </Button>
-                        )}
-                        <Button size="sm" variant="outline" onClick={() => openEdit(s)} title="Edit"><Edit className="h-3 w-3" /></Button>
-                        <Button size="sm" variant="outline" onClick={() => previewClass(s)} title="Preview"><Eye className="h-3 w-3" /></Button>
-                        <Button size="sm" variant="outline" onClick={() => viewAttendance(s)} title="Attendance"><Users className="h-3 w-3" /></Button>
-                        {s.status === "live" && (
-                          <Button size="sm" variant="destructive" onClick={() => updateStatus(s.id, "completed")}>
-                            {t("End", "إنهاء")}
-                          </Button>
-                        )}
-                        {s.status === "scheduled" && (
-                          <Button size="sm" variant="outline" onClick={() => updateStatus(s.id, "cancelled")}>
-                            <Clock className="h-3 w-3" />
-                          </Button>
-                        )}
-                        <Button size="sm" variant="ghost" className="text-destructive" onClick={() => handleDelete(s.id)}><Trash2 className="h-3 w-3" /></Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-                {subSessions.length === 0 && <TableRow><TableCell colSpan={6} className="text-center py-6 text-muted-foreground">{t("No sessions yet", "لا توجد حصص بعد")}</TableCell></TableRow>}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-
-        {/* Subject resource tabs */}
-        <Tabs defaultValue="recordings">
-          <TabsList className="flex-wrap">
-            <TabsTrigger value="recordings" className="gap-1"><Video className="h-3 w-3" />{t("Recordings", "التسجيلات")}</TabsTrigger>
-            <TabsTrigger value="syllabus" className="gap-1"><BookOpen className="h-3 w-3" />{t("Syllabus", "المنهج")}</TabsTrigger>
-            <TabsTrigger value="materials" className="gap-1"><FileText className="h-3 w-3" />{t("Materials", "المواد")}</TabsTrigger>
-            <TabsTrigger value="assignments" className="gap-1"><ClipboardList className="h-3 w-3" />{t("Assignments", "الواجبات")}</TabsTrigger>
-            <TabsTrigger value="announcements" className="gap-1"><Megaphone className="h-3 w-3" />{t("Announcements", "الإعلانات")}</TabsTrigger>
-          </TabsList>
-          <TabsContent value="recordings"><SubjectRecordings subjectId={selectedSubjectId} /></TabsContent>
-          <TabsContent value="syllabus"><SubjectSyllabus subjectId={selectedSubjectId} /></TabsContent>
-          <TabsContent value="materials"><SubjectMaterials subjectId={selectedSubjectId} /></TabsContent>
-          <TabsContent value="assignments"><SubjectAssignments subjectId={selectedSubjectId} /></TabsContent>
-          <TabsContent value="announcements"><SubjectAnnouncements subjectId={selectedSubjectId} /></TabsContent>
-        </Tabs>
-
-        {/* Reuse Create/Edit + Attendance dialogs rendered below */}
-        {renderCreateEditDialog()}
-        {renderAttendanceDialog()}
-      </div>
-    );
-  }
-
-  // ---- Attendance Detail View ----
-  if (attendanceSession) {
-    return (
-      <div className="p-4 md:p-6 space-y-4">
-        <div className="flex items-center justify-between">
-          <Button variant="ghost" onClick={() => setAttendanceSession(null)}>← {t("Back", "رجوع")}</Button>
-          <Button variant="outline" onClick={exportAttendanceCSV}><Download className="h-4 w-4 me-2" />{t("Export CSV", "تصدير CSV")}</Button>
-        </div>
-        <h1 className="text-xl font-bold">{t("Attendance", "الحضور")} — {attendanceSession.subjects?.title || attendanceSession.topic || "Session"}</h1>
-
-        {attendanceLogs.length > 0 && (
-          <Card>
-            <CardHeader><CardTitle className="text-sm">{t("Auto-Logged Attendance", "الحضور التلقائي")}</CardTitle></CardHeader>
-            <CardContent className="p-0">
-              <Table>
-                <TableHeader><TableRow>
-                  <TableHead>{t("Student", "الطالب")}</TableHead>
-                  <TableHead>{t("Joined", "انضم")}</TableHead>
-                  <TableHead>{t("Left", "غادر")}</TableHead>
-                  <TableHead>{t("Duration", "المدة")}</TableHead>
-                </TableRow></TableHeader>
-                <TableBody>
-                  {attendanceLogs.map(l => (
-                    <TableRow key={l.id}>
-                      <TableCell>{(l as any).profiles?.full_name || "Student"}</TableCell>
-                      <TableCell>{l.joined_at ? new Date(l.joined_at).toLocaleTimeString() : "-"}</TableCell>
-                      <TableCell>{l.left_at ? new Date(l.left_at).toLocaleTimeString() : "-"}</TableCell>
-                      <TableCell>{l.duration_seconds ? `${Math.round(l.duration_seconds / 60)} min` : "-"}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-        )}
-
-        <Card>
-          <CardHeader><CardTitle className="text-sm">{t("Manual Attendance", "الحضور اليدوي")}</CardTitle></CardHeader>
-          <CardContent className="p-0">
-            <Table>
-              <TableHeader><TableRow>
-                <TableHead>{t("Student", "الطالب")}</TableHead>
-                <TableHead>{t("Status", "الحالة")}</TableHead>
-              </TableRow></TableHeader>
-              <TableBody>
-                {students.map(s => (
-                  <TableRow key={s.user_id}>
-                    <TableCell>{s.full_name}</TableCell>
-                    <TableCell>
-                      <div className="flex gap-1">
-                        {(["present", "absent", "late"] as const).map(status => (
-                          <Button key={status} size="sm"
-                            variant={editAttendance[s.user_id] === status ? "default" : "outline"}
-                            className={editAttendance[s.user_id] === status ? (status === "present" ? "bg-green-600" : status === "late" ? "bg-amber-500" : "bg-destructive") : ""}
-                            onClick={() => setEditAttendance({ ...editAttendance, [s.user_id]: status })}>
-                            {status === "present" ? t("Present", "حاضر") : status === "late" ? t("Late", "متأخر") : t("Absent", "غائب")}
-                          </Button>
-                        ))}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-        <Button onClick={saveAttendance}>{t("Save Attendance", "حفظ الحضور")}</Button>
-      </div>
-    );
-  }
-
-  // ---- Render helpers ----
-  function renderCreateEditDialog() {
-    return (
-      <Dialog open={showCreate} onOpenChange={setShowCreate}>
-        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{editingSession ? t("Edit Class", "تعديل الحصة") : t("Schedule Class", "جدولة حصة")}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
+        {/* Header */}
+        <div style={{ background:G, padding:"48px 16px 20px" }}>
+          <button onClick={() => setSelectedSubjectId(null)} style={{ display:"flex", alignItems:"center", gap:6, background:"rgba(255,255,255,.15)", border:"none", borderRadius:10, padding:"7px 14px", color:"#fff", fontWeight:700, fontSize:13, cursor:"pointer", marginBottom:16 }}>
+            <ArrowLeft style={{ width:15, height:15 }}/> {t("All Subjects","كل المواد")}
+          </button>
+          <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:12 }}>
             <div>
-              <Label>{t("Subject", "المادة")} *</Label>
-              <Select value={form.subject_id} onValueChange={v => setForm(f => ({ ...f, subject_id: v }))}>
-                <SelectTrigger><SelectValue placeholder={t("Select subject", "اختر المادة")} /></SelectTrigger>
-                <SelectContent>{subjects.map(s => <SelectItem key={s.id} value={s.id}>{s.title}</SelectItem>)}</SelectContent>
-              </Select>
+              <h1 style={{ fontSize:20, fontWeight:900, color:"#fff", margin:0 }}>{sub?.title}</h1>
+              {sub?.title_ar && <p style={{ fontSize:13, color:"rgba(255,255,255,.6)", margin:"4px 0 0", fontFamily:"serif" }}>{sub.title_ar}</p>}
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div><Label>{t("Topic (EN)", "الموضوع")}</Label><Input value={form.topic} onChange={e => setForm(f => ({ ...f, topic: e.target.value }))} /></div>
-              <div><Label>{t("Topic (AR)", "الموضوع بالعربي")}</Label><Input value={form.topic_ar} onChange={e => setForm(f => ({ ...f, topic_ar: e.target.value }))} dir="rtl" /></div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div><Label>{t("Scheduled At", "الموعد")}</Label><Input type="datetime-local" value={form.scheduled_at} onChange={e => setForm(f => ({ ...f, scheduled_at: e.target.value }))} /></div>
-              <div><Label>{t("Duration (min)", "المدة")}</Label><Input type="number" value={form.duration_minutes} onChange={e => setForm(f => ({ ...f, duration_minutes: parseInt(e.target.value) || 60 }))} /></div>
-            </div>
-            <div><Label>{t("Homework (EN)", "الواجب")}</Label><Textarea value={form.homework} onChange={e => setForm(f => ({ ...f, homework: e.target.value }))} rows={2} /></div>
-            <div><Label>{t("Homework (AR)", "الواجب بالعربي")}</Label><Textarea value={form.homework_ar} onChange={e => setForm(f => ({ ...f, homework_ar: e.target.value }))} rows={2} dir="rtl" /></div>
-
-            <div className="space-y-3 border-t pt-3">
-              <p className="text-sm font-medium text-muted-foreground">{t("Settings", "الإعدادات")}</p>
-              <div className="flex items-center justify-between"><Label>{t("Record Class", "تسجيل الحصة")}</Label><Switch checked={form.recording_enabled} onCheckedChange={v => setForm(f => ({ ...f, recording_enabled: v }))} /></div>
-              <div className="flex items-center justify-between"><Label>{t("Enable Chat", "تفعيل المحادثة")}</Label><Switch checked={form.chat_enabled} onCheckedChange={v => setForm(f => ({ ...f, chat_enabled: v }))} /></div>
-              <div className="flex items-center justify-between"><Label>{t("Hand Raising", "رفع اليد")}</Label><Switch checked={form.hand_raise_enabled} onCheckedChange={v => setForm(f => ({ ...f, hand_raise_enabled: v }))} /></div>
-              <div className="flex items-center justify-between"><Label>{t("Waiting Room", "غرفة الانتظار")}</Label><Switch checked={form.waiting_room_enabled} onCheckedChange={v => setForm(f => ({ ...f, waiting_room_enabled: v }))} /></div>
-            </div>
-
-            <Button onClick={handleSave} className="w-full">{editingSession ? t("Save Changes", "حفظ التعديلات") : t("Create", "إنشاء")}</Button>
+            <button onClick={() => { setForm(f => ({...f, subject_id:selectedSubjectId})); setEditingSession(null); setShowCreate(true); }}
+              className="lc-btn" style={{ background:GOLD, color:"#fff", flexShrink:0 }}>
+              <Plus style={{ width:14, height:14 }}/> {t("Schedule","جدولة")}
+            </button>
           </div>
-        </DialogContent>
-      </Dialog>
+          {/* Quick stats */}
+          <div style={{ display:"flex", gap:12, marginTop:16 }}>
+            {[
+              { label:"Total",     v:subSess.length,                                    c:"rgba(255,255,255,.9)" },
+              { label:"Live now",  v:liveSess.length,                                   c:"#ef4444" },
+              { label:"Scheduled", v:subSess.filter(s=>s.status==="scheduled").length,  c:"#60a5fa" },
+            ].map((x,i) => (
+              <div key={i} style={{ textAlign:"center" }}>
+                <div style={{ fontSize:22, fontWeight:900, color:x.c }}>{x.v}</div>
+                <div style={{ fontSize:10, color:"rgba(255,255,255,.5)", fontWeight:600 }}>{x.label}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ padding:"0 16px", marginTop:-4 }}>
+          {/* Live sessions first */}
+          {liveSess.length > 0 && (
+            <div style={{ marginBottom:20 }}>
+              {liveSess.map(s => <SessionCard key={s.id} s={s} onGoLive={goLive} onEdit={openEdit} onDelete={handleDelete} onAttendance={viewAttendance} onUpdateStatus={updateStatus} subjects={subjects} menu={sessionMenu} setMenu={setSessionMenu}/>)}
+            </div>
+          )}
+
+          {/* Upcoming sessions */}
+          <div style={{ marginBottom:20 }}>
+            <p style={{ fontSize:12, fontWeight:700, color:"hsl(var(--muted-foreground))", textTransform:"uppercase", letterSpacing:.6, marginBottom:10 }}>Sessions</p>
+            {subSess.filter(s=>s.status!=="live").map(s => (
+              <SessionCard key={s.id} s={s} onGoLive={goLive} onEdit={openEdit} onDelete={handleDelete} onAttendance={viewAttendance} onUpdateStatus={updateStatus} subjects={subjects} menu={sessionMenu} setMenu={setSessionMenu}/>
+            ))}
+            {subSess.length === 0 && (
+              <div className="lc-card" style={{ padding:32, textAlign:"center", color:"hsl(var(--muted-foreground))" }}>
+                <Video style={{ width:28, height:28, margin:"0 auto 8px", opacity:.4 }}/>
+                <p style={{ fontSize:13 }}>No sessions yet</p>
+              </div>
+            )}
+          </div>
+
+          {/* Resource tabs */}
+          <Tabs defaultValue="recordings" className="space-y-3">
+            <TabsList className="w-full overflow-x-auto flex-nowrap justify-start h-auto gap-1 p-1">
+              <TabsTrigger value="recordings"  className="gap-1 text-xs"><Video className="h-3 w-3"/>{t("Recordings","التسجيلات")}</TabsTrigger>
+              <TabsTrigger value="materials"   className="gap-1 text-xs"><FileText className="h-3 w-3"/>{t("Materials","المواد")}</TabsTrigger>
+              <TabsTrigger value="syllabus"    className="gap-1 text-xs"><BookOpen className="h-3 w-3"/>{t("Syllabus","المنهج")}</TabsTrigger>
+              <TabsTrigger value="assignments" className="gap-1 text-xs"><ClipboardList className="h-3 w-3"/>{t("Tasks","المهام")}</TabsTrigger>
+              <TabsTrigger value="announce"    className="gap-1 text-xs"><Megaphone className="h-3 w-3"/>{t("News","الإعلانات")}</TabsTrigger>
+            </TabsList>
+            <TabsContent value="recordings"><SubjectRecordings    subjectId={selectedSubjectId}/></TabsContent>
+            <TabsContent value="materials"><SubjectMaterials      subjectId={selectedSubjectId}/></TabsContent>
+            <TabsContent value="syllabus"><SubjectSyllabus        subjectId={selectedSubjectId}/></TabsContent>
+            <TabsContent value="assignments"><SubjectAssignments  subjectId={selectedSubjectId}/></TabsContent>
+            <TabsContent value="announce"><SubjectAnnouncements   subjectId={selectedSubjectId}/></TabsContent>
+          </Tabs>
+        </div>
+
+        <CreateEditDialog open={showCreate} onClose={() => setShowCreate(false)} form={form} setForm={setForm} subjects={subjects} editing={editingSession} onSave={handleSave}/>
+      </div>
     );
   }
 
-  function renderAttendanceDialog() { return null; /* Attendance is a separate view above */ }
-
-  // ---- Main List View ----
-  const liveCount = sessions.filter(s => s.status === "live").length;
-  const scheduledCount = sessions.filter(s => s.status === "scheduled").length;
-  const completedCount = sessions.filter(s => s.status === "completed" || s.status === "ended").length;
-
-  // Group sessions by subject for quick navigation
-  const subjectSessionCounts = subjects.map(sub => ({
-    ...sub,
-    sessionCount: sessions.filter(s => s.subject_id === sub.id).length,
-    liveCount: sessions.filter(s => s.subject_id === sub.id && s.status === "live").length,
-  }));
+  /* ── Main Dashboard ── */
+  const liveNow     = sessions.filter(s => s.status === "live");
+  const scheduled   = sessions.filter(s => s.status === "scheduled");
+  const completed   = sessions.filter(s => ["completed","ended"].includes(s.status));
 
   return (
-    <div className="p-4 md:p-6 space-y-6">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <h1 className="text-2xl font-bold">{t("Live Class Management", "إدارة الفصول المباشرة")}</h1>
-        <Button onClick={openCreate}><Plus className="h-4 w-4 me-2" />{t("Schedule Class", "جدولة حصة")}</Button>
-      </div>
+    <div style={{ minHeight:"100vh", background:"hsl(var(--muted)/0.4)", paddingBottom:40 }}>
+      <style>{CSS}</style>
 
-      {/* Stats row */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card><CardContent className="p-4 text-center"><div className="text-2xl font-bold text-red-500">{liveCount}</div><p className="text-xs text-muted-foreground">{t("Live Now", "مباشر الآن")}</p></CardContent></Card>
-        <Card><CardContent className="p-4 text-center"><div className="text-2xl font-bold text-blue-500">{scheduledCount}</div><p className="text-xs text-muted-foreground">{t("Scheduled", "مجدولة")}</p></CardContent></Card>
-        <Card><CardContent className="p-4 text-center"><div className="text-2xl font-bold text-muted-foreground">{completedCount}</div><p className="text-xs text-muted-foreground">{t("Completed", "مكتملة")}</p></CardContent></Card>
-        <Card><CardContent className="p-4 text-center"><div className="text-2xl font-bold text-primary">{subjects.length}</div><p className="text-xs text-muted-foreground">{t("Subjects", "المواد")}</p></CardContent></Card>
-      </div>
+      {/* Header */}
+      <div style={{ background:G, padding:"48px 16px 24px" }}>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:12, marginBottom:20 }}>
+          <div>
+            <p style={{ fontSize:11, color:"rgba(255,255,255,.5)", fontWeight:700, textTransform:"uppercase", letterSpacing:1, margin:0 }}>Admin</p>
+            <h1 style={{ fontSize:20, fontWeight:900, color:"#fff", margin:0 }}>{t("Live Classes","الفصول المباشرة")}</h1>
+          </div>
+          <button onClick={openCreate} className="lc-btn" style={{ background:GOLD, color:"#fff", flexShrink:0 }}>
+            <Plus style={{ width:14, height:14 }}/> {t("Schedule","جدولة")}
+          </button>
+        </div>
 
-      {/* Subject cards for quick access */}
-      <div>
-        <h2 className="text-lg font-semibold mb-3">{t("Subjects", "المواد")}</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {subjectSessionCounts.map(sub => (
-            <Card key={sub.id} className="cursor-pointer hover:border-primary/50 transition-colors" onClick={() => setSelectedSubjectId(sub.id)}>
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="font-semibold">{sub.title}</h3>
-                    {sub.title_ar && <p className="text-xs text-muted-foreground">{sub.title_ar}</p>}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {sub.liveCount > 0 && <Badge className="bg-red-500 text-white animate-pulse">🔴 Live</Badge>}
-                    <Badge variant="secondary">{sub.sessionCount} {t("sessions", "حصص")}</Badge>
-                  </div>
-                </div>
-                <div className="flex gap-2 mt-3">
-                  <Button size="sm" variant="outline" className="text-xs" onClick={e => { e.stopPropagation(); setSelectedSubjectId(sub.id); }}>
-                    <BookOpen className="h-3 w-3 mr-1" />{t("Manage", "إدارة")}
-                  </Button>
-                  <Button size="sm" variant="outline" className="text-xs" onClick={e => { e.stopPropagation(); navigate(`/dashboard/subjects/${sub.id}`); }}>
-                    <Eye className="h-3 w-3 mr-1" />{t("Preview", "معاينة")}
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
+        {/* Stats */}
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10 }}>
+          {[
+            { label:t("Live","مباشر"),      v:liveNow.length,   c:"#ef4444",  pulse:liveNow.length>0 },
+            { label:t("Scheduled","مجدولة"),v:scheduled.length, c:"#60a5fa",  pulse:false },
+            { label:t("Done","مكتمل"),      v:completed.length, c:"rgba(255,255,255,.5)", pulse:false },
+            { label:t("Subjects","مواد"),   v:subjects.length,  c:"rgba(255,255,255,.85)", pulse:false },
+          ].map((s,i) => (
+            <div key={i} style={{ background:"rgba(255,255,255,.1)", borderRadius:12, padding:"10px 8px", textAlign:"center" }}>
+              <div style={{ fontSize:22, fontWeight:900, color:s.c, display:"flex", alignItems:"center", justifyContent:"center", gap:4 }}>
+                {s.pulse && <span style={{ width:7, height:7, borderRadius:"50%", background:"#ef4444", display:"inline-block", animation:"lc-pulse 1s infinite" }}/>}
+                {s.v}
+              </div>
+              <div style={{ fontSize:10, color:"rgba(255,255,255,.5)", fontWeight:600 }}>{s.label}</div>
+            </div>
           ))}
         </div>
       </div>
 
-      {/* Filters + Session table */}
-      <div>
-        <h2 className="text-lg font-semibold mb-3">{t("All Sessions", "كل الحصص")}</h2>
-        <div className="flex flex-wrap gap-3 mb-4">
-          <div className="relative flex-1 min-w-[200px]">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input placeholder={t("Search topic or subject...", "بحث...")} value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="pl-9" />
+      <div style={{ padding:"0 16px", marginTop:20 }}>
+
+        {/* Live now alert */}
+        {liveNow.length > 0 && (
+          <div style={{ marginBottom:20 }}>
+            <p style={{ fontSize:11, fontWeight:700, color:"#ef4444", textTransform:"uppercase", letterSpacing:.6, marginBottom:8, display:"flex", alignItems:"center", gap:6 }}>
+              <span style={{ width:6, height:6, borderRadius:"50%", background:"#ef4444", display:"inline-block", animation:"lc-pulse 1s infinite" }}/>
+              {t("Live Now","مباشر الآن")} · {liveNow.length}
+            </p>
+            {liveNow.map(s => (
+              <SessionCard key={s.id} s={s} onGoLive={goLive} onEdit={openEdit} onDelete={handleDelete} onAttendance={viewAttendance} onUpdateStatus={updateStatus} subjects={subjects} menu={sessionMenu} setMenu={setSessionMenu}/>
+            ))}
           </div>
-          <Select value={subjectFilter} onValueChange={setSubjectFilter}>
-            <SelectTrigger className="w-48"><SelectValue placeholder={t("All Subjects", "كل المواد")} /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">{t("All Subjects", "كل المواد")}</SelectItem>
-              {subjects.map(s => <SelectItem key={s.id} value={s.id}>{s.title}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">{t("All Status", "كل الحالات")}</SelectItem>
-              <SelectItem value="scheduled">{t("Scheduled", "مجدولة")}</SelectItem>
-              <SelectItem value="live">{t("Live", "مباشر")}</SelectItem>
-              <SelectItem value="completed">{t("Completed", "مكتملة")}</SelectItem>
-              <SelectItem value="cancelled">{t("Cancelled", "ملغاة")}</SelectItem>
-            </SelectContent>
-          </Select>
+        )}
+
+        {/* Subject cards */}
+        <div style={{ marginBottom:20 }}>
+          <p style={{ fontSize:11, fontWeight:700, color:"hsl(var(--muted-foreground))", textTransform:"uppercase", letterSpacing:.6, marginBottom:10 }}>
+            {t("Subjects","المواد")} · {subjects.length}
+          </p>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))", gap:10 }}>
+            {subjects.map(sub => {
+              const cnt  = sessions.filter(s => s.subject_id === sub.id).length;
+              const live = sessions.filter(s => s.subject_id === sub.id && s.status === "live").length;
+              return (
+                <div key={sub.id} className="lc-card" onClick={() => setSelectedSubjectId(sub.id)}
+                  style={{ padding:"14px", cursor:"pointer", position:"relative" }}>
+                  {live > 0 && (
+                    <span style={{ position:"absolute", top:10, right:10, width:8, height:8, borderRadius:"50%", background:"#ef4444", animation:"lc-pulse 1s infinite" }}/>
+                  )}
+                  <div style={{ width:36, height:36, borderRadius:10, background:`${G}15`, display:"flex", alignItems:"center", justifyContent:"center", marginBottom:10 }}>
+                    <BookOpen style={{ width:18, height:18, color:G }}/>
+                  </div>
+                  <p style={{ fontSize:13, fontWeight:700, margin:"0 0 2px", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{sub.title}</p>
+                  {sub.title_ar && <p style={{ fontSize:11, color:"hsl(var(--muted-foreground))", margin:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{sub.title_ar}</p>}
+                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:10 }}>
+                    <span style={{ fontSize:11, color:"hsl(var(--muted-foreground))" }}>{cnt} sessions</span>
+                    <ChevronRight style={{ width:14, height:14, color:"hsl(var(--muted-foreground))" }}/>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
 
-        <Card>
-          <CardContent className="p-0">
-            <Table>
-              <TableHeader><TableRow>
-                <TableHead>{t("Subject", "المادة")}</TableHead>
-                <TableHead>{t("Topic", "الموضوع")}</TableHead>
-                <TableHead>{t("Status", "الحالة")}</TableHead>
-                <TableHead>{t("Scheduled", "الموعد")}</TableHead>
-                <TableHead>{t("Participants", "المشاركين")}</TableHead>
-                <TableHead>{t("Actions", "الإجراءات")}</TableHead>
-              </TableRow></TableHeader>
-              <TableBody>
-                {filtered.map(s => (
-                  <TableRow key={s.id}>
-                    <TableCell className="font-medium">{s.subjects?.title || "-"}</TableCell>
-                    <TableCell>{s.topic || <span className="text-muted-foreground italic">—</span>}</TableCell>
-                    <TableCell>{statusBadge(s.status)}</TableCell>
-                    <TableCell>{s.scheduled_at ? format(new Date(s.scheduled_at), "MMM d, h:mm a") : "-"}</TableCell>
-                    <TableCell>{s.total_participants || s.participant_count || 0}</TableCell>
-                    <TableCell>
-                      <div className="flex gap-1 flex-wrap">
-                        {s.status === "scheduled" && (
-                          <Button size="sm" onClick={() => goLiveAndJoin(s)} className="bg-green-600 hover:bg-green-700 text-white">
-                            <Video className="h-3 w-3 mr-1" /> {t("Go Live", "ابدأ")}
-                          </Button>
-                        )}
-                        {s.status === "live" && (
-                          <Button size="sm" onClick={() => previewClass(s)} className="bg-green-600 hover:bg-green-700 text-white">
-                            <Play className="h-3 w-3 mr-1" /> {t("Join", "انضم")}
-                          </Button>
-                        )}
-                        <Button size="sm" variant="outline" onClick={() => openEdit(s)} title="Edit"><Edit className="h-3 w-3" /></Button>
-                        <Button size="sm" variant="outline" onClick={() => previewClass(s)} title="Preview"><Eye className="h-3 w-3" /></Button>
-                        <Button size="sm" variant="outline" onClick={() => viewAttendance(s)} title="Attendance"><Users className="h-3 w-3" /></Button>
-                        {s.status === "live" && <Button size="sm" variant="destructive" onClick={() => updateStatus(s.id, "completed")}>{t("End", "إنهاء")}</Button>}
-                        {s.status === "scheduled" && <Button size="sm" variant="outline" onClick={() => updateStatus(s.id, "cancelled")}><Clock className="h-3 w-3" /></Button>}
-                        <Button size="sm" variant="ghost" className="text-destructive" onClick={() => handleDelete(s.id)}><Trash2 className="h-3 w-3" /></Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-                {filtered.length === 0 && <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">{t("No classes found", "لم يتم العثور على حصص")}</TableCell></TableRow>}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
+        {/* All sessions with search/filter */}
+        <div>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
+            <p style={{ fontSize:11, fontWeight:700, color:"hsl(var(--muted-foreground))", textTransform:"uppercase", letterSpacing:.6, margin:0 }}>
+              {t("Sessions","الحصص")} · {filtered.length}
+            </p>
+            <button onClick={() => setShowFilters(v=>!v)} style={{ display:"flex", alignItems:"center", gap:4, background:"none", border:"1px solid hsl(var(--border))", borderRadius:8, padding:"5px 10px", fontSize:12, cursor:"pointer", color:"hsl(var(--foreground))" }}>
+              <Filter style={{ width:12, height:12 }}/> Filter
+            </button>
+          </div>
+
+          {/* Search + filters */}
+          <div style={{ marginBottom:12 }}>
+            <div style={{ position:"relative", marginBottom:showFilters?8:0 }}>
+              <Search style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", width:14, height:14, color:"hsl(var(--muted-foreground))" }}/>
+              <input value={searchQuery} onChange={e=>setSearchQuery(e.target.value)}
+                placeholder={t("Search topic or subject…","بحث…")}
+                style={{ width:"100%", padding:"10px 12px 10px 36px", borderRadius:10, border:"1px solid hsl(var(--border))", background:"hsl(var(--background))", fontSize:13, boxSizing:"border-box", outline:"none" }}/>
+            </div>
+            {showFilters && (
+              <div style={{ display:"flex", gap:8 }}>
+                <select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}
+                  style={{ flex:1, padding:"8px 10px", borderRadius:8, border:"1px solid hsl(var(--border))", background:"hsl(var(--background))", fontSize:12, outline:"none" }}>
+                  <option value="all">All Status</option>
+                  <option value="scheduled">Scheduled</option>
+                  <option value="live">Live</option>
+                  <option value="completed">Completed</option>
+                  <option value="cancelled">Cancelled</option>
+                </select>
+                <select value={subjectFilter} onChange={e=>setSubjectFilter(e.target.value)}
+                  style={{ flex:1, padding:"8px 10px", borderRadius:8, border:"1px solid hsl(var(--border))", background:"hsl(var(--background))", fontSize:12, outline:"none" }}>
+                  <option value="all">All Subjects</option>
+                  {subjects.map(s => <option key={s.id} value={s.id}>{s.title}</option>)}
+                </select>
+              </div>
+            )}
+          </div>
+
+          {filtered.map(s => (
+            <SessionCard key={s.id} s={s} onGoLive={goLive} onEdit={openEdit} onDelete={handleDelete} onAttendance={viewAttendance} onUpdateStatus={updateStatus} subjects={subjects} menu={sessionMenu} setMenu={setSessionMenu}/>
+          ))}
+          {filtered.length === 0 && (
+            <div className="lc-card" style={{ padding:36, textAlign:"center", color:"hsl(var(--muted-foreground))" }}>
+              <Video style={{ width:28, height:28, margin:"0 auto 8px", opacity:.4 }}/>
+              <p style={{ fontSize:14, fontWeight:500 }}>No sessions found</p>
+            </div>
+          )}
+        </div>
       </div>
 
-      {renderCreateEditDialog()}
+      <CreateEditDialog open={showCreate} onClose={() => setShowCreate(false)} form={form} setForm={setForm} subjects={subjects} editing={editingSession} onSave={handleSave}/>
     </div>
   );
 };
+
+/* ═══════════════════════════════════════════════════════
+   SESSION CARD — mobile-first, all actions accessible
+═══════════════════════════════════════════════════════ */
+const SessionCard = ({ s, onGoLive, onEdit, onDelete, onAttendance, onUpdateStatus, subjects, menu, setMenu }: any) => {
+  const isLive = s.status === "live";
+  const menuOpen = menu === s.id;
+  const G = "hsl(155,55%,15%)";
+
+  return (
+    <div className="lc-card" style={{ marginBottom:8, border: isLive ? "1.5px solid rgba(239,68,68,.4)" : "1.5px solid transparent", position:"relative" }}>
+      {/* Live indicator bar */}
+      {isLive && <div style={{ height:3, background:"#ef4444", animation:"lc-pulse 1s infinite" }}/>}
+
+      <div style={{ padding:"14px 14px 12px" }}>
+        <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:8 }}>
+          <div style={{ flex:1, minWidth:0 }}>
+            {/* Subject */}
+            <p style={{ fontSize:11, fontWeight:700, color:"hsl(var(--muted-foreground))", margin:"0 0 2px", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+              {s.subjects?.title || "No subject"}
+            </p>
+            {/* Topic */}
+            <p style={{ fontSize:14, fontWeight:700, margin:"0 0 8px", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+              {s.topic || <span style={{ fontStyle:"italic", opacity:.5 }}>No topic</span>}
+            </p>
+            {/* Meta row */}
+            <div style={{ display:"flex", flexWrap:"wrap", gap:8, alignItems:"center" }}>
+              <StatusBadge status={s.status}/>
+              {s.scheduled_at && (
+                <span style={{ display:"flex", alignItems:"center", gap:4, fontSize:11, color:"hsl(var(--muted-foreground))" }}>
+                  <Calendar style={{ width:11, height:11 }}/>{fmtDate(s.scheduled_at)}
+                </span>
+              )}
+              {s.duration_minutes && (
+                <span style={{ display:"flex", alignItems:"center", gap:4, fontSize:11, color:"hsl(var(--muted-foreground))" }}>
+                  <Clock style={{ width:11, height:11 }}/>{s.duration_minutes}m
+                </span>
+              )}
+              {(s.total_participants || s.participant_count || 0) > 0 && (
+                <span style={{ display:"flex", alignItems:"center", gap:4, fontSize:11, color:"hsl(var(--muted-foreground))" }}>
+                  <Users style={{ width:11, height:11 }}/>{s.total_participants || s.participant_count}
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* ⋮ menu */}
+          <div style={{ position:"relative", flexShrink:0 }}>
+            <button onClick={() => setMenu(menuOpen ? null : s.id)}
+              style={{ width:32, height:32, borderRadius:8, border:"1px solid hsl(var(--border))", background:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
+              <MoreVertical style={{ width:15, height:15 }}/>
+            </button>
+            {menuOpen && (
+              <div onClick={() => setMenu(null)}
+                style={{ position:"fixed", inset:0, zIndex:40 }}>
+                <div onClick={e => e.stopPropagation()}
+                  style={{ position:"absolute", right:0, top:36, background:"hsl(var(--card))", borderRadius:12, boxShadow:"0 8px 32px rgba(0,0,0,.15)", minWidth:180, zIndex:50, overflow:"hidden", border:"1px solid hsl(var(--border))" }}>
+                  <button onClick={() => { onEdit(s); setMenu(null); }} style={{ width:"100%", display:"flex", alignItems:"center", gap:10, padding:"12px 16px", background:"none", border:"none", cursor:"pointer", fontSize:13, textAlign:"left" }}>
+                    <Edit style={{ width:14, height:14 }}/> Edit
+                  </button>
+                  <button onClick={() => { onAttendance(s); setMenu(null); }} style={{ width:"100%", display:"flex", alignItems:"center", gap:10, padding:"12px 16px", background:"none", border:"none", cursor:"pointer", fontSize:13, textAlign:"left" }}>
+                    <Users style={{ width:14, height:14 }}/> Attendance
+                  </button>
+                  {s.status === "scheduled" && (
+                    <button onClick={() => { onUpdateStatus(s.id,"cancelled"); setMenu(null); }} style={{ width:"100%", display:"flex", alignItems:"center", gap:10, padding:"12px 16px", background:"none", border:"none", cursor:"pointer", fontSize:13, textAlign:"left", color:"#f59e0b" }}>
+                      <XCircle style={{ width:14, height:14 }}/> Cancel
+                    </button>
+                  )}
+                  {s.status === "live" && (
+                    <button onClick={() => { onUpdateStatus(s.id,"completed"); setMenu(null); }} style={{ width:"100%", display:"flex", alignItems:"center", gap:10, padding:"12px 16px", background:"none", border:"none", cursor:"pointer", fontSize:13, textAlign:"left", color:"#f59e0b" }}>
+                      <XCircle style={{ width:14, height:14 }}/> End Class
+                    </button>
+                  )}
+                  <button onClick={() => { onDelete(s.id); setMenu(null); }} style={{ width:"100%", display:"flex", alignItems:"center", gap:10, padding:"12px 16px", background:"none", border:"none", cursor:"pointer", fontSize:13, textAlign:"left", color:"#ef4444", borderTop:"1px solid hsl(var(--border))" }}>
+                    <AlertCircle style={{ width:14, height:14 }}/> Delete
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Primary CTA */}
+        {s.status === "scheduled" && (
+          <button onClick={() => onGoLive(s)} className="lc-btn"
+            style={{ marginTop:10, width:"100%", justifyContent:"center", background:"#16a34a", color:"#fff", padding:"10px" }}>
+            <Video style={{ width:15, height:15 }}/> Go Live
+          </button>
+        )}
+        {s.status === "live" && (
+          <button onClick={() => onGoLive(s)} className="lc-btn"
+            style={{ marginTop:10, width:"100%", justifyContent:"center", background:"#ef4444", color:"#fff", padding:"10px" }}>
+            <Play style={{ width:15, height:15 }}/> Join Class
+          </button>
+        )}
+      </div>
+    </div>
+  );
+};
+
+/* ═══════════════════════════════════════════════════════
+   CREATE / EDIT DIALOG
+═══════════════════════════════════════════════════════ */
+const CreateEditDialog = ({ open, onClose, form, setForm, subjects, editing, onSave }: any) => (
+  <Dialog open={open} onOpenChange={onClose}>
+    <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto mx-4 rounded-2xl p-0">
+      <DialogHeader className="px-5 pt-5 pb-3 border-b">
+        <DialogTitle className="text-base font-bold">
+          {editing ? "Edit Class" : "Schedule New Class"}
+        </DialogTitle>
+      </DialogHeader>
+      <div className="px-5 py-4 space-y-4">
+        {/* Subject */}
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold">Subject *</Label>
+          <Select value={form.subject_id} onValueChange={v => setForm((f:any) => ({...f, subject_id:v}))}>
+            <SelectTrigger className="h-10 text-sm"><SelectValue placeholder="Select a subject"/></SelectTrigger>
+            <SelectContent>{subjects.map((s:any) => <SelectItem key={s.id} value={s.id}>{s.title}</SelectItem>)}</SelectContent>
+          </Select>
+        </div>
+
+        {/* Topic */}
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1.5">
+            <Label className="text-xs font-semibold">Topic (EN)</Label>
+            <Input value={form.topic} onChange={e => setForm((f:any)=>({...f,topic:e.target.value}))} className="h-10 text-sm" placeholder="e.g. Noon Sakin Rules"/>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs font-semibold">Topic (AR)</Label>
+            <Input value={form.topic_ar} onChange={e => setForm((f:any)=>({...f,topic_ar:e.target.value}))} className="h-10 text-sm" dir="rtl" placeholder="الموضوع"/>
+          </div>
+        </div>
+
+        {/* Date + Duration */}
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1.5">
+            <Label className="text-xs font-semibold">Date & Time</Label>
+            <Input type="datetime-local" value={form.scheduled_at} onChange={e => setForm((f:any)=>({...f,scheduled_at:e.target.value}))} className="h-10 text-sm"/>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs font-semibold">Duration (min)</Label>
+            <Input type="number" value={form.duration_minutes} onChange={e => setForm((f:any)=>({...f,duration_minutes:parseInt(e.target.value)||60}))} className="h-10 text-sm"/>
+          </div>
+        </div>
+
+        {/* Homework */}
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold">Homework (EN)</Label>
+          <Textarea value={form.homework} onChange={e => setForm((f:any)=>({...f,homework:e.target.value}))} rows={2} className="text-sm resize-none"/>
+        </div>
+
+        {/* Settings toggles */}
+        <div className="rounded-xl border divide-y">
+          {([
+            { key:"recording_enabled",    label:"Record Class",    icon:"⏺" },
+            { key:"chat_enabled",         label:"Enable Chat",     icon:"💬" },
+            { key:"hand_raise_enabled",   label:"Hand Raising",    icon:"✋" },
+            { key:"waiting_room_enabled", label:"Waiting Room",    icon:"🚪" },
+          ] as const).map(row => (
+            <div key={row.key} className="flex items-center justify-between px-4 py-3">
+              <span className="text-sm">{row.icon} {row.label}</span>
+              <Switch checked={form[row.key]} onCheckedChange={v => setForm((f:any)=>({...f,[row.key]:v}))}/>
+            </div>
+          ))}
+        </div>
+
+        <Button onClick={onSave} className="w-full h-11 text-sm font-bold">
+          {editing ? "Save Changes" : "Create Session"}
+        </Button>
+      </div>
+    </DialogContent>
+  </Dialog>
+);
 
 export default LiveClassManagement;
