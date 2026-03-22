@@ -79,27 +79,55 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     { type: "link", to: "/student/profile", icon: UserCircle,    label: t("Settings", "الإعدادات") },
   ];
 
-  const adminLinks = [
-    { to: "/admin/level-assignment",         icon: GraduationCap,   label: t("Level Assignment", "تحديد المستوى") },
-    { to: "/admin",                           icon: LayoutDashboard, label: t("Dashboard", "لوحة التحكم") },
-    { to: "/admin/subjects",                  icon: BookOpen,        label: t("Subjects", "المواد") },
-    { to: "/admin/courses",                   icon: Layers,          label: t("Courses", "الدورات") },
-    { to: "/admin/syllabus",                  icon: FileText,        label: t("Syllabus & Materials", "المنهج والمواد") },
-    { to: "/admin/live-classes",              icon: Video,           label: t("Live Classes", "الفصول الحية") },
-    { to: "/admin/exams",                     icon: ClipboardList,   label: t("Exams", "الامتحانات") },
-    { to: "/admin/question-bank",             icon: Library,         label: t("Question Bank", "بنك الأسئلة") },
-    { to: "/admin/students",                  icon: Users,           label: t("Students", "الطلاب") },
-    { to: "/admin/grading",                   icon: CheckSquare,     label: t("Grading", "التصحيح") },
-    { to: "/admin/private-sessions",          icon: UserCheck,       label: t("Private Sessions", "الجلسات الخاصة") },
-    { to: "/admin/proctoring",                icon: BarChart,        label: t("Proctoring", "المراقبة") },
-    { to: "/admin/entrance-exam",             icon: GraduationCap,   label: t("Entrance Exam", "اختبار القبول") },
-    { to: "/admin/recitation-review",         icon: Mic,             label: t("Recitation Review", "مراجعة التلاوة") },
-    { to: "/admin/recitation-test-settings",  icon: Settings,        label: t("Recitation Settings", "إعدادات التلاوة") },
-    { to: "/admin/payments",                  icon: CreditCard,      label: t("Payments", "المدفوعات") },
-    { to: "/admin/calendar",                  icon: Calendar,        label: t("Calendar", "التقويم") },
-    { to: "/admin/public-classes",            icon: Globe,           label: t("Public Classes", "الدروس العامة") },
-    { to: "/admin/majlis-moderation",         icon: MessageCircle,   label: t("Al-Majlis", "المجلس") },
-    { to: "/live-quiz",                        icon: Trophy,          label: t("Al-Musabaqah 🏆", "المسابقة الحية 🏆") },
+  // Admin nav — organized into collapsible groups
+  type AdminNavItem =
+    | { type: "link";  to: string; icon: any; label: string }
+    | { type: "group"; key: string; icon: any; label: string; children: { to: string; icon: any; label: string }[] };
+
+  const adminNav: AdminNavItem[] = [
+    // ── Top-level singles ────────────────────────────
+    { type: "link", to: "/admin",                 icon: LayoutDashboard, label: t("Dashboard",        "لوحة التحكم") },
+    { type: "link", to: "/admin/level-assignment",icon: GraduationCap,   label: t("Level Assignment", "تحديد المستوى") },
+
+    // ── Academic Content ─────────────────────────────
+    { type: "group", key: "academic", icon: BookOpen, label: t("Academic", "المحتوى الأكاديمي"), children: [
+      { to: "/admin/subjects",  icon: BookOpen,  label: t("Subjects",            "المواد") },
+      { to: "/admin/courses",   icon: Layers,    label: t("Courses",             "الدورات") },
+      { to: "/admin/syllabus",  icon: FileText,  label: t("Syllabus & Materials","المنهج والمواد") },
+      { to: "/admin/calendar",  icon: Calendar,  label: t("Calendar",            "التقويم") },
+    ]},
+
+    // ── Classes ──────────────────────────────────────
+    { type: "group", key: "classes", icon: Video, label: t("Classes", "الفصول"), children: [
+      { to: "/admin/live-classes",   icon: Video,  label: t("Live Classes",   "الفصول الحية") },
+      { to: "/admin/public-classes", icon: Globe,  label: t("Public Classes", "الدروس العامة") },
+    ]},
+
+    // ── Assessments ──────────────────────────────────
+    { type: "group", key: "assess", icon: ClipboardList, label: t("Assessments", "التقييمات"), children: [
+      { to: "/admin/exams",          icon: ClipboardList, label: t("Exams",          "الامتحانات") },
+      { to: "/admin/question-bank",  icon: Library,       label: t("Question Bank",  "بنك الأسئلة") },
+      { to: "/admin/grading",        icon: CheckSquare,   label: t("Grading",        "التصحيح") },
+      { to: "/admin/entrance-exam",  icon: GraduationCap, label: t("Entrance Exam",  "اختبار القبول") },
+      { to: "/admin/proctoring",     icon: BarChart,      label: t("Proctoring",     "المراقبة") },
+    ]},
+
+    // ── Recitation ───────────────────────────────────
+    { type: "group", key: "recit", icon: Mic, label: t("Recitation", "التلاوة"), children: [
+      { to: "/admin/recitation-review",        icon: Mic,      label: t("Recitation Review",   "مراجعة التلاوة") },
+      { to: "/admin/recitation-test-settings", icon: Settings, label: t("Recitation Settings", "إعدادات التلاوة") },
+    ]},
+
+    // ── Students ─────────────────────────────────────
+    { type: "group", key: "students", icon: Users, label: t("Students", "الطلاب"), children: [
+      { to: "/admin/students",         icon: Users,     label: t("All Students",     "جميع الطلاب") },
+      { to: "/admin/private-sessions", icon: UserCheck, label: t("Private Sessions", "الجلسات الخاصة") },
+    ]},
+
+    // ── Finance & Community ──────────────────────────
+    { type: "link", to: "/admin/payments",          icon: CreditCard,    label: t("Payments",      "المدفوعات") },
+    { type: "link", to: "/admin/majlis-moderation", icon: MessageCircle, label: t("Al-Majlis",     "المجلس") },
+    { type: "link", to: "/live-quiz",               icon: Trophy,        label: t("Al-Musabaqah 🏆","المسابقة الحية 🏆") },
   ];
 
   const SidebarContent = ({ onNavigate }: { onNavigate?: () => void }) => (
@@ -179,19 +207,64 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
           );
         })}
 
-        {/* Admin nav */}
-        {role === "admin" && adminLinks.map(link => (
-          <Link key={link.to} to={link.to} onClick={onNavigate}
-            className={cn(
-              "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
-              location.pathname === link.to
-                ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground"
-            )}>
-            <link.icon className="h-4 w-4 shrink-0" />
-            <span>{link.label}</span>
-          </Link>
-        ))}
+        {/* Admin nav — collapsible groups */}
+        {role === "admin" && adminNav.map((item) => {
+          if (item.type === "link") {
+            const isActive = item.to === "/admin"
+              ? location.pathname === "/admin"
+              : location.pathname.startsWith(item.to);
+            return (
+              <Link key={item.to} to={item.to} onClick={onNavigate}
+                className={cn(
+                  "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
+                  isActive
+                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                    : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground"
+                )}>
+                <item.icon className="h-4 w-4 shrink-0" />
+                <span>{item.label}</span>
+              </Link>
+            );
+          }
+          const groupActive = isGroupActive(item.children.map(c => c.to));
+          const isOpen = expanded[item.key] ?? false;
+          return (
+            <div key={item.key}>
+              <button onClick={() => toggleSection(item.key)}
+                className={cn(
+                  "w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
+                  groupActive
+                    ? "bg-sidebar-accent/40 text-sidebar-accent-foreground"
+                    : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground"
+                )}>
+                <item.icon className="h-4 w-4 shrink-0" />
+                <span className="flex-1 text-left">{item.label}</span>
+                {isOpen
+                  ? <ChevronDown className="h-3.5 w-3.5 opacity-60" />
+                  : <ChevronRight className="h-3.5 w-3.5 opacity-60" />}
+              </button>
+              {isOpen && (
+                <div className="ms-4 mt-0.5 space-y-0.5 border-l border-sidebar-border/50 ps-3">
+                  {item.children.map(child => {
+                    const childActive = location.pathname.startsWith(child.to);
+                    return (
+                      <Link key={child.to} to={child.to} onClick={onNavigate}
+                        className={cn(
+                          "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                          childActive
+                            ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                            : "text-sidebar-foreground/60 hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground"
+                        )}>
+                        <child.icon className="h-3.5 w-3.5 shrink-0" />
+                        <span>{child.label}</span>
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
 
       </nav>
 
