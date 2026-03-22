@@ -135,8 +135,8 @@ export const useProctoring = (
     if (!config.attemptId) return;
     // Per-type cooldown to avoid spam
     const cooldowns: Record<string, number> = {
-      face_not_detected: 8000, eyes_not_visible: 10000, looking_away: 12000,
-      camera_covered: 6000, tab_switch: 5000, fullscreen_exit: 8000,
+      face_not_detected: 2500, eyes_not_visible: 4000, looking_away: 4000,
+      camera_covered: 3000, tab_switch: 3000, fullscreen_exit: 4000,
     };
     const cooldown = cooldowns[type] || 6000;
     const now = Date.now();
@@ -240,7 +240,7 @@ export const useProctoring = (
           // Face too far to the side = looking away
           const xRatio = faceCenterX / frameW;
           const yRatio = faceCenterY / frameH;
-          if (xRatio < 0.2 || xRatio > 0.8 || yRatio < 0.15 || yRatio > 0.85) {
+          if (xRatio < 0.25 || xRatio > 0.75 || yRatio < 0.15 || yRatio > 0.85) {
             logViolation("looking_away", 1, `Face position off-center: ${xRatio.toFixed(2)}, ${yRatio.toFixed(2)}`);
           }
 
@@ -260,7 +260,7 @@ export const useProctoring = (
             }
             const darkRatio = darkPixels / (eyeData.data.length / 4);
             // If eye region is mostly dark, eyes might be closed or looking down
-            if (darkRatio > 0.75) {
+            if (darkRatio > 0.60) { // 60% dark eye region = eyes closed/looking down
               logViolation("eyes_not_visible", 1, `Eye region ${(darkRatio * 100).toFixed(0)}% dark — eyes closed or looking down`);
             }
           }
@@ -283,7 +283,7 @@ export const useProctoring = (
               Math.abs(r - g) < 120 && (r - b) > 12 && r < 250) skinPixels++;
         }
       }
-      facePresent = (skinPixels / totalCenter) > 0.04; // 4% skin = face present
+      facePresent = (skinPixels / totalCenter) > 0.03; // 3% skin = face present (more sensitive)
       faceCount = facePresent ? 1 : 0;
 
       // Simple looking-away: check if skin is concentrated off-center
@@ -301,7 +301,7 @@ export const useProctoring = (
             if (r > 60 && g > 30 && b > 15 && r > g && r > b) skinRight++;
           }
         }
-        if ((skinLeft > 800 || skinRight > 800) && Math.abs(skinLeft - skinRight) > 500) {
+        if ((skinLeft > 600 || skinRight > 600) && Math.abs(skinLeft - skinRight) > 300) {
           facePresent = true; // face is there but off-center
           faceCount = 1;
           logViolation("looking_away", 1, `Face off-center L:${skinLeft} R:${skinRight}`);
@@ -315,14 +315,14 @@ export const useProctoring = (
       if (!faceAbsStart.current) faceAbsStart.current = Date.now();
       const absTime = Date.now() - faceAbsStart.current;
 
-      if (absTime >= 4000 && absTime < 8000) {
-        // 4s absent → warning (severity 1)
+      if (absTime >= 1500 && absTime < 4000) {
+        // 1.5s absent → immediate warning
         logViolation("face_not_detected", 1, `Face absent ${Math.round(absTime/1000)}s`);
-      } else if (absTime >= 8000) {
-        // 8s absent → strike (severity 2)
+      } else if (absTime >= 4000) {
+        // 4s absent → strike + snapshot
         logViolation("face_not_detected", 2, `Face absent ${Math.round(absTime/1000)}s — possible cheating`);
         captureSnapshot("face_absent_extended");
-        faceAbsStart.current = Date.now(); // reset so next strike is another 8s
+        faceAbsStart.current = Date.now(); // reset so it fires again every 4s
       }
     } else {
       faceAbsStart.current = null; // reset timer
