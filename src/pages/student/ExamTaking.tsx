@@ -358,28 +358,49 @@ const ExamTaking = () => {
     };
   }, [submitted]);
 
-  // Load exam
+  // Load exam — wrapped in try/catch so loading always clears
   useEffect(() => {
     if (!attemptId || !user) return;
     (async () => {
-      const { data: ad } = await supabase.from("exam_attempts").select("*,exams(*)").eq("id", attemptId).single();
-      if (!ad || ad.user_id !== user.id) { navigate("/student/exams"); return; }
-      if (ad.status !== "in_progress") {
-        setSubmitted(true); setExam(ad.exams);
-        setSR({ status: ad.status, score: ad.score, totalPoints: ad.total_points, percentage: ad.percentage, passed: ad.passed });
-        setLoading(false); return;
+      try {
+        const { data: ad, error: ae } = await supabase.from("exam_attempts").select("*,exams(*)").eq("id", attemptId).single();
+        if (ae || !ad || ad.user_id !== user.id) { navigate("/student/exams"); return; }
+        if (ad.status !== "in_progress") {
+          setSubmitted(true); setExam(ad.exams);
+          setSR({ status: ad.status, score: ad.score, totalPoints: ad.total_points, percentage: ad.percentage, passed: ad.passed });
+          setLoading(false); return;
+        }
+        setExam(ad.exams);
+        setTimeLeft(Math.max(0, (ad.exams.time_limit_minutes || 60) * 60 - Math.floor((Date.now() - new Date(ad.started_at).getTime()) / 1000)));
+        setTabSw(ad.tab_switches || 0);
+        logActivity(user.id, "exam_started", "exam_attempt", attemptId, { exam_id: ad.exam_id });
+
+        // Try RPC first, fall back to direct query if it fails
+        let ql: any[] = [];
+        try {
+          const { data: qs } = await supabase.rpc("get_exam_questions_for_student", { _exam_id: ad.exam_id });
+          ql = qs || [];
+        } catch {
+          // RPC failed — fall back to direct query
+          const { data: qs2 } = await supabase
+            .from("exam_questions")
+            .select("*, questions(*)")
+            .eq("exam_id", ad.exam_id)
+            .order("order_index");
+          ql = (qs2 || []).map((eq: any) => ({ ...eq.questions, ...eq, id: eq.question_id || eq.id }));
+        }
+        if (ad.exams.randomize_questions) ql = ql.sort(() => Math.random() - 0.5);
+        setQuestions(ql);
+
+        const { data: ea } = await supabase.from("exam_answers").select("*").eq("attempt_id", attemptId);
+        const am: Record<string, AnswerState> = {};
+        (ea || []).forEach((a: any) => { am[a.question_id] = { text: a.answer_text || "", data: a.answer_data, flagged: a.is_flagged || false, confidence: a.answer_data?.confidence || null }; });
+        setAnswers(am);
+      } catch (err) {
+        console.error("Exam load error:", err);
+      } finally {
+        setLoading(false); // ALWAYS clear loading
       }
-      setExam(ad.exams);
-      setTimeLeft(Math.max(0, (ad.exams.time_limit_minutes || 60) * 60 - Math.floor((Date.now() - new Date(ad.started_at).getTime()) / 1000)));
-      setTabSw(ad.tab_switches || 0);
-      logActivity(user.id, "exam_started", "exam_attempt", attemptId, { exam_id: ad.exam_id });
-      const { data: qs } = await supabase.rpc("get_exam_questions_for_student", { _exam_id: ad.exam_id });
-      let ql = qs || []; if (ad.exams.randomize_questions) ql = ql.sort(() => Math.random() - 0.5);
-      setQuestions(ql);
-      const { data: ea } = await supabase.from("exam_answers").select("*").eq("attempt_id", attemptId);
-      const am: Record<string, AnswerState> = {};
-      (ea || []).forEach((a: any) => { am[a.question_id] = { text: a.answer_text || "", data: a.answer_data, flagged: a.is_flagged || false, confidence: a.answer_data?.confidence || null }; });
-      setAnswers(am); setLoading(false);
     })();
   }, [attemptId, user]);
 
@@ -966,4 +987,3 @@ const ExamTaking = () => {
 };
 
 export default ExamTaking;
-
