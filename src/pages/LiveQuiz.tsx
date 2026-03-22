@@ -128,8 +128,7 @@ function splitBilingual(text: string): { ar: string; en: string } | null {
   if (m1 && /[a-zA-Z]/.test(m1[2])) return { ar: m1[1].trim(), en: m1[2].trim() };
   const m2 = t.match(/^\(([^)]+)\)\s*([\s\S]*[؀-ۿ][\s\S]*)$/);
   if (m2 && /[a-zA-Z]/.test(m2[1])) return { ar: m2[2].trim(), en: m2[1].trim() };
-  const lines = t.split(/
-+/);
+  const lines = t.split("\n");
   if (lines.length >= 2) {
     const arParts: string[] = [], enParts: string[] = [];
     for (const l of lines) {
