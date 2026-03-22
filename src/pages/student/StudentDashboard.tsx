@@ -126,7 +126,7 @@ const StudentDashboard = () => {
       const fallbackLang = arAccentVoice?.lang.startsWith('ar') ? 'ar-SA' : 'ar-SA';
       const enText = `assalamu alaykum wa rahmatullahi wa barakatuh, ${firstName}. ahlan wa sahlan bika fi akademiyyat tahleem. nas'alu Allah an yubarak fi ilmik.`;
       const enNotif = unread > 0
-        ? `ladayka ${unread} ${unread === 1 ? 'ish'ar jadeed' : "ish'arat jadeeda"}. tafaddal bil-ittila' alayha.`
+        ? `ladayka ${unread} ${unread === 1 ? "ishaar jadeed" : "ishaarat jadeeda"}. tafaddal bil-ittila alayha.`
         : '';
 
       // ── Speak a sequence of utterances ──────────────────────────
