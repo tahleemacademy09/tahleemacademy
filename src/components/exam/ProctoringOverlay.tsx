@@ -1,12 +1,12 @@
-/*  src/components/exam/ProctoringOverlay.tsx
-    FIXES:
-    1. Banner auto-dismisses when student corrects behaviour (face returns = banner gone)
-    2. Screenshot prevention via CSS + JS
-    3. Face not visible: warning only first time, points deducted on 2nd warning
-    4. No camera preview shown to student
+/*  src/components/exam/ProctoringOverlay.tsx — SMART v3
+    ✅ Specific warnings: camera off, face absent, eyes closed, looking away
+    ✅ Each banner: icon + title + what happened + what to do (EN + AR)
+    ✅ Red pulsing border when face/eye issue active
+    ✅ Severity-coded: warn → caution → alert → critical
+    ✅ Auto-dismisses when student fixes the issue
 */
 import { useEffect, useState, useRef, useCallback } from "react";
-import { ShieldAlert, ShieldCheck, Eye, EyeOff, AlertTriangle, X } from "lucide-react";
+import { X, Camera, ShieldAlert } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -22,34 +22,98 @@ interface Props {
   onPointDeduction: (points: number, reason: string) => void;
 }
 
-const VCFG: Record<string, {
-  en: string; ar: string;
-  hint?: string; // actionable hint shown below the warning
-  sev: "low"|"medium"|"high"|"critical";
-  pts: number; icon: string;
-  dismissOnFix?: boolean;
+const WARN: Record<string, {
+  icon: string; sev: "warn"|"caution"|"alert"|"critical";
+  title_en: string; title_ar: string;
+  msg_en: string;   msg_ar: string;
+  fix_en: string;   fix_ar: string;
+  pts: number; autoFix?: boolean;
 }> = {
-  tab_switch:        { en:"You left the exam window!",            ar:"غادرت نافذة الامتحان!",           hint:"Return to this tab immediately — this has been recorded.",                        sev:"high",     pts:5,  icon:"🚪" },
-  fullscreen_exit:   { en:"Return to fullscreen mode!",           ar:"عُد لوضع ملء الشاشة!",            hint:"Press F11 or tap the expand icon to return.",                                     sev:"medium",   pts:3,  icon:"⬜" },
-  webcam_disabled:   { en:"Camera is disconnected!",              ar:"الكاميرا مفصولة!",                 hint:"Please reconnect your camera. Exam cannot continue without it.",                   sev:"critical", pts:10, icon:"📷" },
-  camera_covered:    { en:"Camera appears covered or blocked!",   ar:"يبدو أن الكاميرا مغطاة!",         hint:"Remove anything covering your camera lens.",                                      sev:"critical", pts:10, icon:"🔲" },
-  copy_paste:        { en:"Copy/Paste is not allowed",            ar:"النسخ واللصق غير مسموح",           hint:"Answer questions in your own words.",                                             sev:"high",     pts:5,  icon:"📋" },
-  dev_tools:         { en:"Developer tools detected!",            ar:"أدوات المطور محظورة!",             hint:"Close developer tools immediately.",                                              sev:"critical", pts:10, icon:"🔧" },
-  right_click:       { en:"Right-click is disabled",              ar:"النقر الأيمن معطل",                hint:"Right-clicking is not permitted during exams.",                                   sev:"low",      pts:1,  icon:"🖱️" },
-  face_not_detected: { en:"Your face is not visible!",            ar:"وجهك غير مرئي!",                  hint:"Sit directly in front of the camera and ensure your face is clearly lit.",         sev:"high",     pts:0,  icon:"👤", dismissOnFix:true },
-  eyes_not_visible:  { en:"Your eyes are not visible!",           ar:"عيناك غير مرئيتين!",              hint:"Look directly at the screen. Keep your face well-lit and your eyes open.",        sev:"medium",   pts:0,  icon:"👁️", dismissOnFix:true },
-  looking_away:      { en:"Please look at your screen!",          ar:"انظر إلى شاشتك!",                 hint:"Keep your face centered in the camera. Looking away is recorded.",                 sev:"medium",   pts:0,  icon:"👀", dismissOnFix:true },
-  not_concentrating: { en:"You appear distracted!",               ar:"يبدو أنك مشتت!",                  hint:"Focus on the exam. Repeated distraction will affect your score.",                  sev:"medium",   pts:0,  icon:"🎯", dismissOnFix:true },
-  multiple_faces:    { en:"Multiple people detected!",            ar:"أكثر من شخص في الإطار!",           hint:"Only you should be visible. Move others out of frame.",                          sev:"critical", pts:10, icon:"👥" },
-  unusual_audio:     { en:"Background noise detected",            ar:"ضجيج في الخلفية",                  hint:"Please move to a quieter location.",                                              sev:"low",      pts:0,  icon:"🎙️" },
-  window_closed:     { en:"Exam window was closed!",              ar:"تم إغلاق نافذة الامتحان!",         hint:"Your exam has been auto-submitted.",                                              sev:"critical", pts:0,  icon:"🚫" },
+  camera_covered:    { icon:"📷", sev:"critical", pts:10,
+    title_en:"Camera Blocked!",              title_ar:"الكاميرا محجوبة!",
+    msg_en:  "Your camera feed is too dark or covered.",
+    msg_ar:  "صورة الكاميرا مظلمة جداً أو محجوبة.",
+    fix_en:  "Uncover your camera immediately to continue.",
+    fix_ar:  "أزل أي شيء يحجب الكاميرا فوراً." },
+  webcam_disabled:   { icon:"🚫", sev:"critical", pts:10,
+    title_en:"Camera Disconnected!",         title_ar:"الكاميرا مفصولة!",
+    msg_en:  "Your webcam has stopped working.",
+    msg_ar:  "الكاميرا توقفت عن العمل.",
+    fix_en:  "Reconnect your camera immediately.",
+    fix_ar:  "أعد تشغيل الكاميرا فوراً." },
+  face_not_detected: { icon:"👤", sev:"alert", pts:0, autoFix:true,
+    title_en:"Face Not Visible",             title_ar:"وجهك غير مرئي",
+    msg_en:  "Your face cannot be seen in the camera.",
+    msg_ar:  "وجهك غير ظاهر في الكاميرا.",
+    fix_en:  "Sit directly in front of your camera and keep your face visible.",
+    fix_ar:  "اجلس أمام الكاميرا مباشرة وابقَ ظاهراً." },
+  eyes_not_visible:  { icon:"👁️", sev:"caution", pts:0, autoFix:true,
+    title_en:"Eyes Not Detected",            title_ar:"العينان غير مرئيتان",
+    msg_en:  "Your eyes are not visible — you may be looking down or eyes are closed.",
+    msg_ar:  "عيناك غير مرئيتان — ربما تنظر للأسفل أو عيناك مغلقتان.",
+    fix_en:  "Look directly at the screen with your eyes open.",
+    fix_ar:  "انظر مباشرة إلى الشاشة وأبقِ عينيك مفتوحتين." },
+  looking_away:      { icon:"👀", sev:"warn", pts:0, autoFix:true,
+    title_en:"Not Concentrating",            title_ar:"غير مركز",
+    msg_en:  "You appear to be looking away from the screen.",
+    msg_ar:  "يبدو أنك تنظر بعيداً عن الشاشة.",
+    fix_en:  "Keep your eyes on the exam screen at all times.",
+    fix_ar:  "أبقِ عينيك على شاشة الامتحان في جميع الأوقات." },
+  multiple_faces:    { icon:"👥", sev:"critical", pts:10,
+    title_en:"Multiple People Detected!",    title_ar:"أكثر من شخص في الإطار!",
+    msg_en:  "More than one face is visible in your camera.",
+    msg_ar:  "يظهر أكثر من وجه في الكاميرا.",
+    fix_en:  "Ensure you are completely alone. This has been reported.",
+    fix_ar:  "تأكد من أنك وحدك تماماً. تم الإبلاغ عن هذا." },
+  tab_switch:        { icon:"🚪", sev:"alert", pts:5,
+    title_en:"You Left the Exam Window!",    title_ar:"غادرت نافذة الامتحان!",
+    msg_en:  "You switched away from the exam. This has been recorded.",
+    msg_ar:  "غادرت الامتحان. تم تسجيل ذلك.",
+    fix_en:  "Stay on this page. Further violations will auto-submit your exam.",
+    fix_ar:  "ابقَ في هذه الصفحة. المخالفات الإضافية ستؤدي إلى التسليم التلقائي." },
+  fullscreen_exit:   { icon:"⬜", sev:"caution", pts:3,
+    title_en:"Return to Fullscreen",         title_ar:"عُد لوضع ملء الشاشة",
+    msg_en:  "You exited fullscreen mode.",
+    msg_ar:  "خرجت من وضع ملء الشاشة.",
+    fix_en:  "Press F11 or click the fullscreen button to return.",
+    fix_ar:  "اضغط F11 للعودة لوضع ملء الشاشة." },
+  copy_paste:        { icon:"📋", sev:"alert", pts:5,
+    title_en:"Copy/Paste Detected",          title_ar:"تم اكتشاف النسخ/اللصق",
+    msg_en:  "A copy or paste action was detected and blocked.",
+    msg_ar:  "تم اكتشاف عملية نسخ أو لصق وإيقافها.",
+    fix_en:  "All exam content is protected. This action has been reported.",
+    fix_ar:  "محتوى الامتحان محمي. تم تسجيل وإبلاغ هذا الإجراء." },
+  dev_tools:         { icon:"🔧", sev:"critical", pts:10,
+    title_en:"Developer Tools Blocked!",     title_ar:"أدوات المطور محظورة!",
+    msg_en:  "An attempt to open developer tools was detected.",
+    msg_ar:  "تم اكتشاف محاولة فتح أدوات المطور.",
+    fix_en:  "This is a serious violation and has been immediately reported.",
+    fix_ar:  "هذه مخالفة خطيرة وتم الإبلاغ عنها فوراً." },
+  right_click:       { icon:"🖱️", sev:"warn", pts:1,
+    title_en:"Right-Click Disabled",         title_ar:"النقر الأيمن معطل",
+    msg_en:  "Right-clicking is not allowed during the exam.",
+    msg_ar:  "النقر بزر الماوس الأيمن غير مسموح أثناء الامتحان.",
+    fix_en:  "This action has been recorded.",
+    fix_ar:  "تم تسجيل هذا الإجراء." },
+  not_concentrating: { icon:"🎯", sev:"caution", pts:0, autoFix:true,
+    title_en:"Stay Focused!",               title_ar:"ابقَ مركزاً!",
+    msg_en:  "You appear to be distracted or not concentrating.",
+    msg_ar:  "يبدو أنك مشتت أو غير مركز.",
+    fix_en:  "Focus on your exam. Repeated distraction is recorded and may affect your score.",
+    fix_ar:  "ركز على امتحانك. الإلهاء المتكرر يُسجَّل وقد يؤثر على درجتك." },
+  unusual_audio:     { icon:"🎙️", sev:"warn", pts:0,
+    title_en:"Background Noise Detected",    title_ar:"ضوضاء في الخلفية",
+    msg_en:  "Sustained background noise was detected.",
+    msg_ar:  "تم اكتشاف ضوضاء مستمرة في الخلفية.",
+    fix_en:  "Move to a quiet environment or silence background sounds.",
+    fix_ar:  "انتقل إلى بيئة هادئة." },
 };
 
-const SEV_STYLE: Record<string,{bg:string;border:string;text:string}> = {
-  low:      { bg:"#fffbeb", border:"#f59e0b", text:"#92400e" },
-  medium:   { bg:"#fff7ed", border:"#f97316", text:"#7c2d12" },
-  high:     { bg:"#1a0000", border:"#ef4444", text:"#ffffff" },
-  critical: { bg:"#0f0000", border:"#dc2626", text:"#ffffff" },
+const SEV_THEME = {
+  warn:     { bg:"#fffbeb", border:"#f59e0b", text:"#78350f" },
+  caution:  { bg:"#fff7ed", border:"#f97316", text:"#7c2d12" },
+  alert:    { bg:"#0f0000", border:"#ef4444", text:"#ffffff" },
+  critical: { bg:"#080000", border:"#dc2626", text:"#ffffff" },
 };
 
 const ProctoringOverlay = ({
@@ -58,366 +122,215 @@ const ProctoringOverlay = ({
   audioMonitoring, recentViolations, getStream,
   attemptId, onPointDeduction,
 }: Props) => {
-  const { t } = useLanguage();
-  const videoRef     = useRef<HTMLVideoElement>(null);
-  const canvasRef    = useRef<HTMLCanvasElement>(null);
-  const detectIv     = useRef<any>(null);
-  const noFaceTimer  = useRef<any>(null);
-  const warnCooldown = useRef<Record<string,number>>({});
-  const faceWarnCount = useRef(0); // track how many face warnings given
+  const { language } = useLanguage();
+  const videoRef      = useRef<HTMLVideoElement>(null);
+  const warnCooldown  = useRef<Record<string, number>>({});
+  const faceWarnCount = useRef(0);
+  const ptsDone       = useRef<Set<string>>(new Set());
 
-  const [banner, setBanner]           = useState<any>(null);
+  const [banners, setBanners]         = useState<Array<{ id:string; type:string; pts:number }>>([]);
   const [autoCountdown, setAutoCount] = useState<number|null>(null);
-  const [localFace, setLocalFace]     = useState(true);
-  const [faceCount, setFaceCount]     = useState(1);
   const [pointsLost, setPointsLost]   = useState(0);
-  const [liveFeed, setLiveFeed]       = useState<string[]>([]);
+  const [borderAlert, setBorderAlert] = useState(false);
 
-  // ── Screenshot prevention ──────────────────────────────────
+  // Screenshot prevention
   useEffect(() => {
-    // CSS: blur on print/screenshot attempt
     const style = document.createElement("style");
-    style.id = "proctor-screenshot-block";
-    style.textContent = `
-      @media print { body { display: none !important; } }
-      .exam-content { -webkit-user-select: none; user-select: none; }
-    `;
+    style.id = "proctor-css";
+    style.textContent = "@media print{body{display:none!important}} .exam-content{-webkit-user-select:none;user-select:none}";
     document.head.appendChild(style);
-
-    // Block PrintScreen key
     const blockPrint = (e: KeyboardEvent) => {
-      if (e.key === "PrintScreen" || (e.metaKey && e.shiftKey && ["3","4","5"].includes(e.key))) {
-        e.preventDefault();
-        triggerWarningDirect("screenshot_attempt");
-        // Clear clipboard immediately
-        setTimeout(() => { navigator.clipboard?.writeText("").catch(() => {}); }, 100);
-      }
+      if (e.key === "PrintScreen") { e.preventDefault(); showBanner("copy_paste"); setTimeout(()=>navigator.clipboard?.writeText("").catch(()=>{}),100); }
     };
-
-    // Detect screen capture API usage
-    const handleVisibility = () => {
-      if (document.hidden) {
-        // May indicate screenshot tool
-      }
-    };
-
     document.addEventListener("keyup", blockPrint);
-    return () => {
-      document.removeEventListener("keyup", blockPrint);
-      document.getElementById("proctor-screenshot-block")?.remove();
-    };
+    return () => { document.removeEventListener("keyup", blockPrint); document.getElementById("proctor-css")?.remove(); };
   }, []);
 
-  // Attach stream to hidden video for display
+  // Attach stream
   useEffect(() => {
-    const stream = getStream();
-    if (stream && videoRef.current) {
-      videoRef.current.srcObject = stream;
-      videoRef.current.play().catch(() => {});
-    }
-    // Also attach to camera preview display element
-    const displayEl = document.getElementById("proctor-cam-preview") as HTMLVideoElement;
-    if (displayEl && stream) {
-      displayEl.srcObject = stream;
-      displayEl.play().catch(() => {});
-    }
+    const s = getStream();
+    if (s && videoRef.current) { videoRef.current.srcObject = s; videoRef.current.play().catch(()=>{}); }
   }, [cameraReady, getStream]);
 
-  const addFeed = useCallback((msg: string) => {
-    const time = new Date().toLocaleTimeString([], { hour:"2-digit", minute:"2-digit", second:"2-digit" });
-    setLiveFeed(prev => [`${time} — ${msg}`, ...prev].slice(0, 25));
-  }, []);
-
-  // ── Show banner — with per-type cooldown ──────────────────
-  const triggerWarningDirect = useCallback((type: string, isSecondFaceWarn = false) => {
-    const cfg = VCFG[type];
-    if (!cfg) return;
-
-    // Per-type cooldown (8s for most, 20s for face warnings)
-    const cooldown = type === "face_not_detected" ? 20000 : 8000;
+  const showBanner = useCallback((type: string) => {
+    const cfg = WARN[type]; if (!cfg) return;
+    const COOL: Record<string,number> = {
+      face_not_detected:2000, eyes_not_visible:3500, looking_away:3500,
+      camera_covered:2500, webcam_disabled:2500, multiple_faces:5000,
+      tab_switch:3000, dev_tools:3000, copy_paste:4000, right_click:6000,
+      fullscreen_exit:5000, unusual_audio:12000,
+    };
     const now = Date.now();
-    if (warnCooldown.current[type] && now - warnCooldown.current[type] < cooldown) return;
+    if (warnCooldown.current[type] && now - warnCooldown.current[type] < (COOL[type]||6000)) return;
     warnCooldown.current[type] = now;
 
-    // Face detection: first warn = no points, second+ = deduct points
     let pts = cfg.pts;
-    if (type === "face_not_detected") {
-      faceWarnCount.current++;
-      if (faceWarnCount.current < 2) {
-        pts = 0; // first warning - no deduction
-      } else {
-        pts = 5; // 2nd+ warning - deduct 5 points
-      }
-    }
+    if (type === "face_not_detected") { faceWarnCount.current++; pts = faceWarnCount.current >= 2 ? 5 : 0; }
 
-    setBanner({ type, cfg, pts, time: new Date().toLocaleTimeString() });
+    const id = type + "-" + now;
+    setBanners(prev => [{id, type, pts}, ...prev].slice(0, 3));
 
-    if (pts > 0) {
-      onPointDeduction(pts, cfg.en);
+    if (pts > 0 && !ptsDone.current.has(id)) {
+      ptsDone.current.add(id);
+      onPointDeduction(pts, cfg.title_en);
       setPointsLost(p => p + pts);
-      addFeed(`${cfg.icon} ${cfg.en} — −${pts} pts`);
-    } else {
-      addFeed(`${cfg.icon} ${cfg.en} — Warning #${faceWarnCount.current}`);
     }
 
-    // Auto-dismiss after 6s unless it's a "dismissOnFix" type
-    if (!cfg.dismissOnFix) {
-      setTimeout(() => setBanner((b: any) => b?.type === type ? null : b), 6000);
+    if (!cfg.autoFix) setTimeout(() => setBanners(prev => prev.filter(b => b.id !== id)), 7000);
+    if (["face_not_detected","eyes_not_visible","looking_away","camera_covered"].includes(type)) setBorderAlert(true);
+
+    if (attemptId) {
+      supabase.from("proctoring_logs" as any).insert({
+        attempt_id: attemptId, violation_type: type, severity: cfg.sev,
+        points_deducted: pts, detected_at: new Date().toISOString(),
+      }).then(()=>{});
     }
-  }, [onPointDeduction, addFeed]);
+  }, [onPointDeduction, attemptId]);
 
-  // ── Face detection with auto-dismiss when face returns ────
-  const detectFaces = useCallback(async () => {
-    const video = videoRef.current;
-    if (!video || video.readyState < 2) return;
+  useEffect(() => { if (lastWarningType) showBanner(lastWarningType); }, [lastWarningType, violations]);
 
-    let facePresent = false;
-    let count = 0;
-
-    // Try FaceDetector API
-    if ("FaceDetector" in window) {
-      try {
-        const fd = new (window as any).FaceDetector({ fastMode: true, maxDetectedFaces: 5 });
-        const faces = await fd.detect(video);
-        count = faces.length;
-        facePresent = count >= 1;
-      } catch (_) {}
+  // Auto-dismiss face banners when face returns
+  useEffect(() => {
+    if (faceDetected) {
+      setBanners(p => p.filter(b => !["face_not_detected","eyes_not_visible","looking_away","not_concentrating"].includes(b.type)));
+      setBorderAlert(false);
     }
-
-    // Canvas fallback
-    if (!facePresent && count === 0) {
-      const canvas = canvasRef.current;
-      if (canvas) {
-        const ctx = canvas.getContext("2d");
-        if (ctx) {
-          canvas.width = 160; canvas.height = 120;
-          ctx.drawImage(video, 0, 0, 160, 120);
-          try {
-            const { data } = ctx.getImageData(0, 0, 160, 120);
-            let skin = 0;
-            for (let i = 0; i < data.length; i += 16) {
-              const r = data[i], g = data[i+1], b = data[i+2];
-              if (r > 50 && g > 20 && b > 10 && r > g && r > b && Math.abs(r-g) < 120 && (r-b) > 10) skin++;
-            }
-            facePresent = (skin / (160*120/4)) > 0.02;
-            count = facePresent ? 1 : 0;
-          } catch (_) {}
-        }
-      }
-    }
-
-    setLocalFace(facePresent);
-    setFaceCount(count);
-
-    if (!facePresent) {
-      // Start grace timer before warning
-      if (!noFaceTimer.current) {
-        noFaceTimer.current = setTimeout(() => {
-          setLocalFace(v => {
-            if (!v) triggerWarningDirect("face_not_detected");
-            return v;
-          });
-          noFaceTimer.current = null;
-        }, 3000); // 3s grace before warning
-      }
-    } else {
-      // Face returned — clear grace timer AND dismiss banner if it was a face warning
-      if (noFaceTimer.current) { clearTimeout(noFaceTimer.current); noFaceTimer.current = null; }
-      setBanner((b: any) => {
-        if (b?.cfg?.dismissOnFix) return null; // auto-dismiss face warning
-        return b;
-      });
-      if (count > 1) triggerWarningDirect("multiple_faces");
-    }
-  }, [triggerWarningDirect]);
+  }, [faceDetected]);
 
   useEffect(() => {
-    if (!cameraReady) return;
-    detectIv.current = setInterval(detectFaces, 600); // 600ms for responsive detection
-    return () => { clearInterval(detectIv.current); if (noFaceTimer.current) clearTimeout(noFaceTimer.current); };
-  }, [cameraReady, detectFaces]);
-
-  // Violations from proctoring hook
-  useEffect(() => {
-    if (!lastWarningType) return;
-    triggerWarningDirect(lastWarningType);
-  }, [lastWarningType, violations]);
+    if (cameraReady) setBanners(p => p.filter(b => b.type !== "webcam_disabled"));
+    else showBanner("webcam_disabled");
+  }, [cameraReady]);
 
   // Auto-submit countdown
   useEffect(() => {
     if (suspicionLevel === "critical" && strikes >= maxStrikes - 1) {
       let c = 10; setAutoCount(c);
-      const iv = setInterval(() => { c--; setAutoCount(c); if (c <= 0) clearInterval(iv); }, 1000);
+      const iv = setInterval(()=>{ c--; setAutoCount(c); if (c<=0) clearInterval(iv); }, 1000);
       return () => clearInterval(iv);
-    } else { setAutoCount(null); }
+    } else setAutoCount(null);
   }, [suspicionLevel, strikes, maxStrikes]);
 
-  // Log to DB
-  useEffect(() => {
-    if (!lastWarningType || !attemptId) return;
-    const cfg = VCFG[lastWarningType];
-    supabase.from("proctoring_logs" as any).insert({
-      attempt_id: attemptId, violation_type: lastWarningType,
-      severity: cfg?.sev || "medium", points_deducted: cfg?.pts || 0,
-      detected_at: new Date().toISOString(),
-    }).then(() => {});
-  }, [lastWarningType, violations, attemptId]);
-
-  const scoreColor = integrityScore >= 80 ? "#22c55e" : integrityScore >= 60 ? "#f59e0b" : "#ef4444";
-  const statusLabel = { low:"SECURE", medium:"CAUTION", high:"WARNING", critical:"CRITICAL" }[suspicionLevel] || "SECURE";
-  const statusColor = { low:"#22c55e", medium:"#f59e0b", high:"#ef4444", critical:"#dc2626" }[suspicionLevel] || "#22c55e";
-  const bannerStyle = banner ? SEV_STYLE[banner.cfg.sev] : null;
+  const isAr = language === "ar";
+  const statusColor = {low:"#22c55e",medium:"#f59e0b",high:"#ef4444",critical:"#dc2626"}[suspicionLevel]||"#22c55e";
 
   return (
     <>
-      {/* Hidden video for processing */}
       <video ref={videoRef} muted playsInline
-        style={{ position:"fixed", width:1, height:1, opacity:0, top:0, left:0, pointerEvents:"none" }} />
-      <canvas ref={canvasRef} style={{ display:"none" }} />
+        style={{position:"fixed",width:1,height:1,opacity:0,top:0,left:0,pointerEvents:"none"}}/>
 
-      {/* ── Live camera corner preview ── */}
-      {cameraReady && (
-        <div style={{
-          position:"fixed", bottom:80, right:12, zIndex:300,
-          borderRadius:12, overflow:"hidden",
-          border: localFace ? "2px solid #22c55e" : "2px solid #ef4444",
-          boxShadow: localFace ? "0 0 12px rgba(34,197,94,.4)" : "0 0 12px rgba(239,68,68,.6)",
-          width:88, height:66, background:"#000",
-          transition:"border-color .3s, box-shadow .3s",
-        }}>
-          <video id="proctor-cam-preview" muted playsInline autoPlay
-            style={{ width:"100%", height:"100%", objectFit:"cover", transform:"scaleX(-1)" }}/>
-          {/* Status dot */}
-          <div style={{
-            position:"absolute", bottom:3, left:3,
-            width:8, height:8, borderRadius:"50%",
-            background: localFace ? "#22c55e" : "#ef4444",
-            boxShadow: localFace ? "0 0 6px #22c55e" : "0 0 6px #ef4444",
-            animation: !localFace ? "pulse 1s infinite" : "none",
-          }}/>
-          {/* "No face" overlay on camera widget */}
-          {!localFace && (
-            <div style={{
-              position:"absolute", inset:0,
-              background:"rgba(239,68,68,.35)",
-              display:"flex", alignItems:"center", justifyContent:"center",
-            }}>
-              <span style={{ fontSize:22 }}>👤</span>
-            </div>
-          )}
-          {/* Multiple faces warning */}
-          {faceCount > 1 && (
-            <div style={{
-              position:"absolute", top:2, left:2, right:2,
-              background:"rgba(220,38,38,.9)", borderRadius:4,
-              fontSize:8, fontWeight:900, color:"#fff", textAlign:"center", padding:"1px 0",
-            }}>
-              {faceCount} FACES
-            </div>
-          )}
-        </div>
+      {/* Pulsing alert border */}
+      {borderAlert && (
+        <div style={{position:"fixed",inset:0,zIndex:400,pointerEvents:"none",
+          border:"4px solid #ef4444",borderRadius:0,
+          animation:"procBorderPulse 1s ease-in-out infinite"}}/>
       )}
 
-      {/* Camera offline warning */}
-      {!cameraReady && (
-        <div style={{
-          position:"fixed", bottom:80, right:12, zIndex:300,
-          width:88, height:66, borderRadius:12, background:"#1a0000",
-          border:"2px solid #ef4444", display:"flex", flexDirection:"column",
-          alignItems:"center", justifyContent:"center", gap:2,
-        }}>
-          <span style={{ fontSize:20 }}>📷</span>
-          <span style={{ fontSize:8, fontWeight:900, color:"#ef4444" }}>OFFLINE</span>
-        </div>
-      )}
-
-      {/* Auto-submit overlay */}
+      {/* Auto-submit countdown */}
       {autoCountdown !== null && autoCountdown > 0 && (
-        <div style={{ position:"fixed", inset:0, zIndex:9999, background:"rgba(0,0,0,.92)",
-          display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:16 }}>
-          <ShieldAlert style={{ width:68, height:68, color:"#dc2626" }} />
-          <div style={{ fontSize:24, fontWeight:900, color:"#fff", textAlign:"center" }}>🚨 Multiple Violations Detected!</div>
-          <div style={{ fontSize:15, color:"rgba(255,255,255,.7)" }}>Your exam will auto-submit in</div>
-          <div style={{ fontSize:90, fontWeight:900, color:"#dc2626", fontVariantNumeric:"tabular-nums", lineHeight:1 }}>{autoCountdown}</div>
-        </div>
-      )}
-
-      {/* Warning banner — dismisses automatically when issue fixed */}
-      {banner && bannerStyle && (
-        <div style={{
-          position:"fixed", top:56, left:"50%", transform:"translateX(-50%)",
-          zIndex:500, maxWidth:460, width:"calc(100% - 16px)",
-          background: banner.cfg.sev === "critical" || banner.cfg.sev === "high"
-            ? "linear-gradient(135deg,#1a0000,#3a0000)"
-            : bannerStyle.bg,
-          border:`2px solid ${bannerStyle.border}`,
-          borderRadius:16, padding:"14px 16px",
-          boxShadow:`0 8px 32px rgba(0,0,0,.4), 0 0 0 2px ${bannerStyle.border}33`,
-          animation:"bannerIn .25s ease",
-        }}>
-          <div style={{ display:"flex", alignItems:"flex-start", gap:12 }}>
-            <div style={{ width:42, height:42, borderRadius:12, background:`${bannerStyle.border}22`,
-              display:"flex", alignItems:"center", justifyContent:"center", fontSize:22, flexShrink:0 }}>
-              {banner.cfg.icon}
-            </div>
-            <div style={{ flex:1 }}>
-              <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4 }}>
-                <span style={{ fontSize:11, fontWeight:900, color:bannerStyle.text, letterSpacing:.8 }}>
-                  ⚠️ PROCTORING ALERT
-                </span>
-                {banner.pts > 0 && (
-                  <span style={{ fontSize:11, fontWeight:700, color:bannerStyle.text,
-                    background:`${bannerStyle.border}22`, borderRadius:10, padding:"2px 8px", marginLeft:"auto" }}>
-                    −{banner.pts} pts
-                  </span>
-                )}
-                {banner.pts === 0 && (
-                  <span style={{ fontSize:10, color:bannerStyle.text, opacity:.7, marginLeft:"auto" }}>
-                    Warning #{faceWarnCount.current}
-                  </span>
-                )}
-              </div>
-              <div style={{ fontSize:16, fontWeight:800, color:bannerStyle.text, marginBottom:3 }}>
-                {t(banner.cfg.en, banner.cfg.ar)}
-              </div>
-              {/* Actionable hint */}
-              {banner.cfg.hint && (
-                <div style={{ fontSize:12, color:bannerStyle.text, opacity:.85, marginTop:4, lineHeight:1.5 }}>
-                  {banner.cfg.hint}
-                </div>
-              )}
-              {!banner.cfg.hint && !banner.cfg.dismissOnFix && (
-                <div style={{ fontSize:11, color:bannerStyle.text, opacity:.7 }}>
-                  This has been recorded and sent to your instructor.
-                </div>
-              )}
-              {banner.type === "face_not_detected" && faceWarnCount.current >= 2 && (
-                <div style={{ fontSize:11, color:"#fca5a5", fontWeight:700, marginTop:4 }}>
-                  ⚠️ Points will be deducted for repeated violations.
-                </div>
-              )}
-            </div>
-            <button onClick={() => setBanner(null)} style={{ background:"none", border:"none",
-              color:bannerStyle.text, cursor:"pointer", opacity:.6, padding:2, flexShrink:0 }}>
-              <X style={{ width:16, height:16 }} />
-            </button>
+        <div style={{position:"fixed",inset:0,zIndex:9999,background:"rgba(0,0,0,.96)",
+          display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:14,padding:24}}>
+          <ShieldAlert style={{width:72,height:72,color:"#dc2626"}}/>
+          <div style={{fontSize:22,fontWeight:900,color:"#fff",textAlign:"center"}}>
+            🚨 Multiple Violations — Auto-Submitting
           </div>
-          {/* Shrink bar */}
-          {!banner.cfg.dismissOnFix && (
-            <div style={{ height:3, background:`${bannerStyle.border}33`, borderRadius:2, marginTop:12, overflow:"hidden" }}>
-              <div style={{ height:"100%", background:bannerStyle.border, borderRadius:2,
-                animation:"shrinkBar 6s linear forwards" }} />
-            </div>
-          )}
+          <div style={{fontSize:14,color:"rgba(255,255,255,.6)",textAlign:"center",maxWidth:300}}>
+            Too many integrity violations were detected. Exam submitting in:
+          </div>
+          <div style={{fontSize:96,fontWeight:900,color:"#dc2626",lineHeight:1}}>{autoCountdown}</div>
         </div>
       )}
 
-      {/* Proctoring status pill is rendered inside ExamTaking header — nothing here */}
+      {/* Banners stack */}
+      <div style={{position:"fixed",top:60,left:"50%",transform:"translateX(-50%)",
+        zIndex:500,width:"calc(100% - 20px)",maxWidth:500,
+        display:"flex",flexDirection:"column",gap:8,pointerEvents:"none"}}>
+        {banners.map(banner => {
+          const cfg = WARN[banner.type]; if (!cfg) return null;
+          const theme = SEV_THEME[cfg.sev];
+          const isDark = cfg.sev === "alert" || cfg.sev === "critical";
+          return (
+            <div key={banner.id} style={{
+              background: isDark ? "linear-gradient(135deg,#1a0000,#2a0000)" : theme.bg,
+              border:"2px solid "+theme.border,borderRadius:16,
+              padding:"14px 16px 12px",
+              boxShadow:"0 8px 32px rgba(0,0,0,.55), 0 0 0 1px "+theme.border+"44",
+              animation:"procBannerIn .2s ease",pointerEvents:"auto",
+            }}>
+              <div style={{display:"flex",alignItems:"flex-start",gap:11,marginBottom:8}}>
+                <div style={{width:40,height:40,borderRadius:10,background:theme.border+"22",
+                  display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>
+                  {cfg.icon}
+                </div>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:9,fontWeight:900,color:theme.text,opacity:.65,letterSpacing:1,textTransform:"uppercase"}}>
+                    {{warn:"⚠ Warning",caution:"⚠ Caution",alert:"🚨 Alert",critical:"🚨 Critical"}[cfg.sev]}
+                  </div>
+                  <div style={{fontSize:15,fontWeight:900,color:theme.text,lineHeight:1.3}}>
+                    {isAr ? cfg.title_ar : cfg.title_en}
+                  </div>
+                </div>
+                {banner.pts > 0 && (
+                  <div style={{background:theme.border+"33",border:"1px solid "+theme.border,
+                    borderRadius:8,padding:"3px 9px",fontSize:11,fontWeight:900,color:theme.text,flexShrink:0}}>
+                    −{banner.pts} pts
+                  </div>
+                )}
+                {!cfg.autoFix && (
+                  <button onClick={()=>setBanners(p=>p.filter(b=>b.id!==banner.id))}
+                    style={{background:"none",border:"none",color:theme.text,cursor:"pointer",opacity:.5,padding:2,flexShrink:0,pointerEvents:"auto"}}>
+                    <X style={{width:14,height:14}}/>
+                  </button>
+                )}
+              </div>
+              <div style={{fontSize:13,color:theme.text,opacity:.8,lineHeight:1.6,paddingLeft:51,marginBottom:6}}>
+                {isAr ? cfg.msg_ar : cfg.msg_en}
+              </div>
+              {cfg.fix_en && (
+                <div style={{fontSize:12,fontWeight:700,color:theme.text,paddingLeft:51,lineHeight:1.5,
+                  borderTop:"1px solid "+theme.border+"33",paddingTop:7}}>
+                  👉 {isAr ? cfg.fix_ar : cfg.fix_en}
+                </div>
+              )}
+              {cfg.autoFix && (
+                <div style={{fontSize:10,color:theme.text,opacity:.45,paddingLeft:51,marginTop:5}}>
+                  {isAr ? "⟳ سيختفي هذا التنبيه تلقائياً عند حل المشكلة" : "⟳ Dismisses automatically when resolved."}
+                </div>
+              )}
+              {!cfg.autoFix && (
+                <div style={{height:2,background:theme.border+"22",borderRadius:1,marginTop:10,overflow:"hidden"}}>
+                  <div style={{height:"100%",background:theme.border,borderRadius:1,animation:"procShrink 7s linear forwards"}}/>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Status pills */}
+      <div style={{position:"fixed",bottom:80,left:10,zIndex:300,pointerEvents:"none",
+        background:"rgba(0,0,0,.75)",backdropFilter:"blur(8px)",borderRadius:20,
+        padding:"5px 10px 5px 7px",border:"1px solid "+statusColor+"44",
+        display:"flex",alignItems:"center",gap:6,fontSize:10,color:statusColor,fontWeight:700,letterSpacing:.5}}>
+        <div style={{width:6,height:6,borderRadius:"50%",background:statusColor,
+          animation:suspicionLevel!=="low"?"procPulse 1s infinite":"none"}}/>
+        {{low:"SECURE",medium:"CAUTION",high:"WARNING",critical:"CRITICAL"}[suspicionLevel]||"SECURE"}
+        {pointsLost > 0 && <span style={{color:"#ef4444",marginLeft:4}}>−{pointsLost}pts</span>}
+      </div>
+      <div style={{position:"fixed",bottom:80,right:10,zIndex:300,pointerEvents:"none",
+        background:"rgba(0,0,0,.75)",backdropFilter:"blur(8px)",borderRadius:20,
+        padding:"5px 10px",border:"1px solid "+(cameraReady?"#22c55e44":"#ef444444"),
+        display:"flex",alignItems:"center",gap:5,
+        fontSize:10,color:cameraReady?"#22c55e":"#ef4444",fontWeight:700}}>
+        <Camera style={{width:10,height:10}}/>
+        {!cameraReady ? "📷 Camera Off" : !faceDetected ? "👤 No Face!" : "Face ✓"}
+      </div>
 
       <style>{`
-        @keyframes bannerIn { from{opacity:0;transform:translate(-50%,-14px)} to{opacity:1;transform:translate(-50%,0)} }
-        @keyframes shrinkBar { from{width:100%} to{width:0} }
-        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+        @keyframes procBannerIn{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
+        @keyframes procShrink{from{width:100%}to{width:0}}
+        @keyframes procPulse{0%,100%{opacity:1}50%{opacity:.2}}
+        @keyframes procBorderPulse{0%,100%{opacity:.4}50%{opacity:1}}
       `}</style>
     </>
   );
