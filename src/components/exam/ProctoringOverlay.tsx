@@ -24,20 +24,25 @@ interface Props {
 
 const VCFG: Record<string, {
   en: string; ar: string;
+  hint?: string; // actionable hint shown below the warning
   sev: "low"|"medium"|"high"|"critical";
   pts: number; icon: string;
-  dismissOnFix?: boolean; // banner clears automatically when issue resolved
+  dismissOnFix?: boolean;
 }> = {
-  tab_switch:        { en:"⚠️ You left the exam window!",        ar:"⚠️ غادرت نافذة الامتحان!",       sev:"high",     pts:5,  icon:"🚪" },
-  fullscreen_exit:   { en:"⚠️ Return to fullscreen!",            ar:"⚠️ عُد لوضع ملء الشاشة!",        sev:"medium",   pts:3,  icon:"⬜" },
-  webcam_disabled:   { en:"🚨 Camera disconnected!",              ar:"🚨 الكاميرا مفصولة!",            sev:"critical", pts:10, icon:"📷" },
-  copy_paste:        { en:"🚫 Copy/Paste is not allowed",         ar:"🚫 النسخ واللصق غير مسموح",      sev:"high",     pts:5,  icon:"📋" },
-  dev_tools:         { en:"🚫 Developer tools detected!",         ar:"🚫 أدوات المطور محظورة!",         sev:"critical", pts:10, icon:"🔧" },
-  right_click:       { en:"🚫 Right-click disabled",              ar:"🚫 النقر الأيمن معطل",            sev:"low",      pts:1,  icon:"🖱️" },
-  face_not_detected: { en:"👁️ Look at your screen!",             ar:"👁️ انظر إلى شاشتك!",            sev:"high",     pts:0,  icon:"👤", dismissOnFix:true },
-  multiple_faces:    { en:"🚨 Multiple people detected!",         ar:"🚨 أكثر من شخص في الإطار!",      sev:"critical", pts:10, icon:"👥" },
-  looking_away:      { en:"👁️ Please focus on your screen",      ar:"👁️ ركز على شاشتك",               sev:"low",      pts:0,  icon:"👀", dismissOnFix:true },
-  unusual_audio:     { en:"🎙️ Background noise detected",        ar:"🎙️ ضجيج في الخلفية",             sev:"low",      pts:0,  icon:"🎙️" },
+  tab_switch:        { en:"You left the exam window!",            ar:"غادرت نافذة الامتحان!",           hint:"Return to this tab immediately — this has been recorded.",                        sev:"high",     pts:5,  icon:"🚪" },
+  fullscreen_exit:   { en:"Return to fullscreen mode!",           ar:"عُد لوضع ملء الشاشة!",            hint:"Press F11 or tap the expand icon to return.",                                     sev:"medium",   pts:3,  icon:"⬜" },
+  webcam_disabled:   { en:"Camera is disconnected!",              ar:"الكاميرا مفصولة!",                 hint:"Please reconnect your camera. Exam cannot continue without it.",                   sev:"critical", pts:10, icon:"📷" },
+  camera_covered:    { en:"Camera appears covered or blocked!",   ar:"يبدو أن الكاميرا مغطاة!",         hint:"Remove anything covering your camera lens.",                                      sev:"critical", pts:10, icon:"🔲" },
+  copy_paste:        { en:"Copy/Paste is not allowed",            ar:"النسخ واللصق غير مسموح",           hint:"Answer questions in your own words.",                                             sev:"high",     pts:5,  icon:"📋" },
+  dev_tools:         { en:"Developer tools detected!",            ar:"أدوات المطور محظورة!",             hint:"Close developer tools immediately.",                                              sev:"critical", pts:10, icon:"🔧" },
+  right_click:       { en:"Right-click is disabled",              ar:"النقر الأيمن معطل",                hint:"Right-clicking is not permitted during exams.",                                   sev:"low",      pts:1,  icon:"🖱️" },
+  face_not_detected: { en:"Your face is not visible!",            ar:"وجهك غير مرئي!",                  hint:"Sit directly in front of the camera and ensure your face is clearly lit.",         sev:"high",     pts:0,  icon:"👤", dismissOnFix:true },
+  eyes_not_visible:  { en:"Your eyes are not visible!",           ar:"عيناك غير مرئيتين!",              hint:"Look directly at the screen. Keep your face well-lit and your eyes open.",        sev:"medium",   pts:0,  icon:"👁️", dismissOnFix:true },
+  looking_away:      { en:"Please look at your screen!",          ar:"انظر إلى شاشتك!",                 hint:"Keep your face centered in the camera. Looking away is recorded.",                 sev:"medium",   pts:0,  icon:"👀", dismissOnFix:true },
+  not_concentrating: { en:"You appear distracted!",               ar:"يبدو أنك مشتت!",                  hint:"Focus on the exam. Repeated distraction will affect your score.",                  sev:"medium",   pts:0,  icon:"🎯", dismissOnFix:true },
+  multiple_faces:    { en:"Multiple people detected!",            ar:"أكثر من شخص في الإطار!",           hint:"Only you should be visible. Move others out of frame.",                          sev:"critical", pts:10, icon:"👥" },
+  unusual_audio:     { en:"Background noise detected",            ar:"ضجيج في الخلفية",                  hint:"Please move to a quieter location.",                                              sev:"low",      pts:0,  icon:"🎙️" },
+  window_closed:     { en:"Exam window was closed!",              ar:"تم إغلاق نافذة الامتحان!",         hint:"Your exam has been auto-submitted.",                                              sev:"critical", pts:0,  icon:"🚫" },
 };
 
 const SEV_STYLE: Record<string,{bg:string;border:string;text:string}> = {
@@ -213,7 +218,7 @@ const ProctoringOverlay = ({
             return v;
           });
           noFaceTimer.current = null;
-        }, 5000); // 5s grace before warning
+        }, 3000); // 3s grace before warning
       }
     } else {
       // Face returned — clear grace timer AND dismiss banner if it was a face warning
@@ -228,7 +233,7 @@ const ProctoringOverlay = ({
 
   useEffect(() => {
     if (!cameraReady) return;
-    detectIv.current = setInterval(detectFaces, 3000);
+    detectIv.current = setInterval(detectFaces, 600); // 600ms for responsive detection
     return () => { clearInterval(detectIv.current); if (noFaceTimer.current) clearTimeout(noFaceTimer.current); };
   }, [cameraReady, detectFaces]);
 
@@ -265,10 +270,66 @@ const ProctoringOverlay = ({
 
   return (
     <>
-      {/* Hidden video elements */}
+      {/* Hidden video for processing */}
       <video ref={videoRef} muted playsInline
         style={{ position:"fixed", width:1, height:1, opacity:0, top:0, left:0, pointerEvents:"none" }} />
       <canvas ref={canvasRef} style={{ display:"none" }} />
+
+      {/* ── Live camera corner preview ── */}
+      {cameraReady && (
+        <div style={{
+          position:"fixed", bottom:80, right:12, zIndex:300,
+          borderRadius:12, overflow:"hidden",
+          border: localFace ? "2px solid #22c55e" : "2px solid #ef4444",
+          boxShadow: localFace ? "0 0 12px rgba(34,197,94,.4)" : "0 0 12px rgba(239,68,68,.6)",
+          width:88, height:66, background:"#000",
+          transition:"border-color .3s, box-shadow .3s",
+        }}>
+          <video id="proctor-cam-preview" muted playsInline autoPlay
+            style={{ width:"100%", height:"100%", objectFit:"cover", transform:"scaleX(-1)" }}/>
+          {/* Status dot */}
+          <div style={{
+            position:"absolute", bottom:3, left:3,
+            width:8, height:8, borderRadius:"50%",
+            background: localFace ? "#22c55e" : "#ef4444",
+            boxShadow: localFace ? "0 0 6px #22c55e" : "0 0 6px #ef4444",
+            animation: !localFace ? "pulse 1s infinite" : "none",
+          }}/>
+          {/* "No face" overlay on camera widget */}
+          {!localFace && (
+            <div style={{
+              position:"absolute", inset:0,
+              background:"rgba(239,68,68,.35)",
+              display:"flex", alignItems:"center", justifyContent:"center",
+            }}>
+              <span style={{ fontSize:22 }}>👤</span>
+            </div>
+          )}
+          {/* Multiple faces warning */}
+          {faceCount > 1 && (
+            <div style={{
+              position:"absolute", top:2, left:2, right:2,
+              background:"rgba(220,38,38,.9)", borderRadius:4,
+              fontSize:8, fontWeight:900, color:"#fff", textAlign:"center", padding:"1px 0",
+            }}>
+              {faceCount} FACES
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Camera offline warning */}
+      {!cameraReady && (
+        <div style={{
+          position:"fixed", bottom:80, right:12, zIndex:300,
+          width:88, height:66, borderRadius:12, background:"#1a0000",
+          border:"2px solid #ef4444", display:"flex", flexDirection:"column",
+          alignItems:"center", justifyContent:"center", gap:2,
+        }}>
+          <span style={{ fontSize:20 }}>📷</span>
+          <span style={{ fontSize:8, fontWeight:900, color:"#ef4444" }}>OFFLINE</span>
+        </div>
+      )}
 
       {/* Auto-submit overlay */}
       {autoCountdown !== null && autoCountdown > 0 && (
@@ -319,11 +380,13 @@ const ProctoringOverlay = ({
               <div style={{ fontSize:16, fontWeight:800, color:bannerStyle.text, marginBottom:3 }}>
                 {t(banner.cfg.en, banner.cfg.ar)}
               </div>
-              {banner.cfg.dismissOnFix ? (
-                <div style={{ fontSize:11, color:bannerStyle.text, opacity:.7 }}>
-                  This alert will disappear when you look at your screen.
+              {/* Actionable hint */}
+              {banner.cfg.hint && (
+                <div style={{ fontSize:12, color:bannerStyle.text, opacity:.85, marginTop:4, lineHeight:1.5 }}>
+                  {banner.cfg.hint}
                 </div>
-              ) : (
+              )}
+              {!banner.cfg.hint && !banner.cfg.dismissOnFix && (
                 <div style={{ fontSize:11, color:bannerStyle.text, opacity:.7 }}>
                   This has been recorded and sent to your instructor.
                 </div>
