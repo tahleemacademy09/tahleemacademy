@@ -68,8 +68,14 @@ const ProctoringDashboard = () => {
   const [examsList, setExamsList]         = useState<any[]>([]);
   const [loading, setLoading]             = useState(true);
   const [mediaTab, setMediaTab]           = useState("all");
-  const [previewMedia, setPreviewMedia]   = useState<any>(null);
-  const [previewUrl, setPreviewUrl]       = useState<string|null>(null);
+  const curMediaRef = { current: [] as any[] }; // updated each render
+  const [previewIdx, setPreviewIdx]       = useState<number>(-1);
+  const [urlCache, setUrlCache]           = useState<Record<string,string>>({});
+  const [touchStartX, setTouchStartX]     = useState<number|null>(null);
+
+  // Computed from current media list and previewIdx
+  const previewMedia = previewIdx >= 0 && previewIdx < curMediaRef.current.length ? curMediaRef.current[previewIdx] : null;
+  const previewUrl   = previewMedia ? (urlCache[previewMedia.file_url] || null) : null;
 
   const fetchSessions = async () => {
     setLoading(true);
@@ -101,10 +107,32 @@ const ProctoringDashboard = () => {
     setViolations(vRes.data||[]); setDeviceLogs(dRes.data||[]); setMedia(mRes.data||[]);
   };
 
-  const openPreview = async (m:any) => {
-    setPreviewMedia(m); setPreviewUrl(null);
-    const { data } = await supabase.storage.from("proctoring-media").createSignedUrl(m.file_url,3600);
-    if (data?.signedUrl) setPreviewUrl(data.signedUrl);
+  const resolveUrl = async (fileUrl: string): Promise<string|null> => {
+    if (urlCache[fileUrl]) return urlCache[fileUrl];
+    const { data } = await supabase.storage.from("proctoring-media").createSignedUrl(fileUrl, 3600);
+    if (data?.signedUrl) {
+      setUrlCache(prev => ({ ...prev, [fileUrl]: data.signedUrl! }));
+      return data.signedUrl;
+    }
+    return null;
+  };
+
+  const openPreview = async (idx: number, mediaList: any[]) => {
+    setPreviewIdx(idx);
+    // Prefetch current + neighbours
+    const toLoad = [idx - 1, idx, idx + 1].filter(i => i >= 0 && i < mediaList.length);
+    for (const i of toLoad) resolveUrl(mediaList[i].file_url);
+  };
+
+  const navPreview = (dir: 1 | -1, mediaList: any[]) => {
+    const next = previewIdx + dir;
+    if (next >= 0 && next < mediaList.length) {
+      setPreviewIdx(next);
+      resolveUrl(mediaList[next].file_url);
+      // Prefetch further
+      const further = next + dir;
+      if (further >= 0 && further < mediaList.length) resolveUrl(mediaList[further].file_url);
+    }
   };
 
   const deleteSession = async (sessionId:string, attemptId:string) => {
@@ -296,35 +324,82 @@ const ProctoringDashboard = () => {
               {curMedia.length === 0
                 ? <div style={{ textAlign:"center", padding:"24px", fontSize:13, color:TL }}>{t("No media","لا توجد وسائط")}</div>
                 : <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8 }}>
-                    {curMedia.map((m:any)=><Thumb key={m.id} media={m} onClick={()=>openPreview(m)}/>)}
+                    {curMedia.map((m:any,i:number)=>{ curMediaRef.current=curMedia; return <Thumb key={m.id} media={m} onClick={()=>openPreview(i,curMedia)}/>; })}
                   </div>
               }
             </div>
           </div>
         </div>
 
-        {/* Full preview dialog */}
-        <Dialog open={!!previewMedia} onOpenChange={()=>{ setPreviewMedia(null); setPreviewUrl(null); }}>
-          <DialogContent style={{ maxWidth:560 }}>
-            <DialogHeader>
-              <DialogTitle style={{ fontSize:13 }}>
-                {previewMedia?.file_type?.replace(/_/g," ")} — {previewMedia ? new Date(previewMedia.created_at).toLocaleString() : ""}
-              </DialogTitle>
-            </DialogHeader>
-            {previewUrl
-              ? <>
-                  <img src={previewUrl} style={{ width:"100%", borderRadius:10 }}/>
-                  <a href={previewUrl} download={previewMedia?.file_name||"capture.jpg"} target="_blank" rel="noopener noreferrer"
-                    style={{ display:"flex", alignItems:"center", gap:6, padding:"9px 16px", borderRadius:10, background:G, color:"#fff", fontSize:13, fontWeight:700, textDecoration:"none", justifyContent:"center" }}>
-                    <Download style={{width:14,height:14}}/> {t("Download","تحميل")}
-                  </a>
-                </>
-              : <div style={{ display:"flex", justifyContent:"center", padding:32 }}>
-                  <div style={{ width:32,height:32,borderRadius:"50%",border:`4px solid ${G}`,borderTopColor:"transparent",animation:"spin .8s linear infinite" }}/>
-                </div>
-            }
-          </DialogContent>
-        </Dialog>
+        {/* Fullscreen swipeable lightbox */}
+        {previewIdx >= 0 && (
+          <div
+            style={{ position:"fixed", inset:0, zIndex:9999, background:"rgba(0,0,0,.97)", display:"flex", flexDirection:"column" as const }}
+            onTouchStart={e => setTouchStartX(e.touches[0].clientX)}
+            onTouchEnd={e => {
+              if (touchStartX === null) return;
+              const dx = e.changedTouches[0].clientX - touchStartX;
+              if (Math.abs(dx) > 50) navPreview(dx < 0 ? 1 : -1, curMediaRef.current);
+              setTouchStartX(null);
+            }}
+          >
+            {/* Top bar */}
+            <div style={{ padding:"14px 16px", display:"flex", alignItems:"center", justifyContent:"space-between", flexShrink:0 }}>
+              <div style={{ fontSize:12, color:"rgba(255,255,255,.6)" }}>
+                {previewMedia?.file_type?.replace(/_/g," ")} · {previewMedia ? new Date(previewMedia.created_at).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}) : ""}
+              </div>
+              <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                <span style={{ fontSize:12, color:"rgba(255,255,255,.5)", fontWeight:700 }}>{previewIdx+1} / {curMediaRef.current.length}</span>
+                <button onClick={() => setPreviewIdx(-1)} style={{ background:"rgba(255,255,255,.15)", border:"none", borderRadius:"50%", width:34, height:34, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", color:"#fff" }}>
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            {/* Image */}
+            <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", position:"relative", minHeight:0 }}>
+              {/* Prev arrow */}
+              {previewIdx > 0 && (
+                <button onClick={() => navPreview(-1, curMediaRef.current)} style={{ position:"absolute", left:10, zIndex:10, background:"rgba(255,255,255,.15)", border:"none", borderRadius:"50%", width:40, height:40, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", color:"#fff", fontSize:20 }}>
+                  ‹
+                </button>
+              )}
+
+              {previewUrl
+                ? <img src={previewUrl} style={{ maxWidth:"100%", maxHeight:"100%", objectFit:"contain", borderRadius:8 }} alt="capture"/>
+                : <div style={{ display:"flex", flexDirection:"column" as const, alignItems:"center", gap:12 }}>
+                    <div style={{ width:40,height:40,borderRadius:"50%",border:`4px solid ${GOLD}`,borderTopColor:"transparent",animation:"spin .8s linear infinite" }}/>
+                    <span style={{ color:"rgba(255,255,255,.4)", fontSize:12 }}>Loading…</span>
+                  </div>
+              }
+
+              {/* Next arrow */}
+              {previewIdx < curMediaRef.current.length - 1 && (
+                <button onClick={() => navPreview(1, curMediaRef.current)} style={{ position:"absolute", right:10, zIndex:10, background:"rgba(255,255,255,.15)", border:"none", borderRadius:"50%", width:40, height:40, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", color:"#fff", fontSize:20 }}>
+                  ›
+                </button>
+              )}
+            </div>
+
+            {/* Dot indicators */}
+            <div style={{ padding:"12px 16px", display:"flex", justifyContent:"center", gap:6, flexShrink:0 }}>
+              {curMediaRef.current.slice(Math.max(0,previewIdx-4), Math.min(curMediaRef.current.length,previewIdx+5)).map((_,i) => {
+                const realIdx = Math.max(0,previewIdx-4)+i;
+                return <div key={realIdx} style={{ width:realIdx===previewIdx?20:6, height:6, borderRadius:3, background:realIdx===previewIdx?GOLD:"rgba(255,255,255,.3)", transition:"all .2s" }}/>;
+              })}
+            </div>
+
+            {/* Download bar */}
+            {previewUrl && previewMedia && (
+              <div style={{ padding:"0 16px 20px", flexShrink:0 }}>
+                <a href={previewUrl} download={previewMedia.file_name||"capture.jpg"} target="_blank" rel="noopener noreferrer"
+                  style={{ display:"flex", alignItems:"center", gap:8, padding:"13px", borderRadius:14, background:G, color:"#fff", fontSize:14, fontWeight:700, textDecoration:"none", justifyContent:"center" }}>
+                  <Download style={{width:16,height:16}}/> {t("Download","تحميل")}
+                </a>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     );
   }
