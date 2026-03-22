@@ -417,7 +417,9 @@ Make questions educational, clearly worded, and accurate.`
 
   const startQuiz = async () => {
     if (!room) return;
-    await loadCurrentQ(0);
+    // Load question FIRST and wait for it before transitioning
+    const { data: qData } = await supabase.from("live_quiz_questions" as any).select("*").eq("room_id", room.id).eq("order_index", 0).single();
+    if (qData) setCurrentQ({ ...qData, options: qData.options as string[] } as Question);
     await supabase.from("live_quiz_rooms" as any).update({ status:"countdown", current_question_index:0 } as any).eq("id", room.id);
     setCountdown(3); setView("countdown-host"); setSelectedAns(null); setAnswerCounts({}); setNumAnswered(0);
   };
@@ -438,7 +440,9 @@ Make questions educational, clearly worded, and accurate.`
       await loadParticipants();
       setView("results-host");
     } else {
-      await loadCurrentQ(next);
+      // Load question synchronously before transitioning so view never blanks
+      const { data: qData } = await supabase.from("live_quiz_questions" as any).select("*").eq("room_id", room.id).eq("order_index", next).single();
+      if (qData) setCurrentQ({ ...qData, options: qData.options as string[] } as Question);
       await supabase.from("live_quiz_rooms" as any).update({ status:"countdown", current_question_index:next } as any).eq("id", room.id);
       setCountdown(3); setView("countdown-host"); setAnswerCounts({}); setNumAnswered(0);
     }
@@ -1097,12 +1101,21 @@ Make questions educational, clearly worded, and accurate.`
   );
 
   /* ══ QUESTION HOST ════════════════════════════════ */
-  if (view === "question-host" && currentQ && room) return (
+  if (view === "question-host" && room) return (
     <div style={{...pageStyle, padding:"18px 16px", overflowY:"auto"}}>
       <IslamicBg opacity={0.05}/>
       <div style={{position:"relative",zIndex:1,maxWidth:600,margin:"0 auto"}}>
 
-        {/* Top bar */}
+        {/* Loading state — shows if currentQ hasn't arrived yet */}
+        {!currentQ && (
+          <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:300,gap:16}}>
+            <div style={{width:48,height:48,borderRadius:"50%",border:`4px solid ${GOLD}`,borderTopColor:"transparent",animation:"spin .8s linear infinite"}}/>
+            <p style={{fontSize:14,color:"rgba(255,255,255,0.5)",margin:0}}>Loading question…</p>
+            <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+          </div>
+        )}
+        {currentQ && (<>
+      {/* Top bar */}
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
           <div>
             <p style={{fontSize:13,color:"rgba(255,255,255,0.45)",margin:0}}>
@@ -1157,6 +1170,7 @@ Make questions educational, clearly worded, and accurate.`
         </div>
 
         <button onClick={handleReveal} style={outlineBtn}>Reveal Answer →</button>
+      </>)}
       </div>
     </div>
   );
