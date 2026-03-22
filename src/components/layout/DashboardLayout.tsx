@@ -12,10 +12,12 @@ import {
   BookOpen, LayoutDashboard, ClipboardList, Users, LogOut, Globe,
   CheckSquare, BarChart, UserCircle, Library, GraduationCap, MessageCircle,
   Menu, Video, Mic, Layers, FileText, UserCheck, BookMarked, Settings,
-  CreditCard, Calendar, ChevronDown, ChevronRight, Wallet,
+  CreditCard, Calendar, ChevronDown, ChevronRight, Wallet, Bell,
   BookOpenCheck, RefreshCw, Headphones, Trophy, X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { supabase } from "@/integrations/supabase/client";
+import { useState as useLayoutState, useEffect as useLayoutEffect } from "react";
 import PaymentBanner from "./PaymentBanner";
 import HolidayBanner from "./HolidayBanner";
 import AdminPaymentIndicator from "./AdminPaymentIndicator";
@@ -94,6 +96,37 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     { type:"link", to:"/admin/majlis-moderation", icon:MessageCircle, label:t("Al-Majlis","المجلس") },
     { type:"link", to:"/live-quiz",               icon:Trophy,        label:t("Al-Musabaqah 🏆","المسابقة الحية 🏆") },
   ];
+
+  // ── Notification badge count for top bar ────────────────────
+  const { user } = useAuth();
+  const [unreadNotifs, setUnreadNotifs] = useLayoutState(0);
+  const [showNotifPanel, setShowNotifPanel] = useLayoutState(false);
+  const [notifList, setNotifList] = useLayoutState<any[]>([]);
+
+  useLayoutEffect(() => {
+    if (!user || role !== "student") return;
+    const load = async () => {
+      const { data } = await supabase
+        .from("notifications")
+        .select("*")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(30);
+      const list = data || [];
+      setNotifList(list);
+      setUnreadNotifs(list.filter((n: any) => !n.is_read).length);
+    };
+    load();
+    // Re-fetch every 60s
+    const iv = setInterval(load, 60000);
+    return () => clearInterval(iv);
+  }, [user, role]);
+
+  const markRead = async (id: string) => {
+    await supabase.from("notifications").update({ is_read: true }).eq("id", id);
+    setNotifList(p => p.map(n => n.id === id ? { ...n, is_read: true } : n));
+    setUnreadNotifs(p => Math.max(0, p - 1));
+  };
 
   // ── Shared sidebar content ────────────────────────────────────
   const SidebarContent = ({ onNavigate }: { onNavigate?: () => void }) => {
@@ -247,17 +280,84 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
           </div>
 
           {role === "student" && (
-            <Link to="/student/enrollment-payment">
-              <Button variant="ghost" size="icon" className="h-8 w-8">
-                <Wallet className="h-4 w-4 text-yellow-500"/>
-              </Button>
-            </Link>
+            <div className="flex items-center gap-1">
+              {/* Notification bell */}
+              <div className="relative">
+                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setShowNotifPanel(true)}>
+                  <Bell className="h-4 w-4"/>
+                </Button>
+                {unreadNotifs > 0 && (
+                  <span className="absolute top-1 right-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[9px] font-black text-white border border-background">
+                    {unreadNotifs > 9 ? "9+" : unreadNotifs}
+                  </span>
+                )}
+              </div>
+              {/* Payment wallet */}
+              <Link to="/student/enrollment-payment">
+                <Button variant="ghost" size="icon" className="h-8 w-8">
+                  <Wallet className="h-4 w-4 text-yellow-500"/>
+                </Button>
+              </Link>
+            </div>
           )}
         </header>
 
         <HolidayBanner/>
         {role === "student" && <PaymentBanner/>}
         {role === "admin"   && <AdminPaymentIndicator/>}
+
+        {/* ── Notification panel (student) ── */}
+        {role === "student" && showNotifPanel && (
+          <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm"
+            onClick={() => setShowNotifPanel(false)}>
+            <div className="absolute top-0 left-0 right-0 max-h-[80vh] bg-white rounded-b-3xl shadow-2xl flex flex-col overflow-hidden"
+              onClick={e => e.stopPropagation()}>
+              {/* Header */}
+              <div className="flex items-center justify-between px-5 py-4 border-b" style={{ background:"#0f2d1f" }}>
+                <div className="flex items-center gap-2.5">
+                  <Bell className="h-4 w-4" style={{ color:"#c9a84c" }}/>
+                  <span className="font-bold text-white text-base">Notifications · الإشعارات</span>
+                  {unreadNotifs > 0 && (
+                    <span className="text-[10px] font-black px-2.5 py-0.5 rounded-full text-white" style={{ background:"#c0392b" }}>
+                      {unreadNotifs} new
+                    </span>
+                  )}
+                </div>
+                <button onClick={() => setShowNotifPanel(false)}
+                  className="w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10">
+                  ✕
+                </button>
+              </div>
+              {/* List */}
+              <div className="overflow-y-auto flex-1">
+                {notifList.length === 0 ? (
+                  <div className="text-center py-10 text-muted-foreground text-sm">No notifications yet</div>
+                ) : notifList.map((n: any) => (
+                  <div key={n.id} onClick={() => !n.is_read && markRead(n.id)}
+                    className="flex items-start gap-3 px-5 py-3.5 border-b cursor-pointer transition-colors"
+                    style={{ background: n.is_read ? "#fafafa" : "#fffbeb" }}>
+                    <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5"
+                      style={{ background: n.is_read ? "#f0f4f0" : "#fffbeb", border:`1.5px solid ${n.is_read ? "#e0e0e0" : "#c9a84c88"}` }}>
+                      <span className="text-sm">
+                        {n.type === "warning" ? "⚠️" : n.type === "exam" ? "📋" : "ℹ️"}
+                      </span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className={`text-sm leading-tight ${n.is_read ? "font-medium" : "font-bold"} text-gray-900`}>{n.title}</p>
+                        {!n.is_read && <div className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0"/>}
+                      </div>
+                      <p className="text-xs text-gray-500 mt-0.5">{n.message}</p>
+                      <p className="text-[10px] text-gray-400 mt-1">
+                        {new Date(n.created_at).toLocaleDateString("en-US", { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" })}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
 
         <main className="flex-1 overflow-auto">
           <Outlet/>
