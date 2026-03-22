@@ -628,7 +628,11 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
         setSessionId(sessions[0].id); setSessionInfo(sessions[0]);
         const { data:att } = await supabase.from("attendance_logs").insert({ session_id:sessions[0].id, user_id:user!.id, device_info:navigator.userAgent }).select("id").single();
         if (att) setAttendanceId(att.id);
-        await supabase.from("class_participants").upsert({ session_id:sessions[0].id, student_id:user!.id, joined_at:new Date().toISOString(), is_muted:!isPrivileged, camera_on:true },{ onConflict:"session_id,student_id" });
+        await supabase.from("class_participants").upsert(
+          { session_id:sessions[0].id, student_id:user!.id, joined_at:new Date().toISOString(),
+            is_muted:!isPrivileged, camera_on:true, left_at:null, left_minutes:null },
+          { onConflict:"session_id,student_id" }
+        );
       }
       setPhase("live");
     } catch(e:any) { setError(e?.message||"Failed to connect"); } finally { setLoading(false); }
