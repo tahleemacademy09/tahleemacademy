@@ -5,6 +5,7 @@
 */
 
 import { useState, useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -123,6 +124,7 @@ const EMOJI_POOL = ["🌙","⭐","🕌","📖","🌟","✨","🌺","🦋","💎"
 ══════════════════════════════════════════════════════ */
 const LiveQuiz = () => {
   const { user, hasRole } = useAuth();
+  const navigate = useNavigate();
   const { toast }        = useToast();
   const isHost           = hasRole?.("admin") || hasRole?.("teacher");
 
@@ -567,8 +569,14 @@ Make questions educational, clearly worded, and accurate.`
 
   /* ══ HUB ══════════════════════════════════════════ */
   if (view === "hub") return (
-    <div style={{...pageStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"40px 20px"}}>
+    <div style={{...pageStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"40px 20px", position:"relative"}}>
       <IslamicBg opacity={0.09}/>
+      {/* Back arrow — top left */}
+      <button
+        onClick={() => navigate(-1)}
+        style={{ position:"absolute", top:16, left:16, zIndex:10, display:"flex", alignItems:"center", gap:6, background:"rgba(255,255,255,0.1)", border:"1px solid rgba(255,255,255,0.18)", borderRadius:12, padding:"8px 14px", color:"rgba(255,255,255,0.85)", fontWeight:700, fontSize:13, cursor:"pointer", backdropFilter:"blur(8px)" }}>
+        ← {isHost ? "Dashboard" : "Back"}
+      </button>
       <div style={{position:"relative",zIndex:1,width:"100%",maxWidth:420,textAlign:"center"}}>
 
         {/* Logo */}
