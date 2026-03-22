@@ -546,17 +546,221 @@ const BottomBar = ({
 };
 
 /* ══════════════════════════════════════════
-   VIDEO GRID — LiveKit GridLayout (reliable)
+   WHATSAPP-STYLE VIDEO GRID
+   - All participants always visible on screen (no scrolling)
+   - Dynamic layout: 1 full, 2 side-by-side, 3-4 2×2, 5-6 3+3, 7+ 3 cols
+   - Mic toggle button on each tile
+   - Speaking highlight ring
 ══════════════════════════════════════════ */
-const VideoGrid = () => {
-  const tracks = useTracks(
-    [{ source:Track.Source.Camera, withPlaceholder:true }, { source:Track.Source.ScreenShare, withPlaceholder:false }],
-    { onlySubscribed: false }
-  );
+const ParticipantTileCustom = ({ participant, isLocal }: { participant: any; isLocal: boolean }) => {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [hasVideo, setHasVideo]     = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [micEnabled, setMicEnabled] = useState(true);
+  const room = useRoomContext();
+
+  useEffect(() => {
+    const update = () => {
+      // Check camera track
+      const camPub = participant.getTrackPublication?.(Track.Source.Camera)
+                  || participant.trackPublications?.get(Track.Source.Camera);
+      const track = camPub?.videoTrack || camPub?.track;
+      if (track?.mediaStreamTrack?.readyState === "live" && videoRef.current) {
+        videoRef.current.srcObject = new MediaStream([track.mediaStreamTrack]);
+        videoRef.current.play().catch(() => {});
+        setHasVideo(true);
+      } else {
+        if (videoRef.current) videoRef.current.srcObject = null;
+        setHasVideo(false);
+      }
+      // Mic state
+      const micPub = participant.getTrackPublication?.(Track.Source.Microphone)
+                  || participant.trackPublications?.get(Track.Source.Microphone);
+      setMicEnabled(!(micPub?.isMuted ?? false));
+    };
+    update();
+    const onSpeak = (v: boolean) => setIsSpeaking(v);
+    participant.on?.("trackSubscribed",   update);
+    participant.on?.("trackUnsubscribed", update);
+    participant.on?.("trackMuted",        update);
+    participant.on?.("trackUnmuted",      update);
+    participant.on?.("isSpeakingChanged", onSpeak);
+    return () => {
+      participant.off?.("trackSubscribed",   update);
+      participant.off?.("trackUnsubscribed", update);
+      participant.off?.("trackMuted",        update);
+      participant.off?.("trackUnmuted",      update);
+      participant.off?.("isSpeakingChanged", onSpeak);
+    };
+  }, [participant]);
+
+  const toggleMyMic = async () => {
+    if (!isLocal) return;
+    const next = !micEnabled;
+    await room.localParticipant.setMicrophoneEnabled(next);
+    setMicEnabled(next);
+  };
+
+  const name = participant.name || participant.identity || "User";
+  const initials = name.split(" ").map((w: string) => w[0] || "").join("").slice(0, 2).toUpperCase() || "?";
+
   return (
-    <GridLayout tracks={tracks} style={{ height:"100%", width:"100%" }}>
-      <ParticipantTile/>
-    </GridLayout>
+    <div style={{
+      position: "relative",
+      width: "100%", height: "100%",
+      background: "#161b22",
+      borderRadius: 12,
+      overflow: "hidden",
+      border: isSpeaking ? "2px solid #22c55e" : "2px solid transparent",
+      transition: "border-color .2s",
+      boxShadow: isSpeaking ? "0 0 12px rgba(34,197,94,.5)" : "none",
+    }}>
+      {/* Video */}
+      <video
+        ref={videoRef} autoPlay playsInline
+        muted={isLocal}
+        style={{
+          width: "100%", height: "100%",
+          objectFit: "cover",
+          display: hasVideo ? "block" : "none",
+          transform: isLocal ? "scaleX(-1)" : "none",
+        }}
+      />
+
+      {/* Avatar fallback */}
+      {!hasVideo && (
+        <div style={{
+          position: "absolute", inset: 0,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          background: "linear-gradient(135deg,#0f2318,#1e3a2f)",
+        }}>
+          <div style={{
+            width: 52, height: 52, borderRadius: "50%",
+            background: G,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 20, fontWeight: 800, color: "#fff",
+            border: isSpeaking ? "3px solid #22c55e" : "3px solid rgba(255,255,255,.15)",
+          }}>
+            {initials}
+          </div>
+        </div>
+      )}
+
+      {/* Bottom bar: name + mic */}
+      <div style={{
+        position: "absolute", bottom: 0, left: 0, right: 0,
+        padding: "20px 8px 6px",
+        background: "linear-gradient(transparent, rgba(0,0,0,.75))",
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        gap: 4,
+      }}>
+        <span style={{
+          fontSize: 11, fontWeight: 600, color: "#fff",
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+          flex: 1,
+        }}>
+          {name}{isLocal ? " (You)" : ""}
+        </span>
+        {/* Mic icon — tappable only for local participant */}
+        <button
+          onClick={isLocal ? toggleMyMic : undefined}
+          style={{
+            width: 26, height: 26,
+            borderRadius: "50%",
+            background: micEnabled ? "rgba(34,197,94,.25)" : "rgba(239,68,68,.3)",
+            border: "none",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            cursor: isLocal ? "pointer" : "default",
+            flexShrink: 0,
+            backdropFilter: "blur(4px)",
+          }}
+        >
+          {micEnabled
+            ? <Mic    style={{ width: 13, height: 13, color: "#22c55e" }}/>
+            : <MicOff style={{ width: 13, height: 13, color: "#ef4444" }}/>}
+        </button>
+      </div>
+
+      {/* Speaking indicator */}
+      {isSpeaking && (
+        <div style={{
+          position: "absolute", top: 6, left: 6,
+          background: "rgba(34,197,94,.9)", borderRadius: 10,
+          padding: "2px 7px", fontSize: 9, color: "#fff", fontWeight: 700,
+        }}>
+          ● Speaking
+        </div>
+      )}
+    </div>
+  );
+};
+
+const VideoGrid = () => {
+  const { localParticipant } = useLocalParticipant();
+  const allParticipants = useParticipants();
+  // Put local first, then remotes
+  const remotes = allParticipants.filter(p => p.identity !== localParticipant?.identity);
+  const all = localParticipant ? [localParticipant, ...remotes] : remotes;
+  const n = all.length;
+
+  // Check for screenshare
+  const screensharer = all.find(p => {
+    const pub = p.getTrackPublication?.(Track.Source.ScreenShare)
+             || p.trackPublications?.get(Track.Source.ScreenShare);
+    return pub?.track && !pub.isMuted;
+  });
+
+  // ── Layout calculation ──────────────────────────────
+  // Always fit ALL tiles on screen with no scroll
+  let cols = 1, rows = 1;
+  if (n === 1) { cols = 1; rows = 1; }
+  else if (n === 2) { cols = 2; rows = 1; }
+  else if (n <= 4) { cols = 2; rows = 2; }
+  else if (n <= 6) { cols = 3; rows = 2; }
+  else if (n <= 9) { cols = 3; rows = 3; }
+  else { cols = 4; rows = Math.ceil(n / 4); }
+
+  const gap = 4;
+
+  // Screenshare layout
+  if (screensharer) {
+    const tracks = [{source:Track.Source.ScreenShare,withPlaceholder:false}];
+    return (
+      <div style={{ width:"100%", height:"100%", display:"flex", gap, padding:gap, boxSizing:"border-box" }}>
+        {/* Main screen */}
+        <div style={{ flex:1, borderRadius:12, overflow:"hidden", background:"#111", minWidth:0 }}>
+          <ParticipantTileCustom participant={screensharer} isLocal={screensharer.identity === localParticipant?.identity}/>
+        </div>
+        {/* Side strip */}
+        <div style={{ width:120, display:"flex", flexDirection:"column", gap, overflowY:"auto" }}>
+          {all.map(p => (
+            <div key={p.identity} style={{ height:90, flexShrink:0 }}>
+              <ParticipantTileCustom participant={p} isLocal={p.identity === localParticipant?.identity}/>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{
+      width: "100%", height: "100%",
+      display: "grid",
+      gridTemplateColumns: `repeat(${cols}, 1fr)`,
+      gridTemplateRows: `repeat(${rows}, 1fr)`,
+      gap,
+      padding: gap,
+      boxSizing: "border-box",
+    }}>
+      {all.map(p => (
+        <ParticipantTileCustom
+          key={p.identity}
+          participant={p}
+          isLocal={p.identity === localParticipant?.identity}
+        />
+      ))}
+    </div>
   );
 };
 
