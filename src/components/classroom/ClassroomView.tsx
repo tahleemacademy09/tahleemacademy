@@ -47,34 +47,34 @@ const TOOLBAR_H  = 64;
    WHITEBOARD — canvas-based, no external packages needed
    Synced via LiveKit data channel
 ═══════════════════════════════════════════════════════ */
-const Whiteboard = ({ onClose, fullscreen, onToggleFullscreen, isTeacher, initialStrokes }: {
-  onClose: () => void; fullscreen: boolean;
-  onToggleFullscreen: () => void; isTeacher: boolean;
+/* ═══════════════════════════════════════════════════════
+   WHITEBOARD
+   - Always fullscreen for everyone
+   - Back button (not X) — closes board but stays in class
+   - Strokes saved to Supabase per subject — persists across sessions
+   - Reloads saved strokes when opened again
+═══════════════════════════════════════════════════════ */
+const Whiteboard = ({ onClose, isTeacher, initialStrokes, subjectId }: {
+  onClose: () => void;
+  isTeacher: boolean;
   initialStrokes?: any[] | null;
+  subjectId: string;
 }) => {
   const room = useRoomContext();
-  const canvasRef   = useRef<HTMLCanvasElement>(null);
-  const drawing     = useRef(false);
-  const lastPos     = useRef<{x:number;y:number}|null>(null);
-  const strokesRef  = useRef<any[]>([]); // all strokes for replay
-  const [color, setColor]     = useState("#1a1a1a");
-
-  // Replay any strokes that arrived before this component mounted
-  useEffect(() => {
-    if (initialStrokes && initialStrokes.length > 0) {
-      strokesRef.current = initialStrokes;
-      // Defer until canvas is painted
-      setTimeout(() => redraw(), 50);
-    }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const canvasRef  = useRef<HTMLCanvasElement>(null);
+  const drawing    = useRef(false);
+  const strokesRef = useRef<any[]>([]);
+  const saveTimer  = useRef<any>(null);
+  const [color, setColor]       = useState("#1a1a1a");
   const [lineWidth, setLineWidth] = useState(3);
-  const [tool, setTool]       = useState<"pen"|"eraser">("pen");
+  const [tool, setTool]         = useState<"pen"|"eraser">("pen");
+  const [loadingStrokes, setLoadingStrokes] = useState(true);
 
   const redraw = useCallback(() => {
     const canvas = canvasRef.current; if (!canvas) return;
     const ctx = canvas.getContext("2d"); if (!ctx) return;
     ctx.fillStyle = "#fff";
-    ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
     for (const stroke of strokesRef.current) {
       if (!stroke.points || stroke.points.length < 2) continue;
       ctx.beginPath();
@@ -88,18 +88,56 @@ const Whiteboard = ({ onClose, fullscreen, onToggleFullscreen, isTeacher, initia
     }
   }, []);
 
-  // Receive whiteboard updates
+  // ── Load persisted strokes from Supabase on mount ──────────────
+  useEffect(() => {
+    const load = async () => {
+      setLoadingStrokes(true);
+      try {
+        const { data } = await supabase
+          .from("subject_whiteboard" as any)
+          .select("strokes")
+          .eq("subject_id", subjectId)
+          .maybeSingle();
+        if (data?.strokes && Array.isArray(data.strokes) && data.strokes.length > 0) {
+          strokesRef.current = data.strokes;
+        } else if (initialStrokes && initialStrokes.length > 0) {
+          // Fallback to live-buffered strokes if no saved data yet
+          strokesRef.current = initialStrokes;
+        }
+      } catch (_) {
+        // Table may not exist yet — fall back to buffered strokes
+        if (initialStrokes && initialStrokes.length > 0) {
+          strokesRef.current = initialStrokes;
+        }
+      }
+      setLoadingStrokes(false);
+      setTimeout(() => redraw(), 30);
+    };
+    load();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Save strokes to Supabase (debounced 1.5s after last stroke) ─
+  const saveStrokes = useCallback(() => {
+    if (!isTeacher) return;
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(async () => {
+      try {
+        await supabase.from("subject_whiteboard" as any).upsert({
+          subject_id: subjectId,
+          strokes: strokesRef.current,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: "subject_id" });
+      } catch (_) {}
+    }, 1500);
+  }, [isTeacher, subjectId]);
+
+  // ── Receive live updates from teacher ──────────────────────────
   useEffect(() => {
     const handler = (payload: Uint8Array) => {
       try {
         const msg = JSON.parse(new TextDecoder().decode(payload));
-        if (msg.type === "wb_strokes") {
-          strokesRef.current = msg.strokes;
-          redraw();
-        } else if (msg.type === "wb_clear") {
-          strokesRef.current = [];
-          redraw();
-        }
+        if (msg.type === "wb_strokes") { strokesRef.current = msg.strokes; redraw(); }
+        if (msg.type === "wb_clear")   { strokesRef.current = []; redraw(); }
       } catch (_) {}
     };
     room.on(RoomEvent.DataReceived, handler);
@@ -107,25 +145,23 @@ const Whiteboard = ({ onClose, fullscreen, onToggleFullscreen, isTeacher, initia
   }, [room, redraw]);
 
   const broadcast = useCallback((msg: object) => {
-    try {
-      const data = new TextEncoder().encode(JSON.stringify(msg));
-      room.localParticipant.publishData(data, { reliable: true });
-    } catch (_) {}
+    try { room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify(msg)), { reliable: true }); }
+    catch (_) {}
   }, [room]);
 
   const getPos = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const rect = canvasRef.current!.getBoundingClientRect();
-    const scaleX = canvasRef.current!.width  / rect.width;
-    const scaleY = canvasRef.current!.height / rect.height;
-    return { x: (e.clientX - rect.left) * scaleX, y: (e.clientY - rect.top) * scaleY };
+    return {
+      x: (e.clientX - rect.left) * (canvasRef.current!.width / rect.width),
+      y: (e.clientY - rect.top)  * (canvasRef.current!.height / rect.height),
+    };
   };
 
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!isTeacher) return;
     drawing.current = true;
     const pos = getPos(e);
-    lastPos.current = pos;
-    strokesRef.current.push({ color: tool==="eraser"?"#fff":color, lineWidth: tool==="eraser"?20:lineWidth, points:[pos] });
+    strokesRef.current.push({ color: tool==="eraser"?"#fff":color, lineWidth: tool==="eraser"?24:lineWidth, points:[pos] });
   };
 
   const onPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -133,92 +169,88 @@ const Whiteboard = ({ onClose, fullscreen, onToggleFullscreen, isTeacher, initia
     const pos = getPos(e);
     const stroke = strokesRef.current[strokesRef.current.length-1];
     if (stroke) { stroke.points.push(pos); redraw(); }
-    lastPos.current = pos;
   };
 
   const onPointerUp = () => {
-    if (!isTeacher) return;
+    if (!isTeacher || !drawing.current) return;
     drawing.current = false;
-    lastPos.current = null;
     broadcast({ type:"wb_strokes", strokes:strokesRef.current });
+    saveStrokes();
   };
 
   const clearBoard = () => {
+    if (!isTeacher) return;
     strokesRef.current = [];
     redraw();
     broadcast({ type:"wb_clear" });
+    saveStrokes();
   };
 
-  const COLORS = ["#1a1a1a","#e53e3e","#2b6cb0","#276749","#b7791f","#553c9a","#ffffff"];
+  const COLORS = ["#1a1a1a","#e53e3e","#2b6cb0","#276749","#b7791f","#553c9a","#ff6b00","#ffffff"];
 
   return (
-    <div style={{
-      position: fullscreen ? "fixed" : "absolute",
-      inset: fullscreen ? 0 : "auto",
-      top: fullscreen ? 0 : 8,
-      left: fullscreen ? 0 : 8,
-      right: fullscreen ? 0 : 8,
-      bottom: fullscreen ? 0 : "auto",
-      height: fullscreen ? "100%" : "calc(100% - 16px)",
-      zIndex: 50, overflow:"hidden",
-      borderRadius: fullscreen ? 0 : 16,
-      boxShadow: "0 8px 32px rgba(0,0,0,.4)",
-      display:"flex", flexDirection:"column",
-      background:"#fff",
-    }}>
-      {/* Header */}
-      <div style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 12px", background:DARK_GREEN, flexShrink:0 }}>
-        <PenTool style={{ width:16, height:16, color:"#fff" }} />
+    <div style={{ position:"fixed", inset:0, zIndex:50, background:"#fff", display:"flex", flexDirection:"column" }}>
+
+      {/* Header — back arrow + title + tools */}
+      <div style={{ background:DARK_GREEN, display:"flex", alignItems:"center", gap:10, padding:"8px 12px", flexShrink:0 }}>
+        {/* Back button */}
+        <button onClick={onClose}
+          style={{ display:"flex", alignItems:"center", gap:6, background:"rgba(255,255,255,.15)", border:"none", borderRadius:10, padding:"7px 14px", color:"#fff", fontWeight:700, fontSize:14, cursor:"pointer" }}>
+          <ArrowLeft style={{ width:16, height:16 }}/> Back
+        </button>
+
+        <PenTool style={{ width:16, height:16, color:"rgba(255,255,255,.7)" }}/>
         <span style={{ fontSize:14, fontWeight:700, color:"#fff", flex:1 }}>
           Whiteboard · السبورة
-          {!isTeacher && <span style={{ fontSize:11, color:"rgba(255,255,255,.6)", marginLeft:8 }}>View only</span>}
+          {!isTeacher && <span style={{ fontSize:11, color:"rgba(255,255,255,.55)", marginLeft:8 }}>View only</span>}
         </span>
-        <button onClick={onToggleFullscreen} style={{ background:"none",border:"none",color:"rgba(255,255,255,.8)",cursor:"pointer",padding:4 }}>
-          {fullscreen ? <Minimize style={{width:16,height:16}}/> : <Maximize style={{width:16,height:16}}/>}
-        </button>
-        <button onClick={onClose} style={{ background:"none",border:"none",color:"rgba(255,255,255,.8)",cursor:"pointer",padding:4 }}>
-          <X style={{width:16,height:16}}/>
-        </button>
-      </div>
 
-      {/* Toolbar (teacher only) */}
-      {isTeacher && (
-        <div style={{ display:"flex", alignItems:"center", gap:8, padding:"6px 10px", background:"#f8f8f8", borderBottom:"1px solid #e0e0e0", flexShrink:0, flexWrap:"wrap" as const }}>
-          {/* Tool */}
-          <div style={{ display:"flex", gap:4 }}>
+        {/* Teacher drawing toolbar inline in header on mobile */}
+        {isTeacher && (
+          <div style={{ display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" as const }}>
+            {/* Pen / Eraser */}
             {[{id:"pen",icon:"✏️"},{id:"eraser",icon:"⬜"}].map(t=>(
               <button key={t.id} onClick={()=>setTool(t.id as any)}
-                style={{ padding:"4px 10px", borderRadius:8, border:"none", background:tool===t.id?"#1a3d24":"#e0e0e0", color:tool===t.id?"#fff":"#333", fontSize:13, cursor:"pointer" }}>
+                style={{ padding:"4px 10px", borderRadius:8, border:"none", background:tool===t.id?"rgba(255,255,255,.35)":"rgba(255,255,255,.12)", color:"#fff", fontSize:12, cursor:"pointer", fontWeight:tool===t.id?700:400 }}>
                 {t.icon}
               </button>
             ))}
+            {/* Colors */}
+            <div style={{ display:"flex", gap:3 }}>
+              {COLORS.map(col=>(
+                <button key={col} onClick={()=>{ setColor(col); setTool("pen"); }}
+                  style={{ width:20, height:20, borderRadius:"50%", background:col, border:color===col&&tool==="pen"?"3px solid #fff":"2px solid rgba(255,255,255,.3)", cursor:"pointer", flexShrink:0 }} />
+              ))}
+            </div>
+            {/* Line width */}
+            <input type="range" min={1} max={20} value={lineWidth} onChange={e=>setLineWidth(+e.target.value)} style={{ width:60 }} />
+            {/* Clear */}
+            <button onClick={clearBoard}
+              style={{ padding:"4px 12px", borderRadius:8, border:"none", background:"#EF4444", color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer" }}>
+              Clear
+            </button>
           </div>
-          {/* Colors */}
-          <div style={{ display:"flex", gap:4 }}>
-            {COLORS.map(c=>(
-              <button key={c} onClick={()=>{ setColor(c); setTool("pen"); }}
-                style={{ width:22, height:22, borderRadius:"50%", background:c, border:color===c&&tool==="pen"?"3px solid #1a3d24":"2px solid #ccc", cursor:"pointer" }} />
-            ))}
-          </div>
-          {/* Line width */}
-          <input type="range" min={1} max={20} value={lineWidth} onChange={e=>setLineWidth(+e.target.value)}
-            style={{ width:80 }} />
-          {/* Clear */}
-          <button onClick={clearBoard}
-            style={{ padding:"4px 12px", borderRadius:8, border:"none", background:"#EF4444", color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer" }}>
-            Clear
-          </button>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Canvas */}
-      <canvas ref={canvasRef} width={1200} height={800}
-        style={{ flex:1, width:"100%", height:"100%", cursor:isTeacher?(tool==="eraser"?"cell":"crosshair"):"default", touchAction:"none" }}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerLeave={onPointerUp}
-      />
+      <div style={{ flex:1, position:"relative", overflow:"hidden" }}>
+        {loadingStrokes && (
+          <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", background:"rgba(255,255,255,.9)", zIndex:5 }}>
+            <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:10 }}>
+              <Loader2 style={{ width:28, height:28, color:DARK_GREEN, animation:"spin .8s linear infinite" }}/>
+              <span style={{ fontSize:13, color:"#555" }}>Loading board…</span>
+            </div>
+          </div>
+        )}
+        <canvas ref={canvasRef} width={1200} height={800}
+          style={{ width:"100%", height:"100%", cursor:isTeacher?(tool==="eraser"?"cell":"crosshair"):"default", touchAction:"none", display:"block" }}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerLeave={onPointerUp}
+        />
+      </div>
     </div>
   );
 };
@@ -765,8 +797,8 @@ const BottomBar = ({
                 const next = !whiteboardOpen;
                 onToggleWhiteboard();
                 try {
-                  const msg = new TextEncoder().encode(JSON.stringify({ type: next ? "wb_open" : "wb_close" }));
-                  room.localParticipant.publishData(msg, { reliable: true });
+                  const data = new TextEncoder().encode(JSON.stringify({ type: next ? "wb_open" : "wb_close" }));
+                  room.localParticipant.publishData(data, { reliable: true });
                 } catch(_) {}
               }
             },
@@ -1161,7 +1193,7 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
 
           {/* Always-on data listener: handles wb_open/close signals */}
           <RoomDataListener
-            onWbOpen={()=>{ setWhiteboardOpen(true); if(!isPrivileged) setWhiteboardFS(true); }}
+            onWbOpen={()=>{ setWhiteboardOpen(true); setWhiteboardFS(true); }}
             onWbClose={()=>{ setWhiteboardOpen(false); setWhiteboardFS(false); }}
             strokesBuffer={wbStrokesBuffer}
             onMatOpen={(mat)=>setSharedMaterial(mat)}
@@ -1202,7 +1234,8 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
               {whiteboardOpen && (
                 <Whiteboard
                   onClose={()=>{
-                    setWhiteboardOpen(false); setWhiteboardFS(false);
+                    setWhiteboardOpen(false);
+                    setWhiteboardFS(false);
                     if (isPrivileged) {
                       try {
                         const msg = new TextEncoder().encode(JSON.stringify({ type: "wb_close" }));
@@ -1210,10 +1243,9 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
                       } catch (_) {}
                     }
                   }}
-                  fullscreen={whiteboardFS}
-                  onToggleFullscreen={()=>setWhiteboardFS(v=>!v)}
                   isTeacher={isPrivileged}
                   initialStrokes={wbStrokesBuffer.current}
+                  subjectId={subject.id}
                 />
               )}
 
