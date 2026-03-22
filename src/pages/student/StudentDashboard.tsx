@@ -74,7 +74,6 @@ const StudentDashboard = () => {
   const [calendarMonth, setCalendarMonth] = useState(new Date());
   const [showAllNotifs, setShowAllNotifs] = useState(false);
   const [greetingSpoken, setGreetingSpoken] = useState(false);
-  const [showNotifPanel, setShowNotifPanel] = useState(false);
 
   // ── Voice system: greeting + notification ───────────────────────
   // Browsers block speechSynthesis until a user gesture happens.
@@ -275,66 +274,6 @@ const StudentDashboard = () => {
         }
       `}</style>
 
-      {/* ── Global Notification Bell Overlay ── */}
-      {showNotifPanel && (
-        <div
-          onClick={() => setShowNotifPanel(false)}
-          style={{ position:"fixed", inset:0, zIndex:200, background:"rgba(0,0,0,0.45)", backdropFilter:"blur(4px)" }}>
-          <div
-            onClick={e => e.stopPropagation()}
-            style={{ position:"absolute", top:0, right:0, left:0, maxHeight:"80vh", background:"#fff", borderRadius:"0 0 24px 24px", overflow:"hidden", boxShadow:"0 8px 40px rgba(0,0,0,0.25)", display:"flex", flexDirection:"column" }}>
-            {/* Panel header */}
-            <div style={{ padding:"16px 20px 14px", background:DARK_GREEN, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-              <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-                <Bell style={{ width:18, height:18, color:GOLD }}/>
-                <span style={{ fontSize:16, fontWeight:800, color:"#fff", fontFamily:"'Playfair Display',serif" }}>
-                  {t("Notifications","الإشعارات")}
-                </span>
-                {notifications.filter(n=>!n.is_read).length > 0 && (
-                  <span style={{ fontSize:11, fontWeight:800, background:"#c0392b", color:"#fff", borderRadius:20, padding:"2px 10px" }}>
-                    {notifications.filter(n=>!n.is_read).length} {t("new","جديد")}
-                  </span>
-                )}
-              </div>
-              <button onClick={() => setShowNotifPanel(false)} style={{ background:"rgba(255,255,255,.15)", border:"none", borderRadius:8, width:32, height:32, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", color:"#fff" }}>
-                ✕
-              </button>
-            </div>
-            {/* Notif list */}
-            <div style={{ overflowY:"auto", flex:1 }}>
-              {notifications.length === 0 ? (
-                <div style={{ textAlign:"center", padding:"40px 20px", color:TEXT_LIGHT, fontSize:14 }}>
-                  {t("No notifications yet","لا توجد إشعارات بعد")}
-                </div>
-              ) : notifications.map(n => (
-                <div key={n.id}
-                  onClick={() => !n.is_read && markAsRead(n.id)}
-                  style={{ display:"flex", alignItems:"flex-start", gap:12, padding:"14px 20px", cursor:"pointer",
-                    background: n.is_read ? "#fafafa" : "#fffbeb",
-                    borderBottom:`1px solid ${BORDER}`,
-                  }}>
-                  <div style={{ width:34, height:34, borderRadius:"50%", background:n.is_read?"#f0f4f0":"#fffbeb", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, border:`1.5px solid ${n.is_read?BORDER:GOLD+"66"}` }}>
-                    {n.type==="warning" ? <AlertTriangle style={{ width:14, height:14, color:GOLD }}/> :
-                     n.type==="exam"    ? <ClipboardList style={{ width:14, height:14, color:"#c0392b" }}/> :
-                     <Info style={{ width:14, height:14, color:MID_GREEN }}/>}
-                  </div>
-                  <div style={{ flex:1 }}>
-                    <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                      <p style={{ fontSize:13, fontWeight:n.is_read?500:700, color:TEXT_DARK, margin:0 }}>{n.title}</p>
-                      {!n.is_read && <div style={{ width:7, height:7, borderRadius:"50%", background:"#c0392b", flexShrink:0 }}/>}
-                    </div>
-                    <p style={{ fontSize:12, color:TEXT_LIGHT, margin:"3px 0 0" }}>{n.message}</p>
-                    <p style={{ fontSize:10, color:TEXT_LIGHT, margin:"4px 0 0" }}>
-                      {new Date(n.created_at).toLocaleDateString(language==="ar"?"ar-SA":"en-US", { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" })}
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
       <div style={{ maxWidth: 720, margin: "0 auto", padding: "20px 16px 40px", display: "flex", flexDirection: "column", gap: 18 }}>
 
         {/* ── Hero + Daily Verse — Merged Card ── */}
@@ -352,26 +291,13 @@ const StudentDashboard = () => {
           <div style={{ padding: "24px 22px 20px", position:"relative", zIndex:1 }}>
             {/* Top row: bismillah + hijri + notification bell */}
             <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16 }}>
-              <span className="dwani-text" style={{ fontSize:15, color:"rgba(255,255,255,0.95)", fontWeight:700, letterSpacing:"0.12em", textShadow:"0 1px 8px rgba(0,0,0,0.3)" }}>
-                بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ
+              <span className="dwani-text" style={{ fontSize:12, color:"rgba(255,255,255,0.9)", fontWeight:700, letterSpacing:"0.06em", textShadow:"0 1px 6px rgba(0,0,0,0.3)", whiteSpace:"nowrap" as const }}>
+                بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ
               </span>
-              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                {/* Notification bell */}
-                <button
-                  onClick={() => setShowNotifPanel(true)}
-                  style={{ position:"relative", width:36, height:36, borderRadius:"50%", background:"rgba(255,255,255,.15)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", backdropFilter:"blur(4px)" }}>
-                  <Bell style={{ width:16, height:16, color:"#fff" }}/>
-                  {notifications.filter(n=>!n.is_read).length > 0 && (
-                    <span style={{ position:"absolute", top:2, right:2, width:12, height:12, borderRadius:"50%", background:"#c0392b", border:"2px solid "+DARK_GREEN, display:"flex", alignItems:"center", justifyContent:"center", fontSize:7, fontWeight:900, color:"#fff" }}>
-                      {notifications.filter(n=>!n.is_read).length > 9 ? "9+" : notifications.filter(n=>!n.is_read).length}
-                    </span>
-                  )}
-                </button>
-                {/* Hijri date */}
-                <div style={{ background:GOLD, borderRadius:30, padding:"6px 14px", display:"flex", alignItems:"center", gap:6, boxShadow:`0 2px 10px ${GOLD}66` }}>
-                  <Calendar style={{ width:12, height:12, color:DARK_GREEN }} />
-                  <span style={{ fontSize:12, color:DARK_GREEN, fontFamily:"'Amiri',serif", fontWeight:900 }} dir="rtl">{hijri.full}</span>
-                </div>
+              {/* Hijri date */}
+              <div style={{ background:GOLD, borderRadius:30, padding:"6px 14px", display:"flex", alignItems:"center", gap:6, boxShadow:`0 2px 10px ${GOLD}66` }}>
+                <Calendar style={{ width:12, height:12, color:DARK_GREEN }} />
+                <span style={{ fontSize:12, color:DARK_GREEN, fontFamily:"'Amiri',serif", fontWeight:900 }} dir="rtl">{hijri.full}</span>
               </div>
             </div>
 
