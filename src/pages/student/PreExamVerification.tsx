@@ -398,43 +398,34 @@ const PreExamVerification = () => {
                 })}
               </div>
 
-              {/* Camera preview */}
+              {/* Camera status message — no preview shown to student */}
               {webcamStream && (
-                <div style={{ padding: "16px 20px", borderTop: "1px solid #f0f4f8" }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: "#9ca3af", marginBottom: 10, letterSpacing: 1 }}>CAMERA PREVIEW</div>
-                  <div style={{ position: "relative", borderRadius: 14, overflow: "hidden", background: "#000", aspectRatio: "4/3" }}>
-                    <video ref={videoRef} autoPlay muted playsInline style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                <div style={{ padding: "14px 20px", borderTop: "1px solid #f0f4f8" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", background: faceCaptured ? "#f0fff4" : "#f0f9ff", borderRadius: 12, border: `1px solid ${faceCaptured ? "#86efac" : "#bae6fd"}` }}>
+                    <div style={{ fontSize: 22, flexShrink: 0 }}>{faceCaptured ? "✅" : "📷"}</div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: faceCaptured ? "#065f46" : "#0369a1" }}>
+                        {faceCaptured
+                          ? t("Verification photo captured successfully", "تم التقاط صورة التحقق بنجاح")
+                          : t("Camera is active and ready", "الكاميرا نشطة وجاهزة")}
+                      </div>
+                      <div style={{ fontSize: 11, color: "#6b7280", marginTop: 2 }}>
+                        {faceCaptured
+                          ? t("Your identity has been recorded for this session.", "تم تسجيل هويتك لهذه الجلسة.")
+                          : t("Your camera is on. A photo will be taken automatically when the exam starts.", "كاميرتك مفعّلة. سيتم التقاط صورة تلقائياً عند بدء الامتحان.")}
+                      </div>
+                    </div>
+                    {!faceCaptured && (
+                      <button onClick={captureSnapshot} style={{ padding: "8px 14px", borderRadius: 10, background: G, border: "none", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}>
+                        {t("Capture", "التقاط")}
+                      </button>
+                    )}
                     {faceCaptured && (
-                      <div style={{ position: "absolute", top: 10, right: 10, background: "#22c55e", borderRadius: 20, padding: "4px 10px", fontSize: 11, color: "#fff", fontWeight: 700 }}>✓ Photo captured</div>
+                      <button onClick={() => { setFaceSnapshot(null); setFaceCaptured(false); }} style={{ padding: "6px 12px", borderRadius: 10, background: "none", border: "1px solid #86efac", color: "#065f46", fontSize: 11, fontWeight: 600, cursor: "pointer", flexShrink: 0 }}>
+                        {t("Redo", "إعادة")}
+                      </button>
                     )}
                   </div>
-                  <button onClick={captureSnapshot} style={{ width: "100%", marginTop: 10, padding: "10px", borderRadius: 12, background: G, border: "none", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'Cairo',sans-serif" }}>
-                    {faceSnapshot ? t("🔄 Retake Photo", "🔄 إعادة التقاط") : t("📸 Capture Verification Photo", "📸 التقاط صورة التحقق")}
-                  </button>
-                  {/* Snapshot preview — student must confirm clarity */}
-                  {faceSnapshot && !faceCaptured && (
-                    <div style={{ marginTop: 12, borderRadius: 12, overflow: "hidden", border: "2px solid #fbbf24" }}>
-                      <div style={{ background: "#fffbeb", padding: "6px 12px", fontSize: 11, fontWeight: 700, color: "#92400e" }}>
-                        📋 {t("Is this photo clear and well-lit?", "هل هذه الصورة واضحة ومضاءة جيداً؟")}
-                      </div>
-                      <img src={faceSnapshot} alt="Snapshot preview" style={{ width: "100%", display: "block" }} />
-                      <div style={{ display: "flex", gap: 8, padding: "10px 12px", background: "#fffbeb" }}>
-                        <button onClick={() => setFaceCaptured(true)}
-                          style={{ flex: 1, padding: "8px", borderRadius: 8, background: "#22c55e", border: "none", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-                          ✓ {t("Yes, use this", "نعم، استخدم هذه")}
-                        </button>
-                        <button onClick={() => { setFaceSnapshot(null); setFaceCaptured(false); }}
-                          style={{ flex: 1, padding: "8px", borderRadius: 8, background: "#ef4444", border: "none", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-                          ✗ {t("Retake", "إعادة")}
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                  {faceCaptured && (
-                    <div style={{ marginTop: 8, padding: "8px 12px", borderRadius: 8, background: "#f0fff4", border: "1px solid #86efac", fontSize: 12, color: "#22c55e", fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
-                      ✓ {t("Verification photo confirmed", "تم تأكيد صورة التحقق")}
-                    </div>
-                  )}
                 </div>
               )}
 
