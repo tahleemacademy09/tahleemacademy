@@ -119,6 +119,41 @@ const genCode = () => Math.floor(100000 + Math.random() * 900000).toString();
 const TOPICS  = ["All Topics","Quran","Tajweed","Arabic","Fiqh","Islamic Studies"];
 const EMOJI_POOL = ["🌙","⭐","🕌","📖","🌟","✨","🌺","🦋","💎","🌸"];
 
+
+/* ── Split bilingual question text into Arabic + English parts ── */
+function splitBilingual(text: string): { ar: string; en: string } | null {
+  if (!text) return null;
+  const t = text.trim();
+  const m1 = t.match(/^([\s\S]*?[؀-ۿ][\s\S]*?)\s*\(([^)]+)\)\s*$/);
+  if (m1 && /[a-zA-Z]/.test(m1[2])) return { ar: m1[1].trim(), en: m1[2].trim() };
+  const m2 = t.match(/^\(([^)]+)\)\s*([\s\S]*[؀-ۿ][\s\S]*)$/);
+  if (m2 && /[a-zA-Z]/.test(m2[1])) return { ar: m2[2].trim(), en: m2[1].trim() };
+  const lines = t.split(/
++/);
+  if (lines.length >= 2) {
+    const arParts: string[] = [], enParts: string[] = [];
+    for (const l of lines) {
+      const s = l.replace(/[()]/g, '').trim(); if (!s) continue;
+      if (/[؀-ۿ]/.test(s)) arParts.push(s);
+      else if (/[a-zA-Z]/.test(s)) enParts.push(s);
+    }
+    if (arParts.length && enParts.length) return { ar: arParts.join(' '), en: enParts.join(' ') };
+  }
+  return null;
+}
+
+const LQQuestion = ({ text }: { text: string }) => {
+  const split = splitBilingual(text);
+  if (split) return (
+    <div style={{textAlign:'center'}}>
+      {split.ar && <p style={{fontFamily:"'Scheherazade New','Amiri Quran','Amiri',serif",fontSize:24,fontWeight:700,color:'#fff',margin:'0 0 10px',lineHeight:2.2,direction:'rtl'}}>{split.ar}</p>}
+      {split.en && <p style={{fontFamily:"'Cairo',sans-serif",fontSize:16,fontWeight:600,color:'rgba(255,255,255,0.85)',margin:0,lineHeight:1.8}}>{split.en}</p>}
+    </div>
+  );
+  const isAr = /[؀-ۿ]/.test(text);
+  return <p style={{fontFamily:isAr?"'Scheherazade New','Amiri Quran','Amiri',serif":"'Cairo',sans-serif",fontSize:isAr?24:20,fontWeight:700,color:'#fff',margin:0,lineHeight:isAr?2.2:1.6,direction:isAr?'rtl':'ltr'}}>{text}</p>;
+};
+
 /* ══════════════════════════════════════════════════════
    MAIN COMPONENT
 ══════════════════════════════════════════════════════ */
@@ -463,6 +498,7 @@ Make questions educational, clearly worded, and accurate.`
       broadcastQuestion(q);
     }
     await supabase.from("live_quiz_rooms" as any).update({ status:"countdown", current_question_index:0 } as any).eq("id", room.id);
+    setRoom(r => r ? { ...r, current_question_index: 0, status: "countdown" } : r);
     setCountdown(3); setView("countdown-host"); setSelectedAns(null); setAnswerCounts({}); setNumAnswered(0);
   };
 
@@ -470,6 +506,7 @@ Make questions educational, clearly worded, and accurate.`
     if (!room) return;
     clearInterval(timerRef.current);
     await supabase.from("live_quiz_rooms" as any).update({ status:"reveal" } as any).eq("id", room.id);
+    setRoom(r => r ? { ...r, status: "reveal" } : r);
     await loadParticipants(); await loadAnswerCounts();
     setView("reveal-host");
   };
@@ -479,6 +516,8 @@ Make questions educational, clearly worded, and accurate.`
     const next = (room.current_question_index||0) + 1;
     if (next >= (room.total_questions||0)) {
       await supabase.from("live_quiz_rooms" as any).update({ status:"finished" } as any).eq("id", room.id);
+      // Update local room state so results screen shows correct totals
+      setRoom(r => r ? { ...r, status:"finished" } : r);
       await loadParticipants();
       setView("results-host");
     } else {
@@ -486,12 +525,14 @@ Make questions educational, clearly worded, and accurate.`
       const q = qData ? { ...qData, options: qData.options as string[] } as Question : null;
       if (q) {
         setCurrentQ(q);
-        // Broadcast to students BEFORE updating DB so they have data when countdown starts
         broadcastQuestion(q);
-        // Small delay so broadcast reaches students before DB status change fires
         await new Promise(res => setTimeout(res, 150));
       }
       await supabase.from("live_quiz_rooms" as any).update({ status:"countdown", current_question_index:next } as any).eq("id", room.id);
+      // ── KEY FIX: update local room state with new index ──────────
+      // Without this, room.current_question_index stays at 0 forever
+      // and the "Question X / Y" counter never advances on host screen
+      setRoom(r => r ? { ...r, current_question_index: next, status: "countdown" } : r);
       setCountdown(3); setView("countdown-host"); setAnswerCounts({}); setNumAnswered(0);
     }
   };
@@ -1219,7 +1260,7 @@ Go to: tahleemacademy.vercel.app/live-quiz`,
 
         {/* Question card */}
         <div style={{...glassCard, textAlign:"center", marginBottom:16, minHeight:90, display:"flex", alignItems:"center", justifyContent:"center"}}>
-          <p style={{fontSize:20,fontWeight:700,color:"#fff",margin:0,lineHeight:1.6,fontFamily:"'Playfair Display',serif"}}>{currentQ.question}</p>
+          <LQQuestion text={currentQ.question}/>
         </div>
 
         {/* Answer grid */}
@@ -1382,7 +1423,7 @@ Go to: tahleemacademy.vercel.app/live-quiz`,
 
         {/* Question */}
         <div style={{...glassCard, textAlign:"center", minHeight:100, display:"flex", alignItems:"center", justifyContent:"center", marginBottom:20}}>
-          <p style={{fontSize:18,fontWeight:700,color:"#fff",margin:0,lineHeight:1.6,fontFamily:"'Playfair Display',serif"}}>{currentQ.question}</p>
+          <LQQuestion text={currentQ.question}/>
         </div>
 
         {/* Options */}
