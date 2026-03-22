@@ -15,6 +15,25 @@ import { sanitizeHtml } from "@/lib/sanitize";
 import { CheckCircle, XCircle, Play, Pause, Volume2, Search, FileText, Image, Download } from "lucide-react";
 import AdminAudioPlayer from "@/components/exam/AdminAudioPlayer";
 
+function splitBilingual(text: string): { ar: string; en: string } | null {
+  if (!text) return null;
+  const t = text.trim();
+  const m1 = t.match(/^([\s\S]*?[\u0600-\u06FF][\s\S]*?)\s*\(([^)]+)\)\s*$/);
+  if (m1 && /[a-zA-Z]/.test(m1[2])) return { ar: m1[1].trim(), en: m1[2].trim() };
+  const m2 = t.match(/^\(([^)]+)\)\s*([\s\S]*[\u0600-\u06FF][\s\S]*)$/);
+  if (m2 && /[a-zA-Z]/.test(m2[1])) return { ar: m2[2].trim(), en: m2[1].trim() };
+  const lines = t.split(/\n+/);
+  if (lines.length >= 2) {
+    const arParts: string[] = [], enParts: string[] = [];
+    for (const l of lines) {
+      const s = l.replace(/[()]/g, '').trim(); if (!s) continue;
+      if (/[\u0600-\u06FF]/.test(s)) arParts.push(s); else if (/[a-zA-Z]/.test(s)) enParts.push(s);
+    }
+    if (arParts.length && enParts.length) return { ar: arParts.join(' '), en: enParts.join(' ') };
+  }
+  return null;
+}
+
 const GradingPage = () => {
   const { t, language } = useLanguage();
   const { toast } = useToast();
@@ -254,22 +273,24 @@ const GradingPage = () => {
                     {ans?.is_correct === false && <XCircle className="h-4 w-4 text-destructive" />}
                   </div>
 
-                  {q.question_text ? (
-                    <div
-                      className="mb-1 font-medium text-sm prose prose-sm max-w-none"
-                      dir="auto"
-                      dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.question_text) }}
-                    />
-                  ) : null}
-                  {q.question_text_ar && q.question_text_ar !== q.question_text ? (
-                    <div
-                      className="mb-2 arabic-exam-text prose prose-sm max-w-none"
-                      dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.question_text_ar) }}
-                    />
-                  ) : null}
-                  {!q.question_text && !q.question_text_ar && (
-                    <p className="mb-2 text-muted-foreground italic text-sm">Question text missing. Please contact administrator.</p>
-                  )}
+                  {(q.question_text || q.question_text_ar) ? (() => {
+                    const primary = q.question_text || q.question_text_ar || '';
+                    const split = splitBilingual(primary);
+                    const hasAr = q.question_text_ar && q.question_text_ar !== q.question_text;
+                    const G = '#0f2d1f', GOLD = '#c9a84c';
+                    return (
+                      <div>
+                        {hasAr
+                          ? <><div dir="rtl" style={{fontFamily:"'Scheherazade New','Amiri Quran',serif",fontSize:20,fontWeight:700,lineHeight:2.2,color:G,textAlign:'right',padding:'8px 12px',background:'#f8fafb',borderRadius:8,borderRight:`4px solid ${GOLD}`,marginBottom:6}} dangerouslySetInnerHTML={{__html:q.question_text_ar}}/>
+                             <div dir="ltr" style={{fontFamily:"'Cairo',sans-serif",fontSize:15,fontWeight:600,lineHeight:1.9,color:G,padding:'6px 12px',background:'#f0f4f0',borderRadius:8,borderLeft:`4px solid ${GOLD}`}} dangerouslySetInnerHTML={{__html:q.question_text}}/></>
+                          : split
+                          ? <>{split.ar && <div dir="rtl" style={{fontFamily:"'Scheherazade New','Amiri Quran',serif",fontSize:20,fontWeight:700,lineHeight:2.2,color:G,textAlign:'right',padding:'8px 12px',background:'#f8fafb',borderRadius:8,borderRight:`4px solid ${GOLD}`,marginBottom:6}}>{split.ar}</div>}
+                             {split.en && <div dir="ltr" style={{fontFamily:"'Cairo',sans-serif",fontSize:15,fontWeight:600,lineHeight:1.9,color:G,padding:'6px 12px',background:'#f0f4f0',borderRadius:8,borderLeft:`4px solid ${GOLD}`}}>{split.en}</div>}</>
+                          : <div dir="auto" style={{fontFamily:"'Scheherazade New','Amiri',serif",fontSize:17,fontWeight:600,lineHeight:2,color:G}} dangerouslySetInnerHTML={{__html:primary}}/>
+                        }
+                      </div>
+                    );
+                  })() : (
 
                   {q.correct_answer && (
                     <p className="mb-2 text-xs text-emerald">
