@@ -75,101 +75,49 @@ const StudentDashboard = () => {
   const [showAllNotifs, setShowAllNotifs] = useState(false);
   const [greetingSpoken, setGreetingSpoken] = useState(false);
 
-  // ── Voice greeting — Arabic male, falls back to English ─────────
-  // Strategy:
-  //   1. Always attempt Arabic with lang="ar-SA" and low pitch (male feel)
-  //   2. Pick any Arabic voice if available (prefer known male names)
-  //   3. If the first utterance produces NO audio (onerror or onend fires
-  //      immediately with 0 chars spoken), fall back to English
-  //   4. Full sentence spoken — not just the name
+  // ── Voice greeting — short, simple, works everywhere ─────────
   useEffect(() => {
     if (!profile?.full_name || greetingSpoken || loading) return;
-
     const firstName = (profile.full_name || 'student').split(' ')[0];
-    const unread    = notifications.filter((n: any) => !n.is_read).length;
 
     const doSpeak = (voices: SpeechSynthesisVoice[]) => {
       window.speechSynthesis.cancel();
 
-      // ── Pick Arabic voice — prefer known male names ──────────────
-      const allAr = voices.filter(v => v.lang.startsWith('ar') || /arab/i.test(v.name));
-      const maleAr = allAr.find(v => /Majed|Maged|Hatem|Tarik|Basem|Mehdi|Hamed|Naief|Mohammed|Ahmad|Arab_Male/i.test(v.name))
-                  || allAr.find(v => v.lang === 'ar-SA')
-                  || allAr.find(v => v.lang === 'ar-EG')
-                  || allAr[0]
-                  || null;
-
-      // ── Full Arabic greeting text ────────────────────────────────
-      // Written as one sentence so even if the voice can't split cleanly
-      // the full meaning is preserved
-      const arText = `السلام عليكم ورحمة الله وبركاته، ${firstName}. أهلاً وسهلاً بك في أكاديمية تعليم. نسأل الله أن يبارك في علمك.`;
-      const arNotif = unread > 0
-        ? `لديك ${unread} ${unread === 1 ? 'إشعار جديد' : 'إشعارات جديدة'}. يمكنك الاطلاع عليها من أيقونة الجرس.`
-        : '';
-
-      // ── Fallback: Arabic-accented English ─────────────────────────
-      // When no Arabic voice exists, we still use transliterated Arabic
-      // phrases + set lang="ar" on whatever voice IS available so the
-      // engine tries to produce Arabic phonology. This gives an Arabic
-      // accent even on a device with only English voices.
-      // We also look for voices whose name suggests an Arabic/Middle-Eastern
-      // origin (Maged, Majed, etc.) which some devices expose as English voices.
-      const arAccentVoice =
-        voices.find(v => /Majed|Maged|Hatem|Tarik|Basem|Mehdi|Hamed|Naief|Mohammed|Ahmad/i.test(v.name)) ||
-        voices.find(v => v.lang === 'ar-SA') ||
-        voices.find(v => v.lang.startsWith('ar')) ||
-        voices.find(v => v.lang === 'en-GB') ||   // British English is closer to Arabic rhythm
-        voices.find(v => v.lang.startsWith('en')) ||
-        null;
-      // Use lang="ar-SA" even for transliterated text — makes the engine
-      // attempt Arabic phonology which sounds Arabic-accented
-      const fallbackLang = arAccentVoice?.lang.startsWith('ar') ? 'ar-SA' : 'ar-SA';
-      const enText = `assalamu alaykum wa rahmatullahi wa barakatuh, ${firstName}. ahlan wa sahlan bika fi akademiyyat tahleem. nas'alu Allah an yubarak fi ilmik.`;
-      const enNotif = unread > 0
-        ? `ladayka ${unread} ${unread === 1 ? "ishaar jadeed" : "ishaarat jadeeda"}. tafaddal bil-ittila alayha.`
-        : '';
-
-      // ── Speak a sequence of utterances ──────────────────────────
-      const speakSeq = (texts: string[], lang: string, voice: SpeechSynthesisVoice | null, idx = 0) => {
-        if (idx >= texts.length || !texts[idx]) return;
-        const u = new SpeechSynthesisUtterance(texts[idx]);
-        u.lang   = lang;
-        u.rate   = 0.80;
-        u.pitch  = 0.60; // noticeably deep male tone
-        u.volume = 1.0;
-        if (voice) u.voice = voice;
-        u.onend = () => setTimeout(() => speakSeq(texts, lang, voice, idx + 1), 350);
-        window.speechSynthesis.speak(u);
+      // Pick the deepest male-sounding voice available
+      // Priority: explicit Arabic male > any Arabic > deep English male > any
+      const pick = (filters: ((v: SpeechSynthesisVoice) => boolean)[]) => {
+        for (const f of filters) { const v = voices.find(f); if (v) return v; }
+        return voices[0] || null;
       };
 
-      // ── Try Arabic first — detect silence and fall back ──────────
-      let arStarted = false;
-      const testAr = new SpeechSynthesisUtterance('السلام');
-      testAr.lang   = 'ar-SA';
-      testAr.volume = 0.01; // nearly silent test
-      testAr.rate   = 2.0;  // fast test
-      if (maleAr) testAr.voice = maleAr;
+      const bestVoice = pick([
+        v => /Majed|Maged|Hatem|Tarik|Basem|Mehdi|Hamed|Naief|Mohammed/i.test(v.name),
+        v => v.lang === 'ar-SA',
+        v => v.lang === 'ar-EG',
+        v => v.lang.startsWith('ar'),
+        v => /Daniel|David|James|Thomas|George/i.test(v.name) && v.lang.startsWith('en'),
+        v => v.lang === 'en-GB',
+        v => true,
+      ]);
 
-      testAr.onstart = () => { arStarted = true; };
-      testAr.onend   = () => {
-        window.speechSynthesis.cancel();
-        if (arStarted && maleAr) {
-          // Arabic TTS is working — speak full greeting in Arabic
-          const seq = [arText, arNotif].filter(Boolean);
-          speakSeq(seq, 'ar-SA', maleAr);
-        } else {
-          // Arabic TTS not available — use Arabic-accented transliteration
-          const seq = [enText, enNotif].filter(Boolean);
-          speakSeq(seq, fallbackLang, arAccentVoice);
-        }
-      };
-      testAr.onerror = () => {
-        window.speechSynthesis.cancel();
-        const seq = [enText, enNotif].filter(Boolean);
-        speakSeq(seq, fallbackLang, arAccentVoice);
-      };
+      const isArabicVoice = bestVoice?.lang?.startsWith('ar') ?? false;
 
-      window.speechSynthesis.speak(testAr);
+      // Simple short text — just what the user asked for
+      // Arabic version: "السلام عليكم [name] مرحبًا"
+      // Fallback: phonetic spelling that any engine pronounces recognizably
+      const text = isArabicVoice
+        ? "السلام عليكم " + firstName + " مرحبًا"
+        : "As-salaamu alaykum. " + firstName + ". Marhaban.";
+
+      const lang = isArabicVoice ? 'ar-SA' : 'en-US';
+
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang   = lang;
+      u.rate   = 0.78;
+      u.pitch  = 0.55; // deep male
+      u.volume = 1.0;
+      if (bestVoice) u.voice = bestVoice;
+      window.speechSynthesis.speak(u);
       setGreetingSpoken(true);
     };
 
@@ -187,7 +135,7 @@ const StudentDashboard = () => {
         setTimeout(() => {
           window.speechSynthesis.removeEventListener('voiceschanged', h);
           doSpeak(window.speechSynthesis.getVoices());
-        }, 2500);
+        }, 2000);
       }
     };
 
@@ -685,4 +633,3 @@ const StudentDashboard = () => {
 };
 
 export default StudentDashboard;
-
