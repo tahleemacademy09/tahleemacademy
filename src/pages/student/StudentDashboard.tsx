@@ -76,60 +76,91 @@ const StudentDashboard = () => {
   const [greetingSpoken, setGreetingSpoken] = useState(false);
   const [showNotifPanel, setShowNotifPanel] = useState(false);
 
-  // ── Voice greeting on first login ──────────────────────────────
+  // ── Voice system: greeting + notification ───────────────────────
+  // Browsers block speechSynthesis until a user gesture happens.
+  // We listen for the first touch/click, then play after voices load.
   useEffect(() => {
     if (!profile?.full_name || greetingSpoken || loading) return;
-    const timer = setTimeout(() => {
-      try {
-        if (!window.speechSynthesis) return;
+
+    const firstName = profile.full_name.split(" ")[0];
+    const unreadCount = notifications.filter(n => !n.is_read).length;
+
+    const speak = () => {
+      if (!window.speechSynthesis) return;
+
+      const getArVoice = () => {
+        const vs = window.speechSynthesis.getVoices();
+        return vs.find(v => v.lang === "ar-SA") ||
+               vs.find(v => v.lang === "ar-EG") ||
+               vs.find(v => v.lang.startsWith("ar")) ||
+               vs.find(v => v.name.toLowerCase().includes("arab")) ||
+               null;
+      };
+
+      const doSpeak = () => {
         window.speechSynthesis.cancel();
-        const firstName = profile.full_name.split(" ")[0];
 
-        // Greeting utterance in Arabic with high quality voice
+        // ── Greeting ──────────────────────────────
         const greet = new SpeechSynthesisUtterance();
-        greet.text = `السلام عليكم ${firstName}، أهلاً وسهلاً بك في أكاديمية تعليم`;
+        greet.text = `السلام عليكم ${firstName}. أهلاً وسهلاً بك في أكاديمية تعليم.`;
         greet.lang = "ar-SA";
-        greet.rate = 0.85;
-        greet.pitch = 1.0;
+        greet.rate = 0.82;
+        greet.pitch = 1.05;
         greet.volume = 1.0;
-
-        // Pick the best Arabic voice available
-        const voices = window.speechSynthesis.getVoices();
-        const arVoice = voices.find(v => v.lang.startsWith("ar")) ||
-                        voices.find(v => v.lang.startsWith("ar-")) ||
-                        voices.find(v => v.name.toLowerCase().includes("arabic"));
+        const arVoice = getArVoice();
         if (arVoice) greet.voice = arVoice;
+
+        // ── Notification alert after greeting ──────
+        greet.onend = () => {
+          if (unreadCount === 0) return;
+          setTimeout(() => {
+            const notif = new SpeechSynthesisUtterance();
+            notif.text = `لديك ${unreadCount} إشعار${unreadCount > 1 ? "ات" : ""} جديد${unreadCount > 1 ? "ة" : ""}. اضغط على أيقونة الجرس للاطلاع عليها.`;
+            notif.lang = "ar-SA";
+            notif.rate = 0.88;
+            notif.pitch = 1.0;
+            notif.volume = 0.95;
+            const v2 = getArVoice();
+            if (v2) notif.voice = v2;
+            window.speechSynthesis.speak(notif);
+          }, 600);
+        };
 
         window.speechSynthesis.speak(greet);
         setGreetingSpoken(true);
-      } catch (_) {}
-    }, 1200);
-    return () => clearTimeout(timer);
-  }, [profile?.full_name, greetingSpoken, loading]);
+      };
 
-  // ── Voice notification alert for unread notifs ───────────────
-  useEffect(() => {
-    if (loading || greetingSpoken) return; // wait for greeting first
-    const unread = notifications.filter(n => !n.is_read);
-    if (unread.length === 0) return;
-    const timer = setTimeout(() => {
-      try {
-        if (!window.speechSynthesis) return;
-        const msg = new SpeechSynthesisUtterance();
-        msg.text = `لديك ${unread.length} إشعار${unread.length > 1 ? "ات" : ""} جديد${unread.length > 1 ? "ة" : ""}. اضغط على أيقونة الجرس للاطلاع عليها.`;
-        msg.lang = "ar-SA";
-        msg.rate = 0.9;
-        msg.pitch = 1.0;
-        msg.volume = 0.9;
-        const voices = window.speechSynthesis.getVoices();
-        const arVoice = voices.find(v => v.lang.startsWith("ar"));
-        if (arVoice) msg.voice = arVoice;
-        // Delay until after greeting finishes (~4s)
-        window.speechSynthesis.speak(msg);
-      } catch (_) {}
-    }, 6000);
-    return () => clearTimeout(timer);
-  }, [loading, greetingSpoken, notifications.length]);
+      // voices may not be loaded yet on first call
+      const voices = window.speechSynthesis.getVoices();
+      if (voices.length > 0) {
+        doSpeak();
+      } else {
+        window.speechSynthesis.onvoiceschanged = () => {
+          window.speechSynthesis.onvoiceschanged = null;
+          doSpeak();
+        };
+      }
+    };
+
+    // Browsers require a user gesture before speechSynthesis works.
+    // We attach one-time listeners for the first interaction.
+    const onGesture = () => {
+      document.removeEventListener("click",     onGesture);
+      document.removeEventListener("touchstart", onGesture);
+      document.removeEventListener("keydown",    onGesture);
+      setTimeout(speak, 300);
+    };
+
+    document.addEventListener("click",     onGesture, { once: true });
+    document.addEventListener("touchstart", onGesture, { once: true });
+    document.addEventListener("keydown",    onGesture, { once: true });
+
+    return () => {
+      document.removeEventListener("click",     onGesture);
+      document.removeEventListener("touchstart", onGesture);
+      document.removeEventListener("keydown",    onGesture);
+    };
+  }, [profile?.full_name, greetingSpoken, loading, notifications.length]);
 
   const dayOfYear = Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0).getTime()) / 86400000);
   const dailyVerse = VERSES[dayOfYear % VERSES.length];
@@ -237,7 +268,12 @@ const StudentDashboard = () => {
 
   return (
     <div style={{ background: CREAM, minHeight: "100vh", fontFamily: "'Cairo', sans-serif" }}>
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Amiri:wght@400;700&family=Cairo:wght@400;600;700;900&family=Playfair+Display:wght@500;700&display=swap');`}</style>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Scheherazade+New:wght@400;700&family=Amiri+Quran&family=Amiri:wght@400;700&family=Cairo:wght@400;600;700;900&family=Playfair+Display:wght@500;700&display=swap');
+        .dwani-text {
+          font-family: 'Scheherazade New', 'Amiri Quran', 'Amiri', serif !important;
+        }
+      `}</style>
 
       {/* ── Global Notification Bell Overlay ── */}
       {showNotifPanel && (
@@ -316,8 +352,8 @@ const StudentDashboard = () => {
           <div style={{ padding: "24px 22px 20px", position:"relative", zIndex:1 }}>
             {/* Top row: bismillah + hijri + notification bell */}
             <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16 }}>
-              <span style={{ fontSize:13, color:"rgba(255,255,255,0.92)", fontFamily:"'Amiri',serif", fontWeight:700, letterSpacing:"0.1em" }}>
-                بسم الله الرحمن الرحيم
+              <span className="dwani-text" style={{ fontSize:15, color:"rgba(255,255,255,0.95)", fontWeight:700, letterSpacing:"0.12em", textShadow:"0 1px 8px rgba(0,0,0,0.3)" }}>
+                بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ
               </span>
               <div style={{ display:"flex", alignItems:"center", gap:8 }}>
                 {/* Notification bell */}
@@ -341,18 +377,17 @@ const StudentDashboard = () => {
 
             {/* Greeting */}
             <div style={{ textAlign:"center" }}>
-              {/* Quranic-style Arabic calligraphy via Google Fonts Amiri Quran */}
+              {/* السلام عليكم — Scheherazade New (Dwani-style calligraphy) */}
               <div style={{ margin:"0 auto 6px", textAlign:"center" }}>
-                <span style={{
-                  fontFamily: "'Amiri Quran', 'Amiri', serif",
-                  fontSize: 40,
-                  fontWeight: 400,
+                <span className="dwani-text" style={{
+                  fontSize: 42,
+                  fontWeight: 700,
                   color: "#fff",
-                  lineHeight: 1.7,
+                  lineHeight: 1.8,
                   display: "block",
-                  letterSpacing: "0.05em",
-                  textShadow: `0 2px 20px rgba(201,168,76,0.3), 0 0 60px rgba(255,255,255,0.08)`,
-                  filter: "drop-shadow(0 2px 8px rgba(0,0,0,0.4))",
+                  letterSpacing: "0.08em",
+                  textShadow: `0 2px 24px rgba(201,168,76,0.4), 0 0 60px rgba(255,255,255,0.1)`,
+                  filter: "drop-shadow(0 3px 10px rgba(0,0,0,0.45))",
                 }} dir="rtl">
                   ٱلسَّلَامُ عَلَيْكُم
                 </span>
