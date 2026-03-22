@@ -1,4 +1,72 @@
 /*  src/pages/student/ExamTaking.tsx
+
+/* ── Bilingual question renderer ──────────────────────────────────────
+   Splits "Arabic text (English text)" into two clean paragraphs.
+   Arabic is shown first, English below. Brackets are removed.
+─────────────────────────────────────────────────────────────────── */
+function splitBilingual(text: string): { ar: string; en: string } | null {
+  if (!text) return null;
+  const t = text.trim();
+  // Pattern: Arabic ... (English ...)
+  const m1 = t.match(/^([\s\S]*?[؀-ۿ][\s\S]*?)\s*\(([^)]+)\)\s*$/);
+  if (m1 && /[a-zA-Z]/.test(m1[2])) return { ar: m1[1].trim(), en: m1[2].trim() };
+  // Pattern: (English ...) Arabic ...
+  const m2 = t.match(/^\(([^)]+)\)\s*([\s\S]*[؀-ۿ][\s\S]*)$/);
+  if (m2 && /[a-zA-Z]/.test(m2[1])) return { ar: m2[2].trim(), en: m2[1].trim() };
+  // Pattern: newline separation
+  const lines = t.split(/
++/);
+  if (lines.length >= 2) {
+    const arParts: string[] = [], enParts: string[] = [];
+    for (const l of lines) {
+      const s = l.replace(/[()]/g, '').trim(); if (!s) continue;
+      if (/[؀-ۿ]/.test(s)) arParts.push(s);
+      else if (/[a-zA-Z]/.test(s)) enParts.push(s);
+    }
+    if (arParts.length && enParts.length) return { ar: arParts.join(' '), en: enParts.join(' ') };
+  }
+  return null;
+}
+
+const QText = ({ text, textAr, G, GOLD }: { text?: string; textAr?: string; G: string; GOLD: string }) => {
+  const primary = text || textAr || '';
+  const secondary = textAr && textAr !== text ? textAr : null;
+  const split = !secondary ? splitBilingual(primary) : null;
+
+  const arStyle: React.CSSProperties = {
+    fontFamily: "'Scheherazade New','Amiri Quran','Amiri',serif",
+    fontSize: 22, fontWeight: 700, lineHeight: 2.3,
+    color: G, textAlign: 'right', direction: 'rtl',
+    padding: '10px 14px', background: '#f8fafb',
+    borderRadius: 10, borderRight: `4px solid ${GOLD}`,
+    marginBottom: 8,
+  };
+  const enStyle: React.CSSProperties = {
+    fontFamily: "'Cairo',sans-serif",
+    fontSize: 16, fontWeight: 600, lineHeight: 1.9,
+    color: G, padding: '8px 14px', background: '#f0f4f2',
+    borderRadius: 10, borderLeft: `4px solid ${GOLD}`,
+  };
+
+  if (secondary) return (
+    <div>
+      <div style={arStyle} dir="rtl" dangerouslySetInnerHTML={{ __html: secondary }}/>
+      <div style={enStyle} dir="ltr"  dangerouslySetInnerHTML={{ __html: primary  }}/>
+    </div>
+  );
+  if (split) return (
+    <div>
+      {split.ar && <div style={arStyle} dir="rtl">{split.ar}</div>}
+      {split.en && <div style={enStyle} dir="ltr">{split.en}</div>}
+    </div>
+  );
+  const isAr = /[؀-ۿ]/.test(primary);
+  return (
+    <div style={{ ...( isAr ? arStyle : enStyle ) }} dir={isAr ? 'rtl' : 'ltr'}
+      dangerouslySetInnerHTML={{ __html: primary }}/>
+  );
+};
+
     ENHANCED VERSION — New question types, confidence indicator,
     keyboard navigation, section support, better mobile UX
 */
@@ -688,17 +756,12 @@ const ExamTaking = () => {
 
                 {/* Question body */}
                 <div style={{ padding: "22px 22px 10px" }}>
-                  {/* Question text */}
+                  {/* Question text — Arabic first, English below, brackets removed */}
                   <div style={{ marginBottom: 20 }}>
-                    {q.question_text && (
-                      <div dir="auto" dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.question_text) }}
-                        style={{ fontSize: 19, fontWeight: 700, lineHeight: 2, color: G, fontFamily: "'Amiri',serif", marginBottom: 6 }} />
-                    )}
-                    {q.question_text_ar && q.question_text_ar !== q.question_text && (
-                      <div dir="rtl" dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.question_text_ar) }}
-                        style={{ fontSize: 22, fontWeight: 700, lineHeight: 2.4, color: G, fontFamily: "'Amiri Quran',serif", direction: "rtl", textAlign: "right", marginTop: 8, padding: "10px 14px", background: "#f8fafb", borderRadius: 10, borderRight: `4px solid ${GOLD}` }} />
-                    )}
-                    {!q.question_text && !q.question_text_ar && <p style={{ color: "#9ca3af", fontStyle: "italic", fontSize: 14 }}>Question text missing.</p>}
+                    {(q.question_text || q.question_text_ar)
+                      ? <QText text={sanitizeHtml(q.question_text||'')} textAr={sanitizeHtml(q.question_text_ar||'')} G={G} GOLD={GOLD}/>
+                      : <p style={{ color: "#9ca3af", fontStyle: "italic", fontSize: 14 }}>Question text missing.</p>
+                    }
                     {/* Media */}
                     {q.media_url && (q.question_type === "audio" || q.question_type === "dictation") && <div style={{ marginTop: 12 }}><AudioPlayer src={q.media_url} title={t("Listen carefully", "استمع بعناية")} maxPlays={3} /></div>}
                     {q.media_url && q.question_type === "video" && <div style={{ marginTop: 12, borderRadius: 12, overflow: "hidden" }}><video controls src={q.media_url} style={{ width: "100%", maxHeight: 240, background: "#000" }} /></div>}
