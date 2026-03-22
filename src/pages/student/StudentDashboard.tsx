@@ -1,4 +1,3 @@
-
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -76,80 +75,102 @@ const StudentDashboard = () => {
   const [showAllNotifs, setShowAllNotifs] = useState(false);
   const [greetingSpoken, setGreetingSpoken] = useState(false);
 
-  // ── Voice greeting — Arabic male voice, deep and calm ──────────
+  // ── Voice greeting ────────────────────────────────────────────
+  // STRICT FIX: always speak English if no Arabic voice is installed.
+  // Arabic TTS skips Arabic characters silently when no Arabic voice
+  // exists — resulting in only the name being heard. We detect this
+  // and always fall back to a full English sentence.
   useEffect(() => {
     if (!profile?.full_name || greetingSpoken || loading) return;
 
-    const firstName = profile.full_name.split(" ")[0];
-    const unreadCount = notifications.filter((n: any) => !n.is_read).length;
+    const firstName = (profile.full_name || "student").split(" ")[0];
+    const unread    = notifications.filter((n: any) => !n.is_read).length;
 
-    // Build the full Arabic utterance — name is embedded in Arabic sentence
-    // Use transliterated name fallback so TTS doesn't fail on latin names
-    const greetText = `السلام عليكم ورحمة الله وبركاته، ${firstName}. أهلاً وسهلاً بك في أكاديمية تعليم. نسأل الله أن يبارك في علمك.`;
-    const notifText = unreadCount > 0
-      ? `لديك ${unreadCount} ${unreadCount === 1 ? "إشعار جديد" : "إشعارات جديدة"}. تفضل بالاطلاع عليها من خلال أيقونة الجرس.`
-      : "";
-
-    const pickMaleArVoice = (voices: SpeechSynthesisVoice[]) => {
-      // Prefer explicitly male Arabic voices
-      const maleName = ["Majed","Maged","مجد","Hatem","Tarik","Mohammed","Samad","Ossama","Basem","Mehdi"];
-      for (const n of maleName) {
-        const v = voices.find(v => v.name.includes(n));
-        if (v) return v;
-      }
-      // Try ar-SA first (Saudi — deepest default), then any Arabic
-      return voices.find(v => v.lang === "ar-SA") ||
-             voices.find(v => v.lang === "ar-EG") ||
-             voices.find(v => v.lang.startsWith("ar")) ||
-             voices.find(v => v.name.toLowerCase().includes("arab")) ||
-             null;
-    };
-
-    const doSpeak = (voices: SpeechSynthesisVoice[]) => {
+    const run = (voices: SpeechSynthesisVoice[]) => {
       window.speechSynthesis.cancel();
 
-      const voice = pickMaleArVoice(voices);
+      // ── Detect Arabic voice ──────────────────────────────────────
+      const arVoice = voices.find(v => v.lang === "ar-SA") ||
+                      voices.find(v => v.lang === "ar-EG") ||
+                      voices.find(v => v.lang.startsWith("ar")) ||
+                      voices.find(v => /arab/i.test(v.name)) ||
+                      null;
 
-      const say = (text: string, onDone?: () => void) => {
-        const u = new SpeechSynthesisUtterance(text);
-        u.lang   = "ar-SA";
-        u.rate   = 0.78;   // slower = deeper feel
-        u.pitch  = 0.72;   // below 1 = deeper male tone
-        u.volume = 1.0;
-        if (voice) u.voice = voice;
-        if (onDone) u.onend = onDone;
-        window.speechSynthesis.speak(u);
-      };
+      // ── Build sentences ──────────────────────────────────────────
+      type Line = { text: string; lang: string; voice: SpeechSynthesisVoice | null };
+      let lines: Line[];
 
-      if (notifText) {
-        say(greetText, () => setTimeout(() => say(notifText), 700));
+      if (arVoice) {
+        // Arabic is available — prefer male names
+        const maleAr = voices.find(v =>
+          /Majed|Maged|Hatem|Tarik|Basem|Mehdi|Hamed|Naief/i.test(v.name) && v.lang.startsWith("ar")
+        ) || arVoice;
+
+        lines = [
+          { text: "السلام عليكم ورحمة الله وبركاته",     lang: "ar-SA", voice: maleAr },
+          { text: firstName,                               lang: "ar-SA", voice: maleAr },
+          { text: "أهلاً وسهلاً بك في أكاديمية تعليم",   lang: "ar-SA", voice: maleAr },
+          { text: "نسأل الله أن يبارك في علمك",           lang: "ar-SA", voice: maleAr },
+        ];
+        if (unread > 0) lines.push({
+          text: `لديك ${unread} ${unread === 1 ? "إشعار جديد" : "إشعارات جديدة"}. تفضل بالاطلاع عليها`,
+          lang: "ar-SA", voice: maleAr,
+        });
+
       } else {
-        say(greetText);
+        // NO Arabic voice — speak full English so nothing is skipped
+        const enVoice = voices.find(v =>
+          /Daniel|David|James|Thomas|Mark|George|Liam|Oliver|Aaron|Wayne/i.test(v.name) && v.lang.startsWith("en")
+        ) || voices.find(v => v.lang === "en-GB") ||
+           voices.find(v => v.lang.startsWith("en")) ||
+           null;
+
+        lines = [
+          { text: `Assalamu alaikum wa rahmatullahi wa barakatuh, ${firstName}.`, lang: "en-US", voice: enVoice },
+          { text: "Welcome to Tahleem Academy.",                                  lang: "en-US", voice: enVoice },
+          { text: "May Allah bless your learning.",                               lang: "en-US", voice: enVoice },
+        ];
+        if (unread > 0) lines.push({
+          text: `You have ${unread} new ${unread === 1 ? "notification" : "notifications"}. Please check the bell icon.`,
+          lang: "en-US", voice: enVoice,
+        });
       }
 
+      // ── Speak lines sequentially ────────────────────────────────
+      const speak = (i: number) => {
+        if (i >= lines.length) return;
+        const { text, lang, voice } = lines[i];
+        const u = new SpeechSynthesisUtterance(text);
+        u.lang   = lang;
+        u.rate   = 0.82;
+        u.pitch  = 0.65;
+        u.volume = 1.0;
+        if (voice) u.voice = voice;
+        u.onend = () => setTimeout(() => speak(i + 1), 300);
+        window.speechSynthesis.speak(u);
+      };
+      speak(0);
       setGreetingSpoken(true);
     };
 
     const trySpeak = () => {
-      const voices = window.speechSynthesis.getVoices();
-      if (voices.length > 0) {
-        doSpeak(voices);
+      if (!window.speechSynthesis) return;
+      const vs = window.speechSynthesis.getVoices();
+      if (vs.length > 0) {
+        run(vs);
       } else {
-        window.speechSynthesis.onvoiceschanged = () => {
-          window.speechSynthesis.onvoiceschanged = null;
-          doSpeak(window.speechSynthesis.getVoices());
-        };
+        const h = () => { window.speechSynthesis.removeEventListener("voiceschanged", h); run(window.speechSynthesis.getVoices()); };
+        window.speechSynthesis.addEventListener("voiceschanged", h);
+        setTimeout(() => { window.speechSynthesis.removeEventListener("voiceschanged", h); run(window.speechSynthesis.getVoices()); }, 2500);
       }
     };
 
-    // Must wait for user gesture — browser blocks autoplay audio
     const onGesture = () => {
       document.removeEventListener("click",      onGesture);
       document.removeEventListener("touchstart", onGesture);
       document.removeEventListener("keydown",    onGesture);
-      setTimeout(trySpeak, 200);
+      setTimeout(trySpeak, 150);
     };
-
     document.addEventListener("click",      onGesture, { once: true });
     document.addEventListener("touchstart", onGesture, { once: true });
     document.addEventListener("keydown",    onGesture, { once: true });
