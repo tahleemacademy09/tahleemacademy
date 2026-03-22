@@ -39,6 +39,7 @@ const PreExamVerification = () => {
 
   const [exam, setExam] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [questionCount, setQuestionCount] = useState<number | null>(null);
   const [agreed, setAgreed] = useState(false);
   const [starting, setStarting] = useState(false);
   const [faceSnapshot, setFaceSnapshot] = useState<string | null>(null);
@@ -57,6 +58,14 @@ const PreExamVerification = () => {
   const allChecked = Object.values(checklist).every(Boolean);
 
   const videoRef = useRef<HTMLVideoElement>(null);
+
+  // Assign stream to video element whenever webcamStream changes
+  // (fixes "camera preview not working" — element doesn't exist at stream creation time)
+  useEffect(() => {
+    if (!webcamStream || !videoRef.current) return;
+    videoRef.current.srcObject = webcamStream;
+    videoRef.current.play().catch(() => {});
+  }, [webcamStream]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -82,7 +91,14 @@ const PreExamVerification = () => {
       if (!examData) { navigate("/student/exams"); return; }
       const { data: existing } = await supabase.from("exam_attempts").select("id").eq("exam_id", examId).eq("user_id", user.id).eq("status", "in_progress").maybeSingle();
       if (existing) { navigate(`/student/exam/${existing.id}`); return; }
-      setExam(examData); setLoading(false);
+      setExam(examData);
+      // Fetch actual question count from exam_questions table
+      const { count } = await supabase
+        .from('exam_questions')
+        .select('id', { count: 'exact', head: true })
+        .eq('exam_id', examId);
+      setQuestionCount(count ?? examData.question_count ?? null);
+      setLoading(false);
     };
     load();
   }, [examId, user]);
@@ -124,7 +140,7 @@ const PreExamVerification = () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: false });
       setWebcamStream(stream);
-      if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play().catch(() => {}); }
+      // srcObject is set by useEffect when videoRef.current is ready
       updateCheck("camera", "passed", "Ready");
     } catch (e: any) {
       updateCheck("camera", exam?.webcam_required ? "failed" : "warning", e.name === "NotAllowedError" ? "Permission denied" : "Not available");
@@ -165,36 +181,52 @@ const PreExamVerification = () => {
 
   const captureSnapshot = () => {
     if (!videoRef.current || !canvasRef.current) return;
+    const video = videoRef.current;
+    if (!video.videoWidth || video.readyState < 2) {
+      toast({ title: t("Camera not ready yet, please wait", "الكاميرا غير جاهزة، يرجى الانتظار"), variant: "destructive" });
+      return;
+    }
     const canvas = canvasRef.current;
-    canvas.width = videoRef.current.videoWidth || 320;
-    canvas.height = videoRef.current.videoHeight || 240;
-    canvas.getContext("2d")?.drawImage(videoRef.current, 0, 0);
-    setFaceSnapshot(canvas.toDataURL("image/jpeg", 0.8));
-    setFaceCaptured(true);
-    toast({ title: t("📸 Photo captured!", "📸 تم التقاط الصورة!") });
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    // Mirror the image (selfie-style)
+    ctx.save();
+    ctx.scale(-1, 1);
+    ctx.drawImage(video, -canvas.width, 0);
+    ctx.restore();
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
+    setFaceSnapshot(dataUrl);
+    setFaceCaptured(false); // require user to confirm clarity
+    toast({ title: t("📸 Preview ready — confirm it's clear", "📸 المعاينة جاهزة — تأكد من وضوحها") });
   };
 
   const handleStart = async () => {
     if (!user || !examId) return;
     setStarting(true);
     try {
-      // Upload verification snapshot if available
-      if (faceSnapshot && webcamStream) {
-        const response = await fetch(faceSnapshot);
-        const blob = await response.blob();
-        const path = `${user.id}/${examId}/verification_${Date.now()}.jpg`;
-        await supabase.storage.from("proctoring-media").upload(path, blob, { contentType: "image/jpeg", upsert: true });
-      }
-
       // Stop streams before starting
       webcamStream?.getTracks().forEach(t => t.stop());
 
+      // Create exam attempt first (fast)
       const { data, error } = await supabase.from("exam_attempts").insert({
         exam_id: examId, user_id: user.id, status: "in_progress",
         started_at: new Date().toISOString(), tab_switches: 0,
       }).select().single();
 
       if (error || !data) throw error;
+
+      // Upload verification snapshot in background — don't block navigation
+      if (faceSnapshot) {
+        fetch(faceSnapshot)
+          .then(r => r.blob())
+          .then(blob => {
+            const path = `${user.id}/${examId}/verification_${Date.now()}.jpg`;
+            return supabase.storage.from("proctoring-media").upload(path, blob, { contentType: "image/jpeg", upsert: true });
+          })
+          .catch(() => {}); // silent fail — don't block
+      }
 
       // Try fullscreen
       if (exam?.fullscreen_required) {
@@ -270,7 +302,7 @@ const PreExamVerification = () => {
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
                   {[
                     { icon: <Clock style={{ width: 16, height: 16 }} />, label: t("Duration", "المدة"), value: `${exam?.time_limit_minutes} ${t("minutes", "دقيقة")}` },
-                    { icon: <BookOpen style={{ width: 16, height: 16 }} />, label: t("Questions", "الأسئلة"), value: `${exam?.question_count || "?"} ${t("questions", "سؤال")}` },
+                    { icon: <BookOpen style={{ width: 16, height: 16 }} />, label: t("Questions", "الأسئلة"), value: `${questionCount ?? exam?.question_count ?? "..."} ${t("questions", "سؤال")}` },
                     { icon: <Shield style={{ width: 16, height: 16 }} />, label: t("Pass Mark", "درجة النجاح"), value: `${exam?.passing_score}%` },
                     { icon: <Eye style={{ width: 16, height: 16 }} />, label: t("Attempts", "المحاولات"), value: `${exam?.max_attempts || 1}` },
                   ].map((item, i) => (
@@ -376,9 +408,33 @@ const PreExamVerification = () => {
                       <div style={{ position: "absolute", top: 10, right: 10, background: "#22c55e", borderRadius: 20, padding: "4px 10px", fontSize: 11, color: "#fff", fontWeight: 700 }}>✓ Photo captured</div>
                     )}
                   </div>
-                  <button onClick={captureSnapshot} style={{ width: "100%", marginTop: 10, padding: "10px", borderRadius: 12, background: faceCaptured ? "#f0fff4" : G, border: faceCaptured ? "1px solid #86efac" : "none", color: faceCaptured ? "#22c55e" : "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'Cairo',sans-serif" }}>
-                    {faceCaptured ? t("✓ Photo captured — retake?", "✓ تم التقاط الصورة — إعادة؟") : t("📸 Capture Verification Photo", "📸 التقاط صورة التحقق")}
+                  <button onClick={captureSnapshot} style={{ width: "100%", marginTop: 10, padding: "10px", borderRadius: 12, background: G, border: "none", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'Cairo',sans-serif" }}>
+                    {faceSnapshot ? t("🔄 Retake Photo", "🔄 إعادة التقاط") : t("📸 Capture Verification Photo", "📸 التقاط صورة التحقق")}
                   </button>
+                  {/* Snapshot preview — student must confirm clarity */}
+                  {faceSnapshot && !faceCaptured && (
+                    <div style={{ marginTop: 12, borderRadius: 12, overflow: "hidden", border: "2px solid #fbbf24" }}>
+                      <div style={{ background: "#fffbeb", padding: "6px 12px", fontSize: 11, fontWeight: 700, color: "#92400e" }}>
+                        📋 {t("Is this photo clear and well-lit?", "هل هذه الصورة واضحة ومضاءة جيداً؟")}
+                      </div>
+                      <img src={faceSnapshot} alt="Snapshot preview" style={{ width: "100%", display: "block" }} />
+                      <div style={{ display: "flex", gap: 8, padding: "10px 12px", background: "#fffbeb" }}>
+                        <button onClick={() => setFaceCaptured(true)}
+                          style={{ flex: 1, padding: "8px", borderRadius: 8, background: "#22c55e", border: "none", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                          ✓ {t("Yes, use this", "نعم، استخدم هذه")}
+                        </button>
+                        <button onClick={() => { setFaceSnapshot(null); setFaceCaptured(false); }}
+                          style={{ flex: 1, padding: "8px", borderRadius: 8, background: "#ef4444", border: "none", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                          ✗ {t("Retake", "إعادة")}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {faceCaptured && (
+                    <div style={{ marginTop: 8, padding: "8px 12px", borderRadius: 8, background: "#f0fff4", border: "1px solid #86efac", fontSize: 12, color: "#22c55e", fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+                      ✓ {t("Verification photo confirmed", "تم تأكيد صورة التحقق")}
+                    </div>
+                  )}
                 </div>
               )}
 
