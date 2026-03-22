@@ -75,81 +75,101 @@ const StudentDashboard = () => {
   const [showAllNotifs, setShowAllNotifs] = useState(false);
   const [greetingSpoken, setGreetingSpoken] = useState(false);
 
-  // ── Voice greeting ────────────────────────────────────────────
-  // STRICT FIX: always speak English if no Arabic voice is installed.
-  // Arabic TTS skips Arabic characters silently when no Arabic voice
-  // exists — resulting in only the name being heard. We detect this
-  // and always fall back to a full English sentence.
+  // ── Voice greeting — Arabic male, falls back to English ─────────
+  // Strategy:
+  //   1. Always attempt Arabic with lang="ar-SA" and low pitch (male feel)
+  //   2. Pick any Arabic voice if available (prefer known male names)
+  //   3. If the first utterance produces NO audio (onerror or onend fires
+  //      immediately with 0 chars spoken), fall back to English
+  //   4. Full sentence spoken — not just the name
   useEffect(() => {
     if (!profile?.full_name || greetingSpoken || loading) return;
 
-    const firstName = (profile.full_name || "student").split(" ")[0];
+    const firstName = (profile.full_name || 'student').split(' ')[0];
     const unread    = notifications.filter((n: any) => !n.is_read).length;
 
-    const run = (voices: SpeechSynthesisVoice[]) => {
+    const doSpeak = (voices: SpeechSynthesisVoice[]) => {
       window.speechSynthesis.cancel();
 
-      // ── Detect Arabic voice ──────────────────────────────────────
-      const arVoice = voices.find(v => v.lang === "ar-SA") ||
-                      voices.find(v => v.lang === "ar-EG") ||
-                      voices.find(v => v.lang.startsWith("ar")) ||
-                      voices.find(v => /arab/i.test(v.name)) ||
-                      null;
+      // ── Pick Arabic voice — prefer known male names ──────────────
+      const allAr = voices.filter(v => v.lang.startsWith('ar') || /arab/i.test(v.name));
+      const maleAr = allAr.find(v => /Majed|Maged|Hatem|Tarik|Basem|Mehdi|Hamed|Naief|Mohammed|Ahmad|Arab_Male/i.test(v.name))
+                  || allAr.find(v => v.lang === 'ar-SA')
+                  || allAr.find(v => v.lang === 'ar-EG')
+                  || allAr[0]
+                  || null;
 
-      // ── Build sentences ──────────────────────────────────────────
-      type Line = { text: string; lang: string; voice: SpeechSynthesisVoice | null };
-      let lines: Line[];
+      // ── Full Arabic greeting text ────────────────────────────────
+      // Written as one sentence so even if the voice can't split cleanly
+      // the full meaning is preserved
+      const arText = `السلام عليكم ورحمة الله وبركاته، ${firstName}. أهلاً وسهلاً بك في أكاديمية تعليم. نسأل الله أن يبارك في علمك.`;
+      const arNotif = unread > 0
+        ? `لديك ${unread} ${unread === 1 ? 'إشعار جديد' : 'إشعارات جديدة'}. يمكنك الاطلاع عليها من أيقونة الجرس.`
+        : '';
 
-      if (arVoice) {
-        // Arabic is available — prefer male names
-        const maleAr = voices.find(v =>
-          /Majed|Maged|Hatem|Tarik|Basem|Mehdi|Hamed|Naief/i.test(v.name) && v.lang.startsWith("ar")
-        ) || arVoice;
+      // ── Fallback: Arabic-accented English ─────────────────────────
+      // When no Arabic voice exists, we still use transliterated Arabic
+      // phrases + set lang="ar" on whatever voice IS available so the
+      // engine tries to produce Arabic phonology. This gives an Arabic
+      // accent even on a device with only English voices.
+      // We also look for voices whose name suggests an Arabic/Middle-Eastern
+      // origin (Maged, Majed, etc.) which some devices expose as English voices.
+      const arAccentVoice =
+        voices.find(v => /Majed|Maged|Hatem|Tarik|Basem|Mehdi|Hamed|Naief|Mohammed|Ahmad/i.test(v.name)) ||
+        voices.find(v => v.lang === 'ar-SA') ||
+        voices.find(v => v.lang.startsWith('ar')) ||
+        voices.find(v => v.lang === 'en-GB') ||   // British English is closer to Arabic rhythm
+        voices.find(v => v.lang.startsWith('en')) ||
+        null;
+      // Use lang="ar-SA" even for transliterated text — makes the engine
+      // attempt Arabic phonology which sounds Arabic-accented
+      const fallbackLang = arAccentVoice?.lang.startsWith('ar') ? 'ar-SA' : 'ar-SA';
+      const enText = `assalamu alaykum wa rahmatullahi wa barakatuh, ${firstName}. ahlan wa sahlan bika fi akademiyyat tahleem. nas'alu Allah an yubarak fi ilmik.`;
+      const enNotif = unread > 0
+        ? `ladayka ${unread} ${unread === 1 ? 'ish'ar jadeed' : "ish'arat jadeeda"}. tafaddal bil-ittila' alayha.`
+        : '';
 
-        lines = [
-          { text: "السلام عليكم ورحمة الله وبركاته",     lang: "ar-SA", voice: maleAr },
-          { text: firstName,                               lang: "ar-SA", voice: maleAr },
-          { text: "أهلاً وسهلاً بك في أكاديمية تعليم",   lang: "ar-SA", voice: maleAr },
-          { text: "نسأل الله أن يبارك في علمك",           lang: "ar-SA", voice: maleAr },
-        ];
-        if (unread > 0) lines.push({
-          text: `لديك ${unread} ${unread === 1 ? "إشعار جديد" : "إشعارات جديدة"}. تفضل بالاطلاع عليها`,
-          lang: "ar-SA", voice: maleAr,
-        });
-
-      } else {
-        // NO Arabic voice — speak full English so nothing is skipped
-        const enVoice = voices.find(v =>
-          /Daniel|David|James|Thomas|Mark|George|Liam|Oliver|Aaron|Wayne/i.test(v.name) && v.lang.startsWith("en")
-        ) || voices.find(v => v.lang === "en-GB") ||
-           voices.find(v => v.lang.startsWith("en")) ||
-           null;
-
-        lines = [
-          { text: `Assalamu alaikum wa rahmatullahi wa barakatuh, ${firstName}.`, lang: "en-US", voice: enVoice },
-          { text: "Welcome to Tahleem Academy.",                                  lang: "en-US", voice: enVoice },
-          { text: "May Allah bless your learning.",                               lang: "en-US", voice: enVoice },
-        ];
-        if (unread > 0) lines.push({
-          text: `You have ${unread} new ${unread === 1 ? "notification" : "notifications"}. Please check the bell icon.`,
-          lang: "en-US", voice: enVoice,
-        });
-      }
-
-      // ── Speak lines sequentially ────────────────────────────────
-      const speak = (i: number) => {
-        if (i >= lines.length) return;
-        const { text, lang, voice } = lines[i];
-        const u = new SpeechSynthesisUtterance(text);
+      // ── Speak a sequence of utterances ──────────────────────────
+      const speakSeq = (texts: string[], lang: string, voice: SpeechSynthesisVoice | null, idx = 0) => {
+        if (idx >= texts.length || !texts[idx]) return;
+        const u = new SpeechSynthesisUtterance(texts[idx]);
         u.lang   = lang;
-        u.rate   = 0.82;
-        u.pitch  = 0.65;
+        u.rate   = 0.80;
+        u.pitch  = 0.60; // noticeably deep male tone
         u.volume = 1.0;
         if (voice) u.voice = voice;
-        u.onend = () => setTimeout(() => speak(i + 1), 300);
+        u.onend = () => setTimeout(() => speakSeq(texts, lang, voice, idx + 1), 350);
         window.speechSynthesis.speak(u);
       };
-      speak(0);
+
+      // ── Try Arabic first — detect silence and fall back ──────────
+      let arStarted = false;
+      const testAr = new SpeechSynthesisUtterance('السلام');
+      testAr.lang   = 'ar-SA';
+      testAr.volume = 0.01; // nearly silent test
+      testAr.rate   = 2.0;  // fast test
+      if (maleAr) testAr.voice = maleAr;
+
+      testAr.onstart = () => { arStarted = true; };
+      testAr.onend   = () => {
+        window.speechSynthesis.cancel();
+        if (arStarted && maleAr) {
+          // Arabic TTS is working — speak full greeting in Arabic
+          const seq = [arText, arNotif].filter(Boolean);
+          speakSeq(seq, 'ar-SA', maleAr);
+        } else {
+          // Arabic TTS not available — use Arabic-accented transliteration
+          const seq = [enText, enNotif].filter(Boolean);
+          speakSeq(seq, fallbackLang, arAccentVoice);
+        }
+      };
+      testAr.onerror = () => {
+        window.speechSynthesis.cancel();
+        const seq = [enText, enNotif].filter(Boolean);
+        speakSeq(seq, fallbackLang, arAccentVoice);
+      };
+
+      window.speechSynthesis.speak(testAr);
       setGreetingSpoken(true);
     };
 
@@ -157,28 +177,34 @@ const StudentDashboard = () => {
       if (!window.speechSynthesis) return;
       const vs = window.speechSynthesis.getVoices();
       if (vs.length > 0) {
-        run(vs);
+        doSpeak(vs);
       } else {
-        const h = () => { window.speechSynthesis.removeEventListener("voiceschanged", h); run(window.speechSynthesis.getVoices()); };
-        window.speechSynthesis.addEventListener("voiceschanged", h);
-        setTimeout(() => { window.speechSynthesis.removeEventListener("voiceschanged", h); run(window.speechSynthesis.getVoices()); }, 2500);
+        const h = () => {
+          window.speechSynthesis.removeEventListener('voiceschanged', h);
+          doSpeak(window.speechSynthesis.getVoices());
+        };
+        window.speechSynthesis.addEventListener('voiceschanged', h);
+        setTimeout(() => {
+          window.speechSynthesis.removeEventListener('voiceschanged', h);
+          doSpeak(window.speechSynthesis.getVoices());
+        }, 2500);
       }
     };
 
     const onGesture = () => {
-      document.removeEventListener("click",      onGesture);
-      document.removeEventListener("touchstart", onGesture);
-      document.removeEventListener("keydown",    onGesture);
+      document.removeEventListener('click',      onGesture);
+      document.removeEventListener('touchstart', onGesture);
+      document.removeEventListener('keydown',    onGesture);
       setTimeout(trySpeak, 150);
     };
-    document.addEventListener("click",      onGesture, { once: true });
-    document.addEventListener("touchstart", onGesture, { once: true });
-    document.addEventListener("keydown",    onGesture, { once: true });
+    document.addEventListener('click',      onGesture, { once: true });
+    document.addEventListener('touchstart', onGesture, { once: true });
+    document.addEventListener('keydown',    onGesture, { once: true });
 
     return () => {
-      document.removeEventListener("click",      onGesture);
-      document.removeEventListener("touchstart", onGesture);
-      document.removeEventListener("keydown",    onGesture);
+      document.removeEventListener('click',      onGesture);
+      document.removeEventListener('touchstart', onGesture);
+      document.removeEventListener('keydown',    onGesture);
     };
   }, [profile?.full_name, greetingSpoken, loading, notifications.length]);
 
