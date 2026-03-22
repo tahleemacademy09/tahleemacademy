@@ -75,87 +75,86 @@ const StudentDashboard = () => {
   const [showAllNotifs, setShowAllNotifs] = useState(false);
   const [greetingSpoken, setGreetingSpoken] = useState(false);
 
-  // ── Voice system: greeting + notification ───────────────────────
-  // Browsers block speechSynthesis until a user gesture happens.
-  // We listen for the first touch/click, then play after voices load.
+  // ── Voice greeting — Arabic male voice, deep and calm ──────────
   useEffect(() => {
     if (!profile?.full_name || greetingSpoken || loading) return;
 
     const firstName = profile.full_name.split(" ")[0];
-    const unreadCount = notifications.filter(n => !n.is_read).length;
+    const unreadCount = notifications.filter((n: any) => !n.is_read).length;
 
-    const speak = () => {
-      if (!window.speechSynthesis) return;
+    // Build the full Arabic utterance — name is embedded in Arabic sentence
+    // Use transliterated name fallback so TTS doesn't fail on latin names
+    const greetText = `السلام عليكم ورحمة الله وبركاته، ${firstName}. أهلاً وسهلاً بك في أكاديمية تعليم. نسأل الله أن يبارك في علمك.`;
+    const notifText = unreadCount > 0
+      ? `لديك ${unreadCount} ${unreadCount === 1 ? "إشعار جديد" : "إشعارات جديدة"}. تفضل بالاطلاع عليها من خلال أيقونة الجرس.`
+      : "";
 
-      const getArVoice = () => {
-        const vs = window.speechSynthesis.getVoices();
-        return vs.find(v => v.lang === "ar-SA") ||
-               vs.find(v => v.lang === "ar-EG") ||
-               vs.find(v => v.lang.startsWith("ar")) ||
-               vs.find(v => v.name.toLowerCase().includes("arab")) ||
-               null;
+    const pickMaleArVoice = (voices: SpeechSynthesisVoice[]) => {
+      // Prefer explicitly male Arabic voices
+      const maleName = ["Majed","Maged","مجد","Hatem","Tarik","Mohammed","Samad","Ossama","Basem","Mehdi"];
+      for (const n of maleName) {
+        const v = voices.find(v => v.name.includes(n));
+        if (v) return v;
+      }
+      // Try ar-SA first (Saudi — deepest default), then any Arabic
+      return voices.find(v => v.lang === "ar-SA") ||
+             voices.find(v => v.lang === "ar-EG") ||
+             voices.find(v => v.lang.startsWith("ar")) ||
+             voices.find(v => v.name.toLowerCase().includes("arab")) ||
+             null;
+    };
+
+    const doSpeak = (voices: SpeechSynthesisVoice[]) => {
+      window.speechSynthesis.cancel();
+
+      const voice = pickMaleArVoice(voices);
+
+      const say = (text: string, onDone?: () => void) => {
+        const u = new SpeechSynthesisUtterance(text);
+        u.lang   = "ar-SA";
+        u.rate   = 0.78;   // slower = deeper feel
+        u.pitch  = 0.72;   // below 1 = deeper male tone
+        u.volume = 1.0;
+        if (voice) u.voice = voice;
+        if (onDone) u.onend = onDone;
+        window.speechSynthesis.speak(u);
       };
 
-      const doSpeak = () => {
-        window.speechSynthesis.cancel();
+      if (notifText) {
+        say(greetText, () => setTimeout(() => say(notifText), 700));
+      } else {
+        say(greetText);
+      }
 
-        // ── Greeting ──────────────────────────────
-        const greet = new SpeechSynthesisUtterance();
-        greet.text = `السلام عليكم ${firstName}. أهلاً وسهلاً بك في أكاديمية تعليم.`;
-        greet.lang = "ar-SA";
-        greet.rate = 0.82;
-        greet.pitch = 1.05;
-        greet.volume = 1.0;
-        const arVoice = getArVoice();
-        if (arVoice) greet.voice = arVoice;
+      setGreetingSpoken(true);
+    };
 
-        // ── Notification alert after greeting ──────
-        greet.onend = () => {
-          if (unreadCount === 0) return;
-          setTimeout(() => {
-            const notif = new SpeechSynthesisUtterance();
-            notif.text = `لديك ${unreadCount} إشعار${unreadCount > 1 ? "ات" : ""} جديد${unreadCount > 1 ? "ة" : ""}. اضغط على أيقونة الجرس للاطلاع عليها.`;
-            notif.lang = "ar-SA";
-            notif.rate = 0.88;
-            notif.pitch = 1.0;
-            notif.volume = 0.95;
-            const v2 = getArVoice();
-            if (v2) notif.voice = v2;
-            window.speechSynthesis.speak(notif);
-          }, 600);
-        };
-
-        window.speechSynthesis.speak(greet);
-        setGreetingSpoken(true);
-      };
-
-      // voices may not be loaded yet on first call
+    const trySpeak = () => {
       const voices = window.speechSynthesis.getVoices();
       if (voices.length > 0) {
-        doSpeak();
+        doSpeak(voices);
       } else {
         window.speechSynthesis.onvoiceschanged = () => {
           window.speechSynthesis.onvoiceschanged = null;
-          doSpeak();
+          doSpeak(window.speechSynthesis.getVoices());
         };
       }
     };
 
-    // Browsers require a user gesture before speechSynthesis works.
-    // We attach one-time listeners for the first interaction.
+    // Must wait for user gesture — browser blocks autoplay audio
     const onGesture = () => {
-      document.removeEventListener("click",     onGesture);
+      document.removeEventListener("click",      onGesture);
       document.removeEventListener("touchstart", onGesture);
       document.removeEventListener("keydown",    onGesture);
-      setTimeout(speak, 300);
+      setTimeout(trySpeak, 200);
     };
 
-    document.addEventListener("click",     onGesture, { once: true });
+    document.addEventListener("click",      onGesture, { once: true });
     document.addEventListener("touchstart", onGesture, { once: true });
     document.addEventListener("keydown",    onGesture, { once: true });
 
     return () => {
-      document.removeEventListener("click",     onGesture);
+      document.removeEventListener("click",      onGesture);
       document.removeEventListener("touchstart", onGesture);
       document.removeEventListener("keydown",    onGesture);
     };
@@ -306,7 +305,7 @@ const StudentDashboard = () => {
               {/* السلام عليكم — Scheherazade New (Dwani-style calligraphy) */}
               <div style={{ margin:"0 auto 6px", textAlign:"center" }}>
                 <span className="dwani-text" style={{
-                  fontSize: 42,
+                  fontSize: 28,
                   fontWeight: 700,
                   color: "#fff",
                   lineHeight: 1.8,
