@@ -14,8 +14,7 @@ function splitBilingual(text: string): { ar: string; en: string } | null {
   const m2 = t.match(/^\(([^)]+)\)\s*([\s\S]*[؀-ۿ][\s\S]*)$/);
   if (m2 && /[a-zA-Z]/.test(m2[1])) return { ar: m2[2].trim(), en: m2[1].trim() };
   // Pattern: newline separation
-  const lines = t.split(/
-+/);
+  const lines = t.split(/\n+/);
   if (lines.length >= 2) {
     const arParts: string[] = [], enParts: string[] = [];
     for (const l of lines) {
