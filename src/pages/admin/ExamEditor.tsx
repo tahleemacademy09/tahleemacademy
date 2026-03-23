@@ -192,23 +192,27 @@ const ExamEditor = () => {
           rtl_mode: (exam as any).rtl_mode ?? false,
         });
       }
-      const { data: qs } = await supabase.from("exam_questions").select("*").eq("exam_id", examId).order("sort_order");
-      if (qs?.length) {
-        setQuestions(qs.map((q) => ({
-          id: q.id,
-          question_type: q.question_type,
-          question_text: q.question_text,
-          question_text_ar: q.question_text_ar || "",
-          options: (q.options as any[]) || [],
-          correct_answer: q.correct_answer || "",
-          points: q.points || 1,
-          difficulty: q.difficulty || "medium",
-          sort_order: q.sort_order || 0,
-          explanation: q.explanation || "",
-          explanation_ar: q.explanation_ar || "",
-          media_url: q.media_url || "",
-        })));
-      }
+      const { data: qs, error: qErr } = await supabase
+        .from("exam_questions")
+        .select("*")
+        .eq("exam_id", examId)
+        .order("sort_order");
+      if (qErr) console.error("ExamEditor: failed to load questions", qErr);
+      // Always set — removes the qs?.length guard that was hiding questions
+      setQuestions((qs || []).map((q: any) => ({
+        id: q.id,
+        question_type: q.question_type || "mcq",
+        question_text: q.question_text || "",
+        question_text_ar: q.question_text_ar || "",
+        options: Array.isArray(q.options) ? q.options : [],
+        correct_answer: q.correct_answer || "",
+        points: q.points || 10,
+        difficulty: q.difficulty || "medium",
+        sort_order: q.sort_order ?? 0,
+        explanation: q.explanation || "",
+        explanation_ar: q.explanation_ar || "",
+        media_url: q.media_url || "",
+      })));
     };
     load();
   }, [examId]);
