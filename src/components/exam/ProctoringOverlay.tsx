@@ -168,7 +168,8 @@ const ProctoringOverlay = ({
     if (type === "face_not_detected") { faceWarnCount.current++; pts = faceWarnCount.current >= 2 ? 5 : 0; }
 
     const id = type + "-" + now;
-    setBanners(prev => [{id, type, pts}, ...prev].slice(0, 3));
+    // Only show 1 banner at a time - replace existing
+    setBanners([{id, type, pts}]);
 
     if (pts > 0 && !ptsDone.current.has(id)) {
       ptsDone.current.add(id);
@@ -276,12 +277,12 @@ const ProctoringOverlay = ({
                     −{banner.pts} pts
                   </div>
                 )}
-                {!cfg.autoFix && (
-                  <button onClick={()=>setBanners(p=>p.filter(b=>b.id!==banner.id))}
-                    style={{background:"none",border:"none",color:theme.text,cursor:"pointer",opacity:.5,padding:2,flexShrink:0,pointerEvents:"auto"}}>
-                    <X style={{width:14,height:14}}/>
-                  </button>
-                )}
+                <button onClick={()=>setBanners(p=>p.filter(b=>b.id!==banner.id))}
+                  style={{background:"none",border:"none",color:theme.text,cursor:"pointer",opacity:.6,padding:2,flexShrink:0,pointerEvents:"auto",
+                    display:"flex",alignItems:"center",justifyContent:"center",width:24,height:24,borderRadius:6,
+                    background:theme.border+"22"}}>
+                  <X style={{width:14,height:14}}/>
+                </button>
               </div>
               <div style={{fontSize:13,color:theme.text,opacity:.8,lineHeight:1.6,paddingLeft:51,marginBottom:6}}>
                 {isAr ? cfg.msg_ar : cfg.msg_en}
@@ -297,7 +298,7 @@ const ProctoringOverlay = ({
                   {isAr ? "⟳ سيختفي هذا التنبيه تلقائياً عند حل المشكلة" : "⟳ Dismisses automatically when resolved."}
                 </div>
               )}
-              {!cfg.autoFix && (
+              {(
                 <div style={{height:2,background:theme.border+"22",borderRadius:1,marginTop:10,overflow:"hidden"}}>
                   <div style={{height:"100%",background:theme.border,borderRadius:1,animation:"procShrink 7s linear forwards"}}/>
                 </div>
