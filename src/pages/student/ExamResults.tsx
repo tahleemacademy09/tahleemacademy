@@ -111,7 +111,18 @@ const ExamResults = () => {
         supabase.rpc("get_exam_questions_for_review", { _attempt_id: attemptId }),
         supabase.from("exam_answers").select("*").eq("attempt_id", attemptId),
       ]);
-      setQuestions(questionsRes.data || []);
+
+      let qs = questionsRes.data || [];
+      // Fallback: if RPC returns nothing, query exam_questions directly via the exam_id
+      if (qs.length === 0 && attemptData.exam_id) {
+        const { data: directQs } = await supabase
+          .from("exam_questions")
+          .select("*")
+          .eq("exam_id", attemptData.exam_id)
+          .order("order_index");
+        qs = directQs || [];
+      }
+      setQuestions(qs);
       setAnswers(answersRes.data || []);
       setLoading(false);
     };
