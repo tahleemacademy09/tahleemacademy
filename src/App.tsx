@@ -26,6 +26,7 @@ const PageLoader = () => (
 
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
+import IdleWarningModal from "@/components/IdleWarningModal";
 
 // ── Public ────────────────────────────────────────────────────────
 const Courses       = lazy(() => import("./pages/Courses"));
@@ -222,7 +223,8 @@ const App = () => (
                 <Route path="*" element={<NotFound />} />
               </Routes>
             </Suspense>
-          </BrowserRouter>
+                <IdleWarningModal />
+      </BrowserRouter>
         </TooltipProvider>
       </AuthProvider>
     </LanguageProvider>
