@@ -1,3 +1,4 @@
+import { useLocation } from "react-router-dom";
 import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
@@ -10,6 +11,9 @@ import { Bot, X, Send, GraduationCap, Calendar, BarChart3, BookOpen, Loader2 } f
 type Msg = { role: "user" | "assistant"; content: string };
 
 const MuallimOverlay = () => {
+  const location = useLocation ? useLocation() : { pathname: '' };
+  const isExamPage = ['/exam-taking', '/student/exam/', '/entrance-exam', '/classroom', '/live-class'].some(p => (location.pathname || '').includes(p));
+  if (isExamPage) return null;
   const { user } = useAuth();
   const { t, dir } = useLanguage();
   const [open, setOpen] = useState(false);
