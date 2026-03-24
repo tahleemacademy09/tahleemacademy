@@ -16,6 +16,7 @@ const GOLD = "#C9973A";
 const GOLD2= "#E8C070";
 
 const Login = () => {
+  const idleLoggedOut = new URLSearchParams(window.location.search).get("reason") === "idle";
   const { t, language, setLanguage } = useLanguage();
   const { signIn, user } = useAuth();
   const { toast } = useToast();
@@ -89,6 +90,12 @@ const Login = () => {
   };
 
   return (
+      {idleLoggedOut && (
+        <div style={{background:"#FFF7ED",border:"1px solid #FED7AA",borderRadius:12,padding:"12px 16px",marginBottom:16,display:"flex",gap:10,alignItems:"center",fontSize:13,color:"#92400E"}}>
+          <span>⏰</span>
+          <span>You were logged out due to inactivity. Please sign in again.</span>
+        </div>
+      )}
     <>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Amiri:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap');
