@@ -195,12 +195,19 @@ const EnrollmentPayment = () => {
 
     const PaystackPop = (window as any).PaystackPop;
     if (!PaystackPop) {
-      // Script not loaded yet — load it now
+      // Load script then retry automatically
+      setPaying(true);
+      const existing = document.getElementById("paystack-script");
+      if (existing) { existing.remove(); }
       const script = document.createElement("script");
+      script.id = "paystack-script";
       script.src = "https://js.paystack.co/v1/inline.js";
-      script.onload = () => initiatePayment();
+      script.onload = () => { setPaying(false); setTimeout(initiatePayment, 300); };
+      script.onerror = () => { 
+        setPaying(false); 
+        toast({ title: "Payment system unavailable", description: "Check your internet connection and try again.", variant: "destructive" }); 
+      };
       document.head.appendChild(script);
-      toast({ title:"Loading payment system…", description:"Please try again in a moment." });
       return;
     }
 
@@ -220,15 +227,24 @@ const EnrollmentPayment = () => {
         },
         // IMPORTANT: callback must NOT be async — Paystack breaks if it is
         callback: (res: any) => {
+          clearTimeout((window as any).__paystack_safety_timer__);
           const reference = res.reference || ref;
           handlePaymentSuccess(reference, amount, selectedPlan, termMonths);
         },
         onClose: () => {
+          clearTimeout((window as any).__paystack_safety_timer__);
           toast({ title: "Payment cancelled" });
           setPaying(false);
         },
       });
       handler.openIframe();
+      // Safety: reset paying after 3 min if no callback received (e.g. iframe blocked)
+      const safetyTimer = setTimeout(() => {
+        setPaying(false);
+        toast({ title: "Payment window closed", description: "If you completed payment, wait a moment then refresh." });
+      }, 180000);
+      // Store timer so callback can clear it
+      (window as any).__paystack_safety_timer__ = safetyTimer;
     } catch (err: any) {
       toast({ title:"Could not open payment", description: err?.message || "Please try again.", variant:"destructive" });
       setPaying(false);
