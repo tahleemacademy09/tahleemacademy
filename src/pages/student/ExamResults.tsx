@@ -111,23 +111,32 @@ const ExamResults = () => {
         supabase.rpc("get_exam_questions_for_review", { _attempt_id: attemptId }),
         supabase.from("exam_answers").select("*").eq("attempt_id", attemptId),
       ]);
-
-      let qs = questionsRes.data || [];
-      // Fallback: if RPC returns nothing, query exam_questions directly via the exam_id
-      if (qs.length === 0 && attemptData.exam_id) {
-        const { data: directQs } = await supabase
-          .from("exam_questions")
-          .select("*")
-          .eq("exam_id", attemptData.exam_id)
-          .order("order_index");
-        qs = directQs || [];
-      }
-      setQuestions(qs);
+      setQuestions(questionsRes.data || []);
       setAnswers(answersRes.data || []);
       setLoading(false);
     };
     load();
   }, [attemptId, user]);
+
+  // Block if results not released yet
+  if (!loading && attempt && attempt.status === "graded") {
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#f8fafb", padding: 24 }}>
+        <div style={{ textAlign: "center", maxWidth: 360 }}>
+          <div style={{ width: 64, height: 64, borderRadius: "50%", background: "#FFF7ED", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+            <span style={{ fontSize: 32 }}>🔒</span>
+          </div>
+          <h2 style={{ fontWeight: 800, fontSize: 20, color: "#111", marginBottom: 8 }}>Results Not Released Yet</h2>
+          <p style={{ fontSize: 14, color: "#6B7280", lineHeight: 1.6 }}>
+            Your exam has been graded. Your teacher will release the results soon.
+          </p>
+          <button onClick={() => navigate("/student/exams")} style={{ marginTop: 20, padding: "12px 24px", borderRadius: 12, border: "none", background: "#064E3B", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 14 }}>
+            Back to Exams
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) return (
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#f8fafb" }}>
