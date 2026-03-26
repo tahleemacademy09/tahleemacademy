@@ -346,9 +346,9 @@ export default function HifdhExercise() {
               ✗ Wrong
             </button>
             <button onClick={() => markAnswer(true)}
-              style={{ padding: "13px 0", borderRadius: 12, border: "none",
+              style={{ padding: "13px 0", borderRadius: 12,
                 background: "#f0fff4", color: "#276749", fontSize: 14, fontWeight: 700, cursor: "pointer",
-                border: `1px solid ${C.border}` as any }}>
+                border: `1px solid ${C.border}` }}>
               ✓ Correct
             </button>
           </div>
