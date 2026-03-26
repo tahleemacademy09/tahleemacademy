@@ -278,7 +278,7 @@ const ProctoringOverlay = ({
                   </div>
                 )}
                 <button onClick={()=>setBanners(p=>p.filter(b=>b.id!==banner.id))}
-                  style={{background:"none",border:"none",color:theme.text,cursor:"pointer",opacity:.6,padding:2,flexShrink:0,pointerEvents:"auto",
+                  style={{border:"none",color:theme.text,cursor:"pointer",opacity:.6,padding:2,flexShrink:0,pointerEvents:"auto",
                     display:"flex",alignItems:"center",justifyContent:"center",width:24,height:24,borderRadius:6,
                     background:theme.border+"22"}}>
                   <X style={{width:14,height:14}}/>
