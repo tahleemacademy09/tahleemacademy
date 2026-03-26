@@ -400,10 +400,10 @@ export default function HifdhTest() {
           const isWrong = confirmed && isSelected && i !== q.correct;
           return (
             <button key={i} onClick={() => !confirmed && setSelected(i)}
-              style={{ padding: "14px", borderRadius: 12, border: "none", cursor: confirmed ? "default" : "pointer",
+              style={{ padding: "14px", borderRadius: 12, cursor: confirmed ? "default" : "pointer",
                 textAlign: "right", direction: "rtl",
                 background: isCorrect ? C.light : isWrong ? "#fff5f5" : isSelected ? "#f0f8ff" : "#fafafa",
-                border: `1.5px solid ${isCorrect ? "#9ae6b4" : isWrong ? "#fca5a5" : isSelected ? "#93c5fd" : "#f0f4f0"}` as any,
+                border: `1.5px solid ${isCorrect ? "#9ae6b4" : isWrong ? "#fca5a5" : isSelected ? "#93c5fd" : "#f0f4f0"}`,
                 fontFamily: "'Amiri Quran',serif", fontSize: 18, color: isCorrect ? "#276749" : isWrong ? "#c0392b" : isSelected ? "#1d4ed8" : C.green,
                 fontWeight: isSelected || isCorrect ? 700 : 400, lineHeight: 1.8, transition: "all .15s" }}>
               <div style={{ display: "flex", gap: 10, alignItems: "center", direction: "rtl" }}>
