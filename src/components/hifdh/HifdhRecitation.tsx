@@ -1,6 +1,5 @@
 // src/components/hifdh/HifdhRecitation.tsx
 // Full Quran page reader with fullscreen, surah jump, prev/next navigation
-import { SURAHS, audioUrl } from "./surahData";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { SURAHS, audioUrl } from "./surahData";
 
