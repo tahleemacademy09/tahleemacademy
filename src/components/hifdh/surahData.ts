@@ -1,4 +1,4 @@
-const surahData = [
+export const SURAHS = [
   { id: 1, name: "Al-Fatihah", ayahs: 7 },
   { id: 2, name: "Al-Baqarah", ayahs: 286 },
   { id: 3, name: "Aal-Imran", ayahs: 200 },
@@ -18,17 +18,11 @@ const surahData = [
   { id: 17, name: "Al-Isra", ayahs: 111 },
   { id: 18, name: "Al-Kahf", ayahs: 110 },
   { id: 19, name: "Maryam", ayahs: 98 },
-  { id: 20, name: "Ta-Ha", ayahs: 135 },
-  { id: 21, name: "Al-Anbiya", ayahs: 112 },
-  { id: 22, name: "Al-Hajj", ayahs: 78 },
-  { id: 23, name: "Al-Mu’minun", ayahs: 118 },
-  { id: 24, name: "An-Nur", ayahs: 64 },
-  { id: 25, name: "Al-Furqan", ayahs: 77 },
-  { id: 26, name: "Ash-Shu'ara", ayahs: 227 },
-  { id: 27, name: "An-Naml", ayahs: 93 },
-  { id: 28, name: "Al-Qasas", ayahs: 88 },
-  { id: 29, name: "Al-Ankabut", ayahs: 69 },
-  { id: 30, name: "Ar-Rum", ayahs: 60 }
+  { id: 20, name: "Ta-Ha", ayahs: 135 }
 ];
 
-export default surahData;
+export const audioUrl = (surahNumber: number, ayahNumber: number) => {
+  return `https://cdn.islamic.network/quran/audio/128/ar.alafasy/${surahNumber}${ayahNumber}.mp3`;
+};
+
+export default SURAHS;
