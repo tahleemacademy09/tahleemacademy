@@ -1,4 +1,7 @@
 // src/components/hifdh/surahData.ts
+export const SURAHS = [
+  // your full surah array here
+];
 export const audioUrl = (surahId: number) => {
   return `https://cdn.islamic.network/quran/audio-surah/128/ar.alafasy/${surahId}.mp3`;
 };
