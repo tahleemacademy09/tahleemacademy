@@ -1,4 +1,7 @@
 // src/components/hifdh/surahData.ts
+export const audioUrl = (surahId: number) => {
+  return `https://cdn.islamic.network/quran/audio-surah/128/ar.alafasy/${surahId}.mp3`;
+};
 
 export interface Surah {
   id: number;
