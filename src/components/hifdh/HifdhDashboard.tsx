@@ -5,7 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 interface Props {
   userId: string | null;
   studentName: string;
-  onNavigate: (tab: "dashboard"|"recitation"|"audio"|"review") => void;
+  onNavigate: (tab: string) => void;
 }
 
 interface ProgressEntry {
@@ -146,8 +146,8 @@ export default function HifdhDashboard({ userId, studentName, onNavigate }: Prop
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
         {[
           { icon:"📖", val:stats.juzCount||"0", label:"Juz Memorized", ar:"أجزاء محفوظة", color:"#1a3d24", tab:"recitation" as const },
-          { icon:"📊", val:`${stats.avgAccuracy}%`, label:"Avg Accuracy", ar:"متوسط الدقة", color:"#276749", tab:"review" as const },
-          { icon:"🔥", val:stats.streak, label:"Day Streak", ar:"سلسلة الأيام", color:"#b7791f", tab:"review" as const },
+          { icon:"📊", val:`${stats.avgAccuracy}%`, label:"Avg Accuracy", ar:"متوسط الدقة", color:"#276749", tab:"test" as const },
+          { icon:"🔥", val:stats.streak, label:"Day Streak", ar:"سلسلة الأيام", color:"#b7791f", tab:"test" as const },
           { icon:"⏱️", val:`${stats.totalMins}m`, label:"Total Time", ar:"إجمالي الوقت", color:"#2b6cb0", tab:"recitation" as const },
         ].map((s,i)=>(
           <div key={i} onClick={()=>onNavigate(s.tab)}
@@ -292,7 +292,7 @@ export default function HifdhDashboard({ userId, studentName, onNavigate }: Prop
 
       {/* Revision Schedule */}
       <div style={card({ padding:"18px 16px" })}>
-        {sectionHeader("Revision Schedule","جدول المراجعة", showSchedule, ()=>setShowSchedule(v=>!v), ()=>onNavigate("review"))}
+        {sectionHeader("Revision Schedule","جدول المراجعة", showSchedule, ()=>setShowSchedule(v=>!v), ()=>onNavigate("test"))}
         {showSchedule && (
           progress.length === 0 ? (
             <div style={{ textAlign:"center", padding:"16px 0", fontSize:13, color:"#7a9e88" }}>
@@ -302,7 +302,7 @@ export default function HifdhDashboard({ userId, studentName, onNavigate }: Prop
           ) : progress.map((r,i)=>{
             const days=daysSince(r.last_reviewed); const col=urgencyColor(days);
             return (
-              <div key={i} onClick={()=>onNavigate("review")}
+              <div key={i} onClick={()=>onNavigate("test")}
                 style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 12px", borderRadius:10, marginBottom:6, cursor:"pointer",
                   background: days>=10?"#fff5f5":days>=5?"#fffbeb":"#f0fff4",
                   border:`1px solid ${col}22`,
