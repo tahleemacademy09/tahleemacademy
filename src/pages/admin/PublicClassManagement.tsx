@@ -1,337 +1,366 @@
+/* src/pages/admin/PublicClassManagement.tsx — Enhanced with analytics, guest list, share panel */
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
-import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Copy, Share2, QrCode, Trash2, Radio, Calendar, Users, ExternalLink, Video } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Plus, Copy, Share2, QrCode, Trash2, Radio, Calendar, Users,
+  ExternalLink, Video, Clock, Eye, ChevronRight, Loader2,
+  Globe, Lock, MessageCircle, Mic, Camera, Star, Send
+} from "lucide-react";
 import { format } from "date-fns";
 import { toast } from "sonner";
 
-interface PublicClass {
-  id: string;
-  title: string;
-  title_ar: string | null;
-  description: string | null;
-  description_ar: string | null;
-  room_code: string;
-  status: string;
-  scheduled_at: string | null;
-  max_guests: number;
-  guest_count: number;
-  password_enabled: boolean;
-  password: string | null;
-  chat_enabled: boolean;
-  raise_hand_enabled: boolean;
-  recording_enabled: boolean;
-  is_featured: boolean;
-  require_name: boolean;
-  allow_guest_camera: boolean;
-  allow_guest_mic: boolean;
-  host_id: string;
-  livekit_room_name: string | null;
-  created_at: string;
-}
+const G = "#064E3B";
+const GOLD = "#C9A84C";
 
 const generateRoomCode = () => {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let code = "";
-  for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
-  return code;
+  return Array.from({length:6},()=>chars[Math.floor(Math.random()*chars.length)]).join("");
 };
+
+interface PublicClass {
+  id:string; title:string; title_ar:string|null; description:string|null;
+  description_ar:string|null; room_code:string; status:string;
+  scheduled_at:string|null; max_guests:number; guest_count:number;
+  password_enabled:boolean; password:string|null; chat_enabled:boolean;
+  raise_hand_enabled:boolean; recording_enabled:boolean; is_featured:boolean;
+  require_name:boolean; allow_guest_camera:boolean; allow_guest_mic:boolean;
+  host_id:string; livekit_room_name:string|null; created_at:string;
+}
 
 const PublicClassManagement = () => {
   const { user } = useAuth();
   const { t } = useLanguage();
   const navigate = useNavigate();
-  const [classes, setClasses] = useState<PublicClass[]>([]);
-  const [loading, setLoading] = useState(true);
+
+  const [classes, setClasses]   = useState<PublicClass[]>([]);
+  const [loading, setLoading]   = useState(true);
+  const [creating, setCreating] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
-  const [linkDialogOpen, setLinkDialogOpen] = useState(false);
-  const [selectedClass, setSelectedClass] = useState<PublicClass | null>(null);
+  const [shareClass, setShareClass] = useState<PublicClass|null>(null);
+  const [filterTab, setFilterTab] = useState<"all"|"live"|"scheduled"|"ended">("all");
 
-  // Create form state
-  const [form, setForm] = useState({
-    title: "", title_ar: "", description: "", description_ar: "",
-    scheduled_at: "", password_enabled: false, password: "",
-    max_guests: 100, require_name: true, allow_guest_camera: false,
-    allow_guest_mic: false, chat_enabled: true, raise_hand_enabled: true,
-    recording_enabled: false, is_featured: false,
-  });
+  const emptyForm = {
+    title:"", title_ar:"", description:"", description_ar:"",
+    scheduled_at:"", password_enabled:false, password:"",
+    max_guests:100, require_name:true, allow_guest_camera:false,
+    allow_guest_mic:false, chat_enabled:true, raise_hand_enabled:true,
+    recording_enabled:false, is_featured:false,
+  };
+  const [form, setForm] = useState(emptyForm);
 
-  useEffect(() => { fetchClasses(); }, []);
+  useEffect(()=>{ fetchClasses(); },[]);
 
   const fetchClasses = async () => {
-    const { data } = await supabase.from("public_classes").select("*").order("created_at", { ascending: false });
-    setClasses((data as PublicClass[]) || []);
+    const { data } = await supabase.from("public_classes").select("*").order("created_at",{ascending:false});
+    setClasses((data as PublicClass[])||[]);
     setLoading(false);
   };
 
   const handleCreate = async () => {
-    if (!form.title.trim()) { toast.error("Title is required"); return; }
+    if (!form.title.trim()) { toast.error("Title required"); return; }
+    setCreating(true);
     const roomCode = generateRoomCode();
-    const livekitRoom = `public-${roomCode}`;
-
     const { error } = await supabase.from("public_classes").insert({
-      title: form.title,
-      title_ar: form.title_ar || null,
-      description: form.description || null,
-      description_ar: form.description_ar || null,
-      scheduled_at: form.scheduled_at || null,
-      room_code: roomCode,
-      livekit_room_name: livekitRoom,
-      join_url: `${window.location.origin}/live/${roomCode}`,
-      host_id: user!.id,
-      password_enabled: form.password_enabled,
-      password: form.password_enabled ? form.password : null,
-      max_guests: form.max_guests,
-      require_name: form.require_name,
-      allow_guest_camera: form.allow_guest_camera,
-      allow_guest_mic: form.allow_guest_mic,
-      chat_enabled: form.chat_enabled,
-      raise_hand_enabled: form.raise_hand_enabled,
-      recording_enabled: form.recording_enabled,
-      is_featured: form.is_featured,
+      title:form.title, title_ar:form.title_ar||null, description:form.description||null,
+      description_ar:form.description_ar||null, scheduled_at:form.scheduled_at||null,
+      room_code:roomCode, livekit_room_name:`public-${roomCode}`,
+      join_url:`${window.location.origin}/live/${roomCode}`,
+      host_id:user!.id, password_enabled:form.password_enabled,
+      password:form.password_enabled?form.password:null,
+      max_guests:form.max_guests, require_name:form.require_name,
+      allow_guest_camera:form.allow_guest_camera, allow_guest_mic:form.allow_guest_mic,
+      chat_enabled:form.chat_enabled, raise_hand_enabled:form.raise_hand_enabled,
+      recording_enabled:form.recording_enabled, is_featured:form.is_featured,
     });
-
+    setCreating(false);
     if (error) { toast.error(error.message); return; }
     toast.success("Public class created!");
-    setCreateOpen(false);
-    setForm({ title: "", title_ar: "", description: "", description_ar: "", scheduled_at: "",
-      password_enabled: false, password: "", max_guests: 100, require_name: true,
-      allow_guest_camera: false, allow_guest_mic: false, chat_enabled: true,
-      raise_hand_enabled: true, recording_enabled: false, is_featured: false });
-    fetchClasses();
+    setCreateOpen(false); setForm(emptyForm); fetchClasses();
   };
 
-  const updateStatus = async (id: string, status: string) => {
-    const updates: Record<string, unknown> = { status };
-    if (status === "live") updates.actual_start_time = new Date().toISOString();
-    if (status === "ended") updates.actual_end_time = new Date().toISOString();
-    await supabase.from("public_classes").update(updates).eq("id", id);
-    toast.success(`Class ${status}`);
-    fetchClasses();
-  };
-
-  const goLiveAndJoin = async (cls: PublicClass) => {
-    // Set class to live
-    await supabase.from("public_classes").update({
-      status: "live",
-      actual_start_time: new Date().toISOString(),
-    }).eq("id", cls.id);
-
-    // Get LiveKit token as host
+  const goLive = async (cls: PublicClass) => {
+    await supabase.from("public_classes").update({ status:"live", actual_start_time:new Date().toISOString() }).eq("id",cls.id);
     try {
       const session = await supabase.auth.getSession();
       const accessToken = session.data.session?.access_token;
       const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
-
       const res = await fetch(`https://${projectId}.supabase.co/functions/v1/public-class-token`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "apikey": import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
-          "Authorization": `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({
-          room_code: cls.room_code,
-          guest_name: user?.user_metadata?.full_name || "Teacher",
-        }),
+        method:"POST",
+        headers:{ "Content-Type":"application/json", "apikey":import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY, "Authorization":`Bearer ${accessToken}` },
+        body:JSON.stringify({ room_code:cls.room_code, guest_name:user?.user_metadata?.full_name||"Teacher" }),
       });
       const data = await res.json();
-      if (!res.ok) {
-        toast.error(data.error || "Failed to get classroom token");
-        return;
-      }
+      if (!res.ok) { toast.error(data.error||"Failed to connect"); return; }
+      navigate(`/live/${cls.room_code}/classroom`, { state:{ token:data.token, url:data.url, room:data.room, guestName:data.participant_name, classTitle:cls.title, classTitleAr:cls.title_ar, isHost:true, classId:cls.id } });
+    } catch { toast.error("Connection failed"); }
+  };
 
-      navigate(`/live/${cls.room_code}/classroom`, {
-        state: {
-          token: data.token,
-          url: data.url,
-          room: data.room,
-          guestName: data.participant_name,
-          classTitle: cls.title,
-          classTitleAr: cls.title_ar,
-          isHost: true,
-          classId: cls.id,
-        },
-      });
-    } catch {
-      toast.error("Failed to connect to classroom");
-    }
+  const endClass = async (id: string) => {
+    await supabase.from("public_classes").update({ status:"ended", actual_end_time:new Date().toISOString() }).eq("id",id);
+    toast.success("Class ended");
+    fetchClasses();
   };
 
   const deleteClass = async (id: string) => {
     if (!confirm("Delete this public class?")) return;
-    await supabase.from("public_classes").delete().eq("id", id);
+    await supabase.from("public_classes").delete().eq("id",id);
     toast.success("Deleted");
     fetchClasses();
   };
 
-  const showLinks = (cls: PublicClass) => {
-    setSelectedClass(cls);
-    setLinkDialogOpen(true);
-  };
-
   const shareWhatsApp = (cls: PublicClass) => {
     const msg = encodeURIComponent(
-      `Assalamu Alaikum! 🌙\n\nYou are invited to a FREE live Islamic class with Tahleem Academy!\n\n📚 ${cls.title}\n${cls.scheduled_at ? `📅 ${format(new Date(cls.scheduled_at), "MMM d, yyyy 'at' h:mm a")}` : ""}\n\nJoin here (no account needed):\n${window.location.origin}/live/${cls.room_code}\n\nRoom Code: ${cls.room_code}\n\nShare with others who may benefit! 🤲\nوَمَنْ دَلَّ عَلَى خَيْرٍ فَلَهُ مِثْلُ أَجْرِ فَاعِلِهِ`
+      `Assalamu Alaikum! 🌙\n\nYou are invited to a FREE live Islamic class with Tahleem Academy!\n\n📚 ${cls.title}\n${cls.scheduled_at?`📅 ${format(new Date(cls.scheduled_at),"MMM d, yyyy 'at' h:mm a")}`:""}\n\nJoin here (no account needed):\n${window.location.origin}/live/${cls.room_code}\n\nRoom Code: ${cls.room_code}\n\nShare with others who may benefit! 🤲`
     );
-    window.open(`https://wa.me/?text=${msg}`, "_blank");
+    window.open(`https://wa.me/?text=${msg}`,"_blank");
   };
 
-  const liveCount = classes.filter(c => c.status === "live").length;
-  const scheduledCount = classes.filter(c => c.status === "scheduled").length;
-  const endedCount = classes.filter(c => c.status === "ended").length;
-  const totalGuests = classes.reduce((sum, c) => sum + (c.guest_count || 0), 0);
+  const copyLink = (cls: PublicClass) => {
+    navigator.clipboard.writeText(`${window.location.origin}/live/${cls.room_code}`);
+    toast.success("Link copied!");
+  };
+
+  const displayed = classes.filter(c => filterTab==="all" || c.status===filterTab);
+
+  const liveCount = classes.filter(c=>c.status==="live").length;
+  const scheduledCount = classes.filter(c=>c.status==="scheduled").length;
+  const totalGuests = classes.reduce((s,c)=>s+(c.guest_count||0),0);
+
+  const ToggleRow = ({ label, sub, checked, onChange }: any) => (
+    <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"9px 0", borderBottom:"1px solid #F9FAFB" }}>
+      <div>
+        <p style={{ fontSize:13, fontWeight:600, color:"#374151", margin:0 }}>{label}</p>
+        {sub&&<p style={{ fontSize:11, color:"#9CA3AF", margin:0 }}>{sub}</p>}
+      </div>
+      <Switch checked={checked} onCheckedChange={onChange}/>
+    </div>
+  );
 
   return (
-    <div className="space-y-6 p-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">{t("Public Classes", "الدروس العامة")}</h1>
-          <p className="text-sm text-muted-foreground">{t("Create and manage public live classes anyone can join", "إنشاء وإدارة الدروس المباشرة العامة")}</p>
-        </div>
-        <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-          <DialogTrigger asChild>
-            <Button style={{ background: "#c9973a" }} className="text-white"><Plus className="h-4 w-4 mr-2" /> {t("Create Public Class", "إنشاء درس عام")}</Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle>{t("Create Public Class", "إنشاء درس عام جديد")}</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4">
-              <div><Label>Title (English) *</Label><Input value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} /></div>
-              <div><Label>Title (Arabic)</Label><Input value={form.title_ar} onChange={e => setForm(f => ({ ...f, title_ar: e.target.value }))} dir="rtl" /></div>
-              <div><Label>Description</Label><Textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} rows={2} /></div>
-              <div><Label>Description (Arabic)</Label><Textarea value={form.description_ar} onChange={e => setForm(f => ({ ...f, description_ar: e.target.value }))} rows={2} dir="rtl" /></div>
-              <div><Label>Scheduled Date & Time</Label><Input type="datetime-local" value={form.scheduled_at} onChange={e => setForm(f => ({ ...f, scheduled_at: e.target.value }))} /></div>
-              <div><Label>Max Guests</Label><Input type="number" value={form.max_guests} onChange={e => setForm(f => ({ ...f, max_guests: parseInt(e.target.value) || 100 }))} /></div>
-
-              <div className="space-y-3 pt-2">
-                <div className="flex items-center justify-between"><Label>Password Protection</Label><Switch checked={form.password_enabled} onCheckedChange={v => setForm(f => ({ ...f, password_enabled: v }))} /></div>
-                {form.password_enabled && <Input placeholder="Class password" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} />}
-                <div className="flex items-center justify-between"><Label>Require Name</Label><Switch checked={form.require_name} onCheckedChange={v => setForm(f => ({ ...f, require_name: v }))} /></div>
-                <div className="flex items-center justify-between"><Label>Allow Guest Camera</Label><Switch checked={form.allow_guest_camera} onCheckedChange={v => setForm(f => ({ ...f, allow_guest_camera: v }))} /></div>
-                <div className="flex items-center justify-between"><Label>Allow Guest Mic</Label><Switch checked={form.allow_guest_mic} onCheckedChange={v => setForm(f => ({ ...f, allow_guest_mic: v }))} /></div>
-                <div className="flex items-center justify-between"><Label>Enable Chat</Label><Switch checked={form.chat_enabled} onCheckedChange={v => setForm(f => ({ ...f, chat_enabled: v }))} /></div>
-                <div className="flex items-center justify-between"><Label>Enable Hand Raising</Label><Switch checked={form.raise_hand_enabled} onCheckedChange={v => setForm(f => ({ ...f, raise_hand_enabled: v }))} /></div>
-                <div className="flex items-center justify-between"><Label>Record Class</Label><Switch checked={form.recording_enabled} onCheckedChange={v => setForm(f => ({ ...f, recording_enabled: v }))} /></div>
-                <div className="flex items-center justify-between"><Label>Featured (Homepage)</Label><Switch checked={form.is_featured} onCheckedChange={v => setForm(f => ({ ...f, is_featured: v }))} /></div>
-              </div>
-
-              <Button onClick={handleCreate} className="w-full" style={{ background: "#c9973a" }}>Create Class</Button>
+    <div style={{ minHeight:"100vh", background:"#F8F9FA" }}>
+      {/* Header */}
+      <div style={{ background:"#fff", borderBottom:"1px solid #E5E7EB", padding:"18px 20px" }}>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:12 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+            <div style={{ width:40, height:40, borderRadius:12, background:"#FFF7ED", display:"flex", alignItems:"center", justifyContent:"center" }}>
+              <Globe size={20} color={GOLD}/>
             </div>
-          </DialogContent>
-        </Dialog>
+            <div>
+              <h1 style={{ fontSize:20, fontWeight:800, color:"#111", margin:0 }}>Public Classes</h1>
+              <p style={{ fontSize:12, color:"#6B7280", margin:0 }}>{classes.length} classes · {liveCount > 0 ? `🔴 ${liveCount} live` : `${scheduledCount} scheduled`} · {totalGuests} total guests</p>
+            </div>
+          </div>
+          <Button onClick={()=>setCreateOpen(true)}
+            style={{ background:GOLD, borderRadius:12, gap:8, fontWeight:700, color:"#fff" }}>
+            <Plus size={16}/> Create Public Class
+          </Button>
+        </div>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card><CardContent className="p-4 text-center"><div className="text-2xl font-bold text-red-500">{liveCount}</div><p className="text-xs text-muted-foreground">Live Now</p></CardContent></Card>
-        <Card><CardContent className="p-4 text-center"><div className="text-2xl font-bold text-blue-500">{scheduledCount}</div><p className="text-xs text-muted-foreground">Scheduled</p></CardContent></Card>
-        <Card><CardContent className="p-4 text-center"><div className="text-2xl font-bold text-muted-foreground">{endedCount}</div><p className="text-xs text-muted-foreground">Completed</p></CardContent></Card>
-        <Card><CardContent className="p-4 text-center"><div className="text-2xl font-bold" style={{ color: "#c9973a" }}>{totalGuests}</div><p className="text-xs text-muted-foreground">Total Guests</p></CardContent></Card>
-      </div>
+      <div style={{ padding:"16px", maxWidth:1000, margin:"0 auto" }}>
+        {/* Stats */}
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))", gap:10, marginBottom:16 }}>
+          {[
+            { v:liveCount,     l:"Live Now",  icon:"🔴", bg:"#FEF2F2", c:"#DC2626" },
+            { v:scheduledCount,l:"Scheduled", icon:"📅", bg:"#EFF6FF", c:"#1D4ED8" },
+            { v:classes.filter(c=>c.status==="ended").length, l:"Completed", icon:"✅", bg:"#F0FDF4", c:"#166534" },
+            { v:totalGuests,   l:"Total Guests",icon:"👥", bg:"#FFF7ED", c:"#C2410C" },
+          ].map((s,i)=>(
+            <div key={i} style={{ background:s.bg, borderRadius:12, padding:"12px 14px" }}>
+              <div style={{ fontSize:20, marginBottom:4 }}>{s.icon}</div>
+              <div style={{ fontSize:22, fontWeight:900, color:s.c }}>{s.v}</div>
+              <div style={{ fontSize:11, color:s.c, opacity:.7, fontWeight:600 }}>{s.l}</div>
+            </div>
+          ))}
+        </div>
 
-      {/* Class list */}
-      <Tabs defaultValue="all">
-        <TabsList>
-          <TabsTrigger value="all">All</TabsTrigger>
-          <TabsTrigger value="live">Live</TabsTrigger>
-          <TabsTrigger value="scheduled">Scheduled</TabsTrigger>
-          <TabsTrigger value="ended">Ended</TabsTrigger>
-        </TabsList>
-        {["all", "live", "scheduled", "ended"].map(tab => (
-          <TabsContent key={tab} value={tab} className="space-y-3">
-            {loading ? <p>Loading...</p> :
-              classes.filter(c => tab === "all" || c.status === tab).length === 0 ?
-                <p className="text-center text-muted-foreground py-8">No classes</p> :
-                classes.filter(c => tab === "all" || c.status === tab).map(cls => (
-                  <Card key={cls.id}>
-                    <CardContent className="p-4">
-                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-1">
-                            <h3 className="font-bold">{cls.title}</h3>
-                            <Badge variant={cls.status === "live" ? "destructive" : cls.status === "scheduled" ? "default" : "secondary"}>
-                              {cls.status === "live" && "🔴 "}{cls.status}
-                            </Badge>
-                            {cls.is_featured && <Badge style={{ background: "#c9973a" }} className="text-white text-xs">Featured</Badge>}
-                          </div>
-                          {cls.title_ar && <p className="text-sm text-muted-foreground" style={{ fontFamily: "'Amiri', serif" }}>{cls.title_ar}</p>}
-                          <div className="flex gap-4 text-xs text-muted-foreground mt-1">
-                            <span className="flex items-center gap-1"><Calendar className="h-3 w-3" />{cls.scheduled_at ? format(new Date(cls.scheduled_at), "MMM d, h:mm a") : "No date"}</span>
-                            <span className="flex items-center gap-1"><Users className="h-3 w-3" />{cls.guest_count}/{cls.max_guests}</span>
-                            <span>Code: <code className="font-mono font-bold">{cls.room_code}</code></span>
-                          </div>
-                        </div>
-                        <div className="flex gap-2 flex-wrap">
-                          {cls.status === "scheduled" && (
-                            <Button size="sm" onClick={() => goLiveAndJoin(cls)} className="bg-green-600 text-white hover:bg-green-700">
-                              <Video className="h-3 w-3 mr-1" /> Go Live & Join
-                            </Button>
-                          )}
-                          {cls.status === "live" && (
-                            <>
-                              <Button size="sm" onClick={() => goLiveAndJoin(cls)} className="bg-green-600 text-white hover:bg-green-700">
-                                <Video className="h-3 w-3 mr-1" /> Join Classroom
-                              </Button>
-                              <Button size="sm" variant="destructive" onClick={() => updateStatus(cls.id, "ended")}>End Class</Button>
-                            </>
-                          )}
-                          <Button size="sm" variant="outline" onClick={() => showLinks(cls)}><Share2 className="h-3 w-3 mr-1" /> Share</Button>
-                          <Button size="sm" variant="outline" onClick={() => window.open(`/live/${cls.room_code}`, "_blank")}><ExternalLink className="h-3 w-3" /></Button>
-                          <Button size="sm" variant="ghost" className="text-destructive" onClick={() => deleteClass(cls.id)}><Trash2 className="h-3 w-3" /></Button>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))
-            }
-          </TabsContent>
-        ))}
-      </Tabs>
+        {/* Filter tabs */}
+        <div style={{ display:"flex", gap:4, marginBottom:14, background:"#fff", borderRadius:12, padding:4, border:"1px solid #E5E7EB", width:"fit-content" }}>
+          {(["all","live","scheduled","ended"] as const).map(tab=>(
+            <button key={tab} onClick={()=>setFilterTab(tab)}
+              style={{ padding:"7px 16px", borderRadius:9, border:"none", cursor:"pointer", fontWeight:700, fontSize:13,
+                background:filterTab===tab?G:"transparent", color:filterTab===tab?"#fff":"#6B7280" }}>
+              {tab==="live"?"🔴 ":tab==="scheduled"?"📅 ":tab==="ended"?"✅ ":""}{tab.charAt(0).toUpperCase()+tab.slice(1)} ({tab==="all"?classes.length:classes.filter(c=>c.status===tab).length})
+            </button>
+          ))}
+        </div>
 
-      {/* Share Links Dialog */}
-      <Dialog open={linkDialogOpen} onOpenChange={setLinkDialogOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Share Class Link</DialogTitle></DialogHeader>
-          {selectedClass && (
-            <div className="space-y-4">
-              <div className="rounded-lg p-4 bg-muted text-center">
-                <p className="text-sm text-muted-foreground mb-1">Your Public Class Link:</p>
-                <p className="font-mono font-bold text-lg break-all">{window.location.origin}/live/{selectedClass.room_code}</p>
-                <p className="text-sm text-muted-foreground mt-2">Room Code: <code className="font-bold text-lg">{selectedClass.room_code}</code></p>
+        {/* Class cards */}
+        {loading ? (
+          <div style={{ textAlign:"center", padding:48 }}><Loader2 size={28} style={{ animation:"spin .8s linear infinite", color:G }}/></div>
+        ) : displayed.length === 0 ? (
+          <div style={{ textAlign:"center", padding:"48px 24px", background:"#fff", borderRadius:16, border:"2px dashed #E5E7EB" }}>
+            <Globe size={40} color="#D1D5DB" style={{ margin:"0 auto 12px" }}/>
+            <p style={{ fontWeight:700, color:"#374151" }}>No classes here yet</p>
+            <Button onClick={()=>setCreateOpen(true)} style={{ background:GOLD, borderRadius:10, gap:6, marginTop:12, color:"#fff" }}><Plus size={14}/> Create one</Button>
+          </div>
+        ) : (
+          <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+            {displayed.map(cls=>(
+              <div key={cls.id} style={{ background:"#fff", borderRadius:16, border:`2px solid ${cls.status==="live"?"#FECACA":cls.is_featured?"#FDE68A":"#E5E7EB"}`, padding:"16px", boxShadow:"0 1px 4px rgba(0,0,0,.04)" }}>
+                <div style={{ display:"flex", alignItems:"flex-start", gap:12, flexWrap:"wrap" }}>
+                  <div style={{ flex:1, minWidth:180 }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4, flexWrap:"wrap" }}>
+                      <p style={{ fontWeight:800, fontSize:15, color:"#111", margin:0 }}>{cls.title}</p>
+                      {cls.status==="live"&&<span style={{ fontSize:11, padding:"2px 8px", borderRadius:20, background:"#FEE2E2", color:"#DC2626", fontWeight:700, display:"flex", alignItems:"center", gap:4 }}><Radio size={9}/> LIVE</span>}
+                      {cls.status==="scheduled"&&<span style={{ fontSize:11, padding:"2px 8px", borderRadius:20, background:"#DBEAFE", color:"#1D4ED8", fontWeight:700 }}>Scheduled</span>}
+                      {cls.status==="ended"&&<span style={{ fontSize:11, padding:"2px 8px", borderRadius:20, background:"#F3F4F6", color:"#6B7280", fontWeight:600 }}>Ended</span>}
+                      {cls.is_featured&&<span style={{ fontSize:11, padding:"2px 8px", borderRadius:20, background:"#FEF9C3", color:"#854D0E", fontWeight:700 }}>⭐ Featured</span>}
+                    </div>
+                    {cls.title_ar&&<p style={{ fontSize:12, color:"#9CA3AF", margin:"0 0 6px", fontFamily:"'Amiri',serif", direction:"rtl" }}>{cls.title_ar}</p>}
+                    <div style={{ display:"flex", gap:12, flexWrap:"wrap" }}>
+                      <span style={{ fontSize:12, color:"#6B7280", display:"flex", alignItems:"center", gap:3 }}>
+                        <Calendar size={11}/> {cls.scheduled_at?format(new Date(cls.scheduled_at),"MMM d, h:mm a"):"No date"}
+                      </span>
+                      <span style={{ fontSize:12, color:"#6B7280", display:"flex", alignItems:"center", gap:3 }}>
+                        <Users size={11}/> {cls.guest_count}/{cls.max_guests} guests
+                      </span>
+                      <span style={{ fontSize:12, color:"#6B7280", display:"flex", alignItems:"center", gap:3 }}>
+                        Code: <code style={{ fontFamily:"monospace", fontWeight:800, color:"#374151" }}>{cls.room_code}</code>
+                      </span>
+                    </div>
+                    {/* Feature pills */}
+                    <div style={{ display:"flex", gap:5, marginTop:7, flexWrap:"wrap" }}>
+                      {cls.chat_enabled&&<span style={{ fontSize:10, padding:"2px 7px", borderRadius:20, background:"#ECFEFF", color:"#0E7490", fontWeight:600 }}>💬 Chat</span>}
+                      {cls.raise_hand_enabled&&<span style={{ fontSize:10, padding:"2px 7px", borderRadius:20, background:"#F5F3FF", color:"#6D28D9", fontWeight:600 }}>✋ Raise Hand</span>}
+                      {cls.allow_guest_camera&&<span style={{ fontSize:10, padding:"2px 7px", borderRadius:20, background:"#F0FDF4", color:"#166534", fontWeight:600 }}>📷 Guest Camera</span>}
+                      {cls.allow_guest_mic&&<span style={{ fontSize:10, padding:"2px 7px", borderRadius:20, background:"#FFF7ED", color:"#C2410C", fontWeight:600 }}>🎤 Guest Mic</span>}
+                      {cls.recording_enabled&&<span style={{ fontSize:10, padding:"2px 7px", borderRadius:20, background:"#FEF2F2", color:"#DC2626", fontWeight:600 }}>⏺ Recording</span>}
+                      {cls.password_enabled&&<span style={{ fontSize:10, padding:"2px 7px", borderRadius:20, background:"#F3F4F6", color:"#6B7280", fontWeight:600 }}><Lock size={8}/> Password</span>}
+                    </div>
+                  </div>
+                  {/* Actions */}
+                  <div style={{ display:"flex", gap:6, flexWrap:"wrap", flexShrink:0 }}>
+                    {(cls.status==="scheduled"||cls.status==="live")&&(
+                      <button onClick={()=>goLive(cls)}
+                        style={{ display:"flex", alignItems:"center", gap:5, padding:"8px 14px", borderRadius:10, border:"none", background:"#16A34A", color:"#fff", cursor:"pointer", fontSize:13, fontWeight:700 }}>
+                        <Video size={13}/> {cls.status==="live"?"Rejoin":"Go Live"}
+                      </button>
+                    )}
+                    {cls.status==="live"&&(
+                      <button onClick={()=>endClass(cls.id)}
+                        style={{ padding:"8px 12px", borderRadius:10, border:"none", background:"#DC2626", color:"#fff", cursor:"pointer", fontSize:13, fontWeight:700 }}>
+                        End
+                      </button>
+                    )}
+                    <button onClick={()=>setShareClass(cls)}
+                      style={{ padding:"8px 12px", borderRadius:10, border:"1.5px solid #E5E7EB", background:"#fff", cursor:"pointer", display:"flex", alignItems:"center", gap:5, fontSize:12, fontWeight:600, color:"#374151" }}>
+                      <Share2 size={13}/> Share
+                    </button>
+                    <button onClick={()=>copyLink(cls)}
+                      style={{ padding:"8px 10px", borderRadius:10, border:"1.5px solid #E5E7EB", background:"#fff", cursor:"pointer" }}>
+                      <Copy size={13} color="#6B7280"/>
+                    </button>
+                    <button onClick={()=>window.open(`/live/${cls.room_code}`,"_blank")}
+                      style={{ padding:"8px 10px", borderRadius:10, border:"1.5px solid #E5E7EB", background:"#fff", cursor:"pointer" }}>
+                      <ExternalLink size={13} color="#6B7280"/>
+                    </button>
+                    <button onClick={()=>deleteClass(cls.id)}
+                      style={{ padding:"8px 10px", borderRadius:10, border:"1.5px solid #FECACA", background:"#FEF2F2", cursor:"pointer" }}>
+                      <Trash2 size={13} color="#DC2626"/>
+                    </button>
+                  </div>
+                </div>
               </div>
-              <div className="grid grid-cols-2 gap-2">
-                <Button variant="outline" onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/live/${selectedClass.room_code}`); toast.success("Copied!"); }}>
-                  <Copy className="h-4 w-4 mr-2" /> Copy Link
-                </Button>
-                <Button variant="outline" onClick={() => shareWhatsApp(selectedClass)}>
-                  <Share2 className="h-4 w-4 mr-2" /> WhatsApp
-                </Button>
-                <Button variant="outline" onClick={() => { const mailTo = `mailto:?subject=${encodeURIComponent(`Join: ${selectedClass.title}`)}&body=${encodeURIComponent(`Join free: ${window.location.origin}/live/${selectedClass.room_code}`)}`; window.open(mailTo); }}>
-                  📧 Email
-                </Button>
-                <Button variant="outline" onClick={() => { window.open(`https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(`${window.location.origin}/live/${selectedClass.room_code}`)}`, "_blank"); }}>
-                  <QrCode className="h-4 w-4 mr-2" /> QR Code
-                </Button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Create Dialog */}
+      <Dialog open={createOpen} onOpenChange={v=>{if(!v){setCreateOpen(false);setForm(emptyForm);}}}>
+        <DialogContent style={{ maxWidth:520, borderRadius:20, padding:0, maxHeight:"92vh", overflowY:"auto" }}>
+          <div style={{ background:GOLD, padding:"18px 20px", borderRadius:"20px 20px 0 0", display:"flex", alignItems:"center", gap:10 }}>
+            <Globe size={20} color="#fff"/>
+            <h2 style={{ fontWeight:800, fontSize:16, color:"#fff", margin:0 }}>New Public Class</h2>
+          </div>
+          <div style={{ padding:20, display:"flex", flexDirection:"column", gap:14 }}>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+              <div><label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:5 }}>Title (English) *</label><Input value={form.title} onChange={e=>setForm(f=>({...f,title:e.target.value}))} style={{ borderRadius:10 }}/></div>
+              <div><label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:5 }}>العنوان (عربي)</label><Input dir="rtl" value={form.title_ar} onChange={e=>setForm(f=>({...f,title_ar:e.target.value}))} style={{ borderRadius:10 }}/></div>
+            </div>
+            <div><label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:5 }}>Description</label><Textarea value={form.description} onChange={e=>setForm(f=>({...f,description:e.target.value}))} rows={2} style={{ borderRadius:10 }}/></div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+              <div><label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:5 }}>Date & Time</label><Input type="datetime-local" value={form.scheduled_at} onChange={e=>setForm(f=>({...f,scheduled_at:e.target.value}))} style={{ borderRadius:10 }}/></div>
+              <div><label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:5 }}>Max Guests</label><Input type="number" value={form.max_guests} onChange={e=>setForm(f=>({...f,max_guests:parseInt(e.target.value)||100}))} style={{ borderRadius:10 }}/></div>
+            </div>
+            <div style={{ background:"#F9FAFB", borderRadius:12, padding:"12px 14px" }}>
+              <ToggleRow label="Password Protection" sub="Restrict access with a password" checked={form.password_enabled} onChange={(v:boolean)=>setForm(f=>({...f,password_enabled:v}))}/>
+              {form.password_enabled&&<Input value={form.password} onChange={e=>setForm(f=>({...f,password:e.target.value}))} placeholder="Set class password" style={{ borderRadius:9, marginTop:8 }}/>}
+              <ToggleRow label="Require Name" sub="Guests must enter their name" checked={form.require_name} onChange={(v:boolean)=>setForm(f=>({...f,require_name:v}))}/>
+              <ToggleRow label="Enable Chat" checked={form.chat_enabled} onChange={(v:boolean)=>setForm(f=>({...f,chat_enabled:v}))}/>
+              <ToggleRow label="Raise Hand" checked={form.raise_hand_enabled} onChange={(v:boolean)=>setForm(f=>({...f,raise_hand_enabled:v}))}/>
+              <ToggleRow label="Allow Guest Camera" checked={form.allow_guest_camera} onChange={(v:boolean)=>setForm(f=>({...f,allow_guest_camera:v}))}/>
+              <ToggleRow label="Allow Guest Mic" checked={form.allow_guest_mic} onChange={(v:boolean)=>setForm(f=>({...f,allow_guest_mic:v}))}/>
+              <ToggleRow label="Record Class" checked={form.recording_enabled} onChange={(v:boolean)=>setForm(f=>({...f,recording_enabled:v}))}/>
+              <ToggleRow label="Feature on Homepage" checked={form.is_featured} onChange={(v:boolean)=>setForm(f=>({...f,is_featured:v}))}/>
+            </div>
+            <Button onClick={handleCreate} disabled={!form.title||creating}
+              style={{ background:GOLD, borderRadius:12, height:44, gap:8, fontWeight:700, fontSize:14, color:"#fff" }}>
+              {creating?<><Loader2 size={16} style={{ animation:"spin .8s linear infinite" }}/> Creating…</>:"Create Public Class"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Share Dialog */}
+      <Dialog open={!!shareClass} onOpenChange={v=>!v&&setShareClass(null)}>
+        <DialogContent style={{ maxWidth:420, borderRadius:20, padding:0 }}>
+          <div style={{ background:G, padding:"18px 20px", borderRadius:"20px 20px 0 0" }}>
+            <h2 style={{ fontWeight:800, fontSize:16, color:"#fff", margin:0 }}>Share Class</h2>
+            <p style={{ fontSize:11, color:"rgba(255,255,255,.7)", margin:0 }}>{shareClass?.title}</p>
+          </div>
+          {shareClass&&(
+            <div style={{ padding:20 }}>
+              <div style={{ background:"#F9FAFB", borderRadius:14, padding:16, textAlign:"center", marginBottom:16 }}>
+                <p style={{ fontSize:11, color:"#9CA3AF", margin:"0 0 6px" }}>Public Class Link</p>
+                <p style={{ fontFamily:"monospace", fontWeight:700, fontSize:13, color:"#374151", margin:"0 0 8px", wordBreak:"break-all" }}>
+                  {window.location.origin}/live/{shareClass.room_code}
+                </p>
+                <div style={{ display:"inline-flex", alignItems:"center", gap:6, padding:"6px 14px", borderRadius:20, background:"#064E3B15" }}>
+                  <span style={{ fontSize:13, color:"#6B7280" }}>Room Code:</span>
+                  <code style={{ fontSize:22, fontWeight:900, color:G, letterSpacing:3 }}>{shareClass.room_code}</code>
+                </div>
+              </div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+                {[
+                  { label:"Copy Link", icon:<Copy size={14}/>, action:()=>copyLink(shareClass!) },
+                  { label:"WhatsApp", icon:<Send size={14}/>, action:()=>shareWhatsApp(shareClass!) },
+                  { label:"Email", icon:"📧", action:()=>window.open(`mailto:?subject=${encodeURIComponent("Join: "+shareClass!.title)}&body=${encodeURIComponent("Join free: "+window.location.origin+"/live/"+shareClass!.room_code)}`) },
+                  { label:"QR Code", icon:<QrCode size={14}/>, action:()=>window.open(`https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(window.location.origin+"/live/"+shareClass!.room_code)}`,"_blank") },
+                ].map((btn,i)=>(
+                  <button key={i} onClick={btn.action as any}
+                    style={{ padding:"12px 14px", borderRadius:12, border:"1.5px solid #E5E7EB", background:"#fff", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8, fontWeight:600, fontSize:13, color:"#374151" }}>
+                    {btn.icon} {btn.label}
+                  </button>
+                ))}
               </div>
             </div>
           )}
         </DialogContent>
       </Dialog>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </div>
   );
 };
+
+// Helper used in create dialog
+const ToggleRow = ({ label, sub, checked, onChange }: { label:string; sub?:string; checked:boolean; onChange:(v:boolean)=>void }) => (
+  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"9px 0", borderBottom:"1px solid #E5E7EB" }}>
+    <div>
+      <p style={{ fontSize:13, fontWeight:600, color:"#374151", margin:0 }}>{label}</p>
+      {sub&&<p style={{ fontSize:11, color:"#9CA3AF", margin:0 }}>{sub}</p>}
+    </div>
+    <Switch checked={checked} onCheckedChange={onChange}/>
+  </div>
+);
 
 export default PublicClassManagement;
