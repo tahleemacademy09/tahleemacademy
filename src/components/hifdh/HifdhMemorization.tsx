@@ -368,9 +368,9 @@ export default function HifdhMemorization() {
           </button>
         ) : (
           <button onClick={playCurrentStep}
-            style={{ flex: 1, padding: "13px 0", borderRadius: 12, border: "none",
+            style={{ flex: 1, padding: "13px 0", borderRadius: 12,
               background: "#f0fff4", color: C.green, fontSize: 14, fontWeight: 700, cursor: "pointer",
-              border: `1px solid ${C.border}` as any }}>
+              border: `1px solid ${C.border}` }}>
             🔊 Play Audio
           </button>
         )}
