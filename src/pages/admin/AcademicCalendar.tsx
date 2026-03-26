@@ -1,791 +1,461 @@
+/* src/pages/admin/AcademicCalendar.tsx — Full calendar with events, class scheduling, Hijri dates, notifications */
 import { useState, useEffect } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
-import { useAcademySettings } from "@/hooks/useAcademySettings";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import {
-  CreditCard, Calendar, Moon, Sun, Power, PowerOff, Clock, Users,
-  AlertTriangle, CheckCircle, Play, Pause, Settings,
+  ChevronLeft, ChevronRight, Plus, Calendar, Clock, Users,
+  Bell, Trash2, Edit, BookOpen, Video, Star, X, Loader2, Send
 } from "lucide-react";
-import { format } from "date-fns";
+import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, isSameMonth, addMonths, subMonths, parseISO } from "date-fns";
+
+const G = "#064E3B";
+
+const EVENT_TYPES = [
+  { value:"class",    label:"Class Session",  color:"#3B82F6", bg:"#EFF6FF", icon:"📚" },
+  { value:"exam",     label:"Exam",           color:"#DC2626", bg:"#FEF2F2", icon:"📝" },
+  { value:"holiday",  label:"Holiday",        color:"#16A34A", bg:"#F0FDF4", icon:"🌙" },
+  { value:"event",    label:"General Event",  color:"#7C3AED", bg:"#F5F3FF", icon:"📅" },
+  { value:"deadline", label:"Deadline",       color:"#D97706", bg:"#FFF7ED", icon:"⚠️" },
+  { value:"meeting",  label:"Meeting",        color:"#0891B2", bg:"#ECFEFF", icon:"💬" },
+];
+
+const NOTIFY_TO = [
+  { value:"all",      label:"All Users" },
+  { value:"students", label:"Students Only" },
+  { value:"teachers", label:"Teachers Only" },
+];
+
+// Approximate Hijri date (simplified — good enough for display)
+function toHijri(date: Date) {
+  // Using a known epoch: 1 Muharram 1 AH = 16 July 622 CE (Julian)
+  const JD = Math.floor((date.getTime() / 86400000) + 2440587.5);
+  const l = JD - 1948440 + 10632;
+  const n = Math.floor((l - 1) / 10631);
+  const ll = l - 10631 * n + 354;
+  const j = Math.floor((10985 - ll) / 5316) * Math.floor((50 * ll) / 17719) +
+    Math.floor(ll / 5670) * Math.floor((43 * ll) / 15238);
+  const lll = ll - Math.floor((30 - j) / 15) * Math.floor((17719 * j) / 50) -
+    Math.floor(j / 16) * Math.floor((15238 * j) / 43) + 29;
+  const month = Math.floor((24 * lll) / 709);
+  const day = lll - Math.floor((709 * month) / 24);
+  const year = 30 * n + j - 30;
+  const months = ["Muharram","Safar","Rabi I","Rabi II","Jumada I","Jumada II","Rajab","Sha'ban","Ramadan","Shawwal","Dhu al-Qi'dah","Dhu al-Hijjah"];
+  const monthsAr = ["محرم","صفر","ربيع الأول","ربيع الثاني","جمادى الأولى","جمادى الثانية","رجب","شعبان","رمضان","شوال","ذو القعدة","ذو الحجة"];
+  return { day, month, year, monthName: months[month-1] || "", monthNameAr: monthsAr[month-1] || "" };
+}
 
 const AcademicCalendar = () => {
-  const { user, profile } = useAuth();
-  const { t } = useLanguage();
+  const { user } = useAuth();
+  const { t, language } = useLanguage();
   const { toast } = useToast();
-  const { settings, loading, updateMultiple, fetchSettings, isPaymentEnabled, isHoliday, isActive } = useAcademySettings();
 
-  const [switchLogs, setSwitchLogs] = useState<any[]>([]);
-  const [terms, setTerms] = useState<any[]>([]);
-  const [showPayOffDialog, setShowPayOffDialog] = useState(false);
-  const [showPayOnDialog, setShowPayOnDialog] = useState(false);
-  const [showHolidayDialog, setShowHolidayDialog] = useState(false);
-  const [showResumeDialog, setShowResumeDialog] = useState(false);
-  const [showTermDialog, setShowTermDialog] = useState(false);
+  const [currentDate, setCurrentDate] = useState(new Date());
+  const [events, setEvents]           = useState<any[]>([]);
+  const [loading, setLoading]         = useState(true);
+  const [selectedDay, setSelectedDay] = useState<Date|null>(null);
+  const [dayEvents, setDayEvents]     = useState<any[]>([]);
+  const [showEventDialog, setShowEventDialog] = useState(false);
+  const [editEvent, setEditEvent]     = useState<any|null>(null);
+  const [saving, setSaving]           = useState(false);
+  const [subjects, setSubjects]       = useState<any[]>([]);
 
-  // Pay off form
-  const [payOffForm, setPayOffForm] = useState({ reason: "", reason_ar: "", freeAccess: true, autoOnDate: "" });
-  // Pay on form
-  const [payOnForm, setPayOnForm] = useState({ graceDays: 7, notify: true });
-  // Holiday form
-  const [holidayForm, setHolidayForm] = useState({ resumeDate: "", reason: "", reason_ar: "", notify: true, autoPayOff: true, autoPayOn: true });
-  // Resume form
-  const [resumeForm, setResumeForm] = useState({ resumeDate: "", message: "", notify: true, autoPayOn: true, graceDays: 7 });
-  // Term form
-  const [termForm, setTermForm] = useState({ academic_year: "2025/2026", term: "first" as string, term_start_date: "", term_end_date: "", resume_date: "", payment_due_date: "", is_active: false, title: "", title_ar: "" });
+  const [form, setForm] = useState({
+    title: "", title_ar: "", description: "",
+    date: format(new Date(),"yyyy-MM-dd"), time_start: "09:00", time_end: "10:00",
+    event_type: "class", subject_id: "", notify_to: "all",
+    send_notification: true, color: "#3B82F6", is_recurring: false,
+    recurrence_days: [] as string[],
+  });
 
-  const [disabledByName, setDisabledByName] = useState("");
+  const fetchEvents = async () => {
+    setLoading(true);
+    const start = format(startOfMonth(currentDate),"yyyy-MM-dd");
+    const end   = format(endOfMonth(currentDate),"yyyy-MM-dd");
+    const { data } = await supabase.from("academic_events" as any)
+      .select("*").gte("date", start).lte("date", end).order("date");
+    setEvents((data||[]) as any[]);
+    setLoading(false);
+  };
 
+  useEffect(() => { fetchEvents(); }, [currentDate]);
   useEffect(() => {
-    loadData();
+    supabase.from("subjects").select("id,title,title_ar").eq("is_active",true).then(({data})=>setSubjects(data||[]));
   }, []);
 
-  const loadData = async () => {
-    const [logsRes, termsRes] = await Promise.all([
-      supabase.from("payment_switch_log" as any).select("*").order("created_at", { ascending: false }).limit(50),
-      supabase.from("academic_calendar" as any).select("*").order("created_at", { ascending: false }),
-    ]);
-    setSwitchLogs((logsRes.data || []) as any[]);
-    setTerms((termsRes.data || []) as any[]);
+  const calendarDays = eachDayOfInterval({ start: startOfMonth(currentDate), end: endOfMonth(currentDate) });
+  const firstDayOffset = startOfMonth(currentDate).getDay();
 
-    // Load disabled-by name
-    if (settings.payment_disabled_by) {
-      const { data: pData } = await supabase.from("profiles").select("full_name").eq("user_id", settings.payment_disabled_by).single();
-      if (pData) setDisabledByName(pData.full_name || "Admin");
-    }
+  const getEventsForDay = (day: Date) => events.filter(e => e.date && isSameDay(parseISO(e.date), day));
+
+  const handleDayClick = (day: Date) => {
+    setSelectedDay(day);
+    setDayEvents(getEventsForDay(day));
+    setForm(f => ({ ...f, date: format(day,"yyyy-MM-dd") }));
   };
 
-  // ─── TURN PAYMENTS OFF ───
-  const handlePayOff = async () => {
-    const updates: Record<string, string | null> = {
-      payment_enabled: "false",
-      payment_disabled_reason: payOffForm.reason,
-      payment_disabled_reason_ar: payOffForm.reason_ar || null,
-      payment_disabled_by: user!.id,
-      payment_disabled_at: new Date().toISOString(),
-      payment_free_access_during_off: payOffForm.freeAccess ? "true" : "false",
-    };
-    if (payOffForm.autoOnDate) {
-      updates.payment_auto_on_date = payOffForm.autoOnDate;
-    }
-    await updateMultiple(updates, user!.id);
-
-    // Count affected students
-    const { count } = await supabase.from("profiles").select("id", { count: "exact", head: true });
-
-    // Log
-    await supabase.from("payment_switch_log" as any).insert({
-      action: "disabled",
-      reason: payOffForm.reason,
-      reason_ar: payOffForm.reason_ar || null,
-      done_by: user!.id,
-      auto_on_date: payOffForm.autoOnDate || null,
-      affected_students: count || 0,
+  const openAddEvent = (day?: Date) => {
+    setEditEvent(null);
+    const d = day || selectedDay || new Date();
+    setForm({
+      title:"", title_ar:"", description:"",
+      date: format(d,"yyyy-MM-dd"), time_start:"09:00", time_end:"10:00",
+      event_type:"class", subject_id:"", notify_to:"all",
+      send_notification:true, color:"#3B82F6", is_recurring:false, recurrence_days:[],
     });
-
-    if (payOffForm.freeAccess) {
-      // Set all non-exempt students to exempt_temp
-      await supabase.from("profiles")
-        .update({ payment_status: "exempt_temp" } as any)
-        .neq("payment_status", "exempt")
-        .neq("payment_status", "paid");
-    }
-
-    toast({ title: "✅ Payments turned OFF. All students now have free access." });
-    setShowPayOffDialog(false);
-    setPayOffForm({ reason: "", reason_ar: "", freeAccess: true, autoOnDate: "" });
-    fetchSettings();
-    loadData();
+    setShowEventDialog(true);
   };
 
-  // ─── TURN PAYMENTS ON ───
-  const handlePayOn = async () => {
-    const today = new Date().toISOString().split("T")[0];
-    await updateMultiple({
-      payment_enabled: "true",
-      payment_enabled_at: new Date().toISOString(),
-      payment_counting_started: "true",
-      payment_count_start_date: today,
-      payment_disabled_reason: null,
-      payment_disabled_reason_ar: null,
-      payment_auto_on_date: null,
-    }, user!.id);
-
-    // Restore statuses for exempt_temp students
-    const graceEnd = new Date();
-    graceEnd.setDate(graceEnd.getDate() + payOnForm.graceDays);
-    const graceEndStr = graceEnd.toISOString().split("T")[0];
-
-    await supabase.from("profiles")
-      .update({ payment_status: "grace", payment_grace_end: graceEndStr } as any)
-      .eq("payment_status", "exempt_temp");
-
-    const { count } = await supabase.from("profiles").select("id", { count: "exact", head: true });
-
-    await supabase.from("payment_switch_log" as any).insert({
-      action: "enabled",
-      reason: `Grace period: ${payOnForm.graceDays} days`,
-      done_by: user!.id,
-      affected_students: count || 0,
+  const openEditEvent = (ev: any) => {
+    setEditEvent(ev);
+    setForm({
+      title: ev.title||"", title_ar: ev.title_ar||"", description: ev.description||"",
+      date: ev.date, time_start: ev.time_start||"09:00", time_end: ev.time_end||"10:00",
+      event_type: ev.event_type||"event", subject_id: ev.subject_id||"", notify_to: ev.notify_to||"all",
+      send_notification: false, color: ev.color||"#3B82F6", is_recurring: false, recurrence_days:[],
     });
+    setShowEventDialog(true);
+  };
 
-    if (payOnForm.notify) {
-      // Send notification to all students
-      const { data: students } = await supabase.from("profiles").select("user_id");
-      if (students) {
-        const notifs = students.map((s: any) => ({
-          user_id: s.user_id,
-          title: "💳 Payment System Active",
-          message: `Assalamu Alaikum! Payment system is now active. You have ${payOnForm.graceDays} days to complete payment.`,
-          type: "payment",
-        }));
-        if (notifs.length > 0) {
-          await supabase.from("notifications").insert(notifs);
+  const saveEvent = async () => {
+    if (!form.title) return;
+    setSaving(true);
+    try {
+      const payload = {
+        title: form.title, title_ar: form.title_ar||null, description: form.description||null,
+        date: form.date, time_start: form.time_start, time_end: form.time_end,
+        event_type: form.event_type, subject_id: form.subject_id||null,
+        notify_to: form.notify_to, color: form.color, created_by: user?.id,
+      };
+
+      if (editEvent) {
+        await supabase.from("academic_events" as any).update(payload as any).eq("id", editEvent.id);
+      } else {
+        await supabase.from("academic_events" as any).insert(payload as any);
+      }
+
+      // Send notifications
+      if (form.send_notification && !editEvent) {
+        let query = supabase.from("user_roles" as any).select("user_id, role");
+        const { data: roles } = await query;
+        const targets = (roles||[]).filter((r: any) => {
+          if (form.notify_to === "all") return true;
+          if (form.notify_to === "students") return r.role === "student";
+          if (form.notify_to === "teachers") return ["teacher","admin"].includes(r.role);
+          return false;
+        });
+        if (targets.length) {
+          await supabase.from("notifications" as any).insert(
+            targets.map((r: any) => ({
+              user_id: r.user_id,
+              title: `📅 ${form.title}`,
+              message: `New event on ${form.date}${form.time_start ? ` at ${form.time_start}` : ""}${form.description ? `: ${form.description}` : ""}`,
+              type: "calendar_event",
+            }))
+          );
         }
       }
-    }
 
-    toast({ title: "✅ Payments turned ON. Grace period started." });
-    setShowPayOnDialog(false);
-    setPayOnForm({ graceDays: 7, notify: true });
-    fetchSettings();
-    loadData();
+      toast({ title: editEvent ? "Event updated" : `✅ Event saved${form.send_notification?" & notifications sent":""}` });
+      setShowEventDialog(false);
+      fetchEvents();
+      if (selectedDay) setDayEvents(getEventsForDay(selectedDay));
+    } catch(e: any) {
+      toast({ title:"Error", description:e.message, variant:"destructive" });
+    } finally { setSaving(false); }
   };
 
-  // ─── SET HOLIDAY ───
-  const handleSetHoliday = async () => {
-    const updates: Record<string, string | null> = {
-      academy_status: "holiday",
-      resume_date: holidayForm.resumeDate,
-      holiday_message: holidayForm.reason,
-      holiday_message_ar: holidayForm.reason_ar || null,
-      payment_counting_started: "false",
-    };
-    if (holidayForm.autoPayOff) {
-      updates.payment_enabled = "false";
-      updates.payment_disabled_reason = "Academy on holiday";
-      updates.payment_disabled_by = user!.id;
-      updates.payment_disabled_at = new Date().toISOString();
-      if (holidayForm.autoPayOn) {
-        updates.payment_auto_on_date = holidayForm.resumeDate;
-      }
-    }
-    await updateMultiple(updates, user!.id);
-
-    if (holidayForm.autoPayOff) {
-      await supabase.from("payment_switch_log" as any).insert({
-        action: "disabled",
-        reason: "Academy on holiday",
-        done_by: user!.id,
-        auto_on_date: holidayForm.autoPayOn ? holidayForm.resumeDate : null,
-      });
-    }
-
-    if (holidayForm.notify) {
-      const { data: students } = await supabase.from("profiles").select("user_id");
-      if (students) {
-        const notifs = students.map((s: any) => ({
-          user_id: s.user_id,
-          title: "🌙 Academy Holiday",
-          message: `Assalamu Alaikum! The academy is now on holiday. ${holidayForm.reason || ""} We resume on ${holidayForm.resumeDate} insha'Allah. Enjoy your break! 📖`,
-          type: "info",
-        }));
-        if (notifs.length > 0) await supabase.from("notifications").insert(notifs);
-      }
-    }
-
-    toast({ title: "🌙 Academy set to holiday mode." });
-    setShowHolidayDialog(false);
-    setHolidayForm({ resumeDate: "", reason: "", reason_ar: "", notify: true, autoPayOff: true, autoPayOn: true });
-    fetchSettings();
-    loadData();
+  const deleteEvent = async (id: string) => {
+    await supabase.from("academic_events" as any).delete().eq("id", id);
+    setEvents(p => p.filter(e => e.id !== id));
+    if (selectedDay) setDayEvents(p => p.filter(e => e.id !== id));
+    toast({ title:"Deleted" });
   };
 
-  // ─── RESUME NOW ───
-  const handleResume = async () => {
-    const today = new Date().toISOString().split("T")[0];
-    const updates: Record<string, string | null> = {
-      academy_status: "active",
-      holiday_message: null,
-      holiday_message_ar: null,
-    };
-    if (resumeForm.autoPayOn) {
-      updates.payment_enabled = "true";
-      updates.payment_enabled_at = new Date().toISOString();
-      updates.payment_counting_started = "true";
-      updates.payment_count_start_date = today;
+  const todayHijri = toHijri(new Date());
+  const currentHijri = toHijri(currentDate);
 
-      const graceEnd = new Date();
-      graceEnd.setDate(graceEnd.getDate() + resumeForm.graceDays);
-
-      // Restore students
-      await supabase.from("profiles")
-        .update({ payment_status: "grace", payment_grace_end: graceEnd.toISOString().split("T")[0] } as any)
-        .in("payment_status", ["grace", "unpaid", "exempt_temp"]);
-
-      await supabase.from("payment_switch_log" as any).insert({
-        action: "enabled",
-        reason: "Academy resumed",
-        done_by: user!.id,
-      });
-    }
-    await updateMultiple(updates, user!.id);
-
-    if (resumeForm.notify) {
-      const { data: students } = await supabase.from("profiles").select("user_id");
-      if (students) {
-        const notifs = students.map((s: any) => ({
-          user_id: s.user_id,
-          title: "🌟 Academy Resumed!",
-          message: `Alhamdulillah! The academy has resumed. Your classes begin today. ${resumeForm.autoPayOn ? `Payment due in ${resumeForm.graceDays} days.` : ""}`,
-          type: "info",
-        }));
-        if (notifs.length > 0) await supabase.from("notifications").insert(notifs);
-      }
-    }
-
-    toast({ title: "🌟 Academy has resumed!" });
-    setShowResumeDialog(false);
-    fetchSettings();
-    loadData();
-  };
-
-  // ─── CREATE TERM ───
-  const handleCreateTerm = async () => {
-    await supabase.from("academic_calendar" as any).insert({
-      title: termForm.title || `${termForm.term} Term ${termForm.academic_year}`,
-      title_ar: termForm.title_ar || null,
-      academic_year: termForm.academic_year,
-      term: termForm.term,
-      term_start_date: termForm.term_start_date,
-      term_end_date: termForm.term_end_date,
-      resume_date: termForm.resume_date || termForm.term_start_date,
-      payment_due_date: termForm.payment_due_date || null,
-      is_active: termForm.is_active,
-      created_by: user!.id,
-    });
-
-    if (termForm.is_active) {
-      await updateMultiple({
-        current_term: termForm.term,
-        current_academic_year: termForm.academic_year,
-      }, user!.id);
-    }
-
-    toast({ title: "✅ Term created successfully." });
-    setShowTermDialog(false);
-    setTermForm({ academic_year: "2025/2026", term: "first", term_start_date: "", term_end_date: "", resume_date: "", payment_due_date: "", is_active: false, title: "", title_ar: "" });
-    loadData();
-  };
-
-  const resumeDateObj = settings.resume_date ? new Date(settings.resume_date) : null;
-  const daysToResume = resumeDateObj ? Math.max(0, Math.ceil((resumeDateObj.getTime() - Date.now()) / 86400000)) : 0;
-
-  if (loading) {
-    return (
-      <div className="container mx-auto px-4 py-8">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent mx-auto" />
-      </div>
-    );
-  }
+  const typeCfg = (type: string) => EVENT_TYPES.find(t=>t.value===type) || EVENT_TYPES[3];
 
   return (
-    <div className="container mx-auto px-4 py-6 space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold" style={{ color: "#0f3122" }}>
-          {t("Academic Calendar", "التقويم الأكاديمي")}
-        </h1>
-        <p className="text-sm text-muted-foreground">
-          {t("Manage terms, holidays, and payment controls", "إدارة الفصول والعطلات وضوابط الدفع")}
-        </p>
+    <div style={{ minHeight:"100vh", background:"#F8F9FA" }}>
+      {/* Header */}
+      <div style={{ background:G, padding:"18px 20px", color:"#fff" }}>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:12 }}>
+          <div>
+            <h1 style={{ fontWeight:900, fontSize:20, margin:0, fontFamily:"'Playfair Display',serif" }}>Academic Calendar</h1>
+            <div style={{ marginTop:4 }}>
+              <p style={{ fontSize:14, fontWeight:800, color:"rgba(255,255,255,.9)", margin:0, fontFamily:"'Amiri',serif" }}>
+                {currentHijri.day} {currentHijri.monthNameAr} {currentHijri.year} هـ
+              </p>
+              <p style={{ fontSize:11, color:"rgba(255,255,255,.65)", margin:0 }}>
+                {currentHijri.day} {currentHijri.monthName} {currentHijri.year} AH · {format(currentDate,"MMMM yyyy")}
+              </p>
+            </div>
+          </div>
+          <Button onClick={()=>openAddEvent()}
+            style={{ background:"rgba(255,255,255,.15)", border:"1px solid rgba(255,255,255,.3)", color:"#fff", borderRadius:12, gap:8, fontWeight:700 }}>
+            <Plus size={16}/> Add Event
+          </Button>
+        </div>
       </div>
 
-      <Tabs defaultValue="overview" className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="overview">{t("Overview", "نظرة عامة")}</TabsTrigger>
-          <TabsTrigger value="terms">{t("Term Management", "إدارة الفصول")}</TabsTrigger>
-          <TabsTrigger value="history">{t("History", "السجل")}</TabsTrigger>
-        </TabsList>
+      <div style={{ padding:"16px", maxWidth:1100, margin:"0 auto" }}>
+        {/* Event type legend */}
+        <div style={{ display:"flex", gap:8, marginBottom:16, flexWrap:"wrap" }}>
+          {EVENT_TYPES.map(et=>(
+            <span key={et.value} style={{ fontSize:11, padding:"3px 10px", borderRadius:20, background:et.bg, color:et.color, fontWeight:600, display:"flex", alignItems:"center", gap:4 }}>
+              {et.icon} {et.label}
+            </span>
+          ))}
+        </div>
 
-        {/* ═══ TAB 1: OVERVIEW ═══ */}
-        <TabsContent value="overview" className="space-y-4">
-          {/* MASTER PAYMENT SWITCH */}
-          <Card className="border-2" style={{ borderColor: isPaymentEnabled ? "#22c55e" : "#ef4444" }}>
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <CreditCard className="h-6 w-6" style={{ color: isPaymentEnabled ? "#22c55e" : "#ef4444" }} />
-                  <div>
-                    <h2 className="text-lg font-bold">{t("Payment System", "نظام الدفع")}</h2>
-                    <Badge variant={isPaymentEnabled ? "default" : "destructive"} className="mt-1">
-                      {isPaymentEnabled ? "● ACTIVE" : "○ INACTIVE"}
-                    </Badge>
-                  </div>
-                </div>
-                <Switch
-                  checked={isPaymentEnabled}
-                  onCheckedChange={(checked) => {
-                    if (checked) setShowPayOnDialog(true);
-                    else setShowPayOffDialog(true);
-                  }}
-                />
-              </div>
-
-              {isPaymentEnabled ? (
-                <p className="text-sm text-muted-foreground mt-3">
-                  {t("Students are required to pay to access the platform.", "يجب على الطلاب الدفع للوصول إلى المنصة.")}
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 320px", gap:16, alignItems:"start" }}>
+          {/* Calendar grid */}
+          <div style={{ background:"#fff", borderRadius:20, border:"1px solid #E5E7EB", overflow:"hidden" }}>
+            {/* Month navigation */}
+            <div style={{ background:"#F9FAFB", padding:"14px 18px", display:"flex", alignItems:"center", justifyContent:"space-between", borderBottom:"1px solid #E5E7EB" }}>
+              <button onClick={()=>setCurrentDate(subMonths(currentDate,1))}
+                style={{ width:36, height:36, borderRadius:10, border:"1px solid #E5E7EB", background:"#fff", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                <ChevronLeft size={18} color="#374151"/>
+              </button>
+              <div style={{ textAlign:"center" }}>
+                <p style={{ fontWeight:900, fontSize:16, color:"#111", margin:0 }}>{format(currentDate,"MMMM yyyy")}</p>
+                <p style={{ fontSize:12, fontWeight:700, color:"#9CA3AF", margin:0, fontFamily:"'Amiri',serif" }}>
+                  {currentHijri.monthNameAr} {currentHijri.year} هـ
                 </p>
-              ) : (
-                <div className="mt-3 space-y-2">
-                  <p className="text-sm text-muted-foreground">
-                    {t("All students have FREE access. No payments collected.", "جميع الطلاب لديهم وصول مجاني. لا يتم تحصيل مدفوعات.")}
-                  </p>
-                  {disabledByName && (
-                    <p className="text-xs text-muted-foreground">
-                      {t("Disabled by:", "أوقفه:")} {disabledByName}
-                    </p>
-                  )}
-                  {settings.payment_disabled_at && (
-                    <p className="text-xs text-muted-foreground">
-                      {t("Disabled on:", "أُوقف في:")} {format(new Date(settings.payment_disabled_at), "PPp")}
-                    </p>
-                  )}
-                  {settings.payment_disabled_reason && (
-                    <p className="text-xs text-muted-foreground">
-                      {t("Reason:", "السبب:")} {settings.payment_disabled_reason}
-                    </p>
-                  )}
-                  <Button onClick={() => setShowPayOnDialog(true)} className="mt-2" style={{ background: "#c9973a", color: "#fff" }}>
-                    <Power className="h-4 w-4 mr-2" />
-                    {t("Turn Payments ON", "تشغيل المدفوعات")}
-                  </Button>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+              </div>
+              <button onClick={()=>setCurrentDate(addMonths(currentDate,1))}
+                style={{ width:36, height:36, borderRadius:10, border:"1px solid #E5E7EB", background:"#fff", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                <ChevronRight size={18} color="#374151"/>
+              </button>
+            </div>
 
-          {/* ACADEMY STATUS */}
-          <Card>
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  {isActive && <Sun className="h-6 w-6 text-green-600" />}
-                  {isHoliday && <Moon className="h-6 w-6 text-amber-500" />}
-                  {settings.academy_status === "closed" && <PowerOff className="h-6 w-6 text-gray-500" />}
+            {/* Day headers */}
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", borderBottom:"1px solid #F3F4F6" }}>
+              {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(d=>(
+                <div key={d} style={{ padding:"10px 0", textAlign:"center", fontSize:11, fontWeight:700, color:"#9CA3AF" }}>{d}</div>
+              ))}
+            </div>
+
+            {/* Days grid */}
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)" }}>
+              {Array.from({length: firstDayOffset}).map((_,i)=>(
+                <div key={`empty-${i}`} style={{ minHeight:80, padding:4, borderBottom:"1px solid #F9FAFB", borderRight:"1px solid #F9FAFB" }}/>
+              ))}
+              {calendarDays.map(day => {
+                const dayEvts = getEventsForDay(day);
+                const isToday  = isSameDay(day, new Date());
+                const isSelected = selectedDay && isSameDay(day, selectedDay);
+                const hijri = toHijri(day);
+                return (
+                  <div key={day.toISOString()} onClick={()=>handleDayClick(day)}
+                    style={{
+                      minHeight:80, padding:4, borderBottom:"1px solid #F9FAFB", borderRight:"1px solid #F9FAFB",
+                      cursor:"pointer", background:isSelected?"#ECFDF5":isToday?"#F0FDF4":"#fff",
+                      transition:"background .1s"
+                    }}>
+                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:3 }}>
+                      <span style={{ fontSize:13, fontWeight:isToday?900:600, color:isToday?G:"#374151",
+                        width:24, height:24, borderRadius:"50%", background:isToday?G:"transparent",
+                        display:"flex", alignItems:"center", justifyContent:"center",
+                        color:isToday?"#fff":"#374151" }}>
+                        {format(day,"d")}
+                      </span>
+                      <span style={{ fontSize:9, color:"#9CA3AF", fontFamily:"'Amiri',serif", lineHeight:1 }}>
+                        {hijri.day}
+                      </span>
+                    </div>
+                    <div style={{ display:"flex", flexDirection:"column", gap:2 }}>
+                      {dayEvts.slice(0,3).map(ev=>{
+                        const tc = typeCfg(ev.event_type);
+                        return (
+                          <div key={ev.id} style={{ fontSize:10, fontWeight:600, padding:"1px 5px", borderRadius:4, background:tc.bg, color:tc.color, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
+                            {tc.icon} {ev.title}
+                          </div>
+                        );
+                      })}
+                      {dayEvts.length > 3 && <span style={{ fontSize:9, color:"#9CA3AF", paddingLeft:2 }}>+{dayEvts.length-3} more</span>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Day detail panel */}
+          <div style={{ position:"sticky", top:20 }}>
+            {selectedDay ? (
+              <div style={{ background:"#fff", borderRadius:20, border:"1px solid #E5E7EB", overflow:"hidden" }}>
+                <div style={{ background:G, padding:"14px 16px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
                   <div>
-                    <h2 className="text-lg font-bold">
-                      {isActive && t("Academy is Active", "الأكاديمية نشطة")}
-                      {isHoliday && t("Academy is on Holiday", "الأكاديمية في عطلة")}
-                      {settings.academy_status === "closed" && t("Academy is Closed", "الأكاديمية مغلقة")}
-                    </h2>
-                    <p className="text-sm text-muted-foreground">
-                      {t("Term:", "الفصل:")} {settings.current_term} • {settings.current_academic_year}
+                    <p style={{ fontWeight:800, fontSize:15, color:"#fff", margin:0 }}>{format(selectedDay,"EEEE, MMMM d")}</p>
+                    <p style={{ fontSize:12, fontWeight:700, color:"rgba(255,255,255,.75)", margin:0, fontFamily:"'Amiri',serif" }}>
+                      {toHijri(selectedDay).day} {toHijri(selectedDay).monthNameAr} {toHijri(selectedDay).year} هـ
                     </p>
                   </div>
+                  <button onClick={()=>openAddEvent(selectedDay)}
+                    style={{ width:32, height:32, borderRadius:8, background:"rgba(255,255,255,.15)", border:"1px solid rgba(255,255,255,.3)", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                    <Plus size={16} color="#fff"/>
+                  </button>
                 </div>
-                <Badge variant={isActive ? "default" : isHoliday ? "secondary" : "outline"}>
-                  {isActive ? "🟢 Active" : isHoliday ? "🌙 Holiday" : "⚫ Closed"}
-                </Badge>
+                <div style={{ padding:14 }}>
+                  {dayEvents.length === 0 ? (
+                    <div style={{ textAlign:"center", padding:"24px 0" }}>
+                      <Calendar size={28} color="#D1D5DB" style={{ margin:"0 auto 8px" }}/>
+                      <p style={{ fontSize:13, color:"#9CA3AF", margin:0 }}>No events this day</p>
+                      <button onClick={()=>openAddEvent(selectedDay)}
+                        style={{ marginTop:12, fontSize:12, color:G, fontWeight:700, background:"none", border:"none", cursor:"pointer" }}>
+                        + Add event
+                      </button>
+                    </div>
+                  ) : (
+                    <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                      {dayEvents.map(ev=>{
+                        const tc = typeCfg(ev.event_type);
+                        const subj = subjects.find(s=>s.id===ev.subject_id);
+                        return (
+                          <div key={ev.id} style={{ background:tc.bg, borderRadius:12, padding:"10px 12px", border:`1px solid ${tc.color}33` }}>
+                            <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", marginBottom:4 }}>
+                              <p style={{ fontWeight:700, fontSize:13, color:tc.color, margin:0 }}>
+                                {tc.icon} {language==="ar"?ev.title_ar||ev.title:ev.title}
+                              </p>
+                              <div style={{ display:"flex", gap:4 }}>
+                                <button onClick={()=>openEditEvent(ev)} style={{ background:"none", border:"none", cursor:"pointer", padding:2 }}><Edit size={12} color={tc.color}/></button>
+                                <button onClick={()=>deleteEvent(ev.id)} style={{ background:"none", border:"none", cursor:"pointer", padding:2 }}><Trash2 size={12} color="#DC2626"/></button>
+                              </div>
+                            </div>
+                            {(ev.time_start||ev.time_end) && (
+                              <p style={{ fontSize:11, color:tc.color, opacity:.8, margin:0, display:"flex", alignItems:"center", gap:4 }}>
+                                <Clock size={10}/> {ev.time_start}{ev.time_end?` - ${ev.time_end}`:""}
+                              </p>
+                            )}
+                            {subj && <p style={{ fontSize:11, color:tc.color, opacity:.7, margin:"2px 0 0", display:"flex", alignItems:"center", gap:4 }}><BookOpen size={10}/> {language==="ar"?subj.title_ar||subj.title:subj.title}</p>}
+                            {ev.description && <p style={{ fontSize:11, color:"#6B7280", margin:"4px 0 0", lineHeight:1.5 }}>{ev.description}</p>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               </div>
+            ) : (
+              <div style={{ background:"#fff", borderRadius:20, border:"2px dashed #E5E7EB", padding:"40px 24px", textAlign:"center" }}>
+                <Calendar size={40} color="#D1D5DB" style={{ margin:"0 auto 12px" }}/>
+                <p style={{ fontWeight:700, color:"#374151", marginBottom:6 }}>Select a day</p>
+                <p style={{ fontSize:13, color:"#9CA3AF" }}>Click any date to view or add events</p>
+              </div>
+            )}
 
-              {isHoliday && (
-                <div className="mt-4 p-4 rounded-lg bg-amber-50 border border-amber-200 space-y-2">
-                  {settings.holiday_message && (
-                    <p className="text-sm text-amber-800">{settings.holiday_message}</p>
-                  )}
-                  {settings.holiday_message_ar && (
-                    <p className="text-sm text-amber-800 font-arabic" dir="rtl">{settings.holiday_message_ar}</p>
-                  )}
-                  {resumeDateObj && (
-                    <p className="text-sm font-medium text-amber-900">
-                      {t("Resume date:", "تاريخ الاستئناف:")} {format(resumeDateObj, "PPP")} — {daysToResume} {t("days remaining", "أيام متبقية")}
-                    </p>
-                  )}
-                  <p className="text-xs text-amber-700 flex items-center gap-1">
-                    <Pause className="h-3 w-3" /> {t("Payment countdown: PAUSED", "العد التنازلي للدفع: متوقف")}
-                  </p>
-                  <div className="flex gap-2 pt-2">
-                    <Button size="sm" variant="outline" onClick={() => setShowResumeDialog(true)} style={{ borderColor: "#c9973a", color: "#c9973a" }}>
-                      {t("Edit Resume Date", "تعديل تاريخ الاستئناف")}
-                    </Button>
-                    <Button size="sm" onClick={async () => { setResumeForm(f => ({ ...f, resumeDate: new Date().toISOString().split("T")[0] })); setShowResumeDialog(true); }} style={{ background: "#22c55e", color: "#fff" }}>
-                      {t("Resume Now", "استئنف الآن")}
-                    </Button>
+            {/* Upcoming events */}
+            <div style={{ background:"#fff", borderRadius:20, border:"1px solid #E5E7EB", padding:16, marginTop:12 }}>
+              <h3 style={{ fontWeight:700, fontSize:14, color:"#111", marginBottom:12 }}>This Month</h3>
+              {events.length === 0 ? (
+                <p style={{ fontSize:12, color:"#9CA3AF" }}>No events this month</p>
+              ) : (
+                <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                  {events.slice(0,8).map(ev=>{
+                    const tc = typeCfg(ev.event_type);
+                    return (
+                      <div key={ev.id} style={{ display:"flex", alignItems:"center", gap:8 }}>
+                        <span style={{ fontSize:16 }}>{tc.icon}</span>
+                        <div style={{ flex:1 }}>
+                          <p style={{ fontSize:12, fontWeight:600, color:"#374151", margin:0 }}>{ev.title}</p>
+                          <p style={{ fontSize:10, color:"#9CA3AF", margin:0 }}>{ev.date}{ev.time_start?` · ${ev.time_start}`:""}</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Add/Edit Event Dialog */}
+      <Dialog open={showEventDialog} onOpenChange={v=>{if(!v)setShowEventDialog(false);}}>
+        <DialogContent style={{ maxWidth:520, borderRadius:20, padding:0, maxHeight:"92vh", overflowY:"auto" }}>
+          <div style={{ background:G, padding:"18px 20px", borderRadius:"20px 20px 0 0", display:"flex", alignItems:"center", gap:10 }}>
+            <Calendar size={20} color="#fff"/>
+            <h2 style={{ fontWeight:800, fontSize:16, color:"#fff", margin:0 }}>{editEvent?"Edit Event":"New Calendar Event"}</h2>
+          </div>
+          <div style={{ padding:20, display:"flex", flexDirection:"column", gap:14 }}>
+            {/* Event type */}
+            <div>
+              <label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:8 }}>Event Type</label>
+              <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+                {EVENT_TYPES.map(et=>(
+                  <button key={et.value} onClick={()=>setForm(f=>({...f,event_type:et.value,color:et.color}))}
+                    style={{ padding:"6px 12px", borderRadius:20, border:`2px solid ${form.event_type===et.value?et.color:"#E5E7EB"}`, background:form.event_type===et.value?et.bg:"#fff", cursor:"pointer", fontSize:11, fontWeight:700, color:form.event_type===et.value?et.color:"#6B7280" }}>
+                    {et.icon} {et.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+              <div><label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:5 }}>Title (English) *</label><Input value={form.title} onChange={e=>setForm(f=>({...f,title:e.target.value}))} style={{ borderRadius:10 }}/></div>
+              <div><label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:5 }}>العنوان (عربي)</label><Input dir="rtl" value={form.title_ar} onChange={e=>setForm(f=>({...f,title_ar:e.target.value}))} style={{ borderRadius:10 }}/></div>
+            </div>
+
+            <div><label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:5 }}>Description</label><Textarea value={form.description} onChange={e=>setForm(f=>({...f,description:e.target.value}))} rows={2} style={{ borderRadius:10 }}/></div>
+
+            {/* Date & Time */}
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
+              <div><label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:5 }}>Date</label><Input type="date" value={form.date} onChange={e=>setForm(f=>({...f,date:e.target.value}))} style={{ borderRadius:10 }}/></div>
+              <div><label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:5 }}>Start</label><Input type="time" value={form.time_start} onChange={e=>setForm(f=>({...f,time_start:e.target.value}))} style={{ borderRadius:10 }}/></div>
+              <div><label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:5 }}>End</label><Input type="time" value={form.time_end} onChange={e=>setForm(f=>({...f,time_end:e.target.value}))} style={{ borderRadius:10 }}/></div>
+            </div>
+
+            {/* Subject */}
+            <div>
+              <label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:5 }}>Link to Subject (optional)</label>
+              <Select value={form.subject_id} onValueChange={v=>setForm(f=>({...f,subject_id:v}))}>
+                <SelectTrigger style={{ borderRadius:10 }}><SelectValue placeholder="Select subject"/></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">None</SelectItem>
+                  {subjects.map(s=><SelectItem key={s.id} value={s.id}>{language==="ar"?s.title_ar||s.title:s.title}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Notification */}
+            {!editEvent && (
+              <div style={{ background:"#F0FDF4", borderRadius:12, padding:"12px 14px", border:"1px solid #86EFAC" }}>
+                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8 }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                    <Bell size={14} color={G}/>
+                    <span style={{ fontSize:13, fontWeight:700, color:G }}>Send Notification</span>
                   </div>
+                  <Switch checked={form.send_notification} onCheckedChange={v=>setForm(f=>({...f,send_notification:v}))}/>
                 </div>
-              )}
-
-              {isActive && (
-                <div className="mt-4 flex gap-2">
-                  <Button size="sm" variant="destructive" onClick={() => setShowHolidayDialog(true)}>
-                    <Moon className="h-4 w-4 mr-1" />
-                    {t("Set Holiday", "تعيين عطلة")}
-                  </Button>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Quick Stats */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <Card>
-              <CardContent className="p-4 text-center">
-                <Calendar className="h-5 w-5 mx-auto mb-1 text-primary" />
-                <p className="text-lg font-bold">{settings.current_term}</p>
-                <p className="text-xs text-muted-foreground">{t("Current Term", "الفصل الحالي")}</p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4 text-center">
-                <Clock className="h-5 w-5 mx-auto mb-1 text-amber-500" />
-                <p className="text-lg font-bold">{settings.payment_grace_days}d</p>
-                <p className="text-xs text-muted-foreground">{t("Grace Period", "فترة السماح")}</p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4 text-center">
-                <CreditCard className="h-5 w-5 mx-auto mb-1" style={{ color: isPaymentEnabled ? "#22c55e" : "#ef4444" }} />
-                <p className="text-lg font-bold">{isPaymentEnabled ? "ON" : "OFF"}</p>
-                <p className="text-xs text-muted-foreground">{t("Payments", "المدفوعات")}</p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4 text-center">
-                <Play className="h-5 w-5 mx-auto mb-1 text-primary" />
-                <p className="text-lg font-bold">{settings.payment_counting_started === "true" ? "Yes" : "No"}</p>
-                <p className="text-xs text-muted-foreground">{t("Counting", "العد التنازلي")}</p>
-              </CardContent>
-            </Card>
-          </div>
-        </TabsContent>
-
-        {/* ═══ TAB 2: TERM MANAGEMENT ═══ */}
-        <TabsContent value="terms" className="space-y-4">
-          {/* Payment Settings */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">{t("Payment Settings", "إعدادات الدفع")}</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <Label>{t("Payment Grace Period (days)", "فترة السماح (أيام)")}</Label>
-                  <Input
-                    type="number"
-                    value={settings.payment_grace_days}
-                    onChange={async (e) => {
-                      await updateMultiple({ payment_grace_days: e.target.value }, user!.id);
-                    }}
-                  />
-                </div>
-              </div>
-              {settings.payment_counting_started === "false" && isActive && (
-                <Button onClick={async () => {
-                  const today = new Date().toISOString().split("T")[0];
-                  await updateMultiple({
-                    payment_counting_started: "true",
-                    payment_count_start_date: today,
-                  }, user!.id);
-                  toast({ title: "✅ Payment counting started." });
-                }} style={{ background: "#c9973a", color: "#fff" }}>
-                  {t("Start Payment Counting Now", "بدء العد التنازلي للدفع الآن")}
-                </Button>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Create Term */}
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle className="text-base">{t("Terms", "الفصول الدراسية")}</CardTitle>
-              <Button size="sm" onClick={() => setShowTermDialog(true)} style={{ background: "#c9973a", color: "#fff" }}>
-                {t("Create Term", "إنشاء فصل")}
-              </Button>
-            </CardHeader>
-            <CardContent>
-              {terms.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-4">{t("No terms created yet.", "لم يتم إنشاء فصول بعد.")}</p>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>{t("Term", "الفصل")}</TableHead>
-                      <TableHead>{t("Year", "السنة")}</TableHead>
-                      <TableHead>{t("Start", "البداية")}</TableHead>
-                      <TableHead>{t("End", "النهاية")}</TableHead>
-                      <TableHead>{t("Status", "الحالة")}</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {terms.map((term: any) => (
-                      <TableRow key={term.id}>
-                        <TableCell className="capitalize">{term.term} Term</TableCell>
-                        <TableCell>{term.academic_year}</TableCell>
-                        <TableCell>{term.term_start_date}</TableCell>
-                        <TableCell>{term.term_end_date}</TableCell>
-                        <TableCell>
-                          <Badge variant={term.is_active ? "default" : "outline"}>
-                            {term.is_active ? "Active" : "Inactive"}
-                          </Badge>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* ═══ TAB 3: HISTORY ═══ */}
-        <TabsContent value="history" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">{t("Payment Switch History", "سجل تبديل المدفوعات")}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {switchLogs.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-4">{t("No switch events yet.", "لا توجد أحداث تبديل بعد.")}</p>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>{t("Date", "التاريخ")}</TableHead>
-                      <TableHead>{t("Action", "الإجراء")}</TableHead>
-                      <TableHead>{t("Reason", "السبب")}</TableHead>
-                      <TableHead>{t("Students", "الطلاب")}</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {switchLogs.map((log: any) => (
-                      <TableRow key={log.id}>
-                        <TableCell className="text-xs">{log.created_at ? format(new Date(log.created_at), "PPp") : "-"}</TableCell>
-                        <TableCell>
-                          <Badge variant={log.action === "enabled" ? "default" : "destructive"}>
-                            {log.action === "enabled" ? "ON" : "OFF"}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-xs max-w-[200px] truncate">{log.reason || "-"}</TableCell>
-                        <TableCell>{log.affected_students || 0}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
-
-      {/* ═══ DIALOGS ═══ */}
-
-      {/* Turn Payments OFF */}
-      <Dialog open={showPayOffDialog} onOpenChange={setShowPayOffDialog}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>{t("Turn Payments Off?", "إيقاف المدفوعات؟")}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Label>{t("Reason (English)", "السبب (إنجليزي)")}</Label>
-              <Textarea value={payOffForm.reason} onChange={(e) => setPayOffForm(f => ({ ...f, reason: e.target.value }))} required />
-            </div>
-            <div>
-              <Label>{t("Reason (Arabic)", "السبب (عربي)")}</Label>
-              <Textarea value={payOffForm.reason_ar} onChange={(e) => setPayOffForm(f => ({ ...f, reason_ar: e.target.value }))} dir="rtl" />
-            </div>
-            <div className="flex items-center justify-between">
-              <Label>{t("Give all students free access?", "منح جميع الطلاب وصولاً مجانياً؟")}</Label>
-              <Switch checked={payOffForm.freeAccess} onCheckedChange={(v) => setPayOffForm(f => ({ ...f, freeAccess: v }))} />
-            </div>
-            <div>
-              <Label>{t("Schedule auto turn-on date (optional)", "جدولة تاريخ التشغيل التلقائي (اختياري)")}</Label>
-              <Input type="date" value={payOffForm.autoOnDate} onChange={(e) => setPayOffForm(f => ({ ...f, autoOnDate: e.target.value }))} />
-            </div>
-            <div className="flex gap-2 justify-end">
-              <Button variant="outline" onClick={() => setShowPayOffDialog(false)}>{t("Cancel", "إلغاء")}</Button>
-              <Button variant="destructive" onClick={handlePayOff} disabled={!payOffForm.reason}>
-                {t("Yes, Turn Payments Off", "نعم، أوقف المدفوعات")}
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Turn Payments ON */}
-      <Dialog open={showPayOnDialog} onOpenChange={setShowPayOnDialog}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>{t("Turn Payments On?", "تشغيل المدفوعات؟")}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Label>{t("Payment grace period (days)", "فترة السماح (أيام)")}</Label>
-              <Input type="number" value={payOnForm.graceDays} onChange={(e) => setPayOnForm(f => ({ ...f, graceDays: parseInt(e.target.value) || 7 }))} />
-            </div>
-            <div className="flex items-center justify-between">
-              <Label>{t("Notify all students?", "إشعار جميع الطلاب؟")}</Label>
-              <Switch checked={payOnForm.notify} onCheckedChange={(v) => setPayOnForm(f => ({ ...f, notify: v }))} />
-            </div>
-            <div className="flex gap-2 justify-end">
-              <Button variant="outline" onClick={() => setShowPayOnDialog(false)}>{t("Cancel", "إلغاء")}</Button>
-              <Button onClick={handlePayOn} style={{ background: "#c9973a", color: "#fff" }}>
-                {t("Yes, Turn Payments On", "نعم، شغّل المدفوعات")}
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Set Holiday */}
-      <Dialog open={showHolidayDialog} onOpenChange={setShowHolidayDialog}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>{t("Set Academy on Holiday", "تعيين عطلة الأكاديمية")}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Label>{t("Resume Date", "تاريخ الاستئناف")}</Label>
-              <Input type="date" value={holidayForm.resumeDate} onChange={(e) => setHolidayForm(f => ({ ...f, resumeDate: e.target.value }))} required />
-            </div>
-            <div>
-              <Label>{t("Holiday Reason (English)", "سبب العطلة (إنجليزي)")}</Label>
-              <Textarea value={holidayForm.reason} onChange={(e) => setHolidayForm(f => ({ ...f, reason: e.target.value }))} />
-            </div>
-            <div>
-              <Label>{t("Holiday Reason (Arabic)", "سبب العطلة (عربي)")}</Label>
-              <Textarea value={holidayForm.reason_ar} onChange={(e) => setHolidayForm(f => ({ ...f, reason_ar: e.target.value }))} dir="rtl" />
-            </div>
-            <div className="flex items-center justify-between">
-              <Label>{t("Notify all students?", "إشعار جميع الطلاب؟")}</Label>
-              <Switch checked={holidayForm.notify} onCheckedChange={(v) => setHolidayForm(f => ({ ...f, notify: v }))} />
-            </div>
-            <div className="flex items-center justify-between">
-              <Label>{t("Auto turn payments OFF?", "إيقاف المدفوعات تلقائياً؟")}</Label>
-              <Switch checked={holidayForm.autoPayOff} onCheckedChange={(v) => setHolidayForm(f => ({ ...f, autoPayOff: v }))} />
-            </div>
-            {holidayForm.autoPayOff && (
-              <div className="flex items-center justify-between">
-                <Label>{t("Auto turn ON on resume?", "تشغيل تلقائي عند الاستئناف؟")}</Label>
-                <Switch checked={holidayForm.autoPayOn} onCheckedChange={(v) => setHolidayForm(f => ({ ...f, autoPayOn: v }))} />
+                {form.send_notification && (
+                  <Select value={form.notify_to} onValueChange={v=>setForm(f=>({...f,notify_to:v}))}>
+                    <SelectTrigger style={{ borderRadius:9, fontSize:13 }}><SelectValue/></SelectTrigger>
+                    <SelectContent>
+                      {NOTIFY_TO.map(n=><SelectItem key={n.value} value={n.value}>{n.label}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                )}
               </div>
             )}
-            <div className="flex gap-2 justify-end">
-              <Button variant="outline" onClick={() => setShowHolidayDialog(false)}>{t("Cancel", "إلغاء")}</Button>
-              <Button onClick={handleSetHoliday} disabled={!holidayForm.resumeDate} style={{ background: "#c9973a", color: "#fff" }}>
-                {t("Save Holiday", "حفظ العطلة")}
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
 
-      {/* Resume Academy */}
-      <Dialog open={showResumeDialog} onOpenChange={setShowResumeDialog}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>{t("Resume Academy", "استئناف الأكاديمية")}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Label>{t("Resume Date", "تاريخ الاستئناف")}</Label>
-              <Input type="date" value={resumeForm.resumeDate} onChange={(e) => setResumeForm(f => ({ ...f, resumeDate: e.target.value }))} />
-            </div>
-            <div className="flex items-center justify-between">
-              <Label>{t("Notify all students?", "إشعار جميع الطلاب؟")}</Label>
-              <Switch checked={resumeForm.notify} onCheckedChange={(v) => setResumeForm(f => ({ ...f, notify: v }))} />
-            </div>
-            <div className="flex items-center justify-between">
-              <Label>{t("Auto turn payments ON?", "تشغيل المدفوعات تلقائياً؟")}</Label>
-              <Switch checked={resumeForm.autoPayOn} onCheckedChange={(v) => setResumeForm(f => ({ ...f, autoPayOn: v }))} />
-            </div>
-            {resumeForm.autoPayOn && (
-              <div>
-                <Label>{t("Grace period (days)", "فترة السماح (أيام)")}</Label>
-                <Input type="number" value={resumeForm.graceDays} onChange={(e) => setResumeForm(f => ({ ...f, graceDays: parseInt(e.target.value) || 7 }))} />
-              </div>
-            )}
-            <div className="flex gap-2 justify-end">
-              <Button variant="outline" onClick={() => setShowResumeDialog(false)}>{t("Cancel", "إلغاء")}</Button>
-              <Button onClick={handleResume} style={{ background: "#22c55e", color: "#fff" }}>
-                {t("Resume Now", "استئنف الآن")}
-              </Button>
-            </div>
+            <Button onClick={saveEvent} disabled={!form.title||saving}
+              style={{ background:G, borderRadius:12, height:44, gap:8, fontWeight:700, fontSize:14 }}>
+              {saving?<><Loader2 size={16} style={{ animation:"spin .8s linear infinite" }}/> Saving…</>:<><Send size={16}/> {editEvent?"Update Event":"Save & Notify"}</>}
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
-
-      {/* Create Term */}
-      <Dialog open={showTermDialog} onOpenChange={setShowTermDialog}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>{t("Create Term", "إنشاء فصل دراسي")}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Label>{t("Title", "العنوان")}</Label>
-              <Input value={termForm.title} onChange={(e) => setTermForm(f => ({ ...f, title: e.target.value }))} placeholder="e.g. First Term 2025/2026" />
-            </div>
-            <div>
-              <Label>{t("Title (Arabic)", "العنوان (عربي)")}</Label>
-              <Input value={termForm.title_ar} onChange={(e) => setTermForm(f => ({ ...f, title_ar: e.target.value }))} dir="rtl" />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label>{t("Academic Year", "السنة الأكاديمية")}</Label>
-                <Input value={termForm.academic_year} onChange={(e) => setTermForm(f => ({ ...f, academic_year: e.target.value }))} />
-              </div>
-              <div>
-                <Label>{t("Term", "الفصل")}</Label>
-                <Select value={termForm.term} onValueChange={(v) => setTermForm(f => ({ ...f, term: v }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="first">First</SelectItem>
-                    <SelectItem value="second">Second</SelectItem>
-                    <SelectItem value="third">Third</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label>{t("Start Date", "تاريخ البداية")}</Label>
-                <Input type="date" value={termForm.term_start_date} onChange={(e) => setTermForm(f => ({ ...f, term_start_date: e.target.value }))} />
-              </div>
-              <div>
-                <Label>{t("End Date", "تاريخ النهاية")}</Label>
-                <Input type="date" value={termForm.term_end_date} onChange={(e) => setTermForm(f => ({ ...f, term_end_date: e.target.value }))} />
-              </div>
-            </div>
-            <div>
-              <Label>{t("Resume Date", "تاريخ الاستئناف")}</Label>
-              <Input type="date" value={termForm.resume_date} onChange={(e) => setTermForm(f => ({ ...f, resume_date: e.target.value }))} />
-            </div>
-            <div className="flex items-center justify-between">
-              <Label>{t("Set as Active Term", "تعيين كفصل نشط")}</Label>
-              <Switch checked={termForm.is_active} onCheckedChange={(v) => setTermForm(f => ({ ...f, is_active: v }))} />
-            </div>
-            <div className="flex gap-2 justify-end">
-              <Button variant="outline" onClick={() => setShowTermDialog(false)}>{t("Cancel", "إلغاء")}</Button>
-              <Button onClick={handleCreateTerm} disabled={!termForm.term_start_date || !termForm.term_end_date} style={{ background: "#c9973a", color: "#fff" }}>
-                {t("Save Term", "حفظ الفصل")}
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </div>
   );
 };
