@@ -1,736 +1,351 @@
+/* src/pages/admin/StudentManagement.tsx — Enhanced User Role Management + View as Student */
 import { useEffect, useState, useMemo } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate } from "react-router-dom";
 import {
-  Search, User, ClipboardList, Mail, Calendar, Eye, CheckCircle, XCircle,
-  UserCheck, Edit, BarChart, RotateCcw, Settings, Ban, Download, Bell,
-  Users, ArrowUpDown, Trash2, ShieldCheck, GraduationCap
+  Search, User, Users, Eye, Edit, ShieldCheck, GraduationCap,
+  Bell, Trash2, ChevronRight, Filter, UserCheck, BookOpen,
+  Send, Loader2, Plus, X, Mail
 } from "lucide-react";
+
+const G = "#064E3B";
+const ROLES = ["student","teacher","admin"] as const;
+const LEVELS = ["beginner","intermediate","advanced"];
+
+const roleColor: Record<string,{bg:string;text:string}> = {
+  student:  { bg:"#EFF6FF", text:"#1D4ED8" },
+  teacher:  { bg:"#F0FDF4", text:"#166534" },
+  admin:    { bg:"#FDF4FF", text:"#7C3AED" },
+};
 
 const StudentManagement = () => {
   const { t, language } = useLanguage();
-  const { toast } = useToast();
   const { user: currentUser, hasRole } = useAuth();
+  const { toast } = useToast();
   const navigate = useNavigate();
-  const [students, setStudents] = useState<any[]>([]);
-  const [exams, setExams] = useState<any[]>([]);
-  const [subjects, setSubjects] = useState<any[]>([]);
-  const [search, setSearch] = useState("");
-  const [typeFilter, setTypeFilter] = useState("all");
-  const [levelFilter, setLevelFilter] = useState("all");
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [loading, setLoading] = useState(true);
+  const isAdmin = hasRole("admin");
 
-  // Detail view
-  const [detailStudent, setDetailStudent] = useState<any>(null);
-  const [studentAttempts, setStudentAttempts] = useState<any[]>([]);
-  const [studentAssignments, setStudentAssignments] = useState<any[]>([]);
-  const [studentEnrollments, setStudentEnrollments] = useState<any[]>([]);
+  const [users, setUsers]         = useState<any[]>([]);
+  const [subjects, setSubjects]   = useState<any[]>([]);
+  const [exams, setExams]         = useState<any[]>([]);
+  const [loading, setLoading]     = useState(true);
+  const [search, setSearch]       = useState("");
+  const [roleFilter, setRoleFilter] = useState("all");
+  const [levelFilter, setLevelFilter] = useState("all");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [activeTab, setActiveTab] = useState<"users"|"roles">("users");
 
   // Dialogs
-  const [assignDialogOpen, setAssignDialogOpen] = useState(false);
-  const [selectedStudent, setSelectedStudent] = useState<any>(null);
-  const [selectedExamId, setSelectedExamId] = useState("");
-  const [bulkAction, setBulkAction] = useState<string | null>(null);
-  const [bulkExamId, setBulkExamId] = useState("");
-  const [bulkLevel, setBulkLevel] = useState("");
-  const [bulkNotifMsg, setBulkNotifMsg] = useState("");
-  const [bulkSubjectId, setBulkSubjectId] = useState("");
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [editProfileStudent, setEditProfileStudent] = useState<any>(null);
-  const [editForm, setEditForm] = useState<any>({});
-  const [deactivateStudent, setDeactivateStudent] = useState<any>(null);
-  const [viewingAnswers, setViewingAnswers] = useState<any>(null);
-  const [examAnswers, setExamAnswers] = useState<any[]>([]);
-  const [examQuestions, setExamQuestions] = useState<any[]>([]);
-  const [enrolSubjectId, setEnrolSubjectId] = useState("");
-
-  const isAdmin = hasRole("admin");
+  const [editUser, setEditUser]   = useState<any|null>(null);
+  const [editForm, setEditForm]   = useState<any>({});
+  const [notifDialog, setNotifDialog] = useState(false);
+  const [notifMsg, setNotifMsg]   = useState("");
+  const [notifTitle, setNotifTitle] = useState("");
+  const [sending, setSending]     = useState(false);
+  const [saving, setSaving]       = useState(false);
 
   const fetchData = async () => {
     setLoading(true);
-    const [profilesRes, rolesRes, examsRes, subjectsRes] = await Promise.all([
-      supabase.from("profiles").select("*"),
+    const [profilesRes, rolesRes, subjectsRes, examsRes] = await Promise.all([
+      supabase.from("profiles").select("*").order("full_name"),
       supabase.from("user_roles").select("user_id, role"),
-      supabase.from("exams").select("id, title, title_ar, is_published, type"),
-      supabase.from("subjects").select("id, title, title_ar"),
+      supabase.from("subjects").select("id,title,title_ar").eq("is_active",true),
+      supabase.from("exams").select("id,title,title_ar").eq("is_published",true),
     ]);
-    const rolesMap = new Map<string, string[]>();
-    (rolesRes.data || []).forEach((r: any) => {
-      if (!rolesMap.has(r.user_id)) rolesMap.set(r.user_id, []);
-      rolesMap.get(r.user_id)!.push(r.role);
-    });
-    const merged = (profilesRes.data || []).map((p: any) => ({
-      ...p,
-      roles: rolesMap.get(p.user_id) || [],
-      isStudent: (rolesMap.get(p.user_id) || []).includes("student"),
-    }));
-    setStudents(merged);
-    setExams(examsRes.data || []);
-    setSubjects(subjectsRes.data || []);
+    const rolesMap = new Map<string,string[]>();
+    (rolesRes.data||[]).forEach((r:any)=>{ if(!rolesMap.has(r.user_id))rolesMap.set(r.user_id,[]); rolesMap.get(r.user_id)!.push(r.role); });
+    setUsers((profilesRes.data||[]).map(p=>({ ...p, roles: rolesMap.get(p.user_id)||[] })));
+    setSubjects(subjectsRes.data||[]);
+    setExams(examsRes.data||[]);
     setLoading(false);
   };
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(()=>{ fetchData(); },[]);
 
-  const filtered = useMemo(() => students.filter((s) => {
-    if (!s.isStudent) return false;
-    const matchesSearch = !search || s.full_name?.toLowerCase().includes(search.toLowerCase()) ||
-      s.email?.toLowerCase().includes(search.toLowerCase()) || s.student_id?.toLowerCase().includes(search.toLowerCase());
-    const matchesType = typeFilter === "all" || s.student_type === typeFilter;
-    const matchesLevel = levelFilter === "all" || s.level === levelFilter;
-    const matchesStatus = statusFilter === "all" || s.status === statusFilter;
-    const visibleToTeacher = isAdmin || s.student_type !== "private" || s.assigned_teacher_id === currentUser?.id;
-    return matchesSearch && matchesType && matchesLevel && matchesStatus && visibleToTeacher;
-  }), [students, search, typeFilter, levelFilter, statusFilter, isAdmin, currentUser]);
-
-  const toggleSelect = (userId: string) => {
-    setSelectedIds(prev => {
-      const next = new Set(prev);
-      if (next.has(userId)) next.delete(userId); else next.add(userId);
-      return next;
-    });
-  };
-  const toggleAll = () => {
-    if (selectedIds.size === filtered.length) setSelectedIds(new Set());
-    else setSelectedIds(new Set(filtered.map(s => s.user_id)));
-  };
-
-  // Quick actions
-  const changeLevel = async (userId: string, newLevel: string) => {
-    await supabase.from("profiles").update({ level: newLevel }).eq("user_id", userId);
-    toast({ title: t("Level updated", "تم تحديث المستوى") });
-    fetchData();
-  };
-
-  const toggleStatus = async (student: any) => {
-    const newStatus = student.status === "active" ? "inactive" : "active";
-    await supabase.from("profiles").update({ status: newStatus }).eq("user_id", student.user_id);
-    toast({ title: t(`Student ${newStatus === "active" ? "activated" : "deactivated"}`, `تم ${newStatus === "active" ? "تفعيل" : "تعطيل"} الطالب`) });
-    setDeactivateStudent(null);
-    fetchData();
-  };
-
-  const resetExamAttempt = async (attemptId: string) => {
-    await supabase.from("exam_answers").delete().eq("attempt_id", attemptId);
-    await supabase.from("exam_attempts").delete().eq("id", attemptId);
-    toast({ title: t("Exam attempt reset", "تمت إعادة تعيين المحاولة") });
-    if (detailStudent) viewStudentDetails(detailStudent);
-  };
-
-  const overrideScore = async (attemptId: string, newScore: number, totalPoints: number) => {
-    const percentage = totalPoints > 0 ? (newScore / totalPoints) * 100 : 0;
-    await supabase.from("exam_attempts").update({
-      score: newScore, percentage, status: "graded", passed: percentage >= 50,
-    }).eq("id", attemptId);
-    toast({ title: t("Score overridden", "تم تعديل الدرجة") });
-    if (detailStudent) viewStudentDetails(detailStudent);
-  };
-
-  // Bulk actions
-  const executeBulkEnrol = async () => {
-    if (!bulkSubjectId || selectedIds.size === 0) return;
-    // Find courses for that subject
-    const { data: courses } = await supabase.from("courses").select("id").eq("subject_id", bulkSubjectId);
-    if (!courses?.length) { toast({ title: t("No courses found for this subject", "لا توجد دورات لهذه المادة"), variant: "destructive" }); return; }
-    const inserts = Array.from(selectedIds).map(uid => ({ user_id: uid, course_id: courses[0].id }));
-    const { error } = await supabase.from("enrollments").insert(inserts);
-    if (error) toast({ title: t("Error", "خطأ"), description: error.message, variant: "destructive" });
-    else toast({ title: t(`Enrolled ${selectedIds.size} students`, `تم تسجيل ${selectedIds.size} طالب`) });
-    setBulkAction(null);
-  };
-
-  const executeBulkLevel = async () => {
-    if (!bulkLevel || selectedIds.size === 0) return;
-    for (const uid of selectedIds) {
-      await supabase.from("profiles").update({ level: bulkLevel }).eq("user_id", uid);
+  const filtered = useMemo(()=> users.filter(u=>{
+    if(roleFilter!=="all" && !u.roles.includes(roleFilter)) return false;
+    if(levelFilter!=="all" && u.level!==levelFilter) return false;
+    if(search){
+      const s=search.toLowerCase();
+      if(!(u.full_name||"").toLowerCase().includes(s) && !(u.email||"").toLowerCase().includes(s)) return false;
     }
-    toast({ title: t(`Level changed for ${selectedIds.size} students`, `تم تغيير المستوى لـ ${selectedIds.size} طالب`) });
-    setBulkAction(null); fetchData();
-  };
+    return true;
+  }),[users,roleFilter,levelFilter,search]);
 
-  const executeBulkNotify = async () => {
-    if (!bulkNotifMsg || selectedIds.size === 0) return;
-    const inserts = Array.from(selectedIds).map(uid => ({
-      user_id: uid, title: t("Admin Notification", "إشعار من الإدارة"),
-      message: bulkNotifMsg, type: "admin",
+  const toggleRole = async (userId: string, role: string, hasIt: boolean) => {
+    if(hasIt){
+      await supabase.from("user_roles").delete().eq("user_id",userId).eq("role",role);
+    } else {
+      await supabase.from("user_roles").insert({ user_id:userId, role } as any);
+    }
+    setUsers(prev=>prev.map(u=>{
+      if(u.user_id!==userId) return u;
+      const roles = hasIt ? u.roles.filter((r:string)=>r!==role) : [...u.roles,role];
+      return {...u,roles};
     }));
-    const { error } = await supabase.from("notifications").insert(inserts);
-    if (error) toast({ title: t("Error", "خطأ"), description: error.message, variant: "destructive" });
-    else toast({ title: t(`Notification sent to ${selectedIds.size} students`, `تم إرسال الإشعار لـ ${selectedIds.size} طالب`) });
-    setBulkAction(null); setBulkNotifMsg("");
+    toast({ title:`${hasIt?"Removed":"Added"} ${role} role` });
   };
 
-  const exportCSV = () => {
-    const rows = (selectedIds.size > 0 ? filtered.filter(s => selectedIds.has(s.user_id)) : filtered);
-    const headers = ["Name", "Email", "Level", "Type", "Status", "Student ID", "Enrolled"];
-    const csv = [headers.join(","), ...rows.map(s =>
-      [s.full_name, s.email, s.level, s.student_type, s.status, s.student_id, s.created_at?.split("T")[0]].join(",")
-    )].join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a"); a.href = url; a.download = "students.csv"; a.click();
-    toast({ title: t("CSV exported", "تم تصدير CSV") });
+  const saveUserEdit = async () => {
+    if(!editUser) return;
+    setSaving(true);
+    try {
+      await supabase.from("profiles").update({
+        full_name: editForm.full_name,
+        level: editForm.level||null,
+        status: editForm.status||null,
+        phone: editForm.phone||null,
+      }).eq("user_id", editUser.user_id);
+      setUsers(prev=>prev.map(u=>u.user_id===editUser.user_id?{...u,...editForm}:u));
+      toast({ title:"User updated" });
+      setEditUser(null);
+    } finally { setSaving(false); }
   };
 
-  // Student detail view
-  const viewStudentDetails = async (student: any) => {
-    setDetailStudent(student);
-    const [attemptsRes, assignmentsRes, enrollmentsRes] = await Promise.all([
-      supabase.from("exam_attempts").select("*, exams(title, title_ar, type, passing_score)")
-        .eq("user_id", student.user_id).order("created_at", { ascending: false }),
-      supabase.from("exam_assignments").select("*, exams(title, title_ar)")
-        .eq("user_id", student.user_id).order("assigned_at", { ascending: false }),
-      supabase.from("enrollments").select("*, courses(title, title_ar, subject_id, subjects(title, title_ar))")
-        .eq("user_id", student.user_id),
-    ]);
-    setStudentAttempts(attemptsRes.data || []);
-    setStudentAssignments(assignmentsRes.data || []);
-    setStudentEnrollments(enrollmentsRes.data || []);
-  };
-
-  const assignExam = async () => {
-    if (!selectedStudent || !selectedExamId) return;
-    const { data: existing } = await supabase.from("exam_assignments").select("id")
-      .eq("user_id", selectedStudent.user_id).eq("exam_id", selectedExamId).maybeSingle();
-    if (existing) { toast({ title: t("Already assigned", "تم التعيين مسبقًا"), variant: "destructive" }); return; }
-    const { error } = await supabase.from("exam_assignments").insert({ user_id: selectedStudent.user_id, exam_id: selectedExamId });
-    if (error) toast({ title: t("Error", "خطأ"), description: error.message, variant: "destructive" });
-    else toast({ title: t("Exam assigned!", "تم تعيين الامتحان!") });
-    setAssignDialogOpen(false); setSelectedExamId("");
-  };
-
-  const removeAssignment = async (id: string) => {
-    await supabase.from("exam_assignments").delete().eq("id", id);
-    toast({ title: t("Assignment removed", "تم إزالة التعيين") });
-    if (detailStudent) viewStudentDetails(detailStudent);
-  };
-
-  const removeEnrollment = async (id: string) => {
-    await supabase.from("enrollments").delete().eq("id", id);
-    toast({ title: t("Enrollment removed", "تم إلغاء التسجيل") });
-    if (detailStudent) viewStudentDetails(detailStudent);
-  };
-
-  const saveEditProfile = async () => {
-    if (!editProfileStudent) return;
-    const { error } = await supabase.from("profiles").update(editForm).eq("user_id", editProfileStudent.user_id);
-    if (error) toast({ title: t("Error", "خطأ"), description: error.message, variant: "destructive" });
-    else { toast({ title: t("Profile updated", "تم تحديث الملف") }); setEditProfileStudent(null); fetchData(); }
-  };
-
-  const openEditProfile = (student: any) => {
-    setEditProfileStudent(student);
-    setEditForm({
-      full_name: student.full_name || "", full_name_ar: student.full_name_ar || "",
-      level: student.level || "beginner", status: student.status || "active",
-      student_type: student.student_type || "group", phone: student.phone || "",
-      whatsapp: student.whatsapp || "", country: student.country || "",
-      city: student.city || "", allow_entrance_retake: student.allow_entrance_retake || false,
-      assigned_teacher_id: student.assigned_teacher_id || "",
-      private_notes: student.private_notes || "",
-    });
-  };
-
-  // Level & type badge helpers
-  const levelBadge = (level: string) => {
-    const map: any = { beginner: { label: t("Beginner", "مبتدئ"), class: "bg-blue-100 text-blue-700 border-blue-200" },
-      intermediate: { label: t("Intermediate", "متوسط"), class: "bg-amber-100 text-amber-700 border-amber-200" },
-      advanced: { label: t("Advanced", "متقدم"), class: "bg-emerald-100 text-emerald-700 border-emerald-200" } };
-    const b = map[level] || map.beginner;
-    return <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full border ${b.class}`}>{b.label}</span>;
-  };
-
-  const statusBadge = (status: string) => (
-    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full border ${status === "active" ? "bg-emerald-50 text-emerald-600 border-emerald-200" : "bg-red-50 text-red-600 border-red-200"}`}>
-      {status === "active" ? t("Active", "نشط") : t("Inactive", "غير نشط")}
-    </span>
-  );
-
-  const typeBadge = (type: string) => (
-    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full border ${type === "private" ? "bg-[#D4AF37]/20 text-[#D4AF37] border-[#D4AF37]/30" : "bg-emerald-100 text-emerald-700 border-emerald-200"}`}>
-      {type === "private" ? t("Private", "خاص") : t("Group", "مجموعة")}
-    </span>
-  );
-
-  // Enrol student in subject manually
-  const manualEnrol = async (userId: string, subjectId: string) => {
-    const { data: courses } = await supabase.from("courses").select("id").eq("subject_id", subjectId);
-    if (!courses?.length) { toast({ title: t("No courses found for this subject", "لا توجد دورات لهذه المادة"), variant: "destructive" }); return; }
-    const { error } = await supabase.from("enrollments").insert({ user_id: userId, course_id: courses[0].id });
-    if (error) { toast({ title: t("Error", "خطأ"), description: error.message, variant: "destructive" }); return; }
-    toast({ title: t("Student enrolled", "تم تسجيل الطالب") });
-    if (detailStudent) viewStudentDetails(detailStudent);
-  };
-
-  // Export exam results CSV
-  const exportExamResultsCSV = () => {
-    if (!detailStudent || studentAttempts.length === 0) return;
-    const headers = ["Exam", "Type", "Status", "Score", "Total", "Percentage", "Passed", "Date"];
-    const csv = [headers.join(","), ...studentAttempts.map(a =>
-      [a.exams?.title, a.exams?.type || "exam", a.status, a.score, a.total_points, Math.round(a.percentage || 0), a.passed ? "Yes" : "No", a.submitted_at?.split("T")[0] || ""].join(",")
-    )].join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a"); anchor.href = url; anchor.download = `results-${detailStudent.full_name || "student"}.csv`; anchor.click();
-    toast({ title: t("Results exported", "تم تصدير النتائج") });
-  };
-
-  // View exam answers side by side
-  const viewAnswersSideBySide = async (attempt: any) => {
-    const [answersRes, questionsRes] = await Promise.all([
-      supabase.from("exam_answers").select("*").eq("attempt_id", attempt.id),
-      supabase.from("exam_questions").select("*").eq("exam_id", attempt.exam_id).order("sort_order"),
-    ]);
-    setExamAnswers(answersRes.data || []);
-    setExamQuestions(questionsRes.data || []);
-    setViewingAnswers(attempt);
-  };
-
-  if (loading) return <div className="flex items-center justify-center min-h-[400px]"><div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" /></div>;
-
-  // ─── EXAM ANSWERS SIDE BY SIDE VIEW ───
-  if (viewingAnswers) {
-    return (
-      <div className="container mx-auto px-4 py-6">
-        <div className="mb-4 flex items-center justify-between">
-          <h1 className="text-xl font-bold">{t("Answers Review", "مراجعة الإجابات")} — {language === "ar" ? viewingAnswers.exams?.title_ar || viewingAnswers.exams?.title : viewingAnswers.exams?.title}</h1>
-          <Button variant="outline" size="sm" onClick={() => setViewingAnswers(null)}>{t("Back", "رجوع")}</Button>
-        </div>
-        <div className="space-y-4">
-          {examQuestions.map((q, i) => {
-            const answer = examAnswers.find(a => a.question_id === q.id);
-            return (
-              <Card key={q.id} className={answer?.is_correct === true ? "border-emerald-300" : answer?.is_correct === false ? "border-destructive/50" : ""}>
-                <CardContent className="p-4 space-y-2">
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="font-medium text-sm">Q{i + 1}: <span dangerouslySetInnerHTML={{ __html: q.question_text }} /></p>
-                    {answer?.is_correct !== null && (
-                      answer?.is_correct ? <CheckCircle className="h-5 w-5 text-emerald-500 shrink-0" /> : <XCircle className="h-5 w-5 text-destructive shrink-0" />
-                    )}
-                  </div>
-                  <div className="grid md:grid-cols-2 gap-3 text-sm">
-                    <div className="p-2 rounded bg-muted/50">
-                      <p className="text-xs font-medium text-muted-foreground mb-1">{t("Student Answer", "إجابة الطالب")}</p>
-                      <p>{answer?.answer_text || <span className="text-muted-foreground italic">{t("No answer", "بدون إجابة")}</span>}</p>
-                    </div>
-                    <div className="p-2 rounded bg-emerald-50 dark:bg-emerald-950/20">
-                      <p className="text-xs font-medium text-emerald-700 dark:text-emerald-400 mb-1">{t("Correct Answer", "الإجابة الصحيحة")}</p>
-                      <p>{q.correct_answer || "—"}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                    <span>{t("Points", "الدرجات")}: {answer?.points_awarded ?? "—"}/{q.points}</span>
-                    {q.explanation && <span>{t("Explanation", "الشرح")}: {q.explanation}</span>}
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
-      </div>
+  const sendNotification = async () => {
+    if(!notifTitle||!notifMsg) return;
+    setSending(true);
+    const targets = selectedIds.size > 0 ? [...selectedIds] : filtered.map(u=>u.user_id);
+    await supabase.from("notifications" as any).insert(
+      targets.map(uid=>({ user_id:uid, title:notifTitle, message:notifMsg, type:"admin_message" }))
     );
-  }
+    toast({ title:`✅ Notification sent to ${targets.length} users` });
+    setNotifDialog(false);
+    setNotifMsg(""); setNotifTitle("");
+    setSending(false);
+  };
 
-  // ─── STUDENT DETAIL VIEW ───
-  if (detailStudent) {
-    return (
-      <div className="container mx-auto px-4 py-6">
-        <div className="mb-6 flex items-center justify-between flex-wrap gap-3">
-          <div className="flex items-center gap-3">
-            <div className="h-14 w-14 rounded-full bg-primary/10 flex items-center justify-center text-primary text-xl font-bold">
-              {(detailStudent.full_name || "?")[0]}
+  const assignExamToLevel = async (examId: string, level: string) => {
+    const levelUsers = users.filter(u=>u.level===level && u.roles.includes("student")).map(u=>u.user_id);
+    if(!levelUsers.length){ toast({ title:"No students in this level" }); return; }
+    const { data: existing } = await supabase.from("exam_assignments").select("user_id").eq("exam_id",examId).in("user_id",levelUsers);
+    const existIds = new Set((existing||[]).map((e:any)=>e.user_id));
+    const newIds = levelUsers.filter(id=>!existIds.has(id));
+    if(newIds.length) await supabase.from("exam_assignments").insert(newIds.map(uid=>({ exam_id:examId, user_id:uid, assigned_by:currentUser?.id })));
+    await supabase.from("notifications" as any).insert(levelUsers.map(uid=>({ user_id:uid, title:"New exam assigned", message:`Exam has been assigned to your group`, type:"exam_assigned", reference_id:examId })));
+    toast({ title:`Assigned to ${newIds.length} students in ${level} level` });
+  };
+
+  const tabs = ["users","roles"] as const;
+  const roleCounts = ROLES.reduce((acc,r)=>({ ...acc, [r]: users.filter(u=>u.roles.includes(r)).length }),{} as Record<string,number>);
+
+  return (
+    <div style={{ minHeight:"100vh", background:"#F8F9FA" }}>
+      {/* Header */}
+      <div style={{ background:"#fff", borderBottom:"1px solid #E5E7EB", padding:"18px 20px" }}>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:12 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+            <div style={{ width:40, height:40, borderRadius:12, background:"#EFF6FF", display:"flex", alignItems:"center", justifyContent:"center" }}>
+              <Users size={20} color="#1D4ED8"/>
             </div>
             <div>
-              <h1 className="text-2xl font-bold flex items-center gap-2">
-                {detailStudent.full_name || t("Student", "طالب")}
-                {levelBadge(detailStudent.level)} {typeBadge(detailStudent.student_type)} {statusBadge(detailStudent.status)}
-              </h1>
-              <p className="text-sm text-muted-foreground flex items-center gap-2 flex-wrap">
-                <span className="flex items-center gap-1"><Mail className="h-3 w-3" />{detailStudent.email || "—"}</span>
-                <span>•</span>
-                <span className="flex items-center gap-1"><GraduationCap className="h-3 w-3" />{detailStudent.student_id || "—"}</span>
-                <span>•</span>
-                <span className="flex items-center gap-1"><Calendar className="h-3 w-3" />{t("Joined", "انضم")}: {new Date(detailStudent.created_at).toLocaleDateString()}</span>
-              </p>
+              <h1 style={{ fontSize:20, fontWeight:800, color:"#111", margin:0 }}>User Management</h1>
+              <p style={{ fontSize:12, color:"#6B7280", margin:0 }}>{users.length} total · {roleCounts.student||0} students · {roleCounts.teacher||0} teachers</p>
             </div>
           </div>
-          <div className="flex gap-2 flex-wrap">
-            <Button variant="default" size="sm" onClick={() => navigate(`/admin/students/${detailStudent.user_id}/view`)}>
-              <Eye className="h-3 w-3 me-1" />{t("View as Student", "عرض كطالب")}
+          <div style={{ display:"flex", gap:8 }}>
+            {selectedIds.size>0&&(
+              <Button onClick={()=>setNotifDialog(true)}
+                style={{ background:"#7C3AED", borderRadius:12, gap:8, fontWeight:700 }}>
+                <Bell size={14}/> Notify {selectedIds.size} selected
+              </Button>
+            )}
+            <Button onClick={()=>setNotifDialog(true)}
+              style={{ background:G, borderRadius:12, gap:8, fontWeight:700 }}>
+              <Send size={14}/> Broadcast
             </Button>
-            <Button variant="outline" size="sm" onClick={() => openEditProfile(detailStudent)}><Edit className="h-3 w-3 me-1" />{t("Edit", "تعديل")}</Button>
-            <Button variant="outline" size="sm" onClick={exportExamResultsCSV}><Download className="h-3 w-3 me-1" />{t("Export Results", "تصدير النتائج")}</Button>
-            <Button variant="outline" size="sm" onClick={() => setDetailStudent(null)}>{t("Back", "رجوع")}</Button>
           </div>
         </div>
+      </div>
 
-        <Tabs defaultValue="attempts">
-          <TabsList className="flex-wrap">
-            <TabsTrigger value="attempts">{t("Exam Attempts", "محاولات الامتحان")} ({studentAttempts.filter(a => (a.exams?.type || "exam") === "exam").length})</TabsTrigger>
-            <TabsTrigger value="tests">{t("Test Attempts", "محاولات التمرينات")} ({studentAttempts.filter(a => a.exams?.type === "test").length})</TabsTrigger>
-            <TabsTrigger value="enrollments">{t("Enrollments", "التسجيلات")} ({studentEnrollments.length})</TabsTrigger>
-            <TabsTrigger value="assignments">{t("Assigned", "المعينة")} ({studentAssignments.length})</TabsTrigger>
-          </TabsList>
+      <div style={{ padding:"16px", maxWidth:1100, margin:"0 auto" }}>
+        {/* Stats */}
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))", gap:10, marginBottom:16 }}>
+          {[
+            { v:users.length, l:"Total Users", icon:"👥", bg:"#F3F4F6", c:"#374151" },
+            { v:roleCounts.student||0, l:"Students", icon:"🎓", bg:"#EFF6FF", c:"#1D4ED8" },
+            { v:roleCounts.teacher||0, l:"Teachers", icon:"👨‍🏫", bg:"#F0FDF4", c:"#166534" },
+            { v:roleCounts.admin||0, l:"Admins", icon:"🛡️", bg:"#FDF4FF", c:"#7C3AED" },
+          ].map((s,i)=>(
+            <div key={i} style={{ background:s.bg, borderRadius:12, padding:"12px 14px" }}>
+              <div style={{ fontSize:20, marginBottom:4 }}>{s.icon}</div>
+              <div style={{ fontSize:22, fontWeight:900, color:s.c }}>{s.v}</div>
+              <div style={{ fontSize:11, color:s.c, opacity:.7, fontWeight:600 }}>{s.l}</div>
+            </div>
+          ))}
+        </div>
 
-          {/* Exam Attempts */}
-          {["attempts", "tests"].map(tab => {
-            const typeKey = tab === "tests" ? "test" : "exam";
-            const items = studentAttempts.filter(a => (a.exams?.type || "exam") === typeKey);
-            return (
-              <TabsContent key={tab} value={tab} className="mt-4 space-y-3">
-                {items.length === 0 ? (
-                  <p className="text-center text-muted-foreground py-8">{t("No attempts yet", "لا توجد محاولات بعد")}</p>
-                ) : items.map((a) => (
-                  <Card key={a.id}>
-                    <CardContent className="flex items-center justify-between p-4 flex-wrap gap-2">
-                      <div>
-                        <div className="font-medium">{language === "ar" ? a.exams?.title_ar || a.exams?.title : a.exams?.title}</div>
-                        <div className="text-xs text-muted-foreground">
-                          {a.submitted_at ? new Date(a.submitted_at).toLocaleString() : new Date(a.created_at).toLocaleString()}
-                        </div>
+        {/* Tabs */}
+        <div style={{ display:"flex", gap:4, marginBottom:14, background:"#fff", borderRadius:12, padding:4, border:"1px solid #E5E7EB", width:"fit-content" }}>
+          {tabs.map(tab=>(
+            <button key={tab} onClick={()=>setActiveTab(tab)}
+              style={{ padding:"8px 18px", borderRadius:9, border:"none", cursor:"pointer", fontWeight:700, fontSize:13, background:activeTab===tab?G:"transparent", color:activeTab===tab?"#fff":"#6B7280" }}>
+              {tab==="users"?"👥 Users":"🛡️ Roles & Permissions"}
+            </button>
+          ))}
+        </div>
+
+        {activeTab==="users" && (
+          <>
+            {/* Filters */}
+            <div style={{ display:"flex", gap:10, marginBottom:14, flexWrap:"wrap" }}>
+              <div style={{ position:"relative", flex:1, minWidth:180 }}>
+                <Search size={13} style={{ position:"absolute", left:10, top:"50%", transform:"translateY(-50%)", color:"#9CA3AF" }}/>
+                <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search name or email…"
+                  style={{ width:"100%", padding:"9px 10px 9px 30px", borderRadius:10, border:"1.5px solid #E5E7EB", fontSize:13, outline:"none", boxSizing:"border-box" as const }}/>
+              </div>
+              {[
+                { val:roleFilter, set:setRoleFilter, opts:[["all","All Roles"],["student","Students"],["teacher","Teachers"],["admin","Admins"]] },
+                { val:levelFilter, set:setLevelFilter, opts:[["all","All Levels"],["beginner","Beginner"],["intermediate","Intermediate"],["advanced","Advanced"]] },
+              ].map((f,i)=>(
+                <select key={i} value={f.val} onChange={e=>f.set(e.target.value)}
+                  style={{ padding:"9px 12px", borderRadius:10, border:"1.5px solid #E5E7EB", fontSize:13, background:"#fff", outline:"none" }}>
+                  {f.opts.map(([v,l])=><option key={v} value={v}>{l}</option>)}
+                </select>
+              ))}
+            </div>
+
+            {loading ? (
+              <div style={{ textAlign:"center", padding:48 }}><Loader2 size={28} style={{ animation:"spin .8s linear infinite", color:G }}/></div>
+            ) : (
+              <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                {filtered.map(u=>(
+                  <div key={u.user_id} style={{ background:"#fff", borderRadius:14, border:"1.5px solid #E5E7EB", padding:"13px 16px", display:"flex", alignItems:"center", gap:12, flexWrap:"wrap" }}>
+                    <input type="checkbox" checked={selectedIds.has(u.user_id)}
+                      onChange={e=>{ const n=new Set(selectedIds); e.target.checked?n.add(u.user_id):n.delete(u.user_id); setSelectedIds(n); }}
+                      style={{ accentColor:G, width:16, height:16 }}/>
+                    <div style={{ width:38, height:38, borderRadius:10, background:`hsl(${Math.abs(u.user_id.charCodeAt(0)*12)%360},60%,85%)`, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, fontSize:14, fontWeight:800, color:"#374151" }}>
+                      {(u.full_name||"?")[0]}
+                    </div>
+                    <div style={{ flex:1, minWidth:120 }}>
+                      <p style={{ fontWeight:700, fontSize:14, color:"#111", margin:0 }}>{u.full_name||"Unknown"}</p>
+                      <p style={{ fontSize:11, color:"#9CA3AF", margin:"2px 0 4px" }}>{u.email}</p>
+                      <div style={{ display:"flex", gap:5, flexWrap:"wrap" }}>
+                        {u.roles.map((r:string)=>(
+                          <span key={r} style={{ fontSize:10, padding:"2px 8px", borderRadius:20, background:roleColor[r]?.bg||"#F3F4F6", color:roleColor[r]?.text||"#374151", fontWeight:700 }}>{r}</span>
+                        ))}
+                        {u.level&&<span style={{ fontSize:10, padding:"2px 8px", borderRadius:20, background:"#F3F4F6", color:"#6B7280", fontWeight:600 }}>{u.level}</span>}
                       </div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        {a.status === "graded" && (
-                          <div className="flex items-center gap-1">
-                            {a.passed ? <CheckCircle className="h-4 w-4 text-emerald-500" /> : <XCircle className="h-4 w-4 text-destructive" />}
-                            <span className="font-semibold">{a.score}/{a.total_points} ({Math.round(a.percentage || 0)}%)</span>
-                          </div>
-                        )}
-                        <Badge variant={a.status === "graded" ? (a.passed ? "default" : "destructive") : a.status === "submitted" ? "secondary" : "outline"}>
-                          {a.status === "in_progress" ? t("In Progress", "قيد التنفيذ") : a.status === "submitted" ? t("Needs Grading", "يحتاج تصحيح") : a.status === "graded" ? (a.passed ? t("Passed", "ناجح") : t("Failed", "راسب")) : a.status}
-                        </Badge>
-                        {/* Override score */}
-                        <Dialog>
-                          <DialogTrigger asChild>
-                            <Button variant="ghost" size="sm" className="text-xs"><Edit className="h-3 w-3 me-1" />{t("Override", "تعديل")}</Button>
-                          </DialogTrigger>
-                          <DialogContent>
-                            <DialogHeader><DialogTitle>{t("Override Score", "تعديل الدرجة")}</DialogTitle></DialogHeader>
-                            <OverrideScoreForm attempt={a} onSave={overrideScore} t={t} />
-                          </DialogContent>
-                        </Dialog>
-                        {/* View Answers Side by Side */}
-                        {(a.status === "graded" || a.status === "submitted") && (
-                          <Button variant="ghost" size="sm" className="text-xs" onClick={() => viewAnswersSideBySide(a)}>
-                            <Eye className="h-3 w-3 me-1" />{t("Answers", "الإجابات")}
-                          </Button>
-                        )}
-                        {/* Reset attempt */}
-                        <Button variant="ghost" size="sm" className="text-xs text-destructive" onClick={() => resetExamAttempt(a.id)}>
-                          <RotateCcw className="h-3 w-3 me-1" />{t("Reset", "إعادة")}
-                        </Button>
-                      </div>
-                    </CardContent>
-                  </Card>
+                    </div>
+                    <div style={{ display:"flex", gap:6 }}>
+                      <button onClick={()=>{ setEditUser(u); setEditForm({ full_name:u.full_name||"", level:u.level||"", status:u.status||"active", phone:u.phone||"" }); }}
+                        style={{ padding:"7px 10px", borderRadius:8, border:"1px solid #E5E7EB", background:"#fff", cursor:"pointer" }}><Edit size={13} color="#6B7280"/></button>
+                      {isAdmin&&(
+                        <button onClick={()=>navigate(`/admin/view-as-student/${u.user_id}`)}
+                          style={{ padding:"7px 10px", borderRadius:8, border:"1px solid #E5E7EB", background:"#fff", cursor:"pointer" }}><Eye size={13} color="#6B7280"/></button>
+                      )}
+                      <button onClick={()=>{ setNotifMsg(""); setNotifTitle(""); setSelectedIds(new Set([u.user_id])); setNotifDialog(true); }}
+                        style={{ padding:"7px 10px", borderRadius:8, border:"1px solid #E5E7EB", background:"#fff", cursor:"pointer" }}><Bell size={13} color="#6B7280"/></button>
+                    </div>
+                  </div>
                 ))}
-              </TabsContent>
-            );
-          })}
-
-          {/* Enrollments */}
-          <TabsContent value="enrollments" className="mt-4 space-y-3">
-            {/* Manual Enrol */}
-            <Card className="border-dashed border-primary/30 bg-primary/5">
-              <CardContent className="flex items-center gap-3 p-3 flex-wrap">
-                <span className="text-sm font-medium">{t("Enrol in subject:", "تسجيل في مادة:")}</span>
-                <Select value={enrolSubjectId} onValueChange={setEnrolSubjectId}>
-                  <SelectTrigger className="w-48"><SelectValue placeholder={t("Select subject", "اختر المادة")} /></SelectTrigger>
-                  <SelectContent>{subjects.map(s => <SelectItem key={s.id} value={s.id}>{language === "ar" ? s.title_ar || s.title : s.title}</SelectItem>)}</SelectContent>
-                </Select>
-                <Button size="sm" disabled={!enrolSubjectId} onClick={() => { manualEnrol(detailStudent.user_id, enrolSubjectId); setEnrolSubjectId(""); }}>
-                  {t("Enrol", "تسجيل")}
-                </Button>
-              </CardContent>
-            </Card>
-
-            {studentEnrollments.length === 0 ? (
-              <p className="text-center text-muted-foreground py-8">{t("No enrollments", "لا توجد تسجيلات")}</p>
-            ) : studentEnrollments.map(e => (
-              <Card key={e.id}>
-                <CardContent className="flex items-center justify-between p-4">
-                  <div>
-                    <div className="font-medium">{language === "ar" ? (e.courses as any)?.title_ar || (e.courses as any)?.title : (e.courses as any)?.title}</div>
-                    <div className="text-xs text-muted-foreground">{t("Enrolled", "مسجل")}: {new Date(e.enrolled_at).toLocaleDateString()}</div>
-                  </div>
-                  <Button variant="ghost" size="sm" className="text-destructive text-xs" onClick={() => removeEnrollment(e.id)}>
-                    <Trash2 className="h-3 w-3 me-1" />{t("Remove", "إزالة")}
-                  </Button>
-                </CardContent>
-              </Card>
-            ))}
-          </TabsContent>
-
-          {/* Assigned Exams */}
-          <TabsContent value="assignments" className="mt-4 space-y-3">
-            {studentAssignments.map(a => (
-              <Card key={a.id}>
-                <CardContent className="flex items-center justify-between p-4">
-                  <div>
-                    <div className="font-medium">{language === "ar" ? a.exams?.title_ar || a.exams?.title : a.exams?.title}</div>
-                    <div className="text-xs text-muted-foreground">{new Date(a.assigned_at).toLocaleDateString()}</div>
-                  </div>
-                  <Button variant="ghost" size="sm" className="text-destructive text-xs" onClick={() => removeAssignment(a.id)}>{t("Remove", "إزالة")}</Button>
-                </CardContent>
-              </Card>
-            ))}
-          </TabsContent>
-        </Tabs>
-      </div>
-    );
-  }
-
-  // ─── MAIN LIST VIEW ───
-  return (
-    <div className="container mx-auto px-4 py-6">
-      {/* Header */}
-      <div className="mb-4 flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-bold">{t("Student Management", "إدارة الطلاب")}</h1>
-          <p className="text-sm text-muted-foreground">{filtered.length} {t("students", "طالب")} {selectedIds.size > 0 && `• ${selectedIds.size} ${t("selected", "محدد")}`}</p>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <Button variant="outline" size="sm" onClick={exportCSV}><Download className="h-3 w-3 me-1" />{t("Export CSV", "تصدير CSV")}</Button>
-        </div>
-      </div>
-
-      {/* Filters */}
-      <div className="mb-4 flex flex-wrap gap-2">
-        {/* Status */}
-        {[{ val: "all", label: t("All", "الكل") }, { val: "active", label: t("Active", "نشط") }, { val: "inactive", label: t("Inactive", "غير نشط") }].map(f => (
-          <Button key={f.val} size="sm" variant={statusFilter === f.val ? "default" : "outline"} onClick={() => setStatusFilter(f.val)}>{f.label}</Button>
-        ))}
-        <div className="w-px h-6 bg-border self-center mx-1" />
-        {/* Level */}
-        {[{ val: "all", label: t("All Levels", "كل المستويات") }, { val: "beginner", label: t("Beginner", "مبتدئ") }, { val: "intermediate", label: t("Intermediate", "متوسط") }, { val: "advanced", label: t("Advanced", "متقدم") }].map(f => (
-          <Button key={f.val} size="sm" variant={levelFilter === f.val ? "default" : "outline"} onClick={() => setLevelFilter(f.val)}>{f.label}</Button>
-        ))}
-        <div className="w-px h-6 bg-border self-center mx-1" />
-        {/* Type */}
-        {[{ val: "all", label: t("All Types", "كل الأنواع") }, { val: "group", label: t("Group", "مجموعة") }, { val: "private", label: t("Private", "خاص") }].map(f => (
-          <Button key={f.val} size="sm" variant={typeFilter === f.val ? "default" : "outline"} onClick={() => setTypeFilter(f.val)}>{f.label}</Button>
-        ))}
-      </div>
-
-      {/* Search */}
-      <div className="mb-4 relative">
-        <Search className="absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input className="ps-10" placeholder={t("Search by name, email or student ID...", "البحث بالاسم أو البريد أو رقم الطالب...")} value={search} onChange={e => setSearch(e.target.value)} />
-      </div>
-
-      {/* Bulk Actions */}
-      {selectedIds.size > 0 && (
-        <div className="mb-4 flex items-center gap-2 flex-wrap p-3 rounded-lg bg-primary/5 border border-primary/20">
-          <span className="text-sm font-medium">{selectedIds.size} {t("selected", "محدد")}:</span>
-          <Button size="sm" variant="outline" onClick={() => setBulkAction("enrol")}><Users className="h-3 w-3 me-1" />{t("Bulk Enrol", "تسجيل جماعي")}</Button>
-          <Button size="sm" variant="outline" onClick={() => setBulkAction("level")}><ArrowUpDown className="h-3 w-3 me-1" />{t("Change Level", "تغيير المستوى")}</Button>
-          <Button size="sm" variant="outline" onClick={() => setBulkAction("notify")}><Bell className="h-3 w-3 me-1" />{t("Send Notification", "إرسال إشعار")}</Button>
-          <Button size="sm" variant="outline" onClick={exportCSV}><Download className="h-3 w-3 me-1" />{t("Export Selected", "تصدير المحدد")}</Button>
-        </div>
-      )}
-
-      {/* Student List */}
-      <div className="space-y-2">
-        {/* Select all header */}
-        <div className="flex items-center gap-3 px-4 py-2 text-xs text-muted-foreground">
-          <Checkbox checked={selectedIds.size === filtered.length && filtered.length > 0} onCheckedChange={toggleAll} />
-          <span className="flex-1">{t("Name", "الاسم")}</span>
-          <span className="w-20 text-center">{t("Level", "المستوى")}</span>
-          <span className="w-16 text-center">{t("Type", "النوع")}</span>
-          <span className="w-16 text-center">{t("Status", "الحالة")}</span>
-          <span className="w-32 text-center">{t("Actions", "إجراءات")}</span>
-        </div>
-
-        {filtered.map(student => (
-          <Card key={student.id} className="hover:shadow-sm transition-shadow">
-            <CardContent className="flex items-center gap-3 p-3 flex-wrap">
-              <Checkbox checked={selectedIds.has(student.user_id)} onCheckedChange={() => toggleSelect(student.user_id)} />
-              <div className="flex items-center gap-3 flex-1 min-w-[200px]">
-                <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold shrink-0">
-                  {(student.full_name || "?")[0]}
-                </div>
-                <div className="min-w-0">
-                  <p className="font-medium text-sm truncate">{student.full_name || t("Unnamed", "بدون اسم")}</p>
-                  <p className="text-xs text-muted-foreground truncate">{student.email} {student.student_id && `• ${student.student_id}`}</p>
-                </div>
               </div>
-              <div className="w-20 text-center">{levelBadge(student.level)}</div>
-              <div className="w-16 text-center">{typeBadge(student.student_type)}</div>
-              <div className="w-16 text-center">{statusBadge(student.status)}</div>
-              <div className="flex items-center gap-1 flex-wrap">
-                <Button variant="ghost" size="icon" className="h-7 w-7" title={t("View as Student", "عرض كطالب")} onClick={() => navigate(`/admin/students/${student.user_id}/view`)}>
-                  <Eye className="h-3.5 w-3.5" />
-                </Button>
-                <Button variant="ghost" size="icon" className="h-7 w-7" title={t("View Details", "عرض التفاصيل")} onClick={() => viewStudentDetails(student)}>
-                  <BarChart className="h-3.5 w-3.5" />
-                </Button>
-                <Button variant="ghost" size="icon" className="h-7 w-7" title={t("Edit Profile", "تعديل الملف")} onClick={() => openEditProfile(student)}>
-                  <Edit className="h-3.5 w-3.5" />
-                </Button>
-                <Button variant="ghost" size="icon" className="h-7 w-7" title={t("Assign Exam", "تعيين امتحان")} onClick={() => { setSelectedStudent(student); setAssignDialogOpen(true); }}>
-                  <ClipboardList className="h-3.5 w-3.5" />
-                </Button>
-                <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" title={t("Deactivate", "تعطيل")} onClick={() => setDeactivateStudent(student)}>
-                  <Ban className="h-3.5 w-3.5" />
-                </Button>
+            )}
+          </>
+        )}
+
+        {activeTab==="roles" && (
+          <div style={{ display:"grid", gap:16 }}>
+            <div style={{ background:"#fff", borderRadius:16, border:"1px solid #E5E7EB", padding:20 }}>
+              <h3 style={{ fontWeight:800, fontSize:15, color:"#111", marginBottom:16 }}>🛡️ Role Assignment</h3>
+              <p style={{ fontSize:13, color:"#6B7280", marginBottom:16 }}>Toggle roles for any user. Multiple roles allowed.</p>
+              <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                {users.slice(0,20).map(u=>(
+                  <div key={u.user_id} style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 14px", borderRadius:12, background:"#F9FAFB", flexWrap:"wrap" }}>
+                    <span style={{ flex:1, fontSize:13, fontWeight:600, color:"#374151" }}>{u.full_name||u.email}</span>
+                    {ROLES.map(r=>(
+                      <label key={r} style={{ display:"flex", alignItems:"center", gap:5, cursor:"pointer", fontSize:12, fontWeight:600, padding:"4px 10px", borderRadius:20, background:u.roles.includes(r)?roleColor[r].bg:"#F3F4F6", color:u.roles.includes(r)?roleColor[r].text:"#9CA3AF", border:`1px solid ${u.roles.includes(r)?roleColor[r].text+"33":"#E5E7EB"}` }}>
+                        <input type="checkbox" checked={u.roles.includes(r)} onChange={()=>toggleRole(u.user_id,r,u.roles.includes(r))} style={{ accentColor:G, width:12, height:12 }}/>
+                        {r}
+                      </label>
+                    ))}
+                  </div>
+                ))}
               </div>
-            </CardContent>
-          </Card>
-        ))}
-        {filtered.length === 0 && <p className="text-center text-muted-foreground py-8">{t("No students found", "لم يتم العثور على طلاب")}</p>}
-      </div>
-
-      {/* ─── DIALOGS ─── */}
-
-      {/* Assign Exam Dialog */}
-      <Dialog open={assignDialogOpen} onOpenChange={setAssignDialogOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>{t("Assign Exam to", "تعيين امتحان لـ")} {selectedStudent?.full_name}</DialogTitle></DialogHeader>
-          <Select value={selectedExamId} onValueChange={setSelectedExamId}>
-            <SelectTrigger><SelectValue placeholder={t("Select an exam", "اختر امتحان")} /></SelectTrigger>
-            <SelectContent>{exams.map(e => <SelectItem key={e.id} value={e.id}>{e.title} ({e.type || "exam"})</SelectItem>)}</SelectContent>
-          </Select>
-          <Button onClick={assignExam} className="w-full">{t("Assign", "تعيين")}</Button>
-        </DialogContent>
-      </Dialog>
-
-      {/* Edit Profile Dialog */}
-      <Dialog open={!!editProfileStudent} onOpenChange={o => !o && setEditProfileStudent(null)}>
-        <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
-          <DialogHeader><DialogTitle>{t("Edit Student Profile", "تعديل ملف الطالب")}</DialogTitle></DialogHeader>
-          <div className="space-y-3">
-            <div className="grid grid-cols-2 gap-3">
-              <div><label className="text-xs font-medium">{t("Full Name", "الاسم الكامل")}</label>
-                <Input value={editForm.full_name} onChange={e => setEditForm({ ...editForm, full_name: e.target.value })} /></div>
-              <div><label className="text-xs font-medium">{t("Arabic Name", "الاسم بالعربية")}</label>
-                <Input value={editForm.full_name_ar} onChange={e => setEditForm({ ...editForm, full_name_ar: e.target.value })} dir="rtl" /></div>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div><label className="text-xs font-medium">{t("Level", "المستوى")}</label>
-                <Select value={editForm.level} onValueChange={v => setEditForm({ ...editForm, level: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="beginner">{t("Beginner", "مبتدئ")}</SelectItem>
-                    <SelectItem value="intermediate">{t("Intermediate", "متوسط")}</SelectItem>
-                    <SelectItem value="advanced">{t("Advanced", "متقدم")}</SelectItem>
-                  </SelectContent>
-                </Select></div>
-              <div><label className="text-xs font-medium">{t("Student Type", "نوع الطالب")}</label>
-                <Select value={editForm.student_type} onValueChange={v => setEditForm({ ...editForm, student_type: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="group">{t("Group", "مجموعة")}</SelectItem>
-                    <SelectItem value="private">{t("Private", "خاص")}</SelectItem>
-                  </SelectContent>
-                </Select></div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div><label className="text-xs font-medium">{t("Status", "الحالة")}</label>
-                <Select value={editForm.status} onValueChange={v => setEditForm({ ...editForm, status: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="active">{t("Active", "نشط")}</SelectItem>
-                    <SelectItem value="inactive">{t("Inactive", "غير نشط")}</SelectItem>
-                  </SelectContent>
-                </Select></div>
-              <div><label className="text-xs font-medium">{t("Phone", "الهاتف")}</label>
-                <Input value={editForm.phone} onChange={e => setEditForm({ ...editForm, phone: e.target.value })} /></div>
-            </div>
-            <div><label className="text-xs font-medium">{t("Private Notes (admin only)", "ملاحظات خاصة")}</label>
-              <Textarea value={editForm.private_notes} onChange={e => setEditForm({ ...editForm, private_notes: e.target.value })} rows={3} /></div>
-            <div className="flex items-center gap-2">
-              <Checkbox checked={editForm.allow_entrance_retake} onCheckedChange={c => setEditForm({ ...editForm, allow_entrance_retake: !!c })} />
-              <span className="text-sm">{t("Allow entrance exam retake", "السماح بإعادة امتحان القبول")}</span>
+
+            <div style={{ background:"#fff", borderRadius:16, border:"1px solid #E5E7EB", padding:20 }}>
+              <h3 style={{ fontWeight:800, fontSize:15, color:"#111", marginBottom:16 }}>📝 Assign Exam by Level</h3>
+              <p style={{ fontSize:13, color:"#6B7280", marginBottom:14 }}>Select an exam and level — all students in that level will be assigned.</p>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+                {LEVELS.map(lv=>(
+                  <div key={lv} style={{ background:"#F9FAFB", borderRadius:12, padding:14, border:"1px solid #E5E7EB" }}>
+                    <p style={{ fontWeight:700, fontSize:13, color:"#374151", marginBottom:8, textTransform:"capitalize" }}>🎓 {lv}</p>
+                    <p style={{ fontSize:11, color:"#9CA3AF", marginBottom:8 }}>{users.filter(u=>u.level===lv&&u.roles.includes("student")).length} students</p>
+                    <select defaultValue="" onChange={e=>{ if(e.target.value)assignExamToLevel(e.target.value,lv); }}
+                      style={{ width:"100%", padding:"8px", borderRadius:9, border:"1px solid #E5E7EB", fontSize:12, outline:"none" }}>
+                      <option value="">Assign exam…</option>
+                      {exams.map(e=><option key={e.id} value={e.id}>{language==="ar"?e.title_ar||e.title:e.title}</option>)}
+                    </select>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditProfileStudent(null)}>{t("Cancel", "إلغاء")}</Button>
-            <Button onClick={saveEditProfile}>{t("Save", "حفظ")}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Deactivate Dialog */}
-      <Dialog open={!!deactivateStudent} onOpenChange={o => !o && setDeactivateStudent(null)}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>{t("Confirm", "تأكيد")}</DialogTitle></DialogHeader>
-          <p className="text-sm">{deactivateStudent?.status === "active"
-            ? t(`Deactivate ${deactivateStudent?.full_name}?`, `تعطيل ${deactivateStudent?.full_name}؟`)
-            : t(`Activate ${deactivateStudent?.full_name}?`, `تفعيل ${deactivateStudent?.full_name}؟`)
-          }</p>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDeactivateStudent(null)}>{t("Cancel", "إلغاء")}</Button>
-            <Button variant={deactivateStudent?.status === "active" ? "destructive" : "default"} onClick={() => toggleStatus(deactivateStudent)}>
-              {deactivateStudent?.status === "active" ? t("Deactivate", "تعطيل") : t("Activate", "تفعيل")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Bulk Enrol Dialog */}
-      <Dialog open={bulkAction === "enrol"} onOpenChange={o => !o && setBulkAction(null)}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>{t("Bulk Enrol in Subject", "تسجيل جماعي في مادة")}</DialogTitle></DialogHeader>
-          <Select value={bulkSubjectId} onValueChange={setBulkSubjectId}>
-            <SelectTrigger><SelectValue placeholder={t("Select subject", "اختر المادة")} /></SelectTrigger>
-            <SelectContent>{subjects.map(s => <SelectItem key={s.id} value={s.id}>{s.title}</SelectItem>)}</SelectContent>
-          </Select>
-          <Button onClick={executeBulkEnrol} disabled={!bulkSubjectId}>{t("Enrol", "تسجيل")} {selectedIds.size} {t("students", "طالب")}</Button>
-        </DialogContent>
-      </Dialog>
-
-      {/* Bulk Change Level Dialog */}
-      <Dialog open={bulkAction === "level"} onOpenChange={o => !o && setBulkAction(null)}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>{t("Change Level", "تغيير المستوى")}</DialogTitle></DialogHeader>
-          <Select value={bulkLevel} onValueChange={setBulkLevel}>
-            <SelectTrigger><SelectValue placeholder={t("Select level", "اختر المستوى")} /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="beginner">{t("Beginner", "مبتدئ")}</SelectItem>
-              <SelectItem value="intermediate">{t("Intermediate", "متوسط")}</SelectItem>
-              <SelectItem value="advanced">{t("Advanced", "متقدم")}</SelectItem>
-            </SelectContent>
-          </Select>
-          <Button onClick={executeBulkLevel} disabled={!bulkLevel}>{t("Change", "تغيير")}</Button>
-        </DialogContent>
-      </Dialog>
-
-      {/* Bulk Notification Dialog */}
-      <Dialog open={bulkAction === "notify"} onOpenChange={o => !o && setBulkAction(null)}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>{t("Send Notification", "إرسال إشعار")}</DialogTitle></DialogHeader>
-          <Textarea value={bulkNotifMsg} onChange={e => setBulkNotifMsg(e.target.value)} placeholder={t("Notification message...", "نص الإشعار...")} rows={3} />
-          <Button onClick={executeBulkNotify} disabled={!bulkNotifMsg}>{t("Send to", "إرسال لـ")} {selectedIds.size} {t("students", "طالب")}</Button>
-        </DialogContent>
-      </Dialog>
-    </div>
-  );
-};
-
-// Override score sub-component
-const OverrideScoreForm = ({ attempt, onSave, t }: { attempt: any; onSave: (id: string, score: number, total: number) => void; t: any }) => {
-  const [score, setScore] = useState(String(attempt.score || 0));
-  return (
-    <div className="space-y-3">
-      <p className="text-sm text-muted-foreground">{t("Current", "الحالي")}: {attempt.score}/{attempt.total_points} ({Math.round(attempt.percentage || 0)}%)</p>
-      <div>
-        <label className="text-xs font-medium">{t("New Score", "الدرجة الجديدة")}</label>
-        <Input type="number" value={score} onChange={e => setScore(e.target.value)} max={attempt.total_points} min={0} />
-        <p className="text-xs text-muted-foreground mt-1">{t("Max", "الحد الأقصى")}: {attempt.total_points}</p>
+        )}
       </div>
-      <Button onClick={() => onSave(attempt.id, Number(score), attempt.total_points)} className="w-full">{t("Save Override", "حفظ التعديل")}</Button>
+
+      {/* Edit User Dialog */}
+      <Dialog open={!!editUser} onOpenChange={v=>!v&&setEditUser(null)}>
+        <DialogContent style={{ maxWidth:420, borderRadius:20, padding:0 }}>
+          <div style={{ background:G, padding:"18px 20px", borderRadius:"20px 20px 0 0" }}>
+            <h2 style={{ fontWeight:800, fontSize:16, color:"#fff", margin:0 }}>Edit User</h2>
+          </div>
+          <div style={{ padding:20, display:"flex", flexDirection:"column", gap:14 }}>
+            <div><label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:5 }}>Full Name</label><Input value={editForm.full_name||""} onChange={e=>setEditForm((f:any)=>({...f,full_name:e.target.value}))} style={{ borderRadius:10 }}/></div>
+            <div><label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:5 }}>Level</label>
+              <select value={editForm.level||""} onChange={e=>setEditForm((f:any)=>({...f,level:e.target.value}))} style={{ width:"100%", padding:"9px 12px", borderRadius:10, border:"1.5px solid #E5E7EB", fontSize:13, outline:"none" }}>
+                <option value="">No level</option>
+                {LEVELS.map(l=><option key={l} value={l}>{l}</option>)}
+              </select>
+            </div>
+            <div><label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:5 }}>Status</label>
+              <select value={editForm.status||"active"} onChange={e=>setEditForm((f:any)=>({...f,status:e.target.value}))} style={{ width:"100%", padding:"9px 12px", borderRadius:10, border:"1.5px solid #E5E7EB", fontSize:13, outline:"none" }}>
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+                <option value="suspended">Suspended</option>
+              </select>
+            </div>
+            <div style={{ background:"#F0FDF4", borderRadius:12, padding:"10px 14px", border:"1px solid #86EFAC" }}>
+              <p style={{ fontSize:12, fontWeight:700, color:G, margin:0 }}>👁️ Roles: {editUser?.roles.join(", ")||"none"}</p>
+              <p style={{ fontSize:11, color:"#6B7280", marginTop:4 }}>Change roles from the Roles tab</p>
+            </div>
+            <Button onClick={saveUserEdit} disabled={saving} style={{ background:G, borderRadius:12, gap:8, fontWeight:700 }}>
+              {saving?<><Loader2 size={14} style={{ animation:"spin .8s linear infinite" }}/> Saving…</>:"Save Changes"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Notification Dialog */}
+      <Dialog open={notifDialog} onOpenChange={v=>!v&&setNotifDialog(false)}>
+        <DialogContent style={{ maxWidth:440, borderRadius:20, padding:0 }}>
+          <div style={{ background:"#7C3AED", padding:"18px 20px", borderRadius:"20px 20px 0 0", display:"flex", alignItems:"center", gap:10 }}>
+            <Bell size={20} color="#fff"/>
+            <h2 style={{ fontWeight:800, fontSize:16, color:"#fff", margin:0 }}>
+              {selectedIds.size>0?`Notify ${selectedIds.size} users`:"Broadcast to All"}
+            </h2>
+          </div>
+          <div style={{ padding:20, display:"flex", flexDirection:"column", gap:14 }}>
+            <div><label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:5 }}>Title *</label><Input value={notifTitle} onChange={e=>setNotifTitle(e.target.value)} placeholder="e.g. Class tomorrow at 9am" style={{ borderRadius:10 }}/></div>
+            <div><label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:5 }}>Message *</label><textarea value={notifMsg} onChange={e=>setNotifMsg(e.target.value)} rows={4} placeholder="Enter your message…" style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:"1.5px solid #E5E7EB", fontSize:13, outline:"none", resize:"none", boxSizing:"border-box" as const }}/></div>
+            <Button onClick={sendNotification} disabled={sending||!notifTitle||!notifMsg}
+              style={{ background:"#7C3AED", borderRadius:12, gap:8, fontWeight:700 }}>
+              {sending?<><Loader2 size={14} style={{ animation:"spin .8s linear infinite" }}/> Sending…</>:<><Send size={14}/> Send Notification</>}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </div>
   );
 };
