@@ -87,6 +87,7 @@ const TranscriptManagement  = lazy(() => import("./pages/admin/TranscriptManagem
 const AttendanceManagement  = lazy(() => import("./pages/admin/AttendanceManagement"));
 const PaymentManagement     = lazy(() => import("./pages/admin/PaymentManagement"));
 const AcademicCalendar      = lazy(() => import("./pages/admin/AcademicCalendar"));
+const PaymentSettings       = lazy(() => import("./pages/admin/PaymentSettings"));
 const PublicClassManagement = lazy(() => import("./pages/admin/PublicClassManagement"));
 const HifdhAdminReview      = lazy(() => import("./pages/admin/HifdhAdminReview"));
 const RecitationTestAdmin   = lazy(() => import("./pages/admin/RecitationTestAdmin"));
@@ -217,6 +218,7 @@ const App = () => (
                   <Route path="/admin/attendance"               element={<AttendanceManagement />} />
                   <Route path="/admin/payments"                 element={<PaymentManagement />} />
                   <Route path="/admin/calendar"                 element={<AcademicCalendar />} />
+                  <Route path="/admin/payment-settings"        element={<PaymentSettings />} />
                   <Route path="/admin/public-classes"           element={<PublicClassManagement />} />
                 </Route>
 
