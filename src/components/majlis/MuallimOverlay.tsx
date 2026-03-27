@@ -244,4 +244,3 @@ const MuallimOverlay = () => {
 };
 
 export default MuallimOverlay;
-
