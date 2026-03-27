@@ -1,379 +1,370 @@
-/* src/pages/admin/ViewAsStudent.tsx — Full student view with admin banner + send message */
-import { useEffect, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+/* src/pages/student/ProfileSettings.tsx
+   FIXED: upsert (not update) so missing profile rows get created
+   FIXED: student_preferences upsert with onConflict
+   FIXED: proper error surfacing with toast
+*/
+import { useState, useEffect, useRef } from "react";
+import { Switch } from "@/components/ui/switch";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { useLanguage } from "@/contexts/LanguageContext";
-import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import {
-  ArrowLeft, BookOpen, ClipboardList, TrendingUp, Calendar,
-  Video, CheckCircle, XCircle, Eye, Mail, Phone, Bell, Edit,
-  GraduationCap, Send, Loader2, ChevronRight, Users, Lock
-} from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { Camera, Save, Lock, LogOut, Trash2, Eye, EyeOff, Loader2, AlertTriangle } from "lucide-react";
 
 const G = "#064E3B";
+const inp: React.CSSProperties = {
+  width: "100%", padding: "9px 12px", borderRadius: 10,
+  border: "1.5px solid #E5E7EB", fontSize: 13, outline: "none",
+  background: "#FAFAFA", boxSizing: "border-box" as const,
+};
 
-const ViewAsStudent = () => {
-  const { userId } = useParams<{ userId: string }>();
-  const { t, language } = useLanguage();
-  const { user: adminUser } = useAuth();
+const TABS = [
+  { id: "profile", icon: "👤", label: "Profile" },
+  { id: "notifications", icon: "🔔", label: "Notifications" },
+  { id: "preferences", icon: "⚙️", label: "Preferences" },
+  { id: "security", icon: "🔒", label: "Security" },
+];
+
+export default function ProfileSettings() {
+  const { language, setLanguage } = useLanguage();
+  const { user, signOut } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
+  const avatarRef = useRef<HTMLInputElement>(null);
 
-  const [loading, setLoading]           = useState(true);
-  const [profile, setProfile]           = useState<any>(null);
-  const [enrollments, setEnrollments]   = useState<any[]>([]);
-  const [attempts, setAttempts]         = useState<any[]>([]);
-  const [notifications, setNotifications] = useState<any[]>([]);
-  const [attendance, setAttendance]     = useState<any[]>([]);
-  const [stats, setStats]               = useState({ enrollments:0, graded:0, avg:0, pending:0, released:0 });
-  const [activeTab, setActiveTab]       = useState("overview");
+  const [tab, setTab]               = useState("profile");
+  const [saving, setSaving]         = useState(false);
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const [showDelete, setShowDelete] = useState(false);
+  const [showPw, setShowPw]         = useState(false);
+  const [showPwVis, setShowPwVis]   = useState(false);
+  const [changingPw, setChangingPw] = useState(false);
+  const [pw, setPw]                 = useState({ new: "", confirm: "" });
 
-  // Send message dialog
-  const [msgDialog, setMsgDialog]       = useState(false);
-  const [msgTitle, setMsgTitle]         = useState("");
-  const [msgBody, setMsgBody]           = useState("");
-  const [sending, setSending]           = useState(false);
+  const [form, setForm] = useState({
+    full_name: "", full_name_ar: "", phone: "", whatsapp: "",
+    parent_name: "", parent_phone: "", date_of_birth: "",
+    bio: "", gender: "", nationality: "", country: "", city: "", avatar_url: "",
+  });
 
+  const [notifs, setNotifs] = useState({
+    email_notifications: true, whatsapp_notifications: false,
+    class_reminder: true, exam_reminder: true,
+    results_notification: true, new_recording_alert: true,
+    announcement_notifications: true,
+  });
+
+  const [prefs, setPrefs] = useState({
+    language: "en", dark_mode: false, autoplay_recordings: true,
+    playback_speed: "1x", show_subtitles: false, default_subject_view: "grid",
+  });
+
+  // Load on mount
   useEffect(() => {
-    if (!userId) return;
-    const load = async () => {
-      const [profileRes, enrollRes, attemptsRes, notifsRes, attendanceRes] = await Promise.all([
-        supabase.from("profiles").select("*").eq("user_id", userId).single(),
-        supabase.from("enrollments").select("*, courses(title, title_ar, subjects(title, title_ar))").eq("user_id", userId),
-        supabase.from("exam_attempts").select("*, exams(title, title_ar, type, term, passing_score)").eq("user_id", userId).order("created_at", { ascending: false }),
-        supabase.from("notifications" as any).select("*").eq("user_id", userId).order("created_at", { ascending: false }).limit(30),
-        supabase.from("manual_attendance").select("*, subjects(title, title_ar)").eq("student_id", userId).order("date", { ascending: false }).limit(50),
-      ]);
-      setProfile(profileRes.data);
-      setEnrollments(enrollRes.data || []);
-      setAttempts(attemptsRes.data || []);
-      setNotifications((notifsRes.data as any[]) || []);
-      setAttendance(attendanceRes.data || []);
-      const graded   = (attemptsRes.data||[]).filter(a => a.status === "graded");
-      const released = (attemptsRes.data||[]).filter(a => a.status === "released");
-      const allGraded = [...graded, ...released];
-      const avg = allGraded.length ? allGraded.reduce((s,a)=>s+(Number(a.percentage)||0),0)/allGraded.length : 0;
-      const pending = (attemptsRes.data||[]).filter(a=>a.status==="submitted").length;
-      setStats({ enrollments: enrollRes.data?.length||0, graded: allGraded.length, avg:Math.round(avg), pending, released:released.length });
-      setLoading(false);
-    };
-    load();
-  }, [userId]);
+    if (!user) return;
+    (async () => {
+      const { data: p } = await supabase.from("profiles").select("*").eq("user_id", user.id).maybeSingle();
+      if (p) setForm({ full_name: p.full_name||"", full_name_ar: p.full_name_ar||"", phone: p.phone||"", whatsapp: p.whatsapp||"", parent_name: p.parent_name||"", parent_phone: p.parent_phone||"", date_of_birth: p.date_of_birth||"", bio: p.bio||"", gender: p.gender||"", nationality: p.nationality||"", country: p.country||"", city: p.city||"", avatar_url: p.avatar_url||"" });
+      const { data: pd } = await supabase.from("student_preferences" as any).select("*").eq("user_id", user.id).maybeSingle();
+      if (pd) {
+        const d = pd as any;
+        if (d.notifications) setNotifs(n => ({ ...n, ...d.notifications }));
+        if (d.preferences)   setPrefs(p  => ({ ...p,  ...d.preferences  }));
+      }
+    })();
+  }, [user]);
 
-  const sendMessage = async () => {
-    if (!msgTitle || !msgBody || !userId) return;
-    setSending(true);
-    await supabase.from("notifications" as any).insert({
-      user_id: userId, title: msgTitle, message: msgBody,
-      type: "admin_message", sent_by: adminUser?.id,
-    } as any);
-    toast({ title: "✅ Message sent to student" });
-    setSending(false); setMsgDialog(false); setMsgTitle(""); setMsgBody("");
-    setNotifications(n => [{ id: Date.now(), title:msgTitle, message:msgBody, created_at:new Date().toISOString(), is_read:false, type:"admin_message" }, ...n]);
+  // FIX: upsert guarantees row creation even if profile missing
+  const saveProfile = async () => {
+    if (!user) return;
+    setSaving(true);
+    const { error } = await supabase.from("profiles").upsert(
+      { ...form, user_id: user.id, updated_at: new Date().toISOString() },
+      { onConflict: "user_id" }
+    );
+    setSaving(false);
+    if (error) toast({ title: "Save failed", description: error.message, variant: "destructive" });
+    else toast({ title: "✅ Profile saved!" });
   };
 
-  if (loading) return (
-    <div style={{ display:"flex", alignItems:"center", justifyContent:"center", minHeight:"60vh" }}>
-      <Loader2 size={32} style={{ animation:"spin .8s linear infinite", color:G }}/>
+  const saveNotifs = async () => {
+    if (!user) return;
+    setSaving(true);
+    const { error } = await supabase.from("student_preferences" as any).upsert(
+      { user_id: user.id, notifications: notifs } as any, { onConflict: "user_id" }
+    );
+    setSaving(false);
+    if (error) toast({ title: "Save failed", description: error.message, variant: "destructive" });
+    else toast({ title: "✅ Notification settings saved" });
+  };
+
+  const savePrefs = async () => {
+    if (!user) return;
+    setSaving(true);
+    const { error } = await supabase.from("student_preferences" as any).upsert(
+      { user_id: user.id, preferences: prefs } as any, { onConflict: "user_id" }
+    );
+    setSaving(false);
+    if (error) toast({ title: "Save failed", description: error.message, variant: "destructive" });
+    else {
+      if (prefs.language !== language) setLanguage(prefs.language as any);
+      toast({ title: "✅ Preferences saved" });
+    }
+  };
+
+  const changePassword = async () => {
+    if (pw.new !== pw.confirm) { toast({ title: "Passwords don't match", variant: "destructive" }); return; }
+    if (pw.new.length < 8) { toast({ title: "Min 8 characters", variant: "destructive" }); return; }
+    setChangingPw(true);
+    const { error } = await supabase.auth.updateUser({ password: pw.new });
+    setChangingPw(false);
+    if (error) toast({ title: "Error", description: error.message, variant: "destructive" });
+    else { toast({ title: "✅ Password updated!" }); setShowPw(false); setPw({ new: "", confirm: "" }); }
+  };
+
+  const uploadAvatar = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]; if (!file || !user) return;
+    setAvatarUploading(true);
+    const path = `avatars/${user.id}.${file.name.split(".").pop()}`;
+    const { error: upErr } = await supabase.storage.from("avatars").upload(path, file, { upsert: true, contentType: file.type });
+    if (upErr) { toast({ title: "Upload failed", description: upErr.message, variant: "destructive" }); setAvatarUploading(false); return; }
+    const { data } = supabase.storage.from("avatars").getPublicUrl(path);
+    const url = data.publicUrl + "?t=" + Date.now();
+    setForm(f => ({ ...f, avatar_url: url }));
+    await supabase.from("profiles").upsert({ user_id: user.id, avatar_url: data.publicUrl, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
+    setAvatarUploading(false);
+    toast({ title: "✅ Photo updated!" });
+  };
+
+  const Sec = ({ title, children }: { title: string; children: React.ReactNode }) => (
+    <div style={{ background: "#fff", borderRadius: 16, border: "1px solid #E5E7EB", overflow: "hidden", marginBottom: 14 }}>
+      <div style={{ padding: "10px 16px", background: "#F9FAFB", borderBottom: "1px solid #E5E7EB" }}>
+        <p style={{ fontWeight: 700, fontSize: 12, color: "#6B7280", margin: 0, textTransform: "uppercase", letterSpacing: .5 }}>{title}</p>
+      </div>
+      <div style={{ padding: "14px 16px" }}>{children}</div>
     </div>
   );
-  if (!profile) return <div style={{ padding:40, textAlign:"center", color:"#6B7280" }}>Student not found</div>;
 
-  const presentCount = attendance.filter(a=>a.status==="present"||a.status==="late").length;
-  const attendancePct = attendance.length ? Math.round((presentCount/attendance.length)*100) : null;
+  const Fld = ({ label, children }: { label: string; children: React.ReactNode }) => (
+    <div style={{ marginBottom: 12 }}>
+      <label style={{ fontSize: 11, fontWeight: 700, color: "#6B7280", display: "block", marginBottom: 4 }}>{label}</label>
+      {children}
+    </div>
+  );
 
-  const TABS = [
-    { id:"overview",  label:"Overview",  icon:"📊" },
-    { id:"exams",     label:"Exams",     icon:"📝" },
-    { id:"courses",   label:"Courses",   icon:"📚" },
-    { id:"attendance",label:"Attendance",icon:"📅" },
-    { id:"messages",  label:"Messages",  icon:"🔔" },
-  ];
+  const Tog = ({ label, sub, checked, onChange }: any) => (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid #F9FAFB" }}>
+      <div>
+        <p style={{ fontWeight: 600, fontSize: 13, color: "#374151", margin: 0 }}>{label}</p>
+        {sub && <p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>{sub}</p>}
+      </div>
+      <Switch checked={checked} onCheckedChange={onChange} />
+    </div>
+  );
 
-  const StatusBadge = ({ status }: { status:string }) => {
-    const cfg: Record<string,{bg:string;text:string}> = {
-      released: { bg:"#DCFCE7", text:"#166534" },
-      graded:   { bg:"#FEF9C3", text:"#854D0E" },
-      submitted:{ bg:"#DBEAFE", text:"#1D4ED8" },
-      in_progress:{ bg:"#F3F4F6", text:"#374151" },
-    };
-    const c = cfg[status]||{ bg:"#F3F4F6", text:"#6B7280" };
-    return <span style={{ fontSize:10, padding:"2px 8px", borderRadius:20, background:c.bg, color:c.text, fontWeight:700 }}>{status.replace("_"," ")}</span>;
-  };
+  const SaveBtn = ({ fn }: { fn: () => void }) => (
+    <button onClick={fn} disabled={saving}
+      style={{ width: "100%", padding: "12px 0", borderRadius: 12, border: "none", cursor: saving ? "not-allowed" : "pointer", fontWeight: 800, fontSize: 14, color: "#fff", background: saving ? "#9CA3AF" : G, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+      {saving ? <><Loader2 size={15} style={{ animation: "spin .8s linear infinite" }} /> Saving…</> : <><Save size={15} /> Save Changes</>}
+    </button>
+  );
 
   return (
-    <div style={{ minHeight:"100vh", background:"#F8F9FA" }}>
-      {/* Admin banner */}
-      <div style={{ background:"#7C3AED", padding:"10px 20px", display:"flex", alignItems:"center", gap:12 }}>
-        <Eye size={16} color="#fff"/>
-        <div style={{ flex:1 }}>
-          <p style={{ fontSize:12, fontWeight:800, color:"#fff", margin:0 }}>👁️ Admin: Viewing as Student</p>
-          <p style={{ fontSize:11, color:"rgba(255,255,255,.7)", margin:0 }}>You are seeing exactly what this student sees. Changes here are real.</p>
-        </div>
-        <button onClick={()=>navigate("/admin/students")}
-          style={{ padding:"5px 12px", borderRadius:8, background:"rgba(255,255,255,.2)", border:"1px solid rgba(255,255,255,.3)", color:"#fff", cursor:"pointer", fontSize:12, fontWeight:600, display:"flex", alignItems:"center", gap:5 }}>
-          <ArrowLeft size={13}/> Back to Admin
-        </button>
-      </div>
+    <div style={{ minHeight: "100vh", background: "#F3F4F6" }}>
 
-      {/* Student header */}
-      <div style={{ background:G, padding:"18px 20px" }}>
-        <div style={{ display:"flex", alignItems:"center", gap:14, flexWrap:"wrap" }}>
-          <div style={{ width:56, height:56, borderRadius:"50%", background:"rgba(255,255,255,.2)", border:"2px solid rgba(255,255,255,.3)", overflow:"hidden", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
-            {profile.avatar_url
-              ? <img src={profile.avatar_url} style={{ width:"100%", height:"100%", objectFit:"cover" }} alt=""/>
-              : <span style={{ fontSize:22, fontWeight:800, color:"#fff" }}>{(profile.full_name||"?")[0]}</span>}
-          </div>
-          <div style={{ flex:1 }}>
-            <p style={{ fontWeight:900, fontSize:18, color:"#fff", margin:0 }}>{profile.full_name||"—"}</p>
-            <div style={{ display:"flex", gap:8, marginTop:4, flexWrap:"wrap" }}>
-              {profile.email&&<span style={{ fontSize:11, color:"rgba(255,255,255,.7)", display:"flex", alignItems:"center", gap:3 }}><Mail size={11}/>{profile.email}</span>}
-              {profile.phone&&<span style={{ fontSize:11, color:"rgba(255,255,255,.7)", display:"flex", alignItems:"center", gap:3 }}><Phone size={11}/>{profile.phone}</span>}
-              {profile.level&&<span style={{ fontSize:11, padding:"2px 8px", borderRadius:20, background:"rgba(255,255,255,.2)", color:"#fff", fontWeight:700 }}>{profile.level}</span>}
-              {profile.status&&<span style={{ fontSize:11, padding:"2px 8px", borderRadius:20, background:profile.status==="active"?"rgba(34,197,94,.3)":"rgba(239,68,68,.3)", color:"#fff", fontWeight:700 }}>{profile.status}</span>}
+      {/* Header */}
+      <div style={{ background: G, padding: "18px 16px 0" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+          <div style={{ position: "relative", flexShrink: 0 }}>
+            <div style={{ width: 58, height: 58, borderRadius: "50%", border: "3px solid rgba(255,255,255,.3)", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(255,255,255,.15)" }}>
+              {form.avatar_url
+                ? <img src={form.avatar_url} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt="" />
+                : <span style={{ fontSize: 22, fontWeight: 800, color: "#fff" }}>{(form.full_name || user?.email || "?")[0].toUpperCase()}</span>}
+              {avatarUploading && <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,.5)", display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "50%" }}><Loader2 size={18} color="#fff" style={{ animation: "spin .8s linear infinite" }} /></div>}
             </div>
+            <button onClick={() => avatarRef.current?.click()} style={{ position: "absolute", bottom: 0, right: 0, width: 22, height: 22, borderRadius: "50%", background: "#fff", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 1px 4px rgba(0,0,0,.2)" }}>
+              <Camera size={11} color={G} />
+            </button>
+            <input ref={avatarRef} type="file" accept="image/*" style={{ display: "none" }} onChange={uploadAvatar} />
           </div>
-          <div style={{ display:"flex", gap:8 }}>
-            <button onClick={()=>setMsgDialog(true)}
-              style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 14px", borderRadius:10, background:"rgba(255,255,255,.15)", border:"1px solid rgba(255,255,255,.3)", color:"#fff", cursor:"pointer", fontSize:12, fontWeight:700 }}>
-              <Send size={13}/> Message
-            </button>
-            <button onClick={()=>navigate(`/admin/students`)}
-              style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 14px", borderRadius:10, background:"rgba(255,255,255,.15)", border:"1px solid rgba(255,255,255,.3)", color:"#fff", cursor:"pointer", fontSize:12, fontWeight:700 }}>
-              <Edit size={13}/> Edit Profile
-            </button>
+          <div>
+            <p style={{ fontWeight: 800, fontSize: 17, color: "#fff", margin: 0 }}>{form.full_name || "My Settings"}</p>
+            <p style={{ fontSize: 12, color: "rgba(255,255,255,.65)", margin: 0 }}>{user?.email}</p>
           </div>
         </div>
-
-        {/* Tabs */}
-        <div style={{ display:"flex", gap:4, marginTop:14, overflowX:"auto", paddingBottom:2 }}>
-          {TABS.map(tab=>(
-            <button key={tab.id} onClick={()=>setActiveTab(tab.id)}
-              style={{ padding:"7px 14px", borderRadius:10, border:"none", cursor:"pointer", fontWeight:700, fontSize:12, whiteSpace:"nowrap",
-                background:activeTab===tab.id?"#fff":"rgba(255,255,255,.12)",
-                color:activeTab===tab.id?G:"rgba(255,255,255,.85)" }}>
-              {tab.icon} {tab.label}
+        <div style={{ display: "flex", gap: 2, overflowX: "auto" }}>
+          {TABS.map(t => (
+            <button key={t.id} onClick={() => setTab(t.id)}
+              style={{ padding: "8px 14px", border: "none", cursor: "pointer", fontWeight: 700, fontSize: 12, whiteSpace: "nowrap", borderRadius: "10px 10px 0 0", background: tab === t.id ? "#F3F4F6" : "transparent", color: tab === t.id ? G : "rgba(255,255,255,.75)" }}>
+              {t.icon} {t.label}
             </button>
           ))}
         </div>
       </div>
 
-      <div style={{ padding:"16px", maxWidth:860, margin:"0 auto" }}>
+      <div style={{ padding: 16, maxWidth: 640, margin: "0 auto" }}>
 
-        {/* OVERVIEW */}
-        {activeTab==="overview"&&(
-          <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
-            {/* Stats grid */}
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))", gap:10 }}>
-              {[
-                { v:stats.enrollments, l:"Courses", icon:"📚", bg:"#EFF6FF", c:"#1D4ED8" },
-                { v:stats.graded,      l:"Graded",  icon:"✅", bg:"#F0FDF4", c:"#166534" },
-                { v:stats.released,    l:"Released", icon:"🔓", bg:"#ECFDF5", c:"#065F46" },
-                { v:stats.avg+"%",     l:"Avg Score",icon:"📊", bg:"#F5F3FF", c:"#6D28D9" },
-                { v:stats.pending,     l:"Pending",  icon:"⏳", bg:"#FFF7ED", c:"#C2410C" },
-                { v:attendancePct!=null?attendancePct+"%":"—", l:"Attendance", icon:"📅", bg:attendancePct!=null&&attendancePct<60?"#FEF2F2":"#F0FDF4", c:attendancePct!=null&&attendancePct<60?"#991B1B":"#166534" },
-              ].map((s,i)=>(
-                <div key={i} style={{ background:s.bg, borderRadius:12, padding:"12px 14px", textAlign:"center" }}>
-                  <div style={{ fontSize:22 }}>{s.icon}</div>
-                  <div style={{ fontSize:20, fontWeight:900, color:s.c }}>{s.v}</div>
-                  <div style={{ fontSize:10, color:s.c, opacity:.7, fontWeight:600 }}>{s.l}</div>
-                </div>
-              ))}
+        {/* PROFILE */}
+        {tab === "profile" && <>
+          <Sec title="Personal Information">
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <Fld label="Full Name (English)"><input style={inp} value={form.full_name} onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))} /></Fld>
+              <Fld label="الاسم (عربي)"><input style={{ ...inp, direction: "rtl" }} value={form.full_name_ar} onChange={e => setForm(f => ({ ...f, full_name_ar: e.target.value }))} /></Fld>
             </div>
-
-            {/* Recent activity */}
-            <div style={{ background:"#fff", borderRadius:16, border:"1px solid #E5E7EB", padding:16 }}>
-              <h3 style={{ fontWeight:800, fontSize:14, color:"#111", marginBottom:12 }}>Recent Exam Activity</h3>
-              {attempts.slice(0,5).map(a=>{
-                const pct = Math.round(a.percentage||0);
-                return (
-                  <div key={a.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 0", borderBottom:"1px solid #F9FAFB" }}>
-                    <div style={{ width:36, height:36, borderRadius:10, background:a.status==="released"?"#F0FDF4":a.status==="graded"?"#FEF9C3":"#DBEAFE", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
-                      <ClipboardList size={16} color={a.status==="released"?"#16A34A":a.status==="graded"?"#854D0E":"#1D4ED8"}/>
-                    </div>
-                    <div style={{ flex:1 }}>
-                      <p style={{ fontSize:13, fontWeight:600, color:"#111", margin:0 }}>{language==="ar"?a.exams?.title_ar||a.exams?.title:a.exams?.title}</p>
-                      <div style={{ display:"flex", gap:8, marginTop:2 }}>
-                        <StatusBadge status={a.status}/>
-                        {(a.status==="graded"||a.status==="released")&&<span style={{ fontSize:11, fontWeight:700, color:pct>=(a.exams?.passing_score||60)?"#16A34A":"#DC2626" }}>{pct}%</span>}
-                      </div>
-                    </div>
-                    {a.status==="graded"&&(
-                      <span style={{ fontSize:11, padding:"3px 8px", borderRadius:20, background:"#FEF9C3", color:"#854D0E", fontWeight:700, display:"flex", alignItems:"center", gap:3 }}>
-                        <Lock size={10}/> Awaiting release
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <Fld label="Phone"><input style={inp} type="tel" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} /></Fld>
+              <Fld label="WhatsApp"><input style={inp} type="tel" value={form.whatsapp} onChange={e => setForm(f => ({ ...f, whatsapp: e.target.value }))} /></Fld>
             </div>
-          </div>
-        )}
-
-        {/* EXAMS */}
-        {activeTab==="exams"&&(
-          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-            {attempts.length===0?(
-              <div style={{ textAlign:"center", padding:"48px 24px", background:"#fff", borderRadius:16, border:"2px dashed #E5E7EB" }}>
-                <p style={{ color:"#9CA3AF" }}>No exam attempts yet</p>
-              </div>
-            ):attempts.map(a=>{
-              const pct = Math.round(a.percentage||0);
-              const passing = a.exams?.passing_score||60;
-              return (
-                <div key={a.id} style={{ background:"#fff", borderRadius:14, border:"1.5px solid #E5E7EB", padding:"14px 16px", display:"flex", alignItems:"center", gap:12, flexWrap:"wrap" }}>
-                  <div style={{ flex:1, minWidth:160 }}>
-                    <p style={{ fontWeight:700, fontSize:14, color:"#111", margin:0 }}>{language==="ar"?a.exams?.title_ar||a.exams?.title:a.exams?.title}</p>
-                    <div style={{ display:"flex", gap:6, marginTop:4, flexWrap:"wrap" }}>
-                      <StatusBadge status={a.status}/>
-                      {a.exams?.term&&<span style={{ fontSize:10, padding:"2px 8px", borderRadius:20, background:"#F5F3FF", color:"#6D28D9", fontWeight:600 }}>{a.exams.term}</span>}
-                    </div>
-                  </div>
-                  {(a.status==="graded"||a.status==="released")&&(
-                    <div style={{ textAlign:"center" }}>
-                      <div style={{ fontSize:20, fontWeight:900, color:pct>=passing?"#16A34A":"#DC2626" }}>{pct}%</div>
-                      <div style={{ fontSize:10, color:"#9CA3AF" }}>{a.score}/{a.total_points}</div>
-                    </div>
-                  )}
-                  {a.status==="released"&&<CheckCircle size={18} color="#16A34A"/>}
-                  {a.status==="graded"&&<Lock size={16} color="#D97706"/>}
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {/* COURSES */}
-        {activeTab==="courses"&&(
-          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-            {enrollments.length===0?(
-              <div style={{ textAlign:"center", padding:"48px 24px", background:"#fff", borderRadius:16, border:"2px dashed #E5E7EB" }}>
-                <p style={{ color:"#9CA3AF" }}>Not enrolled in any courses yet</p>
-              </div>
-            ):enrollments.map(e=>{
-              const course = e.courses as any;
-              return (
-                <div key={e.id} style={{ background:"#fff", borderRadius:14, border:"1.5px solid #E5E7EB", padding:"14px 16px", display:"flex", alignItems:"center", gap:12 }}>
-                  <div style={{ width:40, height:40, borderRadius:10, background:"#ECFDF5", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
-                    <BookOpen size={18} color={G}/>
-                  </div>
-                  <div style={{ flex:1 }}>
-                    <p style={{ fontWeight:700, fontSize:14, color:"#111", margin:0 }}>{language==="ar"?course?.title_ar||course?.title:course?.title}</p>
-                    <p style={{ fontSize:11, color:"#9CA3AF", margin:"2px 0 0" }}>Enrolled {new Date(e.enrolled_at).toLocaleDateString()}</p>
-                  </div>
-                  <div style={{ textAlign:"center" }}>
-                    <div style={{ fontSize:16, fontWeight:900, color:G }}>{e.progress||0}%</div>
-                    <div style={{ fontSize:10, color:"#9CA3AF" }}>progress</div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {/* ATTENDANCE */}
-        {activeTab==="attendance"&&(
-          <>
-            <div style={{ background:"#fff", borderRadius:14, border:"1px solid #E5E7EB", padding:16, marginBottom:12, display:"flex", gap:20 }}>
-              <div style={{ textAlign:"center" }}>
-                <div style={{ fontSize:28, fontWeight:900, color:attendancePct!=null&&attendancePct<60?"#DC2626":G }}>{attendancePct!=null?attendancePct+"%":"—"}</div>
-                <div style={{ fontSize:11, color:"#9CA3AF" }}>Attendance rate</div>
-              </div>
-              <div style={{ display:"flex", gap:16, flexWrap:"wrap" }}>
-                {[["Present","#166534","#F0FDF4",attendance.filter(a=>a.status==="present").length],
-                  ["Late","#D97706","#FFF7ED",attendance.filter(a=>a.status==="late").length],
-                  ["Absent","#DC2626","#FEF2F2",attendance.filter(a=>a.status==="absent").length]].map(([l,c,bg,v])=>(
-                  <div key={l as string} style={{ background:bg as string, borderRadius:10, padding:"8px 14px", textAlign:"center" }}>
-                    <div style={{ fontSize:18, fontWeight:900, color:c as string }}>{v as number}</div>
-                    <div style={{ fontSize:10, color:c as string, opacity:.8, fontWeight:600 }}>{l as string}</div>
-                  </div>
-                ))}
-              </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <Fld label="Date of Birth"><input style={inp} type="date" value={form.date_of_birth} onChange={e => setForm(f => ({ ...f, date_of_birth: e.target.value }))} /></Fld>
+              <Fld label="Gender">
+                <select style={inp} value={form.gender} onChange={e => setForm(f => ({ ...f, gender: e.target.value }))}>
+                  <option value="">Prefer not to say</option>
+                  <option value="male">Male / ذكر</option>
+                  <option value="female">Female / أنثى</option>
+                </select>
+              </Fld>
             </div>
-            <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
-              {attendance.map(a=>(
-                <div key={a.id} style={{ background:"#fff", borderRadius:12, border:"1px solid #E5E7EB", padding:"10px 14px", display:"flex", alignItems:"center", gap:10 }}>
-                  <div style={{ flex:1 }}>
-                    <p style={{ fontSize:13, fontWeight:600, color:"#111", margin:0 }}>{language==="ar"?a.subjects?.title_ar||a.subjects?.title:a.subjects?.title||"—"}</p>
-                    <p style={{ fontSize:11, color:"#9CA3AF", margin:0 }}>{new Date(a.date).toLocaleDateString()}</p>
-                  </div>
-                  <span style={{ fontSize:11, fontWeight:700, padding:"3px 9px", borderRadius:20,
-                    background:a.status==="present"?"#DCFCE7":a.status==="late"?"#FEF9C3":"#FEE2E2",
-                    color:a.status==="present"?"#166534":a.status==="late"?"#854D0E":"#991B1B" }}>
-                    {a.status}
-                  </span>
-                </div>
-              ))}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+              <Fld label="Country"><input style={inp} value={form.country} onChange={e => setForm(f => ({ ...f, country: e.target.value }))} /></Fld>
+              <Fld label="City"><input style={inp} value={form.city} onChange={e => setForm(f => ({ ...f, city: e.target.value }))} /></Fld>
+              <Fld label="Nationality"><input style={inp} value={form.nationality} onChange={e => setForm(f => ({ ...f, nationality: e.target.value }))} /></Fld>
             </div>
-          </>
-        )}
+          </Sec>
+          <Sec title="Parent / Guardian">
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <Fld label="Parent Name"><input style={inp} value={form.parent_name} onChange={e => setForm(f => ({ ...f, parent_name: e.target.value }))} /></Fld>
+              <Fld label="Parent Phone"><input style={inp} type="tel" value={form.parent_phone} onChange={e => setForm(f => ({ ...f, parent_phone: e.target.value }))} /></Fld>
+            </div>
+          </Sec>
+          <SaveBtn fn={saveProfile} />
+        </>}
 
-        {/* MESSAGES */}
-        {activeTab==="messages"&&(
-          <>
-            <div style={{ marginBottom:12 }}>
-              <button onClick={()=>setMsgDialog(true)}
-                style={{ display:"flex", alignItems:"center", gap:8, padding:"10px 18px", borderRadius:12, border:"none", background:G, color:"#fff", cursor:"pointer", fontWeight:700, fontSize:13 }}>
-                <Send size={14}/> Send Message to Student
+        {/* NOTIFICATIONS */}
+        {tab === "notifications" && <>
+          <Sec title="Channels">
+            <Tog label="Email Notifications" sub="Updates via email" checked={notifs.email_notifications} onChange={(v: boolean) => setNotifs(n => ({ ...n, email_notifications: v }))} />
+            <Tog label="WhatsApp Notifications" sub="Class reminders" checked={notifs.whatsapp_notifications} onChange={(v: boolean) => setNotifs(n => ({ ...n, whatsapp_notifications: v }))} />
+            <Tog label="Announcements" sub="Academy-wide messages" checked={notifs.announcement_notifications} onChange={(v: boolean) => setNotifs(n => ({ ...n, announcement_notifications: v }))} />
+          </Sec>
+          <Sec title="Classes & Exams">
+            <Tog label="Class Reminders" checked={notifs.class_reminder} onChange={(v: boolean) => setNotifs(n => ({ ...n, class_reminder: v }))} />
+            <Tog label="Exam Reminders" checked={notifs.exam_reminder} onChange={(v: boolean) => setNotifs(n => ({ ...n, exam_reminder: v }))} />
+            <Tog label="Results Released" sub="When exam results are ready" checked={notifs.results_notification} onChange={(v: boolean) => setNotifs(n => ({ ...n, results_notification: v }))} />
+            <Tog label="New Recordings" sub="When class recordings uploaded" checked={notifs.new_recording_alert} onChange={(v: boolean) => setNotifs(n => ({ ...n, new_recording_alert: v }))} />
+          </Sec>
+          <SaveBtn fn={saveNotifs} />
+        </>}
+
+        {/* PREFERENCES */}
+        {tab === "preferences" && <>
+          <Sec title="Language & Display">
+            <Fld label="Interface Language">
+              <select style={inp} value={prefs.language} onChange={e => setPrefs(p => ({ ...p, language: e.target.value }))}>
+                <option value="en">English</option>
+                <option value="ar">العربية</option>
+              </select>
+            </Fld>
+            <Tog label="Dark Mode" sub="Coming soon" checked={prefs.dark_mode} onChange={(v: boolean) => setPrefs(p => ({ ...p, dark_mode: v }))} />
+          </Sec>
+          <Sec title="Learning">
+            <Tog label="Autoplay Recordings" checked={prefs.autoplay_recordings} onChange={(v: boolean) => setPrefs(p => ({ ...p, autoplay_recordings: v }))} />
+            <Tog label="Show Subtitles" checked={prefs.show_subtitles} onChange={(v: boolean) => setPrefs(p => ({ ...p, show_subtitles: v }))} />
+            <Fld label="Playback Speed">
+              <select style={inp} value={prefs.playback_speed} onChange={e => setPrefs(p => ({ ...p, playback_speed: e.target.value }))}>
+                {["0.75x", "1x", "1.25x", "1.5x", "2x"].map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </Fld>
+            <Fld label="Default View">
+              <select style={inp} value={prefs.default_subject_view} onChange={e => setPrefs(p => ({ ...p, default_subject_view: e.target.value }))}>
+                <option value="grid">Grid</option>
+                <option value="list">List</option>
+              </select>
+            </Fld>
+          </Sec>
+          <SaveBtn fn={savePrefs} />
+        </>}
+
+        {/* SECURITY */}
+        {tab === "security" && <>
+          <Sec title="Account Security">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "11px 0", borderBottom: "1px solid #F3F4F6" }}>
+              <div>
+                <p style={{ fontWeight: 600, fontSize: 13, color: "#374151", margin: 0 }}>Password</p>
+                <p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>Change your login password</p>
+              </div>
+              <button onClick={() => setShowPw(true)} style={{ padding: "7px 14px", borderRadius: 9, border: "1.5px solid #E5E7EB", background: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700, color: "#374151", display: "flex", alignItems: "center", gap: 5 }}>
+                <Lock size={12} /> Change
               </button>
             </div>
-            <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
-              {notifications.length===0?(
-                <div style={{ textAlign:"center", padding:"48px 24px", background:"#fff", borderRadius:16, border:"2px dashed #E5E7EB" }}>
-                  <p style={{ color:"#9CA3AF" }}>No messages</p>
-                </div>
-              ):notifications.map((n:any)=>(
-                <div key={n.id} style={{ background:"#fff", borderRadius:12, border:"1px solid #E5E7EB", padding:"12px 14px" }}>
-                  <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:8 }}>
-                    <div style={{ flex:1 }}>
-                      <p style={{ fontSize:13, fontWeight:700, color:"#111", margin:0 }}>{n.title}</p>
-                      <p style={{ fontSize:12, color:"#6B7280", margin:"3px 0 0", lineHeight:1.5 }}>{n.message}</p>
-                    </div>
-                    <div style={{ textAlign:"right", flexShrink:0 }}>
-                      <p style={{ fontSize:10, color:"#9CA3AF", margin:0 }}>{new Date(n.created_at).toLocaleDateString()}</p>
-                      {!n.is_read&&<span style={{ fontSize:9, padding:"1px 6px", borderRadius:20, background:"#DBEAFE", color:"#1D4ED8", fontWeight:700 }}>Unread</span>}
-                    </div>
-                  </div>
-                </div>
-              ))}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "11px 0" }}>
+              <div>
+                <p style={{ fontWeight: 600, fontSize: 13, color: "#374151", margin: 0 }}>Email</p>
+                <p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>{user?.email}</p>
+              </div>
+              <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: "#DCFCE7", color: "#166534", fontWeight: 700 }}>✓ Verified</span>
             </div>
-          </>
-        )}
+          </Sec>
+          <Sec title="Session">
+            <button onClick={async () => { await signOut(); navigate("/login"); }}
+              style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 12, background: "#FFF7ED", border: "1px solid #FED7AA", cursor: "pointer", width: "100%", marginBottom: 8 }}>
+              <LogOut size={16} color="#D97706" />
+              <div style={{ textAlign: "left" }}><p style={{ fontWeight: 700, fontSize: 13, color: "#D97706", margin: 0 }}>Sign Out</p><p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>Sign out of this device</p></div>
+            </button>
+            <button onClick={() => setShowDelete(true)}
+              style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 12, background: "#FEF2F2", border: "1px solid #FECACA", cursor: "pointer", width: "100%" }}>
+              <Trash2 size={16} color="#DC2626" />
+              <div style={{ textAlign: "left" }}><p style={{ fontWeight: 700, fontSize: 13, color: "#DC2626", margin: 0 }}>Delete Account</p><p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>Permanently delete account and all data</p></div>
+            </button>
+          </Sec>
+        </>}
       </div>
 
-      {/* Send Message Dialog */}
-      <Dialog open={msgDialog} onOpenChange={v=>!v&&setMsgDialog(false)}>
-        <DialogContent style={{ maxWidth:420, borderRadius:20, padding:0 }}>
-          <div style={{ background:"#7C3AED", padding:"18px 20px", borderRadius:"20px 20px 0 0", display:"flex", alignItems:"center", gap:10 }}>
-            <Send size={20} color="#fff"/>
-            <h2 style={{ fontWeight:800, fontSize:16, color:"#fff", margin:0 }}>Message {profile.full_name?.split(" ")[0]}</h2>
+      {/* Password Dialog */}
+      <Dialog open={showPw} onOpenChange={v => !v && setShowPw(false)}>
+        <DialogContent style={{ maxWidth: 400, borderRadius: 20, padding: 0 }}>
+          <div style={{ background: G, padding: "16px 20px", borderRadius: "20px 20px 0 0" }}>
+            <h2 style={{ fontWeight: 800, fontSize: 15, color: "#fff", margin: 0 }}>🔒 Change Password</h2>
           </div>
-          <div style={{ padding:20, display:"flex", flexDirection:"column", gap:14 }}>
-            <div>
-              <label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:5 }}>Title *</label>
-              <input value={msgTitle} onChange={e=>setMsgTitle(e.target.value)} placeholder="e.g. Homework reminder"
-                style={{ width:"100%", padding:"9px 12px", borderRadius:10, border:"1.5px solid #E5E7EB", fontSize:13, outline:"none", boxSizing:"border-box" as const }}/>
+          <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 14 }}>
+            <div style={{ position: "relative" }}>
+              <label style={{ fontSize: 11, fontWeight: 700, color: "#6B7280", display: "block", marginBottom: 4 }}>New Password</label>
+              <input type={showPwVis ? "text" : "password"} value={pw.new} onChange={e => setPw(p => ({ ...p, new: e.target.value }))} style={{ ...inp, paddingRight: 40 }} />
+              <button onClick={() => setShowPwVis(v => !v)} style={{ position: "absolute", right: 10, bottom: 9, background: "none", border: "none", cursor: "pointer" }}>
+                {showPwVis ? <EyeOff size={15} color="#9CA3AF" /> : <Eye size={15} color="#9CA3AF" />}
+              </button>
             </div>
             <div>
-              <label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:5 }}>Message *</label>
-              <textarea value={msgBody} onChange={e=>setMsgBody(e.target.value)} rows={4}
-                placeholder="Write your message to the student…"
-                style={{ width:"100%", padding:"9px 12px", borderRadius:10, border:"1.5px solid #E5E7EB", fontSize:13, outline:"none", resize:"none", boxSizing:"border-box" as const }}/>
+              <label style={{ fontSize: 11, fontWeight: 700, color: "#6B7280", display: "block", marginBottom: 4 }}>Confirm Password</label>
+              <input type="password" value={pw.confirm} onChange={e => setPw(p => ({ ...p, confirm: e.target.value }))} style={inp} />
             </div>
-            <button onClick={sendMessage} disabled={sending||!msgTitle||!msgBody}
-              style={{ padding:"13px", borderRadius:12, border:"none", background:"#7C3AED", color:"#fff", cursor:"pointer", fontWeight:700, fontSize:14, display:"flex", alignItems:"center", justifyContent:"center", gap:8, opacity:(sending||!msgTitle||!msgBody)?.5:1 }}>
-              {sending?<><Loader2 size={16} style={{ animation:"spin .8s linear infinite" }}/> Sending…</>:<><Send size={16}/> Send Message</>}
+            {pw.new && pw.confirm && pw.new !== pw.confirm && <p style={{ fontSize: 12, color: "#DC2626", margin: 0 }}>⚠️ Passwords don't match</p>}
+            <button onClick={changePassword} disabled={changingPw || !pw.new || pw.new !== pw.confirm}
+              style={{ padding: "12px 0", borderRadius: 12, border: "none", cursor: "pointer", fontWeight: 700, color: "#fff", background: changingPw || !pw.new || pw.new !== pw.confirm ? "#9CA3AF" : G, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+              {changingPw ? <><Loader2 size={14} style={{ animation: "spin .8s linear infinite" }} /> Changing…</> : "Update Password"}
             </button>
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Delete Dialog */}
+      <Dialog open={showDelete} onOpenChange={v => !v && setShowDelete(false)}>
+        <DialogContent style={{ maxWidth: 360, borderRadius: 20, padding: 24, textAlign: "center" }}>
+          <div style={{ width: 52, height: 52, borderRadius: "50%", background: "#FEF2F2", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 12px" }}>
+            <AlertTriangle size={24} color="#DC2626" />
+          </div>
+          <h3 style={{ fontWeight: 800, fontSize: 16, marginBottom: 8 }}>Delete Account?</h3>
+          <p style={{ fontSize: 12, color: "#6B7280", marginBottom: 18, lineHeight: 1.6 }}>Permanently deletes your account, exam results, and learning history. Cannot be undone.</p>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={() => setShowDelete(false)} style={{ flex: 1, padding: 11, borderRadius: 11, border: "1.5px solid #E5E7EB", background: "#fff", cursor: "pointer", fontWeight: 600, fontSize: 13 }}>Cancel</button>
+            <button style={{ flex: 1, padding: 11, borderRadius: 11, border: "none", background: "#DC2626", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>Delete</button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </div>
   );
-};
-
-export default ViewAsStudent;
-
+}
