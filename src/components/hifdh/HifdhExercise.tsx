@@ -1,29 +1,70 @@
 // src/components/hifdh/HifdhExercise.tsx
+// Hear prompt fixed + voice recitation with AI evaluation
 import { useState, useCallback, useRef, useEffect } from "react";
-import { SURAHS, audioUrl } from "./surahData";
+import { SURAHS, audioUrl, DEFAULT_RECITER } from "./surahData";
 
 const G = "#1a3d24"; const GM = "#276749"; const GOLD = "#b7791f";
 const LIGHT = "#f0fff4"; const BORDER = "#d4e8d4";
 
 interface Ayah { numberInSurah: number; text: string; }
+interface Props { reciter?: string; }
+
+const DEEPGRAM_KEY = (import.meta as any).env?.VITE_DEEPGRAM_API_KEY || "";
+const GROQ_KEY     = (import.meta as any).env?.VITE_GROQ_API_KEY || "";
 
 function toAr(n: number) { return String(n).replace(/[0-9]/g, d => "٠١٢٣٤٥٦٧٨٩"[+d]); }
+
+function getMime() {
+  for (const t of ["audio/webm;codecs=opus","audio/webm","audio/mp4","audio/ogg;codecs=opus",""])
+    if (!t || MediaRecorder.isTypeSupported(t)) return t;
+  return "";
+}
+
+// Normalise Arabic text for comparison
+function norm(t: string) {
+  return t
+    .replace(/[\u064B-\u065F\u0610-\u061A\u0670]/g, "")
+    .replace(/[\u0622\u0623\u0625\u0627]/g, "\u0627")
+    .replace(/\u0629/g, "\u0647")
+    .replace(/\u0649/g, "\u064A")
+    .replace(/\u0640/g, "")
+    .replace(/[^\u0621-\u063A\u0641-\u064A\s]/g, "")
+    .replace(/\s+/g, " ").trim();
+}
+
+function scoreMatch(transcript: string, reference: string[]): number {
+  const refText = norm(reference.join(" "));
+  const txText  = norm(transcript);
+  if (!txText || !refText) return 0;
+  const refWords = refText.split(" ").filter(Boolean);
+  const txWords  = txText.split(" ").filter(Boolean);
+  if (!txWords.length) return 0;
+  let matched = 0;
+  for (const rw of refWords) {
+    if (txWords.some(tw => {
+      if (tw === rw) return true;
+      if (rw.length >= 3 && tw.length >= 3 && rw.slice(0, 3) === tw.slice(0, 3)) return true;
+      return false;
+    })) matched++;
+  }
+  return Math.round((matched / refWords.length) * 100);
+}
 
 type StageKey = 1 | 2 | 3 | 4 | 5 | 6;
 
 const STAGE: Record<StageKey, { icon: string; title: string; titleAr: string; desc: string; color: string; bg: string; border: string }> = {
-  1: { icon: "📖", title: "Full Verse Prompt",     titleAr: "آية كاملة",           desc: "Full verse shown — read the next 2 after it",          color: G,         bg: LIGHT,     border: BORDER   },
-  2: { icon: "📚", title: "Full Verse Extended",   titleAr: "آية كاملة موسعة",     desc: "Full verse shown — read the next 4 after it",          color: "#276749", bg: "#e6ffed", border: "#9ae6b4" },
-  3: { icon: "✂️", title: "Half Ayah Prompt",      titleAr: "نصف آية",              desc: "First half shown — complete it + continue 2 more",     color: "#2563eb", bg: "#eff6ff", border: "#93c5fd" },
-  4: { icon: "🔤", title: "Half Ayah Extended",    titleAr: "نصف آية موسعة",        desc: "First half shown — complete it + the full next verse",  color: "#1d4ed8", bg: "#dbeafe", border: "#60a5fa" },
-  5: { icon: "💡", title: "Single Word Prompt",    titleAr: "كلمة واحدة",           desc: "Only the first word — recite the full verse from there",color: "#7c3aed", bg: "#f5f3ff", border: "#a78bfa" },
-  6: { icon: "🏁", title: "Full Section Challenge", titleAr: "تحدي القسم الكامل",   desc: "First verse shown — recite all remaining to end",       color: GOLD,      bg: "#fffbeb", border: "#f6d860" },
+  1: { icon: "📖", title: "Full Verse Prompt",     titleAr: "آية كاملة",          desc: "Full verse shown — read the next 2 after it",           color: G,         bg: LIGHT,     border: BORDER   },
+  2: { icon: "📚", title: "Full Verse Extended",   titleAr: "آية كاملة موسعة",    desc: "Full verse shown — read the next 4 after it",           color: "#276749", bg: "#e6ffed", border: "#9ae6b4" },
+  3: { icon: "✂️", title: "Half Ayah Prompt",      titleAr: "نصف آية",            desc: "First half shown — complete it + continue 2 more",      color: "#2563eb", bg: "#eff6ff", border: "#93c5fd" },
+  4: { icon: "🔤", title: "Half Ayah Extended",    titleAr: "نصف آية موسعة",      desc: "First half shown — complete it + the full next verse",   color: "#1d4ed8", bg: "#dbeafe", border: "#60a5fa" },
+  5: { icon: "💡", title: "Single Word Prompt",    titleAr: "كلمة واحدة",         desc: "Only the first word — recite the full verse from there", color: "#7c3aed", bg: "#f5f3ff", border: "#a78bfa" },
+  6: { icon: "🏁", title: "Full Section Challenge",titleAr: "تحدي القسم الكامل",  desc: "First verse shown — recite all remaining to end",        color: GOLD,      bg: "#fffbeb", border: "#f6d860" },
 };
 
 interface Question {
   stage: StageKey;
   prompt: string;
-  promptAyahNum: number;     // the actual surah ayah number for playback
+  promptAyahNum: number;
   promptLabel: string;
   answerLabel: string;
   answer: string[];
@@ -32,84 +73,19 @@ interface Question {
 function generateQ(stage: StageKey, pool: Ayah[], surahName: string): Question | null {
   const n = pool.length;
   if (n < 2) return null;
-
   try {
     switch (stage) {
-      case 1: {
-        const idx   = Math.floor(Math.random() * Math.max(1, n - 2));
-        return {
-          stage, prompt: pool[idx].text, promptAyahNum: pool[idx].numberInSurah,
-          promptLabel: `${surahName} · Verse ${pool[idx].numberInSurah}`,
-          answerLabel: "Now recite the next 2 verses:",
-          answer: pool.slice(idx + 1, idx + 3).map(a => a.text),
-        };
-      }
-      case 2: {
-        const idx   = Math.floor(Math.random() * Math.max(1, Math.max(1, n - 4)));
-        return {
-          stage, prompt: pool[idx].text, promptAyahNum: pool[idx].numberInSurah,
-          promptLabel: `${surahName} · Verse ${pool[idx].numberInSurah}`,
-          answerLabel: "Now recite the next 4 verses:",
-          answer: pool.slice(idx + 1, idx + 5).map(a => a.text),
-        };
-      }
-      case 3: {
-        const idx   = Math.floor(Math.random() * Math.max(1, n - 2));
-        const words = pool[idx].text.split(" ");
-        const half  = Math.max(1, Math.floor(words.length / 2));
-        return {
-          stage, prompt: words.slice(0, half).join(" ") + " …",
-          promptAyahNum: pool[idx].numberInSurah,
-          promptLabel: `First half of Verse ${pool[idx].numberInSurah}`,
-          answerLabel: "Complete this verse, then recite 2 more:",
-          answer: [
-            words.slice(half).join(" ") + " ← (complete verse)",
-            ...pool.slice(idx + 1, idx + 3).map(a => a.text),
-          ],
-        };
-      }
-      case 4: {
-        const idx   = Math.floor(Math.random() * Math.max(1, n - 1));
-        const words = pool[idx].text.split(" ");
-        const half  = Math.max(1, Math.floor(words.length / 2));
-        return {
-          stage, prompt: words.slice(0, half).join(" ") + " …",
-          promptAyahNum: pool[idx].numberInSurah,
-          promptLabel: `First half of Verse ${pool[idx].numberInSurah}`,
-          answerLabel: "Complete this verse and recite the next:",
-          answer: [
-            words.slice(half).join(" ") + " ← (complete verse)",
-            ...(idx + 1 < n ? [pool[idx + 1].text] : []),
-          ],
-        };
-      }
-      case 5: {
-        const idx   = Math.floor(Math.random() * n);
-        const word  = pool[idx].text.split(" ")[0];
-        return {
-          stage, prompt: word + " …",
-          promptAyahNum: pool[idx].numberInSurah,
-          promptLabel: `First word of Verse ${pool[idx].numberInSurah}`,
-          answerLabel: "Recite the complete verse:",
-          answer: [pool[idx].text],
-        };
-      }
-      case 6: {
-        return {
-          stage, prompt: pool[0].text,
-          promptAyahNum: pool[0].numberInSurah,
-          promptLabel: `Opening verse — ${surahName}`,
-          answerLabel: "Recite all remaining verses to the end:",
-          answer: pool.slice(1).map(a => a.text),
-        };
-      }
+      case 1: { const idx = Math.floor(Math.random() * Math.max(1, n - 2)); return { stage, prompt: pool[idx].text, promptAyahNum: pool[idx].numberInSurah, promptLabel: `${surahName} · Verse ${pool[idx].numberInSurah}`, answerLabel: "Now recite the next 2 verses:", answer: pool.slice(idx + 1, idx + 3).map(a => a.text) }; }
+      case 2: { const idx = Math.floor(Math.random() * Math.max(1, n - 4)); return { stage, prompt: pool[idx].text, promptAyahNum: pool[idx].numberInSurah, promptLabel: `${surahName} · Verse ${pool[idx].numberInSurah}`, answerLabel: "Now recite the next 4 verses:", answer: pool.slice(idx + 1, idx + 5).map(a => a.text) }; }
+      case 3: { const idx = Math.floor(Math.random() * Math.max(1, n - 2)); const words = pool[idx].text.split(" "); const half = Math.max(1, Math.floor(words.length / 2)); return { stage, prompt: words.slice(0, half).join(" ") + " …", promptAyahNum: pool[idx].numberInSurah, promptLabel: `First half of Verse ${pool[idx].numberInSurah}`, answerLabel: "Complete this verse, then recite 2 more:", answer: [words.slice(half).join(" ") + " ← (complete verse)", ...pool.slice(idx + 1, idx + 3).map(a => a.text)] }; }
+      case 4: { const idx = Math.floor(Math.random() * Math.max(1, n - 1)); const words = pool[idx].text.split(" "); const half = Math.max(1, Math.floor(words.length / 2)); return { stage, prompt: words.slice(0, half).join(" ") + " …", promptAyahNum: pool[idx].numberInSurah, promptLabel: `First half of Verse ${pool[idx].numberInSurah}`, answerLabel: "Complete this verse and recite the next:", answer: [words.slice(half).join(" ") + " ← (complete verse)", ...(idx + 1 < n ? [pool[idx + 1].text] : [])] }; }
+      case 5: { const idx = Math.floor(Math.random() * n); const word = pool[idx].text.split(" ")[0]; return { stage, prompt: word + " …", promptAyahNum: pool[idx].numberInSurah, promptLabel: `First word of Verse ${pool[idx].numberInSurah}`, answerLabel: "Recite the complete verse:", answer: [pool[idx].text] }; }
+      case 6: { return { stage, prompt: pool[0].text, promptAyahNum: pool[0].numberInSurah, promptLabel: `Opening verse — ${surahName}`, answerLabel: "Recite all remaining verses to the end:", answer: pool.slice(1).map(a => a.text) }; }
     }
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
-export default function HifdhExercise() {
+export default function HifdhExercise({ reciter = DEFAULT_RECITER }: Props) {
   const [surahNum, setSurahNum]     = useState(114);
   const [startV, setStartV]         = useState(1);
   const [endV, setEndV]             = useState(6);
@@ -124,7 +100,15 @@ export default function HifdhExercise() {
   const [noQError, setNoQError]     = useState(false);
   const [isPlaying, setIsPlaying]   = useState(false);
 
+  // Voice eval state
+  const [micState, setMicState]     = useState<"idle"|"recording"|"evaluating">("idle");
+  const [transcript, setTranscript] = useState("");
+  const [evalScore, setEvalScore]   = useState<number|null>(null);
+  const [autoResult, setAutoResult] = useState<"correct"|"wrong"|null>(null);
+
   const audioRef    = useRef<HTMLAudioElement | null>(null);
+  const mrRef       = useRef<MediaRecorder | null>(null);
+  const chunksRef   = useRef<Blob[]>([]);
   const surah       = SURAHS[surahNum - 1];
 
   const fetchAyahs = useCallback(async () => {
@@ -139,17 +123,19 @@ export default function HifdhExercise() {
   }, [surahNum]);
 
   useEffect(() => { fetchAyahs(); }, [fetchAyahs]);
-  useEffect(() => () => { audioRef.current?.pause(); }, []);
+  useEffect(() => () => { audioRef.current?.pause(); mrRef.current?.stop(); }, []);
 
   const stopAudio = () => { audioRef.current?.pause(); audioRef.current = null; setIsPlaying(false); };
 
   const selectedAyahs = ayahs.filter(a => a.numberInSurah >= startV && a.numberInSurah <= endV);
 
+  const resetVoice = () => { setMicState("idle"); setTranscript(""); setEvalScore(null); setAutoResult(null); };
+
   const nextQ = useCallback(() => {
     const pool = ayahs.filter(a => a.numberInSurah >= startV && a.numberInSurah <= endV);
     const q    = generateQ(stage, pool, surah.name);
     if (!q) { setNoQError(true); return; }
-    setQuestion(q); setRevealed(false); stopAudio(); setNoQError(false);
+    setQuestion(q); setRevealed(false); stopAudio(); setNoQError(false); resetVoice();
   }, [ayahs, startV, endV, stage, surah.name]);
 
   const startSession = () => {
@@ -157,11 +143,8 @@ export default function HifdhExercise() {
     const q    = generateQ(stage, pool, surah.name);
     if (!q) { setNoQError(true); return; }
     setScore({ correct: 0, total: 0 });
-    setQuestion(q);
-    setRevealed(false);
-    setNoQError(false);
-    setStarted(true);
-    stopAudio();
+    setQuestion(q); setRevealed(false); setNoQError(false); setStarted(true);
+    stopAudio(); resetVoice();
   };
 
   const markAnswer = (correct: boolean) => {
@@ -169,14 +152,86 @@ export default function HifdhExercise() {
     nextQ();
   };
 
+  // ── Hear prompt ──────────────────────────────────────────
   const playPrompt = () => {
     if (!question) return;
     stopAudio();
     setIsPlaying(true);
-    const audio = new Audio(audioUrl(surahNum, question.promptAyahNum));
+    const url   = audioUrl(surahNum, question.promptAyahNum, reciter);
+    const audio = new Audio(url);
     audioRef.current = audio;
-    audio.play().catch(() => setIsPlaying(false));
+    audio.play().catch(() => {
+      // Try fallback CDN
+      const fb = `https://cdn.islamic.network/quran/audio/128/ar.alafasy/${surahNum * 1000 + question.promptAyahNum}.mp3`;
+      const a2 = new Audio(fb); audioRef.current = a2;
+      a2.play().catch(() => setIsPlaying(false));
+      a2.onended = () => setIsPlaying(false);
+    });
     audio.onended = () => setIsPlaying(false);
+    audio.onerror = () => setIsPlaying(false);
+  };
+
+  // ── Voice recitation eval ────────────────────────────────
+  const startRecording = async () => {
+    resetVoice();
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mime = getMime();
+      const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
+      chunksRef.current = [];
+      mr.ondataavailable = e => { if (e.data?.size) chunksRef.current.push(e.data); };
+      mr.onstop = () => {
+        stream.getTracks().forEach(t => t.stop());
+        const blob = new Blob(chunksRef.current, { type: mime || "audio/webm" });
+        setMicState("evaluating");
+        transcribeAndEval(blob);
+      };
+      mr.start(200);
+      mrRef.current = mr;
+      setMicState("recording");
+    } catch { alert("Mic access denied."); }
+  };
+
+  const stopRecording = () => { mrRef.current?.stop(); };
+
+  const transcribeAndEval = async (blob: Blob) => {
+    if (!question) return;
+    let tx = "";
+    try {
+      if (DEEPGRAM_KEY) {
+        const r = await fetch(
+          "https://api.deepgram.com/v1/listen?model=nova-2&language=ar&punctuate=false",
+          { method: "POST", headers: { Authorization: `Token ${DEEPGRAM_KEY}`, "Content-Type": blob.type || "audio/webm" }, body: blob }
+        );
+        if (r.ok) tx = (await r.json())?.results?.channels?.[0]?.alternatives?.[0]?.transcript || "";
+      }
+      if (!tx && GROQ_KEY) {
+        const ext = blob.type.includes("mp4") ? "mp4" : "webm";
+        const fd = new FormData();
+        fd.append("file", new File([blob], `r.${ext}`, { type: blob.type }));
+        fd.append("model", "whisper-large-v3");
+        fd.append("language", "ar");
+        fd.append("response_format", "json");
+        const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions",
+          { method: "POST", headers: { Authorization: `Bearer ${GROQ_KEY}` }, body: fd });
+        if (r.ok) tx = (await r.json())?.text || "";
+      }
+      if (tx) {
+        setTranscript(tx);
+        const cleanAnswers = question.answer.map(a => a.replace("← (complete verse)", "").trim());
+        const sc = scoreMatch(tx, cleanAnswers);
+        setEvalScore(sc);
+        const result = sc >= 70 ? "correct" : "wrong";
+        setAutoResult(result);
+        // Auto-mark after 2s
+        setTimeout(() => {
+          setScore(s => ({ correct: s.correct + (result === "correct" ? 1 : 0), total: s.total + 1 }));
+          nextQ();
+        }, 2500);
+      } else {
+        setMicState("idle");
+      }
+    } catch { setMicState("idle"); }
   };
 
   const card = (ex?: React.CSSProperties): React.CSSProperties => ({
@@ -185,30 +240,22 @@ export default function HifdhExercise() {
   });
   const canStart = !loading && selectedAyahs.length >= 2;
 
-  // ── SETUP SCREEN ──────────────────────────────────────────────────
+  // ── SETUP ────────────────────────────────────────────────
   if (!started) {
     return (
       <div style={{ padding: "16px", display: "flex", flexDirection: "column", gap: 14 }}>
-
-        {/* Hero */}
         <div style={{ borderRadius: 18, overflow: "hidden" }}>
           <div style={{ background: `linear-gradient(135deg,${G},${GOLD})`, padding: "22px 20px", textAlign: "center" }}>
             <div style={{ fontSize: 44, marginBottom: 10 }}>🎯</div>
-            <div style={{ fontFamily: "'Amiri',serif", fontSize: 24, color: "#fff", fontWeight: 700 }}>Listen Exercise</div>
-            <div style={{ fontFamily: "'Amiri',serif", fontSize: 14, color: "rgba(255,255,255,.75)", marginTop: 4 }}>
-              تمرين الاستماع والاسترجاع
-            </div>
+            <div style={{ fontFamily: "'Amiri',serif", fontSize: 24, color: "#fff", fontWeight: 700 }}>Exercise</div>
+            <div style={{ fontFamily: "'Amiri',serif", fontSize: 14, color: "rgba(255,255,255,.75)", marginTop: 4 }}>تمرين الاستماع والاسترجاع</div>
           </div>
         </div>
 
-        {/* Surah + Range */}
         <div style={card({ padding: "16px" })}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: "#7a9e88", letterSpacing: .5, marginBottom: 10 }}>
-            SURAH & RANGE · السورة والنطاق
-          </div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#7a9e88", letterSpacing: .5, marginBottom: 10 }}>SURAH & RANGE · السورة والنطاق</div>
           <select value={surahNum} onChange={e => setSurahNum(Number(e.target.value))}
-            style={{ width: "100%", padding: "11px 12px", borderRadius: 12, border: `1px solid ${BORDER}`,
-              fontSize: 14, color: G, background: "#f8fafb", marginBottom: 10 }}>
+            style={{ width: "100%", padding: "11px 12px", borderRadius: 12, border: `1px solid ${BORDER}`, fontSize: 14, color: G, background: "#f8fafb", marginBottom: 10 }}>
             {SURAHS.map(s => <option key={s.num} value={s.num}>{s.num}. {s.name} · {s.nameAr}</option>)}
           </select>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
@@ -217,8 +264,7 @@ export default function HifdhExercise() {
                 <div style={{ fontSize: 11, color: "#7a9e88", fontWeight: 600, marginBottom: 4 }}>{lbl as string} Verse</div>
                 <input type="number" min={1} max={surah.verses} value={val as number}
                   onChange={e => (setter as Function)(Number(e.target.value))}
-                  style={{ width: "100%", padding: "10px 12px", borderRadius: 10,
-                    border: `1px solid ${BORDER}`, fontSize: 15, color: G, background: "#f8fafb", fontWeight: 700 }} />
+                  style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: `1px solid ${BORDER}`, fontSize: 15, color: G, background: "#f8fafb", fontWeight: 700 }} />
               </div>
             ))}
           </div>
@@ -227,24 +273,18 @@ export default function HifdhExercise() {
           </div>
         </div>
 
-        {/* Stage picker */}
         <div style={card({ padding: "14px 16px" })}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: "#7a9e88", letterSpacing: .5, marginBottom: 10 }}>
-            SELECT STAGE · اختر المرحلة
-          </div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#7a9e88", letterSpacing: .5, marginBottom: 10 }}>SELECT STAGE · اختر المرحلة</div>
           {([1, 2, 3, 4, 5, 6] as StageKey[]).map(s => {
-            const info = STAGE[s];
-            const active = stage === s;
+            const info = STAGE[s]; const active = stage === s;
             return (
               <div key={s} onClick={() => setStage(s)}
                 style={{ display: "flex", gap: 12, padding: "11px 12px", borderRadius: 12, cursor: "pointer",
-                  marginBottom: s < 6 ? 8 : 0, transition: "all .15s",
-                  background: active ? info.bg : "#fafafa",
+                  marginBottom: s < 6 ? 8 : 0, background: active ? info.bg : "#fafafa",
                   border: `1.5px solid ${active ? info.border : "#f0f4f0"}` }}>
                 <div style={{ width: 36, height: 36, borderRadius: 10, flexShrink: 0,
                   background: active ? info.color : "#f0f4f0",
-                  display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18,
-                  transition: "background .15s" }}>
+                  display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>
                   {info.icon}
                 </div>
                 <div style={{ flex: 1 }}>
@@ -254,7 +294,6 @@ export default function HifdhExercise() {
                   </div>
                   <div style={{ fontSize: 11, color: "#7a9e88", marginTop: 2 }}>{info.desc}</div>
                 </div>
-                <div style={{ flexShrink: 0, fontSize: 14, color: active ? info.color : "transparent" }}>●</div>
               </div>
             );
           })}
@@ -273,7 +312,6 @@ export default function HifdhExercise() {
             color: canStart ? "#fff" : "#7a9e88", fontSize: 15, fontWeight: 800 }}>
           {loading ? "Loading…" : `🎯 Start Stage ${stage} · ابدأ المرحلة`}
         </button>
-
         {fetchErr && (
           <div style={{ padding: "12px", borderRadius: 12, background: "#fff5f5",
             border: "1px solid #fca5a5", fontSize: 13, color: "#c0392b", textAlign: "center" }}>
@@ -285,25 +323,21 @@ export default function HifdhExercise() {
     );
   }
 
-  // ── ACTIVE EXERCISE ───────────────────────────────────────────────
-  // question is guaranteed non-null here — startSession only calls setStarted(true) when q is valid
-  if (!question) {
-    return (
-      <div style={{ padding: "20px", textAlign: "center" }}>
-        <div style={{ fontSize: 13, color: "#7a9e88", marginBottom: 12 }}>Generating question…</div>
-        <button onClick={nextQ} style={{ padding: "10px 20px", borderRadius: 10, border: "none",
-          background: G, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
-          Try Again
-        </button>
-      </div>
-    );
-  }
+  if (!question) return (
+    <div style={{ padding: "20px", textAlign: "center" }}>
+      <div style={{ fontSize: 13, color: "#7a9e88", marginBottom: 12 }}>Generating question…</div>
+      <button onClick={nextQ} style={{ padding: "10px 20px", borderRadius: 10, border: "none",
+        background: G, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Try Again</button>
+    </div>
+  );
 
   const info = STAGE[stage];
+
+  // ── ACTIVE ───────────────────────────────────────────────
   return (
     <div style={{ padding: "16px", display: "flex", flexDirection: "column", gap: 12 }}>
+      <style>{`@keyframes spin2{to{transform:rotate(360deg)}}`}</style>
 
-      {/* Top bar */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div style={{ padding: "5px 12px", borderRadius: 10, background: info.bg, border: `1px solid ${info.border}` }}>
           <span style={{ fontSize: 11, fontWeight: 700, color: info.color }}>{info.icon} Stage {stage}: {info.title}</span>
@@ -314,7 +348,7 @@ export default function HifdhExercise() {
               ✅ <strong style={{ color: G }}>{score.correct}</strong>/{score.total}
             </span>
           )}
-          <button onClick={() => { stopAudio(); setStarted(false); setQuestion(null); }}
+          <button onClick={() => { stopAudio(); mrRef.current?.stop(); setStarted(false); setQuestion(null); resetVoice(); }}
             style={{ fontSize: 11, padding: "5px 10px", borderRadius: 8,
               border: `1px solid ${BORDER}`, background: "#f8fafb", color: "#7a9e88", cursor: "pointer" }}>
             ✕ End
@@ -323,8 +357,7 @@ export default function HifdhExercise() {
       </div>
 
       {/* Prompt card */}
-      <div style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 18,
-        boxShadow: "0 2px 12px rgba(26,61,36,.07)", padding: "18px 16px" }}>
+      <div style={card({ padding: "18px 16px" })}>
         <div style={{ fontSize: 11, fontWeight: 700, color: "#7a9e88", letterSpacing: .5, marginBottom: 10 }}>
           {question.promptLabel.toUpperCase()}
         </div>
@@ -355,24 +388,84 @@ export default function HifdhExercise() {
       </div>
 
       {/* Task description */}
-      <div style={{ padding: "12px 16px", borderRadius: 14,
-        background: info.bg, border: `1px solid ${info.border}` }}>
+      <div style={{ padding: "12px 16px", borderRadius: 14, background: info.bg, border: `1px solid ${info.border}` }}>
         <div style={{ fontSize: 13, fontWeight: 700, color: info.color }}>{question.answerLabel}</div>
         <div style={{ fontSize: 11, color: "#7a9e88", marginTop: 3 }}>{info.desc}</div>
       </div>
 
-      {/* Answer reveal */}
-      {!revealed ? (
+      {/* ── Voice recitation section ── */}
+      <div style={card({ padding: "14px 16px" })}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: "#7a9e88", letterSpacing: .5, marginBottom: 10 }}>
+          🎙 RECITE ALOUD · اتلُ بصوتك
+        </div>
+
+        {micState === "idle" && (
+          <button onClick={startRecording}
+            style={{ width: "100%", padding: "12px 0", borderRadius: 12, border: "none",
+              background: `linear-gradient(135deg,${G},${GM})`, color: "#fff",
+              fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
+            🎙 Recite — AI Will Evaluate
+          </button>
+        )}
+
+        {micState === "recording" && (
+          <div style={{ textAlign: "center" }}>
+            <div style={{ display: "flex", gap: 3, justifyContent: "center", alignItems: "flex-end", height: 28, marginBottom: 8 }}>
+              {[8,14,10,20,12,18,8,15,22,9].map((h, i) => (
+                <div key={i} style={{ width: 4, height: h, borderRadius: 2, background: "#ef4444",
+                  animation: `spin2 0s ${i*0.08}s infinite` }} />
+              ))}
+            </div>
+            <div style={{ fontSize: 12, color: "#ef4444", fontWeight: 700, marginBottom: 10 }}>Recording… recite clearly</div>
+            <button onClick={stopRecording}
+              style={{ padding: "10px 24px", borderRadius: 10, border: "none",
+                background: "#fee2e2", color: "#c0392b", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+              ⏹ Done — Evaluate
+            </button>
+          </div>
+        )}
+
+        {micState === "evaluating" && (
+          <div style={{ textAlign: "center", padding: "16px 0" }}>
+            <div style={{ fontSize: 13, color: GOLD, fontWeight: 700, marginBottom: 4 }}>🤖 AI Evaluating…</div>
+            <div style={{ fontSize: 11, color: "#7a9e88" }}>Comparing your recitation</div>
+          </div>
+        )}
+
+        {evalScore !== null && autoResult && (
+          <div style={{ padding: "12px 14px", borderRadius: 12,
+            background: autoResult === "correct" ? LIGHT : "#fff5f5",
+            border: `1px solid ${autoResult === "correct" ? BORDER : "#fca5a5"}` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+              <span style={{ fontSize: 14, fontWeight: 900, color: autoResult === "correct" ? GM : "#c0392b" }}>
+                {autoResult === "correct" ? "✓ Correct! Masha'Allah" : "✗ Needs practice"}
+              </span>
+              <span style={{ fontSize: 18, fontWeight: 900, color: autoResult === "correct" ? GM : "#c0392b" }}>
+                {evalScore}%
+              </span>
+            </div>
+            {transcript && (
+              <div style={{ direction: "rtl", fontFamily: "'Amiri',serif", fontSize: 14, color: "#7a9e88",
+                background: "#f9fafb", borderRadius: 8, padding: "6px 10px", lineHeight: 1.8 }}>
+                {transcript}
+              </div>
+            )}
+            <div style={{ fontSize: 11, color: "#7a9e88", marginTop: 6 }}>Auto-advancing in 2s…</div>
+          </div>
+        )}
+      </div>
+
+      {/* Manual reveal */}
+      {!revealed && micState === "idle" && !autoResult ? (
         <button onClick={() => setRevealed(true)}
           style={{ padding: "14px 0", borderRadius: 14,
             border: `2px solid ${info.border}`, background: "#fafafa",
             color: G, fontSize: 14, fontWeight: 800, cursor: "pointer" }}>
           👁 Reveal Answer · أظهر الإجابة
         </button>
-      ) : (
+      ) : revealed && !autoResult ? (
         <>
-          <div style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 18,
-            boxShadow: "0 2px 12px rgba(26,61,36,.07)", padding: "16px" }}>
+          <div style={card({ padding: "16px" })}>
             <div style={{ fontSize: 11, fontWeight: 700, color: "#7a9e88", letterSpacing: .5, marginBottom: 10 }}>ANSWER · الإجابة</div>
             {question.answer.map((text, i) => (
               <div key={i} style={{ direction: "rtl", fontFamily: "'Amiri Quran',serif",
@@ -398,12 +491,11 @@ export default function HifdhExercise() {
             </button>
           </div>
         </>
-      )}
+      ) : null}
 
       {/* Session score */}
       {score.total > 0 && (
-        <div style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 14,
-          padding: "12px 16px" }}>
+        <div style={card({ padding: "12px 16px" })}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
             <span style={{ fontSize: 12, color: "#7a9e88", fontWeight: 600 }}>Session Score</span>
             <span style={{ fontSize: 15, fontWeight: 900, color: G }}>
@@ -417,11 +509,11 @@ export default function HifdhExercise() {
         </div>
       )}
 
-      {/* Stage switch strip */}
+      {/* Stage switch */}
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" as const }}>
         <span style={{ fontSize: 11, color: "#7a9e88", alignSelf: "center" }}>Switch:</span>
         {([1, 2, 3, 4, 5, 6] as StageKey[]).map(s => (
-          <button key={s} onClick={() => { setStage(s); setStarted(false); setQuestion(null); stopAudio(); }}
+          <button key={s} onClick={() => { setStage(s); setStarted(false); setQuestion(null); stopAudio(); mrRef.current?.stop(); resetVoice(); }}
             style={{ padding: "5px 11px", borderRadius: 8,
               border: `1px solid ${stage === s ? STAGE[s].border : BORDER}`,
               background: stage === s ? STAGE[s].bg : "#fafafa",
