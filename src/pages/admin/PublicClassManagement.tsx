@@ -364,3 +364,4 @@ const ToggleRow = ({ label, sub, checked, onChange }: { label:string; sub?:strin
 );
 
 export default PublicClassManagement;
+
