@@ -578,4 +578,3 @@ const MediaPreview = ({ src, label }: { src: string; label: string }) => {
 };
 
 export default ExamResults;
-
