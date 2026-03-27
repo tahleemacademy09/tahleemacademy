@@ -582,4 +582,3 @@ const PreExamVerification = () => {
 };
 
 export default PreExamVerification;
-
