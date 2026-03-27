@@ -9,7 +9,7 @@ import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import {
-  BookOpen, LayoutDashboard, ClipboardList, Users, LogOut, Globe,
+  BookOpen, LayoutDashboard, ClipboardList, Users, LogOut, Globe,UserPlus,
   CheckSquare, BarChart, UserCircle, Library, GraduationCap, MessageCircle,
   Menu, Video, Mic, Layers, FileText, UserCheck, BookMarked, Settings,
   CreditCard, Calendar, ChevronDown, ChevronRight, Wallet, Bell,
