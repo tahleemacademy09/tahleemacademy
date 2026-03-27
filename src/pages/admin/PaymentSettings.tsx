@@ -47,7 +47,6 @@ export default function PaymentSettings() {
 
     await updateMultiple(updates, user?.id);
 
-    // Notify all students if requested
     if (notifyStudents) {
       const { data: roles } = await supabase.from("user_roles" as any)
         .select("user_id").eq("role", "student");
@@ -150,7 +149,6 @@ export default function PaymentSettings() {
             </div>
           </div>
 
-          {/* Grace period */}
           <div style={{ marginBottom: 14 }}>
             <label style={{ fontSize: 12, fontWeight: 700, color: "#6B7280", display: "block", marginBottom: 6 }}>
               <Clock size={11} style={{ marginRight: 4, verticalAlign: "middle" }} />
@@ -166,7 +164,6 @@ export default function PaymentSettings() {
             </p>
           </div>
 
-          {/* Reason for disabling */}
           {!isPaymentEnabled && (
             <div style={{ marginBottom: 14 }}>
               <label style={{ fontSize: 12, fontWeight: 700, color: "#6B7280", display: "block", marginBottom: 6 }}>
@@ -182,7 +179,6 @@ export default function PaymentSettings() {
             </div>
           )}
 
-          {/* Notify toggle */}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", background: "#F9FAFB", borderRadius: 12, border: "1px solid #E5E7EB" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <Bell size={14} color="#6B7280" />
@@ -214,7 +210,6 @@ export default function PaymentSettings() {
         </div>
       </div>
 
-      {/* Confirm Dialog */}
       {showConfirm && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999, padding: 16 }}>
           <div style={{ background: "#fff", borderRadius: 20, padding: 28, maxWidth: 380, width: "100%", textAlign: "center" }}>
