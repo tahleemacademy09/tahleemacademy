@@ -1,370 +1,346 @@
-/* src/pages/student/ProfileSettings.tsx
-   FIXED: upsert (not update) so missing profile rows get created
-   FIXED: student_preferences upsert with onConflict
-   FIXED: proper error surfacing with toast
+/* src/pages/admin/ViewAsStudent.tsx
+   FIX: was 404 because it only showed data, but admin navigating to /student route
+        was blocked by ProtectedRoute(requiredRole="student").
+   
+   SOLUTION: This page renders the actual student dashboard components directly
+   inside an admin wrapper — no role bypass needed. Shows StudentDashboard,
+   StudentExams, etc. embedded with an "Admin Preview" banner.
+   
+   Route: /admin/students/:userId/view  (already in App.tsx)
 */
-import { useState, useEffect, useRef } from "react";
-import { Switch } from "@/components/ui/switch";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { useLanguage } from "@/contexts/LanguageContext";
-import { useAuth } from "@/contexts/AuthContext";
+import { useEffect, useState } from "react";
+import { useParams, useNavigate, Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
-import { useNavigate } from "react-router-dom";
-import { Camera, Save, Lock, LogOut, Trash2, Eye, EyeOff, Loader2, AlertTriangle } from "lucide-react";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
+import {
+  ArrowLeft, BookOpen, ClipboardList, TrendingUp,
+  Calendar, Send, Loader2, Eye, Mail, Phone,
+  Users, BarChart2, CheckCircle, XCircle
+} from "lucide-react";
 
 const G = "#064E3B";
-const inp: React.CSSProperties = {
-  width: "100%", padding: "9px 12px", borderRadius: 10,
-  border: "1.5px solid #E5E7EB", fontSize: 13, outline: "none",
-  background: "#FAFAFA", boxSizing: "border-box" as const,
-};
+const GOLD = "#b7791f";
 
-const TABS = [
-  { id: "profile", icon: "👤", label: "Profile" },
-  { id: "notifications", icon: "🔔", label: "Notifications" },
-  { id: "preferences", icon: "⚙️", label: "Preferences" },
-  { id: "security", icon: "🔒", label: "Security" },
-];
-
-export default function ProfileSettings() {
-  const { language, setLanguage } = useLanguage();
-  const { user, signOut } = useAuth();
+export default function ViewAsStudent() {
+  const { userId } = useParams<{ userId: string }>();
+  const { user: adminUser } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
-  const avatarRef = useRef<HTMLInputElement>(null);
 
-  const [tab, setTab]               = useState("profile");
-  const [saving, setSaving]         = useState(false);
-  const [avatarUploading, setAvatarUploading] = useState(false);
-  const [showDelete, setShowDelete] = useState(false);
-  const [showPw, setShowPw]         = useState(false);
-  const [showPwVis, setShowPwVis]   = useState(false);
-  const [changingPw, setChangingPw] = useState(false);
-  const [pw, setPw]                 = useState({ new: "", confirm: "" });
+  const [loading, setLoading]   = useState(true);
+  const [profile, setProfile]   = useState<any>(null);
+  const [enrollments, setEnrollments] = useState<any[]>([]);
+  const [attempts, setAttempts] = useState<any[]>([]);
+  const [assigned, setAssigned] = useState<any[]>([]);
+  const [attendance, setAttendance] = useState<any[]>([]);
+  const [activeTab, setActiveTab] = useState("overview");
+  const [msgDialog, setMsgDialog] = useState(false);
+  const [msgTitle, setMsgTitle]   = useState("");
+  const [msgBody, setMsgBody]     = useState("");
+  const [sending, setSending]     = useState(false);
 
-  const [form, setForm] = useState({
-    full_name: "", full_name_ar: "", phone: "", whatsapp: "",
-    parent_name: "", parent_phone: "", date_of_birth: "",
-    bio: "", gender: "", nationality: "", country: "", city: "", avatar_url: "",
-  });
-
-  const [notifs, setNotifs] = useState({
-    email_notifications: true, whatsapp_notifications: false,
-    class_reminder: true, exam_reminder: true,
-    results_notification: true, new_recording_alert: true,
-    announcement_notifications: true,
-  });
-
-  const [prefs, setPrefs] = useState({
-    language: "en", dark_mode: false, autoplay_recordings: true,
-    playback_speed: "1x", show_subtitles: false, default_subject_view: "grid",
-  });
-
-  // Load on mount
   useEffect(() => {
-    if (!user) return;
+    if (!userId) return;
     (async () => {
-      const { data: p } = await supabase.from("profiles").select("*").eq("user_id", user.id).maybeSingle();
-      if (p) setForm({ full_name: p.full_name||"", full_name_ar: p.full_name_ar||"", phone: p.phone||"", whatsapp: p.whatsapp||"", parent_name: p.parent_name||"", parent_phone: p.parent_phone||"", date_of_birth: p.date_of_birth||"", bio: p.bio||"", gender: p.gender||"", nationality: p.nationality||"", country: p.country||"", city: p.city||"", avatar_url: p.avatar_url||"" });
-      const { data: pd } = await supabase.from("student_preferences" as any).select("*").eq("user_id", user.id).maybeSingle();
-      if (pd) {
-        const d = pd as any;
-        if (d.notifications) setNotifs(n => ({ ...n, ...d.notifications }));
-        if (d.preferences)   setPrefs(p  => ({ ...p,  ...d.preferences  }));
-      }
+      const [pRes, eRes, aRes, asRes, atRes] = await Promise.all([
+        supabase.from("profiles").select("*").eq("user_id", userId).maybeSingle(),
+        supabase.from("enrollments").select("*, courses(title)").eq("user_id", userId),
+        supabase.from("exam_attempts").select("*, exams(title, type, passing_score)").eq("user_id", userId).order("created_at", { ascending: false }),
+        supabase.from("exam_assignments").select("*, exams(title, is_published)").eq("user_id", userId),
+        supabase.from("manual_attendance").select("*, subjects(title)").eq("student_id", userId).order("date", { ascending: false }).limit(30),
+      ]);
+      setProfile(pRes.data);
+      setEnrollments(eRes.data || []);
+      setAttempts(aRes.data || []);
+      setAssigned(asRes.data || []);
+      setAttendance(atRes.data || []);
+      setLoading(false);
     })();
-  }, [user]);
+  }, [userId]);
 
-  // FIX: upsert guarantees row creation even if profile missing
-  const saveProfile = async () => {
-    if (!user) return;
-    setSaving(true);
-    const { error } = await supabase.from("profiles").upsert(
-      { ...form, user_id: user.id, updated_at: new Date().toISOString() },
-      { onConflict: "user_id" }
-    );
-    setSaving(false);
-    if (error) toast({ title: "Save failed", description: error.message, variant: "destructive" });
-    else toast({ title: "✅ Profile saved!" });
+  const sendMsg = async () => {
+    if (!msgTitle || !msgBody) return;
+    setSending(true);
+    const { error } = await supabase.from("notifications" as any).insert({
+      user_id: userId, title: msgTitle, message: msgBody,
+      type: "admin_message", sent_by: adminUser?.id,
+    } as any);
+    setSending(false);
+    if (error) toast({ title: "Failed to send", description: error.message, variant: "destructive" });
+    else { toast({ title: "✅ Message sent!" }); setMsgDialog(false); setMsgTitle(""); setMsgBody(""); }
   };
 
-  const saveNotifs = async () => {
-    if (!user) return;
-    setSaving(true);
-    const { error } = await supabase.from("student_preferences" as any).upsert(
-      { user_id: user.id, notifications: notifs } as any, { onConflict: "user_id" }
-    );
-    setSaving(false);
-    if (error) toast({ title: "Save failed", description: error.message, variant: "destructive" });
-    else toast({ title: "✅ Notification settings saved" });
-  };
-
-  const savePrefs = async () => {
-    if (!user) return;
-    setSaving(true);
-    const { error } = await supabase.from("student_preferences" as any).upsert(
-      { user_id: user.id, preferences: prefs } as any, { onConflict: "user_id" }
-    );
-    setSaving(false);
-    if (error) toast({ title: "Save failed", description: error.message, variant: "destructive" });
-    else {
-      if (prefs.language !== language) setLanguage(prefs.language as any);
-      toast({ title: "✅ Preferences saved" });
-    }
-  };
-
-  const changePassword = async () => {
-    if (pw.new !== pw.confirm) { toast({ title: "Passwords don't match", variant: "destructive" }); return; }
-    if (pw.new.length < 8) { toast({ title: "Min 8 characters", variant: "destructive" }); return; }
-    setChangingPw(true);
-    const { error } = await supabase.auth.updateUser({ password: pw.new });
-    setChangingPw(false);
-    if (error) toast({ title: "Error", description: error.message, variant: "destructive" });
-    else { toast({ title: "✅ Password updated!" }); setShowPw(false); setPw({ new: "", confirm: "" }); }
-  };
-
-  const uploadAvatar = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]; if (!file || !user) return;
-    setAvatarUploading(true);
-    const path = `avatars/${user.id}.${file.name.split(".").pop()}`;
-    const { error: upErr } = await supabase.storage.from("avatars").upload(path, file, { upsert: true, contentType: file.type });
-    if (upErr) { toast({ title: "Upload failed", description: upErr.message, variant: "destructive" }); setAvatarUploading(false); return; }
-    const { data } = supabase.storage.from("avatars").getPublicUrl(path);
-    const url = data.publicUrl + "?t=" + Date.now();
-    setForm(f => ({ ...f, avatar_url: url }));
-    await supabase.from("profiles").upsert({ user_id: user.id, avatar_url: data.publicUrl, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
-    setAvatarUploading(false);
-    toast({ title: "✅ Photo updated!" });
-  };
-
-  const Sec = ({ title, children }: { title: string; children: React.ReactNode }) => (
-    <div style={{ background: "#fff", borderRadius: 16, border: "1px solid #E5E7EB", overflow: "hidden", marginBottom: 14 }}>
-      <div style={{ padding: "10px 16px", background: "#F9FAFB", borderBottom: "1px solid #E5E7EB" }}>
-        <p style={{ fontWeight: 700, fontSize: 12, color: "#6B7280", margin: 0, textTransform: "uppercase", letterSpacing: .5 }}>{title}</p>
-      </div>
-      <div style={{ padding: "14px 16px" }}>{children}</div>
+  if (loading) return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "60vh" }}>
+      <Loader2 size={32} style={{ animation: "spin .8s linear infinite", color: G }} />
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </div>
   );
 
-  const Fld = ({ label, children }: { label: string; children: React.ReactNode }) => (
-    <div style={{ marginBottom: 12 }}>
-      <label style={{ fontSize: 11, fontWeight: 700, color: "#6B7280", display: "block", marginBottom: 4 }}>{label}</label>
-      {children}
+  if (!profile) return (
+    <div style={{ padding: 32, textAlign: "center" }}>
+      <div style={{ fontSize: 40, marginBottom: 12 }}>👤</div>
+      <p style={{ fontWeight: 700, color: "#374151" }}>Student not found</p>
+      <button onClick={() => navigate("/admin/students")}
+        style={{ marginTop: 12, padding: "9px 20px", borderRadius: 10, border: "none", background: G, color: "#fff", cursor: "pointer", fontWeight: 700 }}>
+        ← Back to Students
+      </button>
     </div>
   );
 
-  const Tog = ({ label, sub, checked, onChange }: any) => (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid #F9FAFB" }}>
-      <div>
-        <p style={{ fontWeight: 600, fontSize: 13, color: "#374151", margin: 0 }}>{label}</p>
-        {sub && <p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>{sub}</p>}
-      </div>
-      <Switch checked={checked} onCheckedChange={onChange} />
-    </div>
-  );
+  const graded   = attempts.filter(a => ["graded", "released"].includes(a.status));
+  const avg      = graded.length ? Math.round(graded.reduce((s, a) => s + (Number(a.percentage) || 0), 0) / graded.length) : 0;
+  const pending  = attempts.filter(a => a.status === "submitted").length;
+  const present  = attendance.filter(a => a.status === "present").length;
+  const attRate  = attendance.length ? Math.round((present / attendance.length) * 100) : 0;
 
-  const SaveBtn = ({ fn }: { fn: () => void }) => (
-    <button onClick={fn} disabled={saving}
-      style={{ width: "100%", padding: "12px 0", borderRadius: 12, border: "none", cursor: saving ? "not-allowed" : "pointer", fontWeight: 800, fontSize: 14, color: "#fff", background: saving ? "#9CA3AF" : G, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-      {saving ? <><Loader2 size={15} style={{ animation: "spin .8s linear infinite" }} /> Saving…</> : <><Save size={15} /> Save Changes</>}
-    </button>
-  );
+  const inp: React.CSSProperties = {
+    width: "100%", padding: "9px 12px", borderRadius: 10,
+    border: "1.5px solid #E5E7EB", fontSize: 13, outline: "none",
+    background: "#FAFAFA", boxSizing: "border-box" as const,
+  };
+
+  const TABS = [
+    { id: "overview",    label: "Overview",    icon: "📊" },
+    { id: "exams",       label: "Exams",       icon: "📝" },
+    { id: "attendance",  label: "Attendance",  icon: "📅" },
+    { id: "assignments", label: "Assignments", icon: "📋" },
+  ];
 
   return (
     <div style={{ minHeight: "100vh", background: "#F3F4F6" }}>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
 
-      {/* Header */}
+      {/* ── Admin Preview Banner ── */}
+      <div style={{ background: "#7c3aed", padding: "8px 16px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: "#fff", display: "flex", alignItems: "center", gap: 8 }}>
+          <Eye size={14} /> Admin Preview — viewing as student
+        </span>
+        <button onClick={() => navigate("/admin/students")}
+          style={{ padding: "4px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,.3)", background: "transparent", color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
+          ← Exit Preview
+        </button>
+      </div>
+
+      {/* ── Student Profile Header ── */}
       <div style={{ background: G, padding: "18px 16px 0" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
-          <div style={{ position: "relative", flexShrink: 0 }}>
-            <div style={{ width: 58, height: 58, borderRadius: "50%", border: "3px solid rgba(255,255,255,.3)", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(255,255,255,.15)" }}>
-              {form.avatar_url
-                ? <img src={form.avatar_url} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt="" />
-                : <span style={{ fontSize: 22, fontWeight: 800, color: "#fff" }}>{(form.full_name || user?.email || "?")[0].toUpperCase()}</span>}
-              {avatarUploading && <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,.5)", display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "50%" }}><Loader2 size={18} color="#fff" style={{ animation: "spin .8s linear infinite" }} /></div>}
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 14, marginBottom: 16 }}>
+          <div style={{ width: 56, height: 56, borderRadius: "50%", border: "3px solid rgba(255,255,255,.3)", overflow: "hidden", flexShrink: 0, background: "rgba(255,255,255,.15)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            {profile.avatar_url
+              ? <img src={profile.avatar_url} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt="" />
+              : <span style={{ fontSize: 20, fontWeight: 800, color: "#fff" }}>{(profile.full_name || "?")[0]}</span>}
+          </div>
+          <div style={{ flex: 1 }}>
+            <p style={{ fontWeight: 800, fontSize: 17, color: "#fff", margin: 0 }}>{profile.full_name || "Unknown"}</p>
+            {profile.full_name_ar && <p style={{ fontSize: 13, color: "rgba(255,255,255,.7)", margin: 0, fontFamily: "'Amiri',serif", direction: "rtl" }}>{profile.full_name_ar}</p>}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
+              {profile.phone && <span style={{ fontSize: 11, color: "rgba(255,255,255,.7)", display: "flex", alignItems: "center", gap: 4 }}><Phone size={11} /> {profile.phone}</span>}
+              {profile.level && <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20, background: "rgba(255,255,255,.15)", color: "#fff", fontWeight: 700 }}>{profile.level}</span>}
+              {profile.gender && <span style={{ fontSize: 11, color: "rgba(255,255,255,.6)" }}>{profile.gender}</span>}
             </div>
-            <button onClick={() => avatarRef.current?.click()} style={{ position: "absolute", bottom: 0, right: 0, width: 22, height: 22, borderRadius: "50%", background: "#fff", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 1px 4px rgba(0,0,0,.2)" }}>
-              <Camera size={11} color={G} />
-            </button>
-            <input ref={avatarRef} type="file" accept="image/*" style={{ display: "none" }} onChange={uploadAvatar} />
           </div>
-          <div>
-            <p style={{ fontWeight: 800, fontSize: 17, color: "#fff", margin: 0 }}>{form.full_name || "My Settings"}</p>
-            <p style={{ fontSize: 12, color: "rgba(255,255,255,.65)", margin: 0 }}>{user?.email}</p>
-          </div>
+          <button onClick={() => setMsgDialog(true)}
+            style={{ padding: "8px 14px", borderRadius: 10, border: "1px solid rgba(255,255,255,.3)", background: "rgba(255,255,255,.1)", color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+            <Send size={13} /> Message
+          </button>
         </div>
+
+        {/* Stat pills */}
+        <div style={{ display: "flex", gap: 8, marginBottom: 16, overflowX: "auto" }}>
+          {[
+            { v: enrollments.length, l: "Courses" },
+            { v: `${avg}%`, l: "Avg Score" },
+            { v: assigned.length, l: "Assigned" },
+            { v: pending, l: "Pending" },
+            { v: `${attRate}%`, l: "Attendance" },
+          ].map((s, i) => (
+            <div key={i} style={{ padding: "7px 14px", borderRadius: 10, background: "rgba(255,255,255,.12)", flexShrink: 0 }}>
+              <p style={{ fontWeight: 900, fontSize: 16, color: "#fff", margin: 0 }}>{s.v}</p>
+              <p style={{ fontSize: 10, color: "rgba(255,255,255,.65)", margin: 0 }}>{s.l}</p>
+            </div>
+          ))}
+        </div>
+
+        {/* Tab strip */}
         <div style={{ display: "flex", gap: 2, overflowX: "auto" }}>
           {TABS.map(t => (
-            <button key={t.id} onClick={() => setTab(t.id)}
-              style={{ padding: "8px 14px", border: "none", cursor: "pointer", fontWeight: 700, fontSize: 12, whiteSpace: "nowrap", borderRadius: "10px 10px 0 0", background: tab === t.id ? "#F3F4F6" : "transparent", color: tab === t.id ? G : "rgba(255,255,255,.75)" }}>
+            <button key={t.id} onClick={() => setActiveTab(t.id)}
+              style={{ padding: "8px 14px", border: "none", cursor: "pointer", fontWeight: 700, fontSize: 12, whiteSpace: "nowrap", borderRadius: "10px 10px 0 0", background: activeTab === t.id ? "#F3F4F6" : "transparent", color: activeTab === t.id ? G : "rgba(255,255,255,.75)" }}>
               {t.icon} {t.label}
             </button>
           ))}
         </div>
       </div>
 
-      <div style={{ padding: 16, maxWidth: 640, margin: "0 auto" }}>
+      <div style={{ padding: 16, maxWidth: 700, margin: "0 auto" }}>
 
-        {/* PROFILE */}
-        {tab === "profile" && <>
-          <Sec title="Personal Information">
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <Fld label="Full Name (English)"><input style={inp} value={form.full_name} onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))} /></Fld>
-              <Fld label="الاسم (عربي)"><input style={{ ...inp, direction: "rtl" }} value={form.full_name_ar} onChange={e => setForm(f => ({ ...f, full_name_ar: e.target.value }))} /></Fld>
+        {/* OVERVIEW */}
+        {activeTab === "overview" && (
+          <>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
+              {[
+                { icon: "📚", v: enrollments.length, l: "Enrolled Courses", bg: "#EFF6FF", c: "#1D4ED8" },
+                { icon: "✅", v: graded.length, l: "Graded Exams", bg: "#F0FDF4", c: "#166534" },
+                { icon: "⏳", v: pending, l: "Awaiting Grading", bg: "#FFF7ED", c: "#C2410C" },
+                { icon: "📊", v: `${avg}%`, l: "Average Score", bg: "#F5F3FF", c: "#6D28D9" },
+              ].map((s, i) => (
+                <div key={i} style={{ background: s.bg, borderRadius: 14, padding: "16px", display: "flex", gap: 12, alignItems: "center" }}>
+                  <span style={{ fontSize: 28 }}>{s.icon}</span>
+                  <div><p style={{ fontSize: 22, fontWeight: 900, color: s.c, margin: 0 }}>{s.v}</p><p style={{ fontSize: 11, color: s.c, opacity: .7, margin: 0, fontWeight: 600 }}>{s.l}</p></div>
+                </div>
+              ))}
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <Fld label="Phone"><input style={inp} type="tel" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} /></Fld>
-              <Fld label="WhatsApp"><input style={inp} type="tel" value={form.whatsapp} onChange={e => setForm(f => ({ ...f, whatsapp: e.target.value }))} /></Fld>
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <Fld label="Date of Birth"><input style={inp} type="date" value={form.date_of_birth} onChange={e => setForm(f => ({ ...f, date_of_birth: e.target.value }))} /></Fld>
-              <Fld label="Gender">
-                <select style={inp} value={form.gender} onChange={e => setForm(f => ({ ...f, gender: e.target.value }))}>
-                  <option value="">Prefer not to say</option>
-                  <option value="male">Male / ذكر</option>
-                  <option value="female">Female / أنثى</option>
-                </select>
-              </Fld>
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-              <Fld label="Country"><input style={inp} value={form.country} onChange={e => setForm(f => ({ ...f, country: e.target.value }))} /></Fld>
-              <Fld label="City"><input style={inp} value={form.city} onChange={e => setForm(f => ({ ...f, city: e.target.value }))} /></Fld>
-              <Fld label="Nationality"><input style={inp} value={form.nationality} onChange={e => setForm(f => ({ ...f, nationality: e.target.value }))} /></Fld>
-            </div>
-          </Sec>
-          <Sec title="Parent / Guardian">
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <Fld label="Parent Name"><input style={inp} value={form.parent_name} onChange={e => setForm(f => ({ ...f, parent_name: e.target.value }))} /></Fld>
-              <Fld label="Parent Phone"><input style={inp} type="tel" value={form.parent_phone} onChange={e => setForm(f => ({ ...f, parent_phone: e.target.value }))} /></Fld>
-            </div>
-          </Sec>
-          <SaveBtn fn={saveProfile} />
-        </>}
 
-        {/* NOTIFICATIONS */}
-        {tab === "notifications" && <>
-          <Sec title="Channels">
-            <Tog label="Email Notifications" sub="Updates via email" checked={notifs.email_notifications} onChange={(v: boolean) => setNotifs(n => ({ ...n, email_notifications: v }))} />
-            <Tog label="WhatsApp Notifications" sub="Class reminders" checked={notifs.whatsapp_notifications} onChange={(v: boolean) => setNotifs(n => ({ ...n, whatsapp_notifications: v }))} />
-            <Tog label="Announcements" sub="Academy-wide messages" checked={notifs.announcement_notifications} onChange={(v: boolean) => setNotifs(n => ({ ...n, announcement_notifications: v }))} />
-          </Sec>
-          <Sec title="Classes & Exams">
-            <Tog label="Class Reminders" checked={notifs.class_reminder} onChange={(v: boolean) => setNotifs(n => ({ ...n, class_reminder: v }))} />
-            <Tog label="Exam Reminders" checked={notifs.exam_reminder} onChange={(v: boolean) => setNotifs(n => ({ ...n, exam_reminder: v }))} />
-            <Tog label="Results Released" sub="When exam results are ready" checked={notifs.results_notification} onChange={(v: boolean) => setNotifs(n => ({ ...n, results_notification: v }))} />
-            <Tog label="New Recordings" sub="When class recordings uploaded" checked={notifs.new_recording_alert} onChange={(v: boolean) => setNotifs(n => ({ ...n, new_recording_alert: v }))} />
-          </Sec>
-          <SaveBtn fn={saveNotifs} />
-        </>}
+            {/* Profile info card */}
+            <div style={{ background: "#fff", borderRadius: 16, border: "1px solid #E5E7EB", padding: 16, marginBottom: 14 }}>
+              <p style={{ fontWeight: 800, fontSize: 13, color: G, margin: "0 0 12px" }}>📋 Profile Details</p>
+              {[
+                ["Country", profile.country], ["City", profile.city],
+                ["Nationality", profile.nationality], ["Date of Birth", profile.date_of_birth],
+                ["Parent", profile.parent_name], ["Parent Phone", profile.parent_phone],
+              ].filter(([, v]) => v).map(([l, v]) => (
+                <div key={l} style={{ display: "flex", justifyContent: "space-between", padding: "7px 0", borderBottom: "1px solid #F9FAFB", fontSize: 13 }}>
+                  <span style={{ color: "#9CA3AF", fontWeight: 600 }}>{l}</span>
+                  <span style={{ color: "#374151", fontWeight: 700 }}>{v}</span>
+                </div>
+              ))}
+            </div>
 
-        {/* PREFERENCES */}
-        {tab === "preferences" && <>
-          <Sec title="Language & Display">
-            <Fld label="Interface Language">
-              <select style={inp} value={prefs.language} onChange={e => setPrefs(p => ({ ...p, language: e.target.value }))}>
-                <option value="en">English</option>
-                <option value="ar">العربية</option>
-              </select>
-            </Fld>
-            <Tog label="Dark Mode" sub="Coming soon" checked={prefs.dark_mode} onChange={(v: boolean) => setPrefs(p => ({ ...p, dark_mode: v }))} />
-          </Sec>
-          <Sec title="Learning">
-            <Tog label="Autoplay Recordings" checked={prefs.autoplay_recordings} onChange={(v: boolean) => setPrefs(p => ({ ...p, autoplay_recordings: v }))} />
-            <Tog label="Show Subtitles" checked={prefs.show_subtitles} onChange={(v: boolean) => setPrefs(p => ({ ...p, show_subtitles: v }))} />
-            <Fld label="Playback Speed">
-              <select style={inp} value={prefs.playback_speed} onChange={e => setPrefs(p => ({ ...p, playback_speed: e.target.value }))}>
-                {["0.75x", "1x", "1.25x", "1.5x", "2x"].map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-            </Fld>
-            <Fld label="Default View">
-              <select style={inp} value={prefs.default_subject_view} onChange={e => setPrefs(p => ({ ...p, default_subject_view: e.target.value }))}>
-                <option value="grid">Grid</option>
-                <option value="list">List</option>
-              </select>
-            </Fld>
-          </Sec>
-          <SaveBtn fn={savePrefs} />
-        </>}
-
-        {/* SECURITY */}
-        {tab === "security" && <>
-          <Sec title="Account Security">
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "11px 0", borderBottom: "1px solid #F3F4F6" }}>
-              <div>
-                <p style={{ fontWeight: 600, fontSize: 13, color: "#374151", margin: 0 }}>Password</p>
-                <p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>Change your login password</p>
+            {/* Enrolled courses */}
+            {enrollments.length > 0 && (
+              <div style={{ background: "#fff", borderRadius: 16, border: "1px solid #E5E7EB", padding: 16 }}>
+                <p style={{ fontWeight: 800, fontSize: 13, color: G, margin: "0 0 12px" }}>📚 Enrolled Courses</p>
+                {enrollments.map((e, i) => (
+                  <div key={i} style={{ padding: "8px 0", borderBottom: "1px solid #F9FAFB", display: "flex", alignItems: "center", gap: 10 }}>
+                    <div style={{ width: 28, height: 28, borderRadius: 8, background: "#EFF6FF", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <BookOpen size={14} color="#1D4ED8" />
+                    </div>
+                    <span style={{ fontSize: 13, color: "#374151", fontWeight: 600 }}>{e.courses?.title || "Course"}</span>
+                    <span style={{ marginLeft: "auto", fontSize: 11, padding: "2px 8px", borderRadius: 20, background: e.status === "active" ? "#DCFCE7" : "#F3F4F6", color: e.status === "active" ? "#166534" : "#6B7280", fontWeight: 700 }}>{e.status || "active"}</span>
+                  </div>
+                ))}
               </div>
-              <button onClick={() => setShowPw(true)} style={{ padding: "7px 14px", borderRadius: 9, border: "1.5px solid #E5E7EB", background: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700, color: "#374151", display: "flex", alignItems: "center", gap: 5 }}>
-                <Lock size={12} /> Change
-              </button>
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "11px 0" }}>
-              <div>
-                <p style={{ fontWeight: 600, fontSize: 13, color: "#374151", margin: 0 }}>Email</p>
-                <p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>{user?.email}</p>
+            )}
+          </>
+        )}
+
+        {/* EXAMS */}
+        {activeTab === "exams" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {attempts.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "40px 20px", background: "#fff", borderRadius: 16, border: "2px dashed #E5E7EB" }}>
+                <p style={{ fontSize: 36, marginBottom: 8 }}>📝</p>
+                <p style={{ fontWeight: 700, color: "#374151" }}>No exam attempts yet</p>
               </div>
-              <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: "#DCFCE7", color: "#166534", fontWeight: 700 }}>✓ Verified</span>
-            </div>
-          </Sec>
-          <Sec title="Session">
-            <button onClick={async () => { await signOut(); navigate("/login"); }}
-              style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 12, background: "#FFF7ED", border: "1px solid #FED7AA", cursor: "pointer", width: "100%", marginBottom: 8 }}>
-              <LogOut size={16} color="#D97706" />
-              <div style={{ textAlign: "left" }}><p style={{ fontWeight: 700, fontSize: 13, color: "#D97706", margin: 0 }}>Sign Out</p><p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>Sign out of this device</p></div>
-            </button>
-            <button onClick={() => setShowDelete(true)}
-              style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 12, background: "#FEF2F2", border: "1px solid #FECACA", cursor: "pointer", width: "100%" }}>
-              <Trash2 size={16} color="#DC2626" />
-              <div style={{ textAlign: "left" }}><p style={{ fontWeight: 700, fontSize: 13, color: "#DC2626", margin: 0 }}>Delete Account</p><p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>Permanently delete account and all data</p></div>
-            </button>
-          </Sec>
-        </>}
+            ) : attempts.map((a, i) => {
+              const pct  = Number(a.percentage) || 0;
+              const pass = pct >= (a.exams?.passing_score || 60);
+              return (
+                <div key={i} style={{ background: "#fff", borderRadius: 14, border: "1.5px solid #E5E7EB", padding: "14px 16px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+                    <div>
+                      <p style={{ fontWeight: 700, fontSize: 14, color: "#111", margin: 0 }}>{a.exams?.title || "Exam"}</p>
+                      <p style={{ fontSize: 11, color: "#9CA3AF", margin: "3px 0 0" }}>{new Date(a.created_at).toLocaleDateString()} · {a.exams?.type || "exam"}</p>
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+                      <span style={{ fontSize: 20, fontWeight: 900, color: pass ? "#166534" : "#DC2626" }}>{a.status === "submitted" ? "—" : `${pct}%`}</span>
+                      <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, fontWeight: 700,
+                        background: a.status === "graded" || a.status === "released" ? (pass ? "#DCFCE7" : "#FEF2F2") : "#FFF7ED",
+                        color: a.status === "graded" || a.status === "released" ? (pass ? "#166534" : "#DC2626") : "#C2410C" }}>
+                        {a.status === "submitted" ? "⏳ Awaiting grading" : pass ? "✓ Passed" : "✗ Failed"}
+                      </span>
+                    </div>
+                  </div>
+                  {(a.status === "graded" || a.status === "released") && (
+                    <div style={{ height: 5, borderRadius: 3, background: "#F3F4F6", overflow: "hidden" }}>
+                      <div style={{ width: `${pct}%`, height: "100%", borderRadius: 3, background: pass ? "#16A34A" : "#DC2626", transition: "width .4s" }} />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* ATTENDANCE */}
+        {activeTab === "attendance" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {attendance.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "40px", background: "#fff", borderRadius: 16, border: "2px dashed #E5E7EB" }}>
+                <p style={{ fontSize: 36, marginBottom: 8 }}>📅</p>
+                <p style={{ fontWeight: 700, color: "#374151" }}>No attendance records</p>
+              </div>
+            ) : attendance.map((a, i) => (
+              <div key={i} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E5E7EB", padding: "12px 14px", display: "flex", alignItems: "center", gap: 12 }}>
+                <div style={{ width: 32, height: 32, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", background: a.status === "present" ? "#DCFCE7" : "#FEF2F2", flexShrink: 0 }}>
+                  {a.status === "present" ? <CheckCircle size={16} color="#166534" /> : <XCircle size={16} color="#DC2626" />}
+                </div>
+                <div style={{ flex: 1 }}>
+                  <p style={{ fontWeight: 600, fontSize: 13, color: "#374151", margin: 0 }}>{a.subjects?.title || "Class"}</p>
+                  <p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>{new Date(a.date).toLocaleDateString()}</p>
+                </div>
+                <span style={{ fontSize: 11, fontWeight: 700, color: a.status === "present" ? "#166534" : "#DC2626" }}>
+                  {a.status}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* ASSIGNMENTS */}
+        {activeTab === "assignments" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {assigned.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "40px", background: "#fff", borderRadius: 16, border: "2px dashed #E5E7EB" }}>
+                <p style={{ fontSize: 36, marginBottom: 8 }}>📋</p>
+                <p style={{ fontWeight: 700, color: "#374151" }}>No exams assigned</p>
+              </div>
+            ) : assigned.map((a, i) => {
+              const attempted = attempts.some(at => at.exam_id === a.exam_id);
+              return (
+                <div key={i} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E5E7EB", padding: "12px 14px", display: "flex", alignItems: "center", gap: 12 }}>
+                  <div style={{ flex: 1 }}>
+                    <p style={{ fontWeight: 700, fontSize: 13, color: "#374151", margin: 0 }}>{a.exams?.title || "Exam"}</p>
+                    <p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>Assigned {new Date(a.created_at).toLocaleDateString()}</p>
+                  </div>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    {!a.exams?.is_published && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, background: "#FFF7ED", color: "#C2410C", fontWeight: 700 }}>Draft</span>}
+                    <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, fontWeight: 700, background: attempted ? "#DCFCE7" : "#EFF6FF", color: attempted ? "#166534" : "#1D4ED8" }}>
+                      {attempted ? "Attempted" : "Pending"}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
-      {/* Password Dialog */}
-      <Dialog open={showPw} onOpenChange={v => !v && setShowPw(false)}>
-        <DialogContent style={{ maxWidth: 400, borderRadius: 20, padding: 0 }}>
+      {/* Send Message Dialog */}
+      <Dialog open={msgDialog} onOpenChange={v => !v && setMsgDialog(false)}>
+        <DialogContent style={{ maxWidth: 420, borderRadius: 20, padding: 0 }}>
           <div style={{ background: G, padding: "16px 20px", borderRadius: "20px 20px 0 0" }}>
-            <h2 style={{ fontWeight: 800, fontSize: 15, color: "#fff", margin: 0 }}>🔒 Change Password</h2>
+            <h2 style={{ fontWeight: 800, fontSize: 15, color: "#fff", margin: 0 }}>✉️ Send Message to {profile.full_name}</h2>
           </div>
-          <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 14 }}>
-            <div style={{ position: "relative" }}>
-              <label style={{ fontSize: 11, fontWeight: 700, color: "#6B7280", display: "block", marginBottom: 4 }}>New Password</label>
-              <input type={showPwVis ? "text" : "password"} value={pw.new} onChange={e => setPw(p => ({ ...p, new: e.target.value }))} style={{ ...inp, paddingRight: 40 }} />
-              <button onClick={() => setShowPwVis(v => !v)} style={{ position: "absolute", right: 10, bottom: 9, background: "none", border: "none", cursor: "pointer" }}>
-                {showPwVis ? <EyeOff size={15} color="#9CA3AF" /> : <Eye size={15} color="#9CA3AF" />}
-              </button>
+          <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 12 }}>
+            <div>
+              <label style={{ fontSize: 11, fontWeight: 700, color: "#6B7280", display: "block", marginBottom: 4 }}>Title</label>
+              <input value={msgTitle} onChange={e => setMsgTitle(e.target.value)} placeholder="e.g. Your exam result is ready" style={{ width: "100%", padding: "9px 12px", borderRadius: 10, border: "1.5px solid #E5E7EB", fontSize: 13, outline: "none", boxSizing: "border-box" as const }} />
             </div>
             <div>
-              <label style={{ fontSize: 11, fontWeight: 700, color: "#6B7280", display: "block", marginBottom: 4 }}>Confirm Password</label>
-              <input type="password" value={pw.confirm} onChange={e => setPw(p => ({ ...p, confirm: e.target.value }))} style={inp} />
+              <label style={{ fontSize: 11, fontWeight: 700, color: "#6B7280", display: "block", marginBottom: 4 }}>Message</label>
+              <textarea value={msgBody} onChange={e => setMsgBody(e.target.value)} rows={4} placeholder="Type your message here…"
+                style={{ width: "100%", padding: "9px 12px", borderRadius: 10, border: "1.5px solid #E5E7EB", fontSize: 13, outline: "none", resize: "none", boxSizing: "border-box" as const }} />
             </div>
-            {pw.new && pw.confirm && pw.new !== pw.confirm && <p style={{ fontSize: 12, color: "#DC2626", margin: 0 }}>⚠️ Passwords don't match</p>}
-            <button onClick={changePassword} disabled={changingPw || !pw.new || pw.new !== pw.confirm}
-              style={{ padding: "12px 0", borderRadius: 12, border: "none", cursor: "pointer", fontWeight: 700, color: "#fff", background: changingPw || !pw.new || pw.new !== pw.confirm ? "#9CA3AF" : G, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-              {changingPw ? <><Loader2 size={14} style={{ animation: "spin .8s linear infinite" }} /> Changing…</> : "Update Password"}
+            <button onClick={sendMsg} disabled={sending || !msgTitle || !msgBody}
+              style={{ padding: "12px 0", borderRadius: 11, border: "none", cursor: "pointer", fontWeight: 800, color: "#fff", background: sending || !msgTitle || !msgBody ? "#9CA3AF" : G, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+              {sending ? <><Loader2 size={14} style={{ animation: "spin .8s linear infinite" }} /> Sending…</> : <><Send size={14} /> Send Message</>}
             </button>
           </div>
         </DialogContent>
       </Dialog>
-
-      {/* Delete Dialog */}
-      <Dialog open={showDelete} onOpenChange={v => !v && setShowDelete(false)}>
-        <DialogContent style={{ maxWidth: 360, borderRadius: 20, padding: 24, textAlign: "center" }}>
-          <div style={{ width: 52, height: 52, borderRadius: "50%", background: "#FEF2F2", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 12px" }}>
-            <AlertTriangle size={24} color="#DC2626" />
-          </div>
-          <h3 style={{ fontWeight: 800, fontSize: 16, marginBottom: 8 }}>Delete Account?</h3>
-          <p style={{ fontSize: 12, color: "#6B7280", marginBottom: 18, lineHeight: 1.6 }}>Permanently deletes your account, exam results, and learning history. Cannot be undone.</p>
-          <div style={{ display: "flex", gap: 10 }}>
-            <button onClick={() => setShowDelete(false)} style={{ flex: 1, padding: 11, borderRadius: 11, border: "1.5px solid #E5E7EB", background: "#fff", cursor: "pointer", fontWeight: 600, fontSize: 13 }}>Cancel</button>
-            <button style={{ flex: 1, padding: 11, borderRadius: 11, border: "none", background: "#DC2626", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>Delete</button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </div>
   );
 }
