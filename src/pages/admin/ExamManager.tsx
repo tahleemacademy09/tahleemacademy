@@ -189,7 +189,7 @@ const ExamManager = () => {
               <p style={{ fontSize: 12, color: "#6B7280", margin: 0 }}>{exams.length} exams · {exams.filter(e => e.is_published).length} published</p>
             </div>
           </div>
-          <Button onClick={() => navigate("/admin/exam-editor")}
+          <Button onClick={() => navigate("/admin/exams/create")}
             style={{ background: G, borderRadius: 12, gap: 8, fontWeight: 700 }}>
             <Plus size={16} /> New Exam
           </Button>
@@ -290,7 +290,7 @@ const ExamManager = () => {
                         style={{ display: "flex", alignItems: "center", gap: 5, padding: "7px 12px", borderRadius: 9, border: "none", background: G, color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
                         <Send size={12} /> Assign
                       </button>
-                      <button onClick={() => navigate(`/admin/exam-editor?id=${exam.id}`)}
+                      <button onClick={() => navigate(`/admin/exams/${exam.id}/edit`)}
                         style={{ padding: "7px 10px", borderRadius: 9, border: "1.5px solid #E5E7EB", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center" }}>
                         <Edit size={13} color="#6B7280" />
                       </button>
@@ -302,7 +302,7 @@ const ExamManager = () => {
                         style={{ padding: "7px 10px", borderRadius: 9, border: "1.5px solid #E5E7EB", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center" }}>
                         <Copy size={13} color="#6B7280" />
                       </button>
-                      <button onClick={() => navigate(`/admin/grading?exam=${exam.id}`)}
+                      <button onClick={() => navigate("/admin/grading")}
                         style={{ padding: "7px 10px", borderRadius: 9, border: "1.5px solid #E5E7EB", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center" }}>
                         <BarChart2 size={13} color="#6B7280" />
                       </button>
