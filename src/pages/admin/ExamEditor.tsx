@@ -29,12 +29,23 @@ interface QuestionForm {
   question_text_ar: string;
   options: any[];
   correct_answer: string;
+  accepted_answers: string[];
   points: number;
   difficulty: string;
   sort_order: number;
   explanation: string;
   explanation_ar: string;
+  feedback_incorrect: string;
   media_url: string;
+  matching_pairs: { left: string; right: string }[];
+  ordering_items: string[];
+  partial_credit: boolean;
+  case_sensitive: boolean;
+  min_words: number;
+  max_words: number;
+  question_timer_seconds: number;
+  background_image: string;
+  audio_response_type: "text" | "audio";
 }
 
 const emptyQuestion = (): QuestionForm => ({
@@ -42,28 +53,46 @@ const emptyQuestion = (): QuestionForm => ({
   question_text: "",
   question_text_ar: "",
   options: [
-    { id: "a", text: "", text_ar: "", is_correct: false },
-    { id: "b", text: "", text_ar: "", is_correct: false },
-    { id: "c", text: "", text_ar: "", is_correct: false },
-    { id: "d", text: "", text_ar: "", is_correct: false },
+    { id: "a", text: "", text_ar: "", is_correct: false, image_url: "" },
+    { id: "b", text: "", text_ar: "", is_correct: false, image_url: "" },
+    { id: "c", text: "", text_ar: "", is_correct: false, image_url: "" },
+    { id: "d", text: "", text_ar: "", is_correct: false, image_url: "" },
   ],
   correct_answer: "",
+  accepted_answers: [""],
   points: 1,
   difficulty: "medium",
   sort_order: 0,
   explanation: "",
   explanation_ar: "",
+  feedback_incorrect: "",
   media_url: "",
+  matching_pairs: [{ left: "", right: "" }, { left: "", right: "" }],
+  ordering_items: ["", "", ""],
+  partial_credit: false,
+  case_sensitive: false,
+  min_words: 0,
+  max_words: 0,
+  question_timer_seconds: 0,
+  background_image: "",
+  audio_response_type: "text" as "text" | "audio",
 });
 
 const questionTypes = [
-  { value: "mcq", label: "Multiple Choice", label_ar: "اختيار من متعدد", icon: "📝" },
-  { value: "image_mcq", label: "Image Choice", label_ar: "اختيار بالصور", icon: "🖼️" },
-  { value: "true_false", label: "True / False", label_ar: "صح / خطأ", icon: "✓✗" },
-  { value: "short_answer", label: "Short Answer", label_ar: "إجابة قصيرة", icon: "📝" },
-  { value: "essay", label: "Essay", label_ar: "مقال", icon: "📄" },
-  { value: "fill_blank", label: "Fill in Blank", label_ar: "ملء الفراغ", icon: "___" },
-  { value: "audio", label: "Audio / Dictation", label_ar: "صوت / إملاء", icon: "🎧" },
+  // Standard
+  { value: "mcq",          label: "Multiple Choice",      label_ar: "اختيار من متعدد",         icon: "📝" },
+  { value: "multi_select", label: "Multi-Select",         label_ar: "اختيار متعدد",             icon: "☑️" },
+  { value: "true_false",   label: "True / False",         label_ar: "صح / خطأ",                icon: "✓✗" },
+  { value: "short_answer", label: "Short Answer",         label_ar: "إجابة قصيرة",             icon: "💬" },
+  { value: "essay",        label: "Essay",                label_ar: "مقال",                    icon: "📄" },
+  { value: "fill_blank",   label: "Fill in the Blank",    label_ar: "ملء الفراغ",              icon: "___" },
+  // Media
+  { value: "image_mcq",   label: "Image Choice",          label_ar: "اختيار بالصور",            icon: "🖼️" },
+  { value: "audio",        label: "Audio / Dictation",    label_ar: "صوت / إملاء",             icon: "🎧" },
+  { value: "drawing",      label: "Drawing / Whiteboard", label_ar: "رسم / لوحة بيضاء",        icon: "✏️" },
+  // Interactive
+  { value: "matching",     label: "Matching (Drag & Drop)",label_ar: "مطابقة (سحب وإفلات)",    icon: "🔗" },
+  { value: "ordering",     label: "Ordering / Sequence",  label_ar: "ترتيب / تسلسل",           icon: "📋" },
 ];
 
 // Convert a Date to local datetime-local input format (YYYY-MM-DDTHH:MM)
@@ -206,12 +235,23 @@ const ExamEditor = () => {
         question_text_ar: q.question_text_ar || "",
         options: Array.isArray(q.options) ? q.options : [],
         correct_answer: q.correct_answer || "",
+        accepted_answers: Array.isArray(q.accepted_answers) ? q.accepted_answers : [""],
         points: q.points || 10,
         difficulty: q.difficulty || "medium",
         sort_order: q.sort_order ?? 0,
         explanation: q.explanation || "",
         explanation_ar: q.explanation_ar || "",
+        feedback_incorrect: q.feedback_incorrect || "",
         media_url: q.media_url || "",
+        matching_pairs: Array.isArray(q.matching_pairs) ? q.matching_pairs : [{left:"",right:""},{left:"",right:""}],
+        ordering_items: Array.isArray(q.ordering_items) ? q.ordering_items : ["","",""],
+        partial_credit: q.partial_credit || false,
+        case_sensitive: q.case_sensitive || false,
+        min_words: q.min_words || 0,
+        max_words: q.max_words || 0,
+        question_timer_seconds: q.question_timer_seconds || 0,
+        background_image: q.background_image || "",
+        audio_response_type: q.audio_response_type || "text",
       })));
     };
     load();
@@ -253,14 +293,25 @@ const ExamEditor = () => {
           question_type: q.question_type,
           question_text: sanitizeHtml(q.question_text),
           question_text_ar: q.question_text_ar ? sanitizeHtml(q.question_text_ar) : sanitizeHtml(q.question_text),
-          options: (q.question_type === "mcq" || q.question_type === "image_mcq") ? q.options : null,
+          options: ["mcq","image_mcq","multi_select"].includes(q.question_type) ? q.options : null,
           correct_answer: q.correct_answer || null,
+          accepted_answers: q.accepted_answers?.filter(Boolean) || null,
           points: q.points,
           difficulty: q.difficulty,
           sort_order: i,
           explanation: q.explanation || null,
-          explanation_ar: q.explanation_ar || q.explanation || null,
+          explanation_ar: q.explanation_ar || null,
+          feedback_incorrect: (q as any).feedback_incorrect || null,
           media_url: q.media_url || null,
+          matching_pairs: q.matching_pairs?.filter((p:any)=>p.left||p.right) || null,
+          ordering_items: q.ordering_items?.filter(Boolean) || null,
+          partial_credit: q.partial_credit || false,
+          case_sensitive: q.case_sensitive || false,
+          min_words: q.min_words || 0,
+          max_words: q.max_words || 0,
+          question_timer_seconds: (q as any).question_timer_seconds || 0,
+          background_image: (q as any).background_image || null,
+          audio_response_type: (q as any).audio_response_type || "text",
         }));
         const { error } = await supabase.from("exam_questions").insert(qInserts);
         if (error) throw error;
@@ -1065,14 +1116,109 @@ fill_blank,"The word for 'water' is ___.","كلمة 'ماء' هي ___.",,,,,,,,,
                       </div>
                     )}
 
-                    {/* Explanation */}
-                    <div>
-                      <Input
-                        placeholder={t("Explanation (optional, any language)", "التوضيح (اختياري، أي لغة)")}
-                        value={q.explanation}
-                        onChange={(e) => updateQuestion(idx, { explanation: e.target.value })}
-                        dir="auto"
-                      />
+                    {/* Multi-Select */}
+                    {q.question_type === "multi_select" && (
+                      <div className="space-y-2">
+                        <Label className="text-sm">☑️ {t("Options — check ALL correct answers", "الخيارات — حدد كل الإجابات الصحيحة")}</Label>
+                        {q.options.map((opt: any, oi: number) => (
+                          <div key={opt.id} className="flex items-center gap-2 rounded-lg border p-2" style={{ borderColor: opt.is_correct ? "#064E3B" : undefined, background: opt.is_correct ? "#F0FDF4" : undefined }}>
+                            <input type="checkbox" checked={opt.is_correct} onChange={e => { const o=[...q.options]; o[oi]={...o[oi],is_correct:e.target.checked}; updateQuestion(idx,{options:o}); }} className="w-4 h-4 accent-primary" />
+                            <Input className="flex-1" placeholder={`${t("Option","خيار")} ${String.fromCharCode(65+oi)} (EN)`} value={opt.text} dir="ltr" onChange={e=>{const o=[...q.options];o[oi]={...o[oi],text:e.target.value};updateQuestion(idx,{options:o});}} />
+                            <Input className="w-36" placeholder="العربية" dir="rtl" value={opt.text_ar||""} onChange={e=>{const o=[...q.options];o[oi]={...o[oi],text_ar:e.target.value};updateQuestion(idx,{options:o});}} />
+                            <Button variant="ghost" size="icon" onClick={()=>updateQuestion(idx,{options:q.options.filter((_:any,j:number)=>j!==oi)})}><Trash2 className="h-4 w-4 text-destructive"/></Button>
+                          </div>
+                        ))}
+                        <Button variant="outline" size="sm" className="gap-1" onClick={()=>updateQuestion(idx,{options:[...q.options,{id:Math.random().toString(36).slice(2),text:"",text_ar:"",is_correct:false}]})}><Plus className="h-3 w-3"/>{t("Add Option","إضافة خيار")}</Button>
+                      </div>
+                    )}
+
+                    {/* Short Answer */}
+                    {q.question_type === "short_answer" && (
+                      <div className="space-y-2">
+                        <Label className="text-sm">💬 {t("Accepted Answers (all valid forms)","الإجابات المقبولة (كل الأشكال الصحيحة)")}</Label>
+                        {(q.accepted_answers||[""]).map((ans:string,ai:number)=>(
+                          <div key={ai} className="flex gap-2">
+                            <Input value={ans} placeholder={`${t("Accepted answer","إجابة مقبولة")} ${ai+1}`} dir="auto" onChange={e=>{const a=[...(q.accepted_answers||[""])];a[ai]=e.target.value;updateQuestion(idx,{accepted_answers:a,correct_answer:a[0]});}}/>
+                            {ai>0&&<Button variant="ghost" size="icon" onClick={()=>updateQuestion(idx,{accepted_answers:(q.accepted_answers||[]).filter((_:any,j:number)=>j!==ai)})}><Trash2 className="h-4 w-4 text-destructive"/></Button>}
+                          </div>
+                        ))}
+                        <Button variant="outline" size="sm" className="gap-1" onClick={()=>updateQuestion(idx,{accepted_answers:[...(q.accepted_answers||[]),""]})}><Plus className="h-3 w-3"/>{t("Add Variation","إضافة صيغة")}</Button>
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <input type="checkbox" checked={q.case_sensitive||false} onChange={e=>updateQuestion(idx,{case_sensitive:e.target.checked})}/>
+                          <span>{t("Case Sensitive","حساس لحالة الأحرف")}</span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Essay */}
+                    {q.question_type === "essay" && (
+                      <div className="rounded-lg border bg-accent/20 p-3 text-sm text-muted-foreground space-y-2">
+                        <p>📄 {t("Essay — student types a long response. Requires manual grading.","مقال — يتطلب تصحيحاً يدوياً.")}</p>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div><Label className="text-xs">{t("Min Words","الحد الأدنى")}</Label><Input type="number" min={0} value={q.min_words||0} onChange={e=>updateQuestion(idx,{min_words:+e.target.value})} className="mt-1"/></div>
+                          <div><Label className="text-xs">{t("Max Words","الحد الأقصى")}</Label><Input type="number" min={0} value={q.max_words||0} onChange={e=>updateQuestion(idx,{max_words:+e.target.value})} className="mt-1"/></div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Matching */}
+                    {q.question_type === "matching" && (
+                      <div className="space-y-2">
+                        <Label className="text-sm">🔗 {t("Matching Pairs — Left / Right","أزواج المطابقة — يسار / يمين")}</Label>
+                        {(q.matching_pairs||[]).map((pair:any,pi:number)=>(
+                          <div key={pi} className="grid grid-cols-2 gap-2 items-center">
+                            <Input placeholder={`${t("Left","يسار")} ${pi+1}`} value={pair.left} onChange={e=>{const p=[...(q.matching_pairs||[])];p[pi]={...p[pi],left:e.target.value};updateQuestion(idx,{matching_pairs:p});}} style={{borderColor:"#93C5FD"}}/>
+                            <div className="flex gap-2">
+                              <Input placeholder={`${t("Right","يمين")} ${pi+1}`} value={pair.right} onChange={e=>{const p=[...(q.matching_pairs||[])];p[pi]={...p[pi],right:e.target.value};updateQuestion(idx,{matching_pairs:p});}} style={{borderColor:"#C4B5FD"}}/>
+                              <Button variant="ghost" size="icon" onClick={()=>updateQuestion(idx,{matching_pairs:(q.matching_pairs||[]).filter((_:any,j:number)=>j!==pi)})}><Trash2 className="h-4 w-4 text-destructive"/></Button>
+                            </div>
+                          </div>
+                        ))}
+                        <Button variant="outline" size="sm" className="gap-1" onClick={()=>updateQuestion(idx,{matching_pairs:[...(q.matching_pairs||[]),{left:"",right:""}]})}><Plus className="h-3 w-3"/>{t("Add Pair","إضافة زوج")}</Button>
+                      </div>
+                    )}
+
+                    {/* Ordering */}
+                    {q.question_type === "ordering" && (
+                      <div className="space-y-2">
+                        <Label className="text-sm">📋 {t("Items in Correct Order (shuffled for student)","العناصر بالترتيب الصحيح — ستُخلط للطالب")}</Label>
+                        {(q.ordering_items||[]).map((item:string,oi:number)=>(
+                          <div key={oi} className="flex gap-2 items-center">
+                            <div className="w-7 h-7 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold flex-shrink-0">{oi+1}</div>
+                            <Input value={item} placeholder={`${t("Item","عنصر")} ${oi+1}`} dir="auto" onChange={e=>{const it=[...(q.ordering_items||[])];it[oi]=e.target.value;updateQuestion(idx,{ordering_items:it,correct_answer:it.join("|")});}}/>
+                            <Button variant="ghost" size="icon" onClick={()=>{const it=(q.ordering_items||[]).filter((_:any,j:number)=>j!==oi);updateQuestion(idx,{ordering_items:it,correct_answer:it.join("|")});}}><Trash2 className="h-4 w-4 text-destructive"/></Button>
+                          </div>
+                        ))}
+                        <Button variant="outline" size="sm" className="gap-1" onClick={()=>updateQuestion(idx,{ordering_items:[...(q.ordering_items||[]),""];})}><Plus className="h-3 w-3"/>{t("Add Item","إضافة عنصر")}</Button>
+                      </div>
+                    )}
+
+                    {/* Drawing */}
+                    {q.question_type === "drawing" && (
+                      <div className="rounded-lg border border-dashed p-3 space-y-2">
+                        <Label className="text-sm">✏️ {t("Drawing / Whiteboard — student draws on canvas","رسم — الطالب يرسم على لوحة")}</Label>
+                        <p className="text-xs text-muted-foreground">{t("Requires manual grading. Upload a background image (map/diagram) or leave blank for white canvas.","يتطلب تصحيحاً يدوياً.")}</p>
+                        {q.background_image
+                          ? <div className="flex gap-2 items-center"><img src={q.background_image} className="h-20 rounded border" alt="bg"/><Button variant="ghost" size="sm" className="text-destructive" onClick={()=>updateQuestion(idx,{background_image:""})}>{t("Remove","حذف")}</Button></div>
+                          : <Button variant="outline" size="sm" className="gap-1" onClick={()=>{const el=document.createElement("input");el.type="file";el.accept="image/*";el.onchange=(e:any)=>{const f=e.target.files?.[0];if(f)uploadMedia(f,idx);};el.click();}}><Image className="h-3 w-3"/>{t("Upload Background (optional)","رفع خلفية (اختياري)")}</Button>}
+                      </div>
+                    )}
+
+                    {/* Feedback + per-question timer */}
+                    <div className="grid grid-cols-2 gap-2 pt-1">
+                      <div>
+                        <Label className="text-xs text-muted-foreground">✅ {t("Correct Feedback","تغذية راجعة — صحيح")}</Label>
+                        <Input className="mt-1 text-xs" placeholder={t("Message when correct...","رسالة عند الإجابة الصحيحة...")} value={q.explanation||""} onChange={e=>updateQuestion(idx,{explanation:e.target.value})} dir="auto"/>
+                      </div>
+                      <div>
+                        <Label className="text-xs text-muted-foreground">❌ {t("Wrong Feedback","تغذية راجعة — خطأ")}</Label>
+                        <Input className="mt-1 text-xs" placeholder={t("Hint when wrong...","تلميح عند الخطأ...")} value={(q as any).feedback_incorrect||""} onChange={e=>updateQuestion(idx,{feedback_incorrect:e.target.value} as any)} dir="auto"/>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <span>⏱️ {t("Per-question timer (0 = use exam timer)","مؤقت السؤال (0 = مؤقت الامتحان)")}</span>
+                      <Input type="number" min={0} step={30} className="w-24 h-7 text-xs" value={(q as any).question_timer_seconds||0} onChange={e=>updateQuestion(idx,{question_timer_seconds:+e.target.value} as any)}/>
+                      <span>s</span>
                     </div>
                   </div>
                 </CardContent>
