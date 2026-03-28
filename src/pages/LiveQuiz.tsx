@@ -3,12 +3,7 @@ import React from "react";
 const LiveQuiz = () => {
   return (
     <div>
-      {/* Paste ONLY the body content here */}
-      <h1>Live Quiz</h1>
-    </div>
-  );
-};
-
+      {/* 
 export default LiveQuiz;
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0F172A; color: #E2E8F0; min-height: 100vh; }
@@ -1720,6 +1715,12 @@ function copyCode() {
   });
 }
 <h1>Live Quiz</h1>
+    </div>
+  );
+};
+
+export default LiveQuiz; */}
+      <h1>Live Quiz</h1>
     </div>
   );
 };
