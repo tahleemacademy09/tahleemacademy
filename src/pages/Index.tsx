@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import PublicNav from "@/components/layout/PublicNav";
 
 const Index = () => {
   const navigate = useNavigate();
@@ -248,8 +247,6 @@ const Index = () => {
 
   return (
     <div className="ta-root">
-
-      <PublicNav />
 
       {/* LIVE NOW BANNER */}
       {liveClass && (
