@@ -356,8 +356,19 @@ export const useProctoring = (
       cameraReadyRef.current = true;
       reconnecting.current = false;
       setState(prev => ({ ...prev, cameraReady: true, faceDetected: true }));
-      const displayEl = document.getElementById("proctor-display-video") as HTMLVideoElement;
-      if (displayEl) { displayEl.srcObject = stream; displayEl.play().catch(() => {}); }
+      // Attach to display element with retry — Android needs extra time
+      const attachDisplay = (retries = 0) => {
+        const displayEl = document.getElementById("proctor-display-video") as HTMLVideoElement;
+        if (displayEl) {
+          displayEl.srcObject = stream;
+          displayEl.muted = true;
+          displayEl.setAttribute("playsinline", "true");
+          displayEl.play().catch(() => {});
+        } else if (retries < 5) {
+          setTimeout(() => attachDisplay(retries + 1), 500);
+        }
+      };
+      attachDisplay();
       stream.getVideoTracks()[0]?.addEventListener("ended", () => {
         cameraReadyRef.current = false;
         setState(prev => ({ ...prev, cameraReady: false, faceDetected: false }));
@@ -366,9 +377,21 @@ export const useProctoring = (
       });
       return true;
     } catch (e: any) {
-      if (retry < 2) { await new Promise(r => setTimeout(r, 2000)); return initCamera(retry + 1); }
+      const isPermission = e.name === "NotAllowedError" || e.name === "PermissionDeniedError";
+      if (isPermission) {
+        // Permission denied — don't retry, just log and report gracefully
+        reconnecting.current = false;
+        console.warn("Camera permission denied:", e.message);
+        setState(prev => ({ ...prev, cameraReady: false }));
+        return false;
+      }
+      if (retry < 3) {
+        // Exponential backoff: 1s, 2s, 4s
+        await new Promise(r => setTimeout(r, Math.pow(2, retry) * 1000));
+        return initCamera(retry + 1);
+      }
       reconnecting.current = false;
-      logViolation("webcam_disabled", 3, `Camera failed: ${e.message}`);
+      logViolation("webcam_disabled", 3, `Camera failed after ${retry} retries: ${e.message}`);
       return false;
     }
   }, [logViolation]);
