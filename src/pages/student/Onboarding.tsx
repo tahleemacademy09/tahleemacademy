@@ -139,8 +139,46 @@ const Onboarding = () => {
         completed_at: new Date().toISOString(),
       }, { onConflict: "user_id" });
       await supabase.from("profiles").update({ onboarding_completed: true } as any).eq("user_id", user.id);
-      toast({ title: "✅ Onboarding complete!", description: "Starting your entrance exam…" });
-      navigate("/student/entrance-exam");
+      toast({ title: "✅ Onboarding complete!", description: "Preparing your entrance exam…" });
+
+      // FIX: create exam_attempt before navigating so the route has an attemptId
+      const ENTRANCE_EXAM_ID = "36ef6492-2515-44ea-b086-67c9cee02475";
+      try {
+        // Check if attempt already exists
+        const { data: existing } = await supabase
+          .from("exam_attempts")
+          .select("id, status")
+          .eq("exam_id", ENTRANCE_EXAM_ID)
+          .eq("user_id", user.id)
+          .eq("status", "in_progress")
+          .maybeSingle();
+
+        if (existing) {
+          navigate(`/student/entrance-exam/${existing.id}`);
+          return;
+        }
+
+        // Create new attempt
+        const { data: newAttempt, error: attemptErr } = await supabase
+          .from("exam_attempts")
+          .insert({
+            exam_id: ENTRANCE_EXAM_ID,
+            user_id: user.id,
+            status: "in_progress",
+            started_at: new Date().toISOString(),
+          })
+          .select("id")
+          .single();
+
+        if (attemptErr || !newAttempt) {
+          // Fall back to exams page if creation fails
+          navigate("/student/exams");
+          return;
+        }
+        navigate(`/student/entrance-exam/${newAttempt.id}`);
+      } catch {
+        navigate("/student/exams");
+      }
     } catch (e: any) {
       toast({ title: "Error saving form", description: e.message, variant: "destructive" });
     } finally { setSaving(false); }
