@@ -1,10 +1,15 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Fix 1: LiveQuiz.tsx</title>
-<style>
+import React from "react";
+
+const LiveQuiz = () => {
+  return (
+    <div>
+      {/* Paste ONLY the body content here */}
+      <h1>Live Quiz</h1>
+    </div>
+  );
+};
+
+export default LiveQuiz;
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0F172A; color: #E2E8F0; min-height: 100vh; }
   .header { background: #7C3AED; padding: 16px 20px; position: sticky; top: 0; z-index: 100; box-shadow: 0 2px 12px rgba(0,0,0,.4); }
@@ -1714,6 +1719,9 @@ function copyCode() {
     }, 3000);
   });
 }
-</script>
-</body>
-</html>
+<h1>Live Quiz</h1>
+    </div>
+  );
+};
+
+export default LiveQuiz;
