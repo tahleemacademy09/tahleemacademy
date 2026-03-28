@@ -8,48 +8,37 @@
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0F172A; color: #E2E8F0; min-height: 100vh; }
   .header { background: #7C3AED; padding: 16px 20px; position: sticky; top: 0; z-index: 100; box-shadow: 0 2px 12px rgba(0,0,0,.4); }
-  .header-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
-  .fix-badge { background: rgba(255,255,255,.2); border: 1px solid rgba(255,255,255,.3); border-radius: 20px; padding: 3px 12px; font-size: 11px; font-weight: 800; letter-spacing: 1px; color: #fff; }
+  .header-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
+  .badge { background: rgba(255,255,255,.2); border: 1px solid rgba(255,255,255,.3); border-radius: 20px; padding: 3px 12px; font-size: 11px; font-weight: 800; letter-spacing: 1px; color: #fff; }
   .filename { font-size: 17px; font-weight: 800; color: #fff; }
-  .fix-desc { font-size: 12px; color: rgba(255,255,255,.75); }
-  .meta { display: flex; gap: 14px; font-size: 11px; color: rgba(255,255,255,.55); margin-top: 6px; }
-  .copy-btn { background: #fff; color: #7C3AED; border: none; border-radius: 12px; padding: 11px 22px; font-size: 14px; font-weight: 800; cursor: pointer; flex-shrink: 0; transition: transform .1s; }
-  .copy-btn:active { transform: scale(.96); }
+  .fix-desc { font-size: 12px; color: rgba(255,255,255,.75); margin-top: 4px; }
+  .meta { font-size: 11px; color: rgba(255,255,255,.5); margin-top: 4px; }
+  .copy-btn { background: #fff; color: #7C3AED; border: none; border-radius: 12px; padding: 11px 22px; font-size: 14px; font-weight: 800; cursor: pointer; flex-shrink: 0; }
   .copy-btn.copied { background: #22C55E; color: #fff; }
-  .path-bar { background: #1E293B; padding: 10px 20px; font-size: 11px; color: #64748B; font-family: monospace; border-bottom: 1px solid #334155; }
+  .path-bar { background: #1E293B; padding: 9px 20px; font-size: 11px; color: #64748B; font-family: monospace; border-bottom: 1px solid #334155; }
   .path-bar span { color: #94A3B8; }
-  .code-wrap { padding: 20px; overflow-x: auto; }
-  pre { font-family: 'Courier New', Courier, monospace; font-size: 12px; line-height: 1.7; color: #CBD5E1; white-space: pre-wrap; word-break: break-all; }
+  pre { font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.7; color: #CBD5E1; white-space: pre-wrap; word-break: break-all; padding: 20px 20px 90px; }
   .bottom-bar { position: fixed; bottom: 0; left: 0; right: 0; background: #1E293B; border-top: 1px solid #334155; padding: 12px 20px; display: flex; justify-content: center; }
-  .bottom-copy { background: #7C3AED; color: #fff; border: none; border-radius: 14px; padding: 14px 40px; font-size: 16px; font-weight: 800; cursor: pointer; width: 100%; max-width: 480px; transition: opacity .15s; }
-  .bottom-copy:active { opacity: .8; }
+  .bottom-copy { background: #7C3AED; color: #fff; border: none; border-radius: 14px; padding: 14px; font-size: 16px; font-weight: 800; cursor: pointer; width: 100%; max-width: 500px; }
   .bottom-copy.copied { background: #22C55E; }
-  .code-wrap { padding-bottom: 80px; }
 </style>
 </head>
 <body>
-
 <div class="header">
   <div class="header-top">
     <div>
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
-        <span class="fix-badge">Fix 1</span>
+        <span class="badge">BUILD FIX + Fix 1</span>
         <span class="filename">LiveQuiz.tsx</span>
       </div>
-      <div class="fix-desc">Musabaqah — nextQuestion stale closure bug</div>
+      <div class="fix-desc">✅ Correct .tsx file — Musabaqah stale-closure fix (questionIdxRef)</div>
+      <div class="meta">📁 90.9 KB · 📝 1658 lines · This is the REAL React/TypeScript file</div>
     </div>
-    <button class="copy-btn" id="topBtn" onclick="copyCode(this)">📋 Copy</button>
-  </div>
-  <div class="meta">
-    <span>📁 90.9 KB</span>
-    <span>📝 1658 lines</span>
+    <button class="copy-btn" id="topBtn" onclick="copyCode()">📋 Copy</button>
   </div>
 </div>
-
 <div class="path-bar">Place at: <span>src/pages/LiveQuiz.tsx</span></div>
-
-<div class="code-wrap">
-  <pre id="codeBlock">/*
+<pre id="codeBlock">/*
   LiveQuiz.tsx — Al-Musabaqah | Islamic Live Quiz Arena
   Kahoot-style live quiz with Supabase Realtime
   Colors: Deep Green #064E3B + Gold #C9922A (Tahleem Academy)
@@ -1707,25 +1696,21 @@ Go to: tahleemacademy.vercel.app/live-quiz`,
 };
 
 export default LiveQuiz;</pre>
-</div>
-
 <div class="bottom-bar">
-  <button class="bottom-copy" id="botBtn" onclick="copyCode(this)">📋 Tap to Copy All Code</button>
+  <button class="bottom-copy" id="botBtn" onclick="copyCode()">📋 Tap to Copy — src/pages/LiveQuiz.tsx</button>
 </div>
-
 <script>
 const CODE = document.getElementById('codeBlock').textContent;
-function copyCode(btn) {
+function copyCode() {
   navigator.clipboard.writeText(CODE).then(() => {
-    document.getElementById('topBtn').textContent = '✅ Copied!';
-    document.getElementById('topBtn').classList.add('copied');
-    document.getElementById('botBtn').textContent = '✅ Copied! Paste into your editor';
-    document.getElementById('botBtn').classList.add('copied');
+    ['topBtn','botBtn'].forEach(id => {
+      document.getElementById(id).textContent = '✅ Copied!';
+      document.getElementById(id).classList.add('copied');
+    });
     setTimeout(() => {
       document.getElementById('topBtn').textContent = '📋 Copy';
-      document.getElementById('topBtn').classList.remove('copied');
-      document.getElementById('botBtn').textContent = '📋 Tap to Copy All Code';
-      document.getElementById('botBtn').classList.remove('copied');
+      document.getElementById('botBtn').textContent = '📋 Tap to Copy — src/pages/LiveQuiz.tsx';
+      ['topBtn','botBtn'].forEach(id => document.getElementById(id).classList.remove('copied'));
     }, 3000);
   });
 }
