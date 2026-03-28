@@ -243,7 +243,12 @@ const GradingPage = () => {
                 <div style={{ background: "#F9FAFB", borderRadius: 10, padding: "10px 12px", marginBottom: isEssay ? 10 : 0 }}>
                   <p style={{ fontSize: 11, fontWeight: 700, color: "#9CA3AF", margin: "0 0 4px" }}>Student Answer:</p>
                   {q.question_type === "audio" && ans.audio_url ? (
-                    <AdminAudioPlayer audioUrl={ans.audio_url} />
+                    <div>
+                      <AdminAudioPlayer src={ans.audio_url} label="Student Recording" />
+                      {/* Fallback native player */}
+                      <audio controls preload="metadata" src={ans.audio_url} crossOrigin="anonymous"
+                        style={{ width: "100%", marginTop: 6, borderRadius: 8, display: "block" }} />
+                    </div>
                   ) : (
                     <p style={{ fontSize: 13, color: "#374151", margin: 0, lineHeight: 1.6 }} dir="auto">{ansText || "(No answer)"}</p>
                   )}
