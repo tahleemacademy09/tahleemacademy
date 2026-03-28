@@ -331,10 +331,10 @@ const SubjectManagement = () => {
             {/* Teacher */}
             <div>
               <label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:5 }}>Assign Teacher</label>
-              <Select value={form.teacher_id} onValueChange={v=>setForm(f=>({...f,teacher_id:v}))}>
+              <Select value={form.teacher_id || "none"} onValueChange={v=>setForm(f=>({...f,teacher_id:v==="none" ? "" : v}))}>
                 <SelectTrigger style={{ borderRadius:10 }}><SelectValue placeholder="Select teacher"/></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">None</SelectItem>
+                  <SelectItem value="none">None (No teacher)</SelectItem>
                   {teachers.map((tc:any)=><SelectItem key={tc.user_id} value={tc.user_id}>{tc.full_name}</SelectItem>)}
                 </SelectContent>
               </Select>
