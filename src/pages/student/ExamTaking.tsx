@@ -389,6 +389,19 @@ const ExamTaking = () => {
             .order("order_index");
           ql = (qs2 || []).map((eq: any) => ({ ...eq.questions, ...eq, id: eq.question_id || eq.id }));
         }
+        // FIX: refresh signed media_url for audio questions (signed URLs expire after 1h)
+        ql = await Promise.all(ql.map(async (q: any) => {
+          if (q.media_url && q.media_url.includes("/storage/v1/object/sign/")) {
+            // Extract bucket and path from signed URL
+            const match = q.media_url.match(/\/storage\/v1\/object\/sign\/([^/]+)\/(.+?)\?/);
+            if (match) {
+              const [, bucket, path] = match;
+              const { data: fresh } = await supabase.storage.from(bucket).createSignedUrl(decodeURIComponent(path), 7200);
+              return { ...q, media_url: fresh?.signedUrl || q.media_url };
+            }
+          }
+          return q;
+        }
         if (ad.exams.randomize_questions) ql = ql.sort(() => Math.random() - 0.5);
         setQuestions(ql);
 
@@ -775,7 +788,16 @@ const ExamTaking = () => {
                       : <p style={{ color: "#9ca3af", fontStyle: "italic", fontSize: 14 }}>Question text missing.</p>
                     }
                     {/* Media */}
-                    {q.media_url && (q.question_type === "audio" || q.question_type === "dictation") && <div style={{ marginTop: 12 }}><AudioPlayer src={q.media_url} title={t("Listen carefully", "استمع بعناية")} maxPlays={3} /></div>}
+                    {q.media_url && (q.question_type === "audio" || q.question_type === "dictation" || q.question_type === "audio_dictation") && (
+                      <div style={{ marginTop: 12 }}>
+                        <AudioPlayer src={q.media_url} title={t("Listen carefully", "استمع بعناية")} maxPlays={3} />
+                        {/* Fallback native player in case AudioPlayer fails */}
+                        <audio controls preload="metadata" src={q.media_url} crossOrigin="anonymous"
+                          style={{ width: "100%", marginTop: 6, borderRadius: 8, display: "block" }}
+                          onError={e => { (e.target as HTMLAudioElement).style.display = "block"; }}
+                        />
+                      </div>
+                    )}
                     {q.media_url && q.question_type === "video" && <div style={{ marginTop: 12, borderRadius: 12, overflow: "hidden" }}><video controls src={q.media_url} style={{ width: "100%", maxHeight: 240, background: "#000" }} /></div>}
                     {q.media_url && isImageUrl(q.media_url) && !["audio", "dictation", "video"].includes(q.question_type) && <img src={q.media_url} alt="" style={{ marginTop: 12, maxHeight: 240, borderRadius: 10, objectFit: "contain", display: "block" }} />}
                     {q.media_url && !isImageUrl(q.media_url) && !["audio", "dictation", "video"].includes(q.question_type) && <div style={{ marginTop: 12 }}><AudioPlayer src={q.media_url} title="Audio" /></div>}
