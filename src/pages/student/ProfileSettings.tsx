@@ -1,7 +1,6 @@
 /* src/pages/student/ProfileSettings.tsx
-   FIXED: upsert (not update) so missing profile rows get created
-   FIXED: student_preferences upsert with onConflict
-   FIXED: proper error surfacing with toast
+   FIX: date_of_birth "" → null before upsert (Postgres DATE rejects empty string)
+   FIX: all nullable fields sanitised before save
 */
 import { useState, useEffect, useRef } from "react";
 import { Switch } from "@/components/ui/switch";
@@ -19,12 +18,11 @@ const inp: React.CSSProperties = {
   border: "1.5px solid #E5E7EB", fontSize: 13, outline: "none",
   background: "#FAFAFA", boxSizing: "border-box" as const,
 };
-
 const TABS = [
-  { id: "profile", icon: "👤", label: "Profile" },
+  { id: "profile",       icon: "👤", label: "Profile" },
   { id: "notifications", icon: "🔔", label: "Notifications" },
-  { id: "preferences", icon: "⚙️", label: "Preferences" },
-  { id: "security", icon: "🔒", label: "Security" },
+  { id: "preferences",   icon: "⚙️", label: "Preferences" },
+  { id: "security",      icon: "🔒", label: "Security" },
 ];
 
 export default function ProfileSettings() {
@@ -48,25 +46,29 @@ export default function ProfileSettings() {
     parent_name: "", parent_phone: "", date_of_birth: "",
     bio: "", gender: "", nationality: "", country: "", city: "", avatar_url: "",
   });
-
   const [notifs, setNotifs] = useState({
     email_notifications: true, whatsapp_notifications: false,
     class_reminder: true, exam_reminder: true,
     results_notification: true, new_recording_alert: true,
     announcement_notifications: true,
   });
-
   const [prefs, setPrefs] = useState({
     language: "en", dark_mode: false, autoplay_recordings: true,
     playback_speed: "1x", show_subtitles: false, default_subject_view: "grid",
   });
 
-  // Load on mount
   useEffect(() => {
     if (!user) return;
     (async () => {
       const { data: p } = await supabase.from("profiles").select("*").eq("user_id", user.id).maybeSingle();
-      if (p) setForm({ full_name: p.full_name||"", full_name_ar: p.full_name_ar||"", phone: p.phone||"", whatsapp: p.whatsapp||"", parent_name: p.parent_name||"", parent_phone: p.parent_phone||"", date_of_birth: p.date_of_birth||"", bio: p.bio||"", gender: p.gender||"", nationality: p.nationality||"", country: p.country||"", city: p.city||"", avatar_url: p.avatar_url||"" });
+      if (p) setForm({
+        full_name: p.full_name||"", full_name_ar: p.full_name_ar||"",
+        phone: p.phone||"", whatsapp: p.whatsapp||"",
+        parent_name: p.parent_name||"", parent_phone: p.parent_phone||"",
+        date_of_birth: p.date_of_birth||"",
+        bio: p.bio||"", gender: p.gender||"", nationality: p.nationality||"",
+        country: p.country||"", city: p.city||"", avatar_url: p.avatar_url||"",
+      });
       const { data: pd } = await supabase.from("student_preferences" as any).select("*").eq("user_id", user.id).maybeSingle();
       if (pd) {
         const d = pd as any;
@@ -76,12 +78,27 @@ export default function ProfileSettings() {
     })();
   }, [user]);
 
-  // FIX: upsert guarantees row creation even if profile missing
+  // KEY FIX: empty string → null for all nullable DB columns
+  const sanitise = (f: typeof form) => ({
+    ...f,
+    date_of_birth: f.date_of_birth || null,   // DATE column rejects ""
+    full_name_ar:  f.full_name_ar  || null,
+    phone:         f.phone         || null,
+    whatsapp:      f.whatsapp      || null,
+    parent_name:   f.parent_name   || null,
+    parent_phone:  f.parent_phone  || null,
+    bio:           f.bio           || null,
+    gender:        f.gender        || null,
+    nationality:   f.nationality   || null,
+    country:       f.country       || null,
+    city:          f.city          || null,
+  });
+
   const saveProfile = async () => {
     if (!user) return;
     setSaving(true);
     const { error } = await supabase.from("profiles").upsert(
-      { ...form, user_id: user.id, updated_at: new Date().toISOString() },
+      { ...sanitise(form), user_id: user.id, updated_at: new Date().toISOString() },
       { onConflict: "user_id" }
     );
     setSaving(false);
@@ -97,7 +114,7 @@ export default function ProfileSettings() {
     );
     setSaving(false);
     if (error) toast({ title: "Save failed", description: error.message, variant: "destructive" });
-    else toast({ title: "✅ Notification settings saved" });
+    else toast({ title: "✅ Notifications saved" });
   };
 
   const savePrefs = async () => {
@@ -108,10 +125,7 @@ export default function ProfileSettings() {
     );
     setSaving(false);
     if (error) toast({ title: "Save failed", description: error.message, variant: "destructive" });
-    else {
-      if (prefs.language !== language) setLanguage(prefs.language as any);
-      toast({ title: "✅ Preferences saved" });
-    }
+    else { if (prefs.language !== language) setLanguage(prefs.language as any); toast({ title: "✅ Preferences saved" }); }
   };
 
   const changePassword = async () => {
@@ -131,8 +145,7 @@ export default function ProfileSettings() {
     const { error: upErr } = await supabase.storage.from("avatars").upload(path, file, { upsert: true, contentType: file.type });
     if (upErr) { toast({ title: "Upload failed", description: upErr.message, variant: "destructive" }); setAvatarUploading(false); return; }
     const { data } = supabase.storage.from("avatars").getPublicUrl(path);
-    const url = data.publicUrl + "?t=" + Date.now();
-    setForm(f => ({ ...f, avatar_url: url }));
+    setForm(f => ({ ...f, avatar_url: data.publicUrl + "?t=" + Date.now() }));
     await supabase.from("profiles").upsert({ user_id: user.id, avatar_url: data.publicUrl, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
     setAvatarUploading(false);
     toast({ title: "✅ Photo updated!" });
@@ -146,14 +159,12 @@ export default function ProfileSettings() {
       <div style={{ padding: "14px 16px" }}>{children}</div>
     </div>
   );
-
   const Fld = ({ label, children }: { label: string; children: React.ReactNode }) => (
     <div style={{ marginBottom: 12 }}>
       <label style={{ fontSize: 11, fontWeight: 700, color: "#6B7280", display: "block", marginBottom: 4 }}>{label}</label>
       {children}
     </div>
   );
-
   const Tog = ({ label, sub, checked, onChange }: any) => (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid #F9FAFB" }}>
       <div>
@@ -163,7 +174,6 @@ export default function ProfileSettings() {
       <Switch checked={checked} onCheckedChange={onChange} />
     </div>
   );
-
   const SaveBtn = ({ fn }: { fn: () => void }) => (
     <button onClick={fn} disabled={saving}
       style={{ width: "100%", padding: "12px 0", borderRadius: 12, border: "none", cursor: saving ? "not-allowed" : "pointer", fontWeight: 800, fontSize: 14, color: "#fff", background: saving ? "#9CA3AF" : G, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
@@ -173,18 +183,16 @@ export default function ProfileSettings() {
 
   return (
     <div style={{ minHeight: "100vh", background: "#F3F4F6" }}>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
 
-      {/* Header */}
       <div style={{ background: G, padding: "18px 16px 0" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
           <div style={{ position: "relative", flexShrink: 0 }}>
             <div style={{ width: 58, height: 58, borderRadius: "50%", border: "3px solid rgba(255,255,255,.3)", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(255,255,255,.15)" }}>
-              {form.avatar_url
-                ? <img src={form.avatar_url} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt="" />
-                : <span style={{ fontSize: 22, fontWeight: 800, color: "#fff" }}>{(form.full_name || user?.email || "?")[0].toUpperCase()}</span>}
+              {form.avatar_url ? <img src={form.avatar_url} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt="" /> : <span style={{ fontSize: 22, fontWeight: 800, color: "#fff" }}>{(form.full_name || user?.email || "?")[0].toUpperCase()}</span>}
               {avatarUploading && <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,.5)", display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "50%" }}><Loader2 size={18} color="#fff" style={{ animation: "spin .8s linear infinite" }} /></div>}
             </div>
-            <button onClick={() => avatarRef.current?.click()} style={{ position: "absolute", bottom: 0, right: 0, width: 22, height: 22, borderRadius: "50%", background: "#fff", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 1px 4px rgba(0,0,0,.2)" }}>
+            <button onClick={() => avatarRef.current?.click()} style={{ position: "absolute", bottom: 0, right: 0, width: 22, height: 22, borderRadius: "50%", background: "#fff", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
               <Camera size={11} color={G} />
             </button>
             <input ref={avatarRef} type="file" accept="image/*" style={{ display: "none" }} onChange={uploadAvatar} />
@@ -206,7 +214,6 @@ export default function ProfileSettings() {
 
       <div style={{ padding: 16, maxWidth: 640, margin: "0 auto" }}>
 
-        {/* PROFILE */}
         {tab === "profile" && <>
           <Sec title="Personal Information">
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
@@ -218,7 +225,10 @@ export default function ProfileSettings() {
               <Fld label="WhatsApp"><input style={inp} type="tel" value={form.whatsapp} onChange={e => setForm(f => ({ ...f, whatsapp: e.target.value }))} /></Fld>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <Fld label="Date of Birth"><input style={inp} type="date" value={form.date_of_birth} onChange={e => setForm(f => ({ ...f, date_of_birth: e.target.value }))} /></Fld>
+              <Fld label="Date of Birth">
+                {/* type="date" value must be "" not undefined — but DB gets null */}
+                <input style={inp} type="date" value={form.date_of_birth} onChange={e => setForm(f => ({ ...f, date_of_birth: e.target.value }))} />
+              </Fld>
               <Fld label="Gender">
                 <select style={inp} value={form.gender} onChange={e => setForm(f => ({ ...f, gender: e.target.value }))}>
                   <option value="">Prefer not to say</option>
@@ -242,7 +252,6 @@ export default function ProfileSettings() {
           <SaveBtn fn={saveProfile} />
         </>}
 
-        {/* NOTIFICATIONS */}
         {tab === "notifications" && <>
           <Sec title="Channels">
             <Tog label="Email Notifications" sub="Updates via email" checked={notifs.email_notifications} onChange={(v: boolean) => setNotifs(n => ({ ...n, email_notifications: v }))} />
@@ -258,7 +267,6 @@ export default function ProfileSettings() {
           <SaveBtn fn={saveNotifs} />
         </>}
 
-        {/* PREFERENCES */}
         {tab === "preferences" && <>
           <Sec title="Language & Display">
             <Fld label="Interface Language">
@@ -274,7 +282,7 @@ export default function ProfileSettings() {
             <Tog label="Show Subtitles" checked={prefs.show_subtitles} onChange={(v: boolean) => setPrefs(p => ({ ...p, show_subtitles: v }))} />
             <Fld label="Playback Speed">
               <select style={inp} value={prefs.playback_speed} onChange={e => setPrefs(p => ({ ...p, playback_speed: e.target.value }))}>
-                {["0.75x", "1x", "1.25x", "1.5x", "2x"].map(s => <option key={s} value={s}>{s}</option>)}
+                {["0.75x","1x","1.25x","1.5x","2x"].map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </Fld>
             <Fld label="Default View">
@@ -287,23 +295,14 @@ export default function ProfileSettings() {
           <SaveBtn fn={savePrefs} />
         </>}
 
-        {/* SECURITY */}
         {tab === "security" && <>
           <Sec title="Account Security">
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "11px 0", borderBottom: "1px solid #F3F4F6" }}>
-              <div>
-                <p style={{ fontWeight: 600, fontSize: 13, color: "#374151", margin: 0 }}>Password</p>
-                <p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>Change your login password</p>
-              </div>
-              <button onClick={() => setShowPw(true)} style={{ padding: "7px 14px", borderRadius: 9, border: "1.5px solid #E5E7EB", background: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700, color: "#374151", display: "flex", alignItems: "center", gap: 5 }}>
-                <Lock size={12} /> Change
-              </button>
+              <div><p style={{ fontWeight: 600, fontSize: 13, color: "#374151", margin: 0 }}>Password</p><p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>Change your login password</p></div>
+              <button onClick={() => setShowPw(true)} style={{ padding: "7px 14px", borderRadius: 9, border: "1.5px solid #E5E7EB", background: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700, color: "#374151", display: "flex", alignItems: "center", gap: 5 }}><Lock size={12} /> Change</button>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "11px 0" }}>
-              <div>
-                <p style={{ fontWeight: 600, fontSize: 13, color: "#374151", margin: 0 }}>Email</p>
-                <p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>{user?.email}</p>
-              </div>
+              <div><p style={{ fontWeight: 600, fontSize: 13, color: "#374151", margin: 0 }}>Email</p><p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>{user?.email}</p></div>
               <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: "#DCFCE7", color: "#166534", fontWeight: 700 }}>✓ Verified</span>
             </div>
           </Sec>
@@ -311,18 +310,17 @@ export default function ProfileSettings() {
             <button onClick={async () => { await signOut(); navigate("/login"); }}
               style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 12, background: "#FFF7ED", border: "1px solid #FED7AA", cursor: "pointer", width: "100%", marginBottom: 8 }}>
               <LogOut size={16} color="#D97706" />
-              <div style={{ textAlign: "left" }}><p style={{ fontWeight: 700, fontSize: 13, color: "#D97706", margin: 0 }}>Sign Out</p><p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>Sign out of this device</p></div>
+              <div style={{ textAlign: "left" }}><p style={{ fontWeight: 700, fontSize: 13, color: "#D97706", margin: 0 }}>Sign Out</p></div>
             </button>
             <button onClick={() => setShowDelete(true)}
               style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 12, background: "#FEF2F2", border: "1px solid #FECACA", cursor: "pointer", width: "100%" }}>
               <Trash2 size={16} color="#DC2626" />
-              <div style={{ textAlign: "left" }}><p style={{ fontWeight: 700, fontSize: 13, color: "#DC2626", margin: 0 }}>Delete Account</p><p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>Permanently delete account and all data</p></div>
+              <div style={{ textAlign: "left" }}><p style={{ fontWeight: 700, fontSize: 13, color: "#DC2626", margin: 0 }}>Delete Account</p></div>
             </button>
           </Sec>
         </>}
       </div>
 
-      {/* Password Dialog */}
       <Dialog open={showPw} onOpenChange={v => !v && setShowPw(false)}>
         <DialogContent style={{ maxWidth: 400, borderRadius: 20, padding: 0 }}>
           <div style={{ background: G, padding: "16px 20px", borderRadius: "20px 20px 0 0" }}>
@@ -349,7 +347,6 @@ export default function ProfileSettings() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Dialog */}
       <Dialog open={showDelete} onOpenChange={v => !v && setShowDelete(false)}>
         <DialogContent style={{ maxWidth: 360, borderRadius: 20, padding: 24, textAlign: "center" }}>
           <div style={{ width: 52, height: 52, borderRadius: "50%", background: "#FEF2F2", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 12px" }}>
@@ -363,8 +360,6 @@ export default function ProfileSettings() {
           </div>
         </DialogContent>
       </Dialog>
-
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </div>
   );
 }
