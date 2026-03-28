@@ -263,7 +263,7 @@ const AcademicCalendar = () => {
                       transition:"background .1s"
                     }}>
                     <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:3 }}>
-                      <span style={{ fontSize:13, fontWeight:isToday?900:600, color:isToday?G:"#374151",
+                      <span style={{ fontSize:13, fontWeight:isToday?900:600,
                         width:24, height:24, borderRadius:"50%", background:isToday?G:"transparent",
                         display:"flex", alignItems:"center", justifyContent:"center",
                         color:isToday?"#fff":"#374151" }}>
