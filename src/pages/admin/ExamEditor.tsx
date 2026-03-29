@@ -1,77 +1,26 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Fix 2: ExamEditor.tsx</title>
-<style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0F172A; color: #E2E8F0; min-height: 100vh; }
-  .header { background: #1D4ED8; padding: 16px 20px; position: sticky; top: 0; z-index: 100; box-shadow: 0 2px 12px rgba(0,0,0,.4); }
-  .header-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
-  .fix-badge { background: rgba(255,255,255,.2); border: 1px solid rgba(255,255,255,.3); border-radius: 20px; padding: 3px 12px; font-size: 11px; font-weight: 800; letter-spacing: 1px; color: #fff; }
-  .filename { font-size: 17px; font-weight: 800; color: #fff; }
-  .fix-desc { font-size: 12px; color: rgba(255,255,255,.75); }
-  .meta { display: flex; gap: 14px; font-size: 11px; color: rgba(255,255,255,.55); margin-top: 6px; }
-  .copy-btn { background: #fff; color: #1D4ED8; border: none; border-radius: 12px; padding: 11px 22px; font-size: 14px; font-weight: 800; cursor: pointer; flex-shrink: 0; transition: transform .1s; }
-  .copy-btn:active { transform: scale(.96); }
-  .copy-btn.copied { background: #22C55E; color: #fff; }
-  .path-bar { background: #1E293B; padding: 10px 20px; font-size: 11px; color: #64748B; font-family: monospace; border-bottom: 1px solid #334155; }
-  .path-bar span { color: #94A3B8; }
-  .code-wrap { padding: 20px; overflow-x: auto; }
-  pre { font-family: 'Courier New', Courier, monospace; font-size: 12px; line-height: 1.7; color: #CBD5E1; white-space: pre-wrap; word-break: break-all; }
-  .bottom-bar { position: fixed; bottom: 0; left: 0; right: 0; background: #1E293B; border-top: 1px solid #334155; padding: 12px 20px; display: flex; justify-content: center; }
-  .bottom-copy { background: #1D4ED8; color: #fff; border: none; border-radius: 14px; padding: 14px 40px; font-size: 16px; font-weight: 800; cursor: pointer; width: 100%; max-width: 480px; transition: opacity .15s; }
-  .bottom-copy:active { opacity: .8; }
-  .bottom-copy.copied { background: #22C55E; }
-  .code-wrap { padding-bottom: 80px; }
-</style>
-</head>
-<body>
-
-<div class="header">
-  <div class="header-top">
-    <div>
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
-        <span class="fix-badge">Fix 2</span>
-        <span class="filename">ExamEditor.tsx</span>
-      </div>
-      <div class="fix-desc">ExamEditor — edit saves as new (verification + updated_at)</div>
-    </div>
-    <button class="copy-btn" id="topBtn" onclick="copyCode(this)">📋 Copy</button>
-  </div>
-  <div class="meta">
-    <span>📁 78.1 KB</span>
-    <span>📝 1418 lines</span>
-  </div>
-</div>
-
-<div class="path-bar">Place at: <span>src/pages/admin/ExamEditor.tsx</span></div>
-
-<div class="code-wrap">
-  <pre id="codeBlock">import { useEffect, useState, useRef } from &quot;react&quot;;
-import * as XLSX from &quot;xlsx&quot;;
-import { useParams, useNavigate } from &quot;react-router-dom&quot;;
-import { Button } from &quot;@/components/ui/button&quot;;
-import { Input } from &quot;@/components/ui/input&quot;;
-import { Textarea } from &quot;@/components/ui/textarea&quot;;
-import { Card, CardContent, CardHeader, CardTitle } from &quot;@/components/ui/card&quot;;
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from &quot;@/components/ui/select&quot;;
-import { Switch } from &quot;@/components/ui/switch&quot;;
-import { Label } from &quot;@/components/ui/label&quot;;
-import { Badge } from &quot;@/components/ui/badge&quot;;
-import { Tabs, TabsContent, TabsList, TabsTrigger } from &quot;@/components/ui/tabs&quot;;
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from &quot;@/components/ui/dialog&quot;;
-import { useLanguage } from &quot;@/contexts/LanguageContext&quot;;
-import { useAuth } from &quot;@/contexts/AuthContext&quot;;
-import { supabase } from &quot;@/integrations/supabase/client&quot;;
-import { cn } from &quot;@/lib/utils&quot;;
-import { useToast } from &quot;@/hooks/use-toast&quot;;
-import { Plus, Trash2, Save, GripVertical, Music, FileText, Calendar, Settings2, Upload, Download, Image, Loader2, Eye, Library } from &quot;lucide-react&quot;;
-import { Checkbox } from &quot;@/components/ui/checkbox&quot;;
-import RichTextEditor from &quot;@/components/exam/RichTextEditor&quot;;
-import { sanitizeHtml } from &quot;@/lib/sanitize&quot;;
-import BulkQuestionFormatter, { DEFAULT_FORMAT, type ExamFormatSettings } from &quot;@/components/exam/BulkQuestionFormatter&quot;;
+import { useEffect, useState, useRef } from "react";
+import * as XLSX from "xlsx";
+import { useParams, useNavigate } from "react-router-dom";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { useLanguage } from "@/contexts/LanguageContext";
+import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/integrations/supabase/client";
+import { cn } from "@/lib/utils";
+import { useToast } from "@/hooks/use-toast";
+import { Plus, Trash2, Save, GripVertical, Music, FileText, Calendar, Settings2, Upload, Download, Image, Loader2, Eye, Library } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import RichTextEditor from "@/components/exam/RichTextEditor";
+import { sanitizeHtml } from "@/lib/sanitize";
+import BulkQuestionFormatter, { DEFAULT_FORMAT, type ExamFormatSettings } from "@/components/exam/BulkQuestionFormatter";
 
 interface QuestionForm {
   id?: string;
@@ -96,142 +45,142 @@ interface QuestionForm {
   max_words: number;
   question_timer_seconds: number;
   background_image: string;
-  audio_response_type: &quot;text&quot; | &quot;audio&quot;;
+  audio_response_type: "text" | "audio";
 }
 
-const emptyQuestion = (): QuestionForm =&gt; ({
-  question_type: &quot;mcq&quot;,
-  question_text: &quot;&quot;,
-  question_text_ar: &quot;&quot;,
+const emptyQuestion = (): QuestionForm => ({
+  question_type: "mcq",
+  question_text: "",
+  question_text_ar: "",
   options: [
-    { id: &quot;a&quot;, text: &quot;&quot;, text_ar: &quot;&quot;, is_correct: false, image_url: &quot;&quot; },
-    { id: &quot;b&quot;, text: &quot;&quot;, text_ar: &quot;&quot;, is_correct: false, image_url: &quot;&quot; },
-    { id: &quot;c&quot;, text: &quot;&quot;, text_ar: &quot;&quot;, is_correct: false, image_url: &quot;&quot; },
-    { id: &quot;d&quot;, text: &quot;&quot;, text_ar: &quot;&quot;, is_correct: false, image_url: &quot;&quot; },
+    { id: "a", text: "", text_ar: "", is_correct: false, image_url: "" },
+    { id: "b", text: "", text_ar: "", is_correct: false, image_url: "" },
+    { id: "c", text: "", text_ar: "", is_correct: false, image_url: "" },
+    { id: "d", text: "", text_ar: "", is_correct: false, image_url: "" },
   ],
-  correct_answer: &quot;&quot;,
-  accepted_answers: [&quot;&quot;],
+  correct_answer: "",
+  accepted_answers: [""],
   points: 1,
-  difficulty: &quot;medium&quot;,
+  difficulty: "medium",
   sort_order: 0,
-  explanation: &quot;&quot;,
-  explanation_ar: &quot;&quot;,
-  feedback_incorrect: &quot;&quot;,
-  media_url: &quot;&quot;,
-  matching_pairs: [{ left: &quot;&quot;, right: &quot;&quot; }, { left: &quot;&quot;, right: &quot;&quot; }],
-  ordering_items: [&quot;&quot;, &quot;&quot;, &quot;&quot;],
+  explanation: "",
+  explanation_ar: "",
+  feedback_incorrect: "",
+  media_url: "",
+  matching_pairs: [{ left: "", right: "" }, { left: "", right: "" }],
+  ordering_items: ["", "", ""],
   partial_credit: false,
   case_sensitive: false,
   min_words: 0,
   max_words: 0,
   question_timer_seconds: 0,
-  background_image: &quot;&quot;,
-  audio_response_type: &quot;text&quot; as &quot;text&quot; | &quot;audio&quot;,
+  background_image: "",
+  audio_response_type: "text" as "text" | "audio",
 });
 
 const questionTypes = [
   // ── Standard ───────────────────────────────────────────────────
-  { value: &quot;mcq&quot;,          label: &quot;Multiple Choice&quot;,    label_ar: &quot;اختيار من متعدد&quot;,      icon: &quot;📝&quot;, cat: &quot;Standard&quot; },
-  { value: &quot;multi_select&quot;, label: &quot;Multi-Select&quot;,       label_ar: &quot;اختيار متعدد&quot;,          icon: &quot;☑️&quot;, cat: &quot;Standard&quot; },
-  { value: &quot;true_false&quot;,   label: &quot;True / False&quot;,       label_ar: &quot;صح / خطأ&quot;,              icon: &quot;✓✗&quot;, cat: &quot;Standard&quot; },
-  { value: &quot;short_answer&quot;, label: &quot;Short Answer&quot;,       label_ar: &quot;إجابة قصيرة&quot;,           icon: &quot;💬&quot;, cat: &quot;Standard&quot; },
-  { value: &quot;essay&quot;,        label: &quot;Essay&quot;,              label_ar: &quot;مقال&quot;,                  icon: &quot;📄&quot;, cat: &quot;Standard&quot; },
-  { value: &quot;fill_blank&quot;,   label: &quot;Fill in the Blank&quot;,  label_ar: &quot;ملء الفراغ&quot;,            icon: &quot;___&quot;, cat: &quot;Standard&quot; },
+  { value: "mcq",          label: "Multiple Choice",    label_ar: "اختيار من متعدد",      icon: "📝", cat: "Standard" },
+  { value: "multi_select", label: "Multi-Select",       label_ar: "اختيار متعدد",          icon: "☑️", cat: "Standard" },
+  { value: "true_false",   label: "True / False",       label_ar: "صح / خطأ",              icon: "✓✗", cat: "Standard" },
+  { value: "short_answer", label: "Short Answer",       label_ar: "إجابة قصيرة",           icon: "💬", cat: "Standard" },
+  { value: "essay",        label: "Essay",              label_ar: "مقال",                  icon: "📄", cat: "Standard" },
+  { value: "fill_blank",   label: "Fill in the Blank",  label_ar: "ملء الفراغ",            icon: "___", cat: "Standard" },
   // ── Media ──────────────────────────────────────────────────────
-  { value: &quot;image_mcq&quot;,   label: &quot;Image Choice&quot;,        label_ar: &quot;اختيار بالصور&quot;,         icon: &quot;🖼️&quot;, cat: &quot;Media&quot; },
-  { value: &quot;audio&quot;,        label: &quot;Audio / Dictation&quot;,  label_ar: &quot;صوت / إملاء&quot;,           icon: &quot;🎧&quot;, cat: &quot;Media&quot; },
-  { value: &quot;drawing&quot;,      label: &quot;Drawing / Whiteboard&quot;,label_ar:&quot;رسم / لوحة بيضاء&quot;,     icon: &quot;✏️&quot;, cat: &quot;Media&quot; },
+  { value: "image_mcq",   label: "Image Choice",        label_ar: "اختيار بالصور",         icon: "🖼️", cat: "Media" },
+  { value: "audio",        label: "Audio / Dictation",  label_ar: "صوت / إملاء",           icon: "🎧", cat: "Media" },
+  { value: "drawing",      label: "Drawing / Whiteboard",label_ar:"رسم / لوحة بيضاء",     icon: "✏️", cat: "Media" },
   // ── Interactive ────────────────────────────────────────────────
-  { value: &quot;matching&quot;,     label: &quot;Matching (Drag &amp; Drop)&quot;, label_ar: &quot;مطابقة (سحب وإفلات)&quot;, icon: &quot;🔗&quot;, cat: &quot;Interactive&quot; },
-  { value: &quot;ordering&quot;,     label: &quot;Ordering / Sequence&quot;,   label_ar: &quot;ترتيب / تسلسل&quot;,      icon: &quot;📋&quot;, cat: &quot;Interactive&quot; },
+  { value: "matching",     label: "Matching (Drag & Drop)", label_ar: "مطابقة (سحب وإفلات)", icon: "🔗", cat: "Interactive" },
+  { value: "ordering",     label: "Ordering / Sequence",   label_ar: "ترتيب / تسلسل",      icon: "📋", cat: "Interactive" },
 ];
 
 // Convert a Date to local datetime-local input format (YYYY-MM-DDTHH:MM)
-const toLocalDatetimeString = (date: Date): string =&gt; {
+const toLocalDatetimeString = (date: Date): string => {
   const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, &quot;0&quot;);
-  const d = String(date.getDate()).padStart(2, &quot;0&quot;);
-  const h = String(date.getHours()).padStart(2, &quot;0&quot;);
-  const min = String(date.getMinutes()).padStart(2, &quot;0&quot;);
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  const h = String(date.getHours()).padStart(2, "0");
+  const min = String(date.getMinutes()).padStart(2, "0");
   return `${y}-${m}-${d}T${h}:${min}`;
 };
 
-const ExamEditor = () =&gt; {
-  const { examId } = useParams&lt;{ examId: string }&gt;();
+const ExamEditor = () => {
+  const { examId } = useParams<{ examId: string }>();
   const isEdit = !!examId;
   const { t, language } = useLanguage();
   const { user } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
-  const fileInputRef = useRef&lt;HTMLInputElement&gt;(null);
-  const bulkFileInputRef = useRef&lt;HTMLInputElement&gt;(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const bulkFileInputRef = useRef<HTMLInputElement>(null);
 
   const [examForm, setExamForm] = useState({
-    title: &quot;&quot;, title_ar: &quot;&quot;, description: &quot;&quot;, description_ar: &quot;&quot;,
+    title: "", title_ar: "", description: "", description_ar: "",
     time_limit_minutes: 60, passing_score: 50, max_attempts: 1,
     randomize_questions: false, randomize_answers: false,
     show_results_immediately: true, allow_review: true,
-    display_mode: &quot;one_at_a_time&quot;,
-    guidelines: &quot;&quot;, guidelines_ar: &quot;&quot;,
-    start_date: &quot;&quot;, end_date: &quot;&quot;,
+    display_mode: "one_at_a_time",
+    guidelines: "", guidelines_ar: "",
+    start_date: "", end_date: "",
     proctoring_enabled: false, fullscreen_required: false,
     tab_switch_limit: 3, max_warnings: 3,
     auto_submit_on_violation: false,
     screenshot_interval_seconds: 0,
-    term: &quot;first&quot;,
+    term: "first",
     max_review_views: 1,
-    type: &quot;exam&quot; as &quot;exam&quot; | &quot;test&quot;,
-    level: &quot;&quot; as string,
+    type: "exam" as "exam" | "test",
+    level: "" as string,
   });
-  const [questions, setQuestions] = useState&lt;QuestionForm[]&gt;([emptyQuestion()]);
-  const [formatSettings, setFormatSettings] = useState&lt;ExamFormatSettings&gt;({ ...DEFAULT_FORMAT });
+  const [questions, setQuestions] = useState<QuestionForm[]>([emptyQuestion()]);
+  const [formatSettings, setFormatSettings] = useState<ExamFormatSettings>({ ...DEFAULT_FORMAT });
   const [saving, setSaving] = useState(false);
-  const [uploadingMedia, setUploadingMedia] = useState&lt;number | null&gt;(null);
+  const [uploadingMedia, setUploadingMedia] = useState<number | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [bankOpen, setBankOpen] = useState(false);
-  const [bankQuestions, setBankQuestions] = useState&lt;any[]&gt;([]);
-  const [bankSelected, setBankSelected] = useState&lt;Set&lt;string&gt;&gt;(new Set());
-  const [bankSearch, setBankSearch] = useState(&quot;&quot;);
+  const [bankQuestions, setBankQuestions] = useState<any[]>([]);
+  const [bankSelected, setBankSelected] = useState<Set<string>>(new Set());
+  const [bankSearch, setBankSearch] = useState("");
   const [bankLoading, setBankLoading] = useState(false);
 
-  const openQuestionBank = async () =&gt; {
+  const openQuestionBank = async () => {
     setBankOpen(true);
     setBankLoading(true);
     setBankSelected(new Set());
-    setBankSearch(&quot;&quot;);
-    const { data } = await supabase.from(&quot;exam_questions&quot;).select(&quot;*, exams(title, title_ar)&quot;).order(&quot;created_at&quot;, { ascending: false });
+    setBankSearch("");
+    const { data } = await supabase.from("exam_questions").select("*, exams(title, title_ar)").order("created_at", { ascending: false });
     setBankQuestions(data || []);
     setBankLoading(false);
   };
 
-  const importFromBank = () =&gt; {
-    const selected = bankQuestions.filter((q) =&gt; bankSelected.has(q.id));
-    const newQs: QuestionForm[] = selected.map((q, i) =&gt; ({
+  const importFromBank = () => {
+    const selected = bankQuestions.filter((q) => bankSelected.has(q.id));
+    const newQs: QuestionForm[] = selected.map((q, i) => ({
       question_type: q.question_type,
       question_text: q.question_text,
-      question_text_ar: q.question_text_ar || &quot;&quot;,
+      question_text_ar: q.question_text_ar || "",
       options: (q.options as any[]) || [],
-      correct_answer: q.correct_answer || &quot;&quot;,
+      correct_answer: q.correct_answer || "",
       points: q.points || 1,
-      difficulty: q.difficulty || &quot;medium&quot;,
+      difficulty: q.difficulty || "medium",
       sort_order: questions.length + i,
-      explanation: q.explanation || &quot;&quot;,
-      explanation_ar: q.explanation_ar || &quot;&quot;,
-      media_url: q.media_url || &quot;&quot;,
+      explanation: q.explanation || "",
+      explanation_ar: q.explanation_ar || "",
+      media_url: q.media_url || "",
     }));
-    setQuestions((prev) =&gt; [...prev, ...newQs]);
+    setQuestions((prev) => [...prev, ...newQs]);
     setBankOpen(false);
     toast({ title: t(`✅ Imported ${newQs.length} questions from bank!`, `✅ تم استيراد ${newQs.length} سؤال من البنك!`) });
   };
 
-  useEffect(() =&gt; {
+  useEffect(() => {
     if (!isEdit) return;
-    const load = async () =&gt; {
-      const { data: exam } = await supabase.from(&quot;exams&quot;).select(&quot;*&quot;).eq(&quot;id&quot;, examId).maybeSingle();
+    const load = async () => {
+      const { data: exam } = await supabase.from("exams").select("*").eq("id", examId).maybeSingle();
       if (exam) {
         setExamForm({
-          title: exam.title || &quot;&quot;, title_ar: exam.title_ar || &quot;&quot;,
-          description: exam.description || &quot;&quot;, description_ar: exam.description_ar || &quot;&quot;,
+          title: exam.title || "", title_ar: exam.title_ar || "",
+          description: exam.description || "", description_ar: exam.description_ar || "",
           time_limit_minutes: exam.time_limit_minutes || 60,
           passing_score: exam.passing_score || 50,
           max_attempts: exam.max_attempts || 1,
@@ -239,32 +188,32 @@ const ExamEditor = () =&gt; {
           randomize_answers: exam.randomize_answers || false,
           show_results_immediately: exam.show_results_immediately ?? true,
           allow_review: exam.allow_review ?? true,
-          display_mode: exam.display_mode || &quot;one_at_a_time&quot;,
-          guidelines: exam.guidelines || &quot;&quot;, guidelines_ar: exam.guidelines_ar || &quot;&quot;,
-          start_date: exam.start_date ? toLocalDatetimeString(new Date(exam.start_date)) : &quot;&quot;,
-          end_date: exam.end_date ? toLocalDatetimeString(new Date(exam.end_date)) : &quot;&quot;,
+          display_mode: exam.display_mode || "one_at_a_time",
+          guidelines: exam.guidelines || "", guidelines_ar: exam.guidelines_ar || "",
+          start_date: exam.start_date ? toLocalDatetimeString(new Date(exam.start_date)) : "",
+          end_date: exam.end_date ? toLocalDatetimeString(new Date(exam.end_date)) : "",
           proctoring_enabled: (exam as any).proctoring_enabled || false,
           fullscreen_required: (exam as any).fullscreen_required || false,
           tab_switch_limit: (exam as any).tab_switch_limit || 3,
           max_warnings: (exam as any).max_warnings || 3,
           auto_submit_on_violation: (exam as any).auto_submit_on_violation || false,
           screenshot_interval_seconds: (exam as any).screenshot_interval_seconds || 0,
-          term: (exam as any).term || &quot;first&quot;,
+          term: (exam as any).term || "first",
           max_review_views: (exam as any).max_review_views ?? 1,
-          type: (exam as any).type || &quot;exam&quot;,
-          level: (exam as any).level || &quot;&quot;,
+          type: (exam as any).type || "exam",
+          level: (exam as any).level || "",
         });
         // Load formatting settings
         setFormatSettings({
           question_font_size: (exam as any).question_font_size ?? 16,
-          question_font_family: (exam as any).question_font_family ?? &quot;Cairo&quot;,
-          question_alignment: (exam as any).question_alignment ?? &quot;left&quot;,
+          question_font_family: (exam as any).question_font_family ?? "Cairo",
+          question_alignment: (exam as any).question_alignment ?? "left",
           question_bold: (exam as any).question_bold ?? false,
           question_italic: (exam as any).question_italic ?? false,
           options_font_size: (exam as any).options_font_size ?? 14,
           options_bold: (exam as any).options_bold ?? false,
-          options_alignment: (exam as any).options_alignment ?? &quot;left&quot;,
-          question_color: (exam as any).question_color ?? &quot;#1a1a1a&quot;,
+          options_alignment: (exam as any).options_alignment ?? "left",
+          question_color: (exam as any).question_color ?? "#1a1a1a",
           question_line_height: (exam as any).question_line_height ?? 1.7,
           question_padding: (exam as any).question_padding ?? 16,
           show_question_numbers: (exam as any).show_question_numbers ?? true,
@@ -273,82 +222,112 @@ const ExamEditor = () =&gt; {
         });
       }
       const { data: qs, error: qErr } = await supabase
-        .from(&quot;exam_questions&quot;)
-        .select(&quot;*&quot;)
-        .eq(&quot;exam_id&quot;, examId)
-        .order(&quot;sort_order&quot;);
-      if (qErr) console.error(&quot;ExamEditor: failed to load questions&quot;, qErr);
+        .from("exam_questions")
+        .select("*")
+        .eq("exam_id", examId)
+        .order("sort_order");
+      if (qErr) console.error("ExamEditor: failed to load questions", qErr);
       // Always set — removes the qs?.length guard that was hiding questions
-      setQuestions((qs || []).map((q: any) =&gt; ({
+      setQuestions((qs || []).map((q: any) => ({
         id: q.id,
-        question_type: q.question_type || &quot;mcq&quot;,
-        question_text: q.question_text || &quot;&quot;,
-        question_text_ar: q.question_text_ar || &quot;&quot;,
+        question_type: q.question_type || "mcq",
+        question_text: q.question_text || "",
+        question_text_ar: q.question_text_ar || "",
         options: Array.isArray(q.options) ? q.options : [],
-        correct_answer: q.correct_answer || &quot;&quot;,
-        accepted_answers: Array.isArray(q.accepted_answers) ? q.accepted_answers : [&quot;&quot;],
+        correct_answer: q.correct_answer || "",
+        accepted_answers: Array.isArray(q.accepted_answers) ? q.accepted_answers : [""],
         points: q.points || 10,
-        difficulty: q.difficulty || &quot;medium&quot;,
+        difficulty: q.difficulty || "medium",
         sort_order: q.sort_order ?? 0,
-        explanation: q.explanation || &quot;&quot;,
-        explanation_ar: q.explanation_ar || &quot;&quot;,
-        feedback_incorrect: q.feedback_incorrect || &quot;&quot;,
-        media_url: q.media_url || &quot;&quot;,
-        matching_pairs: Array.isArray(q.matching_pairs) ? q.matching_pairs : [{ left: &quot;&quot;, right: &quot;&quot; }, { left: &quot;&quot;, right: &quot;&quot; }],
-        ordering_items: Array.isArray(q.ordering_items) ? q.ordering_items : [&quot;&quot;, &quot;&quot;, &quot;&quot;],
+        explanation: q.explanation || "",
+        explanation_ar: q.explanation_ar || "",
+        feedback_incorrect: q.feedback_incorrect || "",
+        media_url: q.media_url || "",
+        matching_pairs: Array.isArray(q.matching_pairs) ? q.matching_pairs : [{ left: "", right: "" }, { left: "", right: "" }],
+        ordering_items: Array.isArray(q.ordering_items) ? q.ordering_items : ["", "", ""],
         partial_credit: q.partial_credit || false,
         case_sensitive: q.case_sensitive || false,
         min_words: q.min_words || 0,
         max_words: q.max_words || 0,
         question_timer_seconds: q.question_timer_seconds || 0,
-        background_image: q.background_image || &quot;&quot;,
-        audio_response_type: q.audio_response_type || &quot;text&quot;,
+        background_image: q.background_image || "",
+        audio_response_type: q.audio_response_type || "text",
       })));
     };
     load();
   }, [examId]);
 
-  const handleSave = async () =&gt; {
+  const handleSave = async () => {
     if (!examForm.title) {
-      toast({ title: t(&quot;Error&quot;, &quot;خطأ&quot;), description: t(&quot;Title is required&quot;, &quot;العنوان مطلوب&quot;), variant: &quot;destructive&quot; });
+      toast({ title: t("Error", "خطأ"), description: t("Title is required", "العنوان مطلوب"), variant: "destructive" });
       return;
     }
     setSaving(true);
 
     try {
       let eid = examId;
-      if (isEdit) {
-        const { error } = await supabase.from(&quot;exams&quot;).update({
-          ...examForm,
-          ...formatSettings,
-          updated_at: new Date().toISOString(),   // FIX: explicit timestamp so DB reflects change
-          start_date: examForm.start_date ? new Date(examForm.start_date).toISOString() : null,
-          end_date: examForm.end_date ? new Date(examForm.end_date).toISOString() : null,
-        } as any).eq(&quot;id&quot;, examId);
+
+      // Strip fields that must not appear in an update payload
+      const { ...cleanForm } = examForm as any;
+
+      if (isEdit && examId) {
+        // ── UPDATE existing exam ──────────────────────────────────────────
+        const { error, count } = await supabase
+          .from("exams")
+          .update({
+            ...cleanForm,
+            ...formatSettings,
+            updated_at: new Date().toISOString(),
+            start_date: examForm.start_date ? new Date(examForm.start_date).toISOString() : null,
+            end_date: examForm.end_date ? new Date(examForm.end_date).toISOString() : null,
+          } as any)
+          .eq("id", examId);
+
         if (error) throw error;
-        // FIX: verify the update actually matched a row (catches silent RLS blocks)
-        const { data: verify } = await supabase.from(&quot;exams&quot;).select(&quot;id&quot;).eq(&quot;id&quot;, examId).maybeSingle();
-        if (!verify) throw new Error(&quot;Exam update failed — row not found. Check RLS permissions.&quot;);
+
+        // Verify the update actually affected the row (handles silent RLS failures)
+        const { data: verify } = await supabase
+          .from("exams")
+          .select("id, title")
+          .eq("id", examId)
+          .maybeSingle();
+
+        if (!verify) {
+          throw new Error(t(
+            "Could not verify exam update. You may not have permission to edit this exam.",
+            "تعذّر التحقق من تحديث الامتحان. قد لا تملك صلاحية التعديل."
+          ));
+        }
+
+        eid = examId;
       } else {
-        const { data, error } = await supabase.from(&quot;exams&quot;).insert({
-          ...examForm,
-          ...formatSettings,
-          created_by: user!.id,
-          start_date: examForm.start_date ? new Date(examForm.start_date).toISOString() : null,
-          end_date: examForm.end_date ? new Date(examForm.end_date).toISOString() : null,
-        } as any).select(&quot;id&quot;).single();
+        // ── INSERT new exam ───────────────────────────────────────────────
+        const { data, error } = await supabase
+          .from("exams")
+          .insert({
+            ...cleanForm,
+            ...formatSettings,
+            created_by: user!.id,
+            start_date: examForm.start_date ? new Date(examForm.start_date).toISOString() : null,
+            end_date: examForm.end_date ? new Date(examForm.end_date).toISOString() : null,
+          } as any)
+          .select("id")
+          .single();
         if (error) throw error;
         eid = data?.id;
       }
 
       if (eid) {
-        if (isEdit) await supabase.from(&quot;exam_questions&quot;).delete().eq(&quot;exam_id&quot;, eid);
-        const qInserts = questions.map((q, i) =&gt; ({
+        // Delete existing questions only when editing (re-sync)
+        if (isEdit) {
+          await supabase.from("exam_questions").delete().eq("exam_id", eid);
+        }
+        const qInserts = questions.map((q, i) => ({
           exam_id: eid!,
           question_type: q.question_type,
           question_text: sanitizeHtml(q.question_text),
           question_text_ar: q.question_text_ar ? sanitizeHtml(q.question_text_ar) : null,
-          options: [&quot;mcq&quot;, &quot;image_mcq&quot;, &quot;multi_select&quot;].includes(q.question_type) ? q.options : null,
+          options: ["mcq", "image_mcq", "multi_select"].includes(q.question_type) ? q.options : null,
           correct_answer: q.correct_answer || null,
           accepted_answers: q.accepted_answers?.filter(Boolean) || null,
           points: q.points,
@@ -358,7 +337,7 @@ const ExamEditor = () =&gt; {
           explanation_ar: q.explanation_ar || null,
           feedback_incorrect: q.feedback_incorrect || null,
           media_url: q.media_url || null,
-          matching_pairs: q.matching_pairs?.filter((p: any) =&gt; p.left || p.right) || null,
+          matching_pairs: q.matching_pairs?.filter((p: any) => p.left || p.right) || null,
           ordering_items: q.ordering_items?.filter(Boolean) || null,
           partial_credit: q.partial_credit || false,
           case_sensitive: q.case_sensitive || false,
@@ -366,82 +345,82 @@ const ExamEditor = () =&gt; {
           max_words: q.max_words || 0,
           question_timer_seconds: q.question_timer_seconds || 0,
           background_image: q.background_image || null,
-          audio_response_type: q.audio_response_type || &quot;text&quot;,
+          audio_response_type: q.audio_response_type || "text",
         }));
-        const { error } = await supabase.from(&quot;exam_questions&quot;).insert(qInserts);
+        const { error } = await supabase.from("exam_questions").insert(qInserts);
         if (error) throw error;
       }
 
-      toast({ title: t(&quot;✅ Exam saved!&quot;, &quot;✅ تم حفظ الامتحان!&quot;) });
-      navigate(&quot;/admin/exams&quot;);
+      toast({ title: isEdit ? t("✅ Exam updated!", "✅ تم تحديث الامتحان!") : t("✅ Exam saved!", "✅ تم حفظ الامتحان!") });
+      navigate("/admin/exams");
     } catch (err: any) {
-      toast({ title: t(&quot;Error saving exam&quot;, &quot;خطأ في حفظ الامتحان&quot;), description: err.message, variant: &quot;destructive&quot; });
+      toast({ title: t("Error saving exam", "خطأ في حفظ الامتحان"), description: err.message, variant: "destructive" });
     } finally {
       setSaving(false);
     }
   };
 
-  const addQuestion = () =&gt; setQuestions([...questions, { ...emptyQuestion(), sort_order: questions.length }]);
-  const removeQuestion = (idx: number) =&gt; setQuestions(questions.filter((_, i) =&gt; i !== idx));
-  const updateQuestion = (idx: number, updates: Partial&lt;QuestionForm&gt;) =&gt; {
+  const addQuestion = () => setQuestions([...questions, { ...emptyQuestion(), sort_order: questions.length }]);
+  const removeQuestion = (idx: number) => setQuestions(questions.filter((_, i) => i !== idx));
+  const updateQuestion = (idx: number, updates: Partial<QuestionForm>) => {
     const copy = [...questions];
     copy[idx] = { ...copy[idx], ...updates };
     setQuestions(copy);
   };
 
   // Media upload handler
-  const uploadMedia = async (file: File, questionIdx: number) =&gt; {
+  const uploadMedia = async (file: File, questionIdx: number) => {
     setUploadingMedia(questionIdx);
-    const ext = file.name.split(&quot;.&quot;).pop();
+    const ext = file.name.split(".").pop();
     const path = `questions/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
 
-    const { data, error } = await supabase.storage.from(&quot;exam-media&quot;).upload(path, file);
+    const { data, error } = await supabase.storage.from("exam-media").upload(path, file);
     if (error) {
-      toast({ title: t(&quot;Upload failed&quot;, &quot;فشل الرفع&quot;), description: error.message, variant: &quot;destructive&quot; });
+      toast({ title: t("Upload failed", "فشل الرفع"), description: error.message, variant: "destructive" });
       setUploadingMedia(null);
       return;
     }
 
-    const { data: urlData } = await supabase.storage.from(&quot;exam-media&quot;).createSignedUrl(path, 3600);
-    updateQuestion(questionIdx, { media_url: urlData?.signedUrl || &#x27;&#x27; });
-    toast({ title: t(&quot;✅ File uploaded!&quot;, &quot;✅ تم رفع الملف!&quot;) });
+    const { data: urlData } = await supabase.storage.from("exam-media").createSignedUrl(path, 3600);
+    updateQuestion(questionIdx, { media_url: urlData?.signedUrl || '' });
+    toast({ title: t("✅ File uploaded!", "✅ تم رفع الملف!") });
     setUploadingMedia(null);
   };
 
   // Upload image for an MCQ/image_mcq option
-  const [uploadingOptionImage, setUploadingOptionImage] = useState&lt;string | null&gt;(null);
-  const uploadOptionImage = async (file: File, questionIdx: number, optionIdx: number) =&gt; {
+  const [uploadingOptionImage, setUploadingOptionImage] = useState<string | null>(null);
+  const uploadOptionImage = async (file: File, questionIdx: number, optionIdx: number) => {
     const key = `${questionIdx}-${optionIdx}`;
     setUploadingOptionImage(key);
-    const ext = file.name.split(&quot;.&quot;).pop();
+    const ext = file.name.split(".").pop();
     const path = `questions/options/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
 
-    const { data, error } = await supabase.storage.from(&quot;exam-media&quot;).upload(path, file);
+    const { data, error } = await supabase.storage.from("exam-media").upload(path, file);
     if (error) {
-      toast({ title: t(&quot;Upload failed&quot;, &quot;فشل الرفع&quot;), description: error.message, variant: &quot;destructive&quot; });
+      toast({ title: t("Upload failed", "فشل الرفع"), description: error.message, variant: "destructive" });
       setUploadingOptionImage(null);
       return;
     }
 
-    const { data: urlData } = await supabase.storage.from(&quot;exam-media&quot;).createSignedUrl(path, 3600);
+    const { data: urlData } = await supabase.storage.from("exam-media").createSignedUrl(path, 3600);
     const newOpts = [...questions[questionIdx].options];
-    newOpts[optionIdx] = { ...newOpts[optionIdx], image_url: urlData?.signedUrl || &#x27;&#x27; };
+    newOpts[optionIdx] = { ...newOpts[optionIdx], image_url: urlData?.signedUrl || '' };
     updateQuestion(questionIdx, { options: newOpts });
-    toast({ title: t(&quot;✅ Image uploaded!&quot;, &quot;✅ تم رفع الصورة!&quot;) });
+    toast({ title: t("✅ Image uploaded!", "✅ تم رفع الصورة!") });
     setUploadingOptionImage(null);
   };
 
   // Parse CSV line handling quoted fields (supports commas and Arabic inside quotes)
-  const parseCSVLine = (line: string): string[] =&gt; {
+  const parseCSVLine = (line: string): string[] => {
     const result: string[] = [];
-    let current = &quot;&quot;;
+    let current = "";
     let inQuotes = false;
-    for (let i = 0; i &lt; line.length; i++) {
+    for (let i = 0; i < line.length; i++) {
       const ch = line[i];
       if (inQuotes) {
-        if (ch === &#x27;&quot;&#x27;) {
-          if (i + 1 &lt; line.length &amp;&amp; line[i + 1] === &#x27;&quot;&#x27;) {
-            current += &#x27;&quot;&#x27;;
+        if (ch === '"') {
+          if (i + 1 < line.length && line[i + 1] === '"') {
+            current += '"';
             i++; // skip escaped quote
           } else {
             inQuotes = false;
@@ -450,11 +429,11 @@ const ExamEditor = () =&gt; {
           current += ch;
         }
       } else {
-        if (ch === &#x27;&quot;&#x27;) {
+        if (ch === '"') {
           inQuotes = true;
-        } else if (ch === &#x27;,&#x27;) {
+        } else if (ch === ',') {
           result.push(current.trim());
-          current = &quot;&quot;;
+          current = "";
         } else {
           current += ch;
         }
@@ -465,85 +444,85 @@ const ExamEditor = () =&gt; {
   };
 
   // Map the QuestionType string from XLSX to our internal type
-  const mapQuestionType = (raw: string): string =&gt; {
-    if (!raw) return &quot;mcq&quot;;
+  const mapQuestionType = (raw: string): string => {
+    if (!raw) return "mcq";
     const lower = raw.toLowerCase().trim();
-    if (lower.includes(&quot;multiple choice&quot;) || lower.includes(&quot;radiobutton&quot;) || lower.includes(&quot;dropdown&quot;)) return &quot;mcq&quot;;
-    if (lower.includes(&quot;multiple correct&quot;) || lower.includes(&quot;all correct&quot;)) return &quot;mcq&quot;;
-    if (lower.includes(&quot;true&quot;) || lower.includes(&quot;false&quot;) || lower.includes(&quot;yes/no&quot;)) return &quot;true_false&quot;;
-    if (lower.includes(&quot;fill in&quot;) || lower.includes(&quot;fill_blank&quot;)) return &quot;fill_blank&quot;;
-    if (lower.includes(&quot;essay&quot;)) return &quot;essay&quot;;
-    if (lower.includes(&quot;audio&quot;)) return &quot;audio&quot;;
-    if (lower.includes(&quot;short&quot;) || lower.includes(&quot;matching&quot;) || lower.includes(&quot;drag&quot;)) return &quot;short_answer&quot;;
-    return &quot;mcq&quot;;
+    if (lower.includes("multiple choice") || lower.includes("radiobutton") || lower.includes("dropdown")) return "mcq";
+    if (lower.includes("multiple correct") || lower.includes("all correct")) return "mcq";
+    if (lower.includes("true") || lower.includes("false") || lower.includes("yes/no")) return "true_false";
+    if (lower.includes("fill in") || lower.includes("fill_blank")) return "fill_blank";
+    if (lower.includes("essay")) return "essay";
+    if (lower.includes("audio")) return "audio";
+    if (lower.includes("short") || lower.includes("matching") || lower.includes("drag")) return "short_answer";
+    return "mcq";
   };
 
   // Map DifficultyLevel number to string
-  const mapDifficulty = (raw: any): string =&gt; {
+  const mapDifficulty = (raw: any): string => {
     const val = String(raw).trim();
-    if (val === &quot;1&quot;) return &quot;easy&quot;;
-    if (val === &quot;2&quot;) return &quot;medium&quot;;
-    if (val === &quot;3&quot;) return &quot;hard&quot;;
-    if ([&quot;easy&quot;, &quot;medium&quot;, &quot;hard&quot;].includes(val)) return val;
-    return &quot;medium&quot;;
+    if (val === "1") return "easy";
+    if (val === "2") return "medium";
+    if (val === "3") return "hard";
+    if (["easy", "medium", "hard"].includes(val)) return val;
+    return "medium";
   };
 
   // Convert XLSX row (Question.xlsx format) to QuestionForm
-  const mapXlsxRow = (item: any, index: number): QuestionForm =&gt; {
+  const mapXlsxRow = (item: any, index: number): QuestionForm => {
     const q = emptyQuestion();
     // Map question type from XLSX column names
-    const qType = item[&quot;QuestionType&quot;] || item[&quot;question_type&quot;] || item[&quot;type&quot;] || &quot;&quot;;
+    const qType = item["QuestionType"] || item["question_type"] || item["type"] || "";
     q.question_type = mapQuestionType(qType);
-    q.question_text = item[&quot;Question&quot;] || item[&quot;question_text&quot;] || item[&quot;question&quot;] || &quot;&quot;;
-    q.question_text_ar = item[&quot;Question_ar&quot;] || item[&quot;question_text_ar&quot;] || item[&quot;question_ar&quot;] || &quot;&quot;;
-    q.explanation = item[&quot;Explanation&quot;] || item[&quot;explanation&quot;] || &quot;&quot;;
-    q.explanation_ar = item[&quot;Explanation_ar&quot;] || item[&quot;explanation_ar&quot;] || &quot;&quot;;
-    q.points = Number(item[&quot;Marks&quot;] || item[&quot;points&quot;] || 1) || 1;
-    q.difficulty = mapDifficulty(item[&quot;DifficultyLevel&quot;] || item[&quot;difficulty&quot;]);
+    q.question_text = item["Question"] || item["question_text"] || item["question"] || "";
+    q.question_text_ar = item["Question_ar"] || item["question_text_ar"] || item["question_ar"] || "";
+    q.explanation = item["Explanation"] || item["explanation"] || "";
+    q.explanation_ar = item["Explanation_ar"] || item["explanation_ar"] || "";
+    q.points = Number(item["Marks"] || item["points"] || 1) || 1;
+    q.difficulty = mapDifficulty(item["DifficultyLevel"] || item["difficulty"]);
     q.sort_order = index;
 
     // Collect answers from Answer1..Answer8 columns
     const answers: string[] = [];
-    for (let i = 1; i &lt;= 8; i++) {
-      const val = item[`Answer${i}`] || item[`answer${i}`] || &quot;&quot;;
+    for (let i = 1; i <= 8; i++) {
+      const val = item[`Answer${i}`] || item[`answer${i}`] || "";
       if (String(val).trim()) answers.push(String(val).trim());
     }
 
-    // Parse correct answer index(es) — &quot;1&quot; means Answer1, &quot;1, 3&quot; means multiple
-    const correctRaw = String(item[&quot;correctanswer&quot;] || item[&quot;correct_answer&quot;] || item[&quot;answer&quot;] || &quot;&quot;).trim();
+    // Parse correct answer index(es) — "1" means Answer1, "1, 3" means multiple
+    const correctRaw = String(item["correctanswer"] || item["correct_answer"] || item["answer"] || "").trim();
 
-    if (q.question_type === &quot;mcq&quot; &amp;&amp; answers.length &gt; 0) {
-      const opts = answers.map((text, ai) =&gt; ({
+    if (q.question_type === "mcq" && answers.length > 0) {
+      const opts = answers.map((text, ai) => ({
         id: String.fromCharCode(97 + ai), // a, b, c, d...
         text,
-        text_ar: item[`Answer${ai + 1}_ar`] || &quot;&quot;,
+        text_ar: item[`Answer${ai + 1}_ar`] || "",
         is_correct: false,
       }));
       // Mark correct answers
-      const correctIndices = correctRaw.split(&quot;,&quot;).map(s =&gt; parseInt(s.trim())).filter(n =&gt; !isNaN(n));
-      correctIndices.forEach(ci =&gt; {
-        if (ci &gt;= 1 &amp;&amp; ci &lt;= opts.length) opts[ci - 1].is_correct = true;
+      const correctIndices = correctRaw.split(",").map(s => parseInt(s.trim())).filter(n => !isNaN(n));
+      correctIndices.forEach(ci => {
+        if (ci >= 1 && ci <= opts.length) opts[ci - 1].is_correct = true;
       });
       q.options = opts;
       // Set correct_answer letter for first correct
-      const firstCorrect = opts.findIndex(o =&gt; o.is_correct);
-      q.correct_answer = firstCorrect &gt;= 0 ? opts[firstCorrect].id : &quot;&quot;;
-    } else if (q.question_type === &quot;true_false&quot;) {
+      const firstCorrect = opts.findIndex(o => o.is_correct);
+      q.correct_answer = firstCorrect >= 0 ? opts[firstCorrect].id : "";
+    } else if (q.question_type === "true_false") {
       // Answer1 = TRUE, Answer2 = FALSE; correctanswer = 1 means TRUE
       const ci = parseInt(correctRaw);
-      if (ci === 1) q.correct_answer = &quot;true&quot;;
-      else if (ci === 2) q.correct_answer = &quot;false&quot;;
+      if (ci === 1) q.correct_answer = "true";
+      else if (ci === 2) q.correct_answer = "false";
       else q.correct_answer = correctRaw.toLowerCase();
-    } else if (q.question_type === &quot;fill_blank&quot; || q.question_type === &quot;short_answer&quot;) {
+    } else if (q.question_type === "fill_blank" || q.question_type === "short_answer") {
       // For fill in the blank, Answer1 is the correct answer
-      q.correct_answer = answers[0] || correctRaw || &quot;&quot;;
+      q.correct_answer = answers[0] || correctRaw || "";
     }
 
     return q;
   };
 
   // Bulk question import
-  const handleBulkImport = (e: React.ChangeEvent&lt;HTMLInputElement&gt;) =&gt; {
+  const handleBulkImport = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -552,943 +531,918 @@ const ExamEditor = () =&gt; {
     if (isExcel) {
       // XLSX import using SheetJS
       const reader = new FileReader();
-      reader.onload = (ev) =&gt; {
+      reader.onload = (ev) => {
         try {
           const data = new Uint8Array(ev.target?.result as ArrayBuffer);
-          const workbook = XLSX.read(data, { type: &quot;array&quot; });
+          const workbook = XLSX.read(data, { type: "array" });
           const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-          const rows: any[] = XLSX.utils.sheet_to_json(firstSheet, { defval: &quot;&quot; });
+          const rows: any[] = XLSX.utils.sheet_to_json(firstSheet, { defval: "" });
 
           // Filter out empty rows (no Question text)
-          const validRows = rows.filter(r =&gt; r[&quot;Question&quot;] || r[&quot;question_text&quot;] || r[&quot;question&quot;]);
-          const newQuestions = validRows.map((row, i) =&gt; mapXlsxRow(row, questions.length + i));
+          const validRows = rows.filter(r => r["Question"] || r["question_text"] || r["question"]);
+          const newQuestions = validRows.map((row, i) => mapXlsxRow(row, questions.length + i));
 
           if (newQuestions.length === 0) {
-            toast({ title: t(&quot;No questions found&quot;, &quot;لم يتم العثور على أسئلة&quot;), description: t(&quot;Make sure your file has a &#x27;Question&#x27; column&quot;, &quot;تأكد أن الملف يحتوي على عمود &#x27;Question&#x27;&quot;), variant: &quot;destructive&quot; });
+            toast({ title: t("No questions found", "لم يتم العثور على أسئلة"), description: t("Make sure your file has a 'Question' column", "تأكد أن الملف يحتوي على عمود 'Question'"), variant: "destructive" });
             return;
           }
 
-          setQuestions(prev =&gt; [...prev, ...newQuestions]);
+          setQuestions(prev => [...prev, ...newQuestions]);
           toast({ title: t(`✅ Imported ${newQuestions.length} questions!`, `✅ تم استيراد ${newQuestions.length} سؤال!`) });
         } catch (err: any) {
-          console.error(&quot;XLSX import error:&quot;, err);
-          toast({ title: t(&quot;Import failed&quot;, &quot;فشل الاستيراد&quot;), description: err.message, variant: &quot;destructive&quot; });
+          console.error("XLSX import error:", err);
+          toast({ title: t("Import failed", "فشل الاستيراد"), description: err.message, variant: "destructive" });
         }
       };
       reader.readAsArrayBuffer(file);
     } else {
       // CSV / JSON import
       const reader = new FileReader();
-      reader.onload = (ev) =&gt; {
+      reader.onload = (ev) => {
         try {
           const text = ev.target?.result as string;
           let imported: any[];
 
-          if (file.name.endsWith(&quot;.json&quot;)) {
+          if (file.name.endsWith(".json")) {
             imported = JSON.parse(text);
           } else {
-            const lines = text.split(&quot;\n&quot;).map(l =&gt; l.trim()).filter(Boolean);
+            const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
             const headers = parseCSVLine(lines[0]);
-            imported = lines.slice(1).map(line =&gt; {
+            imported = lines.slice(1).map(line => {
               const vals = parseCSVLine(line);
               const obj: any = {};
-              headers.forEach((h, i) =&gt; { obj[h] = vals[i] || &quot;&quot;; });
+              headers.forEach((h, i) => { obj[h] = vals[i] || ""; });
               return obj;
             });
           }
 
-          const newQuestions: QuestionForm[] = imported.map((item: any, i: number) =&gt; mapXlsxRow(item, questions.length + i));
+          const newQuestions: QuestionForm[] = imported.map((item: any, i: number) => mapXlsxRow(item, questions.length + i));
 
-          setQuestions(prev =&gt; [...prev, ...newQuestions]);
+          setQuestions(prev => [...prev, ...newQuestions]);
           toast({ title: t(`✅ Imported ${newQuestions.length} questions!`, `✅ تم استيراد ${newQuestions.length} سؤال!`) });
         } catch (err: any) {
-          console.error(&quot;Bulk import error:&quot;, err);
-          toast({ title: t(&quot;Import failed&quot;, &quot;فشل الاستيراد&quot;), description: err.message || t(&quot;Invalid file format&quot;, &quot;تنسيق الملف غير صالح&quot;), variant: &quot;destructive&quot; });
+          console.error("Bulk import error:", err);
+          toast({ title: t("Import failed", "فشل الاستيراد"), description: err.message || t("Invalid file format", "تنسيق الملف غير صالح"), variant: "destructive" });
         }
       };
-      reader.readAsText(file, &quot;UTF-8&quot;);
+      reader.readAsText(file, "UTF-8");
     }
-    e.target.value = &quot;&quot;;
+    e.target.value = "";
   };
 
   // Download template
-  const downloadTemplate = (format: &quot;csv&quot; | &quot;json&quot;) =&gt; {
-    if (format === &quot;json&quot;) {
+  const downloadTemplate = (format: "csv" | "json") => {
+    if (format === "json") {
       const template = [
         {
-          question_type: &quot;mcq&quot;,
-          question_text: &quot;What is the Arabic word for &#x27;book&#x27;?&quot;,
-          question_text_ar: &quot;ما هي الكلمة العربية لـ &#x27;كتاب&#x27;؟&quot;,
-          option_a: &quot;كِتَاب&quot;, option_a_ar: &quot;كِتَاب&quot;,
-          option_b: &quot;قَلَم&quot;, option_b_ar: &quot;قَلَم&quot;,
-          option_c: &quot;بَاب&quot;, option_c_ar: &quot;بَاب&quot;,
-          option_d: &quot;مَاء&quot;, option_d_ar: &quot;مَاء&quot;,
-          correct_answer: &quot;a&quot;,
-          points: 1, difficulty: &quot;easy&quot;,
-          explanation: &quot;كِتَاب means book&quot;, explanation_ar: &quot;كِتَاب تعني كتاب&quot;
+          question_type: "mcq",
+          question_text: "What is the Arabic word for 'book'?",
+          question_text_ar: "ما هي الكلمة العربية لـ 'كتاب'؟",
+          option_a: "كِتَاب", option_a_ar: "كِتَاب",
+          option_b: "قَلَم", option_b_ar: "قَلَم",
+          option_c: "بَاب", option_c_ar: "بَاب",
+          option_d: "مَاء", option_d_ar: "مَاء",
+          correct_answer: "a",
+          points: 1, difficulty: "easy",
+          explanation: "كِتَاب means book", explanation_ar: "كِتَاب تعني كتاب"
         },
         {
-          question_type: &quot;true_false&quot;,
-          question_text: &quot;The Arabic alphabet has 28 letters.&quot;,
-          question_text_ar: &quot;الأبجدية العربية تتكون من 28 حرفًا.&quot;,
-          correct_answer: &quot;true&quot;,
-          points: 1, difficulty: &quot;easy&quot;,
-          explanation: &quot;&quot;, explanation_ar: &quot;&quot;
+          question_type: "true_false",
+          question_text: "The Arabic alphabet has 28 letters.",
+          question_text_ar: "الأبجدية العربية تتكون من 28 حرفًا.",
+          correct_answer: "true",
+          points: 1, difficulty: "easy",
+          explanation: "", explanation_ar: ""
         },
         {
-          question_type: &quot;fill_blank&quot;,
-          question_text: &quot;The word for &#x27;peace&#x27; in Arabic is ___.&quot;,
-          question_text_ar: &quot;كلمة &#x27;سلام&#x27; بالعربية هي ___.&quot;,
-          correct_answer: &quot;سَلَام&quot;,
-          points: 2, difficulty: &quot;medium&quot;,
-          explanation: &quot;&quot;, explanation_ar: &quot;&quot;
+          question_type: "fill_blank",
+          question_text: "The word for 'peace' in Arabic is ___.",
+          question_text_ar: "كلمة 'سلام' بالعربية هي ___.",
+          correct_answer: "سَلَام",
+          points: 2, difficulty: "medium",
+          explanation: "", explanation_ar: ""
         },
         {
-          question_type: &quot;short_answer&quot;,
-          question_text: &quot;Write a sentence using the word &#x27;مَدْرَسَة&#x27;.&quot;,
-          question_text_ar: &quot;اكتب جملة باستخدام كلمة &#x27;مَدْرَسَة&#x27;.&quot;,
-          correct_answer: &quot;&quot;,
-          points: 3, difficulty: &quot;medium&quot;,
-          explanation: &quot;&quot;, explanation_ar: &quot;&quot;
+          question_type: "short_answer",
+          question_text: "Write a sentence using the word 'مَدْرَسَة'.",
+          question_text_ar: "اكتب جملة باستخدام كلمة 'مَدْرَسَة'.",
+          correct_answer: "",
+          points: 3, difficulty: "medium",
+          explanation: "", explanation_ar: ""
         }
       ];
-      const blob = new Blob([JSON.stringify(template, null, 2)], { type: &quot;application/json&quot; });
+      const blob = new Blob([JSON.stringify(template, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
-      const a = document.createElement(&quot;a&quot;); a.href = url; a.download = &quot;questions_template.json&quot;; a.click();
+      const a = document.createElement("a"); a.href = url; a.download = "questions_template.json"; a.click();
     } else {
       const csv = `question_type,question_text,question_text_ar,option_a,option_a_ar,option_b,option_b_ar,option_c,option_c_ar,option_d,option_d_ar,correct_answer,points,difficulty,explanation,explanation_ar
-mcq,&quot;What is &#x27;book&#x27; in Arabic?&quot;,&quot;ما هي كلمة &#x27;كتاب&#x27; بالعربية؟&quot;,&quot;كِتَاب&quot;,&quot;كِتَاب&quot;,&quot;قَلَم&quot;,&quot;قَلَم&quot;,&quot;بَاب&quot;,&quot;بَاب&quot;,&quot;مَاء&quot;,&quot;مَاء&quot;,a,1,easy,&quot;كِتَاب means book&quot;,&quot;كِتَاب تعني كتاب&quot;
-true_false,&quot;Arabic is written right to left.&quot;,&quot;العربية تُكتب من اليمين لليسار.&quot;,,,,,,,,,,true,1,easy,&quot;&quot;,&quot;&quot;
-fill_blank,&quot;The word for &#x27;water&#x27; is ___.&quot;,&quot;كلمة &#x27;ماء&#x27; هي ___.&quot;,,,,,,,,,,مَاء,2,medium,&quot;&quot;,&quot;&quot;`;
-      const bom = &quot;\uFEFF&quot;; // UTF-8 BOM for Excel Arabic support
-      const blob = new Blob([bom + csv], { type: &quot;text/csv;charset=utf-8&quot; });
+mcq,"What is 'book' in Arabic?","ما هي كلمة 'كتاب' بالعربية؟","كِتَاب","كِتَاب","قَلَم","قَلَم","بَاب","بَاب","مَاء","مَاء",a,1,easy,"كِتَاب means book","كِتَاب تعني كتاب"
+true_false,"Arabic is written right to left.","العربية تُكتب من اليمين لليسار.",,,,,,,,,,true,1,easy,"",""
+fill_blank,"The word for 'water' is ___.","كلمة 'ماء' هي ___.",,,,,,,,,,مَاء,2,medium,"",""`;
+      const bom = "\uFEFF"; // UTF-8 BOM for Excel Arabic support
+      const blob = new Blob([bom + csv], { type: "text/csv;charset=utf-8" });
       const url = URL.createObjectURL(blob);
-      const a = document.createElement(&quot;a&quot;); a.href = url; a.download = &quot;questions_template.csv&quot;; a.click();
+      const a = document.createElement("a"); a.href = url; a.download = "questions_template.csv"; a.click();
     }
   };
 
   return (
-    &lt;div className=&quot;container mx-auto px-4 py-8&quot;&gt;
-      &lt;div className=&quot;mb-6 flex items-center justify-between flex-wrap gap-3&quot;&gt;
-        &lt;h1 className=&quot;text-3xl font-bold&quot;&gt;{isEdit ? t(&quot;Edit Exam&quot;, &quot;تعديل الامتحان&quot;) : t(&quot;Create Exam&quot;, &quot;إنشاء امتحان&quot;)}&lt;/h1&gt;
-        &lt;Button onClick={handleSave} disabled={saving} size=&quot;lg&quot;&gt;
-          {saving ? &lt;Loader2 className=&quot;mr-2 h-4 w-4 animate-spin&quot; /&gt; : &lt;Save className=&quot;mr-2 h-4 w-4&quot; /&gt;}
-          {examForm.type === &quot;test&quot; ? t(&quot;Save Test&quot;, &quot;حفظ التمرين&quot;) : t(&quot;Save Exam&quot;, &quot;حفظ الامتحان&quot;)}
-        &lt;/Button&gt;
-      &lt;/div&gt;
+    <div className="container mx-auto px-4 py-8">
+      <div className="mb-6 flex items-center justify-between flex-wrap gap-3">
+        <h1 className="text-3xl font-bold">{isEdit ? t("Edit Exam", "تعديل الامتحان") : t("Create Exam", "إنشاء امتحان")}</h1>
+        <Button onClick={handleSave} disabled={saving} size="lg">
+          {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+          {examForm.type === "test" ? t("Save Test", "حفظ التمرين") : t("Save Exam", "حفظ الامتحان")}
+        </Button>
+      </div>
 
-      &lt;Tabs defaultValue=&quot;settings&quot; className=&quot;space-y-6&quot;&gt;
-        &lt;TabsList className=&quot;w-full grid grid-cols-4&quot;&gt;
-          &lt;TabsTrigger value=&quot;settings&quot; className=&quot;gap-2&quot;&gt;&lt;Settings2 className=&quot;h-4 w-4&quot; /&gt;{t(&quot;Settings&quot;, &quot;الإعدادات&quot;)}&lt;/TabsTrigger&gt;
-          &lt;TabsTrigger value=&quot;proctoring&quot; className=&quot;gap-2&quot;&gt;🛡️ {t(&quot;Proctoring&quot;, &quot;المراقبة&quot;)}&lt;/TabsTrigger&gt;
-          &lt;TabsTrigger value=&quot;schedule&quot; className=&quot;gap-2&quot;&gt;&lt;Calendar className=&quot;h-4 w-4&quot; /&gt;{t(&quot;Schedule&quot;, &quot;الجدولة&quot;)}&lt;/TabsTrigger&gt;
-          &lt;TabsTrigger value=&quot;questions&quot; className=&quot;gap-2&quot;&gt;&lt;FileText className=&quot;h-4 w-4&quot; /&gt;{t(&quot;Questions&quot;, &quot;الأسئلة&quot;)} ({questions.length})&lt;/TabsTrigger&gt;
-        &lt;/TabsList&gt;
+      <Tabs defaultValue="settings" className="space-y-6">
+        <TabsList className="w-full grid grid-cols-4">
+          <TabsTrigger value="settings" className="gap-2"><Settings2 className="h-4 w-4" />{t("Settings", "الإعدادات")}</TabsTrigger>
+          <TabsTrigger value="proctoring" className="gap-2">🛡️ {t("Proctoring", "المراقبة")}</TabsTrigger>
+          <TabsTrigger value="schedule" className="gap-2"><Calendar className="h-4 w-4" />{t("Schedule", "الجدولة")}</TabsTrigger>
+          <TabsTrigger value="questions" className="gap-2"><FileText className="h-4 w-4" />{t("Questions", "الأسئلة")} ({questions.length})</TabsTrigger>
+        </TabsList>
 
         {/* Settings Tab */}
-        &lt;TabsContent value=&quot;settings&quot;&gt;
-          &lt;Card&gt;
-            &lt;CardHeader&gt;&lt;CardTitle&gt;{t(&quot;Exam Details&quot;, &quot;تفاصيل الامتحان&quot;)}&lt;/CardTitle&gt;&lt;/CardHeader&gt;
-            &lt;CardContent className=&quot;space-y-4&quot;&gt;
+        <TabsContent value="settings">
+          <Card>
+            <CardHeader><CardTitle>{t("Exam Details", "تفاصيل الامتحان")}</CardTitle></CardHeader>
+            <CardContent className="space-y-4">
               {/* Type Selector */}
-              &lt;div className=&quot;rounded-lg border-2 border-dashed p-4&quot;&gt;
-                &lt;Label className=&quot;text-base font-semibold mb-3 block&quot;&gt;{t(&quot;Type&quot;, &quot;النوع&quot;)}&lt;/Label&gt;
-                &lt;div className=&quot;grid grid-cols-2 gap-3&quot;&gt;
+              <div className="rounded-lg border-2 border-dashed p-4">
+                <Label className="text-base font-semibold mb-3 block">{t("Type", "النوع")}</Label>
+                <div className="grid grid-cols-2 gap-3">
                   {[
-                    { value: &quot;exam&quot; as const, label: t(&quot;Exam / امتحان&quot;, &quot;امتحان / Exam&quot;), marks: 70, color: &quot;border-primary bg-primary/5&quot; },
-                    { value: &quot;test&quot; as const, label: t(&quot;Test / تمرين&quot;, &quot;تمرين / Test&quot;), marks: 30, color: &quot;border-amber-500 bg-amber-500/5&quot; },
-                  ].map((opt) =&gt; (
-                    &lt;button
+                    { value: "exam" as const, label: t("Exam / امتحان", "امتحان / Exam"), marks: 70, color: "border-primary bg-primary/5" },
+                    { value: "test" as const, label: t("Test / تمرين", "تمرين / Test"), marks: 30, color: "border-amber-500 bg-amber-500/5" },
+                  ].map((opt) => (
+                    <button
                       key={opt.value}
-                      type=&quot;button&quot;
-                      onClick={() =&gt; setExamForm({ ...examForm, type: opt.value })}
-                      className={`rounded-lg border-2 p-4 text-start transition-all ${examForm.type === opt.value ? opt.color : &quot;border-border hover:border-muted-foreground/30&quot;}`}
-                    &gt;
-                      &lt;p className=&quot;font-semibold text-sm&quot;&gt;{opt.label}&lt;/p&gt;
-                      &lt;p className=&quot;text-xs text-muted-foreground mt-1&quot;&gt;{t(`Max ${opt.marks} marks`, `${opt.marks} درجة كحد أقصى`)}&lt;/p&gt;
-                    &lt;/button&gt;
+                      type="button"
+                      onClick={() => setExamForm({ ...examForm, type: opt.value })}
+                      className={`rounded-lg border-2 p-4 text-start transition-all ${examForm.type === opt.value ? opt.color : "border-border hover:border-muted-foreground/30"}`}
+                    >
+                      <p className="font-semibold text-sm">{opt.label}</p>
+                      <p className="text-xs text-muted-foreground mt-1">{t(`Max ${opt.marks} marks`, `${opt.marks} درجة كحد أقصى`)}</p>
+                    </button>
                   ))}
-                &lt;/div&gt;
-              &lt;/div&gt;
+                </div>
+              </div>
 
               {/* Level Selector */}
-              &lt;div&gt;
-                &lt;Label&gt;{t(&quot;Level&quot;, &quot;المستوى&quot;)}&lt;/Label&gt;
-                &lt;Select value={examForm.level || &quot;none&quot;} onValueChange={(v) =&gt; setExamForm({ ...examForm, level: v === &quot;none&quot; ? &quot;&quot; : v })}&gt;
-                  &lt;SelectTrigger className=&quot;mt-1&quot;&gt;&lt;SelectValue placeholder={t(&quot;Select level&quot;, &quot;اختر المستوى&quot;)} /&gt;&lt;/SelectTrigger&gt;
-                  &lt;SelectContent&gt;
-                    &lt;SelectItem value=&quot;none&quot;&gt;{t(&quot;All Levels&quot;, &quot;جميع المستويات&quot;)}&lt;/SelectItem&gt;
-                    &lt;SelectItem value=&quot;beginner&quot;&gt;{t(&quot;Beginner / مبتدئ&quot;, &quot;مبتدئ / Beginner&quot;)}&lt;/SelectItem&gt;
-                    &lt;SelectItem value=&quot;intermediate&quot;&gt;{t(&quot;Intermediate / متوسط&quot;, &quot;متوسط / Intermediate&quot;)}&lt;/SelectItem&gt;
-                    &lt;SelectItem value=&quot;advanced&quot;&gt;{t(&quot;Advanced / متقدم&quot;, &quot;متقدم / Advanced&quot;)}&lt;/SelectItem&gt;
-                  &lt;/SelectContent&gt;
-                &lt;/Select&gt;
-              &lt;/div&gt;
+              <div>
+                <Label>{t("Level", "المستوى")}</Label>
+                <Select value={examForm.level || "none"} onValueChange={(v) => setExamForm({ ...examForm, level: v === "none" ? "" : v })}>
+                  <SelectTrigger className="mt-1"><SelectValue placeholder={t("Select level", "اختر المستوى")} /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">{t("All Levels", "جميع المستويات")}</SelectItem>
+                    <SelectItem value="beginner">{t("Beginner / مبتدئ", "مبتدئ / Beginner")}</SelectItem>
+                    <SelectItem value="intermediate">{t("Intermediate / متوسط", "متوسط / Intermediate")}</SelectItem>
+                    <SelectItem value="advanced">{t("Advanced / متقدم", "متقدم / Advanced")}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
 
-              &lt;div className=&quot;grid gap-4 md:grid-cols-2&quot;&gt;
-                &lt;div&gt;
-                  &lt;Label&gt;{t(&quot;Title (English)&quot;, &quot;العنوان (إنجليزي)&quot;)}&lt;/Label&gt;
-                  &lt;Input value={examForm.title} onChange={(e) =&gt; setExamForm({ ...examForm, title: e.target.value })} className=&quot;mt-1&quot; /&gt;
-                &lt;/div&gt;
-                &lt;div&gt;
-                  &lt;Label&gt;{t(&quot;Title (Arabic)&quot;, &quot;العنوان (عربي)&quot;)}&lt;/Label&gt;
-                  &lt;Input value={examForm.title_ar} onChange={(e) =&gt; setExamForm({ ...examForm, title_ar: e.target.value })} dir=&quot;rtl&quot; className=&quot;mt-1&quot; /&gt;
-                &lt;/div&gt;
-              &lt;/div&gt;
-              &lt;div className=&quot;grid gap-4 md:grid-cols-2&quot;&gt;
-                &lt;div&gt;
-                  &lt;Label&gt;{t(&quot;Description&quot;, &quot;الوصف&quot;)}&lt;/Label&gt;
-                  &lt;Textarea value={examForm.description} onChange={(e) =&gt; setExamForm({ ...examForm, description: e.target.value })} className=&quot;mt-1&quot; /&gt;
-                &lt;/div&gt;
-                &lt;div&gt;
-                  &lt;Label&gt;{t(&quot;Description (Arabic)&quot;, &quot;الوصف (عربي)&quot;)}&lt;/Label&gt;
-                  &lt;Textarea value={examForm.description_ar} onChange={(e) =&gt; setExamForm({ ...examForm, description_ar: e.target.value })} dir=&quot;rtl&quot; className=&quot;mt-1&quot; /&gt;
-                &lt;/div&gt;
-              &lt;/div&gt;
-              &lt;div className=&quot;grid gap-4 md:grid-cols-5&quot;&gt;
-                &lt;div&gt;
-                  &lt;Label&gt;{t(&quot;Time Limit (min)&quot;, &quot;الحد الزمني (دقيقة)&quot;)}&lt;/Label&gt;
-                  &lt;Input type=&quot;number&quot; value={examForm.time_limit_minutes} onChange={(e) =&gt; setExamForm({ ...examForm, time_limit_minutes: +e.target.value })} className=&quot;mt-1&quot; /&gt;
-                &lt;/div&gt;
-                &lt;div&gt;
-                  &lt;Label&gt;{t(&quot;Passing Score (%)&quot;, &quot;درجة النجاح (%)&quot;)}&lt;/Label&gt;
-                  &lt;Input type=&quot;number&quot; value={examForm.passing_score} onChange={(e) =&gt; setExamForm({ ...examForm, passing_score: +e.target.value })} className=&quot;mt-1&quot; /&gt;
-                &lt;/div&gt;
-                &lt;div&gt;
-                  &lt;Label&gt;{t(&quot;Max Attempts&quot;, &quot;أقصى محاولات&quot;)}&lt;/Label&gt;
-                  &lt;Input type=&quot;number&quot; value={examForm.max_attempts} onChange={(e) =&gt; setExamForm({ ...examForm, max_attempts: +e.target.value })} className=&quot;mt-1&quot; min={1} /&gt;
-                &lt;/div&gt;
-                &lt;div&gt;
-                  &lt;Label&gt;{t(&quot;Display Mode&quot;, &quot;وضع العرض&quot;)}&lt;/Label&gt;
-                  &lt;Select value={examForm.display_mode} onValueChange={(v) =&gt; setExamForm({ ...examForm, display_mode: v })}&gt;
-                    &lt;SelectTrigger className=&quot;mt-1&quot;&gt;&lt;SelectValue /&gt;&lt;/SelectTrigger&gt;
-                    &lt;SelectContent&gt;
-                      &lt;SelectItem value=&quot;one_at_a_time&quot;&gt;{t(&quot;One at a time&quot;, &quot;واحد في كل مرة&quot;)}&lt;/SelectItem&gt;
-                      &lt;SelectItem value=&quot;all_at_once&quot;&gt;{t(&quot;All at once&quot;, &quot;الكل مرة واحدة&quot;)}&lt;/SelectItem&gt;
-                    &lt;/SelectContent&gt;
-                  &lt;/Select&gt;
-                &lt;/div&gt;
-                &lt;div&gt;
-                  &lt;Label&gt;{t(&quot;Term&quot;, &quot;الفصل الدراسي&quot;)}&lt;/Label&gt;
-                  &lt;Select value={examForm.term} onValueChange={(v) =&gt; setExamForm({ ...examForm, term: v })}&gt;
-                    &lt;SelectTrigger className=&quot;mt-1&quot;&gt;&lt;SelectValue /&gt;&lt;/SelectTrigger&gt;
-                    &lt;SelectContent&gt;
-                      &lt;SelectItem value=&quot;first&quot;&gt;{t(&quot;First Term / الفصل الأول&quot;, &quot;الفصل الأول / First Term&quot;)}&lt;/SelectItem&gt;
-                      &lt;SelectItem value=&quot;second&quot;&gt;{t(&quot;Second Term / الفصل الثاني&quot;, &quot;الفصل الثاني / Second Term&quot;)}&lt;/SelectItem&gt;
-                      &lt;SelectItem value=&quot;third&quot;&gt;{t(&quot;Third Term / الفصل الثالث&quot;, &quot;الفصل الثالث / Third Term&quot;)}&lt;/SelectItem&gt;
-                    &lt;/SelectContent&gt;
-                  &lt;/Select&gt;
-                &lt;/div&gt;
-              &lt;/div&gt;
-              &lt;div className=&quot;grid gap-4 md:grid-cols-2&quot;&gt;
-                &lt;div&gt;
-                  &lt;Label&gt;{t(&quot;Guidelines (English)&quot;, &quot;الإرشادات (إنجليزي)&quot;)}&lt;/Label&gt;
-                  &lt;Textarea value={examForm.guidelines} onChange={(e) =&gt; setExamForm({ ...examForm, guidelines: e.target.value })} className=&quot;mt-1&quot; /&gt;
-                &lt;/div&gt;
-                &lt;div&gt;
-                  &lt;Label&gt;{t(&quot;Guidelines (Arabic)&quot;, &quot;الإرشادات (عربي)&quot;)}&lt;/Label&gt;
-                  &lt;Textarea value={examForm.guidelines_ar} onChange={(e) =&gt; setExamForm({ ...examForm, guidelines_ar: e.target.value })} dir=&quot;rtl&quot; className=&quot;mt-1&quot; /&gt;
-                &lt;/div&gt;
-              &lt;/div&gt;
-              &lt;div className=&quot;flex flex-wrap gap-6 pt-2&quot;&gt;
+              <div className="grid gap-4 md:grid-cols-2">
+                <div>
+                  <Label>{t("Title (English)", "العنوان (إنجليزي)")}</Label>
+                  <Input value={examForm.title} onChange={(e) => setExamForm({ ...examForm, title: e.target.value })} className="mt-1" />
+                </div>
+                <div>
+                  <Label>{t("Title (Arabic)", "العنوان (عربي)")}</Label>
+                  <Input value={examForm.title_ar} onChange={(e) => setExamForm({ ...examForm, title_ar: e.target.value })} dir="rtl" className="mt-1" />
+                </div>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div>
+                  <Label>{t("Description", "الوصف")}</Label>
+                  <Textarea value={examForm.description} onChange={(e) => setExamForm({ ...examForm, description: e.target.value })} className="mt-1" />
+                </div>
+                <div>
+                  <Label>{t("Description (Arabic)", "الوصف (عربي)")}</Label>
+                  <Textarea value={examForm.description_ar} onChange={(e) => setExamForm({ ...examForm, description_ar: e.target.value })} dir="rtl" className="mt-1" />
+                </div>
+              </div>
+              <div className="grid gap-4 md:grid-cols-5">
+                <div>
+                  <Label>{t("Time Limit (min)", "الحد الزمني (دقيقة)")}</Label>
+                  <Input type="number" value={examForm.time_limit_minutes} onChange={(e) => setExamForm({ ...examForm, time_limit_minutes: +e.target.value })} className="mt-1" />
+                </div>
+                <div>
+                  <Label>{t("Passing Score (%)", "درجة النجاح (%)")}</Label>
+                  <Input type="number" value={examForm.passing_score} onChange={(e) => setExamForm({ ...examForm, passing_score: +e.target.value })} className="mt-1" />
+                </div>
+                <div>
+                  <Label>{t("Max Attempts", "أقصى محاولات")}</Label>
+                  <Input type="number" value={examForm.max_attempts} onChange={(e) => setExamForm({ ...examForm, max_attempts: +e.target.value })} className="mt-1" min={1} />
+                </div>
+                <div>
+                  <Label>{t("Display Mode", "وضع العرض")}</Label>
+                  <Select value={examForm.display_mode} onValueChange={(v) => setExamForm({ ...examForm, display_mode: v })}>
+                    <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="one_at_a_time">{t("One at a time", "واحد في كل مرة")}</SelectItem>
+                      <SelectItem value="all_at_once">{t("All at once", "الكل مرة واحدة")}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label>{t("Term", "الفصل الدراسي")}</Label>
+                  <Select value={examForm.term} onValueChange={(v) => setExamForm({ ...examForm, term: v })}>
+                    <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="first">{t("First Term / الفصل الأول", "الفصل الأول / First Term")}</SelectItem>
+                      <SelectItem value="second">{t("Second Term / الفصل الثاني", "الفصل الثاني / Second Term")}</SelectItem>
+                      <SelectItem value="third">{t("Third Term / الفصل الثالث", "الفصل الثالث / Third Term")}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div>
+                  <Label>{t("Guidelines (English)", "الإرشادات (إنجليزي)")}</Label>
+                  <Textarea value={examForm.guidelines} onChange={(e) => setExamForm({ ...examForm, guidelines: e.target.value })} className="mt-1" />
+                </div>
+                <div>
+                  <Label>{t("Guidelines (Arabic)", "الإرشادات (عربي)")}</Label>
+                  <Textarea value={examForm.guidelines_ar} onChange={(e) => setExamForm({ ...examForm, guidelines_ar: e.target.value })} dir="rtl" className="mt-1" />
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-6 pt-2">
                 {[
-                  { key: &quot;randomize_questions&quot;, label: t(&quot;Randomize Questions&quot;, &quot;ترتيب عشوائي للأسئلة&quot;) },
-                  { key: &quot;randomize_answers&quot;, label: t(&quot;Randomize Answers&quot;, &quot;ترتيب عشوائي للإجابات&quot;) },
-                  { key: &quot;show_results_immediately&quot;, label: t(&quot;Show Results Immediately&quot;, &quot;عرض النتائج فورًا&quot;) },
-                  { key: &quot;allow_review&quot;, label: t(&quot;Allow Review&quot;, &quot;السماح بالمراجعة&quot;) },
-                ].map((s) =&gt; (
-                  &lt;div key={s.key} className=&quot;flex items-center gap-2&quot;&gt;
-                    &lt;Switch checked={(examForm as any)[s.key]} onCheckedChange={(v) =&gt; setExamForm({ ...examForm, [s.key]: v })} /&gt;
-                    &lt;Label className=&quot;text-sm&quot;&gt;{s.label}&lt;/Label&gt;
-                  &lt;/div&gt;
+                  { key: "randomize_questions", label: t("Randomize Questions", "ترتيب عشوائي للأسئلة") },
+                  { key: "randomize_answers", label: t("Randomize Answers", "ترتيب عشوائي للإجابات") },
+                  { key: "show_results_immediately", label: t("Show Results Immediately", "عرض النتائج فورًا") },
+                  { key: "allow_review", label: t("Allow Review", "السماح بالمراجعة") },
+                ].map((s) => (
+                  <div key={s.key} className="flex items-center gap-2">
+                    <Switch checked={(examForm as any)[s.key]} onCheckedChange={(v) => setExamForm({ ...examForm, [s.key]: v })} />
+                    <Label className="text-sm">{s.label}</Label>
+                  </div>
                 ))}
-              &lt;/div&gt;
-              {examForm.allow_review &amp;&amp; (
-                &lt;div className=&quot;flex items-center gap-3 pt-2&quot;&gt;
-                  &lt;Label className=&quot;text-sm whitespace-nowrap&quot;&gt;{t(&quot;Max Review Views&quot;, &quot;الحد الأقصى لمرات المراجعة&quot;)}&lt;/Label&gt;
-                  &lt;Input
-                    type=&quot;number&quot;
+              </div>
+              {examForm.allow_review && (
+                <div className="flex items-center gap-3 pt-2">
+                  <Label className="text-sm whitespace-nowrap">{t("Max Review Views", "الحد الأقصى لمرات المراجعة")}</Label>
+                  <Input
+                    type="number"
                     min={1}
                     max={100}
-                    className=&quot;w-24&quot;
+                    className="w-24"
                     value={examForm.max_review_views}
-                    onChange={(e) =&gt; setExamForm({ ...examForm, max_review_views: parseInt(e.target.value) || 1 })}
-                  /&gt;
-                  &lt;span className=&quot;text-xs text-muted-foreground&quot;&gt;{t(&quot;times&quot;, &quot;مرات&quot;)}&lt;/span&gt;
-                &lt;/div&gt;
+                    onChange={(e) => setExamForm({ ...examForm, max_review_views: parseInt(e.target.value) || 1 })}
+                  />
+                  <span className="text-xs text-muted-foreground">{t("times", "مرات")}</span>
+                </div>
               )}
-            &lt;/CardContent&gt;
-          &lt;/Card&gt;
-        &lt;/TabsContent&gt;
+            </CardContent>
+          </Card>
+        </TabsContent>
 
         {/* Proctoring Tab */}
-        &lt;TabsContent value=&quot;proctoring&quot;&gt;
-          &lt;Card&gt;
-            &lt;CardHeader&gt;&lt;CardTitle&gt;🛡️ {t(&quot;Proctoring Settings&quot;, &quot;إعدادات المراقبة&quot;)}&lt;/CardTitle&gt;&lt;/CardHeader&gt;
-            &lt;CardContent className=&quot;space-y-4&quot;&gt;
-              &lt;div className=&quot;flex flex-wrap gap-6&quot;&gt;
+        <TabsContent value="proctoring">
+          <Card>
+            <CardHeader><CardTitle>🛡️ {t("Proctoring Settings", "إعدادات المراقبة")}</CardTitle></CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex flex-wrap gap-6">
                 {[
-                  { key: &quot;proctoring_enabled&quot;, label: t(&quot;Enable Proctoring&quot;, &quot;تفعيل المراقبة&quot;) },
-                  { key: &quot;fullscreen_required&quot;, label: t(&quot;Require Fullscreen&quot;, &quot;إلزام ملء الشاشة&quot;) },
-                  { key: &quot;auto_submit_on_violation&quot;, label: t(&quot;Auto-Submit on Max Violations&quot;, &quot;تقديم تلقائي عند الحد الأقصى&quot;) },
-                ].map((s) =&gt; (
-                  &lt;div key={s.key} className=&quot;flex items-center gap-2&quot;&gt;
-                    &lt;Switch checked={(examForm as any)[s.key]} onCheckedChange={(v) =&gt; setExamForm({ ...examForm, [s.key]: v })} /&gt;
-                    &lt;Label className=&quot;text-sm&quot;&gt;{s.label}&lt;/Label&gt;
-                  &lt;/div&gt;
+                  { key: "proctoring_enabled", label: t("Enable Proctoring", "تفعيل المراقبة") },
+                  { key: "fullscreen_required", label: t("Require Fullscreen", "إلزام ملء الشاشة") },
+                  { key: "auto_submit_on_violation", label: t("Auto-Submit on Max Violations", "تقديم تلقائي عند الحد الأقصى") },
+                ].map((s) => (
+                  <div key={s.key} className="flex items-center gap-2">
+                    <Switch checked={(examForm as any)[s.key]} onCheckedChange={(v) => setExamForm({ ...examForm, [s.key]: v })} />
+                    <Label className="text-sm">{s.label}</Label>
+                  </div>
                 ))}
-              &lt;/div&gt;
-              &lt;div className=&quot;grid gap-4 md:grid-cols-3&quot;&gt;
-                &lt;div&gt;
-                  &lt;Label&gt;{t(&quot;Tab Switch Limit&quot;, &quot;حد تبديل النوافذ&quot;)}&lt;/Label&gt;
-                  &lt;Input type=&quot;number&quot; value={examForm.tab_switch_limit} onChange={(e) =&gt; setExamForm({ ...examForm, tab_switch_limit: +e.target.value })} className=&quot;mt-1&quot; min={1} /&gt;
-                &lt;/div&gt;
-                &lt;div&gt;
-                  &lt;Label&gt;{t(&quot;Max Warnings&quot;, &quot;أقصى تحذيرات&quot;)}&lt;/Label&gt;
-                  &lt;Input type=&quot;number&quot; value={examForm.max_warnings} onChange={(e) =&gt; setExamForm({ ...examForm, max_warnings: +e.target.value })} className=&quot;mt-1&quot; min={1} /&gt;
-                &lt;/div&gt;
-                &lt;div&gt;
-                  &lt;Label&gt;{t(&quot;Screenshot Interval (sec, 0=off)&quot;, &quot;فترة لقطة الشاشة (ثانية، 0=إيقاف)&quot;)}&lt;/Label&gt;
-                  &lt;Input type=&quot;number&quot; value={examForm.screenshot_interval_seconds} onChange={(e) =&gt; setExamForm({ ...examForm, screenshot_interval_seconds: +e.target.value })} className=&quot;mt-1&quot; min={0} /&gt;
-                &lt;/div&gt;
-              &lt;/div&gt;
-              &lt;p className=&quot;text-sm text-muted-foreground&quot;&gt;
+              </div>
+              <div className="grid gap-4 md:grid-cols-3">
+                <div>
+                  <Label>{t("Tab Switch Limit", "حد تبديل النوافذ")}</Label>
+                  <Input type="number" value={examForm.tab_switch_limit} onChange={(e) => setExamForm({ ...examForm, tab_switch_limit: +e.target.value })} className="mt-1" min={1} />
+                </div>
+                <div>
+                  <Label>{t("Max Warnings", "أقصى تحذيرات")}</Label>
+                  <Input type="number" value={examForm.max_warnings} onChange={(e) => setExamForm({ ...examForm, max_warnings: +e.target.value })} className="mt-1" min={1} />
+                </div>
+                <div>
+                  <Label>{t("Screenshot Interval (sec, 0=off)", "فترة لقطة الشاشة (ثانية، 0=إيقاف)")}</Label>
+                  <Input type="number" value={examForm.screenshot_interval_seconds} onChange={(e) => setExamForm({ ...examForm, screenshot_interval_seconds: +e.target.value })} className="mt-1" min={0} />
+                </div>
+              </div>
+              <p className="text-sm text-muted-foreground">
                 {t(
-                  &quot;When proctoring is enabled, students will be monitored for tab switches, fullscreen exits, copy/paste, right-click, and developer tools usage. All violations are logged with timestamps.&quot;,
-                  &quot;عند تفعيل المراقبة، ستتم مراقبة الطلاب لتبديل النوافذ، الخروج من ملء الشاشة، النسخ/اللصق، النقر بزر الماوس الأيمن، واستخدام أدوات المطور. يتم تسجيل جميع المخالفات مع الطوابع الزمنية.&quot;
+                  "When proctoring is enabled, students will be monitored for tab switches, fullscreen exits, copy/paste, right-click, and developer tools usage. All violations are logged with timestamps.",
+                  "عند تفعيل المراقبة، ستتم مراقبة الطلاب لتبديل النوافذ، الخروج من ملء الشاشة، النسخ/اللصق، النقر بزر الماوس الأيمن، واستخدام أدوات المطور. يتم تسجيل جميع المخالفات مع الطوابع الزمنية."
                 )}
-              &lt;/p&gt;
-            &lt;/CardContent&gt;
-          &lt;/Card&gt;
-        &lt;/TabsContent&gt;
+              </p>
+            </CardContent>
+          </Card>
+        </TabsContent>
 
         {/* Schedule Tab */}
-        &lt;TabsContent value=&quot;schedule&quot;&gt;
-          &lt;Card&gt;
-            &lt;CardHeader&gt;&lt;CardTitle&gt;{t(&quot;Exam Schedule&quot;, &quot;جدول الامتحان&quot;)}&lt;/CardTitle&gt;&lt;/CardHeader&gt;
-            &lt;CardContent className=&quot;space-y-4&quot;&gt;
-              &lt;div className=&quot;grid gap-4 md:grid-cols-2&quot;&gt;
-                &lt;div&gt;
-                  &lt;Label&gt;{t(&quot;Start Date &amp; Time&quot;, &quot;تاريخ ووقت البدء&quot;)}&lt;/Label&gt;
-                  &lt;Input type=&quot;datetime-local&quot; value={examForm.start_date} onChange={(e) =&gt; setExamForm({ ...examForm, start_date: e.target.value })} className=&quot;mt-1&quot; /&gt;
-                &lt;/div&gt;
-                &lt;div&gt;
-                  &lt;Label&gt;{t(&quot;End Date &amp; Time&quot;, &quot;تاريخ ووقت الانتهاء&quot;)}&lt;/Label&gt;
-                  &lt;Input type=&quot;datetime-local&quot; value={examForm.end_date} onChange={(e) =&gt; setExamForm({ ...examForm, end_date: e.target.value })} className=&quot;mt-1&quot; /&gt;
-                &lt;/div&gt;
-              &lt;/div&gt;
-              &lt;p className=&quot;text-sm text-muted-foreground&quot;&gt;
+        <TabsContent value="schedule">
+          <Card>
+            <CardHeader><CardTitle>{t("Exam Schedule", "جدول الامتحان")}</CardTitle></CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-2">
+                <div>
+                  <Label>{t("Start Date & Time", "تاريخ ووقت البدء")}</Label>
+                  <Input type="datetime-local" value={examForm.start_date} onChange={(e) => setExamForm({ ...examForm, start_date: e.target.value })} className="mt-1" />
+                </div>
+                <div>
+                  <Label>{t("End Date & Time", "تاريخ ووقت الانتهاء")}</Label>
+                  <Input type="datetime-local" value={examForm.end_date} onChange={(e) => setExamForm({ ...examForm, end_date: e.target.value })} className="mt-1" />
+                </div>
+              </div>
+              <p className="text-sm text-muted-foreground">
                 {t(
-                  &quot;Set the window during which students can take this exam. Leave blank for no restrictions. Times are in your local timezone.&quot;,
-                  &quot;حدد النافذة الزمنية التي يمكن للطلاب فيها أداء هذا الامتحان. اتركها فارغة بدون قيود. الأوقات بتوقيتك المحلي.&quot;
+                  "Set the window during which students can take this exam. Leave blank for no restrictions. Times are in your local timezone.",
+                  "حدد النافذة الزمنية التي يمكن للطلاب فيها أداء هذا الامتحان. اتركها فارغة بدون قيود. الأوقات بتوقيتك المحلي."
                 )}
-              &lt;/p&gt;
-              {(examForm.start_date || examForm.end_date) &amp;&amp; (
-                &lt;div className=&quot;rounded-lg border bg-accent/30 p-3 text-sm space-y-1&quot;&gt;
-                  &lt;p className=&quot;font-medium text-xs text-muted-foreground&quot;&gt;{t(&quot;Student visibility preview:&quot;, &quot;معاينة ظهور الامتحان للطلاب:&quot;)}&lt;/p&gt;
-                  {examForm.start_date &amp;&amp; (
-                    &lt;p&gt;✅ {t(&quot;Opens&quot;, &quot;يفتح&quot;)}: &lt;strong&gt;{new Date(examForm.start_date).toLocaleString()}&lt;/strong&gt; ({t(&quot;your local time&quot;, &quot;توقيتك المحلي&quot;)})&lt;/p&gt;
+              </p>
+              {(examForm.start_date || examForm.end_date) && (
+                <div className="rounded-lg border bg-accent/30 p-3 text-sm space-y-1">
+                  <p className="font-medium text-xs text-muted-foreground">{t("Student visibility preview:", "معاينة ظهور الامتحان للطلاب:")}</p>
+                  {examForm.start_date && (
+                    <p>✅ {t("Opens", "يفتح")}: <strong>{new Date(examForm.start_date).toLocaleString()}</strong> ({t("your local time", "توقيتك المحلي")})</p>
                   )}
-                  {examForm.end_date &amp;&amp; (
-                    &lt;p&gt;🔒 {t(&quot;Closes&quot;, &quot;يغلق&quot;)}: &lt;strong&gt;{new Date(examForm.end_date).toLocaleString()}&lt;/strong&gt;&lt;/p&gt;
+                  {examForm.end_date && (
+                    <p>🔒 {t("Closes", "يغلق")}: <strong>{new Date(examForm.end_date).toLocaleString()}</strong></p>
                   )}
-                  {examForm.start_date &amp;&amp; new Date(examForm.start_date).getTime() &gt; Date.now() &amp;&amp; (
-                    &lt;p className=&quot;text-xs text-muted-foreground&quot;&gt;{t(&quot;⏳ Exam is not yet open for students&quot;, &quot;⏳ الامتحان لم يفتح للطلاب بعد&quot;)}&lt;/p&gt;
+                  {examForm.start_date && new Date(examForm.start_date).getTime() > Date.now() && (
+                    <p className="text-xs text-muted-foreground">{t("⏳ Exam is not yet open for students", "⏳ الامتحان لم يفتح للطلاب بعد")}</p>
                   )}
-                  {examForm.start_date &amp;&amp; examForm.end_date &amp;&amp; new Date(examForm.start_date).getTime() &lt;= Date.now() &amp;&amp; new Date(examForm.end_date).getTime() &gt;= Date.now() &amp;&amp; (
-                    &lt;p className=&quot;text-xs text-primary font-medium&quot;&gt;{t(&quot;🟢 Exam is currently open for students&quot;, &quot;🟢 الامتحان مفتوح حاليًا للطلاب&quot;)}&lt;/p&gt;
+                  {examForm.start_date && examForm.end_date && new Date(examForm.start_date).getTime() <= Date.now() && new Date(examForm.end_date).getTime() >= Date.now() && (
+                    <p className="text-xs text-primary font-medium">{t("🟢 Exam is currently open for students", "🟢 الامتحان مفتوح حاليًا للطلاب")}</p>
                   )}
-                  {examForm.end_date &amp;&amp; new Date(examForm.end_date).getTime() &lt; Date.now() &amp;&amp; (
-                    &lt;p className=&quot;text-xs text-destructive font-medium&quot;&gt;{t(&quot;🔴 Exam window has passed&quot;, &quot;🔴 انتهت فترة الامتحان&quot;)}&lt;/p&gt;
+                  {examForm.end_date && new Date(examForm.end_date).getTime() < Date.now() && (
+                    <p className="text-xs text-destructive font-medium">{t("🔴 Exam window has passed", "🔴 انتهت فترة الامتحان")}</p>
                   )}
-                &lt;/div&gt;
+                </div>
               )}
-            &lt;/CardContent&gt;
-          &lt;/Card&gt;
-        &lt;/TabsContent&gt;
+            </CardContent>
+          </Card>
+        </TabsContent>
 
         {/* Questions Tab */}
-        &lt;TabsContent value=&quot;questions&quot;&gt;
-          &lt;div className=&quot;space-y-4&quot;&gt;
-            &lt;div className=&quot;flex items-center justify-between flex-wrap gap-2&quot;&gt;
-              &lt;h2 className=&quot;text-xl font-semibold&quot;&gt;{t(&quot;Questions&quot;, &quot;الأسئلة&quot;)} ({questions.length})&lt;/h2&gt;
-              &lt;div className=&quot;flex items-center gap-2 flex-wrap&quot;&gt;
+        <TabsContent value="questions">
+          <div className="space-y-4">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <h2 className="text-xl font-semibold">{t("Questions", "الأسئلة")} ({questions.length})</h2>
+              <div className="flex items-center gap-2 flex-wrap">
                 {/* Bulk import */}
-                &lt;input ref={bulkFileInputRef} type=&quot;file&quot; accept=&quot;.csv,.json,.xlsx,.xls&quot; className=&quot;hidden&quot; onChange={handleBulkImport} /&gt;
-                &lt;Dialog&gt;
-                  &lt;DialogTrigger asChild&gt;
-                    &lt;Button variant=&quot;outline&quot; size=&quot;sm&quot; className=&quot;gap-1&quot;&gt;
-                      &lt;Upload className=&quot;h-3 w-3&quot; /&gt;{t(&quot;Bulk Import&quot;, &quot;استيراد جماعي&quot;)}
-                    &lt;/Button&gt;
-                  &lt;/DialogTrigger&gt;
-                  &lt;DialogContent&gt;
-                    &lt;DialogHeader&gt;
-                      &lt;DialogTitle&gt;{t(&quot;Bulk Import Questions&quot;, &quot;استيراد أسئلة جماعي&quot;)}&lt;/DialogTitle&gt;
-                    &lt;/DialogHeader&gt;
-                    &lt;div className=&quot;space-y-4&quot;&gt;
-                      &lt;p className=&quot;text-sm text-muted-foreground&quot;&gt;
+                <input ref={bulkFileInputRef} type="file" accept=".csv,.json,.xlsx,.xls" className="hidden" onChange={handleBulkImport} />
+                <Dialog>
+                  <DialogTrigger asChild>
+                    <Button variant="outline" size="sm" className="gap-1">
+                      <Upload className="h-3 w-3" />{t("Bulk Import", "استيراد جماعي")}
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>{t("Bulk Import Questions", "استيراد أسئلة جماعي")}</DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-4">
+                      <p className="text-sm text-muted-foreground">
                         {t(
-                          &quot;Upload your questions file. Supports Excel (.xlsx), CSV, and JSON formats. Use the exact column format: QuestionType, Question, Answer1-Answer8, correctanswer, Marks, DifficultyLevel, Explanation, Tags.&quot;,
-                          &quot;ارفع ملف الأسئلة. يدعم صيغ Excel (.xlsx) و CSV و JSON. استخدم تنسيق الأعمدة: QuestionType, Question, Answer1-Answer8, correctanswer, Marks, DifficultyLevel, Explanation, Tags.&quot;
+                          "Upload your questions file. Supports Excel (.xlsx), CSV, and JSON formats. Use the exact column format: QuestionType, Question, Answer1-Answer8, correctanswer, Marks, DifficultyLevel, Explanation, Tags.",
+                          "ارفع ملف الأسئلة. يدعم صيغ Excel (.xlsx) و CSV و JSON. استخدم تنسيق الأعمدة: QuestionType, Question, Answer1-Answer8, correctanswer, Marks, DifficultyLevel, Explanation, Tags."
                         )}
-                      &lt;/p&gt;
-                      &lt;div className=&quot;flex gap-2&quot;&gt;
-                        &lt;Button variant=&quot;outline&quot; size=&quot;sm&quot; onClick={() =&gt; downloadTemplate(&quot;csv&quot;)} className=&quot;gap-1&quot;&gt;
-                          &lt;Download className=&quot;h-3 w-3&quot; /&gt; CSV {t(&quot;Template&quot;, &quot;قالب&quot;)}
-                        &lt;/Button&gt;
-                        &lt;Button variant=&quot;outline&quot; size=&quot;sm&quot; onClick={() =&gt; downloadTemplate(&quot;json&quot;)} className=&quot;gap-1&quot;&gt;
-                          &lt;Download className=&quot;h-3 w-3&quot; /&gt; JSON {t(&quot;Template&quot;, &quot;قالب&quot;)}
-                        &lt;/Button&gt;
-                      &lt;/div&gt;
-                      &lt;Button onClick={() =&gt; bulkFileInputRef.current?.click()} className=&quot;w-full gap-1&quot;&gt;
-                        &lt;Upload className=&quot;h-4 w-4&quot; /&gt; {t(&quot;Upload Questions File&quot;, &quot;رفع ملف الأسئلة&quot;)}
-                      &lt;/Button&gt;
-                    &lt;/div&gt;
-                  &lt;/DialogContent&gt;
-                &lt;/Dialog&gt;
+                      </p>
+                      <div className="flex gap-2">
+                        <Button variant="outline" size="sm" onClick={() => downloadTemplate("csv")} className="gap-1">
+                          <Download className="h-3 w-3" /> CSV {t("Template", "قالب")}
+                        </Button>
+                        <Button variant="outline" size="sm" onClick={() => downloadTemplate("json")} className="gap-1">
+                          <Download className="h-3 w-3" /> JSON {t("Template", "قالب")}
+                        </Button>
+                      </div>
+                      <Button onClick={() => bulkFileInputRef.current?.click()} className="w-full gap-1">
+                        <Upload className="h-4 w-4" /> {t("Upload Questions File", "رفع ملف الأسئلة")}
+                      </Button>
+                    </div>
+                  </DialogContent>
+                </Dialog>
 
-                &lt;Button variant=&quot;outline&quot; onClick={openQuestionBank} className=&quot;gap-1&quot;&gt;
-                  &lt;Library className=&quot;h-4 w-4&quot; /&gt;{t(&quot;Import from Bank&quot;, &quot;استيراد من البنك&quot;)}
-                &lt;/Button&gt;
-                &lt;Button variant=&quot;outline&quot; onClick={() =&gt; setPreviewOpen(true)} className=&quot;gap-1&quot;&gt;
-                  &lt;Eye className=&quot;h-4 w-4&quot; /&gt;{t(&quot;Preview&quot;, &quot;معاينة&quot;)}
-                &lt;/Button&gt;
-                &lt;Button variant=&quot;outline&quot; onClick={addQuestion} className=&quot;gap-1&quot;&gt;
-                  &lt;Plus className=&quot;h-4 w-4&quot; /&gt;{t(&quot;Add Question&quot;, &quot;إضافة سؤال&quot;)}
-                &lt;/Button&gt;
-              &lt;/div&gt;
-            &lt;/div&gt;
+                <Button variant="outline" onClick={openQuestionBank} className="gap-1">
+                  <Library className="h-4 w-4" />{t("Import from Bank", "استيراد من البنك")}
+                </Button>
+                <Button variant="outline" onClick={() => setPreviewOpen(true)} className="gap-1">
+                  <Eye className="h-4 w-4" />{t("Preview", "معاينة")}
+                </Button>
+                <Button variant="outline" onClick={addQuestion} className="gap-1">
+                  <Plus className="h-4 w-4" />{t("Add Question", "إضافة سؤال")}
+                </Button>
+              </div>
+            </div>
 
             {/* Bulk Question Formatter */}
-            &lt;BulkQuestionFormatter
+            <BulkQuestionFormatter
               format={formatSettings}
               onChange={setFormatSettings}
-              onApply={() =&gt; {
+              onApply={() => {
                 toast({ title: t(`✅ Formatting applied to all ${questions.length} questions`, `✅ تم تطبيق التنسيق على كل ${questions.length} سؤال`) });
               }}
               questions={questions}
               examTitle={examForm.title}
               examTitleAr={examForm.title_ar}
-            /&gt;
+            />
 
-            {questions.map((q, idx) =&gt; (
-              &lt;Card key={idx} className=&quot;border-2&quot;&gt;
-                &lt;CardContent className=&quot;p-4&quot;&gt;
-                  &lt;div className=&quot;mb-4 flex items-center justify-between flex-wrap gap-2&quot;&gt;
-                    &lt;div className=&quot;flex items-center gap-2&quot;&gt;
-                      &lt;GripVertical className=&quot;h-4 w-4 text-muted-foreground&quot; /&gt;
-                      &lt;Badge variant=&quot;outline&quot;&gt;{t(&quot;Question&quot;, &quot;سؤال&quot;)} {idx + 1}&lt;/Badge&gt;
-                    &lt;/div&gt;
-                    &lt;div className=&quot;flex items-center gap-2 flex-wrap&quot;&gt;
-                      &lt;Select value={q.question_type} onValueChange={(v) =&gt; updateQuestion(idx, { question_type: v })}&gt;
-                        &lt;SelectTrigger className=&quot;w-44&quot;&gt;&lt;SelectValue /&gt;&lt;/SelectTrigger&gt;
-                        &lt;SelectContent&gt;
-                          {questionTypes.map((type) =&gt; (
-                            &lt;SelectItem key={type.value} value={type.value}&gt;
-                              {type.icon} {language === &quot;ar&quot; ? type.label_ar : type.label}
-                            &lt;/SelectItem&gt;
+            {questions.map((q, idx) => (
+              <Card key={idx} className="border-2">
+                <CardContent className="p-4">
+                  <div className="mb-4 flex items-center justify-between flex-wrap gap-2">
+                    <div className="flex items-center gap-2">
+                      <GripVertical className="h-4 w-4 text-muted-foreground" />
+                      <Badge variant="outline">{t("Question", "سؤال")} {idx + 1}</Badge>
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Select value={q.question_type} onValueChange={(v) => updateQuestion(idx, { question_type: v })}>
+                        <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {questionTypes.map((type) => (
+                            <SelectItem key={type.value} value={type.value}>
+                              {type.icon} {language === "ar" ? type.label_ar : type.label}
+                            </SelectItem>
                           ))}
-                        &lt;/SelectContent&gt;
-                      &lt;/Select&gt;
-                      &lt;Select value={q.difficulty} onValueChange={(v) =&gt; updateQuestion(idx, { difficulty: v })}&gt;
-                        &lt;SelectTrigger className=&quot;w-28&quot;&gt;&lt;SelectValue /&gt;&lt;/SelectTrigger&gt;
-                        &lt;SelectContent&gt;
-                          &lt;SelectItem value=&quot;easy&quot;&gt;{t(&quot;Easy&quot;, &quot;سهل&quot;)}&lt;/SelectItem&gt;
-                          &lt;SelectItem value=&quot;medium&quot;&gt;{t(&quot;Medium&quot;, &quot;متوسط&quot;)}&lt;/SelectItem&gt;
-                          &lt;SelectItem value=&quot;hard&quot;&gt;{t(&quot;Hard&quot;, &quot;صعب&quot;)}&lt;/SelectItem&gt;
-                        &lt;/SelectContent&gt;
-                      &lt;/Select&gt;
-                      &lt;Input type=&quot;number&quot; className=&quot;w-20&quot; placeholder={t(&quot;Points&quot;, &quot;نقاط&quot;)} value={q.points} onChange={(e) =&gt; updateQuestion(idx, { points: +e.target.value })} /&gt;
-                      &lt;Button variant=&quot;ghost&quot; size=&quot;icon&quot; onClick={() =&gt; removeQuestion(idx)}&gt;
-                        &lt;Trash2 className=&quot;h-4 w-4 text-destructive&quot; /&gt;
-                      &lt;/Button&gt;
-                    &lt;/div&gt;
-                  &lt;/div&gt;
+                        </SelectContent>
+                      </Select>
+                      <Select value={q.difficulty} onValueChange={(v) => updateQuestion(idx, { difficulty: v })}>
+                        <SelectTrigger className="w-28"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="easy">{t("Easy", "سهل")}</SelectItem>
+                          <SelectItem value="medium">{t("Medium", "متوسط")}</SelectItem>
+                          <SelectItem value="hard">{t("Hard", "صعب")}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Input type="number" className="w-20" placeholder={t("Points", "نقاط")} value={q.points} onChange={(e) => updateQuestion(idx, { points: +e.target.value })} />
+                      <Button variant="ghost" size="icon" onClick={() => removeQuestion(idx)}>
+                        <Trash2 className="h-4 w-4 text-destructive" />
+                      </Button>
+                    </div>
+                  </div>
 
-                  &lt;div className=&quot;space-y-3&quot;&gt;
-                    &lt;div&gt;
-                      &lt;Label className=&quot;text-sm mb-1 block&quot;&gt;{t(&quot;Question Text (supports mixed English &amp; Arabic)&quot;, &quot;نص السؤال (يدعم الإنجليزية والعربية معاً)&quot;)}&lt;/Label&gt;
-                      &lt;RichTextEditor
-                        placeholder={t(&quot;Type your question here in any language...&quot;, &quot;اكتب سؤالك هنا بأي لغة...&quot;)}
+                  <div className="space-y-3">
+                    <div>
+                      <Label className="text-sm mb-1 block">{t("Question Text (supports mixed English & Arabic)", "نص السؤال (يدعم الإنجليزية والعربية معاً)")}</Label>
+                      <RichTextEditor
+                        placeholder={t("Type your question here in any language...", "اكتب سؤالك هنا بأي لغة...")}
                         value={q.question_text}
-                        onChange={(val) =&gt; updateQuestion(idx, { question_text: val })}
-                        dir=&quot;auto&quot;
-                      /&gt;
-                    &lt;/div&gt;
+                        onChange={(val) => updateQuestion(idx, { question_text: val })}
+                        dir="auto"
+                      />
+                    </div>
 
                     {/* Media upload section */}
-                    &lt;div className=&quot;rounded-lg border border-dashed border-primary/30 bg-accent/30 p-3&quot;&gt;
-                      &lt;Label className=&quot;flex items-center gap-2 mb-2 text-sm&quot;&gt;
-                        {q.question_type === &quot;audio&quot; ? &lt;Music className=&quot;h-4 w-4 text-primary&quot; /&gt; : &lt;Image className=&quot;h-4 w-4 text-primary&quot; /&gt;}
-                        {t(&quot;Media (Audio/Image)&quot;, &quot;وسائط (صوت/صورة)&quot;)}
-                      &lt;/Label&gt;
+                    <div className="rounded-lg border border-dashed border-primary/30 bg-accent/30 p-3">
+                      <Label className="flex items-center gap-2 mb-2 text-sm">
+                        {q.question_type === "audio" ? <Music className="h-4 w-4 text-primary" /> : <Image className="h-4 w-4 text-primary" />}
+                        {t("Media (Audio/Image)", "وسائط (صوت/صورة)")}
+                      </Label>
 
                       {q.media_url ? (
-                        &lt;div className=&quot;space-y-2&quot;&gt;
-                          &lt;div className=&quot;flex items-center gap-2 text-sm text-muted-foreground&quot;&gt;
-                            &lt;span className=&quot;truncate flex-1&quot;&gt;{q.media_url.split(&quot;/&quot;).pop()}&lt;/span&gt;
-                            &lt;Button variant=&quot;ghost&quot; size=&quot;sm&quot; className=&quot;text-destructive&quot; onClick={() =&gt; updateQuestion(idx, { media_url: &quot;&quot; })}&gt;
-                              {t(&quot;Remove&quot;, &quot;إزالة&quot;)}
-                            &lt;/Button&gt;
-                          &lt;/div&gt;
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                            <span className="truncate flex-1">{q.media_url.split("/").pop()}</span>
+                            <Button variant="ghost" size="sm" className="text-destructive" onClick={() => updateQuestion(idx, { media_url: "" })}>
+                              {t("Remove", "إزالة")}
+                            </Button>
+                          </div>
                           {q.media_url.match(/\.(mp3|wav|ogg|webm|m4a)$/i) ? (
-                            &lt;audio controls src={q.media_url} className=&quot;w-full&quot; /&gt;
+                            <audio controls src={q.media_url} className="w-full" />
                           ) : q.media_url.match(/\.(jpg|jpeg|png|gif|webp|svg)$/i) ? (
-                            &lt;img src={q.media_url} alt=&quot;Question media&quot; className=&quot;max-h-40 rounded-lg&quot; /&gt;
+                            <img src={q.media_url} alt="Question media" className="max-h-40 rounded-lg" />
                           ) : null}
-                        &lt;/div&gt;
+                        </div>
                       ) : (
-                        &lt;div className=&quot;flex items-center gap-2 flex-wrap&quot;&gt;
-                          &lt;Button
-                            variant=&quot;outline&quot;
-                            size=&quot;sm&quot;
-                            className=&quot;gap-1&quot;
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="gap-1"
                             disabled={uploadingMedia === idx}
-                            onClick={() =&gt; {
-                              const input = document.createElement(&quot;input&quot;);
-                              input.type = &quot;file&quot;;
-                              input.accept = &quot;audio/*,image/*&quot;;
-                              input.onchange = (e: any) =&gt; {
+                            onClick={() => {
+                              const input = document.createElement("input");
+                              input.type = "file";
+                              input.accept = "audio/*,image/*";
+                              input.onchange = (e: any) => {
                                 const file = e.target.files?.[0];
                                 if (file) uploadMedia(file, idx);
                               };
                               input.click();
                             }}
-                          &gt;
+                          >
                             {uploadingMedia === idx ? (
-                              &lt;Loader2 className=&quot;h-3 w-3 animate-spin&quot; /&gt;
+                              <Loader2 className="h-3 w-3 animate-spin" />
                             ) : (
-                              &lt;Upload className=&quot;h-3 w-3&quot; /&gt;
+                              <Upload className="h-3 w-3" />
                             )}
-                            {t(&quot;Upload File&quot;, &quot;رفع ملف&quot;)}
-                          &lt;/Button&gt;
-                          &lt;span className=&quot;text-xs text-muted-foreground&quot;&gt;{t(&quot;or paste URL:&quot;, &quot;أو الصق الرابط:&quot;)}&lt;/span&gt;
-                          &lt;Input
-                            placeholder=&quot;https://example.com/audio.mp3&quot;
+                            {t("Upload File", "رفع ملف")}
+                          </Button>
+                          <span className="text-xs text-muted-foreground">{t("or paste URL:", "أو الصق الرابط:")}</span>
+                          <Input
+                            placeholder="https://example.com/audio.mp3"
                             value={q.media_url}
-                            onChange={(e) =&gt; updateQuestion(idx, { media_url: e.target.value })}
-                            className=&quot;flex-1 min-w-[200px]&quot;
-                          /&gt;
-                        &lt;/div&gt;
+                            onChange={(e) => updateQuestion(idx, { media_url: e.target.value })}
+                            className="flex-1 min-w-[200px]"
+                          />
+                        </div>
                       )}
-                    &lt;/div&gt;
+                    </div>
 
                     {/* MCQ / Image Choice options */}
-                    {(q.question_type === &quot;mcq&quot; || q.question_type === &quot;image_mcq&quot;) &amp;&amp; (
-                      &lt;div className=&quot;space-y-2&quot;&gt;
-                        {q.options.map((opt: any, oi: number) =&gt; (
-                          &lt;div key={opt.id} className=&quot;flex items-start gap-2 rounded-lg border p-2&quot;&gt;
-                            &lt;input
-                              type=&quot;radio&quot;
+                    {(q.question_type === "mcq" || q.question_type === "image_mcq") && (
+                      <div className="space-y-2">
+                        {q.options.map((opt: any, oi: number) => (
+                          <div key={opt.id} className="flex items-start gap-2 rounded-lg border p-2">
+                            <input
+                              type="radio"
                               name={`correct-${idx}`}
                               checked={opt.is_correct}
-                              onChange={() =&gt; {
-                                const newOpts = q.options.map((o: any, j: number) =&gt; ({ ...o, is_correct: j === oi }));
+                              onChange={() => {
+                                const newOpts = q.options.map((o: any, j: number) => ({ ...o, is_correct: j === oi }));
                                 updateQuestion(idx, { options: newOpts });
                               }}
-                              className=&quot;accent-primary mt-2.5&quot;
-                            /&gt;
-                            &lt;div className=&quot;flex-1 space-y-2&quot;&gt;
-                              &lt;div className=&quot;flex items-center gap-2&quot;&gt;
-                                &lt;Input
-                                  className=&quot;flex-1&quot;
-                                  placeholder={`${t(&quot;Option&quot;, &quot;خيار&quot;)} ${String.fromCharCode(65 + oi)} ${t(&quot;(any language)&quot;, &quot;(أي لغة)&quot;)}`}
+                              className="accent-primary mt-2.5"
+                            />
+                            <div className="flex-1 space-y-2">
+                              <div className="flex items-center gap-2">
+                                <Input
+                                  className="flex-1"
+                                  placeholder={`${t("Option", "خيار")} ${String.fromCharCode(65 + oi)} ${t("(any language)", "(أي لغة)")}`}
                                   value={opt.text}
-                                  dir=&quot;auto&quot;
-                                  onChange={(e) =&gt; {
+                                  dir="auto"
+                                  onChange={(e) => {
                                     const newOpts = [...q.options];
                                     newOpts[oi] = { ...newOpts[oi], text: e.target.value };
                                     updateQuestion(idx, { options: newOpts });
                                   }}
-                                /&gt;
-                              &lt;/div&gt;
+                                />
+                              </div>
                               {/* Option image */}
-                              &lt;div className=&quot;flex items-center gap-2&quot;&gt;
+                              <div className="flex items-center gap-2">
                                 {opt.image_url ? (
-                                  &lt;div className=&quot;flex items-center gap-2&quot;&gt;
-                                    &lt;img src={opt.image_url} alt={`Option ${String.fromCharCode(65 + oi)}`} className=&quot;h-16 w-16 object-cover rounded-md border&quot; /&gt;
-                                    &lt;Button variant=&quot;ghost&quot; size=&quot;sm&quot; className=&quot;text-destructive text-xs&quot; onClick={() =&gt; {
+                                  <div className="flex items-center gap-2">
+                                    <img src={opt.image_url} alt={`Option ${String.fromCharCode(65 + oi)}`} className="h-16 w-16 object-cover rounded-md border" />
+                                    <Button variant="ghost" size="sm" className="text-destructive text-xs" onClick={() => {
                                       const newOpts = [...q.options];
-                                      newOpts[oi] = { ...newOpts[oi], image_url: &quot;&quot; };
+                                      newOpts[oi] = { ...newOpts[oi], image_url: "" };
                                       updateQuestion(idx, { options: newOpts });
-                                    }}&gt;
-                                      {t(&quot;Remove&quot;, &quot;إزالة&quot;)}
-                                    &lt;/Button&gt;
-                                  &lt;/div&gt;
+                                    }}>
+                                      {t("Remove", "إزالة")}
+                                    </Button>
+                                  </div>
                                 ) : (
-                                  &lt;Button
-                                    variant=&quot;outline&quot;
-                                    size=&quot;sm&quot;
-                                    className=&quot;gap-1 text-xs&quot;
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="gap-1 text-xs"
                                     disabled={uploadingOptionImage === `${idx}-${oi}`}
-                                    onClick={() =&gt; {
-                                      const input = document.createElement(&quot;input&quot;);
-                                      input.type = &quot;file&quot;;
-                                      input.accept = &quot;image/*&quot;;
-                                      input.onchange = (e: any) =&gt; {
+                                    onClick={() => {
+                                      const input = document.createElement("input");
+                                      input.type = "file";
+                                      input.accept = "image/*";
+                                      input.onchange = (e: any) => {
                                         const file = e.target.files?.[0];
                                         if (file) uploadOptionImage(file, idx, oi);
                                       };
                                       input.click();
                                     }}
-                                  &gt;
+                                  >
                                     {uploadingOptionImage === `${idx}-${oi}` ? (
-                                      &lt;Loader2 className=&quot;h-3 w-3 animate-spin&quot; /&gt;
+                                      <Loader2 className="h-3 w-3 animate-spin" />
                                     ) : (
-                                      &lt;Image className=&quot;h-3 w-3&quot; /&gt;
+                                      <Image className="h-3 w-3" />
                                     )}
-                                    {t(&quot;Add Image&quot;, &quot;إضافة صورة&quot;)}
-                                  &lt;/Button&gt;
+                                    {t("Add Image", "إضافة صورة")}
+                                  </Button>
                                 )}
-                              &lt;/div&gt;
-                            &lt;/div&gt;
-                          &lt;/div&gt;
+                              </div>
+                            </div>
+                          </div>
                         ))}
-                      &lt;/div&gt;
+                      </div>
                     )}
 
                     {/* Correct answer for true_false, fill_blank, short_answer */}
-                    {(q.question_type === &quot;true_false&quot; || q.question_type === &quot;fill_blank&quot; || q.question_type === &quot;short_answer&quot;) &amp;&amp; (
-                      &lt;div&gt;
-                        &lt;Label className=&quot;text-sm&quot;&gt;{t(&quot;Correct Answer (for auto-grading)&quot;, &quot;الإجابة الصحيحة (للتصحيح التلقائي)&quot;)}&lt;/Label&gt;
-                        {q.question_type === &quot;true_false&quot; ? (
-                          &lt;Select value={q.correct_answer} onValueChange={(v) =&gt; updateQuestion(idx, { correct_answer: v })}&gt;
-                            &lt;SelectTrigger className=&quot;mt-1&quot;&gt;&lt;SelectValue placeholder={t(&quot;Select&quot;, &quot;اختر&quot;)} /&gt;&lt;/SelectTrigger&gt;
-                            &lt;SelectContent&gt;
-                              &lt;SelectItem value=&quot;true&quot;&gt;{t(&quot;True&quot;, &quot;صح&quot;)}&lt;/SelectItem&gt;
-                              &lt;SelectItem value=&quot;false&quot;&gt;{t(&quot;False&quot;, &quot;خطأ&quot;)}&lt;/SelectItem&gt;
-                            &lt;/SelectContent&gt;
-                          &lt;/Select&gt;
+                    {(q.question_type === "true_false" || q.question_type === "fill_blank" || q.question_type === "short_answer") && (
+                      <div>
+                        <Label className="text-sm">{t("Correct Answer (for auto-grading)", "الإجابة الصحيحة (للتصحيح التلقائي)")}</Label>
+                        {q.question_type === "true_false" ? (
+                          <Select value={q.correct_answer} onValueChange={(v) => updateQuestion(idx, { correct_answer: v })}>
+                            <SelectTrigger className="mt-1"><SelectValue placeholder={t("Select", "اختر")} /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="true">{t("True", "صح")}</SelectItem>
+                              <SelectItem value="false">{t("False", "خطأ")}</SelectItem>
+                            </SelectContent>
+                          </Select>
                         ) : (
-                          &lt;Input
-                            className=&quot;mt-1&quot;
-                            placeholder={t(&quot;Correct Answer&quot;, &quot;الإجابة الصحيحة&quot;)}
+                          <Input
+                            className="mt-1"
+                            placeholder={t("Correct Answer", "الإجابة الصحيحة")}
                             value={q.correct_answer}
-                            onChange={(e) =&gt; updateQuestion(idx, { correct_answer: e.target.value })}
-                            dir=&quot;auto&quot;
-                          /&gt;
+                            onChange={(e) => updateQuestion(idx, { correct_answer: e.target.value })}
+                            dir="auto"
+                          />
                         )}
-                      &lt;/div&gt;
+                      </div>
                     )}
 
                     {/* Multi-Select */}
-                    {q.question_type === &quot;multi_select&quot; &amp;&amp; (
-                      &lt;div className=&quot;space-y-2&quot;&gt;
-                        &lt;Label className=&quot;text-sm&quot;&gt;☑️ {t(&quot;Options — check all correct answers&quot;, &quot;الخيارات — حدد كل الإجابات الصحيحة&quot;)}&lt;/Label&gt;
-                        {q.options.map((opt: any, oi: number) =&gt; (
-                          &lt;div key={opt.id} className=&quot;flex items-center gap-2 rounded-lg border p-2&quot; style={{ borderColor: opt.is_correct ? &quot;#064E3B&quot; : undefined, background: opt.is_correct ? &quot;#F0FDF4&quot; : undefined }}&gt;
-                            &lt;input type=&quot;checkbox&quot; checked={opt.is_correct} onChange={e =&gt; { const o = [...q.options]; o[oi] = { ...o[oi], is_correct: e.target.checked }; updateQuestion(idx, { options: o }); }} className=&quot;accent-primary w-4 h-4&quot; /&gt;
-                            &lt;Input className=&quot;flex-1&quot; placeholder={`${t(&quot;Option&quot;,&quot;خيار&quot;)} ${String.fromCharCode(65+oi)}`} value={opt.text} dir=&quot;auto&quot; onChange={e =&gt; { const o = [...q.options]; o[oi] = { ...o[oi], text: e.target.value }; updateQuestion(idx, { options: o }); }} /&gt;
-                            &lt;Input className=&quot;w-36&quot; placeholder=&quot;بالعربية&quot; dir=&quot;rtl&quot; value={opt.text_ar||&quot;&quot;} onChange={e =&gt; { const o = [...q.options]; o[oi] = { ...o[oi], text_ar: e.target.value }; updateQuestion(idx, { options: o }); }} /&gt;
-                            &lt;Button variant=&quot;ghost&quot; size=&quot;icon&quot; onClick={() =&gt; updateQuestion(idx, { options: q.options.filter((_:any,j:number)=&gt;j!==oi) })}&gt;&lt;Trash2 className=&quot;h-4 w-4 text-destructive&quot; /&gt;&lt;/Button&gt;
-                          &lt;/div&gt;
+                    {q.question_type === "multi_select" && (
+                      <div className="space-y-2">
+                        <Label className="text-sm">☑️ {t("Options — check all correct answers", "الخيارات — حدد كل الإجابات الصحيحة")}</Label>
+                        {q.options.map((opt: any, oi: number) => (
+                          <div key={opt.id} className="flex items-center gap-2 rounded-lg border p-2" style={{ borderColor: opt.is_correct ? "#064E3B" : undefined, background: opt.is_correct ? "#F0FDF4" : undefined }}>
+                            <input type="checkbox" checked={opt.is_correct} onChange={e => { const o = [...q.options]; o[oi] = { ...o[oi], is_correct: e.target.checked }; updateQuestion(idx, { options: o }); }} className="accent-primary w-4 h-4" />
+                            <Input className="flex-1" placeholder={`${t("Option","خيار")} ${String.fromCharCode(65+oi)}`} value={opt.text} dir="auto" onChange={e => { const o = [...q.options]; o[oi] = { ...o[oi], text: e.target.value }; updateQuestion(idx, { options: o }); }} />
+                            <Input className="w-36" placeholder="بالعربية" dir="rtl" value={opt.text_ar||""} onChange={e => { const o = [...q.options]; o[oi] = { ...o[oi], text_ar: e.target.value }; updateQuestion(idx, { options: o }); }} />
+                            <Button variant="ghost" size="icon" onClick={() => updateQuestion(idx, { options: q.options.filter((_:any,j:number)=>j!==oi) })}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                          </div>
                         ))}
-                        &lt;Button variant=&quot;outline&quot; size=&quot;sm&quot; className=&quot;gap-1&quot; onClick={() =&gt; updateQuestion(idx, { options: [...q.options, { id: Math.random().toString(36).slice(2), text:&quot;&quot;, text_ar:&quot;&quot;, is_correct:false }] })}&gt;&lt;Plus className=&quot;h-3 w-3&quot; /&gt;{t(&quot;Add Option&quot;,&quot;إضافة خيار&quot;)}&lt;/Button&gt;
-                        &lt;div className=&quot;flex gap-2 mt-1&quot;&gt;
-                          &lt;Badge variant=&quot;outline&quot; className=&quot;text-xs&quot;&gt;{t(&quot;Allow Partial Credit&quot;,&quot;سماح بالتصحيح الجزئي&quot;)}&lt;/Badge&gt;
-                          &lt;input type=&quot;checkbox&quot; checked={q.partial_credit||false} onChange={e=&gt;updateQuestion(idx,{partial_credit:e.target.checked})} /&gt;
-                        &lt;/div&gt;
-                      &lt;/div&gt;
+                        <Button variant="outline" size="sm" className="gap-1" onClick={() => updateQuestion(idx, { options: [...q.options, { id: Math.random().toString(36).slice(2), text:"", text_ar:"", is_correct:false }] })}><Plus className="h-3 w-3" />{t("Add Option","إضافة خيار")}</Button>
+                        <div className="flex gap-2 mt-1">
+                          <Badge variant="outline" className="text-xs">{t("Allow Partial Credit","سماح بالتصحيح الجزئي")}</Badge>
+                          <input type="checkbox" checked={q.partial_credit||false} onChange={e=>updateQuestion(idx,{partial_credit:e.target.checked})} />
+                        </div>
+                      </div>
                     )}
 
                     {/* Short Answer — accepted answers list */}
-                    {q.question_type === &quot;short_answer&quot; &amp;&amp; (
-                      &lt;div className=&quot;space-y-2&quot;&gt;
-                        &lt;Label className=&quot;text-sm&quot;&gt;💬 {t(&quot;Accepted Answers (all valid variations)&quot;,&quot;الإجابات المقبولة (كل الأشكال الصحيحة)&quot;)}&lt;/Label&gt;
-                        {(q.accepted_answers||[&quot;&quot;]).map((ans:string, ai:number) =&gt; (
-                          &lt;div key={ai} className=&quot;flex gap-2&quot;&gt;
-                            &lt;Input value={ans} placeholder={`${t(&quot;Accepted answer&quot;,&quot;إجابة مقبولة&quot;)} ${ai+1}`} dir=&quot;auto&quot; onChange={e=&gt;{ const a=[...(q.accepted_answers||[&quot;&quot;])]; a[ai]=e.target.value; updateQuestion(idx,{accepted_answers:a,correct_answer:a[0]}); }} /&gt;
-                            {ai&gt;0&amp;&amp;&lt;Button variant=&quot;ghost&quot; size=&quot;icon&quot; onClick={()=&gt;updateQuestion(idx,{accepted_answers:(q.accepted_answers||[]).filter((_:any,j:number)=&gt;j!==ai)})}&gt;&lt;Trash2 className=&quot;h-4 w-4 text-destructive&quot;/&gt;&lt;/Button&gt;}
-                          &lt;/div&gt;
+                    {q.question_type === "short_answer" && (
+                      <div className="space-y-2">
+                        <Label className="text-sm">💬 {t("Accepted Answers (all valid variations)","الإجابات المقبولة (كل الأشكال الصحيحة)")}</Label>
+                        {(q.accepted_answers||[""]).map((ans:string, ai:number) => (
+                          <div key={ai} className="flex gap-2">
+                            <Input value={ans} placeholder={`${t("Accepted answer","إجابة مقبولة")} ${ai+1}`} dir="auto" onChange={e=>{ const a=[...(q.accepted_answers||[""])]; a[ai]=e.target.value; updateQuestion(idx,{accepted_answers:a,correct_answer:a[0]}); }} />
+                            {ai>0&&<Button variant="ghost" size="icon" onClick={()=>updateQuestion(idx,{accepted_answers:(q.accepted_answers||[]).filter((_:any,j:number)=>j!==ai)})}><Trash2 className="h-4 w-4 text-destructive"/></Button>}
+                          </div>
                         ))}
-                        &lt;Button variant=&quot;outline&quot; size=&quot;sm&quot; className=&quot;gap-1&quot; onClick={()=&gt;updateQuestion(idx,{accepted_answers:[...(q.accepted_answers||[&quot;&quot;]),&quot;&quot;]})}&gt;&lt;Plus className=&quot;h-3 w-3&quot;/&gt;{t(&quot;Add Variation&quot;,&quot;إضافة صيغة&quot;)}&lt;/Button&gt;
-                        &lt;div className=&quot;flex items-center gap-2 text-sm text-muted-foreground&quot;&gt;
-                          &lt;input type=&quot;checkbox&quot; checked={q.case_sensitive||false} onChange={e=&gt;updateQuestion(idx,{case_sensitive:e.target.checked})} /&gt;
-                          &lt;span&gt;{t(&quot;Case Sensitive&quot;,&quot;حساس لحالة الأحرف&quot;)}&lt;/span&gt;
-                        &lt;/div&gt;
-                      &lt;/div&gt;
+                        <Button variant="outline" size="sm" className="gap-1" onClick={()=>updateQuestion(idx,{accepted_answers:[...(q.accepted_answers||[""]),""]})}><Plus className="h-3 w-3"/>{t("Add Variation","إضافة صيغة")}</Button>
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <input type="checkbox" checked={q.case_sensitive||false} onChange={e=>updateQuestion(idx,{case_sensitive:e.target.checked})} />
+                          <span>{t("Case Sensitive","حساس لحالة الأحرف")}</span>
+                        </div>
+                      </div>
                     )}
 
                     {/* Essay */}
-                    {q.question_type === &quot;essay&quot; &amp;&amp; (
-                      &lt;div className=&quot;rounded-lg border bg-accent/20 p-3 text-sm text-muted-foreground space-y-2&quot;&gt;
-                        &lt;p&gt;📄 {t(&quot;Essay — student types a long response. Requires manual grading.&quot;,&quot;مقال — الطالب يكتب إجابة مطولة. يتطلب تصحيحاً يدوياً.&quot;)}&lt;/p&gt;
-                        &lt;div className=&quot;grid grid-cols-2 gap-2&quot;&gt;
-                          &lt;div&gt;&lt;Label className=&quot;text-xs&quot;&gt;{t(&quot;Min Words&quot;,&quot;الحد الأدنى للكلمات&quot;)}&lt;/Label&gt;&lt;Input type=&quot;number&quot; min={0} value={q.min_words||0} onChange={e=&gt;updateQuestion(idx,{min_words:+e.target.value})} className=&quot;mt-1&quot;/&gt;&lt;/div&gt;
-                          &lt;div&gt;&lt;Label className=&quot;text-xs&quot;&gt;{t(&quot;Max Words&quot;,&quot;الحد الأقصى للكلمات&quot;)}&lt;/Label&gt;&lt;Input type=&quot;number&quot; min={0} value={q.max_words||0} onChange={e=&gt;updateQuestion(idx,{max_words:+e.target.value})} className=&quot;mt-1&quot;/&gt;&lt;/div&gt;
-                        &lt;/div&gt;
-                      &lt;/div&gt;
+                    {q.question_type === "essay" && (
+                      <div className="rounded-lg border bg-accent/20 p-3 text-sm text-muted-foreground space-y-2">
+                        <p>📄 {t("Essay — student types a long response. Requires manual grading.","مقال — الطالب يكتب إجابة مطولة. يتطلب تصحيحاً يدوياً.")}</p>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div><Label className="text-xs">{t("Min Words","الحد الأدنى للكلمات")}</Label><Input type="number" min={0} value={q.min_words||0} onChange={e=>updateQuestion(idx,{min_words:+e.target.value})} className="mt-1"/></div>
+                          <div><Label className="text-xs">{t("Max Words","الحد الأقصى للكلمات")}</Label><Input type="number" min={0} value={q.max_words||0} onChange={e=>updateQuestion(idx,{max_words:+e.target.value})} className="mt-1"/></div>
+                        </div>
+                      </div>
                     )}
 
                     {/* Matching */}
-                    {q.question_type === &quot;matching&quot; &amp;&amp; (
-                      &lt;div className=&quot;space-y-2&quot;&gt;
-                        &lt;Label className=&quot;text-sm&quot;&gt;🔗 {t(&quot;Matching Pairs — Left (Prompt) / Right (Target)&quot;,&quot;أزواج المطابقة — يسار (السؤال) / يمين (الإجابة)&quot;)}&lt;/Label&gt;
-                        {(q.matching_pairs||[]).map((pair:any,pi:number)=&gt;(
-                          &lt;div key={pi} className=&quot;grid grid-cols-2 gap-2 items-center&quot;&gt;
-                            &lt;Input placeholder={`${t(&quot;Left&quot;,&quot;يسار&quot;)} ${pi+1}`} value={pair.left} onChange={e=&gt;{const p=[...(q.matching_pairs||[])];p[pi]={...p[pi],left:e.target.value};updateQuestion(idx,{matching_pairs:p});}} style={{borderColor:&quot;#93C5FD&quot;}}/&gt;
-                            &lt;div className=&quot;flex gap-2&quot;&gt;
-                              &lt;Input placeholder={`${t(&quot;Right&quot;,&quot;يمين&quot;)} ${pi+1}`} value={pair.right} onChange={e=&gt;{const p=[...(q.matching_pairs||[])];p[pi]={...p[pi],right:e.target.value};updateQuestion(idx,{matching_pairs:p});}} style={{borderColor:&quot;#C4B5FD&quot;}}/&gt;
-                              &lt;Button variant=&quot;ghost&quot; size=&quot;icon&quot; onClick={()=&gt;updateQuestion(idx,{matching_pairs:(q.matching_pairs||[]).filter((_:any,j:number)=&gt;j!==pi)})}&gt;&lt;Trash2 className=&quot;h-4 w-4 text-destructive&quot;/&gt;&lt;/Button&gt;
-                            &lt;/div&gt;
-                          &lt;/div&gt;
+                    {q.question_type === "matching" && (
+                      <div className="space-y-2">
+                        <Label className="text-sm">🔗 {t("Matching Pairs — Left (Prompt) / Right (Target)","أزواج المطابقة — يسار (السؤال) / يمين (الإجابة)")}</Label>
+                        {(q.matching_pairs||[]).map((pair:any,pi:number)=>(
+                          <div key={pi} className="grid grid-cols-2 gap-2 items-center">
+                            <Input placeholder={`${t("Left","يسار")} ${pi+1}`} value={pair.left} onChange={e=>{const p=[...(q.matching_pairs||[])];p[pi]={...p[pi],left:e.target.value};updateQuestion(idx,{matching_pairs:p});}} style={{borderColor:"#93C5FD"}}/>
+                            <div className="flex gap-2">
+                              <Input placeholder={`${t("Right","يمين")} ${pi+1}`} value={pair.right} onChange={e=>{const p=[...(q.matching_pairs||[])];p[pi]={...p[pi],right:e.target.value};updateQuestion(idx,{matching_pairs:p});}} style={{borderColor:"#C4B5FD"}}/>
+                              <Button variant="ghost" size="icon" onClick={()=>updateQuestion(idx,{matching_pairs:(q.matching_pairs||[]).filter((_:any,j:number)=>j!==pi)})}><Trash2 className="h-4 w-4 text-destructive"/></Button>
+                            </div>
+                          </div>
                         ))}
-                        &lt;Button variant=&quot;outline&quot; size=&quot;sm&quot; className=&quot;gap-1&quot; onClick={()=&gt;updateQuestion(idx,{matching_pairs:[...(q.matching_pairs||[]),{left:&quot;&quot;,right:&quot;&quot;}]})}&gt;&lt;Plus className=&quot;h-3 w-3&quot;/&gt;{t(&quot;Add Pair&quot;,&quot;إضافة زوج&quot;)}&lt;/Button&gt;
-                      &lt;/div&gt;
+                        <Button variant="outline" size="sm" className="gap-1" onClick={()=>updateQuestion(idx,{matching_pairs:[...(q.matching_pairs||[]),{left:"",right:""}]})}><Plus className="h-3 w-3"/>{t("Add Pair","إضافة زوج")}</Button>
+                      </div>
                     )}
 
                     {/* Ordering */}
-                    {q.question_type === &quot;ordering&quot; &amp;&amp; (
-                      &lt;div className=&quot;space-y-2&quot;&gt;
-                        &lt;Label className=&quot;text-sm&quot;&gt;📋 {t(&quot;Items in Correct Order (will be shuffled for student)&quot;,&quot;العناصر بالترتيب الصحيح (ستُخلط للطالب)&quot;)}&lt;/Label&gt;
-                        {(q.ordering_items||[]).map((item:string,oi:number)=&gt;(
-                          &lt;div key={oi} className=&quot;flex gap-2 items-center&quot;&gt;
-                            &lt;div className=&quot;w-7 h-7 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold flex-shrink-0&quot;&gt;{oi+1}&lt;/div&gt;
-                            &lt;Input value={item} placeholder={`${t(&quot;Item&quot;,&quot;عنصر&quot;)} ${oi+1}`} dir=&quot;auto&quot; onChange={e=&gt;{const it=[...(q.ordering_items||[])];it[oi]=e.target.value;updateQuestion(idx,{ordering_items:it,correct_answer:it.join(&quot;|&quot;)});}}/&gt;
-                            &lt;Button variant=&quot;ghost&quot; size=&quot;icon&quot; onClick={()=&gt;{const it=(q.ordering_items||[]).filter((_:any,j:number)=&gt;j!==oi);updateQuestion(idx,{ordering_items:it,correct_answer:it.join(&quot;|&quot;)});}}&gt;&lt;Trash2 className=&quot;h-4 w-4 text-destructive&quot;/&gt;&lt;/Button&gt;
-                          &lt;/div&gt;
+                    {q.question_type === "ordering" && (
+                      <div className="space-y-2">
+                        <Label className="text-sm">📋 {t("Items in Correct Order (will be shuffled for student)","العناصر بالترتيب الصحيح (ستُخلط للطالب)")}</Label>
+                        {(q.ordering_items||[]).map((item:string,oi:number)=>(
+                          <div key={oi} className="flex gap-2 items-center">
+                            <div className="w-7 h-7 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold flex-shrink-0">{oi+1}</div>
+                            <Input value={item} placeholder={`${t("Item","عنصر")} ${oi+1}`} dir="auto" onChange={e=>{const it=[...(q.ordering_items||[])];it[oi]=e.target.value;updateQuestion(idx,{ordering_items:it,correct_answer:it.join("|")});}}/>
+                            <Button variant="ghost" size="icon" onClick={()=>{const it=(q.ordering_items||[]).filter((_:any,j:number)=>j!==oi);updateQuestion(idx,{ordering_items:it,correct_answer:it.join("|")});}}><Trash2 className="h-4 w-4 text-destructive"/></Button>
+                          </div>
                         ))}
-                        &lt;Button variant=&quot;outline&quot; size=&quot;sm&quot; className=&quot;gap-1&quot; onClick={()=&gt;updateQuestion(idx,{ordering_items:[...(q.ordering_items||[]),&quot;&quot;]})}&gt;  &lt;Plus className=&quot;h-3 w-3&quot;/&gt;{t(&quot;Add Item&quot;,&quot;إضافة عنصر&quot;)}&lt;/Button&gt;
-                      &lt;/div&gt;
+                        <Button variant="outline" size="sm" className="gap-1" onClick={()=>updateQuestion(idx,{ordering_items:[...(q.ordering_items||[]),""]})}>  <Plus className="h-3 w-3"/>{t("Add Item","إضافة عنصر")}</Button>
+                      </div>
                     )}
 
                     {/* Drawing */}
-                    {q.question_type === &quot;drawing&quot; &amp;&amp; (
-                      &lt;div className=&quot;rounded-lg border border-dashed p-3 space-y-2&quot;&gt;
-                        &lt;Label className=&quot;text-sm&quot;&gt;✏️ {t(&quot;Drawing / Whiteboard&quot;,&quot;رسم / لوحة بيضاء&quot;)}&lt;/Label&gt;
-                        &lt;p className=&quot;text-xs text-muted-foreground&quot;&gt;{t(&quot;Student draws on a canvas. Saved as image for manual grading.&quot;,&quot;الطالب يرسم على لوحة. يحفظ كصورة للتصحيح اليدوي.&quot;)}&lt;/p&gt;
+                    {q.question_type === "drawing" && (
+                      <div className="rounded-lg border border-dashed p-3 space-y-2">
+                        <Label className="text-sm">✏️ {t("Drawing / Whiteboard","رسم / لوحة بيضاء")}</Label>
+                        <p className="text-xs text-muted-foreground">{t("Student draws on a canvas. Saved as image for manual grading.","الطالب يرسم على لوحة. يحفظ كصورة للتصحيح اليدوي.")}</p>
                         {q.background_image
-                          ? &lt;div className=&quot;flex gap-2 items-center&quot;&gt;&lt;img src={q.background_image} className=&quot;h-20 rounded border&quot; alt=&quot;bg&quot;/&gt;&lt;Button variant=&quot;ghost&quot; size=&quot;sm&quot; className=&quot;text-destructive&quot; onClick={()=&gt;updateQuestion(idx,{background_image:&quot;&quot;})}&gt;{t(&quot;Remove&quot;,&quot;حذف&quot;)}&lt;/Button&gt;&lt;/div&gt;
-                          : &lt;Button variant=&quot;outline&quot; size=&quot;sm&quot; className=&quot;gap-1&quot; onClick={()=&gt;{const el=document.createElement(&quot;input&quot;);el.type=&quot;file&quot;;el.accept=&quot;image/*&quot;;el.onchange=(e:any)=&gt;{ const f=e.target.files?.[0]; if(f) uploadMedia(f,idx); };el.click();}}&gt;&lt;Image className=&quot;h-3 w-3&quot;/&gt;{t(&quot;Upload Background (optional)&quot;,&quot;رفع خلفية (اختياري)&quot;)}&lt;/Button&gt;}
-                      &lt;/div&gt;
+                          ? <div className="flex gap-2 items-center"><img src={q.background_image} className="h-20 rounded border" alt="bg"/><Button variant="ghost" size="sm" className="text-destructive" onClick={()=>updateQuestion(idx,{background_image:""})}>{t("Remove","حذف")}</Button></div>
+                          : <Button variant="outline" size="sm" className="gap-1" onClick={()=>{const el=document.createElement("input");el.type="file";el.accept="image/*";el.onchange=(e:any)=>{ const f=e.target.files?.[0]; if(f) uploadMedia(f,idx); };el.click();}}><Image className="h-3 w-3"/>{t("Upload Background (optional)","رفع خلفية (اختياري)")}</Button>}
+                      </div>
                     )}
 
                     {/* Per-question settings row */}
-                    &lt;div className=&quot;grid grid-cols-2 gap-2 pt-1&quot;&gt;
-                      &lt;div&gt;
-                        &lt;Label className=&quot;text-xs text-muted-foreground&quot;&gt;✅ {t(&quot;Correct Feedback&quot;,&quot;تغذية راجعة صحيحة&quot;)}&lt;/Label&gt;
-                        &lt;Input className=&quot;mt-1 text-xs&quot; placeholder={t(&quot;Message when correct...&quot;,&quot;رسالة عند الإجابة الصحيحة...&quot;)} value={q.explanation||&quot;&quot;} onChange={e=&gt;updateQuestion(idx,{explanation:e.target.value})} dir=&quot;auto&quot;/&gt;
-                      &lt;/div&gt;
-                      &lt;div&gt;
-                        &lt;Label className=&quot;text-xs text-muted-foreground&quot;&gt;❌ {t(&quot;Wrong Feedback&quot;,&quot;تغذية راجعة خاطئة&quot;)}&lt;/Label&gt;
-                        &lt;Input className=&quot;mt-1 text-xs&quot; placeholder={t(&quot;Hint when wrong...&quot;,&quot;تلميح عند الخطأ...&quot;)} value={q.feedback_incorrect||&quot;&quot;} onChange={e=&gt;updateQuestion(idx,{feedback_incorrect:e.target.value})} dir=&quot;auto&quot;/&gt;
-                      &lt;/div&gt;
-                    &lt;/div&gt;
-                    &lt;div className=&quot;flex items-center gap-2 text-xs text-muted-foreground&quot;&gt;
-                      &lt;span&gt;⏱️ {t(&quot;Question Timer (0 = use exam timer)&quot;,&quot;مؤقت السؤال (0 = استخدام مؤقت الامتحان)&quot;)}&lt;/span&gt;
-                      &lt;Input type=&quot;number&quot; min={0} step={30} className=&quot;w-24 h-7 text-xs&quot; value={q.question_timer_seconds||0} onChange={e=&gt;updateQuestion(idx,{question_timer_seconds:+e.target.value})}/&gt;
-                      &lt;span&gt;{t(&quot;seconds&quot;,&quot;ثانية&quot;)}&lt;/span&gt;
-                    &lt;/div&gt;
-                  &lt;/div&gt;
-                &lt;/CardContent&gt;
-              &lt;/Card&gt;
+                    <div className="grid grid-cols-2 gap-2 pt-1">
+                      <div>
+                        <Label className="text-xs text-muted-foreground">✅ {t("Correct Feedback","تغذية راجعة صحيحة")}</Label>
+                        <Input className="mt-1 text-xs" placeholder={t("Message when correct...","رسالة عند الإجابة الصحيحة...")} value={q.explanation||""} onChange={e=>updateQuestion(idx,{explanation:e.target.value})} dir="auto"/>
+                      </div>
+                      <div>
+                        <Label className="text-xs text-muted-foreground">❌ {t("Wrong Feedback","تغذية راجعة خاطئة")}</Label>
+                        <Input className="mt-1 text-xs" placeholder={t("Hint when wrong...","تلميح عند الخطأ...")} value={q.feedback_incorrect||""} onChange={e=>updateQuestion(idx,{feedback_incorrect:e.target.value})} dir="auto"/>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <span>⏱️ {t("Question Timer (0 = use exam timer)","مؤقت السؤال (0 = استخدام مؤقت الامتحان)")}</span>
+                      <Input type="number" min={0} step={30} className="w-24 h-7 text-xs" value={q.question_timer_seconds||0} onChange={e=>updateQuestion(idx,{question_timer_seconds:+e.target.value})}/>
+                      <span>{t("seconds","ثانية")}</span>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
             ))}
-          &lt;/div&gt;
-        &lt;/TabsContent&gt;
-      &lt;/Tabs&gt;
+          </div>
+        </TabsContent>
+      </Tabs>
 
       {/* Preview Dialog */}
-      &lt;Dialog open={previewOpen} onOpenChange={setPreviewOpen}&gt;
-        &lt;DialogContent className=&quot;max-w-3xl max-h-[80vh] overflow-y-auto&quot;&gt;
-          &lt;DialogHeader&gt;
-            &lt;DialogTitle&gt;{t(&quot;Exam Preview&quot;, &quot;معاينة الامتحان&quot;)}&lt;/DialogTitle&gt;
-          &lt;/DialogHeader&gt;
-          &lt;div className=&quot;space-y-6&quot;&gt;
-            {examForm.title &amp;&amp; (
-              &lt;div className=&quot;text-center border-b pb-4&quot;&gt;
-                &lt;h2 className=&quot;text-2xl font-bold&quot;&gt;{examForm.title}&lt;/h2&gt;
-                {examForm.title_ar &amp;&amp; &lt;p className=&quot;text-lg text-muted-foreground mt-1&quot; dir=&quot;rtl&quot;&gt;{examForm.title_ar}&lt;/p&gt;}
-                {examForm.description &amp;&amp; &lt;p className=&quot;text-sm text-muted-foreground mt-2&quot;&gt;{examForm.description}&lt;/p&gt;}
-              &lt;/div&gt;
+      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+        <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{t("Exam Preview", "معاينة الامتحان")}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-6">
+            {examForm.title && (
+              <div className="text-center border-b pb-4">
+                <h2 className="text-2xl font-bold">{examForm.title}</h2>
+                {examForm.title_ar && <p className="text-lg text-muted-foreground mt-1" dir="rtl">{examForm.title_ar}</p>}
+                {examForm.description && <p className="text-sm text-muted-foreground mt-2">{examForm.description}</p>}
+              </div>
             )}
-            {questions.map((q, idx) =&gt; (
-              &lt;div key={idx} className=&quot;border rounded-lg p-4 space-y-3&quot;&gt;
-                &lt;div className=&quot;flex items-start gap-3&quot;&gt;
-                  &lt;span className=&quot;flex-shrink-0 w-8 h-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-sm font-bold&quot;&gt;
+            {questions.map((q, idx) => (
+              <div key={idx} className="border rounded-lg p-4 space-y-3">
+                <div className="flex items-start gap-3">
+                  <span className="flex-shrink-0 w-8 h-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-sm font-bold">
                     {idx + 1}
-                  &lt;/span&gt;
-                  &lt;div className=&quot;flex-1 space-y-2&quot;&gt;
-                    &lt;div className=&quot;flex items-center gap-2 flex-wrap&quot;&gt;
-                      &lt;Badge variant=&quot;secondary&quot;&gt;{questionTypes.find(t =&gt; t.value === q.question_type)?.label || q.question_type}&lt;/Badge&gt;
-                      &lt;Badge variant=&quot;outline&quot;&gt;{q.points} {t(&quot;pts&quot;, &quot;نقطة&quot;)}&lt;/Badge&gt;
-                      &lt;Badge variant={q.difficulty === &quot;easy&quot; ? &quot;default&quot; : q.difficulty === &quot;hard&quot; ? &quot;destructive&quot; : &quot;secondary&quot;}&gt;
+                  </span>
+                  <div className="flex-1 space-y-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Badge variant="secondary">{questionTypes.find(t => t.value === q.question_type)?.label || q.question_type}</Badge>
+                      <Badge variant="outline">{q.points} {t("pts", "نقطة")}</Badge>
+                      <Badge variant={q.difficulty === "easy" ? "default" : q.difficulty === "hard" ? "destructive" : "secondary"}>
                         {q.difficulty}
-                      &lt;/Badge&gt;
-                    &lt;/div&gt;
-                    &lt;div
-                      className=&quot;text-base prose prose-sm max-w-none&quot;
-                      dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.question_text) || `&lt;span class=&quot;text-muted-foreground italic&quot;&gt;${t(&quot;No question text&quot;, &quot;لا يوجد نص&quot;)}&lt;/span&gt;` }}
-                    /&gt;
-                    {q.question_text_ar &amp;&amp; (
-                      &lt;div
-                        className=&quot;text-base prose prose-sm max-w-none text-muted-foreground&quot;
-                        dir=&quot;rtl&quot;
+                      </Badge>
+                    </div>
+                    <div
+                      className="text-base prose prose-sm max-w-none"
+                      dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.question_text) || `<span class="text-muted-foreground italic">${t("No question text", "لا يوجد نص")}</span>` }}
+                    />
+                    {q.question_text_ar && (
+                      <div
+                        className="text-base prose prose-sm max-w-none text-muted-foreground"
+                        dir="rtl"
                         dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.question_text_ar) }}
-                      /&gt;
+                      />
                     )}
 
                     {/* Media preview */}
-                    {q.media_url &amp;&amp; (
-                      &lt;div className=&quot;mt-2&quot;&gt;
+                    {q.media_url && (
+                      <div className="mt-2">
                         {q.media_url.match(/\.(mp3|wav|ogg|webm|m4a)$/i) ? (
-                          &lt;audio controls src={q.media_url} className=&quot;w-full&quot; /&gt;
+                          <audio controls src={q.media_url} className="w-full" />
                         ) : q.media_url.match(/\.(jpg|jpeg|png|gif|webp|svg)$/i) ? (
-                          &lt;img src={q.media_url} alt=&quot;Question media&quot; className=&quot;max-h-40 rounded-lg&quot; /&gt;
+                          <img src={q.media_url} alt="Question media" className="max-h-40 rounded-lg" />
                         ) : null}
-                      &lt;/div&gt;
+                      </div>
                     )}
 
                     {/* MCQ / Image Choice options preview */}
-                    {(q.question_type === &quot;mcq&quot; || q.question_type === &quot;image_mcq&quot;) &amp;&amp; (
-                      &lt;div className={q.question_type === &quot;image_mcq&quot; ? &quot;grid grid-cols-2 gap-2 mt-2&quot; : &quot;space-y-1.5 mt-2&quot;}&gt;
-                        {q.options.map((opt: any, oi: number) =&gt; (
-                          &lt;div
+                    {(q.question_type === "mcq" || q.question_type === "image_mcq") && (
+                      <div className={q.question_type === "image_mcq" ? "grid grid-cols-2 gap-2 mt-2" : "space-y-1.5 mt-2"}>
+                        {q.options.map((opt: any, oi: number) => (
+                          <div
                             key={opt.id}
                             className={cn(
-                              &quot;flex items-center gap-2 rounded-md border px-3 py-2 text-sm&quot;,
-                              opt.is_correct ? &quot;border-primary bg-primary/10 font-medium&quot; : &quot;border-input&quot;
+                              "flex items-center gap-2 rounded-md border px-3 py-2 text-sm",
+                              opt.is_correct ? "border-primary bg-primary/10 font-medium" : "border-input"
                             )}
-                          &gt;
-                            &lt;span className=&quot;font-mono text-xs w-5&quot;&gt;{String.fromCharCode(65 + oi)}.&lt;/span&gt;
-                            &lt;div className=&quot;flex-1&quot;&gt;
-                              {opt.image_url &amp;&amp; (
-                                &lt;img src={opt.image_url} alt={`Option ${String.fromCharCode(65 + oi)}`} className=&quot;h-20 w-full object-contain rounded mb-1&quot; /&gt;
+                          >
+                            <span className="font-mono text-xs w-5">{String.fromCharCode(65 + oi)}.</span>
+                            <div className="flex-1">
+                              {opt.image_url && (
+                                <img src={opt.image_url} alt={`Option ${String.fromCharCode(65 + oi)}`} className="h-20 w-full object-contain rounded mb-1" />
                               )}
-                              {opt.text &amp;&amp; &lt;span&gt;{opt.text}&lt;/span&gt;}
-                              {opt.text_ar &amp;&amp; &lt;span className=&quot;text-muted-foreground ml-2&quot; dir=&quot;rtl&quot;&gt;{opt.text_ar}&lt;/span&gt;}
-                            &lt;/div&gt;
-                            {opt.is_correct &amp;&amp; &lt;Badge className=&quot;ml-2 text-xs&quot; variant=&quot;default&quot;&gt;✓&lt;/Badge&gt;}
-                          &lt;/div&gt;
+                              {opt.text && <span>{opt.text}</span>}
+                              {opt.text_ar && <span className="text-muted-foreground ml-2" dir="rtl">{opt.text_ar}</span>}
+                            </div>
+                            {opt.is_correct && <Badge className="ml-2 text-xs" variant="default">✓</Badge>}
+                          </div>
                         ))}
-                      &lt;/div&gt;
+                      </div>
                     )}
 
                     {/* True/False preview */}
-                    {q.question_type === &quot;true_false&quot; &amp;&amp; q.correct_answer &amp;&amp; (
-                      &lt;p className=&quot;text-sm&quot;&gt;&lt;strong&gt;{t(&quot;Answer&quot;, &quot;الإجابة&quot;)}:&lt;/strong&gt; {q.correct_answer === &quot;true&quot; ? t(&quot;True&quot;, &quot;صح&quot;) : t(&quot;False&quot;, &quot;خطأ&quot;)}&lt;/p&gt;
+                    {q.question_type === "true_false" && q.correct_answer && (
+                      <p className="text-sm"><strong>{t("Answer", "الإجابة")}:</strong> {q.correct_answer === "true" ? t("True", "صح") : t("False", "خطأ")}</p>
                     )}
 
                     {/* Fill blank / short answer preview */}
-                    {(q.question_type === &quot;fill_blank&quot; || q.question_type === &quot;short_answer&quot;) &amp;&amp; q.correct_answer &amp;&amp; (
-                      &lt;p className=&quot;text-sm&quot;&gt;&lt;strong&gt;{t(&quot;Answer&quot;, &quot;الإجابة&quot;)}:&lt;/strong&gt; {q.correct_answer}&lt;/p&gt;
+                    {(q.question_type === "fill_blank" || q.question_type === "short_answer") && q.correct_answer && (
+                      <p className="text-sm"><strong>{t("Answer", "الإجابة")}:</strong> {q.correct_answer}</p>
                     )}
 
                     {/* Explanation */}
-                    {q.explanation &amp;&amp; (
-                      &lt;p className=&quot;text-xs text-muted-foreground mt-2&quot;&gt;💡 {q.explanation}&lt;/p&gt;
+                    {q.explanation && (
+                      <p className="text-xs text-muted-foreground mt-2">💡 {q.explanation}</p>
                     )}
-                  &lt;/div&gt;
-                &lt;/div&gt;
-              &lt;/div&gt;
+                  </div>
+                </div>
+              </div>
             ))}
-          &lt;/div&gt;
-        &lt;/DialogContent&gt;
-      &lt;/Dialog&gt;
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Question Bank Import Dialog */}
-      &lt;Dialog open={bankOpen} onOpenChange={setBankOpen}&gt;
-        &lt;DialogContent className=&quot;max-w-3xl max-h-[80vh] overflow-y-auto&quot;&gt;
-          &lt;DialogHeader&gt;
-            &lt;DialogTitle className=&quot;flex items-center gap-2&quot;&gt;
-              &lt;Library className=&quot;h-5 w-5&quot; /&gt;
-              {t(&quot;Import from Question Bank&quot;, &quot;استيراد من بنك الأسئلة&quot;)}
-            &lt;/DialogTitle&gt;
-          &lt;/DialogHeader&gt;
-          &lt;div className=&quot;space-y-4&quot;&gt;
-            &lt;Input
-              placeholder={t(&quot;Search questions...&quot;, &quot;البحث في الأسئلة...&quot;)}
+      <Dialog open={bankOpen} onOpenChange={setBankOpen}>
+        <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Library className="h-5 w-5" />
+              {t("Import from Question Bank", "استيراد من بنك الأسئلة")}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <Input
+              placeholder={t("Search questions...", "البحث في الأسئلة...")}
               value={bankSearch}
-              onChange={(e) =&gt; setBankSearch(e.target.value)}
-            /&gt;
+              onChange={(e) => setBankSearch(e.target.value)}
+            />
             {bankLoading ? (
-              &lt;div className=&quot;flex justify-center py-8&quot;&gt;
-                &lt;Loader2 className=&quot;h-8 w-8 animate-spin text-primary&quot; /&gt;
-              &lt;/div&gt;
+              <div className="flex justify-center py-8">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              </div>
             ) : (
-              &lt;&gt;
-                &lt;div className=&quot;text-xs text-muted-foreground&quot;&gt;
-                  {bankSelected.size} {t(&quot;selected&quot;, &quot;محدد&quot;)} • {bankQuestions.filter((q) =&gt; {
+              <>
+                <div className="text-xs text-muted-foreground">
+                  {bankSelected.size} {t("selected", "محدد")} • {bankQuestions.filter((q) => {
                     if (!bankSearch) return true;
                     const s = bankSearch.toLowerCase();
-                    return (q.question_text || &quot;&quot;).toLowerCase().includes(s) || (q.question_text_ar || &quot;&quot;).toLowerCase().includes(s);
-                  }).length} {t(&quot;questions&quot;, &quot;سؤال&quot;)}
-                &lt;/div&gt;
-                &lt;div className=&quot;max-h-[400px] overflow-y-auto space-y-1.5&quot;&gt;
-                  {bankQuestions.filter((q) =&gt; {
+                    return (q.question_text || "").toLowerCase().includes(s) || (q.question_text_ar || "").toLowerCase().includes(s);
+                  }).length} {t("questions", "سؤال")}
+                </div>
+                <div className="max-h-[400px] overflow-y-auto space-y-1.5">
+                  {bankQuestions.filter((q) => {
                     if (!bankSearch) return true;
                     const s = bankSearch.toLowerCase();
-                    return (q.question_text || &quot;&quot;).toLowerCase().includes(s) || (q.question_text_ar || &quot;&quot;).toLowerCase().includes(s);
-                  }).map((q) =&gt; {
-                    const strip = (html: string) =&gt; {
-                      const doc = new DOMParser().parseFromString(html || &quot;&quot;, &quot;text/html&quot;);
-                      return doc.body.textContent || &quot;&quot;;
+                    return (q.question_text || "").toLowerCase().includes(s) || (q.question_text_ar || "").toLowerCase().includes(s);
+                  }).map((q) => {
+                    const strip = (html: string) => {
+                      const doc = new DOMParser().parseFromString(html || "", "text/html");
+                      return doc.body.textContent || "";
                     };
                     return (
-                      &lt;div
+                      <div
                         key={q.id}
-                        className={`flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition-colors ${bankSelected.has(q.id) ? &quot;border-primary bg-primary/5&quot; : &quot;hover:bg-accent/50&quot;}`}
-                        onClick={() =&gt; {
-                          setBankSelected((prev) =&gt; {
+                        className={`flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition-colors ${bankSelected.has(q.id) ? "border-primary bg-primary/5" : "hover:bg-accent/50"}`}
+                        onClick={() => {
+                          setBankSelected((prev) => {
                             const next = new Set(prev);
                             next.has(q.id) ? next.delete(q.id) : next.add(q.id);
                             return next;
                           });
                         }}
-                      &gt;
-                        &lt;Checkbox checked={bankSelected.has(q.id)} className=&quot;mt-0.5&quot; /&gt;
-                        &lt;div className=&quot;flex-1 min-w-0&quot;&gt;
-                          &lt;div className=&quot;flex gap-1.5 flex-wrap mb-1&quot;&gt;
-                            &lt;Badge variant=&quot;secondary&quot; className=&quot;text-[10px]&quot;&gt;{q.question_type?.replace(&quot;_&quot;, &quot; &quot;)}&lt;/Badge&gt;
-                            &lt;Badge variant=&quot;outline&quot; className=&quot;text-[10px]&quot;&gt;{q.difficulty}&lt;/Badge&gt;
-                            &lt;Badge variant=&quot;outline&quot; className=&quot;text-[10px]&quot;&gt;{q.points} pts&lt;/Badge&gt;
-                            {q.exams?.title &amp;&amp; (
-                              &lt;span className=&quot;text-[10px] text-muted-foreground&quot;&gt;
-                                {language === &quot;ar&quot; ? q.exams?.title_ar || q.exams?.title : q.exams?.title}
-                              &lt;/span&gt;
+                      >
+                        <Checkbox checked={bankSelected.has(q.id)} className="mt-0.5" />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex gap-1.5 flex-wrap mb-1">
+                            <Badge variant="secondary" className="text-[10px]">{q.question_type?.replace("_", " ")}</Badge>
+                            <Badge variant="outline" className="text-[10px]">{q.difficulty}</Badge>
+                            <Badge variant="outline" className="text-[10px]">{q.points} pts</Badge>
+                            {q.exams?.title && (
+                              <span className="text-[10px] text-muted-foreground">
+                                {language === "ar" ? q.exams?.title_ar || q.exams?.title : q.exams?.title}
+                              </span>
                             )}
-                          &lt;/div&gt;
-                          &lt;p className=&quot;text-sm truncate&quot; dir=&quot;auto&quot;&gt;{strip(q.question_text)}&lt;/p&gt;
-                        &lt;/div&gt;
-                      &lt;/div&gt;
+                          </div>
+                          <p className="text-sm truncate" dir="auto">{strip(q.question_text)}</p>
+                        </div>
+                      </div>
                     );
                   })}
-                &lt;/div&gt;
-                &lt;Button onClick={importFromBank} disabled={bankSelected.size === 0} className=&quot;w-full gap-2&quot;&gt;
-                  &lt;Plus className=&quot;h-4 w-4&quot; /&gt;
+                </div>
+                <Button onClick={importFromBank} disabled={bankSelected.size === 0} className="w-full gap-2">
+                  <Plus className="h-4 w-4" />
                   {t(`Import ${bankSelected.size} Questions`, `استيراد ${bankSelected.size} سؤال`)}
-                &lt;/Button&gt;
-              &lt;/&gt;
+                </Button>
+              </>
             )}
-          &lt;/div&gt;
-        &lt;/DialogContent&gt;
-      &lt;/Dialog&gt;
-    &lt;/div&gt;
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
   );
 };
 
-export default ExamEditor;</pre>
-</div>
-
-<div class="bottom-bar">
-  <button class="bottom-copy" id="botBtn" onclick="copyCode(this)">📋 Tap to Copy All Code</button>
-</div>
-
-<script>
-const CODE = document.getElementById('codeBlock').textContent;
-function copyCode(btn) {
-  navigator.clipboard.writeText(CODE).then(() => {
-    document.getElementById('topBtn').textContent = '✅ Copied!';
-    document.getElementById('topBtn').classList.add('copied');
-    document.getElementById('botBtn').textContent = '✅ Copied! Paste into your editor';
-    document.getElementById('botBtn').classList.add('copied');
-    setTimeout(() => {
-      document.getElementById('topBtn').textContent = '📋 Copy';
-      document.getElementById('topBtn').classList.remove('copied');
-      document.getElementById('botBtn').textContent = '📋 Tap to Copy All Code';
-      document.getElementById('botBtn').classList.remove('copied');
-    }, 3000);
-  });
-}
-</script>
-</body>
-</html>
+export default ExamEditor;
