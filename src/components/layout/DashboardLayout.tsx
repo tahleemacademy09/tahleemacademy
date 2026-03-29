@@ -112,23 +112,62 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   const [notifList, setNotifList] = useLayoutState<any[]>([]);
 
   useLayoutEffect(() => {
-    if (!user || role !== "student") return;
+    if (!user) return;
     const load = async () => {
       const { data } = await supabase
         .from("notifications")
         .select("*")
         .eq("user_id", user.id)
         .order("created_at", { ascending: false })
-        .limit(30);
+        .limit(50);
       const list = data || [];
       setNotifList(list);
       setUnreadNotifs(list.filter((n: any) => !n.is_read).length);
     };
     load();
-    // Re-fetch every 60s
-    const iv = setInterval(load, 60000);
-    return () => clearInterval(iv);
-  }, [user, role]);
+
+    // ── Realtime subscription for instant notifications ──
+    const channel = supabase
+      .channel(`notifications:${user.id}`)
+      .on(
+        "postgres_changes" as any,
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "notifications",
+          filter: `user_id=eq.${user.id}`,
+        },
+        (payload: any) => {
+          setNotifList(prev => [payload.new, ...prev]);
+          setUnreadNotifs(p => p + 1);
+        }
+      )
+      .on(
+        "postgres_changes" as any,
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "notifications",
+          filter: `user_id=eq.${user.id}`,
+        },
+        (payload: any) => {
+          setNotifList(prev =>
+            prev.map((n: any) => n.id === payload.new.id ? payload.new : n)
+          );
+          setUnreadNotifs(prev =>
+            Math.max(0, prev - (payload.old?.is_read === false && payload.new?.is_read === true ? 1 : 0))
+          );
+        }
+      )
+      .subscribe();
+
+    // Polling fallback every 15s in case realtime is unreliable on this plan
+    const iv = setInterval(load, 15000);
+    return () => {
+      clearInterval(iv);
+      supabase.removeChannel(channel);
+    };
+  }, [user]);
 
   const markRead = async (id: string) => {
     await supabase.from("notifications").update({ is_read: true }).eq("id", id);
@@ -287,8 +326,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
             </div>
           </div>
 
-          {role === "student" && (
-            <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1">
               {/* Notification bell */}
               <div className="relative">
                 <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setShowNotifPanel(true)}>
@@ -307,7 +345,6 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                 </Button>
               </Link>
             </div>
-          )}
         </header>
 
         <HolidayBanner/>
@@ -315,7 +352,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
         {role === "admin"   && <AdminPaymentIndicator/>}
 
         {/* ── Notification panel (student) ── */}
-        {role === "student" && showNotifPanel && (
+        {showNotifPanel && (
           <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm"
             onClick={() => setShowNotifPanel(false)}>
             <div className="absolute top-0 left-0 right-0 max-h-[80vh] bg-white rounded-b-3xl shadow-2xl flex flex-col overflow-hidden"
@@ -347,7 +384,12 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                     <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5"
                       style={{ background: n.is_read ? "#f0f4f0" : "#fffbeb", border:`1.5px solid ${n.is_read ? "#e0e0e0" : "#c9a84c88"}` }}>
                       <span className="text-sm">
-                        {n.type === "warning" ? "⚠️" : n.type === "exam" ? "📋" : "ℹ️"}
+                        {n.type === "warning" ? "⚠️"
+                          : n.type === "exam_assigned" ? "📋"
+                          : n.type === "result_released" ? "🎯"
+                          : n.type === "exam" ? "📋"
+                          : n.type === "payment" ? "💳"
+                          : "🔔"}
                       </span>
                     </div>
                     <div className="flex-1 min-w-0">
