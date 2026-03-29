@@ -242,7 +242,11 @@ const GradingPage = () => {
                 {/* Answer */}
                 <div style={{ background: "#F9FAFB", borderRadius: 10, padding: "10px 12px", marginBottom: isEssay ? 10 : 0 }}>
                   <p style={{ fontSize: 11, fontWeight: 700, color: "#9CA3AF", margin: "0 0 4px" }}>Student Answer:</p>
-                  {q.question_type === "audio" && ans.audio_url ? (
+                  {(() => {
+                    // Audio URL is stored in answer_data.audioUrl by ExamTaking.
+                    // Fallback to legacy top-level audio_url column if present.
+                    const audioSrc = ans.answer_data?.audioUrl || ans.audio_url || null;
+                    return q.question_type === "audio" && audioSrc ? (
                     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                       {/* Prominent audio banner */}
                       <div style={{ background: "linear-gradient(135deg,#064E3B,#065F46)", borderRadius: 12, padding: "14px 16px", display: "flex", alignItems: "center", gap: 14 }}>
@@ -255,17 +259,17 @@ const GradingPage = () => {
                         </div>
                       </div>
                       {/* Full-featured player */}
-                      <AdminAudioPlayer src={ans.audio_url} label="▶  Play / Pause student recording" />
+                      <AdminAudioPlayer src={audioSrc} label="▶  Play / Pause student recording" />
                       {/* Native fallback */}
                       <details style={{ fontSize: 11, color: "#9CA3AF" }}>
                         <summary style={{ cursor: "pointer", userSelect: "none" }}>Native player (fallback)</summary>
-                        <audio controls preload="metadata" src={ans.audio_url} crossOrigin="anonymous"
+                        <audio controls preload="metadata" src={audioSrc} crossOrigin="anonymous"
                           style={{ width: "100%", marginTop: 6, borderRadius: 8, display: "block" }} />
                       </details>
                     </div>
-                  ) : (
+                    ) : (
                     <p style={{ fontSize: 13, color: "#374151", margin: 0, lineHeight: 1.6 }} dir="auto">{ansText || "(No answer)"}</p>
-                  )}
+                  ); })()}
                 </div>
 
                 {/* MCQ auto-grade display */}
