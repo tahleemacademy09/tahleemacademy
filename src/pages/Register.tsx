@@ -31,19 +31,27 @@ const checkPassword = (pw: string) => ({
   number: /\d/.test(pw),
 });
 
-// ── Dynamic stepper — built from admin config ─────────────────────────────
+// ── Bilingual Dynamic Stepper ────────────────────────────────────────────
+const STEP_LABELS = [
+  { en: "Create Account",  ar: "إنشاء الحساب" },
+  { en: "Payment",         ar: "الدفع"         },
+  { en: "Onboarding",      ar: "الاستبيان"     },
+  { en: "Exams",           ar: "الاختبارات"    },
+];
+
 const DynamicStepper = ({ activeStep, steps }: { activeStep: number; steps: { label: string; sub: string }[] }) => (
   <div style={{ marginBottom: 24 }}>
     <div style={{ display: "flex", alignItems: "center" }}>
       {steps.map((s, i) => (
         <div key={i} style={{ display: "flex", alignItems: "center", flex: i < steps.length - 1 ? 1 : undefined }}>
           <div style={{
-            width: 26, height: 26, borderRadius: "50%", flexShrink: 0, fontSize: 10, fontWeight: 800,
+            width: 30, height: 30, borderRadius: "50%", flexShrink: 0, fontSize: 10, fontWeight: 800,
             background: activeStep > i + 1 ? "#22c55e" : activeStep === i + 1 ? G : "#e5e7eb",
             color: "#fff", display: "flex", alignItems: "center", justifyContent: "center",
-            transition: "all .3s", boxShadow: activeStep === i + 1 ? `0 0 0 3px rgba(6,78,59,.2)` : "none",
+            transition: "all .3s", boxShadow: activeStep === i + 1 ? `0 0 0 4px rgba(6,78,59,.15)` : "none",
+            position: "relative",
           }}>
-            {activeStep > i + 1 ? <CheckCircle2 size={13} /> : i + 1}
+            {activeStep > i + 1 ? <CheckCircle2 size={14} /> : i + 1}
           </div>
           {i < steps.length - 1 && (
             <div style={{ flex: 1, height: 2, background: activeStep > i + 1 ? "#22c55e" : "#e5e7eb", transition: "background .4s" }} />
@@ -51,11 +59,21 @@ const DynamicStepper = ({ activeStep, steps }: { activeStep: number; steps: { la
         </div>
       ))}
     </div>
-    <div style={{ marginTop: 10, textAlign: "center" }}>
-      <div style={{ fontSize: 11, fontWeight: 700, color: G, textTransform: "uppercase" as const, letterSpacing: .6 }}>
-        Step {activeStep} of {steps.length} — {steps[activeStep - 1]?.label}
-      </div>
-      <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 2 }}>{steps[activeStep - 1]?.sub}</div>
+    {/* Bilingual step labels row */}
+    <div style={{ display: "flex", marginTop: 8 }}>
+      {steps.map((s, i) => {
+        const lbl = STEP_LABELS[i] || { en: s.label, ar: s.label };
+        const isActive = activeStep === i + 1;
+        return (
+          <div key={i} style={{ flex: i < steps.length - 1 ? 1 : undefined, textAlign: "center", opacity: isActive ? 1 : 0.45 }}>
+            <div style={{ fontSize: 9, fontWeight: 800, color: isActive ? G : "#6b7280", lineHeight: 1.3 }}>{lbl.en}</div>
+            <div style={{ fontSize: 9, fontWeight: 700, color: isActive ? GOLD : "#9ca3af", fontFamily: "'Cairo',sans-serif", direction: "rtl" }}>{lbl.ar}</div>
+          </div>
+        );
+      })}
+    </div>
+    <div style={{ marginTop: 8, textAlign: "center" }}>
+      <div style={{ fontSize: 11, color: "#9ca3af" }}>{steps[activeStep - 1]?.sub}</div>
     </div>
   </div>
 );
@@ -104,6 +122,8 @@ const Register = () => {
   const [step, setStep]         = useState(1);
   const [paying, setPaying]     = useState(false);
   const [creating, setCreating] = useState(false);
+  // Islamic welcome overlay — shown before step 1 when user first arrives
+  const [showWelcome, setShowWelcome] = useState(true);
 
   const pwChecks    = checkPassword(password);
   const pwStrength  = Object.values(pwChecks).filter(Boolean).length;
@@ -279,6 +299,84 @@ const Register = () => {
             Sign In Instead →
           </Link>
           <Link to="/" style={{ fontSize: 12, color: "#9ca3af", textDecoration: "underline" }}>← Back to Home</Link>
+        </div>
+      </div>
+    );
+  }
+
+  // ── ISLAMIC WELCOME TRANSITION ────────────────────────────────────────
+  if (showWelcome) {
+    return (
+      <div style={{
+        minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center",
+        fontFamily: "'Cairo',sans-serif",
+        background: `linear-gradient(160deg,${G} 0%,${GM} 50%,#0a1f12 100%)`,
+        position: "relative", overflow: "hidden",
+      }}>
+        <style>{`
+          @keyframes fadeUp { from{opacity:0;transform:translateY(30px)} to{opacity:1;transform:translateY(0)} }
+          @keyframes pulse  { 0%,100%{opacity:1} 50%{opacity:.6} }
+          @keyframes spin   { to{transform:rotate(360deg)} }
+          .welcome-ring { position:absolute;border-radius:50%;border:1px solid rgba(201,168,76,.15); }
+        `}</style>
+        {/* Decorative rings */}
+        {[200,320,440,560].map((sz,i) => (
+          <div key={i} className="welcome-ring" style={{ width:sz,height:sz,top:"50%",left:"50%",transform:"translate(-50%,-50%)" }} />
+        ))}
+        {/* Gold geometric pattern overlay */}
+        <div style={{ position:"absolute",inset:0,opacity:.05,backgroundImage:`url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cpolygon points='30,2 58,16 58,44 30,58 2,44 2,16' fill='none' stroke='%23c9a84c' stroke-width='1'/%3E%3C/svg%3E")` }} />
+
+        <div style={{ position:"relative",zIndex:2,textAlign:"center",padding:"40px 28px",maxWidth:520,animation:"fadeUp .8s ease" }}>
+          {/* Bismillah */}
+          <p style={{ fontFamily:"'Amiri',serif",fontSize:26,color:"rgba(201,168,76,.9)",margin:"0 0 24px",direction:"rtl",letterSpacing:2 }}>
+            بِسْمِ اللهِ الرَّحْمَنِ الرَّحِيمِ
+          </p>
+
+          {/* Icon */}
+          <div style={{ width:80,height:80,borderRadius:24,background:"rgba(201,168,76,.15)",border:"2px solid rgba(201,168,76,.3)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 28px" }}>
+            <BookOpen style={{ width:38,height:38,color:GOLD }} />
+          </div>
+
+          {/* Welcome heading */}
+          <h1 style={{ fontSize:28,fontWeight:900,color:"#fff",margin:"0 0 6px",lineHeight:1.3 }}>
+            Welcome to Tahleem Academy
+          </h1>
+          <p style={{ fontSize:16,color:GOLD,fontFamily:"'Amiri',serif",margin:"0 0 28px",direction:"rtl" }}>
+            مرحباً بك في رحلة طلب العلم
+          </p>
+
+          {/* Message box */}
+          <div style={{ background:"rgba(255,255,255,.07)",border:"1px solid rgba(201,168,76,.25)",borderRadius:18,padding:"24px 28px",marginBottom:32,textAlign:"left" }}>
+            <p style={{ fontSize:15,color:"rgba(255,255,255,.9)",lineHeight:1.8,margin:"0 0 16px" }}>
+              You are about to begin your blessed journey of seeking knowledge.
+            </p>
+            <p style={{ fontFamily:"'Amiri',serif",fontSize:18,color:GOLD,direction:"rtl",lineHeight:2,margin:"0 0 16px" }}>
+              "طَلَبُ الْعِلْمِ فَرِيضَةٌ عَلَى كُلِّ مُسْلِمٍ"
+            </p>
+            <p style={{ fontSize:13,color:"rgba(255,255,255,.6)",fontStyle:"italic",margin:"0 0 16px" }}>
+              "Seeking knowledge is an obligation upon every Muslim." — Ibn Mājah
+            </p>
+            <p style={{ fontSize:14,color:"rgba(255,255,255,.75)",lineHeight:1.7,margin:0 }}>
+              May Allah put <em style={{ color:GOLD }}>barakah</em> in your learning and make it a source of benefit for you, your family, and the Ummah.
+            </p>
+          </div>
+
+          {/* CTA */}
+          <button
+            onClick={() => setShowWelcome(false)}
+            style={{
+              width:"100%",padding:"16px 32px",borderRadius:14,border:"none",
+              background:`linear-gradient(135deg,${GOLD},#b8902a)`,
+              color:"#fff",fontSize:16,fontWeight:800,cursor:"pointer",
+              display:"flex",alignItems:"center",justifyContent:"center",gap:10,
+              boxShadow:"0 8px 32px rgba(201,168,76,.4)",transition:"all .25s",
+            }}
+          >
+            Begin Your Journey <ArrowRight size={18} />
+          </button>
+          <p style={{ fontSize:12,color:"rgba(255,255,255,.4)",marginTop:14 }}>
+            Let us begin by creating your account
+          </p>
         </div>
       </div>
     );
@@ -499,7 +597,7 @@ const Register = () => {
                 style={{ width:"100%",padding:"15px 0",borderRadius:14,background:paying||creating?"#9ca3af":"linear-gradient(135deg,#D4A843,#B8860B)",border:"none",color:"#fff",fontSize:15,fontWeight:800,cursor:paying||creating?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:10,boxShadow:"0 4px 16px rgba(212,168,67,.35)",transition:"all .2s",fontFamily:"'Cairo',sans-serif",animation:paying||creating?"none":"glow 2s infinite" }}>
                 {paying || creating
                   ? <><div style={{ width:18,height:18,border:"2.5px solid rgba(255,255,255,.4)",borderTopColor:"#fff",borderRadius:"50%",animation:"spin .8s linear infinite" }} />{creating?"Creating account…":"Processing payment…"}</>
-                  : <><CreditCard size={18} /> Pay {currencySymbol(config.entrance_fee_currency)}{config.entrance_fee_amount.toLocaleString()} & Create Account</>
+                  : <><CreditCard size={18} /> Register Now — Pay {currencySymbol(config.entrance_fee_currency)}{config.entrance_fee_amount.toLocaleString()}</>
                 }
               </button>
 
