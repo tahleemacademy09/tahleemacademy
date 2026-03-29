@@ -38,6 +38,7 @@ const Courses         = lazy(() => import("./pages/Courses"));
 const Contact         = lazy(() => import("./pages/Contact"));
 const RecordingsPage  = lazy(() => import("./pages/RecordingsPage"));
 const LiveQuiz        = lazy(() => import("./pages/LiveQuiz"));
+const Pricing         = lazy(() => import("./pages/Pricing"));
 const GuestClassroom  = lazy(() => import("./pages/public/GuestClassroom"));
 const JoinClass       = lazy(() => import("./pages/public/JoinClass"));
 const LiveClasses     = lazy(() => import("./pages/public/LiveClasses"));
@@ -137,6 +138,7 @@ const App = () => (
                     <Route path="/courses"  element={<Courses />} />
                     <Route path="/about"    element={<About />} />
                     <Route path="/contact"  element={<Contact />} />
+                    <Route path="/pricing"  element={<Pricing />} />
                   </Route>
 
                   {/* Auth */}
