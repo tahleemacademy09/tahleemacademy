@@ -878,10 +878,24 @@ const ExamTaking = () => {
                       <p style={{ fontSize: 12, color: "#9ca3af" }}>{t("Or record your answer:", "أو سجّل إجابتك:")}</p>
                       <AudioRecorder onRecordingComplete={async (blob, url) => {
                         if (!blob.size) { toast({ title: "Recording empty.", variant: "destructive" }); return; }
-                        const path = `student-answers/${user!.id}/${attemptId}_${q.id}.webm`;
-                        const { error } = await supabase.storage.from("exam-media").upload(path, blob, { upsert: true });
-                        if (!error) { const { data: ud } = await supabase.storage.from("exam-media").createSignedUrl(path, 3600); setAnswer(q.id, answers[q.id]?.text || "[audio_recorded]", { audioUrl: ud?.signedUrl || url, fileType: "audio" }); }
-                        else { toast({ title: "Upload failed.", variant: "destructive" }); setAnswer(q.id, answers[q.id]?.text || "[audio_recorded]", { audioUrl: url, fileType: "audio" }); }
+                        // Determine extension from the actual blob MIME type
+                        const ext = blob.type.includes("mp4") ? "mp4"
+                          : blob.type.includes("ogg") ? "ogg"
+                          : blob.type.includes("webm") ? "webm"
+                          : "mp4";  // safe fallback for Android
+                        const path = `student-answers/${user!.id}/${attemptId}_${q.id}.${ext}`;
+                        const { error } = await supabase.storage
+                          .from("exam-media")
+                          .upload(path, blob, { upsert: true, contentType: blob.type || "audio/mp4" });
+                        if (!error) {
+                          // Use a 7-day signed URL so admin can always play it
+                          const { data: ud } = await supabase.storage.from("exam-media").createSignedUrl(path, 604800);
+                          setAnswer(q.id, "[audio_recorded]", { audioUrl: ud?.signedUrl || url, fileType: "audio", storagePath: path });
+                        } else {
+                          toast({ title: "Upload failed: " + error.message, variant: "destructive" });
+                          // Store blob URL as fallback so student isn't blocked
+                          setAnswer(q.id, "[audio_recorded]", { audioUrl: url, fileType: "audio" });
+                        }
                       }} existingUrl={answers[q.id]?.data?.audioUrl} />
                     </div>
                   )}
