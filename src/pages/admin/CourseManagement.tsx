@@ -51,7 +51,7 @@ const CourseManagement = () => {
   const [cf, setCf] = useState({
     title:"", title_ar:"", description:"", description_ar:"",
     level:"beginner" as Level, subject_id:"", is_published:false, sort_order:0,
-    thumbnail_url:"", duration_weeks:0, prerequisites:"",
+    image_url:"",
   });
 
   // Lesson form
@@ -97,7 +97,7 @@ const CourseManagement = () => {
   /* ── Mutations ─────────────────────────────────────── */
   const saveCourse = useMutation({
     mutationFn: async () => {
-      let thumbUrl = cf.thumbnail_url;
+      let thumbUrl = cf.image_url;
 
       // Upload thumbnail if file selected
       if (thumbFile) {
@@ -117,7 +117,7 @@ const CourseManagement = () => {
         description: cf.description || null, description_ar: cf.description_ar || null,
         level: cf.level, subject_id: cf.subject_id || null,
         is_published: cf.is_published, sort_order: cf.sort_order,
-        thumbnail_url: thumbUrl || null,
+        image_url: thumbUrl || null,
         created_by: user?.id,
       };
 
@@ -202,12 +202,12 @@ const CourseManagement = () => {
   });
 
   /* ── Helpers ───────────────────────────────────────── */
-  const resetCf = () => setCf({ title:"", title_ar:"", description:"", description_ar:"", level:"beginner", subject_id:"", is_published:false, sort_order:0, thumbnail_url:"", duration_weeks:0, prerequisites:"" });
+  const resetCf = () => setCf({ title:"", title_ar:"", description:"", description_ar:"", level:"beginner", subject_id:"", is_published:false, sort_order:0, image_url:"" });
   const resetLf = () => setLf({ title:"", title_ar:"", video_url:"", content:"", duration_minutes:0, sort_order:0, is_free:false });
 
   const openEditCourse = (c: any) => {
     setEditCourseId(c.id);
-    setCf({ title:c.title, title_ar:c.title_ar||"", description:c.description||"", description_ar:c.description_ar||"", level:c.level||"beginner", subject_id:c.subject_id||"", is_published:c.is_published, sort_order:c.sort_order||0, thumbnail_url:c.thumbnail_url||"", duration_weeks:c.duration_weeks||0, prerequisites:c.prerequisites||"" });
+    setCf({ title:c.title, title_ar:c.title_ar||"", description:c.description||"", description_ar:c.description_ar||"", level:c.level||"beginner", subject_id:c.subject_id||"", is_published:c.is_published, sort_order:c.sort_order||0, image_url:c.image_url||"" });
     setCourseOpen(true);
   };
 
@@ -304,8 +304,8 @@ const CourseManagement = () => {
                       onMouseLeave={e=>(e.currentTarget as any).style.boxShadow="0 1px 4px rgba(0,0,0,.04)"}>
 
                       {/* Thumbnail / colour header */}
-                      {course.thumbnail_url ? (
-                        <img src={course.thumbnail_url} alt={course.title} style={{ width:"100%", height:140, objectFit:"cover", display:"block" }} />
+                      {course.image_url ? (
+                        <img src={course.image_url} alt={course.title} style={{ width:"100%", height:140, objectFit:"cover", display:"block" }} />
                       ) : (
                         <div style={{ height:100, background:`linear-gradient(135deg,${lv.border},${lv.bg})`, display:"flex", alignItems:"center", justifyContent:"center" }}>
                           <BookOpen size={32} color={lv.text} style={{ opacity:.4 }} />
@@ -383,8 +383,8 @@ const CourseManagement = () => {
           {/* Course info strip */}
           <div style={{ background:"#fff", borderBottom:"1px solid #E5E7EB", padding:"16px 20px" }}>
             <div style={{ display:"flex", flexWrap:"wrap", gap:16, alignItems:"center" }}>
-              {selectedCourse.thumbnail_url && (
-                <img src={selectedCourse.thumbnail_url} style={{ width:64, height:64, borderRadius:10, objectFit:"cover", flexShrink:0 }} alt="" />
+              {selectedCourse.image_url && (
+                <img src={selectedCourse.image_url} style={{ width:64, height:64, borderRadius:10, objectFit:"cover", flexShrink:0 }} alt="" />
               )}
               <div style={{ flex:1, minWidth:200 }}>
                 {selectedCourse.description && <p style={{ fontSize:13, color:"#6B7280", margin:0, lineHeight:1.6 }}>{selectedCourse.description}</p>}
@@ -534,8 +534,8 @@ const CourseManagement = () => {
                 onMouseLeave={e=>(e.currentTarget as any).style.borderColor="#E5E7EB"}>
                 {thumbFile ? (
                   <img src={URL.createObjectURL(thumbFile)} style={{ width:"100%", height:"100%", objectFit:"cover" }} alt=""/>
-                ) : cf.thumbnail_url ? (
-                  <img src={cf.thumbnail_url} style={{ width:"100%", height:"100%", objectFit:"cover" }} alt=""/>
+                ) : cf.image_url ? (
+                  <img src={cf.image_url} style={{ width:"100%", height:"100%", objectFit:"cover" }} alt=""/>
                 ) : (
                   <div style={{ textAlign:"center", color:"#9CA3AF" }}>
                     <Image size={28} style={{ marginBottom:6 }}/>
