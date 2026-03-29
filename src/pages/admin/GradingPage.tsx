@@ -128,8 +128,6 @@ const GradingPage = () => {
           const { error: ansErr } = await supabase.from("exam_answers").update({
             points_awarded: pts,
             is_correct: pts > 0,
-            graded_by: user?.id,
-            graded_at: new Date().toISOString(),
           }).eq("id", ans.id);
           if (ansErr) console.warn("Answer update error:", ansErr.message);
         }
@@ -143,8 +141,6 @@ const GradingPage = () => {
         total_points: totalPoints,
         percentage: pct,
         passed: pct >= passing,
-        graded_by: user?.id,
-        graded_at: new Date().toISOString(),
       }).eq("id", selectedAttempt.id);
 
       if (attemptErr) throw new Error(`Failed to update attempt status: ${attemptErr.message}`);
