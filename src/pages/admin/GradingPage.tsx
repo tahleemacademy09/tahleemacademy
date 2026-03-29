@@ -307,20 +307,20 @@ const GradingPage = () => {
                   </div>
                 )}
 
-                {/* Manual scoring for essays */}
+                {/* Manual scoring for essays + audio */}
                 {isEssay && (
                   <div style={{ marginTop: 12, background: "#F0FDF4", borderRadius: 12, padding: "14px 16px", border: "1.5px solid #BBDDC8" }}>
                     <p style={{ fontSize: 12, fontWeight: 800, color: G, margin: "0 0 10px", display: "flex", alignItems: "center", gap: 6 }}>
                       ✏️ Grade this answer <span style={{ fontSize: 11, fontWeight: 600, color: "#6B7280" }}>({q.points||1} pt{(q.points||1)!==1?"s":" max"})</span>
                     </p>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                      {Array.from({ length: (q.points||1) + 1 }, (_, n) => {
-                        const isSelected = (scoreRefs.current[selectedAttempt.id]||{})[i] === n || (!(selectedAttempt.id in (scoreRefs.current[selectedAttempt.id]||{})) && ans.points_awarded === n);
-                        return (
+
+                    {/* Quick-pick buttons (for small point values) */}
+                    {(q.points||1) <= 10 && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+                        {Array.from({ length: (q.points||1) + 1 }, (_, n) => (
                           <button key={n} onClick={() => {
                             if (!scoreRefs.current[selectedAttempt.id]) scoreRefs.current[selectedAttempt.id] = {};
                             scoreRefs.current[selectedAttempt.id][i] = n;
-                            // Update the matching answer in state (find by question_id)
                             setAnswers(prev => prev.map((a: any) =>
                               a.question_id === q.id ? { ...a, points_awarded: n } : a
                             ));
@@ -335,10 +335,33 @@ const GradingPage = () => {
                             }}>
                             {n}
                           </button>
-                        );
-                      })}
-                      <span style={{ fontSize: 12, color: "#9CA3AF", marginLeft: 4 }}>/ {q.points||1}</span>
+                        ))}
+                        <span style={{ fontSize: 12, color: "#9CA3AF", marginLeft: 4 }}>/ {q.points||1}</span>
+                      </div>
+                    )}
+
+                    {/* Manual number input — always visible, essential for high point values */}
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#fff", borderRadius: 10, padding: "10px 12px", border: "1.5px solid #BBDDC8" }}>
+                      <span style={{ fontSize: 12, color: "#6B7280", fontWeight: 700, whiteSpace: "nowrap" as const }}>Enter score:</span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={q.points||1}
+                        step={0.5}
+                        value={(scoreRefs.current[selectedAttempt.id]||{})[i] ?? (ans as any).points_awarded ?? 0}
+                        onChange={e => {
+                          const val = Math.min(q.points||1, Math.max(0, Number(e.target.value)));
+                          if (!scoreRefs.current[selectedAttempt.id]) scoreRefs.current[selectedAttempt.id] = {};
+                          scoreRefs.current[selectedAttempt.id][i] = val;
+                          setAnswers(prev => prev.map((a: any) =>
+                            a.question_id === q.id ? { ...a, points_awarded: val } : a
+                          ));
+                        }}
+                        style={{ width: 72, padding: "6px 10px", borderRadius: 8, border: "1.5px solid #D1D5DB", fontSize: 16, fontWeight: 800, color: G, textAlign: "center", outline: "none" }}
+                      />
+                      <span style={{ fontSize: 13, color: "#6B7280" }}>/ {q.points||1} pts</span>
                     </div>
+
                     {/* Current score indicator */}
                     {(scoreRefs.current[selectedAttempt.id]||{})[i] !== undefined && (
                       <p style={{ fontSize: 11, color: G, fontWeight: 700, margin: "8px 0 0" }}>
