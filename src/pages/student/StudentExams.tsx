@@ -119,7 +119,7 @@ const StudentExams = () => {
   const counts    = { available: available.length, completed: completed.length, history: pastAttempts.length };
 
   const totalDone      = assignedExams.filter(e => getStatus(e) === "exhausted").length;
-  const gradedAttempts = pastAttempts.filter(a => a.status === "graded");
+  const gradedAttempts = pastAttempts.filter(a => a.status === "graded" || a.status === "released");
   const avgPct         = gradedAttempts.length ? Math.round(gradedAttempts.reduce((s,a) => s + (a.percentage||0), 0) / gradedAttempts.length) : 0;
   const passedCount    = gradedAttempts.filter(a => a.passed).length;
 
@@ -222,7 +222,7 @@ const StudentExams = () => {
           )}
 
           {/* Score */}
-          {status === "exhausted" && latest?.status === "graded" && (
+          {status === "exhausted" && (latest?.status === "graded" || latest?.status === "released") && (
             <div style={{
               display:"flex", alignItems:"center", gap:10, padding:"10px 12px", borderRadius:12, marginBottom:12,
               background: latest.passed ? "#f0fff4" : "#fff5f5",
@@ -239,7 +239,7 @@ const StudentExams = () => {
               </div>
             </div>
           )}
-          {status === "exhausted" && latest?.status === "submitted" && (
+          {status === "exhausted" && latest?.status === "submitted" && latest?.status !== "released" && (
             <div style={{ padding:"9px 12px", borderRadius:10, background:"#fffbeb", border:"1px solid #fde68a", marginBottom:12, fontSize:12, color:"#92400e", fontWeight:600 }}>
               ⏳ {t("Awaiting grading","بانتظار التصحيح")}
             </div>
@@ -291,7 +291,7 @@ const StudentExams = () => {
   const HistoryRow = ({ attempt }: { attempt: any }) => {
     const title  = language === "ar" ? attempt.exams?.title_ar || attempt.exams?.title : attempt.exams?.title;
     const isTest = (attempt.exams?.type || "exam") === "test";
-    const graded = attempt.status === "graded";
+    const graded = attempt.status === "graded" || attempt.status === "released";
     const inProg = attempt.status === "in_progress";
     return (
       <div onClick={() => !inProg && navigate(`/student/results/${attempt.id}`)} style={{
