@@ -257,6 +257,10 @@ const ExamEditor = () => {
     load();
   }, [examId]);
 
+  const G = "#064E3B";
+  const GOLD = "#c9a84c";
+  const [activeTab, setActiveTab] = useState("settings");
+
   const handleSave = async () => {
     if (!examForm.title) {
       toast({ title: t("Error", "خطأ"), description: t("Title is required", "العنوان مطلوب"), variant: "destructive" });
@@ -646,23 +650,103 @@ fill_blank,"The word for 'water' is ___.","كلمة 'ماء' هي ___.",,,,,,,,,
     }
   };
 
+  const tabs = [
+    { value: "settings",   icon: "⚙️", label: t("Settings", "الإعدادات") },
+    { value: "proctoring", icon: "🛡️", label: t("Proctoring", "المراقبة") },
+    { value: "schedule",   icon: "📅", label: t("Schedule", "الجدولة") },
+    { value: "questions",  icon: "📝", label: `${t("Questions", "الأسئلة")} (${questions.length})` },
+  ];
+
   return (
-    <div className="container mx-auto px-4 py-8">
-      <div className="mb-6 flex items-center justify-between flex-wrap gap-3">
-        <h1 className="text-3xl font-bold">{isEdit ? t("Edit Exam", "تعديل الامتحان") : t("Create Exam", "إنشاء امتحان")}</h1>
-        <Button onClick={handleSave} disabled={saving} size="lg">
-          {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-          {examForm.type === "test" ? t("Save Test", "حفظ التمرين") : t("Save Exam", "حفظ الامتحان")}
-        </Button>
+    <div style={{ minHeight: "100vh", background: "#F0F4F2", fontFamily: "'Cairo', sans-serif" }}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap');`}</style>
+
+      {/* ── Branded Header ── */}
+      <div style={{
+        background: `linear-gradient(135deg, ${G} 0%, #0a3d2a 100%)`,
+        padding: "20px 24px 0",
+        boxShadow: "0 4px 24px rgba(6,78,59,.35)",
+      }}>
+        {/* Top bar */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <button
+              onClick={() => navigate("/admin/exams")}
+              style={{ background: "rgba(255,255,255,.12)", border: "none", borderRadius: 10, padding: "8px 14px",
+                color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+              ← {t("Back", "رجوع")}
+            </button>
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
+                <span style={{ fontSize: 18 }}>{examForm.type === "test" ? "📋" : "📝"}</span>
+                <h1 style={{ fontSize: 20, fontWeight: 900, color: "#fff", margin: 0, lineHeight: 1 }}>
+                  {isEdit ? t("Edit Exam", "تعديل الامتحان") : t("Create Exam", "إنشاء امتحان")}
+                </h1>
+              </div>
+              {examForm.title && (
+                <p style={{ fontSize: 12, color: "rgba(255,255,255,.6)", margin: 0, fontWeight: 600 }}>
+                  {examForm.title}{examForm.title_ar ? ` · ${examForm.title_ar}` : ""}
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* Stats pills */}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            {[
+              { label: t("Questions", "أسئلة"), val: questions.length, color: GOLD },
+              { label: t("Points", "نقاط"), val: questions.reduce((s,q) => s + (q.points||1), 0), color: "#86efac" },
+              { label: t("Min", "دقيقة"), val: examForm.time_limit_minutes, color: "#93c5fd" },
+            ].map(({ label, val, color }) => (
+              <div key={label} style={{ background: "rgba(255,255,255,.1)", borderRadius: 10, padding: "7px 13px", textAlign: "center" }}>
+                <div style={{ fontSize: 17, fontWeight: 900, color, lineHeight: 1 }}>{val}</div>
+                <div style={{ fontSize: 9, color: "rgba(255,255,255,.5)", fontWeight: 700, letterSpacing: .5, marginTop: 1 }}>{label}</div>
+              </div>
+            ))}
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              style={{
+                background: saving ? "rgba(255,255,255,.2)" : GOLD,
+                border: "none", borderRadius: 12,
+                padding: "10px 22px", color: saving ? "rgba(255,255,255,.6)" : G,
+                cursor: saving ? "not-allowed" : "pointer",
+                fontSize: 14, fontWeight: 900, display: "flex", alignItems: "center", gap: 8,
+                boxShadow: "0 3px 14px rgba(201,168,76,.4)",
+              }}>
+              {saving
+                ? <><span style={{ width: 14, height: 14, border: "2px solid rgba(255,255,255,.4)", borderTopColor: "transparent", borderRadius: "50%", display: "inline-block", animation: "spin .7s linear infinite" }}/>{t("Saving…", "حفظ…")}</>
+                : <>{examForm.type === "test" ? t("💾 Save Test", "💾 حفظ التمرين") : t("💾 Save Exam", "💾 حفظ الامتحان")}</>
+              }
+            </button>
+          </div>
+        </div>
+
+        {/* Custom Tab Bar */}
+        <div style={{ display: "flex", gap: 0 }}>
+          {tabs.map(tab => (
+            <button key={tab.value} onClick={() => setActiveTab(tab.value)} style={{
+              flex: 1, padding: "12px 8px 10px",
+              background: activeTab === tab.value ? "#fff" : "transparent",
+              border: "none", cursor: "pointer",
+              borderRadius: activeTab === tab.value ? "12px 12px 0 0" : 0,
+              color: activeTab === tab.value ? G : "rgba(255,255,255,.65)",
+              fontWeight: 800, fontSize: 12,
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+              transition: "all .2s",
+              boxShadow: activeTab === tab.value ? "0 -2px 12px rgba(0,0,0,.1)" : "none",
+            }}>
+              <span>{tab.icon}</span>
+              <span>{tab.label}</span>
+            </button>
+          ))}
+        </div>
       </div>
 
-      <Tabs defaultValue="settings" className="space-y-6">
-        <TabsList className="w-full grid grid-cols-4">
-          <TabsTrigger value="settings" className="gap-2"><Settings2 className="h-4 w-4" />{t("Settings", "الإعدادات")}</TabsTrigger>
-          <TabsTrigger value="proctoring" className="gap-2">🛡️ {t("Proctoring", "المراقبة")}</TabsTrigger>
-          <TabsTrigger value="schedule" className="gap-2"><Calendar className="h-4 w-4" />{t("Schedule", "الجدولة")}</TabsTrigger>
-          <TabsTrigger value="questions" className="gap-2"><FileText className="h-4 w-4" />{t("Questions", "الأسئلة")} ({questions.length})</TabsTrigger>
-        </TabsList>
+      {/* ── Tab content wrapper ── */}
+      <div style={{ maxWidth: 960, margin: "0 auto", padding: "24px 16px 60px" }}>
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-0">
+        <TabsList className="hidden" />
 
         {/* Settings Tab */}
         <TabsContent value="settings">
@@ -1265,6 +1349,8 @@ fill_blank,"The word for 'water' is ___.","كلمة 'ماء' هي ___.",,,,,,,,,
           </div>
         </TabsContent>
       </Tabs>
+      </div>{/* tab content wrapper */}
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
 
       {/* Preview Dialog */}
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
