@@ -401,7 +401,7 @@ const ExamTaking = () => {
             }
           }
           return q;
-        }
+        }));
         if (ad.exams.randomize_questions) ql = ql.sort(() => Math.random() - 0.5);
         setQuestions(ql);
 
