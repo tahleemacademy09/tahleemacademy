@@ -95,11 +95,17 @@ const GradingPage = () => {
       supabase.from("exam_questions").select("*").eq("exam_id", attempt.exam_id).order("sort_order"),
       supabase.from("exam_answers").select("*").eq("attempt_id", attempt.id),
     ]);
-    setQuestions(qRes.data || []);
-    setAnswers(aRes.data || []);
+    const qs = qRes.data || [];
+    const ans = aRes.data || [];
+    setQuestions(qs);
+    setAnswers(ans);
+    // Initialize score refs keyed by question index, matched via question_id
     if (!scoreRefs.current[attempt.id]) {
       const init: Record<number, number> = {};
-      (aRes.data||[]).forEach((a: any, i: number) => { init[i] = a.points_awarded || 0; });
+      qs.forEach((q: any, i: number) => {
+        const a = ans.find((a: any) => a.question_id === q.id);
+        init[i] = a?.points_awarded || 0;
+      });
       scoreRefs.current[attempt.id] = init;
     }
   };
@@ -112,20 +118,26 @@ const GradingPage = () => {
       const totalPoints = questions.reduce((s, q) => s + (q.points || 1), 0);
       let earned = 0;
 
-      for (let i = 0; i < answers.length; i++) {
-        const pts = scores[i] ?? answers[i]?.points_awarded ?? 0;
+      // Loop questions (not answers) so unanswered Qs still count in total
+      for (let i = 0; i < questions.length; i++) {
+        const q = questions[i];
+        const ans = answers.find((a: any) => a.question_id === q.id);
+        const pts = scores[i] ?? ans?.points_awarded ?? 0;
         earned += Number(pts);
-        await supabase.from("exam_answers").update({
-          points_awarded: pts,
-          is_correct: pts > 0,
-          graded_by: user?.id,
-          graded_at: new Date().toISOString(),
-        }).eq("id", answers[i].id);
+        if (ans?.id) {
+          const { error: ansErr } = await supabase.from("exam_answers").update({
+            points_awarded: pts,
+            is_correct: pts > 0,
+            graded_by: user?.id,
+            graded_at: new Date().toISOString(),
+          }).eq("id", ans.id);
+          if (ansErr) console.warn("Answer update error:", ansErr.message);
+        }
       }
 
       const pct = totalPoints > 0 ? Math.round((earned / totalPoints) * 100) : 0;
       const passing = selectedAttempt.exams?.passing_score || 60;
-      await supabase.from("exam_attempts").update({
+      const { error: attemptErr } = await supabase.from("exam_attempts").update({
         status: "graded",
         score: earned,
         total_points: totalPoints,
@@ -134,6 +146,8 @@ const GradingPage = () => {
         graded_by: user?.id,
         graded_at: new Date().toISOString(),
       }).eq("id", selectedAttempt.id);
+
+      if (attemptErr) throw new Error(`Failed to update attempt status: ${attemptErr.message}`);
 
       toast({ title: `✅ Graded! Score: ${earned}/${totalPoints} (${pct}%)` });
       setSelectedAttempt(null);
@@ -219,14 +233,24 @@ const GradingPage = () => {
         </div>
 
         <div style={{ padding: "16px", maxWidth: 800, margin: "0 auto", display: "flex", flexDirection: "column", gap: 14 }}>
-          {answers.map((ans, i) => {
-            const q = questions.find(q => q.id === ans.question_id) || questions[i] || {};
+          {questions.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "48px 24px", background: "#fff", borderRadius: 16, border: "2px dashed #E5E7EB" }}>
+              <p style={{ fontWeight: 700, color: "#9CA3AF", fontSize: 13 }}>Loading questions…</p>
+            </div>
+          ) : null}
+          {questions.map((q, i) => {
+            // Find this question's answer (may be null if student skipped it)
+            const ans = answers.find((a: any) => a.question_id === q.id) || {
+              id: null, answer_text: null, selected_option: null,
+              answer_data: null, points_awarded: 0, is_correct: false,
+            };
             const isEssay = q.question_type === "essay" || q.question_type === "short_answer" || q.question_type === "audio";
             const bi = splitBilingual(q.question_text||"");
-            const ansText = ans.answer_text || ans.selected_option || "";
+            const ansText = (ans as any).answer_text || (ans as any).selected_option || "";
+            const notAnswered = !ansText && !(ans as any).answer_data?.audioUrl && !(ans as any).audio_url;
 
             return (
-              <div key={ans.id} style={{ background: "#fff", borderRadius: 16, border: "1.5px solid #E5E7EB", padding: 16 }}>
+              <div key={q.id} style={{ background: "#fff", borderRadius: 16, border: `1.5px solid ${notAnswered ? "#FDE68A" : "#E5E7EB"}`, padding: 16 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
                   <span style={{ width: 28, height: 28, borderRadius: 8, background: "#F3F4F6", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, color: "#6B7280" }}>
                     {i+1}
@@ -242,6 +266,11 @@ const GradingPage = () => {
                 {/* Answer */}
                 <div style={{ background: "#F9FAFB", borderRadius: 10, padding: "10px 12px", marginBottom: isEssay ? 10 : 0 }}>
                   <p style={{ fontSize: 11, fontWeight: 700, color: "#9CA3AF", margin: "0 0 4px" }}>Student Answer:</p>
+                  {notAnswered && (
+                    <div style={{ padding: "6px 10px", background: "#FFF7ED", borderRadius: 8, border: "1px solid #FDE68A", marginBottom: 6, fontSize: 11, color: "#92400E", fontWeight: 700 }}>
+                      ⚠️ Not answered — grade as 0 or skip
+                    </div>
+                  )}
                   {(() => {
                     // Audio URL is stored in answer_data.audioUrl by ExamTaking.
                     // Fallback to legacy top-level audio_url column if present.
@@ -295,9 +324,10 @@ const GradingPage = () => {
                           <button key={n} onClick={() => {
                             if (!scoreRefs.current[selectedAttempt.id]) scoreRefs.current[selectedAttempt.id] = {};
                             scoreRefs.current[selectedAttempt.id][i] = n;
-                            const copy = [...answers];
-                            copy[i] = { ...copy[i], points_awarded: n };
-                            setAnswers(copy);
+                            // Update the matching answer in state (find by question_id)
+                            setAnswers(prev => prev.map((a: any) =>
+                              a.question_id === q.id ? { ...a, points_awarded: n } : a
+                            ));
                           }}
                             style={{
                               width: 40, height: 40, borderRadius: 10,
