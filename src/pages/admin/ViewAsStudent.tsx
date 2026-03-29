@@ -1,27 +1,19 @@
 /* src/pages/admin/ViewAsStudent.tsx
-   FIX: was 404 because it only showed data, but admin navigating to /student route
-        was blocked by ProtectedRoute(requiredRole="student").
-   
-   SOLUTION: This page renders the actual student dashboard components directly
-   inside an admin wrapper — no role bypass needed. Shows StudentDashboard,
-   StudentExams, etc. embedded with an "Admin Preview" banner.
-   
-   Route: /admin/students/:userId/view  (already in App.tsx)
+   Admin can VIEW a student's full profile AND navigate as if they ARE that student.
+   Route: /admin/students/:userId/view
 */
 import { useEffect, useState } from "react";
-import { useParams, useNavigate, Link } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import {
-  ArrowLeft, BookOpen, ClipboardList, TrendingUp,
-  Calendar, Send, Loader2, Eye, Mail, Phone,
-  Users, BarChart2, CheckCircle, XCircle
+  Send, Loader2, Eye, CheckCircle, XCircle,
+  BookOpen, ClipboardList, Calendar, Users
 } from "lucide-react";
 
 const G = "#064E3B";
-const GOLD = "#b7791f";
 
 export default function ViewAsStudent() {
   const { userId } = useParams<{ userId: string }>();
@@ -29,12 +21,13 @@ export default function ViewAsStudent() {
   const { toast } = useToast();
   const navigate = useNavigate();
 
-  const [loading, setLoading]   = useState(true);
-  const [profile, setProfile]   = useState<any>(null);
+  const [loading, setLoading]     = useState(true);
+  const [profile, setProfile]     = useState<any>(null);
   const [enrollments, setEnrollments] = useState<any[]>([]);
-  const [attempts, setAttempts] = useState<any[]>([]);
-  const [assigned, setAssigned] = useState<any[]>([]);
+  const [attempts, setAttempts]   = useState<any[]>([]);
+  const [assigned, setAssigned]   = useState<any[]>([]);
   const [attendance, setAttendance] = useState<any[]>([]);
+  const [notifs, setNotifs]       = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState("overview");
   const [msgDialog, setMsgDialog] = useState(false);
   const [msgTitle, setMsgTitle]   = useState("");
@@ -44,18 +37,20 @@ export default function ViewAsStudent() {
   useEffect(() => {
     if (!userId) return;
     (async () => {
-      const [pRes, eRes, aRes, asRes, atRes] = await Promise.all([
+      const [pRes, eRes, aRes, asRes, atRes, nRes] = await Promise.all([
         supabase.from("profiles").select("*").eq("user_id", userId).maybeSingle(),
-        supabase.from("enrollments").select("*, courses(title)").eq("user_id", userId),
+        supabase.from("enrollments").select("*, courses(title, level)").eq("user_id", userId),
         supabase.from("exam_attempts").select("*, exams(title, type, passing_score)").eq("user_id", userId).order("created_at", { ascending: false }),
-        supabase.from("exam_assignments").select("*, exams(title, is_published)").eq("user_id", userId),
+        supabase.from("exam_assignments").select("*, exams(title, is_published, start_date, end_date)").eq("user_id", userId),
         supabase.from("manual_attendance").select("*, subjects(title)").eq("student_id", userId).order("date", { ascending: false }).limit(30),
+        supabase.from("notifications" as any).select("*").eq("user_id", userId).order("created_at", { ascending: false }).limit(20),
       ]);
       setProfile(pRes.data);
       setEnrollments(eRes.data || []);
       setAttempts(aRes.data || []);
       setAssigned(asRes.data || []);
       setAttendance(atRes.data || []);
+      setNotifs(nRes.data || []);
       setLoading(false);
     })();
   }, [userId]);
@@ -69,7 +64,7 @@ export default function ViewAsStudent() {
     } as any);
     setSending(false);
     if (error) toast({ title: "Failed to send", description: error.message, variant: "destructive" });
-    else { toast({ title: "✅ Message sent!" }); setMsgDialog(false); setMsgTitle(""); setMsgBody(""); }
+    else { toast({ title: "✅ Message sent to student!" }); setMsgDialog(false); setMsgTitle(""); setMsgBody(""); }
   };
 
   if (loading) return (
@@ -81,70 +76,67 @@ export default function ViewAsStudent() {
 
   if (!profile) return (
     <div style={{ padding: 32, textAlign: "center" }}>
-      <div style={{ fontSize: 40, marginBottom: 12 }}>👤</div>
-      <p style={{ fontWeight: 700, color: "#374151" }}>Student not found</p>
+      <p style={{ fontWeight: 700 }}>Student not found</p>
       <button onClick={() => navigate("/admin/students")}
         style={{ marginTop: 12, padding: "9px 20px", borderRadius: 10, border: "none", background: G, color: "#fff", cursor: "pointer", fontWeight: 700 }}>
-        ← Back to Students
+        ← Back
       </button>
     </div>
   );
 
-  const graded   = attempts.filter(a => ["graded", "released"].includes(a.status));
-  const avg      = graded.length ? Math.round(graded.reduce((s, a) => s + (Number(a.percentage) || 0), 0) / graded.length) : 0;
+  const graded   = attempts.filter(a => ["graded","released"].includes(a.status));
+  const avg      = graded.length ? Math.round(graded.reduce((s,a) => s + (Number(a.percentage)||0), 0) / graded.length) : 0;
   const pending  = attempts.filter(a => a.status === "submitted").length;
   const present  = attendance.filter(a => a.status === "present").length;
   const attRate  = attendance.length ? Math.round((present / attendance.length) * 100) : 0;
 
-  const inp: React.CSSProperties = {
-    width: "100%", padding: "9px 12px", borderRadius: 10,
-    border: "1.5px solid #E5E7EB", fontSize: 13, outline: "none",
-    background: "#FAFAFA", boxSizing: "border-box" as const,
-  };
-
   const TABS = [
-    { id: "overview",    label: "Overview",    icon: "📊" },
-    { id: "exams",       label: "Exams",       icon: "📝" },
-    { id: "attendance",  label: "Attendance",  icon: "📅" },
-    { id: "assignments", label: "Assignments", icon: "📋" },
+    { id: "overview",    label: "Overview",     icon: "📊" },
+    { id: "exams",       label: "Exams",        icon: "📝" },
+    { id: "courses",     label: "Courses",      icon: "📚" },
+    { id: "attendance",  label: "Attendance",   icon: "📅" },
+    { id: "assignments", label: "Assignments",  icon: "📋" },
+    { id: "notifs",      label: "Notifications",icon: "🔔" },
   ];
 
   return (
-    <div style={{ minHeight: "100vh", background: "#F3F4F6" }}>
+    <div style={{ minHeight: "100vh", background: "#F3F4F6", fontFamily: "'Cairo',sans-serif" }}>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
 
-      {/* ── Admin Preview Banner ── */}
-      <div style={{ background: "#7c3aed", padding: "8px 16px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <span style={{ fontSize: 12, fontWeight: 700, color: "#fff", display: "flex", alignItems: "center", gap: 8 }}>
-          <Eye size={14} /> Admin Preview — viewing as student
+      {/* Admin Preview Banner */}
+      <div style={{ background: "#7c3aed", padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color: "#fff", display: "flex", alignItems: "center", gap: 8 }}>
+          <Eye size={14} /> Admin Preview — viewing as: <strong style={{ color: "#e9d5ff" }}>{profile.full_name}</strong>
         </span>
-        <button onClick={() => navigate("/admin/students")}
-          style={{ padding: "4px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,.3)", background: "transparent", color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
-          ← Exit Preview
-        </button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => setMsgDialog(true)}
+            style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,.4)", background: "rgba(255,255,255,.15)", color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 5 }}>
+            <Send size={11} /> Message Student
+          </button>
+          <button onClick={() => navigate("/admin/students")}
+            style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,.3)", background: "transparent", color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
+            ← Exit Preview
+          </button>
+        </div>
       </div>
 
-      {/* ── Student Profile Header ── */}
+      {/* Student Header — styled exactly like student dashboard */}
       <div style={{ background: G, padding: "18px 16px 0" }}>
         <div style={{ display: "flex", alignItems: "flex-start", gap: 14, marginBottom: 16 }}>
           <div style={{ width: 56, height: 56, borderRadius: "50%", border: "3px solid rgba(255,255,255,.3)", overflow: "hidden", flexShrink: 0, background: "rgba(255,255,255,.15)", display: "flex", alignItems: "center", justifyContent: "center" }}>
             {profile.avatar_url
               ? <img src={profile.avatar_url} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt="" />
-              : <span style={{ fontSize: 20, fontWeight: 800, color: "#fff" }}>{(profile.full_name || "?")[0]}</span>}
+              : <span style={{ fontSize: 22, fontWeight: 800, color: "#fff" }}>{(profile.full_name || "?")[0]}</span>}
           </div>
           <div style={{ flex: 1 }}>
-            <p style={{ fontWeight: 800, fontSize: 17, color: "#fff", margin: 0 }}>{profile.full_name || "Unknown"}</p>
-            {profile.full_name_ar && <p style={{ fontSize: 13, color: "rgba(255,255,255,.7)", margin: 0, fontFamily: "'Amiri',serif", direction: "rtl" }}>{profile.full_name_ar}</p>}
+            <p style={{ fontWeight: 900, fontSize: 18, color: "#fff", margin: 0 }}>{profile.full_name}</p>
+            {profile.full_name_ar && <p style={{ fontSize: 13, color: "rgba(255,255,255,.7)", margin: "2px 0 0", direction: "rtl" }}>{profile.full_name_ar}</p>}
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
-              {profile.phone && <span style={{ fontSize: 11, color: "rgba(255,255,255,.7)", display: "flex", alignItems: "center", gap: 4 }}><Phone size={11} /> {profile.phone}</span>}
-              {profile.level && <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20, background: "rgba(255,255,255,.15)", color: "#fff", fontWeight: 700 }}>{profile.level}</span>}
-              {profile.gender && <span style={{ fontSize: 11, color: "rgba(255,255,255,.6)" }}>{profile.gender}</span>}
+              {profile.level && <span style={{ fontSize: 11, padding: "2px 10px", borderRadius: 20, background: "rgba(255,255,255,.18)", color: "#fff", fontWeight: 700 }}>{profile.level}</span>}
+              {profile.gender && <span style={{ fontSize: 11, color: "rgba(255,255,255,.65)" }}>{profile.gender}</span>}
+              {profile.country && <span style={{ fontSize: 11, color: "rgba(255,255,255,.65)" }}>🌍 {profile.country}</span>}
             </div>
           </div>
-          <button onClick={() => setMsgDialog(true)}
-            style={{ padding: "8px 14px", borderRadius: 10, border: "1px solid rgba(255,255,255,.3)", background: "rgba(255,255,255,.1)", color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
-            <Send size={13} /> Message
-          </button>
         </div>
 
         {/* Stat pills */}
@@ -156,7 +148,7 @@ export default function ViewAsStudent() {
             { v: pending, l: "Pending" },
             { v: `${attRate}%`, l: "Attendance" },
           ].map((s, i) => (
-            <div key={i} style={{ padding: "7px 14px", borderRadius: 10, background: "rgba(255,255,255,.12)", flexShrink: 0 }}>
+            <div key={i} style={{ padding: "7px 14px", borderRadius: 10, background: "rgba(255,255,255,.12)", flexShrink: 0, textAlign: "center" }}>
               <p style={{ fontWeight: 900, fontSize: 16, color: "#fff", margin: 0 }}>{s.v}</p>
               <p style={{ fontSize: 10, color: "rgba(255,255,255,.65)", margin: 0 }}>{s.l}</p>
             </div>
@@ -167,14 +159,14 @@ export default function ViewAsStudent() {
         <div style={{ display: "flex", gap: 2, overflowX: "auto" }}>
           {TABS.map(t => (
             <button key={t.id} onClick={() => setActiveTab(t.id)}
-              style={{ padding: "8px 14px", border: "none", cursor: "pointer", fontWeight: 700, fontSize: 12, whiteSpace: "nowrap", borderRadius: "10px 10px 0 0", background: activeTab === t.id ? "#F3F4F6" : "transparent", color: activeTab === t.id ? G : "rgba(255,255,255,.75)" }}>
+              style={{ padding: "8px 12px", border: "none", cursor: "pointer", fontWeight: 700, fontSize: 11, whiteSpace: "nowrap", borderRadius: "10px 10px 0 0", background: activeTab === t.id ? "#F3F4F6" : "transparent", color: activeTab === t.id ? G : "rgba(255,255,255,.75)" }}>
               {t.icon} {t.label}
             </button>
           ))}
         </div>
       </div>
 
-      <div style={{ padding: 16, maxWidth: 700, margin: "0 auto" }}>
+      <div style={{ padding: 16, maxWidth: 720, margin: "0 auto" }}>
 
         {/* OVERVIEW */}
         {activeTab === "overview" && (
@@ -188,18 +180,22 @@ export default function ViewAsStudent() {
               ].map((s, i) => (
                 <div key={i} style={{ background: s.bg, borderRadius: 14, padding: "16px", display: "flex", gap: 12, alignItems: "center" }}>
                   <span style={{ fontSize: 28 }}>{s.icon}</span>
-                  <div><p style={{ fontSize: 22, fontWeight: 900, color: s.c, margin: 0 }}>{s.v}</p><p style={{ fontSize: 11, color: s.c, opacity: .7, margin: 0, fontWeight: 600 }}>{s.l}</p></div>
+                  <div>
+                    <p style={{ fontSize: 22, fontWeight: 900, color: s.c, margin: 0 }}>{s.v}</p>
+                    <p style={{ fontSize: 11, color: s.c, opacity: .7, margin: 0, fontWeight: 600 }}>{s.l}</p>
+                  </div>
                 </div>
               ))}
             </div>
 
-            {/* Profile info card */}
+            {/* Profile details */}
             <div style={{ background: "#fff", borderRadius: 16, border: "1px solid #E5E7EB", padding: 16, marginBottom: 14 }}>
               <p style={{ fontWeight: 800, fontSize: 13, color: G, margin: "0 0 12px" }}>📋 Profile Details</p>
               {[
-                ["Country", profile.country], ["City", profile.city],
-                ["Nationality", profile.nationality], ["Date of Birth", profile.date_of_birth],
-                ["Parent", profile.parent_name], ["Parent Phone", profile.parent_phone],
+                ["Email", profile.email], ["Phone", profile.phone], ["Country", profile.country],
+                ["City", profile.city], ["Nationality", profile.nationality],
+                ["Date of Birth", profile.date_of_birth], ["Parent", profile.parent_name],
+                ["Parent Phone", profile.parent_phone], ["Level", profile.level],
               ].filter(([, v]) => v).map(([l, v]) => (
                 <div key={l} style={{ display: "flex", justifyContent: "space-between", padding: "7px 0", borderBottom: "1px solid #F9FAFB", fontSize: 13 }}>
                   <span style={{ color: "#9CA3AF", fontWeight: 600 }}>{l}</span>
@@ -208,21 +204,24 @@ export default function ViewAsStudent() {
               ))}
             </div>
 
-            {/* Enrolled courses */}
-            {enrollments.length > 0 && (
-              <div style={{ background: "#fff", borderRadius: 16, border: "1px solid #E5E7EB", padding: 16 }}>
-                <p style={{ fontWeight: 800, fontSize: 13, color: G, margin: "0 0 12px" }}>📚 Enrolled Courses</p>
-                {enrollments.map((e, i) => (
-                  <div key={i} style={{ padding: "8px 0", borderBottom: "1px solid #F9FAFB", display: "flex", alignItems: "center", gap: 10 }}>
-                    <div style={{ width: 28, height: 28, borderRadius: 8, background: "#EFF6FF", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      <BookOpen size={14} color="#1D4ED8" />
-                    </div>
-                    <span style={{ fontSize: 13, color: "#374151", fontWeight: 600 }}>{e.courses?.title || "Course"}</span>
-                    <span style={{ marginLeft: "auto", fontSize: 11, padding: "2px 8px", borderRadius: 20, background: e.status === "active" ? "#DCFCE7" : "#F3F4F6", color: e.status === "active" ? "#166534" : "#6B7280", fontWeight: 700 }}>{e.status || "active"}</span>
-                  </div>
-                ))}
+            {/* Quick actions */}
+            <div style={{ background: "#fff", borderRadius: 16, border: "1px solid #E5E7EB", padding: 16 }}>
+              <p style={{ fontWeight: 800, fontSize: 13, color: G, margin: "0 0 12px" }}>⚡ Quick Actions</p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <button onClick={() => navigate(`/admin/grading`)}
+                  style={{ padding: "11px 14px", borderRadius: 11, border: "1.5px solid #E5E7EB", background: "#F9FAFB", cursor: "pointer", textAlign: "left", fontSize: 13, fontWeight: 600, color: G }}>
+                  📝 Grade this student's pending exams →
+                </button>
+                <button onClick={() => navigate(`/admin/exams`)}
+                  style={{ padding: "11px 14px", borderRadius: 11, border: "1.5px solid #E5E7EB", background: "#F9FAFB", cursor: "pointer", textAlign: "left", fontSize: 13, fontWeight: 600, color: G }}>
+                  📋 Assign an exam to this student →
+                </button>
+                <button onClick={() => setMsgDialog(true)}
+                  style={{ padding: "11px 14px", borderRadius: 11, border: "1.5px solid #E5E7EB", background: "#F9FAFB", cursor: "pointer", textAlign: "left", fontSize: 13, fontWeight: 600, color: G }}>
+                  ✉️ Send notification to this student →
+                </button>
               </div>
-            )}
+            </div>
           </>
         )}
 
@@ -230,33 +229,40 @@ export default function ViewAsStudent() {
         {activeTab === "exams" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {attempts.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "40px 20px", background: "#fff", borderRadius: 16, border: "2px dashed #E5E7EB" }}>
+              <div style={{ textAlign: "center", padding: "48px", background: "#fff", borderRadius: 16, border: "2px dashed #E5E7EB" }}>
                 <p style={{ fontSize: 36, marginBottom: 8 }}>📝</p>
                 <p style={{ fontWeight: 700, color: "#374151" }}>No exam attempts yet</p>
               </div>
             ) : attempts.map((a, i) => {
-              const pct  = Number(a.percentage) || 0;
+              const pct = Number(a.percentage) || 0;
               const pass = pct >= (a.exams?.passing_score || 60);
               return (
                 <div key={i} style={{ background: "#fff", borderRadius: 14, border: "1.5px solid #E5E7EB", padding: "14px 16px" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                     <div>
                       <p style={{ fontWeight: 700, fontSize: 14, color: "#111", margin: 0 }}>{a.exams?.title || "Exam"}</p>
-                      <p style={{ fontSize: 11, color: "#9CA3AF", margin: "3px 0 0" }}>{new Date(a.created_at).toLocaleDateString()} · {a.exams?.type || "exam"}</p>
+                      <p style={{ fontSize: 11, color: "#9CA3AF", margin: "3px 0 0" }}>
+                        {new Date(a.created_at).toLocaleDateString()} · {a.exams?.type || "exam"}
+                      </p>
                     </div>
-                    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
-                      <span style={{ fontSize: 20, fontWeight: 900, color: pass ? "#166534" : "#DC2626" }}>{a.status === "submitted" ? "—" : `${pct}%`}</span>
-                      <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, fontWeight: 700,
-                        background: a.status === "graded" || a.status === "released" ? (pass ? "#DCFCE7" : "#FEF2F2") : "#FFF7ED",
-                        color: a.status === "graded" || a.status === "released" ? (pass ? "#166534" : "#DC2626") : "#C2410C" }}>
-                        {a.status === "submitted" ? "⏳ Awaiting grading" : pass ? "✓ Passed" : "✗ Failed"}
-                      </span>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontSize: 20, fontWeight: 900, color: pass ? "#166534" : "#DC2626" }}>
+                        {a.status === "submitted" ? "⏳" : `${pct}%`}
+                      </div>
+                      <div style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, fontWeight: 700, marginTop: 3,
+                        background: a.status === "submitted" ? "#FFF7ED" : pass ? "#DCFCE7" : "#FEF2F2",
+                        color: a.status === "submitted" ? "#C2410C" : pass ? "#166534" : "#DC2626" }}>
+                        {a.status === "submitted" ? "Awaiting grading" : a.status === "in_progress" ? "In progress" : pass ? "✓ Passed" : "✗ Failed"}
+                      </div>
                     </div>
                   </div>
                   {(a.status === "graded" || a.status === "released") && (
-                    <div style={{ height: 5, borderRadius: 3, background: "#F3F4F6", overflow: "hidden" }}>
+                    <div style={{ height: 5, borderRadius: 3, background: "#F3F4F6", overflow: "hidden", marginTop: 10 }}>
                       <div style={{ width: `${pct}%`, height: "100%", borderRadius: 3, background: pass ? "#16A34A" : "#DC2626", transition: "width .4s" }} />
                     </div>
+                  )}
+                  {a.score !== null && a.total_points !== null && (
+                    <p style={{ fontSize: 11, color: "#9CA3AF", margin: "6px 0 0" }}>{a.score} / {a.total_points} points</p>
                   )}
                 </div>
               );
@@ -264,56 +270,115 @@ export default function ViewAsStudent() {
           </div>
         )}
 
-        {/* ATTENDANCE */}
-        {activeTab === "attendance" && (
+        {/* COURSES */}
+        {activeTab === "courses" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {attendance.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "40px", background: "#fff", borderRadius: 16, border: "2px dashed #E5E7EB" }}>
-                <p style={{ fontSize: 36, marginBottom: 8 }}>📅</p>
-                <p style={{ fontWeight: 700, color: "#374151" }}>No attendance records</p>
+            {enrollments.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "48px", background: "#fff", borderRadius: 16, border: "2px dashed #E5E7EB" }}>
+                <p style={{ fontSize: 36, marginBottom: 8 }}>📚</p>
+                <p style={{ fontWeight: 700, color: "#374151" }}>Not enrolled in any courses</p>
               </div>
-            ) : attendance.map((a, i) => (
+            ) : enrollments.map((e, i) => (
               <div key={i} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E5E7EB", padding: "12px 14px", display: "flex", alignItems: "center", gap: 12 }}>
-                <div style={{ width: 32, height: 32, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", background: a.status === "present" ? "#DCFCE7" : "#FEF2F2", flexShrink: 0 }}>
-                  {a.status === "present" ? <CheckCircle size={16} color="#166534" /> : <XCircle size={16} color="#DC2626" />}
+                <div style={{ width: 36, height: 36, borderRadius: 10, background: "#EFF6FF", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <BookOpen size={16} color="#1D4ED8" />
                 </div>
                 <div style={{ flex: 1 }}>
-                  <p style={{ fontWeight: 600, fontSize: 13, color: "#374151", margin: 0 }}>{a.subjects?.title || "Class"}</p>
-                  <p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>{new Date(a.date).toLocaleDateString()}</p>
+                  <p style={{ fontWeight: 700, fontSize: 13, color: "#374151", margin: 0 }}>{e.courses?.title || "Course"}</p>
+                  <p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>{e.courses?.level || ""}</p>
                 </div>
-                <span style={{ fontSize: 11, fontWeight: 700, color: a.status === "present" ? "#166534" : "#DC2626" }}>
-                  {a.status}
+                <span style={{ fontSize: 11, padding: "2px 10px", borderRadius: 20, fontWeight: 700,
+                  background: e.status === "active" ? "#DCFCE7" : "#F3F4F6",
+                  color: e.status === "active" ? "#166534" : "#6B7280" }}>
+                  {e.status || "active"}
                 </span>
               </div>
             ))}
           </div>
         )}
 
+        {/* ATTENDANCE */}
+        {activeTab === "attendance" && (
+          <>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 14 }}>
+              {[
+                { v: attendance.length, l: "Total Classes", bg: "#EFF6FF", c: "#1D4ED8" },
+                { v: present, l: "Present", bg: "#F0FDF4", c: "#166534" },
+                { v: `${attRate}%`, l: "Rate", bg: "#F5F3FF", c: "#6D28D9" },
+              ].map((s, i) => (
+                <div key={i} style={{ background: s.bg, borderRadius: 12, padding: 14, textAlign: "center" }}>
+                  <p style={{ fontSize: 20, fontWeight: 900, color: s.c, margin: 0 }}>{s.v}</p>
+                  <p style={{ fontSize: 11, color: s.c, opacity: .7, margin: 0 }}>{s.l}</p>
+                </div>
+              ))}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {attendance.map((a, i) => (
+                <div key={i} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E5E7EB", padding: "10px 14px", display: "flex", alignItems: "center", gap: 12 }}>
+                  <div style={{ width: 32, height: 32, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", background: a.status === "present" ? "#DCFCE7" : "#FEF2F2" }}>
+                    {a.status === "present" ? <CheckCircle size={16} color="#166534" /> : <XCircle size={16} color="#DC2626" />}
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <p style={{ fontWeight: 600, fontSize: 13, color: "#374151", margin: 0 }}>{a.subjects?.title || "Class"}</p>
+                    <p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>{new Date(a.date).toLocaleDateString()}</p>
+                  </div>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: a.status === "present" ? "#166534" : "#DC2626" }}>{a.status}</span>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
         {/* ASSIGNMENTS */}
         {activeTab === "assignments" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {assigned.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "40px", background: "#fff", borderRadius: 16, border: "2px dashed #E5E7EB" }}>
+              <div style={{ textAlign: "center", padding: "48px", background: "#fff", borderRadius: 16, border: "2px dashed #E5E7EB" }}>
                 <p style={{ fontSize: 36, marginBottom: 8 }}>📋</p>
                 <p style={{ fontWeight: 700, color: "#374151" }}>No exams assigned</p>
               </div>
             ) : assigned.map((a, i) => {
               const attempted = attempts.some(at => at.exam_id === a.exam_id);
               return (
-                <div key={i} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E5E7EB", padding: "12px 14px", display: "flex", alignItems: "center", gap: 12 }}>
-                  <div style={{ flex: 1 }}>
-                    <p style={{ fontWeight: 700, fontSize: 13, color: "#374151", margin: 0 }}>{a.exams?.title || "Exam"}</p>
-                    <p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>Assigned {new Date(a.created_at).toLocaleDateString()}</p>
-                  </div>
-                  <div style={{ display: "flex", gap: 6 }}>
-                    {!a.exams?.is_published && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, background: "#FFF7ED", color: "#C2410C", fontWeight: 700 }}>Draft</span>}
-                    <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, fontWeight: 700, background: attempted ? "#DCFCE7" : "#EFF6FF", color: attempted ? "#166534" : "#1D4ED8" }}>
-                      {attempted ? "Attempted" : "Pending"}
+                <div key={i} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E5E7EB", padding: "12px 14px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <div style={{ flex: 1 }}>
+                      <p style={{ fontWeight: 700, fontSize: 13, color: "#374151", margin: 0 }}>{a.exams?.title || "Exam"}</p>
+                      <p style={{ fontSize: 11, color: "#9CA3AF", margin: "3px 0 0" }}>
+                        Assigned {new Date(a.created_at).toLocaleDateString()}
+                        {a.exams?.end_date && ` · Due ${new Date(a.exams.end_date).toLocaleDateString()}`}
+                      </p>
+                    </div>
+                    <span style={{ fontSize: 10, padding: "3px 10px", borderRadius: 20, fontWeight: 700,
+                      background: attempted ? "#DCFCE7" : "#EFF6FF",
+                      color: attempted ? "#166534" : "#1D4ED8" }}>
+                      {attempted ? "✓ Attempted" : "Pending"}
                     </span>
                   </div>
                 </div>
               );
             })}
+          </div>
+        )}
+
+        {/* NOTIFICATIONS */}
+        {activeTab === "notifs" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {notifs.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "48px", background: "#fff", borderRadius: 16, border: "2px dashed #E5E7EB" }}>
+                <p style={{ fontSize: 36, marginBottom: 8 }}>🔔</p>
+                <p style={{ fontWeight: 700, color: "#374151" }}>No notifications</p>
+              </div>
+            ) : notifs.map((n: any, i) => (
+              <div key={i} style={{ background: n.is_read ? "#fff" : "#FFFBEB", borderRadius: 12, border: `1px solid ${n.is_read ? "#E5E7EB" : "#FDE68A"}`, padding: "12px 14px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                  <p style={{ fontWeight: n.is_read ? 600 : 800, fontSize: 13, color: "#374151", margin: 0 }}>{n.title}</p>
+                  {!n.is_read && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, background: "#FDE68A", color: "#92400E", fontWeight: 700 }}>Unread</span>}
+                </div>
+                <p style={{ fontSize: 12, color: "#6B7280", margin: "0 0 4px" }}>{n.message}</p>
+                <p style={{ fontSize: 10, color: "#9CA3AF", margin: 0 }}>{new Date(n.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</p>
+              </div>
+            ))}
           </div>
         )}
       </div>
@@ -322,21 +387,23 @@ export default function ViewAsStudent() {
       <Dialog open={msgDialog} onOpenChange={v => !v && setMsgDialog(false)}>
         <DialogContent style={{ maxWidth: 420, borderRadius: 20, padding: 0 }}>
           <div style={{ background: G, padding: "16px 20px", borderRadius: "20px 20px 0 0" }}>
-            <h2 style={{ fontWeight: 800, fontSize: 15, color: "#fff", margin: 0 }}>✉️ Send Message to {profile.full_name}</h2>
+            <h2 style={{ fontWeight: 800, fontSize: 15, color: "#fff", margin: 0 }}>✉️ Message {profile.full_name}</h2>
+            <p style={{ fontSize: 11, color: "rgba(255,255,255,.6)", margin: "3px 0 0" }}>This will appear in their notification panel instantly</p>
           </div>
           <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 12 }}>
             <div>
               <label style={{ fontSize: 11, fontWeight: 700, color: "#6B7280", display: "block", marginBottom: 4 }}>Title</label>
-              <input value={msgTitle} onChange={e => setMsgTitle(e.target.value)} placeholder="e.g. Your exam result is ready" style={{ width: "100%", padding: "9px 12px", borderRadius: 10, border: "1.5px solid #E5E7EB", fontSize: 13, outline: "none", boxSizing: "border-box" as const }} />
+              <input value={msgTitle} onChange={e => setMsgTitle(e.target.value)} placeholder="e.g. Your exam result is ready"
+                style={{ width: "100%", padding: "9px 12px", borderRadius: 10, border: "1.5px solid #E5E7EB", fontSize: 13, outline: "none", boxSizing: "border-box" as const }} />
             </div>
             <div>
               <label style={{ fontSize: 11, fontWeight: 700, color: "#6B7280", display: "block", marginBottom: 4 }}>Message</label>
-              <textarea value={msgBody} onChange={e => setMsgBody(e.target.value)} rows={4} placeholder="Type your message here…"
+              <textarea value={msgBody} onChange={e => setMsgBody(e.target.value)} rows={4} placeholder="Type your message…"
                 style={{ width: "100%", padding: "9px 12px", borderRadius: 10, border: "1.5px solid #E5E7EB", fontSize: 13, outline: "none", resize: "none", boxSizing: "border-box" as const }} />
             </div>
             <button onClick={sendMsg} disabled={sending || !msgTitle || !msgBody}
               style={{ padding: "12px 0", borderRadius: 11, border: "none", cursor: "pointer", fontWeight: 800, color: "#fff", background: sending || !msgTitle || !msgBody ? "#9CA3AF" : G, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-              {sending ? <><Loader2 size={14} style={{ animation: "spin .8s linear infinite" }} /> Sending…</> : <><Send size={14} /> Send Message</>}
+              {sending ? <><Loader2 size={14} style={{ animation: "spin .8s linear infinite" }} /> Sending…</> : <><Send size={14} /> Send</>}
             </button>
           </div>
         </DialogContent>
