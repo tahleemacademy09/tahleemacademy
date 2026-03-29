@@ -24,28 +24,44 @@ const AudioRecorder = ({ onRecordingComplete, existingUrl, className }: AudioRec
   const startRecording = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
+
+      // Detect the best supported MIME type — Android Chrome supports mp4/aac,
+      // desktop browsers prefer webm/opus. Falling back ensures the file is valid.
+      const mimeType = (() => {
+        const candidates = [
+          "audio/mp4",          // Android Chrome / Samsung Internet
+          "audio/webm;codecs=opus",
+          "audio/webm",
+          "audio/ogg;codecs=opus",
+          "",                   // browser default
+        ];
+        return candidates.find(m => !m || MediaRecorder.isTypeSupported(m)) || "";
+      })();
+
+      const mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
       mediaRecorderRef.current = mediaRecorder;
       chunksRef.current = [];
       setDuration(0);
 
+      // Request data every 250ms so chunks arrive even if onstop fires late
       mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunksRef.current.push(e.data);
+        if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
       };
 
       mediaRecorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+        const finalMime = mimeType || "audio/webm";
+        const blob = new Blob(chunksRef.current, { type: finalMime });
         const url = URL.createObjectURL(blob);
         setAudioUrl(url);
         onRecordingComplete(blob, url);
         stream.getTracks().forEach((t) => t.stop());
       };
 
-      mediaRecorder.start();
+      mediaRecorder.start(250);  // timeslice = 250ms
       setIsRecording(true);
       timerRef.current = setInterval(() => setDuration((d) => d + 1), 1000);
-    } catch {
-      // Microphone not available
+    } catch (err) {
+      console.error("AudioRecorder: microphone error", err);
     }
   }, [onRecordingComplete]);
 
