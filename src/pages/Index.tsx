@@ -5,6 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 const Index = () => {
   const navigate = useNavigate();
   const [liveClass, setLiveClass] = useState<{ title: string; room_code: string } | null>(null);
+  const [showEnrollGuide, setShowEnrollGuide] = useState(false);
 
   useEffect(() => {
     supabase.from("public_classes").select("title, room_code").eq("status", "live").eq("is_featured", true).limit(1).then(({ data }) => {
@@ -30,6 +31,7 @@ const Index = () => {
         color: #1a1a1a;
         overflow-x: hidden;
       }
+      @keyframes fadeUp { from{opacity:0;transform:translateY(16px)} to{opacity:1;transform:translateY(0)} }
 
       /* HERO */
       .ta-hero { min-height:100vh; position:relative; display:flex; align-items:center; overflow:hidden; }
@@ -280,9 +282,59 @@ const Index = () => {
             <p className="ta-hero-subtitle">
               Learn Quran, Tajweed, Arabic Language and Islamic Studies with qualified scholars — live, interactive, and designed for every level.
             </p>
-            <div className="ta-hero-buttons">
-              <button className="ta-hero-btn-primary" onClick={() => navigate("/register")}>Start Learning →</button>
-              <button className="ta-hero-btn-secondary" onClick={() => navigate("/courses")}>Browse Courses</button>
+            <div className="ta-hero-buttons" style={{ flexDirection: "column", alignItems: "flex-start", gap: 10 }}>
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                <button
+                  className="ta-hero-btn-primary"
+                  onClick={() => navigate("/register")}
+                  style={{ borderRadius: 8, minWidth: 160 }}
+                >
+                  Enroll Now
+                </button>
+                <button
+                  onClick={() => setShowEnrollGuide(v => !v)}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 8,
+                    padding: "14px 22px", background: "transparent",
+                    border: "2px solid rgba(255,255,255,0.35)", color: "#fff",
+                    borderRadius: 8, fontSize: 15, cursor: "pointer",
+                    fontFamily: "'Cairo',sans-serif", transition: "0.25s",
+                  }}
+                >
+                  How to Enroll {showEnrollGuide ? "▲" : "▼"}
+                </button>
+              </div>
+              {/* Expandable enrollment guide */}
+              {showEnrollGuide && (
+                <div style={{
+                  background: "rgba(0,0,0,0.55)", backdropFilter: "blur(12px)",
+                  border: "1px solid rgba(201,168,76,0.3)", borderRadius: 14,
+                  padding: "20px 22px", maxWidth: 420, animation: "fadeUp .3s ease",
+                }}>
+                  <p style={{ fontSize: 13, fontWeight: 800, color: "#c9a84c", margin: "0 0 14px", letterSpacing: 0.5 }}>📋 ENROLLMENT STEPS</p>
+                  {[
+                    { n: "1", icon: "👤", title: "Create Your Account", desc: "Register with your name, email and password" },
+                    { n: "2", icon: "💳", title: "Complete Payment", desc: "Pay the one-time registration fee (if enabled)" },
+                    { n: "3", icon: "📝", title: "Fill Onboarding Form", desc: "Tell us about your background and goals" },
+                    { n: "4", icon: "📖", title: "Take Entrance Exam", desc: "Written assessment with full proctoring" },
+                    { n: "5", icon: "🎤", title: "Recitation Test", desc: "Audio evaluation of your Quran recitation" },
+                    { n: "6", icon: "✅", title: "Admin Approval", desc: "Admin reviews results and assigns your level" },
+                    { n: "7", icon: "🚀", title: "Access Dashboard", desc: "Start your learning journey!" },
+                  ].map(s => (
+                    <div key={s.n} style={{ display: "flex", gap: 12, alignItems: "flex-start", marginBottom: 10 }}>
+                      <div style={{ width: 28, height: 28, borderRadius: "50%", background: "#c9a84c", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, flexShrink: 0 }}>{s.n}</div>
+                      <div>
+                        <p style={{ fontSize: 13, fontWeight: 700, color: "#fff", margin: 0 }}>{s.icon} {s.title}</p>
+                        <p style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", margin: 0 }}>{s.desc}</p>
+                      </div>
+                    </div>
+                  ))}
+                  <button onClick={() => navigate("/register")}
+                    style={{ width: "100%", marginTop: 8, padding: "11px", borderRadius: 10, border: "none", background: "#c9a84c", color: "#fff", fontSize: 14, fontWeight: 800, cursor: "pointer" }}>
+                    Enroll Now →
+                  </button>
+                </div>
+              )}
             </div>
           </div>
           <div className="ta-hero-right">
@@ -371,7 +423,7 @@ const Index = () => {
                   <div className="ta-course-desc">{c.desc}</div>
                   <div className="ta-course-footer">
                     <span className="ta-course-level">{c.level}</span>
-                    <button className="ta-course-btn" onClick={() => navigate("/register")}>Enrol Now</button>
+                    <button className="ta-course-btn" onClick={() => navigate("/register")}>Enroll Now</button>
                   </div>
                 </div>
               </div>
@@ -402,7 +454,7 @@ const Index = () => {
           <div className="ta-cta-arabic">اطلبوا العلم من المهد إلى اللحد</div>
           <h2 className="ta-cta-title">Begin Your Journey Today</h2>
           <p className="ta-cta-text">Join Tahleem Academy and take your first step towards mastering Arabic and Islamic knowledge — guided by qualified scholars.</p>
-          <button className="ta-cta-btn" onClick={() => navigate("/register")}>Create Free Account →</button>
+          <button className="ta-cta-btn" onClick={() => navigate("/register")}>Enroll Now →</button>
         </div>
       </section>
 
