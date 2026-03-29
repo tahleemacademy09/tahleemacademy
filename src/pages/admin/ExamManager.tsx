@@ -185,15 +185,25 @@ export default function ExamManager() {
           });
       }
 
-      // Notify all students
-      await supabase.from("notifications" as any).insert(
-        userIds.map(uid => ({
-          user_id: uid,
-          title: `📝 Exam assigned: ${assignExam.title}`,
-          message: `You have been assigned "${assignExam.title}". ${assignExam.start_date ? `Opens: ${new Date(assignExam.start_date).toLocaleDateString()}` : "You can take it now."}`,
-          type: "exam_assigned", reference_id: assignExam.id, is_read: false,
-        }))
-      );
+      // Notify all students — try bulk first, fall back to individual if RLS blocks bulk
+      const notifRows = userIds.map(uid => ({
+        user_id: uid,
+        title: `📝 Exam assigned: ${assignExam.title}`,
+        message: `You have been assigned "${assignExam.title}". ${assignExam.start_date ? `Opens: ${new Date(assignExam.start_date).toLocaleDateString()}` : "You can take it now."}`,
+        type: "exam_assigned", reference_id: assignExam.id, is_read: false,
+      }));
+      const { error: bulkNotifErr } = await supabase.from("notifications" as any).insert(notifRows);
+      if (bulkNotifErr) {
+        // Bulk failed (likely RLS) — insert one-by-one so at least some get through
+        console.warn("Bulk notification insert failed, trying individually:", bulkNotifErr.message);
+        let notifOk = 0;
+        for (const row of notifRows) {
+          const { error: singleErr } = await supabase.from("notifications" as any).insert(row);
+          if (!singleErr) notifOk++;
+          else console.warn("Single notif insert failed:", singleErr.message);
+        }
+        if (notifOk === 0) console.error("All notification inserts failed — check RLS policy on notifications table");
+      }
 
       toast({ title: `✅ Assigned to ${userIds.length} student${userIds.length !== 1 ? "s" : ""}` });
       setAssignExam(null);
