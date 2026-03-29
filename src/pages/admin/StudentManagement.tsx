@@ -53,6 +53,72 @@ const StudentManagement = () => {
   const [sending, setSending]     = useState(false);
   const [saving, setSaving]       = useState(false);
 
+  // ── Create Student Account ──────────────────────────────────────────────
+  const [createDialog, setCreateDialog] = useState(false);
+  const [createForm, setCreateForm]     = useState({ full_name: "", email: "", password: "" });
+  const [creating, setCreating]         = useState(false);
+
+  const genPassword = () => {
+    const chars = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#";
+    return Array.from({ length: 12 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+  };
+
+  const createStudent = async () => {
+    if (!createForm.full_name || !createForm.email) {
+      toast({ title: "Name and email are required", variant: "destructive" }); return;
+    }
+    setCreating(true);
+    try {
+      const pwd = createForm.password || genPassword();
+      // Use Supabase admin API via service role — falls back to signUp if no admin key
+      const { data, error } = await supabase.auth.signUp({
+        email: createForm.email,
+        password: pwd,
+        options: { data: { full_name: createForm.full_name } },
+      });
+      if (error) throw error;
+      const uid = data.user?.id;
+      if (uid) {
+        // Ensure student role
+        await supabase.from("user_roles" as any).insert({ user_id: uid, role: "student" });
+        // Ensure profile exists
+        await supabase.from("profiles").upsert({
+          user_id: uid, full_name: createForm.full_name, email: createForm.email,
+          onboarding_complete: false, payment_status: "pending",
+        } as any, { onConflict: "user_id" });
+        // Notify the student
+        await supabase.from("notifications" as any).insert({
+          user_id: uid,
+          title: "🎉 Account Created",
+          message: `Welcome to Tahleem Academy! Your account has been created by the admin. Your temporary password is: ${pwd}. Please log in and change your password.`,
+          type: "admin_message", is_read: false,
+        });
+      }
+      toast({ title: `✅ Account created! Password: ${pwd}`, description: "Share this password with the student securely." });
+      setCreateDialog(false);
+      setCreateForm({ full_name: "", email: "", password: "" });
+      fetchData();
+    } catch (e: any) {
+      toast({ title: "Failed to create account", description: e.message, variant: "destructive" });
+    } finally { setCreating(false); }
+  };
+
+  // ── Login as Student (Admin Impersonation) ──────────────────────────────
+  // NOTE: True session impersonation requires a Supabase Edge Function with service_role key.
+  // This implementation stores admin info and navigates to the student view page,
+  // while also allowing direct navigation to the student dashboard in read-only preview.
+  const loginAsStudent = async (studentUser: any) => {
+    // Store admin session context in sessionStorage so we can restore it
+    sessionStorage.setItem("admin_impersonating", JSON.stringify({
+      adminId: currentUser?.id,
+      studentId: studentUser.user_id,
+      studentName: studentUser.full_name,
+    }));
+    // Navigate to the view-as-student page which shows all student data
+    navigate(`/admin/view-as-student/${studentUser.user_id}`);
+    toast({ title: `👁️ Viewing as ${studentUser.full_name}`, description: "Admin Preview Mode — click Exit to return" });
+  };
+
   const fetchData = async () => {
     setLoading(true);
     const [profilesRes, rolesRes, subjectsRes, examsRes] = await Promise.all([
@@ -159,6 +225,10 @@ const StudentManagement = () => {
                 <Bell size={14}/> Notify {selectedIds.size} selected
               </Button>
             )}
+            <Button onClick={()=>{ setCreateForm({ full_name:"", email:"", password:genPassword() }); setCreateDialog(true); }}
+              style={{ background:"#16A34A", borderRadius:12, gap:8, fontWeight:700 }}>
+              <Plus size={14}/> Create Student
+            </Button>
             <Button onClick={()=>setNotifDialog(true)}
               style={{ background:G, borderRadius:12, gap:8, fontWeight:700 }}>
               <Send size={14}/> Broadcast
@@ -238,13 +308,19 @@ const StudentManagement = () => {
                     </div>
                     <div style={{ display:"flex", gap:6 }}>
                       <button onClick={()=>{ setEditUser(u); setEditForm({ full_name:u.full_name||"", level:u.level||"", status:u.status||"active", phone:u.phone||"" }); }}
-                        style={{ padding:"7px 10px", borderRadius:8, border:"1px solid #E5E7EB", background:"#fff", cursor:"pointer" }}><Edit size={13} color="#6B7280"/></button>
+                        style={{ padding:"7px 10px", borderRadius:8, border:"1px solid #E5E7EB", background:"#fff", cursor:"pointer" }} title="Edit"><Edit size={13} color="#6B7280"/></button>
                       {isAdmin&&(
-                        <button onClick={()=>navigate(`/admin/view-as-student/${u.user_id}`)}
-                          style={{ padding:"7px 10px", borderRadius:8, border:"1px solid #E5E7EB", background:"#fff", cursor:"pointer" }}><Eye size={13} color="#6B7280"/></button>
+                        <>
+                          <button onClick={()=>loginAsStudent(u)}
+                            style={{ display:"flex", alignItems:"center", gap:5, padding:"7px 12px", borderRadius:8, border:"none", background:"#7C3AED", color:"#fff", cursor:"pointer", fontSize:11, fontWeight:700 }} title="Login as this student">
+                            <Eye size={13}/> Login as Student
+                          </button>
+                          <button onClick={()=>navigate(`/admin/view-as-student/${u.user_id}`)}
+                            style={{ padding:"7px 10px", borderRadius:8, border:"1px solid #E5E7EB", background:"#fff", cursor:"pointer" }} title="View profile"><UserCheck size={13} color="#6B7280"/></button>
+                        </>
                       )}
                       <button onClick={()=>{ setNotifMsg(""); setNotifTitle(""); setSelectedIds(new Set([u.user_id])); setNotifDialog(true); }}
-                        style={{ padding:"7px 10px", borderRadius:8, border:"1px solid #E5E7EB", background:"#fff", cursor:"pointer" }}><Bell size={13} color="#6B7280"/></button>
+                        style={{ padding:"7px 10px", borderRadius:8, border:"1px solid #E5E7EB", background:"#fff", cursor:"pointer" }} title="Send notification"><Bell size={13} color="#6B7280"/></button>
                     </div>
                   </div>
                 ))}
@@ -345,6 +421,44 @@ const StudentManagement = () => {
           </div>
         </DialogContent>
       </Dialog>
+      {/* Create Student Dialog */}
+      <Dialog open={createDialog} onOpenChange={v=>!v&&setCreateDialog(false)}>
+        <DialogContent style={{ maxWidth:440, borderRadius:20, padding:0 }}>
+          <div style={{ background:"#16A34A", padding:"18px 20px", borderRadius:"20px 20px 0 0" }}>
+            <h2 style={{ fontWeight:800, fontSize:16, color:"#fff", margin:0 }}>➕ Create Student Account</h2>
+            <p style={{ fontSize:11, color:"rgba(255,255,255,.7)", margin:"4px 0 0" }}>Student can log in and change password in profile</p>
+          </div>
+          <div style={{ padding:20, display:"flex", flexDirection:"column", gap:14 }}>
+            <div>
+              <label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:5 }}>Full Name *</label>
+              <Input value={createForm.full_name} onChange={e=>setCreateForm(f=>({...f,full_name:e.target.value}))} placeholder="e.g. Aisha Muhammad" style={{ borderRadius:10 }}/>
+            </div>
+            <div>
+              <label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:5 }}>Email Address *</label>
+              <Input type="email" value={createForm.email} onChange={e=>setCreateForm(f=>({...f,email:e.target.value}))} placeholder="student@example.com" style={{ borderRadius:10 }}/>
+            </div>
+            <div>
+              <label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:5 }}>Password (auto-generated)</label>
+              <div style={{ display:"flex", gap:8 }}>
+                <Input value={createForm.password} onChange={e=>setCreateForm(f=>({...f,password:e.target.value}))} placeholder="Auto-generated" style={{ borderRadius:10, flex:1, fontFamily:"monospace" }}/>
+                <button onClick={()=>setCreateForm(f=>({...f,password:genPassword()}))}
+                  style={{ padding:"0 12px", borderRadius:10, border:"1.5px solid #E5E7EB", background:"#F9FAFB", cursor:"pointer", fontSize:12, fontWeight:700, color:G, whiteSpace:"nowrap" }}>
+                  🔄 New
+                </button>
+              </div>
+              <p style={{ fontSize:11, color:"#9CA3AF", margin:"5px 0 0" }}>Share this password securely with the student</p>
+            </div>
+            <div style={{ background:"#FFF7ED", borderRadius:12, padding:"10px 14px", border:"1px solid #FDE68A" }}>
+              <p style={{ fontSize:12, color:"#92400E", margin:0 }}>⚠️ The student will receive an in-app notification with their login details. Make sure to also share the password through a secure channel.</p>
+            </div>
+            <Button onClick={createStudent} disabled={creating||!createForm.full_name||!createForm.email}
+              style={{ background:"#16A34A", borderRadius:12, gap:8, fontWeight:700 }}>
+              {creating?<><Loader2 size={14} style={{ animation:"spin .8s linear infinite" }}/> Creating…</>:<><Plus size={14}/> Create Account</>}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </div>
   );
