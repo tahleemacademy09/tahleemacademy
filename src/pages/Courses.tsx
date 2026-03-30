@@ -16,8 +16,9 @@ import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "@/hooks/use-toast";
 import { motion } from "framer-motion";
-import { BookOpen, Clock, Users, Plus, Edit, Trash2, Eye, EyeOff, GraduationCap } from "lucide-react";
-// Images served from /public/images — no import needed, use absolute paths below
+import { BookOpen, Clock, Users, Plus, Edit, Trash2, Eye, EyeOff, GraduationCap, ImageIcon } from "lucide-react";
+
+const SUPABASE_URL = "https://wvqeubhupkddtkcdwqcm.supabase.co";
 
 const LEVELS = ["beginner", "intermediate", "advanced"];
 
@@ -36,6 +37,17 @@ const levelColor = (l: string) => {
 const defaultImage = (category?: string | null) => {
   if (category?.toLowerCase().includes("tajweed") || category?.toLowerCase().includes("quran")) return "/images/quran-tajweed.jpeg";
   return "/images/arabic-language.jpeg";
+};
+
+/** Resolve any image_url value to a displayable src.
+ *  Handles: full https URLs, Supabase storage paths, and empty strings. */
+const resolveImageSrc = (imageUrl: string | null | undefined, category?: string | null): string => {
+  if (!imageUrl || imageUrl.trim() === "") return defaultImage(category);
+  // Already a full URL (http/https)
+  if (imageUrl.startsWith("http://") || imageUrl.startsWith("https://")) return imageUrl;
+  // Supabase storage public path — strip leading slash if present
+  const cleanPath = imageUrl.replace(/^\//, "");
+  return `${SUPABASE_URL}/storage/v1/object/public/${cleanPath}`;
 };
 
 const emptyCourseForm = {
@@ -212,11 +224,20 @@ const Courses = () => {
                   <Badge variant="secondary" className="text-[10px]">{t("Draft", "مسودة")}</Badge>
                 </div>
               )}
-              <div className="h-40 overflow-hidden">
+              <div className="h-40 overflow-hidden bg-muted flex items-center justify-center">
                 <img
-                  src={course.image_url || defaultImage(course.category)}
+                  src={resolveImageSrc(course.image_url, course.category)}
                   alt={language === "ar" ? course.title_ar || course.title : course.title}
                   className="h-full w-full object-cover group-hover:scale-110 transition-transform"
+                  onError={(e) => {
+                    const img = e.currentTarget;
+                    const fallback = defaultImage(course.category);
+                    if (img.src !== window.location.origin + fallback) {
+                      img.src = fallback;
+                    } else {
+                      img.style.display = "none";
+                    }
+                  }}
                 />
               </div>
               <CardContent className="p-5">
@@ -295,7 +316,35 @@ const Courses = () => {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div><Label>{t("Instructor Name", "اسم المعلم")}</Label><Input value={form.instructor_name} onChange={(e) => setForm({ ...form, instructor_name: e.target.value })} /></div>
-              <div><Label>{t("Image URL", "رابط الصورة")}</Label><Input value={form.image_url} onChange={(e) => setForm({ ...form, image_url: e.target.value })} placeholder="https://..." /></div>
+              <div>
+                <Label>{t("Image", "الصورة")}</Label>
+                <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+                  <Input
+                    value={form.image_url}
+                    onChange={(e) => setForm({ ...form, image_url: e.target.value })}
+                    placeholder="https://... or upload below"
+                  />
+                  <input
+                    type="file"
+                    accept="image/*"
+                    style={{ fontSize:12 }}
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      const ext = file.name.split(".").pop();
+                      const path = `courses/${Date.now()}.${ext}`;
+                      const { error } = await supabase.storage.from("course-images").upload(path, file, { upsert: true });
+                      if (error) { toast({ title: "Upload failed", description: error.message, variant: "destructive" }); return; }
+                      const { data } = supabase.storage.from("course-images").getPublicUrl(path);
+                      setForm(f => ({ ...f, image_url: data.publicUrl }));
+                      toast({ title: t("Image uploaded", "تم رفع الصورة") });
+                    }}
+                  />
+                  {form.image_url && (
+                    <img src={resolveImageSrc(form.image_url)} alt="preview" style={{ height:80, objectFit:"cover", borderRadius:8, border:"1px solid #e5e7eb" }} />
+                  )}
+                </div>
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div><Label>{t("Sort Order", "الترتيب")}</Label><Input type="number" value={form.sort_order} onChange={(e) => setForm({ ...form, sort_order: parseInt(e.target.value) || 0 })} /></div>
