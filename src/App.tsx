@@ -132,19 +132,20 @@ const App = () => (
                 </div>
               }>
                 <Routes>
-                  {/* Public layout */}
+                  {/* Public layout — includes nav with hamburger */}
                   <Route element={<PublicLayout />}>
-                    <Route path="/"         element={<Index />} />
-                    <Route path="/courses"  element={<Courses />} />
-                    <Route path="/about"    element={<About />} />
-                    <Route path="/contact"  element={<Contact />} />
-                    <Route path="/pricing"  element={<Pricing />} />
+                    <Route path="/"               element={<Index />} />
+                    <Route path="/courses"        element={<Courses />} />
+                    <Route path="/about"          element={<About />} />
+                    <Route path="/contact"        element={<Contact />} />
+                    <Route path="/pricing"        element={<Pricing />} />
+                    {/* Auth pages inside PublicLayout so hamburger appears */}
+                    <Route path="/login"          element={<Login />} />
+                    <Route path="/register"       element={<Register />} />
+                    <Route path="/reset-password" element={<ResetPassword />} />
                   </Route>
 
-                  {/* Auth */}
-                  <Route path="/login"          element={<Login />} />
-                  <Route path="/register"       element={<Register />} />
-                  <Route path="/reset-password" element={<ResetPassword />} />
+                  {/* Admin login — standalone, no public nav */}
                   <Route path="/admin-secure"   element={<AdminLogin />} />
 
                   {/* Misc public */}
