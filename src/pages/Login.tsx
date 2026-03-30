@@ -179,10 +179,10 @@ const Login = () => {
         }
       `}</style>
 
-      <div className="login-root" style={{ minHeight:"100vh", background:"#FDFCF9", display:"flex", flexDirection:"column" }}>
+      <div className="login-root" style={{ flex:1, background:"#FDFCF9", display:"flex", flexDirection:"column" }}>
 
         {/* ── DESKTOP SPLIT LAYOUT ──────────────────────────────── */}
-        <div style={{ display:"flex", minHeight:"100vh" }}>
+        <div style={{ display:"flex", minHeight:"calc(100vh - 66px)" }}>
 
           {/* LEFT PANEL — desktop only */}
           <motion.div
@@ -276,7 +276,8 @@ const Login = () => {
               style={{ width:"100%", maxWidth:420 }}
             >
               {/* ── MOBILE TOP BRAND ── */}
-              <div style={{ marginBottom:28, textAlign:"center" }} className="mobile-brand">
+              {/* Mobile brand hidden — PublicNav already shows the logo + hamburger */}
+              <div style={{ display:"none" }} className="mobile-brand">
                 <style>{`@media(min-width:900px){ .mobile-brand{ display:none!important } }`}</style>
 
                 {/* Brand pill */}
