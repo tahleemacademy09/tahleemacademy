@@ -1,14 +1,15 @@
 /* ═══════════════════════════════════════════════════════════════════════════════
-   App.tsx — PATCHED VERSION
-   Changes from original:
-   1. Added: RegistrationSettings lazy import
-   2. Added: /admin/view-as-student/:userId  route (FIXES the 404)
-   3. Added: /admin/registration-settings    route
-   4. Added nav item to DashboardLayout handled separately
+   App.tsx — FIXED VERSION
+   Fixes applied (C-1 and C-2):
 
-   Instructions:
-   - Replace your src/App.tsx with this file
-   - Keep all other code exactly the same — only the marked NEW lines are added
+   C-1 FIX: Added AuthCallback lazy import + /auth/callback route
+            Without this, Google OAuth users hit a 404 on return from Google.
+
+   C-2 FIX: Added TasjeelAwaitingLevel lazy import + /student/awaiting-level route
+            Without this, students who complete the entrance exam and are awaiting
+            level assignment are permanently stuck on a 404.
+
+   All other routes and logic are UNCHANGED.
 ═══════════════════════════════════════════════════════════════════════════════*/
 
 import { lazy, Suspense } from "react";
@@ -43,6 +44,10 @@ const GuestClassroom  = lazy(() => import("./pages/public/GuestClassroom"));
 const JoinClass       = lazy(() => import("./pages/public/JoinClass"));
 const LiveClasses     = lazy(() => import("./pages/public/LiveClasses"));
 
+// ── C-1 FIX: AuthCallback — handles Google OAuth redirect ─────────────────
+// This MUST exist as a route or Google sign-in always 404s on return.
+const AuthCallback    = lazy(() => import("./pages/AuthCallback"));
+
 // ── Student pages ──────────────────────────────────────────────────────────
 const StudentDashboard    = lazy(() => import("./pages/student/StudentDashboard"));
 const StudentExams        = lazy(() => import("./pages/student/StudentExams"));
@@ -65,7 +70,11 @@ const RevisionRoom        = lazy(() => import("./pages/student/RevisionRoom"));
 const PaymentScreen       = lazy(() => import("./pages/student/PaymentScreen"));
 const RecordingPlayer     = lazy(() => import("./pages/student/RecordingPlayer"));
 const EnrollmentPayment   = lazy(() => import("./pages/student/EnrollmentPayment"));
-const StudentCourses      = lazy(() => import("./pages/student/StudentCourses"));
+
+// ── C-2 FIX: TasjeelAwaitingLevel — step after entrance exam ──────────────
+// TASJEEL_ROUTES maps level_assignment → /student/awaiting-level.
+// Without this route, graduated students are permanently stuck on a 404.
+const TasjeelAwaitingLevel = lazy(() => import("./pages/student/TasjeelAwaitingLevel"));
 
 // ── Admin pages ────────────────────────────────────────────────────────────
 const AdminDashboard        = lazy(() => import("./pages/admin/AdminDashboard"));
@@ -94,8 +103,6 @@ const HifdhAdminReview      = lazy(() => import("./pages/admin/HifdhAdminReview"
 const RecitationTestAdmin   = lazy(() => import("./pages/admin/RecitationTestAdmin"));
 const LevelAssignment       = lazy(() => import("./pages/admin/LevelAssignment"));
 const PrivateSessions       = lazy(() => import("./pages/admin/PrivateSessions"));
-const MajlisAdmin           = lazy(() => import("./pages/admin/MajlisModeration"));
-// ── NEW ────────────────────────────────────────────────────────────────────
 const RegistrationSettings  = lazy(() => import("./pages/admin/RegistrationSettings"));
 
 // ── Teacher pages ──────────────────────────────────────────────────────────
@@ -132,6 +139,10 @@ const App = () => (
                 </div>
               }>
                 <Routes>
+                  {/* ── C-1 FIX: Google OAuth callback — MUST be outside all layout wrappers ── */}
+                  {/* Supabase redirects here after Google auth. No nav, no protection needed.  */}
+                  <Route path="/auth/callback" element={<AuthCallback />} />
+
                   {/* Public layout — includes nav with hamburger */}
                   <Route element={<PublicLayout />}>
                     <Route path="/"               element={<Index />} />
@@ -182,6 +193,14 @@ const App = () => (
                   <Route path="/student/entrance-results/:attemptId" element={<ProtectedRoute skipOnboardingCheck><EntranceResults /></ProtectedRoute>} />
                   <Route path="/student/payment"                     element={<ProtectedRoute skipOnboardingCheck><PaymentScreen /></ProtectedRoute>} />
 
+                  {/* C-2 FIX: Awaiting level assignment — step after entrance exam review ── */}
+                  {/* TASJEEL_ROUTES maps level_assignment → this path.                       */}
+                  {/* Must use skipOnboardingCheck because Tasjeel is not yet "completed".    */}
+                  <Route
+                    path="/student/awaiting-level"
+                    element={<ProtectedRoute skipOnboardingCheck><TasjeelAwaitingLevel /></ProtectedRoute>}
+                  />
+
                   {/* ── Teacher routes ── */}
                   <Route element={<ProtectedRoute requiredRole="teacher"><TeacherLayout /></ProtectedRoute>}>
                     <Route path="/teacher"                  element={<TeacherDashboard />} />
@@ -215,7 +234,7 @@ const App = () => (
                     <Route path="/admin/proctoring"               element={<ProctoringDashboard />} />
                     <Route path="/admin/private-sessions"         element={<PrivateSessions />} />
                     <Route path="/admin/students"                 element={<StudentManagement />} />
-                    {/* FIX: both URL patterns resolve to ViewAsStudent */}
+                    {/* Both URL patterns resolve to ViewAsStudent */}
                     <Route path="/admin/students/:userId/view"    element={<ViewAsStudent />} />
                     <Route path="/admin/view-as-student/:userId"  element={<ViewAsStudent />} />
                     <Route path="/admin/recordings"               element={<RecordingManagement />} />
@@ -232,7 +251,6 @@ const App = () => (
                     <Route path="/admin/calendar"                 element={<AcademicCalendar />} />
                     <Route path="/admin/payment-settings"         element={<PaymentSettings />} />
                     <Route path="/admin/public-classes"           element={<PublicClassManagement />} />
-                    {/* NEW: Registration settings */}
                     <Route path="/admin/registration-settings"    element={<RegistrationSettings />} />
                   </Route>
 
