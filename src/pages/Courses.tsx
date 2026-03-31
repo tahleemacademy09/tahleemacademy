@@ -68,27 +68,34 @@ const Courses = () => {
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyCourseForm);
 
-  // Fetch courses from DB
-  const { data: courses, isLoading } = useQuery({
+  // Fetch courses from DB — with retry:1 and 8s timeout so it never hangs
+  const { data: courses, isLoading, isError } = useQuery({
     queryKey: ["public-courses"],
+    retry: 1,
+    staleTime: 60_000,
     queryFn: async () => {
-      const { data, error } = await supabase
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("Courses request timed out")), 8000)
+      );
+      const fetchPromise = supabase
         .from("courses")
         .select("*")
-        .order("sort_order", { ascending: true });
-      if (error) throw error;
-      return data || [];
+        .order("sort_order", { ascending: true })
+        .then(({ data, error }) => {
+          if (error) throw error;
+          return data || [];
+        });
+      return Promise.race([fetchPromise, timeoutPromise]);
     },
   });
 
-  // Fetch enrollment counts
+  // Fetch enrollment counts — non-blocking, graceful failure
   const { data: enrollmentCounts } = useQuery({
     queryKey: ["enrollment-counts"],
+    retry: 0,
+    staleTime: 120_000,
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("enrollments")
-        .select("course_id");
-      if (error) throw error;
+      const { data } = await supabase.from("enrollments").select("course_id");
       const counts: Record<string, number> = {};
       (data || []).forEach((e: any) => {
         counts[e.course_id] = (counts[e.course_id] || 0) + 1;
@@ -202,11 +209,24 @@ const Courses = () => {
       {isLoading && (
         <div className="text-center py-16">
           <div className="h-10 w-10 mx-auto animate-spin rounded-full border-4 border-primary border-t-transparent" />
+          <p className="text-sm text-muted-foreground mt-4">{t("Loading courses…", "جارٍ تحميل الدورات…")}</p>
+        </div>
+      )}
+
+      {/* Error state */}
+      {isError && !isLoading && (
+        <div className="text-center py-16 space-y-3">
+          <GraduationCap className="h-12 w-12 mx-auto text-muted-foreground" />
+          <p className="text-muted-foreground font-medium">{t("Could not load courses.", "تعذّر تحميل الدورات.")}</p>
+          <p className="text-sm text-muted-foreground">{t("Please check your internet connection and refresh the page.", "تحقق من اتصالك بالإنترنت وأعد تحميل الصفحة.")}</p>
+          <button onClick={() => window.location.reload()} className="mt-2 px-5 py-2 rounded-lg text-sm font-bold" style={{background:"#064E3B",color:"#fff",border:"none",cursor:"pointer"}}>
+            {t("Refresh", "تحديث")}
+          </button>
         </div>
       )}
 
       {/* Empty state */}
-      {!isLoading && filtered.length === 0 && (
+      {!isLoading && !isError && filtered.length === 0 && (
         <div className="text-center py-16 space-y-3">
           <GraduationCap className="h-12 w-12 mx-auto text-muted-foreground" />
           <p className="text-muted-foreground">{t("No courses available yet.", "لا توجد دورات متاحة بعد.")}</p>
@@ -214,7 +234,7 @@ const Courses = () => {
       )}
 
       {/* Grid */}
-      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+      {!isError && <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
         {filtered.map((course: any, i: number) => (
           <motion.div key={course.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}>
             <Card className="group h-full overflow-hidden hover:shadow-lg transition-shadow relative">
