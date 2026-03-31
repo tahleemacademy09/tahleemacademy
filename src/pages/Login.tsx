@@ -4,7 +4,6 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { lovable } from "@/integrations/lovable/index";
 import { Loader2, Mail, Lock, Eye, EyeOff, Check, Globe, BookOpen } from "lucide-react";
 import { motion } from "framer-motion";
 import {
@@ -18,7 +17,8 @@ const GOLD2= "#E8C070";
 const Login = () => {
   const idleLoggedOut = new URLSearchParams(window.location.search).get("reason") === "idle";
   const { t, language, setLanguage } = useLanguage();
-  const { signIn, user } = useAuth();
+  // FIX: use signInWithGoogle from AuthContext (replaces broken lovable.auth)
+  const { signIn, signInWithGoogle, user } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
 
@@ -34,14 +34,15 @@ const Login = () => {
   const [resetSent, setResetSent]   = useState(false);
   const [focusedField, setFocusedField] = useState<string | null>(null);
 
+  // FIX: teacher route corrected from /teacher/dashboard → /teacher
   useEffect(() => {
     if (user) {
       supabase.from("user_roles").select("role").eq("user_id", user.id).then(({ data: roles }) => {
         const isAdmin   = roles?.some(r => r.role === "admin");
         const isTeacher = roles?.some(r => r.role === "teacher");
-        if (isAdmin) navigate("/admin", { replace: true });
-        else if (isTeacher) navigate("/teacher/dashboard", { replace: true });
-        else navigate("/student", { replace: true });
+        if (isAdmin)        navigate("/admin",   { replace: true });
+        else if (isTeacher) navigate("/teacher", { replace: true }); // was /teacher/dashboard (404)
+        else                navigate("/student", { replace: true });
       });
     }
   }, [user, navigate]);
@@ -51,41 +52,77 @@ const Login = () => {
     setEmailValid(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val));
   };
 
+  // FIX: wrapped in try/finally so setLoading(false) ALWAYS runs even if signIn throws.
+  // Previously: if signIn threw an exception, loading stayed true forever ("Signing in…" stuck).
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    const { error, data } = await signIn(email, password);
-    setLoading(false);
-    if (error) {
+    try {
+      const { error, data } = await signIn(email, password);
+      if (error) {
+        toast({
+          title: t("Login Failed", "فشل تسجيل الدخول"),
+          description: t(
+            "Incorrect email or password. Please try again.",
+            "البريد الإلكتروني أو كلمة المرور غير صحيحة."
+          ),
+          variant: "destructive",
+        });
+      } else {
+        const { data: roles } = await supabase
+          .from("user_roles")
+          .select("role")
+          .eq("user_id", data.user?.id);
+        const isAdmin   = roles?.some(r => r.role === "admin");
+        const isTeacher = roles?.some(r => r.role === "teacher");
+        // FIX: teacher route corrected from /teacher/dashboard → /teacher
+        navigate(isAdmin ? "/admin" : isTeacher ? "/teacher" : "/student");
+      }
+    } catch (err: any) {
+      // Catch unexpected errors so loading spinner never gets stuck
+      console.error("[Login] signIn error:", err);
       toast({
-        title: t("Login Failed", "فشل تسجيل الدخول"),
-        description: t("Incorrect email or password. Please try again.", "البريد الإلكتروني أو كلمة المرور غير صحيحة."),
+        title: t("Error", "خطأ"),
+        description: t(
+          "Something went wrong. Please try again.",
+          "حدث خطأ ما. حاول مجددًا."
+        ),
         variant: "destructive",
       });
-    } else {
-      const { data: roles } = await supabase.from("user_roles").select("role").eq("user_id", data.user?.id);
-      const isAdmin   = roles?.some(r => r.role === "admin");
-      const isTeacher = roles?.some(r => r.role === "teacher");
-      navigate(isAdmin ? "/admin" : isTeacher ? "/teacher/dashboard" : "/student");
+    } finally {
+      // ALWAYS clears the loading state — this is the core fix
+      setLoading(false);
     }
   };
 
+  // FIX: use signInWithGoogle from AuthContext which calls supabase.auth.signInWithOAuth correctly.
+  // Previously used lovable.auth.signInWithOAuth which is a defunct integration.
   const handleGoogleSignIn = async () => {
-    const { error } = await lovable.auth.signInWithOAuth("google", { redirect_uri: window.location.origin });
-    if (error) toast({ title: t("Error", "خطأ"), description: error.message, variant: "destructive" });
+    const { error } = await signInWithGoogle();
+    if (error) {
+      toast({
+        title: t("Error", "خطأ"),
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+    // On success: Supabase redirects browser to Google, then back to /auth/callback
   };
 
   const handleForgotPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setResetLoading(true);
-    const { error } = await supabase.auth.resetPasswordForEmail(resetEmail, {
-      redirectTo: `${window.location.origin}/reset-password`,
-    });
-    setResetLoading(false);
-    if (error) {
-      toast({ title: t("Error", "خطأ"), description: error.message, variant: "destructive" });
-    } else {
-      setResetSent(true);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(resetEmail, {
+        redirectTo: `${window.location.origin}/reset-password`,
+      });
+      if (error) {
+        toast({ title: t("Error", "خطأ"), description: error.message, variant: "destructive" });
+      } else {
+        setResetSent(true);
+      }
+    } finally {
+      setResetLoading(false);
     }
   };
 
@@ -105,6 +142,7 @@ const Login = () => {
         @keyframes float    { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-8px)} }
         @keyframes spin-slow { to{transform:rotate(360deg)} }
         @keyframes pulse-gold { 0%,100%{box-shadow:0 0 0 0 rgba(201,151,58,.35)} 50%{box-shadow:0 0 0 10px rgba(201,151,58,0)} }
+        @keyframes spin { to{transform:rotate(360deg)} }
 
         .login-root { font-family:'DM Sans',sans-serif; }
 
@@ -201,19 +239,13 @@ const Login = () => {
           >
             <style>{`@media(min-width:900px){ .lg-panel{ display:flex!important } }`}</style>
 
-            {/* Geometric bg */}
             <div className="geo-bg" />
-
-            {/* Decorative circles */}
             <div style={{ position:"absolute", top:-60, right:-60, width:220, height:220, borderRadius:"50%", border:`1px solid rgba(201,151,58,.15)` }} />
             <div style={{ position:"absolute", top:-30, right:-30, width:140, height:140, borderRadius:"50%", border:`1px solid rgba(201,151,58,.1)` }} />
             <div style={{ position:"absolute", bottom:-80, left:-80, width:280, height:280, borderRadius:"50%", border:`1px solid rgba(201,151,58,.1)` }} />
-
-            {/* Spinning ring */}
             <div style={{ position:"absolute", top:40, left:40, width:80, height:80, borderRadius:"50%", border:`1px dashed rgba(201,151,58,.3)`, animation:"spin-slow 20s linear infinite" }} />
 
             <div style={{ position:"relative", zIndex:2, textAlign:"center" }}>
-              {/* Logo mark */}
               <motion.div
                 animate={{ y:[0,-8,0] }}
                 transition={{ duration:4, repeat:Infinity, ease:"easeInOut" }}
@@ -222,12 +254,10 @@ const Login = () => {
                 <BookOpen style={{ width:42, height:42, color:GOLD }} />
               </motion.div>
 
-              {/* Bismillah */}
               <div style={{ fontFamily:"'Amiri',serif", fontSize:22, color:"rgba(232,192,112,.85)", marginBottom:24, direction:"rtl", letterSpacing:1, lineHeight:1.8 }}>
                 بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ
               </div>
 
-              {/* Name */}
               <h1 style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:42, fontWeight:700, color:"#fff", lineHeight:1.1, marginBottom:8 }}>
                 Tahleem<br />
                 <span style={{ color:GOLD }}>Academy</span>
@@ -236,14 +266,12 @@ const Login = () => {
                 أكاديمية تعليم
               </div>
 
-              {/* Divider */}
               <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:28 }}>
                 <div style={{ flex:1, height:1, background:`linear-gradient(to right,transparent,rgba(201,151,58,.4))` }} />
                 <span style={{ color:GOLD, fontSize:12 }}>◆</span>
                 <div style={{ flex:1, height:1, background:`linear-gradient(to left,transparent,rgba(201,151,58,.4))` }} />
               </div>
 
-              {/* Hadith */}
               <p style={{ fontFamily:"'Amiri',serif", fontSize:18, color:"rgba(255,255,255,.7)", lineHeight:1.8, direction:"rtl", marginBottom:10 }}>
                 طَلَبُ الْعِلْمِ فَرِيضَةٌ عَلَى كُلِّ مُسْلِمٍ
               </p>
@@ -251,7 +279,6 @@ const Login = () => {
                 "Seeking knowledge is an obligation upon every Muslim"
               </p>
 
-              {/* Feature pills */}
               <div style={{ display:"flex", flexDirection:"column", gap:10, marginTop:40 }}>
                 {[
                   { icon:"📖", text:"Quran & Tajweed" },
@@ -275,28 +302,7 @@ const Login = () => {
               transition={{ duration:.55, delay:.15 }}
               style={{ width:"100%", maxWidth:420 }}
             >
-              {/* ── MOBILE TOP BRAND ── */}
-              {/* Mobile brand hidden — PublicNav already shows the logo + hamburger */}
-              <div style={{ display:"none" }} className="mobile-brand">
-                <style>{`@media(min-width:900px){ .mobile-brand{ display:none!important } }`}</style>
-
-                {/* Brand pill */}
-                <div style={{ display:"inline-flex", alignItems:"center", gap:10, background:G, borderRadius:16, padding:"12px 20px", marginBottom:12, boxShadow:`0 4px 20px rgba(6,78,59,.25)` }}>
-                  <div style={{ width:36, height:36, borderRadius:10, background:GOLD, display:"flex", alignItems:"center", justifyContent:"center" }}>
-                    <BookOpen style={{ width:18, height:18, color:"#fff" }} />
-                  </div>
-                  <span style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:20, fontWeight:700, color:"#fff", letterSpacing:.5 }}>
-                    Tahleem <span style={{ color:GOLD2 }}>Academy</span>
-                  </span>
-                </div>
-
-                {/* Arabic tagline */}
-                <div style={{ fontFamily:"'Amiri',serif", fontSize:15, color:"#9a8c7c", direction:"rtl", letterSpacing:.5 }}>
-                  ابدأ رحلتك في طلب العلم
-                </div>
-              </div>
-
-              {/* ── GOLDEN ORNAMENT DIVIDER ── */}
+              {/* ── ORNAMENT DIVIDER ── */}
               <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:28 }}>
                 <div style={{ flex:1, height:1, background:`linear-gradient(to right,transparent,rgba(201,151,58,.3))` }} />
                 <div style={{ display:"flex", gap:5 }}>
