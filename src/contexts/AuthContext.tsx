@@ -1,3 +1,4 @@
+
 // src/contexts/AuthContext.tsx
 // ═══════════════════════════════════════════════════════════════════════════
 // MODIFIED: Added signInWithGoogle (native Supabase OAuth)
@@ -63,6 +64,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // ── Fetch roles + profile ─────────────────────────────────────────────
 
   const fetchUserData = async (userId: string, setLoadingFalse = false) => {
+    // Safety timeout — ALWAYS clear loading after 6 seconds max
+    let safetyTimer: ReturnType<typeof setTimeout> | null = null;
+    if (setLoadingFalse) {
+      safetyTimer = setTimeout(() => setLoading(false), 6000);
+    }
     try {
       const [rolesRes, profileRes] = await Promise.all([
         supabase.from("user_roles").select("role").eq("user_id", userId),
@@ -73,6 +79,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (err) {
       console.error("fetchUserData error:", err);
     } finally {
+      if (safetyTimer) clearTimeout(safetyTimer);
       if (setLoadingFalse) setLoading(false);
     }
   };
