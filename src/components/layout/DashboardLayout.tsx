@@ -98,6 +98,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   icon: CreditCard,
   children: [
     { type:"link", to:"/admin/payments",              icon: CreditCard,  label:"Payment Settings" },
+    { type:"link", to:"/admin/tasjeel",                icon: UserPlus,    label:"🎓 Tasjeel"       },
     { type:"link", to:"/admin/registration-settings", icon: UserPlus,    label:"Registration"     },
   ]
 },
