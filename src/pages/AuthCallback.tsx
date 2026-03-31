@@ -1,14 +1,18 @@
 // src/pages/AuthCallback.tsx
 // ═══════════════════════════════════════════════════════════════════════════
 // OAUTH CALLBACK PAGE
-// Route: /auth/callback
+// Route: /auth/callback  ← registered in App.tsx (C-1 fix)
 //
-// Supabase automatically handles the OAuth token exchange when the user
-// returns from Google. The onAuthStateChange in AuthContext fires SIGNED_IN,
-// which triggers onUserAuthenticated → initializeTasjeel.
+// C-3 FIX APPLIED:
+//   Teacher redirect was: navigate("/teacher/dashboard")  ← 404, route doesn't exist
+//   Teacher redirect now: navigate("/teacher")            ← correct route
 //
-// This page just shows a loading screen and waits for that to complete,
-// then redirects the user to their correct next step.
+// How this page works:
+//   1. Supabase SDK auto-exchanges the OAuth code from the URL for a session.
+//   2. onAuthStateChange in AuthContext fires SIGNED_IN → onUserAuthenticated
+//      → initializeTasjeel runs in the background.
+//   3. This page polls for the Tasjeel record (up to 5 seconds), then
+//      redirects the user to the correct route for their role / pipeline step.
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { useEffect, useState } from "react";
@@ -19,18 +23,25 @@ import { BookOpen } from "lucide-react";
 const G    = "#064E3B";
 const GOLD = "#C9973A";
 
+// ── Tasjeel step → route mapping (kept in sync with useTasjeel.ts) ────────
+const STEP_ROUTES: Record<string, string> = {
+  enrollment:       "/register",
+  payment:          "/register",
+  onboarding:       "/onboarding",
+  exam:             "/student/entrance-exam",
+  review:           "/student/entrance-results",
+  level_assignment: "/student/awaiting-level",
+  completed:        "/student",
+};
+
 const AuthCallback = () => {
   const navigate = useNavigate();
-  const [status, setStatus] = useState<"loading" | "error">("loading");
+  const [status, setStatus]   = useState<"loading" | "error">("loading");
   const [errorMsg, setErrorMsg] = useState("");
 
   useEffect(() => {
-    // Supabase JS SDK auto-detects the OAuth code/token in the URL
-    // and fires onAuthStateChange(SIGNED_IN). We just need to wait
-    // for that to complete, then fetch the user's Tasjeel step.
     const processCallback = async () => {
-      // Give Supabase a moment to process the URL params
-      // (it does this synchronously in v2 but we yield to let state settle)
+      // Yield briefly so Supabase SDK can finish processing the URL hash/code
       await new Promise((resolve) => setTimeout(resolve, 500));
 
       const { data: { session }, error } = await supabase.auth.getSession();
@@ -43,24 +54,7 @@ const AuthCallback = () => {
 
       const userId = session.user.id;
 
-      // Wait for Tasjeel to be initialized (onUserAuthenticated runs async)
-      // Poll for up to 5 seconds
-      let tasjeel = null;
-      for (let attempt = 0; attempt < 10; attempt++) {
-        const { data } = await supabase
-          .from("tasjeel_progress" as any)
-          .select("current_step")
-          .eq("user_id", userId)
-          .maybeSingle();
-
-        if (data) { tasjeel = data; break; }
-        await new Promise((r) => setTimeout(r, 500));
-      }
-
-      // Determine redirect based on Tasjeel step
-      const step = (tasjeel as any)?.current_step ?? "completed";
-
-      // Check if admin or teacher — they always go to their dashboard
+      // ── Check role first — admins and teachers bypass Tasjeel entirely ──
       const { data: rolesData } = await supabase
         .from("user_roles")
         .select("role")
@@ -72,32 +66,47 @@ const AuthCallback = () => {
         navigate("/admin", { replace: true });
         return;
       }
+
       if (roles.includes("teacher")) {
-        navigate("/teacher/dashboard", { replace: true });
+        // C-3 FIX: was "/teacher/dashboard" which does not exist as a route.
+        // The teacher dashboard is registered at "/teacher" in App.tsx.
+        navigate("/teacher", { replace: true });
         return;
       }
 
-      // Student: route to their Tasjeel step
-      const STEP_ROUTES: Record<string, string> = {
-        enrollment:       "/register",
-        payment:          "/register",
-        onboarding:       "/onboarding",
-        exam:             "/student/entrance-exam",
-        review:           "/student/entrance-results",
-        level_assignment: "/student/awaiting-level",
-        completed:        "/student",
-      };
+      // ── Student: wait for Tasjeel to be initialized then redirect ────────
+      // onUserAuthenticated → initializeTasjeel runs async in AuthContext.
+      // Poll up to 5 seconds (10 × 500 ms) for the record to appear.
+      let tasjeel = null;
+      for (let attempt = 0; attempt < 10; attempt++) {
+        const { data } = await supabase
+          .from("tasjeel_progress" as any)
+          .select("current_step")
+          .eq("user_id", userId)
+          .maybeSingle();
 
-      navigate(STEP_ROUTES[step] ?? "/student", { replace: true });
+        if (data) {
+          tasjeel = data;
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 500));
+      }
+
+      // If Tasjeel never initialised (edge case), fall back to student home
+      const step = (tasjeel as any)?.current_step ?? "completed";
+      const route = STEP_ROUTES[step] ?? "/student";
+
+      navigate(route, { replace: true });
     };
 
     processCallback().catch((err) => {
       console.error("[AuthCallback] error:", err);
       setStatus("error");
-      setErrorMsg("An unexpected error occurred.");
+      setErrorMsg("An unexpected error occurred. Please try signing in again.");
     });
   }, [navigate]);
 
+  // ── Error screen ──────────────────────────────────────────────────────────
   if (status === "error") {
     return (
       <div
@@ -119,6 +128,7 @@ const AuthCallback = () => {
             height: 60,
             borderRadius: "50%",
             background: "#FEF2F2",
+            border: "2px solid #FCA5A5",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -130,7 +140,15 @@ const AuthCallback = () => {
         <h2 style={{ fontSize: 20, fontWeight: 700, color: "#111", margin: 0 }}>
           Authentication Failed
         </h2>
-        <p style={{ fontSize: 14, color: "#6b7280", textAlign: "center", maxWidth: 320 }}>
+        <p
+          style={{
+            fontSize: 14,
+            color: "#6b7280",
+            textAlign: "center",
+            maxWidth: 320,
+            lineHeight: 1.6,
+          }}
+        >
           {errorMsg}
         </p>
         <button
@@ -152,13 +170,14 @@ const AuthCallback = () => {
     );
   }
 
+  // ── Loading screen ────────────────────────────────────────────────────────
   return (
     <>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&family=DM+Sans:wght@400;500;600&display=swap');
-        @keyframes spin { to { transform: rotate(360deg); } }
-        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
-        @keyframes fadeUp { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:none} }
+        @keyframes spin    { to { transform: rotate(360deg); } }
+        @keyframes pulse   { 0%,100%{opacity:1} 50%{opacity:.5} }
+        @keyframes fadeUp  { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:none} }
       `}</style>
 
       <div
@@ -215,6 +234,16 @@ const AuthCallback = () => {
         >
           Signing you in…
         </h2>
+
+        <p
+          style={{
+            fontSize: 13,
+            color: "rgba(255,255,255,.55)",
+            margin: "0 0 16px",
+          }}
+        >
+          Setting up your account, please wait
+        </p>
 
         <p
           style={{
