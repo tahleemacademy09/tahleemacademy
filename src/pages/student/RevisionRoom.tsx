@@ -104,7 +104,7 @@ const RevisionRoom = () => {
     queryKey: ["revision-flashcards", subjectId],
     queryFn: async () => {
       const { data } = await supabase.from("revision_flashcards" as any).select("*").eq("subject_id", subjectId!).order("order_index");
-      return (data||[]) as Flashcard[];
+      return (data||[]) as unknown as Flashcard[];
     },
   });
 

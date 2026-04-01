@@ -2144,8 +2144,8 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
       {showSettings && renderSettings()}
 
       {/* Dialogs */}
-      {showCreateDialog && <CreateChannelDialog open onClose={() => setShowCreateDialog(false)} onChannelCreated={handleChannelCreated} />}
-      {showBrowseChannels && <BrowseChannelsDialog open onClose={() => setShowBrowseChannels(false)} onChannelJoined={handleChannelCreated} />}
+      {showCreateDialog && <CreateChannelDialog open onOpenChange={(v: boolean) => { if(!v) setShowCreateDialog(false); }} onChannelCreated={handleChannelCreated} />}
+      {showBrowseChannels && <BrowseChannelsDialog open onOpenChange={(v: boolean) => { if(!v) setShowBrowseChannels(false); }} myChannelIds={[]} onJoined={handleChannelCreated} />}
       {showGroupInfo && activeChannel && (
         <GroupInfoPanel channel={activeChannel} onClose={() => setShowGroupInfo(false)} canModerate={canModerate} memberCount={memberCounts[activeChannel.id] || 0}
           onEditName={() => { setEditName(getCN(activeChannel)); setEditDesc((activeChannel as any).description || ""); setEditingChannel(true); setShowGroupInfo(false); }}

@@ -81,7 +81,7 @@ const PreExamVerification = () => {
       if (existing) { navigate(`/student/exam/${existing.id}`); return; }
       setExam(data);
       const { count } = await supabase.from("exam_questions").select("id", { count:"exact", head:true }).eq("exam_id", examId);
-      setQuestionCount(count ?? data.question_count ?? null);
+      setQuestionCount(count ?? (data as any).question_count ?? null);
       setLoading(false);
     })();
   }, [examId, user]);

@@ -264,7 +264,7 @@ const SubjectManagement = () => {
               const teacher = teachers.find((tc:any)=>tc.user_id===s.teacher_id);
               return (
                 <div key={s.id} style={{ background:"#fff", borderRadius:14, border:"1.5px solid #E5E7EB", padding:"14px 16px", display:"flex", alignItems:"center", gap:12, flexWrap:"wrap" }}>
-                  <div style={{ width:44, height:44, borderRadius:10, overflow:"hidden", flexShrink:0, background:s.color||G, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                  <div style={{ width:44, height:44, borderRadius:10, overflow:"hidden", flexShrink:0, background:(s as any).color||G, display:"flex", alignItems:"center", justifyContent:"center" }}>
                     {s.image_url?<img src={s.image_url} style={{ width:"100%", height:"100%", objectFit:"cover" }} alt=""/>:<BookOpen size={20} color="#fff"/>}
                   </div>
                   <div style={{ flex:1, minWidth:150 }}>
