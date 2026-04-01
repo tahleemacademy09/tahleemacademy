@@ -380,7 +380,7 @@ export default function RecitationMic({ userId }: Props) {
       const ev = JSON.parse(raw.replace(/```json\s*/gi,"").replace(/```\s*/g,"").trim()) as RevResult;
       setRevResult(ev); setRevTranscript(tx); setAppMode("rev-result");
       if (userId && surahSnap) {
-        await supabase.from("hifdh_recordings").insert({
+        await (supabase as any).from("hifdh_recordings").insert({
           student_id:userId, surah_num:surahSnap.number, surah_name:surahSnap.englishName,
           ayah_start:fv, ayah_end:tv, ai_score:ev.overallScore, status:"evaluated",
           transcript:tx, word_results:ev.wordResults

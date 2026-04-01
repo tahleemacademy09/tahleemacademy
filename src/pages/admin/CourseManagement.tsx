@@ -433,7 +433,7 @@ const CourseManagement = () => {
                 </div>
 
                 {lessonsLoading ? (
-                  <div style={{ space:12 }}>{[1,2,3].map(i=><div key={i} style={{ height:64, background:"#E5E7EB", borderRadius:12, marginBottom:8, animation:"pulse 1.5s infinite" }}/>)}</div>
+                  <div style={{ display:"flex", flexDirection:"column", gap:12 }}>{[1,2,3].map(i=><div key={i} style={{ height:64, background:"#E5E7EB", borderRadius:12, marginBottom:8, animation:"pulse 1.5s infinite" }}/>)}</div>
                 ) : lessons.length === 0 ? (
                   <div style={{ textAlign:"center", padding:"48px 24px", background:"#fff", borderRadius:16, border:"2px dashed #E5E7EB" }}>
                     <div style={{ fontSize:40, marginBottom:10 }}>📹</div>

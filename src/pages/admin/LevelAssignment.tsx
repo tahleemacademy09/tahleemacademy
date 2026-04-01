@@ -220,7 +220,7 @@ const LevelAssignment = () => {
         message: `Congratulations! You have been assigned to the ${LEVEL_CFG[lvl].label} level. Please subscribe to begin your classes.`,
         created_at: new Date().toISOString(),
         read: false,
-      }).catch(() => {});
+      }).then(() => {}).catch(() => {});
 
       toast({ title: `✅ ${student.full_name} assigned to ${LEVEL_CFG[lvl].label}` });
       await load();

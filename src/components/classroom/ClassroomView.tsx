@@ -970,7 +970,7 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
           {/* Whiteboard — rendered inside LiveKit context so it can use useRoomContext() */}
           {wbOpen && (
             <WhiteboardBridge
-              onClose={()=>{ setWbOpen(false); if(isPrivileged){try{const r=room;r?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"wb_close"})),{reliable:true});}catch{}} }}
+              onClose={()=>{ setWbOpen(false); }}
               isTeacher={isPrivileged}
               initialStrokes={wbBuffer.current}
               subjectId={subject.id}

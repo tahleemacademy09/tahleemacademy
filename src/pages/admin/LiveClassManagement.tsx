@@ -165,7 +165,7 @@ const LiveClassManagement = () => {
       await supabase.from("live_sessions").update(payload).eq("id", editingSession.id);
       toast({ title:t("Class updated","تم تحديث الحصة") });
     } else {
-      await supabase.from("live_sessions").insert({ ...payload, status:"scheduled" });
+      await supabase.from("live_sessions").insert({ ...payload, status:"scheduled" } as any);
       toast({ title:t("Class scheduled","تم جدولة الحصة") });
     }
     setShowCreate(false); fetchData();
