@@ -46,7 +46,7 @@ const SubjectMaterials = ({ subjectId }: { subjectId: string }) => {
   const { data: sessions = [] } = useQuery({
     queryKey: ["sessions-light", subjectId],
     queryFn: async () => {
-      const { data } = await supabase
+      const { data } = await (supabase as any)
         .from("class_sessions")
         .select("id, session_number, topic")
         .eq("subject_id", subjectId)

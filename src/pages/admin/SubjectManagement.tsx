@@ -200,7 +200,7 @@ const SubjectManagement = () => {
                 return (
                   <div key={s.id} style={{ background:"#fff", borderRadius:18, border:`1.5px solid ${s.is_active?"#E5E7EB":"#FEE2E2"}`, overflow:"hidden", boxShadow:"0 2px 8px rgba(0,0,0,.05)", opacity:s.is_active?1:.75 }}>
                     {/* Header */}
-                    <div style={{ height:130, background:s.image_url?`linear-gradient(rgba(0,0,0,.35),rgba(0,0,0,.5)),url(${s.image_url}) center/cover`:`linear-gradient(135deg,${s.color||G},${s.color||G}dd)`, display:"flex", flexDirection:"column", justifyContent:"space-between", padding:"12px 14px" }}>
+                    <div style={{ height:130, background:s.image_url?`linear-gradient(rgba(0,0,0,.35),rgba(0,0,0,.5)),url(${s.image_url}) center/cover`:`linear-gradient(135deg,${(s as any).color||G},${(s as any).color||G}dd)`, display:"flex", flexDirection:"column", justifyContent:"space-between", padding:"12px 14px" }}>
                       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
                         <div style={{ width:36, height:36, borderRadius:10, background:"rgba(255,255,255,.2)", display:"flex", alignItems:"center", justifyContent:"center" }}>
                           <BookOpen size={18} color="#fff"/>
@@ -264,7 +264,7 @@ const SubjectManagement = () => {
               const teacher = teachers.find((tc:any)=>tc.user_id===s.teacher_id);
               return (
                 <div key={s.id} style={{ background:"#fff", borderRadius:14, border:"1.5px solid #E5E7EB", padding:"14px 16px", display:"flex", alignItems:"center", gap:12, flexWrap:"wrap" }}>
-                  <div style={{ width:44, height:44, borderRadius:10, overflow:"hidden", flexShrink:0, background:s.color||G, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                  <div style={{ width:44, height:44, borderRadius:10, overflow:"hidden", flexShrink:0, background:(s as any).color||G, display:"flex", alignItems:"center", justifyContent:"center" }}>
                     {s.image_url?<img src={s.image_url} style={{ width:"100%", height:"100%", objectFit:"cover" }} alt=""/>:<BookOpen size={20} color="#fff"/>}
                   </div>
                   <div style={{ flex:1, minWidth:150 }}>

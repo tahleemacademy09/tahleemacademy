@@ -476,7 +476,7 @@ const ExamTaking = () => {
       for (const [qId, ans] of Object.entries(answersRef.current)) {
         if (!ans.text && !ans.data) continue;
         const { data: ex } = await supabase.from("exam_answers").select("id").eq("attempt_id", attemptId).eq("question_id", qId).maybeSingle();
-        const p: any = { answer_text: ans.text || null, answer_data: { ...ans.data, confidence: ans.confidence, timeSpent: timePerQuestion[qId] || 0 } || null, is_flagged: ans.flagged || false };
+        const p: any = { answer_text: ans.text || null, answer_data: (ans.data ? { ...ans.data, confidence: ans.confidence, timeSpent: timePerQuestion[qId] || 0 } : null), is_flagged: ans.flagged || false };
         if (ex) await supabase.from("exam_answers").update(p).eq("id", ex.id);
         else await supabase.from("exam_answers").insert({ attempt_id: attemptId, question_id: qId, ...p });
       }

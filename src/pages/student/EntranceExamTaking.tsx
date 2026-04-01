@@ -271,7 +271,7 @@ const EntranceExamTaking = () => {
       await supabase.rpc("grade_exam_attempt", { _attempt_id: attemptId! });
 
       // Advance Tasjeel step to "review"
-      await advanceStep("review", { exam_completed_at: new Date().toISOString(), exam_attempt_id: attemptId });
+      await advanceStep("review");
 
       navigate(`/student/entrance-results/${attemptId}`, { replace: true });
     } catch (err) {
@@ -352,7 +352,7 @@ const EntranceExamTaking = () => {
       </div>
 
       {/* ── MAIN LAYOUT: Left=Question, Right=Navigation panel ── */}
-      <div style={{ display: "flex", gap: 0, maxWidth: 1200, margin: "0 auto", padding: "16px", gap: 16 }}>
+      <div style={{ display: "flex", maxWidth: 1200, margin: "0 auto", padding: "16px", gap: 16 }}>
 
         {/* ── LEFT: QUESTION PANEL ── */}
         <div style={{ flex: 1, minWidth: 0 }}>

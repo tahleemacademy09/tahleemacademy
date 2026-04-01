@@ -272,10 +272,10 @@ export default function HifdhRevision() {
         style={{ flex: 1, overflowY: "auto", maxWidth: 720, margin: "0 auto", width: "100%", paddingBottom: 32 }}>
         <div key={tab} style={{ animation: "fadeUp .25s ease" }}>
           {tab === "overview"     && <HifdhDashboard userId={userId} studentName={studentName} onNavigate={t => setTab(t === "recitation" ? "recitation" : t === "review" ? "test" : "overview")} />}
-          {tab === "recitation"   && <HifdhRecitation reciter={reciter} />}
-          {tab === "memorization" && <HifdhMemorization reciter={reciter} />}
-          {tab === "exercise"     && <HifdhExercise reciter={reciter} />}
-          {tab === "test"         && <HifdhTest reciter={reciter} />}
+          {tab === "recitation"   && <HifdhRecitation />}
+          {tab === "memorization" && <HifdhMemorization />}
+          {tab === "exercise"     && <HifdhExercise />}
+          {tab === "test"         && <HifdhTest />}
         </div>
       </div>
     </div>

@@ -85,7 +85,7 @@ const Whiteboard = ({ room, onClose, isTeacher, initialStrokes, subjectId, canSt
     (async () => {
       try {
         const { data } = await supabase.from("subject_whiteboard" as any).select("strokes").eq("subject_id", subjectId).maybeSingle();
-        if (data?.strokes?.length) strokesRef.current = data.strokes;
+        if ((data as any)?.strokes?.length) strokesRef.current = (data as any).strokes;
         else if (initialStrokes?.length) strokesRef.current = initialStrokes;
       } catch { if (initialStrokes?.length) strokesRef.current = initialStrokes; }
       setBusy(false); setTimeout(redraw, 40);
@@ -222,7 +222,7 @@ const RoomDataListener = ({ onWbOpen, onWbClose, strokesBuffer, onMatOpen, onMat
       } catch {}
     };
     room.on(RoomEvent.DataReceived, h);
-    return () => room.off(RoomEvent.DataReceived, h);
+    return () => { room.off(RoomEvent.DataReceived, h); };
   }, [room, onWbOpen, onWbClose, strokesBuffer, onMatOpen, onMatClose]);
   return null;
 };
@@ -342,7 +342,7 @@ const RecController = ({ sessionId, subjectId, userEmail, onSavingChange }: any)
     mr.ondataavailable = e => { if (e.data.size>0) chunksRef.current.push(e.data); };
     mr.start(1000); mrRef.current = mr; setRecording(true); setPaused(false); setTime(0);
     timerRef.current = setInterval(()=>setTime(t=>t+1), 1000);
-    if (sessionId) await supabase.from("live_sessions").update({ is_recording:true }).eq("id", sessionId);
+    if (sessionId) await supabase.from("live_sessions").update({ is_recording:true } as any).eq("id", sessionId);
   };
 
   const stopRec = async () => {
@@ -355,8 +355,8 @@ const RecController = ({ sessionId, subjectId, userEmail, onSavingChange }: any)
         await supabase.storage.from("recordings").upload(path, blob);
         const { data:{ publicUrl } } = supabase.storage.from("recordings").getPublicUrl(path);
         if (sessionId) {
-          await supabase.from("live_sessions").update({ recording_url:publicUrl, is_recording:false }).eq("id", sessionId);
-          await supabase.from("recordings").insert({ session_id:sessionId, subject_id:subjectId, url:publicUrl, recorded_by:userEmail, duration_seconds:time });
+          await supabase.from("live_sessions").update({ recording_url:publicUrl, is_recording:false } as any).eq("id", sessionId);
+          await supabase.from("recordings" as any).insert({ session_id:sessionId, subject_id:subjectId, url:publicUrl, recorded_by:userEmail, duration_seconds:time });
         }
         toast({ title:t("Recording saved ✅","تم حفظ التسجيل ✅") });
       } catch (e:any) { toast({ title:"Save failed", description:e?.message, variant:"destructive" }); }
@@ -364,7 +364,7 @@ const RecController = ({ sessionId, subjectId, userEmail, onSavingChange }: any)
     };
     acRef.current?.close();
     setRecording(false); setPaused(false);
-    if (sessionId) await supabase.from("live_sessions").update({ is_recording:false }).eq("id", sessionId);
+    if (sessionId) await supabase.from("live_sessions").update({ is_recording:false } as any).eq("id", sessionId);
   };
 
   const togglePause = () => {
@@ -970,7 +970,7 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
           {/* Whiteboard — rendered inside LiveKit context so it can use useRoomContext() */}
           {wbOpen && (
             <WhiteboardBridge
-              onClose={()=>{ setWbOpen(false); if(isPrivileged){try{const r=room;r?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"wb_close"})),{reliable:true});}catch{}} }}
+              onClose={()=>{ setWbOpen(false); }}
               isTeacher={isPrivileged}
               initialStrokes={wbBuffer.current}
               subjectId={subject.id}

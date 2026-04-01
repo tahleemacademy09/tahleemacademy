@@ -22,9 +22,9 @@ const TeacherSettings = () => {
     if (profile) {
       setProfileForm({
         full_name: profile.full_name || "",
-        full_name_ar: profile.full_name_ar || "",
+        full_name_ar: (profile as any).full_name_ar || "",
         phone: profile.phone || "",
-        whatsapp: profile.whatsapp || "",
+        whatsapp: (profile as any).whatsapp || "",
       });
     }
   }, [profile]);

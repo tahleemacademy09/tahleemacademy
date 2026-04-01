@@ -151,8 +151,136 @@ const ExamEditor = () => {
     { value: "questions",  icon: <FileText className="w-4 h-4"/>, label: `${t("Questions", "الأسئلة")} (${questions.length})` },
   ];
 
-  // ... (Keep all your existing useEffect and handler functions here - handleSave, uploadMedia, parseCSVLine, handleBulkImport, mapXlsxRow, openQuestionBank, importFromBank, etc. exactly as they were in your code) ...
-  // [Placeholder to keep the response length manageable, assume all data-fetching and mutating functions are perfectly preserved here]
+  const addQuestion = () => setQuestions(q => [...q, { ...emptyQuestion(), sort_order: q.length }]);
+  const removeQuestion = (idx: number) => setQuestions(q => q.filter((_, i) => i !== idx));
+  const updateQuestion = (idx: number, updates: Partial<QuestionForm>) =>
+    setQuestions(q => q.map((qq, i) => i === idx ? { ...qq, ...updates } : qq));
+
+  const uploadMedia = async (file: File, idx: number) => {
+    setUploadingMedia(idx);
+    try {
+      const path = `exam-media/${Date.now()}_${file.name}`;
+      await supabase.storage.from("exam-media").upload(path, file);
+      const { data: { publicUrl } } = supabase.storage.from("exam-media").getPublicUrl(path);
+      updateQuestion(idx, { media_url: publicUrl });
+    } catch (e: any) { toast({ title: "Upload failed", description: e.message, variant: "destructive" }); }
+    setUploadingMedia(null);
+  };
+
+  const handleSave = async () => {
+    if (!examForm.title.trim()) { toast({ title: "Title is required", variant: "destructive" }); return; }
+    setSaving(true);
+    try {
+      const examPayload: any = {
+        title: examForm.title, title_ar: examForm.title_ar || null,
+        description: examForm.description || null, description_ar: examForm.description_ar || null,
+        time_limit_minutes: examForm.time_limit_minutes, passing_score: examForm.passing_score,
+        max_attempts: examForm.max_attempts,
+        randomize_questions: examForm.randomize_questions, randomize_answers: examForm.randomize_answers,
+        show_results_immediately: examForm.show_results_immediately, allow_review: examForm.allow_review,
+        display_mode: examForm.display_mode,
+        guidelines: examForm.guidelines || null, guidelines_ar: examForm.guidelines_ar || null,
+        start_date: examForm.start_date || null, end_date: examForm.end_date || null,
+        proctoring_enabled: examForm.proctoring_enabled, fullscreen_required: examForm.fullscreen_required,
+        tab_switch_limit: examForm.tab_switch_limit, max_warnings: examForm.max_warnings,
+        auto_submit_on_violation: examForm.auto_submit_on_violation,
+        screenshot_interval_seconds: examForm.screenshot_interval_seconds,
+        term: examForm.term, max_review_views: examForm.max_review_views,
+        type: examForm.type, level: examForm.level || null,
+        ...formatSettings, created_by: user?.id,
+      };
+      let savedExamId = examId;
+      if (isEdit && examId) {
+        await supabase.from("exams").update(examPayload).eq("id", examId);
+      } else {
+        const { data } = await supabase.from("exams").insert(examPayload).select("id").single();
+        savedExamId = data?.id;
+      }
+      if (!savedExamId) throw new Error("Failed to save exam");
+      if (isEdit) await supabase.from("exam_questions").delete().eq("exam_id", savedExamId);
+      const qPayloads = questions.map((q, i) => ({
+        exam_id: savedExamId!, question_type: q.question_type, question_text: sanitizeHtml(q.question_text),
+        question_text_ar: q.question_text_ar ? sanitizeHtml(q.question_text_ar) : null,
+        options: q.options?.length ? q.options : null, correct_answer: q.correct_answer || null,
+        points: q.points || 1, difficulty: q.difficulty || "medium", sort_order: i,
+        explanation: q.explanation || null, media_url: q.media_url || null,
+        partial_credit: q.partial_credit, case_sensitive: q.case_sensitive,
+        min_words: q.min_words || null, max_words: q.max_words || null,
+        question_timer_seconds: q.question_timer_seconds || null,
+        background_image: q.background_image || null, audio_response_type: q.audio_response_type || null,
+      }));
+      if (qPayloads.length) await supabase.from("exam_questions").insert(qPayloads);
+      toast({ title: isEdit ? "Exam updated" : "Exam created" });
+      navigate("/admin/exams");
+    } catch (e: any) { toast({ title: "Save failed", description: e.message, variant: "destructive" }); }
+    setSaving(false);
+  };
+
+  const handleBulkImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    try {
+      const text = await file.text();
+      const rows = text.split("\n").filter(r => r.trim());
+      const newQs: QuestionForm[] = rows.slice(1).map((row, i) => {
+        const cols = row.split(",");
+        return { ...emptyQuestion(), question_text: cols[0] || "", sort_order: questions.length + i };
+      });
+      setQuestions(q => [...q, ...newQs]);
+      toast({ title: `Imported ${newQs.length} questions` });
+    } catch { toast({ title: "Import failed", variant: "destructive" }); }
+    e.target.value = "";
+  };
+
+  const openQuestionBank = async () => {
+    setBankOpen(true); setBankLoading(true);
+    const { data } = await supabase.from("exam_questions").select("*").order("created_at", { ascending: false }).limit(200);
+    setBankQuestions(data || []); setBankLoading(false);
+  };
+
+  useEffect(() => {
+    if (!examId) return;
+    (async () => {
+      const { data: exam } = await supabase.from("exams").select("*").eq("id", examId).single();
+      if (exam) {
+        setExamForm({
+          title: exam.title || "", title_ar: exam.title_ar || "",
+          description: exam.description || "", description_ar: exam.description_ar || "",
+          time_limit_minutes: exam.time_limit_minutes || 60, passing_score: exam.passing_score || 50,
+          max_attempts: exam.max_attempts || 1,
+          randomize_questions: exam.randomize_questions || false, randomize_answers: exam.randomize_answers || false,
+          show_results_immediately: exam.show_results_immediately ?? true, allow_review: exam.allow_review ?? true,
+          display_mode: exam.display_mode || "one_at_a_time",
+          guidelines: exam.guidelines || "", guidelines_ar: exam.guidelines_ar || "",
+          start_date: exam.start_date ? toLocalDatetimeString(new Date(exam.start_date)) : "",
+          end_date: exam.end_date ? toLocalDatetimeString(new Date(exam.end_date)) : "",
+          proctoring_enabled: exam.proctoring_enabled || false, fullscreen_required: exam.fullscreen_required || false,
+          tab_switch_limit: exam.tab_switch_limit || 3, max_warnings: exam.max_warnings || 3,
+          auto_submit_on_violation: exam.auto_submit_on_violation || false,
+          screenshot_interval_seconds: exam.screenshot_interval_seconds || 0,
+          term: exam.term || "first", max_review_views: exam.max_review_views || 1,
+          type: (exam.type as "exam" | "test") || "exam", level: exam.level || "",
+        });
+      }
+      const { data: qs } = await supabase.from("exam_questions").select("*").eq("exam_id", examId).order("sort_order");
+      if (qs?.length) {
+        setQuestions(qs.map(q => ({
+          id: q.id, question_type: q.question_type || "mcq",
+          question_text: q.question_text || "", question_text_ar: q.question_text_ar || "",
+          options: (q.options as any[]) || emptyQuestion().options,
+          correct_answer: q.correct_answer || "", accepted_answers: (q.accepted_answers as string[]) || [""],
+          points: q.points || 1, difficulty: q.difficulty || "medium", sort_order: q.sort_order || 0,
+          explanation: q.explanation || "", explanation_ar: q.explanation_ar || "",
+          feedback_incorrect: q.feedback_incorrect || "", media_url: q.media_url || "",
+          matching_pairs: (q.matching_pairs as any[]) || [{ left: "", right: "" }],
+          ordering_items: (q.ordering_items as string[]) || [""],
+          partial_credit: q.partial_credit || false, case_sensitive: q.case_sensitive || false,
+          min_words: q.min_words || 0, max_words: q.max_words || 0,
+          question_timer_seconds: q.question_timer_seconds || 0,
+          background_image: q.background_image || "", audio_response_type: (q.audio_response_type as "text" | "audio") || "text",
+        })));
+      }
+    })();
+  }, [examId]);
 
   return (
     <div className="min-h-screen bg-slate-50 font-['Cairo'] pb-20">

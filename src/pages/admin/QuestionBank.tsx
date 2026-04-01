@@ -146,7 +146,7 @@ const QuestionBank = () => {
             return (
               <button key={type} onClick={() => setTypeFilter(typeFilter === type ? "all" : type)}
                 style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: typeFilter === type ? cfg.text : cfg.bg, color: typeFilter === type ? "#fff" : cfg.text, border: "none", cursor: "pointer", fontWeight: 600 }}>
-                {type.replace("_"," ")} ({count})
+                {String(type).replace("_"," ")} ({String(count)})
               </button>
             );
           })}

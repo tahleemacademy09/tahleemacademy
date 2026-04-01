@@ -305,13 +305,13 @@ const LiveQuiz = () => {
   const loadParticipants = async () => {
     if (!room) return;
     const { data } = await supabase.from("live_quiz_participants" as any).select("*").eq("room_id", room.id).order("score",{ascending:false});
-    setParticipants((data||[]) as Participant[]);
+    setParticipants((data||[]) as unknown as Participant[]);
   };
 
   const loadCurrentQ = async (idx: number) => {
     if (!room) return;
     const { data } = await supabase.from("live_quiz_questions" as any).select("*").eq("room_id", room.id).eq("order_index", idx).single();
-    if (data) setCurrentQ({ ...data, options: data.options as string[] } as Question);
+    if (data) setCurrentQ({ ...(data as any), options: (data as any).options as string[] } as Question);
   };
 
   const loadAnswerCounts = async () => {
@@ -443,7 +443,7 @@ Make questions educational, clearly worded, and accurate.`
       } as any).select().single();
       if (error) throw error;
 
-      setRoom(rd as Room);
+      setRoom(rd as unknown as Room);
       for (let i = 0; i < selected.length; i++) {
         await supabase.from("live_quiz_questions" as any).insert({
           room_id: (rd as any).id, question: selected[i].question,
@@ -465,12 +465,12 @@ Make questions educational, clearly worded, and accurate.`
     try {
       const { data: rd } = await supabase.from("live_quiz_rooms" as any).select("*").eq("code", joinCode.trim()).eq("status","waiting").single();
       if (!rd) throw new Error("Room not found or already started");
-      setRoom(rd as Room);
+      setRoom(rd as unknown as Room);
       const { data: pd, error: pe } = await supabase.from("live_quiz_participants" as any).insert({
         room_id: (rd as any).id, player_name: playerName.trim(), score:0, streak:0,
       } as any).select().single();
       if (pe) throw pe;
-      setParticipant(pd as Participant);
+      setParticipant(pd as unknown as Participant);
       setView("lobby-player");
     } catch(e:any) {
       toast({ title:"Error", description:e.message, variant:"destructive" });
@@ -494,7 +494,7 @@ Make questions educational, clearly worded, and accurate.`
     questionIdxRef.current = 0;
     // Load Q0 on host side
     const { data: qData } = await supabase.from("live_quiz_questions" as any).select("*").eq("room_id", room.id).eq("order_index", 0).single();
-    const q = qData ? { ...qData, options: qData.options as string[] } as Question : null;
+     const q = qData ? { ...(qData as any), options: (qData as any).options as string[] } as Question : null;
     if (q) {
       setCurrentQ(q);
       broadcastQuestion(q);
@@ -525,7 +525,7 @@ Make questions educational, clearly worded, and accurate.`
       setView("results-host");
     } else {
       const { data: qData } = await supabase.from("live_quiz_questions" as any).select("*").eq("room_id", room.id).eq("order_index", next).single();
-      const q = qData ? { ...qData, options: qData.options as string[] } as Question : null;
+      const q = qData ? { ...(qData as any), options: (qData as any).options as string[] } as Question : null;
       if (q) {
         setCurrentQ(q);
         broadcastQuestion(q);

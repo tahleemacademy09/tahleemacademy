@@ -125,6 +125,33 @@ export type Database = {
         }
         Relationships: []
       }
+      admin_notifications: {
+        Row: {
+          created_at: string | null
+          id: string
+          message: string | null
+          read: boolean | null
+          type: string
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          message?: string | null
+          read?: boolean | null
+          type: string
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          message?: string | null
+          read?: boolean | null
+          type?: string
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       ai_query_logs: {
         Row: {
           created_at: string
@@ -254,7 +281,9 @@ export type Database = {
           avatar: string | null
           created_at: string | null
           created_by: string | null
+          created_by_name: string | null
           description: string | null
+          icon_url: string | null
           id: string
           is_private: boolean | null
           last_message: string | null
@@ -269,7 +298,9 @@ export type Database = {
           avatar?: string | null
           created_at?: string | null
           created_by?: string | null
+          created_by_name?: string | null
           description?: string | null
+          icon_url?: string | null
           id?: string
           is_private?: boolean | null
           last_message?: string | null
@@ -284,7 +315,9 @@ export type Database = {
           avatar?: string | null
           created_at?: string | null
           created_by?: string | null
+          created_by_name?: string | null
           description?: string | null
+          icon_url?: string | null
           id?: string
           is_private?: boolean | null
           last_message?: string | null
@@ -302,8 +335,10 @@ export type Database = {
           channel_id: string
           id: string
           is_muted: boolean | null
+          is_online: boolean | null
           joined_at: string | null
           last_read_at: string | null
+          last_seen: string | null
           role: string | null
           user_id: string
         }
@@ -311,8 +346,10 @@ export type Database = {
           channel_id: string
           id?: string
           is_muted?: boolean | null
+          is_online?: boolean | null
           joined_at?: string | null
           last_read_at?: string | null
+          last_seen?: string | null
           role?: string | null
           user_id: string
         }
@@ -320,8 +357,10 @@ export type Database = {
           channel_id?: string
           id?: string
           is_muted?: boolean | null
+          is_online?: boolean | null
           joined_at?: string | null
           last_read_at?: string | null
+          last_seen?: string | null
           role?: string | null
           user_id?: string
         }
@@ -344,16 +383,23 @@ export type Database = {
           created_at: string
           deleted_by: string | null
           deleted_reason: string | null
+          duration_ms: number | null
           edited_at: string | null
           edited_by: string | null
           id: string
           is_broadcast: boolean | null
+          is_deleted: boolean | null
           is_flagged: boolean | null
           is_pinned: boolean | null
           is_starred: boolean | null
           is_system: boolean | null
           media_path: string | null
+          media_type: string | null
+          media_url: string | null
           original_text: string | null
+          reply_preview: string | null
+          reply_to_id: string | null
+          seen_by: string[] | null
           text: string | null
           user_id: string
         }
@@ -365,16 +411,23 @@ export type Database = {
           created_at?: string
           deleted_by?: string | null
           deleted_reason?: string | null
+          duration_ms?: number | null
           edited_at?: string | null
           edited_by?: string | null
           id?: string
           is_broadcast?: boolean | null
+          is_deleted?: boolean | null
           is_flagged?: boolean | null
           is_pinned?: boolean | null
           is_starred?: boolean | null
           is_system?: boolean | null
           media_path?: string | null
+          media_type?: string | null
+          media_url?: string | null
           original_text?: string | null
+          reply_preview?: string | null
+          reply_to_id?: string | null
+          seen_by?: string[] | null
           text?: string | null
           user_id: string
         }
@@ -386,16 +439,23 @@ export type Database = {
           created_at?: string
           deleted_by?: string | null
           deleted_reason?: string | null
+          duration_ms?: number | null
           edited_at?: string | null
           edited_by?: string | null
           id?: string
           is_broadcast?: boolean | null
+          is_deleted?: boolean | null
           is_flagged?: boolean | null
           is_pinned?: boolean | null
           is_starred?: boolean | null
           is_system?: boolean | null
           media_path?: string | null
+          media_type?: string | null
+          media_url?: string | null
           original_text?: string | null
+          reply_preview?: string | null
+          reply_to_id?: string | null
+          seen_by?: string[] | null
           text?: string | null
           user_id?: string
         }
@@ -405,6 +465,13 @@ export type Database = {
             columns: ["channel_id"]
             isOneToOne: false
             referencedRelation: "chat_channels"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chat_messages_reply_to_id_fkey"
+            columns: ["reply_to_id"]
+            isOneToOne: false
+            referencedRelation: "chat_messages"
             referencedColumns: ["id"]
           },
         ]
@@ -679,6 +746,36 @@ export type Database = {
           },
         ]
       }
+      dashboards: {
+        Row: {
+          created_at: string | null
+          id: string
+          last_seen_at: string | null
+          preferences: Json | null
+          updated_at: string | null
+          user_id: string
+          widgets: Json | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          last_seen_at?: string | null
+          preferences?: Json | null
+          updated_at?: string | null
+          user_id: string
+          widgets?: Json | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          last_seen_at?: string | null
+          preferences?: Json | null
+          updated_at?: string | null
+          user_id?: string
+          widgets?: Json | null
+        }
+        Relationships: []
+      }
       device_logs: {
         Row: {
           attempt_id: string
@@ -729,6 +826,8 @@ export type Database = {
           enrolled_at: string
           id: string
           progress: number | null
+          registration_paid: boolean | null
+          registration_paid_at: string | null
           user_id: string
         }
         Insert: {
@@ -736,6 +835,8 @@ export type Database = {
           enrolled_at?: string
           id?: string
           progress?: number | null
+          registration_paid?: boolean | null
+          registration_paid_at?: string | null
           user_id: string
         }
         Update: {
@@ -743,6 +844,8 @@ export type Database = {
           enrolled_at?: string
           id?: string
           progress?: number | null
+          registration_paid?: boolean | null
+          registration_paid_at?: string | null
           user_id?: string
         }
         Relationships: [
@@ -757,6 +860,7 @@ export type Database = {
       }
       exam_answers: {
         Row: {
+          answer: Json | null
           answer_data: Json | null
           answer_text: string | null
           attempt_id: string
@@ -772,6 +876,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          answer?: Json | null
           answer_data?: Json | null
           answer_text?: string | null
           attempt_id: string
@@ -787,6 +892,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          answer?: Json | null
           answer_data?: Json | null
           answer_text?: string | null
           attempt_id?: string
@@ -820,19 +926,28 @@ export type Database = {
       }
       exam_assignments: {
         Row: {
+          allow_retake: boolean | null
           assigned_at: string
+          assigned_by: string | null
+          assigned_round: number | null
           exam_id: string
           id: string
           user_id: string
         }
         Insert: {
+          allow_retake?: boolean | null
           assigned_at?: string
+          assigned_by?: string | null
+          assigned_round?: number | null
           exam_id: string
           id?: string
           user_id: string
         }
         Update: {
+          allow_retake?: boolean | null
           assigned_at?: string
+          assigned_by?: string | null
+          assigned_round?: number | null
           exam_id?: string
           id?: string
           user_id?: string
@@ -943,6 +1058,10 @@ export type Database = {
       }
       exam_questions: {
         Row: {
+          accepted_answers: Json | null
+          audio_response_type: string | null
+          background_image: string | null
+          case_sensitive: boolean | null
           correct_answer: string | null
           created_at: string
           custom_format: Json | null
@@ -950,17 +1069,30 @@ export type Database = {
           exam_id: string
           explanation: string | null
           explanation_ar: string | null
+          feedback_incorrect: string | null
           id: string
+          marks: number | null
+          matching_pairs: Json | null
+          max_words: number | null
           media_url: string | null
+          metadata: Json | null
+          min_words: number | null
           options: Json | null
+          ordering_items: Json | null
+          partial_credit: boolean | null
           points: number | null
           question_text: string
           question_text_ar: string | null
+          question_timer_seconds: number | null
           question_type: string
           sort_order: number | null
           tags: string[] | null
         }
         Insert: {
+          accepted_answers?: Json | null
+          audio_response_type?: string | null
+          background_image?: string | null
+          case_sensitive?: boolean | null
           correct_answer?: string | null
           created_at?: string
           custom_format?: Json | null
@@ -968,17 +1100,30 @@ export type Database = {
           exam_id: string
           explanation?: string | null
           explanation_ar?: string | null
+          feedback_incorrect?: string | null
           id?: string
+          marks?: number | null
+          matching_pairs?: Json | null
+          max_words?: number | null
           media_url?: string | null
+          metadata?: Json | null
+          min_words?: number | null
           options?: Json | null
+          ordering_items?: Json | null
+          partial_credit?: boolean | null
           points?: number | null
           question_text: string
           question_text_ar?: string | null
-          question_type: string
+          question_timer_seconds?: number | null
+          question_type?: string
           sort_order?: number | null
           tags?: string[] | null
         }
         Update: {
+          accepted_answers?: Json | null
+          audio_response_type?: string | null
+          background_image?: string | null
+          case_sensitive?: boolean | null
           correct_answer?: string | null
           created_at?: string
           custom_format?: Json | null
@@ -986,12 +1131,21 @@ export type Database = {
           exam_id?: string
           explanation?: string | null
           explanation_ar?: string | null
+          feedback_incorrect?: string | null
           id?: string
+          marks?: number | null
+          matching_pairs?: Json | null
+          max_words?: number | null
           media_url?: string | null
+          metadata?: Json | null
+          min_words?: number | null
           options?: Json | null
+          ordering_items?: Json | null
+          partial_credit?: boolean | null
           points?: number | null
           question_text?: string
           question_text_ar?: string | null
+          question_timer_seconds?: number | null
           question_type?: string
           sort_order?: number | null
           tags?: string[] | null
@@ -1313,6 +1467,225 @@ export type Database = {
           },
         ]
       }
+      hifdh_custom_voices: {
+        Row: {
+          created_at: string | null
+          file_path: string
+          id: string
+          name: string
+          reviewed_at: string | null
+          reviewed_by: string | null
+          status: string | null
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          file_path: string
+          id?: string
+          name: string
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          file_path?: string
+          id?: string
+          name?: string
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
+      hifdh_daily_tasks: {
+        Row: {
+          completed: boolean | null
+          created_at: string | null
+          id: string
+          surah_name: string | null
+          target_date: string | null
+          task_type: string | null
+          user_id: string | null
+          verses_count: number | null
+        }
+        Insert: {
+          completed?: boolean | null
+          created_at?: string | null
+          id?: string
+          surah_name?: string | null
+          target_date?: string | null
+          task_type?: string | null
+          user_id?: string | null
+          verses_count?: number | null
+        }
+        Update: {
+          completed?: boolean | null
+          created_at?: string | null
+          id?: string
+          surah_name?: string | null
+          target_date?: string | null
+          task_type?: string | null
+          user_id?: string | null
+          verses_count?: number | null
+        }
+        Relationships: []
+      }
+      hifdh_plans: {
+        Row: {
+          assigned_by: string | null
+          ayah_end: number | null
+          ayah_start: number | null
+          created_at: string | null
+          current_juz: number | null
+          daily_target_ayahs: number | null
+          difficulty: string | null
+          id: string
+          max_ayahs_override: number | null
+          notes: string | null
+          revision_mode: string | null
+          student_id: string | null
+          surah_number: number | null
+          surah_rotation: Json | null
+          teacher_locked: boolean | null
+          updated_at: string | null
+        }
+        Insert: {
+          assigned_by?: string | null
+          ayah_end?: number | null
+          ayah_start?: number | null
+          created_at?: string | null
+          current_juz?: number | null
+          daily_target_ayahs?: number | null
+          difficulty?: string | null
+          id?: string
+          max_ayahs_override?: number | null
+          notes?: string | null
+          revision_mode?: string | null
+          student_id?: string | null
+          surah_number?: number | null
+          surah_rotation?: Json | null
+          teacher_locked?: boolean | null
+          updated_at?: string | null
+        }
+        Update: {
+          assigned_by?: string | null
+          ayah_end?: number | null
+          ayah_start?: number | null
+          created_at?: string | null
+          current_juz?: number | null
+          daily_target_ayahs?: number | null
+          difficulty?: string | null
+          id?: string
+          max_ayahs_override?: number | null
+          notes?: string | null
+          revision_mode?: string | null
+          student_id?: string | null
+          surah_number?: number | null
+          surah_rotation?: Json | null
+          teacher_locked?: boolean | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      hifdh_progress: {
+        Row: {
+          best_accuracy: number | null
+          id: string
+          last_reviewed: string | null
+          surah_name: string | null
+          surah_num: number | null
+          times_reviewed: number | null
+          user_id: string | null
+        }
+        Insert: {
+          best_accuracy?: number | null
+          id?: string
+          last_reviewed?: string | null
+          surah_name?: string | null
+          surah_num?: number | null
+          times_reviewed?: number | null
+          user_id?: string | null
+        }
+        Update: {
+          best_accuracy?: number | null
+          id?: string
+          last_reviewed?: string | null
+          surah_name?: string | null
+          surah_num?: number | null
+          times_reviewed?: number | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
+      hifdh_recordings: {
+        Row: {
+          admin_feedback: string | null
+          admin_id: string | null
+          admin_reviewed_at: string | null
+          admin_score: number | null
+          ai_score: number | null
+          audio_url: string | null
+          ayah_end: number | null
+          ayah_start: number | null
+          correct: number | null
+          created_at: string | null
+          duration: number | null
+          id: string
+          status: string | null
+          student_id: string | null
+          surah_name: string | null
+          surah_num: number | null
+          transcript: string | null
+          word_results: Json | null
+          wrong: number | null
+        }
+        Insert: {
+          admin_feedback?: string | null
+          admin_id?: string | null
+          admin_reviewed_at?: string | null
+          admin_score?: number | null
+          ai_score?: number | null
+          audio_url?: string | null
+          ayah_end?: number | null
+          ayah_start?: number | null
+          correct?: number | null
+          created_at?: string | null
+          duration?: number | null
+          id?: string
+          status?: string | null
+          student_id?: string | null
+          surah_name?: string | null
+          surah_num?: number | null
+          transcript?: string | null
+          word_results?: Json | null
+          wrong?: number | null
+        }
+        Update: {
+          admin_feedback?: string | null
+          admin_id?: string | null
+          admin_reviewed_at?: string | null
+          admin_score?: number | null
+          ai_score?: number | null
+          audio_url?: string | null
+          ayah_end?: number | null
+          ayah_start?: number | null
+          correct?: number | null
+          created_at?: string | null
+          duration?: number | null
+          id?: string
+          status?: string | null
+          student_id?: string | null
+          surah_name?: string | null
+          surah_num?: number | null
+          transcript?: string | null
+          word_results?: Json | null
+          wrong?: number | null
+        }
+        Relationships: []
+      }
       hifdh_revision_sessions: {
         Row: {
           actual_end_time: string | null
@@ -1536,6 +1909,95 @@ export type Database = {
           },
         ]
       }
+      hifdh_sessions: {
+        Row: {
+          accuracy_score: number | null
+          audio_path: string | null
+          ayah_end: number | null
+          ayah_start: number | null
+          correct: number | null
+          created_at: string | null
+          duration: number | null
+          feedback: string | null
+          fluency_score: number | null
+          id: string
+          plan_id: string | null
+          recitation_transcript: string | null
+          reviewed_at: string | null
+          session_date: string | null
+          status: string | null
+          streak_count: number | null
+          student_id: string | null
+          submitted_at: string | null
+          surah_name: string | null
+          surah_number: number | null
+          teacher_feedback: string | null
+          teacher_id: string | null
+          teacher_score: number | null
+          wrong: number | null
+        }
+        Insert: {
+          accuracy_score?: number | null
+          audio_path?: string | null
+          ayah_end?: number | null
+          ayah_start?: number | null
+          correct?: number | null
+          created_at?: string | null
+          duration?: number | null
+          feedback?: string | null
+          fluency_score?: number | null
+          id?: string
+          plan_id?: string | null
+          recitation_transcript?: string | null
+          reviewed_at?: string | null
+          session_date?: string | null
+          status?: string | null
+          streak_count?: number | null
+          student_id?: string | null
+          submitted_at?: string | null
+          surah_name?: string | null
+          surah_number?: number | null
+          teacher_feedback?: string | null
+          teacher_id?: string | null
+          teacher_score?: number | null
+          wrong?: number | null
+        }
+        Update: {
+          accuracy_score?: number | null
+          audio_path?: string | null
+          ayah_end?: number | null
+          ayah_start?: number | null
+          correct?: number | null
+          created_at?: string | null
+          duration?: number | null
+          feedback?: string | null
+          fluency_score?: number | null
+          id?: string
+          plan_id?: string | null
+          recitation_transcript?: string | null
+          reviewed_at?: string | null
+          session_date?: string | null
+          status?: string | null
+          streak_count?: number | null
+          student_id?: string | null
+          submitted_at?: string | null
+          surah_name?: string | null
+          surah_number?: number | null
+          teacher_feedback?: string | null
+          teacher_id?: string | null
+          teacher_score?: number | null
+          wrong?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "hifdh_sessions_plan_id_fkey"
+            columns: ["plan_id"]
+            isOneToOne: false
+            referencedRelation: "hifdh_plans"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       lesson_progress: {
         Row: {
           completed: boolean | null
@@ -1637,6 +2099,179 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      live_quiz_answers: {
+        Row: {
+          answer: string
+          answered_at: string | null
+          id: string
+          is_correct: boolean
+          participant_id: string | null
+          points_earned: number | null
+          question_id: string | null
+          room_id: string | null
+          time_taken: number | null
+        }
+        Insert: {
+          answer: string
+          answered_at?: string | null
+          id?: string
+          is_correct?: boolean
+          participant_id?: string | null
+          points_earned?: number | null
+          question_id?: string | null
+          room_id?: string | null
+          time_taken?: number | null
+        }
+        Update: {
+          answer?: string
+          answered_at?: string | null
+          id?: string
+          is_correct?: boolean
+          participant_id?: string | null
+          points_earned?: number | null
+          question_id?: string | null
+          room_id?: string | null
+          time_taken?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_quiz_answers_participant_id_fkey"
+            columns: ["participant_id"]
+            isOneToOne: false
+            referencedRelation: "live_quiz_participants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_quiz_answers_question_id_fkey"
+            columns: ["question_id"]
+            isOneToOne: false
+            referencedRelation: "live_quiz_questions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_quiz_answers_room_id_fkey"
+            columns: ["room_id"]
+            isOneToOne: false
+            referencedRelation: "live_quiz_rooms"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_quiz_participants: {
+        Row: {
+          id: string
+          joined_at: string | null
+          last_answer_correct: boolean | null
+          player_name: string
+          room_id: string | null
+          score: number
+          streak: number
+        }
+        Insert: {
+          id?: string
+          joined_at?: string | null
+          last_answer_correct?: boolean | null
+          player_name: string
+          room_id?: string | null
+          score?: number
+          streak?: number
+        }
+        Update: {
+          id?: string
+          joined_at?: string | null
+          last_answer_correct?: boolean | null
+          player_name?: string
+          room_id?: string | null
+          score?: number
+          streak?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_quiz_participants_room_id_fkey"
+            columns: ["room_id"]
+            isOneToOne: false
+            referencedRelation: "live_quiz_rooms"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_quiz_questions: {
+        Row: {
+          correct_answer: string
+          explanation: string | null
+          id: string
+          options: Json
+          order_index: number
+          question: string
+          room_id: string | null
+          time_limit: number
+          topic: string | null
+        }
+        Insert: {
+          correct_answer: string
+          explanation?: string | null
+          id?: string
+          options: Json
+          order_index?: number
+          question: string
+          room_id?: string | null
+          time_limit?: number
+          topic?: string | null
+        }
+        Update: {
+          correct_answer?: string
+          explanation?: string | null
+          id?: string
+          options?: Json
+          order_index?: number
+          question?: string
+          room_id?: string | null
+          time_limit?: number
+          topic?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_quiz_questions_room_id_fkey"
+            columns: ["room_id"]
+            isOneToOne: false
+            referencedRelation: "live_quiz_rooms"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_quiz_rooms: {
+        Row: {
+          code: string
+          created_at: string | null
+          current_question_index: number
+          host_id: string | null
+          id: string
+          status: string
+          topic: string | null
+          total_questions: number
+        }
+        Insert: {
+          code: string
+          created_at?: string | null
+          current_question_index?: number
+          host_id?: string | null
+          id?: string
+          status?: string
+          topic?: string | null
+          total_questions?: number
+        }
+        Update: {
+          code?: string
+          created_at?: string | null
+          current_question_index?: number
+          host_id?: string | null
+          id?: string
+          status?: string
+          topic?: string | null
+          total_questions?: number
+        }
+        Relationships: []
       }
       live_sessions: {
         Row: {
@@ -2046,6 +2681,38 @@ export type Database = {
           },
         ]
       }
+      message_reactions: {
+        Row: {
+          created_at: string | null
+          emoji: string
+          id: string
+          message_id: string | null
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          emoji: string
+          id?: string
+          message_id?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          emoji?: string
+          id?: string
+          message_id?: string | null
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "message_reactions_message_id_fkey"
+            columns: ["message_id"]
+            isOneToOne: false
+            referencedRelation: "chat_messages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       notifications: {
         Row: {
           created_at: string
@@ -2053,6 +2720,8 @@ export type Database = {
           is_read: boolean | null
           link: string | null
           message: string
+          reference_id: string | null
+          sent_by: string | null
           title: string
           type: string | null
           user_id: string
@@ -2063,6 +2732,8 @@ export type Database = {
           is_read?: boolean | null
           link?: string | null
           message: string
+          reference_id?: string | null
+          sent_by?: string | null
           title: string
           type?: string | null
           user_id: string
@@ -2073,11 +2744,147 @@ export type Database = {
           is_read?: boolean | null
           link?: string | null
           message?: string
+          reference_id?: string | null
+          sent_by?: string | null
           title?: string
           type?: string | null
           user_id?: string
         }
         Relationships: []
+      }
+      onboarding_forms: {
+        Row: {
+          arabic_level: string | null
+          city: string | null
+          completed_at: string | null
+          country: string | null
+          created_at: string | null
+          dob: string | null
+          extra_notes: string | null
+          gender: string | null
+          heard_from: string | null
+          hours_per_day: string | null
+          id: string
+          islamic_knowledge: string | null
+          learning_goals: string[] | null
+          memorized_surahs: string[] | null
+          occupation: string | null
+          phone: string | null
+          preferred_device: string | null
+          preferred_subjects: string[] | null
+          preferred_time: string | null
+          previous_teacher: string | null
+          quran_level: string | null
+          tajweed_knowledge: string | null
+          user_id: string | null
+          years_studying: string | null
+        }
+        Insert: {
+          arabic_level?: string | null
+          city?: string | null
+          completed_at?: string | null
+          country?: string | null
+          created_at?: string | null
+          dob?: string | null
+          extra_notes?: string | null
+          gender?: string | null
+          heard_from?: string | null
+          hours_per_day?: string | null
+          id?: string
+          islamic_knowledge?: string | null
+          learning_goals?: string[] | null
+          memorized_surahs?: string[] | null
+          occupation?: string | null
+          phone?: string | null
+          preferred_device?: string | null
+          preferred_subjects?: string[] | null
+          preferred_time?: string | null
+          previous_teacher?: string | null
+          quran_level?: string | null
+          tajweed_knowledge?: string | null
+          user_id?: string | null
+          years_studying?: string | null
+        }
+        Update: {
+          arabic_level?: string | null
+          city?: string | null
+          completed_at?: string | null
+          country?: string | null
+          created_at?: string | null
+          dob?: string | null
+          extra_notes?: string | null
+          gender?: string | null
+          heard_from?: string | null
+          hours_per_day?: string | null
+          id?: string
+          islamic_knowledge?: string | null
+          learning_goals?: string[] | null
+          memorized_surahs?: string[] | null
+          occupation?: string | null
+          phone?: string | null
+          preferred_device?: string | null
+          preferred_subjects?: string[] | null
+          preferred_time?: string | null
+          previous_teacher?: string | null
+          quran_level?: string | null
+          tajweed_knowledge?: string | null
+          user_id?: string | null
+          years_studying?: string | null
+        }
+        Relationships: []
+      }
+      payment_history: {
+        Row: {
+          amount: number
+          created_at: string | null
+          enrollment_id: string | null
+          id: string
+          level: string | null
+          paid_at: string | null
+          payment_ref: string | null
+          payment_type: string | null
+          plan_type: string | null
+          receipt_id: string | null
+          status: string | null
+          user_id: string
+        }
+        Insert: {
+          amount: number
+          created_at?: string | null
+          enrollment_id?: string | null
+          id?: string
+          level?: string | null
+          paid_at?: string | null
+          payment_ref?: string | null
+          payment_type?: string | null
+          plan_type?: string | null
+          receipt_id?: string | null
+          status?: string | null
+          user_id: string
+        }
+        Update: {
+          amount?: number
+          created_at?: string | null
+          enrollment_id?: string | null
+          id?: string
+          level?: string | null
+          paid_at?: string | null
+          payment_ref?: string | null
+          payment_type?: string | null
+          plan_type?: string | null
+          receipt_id?: string | null
+          status?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payment_history_enrollment_id_fkey"
+            columns: ["enrollment_id"]
+            isOneToOne: false
+            referencedRelation: "enrollments"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       payment_plans: {
         Row: {
@@ -2391,6 +3198,7 @@ export type Database = {
           age_group: string | null
           allow_entrance_retake: boolean | null
           assigned_teacher_id: string | null
+          auth_provider: string | null
           avatar_url: string | null
           bio: string | null
           city: string | null
@@ -2433,6 +3241,7 @@ export type Database = {
           age_group?: string | null
           allow_entrance_retake?: boolean | null
           assigned_teacher_id?: string | null
+          auth_provider?: string | null
           avatar_url?: string | null
           bio?: string | null
           city?: string | null
@@ -2475,6 +3284,7 @@ export type Database = {
           age_group?: string | null
           allow_entrance_retake?: boolean | null
           assigned_teacher_id?: string | null
+          auth_provider?: string | null
           avatar_url?: string | null
           bio?: string | null
           city?: string | null
@@ -2694,6 +3504,72 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      recitation_tests: {
+        Row: {
+          admin_approved: boolean | null
+          admin_approved_at: string | null
+          admin_notes: string | null
+          ai_score: number | null
+          ai_transcript: string | null
+          audio_path: string | null
+          created_at: string | null
+          final_level: string | null
+          id: string
+          stage: number | null
+          stage1_submitted_at: string | null
+          stage2_completed_at: string | null
+          stage3_completed_at: string | null
+          stage3_requested_at: string | null
+          stage3_session_date: string | null
+          status: string | null
+          teacher_notes: string | null
+          teacher_score: number | null
+          user_id: string | null
+        }
+        Insert: {
+          admin_approved?: boolean | null
+          admin_approved_at?: string | null
+          admin_notes?: string | null
+          ai_score?: number | null
+          ai_transcript?: string | null
+          audio_path?: string | null
+          created_at?: string | null
+          final_level?: string | null
+          id?: string
+          stage?: number | null
+          stage1_submitted_at?: string | null
+          stage2_completed_at?: string | null
+          stage3_completed_at?: string | null
+          stage3_requested_at?: string | null
+          stage3_session_date?: string | null
+          status?: string | null
+          teacher_notes?: string | null
+          teacher_score?: number | null
+          user_id?: string | null
+        }
+        Update: {
+          admin_approved?: boolean | null
+          admin_approved_at?: string | null
+          admin_notes?: string | null
+          ai_score?: number | null
+          ai_transcript?: string | null
+          audio_path?: string | null
+          created_at?: string | null
+          final_level?: string | null
+          id?: string
+          stage?: number | null
+          stage1_submitted_at?: string | null
+          stage2_completed_at?: string | null
+          stage3_completed_at?: string | null
+          stage3_requested_at?: string | null
+          stage3_session_date?: string | null
+          status?: string | null
+          teacher_notes?: string | null
+          teacher_score?: number | null
+          user_id?: string | null
+        }
+        Relationships: []
       }
       recording_bookmarks: {
         Row: {
@@ -3681,6 +4557,32 @@ export type Database = {
           },
         ]
       }
+      subject_whiteboard: {
+        Row: {
+          strokes: Json | null
+          subject_id: string
+          updated_at: string | null
+        }
+        Insert: {
+          strokes?: Json | null
+          subject_id: string
+          updated_at?: string | null
+        }
+        Update: {
+          strokes?: Json | null
+          subject_id?: string
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subject_whiteboard_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: true
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       subjects: {
         Row: {
           course_syllabus: string | null
@@ -3691,6 +4593,7 @@ export type Database = {
           description_ar: string | null
           icon: string | null
           id: string
+          image_url: string | null
           is_active: boolean | null
           level: string | null
           livekit_room_name: string | null
@@ -3714,6 +4617,7 @@ export type Database = {
           description_ar?: string | null
           icon?: string | null
           id?: string
+          image_url?: string | null
           is_active?: boolean | null
           level?: string | null
           livekit_room_name?: string | null
@@ -3737,6 +4641,7 @@ export type Database = {
           description_ar?: string | null
           icon?: string | null
           id?: string
+          image_url?: string | null
           is_active?: boolean | null
           level?: string | null
           livekit_room_name?: string | null
@@ -3750,6 +4655,63 @@ export type Database = {
           title_ar?: string | null
           total_sessions?: number | null
           updated_at?: string | null
+        }
+        Relationships: []
+      }
+      tasjeel_progress: {
+        Row: {
+          completed_at: string | null
+          created_at: string | null
+          current_step: string
+          exam_attempt_id: string | null
+          exam_completed_at: string | null
+          id: string
+          level_assigned: string | null
+          level_assigned_at: string | null
+          onboarding_completed_at: string | null
+          payment_amount: number | null
+          payment_currency: string | null
+          payment_paid_at: string | null
+          payment_ref: string | null
+          payment_status: string | null
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string | null
+          current_step?: string
+          exam_attempt_id?: string | null
+          exam_completed_at?: string | null
+          id?: string
+          level_assigned?: string | null
+          level_assigned_at?: string | null
+          onboarding_completed_at?: string | null
+          payment_amount?: number | null
+          payment_currency?: string | null
+          payment_paid_at?: string | null
+          payment_ref?: string | null
+          payment_status?: string | null
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string | null
+          current_step?: string
+          exam_attempt_id?: string | null
+          exam_completed_at?: string | null
+          id?: string
+          level_assigned?: string | null
+          level_assigned_at?: string | null
+          onboarding_completed_at?: string | null
+          payment_amount?: number | null
+          payment_currency?: string | null
+          payment_paid_at?: string | null
+          payment_ref?: string | null
+          payment_status?: string | null
+          updated_at?: string | null
+          user_id?: string
         }
         Relationships: []
       }
@@ -3785,6 +4747,105 @@ export type Database = {
           title?: string
         }
         Relationships: []
+      }
+      teacher_course_assignments: {
+        Row: {
+          course_id: string | null
+          id: string
+          teacher_id: string | null
+        }
+        Insert: {
+          course_id?: string | null
+          id?: string
+          teacher_id?: string | null
+        }
+        Update: {
+          course_id?: string | null
+          id?: string
+          teacher_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "teacher_course_assignments_course_id_fkey"
+            columns: ["course_id"]
+            isOneToOne: false
+            referencedRelation: "courses"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "teacher_course_assignments_teacher_id_fkey"
+            columns: ["teacher_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["user_id"]
+          },
+        ]
+      }
+      teacher_recitations: {
+        Row: {
+          audio_url: string | null
+          ayah_num: number | null
+          created_at: string | null
+          id: string
+          surah_name: string | null
+          surah_num: number | null
+          teacher_id: string | null
+          teacher_name: string | null
+        }
+        Insert: {
+          audio_url?: string | null
+          ayah_num?: number | null
+          created_at?: string | null
+          id?: string
+          surah_name?: string | null
+          surah_num?: number | null
+          teacher_id?: string | null
+          teacher_name?: string | null
+        }
+        Update: {
+          audio_url?: string | null
+          ayah_num?: number | null
+          created_at?: string | null
+          id?: string
+          surah_name?: string | null
+          surah_num?: number | null
+          teacher_id?: string | null
+          teacher_name?: string | null
+        }
+        Relationships: []
+      }
+      teacher_subject_assignments: {
+        Row: {
+          id: string
+          subject_id: string | null
+          teacher_id: string | null
+        }
+        Insert: {
+          id?: string
+          subject_id?: string | null
+          teacher_id?: string | null
+        }
+        Update: {
+          id?: string
+          subject_id?: string | null
+          teacher_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "teacher_subject_assignments_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "teacher_subject_assignments_teacher_id_fkey"
+            columns: ["teacher_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["user_id"]
+          },
+        ]
       }
       user_roles: {
         Row: {
@@ -3847,6 +4908,8 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      extract_arabic_part: { Args: { txt: string }; Returns: string }
+      extract_english_part: { Args: { txt: string }; Returns: string }
       get_exam_questions_for_review: {
         Args: { _attempt_id: string }
         Returns: {
@@ -3889,6 +4952,10 @@ export type Database = {
           _user_id: string
         }
         Returns: boolean
+      }
+      mark_notifications_read: {
+        Args: { p_user_id: string }
+        Returns: undefined
       }
     }
     Enums: {

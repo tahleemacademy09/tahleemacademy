@@ -239,10 +239,10 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER }: Props) {
     const pct=qs.length>0?Math.round((correct/qs.length)*100):0;
     supabase.auth.getUser().then(({data})=>{
       if(!data?.user) return;
-      supabase.from("hifdh_sessions").insert({
+      (supabase as any).from("hifdh_sessions").insert({
         student_id:data.user.id, surah_name:SURAHS[surahNum-1].name,
         ayah_start:startV, accuracy_score:pct, duration:qs.length*45-timeLeft,
-      }).catch(()=>{});
+      }).then(() => {}).catch(()=>{});
     });
   },[surahNum,startV,timeLeft]);
 

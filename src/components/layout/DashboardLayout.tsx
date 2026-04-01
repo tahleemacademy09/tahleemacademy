@@ -92,16 +92,11 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
       { to:"/admin/students",         icon:Users,     label:t("All Students","جميع الطلاب") },
       { to:"/admin/private-sessions", icon:UserCheck, label:t("Private Sessions","الجلسات الخاصة") },
     ]},
-    {
-  type: "group",
-  label: "Finance",
-  icon: CreditCard,
-  children: [
-    { type:"link", to:"/admin/payments",              icon: CreditCard,  label:"Payment Settings" },
-    { type:"link", to:"/admin/tasjeel",                icon: UserPlus,    label:"🎓 Tasjeel"       },
-    { type:"link", to:"/admin/registration-settings", icon: UserPlus,    label:"Registration"     },
-  ]
-},
+    { type:"group", key:"finance", icon:CreditCard, label:"Finance", children:[
+      { to:"/admin/payments",              icon: CreditCard,  label:"Payment Settings" },
+      { to:"/admin/tasjeel",                icon: UserPlus,    label:"🎓 Tasjeel"       },
+      { to:"/admin/registration-settings", icon: UserPlus,    label:"Registration"     },
+    ]},
     { type:"link", to:"/admin/majlis-moderation", icon:MessageCircle, label:t("Al-Majlis","المجلس") },
     { type:"link", to:"/live-quiz",               icon:Trophy,        label:t("Al-Musabaqah 🏆","المسابقة الحية 🏆") },
   ];
