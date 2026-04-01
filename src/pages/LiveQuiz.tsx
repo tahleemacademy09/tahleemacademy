@@ -494,7 +494,7 @@ Make questions educational, clearly worded, and accurate.`
     questionIdxRef.current = 0;
     // Load Q0 on host side
     const { data: qData } = await supabase.from("live_quiz_questions" as any).select("*").eq("room_id", room.id).eq("order_index", 0).single();
-    const q = qData ? { ...qData, options: qData.options as string[] } as Question : null;
+     const q = qData ? { ...(qData as any), options: (qData as any).options as string[] } as Question : null;
     if (q) {
       setCurrentQ(q);
       broadcastQuestion(q);
