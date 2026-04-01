@@ -222,7 +222,7 @@ const RoomDataListener = ({ onWbOpen, onWbClose, strokesBuffer, onMatOpen, onMat
       } catch {}
     };
     room.on(RoomEvent.DataReceived, h);
-    return () => room.off(RoomEvent.DataReceived, h);
+    return () => { room.off(RoomEvent.DataReceived, h); };
   }, [room, onWbOpen, onWbClose, strokesBuffer, onMatOpen, onMatClose]);
   return null;
 };
