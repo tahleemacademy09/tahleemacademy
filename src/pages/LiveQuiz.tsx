@@ -443,7 +443,7 @@ Make questions educational, clearly worded, and accurate.`
       } as any).select().single();
       if (error) throw error;
 
-      setRoom(rd as Room);
+      setRoom(rd as unknown as Room);
       for (let i = 0; i < selected.length; i++) {
         await supabase.from("live_quiz_questions" as any).insert({
           room_id: (rd as any).id, question: selected[i].question,
