@@ -16,10 +16,10 @@ const PaymentBanner = () => {
   // If payments are OFF or academy is on holiday, no banner
   if (!isPaymentEnabled || isHoliday) return null;
 
-  if (profile.payment_status === "paid" || profile.payment_status === "exempt" || profile.is_payment_exempt) return null;
+  if (profile.payment_status === "paid" || profile.payment_status === "exempt" || (profile as any).is_payment_exempt) return null;
   if (profile.payment_status !== "grace") return null;
 
-  const endDate = profile.subscription_end_date ? new Date(profile.subscription_end_date) : null;
+  const endDate = (profile as any).subscription_end_date ? new Date((profile as any).subscription_end_date as string) : null;
   const daysLeft = endDate ? Math.max(0, Math.ceil((endDate.getTime() - Date.now()) / 86400000)) : 0;
 
   return (

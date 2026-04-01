@@ -97,9 +97,9 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   label: "Finance",
   icon: CreditCard,
   children: [
-    { type:"link", to:"/admin/payments",              icon: CreditCard,  label:"Payment Settings" },
-    { type:"link", to:"/admin/tasjeel",                icon: UserPlus,    label:"🎓 Tasjeel"       },
-    { type:"link", to:"/admin/registration-settings", icon: UserPlus,    label:"Registration"     },
+    { to:"/admin/payments",              icon: CreditCard,  label:"Payment Settings" },
+    { to:"/admin/tasjeel",                icon: UserPlus,    label:"🎓 Tasjeel"       },
+    { to:"/admin/registration-settings", icon: UserPlus,    label:"Registration"     },
   ]
 },
     { type:"link", to:"/admin/majlis-moderation", icon:MessageCircle, label:t("Al-Majlis","المجلس") },
