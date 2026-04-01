@@ -149,9 +149,9 @@ const StudentManagement = () => {
 
   const toggleRole = async (userId: string, role: string, hasIt: boolean) => {
     if(hasIt){
-      await supabase.from("user_roles").delete().eq("user_id",userId).eq("role",role);
+      await supabase.from("user_roles").delete().eq("user_id",userId).eq("role",role as any);
     } else {
-      await supabase.from("user_roles").insert({ user_id: userId, role: role as any } as any);
+      await (supabase as any).from("user_roles").insert({ user_id: userId, role });
     }
     setUsers(prev=>prev.map(u=>{
       if(u.user_id!==userId) return u;

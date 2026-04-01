@@ -162,7 +162,7 @@ const EnrollmentPayment = () => {
     const { data } = await supabase.from("payments" as any)
       .select("*").eq("student_id", user.id)
       .order("created_at", { ascending: false }).limit(50);
-    setPayments((data || []) as Payment[]);
+    setPayments((data || []) as unknown as Payment[]);
     setLoadingHistory(false);
   }, [user]);
 

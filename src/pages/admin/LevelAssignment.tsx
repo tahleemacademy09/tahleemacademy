@@ -214,13 +214,13 @@ const LevelAssignment = () => {
         grace_end_date: new Date(Date.now() + 7 * 86400000).toISOString(),
       }).eq("user_id", student.user_id);
       // Notify student
-      await supabase.from("admin_notifications" as any).insert({
+      await (supabase as any).from("admin_notifications").insert({
         type: "level_assigned",
         user_id: student.user_id,
         message: `Congratulations! You have been assigned to the ${LEVEL_CFG[lvl].label} level. Please subscribe to begin your classes.`,
         created_at: new Date().toISOString(),
         read: false,
-      }).then(() => {}).catch(() => {});
+      });
 
       toast({ title: `✅ ${student.full_name} assigned to ${LEVEL_CFG[lvl].label}` });
       await load();

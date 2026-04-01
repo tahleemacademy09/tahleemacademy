@@ -193,9 +193,9 @@ const EnrollmentPayment = () => {
       }
 
       // Auto-expire if grace period is over
-      if (enr && enr.status === "grace" && enr.grace_end_date && new Date(enr.grace_end_date) < new Date()) {
-        await supabase.from("enrollments" as any).update({ status: "locked" }).eq("id", enr.id);
-        enr = { ...enr, status: "locked" };
+      if (enr && (enr as any).status === "grace" && (enr as any).grace_end_date && new Date((enr as any).grace_end_date) < new Date()) {
+        await supabase.from("enrollments" as any).update({ status: "locked" }).eq("id", (enr as any).id);
+        enr = { ...(enr as any), status: "locked" };
       }
 
       setEnrollment(enr as unknown as Enrollment);

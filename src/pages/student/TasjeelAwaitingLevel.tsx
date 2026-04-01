@@ -38,17 +38,17 @@ const TasjeelAwaitingLevel = () => {
       // Also check profiles directly for level assignment
       const { data: profile } = await supabase
         .from("profiles")
-        .select("level, course_level")
+        .select("level")
         .eq("user_id", user.id)
         .single();
 
-      if (profile?.level && profile.level !== "pending") {
+      if ((profile as any)?.level && (profile as any).level !== "pending") {
         // Admin has assigned a level — advance to completed
         await supabase
           .from("tasjeel_progress" as any)
           .update({
             current_step:     "completed",
-            level_assigned:   profile.level,
+            level_assigned:   (profile as any).level,
             level_assigned_at: new Date().toISOString(),
             completed_at:     new Date().toISOString(),
             updated_at:       new Date().toISOString(),
