@@ -311,7 +311,7 @@ const LiveQuiz = () => {
   const loadCurrentQ = async (idx: number) => {
     if (!room) return;
     const { data } = await supabase.from("live_quiz_questions" as any).select("*").eq("room_id", room.id).eq("order_index", idx).single();
-    if (data) setCurrentQ({ ...data, options: data.options as string[] } as Question);
+    if (data) setCurrentQ({ ...(data as any), options: (data as any).options as string[] } as Question);
   };
 
   const loadAnswerCounts = async () => {
