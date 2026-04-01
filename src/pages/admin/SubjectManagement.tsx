@@ -200,7 +200,7 @@ const SubjectManagement = () => {
                 return (
                   <div key={s.id} style={{ background:"#fff", borderRadius:18, border:`1.5px solid ${s.is_active?"#E5E7EB":"#FEE2E2"}`, overflow:"hidden", boxShadow:"0 2px 8px rgba(0,0,0,.05)", opacity:s.is_active?1:.75 }}>
                     {/* Header */}
-                    <div style={{ height:130, background:s.image_url?`linear-gradient(rgba(0,0,0,.35),rgba(0,0,0,.5)),url(${s.image_url}) center/cover`:`linear-gradient(135deg,${s.color||G},${s.color||G}dd)`, display:"flex", flexDirection:"column", justifyContent:"space-between", padding:"12px 14px" }}>
+                    <div style={{ height:130, background:s.image_url?`linear-gradient(rgba(0,0,0,.35),rgba(0,0,0,.5)),url(${s.image_url}) center/cover`:`linear-gradient(135deg,${(s as any).color||G},${(s as any).color||G}dd)`, display:"flex", flexDirection:"column", justifyContent:"space-between", padding:"12px 14px" }}>
                       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
                         <div style={{ width:36, height:36, borderRadius:10, background:"rgba(255,255,255,.2)", display:"flex", alignItems:"center", justifyContent:"center" }}>
                           <BookOpen size={18} color="#fff"/>

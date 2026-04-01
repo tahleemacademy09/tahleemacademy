@@ -525,7 +525,7 @@ Make questions educational, clearly worded, and accurate.`
       setView("results-host");
     } else {
       const { data: qData } = await supabase.from("live_quiz_questions" as any).select("*").eq("room_id", room.id).eq("order_index", next).single();
-      const q = qData ? { ...qData, options: qData.options as string[] } as Question : null;
+      const q = qData ? { ...(qData as any), options: (qData as any).options as string[] } as Question : null;
       if (q) {
         setCurrentQ(q);
         broadcastQuestion(q);

@@ -151,7 +151,7 @@ const StudentManagement = () => {
     if(hasIt){
       await supabase.from("user_roles").delete().eq("user_id",userId).eq("role",role);
     } else {
-      await supabase.from("user_roles").insert({ user_id:userId, role } as any);
+      await supabase.from("user_roles").insert({ user_id: userId, role: role as any } as any);
     }
     setUsers(prev=>prev.map(u=>{
       if(u.user_id!==userId) return u;
