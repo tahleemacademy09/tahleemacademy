@@ -271,7 +271,7 @@ const EntranceExamTaking = () => {
       await supabase.rpc("grade_exam_attempt", { _attempt_id: attemptId! });
 
       // Advance Tasjeel step to "review"
-      await advanceStep("review", { exam_completed_at: new Date().toISOString(), exam_attempt_id: attemptId });
+      await advanceStep("review");
 
       navigate(`/student/entrance-results/${attemptId}`, { replace: true });
     } catch (err) {
