@@ -1,8 +1,10 @@
 // src/hooks/useTasjeel.ts
 // ═══════════════════════════════════════════════════════════════════════════
 // TASJEEL PIPELINE HOOK
-// Reads the user's current registration step from tasjeel_progress.
-// Used by TasjeelGuard, Login redirect, and individual step pages.
+// FIX: Wrapped refresh() in try-finally so setLoading(false) is ALWAYS
+// called even if the Supabase query throws (e.g. table missing, RLS error,
+// network timeout). Previously an uncaught throw left loading=true forever,
+// causing ProtectedRoute to spin indefinitely after sign-in.
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { useState, useEffect, useCallback } from "react";
@@ -57,7 +59,7 @@ export interface UseTasjeelReturn {
 
 export const TASJEEL_ROUTES: Record<TasjeelStep, string> = {
   enrollment:       "/register",
-  payment:          "/register",           // payment is inline in Register.tsx step 2
+  payment:          "/register",
   onboarding:       "/onboarding",
   exam:             "/student/entrance-exam",
   review:           "/student/entrance-results",
@@ -73,19 +75,35 @@ export function useTasjeel(): UseTasjeelReturn {
   const [loading, setLoading]   = useState(true);
 
   // ── Fetch progress from DB ──────────────────────────────────────────────
+  // FIX: try-finally guarantees setLoading(false) always fires, even when
+  // the query throws instead of returning { data, error }.
   const refresh = useCallback(async () => {
-    if (!user) { setLoading(false); return; }
-
-    const { data, error } = await supabase
-      .from("tasjeel_progress" as any)
-      .select("*")
-      .eq("user_id", user.id)
-      .maybeSingle();
-
-    if (!error && data) {
-      setProgress(data as TasjeelProgress);
+    if (!user) {
+      setLoading(false);
+      return;
     }
-    setLoading(false);
+
+    try {
+      const { data, error } = await supabase
+        .from("tasjeel_progress" as any)
+        .select("*")
+        .eq("user_id", user.id)
+        .maybeSingle();
+
+      if (error) {
+        // Log but don't crash — user can still proceed
+        console.error("[useTasjeel] refresh error:", error);
+      } else if (data) {
+        setProgress(data as TasjeelProgress);
+      }
+    } catch (err) {
+      // Network / unexpected errors — log but don't leave spinner stuck
+      console.error("[useTasjeel] refresh threw:", err);
+    } finally {
+      // ALWAYS clear loading — this was missing before and caused the
+      // infinite spinner on sign-in via ProtectedRoute
+      setLoading(false);
+    }
   }, [user]);
 
   useEffect(() => {
@@ -103,44 +121,41 @@ export function useTasjeel(): UseTasjeelReturn {
         ...metadata,
       };
 
-      // Set timestamp fields when crossing key steps
-      if (toStep === "onboarding" && !progress?.onboarding_completed_at) {
-        // Don't set yet — set when onboarding actually completes
-      }
       if (toStep === "completed") {
         update.completed_at = new Date().toISOString();
       }
 
-      const { data, error } = await supabase
-        .from("tasjeel_progress" as any)
-        .upsert(
-          { user_id: user.id, ...update } as any,
-          { onConflict: "user_id" }
-        )
-        .select()
-        .single();
+      try {
+        const { data, error } = await supabase
+          .from("tasjeel_progress" as any)
+          .upsert(
+            { user_id: user.id, ...update } as any,
+            { onConflict: "user_id" }
+          )
+          .select()
+          .single();
 
-      if (!error && data) {
-        setProgress(data as TasjeelProgress);
-      } else if (error) {
-        console.error("[useTasjeel] advanceStep error:", error);
+        if (!error && data) {
+          setProgress(data as TasjeelProgress);
+        } else if (error) {
+          console.error("[useTasjeel] advanceStep error:", error);
+        }
+      } catch (err) {
+        console.error("[useTasjeel] advanceStep threw:", err);
       }
     },
     [user, progress]
   );
 
-  const currentStep  = progress?.current_step ?? null;
-  const isCompleted  = currentStep === "completed";
-  const stepRoute    = currentStep ? TASJEEL_ROUTES[currentStep] : "/register";
+  const currentStep = progress?.current_step ?? null;
+  const isCompleted = currentStep === "completed";
+  const stepRoute   = currentStep ? TASJEEL_ROUTES[currentStep] : "/register";
 
   return { progress, loading, isCompleted, currentStep, advanceStep, refresh, stepRoute };
 }
 
 // ── Utility: Initialize Tasjeel for a user (idempotent) ───────────────────
-//
-// Call this after ANY successful authentication.
-// Uses upsert with onConflict so it's safe to call multiple times.
-//
+
 export async function initializeTasjeel(
   userId: string,
   registrationEnabled: boolean
@@ -157,16 +172,14 @@ export async function initializeTasjeel(
         updated_at:   new Date().toISOString(),
       } as any,
       {
-        // Only insert if row doesn't exist — don't overwrite existing progress
-        onConflict:        "user_id",
-        ignoreDuplicates:  true,
+        onConflict:       "user_id",
+        ignoreDuplicates: true,
       }
     )
     .select()
     .single();
 
   if (error && error.code !== "23505") {
-    // 23505 = unique_violation (row already exists — that's fine)
     console.error("[Tasjeel] initializeTasjeel error:", error);
   }
 
@@ -181,6 +194,7 @@ export async function initializeTasjeel(
 }
 
 // ── Utility: Create dashboard record (idempotent) ──────────────────────────
+
 export async function createDashboardIfNotExists(userId: string): Promise<void> {
   await supabase
     .from("dashboards" as any)
