@@ -305,7 +305,7 @@ const LiveQuiz = () => {
   const loadParticipants = async () => {
     if (!room) return;
     const { data } = await supabase.from("live_quiz_participants" as any).select("*").eq("room_id", room.id).order("score",{ascending:false});
-    setParticipants((data||[]) as Participant[]);
+    setParticipants((data||[]) as unknown as Participant[]);
   };
 
   const loadCurrentQ = async (idx: number) => {
