@@ -125,7 +125,7 @@ const EnrollmentPayment = () => {
       const plansRes = await supabase.from("payment_plans" as any)
         .select("*").eq("is_active", true).order("amount");
 
-      const allPlans = (plansRes.data || []) as Plan[];
+      const allPlans = (plansRes.data || []) as unknown as Plan[];
       const hasPrivate = !!(profRes.data as any)?.private_session_rate || (profRes.data as any)?.student_type === "private";
 
       // Match plan to student's level:
