@@ -465,7 +465,7 @@ Make questions educational, clearly worded, and accurate.`
     try {
       const { data: rd } = await supabase.from("live_quiz_rooms" as any).select("*").eq("code", joinCode.trim()).eq("status","waiting").single();
       if (!rd) throw new Error("Room not found or already started");
-      setRoom(rd as Room);
+      setRoom(rd as unknown as Room);
       const { data: pd, error: pe } = await supabase.from("live_quiz_participants" as any).insert({
         room_id: (rd as any).id, player_name: playerName.trim(), score:0, streak:0,
       } as any).select().single();
