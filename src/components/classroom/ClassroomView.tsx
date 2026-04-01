@@ -364,7 +364,7 @@ const RecController = ({ sessionId, subjectId, userEmail, onSavingChange }: any)
     };
     acRef.current?.close();
     setRecording(false); setPaused(false);
-    if (sessionId) await supabase.from("live_sessions").update({ is_recording:false }).eq("id", sessionId);
+    if (sessionId) await supabase.from("live_sessions").update({ is_recording:false } as any).eq("id", sessionId);
   };
 
   const togglePause = () => {
