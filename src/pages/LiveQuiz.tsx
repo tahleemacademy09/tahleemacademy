@@ -470,7 +470,7 @@ Make questions educational, clearly worded, and accurate.`
         room_id: (rd as any).id, player_name: playerName.trim(), score:0, streak:0,
       } as any).select().single();
       if (pe) throw pe;
-      setParticipant(pd as Participant);
+      setParticipant(pd as unknown as Participant);
       setView("lobby-player");
     } catch(e:any) {
       toast({ title:"Error", description:e.message, variant:"destructive" });
