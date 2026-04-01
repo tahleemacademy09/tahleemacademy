@@ -8,20 +8,34 @@ const Index = () => {
   const [showEnrollGuide, setShowEnrollGuide] = useState(false);
 
   useEffect(() => {
-    supabase.from("public_classes").select("title, room_code").eq("status", "live").eq("is_featured", true).limit(1).then(({ data }) => {
-      if (data && data.length > 0) setLiveClass(data[0] as { title: string; room_code: string });
-    });
+    let cancelled = false;
+    // ✅ Wrapped in try/catch + cancelled flag so it never stalls auth
+    const fetchLiveClass = async () => {
+      try {
+        const { data, error } = await supabase
+          .from("public_classes")
+          .select("title, room_code")
+          .eq("status", "live")
+          .eq("is_featured", true)
+          .limit(1);
+        if (!cancelled && !error && data && data.length > 0) {
+          setLiveClass(data[0] as { title: string; room_code: string });
+        }
+      } catch {
+        // silently ignore — live banner is optional
+      }
+    };
+    fetchLiveClass();
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
-    // Inject Google Fonts
     const link = document.createElement("link");
     link.rel = "stylesheet";
     link.href =
       "https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Cairo:wght@400;600;700&family=Amiri:wght@400;700&display=swap";
     document.head.appendChild(link);
 
-    // Inject CSS
     const style = document.createElement("style");
     style.innerHTML = `
       .ta-root * { margin:0; padding:0; box-sizing:border-box; }
@@ -304,7 +318,6 @@ const Index = () => {
                   How to Enroll {showEnrollGuide ? "▲" : "▼"}
                 </button>
               </div>
-              {/* Expandable enrollment guide */}
               {showEnrollGuide && (
                 <div style={{
                   background: "rgba(0,0,0,0.55)", backdropFilter: "blur(12px)",
@@ -383,7 +396,7 @@ const Index = () => {
         </div>
       </section>
 
-      {/* WHY SECTION — 3 IMAGE CARDS */}
+      {/* WHY SECTION */}
       <section className="ta-why-outer">
         <div className="ta-why-inner">
           <div className="ta-section-tag" style={{direction:"rtl", fontFamily:"'Amiri',serif", fontSize:"20px", letterSpacing:"0", textTransform:"none"}}>وَفَوْقَ كُلِّ ذِي عِلْمٍ عَلِيمٌ</div>
@@ -539,4 +552,3 @@ const Index = () => {
 };
 
 export default Index;
-
