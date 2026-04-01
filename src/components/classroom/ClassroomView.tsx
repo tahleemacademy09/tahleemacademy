@@ -342,7 +342,7 @@ const RecController = ({ sessionId, subjectId, userEmail, onSavingChange }: any)
     mr.ondataavailable = e => { if (e.data.size>0) chunksRef.current.push(e.data); };
     mr.start(1000); mrRef.current = mr; setRecording(true); setPaused(false); setTime(0);
     timerRef.current = setInterval(()=>setTime(t=>t+1), 1000);
-    if (sessionId) await supabase.from("live_sessions").update({ is_recording:true }).eq("id", sessionId);
+    if (sessionId) await supabase.from("live_sessions").update({ is_recording:true } as any).eq("id", sessionId);
   };
 
   const stopRec = async () => {
