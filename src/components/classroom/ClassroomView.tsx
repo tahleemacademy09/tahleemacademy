@@ -355,8 +355,8 @@ const RecController = ({ sessionId, subjectId, userEmail, onSavingChange }: any)
         await supabase.storage.from("recordings").upload(path, blob);
         const { data:{ publicUrl } } = supabase.storage.from("recordings").getPublicUrl(path);
         if (sessionId) {
-          await supabase.from("live_sessions").update({ recording_url:publicUrl, is_recording:false }).eq("id", sessionId);
-          await supabase.from("recordings").insert({ session_id:sessionId, subject_id:subjectId, url:publicUrl, recorded_by:userEmail, duration_seconds:time });
+          await supabase.from("live_sessions").update({ recording_url:publicUrl, is_recording:false } as any).eq("id", sessionId);
+          await supabase.from("recordings" as any).insert({ session_id:sessionId, subject_id:subjectId, url:publicUrl, recorded_by:userEmail, duration_seconds:time });
         }
         toast({ title:t("Recording saved ✅","تم حفظ التسجيل ✅") });
       } catch (e:any) { toast({ title:"Save failed", description:e?.message, variant:"destructive" }); }
