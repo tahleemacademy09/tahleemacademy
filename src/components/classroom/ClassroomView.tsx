@@ -85,7 +85,7 @@ const Whiteboard = ({ room, onClose, isTeacher, initialStrokes, subjectId, canSt
     (async () => {
       try {
         const { data } = await supabase.from("subject_whiteboard" as any).select("strokes").eq("subject_id", subjectId).maybeSingle();
-        if (data?.strokes?.length) strokesRef.current = data.strokes;
+        if ((data as any)?.strokes?.length) strokesRef.current = (data as any).strokes;
         else if (initialStrokes?.length) strokesRef.current = initialStrokes;
       } catch { if (initialStrokes?.length) strokesRef.current = initialStrokes; }
       setBusy(false); setTimeout(redraw, 40);
