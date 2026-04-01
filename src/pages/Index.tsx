@@ -1,285 +1,514 @@
-// supabase/functions/paystack-webhook/index.ts
-// ═══════════════════════════════════════════════════════════════════════════
-// C-4 FIX APPLIED — Webhook signature check is now MANDATORY.
-//
-// VULNERABILITY THAT WAS HERE:
-//   if (signature) {          ← if header is absent, entire check was skipped
-//     verifySignature(...)    ← attacker sends no header → free payment bypass
-//   }
-//
-// FIX:
-//   Signature header is now REQUIRED. A missing or invalid signature returns
-//   HTTP 401 immediately — the webhook body is never processed.
-//
-// All existing payment + Tasjeel logic below is UNCHANGED.
-// ═══════════════════════════════════════════════════════════════════════════
+/*  src/pages/Index.tsx
+    Tahleem Academy \u2014 Public Landing / Home Page
+    \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+    FIX: Previous file was accidentally overwritten with
+    supabase/functions/paystack-webhook/index.ts (Deno edge-function code),
+    which caused "Deno is not defined" to crash the entire app on load.
+    This is the correct React component for the "/" route.
+*/
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { useNavigate } from "react-router-dom";
+import { motion } from "framer-motion";
+import {
+  BookOpen, Users, Star, GraduationCap, Mic, Video,
+  CheckCircle, ArrowRight, Sparkles, Clock, Shield,
+  Globe, Award, BookMarked, Heart, ChevronRight,
+} from "lucide-react";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+/* \u2500\u2500 Design tokens (match Pricing / About pages) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */
+const G      = "#064E3B";
+const GM     = "#075E54";
+const LIGHT  = "#F0FDF4";
+const GOLD   = "#D4A843";
+const GOLDBG = "#FFFBEB";
+
+/* \u2500\u2500 Framer-motion helpers \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */
+const fadeUp = {
+  hidden:  { opacity: 0, y: 28 },
+  visible: (i = 0) => ({
+    opacity: 1, y: 0,
+    transition: { delay: i * 0.1, duration: 0.55, ease: "easeOut" },
+  }),
 };
 
-// ── HMAC-SHA512 signature verification (Paystack standard) ────────────────
-async function verifySignature(
-  body: string,
-  signature: string,
-  secret: string
-): Promise<boolean> {
-  const encoder = new TextEncoder();
-  const key = await crypto.subtle.importKey(
-    "raw",
-    encoder.encode(secret),
-    { name: "HMAC", hash: "SHA-512" },
-    false,
-    ["sign"]
-  );
-  const sig  = await crypto.subtle.sign("HMAC", key, encoder.encode(body));
-  const hash = Array.from(new Uint8Array(sig))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-  return hash === signature;
-}
+const stagger = {
+  hidden:  {},
+  visible: { transition: { staggerChildren: 0.1 } },
+};
 
-Deno.serve(async (req) => {
-  // ── CORS preflight ────────────────────────────────────────────────────────
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+/* \u2500\u2500 Data \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */
+const STATS = [
+  { icon: <Users  size={28} color={G} />, value: "500+",  label: "Students Enrolled"    },
+  { icon: <Star   size={28} color={G} />, value: "4.9\u2605",  label: "Average Rating"       },
+  { icon: <Clock  size={28} color={G} />, value: "3 yrs", label: "Years of Excellence"  },
+  { icon: <Globe  size={28} color={G} />, value: "12+",   label: "Countries Reached"    },
+];
 
-  // ── GET — return Paystack public key to frontend ──────────────────────────
-  if (req.method === "GET") {
-    const publicKey = Deno.env.get("PAYSTACK_PUBLIC_KEY") || "";
-    return new Response(JSON.stringify({ publicKey }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
+const FEATURES = [
+  {
+    icon:  <BookOpen size={32} color={G} />,
+    title: "Structured Curriculum",
+    desc:  "From Noorani Qaida to advanced Tajweed \u2014 every level follows a carefully designed Islamic education pathway.",
+  },
+  {
+    icon:  <Mic size={32} color={G} />,
+    title: "Live Recitation Feedback",
+    desc:  "AI-assisted and teacher-reviewed recitation assessments give you real-time corrections on your Tajweed.",
+  },
+  {
+    icon:  <Video size={32} color={G} />,
+    title: "Live Interactive Classes",
+    desc:  "Attend scheduled live sessions with qualified ustadhs via our built-in virtual classroom.",
+  },
+  {
+    icon:  <Award size={32} color={G} />,
+    title: "Certified Instructors",
+    desc:  "Learn from verified scholars with ij\u0101zah chains, combining authentic knowledge with modern pedagogy.",
+  },
+  {
+    icon:  <BookMarked size={32} color={G} />,
+    title: "Al-Hifdh Centre",
+    desc:  "A dedicated Quran memorization module with spaced-repetition, audio playback, and progress tracking.",
+  },
+  {
+    icon:  <Shield size={32} color={G} />,
+    title: "Secure & Proctored Exams",
+    desc:  "Tamper-resistant online exams with live proctoring \u2014 your academic integrity is protected.",
+  },
+];
 
-  // ── All non-POST methods rejected ─────────────────────────────────────────
-  if (req.method !== "POST") {
-    return new Response(JSON.stringify({ error: "Method not allowed" }), {
-      status: 405,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
+const PROGRAMS = [
+  {
+    level:   "Beginner",
+    levelAr: "\u0627\u0644\u0645\u0628\u062a\u062f\u0626",
+    color:   "#16A34A",
+    bg:      "#F0FDF4",
+    border:  "#86EFAC",
+    price:   "\u20a65,000 / mo",
+    items:   ["Noorani Qaida", "Basic Tajweed", "Arabic Alphabet", "Foundational Islamic Studies"],
+  },
+  {
+    level:   "Intermediate",
+    levelAr: "\u0627\u0644\u0645\u062a\u0648\u0633\u0637",
+    color:   "#2563EB",
+    bg:      "#EFF6FF",
+    border:  "#93C5FD",
+    price:   "\u20a66,000 / mo",
+    badge:   "Most Popular",
+    items:   ["Full Tajweed Rules", "Surah Memorisation", "Arabic Grammar Basics", "Fiqh & Aqeedah"],
+  },
+  {
+    level:   "Advanced",
+    levelAr: "\u0627\u0644\u0645\u062a\u0642\u062f\u0645",
+    color:   "#7C3AED",
+    bg:      "#F5F3FF",
+    border:  "#C4B5FD",
+    price:   "\u20a67,000 / mo",
+    items:   ["Advanced Tajweed & Qir\u0101'\u0101t", "Full Hifdh Programme", "Advanced Arabic", "Tafseer & Hadith Sciences"],
+  },
+];
 
-  // ── Read body FIRST (can only be read once) ───────────────────────────────
-  const body   = await req.text();
-  const secret = Deno.env.get("PAYSTACK_SECRET_KEY") || "";
+const HOW_IT_WORKS = [
+  { step: "01", title: "Register & Pay",    desc: "Create your account and pay the one-time \u20a65,000 registration fee." },
+  { step: "02", title: "Entrance Exam",     desc: "Take our online written and recitation entrance assessment." },
+  { step: "03", title: "Level Assignment",  desc: "An ustadh reviews your recitation and assigns your level." },
+  { step: "04", title: "Start Learning",    desc: "Get full access to your level's live classes, materials, and Al-Hifdh Centre." },
+];
 
-  // ── C-4 FIX: Signature is now MANDATORY ───────────────────────────────────
-  // Previously: `if (signature) { verify() }` — no header = no check = bypass.
-  // Now: missing header → 401. Invalid signature → 401. No exceptions.
-  const signature = req.headers.get("x-paystack-signature");
+/* \u2500\u2500 Component \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */
+const Index = () => {
+  const navigate = useNavigate();
 
-  if (!signature) {
-    console.warn("[paystack-webhook] Request rejected: missing x-paystack-signature header");
-    return new Response(
-      JSON.stringify({ error: "Missing signature header" }),
-      {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
-    );
-  }
+  return (
+    <div style={{ fontFamily: "inherit", color: "#111" }}>
 
-  const valid = await verifySignature(body, signature, secret);
-  if (!valid) {
-    console.warn("[paystack-webhook] Request rejected: signature mismatch");
-    return new Response(
-      JSON.stringify({ error: "Invalid signature" }),
-      {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
-    );
-  }
+      {/* \u2500\u2500 HERO \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */}
+      <section
+        style={{
+          background: `linear-gradient(135deg, ${G} 0%, ${GM} 50%, #0F766E 100%)`,
+          minHeight: "100vh",
+          display: "flex",
+          alignItems: "center",
+          padding: "80px 20px 60px",
+          position: "relative",
+          overflow: "hidden",
+        }}
+      >
+        {/* Decorative pattern overlay */}
+        <div
+          aria-hidden
+          style={{
+            position: "absolute", inset: 0,
+            backgroundImage: `radial-gradient(circle at 20% 50%, rgba(212,168,67,0.12) 0%, transparent 50%),
+                              radial-gradient(circle at 80% 20%, rgba(255,255,255,0.06) 0%, transparent 40%)`,
+          }}
+        />
 
-  // ── Signature verified — safe to process ─────────────────────────────────
-  const supabase = createClient(
-    Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-  );
+        <div style={{ maxWidth: 900, margin: "0 auto", textAlign: "center", position: "relative", zIndex: 1 }}>
 
-  try {
-    const event     = JSON.parse(body);
-    const eventType = event.event;
-    const data      = event.data;
+          {/* Badge */}
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.4 }}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 8,
+              background: "rgba(212,168,67,0.2)", border: `1px solid ${GOLD}`,
+              borderRadius: 50, padding: "6px 16px", marginBottom: 28,
+            }}
+          >
+            <Sparkles size={14} color={GOLD} />
+            <span style={{ color: GOLD, fontSize: 13, fontWeight: 700 }}>
+              Nigeria's Leading Islamic E-Learning Platform
+            </span>
+          </motion.div>
 
-    if (eventType === "charge.success") {
-      const reference     = data.reference;
-      const transactionId = String(data.id);
-      const customerEmail = data.customer?.email || "";
-      const amountKobo    = data.amount || 0;   // Paystack always sends in kobo/pesewas
-      const currency      = data.currency || "NGN";
+          {/* Headline */}
+          <motion.h1
+            initial={{ opacity: 0, y: 30 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, delay: 0.1 }}
+            style={{
+              fontSize: "clamp(2rem, 6vw, 3.8rem)",
+              fontWeight: 800,
+              color: "#fff",
+              lineHeight: 1.18,
+              marginBottom: 20,
+            }}
+          >
+            Learn Qur'an & Islamic Studies
+            <br />
+            <span style={{ color: GOLD }}>From Authentic Scholars</span>
+          </motion.h1>
 
-      // ── 1. Update payments table ─────────────────────────────────────────
-      await supabase
-        .from("payments")
-        .update({
-          status:                  "success",
-          paystack_transaction_id: transactionId,
-          payment_method:          data.channel || "paystack",
-          paid_at:                 new Date().toISOString(),
-        })
-        .eq("paystack_reference", reference);
+          {/* Arabic sub-headline */}
+          <motion.p
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.25, duration: 0.5 }}
+            style={{
+              fontSize: "clamp(1rem, 2.5vw, 1.4rem)",
+              color: "rgba(255,255,255,0.7)",
+              marginBottom: 10,
+              fontFamily: "serif",
+              direction: "rtl",
+            }}
+          >
+            \u062a\u0639\u0644\u0651\u0645 \u0627\u0644\u0642\u0631\u0622\u0646 \u0627\u0644\u0643\u0631\u064a\u0645 \u0648\u0627\u0644\u0639\u0644\u0648\u0645 \u0627\u0644\u0625\u0633\u0644\u0627\u0645\u064a\u0629 \u0645\u0639 \u0639\u0644\u0645\u0627\u0621 \u0645\u0648\u062b\u0648\u0642\u064a\u0646
+          </motion.p>
 
-      // ── 2. Fetch payment record ───────────────────────────────────────────
-      const { data: payment } = await supabase
-        .from("payments")
-        .select("*, payment_plans(*)")
-        .eq("paystack_reference", reference)
-        .single();
+          <motion.p
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.3, duration: 0.5 }}
+            style={{
+              fontSize: "clamp(0.95rem, 2vw, 1.15rem)",
+              color: "rgba(255,255,255,0.78)",
+              maxWidth: 640,
+              margin: "0 auto 36px",
+              lineHeight: 1.7,
+            }}
+          >
+            Structured programmes in Tajweed, Quran memorisation (Al-Hifdh), Arabic,
+            Fiqh, and Aqeedah \u2014 taught live by qualified instructors with weekly sessions,
+            AI recitation feedback, and certified transcripts.
+          </motion.p>
 
-      if (payment) {
-        // ── 3. Update enrollment status ──────────────────────────────────────
-        await supabase
-          .from("enrollments")
-          .update({
-            status:  "active",
-            paid_at: new Date().toISOString(),
-          })
-          .eq("user_id", payment.user_id);
+          {/* CTA Buttons */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.4, duration: 0.5 }}
+            style={{ display: "flex", gap: 14, justifyContent: "center", flexWrap: "wrap" }}
+          >
+            <button
+              onClick={() => navigate("/register")}
+              style={{
+                background: GOLD, color: "#fff",
+                border: "none", borderRadius: 10,
+                padding: "14px 32px", fontSize: 16, fontWeight: 700,
+                cursor: "pointer", display: "flex", alignItems: "center", gap: 8,
+                boxShadow: "0 4px 20px rgba(212,168,67,0.4)",
+                transition: "transform 0.15s",
+              }}
+              onMouseEnter={e => (e.currentTarget.style.transform = "translateY(-2px)")}
+              onMouseLeave={e => (e.currentTarget.style.transform = "translateY(0)")}
+            >
+              Enroll Now \u2014 \u20a65,000 <ArrowRight size={18} />
+            </button>
+            <button
+              onClick={() => navigate("/courses")}
+              style={{
+                background: "rgba(255,255,255,0.12)",
+                color: "#fff",
+                border: "1.5px solid rgba(255,255,255,0.35)",
+                borderRadius: 10,
+                padding: "14px 32px", fontSize: 16, fontWeight: 600,
+                cursor: "pointer", display: "flex", alignItems: "center", gap: 8,
+                transition: "background 0.15s",
+              }}
+              onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.2)")}
+              onMouseLeave={e => (e.currentTarget.style.background = "rgba(255,255,255,0.12)")}
+            >
+              Explore Courses <ChevronRight size={18} />
+            </button>
+          </motion.div>
 
-        // ── 4. Advance Tasjeel step ───────────────────────────────────────────
-        // Idempotent — only advances if user is on 'payment' or 'enrollment' step
-        // and payment has not already been recorded. Safe for webhook replays.
-        await advanceTasjeelAfterPayment(supabase, payment.user_id, {
-          payment_ref:      reference,
-          payment_amount:   amountKobo / 100,
-          payment_currency: currency,
-        });
+          {/* Trust strip */}
+          <motion.p
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.55 }}
+            style={{ color: "rgba(255,255,255,0.5)", fontSize: 13, marginTop: 22 }}
+          >
+            \u2713 No hidden fees &nbsp;\u00b7&nbsp; \u2713 Certified instructors &nbsp;\u00b7&nbsp; \u2713 Cancel anytime
+          </motion.p>
+        </div>
+      </section>
 
-        // ── 5. Mark payment_history row as success ────────────────────────────
-        await supabase
-          .from("payment_history" as any)
-          .update({ status: "success" })
-          .eq("payment_ref", reference);
+      {/* \u2500\u2500 STATS \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */}
+      <section style={{ background: LIGHT, padding: "48px 20px" }}>
+        <div
+          style={{
+            maxWidth: 900, margin: "0 auto",
+            display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+            gap: 24,
+          }}
+        >
+          {STATS.map((s, i) => (
+            <motion.div
+              key={i}
+              custom={i}
+              initial="hidden"
+              whileInView="visible"
+              viewport={{ once: true }}
+              variants={fadeUp}
+              style={{
+                textAlign: "center", background: "#fff",
+                borderRadius: 14, padding: "28px 20px",
+                boxShadow: "0 2px 12px rgba(6,78,59,0.07)",
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}>{s.icon}</div>
+              <div style={{ fontSize: 28, fontWeight: 800, color: G }}>{s.value}</div>
+              <div style={{ fontSize: 13, color: "#6B7280", marginTop: 4 }}>{s.label}</div>
+            </motion.div>
+          ))}
+        </div>
+      </section>
 
-      } else {
-        // ── Fallback: no payments row found — resolve user by email ───────────
-        // This handles cases where the frontend didn't pre-create a payments row.
-        console.warn(
-          `[paystack-webhook] No payments row for reference=${reference}, falling back to email lookup`
-        );
+      {/* \u2500\u2500 FEATURES \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */}
+      <section style={{ padding: "72px 20px" }}>
+        <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+          <motion.div
+            initial="hidden" whileInView="visible" viewport={{ once: true }} variants={fadeUp}
+            style={{ textAlign: "center", marginBottom: 48 }}
+          >
+            <h2 style={{ fontSize: "clamp(1.6rem, 4vw, 2.4rem)", fontWeight: 800, color: G, marginBottom: 10 }}>
+              Why Tahleem Academy?
+            </h2>
+            <p style={{ fontSize: 15, color: "#6B7280", maxWidth: 560, margin: "0 auto" }}>
+              A complete Islamic education platform built for serious students \u2014 from total beginners to advanced scholars.
+            </p>
+          </motion.div>
 
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("user_id")
-          .eq("email", customerEmail)
-          .maybeSingle();
+          <motion.div
+            initial="hidden" whileInView="visible" viewport={{ once: true }} variants={stagger}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
+              gap: 24,
+            }}
+          >
+            {FEATURES.map((f, i) => (
+              <motion.div
+                key={i}
+                variants={fadeUp}
+                style={{
+                  background: "#fff",
+                  border: "1.5px solid #E5E7EB",
+                  borderRadius: 14,
+                  padding: "28px 24px",
+                  transition: "box-shadow 0.2s, border-color 0.2s",
+                }}
+                onMouseEnter={e => {
+                  (e.currentTarget as HTMLDivElement).style.borderColor = G;
+                  (e.currentTarget as HTMLDivElement).style.boxShadow = `0 4px 20px rgba(6,78,59,0.1)`;
+                }}
+                onMouseLeave={e => {
+                  (e.currentTarget as HTMLDivElement).style.borderColor = "#E5E7EB";
+                  (e.currentTarget as HTMLDivElement).style.boxShadow = "none";
+                }}
+              >
+                <div
+                  style={{
+                    width: 56, height: 56, borderRadius: 14,
+                    background: LIGHT, display: "flex", alignItems: "center",
+                    justifyContent: "center", marginBottom: 16,
+                  }}
+                >
+                  {f.icon}
+                </div>
+                <h3 style={{ fontSize: 17, fontWeight: 700, color: "#111", marginBottom: 8 }}>{f.title}</h3>
+                <p style={{ fontSize: 14, color: "#6B7280", lineHeight: 1.65 }}>{f.desc}</p>
+              </motion.div>
+            ))}
+          </motion.div>
+        </div>
+      </section>
 
-        if (profile?.user_id) {
-          await advanceTasjeelAfterPayment(supabase, profile.user_id, {
-            payment_ref:      reference,
-            payment_amount:   amountKobo / 100,
-            payment_currency: currency,
-          });
-        } else {
-          console.error(
-            `[paystack-webhook] Could not resolve user for reference=${reference}, email=${customerEmail}`
-          );
-        }
-      }
-    }
+      {/* \u2500\u2500 PROGRAMMES \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */}
+      <section style={{ background: LIGHT, padding: "72px 20px" }}>
+        <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+          <motion.div
+            initial="hidden" whileInView="visible" viewport={{ once: true }} variants={fadeUp}
+            style={{ textAlign: "center", marginBottom: 48 }}
+          >
+            <h2 style={{ fontSize: "clamp(1.6rem, 4vw, 2.4rem)", fontWeight: 800, color: G, marginBottom: 10 }}>
+              Choose Your Level
+            </h2>
+            <p style={{ fontSize: 15, color: "#6B7280", maxWidth: 520, margin: "0 auto" }}>
+              Three structured programmes \u2014 your level is assigned after the entrance assessment.
+            </p>
+          </motion.div>
 
-    return new Response(JSON.stringify({ received: true }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+          <motion.div
+            initial="hidden" whileInView="visible" viewport={{ once: true }} variants={stagger}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+              gap: 24,
+            }}
+          >
+            {PROGRAMS.map((p, i) => (
+              <motion.div
+                key={i}
+                variants={fadeUp}
+                style={{
+                  background: p.bg,
+                  border: `2px solid ${p.border}`,
+                  borderRadius: 16,
+                  padding: "28px 24px",
+                  position: "relative",
+                }}
+              >
+                {p.badge && (
+                  <div
+                    style={{
+                      position: "absolute", top: -12, right: 20,
+                      background: GOLD, color: "#fff",
+                      fontSize: 11, fontWeight: 800,
+                      padding: "4px 14px", borderRadius: 50,
+                      letterSpacing: 0.5,
+                    }}
+                  >
+                    \u2b50 {p.badge}
+                  </div>
+                )}
+                <div style={{ marginBottom: 16 }}>
+                  <span style={{ fontSize: 22, fontWeight: 800, color: p.color }}>{p.level}</span>
+                  <span
+                    style={{
+                      marginLeft: 10, fontSize: 15, color: p.color,
+                      fontFamily: "serif", direction: "rtl", display: "inline",
+                    }}
+                  >
+                    {p.levelAr}
+                  </span>
+                </div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: G, marginBottom: 18 }}>
+                  {p.price}
+                </div>
+                <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+                  {p.items.map((item, j) => (
+                    <li key={j} style={{ display: "flex", alignItems: "flex-start", gap: 9, marginBottom: 10 }}>
+                      <CheckCircle size={16} color={p.color} style={{ marginTop: 2, flexShrink: 0 }} />
+                      <span style={{ fontSize: 14, color: "#374151" }}>{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              </motion.div>
+            ))}
+          </motion.div>
 
-  } catch (err) {
-    console.error("[paystack-webhook] Processing error:", err);
-    return new Response(
-      JSON.stringify({ error: "Internal server error" }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
-    );
-  }
-});
+          <motion.div
+            initial="hidden" whileInView="visible" viewport={{ once: true }} variants={fadeUp}
+            style={{ textAlign: "center", marginTop: 36 }}
+          >
+            <button
+              onClick={() => navigate("/pricing")}
+              style={{
+                background: "transparent", color: G,
+                border: `2px solid ${G}`, borderRadius: 10,
+                padding: "12px 28px", fontSize: 15, fontWeight: 700,
+                cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 8,
+              }}
+            >
+              View Full Pricing Details <ArrowRight size={16} />
+            </button>
+          </motion.div>
+        </div>
+      </section>
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Advance Tasjeel pipeline from 'payment'/'enrollment' → next step
-//
-// Idempotency guarantees:
-//   • Only advances if current_step is 'payment' or 'enrollment'
-//   • Only advances if payment_status is NOT already 'paid'
-//   • Uses upsert with onConflict so replaying the webhook is safe
-// ─────────────────────────────────────────────────────────────────────────────
-async function advanceTasjeelAfterPayment(
-  supabase: ReturnType<typeof createClient>,
-  userId: string,
-  paymentMeta: {
-    payment_ref:      string;
-    payment_amount:   number;
-    payment_currency: string;
-  }
-) {
-  // Read current state
-  const { data: currentProgress } = await supabase
-    .from("tasjeel_progress")
-    .select("current_step, payment_status")
-    .eq("user_id", userId)
-    .single();
+      {/* \u2500\u2500 HOW IT WORKS \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */}
+      <section style={{ padding: "72px 20px" }}>
+        <div style={{ maxWidth: 900, margin: "0 auto" }}>
+          <motion.div
+            initial="hidden" whileInView="visible" viewport={{ once: true }} variants={fadeUp}
+            style={{ textAlign: "center", marginBottom: 48 }}
+          >
+            <h2 style={{ fontSize: "clamp(1.6rem, 4vw, 2.4rem)", fontWeight: 800, color: G, marginBottom: 10 }}>
+              How Enrolment Works
+            </h2>
+            <p style={{ fontSize: 15, color: "#6B7280", maxWidth: 480, margin: "0 auto" }}>
+              A transparent 4-step process from registration to your first class.
+            </p>
+          </motion.div>
 
-  // Only process if user is at the payment/enrollment step
-  const advanceable = ["payment", "enrollment"].includes(
-    currentProgress?.current_step ?? ""
-  );
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
+              gap: 24,
+            }}
+          >
+            {HOW_IT_WORKS.map((h, i) => (
+              <motion.div
+                key={i}
+                custom={i}
+                initial="hidden"
+                whileInView="visible"
+                viewport={{ once: true }}
+                variants={fadeUp}
+                style={{ textAlign: "center" }}
+              >
+                <div
+                  style={{
+                    width: 56, height: 56, borderRadius: "50%",
+                    background: `linear-gradient(135deg, ${G}, ${GM})`,
+                    color: "#fff", fontSize: 18, fontWeight: 800,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    margin: "0 auto 16px",
+                    boxShadow: "0 4px 14px rgba(6,78,59,0.25)",
+                  }}
+                >
+                  {h.step}
+                </div>
+                <h3 style={{ fontSize: 16, fontWeight: 700, color: "#111", marginBottom: 8 }}>{h.title}</h3>
+                <p style={{ fontSize: 13.5, color: "#6B7280", lineHeight: 1.6 }}>{h.desc}</p>
+              </motion.div>
+            ))}
+          </div>
+        </div>
+      </section>
 
-  // Skip if payment already recorded (duplicate webhook protection)
-  const alreadyPaid = currentProgress?.payment_status === "paid";
-
-  if (!advanceable || alreadyPaid) {
-    console.info(
-      `[Tasjeel] Skipping advance for user=${userId} — ` +
-      `step=${currentProgress?.current_step}, alreadyPaid=${alreadyPaid}`
-    );
-    return;
-  }
-
-  // Read admin settings to determine which step comes after payment
-  const { data: settings } = await supabase
-    .from("academy_settings")
-    .select("key, value")
-    .in("key", ["onboarding_required", "entrance_exam_required"]);
-
-  const settingsMap: Record<string, string> = {};
-  (settings ?? []).forEach((r: any) => { settingsMap[r.key] = r.value; });
-
-  // Determine next step
-  let nextStep = "onboarding";
-  if (settingsMap["onboarding_required"] === "false") {
-    nextStep = settingsMap["entrance_exam_required"] !== "false" ? "exam" : "completed";
-  }
-
-  const now = new Date().toISOString();
-
-  const { error } = await supabase
-    .from("tasjeel_progress")
-    .upsert(
-      {
-        user_id:          userId,
-        current_step:     nextStep,
-        payment_ref:      paymentMeta.payment_ref,
-        payment_status:   "paid",
-        payment_amount:   paymentMeta.payment_amount,
-        payment_currency: paymentMeta.payment_currency,
-        payment_paid_at:  now,
-        updated_at:       now,
-        ...(nextStep === "completed" ? { completed_at: now } : {}),
-      },
-      { onConflict: "user_id" }
-    );
-
-  if (error) {
-    console.error("[Tasjeel] advanceTasjeelAfterPayment error:", error);
-  } else {
-    console.info(
-      `[Tasjeel] User ${userId} advanced to step="${nextStep}" ` +
-      `after payment ref=${paymentMeta.payment_ref}`
-    );
-  }
-}
+      {/* \u2500\u2500 TESTIMONIAL / QUOTE \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */}
+      <section style={{ background: GOLDBG, padding: "60px 20px" }}>
+        <motion.div
+          initial="hidden" whileInView="visible" viewport={{ once: true }} variants={fadeUp}
+          style={{ maxWidth: 700, margin: "0 auto", textAlign: "center" }}
+        >
+          <Heart size={32} color={GOLD} style={{ margin: "0 auto 20px" }} />
+          <blockquote
+            style={{
+              fontSize
