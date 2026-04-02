@@ -139,6 +139,13 @@ const Onboarding = () => {
         completed_at: new Date().toISOString(),
       }, { onConflict: "user_id" });
       await supabase.from("profiles").update({ onboarding_completed: true } as any).eq("user_id", user.id);
+
+      // ── Advance Tasjeel to "exam" step ─────────────────────────────────────
+      await supabase.from("tasjeel_progress" as any).update({
+        current_step: "exam",
+        updated_at:   new Date().toISOString(),
+      } as any).eq("user_id", user.id);
+
       toast({ title: "✅ Onboarding complete!", description: "Preparing your entrance exam…" });
 
       // FIX: create exam_attempt before navigating so the route has an attemptId
