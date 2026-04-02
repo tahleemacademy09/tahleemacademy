@@ -83,7 +83,7 @@ const WARN: Record<string, {
     msg_ar:  "تم اكتشاف عملية نسخ أو لصق وإيقافها.",
     fix_en:  "All exam content is protected. This action has been reported.",
     fix_ar:  "محتوى الامتحان محمي. تم تسجيل وإبلاغ هذا الإجراء." },
-  dev_tools:         { icon:"🔧", sev:"critical", pts:10,
+  dev_tools:         { icon:"🔧", sev:"critical", pts:3,
     title_en:"Developer Tools Blocked!",     title_ar:"أدوات المطور محظورة!",
     msg_en:  "An attempt to open developer tools was detected.",
     msg_ar:  "تم اكتشاف محاولة فتح أدوات المطور.",
