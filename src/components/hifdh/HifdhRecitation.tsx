@@ -222,9 +222,8 @@ export default function HifdhRecitation({ reciter: reciterProp, onReciterChange 
           </button>
         </div>
       </div>
-          </button>
-        </div>
-      </div>
+
+
 
       {/* ── Quran Text Container ── */}
       <div ref={containerRef}
