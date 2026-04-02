@@ -26,7 +26,6 @@ const levelCfg: Record<Level, { bg: string; text: string; border: string; dot: s
 
 const G = "#064E3B";
 
-// ✅ Robust image resolver
 const resolveImageUrl = async (url: string | null | undefined): Promise<string | null> => {
   if (!url || url.trim() === "") return null;
   if (url.startsWith("http://") || url.startsWith("https://")) return url;
@@ -39,7 +38,6 @@ const resolveImageUrl = async (url: string | null | undefined): Promise<string |
   }
 };
 
-// ✅ Safe Thumbnail Component
 const CourseThumb = ({
   url, title, height = 140, lv,
 }: { url?: string | null; title: string; height?: number; lv: typeof levelCfg[Level] }) => {
@@ -49,8 +47,7 @@ const CourseThumb = ({
 
   useEffect(() => {
     let mounted = true;
-    const load = async () => {
-      const resolved = await resolveImageUrl(url);
+    const load = async () => {      const resolved = await resolveImageUrl(url);
       if (mounted) {
         setResolvedUrl(resolved);
         setLoading(false);
@@ -91,20 +88,16 @@ const CourseManagement = () => {
   const { user } = useAuth();
   const qc = useQueryClient();
 
-  // State
   const [view, setView] = useState<"list"|"detail">("list");
   const [selectedCourse, setSelectedCourse] = useState<any | null>(null);
   const [activeTab, setActiveTab] = useState<"lessons"|"content">("lessons");
   const [search, setSearch] = useState("");
 
-  // Dialogs
   const [courseOpen, setCourseOpen] = useState(false);
   const [lessonOpen, setLessonOpen] = useState(false);
   const [editCourseId, setEditCourseId] = useState<string|null>(null);
-  const [editLessonId, setEditLessonId] = useState<string|null>(null);
-  const [deleteConfirm, setDeleteConfirm] = useState<{type:"course"|"lesson", id:string, name:string}|null>(null);
+  const [editLessonId, setEditLessonId] = useState<string|null>(null);  const [deleteConfirm, setDeleteConfirm] = useState<{type:"course"|"lesson", id:string, name:string}|null>(null);
 
-  // Forms
   const [cf, setCf] = useState({
     title:"", title_ar:"", description:"", description_ar:"",
     level:"beginner" as Level, subject_id:"", is_published:false, sort_order:0,
@@ -116,12 +109,10 @@ const CourseManagement = () => {
     duration_minutes:0, sort_order:0, is_free:false,
   });
 
-  // Thumbnail Upload
   const [thumbFile, setThumbFile] = useState<File|null>(null);
   const [thumbUploading, setThumbUploading] = useState(false);
   const thumbRef = useRef<HTMLInputElement>(null);
 
-  /* ── Queries ───────────────────────────────────────── */
   const { data: subjects = [] } = useQuery({
     queryKey: ["subjects"],
     queryFn: async () => {
@@ -130,12 +121,11 @@ const CourseManagement = () => {
     },
   });
 
-  // ✅ FIXED: Use simple select("*") to avoid relationship errors
   const { data: courses = [], isLoading } = useQuery({
     queryKey: ["admin-courses"],
     queryFn: async () => {
       const { data, error } = await supabase.from("courses")
-        .select("*")  // <--- FIXED: Removed complex join
+        .select("*")
         .order("sort_order");
       if (error) throw error;
       return data as any[];
@@ -152,11 +142,9 @@ const CourseManagement = () => {
     },
   });
 
-  /* ── Mutations ─────────────────────────────────────── */
   const saveCourse = useMutation({
     mutationFn: async () => {
       let thumbUrl = cf.image_url;
-
       if (thumbFile) {
         setThumbUploading(true);
         try {
@@ -206,8 +194,7 @@ const CourseManagement = () => {
   const deleteCourse = useMutation({
     mutationFn: async (id: string) => {
       const { error } = await supabase.from("courses").delete().eq("id", id);
-      if (error) throw error;
-    },
+      if (error) throw error;    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["admin-courses"] });
       if (selectedCourse && deleteConfirm?.id === selectedCourse.id) {
@@ -256,8 +243,7 @@ const CourseManagement = () => {
     },
   });
 
-  const togglePublish = useMutation({
-    mutationFn: async ({ id, v }: { id:string; v:boolean }) => {
+  const togglePublish = useMutation({    mutationFn: async ({ id, v }: { id:string; v:boolean }) => {
       const { error } = await supabase.from("courses").update({ is_published: v }).eq("id", id);
       if (error) throw error;
     },
@@ -267,7 +253,6 @@ const CourseManagement = () => {
     },
   });
 
-  /* ── Helpers ──────────────────────────────────────── */
   const resetCf = () => setCf({ title:"", title_ar:"", description:"", description_ar:"", level:"beginner", subject_id:"", is_published:false, sort_order:0, image_url:"" });
   const resetLf = () => setLf({ title:"", title_ar:"", video_url:"", content:"", duration_minutes:0, sort_order:0, is_free:false });
 
@@ -295,16 +280,11 @@ const CourseManagement = () => {
   const totalLessons = lessons.length;
   const totalMins    = lessons.reduce((s: number, l: any) => s + (l.duration_minutes||0), 0);
 
-  /* ══════════════════════════════════════════════════
-     RENDER
-  ══════════════════════════════════════════════════ */
   return (
     <div style={{ minHeight:"100vh", background:"#F8F9FA", fontFamily:"'Inter',system-ui,sans-serif" }}>
 
-      {/* ── LIST VIEW ─────────────────────────────── */}
       {view === "list" && (
         <>
-          {/* Header */}
           <div style={{ background:"#fff", borderBottom:"1px solid #E5E7EB", padding:"20px 24px" }}>
             <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:12 }}>
               <div style={{ display:"flex", alignItems:"center", gap:12 }}>
@@ -312,8 +292,7 @@ const CourseManagement = () => {
                   <BookOpen size={20} color={G} />
                 </div>
                 <div>
-                  <h1 style={{ fontSize:20, fontWeight:800, color:"#111", margin:0 }}>Course Management</h1>
-                  <p style={{ fontSize:12, color:"#6B7280", margin:0 }}>{courses.length} courses · {courses.filter((c:any)=>c.is_published).length} published</p>
+                  <h1 style={{ fontSize:20, fontWeight:800, color:"#111", margin:0 }}>Course Management</h1>                  <p style={{ fontSize:12, color:"#6B7280", margin:0 }}>{courses.length} courses · {courses.filter((c:any)=>c.is_published).length} published</p>
                 </div>
               </div>
               <Button onClick={() => { setEditCourseId(null); resetCf(); setCourseOpen(true); }}
@@ -324,14 +303,12 @@ const CourseManagement = () => {
           </div>
 
           <div style={{ padding:24 }}>
-            {/* Search */}
             <div style={{ position:"relative", marginBottom:20, maxWidth:400 }}>
               <Search size={14} style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", color:"#9CA3AF" }} />
               <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search courses…"
                 style={{ width:"100%", padding:"10px 14px 10px 36px", borderRadius:12, border:"1.5px solid #E5E7EB", fontSize:13, color:"#111", outline:"none", background:"#fff", boxSizing:"border-box" as const }} />
             </div>
 
-            {/* Stats bar */}
             <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:12, marginBottom:24 }}>
               {[
                 { label:"Total Courses", value:courses.length, icon:"📚", color:"#EFF6FF", border:"#BFDBFE", text:"#1D4ED8" },
@@ -346,7 +323,6 @@ const CourseManagement = () => {
               ))}
             </div>
 
-            {/* Course cards */}
             {isLoading ? (
               <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))", gap:14 }}>
                 {[1,2,3].map(i=><div key={i} style={{ height:180, background:"#E5E7EB", borderRadius:16, animation:"pulse 1.5s infinite" }}/>)}
@@ -365,8 +341,7 @@ const CourseManagement = () => {
                     <div key={course.id}
                       onClick={() => openCourseDetail(course)}
                       style={{ background:"#fff", borderRadius:16, border:"1.5px solid #E5E7EB", overflow:"hidden", cursor:"pointer", transition:"all .15s", boxShadow:"0 1px 4px rgba(0,0,0,.04)" }}
-                      onMouseEnter={e=>(e.currentTarget as any).style.boxShadow="0 8px 24px rgba(0,0,0,.1)"}
-                      onMouseLeave={e=>(e.currentTarget as any).style.boxShadow="0 1px 4px rgba(0,0,0,.04)"}>
+                      onMouseEnter={e=>(e.currentTarget as any).style.boxShadow="0 8px 24px rgba(0,0,0,.1)"}                      onMouseLeave={e=>(e.currentTarget as any).style.boxShadow="0 1px 4px rgba(0,0,0,.04)"}>
 
                       <CourseThumb url={course.image_url} title={course.title} lv={lv} />
 
@@ -388,7 +363,6 @@ const CourseManagement = () => {
                           </span>
                         </div>
 
-                        {/* Action row */}
                         <div style={{ display:"flex", gap:6 }} onClick={e=>e.stopPropagation()}>
                           <button onClick={()=>openEditCourse(course)} style={{ flex:1, padding:"7px", borderRadius:9, border:"1.5px solid #E5E7EB", background:"#fff", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:5, fontSize:12, fontWeight:600, color:"#374151" }}>
                             <Edit size={13}/> Edit
@@ -413,12 +387,10 @@ const CourseManagement = () => {
         </>
       )}
 
-      {/* ── DETAIL VIEW ───────────────────────────── */}
       {view === "detail" && selectedCourse && (
         <div style={{ display:"flex", flexDirection:"column", minHeight:"100vh" }}>
           <div style={{ background:G, padding:"14px 20px", display:"flex", alignItems:"center", gap:12 }}>
-            <button onClick={()=>setView("list")} style={{ background:"rgba(255,255,255,.15)", border:"none", borderRadius:8, padding:"8px 10px", color:"#fff", cursor:"pointer", display:"flex", alignItems:"center", gap:6, fontSize:12, fontWeight:600 }}>
-              <ChevronLeft size={16}/> All Courses
+            <button onClick={()=>setView("list")} style={{ background:"rgba(255,255,255,.15)", border:"none", borderRadius:8, padding:"8px 10px", color:"#fff", cursor:"pointer", display:"flex", alignItems:"center", gap:6, fontSize:12, fontWeight:600 }}>              <ChevronLeft size={16}/> All Courses
             </button>
             <div style={{ flex:1, minWidth:0 }}>
               <p style={{ fontWeight:800, fontSize:15, color:"#fff", margin:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{selectedCourse.title}</p>
@@ -467,8 +439,7 @@ const CourseManagement = () => {
 
           <div style={{ background:"#fff", borderBottom:"1px solid #E5E7EB", display:"flex" }}>
             {(["lessons","content"] as const).map(tab=>(
-              <button key={tab} onClick={()=>setActiveTab(tab)}
-                style={{ padding:"14px 20px", border:"none", background:"none", cursor:"pointer", fontSize:13, fontWeight:600, color:activeTab===tab?G:"#6B7280", borderBottom:activeTab===tab?`2px solid ${G}`:"2px solid transparent", transition:"all .15s" }}>
+              <button key={tab} onClick={()=>setActiveTab(tab)}                style={{ padding:"14px 20px", border:"none", background:"none", cursor:"pointer", fontSize:13, fontWeight:600, color:activeTab===tab?G:"#6B7280", borderBottom:activeTab===tab?`2px solid ${G}`:"2px solid transparent", transition:"all .15s" }}>
                 {tab==="lessons"?`📹 Lessons (${totalLessons})`:"📋 Course Info"}
               </button>
             ))}
@@ -517,8 +488,7 @@ const CourseManagement = () => {
                             )}
                             {lesson.video_url && <span style={{ fontSize:11, color:"#16A34A", fontWeight:600 }}>✓ Video</span>}
                           </div>
-                        </div>
-                        <div style={{ display:"flex", gap:6 }}>
+                        </div>                        <div style={{ display:"flex", gap:6 }}>
                           <button onClick={()=>openEditLesson(lesson)} style={{ width:32, height:32, borderRadius:8, border:"1px solid #E5E7EB", background:"#fff", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
                             <Edit size={13} color="#6B7280"/>
                           </button>
@@ -557,7 +527,6 @@ const CourseManagement = () => {
         </div>
       )}
 
-      {/* ══ COURSE DIALOG ════════════════════════════ */}
       <Dialog open={courseOpen} onOpenChange={v=>{ setCourseOpen(v); if(!v){ setEditCourseId(null); setThumbFile(null); resetCf(); } }}>
         <DialogContent style={{ maxWidth:560, maxHeight:"92vh", overflowY:"auto", borderRadius:20, padding:0 }}>
           <div style={{ background:G, padding:"18px 20px", borderRadius:"20px 20px 0 0" }}>
@@ -568,8 +537,7 @@ const CourseManagement = () => {
           </div>
           <div style={{ padding:20, display:"flex", flexDirection:"column", gap:16 }}>
 
-            <div>
-              <label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:8 }}>Cover Image</label>
+            <div>              <label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:8 }}>Cover Image</label>
               <div
                 onClick={()=>thumbRef.current?.click()}
                 style={{ borderRadius:14, border:"2px dashed #E5E7EB", background:"#FAFAFA", cursor:"pointer", overflow:"hidden", height:120, display:"flex", alignItems:"center", justifyContent:"center", transition:"border-color .15s" }}
@@ -618,8 +586,7 @@ const CourseManagement = () => {
                           <div style={{ width:8, height:8, borderRadius:"50%", background:levelCfg[l].dot }}/>
                           {l.charAt(0).toUpperCase()+l.slice(1)}
                         </div>
-                      </SelectItem>
-                    ))}
+                      </SelectItem>                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -650,7 +617,6 @@ const CourseManagement = () => {
         </DialogContent>
       </Dialog>
 
-      {/* ══ LESSON DIALOG ════════════════════════════ */}
       <Dialog open={lessonOpen} onOpenChange={v=>{ setLessonOpen(v); if(!v){ setEditLessonId(null); resetLf(); } }}>
         <DialogContent style={{ maxWidth:500, borderRadius:20, padding:0 }}>
           <div style={{ background:"#1E40AF", padding:"18px 20px", borderRadius:"20px 20px 0 0" }}>
@@ -670,7 +636,6 @@ const CourseManagement = () => {
                 <Input value={lf.title_ar} onChange={e=>setLf({...lf,title_ar:e.target.value})} dir="rtl" style={{ borderRadius:10 }}/>
               </div>
             </div>
-
             <div>
               <label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:6 }}>Video URL</label>
               <div style={{ position:"relative" }}>
@@ -703,7 +668,6 @@ const CourseManagement = () => {
         </DialogContent>
       </Dialog>
 
-      {/* ══ DELETE CONFIRM ════════════════════════════ */}
       <Dialog open={!!deleteConfirm} onOpenChange={v=>!v&&setDeleteConfirm(null)}>
         <DialogContent style={{ maxWidth:380, borderRadius:20, textAlign:"center", padding:28 }}>
           <div style={{ width:56, height:56, borderRadius:"50%", background:"#FEF2F2", display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 16px" }}>
@@ -720,8 +684,7 @@ const CourseManagement = () => {
               Delete
             </button>
           </div>
-        </DialogContent>
-      </Dialog>
+        </DialogContent>      </Dialog>
 
       <style>{`@keyframes spin{to{transform:rotate(360deg)}} @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}`}</style>
     </div>
@@ -729,4 +692,3 @@ const CourseManagement = () => {
 };
 
 export default CourseManagement;
-```
