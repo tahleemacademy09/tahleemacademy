@@ -11,6 +11,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useRecitationSettings } from "@/hooks/useRecitationSettings";
+import { useTasjeel } from "@/hooks/useTasjeel";
 import {
   Mic, MicOff, Play, Pause, Upload, CheckCircle2,
   Clock, Video, Star, ArrowRight, Loader2, RotateCcw,
@@ -33,6 +34,7 @@ const RecitationTest = () => {
   const { toast }         = useToast();
   const navigate          = useNavigate();
   const { settings, loading: settingsLoading } = useRecitationSettings();
+  const { currentStep } = useTasjeel();
 
   // Stage: 1=record, 2=ai-scoring, 3=book-session
   const [stage, setStage]       = useState<1|2|3>(1);
@@ -304,6 +306,15 @@ const RecitationTest = () => {
       } catch (_) { /* non-critical — ignore if table doesn't exist */ }
 
       setBookingDone(true);
+      // Advance tasjeel step if student is in registration pipeline
+      try {
+        if (currentStep && currentStep !== "completed") {
+          await supabase
+            .from("tasjeel_progress" as any)
+            .update({ current_step: "level_assignment", updated_at: new Date().toISOString() } as any)
+            .eq("user_id", user!.id);
+        }
+      } catch (_) { /* non-critical */ }
       toast({ title: "✅ Session booked!", description: "A teacher will confirm your session within 24 hours." });
     } catch (e: any) {
       toast({ title: "Booking failed", description: e.message, variant: "destructive" });
@@ -331,7 +342,7 @@ const RecitationTest = () => {
         <div style={{ fontSize: 13, color: "#666", lineHeight: 1.6, marginBottom: 20 }}>
           {settings.disabled_message || "The recitation test is temporarily unavailable. Please check back soon."}
         </div>
-        <button onClick={() => navigate("/student")} style={{ width: "100%", padding: "13px", borderRadius: 12, border: "none", background: `linear-gradient(135deg,${G},${GM})`, color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
+        <button onClick={() => currentStep && currentStep !== "completed" ? navigate("/registration-complete") : navigate("/student")} style={{ width: "100%", padding: "13px", borderRadius: 12, border: "none", background: `linear-gradient(135deg,${G},${GM})`, color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
           Back to Dashboard
         </button>
       </div>
@@ -667,9 +678,9 @@ const RecitationTest = () => {
                       ))}
                     </div>
 
-                    <button onClick={() => navigate("/student")}
+                    <button onClick={() => currentStep && currentStep !== "completed" ? navigate("/registration-complete") : navigate("/student")}
                       style={{ width:"100%", padding:"14px", borderRadius:14, border:"none", background:`linear-gradient(135deg,${G},${GM})`, color:"#fff", fontSize:15, fontWeight:800, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:10 }}>
-                      Go to Dashboard <ArrowRight size={17} />
+                      {currentStep && currentStep !== "completed" ? "Complete Registration →" : "Go to Dashboard"} <ArrowRight size={17} />
                     </button>
                   </div>
                 )}
