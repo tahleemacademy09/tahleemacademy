@@ -1,6 +1,8 @@
 // src/components/hifdh/HifdhRecitation.tsx
 import { useState, useEffect, useRef, useCallback } from "react";
-import { SURAHS, audioUrl } from "./surahData";
+import { SURAHS, audioUrl, RECITERS, DEFAULT_RECITER } from "./surahData";
+import { audioManager } from "./audioManager";
+import ReciterControls from "./ReciterControls";
 
 interface Ayah { numberInSurah: number; text: string; }
 interface SurahData { englishName: string; name: string; numberOfAyahs: number; ayahs: Ayah[]; }
@@ -10,7 +12,9 @@ const LIGHT = "#f0fff4"; const BORDER = "#d4e8d4";
 
 function toAr(n: number) { return String(n).replace(/[0-9]/g, d => "٠١٢٣٤٥٦٧٨٩"[+d]); }
 
-export default function HifdhRecitation() {
+interface Props { reciter?: string; onReciterChange?: (id: string) => void; }
+
+export default function HifdhRecitation({ reciter: reciterProp, onReciterChange }: Props = {}) {
   const [selSurah, setSelSurah]       = useState(1);
   const [surahData, setSurahData]     = useState<SurahData | null>(null);
   const [loading, setLoading]         = useState(false);
@@ -20,6 +24,7 @@ export default function HifdhRecitation() {
   const [isFullscreen, setIsFS]       = useState(false);
   const [showList, setShowList]       = useState(false);
   const [search, setSearch]           = useState("");
+  const [reciter, setReciter]         = useState(reciterProp || DEFAULT_RECITER);
 
   // Refs avoid stale closures in audio callbacks
   const audioRef       = useRef<HTMLAudioElement | null>(null);
@@ -67,7 +72,7 @@ export default function HifdhRecitation() {
       verseRefs.current[num]?.scrollIntoView({ behavior: "smooth", block: "center" });
     });
 
-    const audio = new Audio(audioUrl(selSurahRef.current, num));
+    const audio = new Audio(audioUrl(selSurahRef.current, num, reciter));
     audioRef.current = audio;
 
     audio.play().catch(stopAll);
@@ -180,10 +185,24 @@ export default function HifdhRecitation() {
         </div>
       )}
 
-      {/* ── Controls Bar ── */}
+      {/* ── Reciter Controls ── */}
+      <ReciterControls
+        surahNum={selSurah}
+        totalAyahs={surahData?.numberOfAyahs || surah.verses}
+        playingAyah={playingAyah}
+        onAyahChange={(a) => {
+          setPlayingAyah(a);
+          requestAnimationFrame(() => {
+            verseRefs.current[a]?.scrollIntoView({ behavior: "smooth", block: "center" });
+          });
+        }}
+        reciter={reciter}
+        onReciterChange={(id) => { setReciter(id); onReciterChange?.(id); }}
+      />
+
+      {/* ── Font Size + Fullscreen Bar ── */}
       <div style={card({ padding: "10px 14px" })}>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" as const }}>
-          {/* Font size */}
           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
             <button onClick={() => setFontSize(v => Math.max(18, v - 2))}
               style={{ width: 32, height: 32, borderRadius: 8, border: `1px solid ${BORDER}`,
@@ -194,19 +213,6 @@ export default function HifdhRecitation() {
                 background: "#f8fafb", fontSize: 13, cursor: "pointer", color: G, fontWeight: 800 }}>A+</button>
           </div>
           <div style={{ flex: 1 }} />
-          {playingAyah > 0 ? (
-            <button onClick={stopAll}
-              style={{ padding: "8px 16px", borderRadius: 10, border: "none",
-                background: "#fee2e2", color: "#c0392b", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
-              ⏹ Stop
-            </button>
-          ) : (
-            <button onClick={() => playAyah(1)}
-              style={{ padding: "8px 16px", borderRadius: 10, border: "none",
-                background: `linear-gradient(135deg,${G},${GM})`, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
-              ▶ Play All
-            </button>
-          )}
           <button onClick={toggleFS}
             style={{ padding: "8px 10px", borderRadius: 10,
               border: `1px solid ${isFullscreen ? G : BORDER}`,
@@ -216,6 +222,8 @@ export default function HifdhRecitation() {
           </button>
         </div>
       </div>
+
+
 
       {/* ── Quran Text Container ── */}
       <div ref={containerRef}

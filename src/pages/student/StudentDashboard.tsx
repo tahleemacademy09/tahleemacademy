@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import QuranPhrasesWidget from "@/components/dashboard/QuranPhrasesWidget";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -40,6 +41,15 @@ const VERSES = [
   { ar: "إِنَّ اللَّهَ مَعَ الصَّابِرِينَ", en: "Indeed, Allah is with the patient.", ref: "Quran 2:153" },
   { ar: "وَعَسَىٰ أَن تَكْرَهُوا شَيْئًا وَهُوَ خَيْرٌ لَّكُمْ", en: "Perhaps you dislike something which is good for you.", ref: "Quran 2:216" },
   { ar: "إِنَّ اللَّهَ لَا يُغَيِّرُ مَا بِقَوْمٍ حَتَّىٰ يُغَيِّرُوا مَا بِأَنفُسِهِمْ", en: "Allah does not change a people until they change what is within themselves.", ref: "Quran 13:11" },
+  { ar: "وَمَا تَوْفِيقِي إِلَّا بِاللَّهِ", en: "My success is only through Allah.", ref: "Quran 11:88" },
+  { ar: "قُلْ هُوَ اللَّهُ أَحَدٌ", en: "Say: He is Allah, the One.", ref: "Quran 112:1" },
+  { ar: "وَنُنَزِّلُ مِنَ الْقُرْآنِ مَا هُوَ شِفَاءٌ وَرَحْمَةٌ لِّلْمُؤْمِنِينَ", en: "We send down in the Quran that which is a healing and mercy for the believers.", ref: "Quran 17:82" },
+  { ar: "أَلَا بِذِكْرِ اللَّهِ تَطْمَئِنُّ الْقُلُوبُ", en: "Verily, in the remembrance of Allah do hearts find rest.", ref: "Quran 13:28" },
+  { ar: "وَقُل رَّبِّ ارْحَمْهُمَا كَمَا رَبَّيَانِي صَغِيرًا", en: "My Lord, have mercy upon them as they brought me up when I was small.", ref: "Quran 17:24" },
+  { ar: "إِنَّ أَكْرَمَكُمْ عِندَ اللَّهِ أَتْقَاكُمْ", en: "The most noble of you in the sight of Allah is the most righteous.", ref: "Quran 49:13" },
+  { ar: "وَلَا تَيْأَسُوا مِن رَّوْحِ اللَّهِ", en: "Do not despair of the mercy of Allah.", ref: "Quran 12:87" },
+  { ar: "فَإِذَا فَرَغْتَ فَانصَبْ", en: "So when you have finished, then stand up for worship.", ref: "Quran 94:7" },
+  { ar: "وَاسْتَعِينُوا بِالصَّبْرِ وَالصَّلَاةِ", en: "Seek help through patience and prayer.", ref: "Quran 2:45" },
 ];
 
 const gradePoint = (pct: number): number => {
@@ -432,7 +442,10 @@ const StudentDashboard = () => {
           </div>
         </div>
 
-        {/* ── Notifications ── */}
+        {/* ── Quran Phrases Widget ── */}
+        <QuranPhrasesWidget language={language} />
+
+
         <div style={card}>
           <div style={{ padding:"16px 18px", borderBottom:`1px solid ${BORDER}`, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
             <div style={{ display:"flex", alignItems:"center", gap:8 }}>
