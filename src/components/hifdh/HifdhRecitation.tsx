@@ -1,6 +1,8 @@
 // src/components/hifdh/HifdhRecitation.tsx
 import { useState, useEffect, useRef, useCallback } from "react";
-import { SURAHS, audioUrl } from "./surahData";
+import { SURAHS, audioUrl, RECITERS, DEFAULT_RECITER } from "./surahData";
+import { audioManager } from "./audioManager";
+import ReciterControls from "./ReciterControls";
 
 interface Ayah { numberInSurah: number; text: string; }
 interface SurahData { englishName: string; name: string; numberOfAyahs: number; ayahs: Ayah[]; }
