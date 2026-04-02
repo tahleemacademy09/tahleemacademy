@@ -32,6 +32,8 @@ const Index           = lazy(() => import("./pages/Index"));
 const Login           = lazy(() => import("./pages/Login"));
 const AdminLogin      = lazy(() => import("./pages/AdminLogin"));
 const Register        = lazy(() => import("./pages/Register"));
+const RegisterContinue    = lazy(() => import("./pages/RegisterContinue"));
+const RegistrationComplete = lazy(() => import("./pages/RegistrationComplete"));
 const ResetPassword   = lazy(() => import("./pages/ResetPassword"));
 const About           = lazy(() => import("./pages/About"));
 const Courses         = lazy(() => import("./pages/Courses"));
@@ -149,6 +151,10 @@ const App = () => (
 
                   {/* Admin login — standalone, no public nav */}
                   <Route path="/admin-secure"   element={<AdminLogin />} />
+
+                  {/* Registration pipeline continuations — no auth guard needed */}
+                  <Route path="/auth/register-continue" element={<RegisterContinue />} />
+                  <Route path="/registration-complete"  element={<RegistrationComplete />} />
 
                   {/* Misc public */}
                   <Route path="/live-quiz"               element={<ProtectedRoute skipOnboardingCheck><LiveQuiz /></ProtectedRoute>} />
