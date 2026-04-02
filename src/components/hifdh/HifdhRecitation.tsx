@@ -12,7 +12,9 @@ const LIGHT = "#f0fff4"; const BORDER = "#d4e8d4";
 
 function toAr(n: number) { return String(n).replace(/[0-9]/g, d => "٠١٢٣٤٥٦٧٨٩"[+d]); }
 
-export default function HifdhRecitation() {
+interface Props { reciter?: string; onReciterChange?: (id: string) => void; }
+
+export default function HifdhRecitation({ reciter: reciterProp, onReciterChange }: Props = {}) {
   const [selSurah, setSelSurah]       = useState(1);
   const [surahData, setSurahData]     = useState<SurahData | null>(null);
   const [loading, setLoading]         = useState(false);
@@ -22,6 +24,7 @@ export default function HifdhRecitation() {
   const [isFullscreen, setIsFS]       = useState(false);
   const [showList, setShowList]       = useState(false);
   const [search, setSearch]           = useState("");
+  const [reciter, setReciter]         = useState(reciterProp || DEFAULT_RECITER);
 
   // Refs avoid stale closures in audio callbacks
   const audioRef       = useRef<HTMLAudioElement | null>(null);
