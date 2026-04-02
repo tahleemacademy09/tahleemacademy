@@ -1,10 +1,10 @@
-/*  src/components/hifdh/HifdhDashboard.tsx - BEAUTIFUL VERSION */
+/*  src/components/hifdh/HifdhDashboard.tsx - BEAUTIFUL VERSION (FIXED) */
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { 
   BookOpen, TrendingUp, Flame, Clock, ChevronDown,
   CheckCircle2, RotateCcw, BookMarked, Headphones,
-  Calendar, AlertCircle, Star
+  Calendar, AlertCircle, Star, Plus
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
