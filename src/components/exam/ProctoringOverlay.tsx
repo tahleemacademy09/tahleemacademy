@@ -29,13 +29,13 @@ const WARN: Record<string, {
   fix_en: string;   fix_ar: string;
   pts: number; autoFix?: boolean;
 }> = {
-  camera_covered:    { icon:"📷", sev:"critical", pts:10,
+  camera_covered:    { icon:"📷", sev:"caution", pts:0, autoFix:true,
     title_en:"Camera Blocked!",              title_ar:"الكاميرا محجوبة!",
     msg_en:  "Your camera feed is too dark or covered.",
     msg_ar:  "صورة الكاميرا مظلمة جداً أو محجوبة.",
     fix_en:  "Uncover your camera immediately to continue.",
     fix_ar:  "أزل أي شيء يحجب الكاميرا فوراً." },
-  webcam_disabled:   { icon:"🚫", sev:"critical", pts:10,
+  webcam_disabled:   { icon:"🚫", sev:"alert", pts:0, autoFix:true,
     title_en:"Camera Disconnected!",         title_ar:"الكاميرا مفصولة!",
     msg_en:  "Your webcam has stopped working.",
     msg_ar:  "الكاميرا توقفت عن العمل.",
@@ -59,7 +59,7 @@ const WARN: Record<string, {
     msg_ar:  "يبدو أنك تنظر بعيداً عن الشاشة.",
     fix_en:  "Keep your eyes on the exam screen at all times.",
     fix_ar:  "أبقِ عينيك على شاشة الامتحان في جميع الأوقات." },
-  multiple_faces:    { icon:"👥", sev:"critical", pts:10,
+  multiple_faces:    { icon:"👥", sev:"critical", pts:3,
     title_en:"Multiple People Detected!",    title_ar:"أكثر من شخص في الإطار!",
     msg_en:  "More than one face is visible in your camera.",
     msg_ar:  "يظهر أكثر من وجه في الكاميرا.",
@@ -83,7 +83,7 @@ const WARN: Record<string, {
     msg_ar:  "تم اكتشاف عملية نسخ أو لصق وإيقافها.",
     fix_en:  "All exam content is protected. This action has been reported.",
     fix_ar:  "محتوى الامتحان محمي. تم تسجيل وإبلاغ هذا الإجراء." },
-  dev_tools:         { icon:"🔧", sev:"critical", pts:10,
+  dev_tools:         { icon:"🔧", sev:"critical", pts:3,
     title_en:"Developer Tools Blocked!",     title_ar:"أدوات المطور محظورة!",
     msg_en:  "An attempt to open developer tools was detected.",
     msg_ar:  "تم اكتشاف محاولة فتح أدوات المطور.",
