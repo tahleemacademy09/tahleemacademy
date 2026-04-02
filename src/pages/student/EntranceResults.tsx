@@ -8,12 +8,12 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useRegistrationSettings } from "@/hooks/useRegistrationSettings";
 import { motion } from "framer-motion";
-import { CheckCircle, Star, BookOpen, ArrowRight } from "lucide-react";
+import { CheckCircle, Star, BookOpen, ArrowRight, LogIn } from "lucide-react";
 import StandaloneNav from "@/components/layout/StandaloneNav";
 
 const EntranceResults = () => {
   const { attemptId } = useParams<{ attemptId: string }>();
-  const { user, refreshProfile } = useAuth();
+  const { user, refreshProfile, signOut } = useAuth();
   const { toast } = useToast();
   const { config } = useRegistrationSettings();
   const navigate = useNavigate();
@@ -42,10 +42,16 @@ const EntranceResults = () => {
 
     setAttempt(attemptData);
 
-    // Calculate level
+    // ✅ FIX: Only process if exam is graded/submitted (not in_progress)
+    if (attemptData.status === "in_progress") {
+      toast({ title: "Exam still in progress", variant: "destructive" });
+      navigate("/student/exams");
+      return;
+    }
+    // Calculate level from score
     const score = attemptData.score || 0;
     const total = attemptData.total_points || 20;
-    const percentage = (score / total) * 100;
+    const percentage = total > 0 ? (score / total) * 100 : 0;
 
     let level = "beginner";
     if (percentage >= 70) level = "advanced";
@@ -56,11 +62,12 @@ const EntranceResults = () => {
     // Check if already processed
     const { data: profileData } = await supabase
       .from("profiles")
-      .select("has_taken_entrance_exam, onboarding_completed")
+      .select("has_taken_entrance_exam, onboarding_completed, level")
       .eq("user_id", user!.id)
       .single();
 
-    if (profileData && !(profileData as any).onboarding_completed) {
+    // ✅ FIX: Only process enrollment if not already done AND exam is graded
+    if (profileData && !(profileData as any).onboarding_completed && attemptData.status !== "in_progress") {
       await processEnrollment(level, score, total, percentage);
     } else {
       // Already processed, just load enrolled subjects
@@ -89,11 +96,9 @@ const EntranceResults = () => {
       .from("level_courses" as any)
       .select("subject_id")
       .eq("level", level);
-
     const subjectIds = (levelCourses as any[] || []).map((lc: any) => lc.subject_id);
 
     if (subjectIds.length > 0) {
-      // Get courses for these subjects
       const { data: courses } = await supabase
         .from("courses")
         .select("id, title, title_ar, subject_id")
@@ -111,7 +116,6 @@ const EntranceResults = () => {
       }
     }
 
-    // Load enrolled subjects for display
     await loadEnrolledSubjects(level);
 
     // Add student to level channel in Majlis
@@ -135,16 +139,13 @@ const EntranceResults = () => {
         .maybeSingle();
     }
 
-    // Refresh the auth context so ProtectedRoute sees updated profile
     await refreshProfile();
-
     setProcessing(false);
   };
 
   const loadEnrolledSubjects = async (level: string) => {
     const { data: levelCourses } = await supabase
-      .from("level_courses" as any)
-      .select("subject_id")
+      .from("level_courses" as any)      .select("subject_id")
       .eq("level", level);
 
     const subjectIds = (levelCourses as any[] || []).map((lc: any) => lc.subject_id);
@@ -156,6 +157,23 @@ const EntranceResults = () => {
         .in("id", subjectIds);
       setEnrolledSubjects(subjects || []);
     }
+  };
+
+  // ✅ FIX: Handle login redirect properly
+  const handleContinue = async () => {
+    // Show confirmation toast
+    toast({
+      title: "✅ Registration Complete!",
+      description: "Please login to access your dashboard and start learning.",
+    });
+
+    // Sign out current session to force fresh login
+    await signOut();
+    
+    // Small delay for toast to show
+    setTimeout(() => {
+      navigate("/login", { replace: true });
+    }, 1500);
   };
 
   if (loading) {
@@ -173,11 +191,10 @@ const EntranceResults = () => {
 
   const score = attempt?.score || 0;
   const total = attempt?.total_points || 20;
-  const percentage = Math.round((score / total) * 100);
+  const percentage = total > 0 ? Math.round((score / total) * 100) : 0;
 
   const levelConfig: Record<string, { emoji: string; color: string; bg: string; labelEn: string; labelAr: string; message: string }> = {
-    beginner: {
-      emoji: "🟢",
+    beginner: {      emoji: "🟢",
       color: "#22c55e",
       bg: "rgba(34,197,94,0.15)",
       labelEn: "Beginner",
@@ -226,8 +243,7 @@ const EntranceResults = () => {
 
           <CardContent className="p-8 space-y-6">
             {/* Bismillah */}
-            <div className="text-center">
-              <p className="amiri text-lg" style={{ color: "#c9973a" }} dir="rtl">
+            <div className="text-center">              <p className="amiri text-lg" style={{ color: "#c9973a" }} dir="rtl">
                 بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ
               </p>
             </div>
@@ -276,9 +292,25 @@ const EntranceResults = () => {
               transition={{ delay: 0.7 }}
               className="text-center text-sm leading-relaxed"
               style={{ color: "#4a4a4a" }}
-            >
-              {lc.message}
+            >              {lc.message}
             </motion.p>
+
+            {/* ✅ FIX: Clear completion message */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.8 }}
+              className="p-4 rounded-xl text-center text-sm"
+              style={{ background: "rgba(34,197,94,0.1)", border: "1px solid rgba(34,197,94,0.3)" }}
+            >
+              <CheckCircle className="h-5 w-5 mx-auto mb-2" style={{ color: "#22c55e" }} />
+              <p style={{ color: "#166534", fontWeight: 600 }}>
+                ✅ Registration Complete!
+              </p>
+              <p style={{ color: "#166534", fontSize: 12, marginTop: 4 }}>
+                Please login to access your personalized dashboard and start learning.
+              </p>
+            </motion.div>
 
             {/* Enrolled Subjects */}
             {enrolledSubjects.length > 0 && (
@@ -310,7 +342,6 @@ const EntranceResults = () => {
                 ))}
               </motion.div>
             )}
-
             {enrolledSubjects.length === 0 && (
               <motion.div
                 initial={{ opacity: 0 }}
@@ -323,34 +354,43 @@ const EntranceResults = () => {
               </motion.div>
             )}
 
-            {/* Go to Dashboard */}
+            {/* ✅ FIX: Login button with clear instruction */}
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ delay: 1.1 }}
             >
-              {/* If recitation test is required and still in pipeline → go there, else dashboard */}
               <Button
-                onClick={() => {
-                  if (config?.recitation_test_required) {
-                    navigate("/student/recitation-test", { replace: true });
-                  } else {
-                    navigate("/student/awaiting-level", { replace: true });
-                  }
-                }}
+                onClick={handleContinue}
+                disabled={processing}
                 className="w-full py-6 text-base rounded-xl font-bold"
-                style={{ background: "#c9973a", color: "#fff", fontFamily: "'Cairo', sans-serif" }}
+                style={{ 
+                  background: "#c9973a", 
+                  color: "#fff", 
+                  fontFamily: "'Cairo', sans-serif",
+                  opacity: processing ? 0.7 : 1,
+                  cursor: processing ? "not-allowed" : "pointer"
+                }}
               >
-                {config?.recitation_test_required
-                  ? <>Continue to Recitation Test <ArrowRight className="ml-2 h-4 w-4" /></>
-                  : <>Continue <ArrowRight className="ml-2 h-4 w-4" /></>
-                }
+                {processing ? (
+                  "Processing..."
+                ) : (
+                  <>
+                    <LogIn className="mr-2 h-4 w-4" />
+                    Login to Access Dashboard
+                    <ArrowRight className="ml-2 h-4 w-4" />
+                  </>
+                )}
               </Button>
+              
+              {/* Helper text */}
+              <p className="text-center text-xs mt-3" style={{ color: "#9ca3af" }}>
+                You'll be signed out and redirected to login for a fresh session.
+              </p>
             </motion.div>
           </CardContent>
         </Card>
-      </motion.div>
-    </div>
+      </motion.div>    </div>
   );
 };
 
