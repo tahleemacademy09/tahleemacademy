@@ -29,13 +29,13 @@ const WARN: Record<string, {
   fix_en: string;   fix_ar: string;
   pts: number; autoFix?: boolean;
 }> = {
-  camera_covered:    { icon:"📷", sev:"critical", pts:10,
+  camera_covered:    { icon:"📷", sev:"caution", pts:0, autoFix:true,
     title_en:"Camera Blocked!",              title_ar:"الكاميرا محجوبة!",
     msg_en:  "Your camera feed is too dark or covered.",
     msg_ar:  "صورة الكاميرا مظلمة جداً أو محجوبة.",
     fix_en:  "Uncover your camera immediately to continue.",
     fix_ar:  "أزل أي شيء يحجب الكاميرا فوراً." },
-  webcam_disabled:   { icon:"🚫", sev:"critical", pts:10,
+  webcam_disabled:   { icon:"🚫", sev:"alert", pts:0, autoFix:true,
     title_en:"Camera Disconnected!",         title_ar:"الكاميرا مفصولة!",
     msg_en:  "Your webcam has stopped working.",
     msg_ar:  "الكاميرا توقفت عن العمل.",
