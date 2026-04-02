@@ -213,16 +213,44 @@ const LevelAssignment = () => {
         level: lvl, status: "grace",
         grace_end_date: new Date(Date.now() + 7 * 86400000).toISOString(),
       }).eq("user_id", student.user_id);
-      // Notify student
-      await (supabase as any).from("admin_notifications").insert({
-        type: "level_assigned",
-        user_id: student.user_id,
-        message: `Congratulations! You have been assigned to the ${LEVEL_CFG[lvl].label} level. Please subscribe to begin your classes.`,
-        created_at: new Date().toISOString(),
-        read: false,
-      });
+      // ── Mark Tasjeel as completed ──────────────────────────────────────────
+      await supabase.from("tasjeel_progress" as any).update({
+        current_step:      "completed",
+        level_assigned:    lvl,
+        level_assigned_at: new Date().toISOString(),
+        completed_at:      new Date().toISOString(),
+        updated_at:        new Date().toISOString(),
+      } as any).eq("user_id", student.user_id);
 
-      toast({ title: `✅ ${student.full_name} assigned to ${LEVEL_CFG[lvl].label}` });
+      // ── Also update profiles.course_level so DashboardLayout unlocks ──────
+      await supabase.from("profiles").update({ course_level: lvl } as any).eq("user_id", student.user_id);
+
+      // ── Notify the student via the notifications table (in-app) ───────────
+      await supabase.from("notifications" as any).insert({
+        user_id:    student.user_id,
+        title:      "🎉 Your Level Has Been Assigned!",
+        message:    `Congratulations, ${student.full_name}! You have been placed in the ${LEVEL_CFG[lvl as Level]?.label || lvl} level. Your full dashboard is now unlocked. Log in to begin your Islamic learning journey. بارك الله فيك!`,
+        type:       "level_assigned",
+        is_read:    false,
+        created_at: new Date().toISOString(),
+        metadata: JSON.stringify({
+          level:      lvl,
+          action_url: "/student",
+        }),
+      } as any);
+
+      // ── Legacy admin_notifications table (non-critical fallback) ──────────
+      try {
+        await (supabase as any).from("admin_notifications").insert({
+          type:       "level_assigned",
+          user_id:    student.user_id,
+          message:    `Level ${LEVEL_CFG[lvl as Level]?.label || lvl} assigned to ${student.full_name}.`,
+          created_at: new Date().toISOString(),
+          read:       false,
+        });
+      } catch (_) { /* non-critical */ }
+
+      toast({ title: `✅ ${student.full_name} assigned to ${LEVEL_CFG[lvl as Level]?.label || lvl}` });
       await load();
     } catch (e: any) {
       toast({ title: "Assignment failed", description: e.message, variant: "destructive" });
