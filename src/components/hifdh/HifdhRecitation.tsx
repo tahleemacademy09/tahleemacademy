@@ -72,7 +72,7 @@ export default function HifdhRecitation({ reciter: reciterProp, onReciterChange 
       verseRefs.current[num]?.scrollIntoView({ behavior: "smooth", block: "center" });
     });
 
-    const audio = new Audio(audioUrl(selSurahRef.current, num));
+    const audio = new Audio(audioUrl(selSurahRef.current, num, reciter));
     audioRef.current = audio;
 
     audio.play().catch(stopAll);
