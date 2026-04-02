@@ -44,19 +44,19 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     | { type:"group"; key:string; icon:any; label:string; children:{to:string;icon:any;label:string}[] };
 
   const studentNav: NavItem[] = [
-    { type:"link", to:"/student",         icon:LayoutDashboard, label:t("Dashboard","لوحة التحكم") },
-    { type:"link", to:"/student/courses", icon:BookOpenCheck,   label:t("Learning Hub","مركز التعلم") },
-    { type:"group", key:"revision", icon:RefreshCw, label:t("Revision","المراجعة"), children:[
-      { to:"/student/revision", icon:BookMarked, label:t("General Revision","المراجعة العامة") },
-      { to:"/student/hifdh",    icon:Headphones, label:t("Al-Hifdh","الحفظ") },
+    { type:"link", to:"/student",         icon:LayoutDashboard, label:t("Al-Markaz","المركز") },
+    { type:"link", to:"/student/courses", icon:BookOpenCheck,   label:t("Bayt Al-ʿIlm","بيت العلم") },
+    { type:"group", key:"revision", icon:RefreshCw, label:t("Al-Murājaʿah","المراجعة"), children:[
+      { to:"/student/revision", icon:BookMarked, label:t("Al-Murājaʿah Al-ʿĀmmah","المراجعة العامة") },
+      { to:"/student/hifdh",    icon:Headphones, label:t("Al-Ḥifẓ","الحفظ") },
     ]},
-    { type:"group", key:"exams", icon:ClipboardList, label:t("Exams","الامتحانات"), children:[
-      { to:"/student/exams",       icon:ClipboardList, label:t("My Exams","امتحاناتي") },
-      { to:"/student/transcripts", icon:GraduationCap, label:t("Transcripts","السجل الأكاديمي") },
+    { type:"group", key:"exams", icon:ClipboardList, label:t("Al-Imtihānāt","الامتحانات"), children:[
+      { to:"/student/exams",       icon:ClipboardList, label:t("Imtihānātī","امتحاناتي") },
+      { to:"/student/transcripts", icon:GraduationCap, label:t("Al-Sijillāt","السجلات الأكاديمية") },
     ]},
     { type:"link", to:"/student/majlis",  icon:MessageCircle, label:t("Al-Majlis","المجلس") },
-    { type:"link", to:"/live-quiz",       icon:Trophy,        label:t("Al-Musabaqah 🏆","المسابقة الحية 🏆") },
-    { type:"link", to:"/student/profile", icon:UserCircle,    label:t("Settings","الإعدادات") },
+    { type:"link", to:"/live-quiz",       icon:Trophy,        label:t("Al-Musābaqah 🏆","المسابقة الحية 🏆") },
+    { type:"link", to:"/student/profile", icon:UserCircle,    label:t("Al-Iʿdādāt","الإعدادات") },
   ];
 
   // ── Admin nav — grouped ──────────────────────────────────────
@@ -275,7 +275,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                   : "text-sidebar-foreground/65 hover:bg-sidebar-accent/40 hover:text-sidebar-accent-foreground"
               )}>
               <Wallet className="h-4 w-4 shrink-0 text-yellow-400"/>
-              <span>{t("Payment","الدفع")}</span>
+              <span>{t("Al-Maliyyah","الدفع")}</span>
             </Link>
           )}
           <button
@@ -288,7 +288,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
             className="w-full flex items-center gap-2.5 rounded-md px-3 py-2 text-sm text-sidebar-foreground/65 hover:bg-destructive/20 hover:text-destructive transition-colors"
             onClick={() => { signOut(); onNavigate?.(); }}>
             <LogOut className="h-4 w-4"/>
-            <span>{t("Sign Out","تسجيل الخروج")}</span>
+            <span>{t("Al-Khurūj","تسجيل الخروج")}</span>
           </button>
         </div>
       </div>
