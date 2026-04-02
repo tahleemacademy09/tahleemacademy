@@ -1,10 +1,11 @@
-/* src/pages/admin/EntranceExamAdmin.tsx — Enhanced with stats, search, manual grading, bulk level assignment */
+/* src/pages/admin/EntranceExamAdmin.tsx — ENHANCED with Question Editor */
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate } from "react-router-dom";
@@ -12,7 +13,8 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import {
   FileText, Users, Settings, Plus, Trash2, Download, Eye,
   BookOpen, RotateCcw, UserCog, Search, ChevronRight,
-  CheckCircle, XCircle, Loader2, BarChart2, GraduationCap
+  CheckCircle, XCircle, Loader2, BarChart2, GraduationCap,
+  Edit2, ArrowUp, ArrowDown, X, Save
 } from "lucide-react";
 
 const G = "#064E3B";
@@ -26,18 +28,47 @@ const levelCfg = {
   advanced:     { bg:"#FEE2E2", text:"#991B1B", border:"#FECACA", label:"Advanced / متقدم",     dot:"🔴" },
 };
 
+type QuestionType = "mcq" | "true_false" | "essay" | "short_answer" | "fill_blank";
+type Difficulty = "easy" | "medium" | "hard";
+
+interface Question {
+  id?: string;
+  exam_id: string;
+  question_text: string;
+  question_text_ar: string;
+  question_type: QuestionType;
+  difficulty: Difficulty;
+  points: number;
+  options?: any[];
+  correct_answer?: string;
+  sort_order: number;
+}
+
 const EntranceExamAdmin = () => {
   const { toast } = useToast();
   const { language } = useLanguage();
   const navigate = useNavigate();
-
-  const [questions, setQuestions]     = useState<any[]>([]);
+  const [questions, setQuestions]     = useState<Question[]>([]);
   const [subjects, setSubjects]       = useState<any[]>([]);
   const [levelCourses, setLevelCourses] = useState<any[]>([]);
   const [results, setResults]         = useState<any[]>([]);
   const [loading, setLoading]         = useState(true);
   const [activeTab, setActiveTab]     = useState<"questions"|"mapping"|"results">("results");
   const [search, setSearch]           = useState("");
+
+  // Question Editor State
+  const [editDialog, setEditDialog]   = useState(false);
+  const [editingQuestion, setEditingQuestion] = useState<Question | null>(null);
+  const [savingQuestion, setSavingQuestion] = useState(false);
+  const [form, setForm] = useState<Partial<Question>>({
+    question_text: "",
+    question_text_ar: "",
+    question_type: "mcq",
+    difficulty: "easy",
+    points: 5,
+    options: [],
+    correct_answer: "",
+  });
 
   // Subject mapping
   const [selectedLevel, setSelectedLevel]   = useState<typeof LEVELS[number]>("beginner");
@@ -65,8 +96,7 @@ const EntranceExamAdmin = () => {
         .neq("status","in_progress")
         .order("submitted_at", { ascending:false }),
     ]);
-    setQuestions(qRes.data||[]);
-    setSubjects(subRes.data||[]);
+    setQuestions(qRes.data||[]);    setSubjects(subRes.data||[]);
     setLevelCourses((lcRes.data as any[])||[]);
     setResults((attRes.data as any[])||[]);
     setLoading(false);
@@ -74,6 +104,106 @@ const EntranceExamAdmin = () => {
 
   useEffect(()=>{ loadData(); },[]);
 
+  // ── Question Editor Functions ───────────────────────────────────
+  const openEdit = (q?: Question) => {
+    if (q) {
+      setEditingQuestion(q);
+      setForm({ ...q });
+    } else {
+      setEditingQuestion(null);
+      setForm({
+        question_text: "",
+        question_text_ar: "",
+        question_type: "mcq",
+        difficulty: "easy",
+        points: 5,
+        options: [
+          { id: "a", text: "", text_ar: "" },
+          { id: "b", text: "", text_ar: "" },
+          { id: "c", text: "", text_ar: "" },
+          { id: "d", text: "", text_ar: "" },
+        ],
+        correct_answer: "",
+      });
+    }
+    setEditDialog(true);
+  };
+
+  const saveQuestion = async () => {
+    if (!form.question_text?.trim()) {
+      toast({ title: "Question text required", variant: "destructive" });
+      return;
+    }
+
+    setSavingQuestion(true);
+    try {
+      const qData = {
+        exam_id: ENTRANCE_EXAM_ID,
+        question_text: form.question_text,
+        question_text_ar: form.question_text_ar,
+        question_type: form.question_type,
+        difficulty: form.difficulty,
+        points: form.points,
+        options: form.question_type === "mcq" ? form.options : null,
+        correct_answer: form.correct_answer,        sort_order: editingQuestion?.sort_order || questions.length + 1,
+      };
+
+      if (editingQuestion?.id) {
+        await supabase.from("exam_questions").update(qData).eq("id", editingQuestion.id);
+        toast({ title: "✅ Question updated" });
+      } else {
+        await supabase.from("exam_questions").insert(qData);
+        toast({ title: "✅ Question added" });
+      }
+
+      setEditDialog(false);
+      loadData();
+    } catch (err: any) {
+      toast({ title: "Error saving", description: err.message, variant: "destructive" });
+    } finally {
+      setSavingQuestion(false);
+    }
+  };
+
+  const deleteQuestion = async (id: string) => {
+    if (!confirm("Delete this question?")) return;
+    await supabase.from("exam_questions").delete().eq("id", id);
+    toast({ title: "🗑️ Question deleted" });
+    loadData();
+  };
+
+  const moveQuestion = async (index: number, direction: "up" | "down") => {
+    const newQuestions = [...questions];
+    const newIndex = direction === "up" ? index - 1 : index + 1;
+    if (newIndex < 0 || newIndex >= newQuestions.length) return;
+
+    const temp = newQuestions[index].sort_order;
+    newQuestions[index].sort_order = newQuestions[newIndex].sort_order;
+    newQuestions[newIndex].sort_order = temp;
+
+    await supabase.from("exam_questions").update({ sort_order: newQuestions[index].sort_order }).eq("id", newQuestions[index].id);
+    await supabase.from("exam_questions").update({ sort_order: newQuestions[newIndex].sort_order }).eq("id", newQuestions[newIndex].id);
+
+    setQuestions(newQuestions);
+    toast({ title: "📋 Order updated" });
+  };
+
+  const addOption = () => {
+    const newOptions = [...(form.options || []), { id: String.fromCharCode(97 + form.options!.length), text: "", text_ar: "" }];
+    setForm({ ...form, options: newOptions });
+  };
+
+  const removeOption = (idx: number) => {
+    const newOptions = form.options?.filter((_, i) => i !== idx) || [];    setForm({ ...form, options: newOptions });
+  };
+
+  const updateOption = (idx: number, field: string, value: string) => {
+    const newOptions = [...(form.options || [])];
+    newOptions[idx] = { ...newOptions[idx], [field]: value };
+    setForm({ ...form, options: newOptions });
+  };
+
+  // ── Existing Admin Functions ───────────────────────────────────
   const addSubjectToLevel = async (level: string, subjectId: string) => {
     const { error } = await supabase.from("level_courses" as any).insert({ level, subject_id:subjectId } as any);
     if (error?.code === "23505") { toast({ title:"Already mapped", variant:"destructive" }); return; }
@@ -113,8 +243,7 @@ const EntranceExamAdmin = () => {
     for (const r of toUpdate) {
       const pct = r.total_points ? Math.round((r.score/r.total_points)*100) : 0;
       await supabase.from("profiles").update({ level:levelFromScore(pct) }).eq("user_id", r.user_id);
-    }
-    toast({ title:`✅ Applied auto-level to ${toUpdate.length} students` });
+    }    toast({ title:`✅ Applied auto-level to ${toUpdate.length} students` });
     setBulkApplying(false); setBulkDialog(false);
     loadData();
   };
@@ -141,6 +270,8 @@ const EntranceExamAdmin = () => {
     [l]: results.filter(r=>{ const pct=r.total_points?Math.round((r.score/r.total_points)*100):0; return levelFromScore(pct)===l; }).length
   }),{} as Record<string,number>);
 
+  const totalPoints = questions.reduce((sum, q) => sum + (q.points || 0), 0);
+
   const TABS = [
     { id:"results",  label:`Results (${results.length})`, icon:"👥" },
     { id:"mapping",  label:"Level Mapping",               icon:"🗺️" },
@@ -158,11 +289,10 @@ const EntranceExamAdmin = () => {
             </div>
             <div>
               <h1 style={{ fontSize:20, fontWeight:800, color:"#111", margin:0 }}>Entrance Exam</h1>
-              <p style={{ fontSize:12, color:"#6B7280", margin:0 }}>{results.length} submissions · {questions.length} questions</p>
+              <p style={{ fontSize:12, color:"#6B7280", margin:0 }}>{results.length} submissions · {questions.length} questions · {totalPoints} pts</p>
             </div>
           </div>
-          <div style={{ display:"flex", gap:8 }}>
-            <button onClick={()=>setBulkDialog(true)}
+          <div style={{ display:"flex", gap:8 }}>            <button onClick={()=>setBulkDialog(true)}
               style={{ padding:"8px 14px", borderRadius:10, border:"1.5px solid #E5E7EB", background:"#fff", cursor:"pointer", fontSize:13, fontWeight:700, color:"#374151", display:"flex", alignItems:"center", gap:6 }}>
               <UserCog size={13}/> Auto-Assign Levels
             </button>
@@ -170,10 +300,6 @@ const EntranceExamAdmin = () => {
               style={{ padding:"8px 14px", borderRadius:10, border:"1.5px solid #E5E7EB", background:"#fff", cursor:"pointer", fontSize:13, fontWeight:700, color:"#374151", display:"flex", alignItems:"center", gap:6 }}>
               <Download size={13}/> Export CSV
             </button>
-            <Button onClick={()=>navigate(`/admin/exams/${ENTRANCE_EXAM_ID}/edit`)}
-              style={{ background:G, borderRadius:10, gap:6, fontWeight:700 }}>
-              <Settings size={14}/> Edit Exam
-            </Button>
           </div>
         </div>
       </div>
@@ -215,8 +341,7 @@ const EntranceExamAdmin = () => {
             {loading?<div style={{ textAlign:"center", padding:40 }}><Loader2 size={28} style={{ animation:"spin .8s linear infinite", color:G }}/></div>:(
               <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
                 {filtered.map(r=>{
-                  const p = r.profiles;
-                  const pct = r.total_points ? Math.round((r.score/r.total_points)*100) : 0;
+                  const p = r.profiles;                  const pct = r.total_points ? Math.round((r.score/r.total_points)*100) : 0;
                   const suggested = levelFromScore(pct);
                   const current = p?.level;
                   const mismatch = suggested !== current;
@@ -265,8 +390,7 @@ const EntranceExamAdmin = () => {
             {LEVELS.map(level=>{
               const mapped = levelCourses.filter((lc:any)=>lc.level===level);
               const cfg = levelCfg[level];
-              return (
-                <div key={level} style={{ background:"#fff", borderRadius:16, border:`1.5px solid ${cfg.border}`, overflow:"hidden" }}>
+              return (                <div key={level} style={{ background:"#fff", borderRadius:16, border:`1.5px solid ${cfg.border}`, overflow:"hidden" }}>
                   <div style={{ background:cfg.bg, padding:"12px 16px", display:"flex", alignItems:"center", gap:8, borderBottom:`1px solid ${cfg.border}` }}>
                     <span style={{ fontSize:18 }}>{cfg.dot}</span>
                     <div>
@@ -306,34 +430,182 @@ const EntranceExamAdmin = () => {
           </div>
         )}
 
-        {/* QUESTIONS TAB */}
+        {/* QUESTIONS TAB - ENHANCED WITH FULL EDITOR */}
         {activeTab==="questions"&&(
           <>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
-              <p style={{ fontSize:13, color:"#6B7280", margin:0 }}>{questions.length} placement questions</p>
-              <Button onClick={()=>navigate(`/admin/exams/${ENTRANCE_EXAM_ID}/edit`)}
-                style={{ background:G, borderRadius:10, gap:6, fontWeight:700 }}>
-                <BookOpen size={14}/> Edit Questions
+              <p style={{ fontSize:13, color:"#6B7280", margin:0 }}>{questions.length} questions · {totalPoints} total points</p>
+              <Button onClick={()=>openEdit()} style={{ background:G, borderRadius:10, gap:6 }}>
+                <Plus size={14}/> Add Question
               </Button>
             </div>
-            <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
-              {questions.map((q,i)=>(
-                <div key={q.id} style={{ background:"#fff", borderRadius:12, border:"1px solid #E5E7EB", padding:"12px 14px", display:"flex", gap:10 }}>
-                  <span style={{ fontSize:11, fontWeight:800, color:"#9CA3AF", minWidth:24 }}>{i+1}</span>
-                  <div style={{ flex:1 }}>
-                    <p style={{ fontSize:13, fontWeight:600, color:"#111", margin:0 }}>{q.question_text}</p>
-                    {q.question_text_ar&&<p style={{ fontSize:12, color:"#9CA3AF", margin:"3px 0 0", fontFamily:"'Amiri',serif", direction:"rtl" }}>{q.question_text_ar}</p>}
+            <div style={{ display:"flex", flexDirection:"column", gap:6 }}>              {questions.map((q,i)=>(
+                <div key={q.id} style={{ background:"#fff", borderRadius:12, border:"1px solid #E5E7EB", padding:"14px 16px", display:"flex", gap:12 }}>
+                  {/* Order controls */}
+                  <div style={{ display:"flex", flexDirection:"column", gap:2, justifyContent:"center" }}>
+                    <button onClick={()=>moveQuestion(i,"up")} disabled={i===0}
+                      style={{ padding:3, borderRadius:5, border:"1px solid #E5E7EB", background:i===0?"#F3F4F6":"#fff", cursor:i===0?"not-allowed":"pointer", opacity:i===0?0.4:1 }}>
+                      <ArrowUp size={12} color="#374151"/>
+                    </button>
+                    <span style={{ fontSize:11, fontWeight:800, color:"#9CA3AF", textAlign:"center" }}>{i+1}</span>
+                    <button onClick={()=>moveQuestion(i,"down")} disabled={i===questions.length-1}
+                      style={{ padding:3, borderRadius:5, border:"1px solid #E5E7EB", background:i===questions.length-1?"#F3F4F6":"#fff", cursor:i===questions.length-1?"not-allowed":"pointer", opacity:i===questions.length-1?0.4:1 }}>
+                      <ArrowDown size={12} color="#374151"/>
+                    </button>
                   </div>
-                  <span style={{ fontSize:10, padding:"2px 8px", borderRadius:20, background:"#EFF6FF", color:"#1D4ED8", fontWeight:700, alignSelf:"flex-start", whiteSpace:"nowrap" }}>
-                    {q.question_type?.replace("_"," ")||"mcq"}
-                  </span>
+                  {/* Question content */}
+                  <div style={{ flex:1 }}>
+                    <div style={{ display:"flex", gap:6, marginBottom:6, flexWrap:"wrap" }}>
+                      <span style={{ fontSize:10, padding:"2px 8px", borderRadius:20, background:"#EFF6FF", color:"#1D4ED8", fontWeight:700 }}>
+                        {q.question_type?.replace("_"," ")}
+                      </span>
+                      <span style={{ fontSize:10, padding:"2px 8px", borderRadius:20, background:q.difficulty==="easy"?"#DCFCE7":q.difficulty==="medium"?"#FEF9C3":"#FEE2E2", color:q.difficulty==="easy"?"#166534":q.difficulty==="medium"?"#854D0E":"#991B1B", fontWeight:700 }}>
+                        {q.difficulty}
+                      </span>
+                      <span style={{ fontSize:10, padding:"2px 8px", borderRadius:20, background:"#F3F4F6", color:"#374151", fontWeight:700 }}>
+                        {q.points} pts
+                      </span>
+                    </div>
+                    <p style={{ fontSize:14, fontWeight:600, color:"#111", margin:"0 0 4px" }}>{q.question_text}</p>
+                    {q.question_text_ar&&<p style={{ fontSize:12, color:"#9CA3AF", margin:0, fontFamily:"'Amiri',serif", direction:"rtl" }}>{q.question_text_ar}</p>}
+                  </div>
+                  {/* Actions */}
+                  <div style={{ display:"flex", gap:6 }}>
+                    <button onClick={()=>openEdit(q)} style={{ padding:"8px 10px", borderRadius:8, border:"1px solid #E5E7EB", background:"#fff", cursor:"pointer" }}>
+                      <Edit2 size={14} color="#6B7280"/>
+                    </button>
+                    <button onClick={()=>deleteQuestion(q.id!)} style={{ padding:"8px 10px", borderRadius:8, border:"1px solid #FEE2E2", background:"#FFF5F5", cursor:"pointer" }}>
+                      <Trash2 size={14} color="#DC2626"/>
+                    </button>
+                  </div>
                 </div>
               ))}
-              {questions.length===0&&<div style={{ textAlign:"center", padding:"48px 24px", background:"#fff", borderRadius:16, border:"2px dashed #E5E7EB" }}><p style={{ color:"#9CA3AF" }}>No questions yet — add them in the exam editor</p></div>}
+              {questions.length===0&&<div style={{ textAlign:"center", padding:"48px 24px", background:"#fff", borderRadius:16, border:"2px dashed #E5E7EB" }}><p style={{ color:"#9CA3AF" }}>No questions yet — add your first question</p></div>}
             </div>
           </>
         )}
       </div>
+
+      {/* Question Edit Dialog */}
+      <Dialog open={editDialog} onOpenChange={setEditDialog}>
+        <DialogContent style={{ maxWidth:700, maxHeight:"90vh", overflow:"auto" }}>          <DialogHeader>
+            <DialogTitle style={{ fontSize:18, fontWeight:800 }}>
+              {editingQuestion ? "Edit Question" : "Add New Question"}
+            </DialogTitle>
+          </DialogHeader>
+
+          <div style={{ display:"flex", flexDirection:"column", gap:16, paddingTop:16 }}>
+            {/* Question Type */}
+            <div>
+              <label style={{ fontSize:13, fontWeight:700, color:"#374151", marginBottom:6, display:"block" }}>Question Type</label>
+              <Select value={form.question_type} onValueChange={(v)=>setForm({...form, question_type:v as QuestionType})}>
+                <SelectTrigger style={{ borderRadius:10 }}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="mcq">Multiple Choice (MCQ)</SelectItem>
+                  <SelectItem value="true_false">True / False</SelectItem>
+                  <SelectItem value="essay">Essay (Long Answer)</SelectItem>
+                  <SelectItem value="short_answer">Short Answer</SelectItem>
+                  <SelectItem value="fill_blank">Fill in the Blank</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Difficulty & Points */}
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+              <div>
+                <label style={{ fontSize:13, fontWeight:700, color:"#374151", marginBottom:6, display:"block" }}>Difficulty</label>
+                <Select value={form.difficulty} onValueChange={(v)=>setForm({...form, difficulty:v as Difficulty})}>
+                  <SelectTrigger style={{ borderRadius:10 }}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="easy">Easy</SelectItem>
+                    <SelectItem value="medium">Medium</SelectItem>
+                    <SelectItem value="hard">Hard</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <label style={{ fontSize:13, fontWeight:700, color:"#374151", marginBottom:6, display:"block" }}>Points</label>
+                <Input type="number" value={form.points} onChange={(e)=>setForm({...form, points:parseInt(e.target.value)||0})} style={{ borderRadius:10 }} />
+              </div>
+            </div>
+
+            {/* Question Text */}
+            <div>
+              <label style={{ fontSize:13, fontWeight:700, color:"#374151", marginBottom:6, display:"block" }}>Question (English)</label>
+              <Textarea value={form.question_text} onChange={(e)=>setForm({...form, question_text:e.target.value})} placeholder="Enter question text..." rows={3} style={{ borderRadius:10, resize:"none" }} />
+            </div>
+            <div>
+              <label style={{ fontSize:13, fontWeight:700, color:"#374151", marginBottom:6, display:"block" }}>Question (Arabic)</label>
+              <Textarea value={form.question_text_ar} onChange={(e)=>setForm({...form, question_text_ar:e.target.value})} placeholder="اكتب نص السؤال بالعربية..." rows={3} style={{ borderRadius:10, resize:"none", direction:"rtl" }} />
+            </div>
+
+            {/* MCQ Options */}
+            {form.question_type==="mcq" && (
+              <div>
+                <label style={{ fontSize:13, fontWeight:700, color:"#374151", marginBottom:6, display:"block" }}>Answer Options</label>
+                <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                  {form.options?.map((opt,idx)=>(
+                    <div key={idx} style={{ display:"flex", gap:8, alignItems:"center" }}>
+                      <span style={{ fontSize:13, fontWeight:700, color:"#374151", width:24 }}>{String.fromCharCode(65+idx)}.</span>
+                      <Input value={opt.text} onChange={(e)=>updateOption(idx,"text",e.target.value)} placeholder="Option text" style={{ flex:1, borderRadius:10 }} />
+                      <Input value={opt.text_ar} onChange={(e)=>updateOption(idx,"text_ar",e.target.value)} placeholder="نص الخيار" style={{ flex:1, borderRadius:10, direction:"rtl" }} />
+                      <button onClick={()=>removeOption(idx)} style={{ padding:8, borderRadius:8, border:"1px solid #E5E7EB", background:"#fff", cursor:"pointer" }}>
+                        <X size={14} color="#6B7280"/>
+                      </button>
+                    </div>
+                  ))}
+                  <Button onClick={addOption} variant="outline" style={{ borderRadius:10, gap:6 }}>
+                    <Plus size={14}/> Add Option
+                  </Button>
+                </div>
+
+                <div style={{ marginTop:12 }}>
+                  <label style={{ fontSize:13, fontWeight:700, color:"#374151", marginBottom:6, display:"block" }}>Correct Answer</label>
+                  <Select value={form.correct_answer} onValueChange={(v)=>setForm({...form, correct_answer:v})}>
+                    <SelectTrigger style={{ borderRadius:10 }}>
+                      <SelectValue placeholder="Select correct answer" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {form.options?.map((opt,idx)=>(
+                        <SelectItem key={idx} value={opt.id}>{String.fromCharCode(65+idx)}. {opt.text||"(empty)"}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            )}
+
+            {/* True/False */}
+            {form.question_type==="true_false" && (
+              <div>
+                <label style={{ fontSize:13, fontWeight:700, color:"#374151", marginBottom:6, display:"block" }}>Correct Answer</label>
+                <Select value={form.correct_answer} onValueChange={(v)=>setForm({...form, correct_answer:v})}>
+                  <SelectTrigger style={{ borderRadius:10 }}>
+                    <SelectValue placeholder="Select correct answer" />
+                  </SelectTrigger>                  <SelectContent>
+                    <SelectItem value="true">True / صحيح</SelectItem>
+                    <SelectItem value="false">False / خطأ</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            {/* Actions */}
+            <div style={{ display:"flex", gap:10, paddingTop:8 }}>
+              <Button onClick={()=>setEditDialog(false)} variant="outline" style={{ flex:1, borderRadius:10 }}>
+                Cancel
+              </Button>
+              <Button onClick={saveQuestion} disabled={savingQuestion} style={{ flex:1, background:G, borderRadius:10, gap:6 }}>
+                {savingQuestion ? "Saving..." : <><Save size={16}/> Save Question</>}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Change Level Dialog */}
       <Dialog open={levelDialog} onOpenChange={v=>!v&&setLevelDialog(false)}>
@@ -363,8 +635,7 @@ const EntranceExamAdmin = () => {
             🔴 ≥70% → Advanced · 🟡 40–69% → Intermediate · 🟢 &lt;40% → Beginner
           </p>
           <div style={{ padding:"12px 14px", background:"#FFF7ED", borderRadius:12, border:"1px solid #FDE68A", marginBottom:16 }}>
-            <p style={{ fontSize:12, color:"#92400E", margin:0 }}>⚠️ {results.filter(r=>{ const pct=r.total_points?Math.round((r.score/r.total_points)*100):0; return levelFromScore(pct)!==r.profiles?.level; }).length} students have a level mismatch</p>
-          </div>
+            <p style={{ fontSize:12, color:"#92400E", margin:0 }}>⚠️ {results.filter(r=>{ const pct=r.total_points?Math.round((r.score/r.total_points)*100):0; return levelFromScore(pct)!==r.profiles?.level; }).length} students have a level mismatch</p>          </div>
           <div style={{ display:"flex", gap:10 }}>
             <button onClick={()=>setBulkDialog(false)} style={{ flex:1, padding:"11px", borderRadius:12, border:"1.5px solid #E5E7EB", background:"#fff", cursor:"pointer", fontWeight:600 }}>Cancel</button>
             <button onClick={applyAutoLevel} disabled={bulkApplying}
@@ -380,4 +651,3 @@ const EntranceExamAdmin = () => {
 };
 
 export default EntranceExamAdmin;
-
