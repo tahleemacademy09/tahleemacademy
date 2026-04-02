@@ -1,33 +1,31 @@
 /*  src/components/hifdh/audioManager.ts
-    Enhanced Reciter-aware Audio Manager with looping, speed, preload queue.
-    «Sitting with a qualified Qāri' guiding your memorization»
+    Reciter-aware Audio Manager — loop, speed, preload queue.
+    Speeds now include 1.25× and 1.5× as requested.
 */
 import { audioUrl, DEFAULT_RECITER } from "./surahData";
 
-export type PlaybackSpeed = 0.5 | 0.75 | 1;
-const SPEEDS: PlaybackSpeed[] = [0.5, 0.75, 1];
+export type PlaybackSpeed = 0.5 | 0.75 | 1 | 1.25 | 1.5;
+const SPEEDS: PlaybackSpeed[] = [0.5, 0.75, 1, 1.25, 1.5];
 
 class AudioManager {
-  /* ── state ─────────────────────────────────────── */
   private audio: HTMLAudioElement | null = null;
   private preloadCache = new Map<string, HTMLAudioElement>();
   private stopCb: (() => void) | null = null;
 
-  currentReciter = DEFAULT_RECITER;
-  currentSurah = 1;
-  currentAyah = 0;
-  isLooping = false;
-  loopCount = 0;         // 0 = infinite
+  currentReciter   = DEFAULT_RECITER;
+  currentSurah     = 1;
+  currentAyah      = 0;
+  isLooping        = false;
+  loopCount        = 0;
   private loopsDone = 0;
   playbackSpeed: PlaybackSpeed = 1;
-  private _isPlaying = false;
-  private _buffering = false;
+  private _isPlaying  = false;
+  private _buffering  = false;
 
   private onAyahChange?: (ayah: number) => void;
   private onLoopTick?: (done: number, total: number) => void;
   private onBuffering?: (buffering: boolean) => void;
 
-  /* ── init ──────────────────────────────────────── */
   init() {
     if (typeof window !== "undefined" && !this.audio) {
       this.audio = new Audio();
@@ -35,15 +33,11 @@ class AudioManager {
     }
   }
 
-  /* ── configuration ─────────────────────────────── */
   setReciter(id: string) {
     if (id === this.currentReciter) return;
     this.currentReciter = id;
     this.preloadCache.clear();
-    // If playing, restart current ayah with new reciter
-    if (this._isPlaying) {
-      this.playAyah(this.currentSurah, this.currentAyah);
-    }
+    if (this._isPlaying) this.playAyah(this.currentSurah, this.currentAyah);
   }
 
   setSpeed(s: PlaybackSpeed) {
@@ -52,7 +46,7 @@ class AudioManager {
   }
 
   cycleSpeed(): PlaybackSpeed {
-    const idx = SPEEDS.indexOf(this.playbackSpeed);
+    const idx  = SPEEDS.indexOf(this.playbackSpeed);
     const next = SPEEDS[(idx + 1) % SPEEDS.length];
     this.setSpeed(next);
     return next;
@@ -64,23 +58,19 @@ class AudioManager {
     this.loopsDone = 0;
   }
 
-  onAyahChanged(fn: (ayah: number) => void) { this.onAyahChange = fn; }
-  onLoopProgress(fn: (done: number, total: number) => void) { this.onLoopTick = fn; }
-  onBufferingChange(fn: (b: boolean) => void) { this.onBuffering = fn; }
+  onAyahChanged(fn: (ayah: number) => void)               { this.onAyahChange = fn; }
+  onLoopProgress(fn: (done: number, total: number) => void) { this.onLoopTick  = fn; }
+  onBufferingChange(fn: (b: boolean) => void)              { this.onBuffering  = fn; }
 
-  /* ── preloading ────────────────────────────────── */
-  private getUrl(surah: number, ayah: number): string {
+  private getUrl(surah: number, ayah: number) {
     return audioUrl(surah, ayah, this.currentReciter);
   }
 
   preload(surah: number, ayah: number) {
     const url = this.getUrl(surah, ayah);
     if (this.preloadCache.has(url)) return;
-    const a = new Audio();
-    a.preload = "auto";
-    a.src = url;
+    const a = new Audio(); a.preload = "auto"; a.src = url;
     this.preloadCache.set(url, a);
-    // Evict oldest if cache > 10
     if (this.preloadCache.size > 10) {
       const first = this.preloadCache.keys().next().value;
       if (first) this.preloadCache.delete(first);
@@ -92,30 +82,22 @@ class AudioManager {
     this.preload(surah, ayah + 1);
   }
 
-  /* ── playback ──────────────────────────────────── */
   playAyah(surah: number, ayah: number, onEnd?: () => void, onStop?: () => void) {
     this.init();
     if (!this.audio) return;
     this.stop();
-
-    this.currentSurah = surah;
-    this.currentAyah = ayah;
-    this.loopsDone = 0;
-    this.stopCb = onStop ?? null;
-    this._isPlaying = true;
+    this.currentSurah  = surah;
+    this.currentAyah   = ayah;
+    this.loopsDone     = 0;
+    this.stopCb        = onStop ?? null;
+    this._isPlaying    = true;
 
     const url = this.getUrl(surah, ayah);
     this.audio.src = url;
     this.audio.playbackRate = this.playbackSpeed;
-
     this.setBuffering(true);
     this.audio.oncanplay = () => this.setBuffering(false);
-
-    this.audio.play().catch(() => {
-      this._isPlaying = false;
-      this.setBuffering(false);
-    });
-
+    this.audio.play().catch(() => { this._isPlaying = false; this.setBuffering(false); });
     this.preloadAdjacent(surah, ayah);
     this.onAyahChange?.(ayah);
 
@@ -124,64 +106,41 @@ class AudioManager {
         this.loopsDone++;
         this.onLoopTick?.(this.loopsDone, this.loopCount);
         if (this.loopCount === 0 || this.loopsDone < this.loopCount) {
-          // Replay same ayah
-          if (this.audio) {
-            this.audio.currentTime = 0;
-            this.audio.play().catch(() => {});
-          }
+          if (this.audio) { this.audio.currentTime = 0; this.audio.play().catch(() => {}); }
           return;
         }
       }
-      // Done — trigger callback
       this._isPlaying = false;
       this.stopCb = null;
       onEnd?.();
     };
   }
 
-  /** Play a range of ayahs sequentially */
   playRange(surah: number, from: number, to: number, onEnd?: () => void) {
     let current = from;
     const playNext = () => {
-      if (current > to) {
-        this._isPlaying = false;
-        onEnd?.();
-        return;
-      }
-      this.playAyah(surah, current, () => {
-        current++;
-        playNext();
-      });
+      if (current > to) { this._isPlaying = false; onEnd?.(); return; }
+      this.playAyah(surah, current, () => { current++; playNext(); });
     };
     playNext();
   }
 
-  /* ── stop / pause ──────────────────────────────── */
   stop() {
     if (!this.audio) return;
     this.audio.pause();
-    this.audio.onended = null;
+    this.audio.onended  = null;
     this.audio.oncanplay = null;
-    this.audio.src = "";
-    this._isPlaying = false;
+    this.audio.src      = "";
+    this._isPlaying     = false;
     this.setBuffering(false);
     this.stopCb?.();
     this.stopCb = null;
   }
 
-  pause() {
-    if (!this.audio) return;
-    this.audio.pause();
-    this._isPlaying = false;
-  }
+  pause()  { if (!this.audio) return; this.audio.pause(); this._isPlaying = false; }
+  resume() { if (!this.audio) return; this.audio.play().catch(() => {}); this._isPlaying = true; }
 
-  resume() {
-    if (!this.audio) return;
-    this.audio.play().catch(() => {});
-    this._isPlaying = true;
-  }
-
-  /* ── legacy play() for backward compat ─────────── */
+  // Legacy
   play(src: string, onEnd?: () => void, onStop?: () => void) {
     this.init();
     if (!this.audio || !src) return;
@@ -194,18 +153,14 @@ class AudioManager {
     this.audio.onended = () => { this._isPlaying = false; this.stopCb = null; onEnd?.(); };
   }
 
-  /* ── getters ───────────────────────────────────── */
   get isPlaying() { return this._isPlaying; }
-  get buffering() { return this._buffering; }
+  get buffering()  { return this._buffering; }
   get currentTime() { return this.audio?.currentTime ?? 0; }
-  get duration() { return this.audio?.duration ?? 0; }
+  get duration()    { return this.audio?.duration ?? 0; }
 
   setTimeUpdate(fn: (() => void) | null) { if (this.audio) this.audio.ontimeupdate = fn; }
 
-  private setBuffering(b: boolean) {
-    this._buffering = b;
-    this.onBuffering?.(b);
-  }
+  private setBuffering(b: boolean) { this._buffering = b; this.onBuffering?.(b); }
 }
 
 export const audioManager = new AudioManager();
