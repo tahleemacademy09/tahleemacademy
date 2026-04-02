@@ -1,4 +1,5 @@
-import { useState, useRef } from "react";
+/*  src/pages/admin/CourseManagement.tsx — FIXED IMAGE HANDLING */
+import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -29,33 +30,85 @@ const levelCfg: Record<Level, { bg: string; text: string; border: string; dot: s
 
 const G = "#064E3B";
 
-// Resolve both full URLs and Supabase storage paths to a displayable URL
-const resolveImageUrl = (url: string | null | undefined): string | null => {
+// ✅ FIXED: Robust image URL resolver with async support for signed URLs
+const resolveImageUrl = async (url: string | null | undefined): Promise<string | null> => {
   if (!url || url.trim() === "") return null;
-  if (url.startsWith("http://") || url.startsWith("https://")) return url;
-  const { data: d1 } = supabase.storage.from("subject-files").getPublicUrl(url);
-  if (d1?.publicUrl) return d1.publicUrl;
-  const { data: d2 } = supabase.storage.from("subject-images").getPublicUrl(url);
-  return d2?.publicUrl || null;
+  
+  // Already a full HTTP URL
+  if (url.startsWith("http://") || url.startsWith("https://")) {
+    return url;
+  }
+  
+  // Supabase storage path - try to get public URL
+  try {
+    // Try subject-files bucket first
+    const { data: d1 } = supabase.storage.from("subject-files").getPublicUrl(url);
+    if (d1?.publicUrl) return d1.publicUrl;
+    
+    // Try subject-images bucket
+    const { data: d2 } = supabase.storage.from("subject-images").getPublicUrl(url);
+    if (d2?.publicUrl) return d2.publicUrl;    
+    // If bucket is private, generate signed URL (1 hour expiry)
+    const { data: signed } = await supabase.storage.from("subject-files").createSignedUrl(url, 3600);
+    if (signed?.signedUrl) return signed.signedUrl;
+    
+  } catch (err) {
+    console.warn('Failed to resolve image URL:', url, err);
+  }
+  
+  return null;
 };
 
-// Thumbnail component with useState error fallback — never shows broken img tag
+// ✅ FIXED: Thumbnail component with async image loading and robust error handling
 const CourseThumb = ({
   url, title, height = 140, lv,
 }: { url?: string | null; title: string; height?: number; lv: typeof levelCfg[Level] }) => {
+  const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
-  const resolved = resolveImageUrl(url);
-  if (!resolved || failed) {
+  const [loading, setLoading] = useState(true);
+
+  // Resolve URL on mount
+  useEffect(() => {
+    let mounted = true;
+    const load = async () => {
+      const resolved = await resolveImageUrl(url);
+      if (mounted) {
+        setResolvedUrl(resolved);
+        setLoading(false);
+      }
+    };
+    load();
+    return () => { mounted = false; };
+  }, [url]);
+
+  // Show loading state
+  if (loading) {
+    return (
+      <div style={{ height, background: `linear-gradient(135deg,${lv.border},${lv.bg})`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <Loader2 size={height > 80 ? 28 : 18} style={{ animation: "spin 1s linear infinite", color: lv.text, opacity: 0.5 }} />
+      </div>
+    );
+  }
+
+  // Show fallback if no URL or failed
+  if (!resolvedUrl || failed) {
     return (
       <div style={{ height, background: `linear-gradient(135deg,${lv.border},${lv.bg})`, display: "flex", alignItems: "center", justifyContent: "center" }}>
         <BookOpen size={height > 80 ? 28 : 18} color={lv.text} style={{ opacity: 0.35 }} />
       </div>
-    );
-  }
+    );  }
+
+  // Show image with error fallback
   return (
-    <img src={resolved} alt={title}
+    <img 
+      src={resolvedUrl} 
+      alt={title}
       style={{ width: "100%", height, objectFit: "cover", display: "block" }}
-      onError={() => setFailed(true)} />
+      onError={() => {
+        console.warn('Image failed to load:', resolvedUrl);
+        setFailed(true);
+      }} 
+    />
   );
 };
 
@@ -92,19 +145,18 @@ const CourseManagement = () => {
 
   // Thumbnail upload
   const [thumbFile, setThumbFile] = useState<File|null>(null);
-  const [thumbUploading, setThumbUploading] = useState(false);
-  const thumbRef = useRef<HTMLInputElement>(null);
+  const [thumbUploading, setThumbUploading] = useState(false);  const thumbRef = useRef<HTMLInputElement>(null);
 
   /* ── Queries ───────────────────────────────────────── */
-  const { data: subjects = [] } = useQuery({
+  const {  subjects = [] } = useQuery({
     queryKey: ["subjects"],
     queryFn: async () => {
-      const { data } = await supabase.from("subjects").select("*").order("title");
+      const {  } = await supabase.from("subjects").select("*").order("title");
       return data || [];
     },
   });
 
-  const { data: courses = [], isLoading } = useQuery({
+  const {  courses = [], isLoading } = useQuery({
     queryKey: ["admin-courses"],
     queryFn: async () => {
       const { data, error } = await supabase.from("courses")
@@ -114,11 +166,11 @@ const CourseManagement = () => {
     },
   });
 
-  const { data: lessons = [], isLoading: lessonsLoading } = useQuery({
+  const {  lessons = [], isLoading: lessonsLoading } = useQuery({
     queryKey: ["admin-lessons", selectedCourse?.id],
     enabled: !!selectedCourse,
     queryFn: async () => {
-      const { data } = await supabase.from("lessons")
+      const {  } = await supabase.from("lessons")
         .select("*").eq("course_id", selectedCourse.id).order("sort_order");
       return data || [];
     },
@@ -129,17 +181,29 @@ const CourseManagement = () => {
     mutationFn: async () => {
       let thumbUrl = cf.image_url;
 
-      // Upload thumbnail if file selected
+      // ✅ FIXED: Upload thumbnail if file selected
       if (thumbFile) {
         setThumbUploading(true);
-        const ext  = thumbFile.name.split(".").pop();
-        const path = `course-thumbnails/${crypto.randomUUID()}.${ext}`;
-        const { error: upErr } = await supabase.storage.from("subject-files").upload(path, thumbFile);
-        if (!upErr) {
-          const { data } = supabase.storage.from("subject-files").getPublicUrl(path);
-          thumbUrl = data.publicUrl;
+        try {
+          const ext  = thumbFile.name.split(".").pop() || "jpg";
+          const path = `course-thumbnails/${crypto.randomUUID()}.${ext}`;
+          
+          // Upload to Supabase Storage
+          const { error: upErr,  } = await supabase.storage
+            .from("subject-files")
+            .upload(path, thumbFile, { upsert: true, contentType: thumbFile.type });
+          
+          if (upErr) throw upErr;
+                    // Get public URL
+          const {  pubData } = supabase.storage.from("subject-files").getPublicUrl(path);
+          thumbUrl = pubData?.publicUrl || null;
+          
+        } catch (err: any) {
+          console.error('Thumbnail upload failed:', err);
+          toast({ title: "Upload failed", description: err.message, variant: "destructive" });
+        } finally {
+          setThumbUploading(false);
         }
-        setThumbUploading(false);
       }
 
       const payload = {
@@ -149,6 +213,7 @@ const CourseManagement = () => {
         is_published: cf.is_published, sort_order: cf.sort_order,
         image_url: thumbUrl || null,
         created_by: user?.id,
+        updated_at: new Date().toISOString(),
       };
 
       if (editCourseId) {
@@ -178,8 +243,7 @@ const CourseManagement = () => {
       if (selectedCourse && deleteConfirm?.id === selectedCourse.id) {
         setView("list"); setSelectedCourse(null);
       }
-      setDeleteConfirm(null);
-      toast({ title: t("Deleted", "تم الحذف") });
+      setDeleteConfirm(null);      toast({ title: t("Deleted", "تم الحذف") });
     },
   });
 
@@ -191,6 +255,7 @@ const CourseManagement = () => {
         duration_minutes: lf.duration_minutes,
         sort_order: lf.sort_order,
         course_id: selectedCourse.id,
+        updated_at: new Date().toISOString(),
       };
       if (editLessonId) {
         const { error } = await supabase.from("lessons").update(payload).eq("id", editLessonId);
@@ -222,13 +287,12 @@ const CourseManagement = () => {
 
   const togglePublish = useMutation({
     mutationFn: async ({ id, v }: { id:string; v:boolean }) => {
-      const { error } = await supabase.from("courses").update({ is_published: v }).eq("id", id);
+      const { error } = await supabase.from("courses").update({ is_published: v, updated_at: new Date().toISOString() }).eq("id", id);
       if (error) throw error;
     },
     onSuccess: (_, { id, v }) => {
       qc.invalidateQueries({ queryKey: ["admin-courses"] });
-      if (selectedCourse?.id === id) setSelectedCourse((p: any) => ({ ...p, is_published: v }));
-    },
+      if (selectedCourse?.id === id) setSelectedCourse((p: any) => ({ ...p, is_published: v }));    },
   });
 
   /* ── Helpers ───────────────────────────────────────── */
@@ -277,8 +341,7 @@ const CourseManagement = () => {
                 </div>
                 <div>
                   <h1 style={{ fontSize:20, fontWeight:800, color:"#111", margin:0 }}>Course Management</h1>
-                  <p style={{ fontSize:12, color:"#6B7280", margin:0 }}>{courses.length} courses · {courses.filter((c:any)=>c.is_published).length} published</p>
-                </div>
+                  <p style={{ fontSize:12, color:"#6B7280", margin:0 }}>{courses.length} courses · {courses.filter((c:any)=>c.is_published).length} published</p>                </div>
               </div>
               <Button onClick={() => { setEditCourseId(null); resetCf(); setCourseOpen(true); }}
                 style={{ background:G, borderRadius:12, gap:8, fontWeight:700 }}>
@@ -327,13 +390,12 @@ const CourseManagement = () => {
                   const lv = levelCfg[course.level as Level] || levelCfg.beginner;
                   const subj = (course as any).subjects;
                   return (
-                    <div key={course.id}
-                      onClick={() => openCourseDetail(course)}
+                    <div key={course.id}                      onClick={() => openCourseDetail(course)}
                       style={{ background:"#fff", borderRadius:16, border:"1.5px solid #E5E7EB", overflow:"hidden", cursor:"pointer", transition:"all .15s", boxShadow:"0 1px 4px rgba(0,0,0,.04)" }}
                       onMouseEnter={e=>(e.currentTarget as any).style.boxShadow="0 8px 24px rgba(0,0,0,.1)"}
                       onMouseLeave={e=>(e.currentTarget as any).style.boxShadow="0 1px 4px rgba(0,0,0,.04)"}>
 
-                      {/* Thumbnail */}
+                      {/* ✅ FIXED: Thumbnail with async loading */}
                       <CourseThumb url={course.image_url} title={course.title} lv={lv} />
 
                       <div style={{ padding:"14px 16px" }}>
@@ -377,8 +439,7 @@ const CourseManagement = () => {
               </div>
             )}
           </div>
-        </>
-      )}
+        </>      )}
 
       {/* ── DETAIL VIEW ───────────────────────────── */}
       {view === "detail" && selectedCourse && (
@@ -427,8 +488,7 @@ const CourseManagement = () => {
               <div style={{ display:"flex", gap:20 }}>
                 {[{ v:totalLessons, l:"Lessons" },{ v:totalMins+"m", l:"Duration" }].map((s,i)=>(
                   <div key={i} style={{ textAlign:"center" }}>
-                    <div style={{ fontSize:22, fontWeight:900, color:G }}>{s.v}</div>
-                    <div style={{ fontSize:11, color:"#9CA3AF" }}>{s.l}</div>
+                    <div style={{ fontSize:22, fontWeight:900, color:G }}>{s.v}</div>                    <div style={{ fontSize:11, color:"#9CA3AF" }}>{s.l}</div>
                   </div>
                 ))}
               </div>
@@ -477,8 +537,7 @@ const CourseManagement = () => {
                         <div style={{ width:32, height:32, borderRadius:8, background:"#ECFDF5", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
                           <span style={{ fontSize:12, fontWeight:800, color:G }}>{idx+1}</span>
                         </div>
-                        <div style={{ width:36, height:36, borderRadius:9, background:"#F3F4F6", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
-                          <Video size={16} color="#6B7280"/>
+                        <div style={{ width:36, height:36, borderRadius:9, background:"#F3F4F6", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>                          <Video size={16} color="#6B7280"/>
                         </div>
                         <div style={{ flex:1, minWidth:0 }}>
                           <p style={{ fontWeight:700, fontSize:13, color:"#111", margin:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{lesson.title}</p>
@@ -527,8 +586,7 @@ const CourseManagement = () => {
                     <p style={{ fontSize:11, fontWeight:700, color:"#9CA3AF", textTransform:"uppercase", letterSpacing:.5, marginBottom:4 }}>Status</p>
                     <span style={{ fontSize:13, fontWeight:700, padding:"4px 12px", borderRadius:20, background:selectedCourse.is_published?"#DCFCE7":"#F3F4F6", color:selectedCourse.is_published?"#166534":"#6B7280" }}>
                       {selectedCourse.is_published?"✓ Published":"Draft"}
-                    </span>
-                  </div>
+                    </span>                  </div>
                   <Button onClick={()=>openEditCourse(selectedCourse)} style={{ background:G, borderRadius:12, gap:8 }}>
                     <Edit size={14}/> Edit Course Details
                   </Button>
@@ -561,7 +619,7 @@ const CourseManagement = () => {
                 {thumbFile ? (
                   <img src={URL.createObjectURL(thumbFile)} style={{ width:"100%", height:"100%", objectFit:"cover" }} alt=""/>
                 ) : cf.image_url ? (
-                  <img src={cf.image_url} style={{ width:"100%", height:"100%", objectFit:"cover" }} alt=""/>
+                  <CourseThumb url={cf.image_url} title="Preview" height={120} lv={levelCfg.beginner} />
                 ) : (
                   <div style={{ textAlign:"center", color:"#9CA3AF" }}>
                     <Image size={28} style={{ marginBottom:6 }}/>
@@ -570,14 +628,14 @@ const CourseManagement = () => {
                 )}
               </div>
               <input ref={thumbRef} type="file" accept="image/*" style={{ display:"none" }} onChange={e=>setThumbFile(e.target.files?.[0]||null)}/>
+              {thumbFile && <p style={{ fontSize:11, color:G, marginTop:4 }}>✓ {thumbFile.name}</p>}
             </div>
 
             {/* Title fields */}
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
               <div>
                 <label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:6 }}>Title (English) *</label>
-                <Input value={cf.title} onChange={e=>setCf({...cf,title:e.target.value})} placeholder="e.g. Quran Memorisation" style={{ borderRadius:10 }}/>
-              </div>
+                <Input value={cf.title} onChange={e=>setCf({...cf,title:e.target.value})} placeholder="e.g. Quran Memorisation" style={{ borderRadius:10 }}/>              </div>
               <div>
                 <label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:6 }}>العنوان (عربي)</label>
                 <Input value={cf.title_ar} onChange={e=>setCf({...cf,title_ar:e.target.value})} dir="rtl" placeholder="مثال: حفظ القرآن" style={{ borderRadius:10 }}/>
@@ -626,8 +684,7 @@ const CourseManagement = () => {
             {/* Sort order + Publish */}
             <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"12px 14px", background:"#F9FAFB", borderRadius:12, border:"1px solid #E5E7EB" }}>
               <div>
-                <p style={{ fontWeight:700, fontSize:13, color:"#374151", margin:0 }}>Publish Course</p>
-                <p style={{ fontSize:11, color:"#9CA3AF", margin:0 }}>Visible to enrolled students</p>
+                <p style={{ fontWeight:700, fontSize:13, color:"#374151", margin:0 }}>Publish Course</p>                <p style={{ fontSize:11, color:"#9CA3AF", margin:0 }}>Visible to enrolled students</p>
               </div>
               <Switch checked={cf.is_published} onCheckedChange={v=>setCf({...cf,is_published:v})}/>
             </div>
@@ -676,8 +733,7 @@ const CourseManagement = () => {
 
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
               <div>
-                <label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:6 }}>Duration (min)</label>
-                <Input type="number" value={lf.duration_minutes} onChange={e=>setLf({...lf,duration_minutes:parseInt(e.target.value)||0})} style={{ borderRadius:10 }}/>
+                <label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:6 }}>Duration (min)</label>                <Input type="number" value={lf.duration_minutes} onChange={e=>setLf({...lf,duration_minutes:parseInt(e.target.value)||0})} style={{ borderRadius:10 }}/>
               </div>
               <div>
                 <label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:6 }}>Sort Order</label>
