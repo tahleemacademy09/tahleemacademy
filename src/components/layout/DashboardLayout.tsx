@@ -13,7 +13,7 @@ import {
   CheckSquare, BarChart, UserCircle, Library, GraduationCap, MessageCircle,
   Menu, Video, Mic, Layers, FileText, UserCheck, BookMarked, Settings,
   CreditCard, Calendar, ChevronDown, ChevronRight, Wallet, Bell,
-  BookOpenCheck, RefreshCw, Headphones, Trophy, X,
+  BookOpenCheck, RefreshCw, Headphones, Trophy, X, Lock, Clock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
@@ -31,6 +31,26 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   const [open, setOpen] = useState(false);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
+  // ── Level-pending: lock most features until admin assigns a level ─────────
+  // A student is "pending" when course_level is null / "pending" / missing.
+  // Admins and teachers are never in this state.
+  const levelPending = role === "student" && (
+    !(profile as any)?.course_level ||
+    (profile as any)?.course_level === "pending"
+  );
+
+  // Routes that require a level assignment before access
+  const LOCKED_ROUTES = new Set([
+    "/student/courses",
+    "/student/revision",
+    "/student/hifdh",
+    "/student/majlis",
+    "/live-quiz",
+    "/student/live-classes",
+    "/student/exams",
+    "/student/transcripts",
+  ]);
+
   // Fullscreen escape for Majlis
   const isMajlis = location.pathname === "/student/majlis";
   if (isMajlis) return <div style={{ position:"fixed", inset:0, zIndex:40 }}><Outlet /></div>;
@@ -44,19 +64,19 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     | { type:"group"; key:string; icon:any; label:string; children:{to:string;icon:any;label:string}[] };
 
   const studentNav: NavItem[] = [
-    { type:"link", to:"/student",         icon:LayoutDashboard, label:t("Al-Markaz","المركز") },
-    { type:"link", to:"/student/courses", icon:BookOpenCheck,   label:t("Bayt Al-ʿIlm","بيت العلم") },
-    { type:"group", key:"revision", icon:RefreshCw, label:t("Al-Murājaʿah","المراجعة"), children:[
-      { to:"/student/revision", icon:BookMarked, label:t("Al-Murājaʿah Al-ʿĀmmah","المراجعة العامة") },
-      { to:"/student/hifdh",    icon:Headphones, label:t("Al-Ḥifẓ","الحفظ") },
+    { type:"link", to:"/student",         icon:LayoutDashboard, label:t("Dashboard","لوحة التحكم") },
+    { type:"link", to:"/student/courses", icon:BookOpenCheck,   label:t("Learning Hub","مركز التعلم") },
+    { type:"group", key:"revision", icon:RefreshCw, label:t("Revision","المراجعة"), children:[
+      { to:"/student/revision", icon:BookMarked, label:t("General Revision","المراجعة العامة") },
+      { to:"/student/hifdh",    icon:Headphones, label:t("Al-Hifdh","الحفظ") },
     ]},
-    { type:"group", key:"exams", icon:ClipboardList, label:t("Al-Imtihānāt","الامتحانات"), children:[
-      { to:"/student/exams",       icon:ClipboardList, label:t("Imtihānātī","امتحاناتي") },
-      { to:"/student/transcripts", icon:GraduationCap, label:t("Al-Sijillāt","السجلات الأكاديمية") },
+    { type:"group", key:"exams", icon:ClipboardList, label:t("Exams","الامتحانات"), children:[
+      { to:"/student/exams",       icon:ClipboardList, label:t("My Exams","امتحاناتي") },
+      { to:"/student/transcripts", icon:GraduationCap, label:t("Transcripts","السجل الأكاديمي") },
     ]},
     { type:"link", to:"/student/majlis",  icon:MessageCircle, label:t("Al-Majlis","المجلس") },
-    { type:"link", to:"/live-quiz",       icon:Trophy,        label:t("Al-Musābaqah 🏆","المسابقة الحية 🏆") },
-    { type:"link", to:"/student/profile", icon:UserCircle,    label:t("Al-Iʿdādāt","الإعدادات") },
+    { type:"link", to:"/live-quiz",       icon:Trophy,        label:t("Al-Musabaqah 🏆","المسابقة الحية 🏆") },
+    { type:"link", to:"/student/profile", icon:UserCircle,    label:t("Settings","الإعدادات") },
   ];
 
   // ── Admin nav — grouped ──────────────────────────────────────
@@ -204,6 +224,19 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
               const active = item.to === "/admin" || item.to === "/student"
                 ? location.pathname === item.to
                 : location.pathname.startsWith(item.to);
+              const isLocked = levelPending && LOCKED_ROUTES.has(item.to);
+              if (isLocked) {
+                return (
+                  <div key={item.to}
+                    title="Available after level assignment"
+                    style={{ opacity: .45, cursor: "not-allowed" }}
+                    className="flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium text-sidebar-foreground/40">
+                    <item.icon className="h-4 w-4 shrink-0"/>
+                    <span className="truncate flex-1">{item.label}</span>
+                    <Lock className="h-3 w-3 shrink-0 opacity-60"/>
+                  </div>
+                );
+              }
               return (
                 <Link key={item.to} to={item.to} onClick={onNavigate}
                   className={cn(
@@ -219,9 +252,12 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
             }
             const isActive = groupActive(item.children.map((c: any) => c.to));
             const isOpen   = expanded[item.key] ?? false;
+            const groupLocked = levelPending && item.children.every((c: any) => LOCKED_ROUTES.has(c.to));
             return (
               <div key={item.key}>
-                <button onClick={() => toggle(item.key)}
+                <button onClick={() => !groupLocked && toggle(item.key)}
+                  title={groupLocked ? "Available after level assignment" : undefined}
+                  style={groupLocked ? { opacity: .45, cursor: "not-allowed" } : undefined}
                   className={cn(
                     "w-full flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-colors",
                     isActive
@@ -275,7 +311,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                   : "text-sidebar-foreground/65 hover:bg-sidebar-accent/40 hover:text-sidebar-accent-foreground"
               )}>
               <Wallet className="h-4 w-4 shrink-0 text-yellow-400"/>
-              <span>{t("Al-Maliyyah","الدفع")}</span>
+              <span>{t("Payment","الدفع")}</span>
             </Link>
           )}
           <button
@@ -288,7 +324,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
             className="w-full flex items-center gap-2.5 rounded-md px-3 py-2 text-sm text-sidebar-foreground/65 hover:bg-destructive/20 hover:text-destructive transition-colors"
             onClick={() => { signOut(); onNavigate?.(); }}>
             <LogOut className="h-4 w-4"/>
-            <span>{t("Al-Khurūj","تسجيل الخروج")}</span>
+            <span>{t("Sign Out","تسجيل الخروج")}</span>
           </button>
         </div>
       </div>
@@ -350,6 +386,31 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
         <HolidayBanner/>
         {role === "student" && <PaymentBanner/>}
         {role === "admin"   && <AdminPaymentIndicator/>}
+
+        {/* ── Pending level assignment banner ── */}
+        {levelPending && (
+          <div style={{
+            background: "linear-gradient(90deg, #0f2d1f, #1a4731)",
+            borderBottom: "1px solid rgba(201,168,76,.2)",
+            padding: "10px 20px",
+            display: "flex", alignItems: "center", gap: 12, flexShrink: 0,
+          }}>
+            <div style={{ width: 28, height: 28, borderRadius: "50%", background: "rgba(201,168,76,.15)", border: "1.5px solid rgba(201,168,76,.3)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <Clock style={{ width: 14, height: 14, color: "#c9a84c" }} />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <p style={{ fontSize: 12, fontWeight: 800, color: "#c9a84c", margin: "0 0 1px" }}>
+                Awaiting Level Assignment
+              </p>
+              <p style={{ fontSize: 11, color: "rgba(255,255,255,.55)", margin: 0 }}>
+                Your application is under review. Full dashboard access unlocks once an admin assigns your learning level (within 48h).
+              </p>
+            </div>
+            <div style={{ flexShrink: 0 }}>
+              <Lock style={{ width: 14, height: 14, color: "rgba(255,255,255,.3)" }} />
+            </div>
+          </div>
+        )}
 
         {/* ── Notification panel (student) ── */}
         {showNotifPanel && (
