@@ -1,11 +1,3 @@
-Here is the **complete, corrected `CourseManagement.tsx`**.
-
-This version fixes the **"0 courses" issue** by using a safer query that doesn't depend on complex database relationships, and it keeps all the robust image handling we added.
-
-### **File: `src/pages/admin/CourseManagement.tsx`**
-
-```tsx
-/*  src/pages/admin/CourseManagement.tsx  */
 import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
