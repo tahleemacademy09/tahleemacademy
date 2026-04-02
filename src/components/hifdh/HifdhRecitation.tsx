@@ -185,10 +185,24 @@ export default function HifdhRecitation({ reciter: reciterProp, onReciterChange 
         </div>
       )}
 
-      {/* ── Controls Bar ── */}
+      {/* ── Reciter Controls ── */}
+      <ReciterControls
+        surahNum={selSurah}
+        totalAyahs={surahData?.numberOfAyahs || surah.verses}
+        playingAyah={playingAyah}
+        onAyahChange={(a) => {
+          setPlayingAyah(a);
+          requestAnimationFrame(() => {
+            verseRefs.current[a]?.scrollIntoView({ behavior: "smooth", block: "center" });
+          });
+        }}
+        reciter={reciter}
+        onReciterChange={(id) => { setReciter(id); onReciterChange?.(id); }}
+      />
+
+      {/* ── Font Size + Fullscreen Bar ── */}
       <div style={card({ padding: "10px 14px" })}>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" as const }}>
-          {/* Font size */}
           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
             <button onClick={() => setFontSize(v => Math.max(18, v - 2))}
               style={{ width: 32, height: 32, borderRadius: 8, border: `1px solid ${BORDER}`,
@@ -199,25 +213,15 @@ export default function HifdhRecitation({ reciter: reciterProp, onReciterChange 
                 background: "#f8fafb", fontSize: 13, cursor: "pointer", color: G, fontWeight: 800 }}>A+</button>
           </div>
           <div style={{ flex: 1 }} />
-          {playingAyah > 0 ? (
-            <button onClick={stopAll}
-              style={{ padding: "8px 16px", borderRadius: 10, border: "none",
-                background: "#fee2e2", color: "#c0392b", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
-              ⏹ Stop
-            </button>
-          ) : (
-            <button onClick={() => playAyah(1)}
-              style={{ padding: "8px 16px", borderRadius: 10, border: "none",
-                background: `linear-gradient(135deg,${G},${GM})`, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
-              ▶ Play All
-            </button>
-          )}
           <button onClick={toggleFS}
             style={{ padding: "8px 10px", borderRadius: 10,
               border: `1px solid ${isFullscreen ? G : BORDER}`,
               background: isFullscreen ? G : "#f8fafb",
               color: isFullscreen ? "#fff" : G, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
             {isFullscreen ? "⊠ Exit" : "⛶ Full"}
+          </button>
+        </div>
+      </div>
           </button>
         </div>
       </div>
