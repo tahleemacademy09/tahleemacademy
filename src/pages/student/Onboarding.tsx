@@ -47,8 +47,7 @@ const Radio = ({ name, val, checked, label, onChange }: any) => (
     <input type="radio" name={name} value={val} checked={checked} onChange={onChange} style={{ display:"none" }} />
     <div style={{ width:18, height:18, borderRadius:"50%", border:`2px solid ${checked ? GM : "#d1d5db"}`, background: checked ? GM : "#fff", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
       {checked && <div style={{ width:6, height:6, borderRadius:"50%", background:"#fff" }} />}
-    </div>
-    {label}
+    </div>    {label}
   </label>
 );
 
@@ -98,7 +97,6 @@ const Onboarding = () => {
   const [country, setCountry] = useState("");
   const [city, setCity] = useState("");
   const [occupation, setOccupation] = useState("");
-
   // Step 2
   const [quranLevel, setQuranLevel] = useState("");
   const [memorized, setMemorized] = useState<string[]>([]);
@@ -147,7 +145,6 @@ const Onboarding = () => {
       } as any).eq("user_id", user.id);
 
       toast({ title: "✅ Onboarding complete!", description: "Preparing your entrance exam…" });
-
       // FIX: create exam_attempt before navigating so the route has an attemptId
       const ENTRANCE_EXAM_ID = "36ef6492-2515-44ea-b086-67c9cee02475";
       try {
@@ -161,7 +158,8 @@ const Onboarding = () => {
           .maybeSingle();
 
         if (existing) {
-          navigate(`/student/entrance-exam/${existing.id}`);
+          // ✅ FIXED: Navigate to correct exam route
+          navigate(`/student/exam/${existing.id}`);
           return;
         }
 
@@ -182,7 +180,11 @@ const Onboarding = () => {
           navigate("/student/exams");
           return;
         }
-        navigate(`/student/entrance-exam/${newAttempt.id}`);
+        
+        // ✅ FIXED: Navigate to correct exam route with new attempt ID
+        // Small delay to ensure DB sync
+        await new Promise(resolve => setTimeout(resolve, 500));
+        navigate(`/student/exam/${newAttempt.id}`);
       } catch {
         navigate("/student/exams");
       }
@@ -192,8 +194,7 @@ const Onboarding = () => {
   };
 
   const next = () => {
-    if (step === 1 && (!phone || !dob || !gender || !country)) {
-      toast({ title: "Fill all required fields (*)", variant: "destructive" }); return;
+    if (step === 1 && (!phone || !dob || !gender || !country)) {      toast({ title: "Fill all required fields (*)", variant: "destructive" }); return;
     }
     if (step === 2 && !quranLevel) {
       toast({ title: "Please select your Quran level", variant: "destructive" }); return;
@@ -242,8 +243,7 @@ const Onboarding = () => {
             {/* STEP 1 */}
             {step === 1 && (
               <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
-                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
-                  <div>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>                  <div>
                     <label style={lbl}>Phone <span style={{color:"#ef4444"}}>*</span></label>
                     <input value={phone} onChange={e=>setPhone(e.target.value)} {...f("phone")} style={inputSt(foc==="phone")} placeholder="+234 800 000 0000" type="tel" />
                   </div>
@@ -292,8 +292,7 @@ const Onboarding = () => {
                       ["fluent",     "Can read Quran fluently with Tajweed"],
                       ["memorising", "Currently memorising (Hifz)"],
                       ["hafiz",      "Already a Hafiz (memorised full Quran)"],
-                    ].map(([v,l]) => <Radio key={v} name="quran" val={v} checked={quranLevel===v} onChange={() => setQuranLevel(v)} label={l} />)}
-                  </div>
+                    ].map(([v,l]) => <Radio key={v} name="quran" val={v} checked={quranLevel===v} onChange={() => setQuranLevel(v)} label={l} />)}                  </div>
                 </div>
                 <div>
                   <label style={lbl}>Surahs memorised (select all)</label>
@@ -342,8 +341,7 @@ const Onboarding = () => {
                 <div>
                   <label style={lbl}>Subjects you are most interested in (select all)</label>
                   <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
-                    {["Quran Recitation","Quran Memorisation (Hifz)","Tajweed Rules","Arabic Grammar","Arabic Vocabulary","Fiqh (Jurisprudence)","Aqeedah (Creed)","Quran Tafseer","Hadith","Seerah","Islamic History"].map(s => (
-                      <Chip key={s} label={s} sel={subjects.includes(s)} onClick={() => tog(subjects, s, setSubjects)} />
+                    {["Quran Recitation","Quran Memorisation (Hifz)","Tajweed Rules","Arabic Grammar","Arabic Vocabulary","Fiqh (Jurisprudence)","Aqeedah (Creed)","Quran Tafseer","Hadith","Seerah","Islamic History"].map(s => (                      <Chip key={s} label={s} sel={subjects.includes(s)} onClick={() => tog(subjects, s, setSubjects)} />
                     ))}
                   </div>
                 </div>
@@ -392,8 +390,7 @@ const Onboarding = () => {
                   {["Take a written entrance exam (~15 min)","Submit a recitation audio of Surah Al-Fatiha","Attend a live evaluation with a teacher (10–15 min)","Receive your level assignment from the admin"].map((s,i) => (
                     <div key={i} style={{ display:"flex", alignItems:"flex-start", gap:8, marginBottom:i<3?6:0, fontSize:12, color:"#78350F" }}>
                       <div style={{ width:18, height:18, borderRadius:"50%", background:GOLD, color:"#fff", fontSize:10, fontWeight:800, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, marginTop:1 }}>{i+1}</div>
-                      {s}
-                    </div>
+                      {s}                    </div>
                   ))}
                 </div>
               </div>
@@ -412,7 +409,7 @@ const Onboarding = () => {
                 {saving
                   ? <><Loader2 style={{ width:18, height:18, animation:"spin .8s linear infinite" }} /> Saving…</>
                   : step === TOTAL
-                  ? <><CheckCircle2 size={18} /> Submit &amp; Start Exam</>
+                  ? <><CheckCircle2 size={18} /> Submit & Start Exam</>
                   : <>Next Step <ArrowRight size={16} /></>
                 }
               </button>
