@@ -144,11 +144,20 @@ const RegisterContinue = () => {
         currency: config.entrance_fee_currency,
         ref,
         metadata: { full_name: name, type: "registration" },
-        callback: async (res: any) => {
-          await recordPayment(userId, res.reference);
-          await advanceTasjeel(userId, "onboarding");
-          setPaying(false);
-          navigate("/onboarding", { replace: true });
+        // IMPORTANT: callback must NOT be async — Paystack breaks if it is.
+        // Use .then() chains for post-payment async work instead.
+        callback: (res: any) => {
+          recordPayment(userId, res.reference)
+            .then(() => advanceTasjeel(userId, "onboarding"))
+            .then(() => {
+              setPaying(false);
+              navigate("/onboarding", { replace: true });
+            })
+            .catch(() => {
+              // Even if recording fails, advance the user
+              setPaying(false);
+              navigate("/onboarding", { replace: true });
+            });
         },
         onClose: () => {
           setPaying(false);
