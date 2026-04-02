@@ -279,31 +279,57 @@ const PublicNav = () => {
               ))}
             </div>
 
-            {/* ── ENROLL SECTION ──────────────────────────── */}
-            <div style={{ margin:"0 16px 16px", borderRadius:16, border:`2px solid ${GOLD}`, overflow:"hidden" }}>
-              {/* Gold header — tap to collapse/expand */}
-              <button
-                onClick={() => setEnrollOpen(o => !o)}
-                style={{ width:"100%", background:`linear-gradient(135deg,${GOLD},#B8860B)`, padding:"14px 18px", display:"flex", alignItems:"center", gap:10, border:"none", cursor:"pointer", textAlign:"left" }}
-              >
-                <div style={{ width:36, height:36, borderRadius:"50%", background:"rgba(255,255,255,.2)", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
-                  <Star size={18} color="#fff" fill="#fff" />
+            {/* ── ENROLL SECTION — compact ─────────────── */}
+            <div style={{ margin:"0 16px 16px", borderRadius:14, overflow:"hidden", border:`1.5px solid ${GOLD}`, boxShadow:"0 4px 16px rgba(212,168,67,.12)" }}>
+
+              {/* Header row */}
+              <div style={{ background:`linear-gradient(135deg,${GOLD},#B8860B)`, padding:"11px 14px", display:"flex", alignItems:"center", gap:10 }}>
+                <div style={{ width:30, height:30, borderRadius:9, background:"rgba(255,255,255,.2)", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                  <Star size={14} color="#fff" fill="#fff" />
                 </div>
                 <div style={{ flex:1 }}>
-                  <div style={{ color:"#fff", fontWeight:800, fontSize:16 }}>How to Enroll</div>
-                  <div style={{ color:"rgba(255,255,255,.8)", fontSize:12 }}>
-                    {enrollOpen ? "Tap to collapse" : "Tap to see the full enrolment guide"}
-                  </div>
+                  <div style={{ color:"#fff", fontWeight:800, fontSize:14, lineHeight:1 }}>How to Enroll</div>
+                  <div style={{ color:"rgba(255,255,255,.7)", fontSize:11, marginTop:2 }}>5 steps · ~1 hour</div>
                 </div>
-                <div style={{ width:32, height:32, borderRadius:"50%", background:"rgba(255,255,255,.15)", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, transition:"transform .25s", transform: enrollOpen ? "rotate(180deg)" : "rotate(0deg)" }}>
-                  <ChevronDown size={18} color="#fff" />
-                </div>
-              </button>
+                <button onClick={() => setEnrollOpen(o => !o)}
+                  style={{ width:26, height:26, borderRadius:"50%", background:"rgba(255,255,255,.15)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", transition:"transform .25s", transform: enrollOpen ? "rotate(180deg)" : "rotate(0)" }}>
+                  <ChevronDown size={14} color="#fff" />
+                </button>
+              </div>
 
-              {/* Collapsible body */}
+              {/* Quick step pills — always visible */}
+              <div style={{ background:"#fffbf0", padding:"9px 12px", display:"flex", gap:5, overflowX:"auto", scrollbarWidth:"none", borderBottom: enrollOpen ? "1px solid #f5e6c0" : "none" }}>
+                {["💳 Pay","📝 Form","📖 Exam","🎤 Recite","✅ Done"].map((s, i) => (
+                  <div key={i} style={{ display:"flex", alignItems:"center", gap:5, flexShrink:0 }}>
+                    <div style={{ background:"#fff", border:`1px solid rgba(212,168,67,.3)`, borderRadius:8, padding:"4px 9px", fontSize:10, fontWeight:700, color:"#8B6914", whiteSpace:"nowrap" }}>{s}</div>
+                    {i < 4 && <span style={{ color:"#D4A843", fontSize:10 }}>›</span>}
+                  </div>
+                ))}
+              </div>
+
+              {/* Expandable: fee table + CTA */}
               {enrollOpen && (
                 <div style={{ animation:"slideDown .2s ease" }}>
-                  <EnrollPanel onClose={close} onRegister={() => { close(); navigate("/register"); }} mobile />
+                  <div style={{ padding:"10px 12px", borderBottom:"1px solid #f0f0f0" }}>
+                    <div style={{ fontSize:10, fontWeight:800, color:"#9ca3af", textTransform:"uppercase" as const, letterSpacing:.5, marginBottom:7 }}>💰 Monthly Fees After Approval</div>
+                    <div style={{ display:"flex", gap:6 }}>
+                      {[{l:"Beginner",p:"₦5k",c:"#16A34A",bg:"#F0FDF4"},{l:"Intermediate",p:"₦6k",c:"#D97706",bg:"#FEF3C7"},{l:"Advanced",p:"₦7k",c:"#7C3AED",bg:"#EDE9FE"}].map(f => (
+                        <div key={f.l} style={{ flex:1, background:f.bg, borderRadius:8, padding:"7px 6px", textAlign:"center" }}>
+                          <div style={{ fontSize:14, fontWeight:800, color:f.c }}>{f.p}<span style={{ fontSize:9, fontWeight:400 }}>/mo</span></div>
+                          <div style={{ fontSize:9, color:"#666", marginTop:2, lineHeight:1.2 }}>{f.l}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div style={{ padding:"11px 12px" }}>
+                    <button onClick={() => { close(); navigate("/register"); }}
+                      style={{ width:"100%", padding:"11px", borderRadius:10, border:"none", cursor:"pointer", background:`linear-gradient(135deg,${GOLD},#B8860B)`, color:"#fff", fontWeight:800, fontSize:13, display:"flex", alignItems:"center", justifyContent:"center", gap:8, fontFamily:"inherit", boxShadow:"0 3px 12px rgba(212,168,67,.3)" }}>
+                      <Star size={13} fill="currentColor" /> Register & Pay ₦5,000 <ArrowRight size={13} />
+                    </button>
+                    <p style={{ fontSize:10, color:"#9ca3af", textAlign:"center", marginTop:6, display:"flex", alignItems:"center", justifyContent:"center", gap:3 }}>
+                      <Shield size={9} /> Secured by Paystack · Non-refundable after exam begins
+                    </p>
+                  </div>
                 </div>
               )}
             </div>
