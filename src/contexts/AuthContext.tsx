@@ -1,3 +1,7 @@
+// src/contexts/AuthContext.tsx
+// CHANGE: emailRedirectTo now points to /auth/register-continue
+// so that clicking the verification email lands the user in the registration pipeline
+// (payment → onboarding → exam → recitation → welcome)
 
 import React, { createContext, useContext, useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
@@ -14,6 +18,7 @@ export interface UserProfile {
   has_taken_entrance_exam?: boolean;
   payment_status?: string;
   course_level?: string;
+  level?: string;
   [key: string]: unknown;
 }
 
@@ -33,10 +38,10 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(null);
+  const [user,    setUser]    = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
-  const [roles, setRoles] = useState<string[]>([]);
+  const [roles,   setRoles]   = useState<string[]>([]);
   const [profile, setProfile] = useState<UserProfile | null>(null);
 
   const fetchUserData = async (userId: string, setLoadingFalse = false) => {
@@ -50,8 +55,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (err) {
       console.error("fetchUserData error:", err);
     } finally {
-      // Only set loading false here when called on initial session restore
-      // so ProtectedRoute never renders with roles still empty
       if (setLoadingFalse) setLoading(false);
     }
   };
@@ -67,10 +70,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setSession(session);
       setUser(session?.user ?? null);
       if (session?.user) {
-        // KEY FIX: reset loading=true so TasjeelGuard/ProtectedRoute waits for
-        // fresh roles on every sign-in, not just on initial page load.
-        // Without this, loading stays false from a previous null-session and
-        // guards check hasRole() before the new roles arrive.
         setLoading(true);
         fetchUserData(session.user.id, true);
       } else {
@@ -84,8 +83,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setSession(session);
       setUser(session?.user ?? null);
       if (session?.user) {
-        // Pass true so fetchUserData sets loading=false AFTER roles are loaded
-        // This prevents ProtectedRoute from redirecting before roles arrive
         fetchUserData(session.user.id, true);
       } else {
         setLoading(false);
@@ -97,8 +94,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signUp = async (email: string, password: string, fullName: string) => {
     return supabase.auth.signUp({
-      email, password,
-      options: { emailRedirectTo: window.location.origin, data: { full_name: fullName } },
+      email,
+      password,
+      options: {
+        // ── KEY CHANGE ────────────────────────────────────────────────────────
+        // After email verification, land the user on RegisterContinue which
+        // handles payment → onboarding routing without requiring a separate login.
+        // IMPORTANT: Add this URL to your Supabase project's "Redirect URLs" whitelist:
+        //   Authentication → URL Configuration → Redirect URLs → add:
+        //   https://your-domain.com/auth/register-continue
+        emailRedirectTo: `${window.location.origin}/auth/register-continue`,
+        data: { full_name: fullName },
+      },
     });
   };
 
