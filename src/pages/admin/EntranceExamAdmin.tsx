@@ -1,4 +1,4 @@
-/* src/pages/admin/EntranceExamAdmin.tsx — ENHANCED with Question Editor */
+/* src/pages/admin/EntranceExamAdmin.tsx — COMPLETE FIXED VERSION */
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,6 +10,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate } from "react-router-dom";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { useAuth } from "@/contexts/AuthContext";
 import {
   FileText, Users, Settings, Plus, Trash2, Download, Eye,
   BookOpen, RotateCcw, UserCog, Search, ChevronRight,
@@ -46,8 +47,9 @@ interface Question {
 
 const EntranceExamAdmin = () => {
   const { toast } = useToast();
-  const { language } = useLanguage();
+  const { language } = useLanguage();  const { user } = useAuth();
   const navigate = useNavigate();
+
   const [questions, setQuestions]     = useState<Question[]>([]);
   const [subjects, setSubjects]       = useState<any[]>([]);
   const [levelCourses, setLevelCourses] = useState<any[]>([]);
@@ -89,14 +91,25 @@ const EntranceExamAdmin = () => {
     const [qRes, subRes, lcRes, attRes] = await Promise.all([
       supabase.from("exam_questions").select("*").eq("exam_id", ENTRANCE_EXAM_ID).order("sort_order"),
       supabase.from("subjects").select("*").eq("is_active",true).order("title"),
-      supabase.from("level_courses" as any).select("*, subjects(title, title_ar)"),
+      supabase.from("level_courses").select("*, subjects(title, title_ar)"),
       supabase.from("exam_attempts")
-        .select("*, profiles!inner(full_name, full_name_ar, avatar_url, level, email)")
+        .select(`
+          *,
+          profiles!inner(
+            full_name,            full_name_ar,
+            avatar_url,
+            level,
+            email,
+            has_taken_entrance_exam,
+            onboarding_completed
+          )
+        `)
         .eq("exam_id", ENTRANCE_EXAM_ID)
         .neq("status","in_progress")
         .order("submitted_at", { ascending:false }),
     ]);
-    setQuestions(qRes.data||[]);    setSubjects(subRes.data||[]);
+    setQuestions(qRes.data||[]);
+    setSubjects(subRes.data||[]);
     setLevelCourses((lcRes.data as any[])||[]);
     setResults((attRes.data as any[])||[]);
     setLoading(false);
@@ -132,8 +145,7 @@ const EntranceExamAdmin = () => {
   const saveQuestion = async () => {
     if (!form.question_text?.trim()) {
       toast({ title: "Question text required", variant: "destructive" });
-      return;
-    }
+      return;    }
 
     setSavingQuestion(true);
     try {
@@ -145,7 +157,8 @@ const EntranceExamAdmin = () => {
         difficulty: form.difficulty,
         points: form.points,
         options: form.question_type === "mcq" ? form.options : null,
-        correct_answer: form.correct_answer,        sort_order: editingQuestion?.sort_order || questions.length + 1,
+        correct_answer: form.correct_answer,
+        sort_order: editingQuestion?.sort_order || questions.length + 1,
       };
 
       if (editingQuestion?.id) {
@@ -181,8 +194,7 @@ const EntranceExamAdmin = () => {
     newQuestions[index].sort_order = newQuestions[newIndex].sort_order;
     newQuestions[newIndex].sort_order = temp;
 
-    await supabase.from("exam_questions").update({ sort_order: newQuestions[index].sort_order }).eq("id", newQuestions[index].id);
-    await supabase.from("exam_questions").update({ sort_order: newQuestions[newIndex].sort_order }).eq("id", newQuestions[newIndex].id);
+    await supabase.from("exam_questions").update({ sort_order: newQuestions[index].sort_order }).eq("id", newQuestions[index].id);    await supabase.from("exam_questions").update({ sort_order: newQuestions[newIndex].sort_order }).eq("id", newQuestions[newIndex].id);
 
     setQuestions(newQuestions);
     toast({ title: "📋 Order updated" });
@@ -194,7 +206,8 @@ const EntranceExamAdmin = () => {
   };
 
   const removeOption = (idx: number) => {
-    const newOptions = form.options?.filter((_, i) => i !== idx) || [];    setForm({ ...form, options: newOptions });
+    const newOptions = form.options?.filter((_, i) => i !== idx) || [];
+    setForm({ ...form, options: newOptions });
   };
 
   const updateOption = (idx: number, field: string, value: string) => {
@@ -203,9 +216,9 @@ const EntranceExamAdmin = () => {
     setForm({ ...form, options: newOptions });
   };
 
-  // ── Existing Admin Functions ───────────────────────────────────
+  // ── Admin Functions ───────────────────────────────────
   const addSubjectToLevel = async (level: string, subjectId: string) => {
-    const { error } = await supabase.from("level_courses" as any).insert({ level, subject_id:subjectId } as any);
+    const { error } = await supabase.from("level_courses").insert({ level, subject_id:subjectId });
     if (error?.code === "23505") { toast({ title:"Already mapped", variant:"destructive" }); return; }
     if (error) { toast({ title:"Error", description:error.message, variant:"destructive" }); return; }
     toast({ title:"Subject added" });
@@ -213,7 +226,7 @@ const EntranceExamAdmin = () => {
   };
 
   const removeMapping = async (id: string) => {
-    await supabase.from("level_courses" as any).delete().eq("id", id);
+    await supabase.from("level_courses").delete().eq("id", id);
     loadData();
   };
 
@@ -225,13 +238,74 @@ const EntranceExamAdmin = () => {
     loadData();
   };
 
+  // ✅ FIXED: Complete level assignment with auto-enrollment
   const changeLevel = async () => {
     if (!targetResult) return;
     setSaving(true);
-    await supabase.from("profiles").update({ level:newLevel }).eq("user_id", targetResult.user_id);
-    toast({ title:`Level changed to ${newLevel}` });
-    setSaving(false); setLevelDialog(false);
-    loadData();
+    
+    try {      // 1. Update profile level
+      await supabase.from("profiles").update({ 
+        level: newLevel,
+        has_taken_entrance_exam: true,
+        onboarding_completed: true
+      }).eq("user_id", targetResult.user_id);
+      
+      // 2. Update exam attempt status
+      await supabase.from("exam_attempts").update({
+        status: "reviewed",
+        reviewed_by: user?.id,
+        reviewed_at: new Date().toISOString()
+      }).eq("id", targetResult.id);
+      
+      // 3. Auto-enroll in level_courses subjects
+      const { data: levelCourses } = await supabase
+        .from("level_courses")
+        .select("subject_id")
+        .eq("level", newLevel);
+      
+      if (levelCourses && levelCourses.length > 0) {
+        const subjectIds = levelCourses.map((lc: any) => lc.subject_id);
+        
+        const { data: courses } = await supabase
+          .from("courses")
+          .select("id, subject_id")
+          .in("subject_id", subjectIds)
+          .eq("is_published", true);
+        
+        if (courses) {
+          for (const course of courses) {
+            await supabase
+              .from("enrollments")
+              .upsert({
+                user_id: targetResult.user_id,
+                course_id: course.id,
+                enrolled_at: new Date().toISOString(),
+                status: "active"
+              }, {
+                onConflict: "user_id,course_id"
+              });
+          }
+        }
+      }
+      
+      // 4. Create notification for student
+      await supabase.from("notifications").insert({
+        user_id: targetResult.user_id,
+        title: "Level Assigned!",
+        message: `You've been placed in ${newLevel} level. Check your dashboard to start learning.`,        type: "level_assigned",
+        is_read: false,
+        created_at: new Date().toISOString()
+      });
+      
+      toast({ title: `✅ Level assigned: ${newLevel}` });
+      setSaving(false);
+      setLevelDialog(false);
+      loadData();
+      
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+      setSaving(false);
+    }
   };
 
   const applyAutoLevel = async () => {
@@ -243,17 +317,18 @@ const EntranceExamAdmin = () => {
     for (const r of toUpdate) {
       const pct = r.total_points ? Math.round((r.score/r.total_points)*100) : 0;
       await supabase.from("profiles").update({ level:levelFromScore(pct) }).eq("user_id", r.user_id);
-    }    toast({ title:`✅ Applied auto-level to ${toUpdate.length} students` });
+    }
+    toast({ title:`✅ Applied auto-level to ${toUpdate.length} students` });
     setBulkApplying(false); setBulkDialog(false);
     loadData();
   };
 
   const exportCSV = () => {
-    const header = "Name,Email,Score,Total,Percentage,Suggested Level,Current Level,Date\n";
+    const header = "Name,Email,Score,Total,Percentage,Suggested Level,Current Level,Status,Date\n";
     const rows = results.map((r:any)=>{
       const p = r.profiles;
       const pct = r.total_points ? Math.round((r.score/r.total_points)*100) : 0;
-      return `"${p?.full_name||""}","${p?.email||""}",${r.score||0},${r.total_points||20},${pct}%,${levelFromScore(pct)},${p?.level||""},${r.submitted_at||""}`;
+      return `"${p?.full_name||""}","${p?.email||""}",${r.score||0},${r.total_points||20},${pct}%,${levelFromScore(pct)},${p?.level||""},${r.status||""},${r.submitted_at||""}`;
     }).join("\n");
     const blob = new Blob([header+rows], { type:"text/csv" });
     const url = URL.createObjectURL(blob);
@@ -266,8 +341,7 @@ const EntranceExamAdmin = () => {
   });
 
   const levelCounts = LEVELS.reduce((acc,l)=>({
-    ...acc,
-    [l]: results.filter(r=>{ const pct=r.total_points?Math.round((r.score/r.total_points)*100):0; return levelFromScore(pct)===l; }).length
+    ...acc,    [l]: results.filter(r=>{ const pct=r.total_points?Math.round((r.score/r.total_points)*100):0; return levelFromScore(pct)===l; }).length
   }),{} as Record<string,number>);
 
   const totalPoints = questions.reduce((sum, q) => sum + (q.points || 0), 0);
@@ -292,7 +366,8 @@ const EntranceExamAdmin = () => {
               <p style={{ fontSize:12, color:"#6B7280", margin:0 }}>{results.length} submissions · {questions.length} questions · {totalPoints} pts</p>
             </div>
           </div>
-          <div style={{ display:"flex", gap:8 }}>            <button onClick={()=>setBulkDialog(true)}
+          <div style={{ display:"flex", gap:8 }}>
+            <button onClick={()=>setBulkDialog(true)}
               style={{ padding:"8px 14px", borderRadius:10, border:"1.5px solid #E5E7EB", background:"#fff", cursor:"pointer", fontSize:13, fontWeight:700, color:"#374151", display:"flex", alignItems:"center", gap:6 }}>
               <UserCog size={13}/> Auto-Assign Levels
             </button>
@@ -315,8 +390,7 @@ const EntranceExamAdmin = () => {
               <div style={{ fontSize:20, marginBottom:4 }}>{s.icon}</div>
               <div style={{ fontSize:22, fontWeight:900, color:s.c }}>{s.v}</div>
               <div style={{ fontSize:11, color:s.c, opacity:.7, fontWeight:600 }}>{s.l}</div>
-            </div>
-          ))}
+            </div>          ))}
         </div>
 
         {/* Tabs */}
@@ -341,7 +415,8 @@ const EntranceExamAdmin = () => {
             {loading?<div style={{ textAlign:"center", padding:40 }}><Loader2 size={28} style={{ animation:"spin .8s linear infinite", color:G }}/></div>:(
               <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
                 {filtered.map(r=>{
-                  const p = r.profiles;                  const pct = r.total_points ? Math.round((r.score/r.total_points)*100) : 0;
+                  const p = r.profiles;
+                  const pct = r.total_points ? Math.round((r.score/r.total_points)*100) : 0;
                   const suggested = levelFromScore(pct);
                   const current = p?.level;
                   const mismatch = suggested !== current;
@@ -359,6 +434,16 @@ const EntranceExamAdmin = () => {
                           {current&&<span style={{ fontSize:10, padding:"2px 8px", borderRadius:20, background:"#F3F4F6", color:"#6B7280", fontWeight:600 }}>
                             Current: {current}
                           </span>}
+                          {/* ✅ NEW: Status badge */}
+                          <span style={{ 
+                            fontSize:10, 
+                            padding:"2px 8px", 
+                            borderRadius:20, 
+                            background: r.status === "reviewed" ? "#DCFCE7" : "#FEF9C3",                            color: r.status === "reviewed" ? "#166534" : "#854D0E",
+                            fontWeight:700 
+                          }}>
+                            {r.status === "reviewed" ? "✅ Reviewed" : "⏳ Pending"}
+                          </span>
                           {mismatch&&<span style={{ fontSize:10, padding:"2px 8px", borderRadius:20, background:"#FEF9C3", color:"#854D0E", fontWeight:700 }}>⚠️ Mismatch</span>}
                         </div>
                       </div>
@@ -390,7 +475,8 @@ const EntranceExamAdmin = () => {
             {LEVELS.map(level=>{
               const mapped = levelCourses.filter((lc:any)=>lc.level===level);
               const cfg = levelCfg[level];
-              return (                <div key={level} style={{ background:"#fff", borderRadius:16, border:`1.5px solid ${cfg.border}`, overflow:"hidden" }}>
+              return (
+                <div key={level} style={{ background:"#fff", borderRadius:16, border:`1.5px solid ${cfg.border}`, overflow:"hidden" }}>
                   <div style={{ background:cfg.bg, padding:"12px 16px", display:"flex", alignItems:"center", gap:8, borderBottom:`1px solid ${cfg.border}` }}>
                     <span style={{ fontSize:18 }}>{cfg.dot}</span>
                     <div>
@@ -402,8 +488,7 @@ const EntranceExamAdmin = () => {
                     {mapped.length===0?<p style={{ fontSize:12, color:"#9CA3AF", fontStyle:"italic" }}>No subjects mapped yet</p>:(
                       <div style={{ display:"flex", flexDirection:"column", gap:6, marginBottom:12 }}>
                         {mapped.map((lc:any)=>(
-                          <div key={lc.id} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"8px 12px", borderRadius:10, background:"#F9FAFB", border:"1px solid #E5E7EB" }}>
-                            <p style={{ fontSize:13, fontWeight:600, color:"#374151", margin:0 }}>{language==="ar"?lc.subjects?.title_ar||lc.subjects?.title:lc.subjects?.title}</p>
+                          <div key={lc.id} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"8px 12px", borderRadius:10, background:"#F9FAFB", border:"1px solid #E5E7EB" }}>                            <p style={{ fontSize:13, fontWeight:600, color:"#374151", margin:0 }}>{language==="ar"?lc.subjects?.title_ar||lc.subjects?.title:lc.subjects?.title}</p>
                             <button onClick={()=>removeMapping(lc.id)} style={{ background:"none", border:"none", cursor:"pointer", padding:4 }}><Trash2 size={14} color="#DC2626"/></button>
                           </div>
                         ))}
@@ -419,7 +504,7 @@ const EntranceExamAdmin = () => {
                       </select>
                       <button onClick={()=>{ if(selectedLevel===level&&selectedSubject) addSubjectToLevel(level,selectedSubject); }}
                         disabled={selectedLevel!==level||!selectedSubject}
-                        style={{ padding:"8px 14px", borderRadius:9, border:"none", background:G, color:"#fff", cursor:"pointer", fontWeight:700, fontSize:13, opacity:selectedLevel!==level||!selectedSubject?.5:1 }}>
+                        style={{ padding:"8px 14px", borderRadius:9, border:"none", background:G, color:"#fff", cursor:"pointer", fontWeight:700, fontSize:13, opacity:selectedLevel!==level||!selectedSubject?0.5:1 }}>
                         <Plus size={14}/>
                       </button>
                     </div>
@@ -430,7 +515,7 @@ const EntranceExamAdmin = () => {
           </div>
         )}
 
-        {/* QUESTIONS TAB - ENHANCED WITH FULL EDITOR */}
+        {/* QUESTIONS TAB */}
         {activeTab==="questions"&&(
           <>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
@@ -439,7 +524,8 @@ const EntranceExamAdmin = () => {
                 <Plus size={14}/> Add Question
               </Button>
             </div>
-            <div style={{ display:"flex", flexDirection:"column", gap:6 }}>              {questions.map((q,i)=>(
+            <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+              {questions.map((q,i)=>(
                 <div key={q.id} style={{ background:"#fff", borderRadius:12, border:"1px solid #E5E7EB", padding:"14px 16px", display:"flex", gap:12 }}>
                   {/* Order controls */}
                   <div style={{ display:"flex", flexDirection:"column", gap:2, justifyContent:"center" }}>
@@ -451,8 +537,7 @@ const EntranceExamAdmin = () => {
                     <button onClick={()=>moveQuestion(i,"down")} disabled={i===questions.length-1}
                       style={{ padding:3, borderRadius:5, border:"1px solid #E5E7EB", background:i===questions.length-1?"#F3F4F6":"#fff", cursor:i===questions.length-1?"not-allowed":"pointer", opacity:i===questions.length-1?0.4:1 }}>
                       <ArrowDown size={12} color="#374151"/>
-                    </button>
-                  </div>
+                    </button>                  </div>
                   {/* Question content */}
                   <div style={{ flex:1 }}>
                     <div style={{ display:"flex", gap:6, marginBottom:6, flexWrap:"wrap" }}>
@@ -488,7 +573,8 @@ const EntranceExamAdmin = () => {
 
       {/* Question Edit Dialog */}
       <Dialog open={editDialog} onOpenChange={setEditDialog}>
-        <DialogContent style={{ maxWidth:700, maxHeight:"90vh", overflow:"auto" }}>          <DialogHeader>
+        <DialogContent style={{ maxWidth:700, maxHeight:"90vh", overflow:"auto" }}>
+          <DialogHeader>
             <DialogTitle style={{ fontSize:18, fontWeight:800 }}>
               {editingQuestion ? "Edit Question" : "Add New Question"}
             </DialogTitle>
@@ -500,8 +586,7 @@ const EntranceExamAdmin = () => {
               <label style={{ fontSize:13, fontWeight:700, color:"#374151", marginBottom:6, display:"block" }}>Question Type</label>
               <Select value={form.question_type} onValueChange={(v)=>setForm({...form, question_type:v as QuestionType})}>
                 <SelectTrigger style={{ borderRadius:10 }}>
-                  <SelectValue />
-                </SelectTrigger>
+                  <SelectValue />                </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="mcq">Multiple Choice (MCQ)</SelectItem>
                   <SelectItem value="true_false">True / False</SelectItem>
@@ -550,8 +635,7 @@ const EntranceExamAdmin = () => {
                 <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
                   {form.options?.map((opt,idx)=>(
                     <div key={idx} style={{ display:"flex", gap:8, alignItems:"center" }}>
-                      <span style={{ fontSize:13, fontWeight:700, color:"#374151", width:24 }}>{String.fromCharCode(65+idx)}.</span>
-                      <Input value={opt.text} onChange={(e)=>updateOption(idx,"text",e.target.value)} placeholder="Option text" style={{ flex:1, borderRadius:10 }} />
+                      <span style={{ fontSize:13, fontWeight:700, color:"#374151", width:24 }}>{String.fromCharCode(65+idx)}.</span>                      <Input value={opt.text} onChange={(e)=>updateOption(idx,"text",e.target.value)} placeholder="Option text" style={{ flex:1, borderRadius:10 }} />
                       <Input value={opt.text_ar} onChange={(e)=>updateOption(idx,"text_ar",e.target.value)} placeholder="نص الخيار" style={{ flex:1, borderRadius:10, direction:"rtl" }} />
                       <button onClick={()=>removeOption(idx)} style={{ padding:8, borderRadius:8, border:"1px solid #E5E7EB", background:"#fff", cursor:"pointer" }}>
                         <X size={14} color="#6B7280"/>
@@ -586,7 +670,8 @@ const EntranceExamAdmin = () => {
                 <Select value={form.correct_answer} onValueChange={(v)=>setForm({...form, correct_answer:v})}>
                   <SelectTrigger style={{ borderRadius:10 }}>
                     <SelectValue placeholder="Select correct answer" />
-                  </SelectTrigger>                  <SelectContent>
+                  </SelectTrigger>
+                  <SelectContent>
                     <SelectItem value="true">True / صحيح</SelectItem>
                     <SelectItem value="false">False / خطأ</SelectItem>
                   </SelectContent>
@@ -599,8 +684,7 @@ const EntranceExamAdmin = () => {
               <Button onClick={()=>setEditDialog(false)} variant="outline" style={{ flex:1, borderRadius:10 }}>
                 Cancel
               </Button>
-              <Button onClick={saveQuestion} disabled={savingQuestion} style={{ flex:1, background:G, borderRadius:10, gap:6 }}>
-                {savingQuestion ? "Saving..." : <><Save size={16}/> Save Question</>}
+              <Button onClick={saveQuestion} disabled={savingQuestion} style={{ flex:1, background:G, borderRadius:10, gap:6 }}>                {savingQuestion ? "Saving..." : <><Save size={16}/> Save Question</>}
               </Button>
             </div>
           </div>
@@ -635,7 +719,8 @@ const EntranceExamAdmin = () => {
             🔴 ≥70% → Advanced · 🟡 40–69% → Intermediate · 🟢 &lt;40% → Beginner
           </p>
           <div style={{ padding:"12px 14px", background:"#FFF7ED", borderRadius:12, border:"1px solid #FDE68A", marginBottom:16 }}>
-            <p style={{ fontSize:12, color:"#92400E", margin:0 }}>⚠️ {results.filter(r=>{ const pct=r.total_points?Math.round((r.score/r.total_points)*100):0; return levelFromScore(pct)!==r.profiles?.level; }).length} students have a level mismatch</p>          </div>
+            <p style={{ fontSize:12, color:"#92400E", margin:0 }}>⚠️ {results.filter(r=>{ const pct=r.total_points?Math.round((r.score/r.total_points)*100):0; return levelFromScore(pct)!==r.profiles?.level; }).length} students have a level mismatch</p>
+          </div>
           <div style={{ display:"flex", gap:10 }}>
             <button onClick={()=>setBulkDialog(false)} style={{ flex:1, padding:"11px", borderRadius:12, border:"1.5px solid #E5E7EB", background:"#fff", cursor:"pointer", fontWeight:600 }}>Cancel</button>
             <button onClick={applyAutoLevel} disabled={bulkApplying}
@@ -649,5 +734,4 @@ const EntranceExamAdmin = () => {
     </div>
   );
 };
-
 export default EntranceExamAdmin;
