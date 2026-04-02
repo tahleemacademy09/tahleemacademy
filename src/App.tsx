@@ -20,7 +20,6 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { LanguageProvider } from "@/contexts/LanguageContext";
 import ProtectedRoute from "@/components/layout/ProtectedRoute";
-import TasjeelGuard from "@/components/TasjeelGuard";
 import DashboardLayout from "@/components/layout/DashboardLayout";
 import TeacherLayout from "@/components/layout/TeacherLayout";
 import PublicLayout from "@/components/layout/PublicLayout";
@@ -160,7 +159,7 @@ const App = () => (
 
                   {/* ── Student routes ── */}
                   <Route element={<ProtectedRoute><DashboardLayout role="student" /></ProtectedRoute>}>
-                    <Route path="/student"                       element={<TasjeelGuard><StudentDashboard /></TasjeelGuard>} />
+                    <Route path="/student"                       element={<StudentDashboard />} />
                     <Route path="/student/courses"               element={<LearningHub />} />
                     <Route path="/student/courses/:courseId"     element={<LearningHub />} />
                     <Route path="/student/subjects/:subjectId"   element={<SubjectView />} />
