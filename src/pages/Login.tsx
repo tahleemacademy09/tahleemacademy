@@ -18,7 +18,7 @@ const GOLD2= "#E8C070";
 const Login = () => {
   const idleLoggedOut = new URLSearchParams(window.location.search).get("reason") === "idle";
   const { t, language, setLanguage } = useLanguage();
-  const { signIn, user } = useAuth();
+  const { signIn, user, roles, loading: authLoading } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
 
@@ -34,17 +34,19 @@ const Login = () => {
   const [resetSent, setResetSent]   = useState(false);
   const [focusedField, setFocusedField] = useState<string | null>(null);
 
+  // Navigate once auth context has finished loading roles.
+  // IMPORTANT: we read roles from AuthContext (not a separate fetch) so there
+  // is no race between this effect and the context's own fetchUserData call.
+  // authLoading stays true until roles are fetched, so we never navigate with
+  // an empty roles array.
   useEffect(() => {
-    if (user) {
-      supabase.from("user_roles").select("role").eq("user_id", user.id).then(({ data: roles }) => {
-        const isAdmin   = roles?.some(r => r.role === "admin");
-        const isTeacher = roles?.some(r => r.role === "teacher");
-        if (isAdmin) navigate("/admin", { replace: true });
-        else if (isTeacher) navigate("/teacher/dashboard", { replace: true });
-        else navigate("/student", { replace: true });
-      });
-    }
-  }, [user, navigate]);
+    if (!user || authLoading) return;
+    const isAdmin   = roles.includes("admin");
+    const isTeacher = roles.includes("teacher");
+    if (isAdmin)   navigate("/admin",              { replace: true });
+    else if (isTeacher) navigate("/teacher/dashboard", { replace: true });
+    else           navigate("/student",            { replace: true });
+  }, [user, roles, authLoading, navigate]);
 
   const validateEmail = (val: string) => {
     if (!val) { setEmailValid(null); return; }
