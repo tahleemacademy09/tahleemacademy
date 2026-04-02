@@ -67,7 +67,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setSession(session);
       setUser(session?.user ?? null);
       if (session?.user) {
-        // Don't set loading=false here — let fetchUserData do it so roles are ready
+        // KEY FIX: reset loading=true so TasjeelGuard/ProtectedRoute waits for
+        // fresh roles on every sign-in, not just on initial page load.
+        // Without this, loading stays false from a previous null-session and
+        // guards check hasRole() before the new roles arrive.
+        setLoading(true);
         fetchUserData(session.user.id, true);
       } else {
         setRoles([]);
