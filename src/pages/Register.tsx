@@ -24,6 +24,81 @@ const checkPassword = (pw: string) => ({
   number: /\d/.test(pw),
 });
 
+// ── Shell must be OUTSIDE Register so React doesn't recreate it on every
+// keystroke (which would unmount inputs and dismiss the Android keyboard).
+interface ShellProps {
+  children: React.ReactNode;
+  language: string;
+  setLanguage: (l: string) => void;
+  config: any;
+  currencySymbol: (c: string) => string;
+}
+
+const Shell = ({ children, language, setLanguage, config, currencySymbol }: ShellProps) => {
+  const isRTL = language === "ar";
+  const G = "#0f2d1f", GM = "#1a4731", GOLD = "#c9a84c";
+  return (
+    <div style={{ minHeight: "100vh", display: "flex", fontFamily: "'Cairo',sans-serif", background: `radial-gradient(ellipse at 20% 50%,rgba(15,45,31,.08) 0%,transparent 60%),#f8fafb` }}>
+      <style>{`
+        @keyframes fadeUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+        @keyframes spin{to{transform:rotate(360deg)}}
+        .reg-input::placeholder{color:#9ca3af}
+        .reg-btn:hover{transform:translateY(-1px);box-shadow:0 8px 24px rgba(15,45,31,.35)!important}
+        @media(max-width:1024px){.lg-hide{display:none!important}}
+      `}</style>
+      {/* LEFT decorative panel */}
+      <div className="lg-hide" style={{ flex: 1, background: `linear-gradient(160deg,${G},${GM},#0a1f12)`, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 40, position: "relative", overflow: "hidden" }}>
+        {[160, 240, 340].map((sz, i) => <div key={i} style={{ position: "absolute", width: sz, height: sz, borderRadius: "50%", border: `1px solid rgba(201,168,76,${.12 - i * .03})`, top: "50%", left: "50%", transform: "translate(-50%,-50%)" }} />)}
+        <div style={{ position: "relative", textAlign: "center", animation: "fadeUp .8s ease" }}>
+          <div style={{ width: 72, height: 72, borderRadius: 20, background: "rgba(201,168,76,.15)", border: "1.5px solid rgba(201,168,76,.3)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 24px" }}>
+            <BookOpen style={{ width: 34, height: 34, color: GOLD }} />
+          </div>
+          <h1 style={{ fontSize: 32, fontWeight: 900, color: "#fff", margin: "0 0 8px" }}>Tahleem<span style={{ color: GOLD }}> Academy</span></h1>
+          <p style={{ fontSize: 15, color: "rgba(255,255,255,.55)", margin: "0 0 36px", lineHeight: 1.6 }}>أكاديمية تعليم الإسلامية<br />Your journey to Islamic knowledge</p>
+          <div style={{ background: "rgba(255,255,255,.06)", borderRadius: 16, padding: "16px 20px", border: "1px solid rgba(255,255,255,.08)", textAlign: "left" }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: GOLD, marginBottom: 12, textTransform: "uppercase", letterSpacing: .5 }}>Registration Journey</div>
+            {[
+              { show: true,                            icon: <User size={13} color={GOLD} />,           label: "1. Create Account" },
+              { show: true,                            icon: <Mail size={13} color={GOLD} />,           label: "2. Verify Email" },
+              { show: config.entrance_fee_enabled,     icon: <Star size={13} color={GOLD} />,           label: `3. Pay ${currencySymbol(config.entrance_fee_currency)}${config.entrance_fee_amount.toLocaleString()}` },
+              { show: config.onboarding_required,      icon: <FileText size={13} color="#60A5FA" />,    label: "Fill Onboarding Form" },
+              { show: config.entrance_exam_required,   icon: <GraduationCap size={13} color="#A78BFA" />, label: "Entrance Exam" },
+              { show: config.recitation_test_required, icon: <Mic size={13} color="#34D399" />,         label: "Recitation Test" },
+            ].filter(s => s.show).map((s, i, arr) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: i < arr.length - 1 ? 8 : 0 }}>
+                <div style={{ width: 24, height: 24, borderRadius: "50%", background: "rgba(255,255,255,.08)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{s.icon}</div>
+                <span style={{ fontSize: 12, color: "rgba(255,255,255,.75)" }}>{s.label}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* RIGHT: main content */}
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "32px 20px", minWidth: 0 }}>
+        <div style={{ position: "absolute", top: 16, right: 16 }}>
+          <button onClick={() => setLanguage && setLanguage(language === "ar" ? "en" : "ar")} style={{ display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", borderRadius: 20, background: "rgba(15,45,31,.07)", border: `1px solid rgba(15,45,31,.12)`, color: G, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+            <Globe style={{ width: 13, height: 13 }} />{language === "ar" ? "English" : "العربية"}
+          </button>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 24 }}>
+          <div style={{ width: 40, height: 40, borderRadius: 12, background: G, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <BookOpen style={{ width: 20, height: 20, color: GOLD }} />
+          </div>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 900, color: G }}>Tahleem <span style={{ color: GOLD }}>Academy</span></div>
+            <div style={{ fontSize: 10, color: "#7a9e88" }}>أكاديمية تعليم</div>
+          </div>
+        </div>
+        <div style={{ width: "100%", maxWidth: 480, background: "#fff", borderRadius: 24, border: "1px solid rgba(15,45,31,.1)", boxShadow: "0 8px 40px rgba(15,45,31,.1)", padding: "36px 28px", animation: "fadeUp .5s ease" }}>
+          {children}
+        </div>
+        <p style={{ marginTop: 20, fontSize: 11, color: "#9ca3af", textAlign: "center" }}>Tahleem Academy — Islamic Education Platform</p>
+      </div>
+    </div>
+  );
+};
+
 const Register = () => {
   const { t, language, setLanguage } = useLanguage() as any;
   const { signUp }                   = useAuth();
@@ -190,72 +265,10 @@ const Register = () => {
     );
   }
 
-  // ── Shared shell ───────────────────────────────────────────────────────────
-  const Shell = ({ children }: { children: React.ReactNode }) => (
-    <div style={{ minHeight: "100vh", display: "flex", fontFamily: "'Cairo',sans-serif", background: `radial-gradient(ellipse at 20% 50%,rgba(15,45,31,.08) 0%,transparent 60%),#f8fafb` }}>
-      <style>{`
-        @keyframes fadeUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
-        @keyframes spin{to{transform:rotate(360deg)}}
-        .reg-input::placeholder{color:#9ca3af}
-        .reg-btn:hover{transform:translateY(-1px);box-shadow:0 8px 24px rgba(15,45,31,.35)!important}
-        @media(max-width:1024px){.lg-hide{display:none!important}}
-      `}</style>
-      {/* LEFT decorative panel */}
-      <div className="lg-hide" style={{ flex: 1, background: `linear-gradient(160deg,${G},${GM},#0a1f12)`, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 40, position: "relative", overflow: "hidden" }}>
-        {[160, 240, 340].map((sz, i) => <div key={i} style={{ position: "absolute", width: sz, height: sz, borderRadius: "50%", border: `1px solid rgba(201,168,76,${.12 - i * .03})`, top: "50%", left: "50%", transform: "translate(-50%,-50%)" }} />)}
-        <div style={{ position: "relative", textAlign: "center", animation: "fadeUp .8s ease" }}>
-          <div style={{ width: 72, height: 72, borderRadius: 20, background: "rgba(201,168,76,.15)", border: "1.5px solid rgba(201,168,76,.3)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 24px" }}>
-            <BookOpen style={{ width: 34, height: 34, color: GOLD }} />
-          </div>
-          <h1 style={{ fontSize: 32, fontWeight: 900, color: "#fff", margin: "0 0 8px" }}>Tahleem<span style={{ color: GOLD }}> Academy</span></h1>
-          <p style={{ fontSize: 15, color: "rgba(255,255,255,.55)", margin: "0 0 36px", lineHeight: 1.6 }}>أكاديمية تعليم الإسلامية<br />Your journey to Islamic knowledge</p>
-          <div style={{ background: "rgba(255,255,255,.06)", borderRadius: 16, padding: "16px 20px", border: "1px solid rgba(255,255,255,.08)", textAlign: "left" }}>
-            <div style={{ fontSize: 12, fontWeight: 800, color: GOLD, marginBottom: 12, textTransform: "uppercase", letterSpacing: .5 }}>Registration Journey</div>
-            {[
-              { show: true,                            icon: <User size={13} color={GOLD} />,           label: "1. Create Account" },
-              { show: true,                            icon: <Mail size={13} color={GOLD} />,           label: "2. Verify Email" },
-              { show: config.entrance_fee_enabled,     icon: <Star size={13} color={GOLD} />,           label: `3. Pay ${currencySymbol(config.entrance_fee_currency)}${config.entrance_fee_amount.toLocaleString()}` },
-              { show: config.onboarding_required,      icon: <FileText size={13} color="#60A5FA" />,    label: "Fill Onboarding Form" },
-              { show: config.entrance_exam_required,   icon: <GraduationCap size={13} color="#A78BFA" />, label: "Entrance Exam" },
-              { show: config.recitation_test_required, icon: <Mic size={13} color="#34D399" />,         label: "Recitation Test" },
-            ].filter(s => s.show).map((s, i, arr) => (
-              <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: i < arr.length - 1 ? 8 : 0 }}>
-                <div style={{ width: 24, height: 24, borderRadius: "50%", background: "rgba(255,255,255,.08)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{s.icon}</div>
-                <span style={{ fontSize: 12, color: "rgba(255,255,255,.75)" }}>{s.label}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* RIGHT: main content */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "32px 20px", minWidth: 0 }}>
-        <div style={{ position: "absolute", top: 16, right: 16 }}>
-          <button onClick={() => setLanguage && setLanguage(language === "ar" ? "en" : "ar")} style={{ display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", borderRadius: 20, background: "rgba(15,45,31,.07)", border: `1px solid rgba(15,45,31,.12)`, color: G, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-            <Globe style={{ width: 13, height: 13 }} />{language === "ar" ? "English" : "العربية"}
-          </button>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 24 }}>
-          <div style={{ width: 40, height: 40, borderRadius: 12, background: G, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <BookOpen style={{ width: 20, height: 20, color: GOLD }} />
-          </div>
-          <div>
-            <div style={{ fontSize: 16, fontWeight: 900, color: G }}>Tahleem <span style={{ color: GOLD }}>Academy</span></div>
-            <div style={{ fontSize: 10, color: "#7a9e88" }}>أكاديمية تعليم</div>
-          </div>
-        </div>
-        <div style={{ width: "100%", maxWidth: 480, background: "#fff", borderRadius: 24, border: "1px solid rgba(15,45,31,.1)", boxShadow: "0 8px 40px rgba(15,45,31,.1)", padding: "36px 28px", animation: "fadeUp .5s ease" }}>
-          {children}
-        </div>
-        <p style={{ marginTop: 20, fontSize: 11, color: "#9ca3af", textAlign: "center" }}>Tahleem Academy — Islamic Education Platform</p>
-      </div>
-    </div>
-  );
-
   // ── PHASE: VERIFY EMAIL ────────────────────────────────────────────────────
   if (phase === "verify") {
     return (
-      <Shell>
+      <Shell language={language} setLanguage={setLanguage} config={config} currencySymbol={currencySymbol}>
         <div style={{ textAlign: "center" }}>
           {/* Animated email icon */}
           <div style={{ width: 80, height: 80, borderRadius: "50%", background: `linear-gradient(135deg,${G},${GM})`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 20px", boxShadow: `0 8px 32px rgba(15,45,31,.25)` }}>
@@ -319,7 +332,7 @@ const Register = () => {
 
   // ── PHASE: ACCOUNT FORM ────────────────────────────────────────────────────
   return (
-    <Shell>
+    <Shell language={language} setLanguage={setLanguage} config={config} currencySymbol={currencySymbol}>
       <div style={{ marginBottom: 24, direction: isRTL ? "rtl" : "ltr" }}>
         <h2 style={{ fontSize: 22, fontWeight: 900, color: G, margin: "0 0 6px" }}>Create your account</h2>
         <p style={{ fontSize: 13, color: "#7a9e88", margin: 0 }}>
