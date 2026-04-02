@@ -149,7 +149,7 @@ const Onboarding = () => {
       const ENTRANCE_EXAM_ID = "36ef6492-2515-44ea-b086-67c9cee02475";
       try {
         // Check if attempt already exists
-        const { data: existing } = await supabase
+        const {  existing } = await supabase
           .from("exam_attempts")
           .select("id, status")
           .eq("exam_id", ENTRANCE_EXAM_ID)
@@ -158,13 +158,13 @@ const Onboarding = () => {
           .maybeSingle();
 
         if (existing) {
-          // ✅ FIXED: Navigate to correct exam route
-          navigate(`/student/exam/${existing.id}`);
+          // ✅ FIXED: Navigate to CORRECT exam route (matches App.tsx)
+          navigate(`/student/entrance-exam/${existing.id}`);
           return;
         }
 
         // Create new attempt
-        const { data: newAttempt, error: attemptErr } = await supabase
+        const {  newAttempt, error: attemptErr } = await supabase
           .from("exam_attempts")
           .insert({
             exam_id: ENTRANCE_EXAM_ID,
@@ -181,10 +181,10 @@ const Onboarding = () => {
           return;
         }
         
-        // ✅ FIXED: Navigate to correct exam route with new attempt ID
+        // ✅ FIXED: Navigate to CORRECT exam route with new attempt ID
         // Small delay to ensure DB sync
         await new Promise(resolve => setTimeout(resolve, 500));
-        navigate(`/student/exam/${newAttempt.id}`);
+        navigate(`/student/entrance-exam/${newAttempt.id}`);
       } catch {
         navigate("/student/exams");
       }
