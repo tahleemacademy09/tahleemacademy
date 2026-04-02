@@ -75,14 +75,12 @@ export default function HifdhDashboard({ userId, studentName, onNavigate }: Prop
   const [taskPlan, setTaskPlan] = useState<"daily"|"weekly"|"biweekly"|"monthly">("daily");
   const [savingTask, setSavingTask] = useState(false);
 
-  // Calculate overdue items
   const overdueCount = progress.filter(p => daysSince(p.last_reviewed) >= 10).length;
   const urgentCount = progress.filter(p => {
     const days = daysSince(p.last_reviewed);
     return days >= 5 && days < 10;
   }).length;
 
-  // Get current Juz being memorized
   const currentJuz = juzPartial.length > 0 ? juzPartial[0] : null;
   const currentSurah = currentJuz ? progress.find(p => 
     Math.ceil(p.surah_num / 4.27) === currentJuz
@@ -96,9 +94,9 @@ export default function HifdhDashboard({ userId, studentName, onNavigate }: Prop
       supabase.from("hifdh_sessions").select("surah_name,ayah_start,accuracy_score,created_at,duration").eq("student_id", userId).order("created_at", { ascending: false }).limit(6),
       supabase.from("hifdh_daily_tasks").select("*").eq("user_id", userId).eq("target_date", new Date().toISOString().split("T")[0]).order("created_at", { ascending: true }),
     ]).then(([prog, sess, taskRes]) => {
-      if (prog.data) {        const entries = prog.data as ProgressEntry[];
-        setProgress(entries);
-        const done: number[] = [];
+      if (prog.data) {
+        const entries = prog.data as ProgressEntry[];
+        setProgress(entries);        const done: number[] = [];
         const partial: number[] = [];
         entries.forEach(p => {
           const j = Math.min(30, Math.ceil(p.surah_num / 4.27));
@@ -111,7 +109,6 @@ export default function HifdhDashboard({ userId, studentName, onNavigate }: Prop
         const avg = scores.length ? Math.round(scores.reduce((a,b)=>a+b,0)/scores.length) : 0;
         setStats(s => ({ ...s, avgAccuracy: avg, juzCount: done.length }));
 
-        // Calculate weekly data
         const weekData: WeeklyData[] = [];
         for (let i = 6; i >= 0; i--) {
           const d = new Date();
@@ -145,10 +142,10 @@ export default function HifdhDashboard({ userId, studentName, onNavigate }: Prop
 
   const addTask = async () => {
     if (!userId || !taskSurah.trim()) return;
-    setSavingTask(true);    const today = new Date().toISOString().split("T")[0];
+    setSavingTask(true);
+    const today = new Date().toISOString().split("T")[0];
     const dates: string[] = [];
-    const count = taskPlan==="daily"?1:taskPlan==="weekly"?7:taskPlan==="biweekly"?14:30;
-    for (let i=0;i<count;i++) {
+    const count = taskPlan==="daily"?1:taskPlan==="weekly"?7:taskPlan==="biweekly"?14:30;    for (let i=0;i<count;i++) {
       const d = new Date();
       d.setDate(d.getDate()+i);
       dates.push(d.toISOString().split("T")[0]);
@@ -192,15 +189,12 @@ export default function HifdhDashboard({ userId, studentName, onNavigate }: Prop
   return (
     <div className="space-y-4 p-4 md:p-6 max-w-6xl mx-auto bg-gradient-to-br from-[#fafafa] via-[#f8fafb] to-[#f0f4f0] min-h-screen pb-20">
       
-      {/* ═══════════════════════════════════════════════════════════
-          OVERDUE ALERT
-      ═══════════════════════════════════════════════════════════ */}      {overdueCount > 0 && (
+      {overdueCount > 0 && (
         <Card className="border-2 border-red-300 bg-gradient-to-r from-red-50 to-red-100 p-4 shadow-lg">
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 rounded-full bg-red-600 flex items-center justify-center flex-shrink-0">
               <AlertTriangle className="w-6 h-6 text-white" />
-            </div>
-            <div className="flex-1">
+            </div>            <div className="flex-1">
               <h3 className="font-bold text-red-900 text-lg">
                 {overdueCount} Revision{overdueCount > 1 ? "s" : ""} Overdue!
               </h3>
@@ -219,9 +213,6 @@ export default function HifdhDashboard({ userId, studentName, onNavigate }: Prop
         </Card>
       )}
 
-      {/* ═══════════════════════════════════════════════════════════
-          CONTINUE LEARNING - PRIMARY ACTION
-      ═══════════════════════════════════════════════════════════ */}
       {currentSurah && (
         <Button 
           onClick={() => onNavigate("recitation")}
@@ -242,8 +233,6 @@ export default function HifdhDashboard({ userId, studentName, onNavigate }: Prop
         </Button>
       )}
 
-      {/* ═══════════════════════════════════════════════════════════
-          STATS OVERVIEW - Professional Cards      ═══════════════════════════════════════════════════════════ */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
         <StatCard
           icon={<BookOpen className="w-5 h-5" />}
@@ -254,8 +243,7 @@ export default function HifdhDashboard({ userId, studentName, onNavigate }: Prop
           onClick={() => onNavigate("recitation")}
         />
         <StatCard
-          icon={<TrendingUp className="w-5 h-5" />}
-          value={`${stats.avgAccuracy}%`}
+          icon={<TrendingUp className="w-5 h-5" />}          value={`${stats.avgAccuracy}%`}
           label="Accuracy"
           labelAr="الدقة"
           gradient="from-[#276749] to-[#38a169]"
@@ -279,9 +267,6 @@ export default function HifdhDashboard({ userId, studentName, onNavigate }: Prop
         />
       </div>
 
-      {/* ═══════════════════════════════════════════════════════════
-          TODAY'S TASKS - Priority Section
-      ═══════════════════════════════════════════════════════════ */}
       <Card className="overflow-hidden border-2 border-[#e2e8f0] shadow-lg">
         <div className="bg-gradient-to-r from-[#1a3d24] to-[#276749] p-4 md:p-5">
           <div className="flex items-center justify-between">
@@ -292,7 +277,8 @@ export default function HifdhDashboard({ userId, studentName, onNavigate }: Prop
               <div>
                 <h3 className="font-bold text-xl text-white">Today's Tasks</h3>
                 <p className="text-white/80 text-sm">مهام اليوم</p>
-              </div>            </div>
+              </div>
+            </div>
             <div className="text-right">
               <div className="text-2xl font-bold text-white">{completedToday}/{totalToday}</div>
               <div className="text-xs text-white/70">Completed</div>
@@ -306,8 +292,7 @@ export default function HifdhDashboard({ userId, studentName, onNavigate }: Prop
             <div className="text-center py-10">
               <div className="w-20 h-20 mx-auto mb-4 rounded-full bg-gradient-to-br from-[#c9a84c]/20 to-[#b7791f]/20 flex items-center justify-center">
                 <Calendar className="w-9 h-9 text-[#b7791f]" />
-              </div>
-              <p className="text-[#1a3d24] font-bold text-lg mb-1">No tasks for today</p>
+              </div>              <p className="text-[#1a3d24] font-bold text-lg mb-1">No tasks for today</p>
               <p className="text-[#7a9e88] text-sm mb-4">لا توجد مهام اليوم بعد</p>
               <Button 
                 onClick={() => setShowAddTask(true)}
@@ -341,7 +326,8 @@ export default function HifdhDashboard({ userId, studentName, onNavigate }: Prop
                   <div className="flex-1 min-w-0">
                     <div className={cn(
                       "font-bold text-sm",
-                      task.completed ? "text-[#276749] line-through" : "text-[#1a3d24]"                    )}>
+                      task.completed ? "text-[#276749] line-through" : "text-[#1a3d24]"
+                    )}>
                       {task.task_type === "memorize" ? "📖 Memorize" : "🔄 Revise"} · {task.surah_name}
                     </div>
                     <div className="text-xs text-[#7a9e88] font-medium">{task.verses_count} verses</div>
@@ -355,8 +341,7 @@ export default function HifdhDashboard({ userId, studentName, onNavigate }: Prop
                     )}
                   >
                     {task.completed ? "Done" : "Pending"}
-                  </Badge>
-                </div>
+                  </Badge>                </div>
               ))}
             </div>
           )}
@@ -374,9 +359,6 @@ export default function HifdhDashboard({ userId, studentName, onNavigate }: Prop
         </div>
       </Card>
 
-      {/* ═══════════════════════════════════════════════════════════
-          WEEKLY PROGRESS
-      ═══════════════════════════════════════════════════════════ */}
       <Card className="overflow-hidden border-2 border-[#e2e8f0] shadow-lg">
         <div className="p-4 md:p-5">
           <div className="flex items-center justify-between mb-4">
@@ -390,7 +372,8 @@ export default function HifdhDashboard({ userId, studentName, onNavigate }: Prop
               </div>
             </div>
           </div>
-                    <div className="flex items-end justify-between gap-2 h-24">
+          
+          <div className="flex items-end justify-between gap-2 h-24">
             {weeklyData.map((day, index) => {
               const maxCount = Math.max(...weeklyData.map(d => d.count), 1);
               const height = (day.count / maxCount) * 100;
@@ -407,8 +390,7 @@ export default function HifdhDashboard({ userId, studentName, onNavigate }: Prop
                       )}
                       style={{ height: `${Math.max(height, day.count > 0 ? 20 : 5)}%` }}
                     />
-                  </div>
-                  <span className={cn(
+                  </div>                  <span className={cn(
                     "text-xs font-bold",
                     isToday ? "text-[#1a3d24]" : "text-[#a0aec0]"
                   )}>
@@ -421,9 +403,6 @@ export default function HifdhDashboard({ userId, studentName, onNavigate }: Prop
         </div>
       </Card>
 
-      {/* ═══════════════════════════════════════════════════════════
-          CURRENT JUZ PROGRESS
-      ═══════════════════════════════════════════════════════════ */}
       {currentSurah && (
         <Card className="overflow-hidden border-2 border-[#e2e8f0] shadow-lg">
           <div className="p-4 md:p-5">
@@ -439,7 +418,8 @@ export default function HifdhDashboard({ userId, studentName, onNavigate }: Prop
               </div>
               <Button 
                 variant="ghost" 
-                size="sm"                onClick={() => onNavigate("recitation")}
+                size="sm"
+                onClick={() => onNavigate("recitation")}
                 className="text-[#c9a84c] hover:text-[#b7791f] hover:bg-[#c9a84c]/10 font-semibold"
               >
                 View All <ChevronRight className="w-4 h-4 ml-1" />
@@ -459,8 +439,7 @@ export default function HifdhDashboard({ userId, studentName, onNavigate }: Prop
                 className="h-3 bg-white"
               />
               <div className="flex justify-between mt-2 text-sm">
-                <span className="text-[#7a9e88] font-medium">
-                  {currentSurah.verses_memorized || 0} verses memorized
+                <span className="text-[#7a9e88] font-medium">                  {currentSurah.verses_memorized || 0} verses memorized
                 </span>
                 <span className="text-[#1a3d24] font-bold">
                   {Math.round((currentSurah.verses_memorized || 0) / (currentSurah.total_verses || 1) * 100)}%
@@ -471,9 +450,6 @@ export default function HifdhDashboard({ userId, studentName, onNavigate }: Prop
         </Card>
       )}
 
-      {/* ═══════════════════════════════════════════════════════════
-          URGENT REVISIONS - Top 3 Only
-      ═══════════════════════════════════════════════════════════ */}
       {progress.length > 0 && (
         <Card className="overflow-hidden border-2 border-[#e2e8f0] shadow-lg">
           <div className="p-4 md:p-5">
@@ -488,7 +464,8 @@ export default function HifdhDashboard({ userId, studentName, onNavigate }: Prop
                 </div>
               </div>
               <Button 
-                variant="ghost"                 size="sm"
+                variant="ghost" 
+                size="sm"
                 onClick={() => onNavigate("test")}
                 className="text-[#c9a84c] hover:text-[#b7791f] hover:bg-[#c9a84c]/10 font-semibold"
               >
@@ -511,8 +488,7 @@ export default function HifdhDashboard({ userId, studentName, onNavigate }: Prop
                         "flex items-center gap-3 p-3 rounded-xl border-2 cursor-pointer transition-all hover:shadow-md",
                         isUrgent 
                           ? "bg-gradient-to-r from-amber-50 to-amber-100 border-amber-300" 
-                          : "bg-gradient-to-r from-emerald-50 to-emerald-100 border-emerald-300"
-                      )}
+                          : "bg-gradient-to-r from-emerald-50 to-emerald-100 border-emerald-300"                      )}
                     >
                       <div className={cn(
                         "w-3 h-3 rounded-full flex-shrink-0",
@@ -537,13 +513,11 @@ export default function HifdhDashboard({ userId, studentName, onNavigate }: Prop
                     </div>
                   );
                 })}
-            </div>          </div>
+            </div>
+          </div>
         </Card>
       )}
 
-      {/* ═══════════════════════════════════════════════════════════
-          RECENT SESSIONS - Last 3 Only
-      ═══════════════════════════════════════════════════════════ */}
       {sessions.length > 0 && (
         <Card className="overflow-hidden border-2 border-[#e2e8f0] shadow-lg">
           <div className="p-4 md:p-5">
@@ -563,8 +537,7 @@ export default function HifdhDashboard({ userId, studentName, onNavigate }: Prop
                 onClick={() => onNavigate("recitation")}
                 className="text-[#c9a84c] hover:text-[#b7791f] hover:bg-[#c9a84c]/10 font-semibold"
               >
-                View History <ChevronRight className="w-4 h-4 ml-1" />
-              </Button>
+                View History <ChevronRight className="w-4 h-4 ml-1" />              </Button>
             </div>
 
             <div className="space-y-2">
@@ -586,7 +559,8 @@ export default function HifdhDashboard({ userId, studentName, onNavigate }: Prop
                   </div>
                   <div className="flex-1 min-w-0">
                     <h4 className="font-bold text-sm text-[#1a3d24] truncate">{session.surah_name}</h4>
-                    <p className="text-xs text-[#7a9e88] font-medium">                      Ayah {session.ayah_start} · {Math.round((session.duration || 0) / 60)}m
+                    <p className="text-xs text-[#7a9e88] font-medium">
+                      Ayah {session.ayah_start} · {Math.round((session.duration || 0) / 60)}m
                     </p>
                   </div>
                   {session.accuracy_score >= 80 && <Star className="w-4 h-4 text-[#c9a84c] fill-[#c9a84c]" />}
@@ -597,9 +571,6 @@ export default function HifdhDashboard({ userId, studentName, onNavigate }: Prop
         </Card>
       )}
 
-      {/* ═══════════════════════════════════════════════════════════
-          ADD TASK MODAL
-      ═══════════════════════════════════════════════════════════ */}
       <Dialog open={showAddTask} onOpenChange={setShowAddTask}>
         <DialogContent className="max-w-md">
           <DialogHeader>
@@ -615,8 +586,7 @@ export default function HifdhDashboard({ userId, studentName, onNavigate }: Prop
               <div>
                 <label className="text-xs font-bold text-[#1a3d24] mb-1.5 block">Type</label>
                 <select
-                  value={taskType}
-                  onChange={(e) => setTaskType(e.target.value as any)}
+                  value={taskType}                  onChange={(e) => setTaskType(e.target.value as any)}
                   className="w-full rounded-lg border-2 border-[#e2e8f0] bg-white px-3 py-2.5 text-sm font-medium text-[#1a3d24] focus:border-[#c9a84c] focus:outline-none"
                 >
                   <option value="revise">🔄 Revise</option>
@@ -635,6 +605,7 @@ export default function HifdhDashboard({ userId, studentName, onNavigate }: Prop
                 />
               </div>
             </div>
+
             <div>
               <label className="text-xs font-bold text-[#1a3d24] mb-1.5 block">Surah name</label>
               <Input
@@ -664,8 +635,7 @@ export default function HifdhDashboard({ userId, studentName, onNavigate }: Prop
                         : "bg-[#f8fafb] text-[#7a9e88] hover:bg-[#e2e8f0]"
                     )}
                   >
-                    <div>{en}</div>
-                    <div className="text-[10px] opacity-80 mt-0.5">{ar}</div>
+                    <div>{en}</div>                    <div className="text-[10px] opacity-80 mt-0.5">{ar}</div>
                   </button>
                 ))}
               </div>
@@ -684,7 +654,8 @@ export default function HifdhDashboard({ userId, studentName, onNavigate }: Prop
                 disabled={savingTask || !taskSurah.trim()}
                 className="flex-1 h-11 bg-gradient-to-r from-[#1a3d24] to-[#276749] hover:from-[#276749] hover:to-[#1a3d24] text-white font-bold shadow-lg disabled:opacity-50"
               >
-                {savingTask ? "Saving..." : "Add Task"}              </Button>
+                {savingTask ? "Saving..." : "Add Task"}
+              </Button>
             </div>
           </div>
         </DialogContent>
@@ -693,13 +664,23 @@ export default function HifdhDashboard({ userId, studentName, onNavigate }: Prop
   );
 }
 
-// ═══════════════════════════════════════════════════════════════
-// StatCard Component
-// ═══════════════════════════════════════════════════════════════
-
 function StatCard({ icon, value, label, labelAr, gradient, onClick }: any) {
   return (
     <Card 
       onClick={onClick}
       className={cn(
-        "
+        "p-4 cursor-pointer transition-all hover:shadow-xl hover:-translate-y-1 active:scale-95 overflow-hidden bg-gradient-to-br",
+        gradient
+      )}
+    >
+      <div className="space-y-2 text-center">
+        <div className="w-10 h-10 rounded-xl mx-auto flex items-center justify-center bg-white/20 backdrop-blur-sm">
+          {icon}
+        </div>
+        <div className="text-2xl md:text-3xl font-black text-white">{value}</div>
+        <div className="font-bold text-xs text-white/90 leading-tight">{label}</div>
+        <div className="text-[10px] text-white/70">{labelAr}</div>
+      </div>
+    </Card>
+  );
+}
