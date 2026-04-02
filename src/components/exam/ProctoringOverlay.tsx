@@ -59,7 +59,7 @@ const WARN: Record<string, {
     msg_ar:  "يبدو أنك تنظر بعيداً عن الشاشة.",
     fix_en:  "Keep your eyes on the exam screen at all times.",
     fix_ar:  "أبقِ عينيك على شاشة الامتحان في جميع الأوقات." },
-  multiple_faces:    { icon:"👥", sev:"critical", pts:10,
+  multiple_faces:    { icon:"👥", sev:"critical", pts:3,
     title_en:"Multiple People Detected!",    title_ar:"أكثر من شخص في الإطار!",
     msg_en:  "More than one face is visible in your camera.",
     msg_ar:  "يظهر أكثر من وجه في الكاميرا.",
