@@ -10,7 +10,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import {
-  BookOpen, ClipboardList, Bell, TrendingUp, Calendar, CheckCircle, XCircle,
+  Clock, BookOpen, ClipboardList, Bell, TrendingUp, Calendar, CheckCircle, XCircle,
   GraduationCap, MessageCircle, ArrowRight, Video, Star, ChevronLeft,
   ChevronRight, AlertTriangle, Info, Mic
 } from "lucide-react";
@@ -280,6 +280,36 @@ const StudentDashboard = () => {
       `}</style>
 
       <div style={{ maxWidth: 720, margin: "0 auto", padding: "20px 16px 40px", display: "flex", flexDirection: "column", gap: 18 }}>
+
+        {/* ── Awaiting Level Assignment Banner ── */}
+        {(!(profile as any)?.course_level || (profile as any)?.course_level === "pending") && (
+          <div style={{
+            background: "linear-gradient(135deg, #0f2d1f, #1a4731)",
+            borderRadius: 16, padding: "16px 20px",
+            border: "1px solid rgba(201,168,76,.25)",
+            boxShadow: "0 4px 20px rgba(15,45,31,.2)",
+            display: "flex", alignItems: "flex-start", gap: 14,
+          }}>
+            <div style={{ width: 40, height: 40, borderRadius: "50%", background: "rgba(201,168,76,.15)", border: "1.5px solid rgba(201,168,76,.35)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <Clock style={{ width: 18, height: 18, color: GOLD }} />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 14, fontWeight: 800, color: GOLD, marginBottom: 3 }}>
+                Awaiting Level Assignment — جارٍ مراجعة ملفك
+              </div>
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,.65)", lineHeight: 1.6, marginBottom: 10 }}>
+                Alhamdulillah — your application is complete and under review. An admin will assign your learning level within 48 hours. You'll receive an email notification, then your full dashboard unlocks.
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {["✅ Account created", "✅ Onboarding submitted", "✅ Entrance exam done", "✅ Recitation submitted", "⏳ Level assignment pending"].map((s, i) => (
+                  <span key={i} style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: i < 4 ? "rgba(34,197,94,.15)" : "rgba(201,168,76,.15)", color: i < 4 ? "#86EFAC" : GOLD, border: `1px solid ${i < 4 ? "rgba(34,197,94,.2)" : "rgba(201,168,76,.25)"}`, fontWeight: 700 }}>
+                    {s}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ── Hero + Daily Verse — Merged Card ── */}
         <div style={{
