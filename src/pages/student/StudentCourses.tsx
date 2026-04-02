@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
-import { BookOpen, Lock, Play, ArrowRight, Layers, BookMarked, Moon, Scale } from "lucide-react";
+import { BookOpen, Lock, Play, ArrowRight, Layers, BookMarked, Moon, Scale, ImageOff } from "lucide-react";
 
 const SUBJECT_ICONS: Record<string, any> = {
   BookOpen, Layers, BookMarked, Moon, Scale,
@@ -47,8 +47,7 @@ const StudentCourses = () => {
 
   const { data: lessons } = useQuery({
     queryKey: ["all-lessons"],
-    queryFn: async () => {
-      const { data, error } = await supabase.from("lessons").select("id, course_id").order("sort_order");
+    queryFn: async () => {      const { data, error } = await supabase.from("lessons").select("id, course_id").order("sort_order");
       if (error) throw error;
       return data;
     },
@@ -93,6 +92,11 @@ const StudentCourses = () => {
     if (level === "intermediate") return "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200";
     return "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200";
   };
+
+  // ✅ NEW: Helper to get course image URL
+  const getCourseImage = (course: any) => {
+    // Check for image_url, thumbnail, or cover_image fields
+    return course.image_url || course.thumbnail || course.cover_image || null;  };
 
   if (isLoading) {
     return (
@@ -142,30 +146,55 @@ const StudentCourses = () => {
                 </Button>
               </Link>
             </div>
-
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
               {subjectCourses.map((course: any) => {
                 const isAccessible = course.level?.toLowerCase() === studentLevel?.toLowerCase() || !course.level;
                 const lessonCount = getLessonCount(course.id);
                 const completedCount = getCompletedCount(course.id);
                 const progressPct = getProgressPercent(course.id);
+                const imageUrl = getCourseImage(course); // ✅ Get image URL
 
                 return (
                   <Card key={course.id} className={`overflow-hidden transition-all ${isAccessible ? 'hover:shadow-lg' : 'opacity-70'}`}>
-                    {/* Gradient header */}
-                    <div className="h-28 bg-gradient-to-br from-primary/20 to-secondary/20 flex items-center justify-center relative">
-                      <BookOpen className="h-10 w-10 text-primary/40" />
+                    {/* ✅ FIXED: Image Header with Fallback */}
+                    <div className="h-28 relative overflow-hidden bg-gradient-to-br from-primary/20 to-secondary/20">
+                      {imageUrl ? (
+                        <>
+                          <img
+                            src={imageUrl}
+                            alt={language === "ar" ? course.title_ar || course.title : course.title}
+                            className="w-full h-full object-cover"
+                            onError={(e) => {
+                              // ✅ Fallback if image fails to load
+                              (e.target as HTMLImageElement).style.display = 'none';
+                              const fallback = e.currentTarget.parentElement?.querySelector('.fallback-icon');
+                              if (fallback) fallback.classList.remove('hidden');
+                            }}
+                          />
+                          {/* Fallback icon (hidden by default, shown on error) */}
+                          <div className="fallback-icon hidden absolute inset-0 flex items-center justify-center">
+                            <BookOpen className="h-10 w-10 text-primary/40" />
+                          </div>
+                        </>
+                      ) : (
+                        /* ✅ No image - show gradient + icon */
+                        <div className="w-full h-full flex items-center justify-center">
+                          <BookOpen className="h-10 w-10 text-primary/40" />
+                        </div>
+                      )}
+                      
+                      {/* Lock overlay for locked courses */}
                       {!isAccessible && (
                         <div className="absolute inset-0 bg-background/60 backdrop-blur-sm flex items-center justify-center">
                           <Lock className="h-6 w-6 text-muted-foreground" />
                         </div>
                       )}
                     </div>
+
                     <CardContent className="p-4 space-y-3">
                       <div className="flex items-center gap-2 flex-wrap">
                         <Badge className={levelColor(course.level || 'beginner')} variant="secondary">
-                          {levelLabel(course.level || 'beginner')}
-                        </Badge>
+                          {levelLabel(course.level || 'beginner')}                        </Badge>
                         <span className="text-xs text-muted-foreground">
                           {lessonCount} {t("lessons", "درس")}
                         </span>
@@ -214,8 +243,7 @@ const StudentCourses = () => {
               })}
             </div>
           </div>
-        );
-      })}
+        );      })}
 
       {/* Empty state */}
       {(subjects || []).every((s: any) => (courses || []).filter((c: any) => c.subject_id === s.id).length === 0) && (
