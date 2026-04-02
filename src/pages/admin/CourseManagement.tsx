@@ -29,6 +29,36 @@ const levelCfg: Record<Level, { bg: string; text: string; border: string; dot: s
 
 const G = "#064E3B";
 
+// Resolve both full URLs and Supabase storage paths to a displayable URL
+const resolveImageUrl = (url: string | null | undefined): string | null => {
+  if (!url || url.trim() === "") return null;
+  if (url.startsWith("http://") || url.startsWith("https://")) return url;
+  const { data: d1 } = supabase.storage.from("subject-files").getPublicUrl(url);
+  if (d1?.publicUrl) return d1.publicUrl;
+  const { data: d2 } = supabase.storage.from("subject-images").getPublicUrl(url);
+  return d2?.publicUrl || null;
+};
+
+// Thumbnail component with useState error fallback — never shows broken img tag
+const CourseThumb = ({
+  url, title, height = 140, lv,
+}: { url?: string | null; title: string; height?: number; lv: typeof levelCfg[Level] }) => {
+  const [failed, setFailed] = useState(false);
+  const resolved = resolveImageUrl(url);
+  if (!resolved || failed) {
+    return (
+      <div style={{ height, background: `linear-gradient(135deg,${lv.border},${lv.bg})`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <BookOpen size={height > 80 ? 28 : 18} color={lv.text} style={{ opacity: 0.35 }} />
+      </div>
+    );
+  }
+  return (
+    <img src={resolved} alt={title}
+      style={{ width: "100%", height, objectFit: "cover", display: "block" }}
+      onError={() => setFailed(true)} />
+  );
+};
+
 const CourseManagement = () => {
   const { t } = useLanguage();
   const { user } = useAuth();
@@ -303,14 +333,8 @@ const CourseManagement = () => {
                       onMouseEnter={e=>(e.currentTarget as any).style.boxShadow="0 8px 24px rgba(0,0,0,.1)"}
                       onMouseLeave={e=>(e.currentTarget as any).style.boxShadow="0 1px 4px rgba(0,0,0,.04)"}>
 
-                      {/* Thumbnail / colour header */}
-                      {course.image_url ? (
-                        <img src={course.image_url} alt={course.title} style={{ width:"100%", height:140, objectFit:"cover", display:"block" }} />
-                      ) : (
-                        <div style={{ height:100, background:`linear-gradient(135deg,${lv.border},${lv.bg})`, display:"flex", alignItems:"center", justifyContent:"center" }}>
-                          <BookOpen size={32} color={lv.text} style={{ opacity:.4 }} />
-                        </div>
-                      )}
+                      {/* Thumbnail */}
+                      <CourseThumb url={course.image_url} title={course.title} lv={lv} />
 
                       <div style={{ padding:"14px 16px" }}>
                         <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:8, marginBottom:8 }}>
@@ -384,7 +408,9 @@ const CourseManagement = () => {
           <div style={{ background:"#fff", borderBottom:"1px solid #E5E7EB", padding:"16px 20px" }}>
             <div style={{ display:"flex", flexWrap:"wrap", gap:16, alignItems:"center" }}>
               {selectedCourse.image_url && (
-                <img src={selectedCourse.image_url} style={{ width:64, height:64, borderRadius:10, objectFit:"cover", flexShrink:0 }} alt="" />
+                <div style={{ width:64, height:64, borderRadius:10, overflow:"hidden", flexShrink:0 }}>
+                  <CourseThumb url={selectedCourse.image_url} title={selectedCourse.title} height={64} lv={levelCfg[selectedCourse.level as Level] || levelCfg.beginner} />
+                </div>
               )}
               <div style={{ flex:1, minWidth:200 }}>
                 {selectedCourse.description && <p style={{ fontSize:13, color:"#6B7280", margin:0, lineHeight:1.6 }}>{selectedCourse.description}</p>}
