@@ -442,7 +442,10 @@ const StudentDashboard = () => {
           </div>
         </div>
 
-        {/* ── Notifications ── */}
+        {/* ── Quran Phrases Widget ── */}
+        <QuranPhrasesWidget language={language} />
+
+
         <div style={card}>
           <div style={{ padding:"16px 18px", borderBottom:`1px solid ${BORDER}`, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
             <div style={{ display:"flex", alignItems:"center", gap:8 }}>
