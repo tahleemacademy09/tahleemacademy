@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { useRegistrationSettings } from "@/hooks/useRegistrationSettings";
 import { motion } from "framer-motion";
 import { CheckCircle, Star, BookOpen, ArrowRight } from "lucide-react";
 import StandaloneNav from "@/components/layout/StandaloneNav";
@@ -14,6 +15,7 @@ const EntranceResults = () => {
   const { attemptId } = useParams<{ attemptId: string }>();
   const { user, refreshProfile } = useAuth();
   const { toast } = useToast();
+  const { config } = useRegistrationSettings();
   const navigate = useNavigate();
   const [attempt, setAttempt] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -327,12 +329,22 @@ const EntranceResults = () => {
               animate={{ opacity: 1 }}
               transition={{ delay: 1.1 }}
             >
+              {/* If recitation test is required and still in pipeline → go there, else dashboard */}
               <Button
-                onClick={() => navigate("/student", { replace: true })}
+                onClick={() => {
+                  if (config?.recitation_test_required) {
+                    navigate("/student/recitation-test", { replace: true });
+                  } else {
+                    navigate("/student/awaiting-level", { replace: true });
+                  }
+                }}
                 className="w-full py-6 text-base rounded-xl font-bold"
                 style={{ background: "#c9973a", color: "#fff", fontFamily: "'Cairo', sans-serif" }}
               >
-                Go to Dashboard <ArrowRight className="ml-2 h-4 w-4" />
+                {config?.recitation_test_required
+                  ? <>Continue to Recitation Test <ArrowRight className="ml-2 h-4 w-4" /></>
+                  : <>Continue <ArrowRight className="ml-2 h-4 w-4" /></>
+                }
               </Button>
             </motion.div>
           </CardContent>
