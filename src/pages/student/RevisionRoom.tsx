@@ -47,7 +47,7 @@ const RevisionRoom = () => {
   const [showAiCard, setShowAiCard] = useState(false);
   const [cardForm, setCardForm] = useState({ front:"", front_ar:"", back:"", back_ar:"", topic:"" });
 
-  // Quiz state  const [quizMode, setQuizMode] = useState(false);
+  // ✅ Quiz state (FIXED: quizMode is now properly defined)  const [quizMode, setQuizMode] = useState(false);
   const [quizSource, setQuizSource] = useState<"flashcard"|"exam"|"ai"|null>(null);
   const [quizQs, setQuizQs] = useState<QuizQ[]>([]);
   const [quizIdx, setQuizIdx] = useState(0);
@@ -79,7 +79,7 @@ const RevisionRoom = () => {
   const [expandedLevels, setExpandedLevels] = useState<Record<string, boolean>>({});
 
   // Queries
-  const { data: subject } = useQuery({
+  const {  subject } = useQuery({
     queryKey: ["revision-subject", subjectId],
     queryFn: async () => {
       const { data } = await supabase.from("subjects").select("*").eq("id", subjectId!).single();
@@ -87,7 +87,7 @@ const RevisionRoom = () => {
     },
   });
 
-  const { data: allSubjects = [] } = useQuery({
+  const {  allSubjects = [] } = useQuery({
     queryKey: ["all-revision-subjects"],
     queryFn: async () => {
       const { data } = await supabase.from("subjects").select("*").eq("is_active", true).order("title");
@@ -103,7 +103,7 @@ const RevisionRoom = () => {
     return grouped;
   }, [allSubjects]);
 
-  const { data: flashcards = [] } = useQuery({
+  const {  flashcards = [] } = useQuery({
     queryKey: ["revision-flashcards", subjectId],
     queryFn: async () => {
       const { data } = await supabase.from("revision_flashcards" as any).select("*").eq("subject_id", subjectId!).order("order_index");
@@ -111,7 +111,7 @@ const RevisionRoom = () => {
     },
   });
 
-  const { data: fcProgress = [] } = useQuery({
+  const {  fcProgress = [] } = useQuery({
     queryKey: ["revision-fc-progress", subjectId, user?.id],
     enabled: !!user && flashcards.length > 0,
     queryFn: async () => {
@@ -122,7 +122,7 @@ const RevisionRoom = () => {
     },
   });
 
-  const { data: summaries = [] } = useQuery({
+  const {  summaries = [] } = useQuery({
     queryKey: ["revision-summaries", subjectId],
     queryFn: async () => {
       const { data } = await supabase.from("revision_summaries" as any).select("*").eq("subject_id", subjectId!).order("created_at", { ascending:false });
@@ -130,7 +130,7 @@ const RevisionRoom = () => {
     },
   });
 
-  const { data: notes = [] } = useQuery({
+  const {  notes = [] } = useQuery({
     queryKey: ["revision-notes", subjectId, user?.id],
     enabled: !!user,
     queryFn: async () => {
@@ -139,7 +139,7 @@ const RevisionRoom = () => {
     },
   });
 
-  const { data: materials = [] } = useQuery({
+  const {  materials = [] } = useQuery({
     queryKey: ["subject-materials-rev", subjectId],
     enabled: !!subjectId,
     queryFn: async () => {
@@ -147,7 +147,7 @@ const RevisionRoom = () => {
       return (data||[]) as any[];
     },  });
 
-  const { data: quizHistory = [] } = useQuery({
+  const {  quizHistory = [] } = useQuery({
     queryKey: ["revision-quiz-history", subjectId, user?.id],
     enabled: !!user,
     queryFn: async () => {
@@ -156,11 +156,11 @@ const RevisionRoom = () => {
     },
   });
 
-  const { data: exams = [] } = useQuery({
+  const {  exams = [] } = useQuery({
     queryKey: ["subject-exams-for-quiz", subjectId],
     enabled: !!subjectId,
     queryFn: async () => {
-      const { data: courses } = await supabase.from("courses").select("id").eq("subject_id", subjectId!);
+      const {  courses } = await supabase.from("courses").select("id").eq("subject_id", subjectId!);
       if (!courses?.length) return [];
       const { data } = await supabase.from("exams").select("id,title,title_ar").in("course_id", courses.map(c=>c.id)).eq("is_published", true);
       return (data||[]) as any[];
@@ -369,7 +369,7 @@ Make questions educational and progressively challenging.`
   const startExamQuiz = async (examId: string) => {
     setQuizLoading(true);
     try {
-      const { data: qs } = await supabase.from("exam_questions").select("*").eq("exam_id", examId).order("created_at");
+      const {  qs } = await supabase.from("exam_questions").select("*").eq("exam_id", examId).order("created_at");
       if (!qs?.length) { toast({ title:"No questions in this exam yet." }); setQuizLoading(false); return; }
       const questions: QuizQ[] = qs
         .filter((q:any) => q.question_type === "mcq" && q.options?.length >= 2)
@@ -510,7 +510,7 @@ Make questions educational and progressively challenging.`
         <div style={{ minHeight:"100svh", background:"#F8F9FA", padding:"24px 16px" }}>
           <div style={{ maxWidth:540, margin:"0 auto" }}>
             <div style={{ background:"#fff", borderRadius:20, padding:28, textAlign:"center", marginBottom:20, boxShadow:"0 4px 20px rgba(0,0,0,.06)" }}>
-              <div style={{ fontSize:56, marginBottom:12 }}>{pct>=80?"🏆":pct>=60?"👍":"📚"}</div>
+              <div style={{ fontSize:56, marginBottom:12 }}>{pct>=80?"🏆":pct>=60?"👍":""}</div>
               <h2 style={{ fontWeight:900, fontSize:24, color:G, margin:"0 0 8px" }}>Quiz Complete!</h2>
               <div style={{ fontSize:48, fontWeight:900, color:pct>=70?"#16A34A":"#DC2626", margin:"12px 0" }}>{score}/{quizQs.length}</div>
               <div style={{ fontSize:16, color:"#6B7280", marginBottom:20 }}>{pct}% correct</div>
@@ -975,7 +975,7 @@ Make questions educational and progressively challenging.`
                       <button key={mat.id} onClick={()=>{ if(!canRead) return; setSelMaterial(mat); setPageFrom(1); setPageTo(5); setMatGenStep("config"); }}
                         style={{ display:"flex", alignItems:"center", gap:12, padding:"14px 16px", borderRadius:14, border:`1.5px solid ${selMaterial?.id===mat.id?"#0D9488":"#E5E7EB"}`, background:selMaterial?.id===mat.id?"#F0FDFA":"#fff", cursor:canRead?"pointer":"not-allowed", textAlign:"left", opacity:canRead?1:.5 }}>
                         <div style={{ width:40, height:40, borderRadius:10, background:isPdf?"#FEF2F2":isText?"#FFFBEB":"#F3F4F6", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
-                          <span style={{ fontSize:20 }}>{isPdf?"📄":isText?"📝":"📎"}</span>
+                          <span style={{ fontSize:20 }}>{isPdf?"📄":isText?"📝":""}</span>
                         </div>
                         <div style={{ flex:1, minWidth:0 }}>
                           <p style={{ fontWeight:700, fontSize:13, color:"#111", margin:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{mat.title}</p>                          <p style={{ fontSize:11, color:"#9CA3AF", margin:0 }}>
