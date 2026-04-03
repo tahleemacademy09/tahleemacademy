@@ -7,10 +7,10 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import {
   BookOpen, Flame, Clock, BarChart3, Calendar,
-  Layers, FileText, StickyNote, Trophy, ArrowRight
+  Layers, FileText, StickyNote, Trophy, ArrowRight, AlertCircle, CheckCircle2
 } from "lucide-react";
 import { format, isToday, differenceInDays, startOfDay } from "date-fns";
 
@@ -19,24 +19,50 @@ const RevisionHub = () => {
   const { user, profile } = useAuth();
   const navigate = useNavigate();
 
-  const {  subjects = [], isLoading } = useQuery({
-    queryKey: ["revision-subjects", profile?.level],
-    enabled: !!user,
+  // Determine assigned level (course_level takes priority)
+  const assignedLevel = profile?.course_level || profile?.level;
+  const isLevelAssigned = !!assignedLevel;
+
+  // Fetch subjects based on level
+  const { data: subjects = [], isLoading, error } = useQuery({
+    queryKey: ["revision-subjects", assignedLevel],
+    enabled: !!user && !!isLevelAssigned,
     queryFn: async () => {
-      const {  levelCourses } = await supabase.from("level_courses").select("subject_id").eq("level", profile?.level || "beginner");
-      if (!levelCourses?.length) {
-        const { data } = await supabase.from("subjects").select("*").eq("is_active", true);
-        return (data || []) as any[];
-      }
-      const subjectIds = levelCourses.map(lc => lc.subject_id).filter(Boolean);
-      if (!subjectIds.length) return [];
-      const { data } = await supabase.from("subjects").select("*").in("id", subjectIds as string[]);
+      const level = assignedLevel || "beginner";
+      
+      // 1. Try level_courses mapping
+      const { data: levelCourses, error: lcErr } = await supabase
+        .from("level_courses")
+        .select("subject_id")
+        .eq("level", level);
+
+      if (lcErr) console.warn("level_courses fetch warning:", lcErr);
+
+      if (levelCourses?.length) {
+        const subjectIds = levelCourses.map(lc => lc.subject_id).filter(Boolean);
+        if (subjectIds.length) {
+          const { data, error: subErr } = await supabase
+            .from("subjects")
+            .select("*")
+            .in("id", subjectIds as string[]);
+          if (subErr) console.error("subjects fetch error:", subErr);
+          return (data || []) as any[];
+        }      }
+
+      // 2. Fallback: all active subjects (with console warning for admin)
+      console.warn(`⚠️ No subjects mapped to level "${level}". Falling back to all active subjects.`);
+      const { data, error: fallbackErr } = await supabase
+        .from("subjects")
+        .select("*")
+        .eq("is_active", true);
+      if (fallbackErr) console.error("fallback subjects error:", fallbackErr);
       return (data || []) as any[];
     },
   });
 
+  // Teacher profiles
   const teacherIds = [...new Set(subjects.map((s: any) => s.teacher_id).filter(Boolean))];
-  const {  teachers = [] } = useQuery({
+  const { data: teachers = [] } = useQuery({
     queryKey: ["revision-teachers", teacherIds],
     enabled: teacherIds.length > 0,
     queryFn: async () => {
@@ -45,15 +71,17 @@ const RevisionHub = () => {
     },
   });
 
-  const {  flashcardProgress = [] } = useQuery({
+  // Stats queries (unchanged)
+  const { data: flashcardProgress = [] } = useQuery({
     queryKey: ["revision-fc-progress", user?.id],
-    enabled: !!user,    queryFn: async () => {
+    enabled: !!user,
+    queryFn: async () => {
       const { data } = await supabase.from("revision_flashcard_progress" as any).select("*").eq("student_id", user!.id);
       return (data || []) as any[];
     },
   });
 
-  const {  quizSessions = [] } = useQuery({
+  const { data: quizSessions = [] } = useQuery({
     queryKey: ["revision-quizzes", user?.id],
     enabled: !!user,
     queryFn: async () => {
@@ -62,16 +90,16 @@ const RevisionHub = () => {
     },
   });
 
-  const {  todaySchedule = [] } = useQuery({
+  const { data: todaySchedule = [] } = useQuery({
     queryKey: ["revision-schedule-today", user?.id],
     enabled: !!user,
     queryFn: async () => {
       const today = format(new Date(), "yyyy-MM-dd");
       const { data } = await supabase.from("revision_schedule" as any).select("*").eq("student_id", user!.id).eq("scheduled_date", today).eq("is_completed", false);
-      return (data || []) as any[];
-    },
+      return (data || []) as any[];    },
   });
 
+  // Compute stats
   const knownToday = flashcardProgress.filter((p: any) => p.status === "known" && p.last_reviewed_at && isToday(new Date(p.last_reviewed_at))).length;
   const weekQuizzes = quizSessions.filter((q: any) => differenceInDays(new Date(), new Date(q.completed_at)) <= 7);
   const weekAvg = weekQuizzes.length > 0 ? Math.round(weekQuizzes.reduce((s: number, q: any) => s + Number(q.percentage || 0), 0) / weekQuizzes.length) : 0;
@@ -90,14 +118,34 @@ const RevisionHub = () => {
 
   const getTeacher = (teacherId: string) => teachers.find((t: any) => t.user_id === teacherId);
 
+  // ── UI States ──
+  if (!user) return <div className="container mx-auto px-4 py-8"><Skeleton className="h-64 rounded-2xl" /></div>;
+  
+  if (!isLevelAssigned && !isLoading) {
+    return (
+      <div className="container mx-auto px-4 py-12 flex flex-col items-center justify-center min-h-[60vh]">
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-8 max-w-md text-center shadow-sm">
+          <AlertCircle className="h-10 w-10 text-amber-600 mx-auto mb-4" />
+          <h2 className="text-xl font-bold text-amber-900 mb-2">Level Not Assigned Yet</h2>
+          <p className="text-amber-700 mb-6 text-sm leading-relaxed">
+            An admin needs to assign your learning level before you can access subjects and revision materials.
+          </p>
+          <Link to="/student" className="inline-flex items-center gap-2 px-5 py-2.5 bg-amber-600 text-white rounded-xl font-medium hover:bg-amber-700 transition">
+            <ArrowRight className="h-4 w-4 rotate-180" /> Back to Dashboard
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   if (isLoading) return <div className="container mx-auto px-4 py-8"><Skeleton className="h-64 rounded-2xl" /></div>;
 
   return (
     <div style={{ background: "#FAF6EE", minHeight: "100vh", fontFamily: "'Cairo', sans-serif" }}>
       <div className="container mx-auto px-4 py-6 md:py-8 space-y-8" style={{ maxWidth: 900 }}>
         
-        {/* Header */}        <div className="text-center space-y-2" style={{ background: "linear-gradient(135deg, #064E3B 0%, #075E54 100%)", padding: "28px 20px", borderRadius: 20, color: "#fff", boxShadow: "0 4px 20px rgba(6,78,59,0.15)" }}>
-          <h1 className="text-3xl md:text-4xl font-bold" style={{ fontFamily: language === "ar" ? "'Amiri', serif" : "'Playfair Display', serif" }}>
+        {/* Header */}
+        <div className="text-center space-y-2" style={{ background: "linear-gradient(135deg, #064E3B 0%, #075E54 100%)", padding: "28px 20px", borderRadius: 20, color: "#fff", boxShadow: "0 4px 20px rgba(6,78,59,0.15)" }}>          <h1 className="text-3xl md:text-4xl font-bold" style={{ fontFamily: language === "ar" ? "'Amiri', serif" : "'Playfair Display', serif" }}>
             {t("Revision Centre", "مركز المراجعة")}
           </h1>
           <p className="text-sm md:text-base opacity-80 font-arabic" dir="rtl" style={{ color: "#E8C070", marginTop: 6 }}>
@@ -145,8 +193,8 @@ const RevisionHub = () => {
                 {todaySchedule.map((item: any) => {
                   const subj = subjects.find((s: any) => s.id === item.subject_id);
                   return (
-                    <div key={item.id} className="flex items-center justify-between p-3 rounded-xl bg-[#FAF6EE] border border-[#E8C070]/20">                      <div>
-                        <p className="text-sm font-semibold" style={{ color: "#064E3B" }}>{subj ? (language === "ar" ? subj.title_ar || subj.title : subj.title) : ""}</p>
+                    <div key={item.id} className="flex items-center justify-between p-3 rounded-xl bg-[#FAF6EE] border border-[#E8C070]/20">
+                      <div>                        <p className="text-sm font-semibold" style={{ color: "#064E3B" }}>{subj ? (language === "ar" ? subj.title_ar || subj.title : subj.title) : ""}</p>
                         <p className="text-xs text-gray-500">{item.revision_type} • {item.duration_minutes}m</p>
                       </div>
                       <Button size="sm" className="text-xs" style={{ background: "#064E3B", color: "#fff", borderRadius: 10 }} onClick={() => subj && navigate(`/student/revision/${subj.id}`)}>
@@ -166,8 +214,19 @@ const RevisionHub = () => {
             <BookOpen className="h-5 w-5" style={{ color: "#E8C070" }} />
             {t("Your Subjects", "موادك")}
           </h2>
+          
           {subjects.length === 0 ? (
-            <p className="text-sm text-gray-500 text-center py-8 bg-white rounded-2xl border border-gray-100">{t("No subjects enrolled", "لم يتم التسجيل في أي مادة")}</p>
+            <Card className="border-0" style={{ background: "#fff", borderRadius: 18 }}>
+              <CardContent className="p-8 text-center">
+                <CheckCircle2 className="h-12 w-12 text-gray-300 mx-auto mb-4" />
+                <h3 className="text-lg font-semibold text-gray-700 mb-2">{t("No subjects available", "لا توجد مواد متاحة")}</h3>
+                <p className="text-sm text-gray-500 max-w-md mx-auto">
+                  {isLevelAssigned 
+                    ? t("No subjects are currently mapped to your level. Contact your admin to configure level_courses.", "لا توجد مواد مرتبطة بمستواك حالياً. تواصل مع المشرف لضبط ربط المواد.")
+                    : t("Your level hasn't been assigned yet. Please wait for admin approval.", "لم يتم تعيين مستواك بعد. يرجى انتظار موافقة المشرف.")}
+                </p>
+              </CardContent>
+            </Card>
           ) : (
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
               {subjects.map((subj: any) => {
@@ -184,62 +243,9 @@ const RevisionHub = () => {
                             {language === "ar" ? subj.title_ar || subj.title : subj.title}
                           </h3>
                           {subj.title_ar && language !== "ar" && <p className="text-xs text-gray-500 font-arabic" dir="rtl">{subj.title_ar}</p>}
-                        </div>
-                        {subj.level && <Badge variant="secondary" className="text-xs" style={{ background: subj.level === "beginner" ? "#DCFCE7" : subj.level === "intermediate" ? "#FEF3C7" : "#FEE2E2", color: subj.level === "beginner" ? "#166534" : subj.level === "intermediate" ? "#92400E" : "#991B1B" }}>{subj.level}</Badge>}
+                        </div>                        {subj.level && <Badge variant="secondary" className="text-xs" style={{ background: subj.level === "beginner" ? "#DCFCE7" : subj.level === "intermediate" ? "#FEF3C7" : "#FEE2E2", color: subj.level === "beginner" ? "#166534" : subj.level === "intermediate" ? "#92400E" : "#991B1B" }}>{subj.level}</Badge>}
                       </div>
                       {teacher && <p className="text-xs text-gray-500">{language === "ar" ? teacher.full_name_ar || teacher.full_name : teacher.full_name}</p>}
 
                       <div className="flex items-center gap-3 text-xs text-gray-500">
-                        <span className="flex items-center gap-1"><Layers className="h-3 w-3" /> {t("Flashcards", "بطاقات")}</span>
-                        <span className="flex items-center gap-1"><FileText className="h-3 w-3" /> {t("Summaries", "ملخصات")}</span>
-                        {subjectQuizzes.length > 0 && <span className="font-medium">{t("Quiz avg", "معدل")}: {quizAvg}%</span>}
-                      </div>
-                      <div className="flex gap-2 pt-1">
-                        {["flashcards", "quiz", "summaries"].map(tab => (
-                          <Button key={tab} size="sm" variant="outline" className="text-xs h-7 gap-1 flex-1" style={{ borderRadius: 8, borderColor: "#E5E7EB" }} onClick={e => { e.stopPropagation(); navigate(`/student/revision/${subj.id}?tab=${tab}`); }}>
-                            {tab === "flashcards" ? "🃏" : tab === "quiz" ? "📝" : "📄"} {t(tab.charAt(0).toUpperCase() + tab.slice(1), tab === "flashcards" ? "بطاقات" : tab === "quiz" ? "اختبار" : "ملخص")}
-                          </Button>
-                        ))}
-                      </div>
-                    </CardContent>
-                  </Card>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        {/* Recent Activity */}
-        {quizSessions.length > 0 && (
-          <div>
-            <h2 className="text-lg font-semibold mb-3 flex items-center gap-2" style={{ color: "#064E3B" }}>
-              <Trophy className="h-5 w-5" style={{ color: "#E8C070" }} />
-              {t("Recent Activity", "النشاط الأخير")}
-            </h2>
-            <div className="space-y-2">
-              {quizSessions.slice(0, 5).map((q: any) => {
-                const subj = subjects.find((s: any) => s.id === q.subject_id);
-                return (
-                  <Card key={q.id} className="border-0" style={{ background: "#fff", borderRadius: 14 }}>
-                    <CardContent className="p-4 flex items-center justify-between">
-                      <div>
-                        <p className="text-sm font-semibold" style={{ color: "#064E3B" }}>{subj ? (language === "ar" ? subj.title_ar || subj.title : subj.title) : t("Quiz", "اختبار")}</p>
-                        <p className="text-xs text-gray-500">{q.source} • {format(new Date(q.completed_at), "MMM d, h:mm a")}</p>
-                      </div>
-                      <div className="text-right">
-                        <p className="font-bold text-sm" style={{ color: Number(q.percentage) >= 70 ? "#059669" : "#DC2626" }}>{q.score}/{q.total}</p>
-                        <p className="text-xs text-gray-500">{Math.round(q.percentage || 0)}%</p>
-                      </div>
-                    </CardContent>
-                  </Card>
-                );
-              })}
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-};
-
-export default RevisionHub;
+                        <span className="flex items-center gap-1"><Layers className="h-3 w-3"
