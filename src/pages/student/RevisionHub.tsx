@@ -19,43 +19,40 @@ const RevisionHub = () => {
   const { user, profile } = useAuth();
   const navigate = useNavigate();
 
-  // Determine assigned level (course_level takes priority over legacy level)
-  const assignedLevel = profile?.course_level || profile?.level;
-  const isLevelAssigned = !!assignedLevel;
+  // ✅ Use only 'level' since 'course_level' doesn't exist in your DB
+  const studentLevel = (profile?.level || "beginner").toLowerCase();
+  const isLevelAssigned = !!profile?.level;
 
-  // Fetch subjects based on level
-  const {  subjects = [], isLoading, error } = useQuery({
-    queryKey: ["revision-subjects", assignedLevel],
-    enabled: !!user && !!isLevelAssigned,
+  // ✅ Robust subject query with case-insensitive matching & guaranteed fallback
+  const { data: subjects = [], isLoading } = useQuery({
+    queryKey: ["revision-subjects", studentLevel],
+    enabled: !!user,
     queryFn: async () => {
-      const level = assignedLevel || "beginner";
-      
-      // 1. Try level_courses mapping first
-      const {  levelCourses, error: lcErr } = await supabase
+      // 1. Try level_courses mapping (case-insensitive)
+      const { data: levelCourses, error: lcErr } = await supabase
         .from("level_courses")
-        .select("subject_id")
-        .eq("level", level);
+        .select("subject_id, level")
+        .ilike("level", studentLevel);
 
       if (lcErr) console.warn("level_courses fetch warning:", lcErr);
 
-      if (levelCourses?.length) {
+      if (levelCourses && levelCourses.length > 0) {
         const subjectIds = levelCourses.map(lc => lc.subject_id).filter(Boolean);
-        if (subjectIds.length) {
-          const { data, error: subErr } = await supabase
+        if (subjectIds.length > 0) {
+          const { data, error } = await supabase
             .from("subjects")
             .select("*")
-            .in("id", subjectIds as string[]);
-          if (subErr) console.error("subjects fetch error:", subErr);
-          return (data || []) as any[];
-        }      }
-
-      // 2. Fallback: all active subjects (with console warning for admin debugging)
-      console.warn(`⚠️ No subjects mapped to level "${level}". Falling back to all active subjects.`);
-      const { data, error: fallbackErr } = await supabase
+            .in("id", subjectIds)
+            .eq("is_active", true);
+          if (data && data.length > 0) return data;
+        }
+      }
+      // 2. Fallback: Show ALL active subjects if mapping is empty/fails
+      console.warn(`⚠️ No subjects found for level "${studentLevel}". Showing all active subjects.`);
+      const { data, error } = await supabase
         .from("subjects")
         .select("*")
         .eq("is_active", true);
-      if (fallbackErr) console.error("fallback subjects error:", fallbackErr);
       return (data || []) as any[];
     },
   });
@@ -90,15 +87,15 @@ const RevisionHub = () => {
     },
   });
 
-  const { data: todaySchedule = [] } = useQuery({
+  const {  todaySchedule = [] } = useQuery({
     queryKey: ["revision-schedule-today", user?.id],
     enabled: !!user,
     queryFn: async () => {
       const today = format(new Date(), "yyyy-MM-dd");
       const { data } = await supabase.from("revision_schedule" as any).select("*").eq("student_id", user!.id).eq("scheduled_date", today).eq("is_completed", false);
-      return (data || []) as any[];    },
+      return (data || []) as any[];
+    },
   });
-
   // Compute stats
   const knownToday = flashcardProgress.filter((p: any) => p.status === "known" && p.last_reviewed_at && isToday(new Date(p.last_reviewed_at))).length;
   const weekQuizzes = quizSessions.filter((q: any) => differenceInDays(new Date(), new Date(q.completed_at)) <= 7);
@@ -120,24 +117,6 @@ const RevisionHub = () => {
 
   // ── UI States ──
   if (!user) return <div className="container mx-auto px-4 py-8"><Skeleton className="h-64 rounded-2xl" /></div>;
-  
-  if (!isLevelAssigned && !isLoading) {
-    return (
-      <div className="container mx-auto px-4 py-12 flex flex-col items-center justify-center min-h-[60vh]">
-        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-8 max-w-md text-center shadow-sm">
-          <AlertCircle className="h-10 w-10 text-amber-600 mx-auto mb-4" />
-          <h2 className="text-xl font-bold text-amber-900 mb-2">Level Not Assigned Yet</h2>
-          <p className="text-amber-700 mb-6 text-sm leading-relaxed">
-            An admin needs to assign your learning level before you can access subjects and revision materials.
-          </p>
-          <Link to="/student" className="inline-flex items-center gap-2 px-5 py-2.5 bg-amber-600 text-white rounded-xl font-medium hover:bg-amber-700 transition">
-            <ArrowRight className="h-4 w-4 rotate-180" /> Back to Dashboard
-          </Link>
-        </div>
-      </div>
-    );
-  }
-
   if (isLoading) return <div className="container mx-auto px-4 py-8"><Skeleton className="h-64 rounded-2xl" /></div>;
 
   return (
@@ -145,7 +124,8 @@ const RevisionHub = () => {
       <div className="container mx-auto px-4 py-6 md:py-8 space-y-8" style={{ maxWidth: 900 }}>
         
         {/* Header */}
-        <div className="text-center space-y-2" style={{ background: "linear-gradient(135deg, #064E3B 0%, #075E54 100%)", padding: "28px 20px", borderRadius: 20, color: "#fff", boxShadow: "0 4px 20px rgba(6,78,59,0.15)" }}>          <h1 className="text-3xl md:text-4xl font-bold" style={{ fontFamily: language === "ar" ? "'Amiri', serif" : "'Playfair Display', serif" }}>
+        <div className="text-center space-y-2" style={{ background: "linear-gradient(135deg, #064E3B 0%, #075E54 100%)", padding: "28px 20px", borderRadius: 20, color: "#fff", boxShadow: "0 4px 20px rgba(6,78,59,0.15)" }}>
+          <h1 className="text-3xl md:text-4xl font-bold" style={{ fontFamily: language === "ar" ? "'Amiri', serif" : "'Playfair Display', serif" }}>
             {t("Revision Centre", "مركز المراجعة")}
           </h1>
           <p className="text-sm md:text-base opacity-80 font-arabic" dir="rtl" style={{ color: "#E8C070", marginTop: 6 }}>
@@ -165,8 +145,7 @@ const RevisionHub = () => {
               <CardContent className="p-5 text-center">
                 <s.icon className="h-6 w-6 mx-auto mb-2" style={{ color: s.color }} />
                 <p className="text-2xl font-bold" style={{ color: s.color }}>{s.val}</p>
-                <p className="text-xs font-medium mt-1" style={{ color: "#6B7280" }}>{s.label}</p>
-              </CardContent>
+                <p className="text-xs font-medium mt-1" style={{ color: "#6B7280" }}>{s.label}</p>              </CardContent>
             </Card>
           ))}
         </div>
@@ -194,7 +173,8 @@ const RevisionHub = () => {
                   const subj = subjects.find((s: any) => s.id === item.subject_id);
                   return (
                     <div key={item.id} className="flex items-center justify-between p-3 rounded-xl bg-[#FAF6EE] border border-[#E8C070]/20">
-                      <div>                        <p className="text-sm font-semibold" style={{ color: "#064E3B" }}>{subj ? (language === "ar" ? subj.title_ar || subj.title : subj.title) : ""}</p>
+                      <div>
+                        <p className="text-sm font-semibold" style={{ color: "#064E3B" }}>{subj ? (language === "ar" ? subj.title_ar || subj.title : subj.title) : ""}</p>
                         <p className="text-xs text-gray-500">{item.revision_type} • {item.duration_minutes}m</p>
                       </div>
                       <Button size="sm" className="text-xs" style={{ background: "#064E3B", color: "#fff", borderRadius: 10 }} onClick={() => subj && navigate(`/student/revision/${subj.id}`)}>
@@ -214,8 +194,7 @@ const RevisionHub = () => {
             <BookOpen className="h-5 w-5" style={{ color: "#E8C070" }} />
             {t("Your Subjects", "موادك")}
           </h2>
-          
-          {subjects.length === 0 ? (
+                    {subjects.length === 0 ? (
             <Card className="border-0" style={{ background: "#fff", borderRadius: 18 }}>
               <CardContent className="p-8 text-center">
                 <CheckCircle2 className="h-12 w-12 text-gray-300 mx-auto mb-4" />
@@ -243,7 +222,8 @@ const RevisionHub = () => {
                             {language === "ar" ? subj.title_ar || subj.title : subj.title}
                           </h3>
                           {subj.title_ar && language !== "ar" && <p className="text-xs text-gray-500 font-arabic" dir="rtl">{subj.title_ar}</p>}
-                        </div>                        {subj.level && <Badge variant="secondary" className="text-xs" style={{ background: subj.level === "beginner" ? "#DCFCE7" : subj.level === "intermediate" ? "#FEF3C7" : "#FEE2E2", color: subj.level === "beginner" ? "#166534" : subj.level === "intermediate" ? "#92400E" : "#991B1B" }}>{subj.level}</Badge>}
+                        </div>
+                        {subj.level && <Badge variant="secondary" className="text-xs" style={{ background: subj.level === "beginner" ? "#DCFCE7" : subj.level === "intermediate" ? "#FEF3C7" : "#FEE2E2", color: subj.level === "beginner" ? "#166534" : subj.level === "intermediate" ? "#92400E" : "#991B1B" }}>{subj.level}</Badge>}
                       </div>
                       {teacher && <p className="text-xs text-gray-500">{language === "ar" ? teacher.full_name_ar || teacher.full_name : teacher.full_name}</p>}
 
@@ -263,8 +243,7 @@ const RevisionHub = () => {
                     </CardContent>
                   </Card>
                 );
-              })}
-            </div>
+              })}            </div>
           )}
         </div>
 
@@ -292,7 +271,8 @@ const RevisionHub = () => {
                     </CardContent>
                   </Card>
                 );
-              })}            </div>
+              })}
+            </div>
           </div>
         )}
       </div>
