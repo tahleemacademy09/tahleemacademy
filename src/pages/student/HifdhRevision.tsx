@@ -46,7 +46,7 @@ const audioUrl = (surah: number, ayah: number, reciter: string) => {
 };
 
 export default function HifdhRevision() {
-  // ── State (Safe initialization) ─────────────────────────────────────────
+  // ── State ───────────────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<Tab>("overview");  const [userId, setUserId] = useState<string | null>(null);
   const [studentName, setStudentName] = useState("Student");
   
@@ -67,7 +67,7 @@ export default function HifdhRevision() {
   const touchStartX = useRef(0);
   const touchStartY = useRef(0);
 
-  // ── Persistence ─────────────────────────────────────────────────────────
+  // ── Persistence ────────────────────────────────────────────────────────
   useEffect(() => {
     const tab = localStorage.getItem("hifdh_tab");
     if (tab) setActiveTab(tab as Tab);
@@ -96,7 +96,7 @@ export default function HifdhRevision() {
     });
   }, []);
 
-  // ── Fetch Page ──────────────────────────────────────────────────────────  const fetchPage = useCallback(async (page: number) => {
+  // ── Fetch Page (Fixed: async keyword added) ─────────────────────────────  const fetchPage = useCallback(async (page: number) => {
     setLoading(true);
     setPageData(null);
     setIsTransitioning(true);
