@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useTasjeel } from "@/hooks/useTasjeel";
 import {
   BookOpen, LayoutDashboard, ClipboardList, Users, LogOut, Globe,UserPlus,
   CheckSquare, BarChart, UserCircle, Library, GraduationCap, MessageCircle,
@@ -27,17 +28,16 @@ interface DashboardLayoutProps { role: "student" | "admin"; }
 const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   const { t, language, setLanguage, dir } = useLanguage();
   const { signOut, profile } = useAuth();
+  const { currentStep } = useTasjeel();
   const location = useLocation();
   const [open, setOpen] = useState(false);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   // ── Level-pending: lock most features until admin assigns a level ─────────
-  // A student is "pending" when course_level is null / "pending" / missing.
-  // Admins and teachers are never in this state.
-  const levelPending = role === "student" && (
-    !(profile as any)?.course_level ||
-    (profile as any)?.course_level === "pending"
-  );
+  // Uses currentStep from tasjeel_progress as the single source of truth.
+  // profile.course_level alone is stale (cached at login, never auto-refreshed).
+  // Admins and teachers are never in this state (TasjeelGuard bypasses them).
+  const levelPending = role === "student" && currentStep !== null && currentStep !== "completed";
 
   // Routes that require a level assignment before access
   const LOCKED_ROUTES = new Set([
