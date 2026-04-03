@@ -1,16 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { audioUrl, DEFAULT_RECITER } from "./surahData";
-import { Play, Pause, SkipBack, SkipForward, Volume2, Type, ChevronLeft, ChevronRight } from "lucide-react";
-
-// Fallback reciters (ensures dropdown always works)
-const RECITERS = [
-  { id: "ar.alafasy", name: "Mishary Rashid Alafasy" },
-  { id: "ar.abdurrahmaansudais", name: "Abdurrahman As-Sudais" },
-  { id: "ar.husary", name: "Mahmoud Khalil Al-Husary" },
-  { id: "ar.minshawi", name: "Mohamed Siddiq Al-Minshawi" },
-  { id: "ar.shaatri", name: "Abu Bakr Ash-Shaatree" },
-  { id: "ar.abdulsamad", name: "Abdul Basit Abdul Samad" },
-];
+import { ChevronLeft, ChevronRight } from "lucide-react";
 
 const G = "#0f2d1f";
 const GM = "#1a4731";
@@ -47,7 +37,8 @@ export default function HifdhRecitation({ reciter: reciterProp, onReciterChange 
 
   const stopAll = useCallback(() => {
     audioRef.current?.pause();
-    audioRef.current = null;    playingRef.current = 0;
+    audioRef.current = null;
+    playingRef.current = 0;
     setPlayingAyah(0);
     setIsPlaying(false);
   }, []);
@@ -56,8 +47,7 @@ export default function HifdhRecitation({ reciter: reciterProp, onReciterChange 
     setLoading(true);
     setError("");
     setPageData(null);
-    stopAll();
-    try {
+    stopAll();    try {
       const res = await fetch(`https://api.alquran.cloud/v1/page/${page}/ar.uthmani`);
       const json = await res.json();
       if (json.code === 200) setPageData(json.data);
@@ -96,7 +86,8 @@ export default function HifdhRecitation({ reciter: reciterProp, onReciterChange 
       if (next <= last) playAyah(next);
       else { stopAll(); setIsPlaying(false); }
     };
-    audio.onerror = () => { stopAll(); setIsPlaying(false); };  }, [stopAll, reciter]);
+    audio.onerror = () => { stopAll(); setIsPlaying(false); };
+  }, [stopAll, reciter]);
 
   const togglePlay = () => {
     if (isPlaying) {
@@ -105,8 +96,7 @@ export default function HifdhRecitation({ reciter: reciterProp, onReciterChange 
     } else {
       const start = playingAyah > 0 ? playingAyah : (pageData?.ayahs?.[0]?.numberInSurah || 1);
       playAyah(start);
-    }
-  };
+    }  };
 
   const nextAyah = () => {
     const pd = pageDataRef.current;
@@ -136,65 +126,12 @@ export default function HifdhRecitation({ reciter: reciterProp, onReciterChange 
         .verse-active { background: #fffbeb; border-radius: 8px; padding: 2px 4px; box-shadow: 0 0 0 2px ${GOLD}33; }
       `}</style>
 
-      {/* ── TOP CONTROL BAR (Compact, Mobile-Optimized) ──────────────────── */}
-      <div style={{
-        background: `linear-gradient(135deg, ${G}, ${GM})`,
-        padding: "10px 12px",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        boxShadow: "0 2px 12px rgba(15,45,31,0.15)",
-        position: "sticky",
-        top: 0,        zIndex: 50,
-        gap: 8,
-        flexWrap: "nowrap"
-      }}>
-        {/* Left: Page Info */}
-        <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-          <div style={{ background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 8, padding: "5px 8px", color: "#fff", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-            <span style={{ fontFamily: "'Amiri', serif", fontSize: 15 }}>{surahInfo.nameAr || "القرآن"}</span>
-            <span style={{ fontSize: 10, opacity: 0.8, marginLeft: 4 }}>Juz {juzInfo} · {currentPage}</span>
-          </div>
-        </div>
-
-        {/* Center: Playback Controls */}
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <button onClick={prevAyah} disabled={!pageAyahs.length}
-            style={{ width: 34, height: 34, borderRadius: "50%", border: "1px solid rgba(255,255,255,0.3)", background: "rgba(255,255,255,0.12)", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <SkipBack size={16} />
-          </button>
-          <button onClick={togglePlay}
-            style={{ width: 42, height: 42, borderRadius: "50%", border: "none", background: GOLD, color: G, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 2px 8px rgba(201,168,76,0.4)" }}>
-            {isPlaying ? <Pause size={20} fill={G} /> : <Play size={20} fill={G} style={{ marginLeft: 2 }} />}
-          </button>
-          <button onClick={nextAyah} disabled={!pageAyahs.length}
-            style={{ width: 34, height: 34, borderRadius: "50%", border: "1px solid rgba(255,255,255,0.3)", background: "rgba(255,255,255,0.12)", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <SkipForward size={16} />
-          </button>
-        </div>
-
-        {/* Right: Reciter & Font */}
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <select value={reciter} onChange={(e) => { setReciter(e.target.value); onReciterChange?.(e.target.value); }}
-            style={{ background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 8, padding: "5px 6px", color: "#fff", fontSize: 11, cursor: "pointer", outline: "none", maxWidth: 90 }}>
-            {RECITERS.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-          </select>
-          <button onClick={() => setFontSize((v) => Math.max(22, v - 2))}
-            style={{ width: 30, height: 30, borderRadius: 8, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.12)", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <Type size={14} />−
-          </button>
-          <button onClick={() => setFontSize((v) => Math.min(38, v + 2))}
-            style={{ width: 30, height: 30, borderRadius: 8, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.12)", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <Type size={14} />+
-          </button>
-        </div>
-      </div>
-
-      {/* ── QURAN PAGE CONTAINER (Mushaf Style, Full Viewport) ───────────── */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "16px", overflow: "hidden", height: "calc(100dvh - 110px)" }}>
+      {/* ── QURAN PAGE CONTAINER (Full Viewport, No Header) ───────────── */}
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "16px", overflow: "hidden", height: "calc(100dvh - 70px)" }}>
         {loading && (
           <div style={{ textAlign: "center", color: "#7a9e88", animation: "pulse 1.5s infinite" }}>
-            <div style={{ fontSize: 32, marginBottom: 12 }}>📖</div>            Loading Page {currentPage}...
+            <div style={{ fontSize: 32, marginBottom: 12 }}>📖</div>
+            Loading Page {currentPage}...
           </div>
         )}
         {error && !loading && (
@@ -208,8 +145,7 @@ export default function HifdhRecitation({ reciter: reciterProp, onReciterChange 
           <div style={{ width: "100%", maxWidth: 680, background: "#fff", borderRadius: 20, padding: "20px 16px", border: "1px solid #e5e7eb", boxShadow: "0 4px 20px rgba(0,0,0,0.05)", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", height: "100%", overflowY: "auto" }}>
             {/* Bismillah */}
             {currentPage !== 1 && currentPage !== 2 && (
-              <div style={{ textAlign: "center", fontFamily: "'Amiri Quran', serif", fontSize: fontSize + 2, color: G, marginBottom: 16, padding: "12px", borderRadius: 12, background: BG, border: "1px solid #e5e7eb" }}>
-                بِسْمِ ٱللَّهِ ٱلرَّحْمَـٰنِ ٱلرَّحِيمِ
+              <div style={{ textAlign: "center", fontFamily: "'Amiri Quran', serif", fontSize: fontSize + 2, color: G, marginBottom: 16, padding: "12px", borderRadius: 12, background: BG, border: "1px solid #e5e7eb" }}>                بِسْمِ ٱللَّهِ ٱلرَّحْمَـٰنِ ٱلرَّحِيمِ
               </div>
             )}
 
@@ -243,7 +179,8 @@ export default function HifdhRecitation({ reciter: reciterProp, onReciterChange 
       <div style={{ padding: "10px 12px", background: "#fff", borderTop: "1px solid #e5e7eb", display: "flex", gap: 10, position: "sticky", bottom: 0, zIndex: 40 }}>
         <button onClick={() => setCurrentPage((p) => Math.max(1, p - 1))} disabled={currentPage <= 1}
           style={{ flex: 1, padding: "12px", borderRadius: 12, border: "1px solid #e5e7eb", background: currentPage <= 1 ? "#f8fafb" : BG, color: currentPage <= 1 ? "#ccc" : G, fontWeight: 700, cursor: currentPage <= 1 ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-          <ChevronLeft size={18} /> Page {currentPage - 1}        </button>
+          <ChevronLeft size={18} /> Page {currentPage - 1}
+        </button>
         <button onClick={() => setCurrentPage((p) => Math.min(604, p + 1))} disabled={currentPage >= 604}
           style={{ flex: 1, padding: "12px", borderRadius: 12, border: "1px solid #e5e7eb", background: currentPage >= 604 ? "#f8fafb" : BG, color: currentPage >= 604 ? "#ccc" : G, fontWeight: 700, cursor: currentPage >= 604 ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
           Page {currentPage + 1} <ChevronRight size={18} />
