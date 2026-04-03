@@ -14,35 +14,38 @@ serve(async (req) => {
     const { prompt } = await req.json();
     if (!prompt) throw new Error("prompt is required");
 
-    const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
-    if (!ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY not set");
+    // Accepts either DASHSCOPE_API_KEY or QWEN_API_KEY
+    const apiKey = Deno.env.get("DASHSCOPE_API_KEY") || Deno.env.get("QWEN_API_KEY");
+    if (!apiKey) throw new Error("DASHSCOPE_API_KEY or QWEN_API_KEY not set in Supabase secrets");
 
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
+    // Qwen via DashScope OpenAI-compatible endpoint
+    const response = await fetch("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-api-key": ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
+        "Authorization": `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 2000,
+        model: "qwen-plus", // Options: qwen-turbo (fast/cheap), qwen-plus (balanced), qwen-max (best quality)
         messages: [{ role: "user", content: prompt }],
+        temperature: 0.7,
+        max_tokens: 4000,
       }),
     });
 
     if (!response.ok) {
-      const err = await response.text();
-      throw new Error(`Anthropic API error ${response.status}: ${err}`);
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error?.message || `Qwen API error ${response.status}`);
     }
 
     const data = await response.json();
-    const text = data.content?.[0]?.text || "";
+    const text = data.choices?.[0]?.message?.content || "";
 
     return new Response(JSON.stringify({ text }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e: any) {
+    console.error("Edge function error:", e);
     return new Response(JSON.stringify({ error: e.message }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
