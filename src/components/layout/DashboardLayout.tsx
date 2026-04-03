@@ -34,12 +34,8 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   // ── Level-pending: lock most features until admin assigns a level ─────────
-  // Uses currentStep from tasjeel_progress as the single source of truth.
-  // profile.course_level alone is stale (cached at login, never auto-refreshed).
-  // Admins and teachers are never in this state (TasjeelGuard bypasses them).
   const levelPending = role === "student" && currentStep !== null && currentStep !== "completed";
 
-  // Routes that require a level assignment before access
   const LOCKED_ROUTES = new Set([
     "/student/courses",
     "/student/revision",
@@ -51,9 +47,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     "/student/transcripts",
   ]);
 
-  // Fullscreen escape for Majlis
-  const isMajlis = location.pathname === "/student/majlis";
-  if (isMajlis) return <div style={{ position:"fixed", inset:0, zIndex:40 }}><Outlet /></div>;
+  const isMajlis = location.pathname === "/student/majlis";  if (isMajlis) return <div style={{ position:"fixed", inset:0, zIndex:40 }}><Outlet /></div>;
 
   const toggle = (key: string) => setExpanded(p => ({ ...p, [key]: !p[key] }));
   const groupActive = (paths: string[]) => paths.some(p => location.pathname.startsWith(p));
@@ -87,6 +81,8 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   const adminNav: AdminNavItem[] = [
     { type:"link",  to:"/admin",                  icon:LayoutDashboard, label:t("Dashboard","لوحة التحكم") },
     { type:"link",  to:"/admin/level-assignment", icon:GraduationCap,   label:t("Level Assignment","تحديد المستوى") },
+    // ✅ ADDED: Subject Level Mapping
+    { type:"link",  to:"/admin/level-subject-mapping", icon:BookOpen, label:t("Subject Level Mapping","تعيين مستويات المواد") },
     { type:"group", key:"academic", icon:BookOpen, label:t("Academic","المحتوى الأكاديمي"), children:[
       { to:"/admin/subjects", icon:BookOpen,  label:t("Subjects","المواد") },
       { to:"/admin/courses",  icon:Layers,    label:t("Courses","الدورات") },
@@ -100,8 +96,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     { type:"group", key:"assess", icon:ClipboardList, label:t("Assessments","التقييمات"), children:[
       { to:"/admin/exams",         icon:ClipboardList, label:t("Exams","الامتحانات") },
       { to:"/admin/question-bank", icon:Library,       label:t("Question Bank","بنك الأسئلة") },
-      { to:"/admin/grading",       icon:CheckSquare,   label:t("Grading","التصحيح") },
-      { to:"/admin/entrance-exam", icon:GraduationCap, label:t("Entrance Exam","اختبار القبول") },
+      { to:"/admin/grading",       icon:CheckSquare,   label:t("Grading","التصحيح") },      { to:"/admin/entrance-exam", icon:GraduationCap, label:t("Entrance Exam","اختبار القبول") },
       { to:"/admin/proctoring",    icon:BarChart,      label:t("Proctoring","المراقبة") },
     ]},
     { type:"group", key:"recit", icon:Mic, label:t("Recitation","التلاوة"), children:[
@@ -141,42 +136,25 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     };
     load();
 
-    // ── Realtime subscription for instant notifications ──
     const channel = supabase
       .channel(`notifications:${user.id}`)
       .on(
         "postgres_changes" as any,
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "notifications",
-          filter: `user_id=eq.${user.id}`,
-        },
+        { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${user.id}` },
         (payload: any) => {
           setNotifList(prev => [payload.new, ...prev]);
           setUnreadNotifs(p => p + 1);
         }
-      )
-      .on(
+      )      .on(
         "postgres_changes" as any,
-        {
-          event: "UPDATE",
-          schema: "public",
-          table: "notifications",
-          filter: `user_id=eq.${user.id}`,
-        },
+        { event: "UPDATE", schema: "public", table: "notifications", filter: `user_id=eq.${user.id}` },
         (payload: any) => {
-          setNotifList(prev =>
-            prev.map((n: any) => n.id === payload.new.id ? payload.new : n)
-          );
-          setUnreadNotifs(prev =>
-            Math.max(0, prev - (payload.old?.is_read === false && payload.new?.is_read === true ? 1 : 0))
-          );
+          setNotifList(prev => prev.map((n: any) => n.id === payload.new.id ? payload.new : n));
+          setUnreadNotifs(prev => Math.max(0, prev - (payload.old?.is_read === false && payload.new?.is_read === true ? 1 : 0)));
         }
       )
       .subscribe();
 
-    // Polling fallback every 15s in case realtime is unreliable on this plan
     const iv = setInterval(load, 15000);
     return () => {
       clearInterval(iv);
@@ -195,7 +173,6 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     const nav = role === "student" ? studentNav : adminNav;
     return (
       <div className="flex h-full flex-col">
-        {/* Logo */}
         <div className="flex h-14 items-center gap-3 border-b border-sidebar-border px-4">
           <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-sidebar-primary shrink-0">
             <BookOpen className="h-3.5 w-3.5 text-sidebar-primary-foreground" />
@@ -204,7 +181,6 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
             {t("Tahleem","تعليم")}
             <span className="text-sidebar-primary ms-1 text-xs font-normal opacity-80">{t("Academy","أكاديمية")}</span>
           </span>
-          {/* Close button on mobile */}
           {onNavigate && (
             <button onClick={onNavigate} className="ml-auto text-sidebar-foreground/50 hover:text-sidebar-foreground">
               <X className="h-4 w-4"/>
@@ -212,15 +188,13 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
           )}
         </div>
 
-        {/* Nav items */}
         <nav className="flex-1 overflow-y-auto p-2 space-y-0.5">
           {(nav as any[]).map((item: any) => {
             if (item.type === "link") {
               const active = item.to === "/admin" || item.to === "/student"
                 ? location.pathname === item.to
                 : location.pathname.startsWith(item.to);
-              const isLocked = levelPending && LOCKED_ROUTES.has(item.to);
-              if (isLocked) {
+              const isLocked = levelPending && LOCKED_ROUTES.has(item.to);              if (isLocked) {
                 return (
                   <div key={item.to}
                     title="Available after level assignment"
@@ -269,8 +243,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                   <div className="ms-5 mt-0.5 mb-1 space-y-0.5 border-l border-sidebar-border/40 ps-3">
                     {item.children.map((child: any) => {
                       const ca = location.pathname.startsWith(child.to);
-                      return (
-                        <Link key={child.to} to={child.to} onClick={onNavigate}
+                      return (                        <Link key={child.to} to={child.to} onClick={onNavigate}
                           className={cn(
                             "flex items-center gap-2 rounded-md px-2.5 py-1.5 text-sm transition-colors",
                             ca
@@ -289,7 +262,6 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
           })}
         </nav>
 
-        {/* Footer */}
         <div className="border-t border-sidebar-border p-2 space-y-0.5">
           {profile?.full_name && (
             <div className="px-3 py-2">
@@ -320,21 +292,18 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
             onClick={() => { signOut(); onNavigate?.(); }}>
             <LogOut className="h-4 w-4"/>
             <span>{t("Sign Out","تسجيل الخروج")}</span>
-          </button>
-        </div>
+          </button>        </div>
       </div>
     );
   };
 
   return (
     <div className="flex h-screen overflow-hidden">
-      {/* Desktop sidebar */}
       <aside className="hidden w-60 flex-col bg-sidebar md:flex flex-shrink-0 border-r border-sidebar-border">
         <SidebarContent />
       </aside>
 
       <div className="flex flex-1 flex-col min-w-0 overflow-hidden">
-        {/* Mobile top bar */}
         <header className="flex h-12 items-center gap-3 border-b bg-background px-4 md:hidden flex-shrink-0">
           <Sheet open={open} onOpenChange={setOpen}>
             <SheetTrigger asChild>
@@ -358,7 +327,6 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
           </div>
 
           <div className="flex items-center gap-1">
-              {/* Notification bell */}
               <div className="relative">
                 <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setShowNotifPanel(true)}>
                   <Bell className="h-4 w-4"/>
@@ -369,20 +337,17 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                   </span>
                 )}
               </div>
-              {/* Payment wallet */}
               <Link to="/student/enrollment-payment">
                 <Button variant="ghost" size="icon" className="h-8 w-8">
                   <Wallet className="h-4 w-4 text-yellow-500"/>
                 </Button>
-              </Link>
-            </div>
+              </Link>            </div>
         </header>
 
         <HolidayBanner/>
         {role === "student" && <PaymentBanner/>}
         {role === "admin"   && <AdminPaymentIndicator/>}
 
-        {/* ── Pending level assignment banner ── */}
         {levelPending && (
           <div style={{
             background: "linear-gradient(90deg, #0f2d1f, #1a4731)",
@@ -407,13 +372,11 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
           </div>
         )}
 
-        {/* ── Notification panel (student) ── */}
         {showNotifPanel && (
           <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm"
             onClick={() => setShowNotifPanel(false)}>
             <div className="absolute top-0 left-0 right-0 max-h-[80vh] bg-white rounded-b-3xl shadow-2xl flex flex-col overflow-hidden"
               onClick={e => e.stopPropagation()}>
-              {/* Header */}
               <div className="flex items-center justify-between px-5 py-4 border-b" style={{ background:"#0f2d1f" }}>
                 <div className="flex items-center gap-2.5">
                   <Bell className="h-4 w-4" style={{ color:"#c9a84c" }}/>
@@ -427,9 +390,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                 <button onClick={() => setShowNotifPanel(false)}
                   className="w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10">
                   ✕
-                </button>
-              </div>
-              {/* List */}
+                </button>              </div>
               <div className="overflow-y-auto flex-1">
                 {notifList.length === 0 ? (
                   <div className="text-center py-10 text-muted-foreground text-sm">No notifications yet</div>
