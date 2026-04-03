@@ -147,9 +147,20 @@ const App = () => (
                   <Route path="/registration-complete"  element={<RegistrationComplete />} />
                   {/* Misc public */}
                   <Route path="/live-quiz"               element={<ProtectedRoute skipOnboardingCheck><LiveQuiz /></ProtectedRoute>} />
-                  <Route path="/public/classes"          element={<LiveClasses />} />
-                  <Route path="/public/join/:classCode"  element={<JoinClass />} />
-                  <Route path="/public/classroom/:roomId" element={<GuestClassroom />} />
+
+                  {/* ── Public Live Classes (/live/ prefix — matches all links in codebase) ── */}
+                  {/* Listing page */}
+                  <Route path="/live"                        element={<LiveClasses />} />
+                  <Route path="/public/classes"              element={<LiveClasses />} />
+
+                  {/* Join / detail page — :roomCode matches JoinClass useParams + all Link hrefs */}
+                  <Route path="/live/:roomCode"              element={<JoinClass />} />
+                  <Route path="/public/join/:roomCode"       element={<JoinClass />} />
+
+                  {/* Guest classroom — navigated to from JoinClass after token exchange */}
+                  <Route path="/live/:roomCode/classroom"    element={<GuestClassroom />} />
+                  <Route path="/public/classroom/:roomCode"  element={<GuestClassroom />} />
+
                   <Route path="/recordings/:recordingId" element={<ProtectedRoute><RecordingPlayer /></ProtectedRoute>} />
 
                   {/* ── Student routes ── */}
