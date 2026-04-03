@@ -96,7 +96,7 @@ export default function HifdhRevision() {
     });
   }, []);
 
-  // ── Fetch Page (Fixed: async keyword added) ─────────────────────────────  const fetchPage = useCallback(async (page: number) => {
+  // ── Fetch Page (ASYNC KEYWORD VERIFIED) ─────────────────────────────────  const fetchPage = useCallback(async (page: number): Promise<void> => {
     setLoading(true);
     setPageData(null);
     setIsTransitioning(true);
@@ -104,7 +104,9 @@ export default function HifdhRevision() {
       const res = await fetch(`https://api.alquran.cloud/v1/page/${page}/ar.uthmani`);
       const json = await res.json();
       if (json.code === 200) setPageData(json.data);
-    } catch { /* silent */ }
+    } catch (error) {
+      console.error("Fetch error:", error);
+    }
     setLoading(false);
   }, []);
 
@@ -143,9 +145,9 @@ export default function HifdhRevision() {
   }, [reciter]);
 
   const togglePlay = () => {
-    if (!audioRef.current) return;
-    if (isPlaying) {
-      audioRef.current.pause();      setIsPlaying(false);
+    if (!audioRef.current) return;    if (isPlaying) {
+      audioRef.current.pause();
+      setIsPlaying(false);
     } else {
       const target = playingAyah > 0 ? playingAyah : 1;
       playAyah(target);
@@ -192,9 +194,9 @@ export default function HifdhRevision() {
     
     if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 50) {
       if (diffX > 0) {
-        setCurrentPage(p => Math.min(604, p + 1));
-      } else {
-        setCurrentPage(p => Math.max(1, p - 1));      }
+        setCurrentPage(p => Math.min(604, p + 1));      } else {
+        setCurrentPage(p => Math.max(1, p - 1));
+      }
     }
   };
 
@@ -241,9 +243,9 @@ export default function HifdhRevision() {
       )}
 
       {/* ── CONTENT AREA ────────────────────────────────────────────────── */}
-      <div className="flex-1 overflow-hidden relative">
-        
-        {activeTab === "overview" && (          <div className="h-full overflow-y-auto">
+      <div className="flex-1 overflow-hidden relative">        
+        {activeTab === "overview" && (
+          <div className="h-full overflow-y-auto">
             <HifdhDashboard userId={userId} studentName={studentName} onNavigate={setActiveTab} activeTab={activeTab} />
           </div>
         )}
@@ -290,9 +292,9 @@ export default function HifdhRevision() {
                   </button>
                   <button onClick={(e) => { e.stopPropagation(); setCurrentPage(p => Math.min(604, p + 1)); }} 
                     className="p-1.5 rounded-full bg-gray-100 active:scale-95 transition">
-                    <SkipForward size={16} className="text-[#0f2d1f]" />
-                  </button>
+                    <SkipForward size={16} className="text-[#0f2d1f]" />                  </button>
                 </div>
+
                 <div className="flex items-center gap-1.5">
                   <select value={reciter} onChange={(e) => setReciter(e.target.value)}
                     className="text-[10px] bg-gray-50 border border-gray-200 rounded px-1.5 py-1 outline-none max-w-[80px] truncate" 
