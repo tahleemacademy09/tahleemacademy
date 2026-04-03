@@ -108,7 +108,7 @@ const EntranceExamAdmin = () => {
         .neq("status","in_progress")
         .order("submitted_at", { ascending:false }),
     ]);
-    setQuestions(qRes.data||[]);
+    setQuestions((qRes.data as any[])||[]);
     setSubjects(subRes.data||[]);
     setLevelCourses((lcRes.data as any[])||[]);
     setResults((attRes.data as any[])||[]);

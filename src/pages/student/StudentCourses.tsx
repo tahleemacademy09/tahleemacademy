@@ -26,7 +26,7 @@ const StudentCourses = () => {
   const studentLevel = profile?.level || "beginner";
 
   // 1. Fetch Subjects
-  const {  subjects, isLoading: loadingSubjects } = useQuery({
+  const { data: subjects, isLoading: loadingSubjects } = useQuery({
     queryKey: ["subjects-active"],
     queryFn: async () => {
       const { data, error } = await supabase
