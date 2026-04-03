@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { BarChart3, Mic, Brain, Target, FileCheck, Play, Pause, SkipBack, SkipForward, Type } from "lucide-react";
+import { BarChart3, Mic, Brain, Target, FileCheck, Play, Pause, SkipBack, SkipForward, Minus, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // Import your existing components
@@ -19,11 +19,18 @@ const TABS = [
   { id: "test" as Tab, en: "Test", ar: "اختبار", icon: FileCheck },
 ];
 
+// Expanded popular reciters
 const RECITERS = [
   { id: "ar.alafasy", name: "Mishary Rashid Alafasy" },
   { id: "ar.abdurrahmaansudais", name: "Abdurrahman As-Sudais" },
   { id: "ar.husary", name: "Mahmoud Khalil Al-Husary" },
   { id: "ar.minshawi", name: "Mohamed Siddiq Al-Minshawi" },
+  { id: "ar.shaatri", name: "Abu Bakr Ash-Shaatree" },
+  { id: "ar.abdulsamad", name: "Abdul Basit Abdul Samad" },
+  { id: "ar.muhammadjibreel", name: "Muhammad Jibreel" },
+  { id: "ar.haniarrifai", name: "Hani Ar-Rifai" },
+  { id: "ar.maaboramadan", name: "Maher Al Muaiqly" },
+  { id: "ar.abdullahbasfar", name: "Abdullah Basfar" },
 ];
 
 const G = "#0f2d1f";
@@ -31,7 +38,7 @@ const GOLD = "#c9a84c";
 const BG = "#faf6ee";
 
 function toAr(n: number) {
-  return String(n).replace(/[0-9]/g, (d) => "٠١٢٤٥٦٧٨٩"[+d]);
+  return String(n).replace(/[0-9]/g, (d) => "٠١٢٣٤٥٦٧٨٩"[+d]);
 }
 
 // Audio URL Builder
@@ -40,16 +47,16 @@ const audioUrl = (surah: number, ayah: number, reciter: string) => {
   const a = String(ayah).padStart(3, "0");
   return `https://cdn.islamic.network/quran/audio/128/${reciter}/${s}${a}.mp3`;
 };
-
 export default function HifdhRevision() {
   const [activeTab, setActiveTab] = useState<Tab>("overview");
   const [userId, setUserId] = useState<string | null>(null);
   const [studentName, setStudentName] = useState("Student");
   
-  // Visibility
-  const [tabsVisible, setTabsVisible] = useState(true);  const [controlsVisible, setControlsVisible] = useState(true);
+  // Header visibility (optional auto-hide)
+  const [tabsVisible, setTabsVisible] = useState(true);
+  const tabTimerRef = useRef<ReturnType<typeof setTimeout>>();
 
-  // Recitation
+  // Recitation state
   const [currentPage, setCurrentPage] = useState(1);
   const [pageData, setPageData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
@@ -63,8 +70,6 @@ export default function HifdhRevision() {
   const playingRef = useRef(0);
   const pageDataRef = useRef<any>(null);
   const verseRefs = useRef<Record<number, HTMLSpanElement | null>>({});
-  const tabTimerRef = useRef<ReturnType<typeof setTimeout>>();
-  const controlTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const touchStartX = useRef(0);
 
   useEffect(() => { pageDataRef.current = pageData; }, [pageData]);
@@ -80,39 +85,29 @@ export default function HifdhRevision() {
     });
   }, []);
 
-  // Auto-Hide Logic
+  // Header auto-hide (optional)
   const resetTabTimer = useCallback(() => {
     setTabsVisible(true);
     clearTimeout(tabTimerRef.current);
     tabTimerRef.current = setTimeout(() => setTabsVisible(false), 3000);
   }, []);
 
-  const resetControlTimer = useCallback(() => {
-    setControlsVisible(true);
-    clearTimeout(controlTimerRef.current);
-    controlTimerRef.current = setTimeout(() => setControlsVisible(false), 3000);
-  }, []);
-
-  const revealAll = useCallback(() => {
-    resetTabTimer();
-    resetControlTimer();
-  }, [resetTabTimer, resetControlTimer]);
   useEffect(() => {
-    revealAll();
+    resetTabTimer();
     const events = ["touchstart", "scroll", "mousemove", "keydown", "click"];
-    const handler = () => revealAll();
-    events.forEach((e) => window.addEventListener(e, handler, { passive: true }));
-    return () => {
+    const handler = () => resetTabTimer();
+    events.forEach((e) => window.addEventListener(e, handler, { passive: true }));    return () => {
       events.forEach((e) => window.removeEventListener(e, handler));
       clearTimeout(tabTimerRef.current);
-      clearTimeout(controlTimerRef.current);
     };
-  }, [revealAll]);
+  }, [resetTabTimer]);
 
-  // Recitation Logic
+  // ── FIXED AUDIO PLAYBACK LOGIC ──────────────────────────────────────────
   const stopAll = useCallback(() => {
-    audioRef.current?.pause();
-    audioRef.current = null;
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
     playingRef.current = 0;
     setPlayingAyah(0);
     setIsPlaying(false);
@@ -133,51 +128,78 @@ export default function HifdhRevision() {
   useEffect(() => { fetchPage(currentPage); }, [currentPage, fetchPage]);
 
   const playAyah = useCallback((num: number) => {
-    audioRef.current?.pause();
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
     const pd = pageDataRef.current;
     if (!pd || !pd.ayahs) return;
     const ayah = pd.ayahs.find((a: any) => a.numberInSurah === num);
-    if (!ayah) { stopAll(); return; }
+    if (!ayah) return;
 
     playingRef.current = num;
     setPlayingAyah(num);
     setIsPlaying(true);
-    resetControlTimer();
 
-    const audio = new Audio(audioUrl(ayah.surah.number, num, reciter));
-    audioRef.current = audio;    audio.play().catch(stopAll);
+    const audio = new Audio();
+    audio.src = audioUrl(ayah.surah.number, num, reciter);
+    audio.preload = "auto";
+    audioRef.current = audio;
+    // Proper promise handling for browser autoplay policies
+    audio.play()
+      .then(() => setIsPlaying(true))
+      .catch((err) => {
+        console.warn("Audio play failed:", err.name, err.message);
+        setIsPlaying(false);
+      });
+
     audio.onended = () => {
       const next = num + 1;
-      if (next <= pd.ayahs[pd.ayahs.length - 1].numberInSurah) playAyah(next);
-      else stopAll();
+      if (next <= pd.ayahs[pd.ayahs.length - 1].numberInSurah) {
+        playAyah(next);
+      } else {
+        setIsPlaying(false);
+      }
     };
-  }, [stopAll, reciter, resetControlTimer]);
 
-  // Fixed Toggle Play
+    audio.onerror = () => {
+      console.error("Audio failed to load. Check network or reciter availability.");
+      setIsPlaying(false);
+    };
+  }, [reciter]);
+
   const togglePlay = () => {
     if (isPlaying) {
       audioRef.current?.pause();
       setIsPlaying(false);
     } else {
-      const targetAyah = playingAyah > 0 ? playingAyah : 1;
-      playAyah(targetAyah);
+      const target = playingAyah > 0 ? playingAyah : 1;
+      playAyah(target);
     }
   };
 
-  const nextAyah = () => playingAyah < (pageData?.ayahs?.length || 0) && playAyah(playingAyah + 1);
-  const prevAyah = () => playingAyah > 1 && playAyah(playingAyah - 1);
+  const nextAyah = () => {
+    const pd = pageDataRef.current;
+    if (!pd || !pd.ayahs) return;
+    const next = playingAyah > 0 ? playingAyah + 1 : 1;
+    if (next <= pd.ayahs[pd.ayahs.length - 1].numberInSurah) playAyah(next);
+  };
 
-  // Swipe Handlers
+  const prevAyah = () => {
+    const prev = playingAyah > 1 ? playingAyah - 1 : 1;
+    playAyah(prev);
+  };
+
+  // Swipe handlers for ayah navigation
   const handleTouchStart = (e: React.TouchEvent) => {
     touchStartX.current = e.touches[0].clientX;
   };
-
   const handleTouchEnd = (e: React.TouchEvent) => {
     const touchEndX = e.changedTouches[0].clientX;
     const diff = touchStartX.current - touchEndX;
-    if (Math.abs(diff) > 50) { // Threshold
-      if (diff > 0) nextAyah(); // Swipe Left -> Next
-      else prevAyah(); // Swipe Right -> Prev
+    if (Math.abs(diff) > 50) {
+      if (diff > 0) nextAyah();
+      else prevAyah();
     }
   };
 
@@ -185,16 +207,17 @@ export default function HifdhRevision() {
   const pageAyahs = pageData?.ayahs || [];
 
   return (
-    <div className="relative h-[100dvh] bg-[#faf6ee] flex flex-col overflow-hidden" onClick={revealAll}>
+    <div className="relative h-[100dvh] bg-[#faf6ee] flex flex-col overflow-hidden" onClick={resetTabTimer}>
       <style>{`
         .quran-text { font-family: 'Amiri Quran', 'Scheherazade New', serif; line-height: 2.4; }
         .ayah-marker { font-family: 'Amiri', serif; color: ${GOLD}; font-size: 0.85em; margin: 0 4px; }
         .verse-active { background: #fffbeb; border-radius: 8px; padding: 2px 4px; box-shadow: 0 0 0 2px ${GOLD}33; }
       `}</style>
 
-      {/* ── STICKY TAB BAR (Header Style) ───────────────────────────────── */}
+      {/* ── STICKY TAB BAR ──────────────────────────────────────────────── */}
       <nav className={cn(
-        "sticky top-0 z-50 w-full bg-white border-b border-gray-100 shadow-sm transition-all duration-300 ease-out",        tabsVisible ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-full pointer-events-none"
+        "sticky top-0 z-50 w-full bg-white border-b border-gray-100 shadow-sm transition-all duration-300 ease-out",
+        tabsVisible ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-full pointer-events-none"
       )}>
         <div className="flex items-stretch justify-between w-full px-0 py-2">
           {TABS.map((item) => {
@@ -217,22 +240,19 @@ export default function HifdhRevision() {
       {/* ── CONTENT AREA ────────────────────────────────────────────────── */}
       <div className="flex-1 overflow-hidden relative">
         
-        {/* Overview Tab */}
         {activeTab === "overview" && (
           <div className="h-full overflow-y-auto">
             <HifdhDashboard userId={userId} studentName={studentName} onNavigate={setActiveTab} activeTab={activeTab} />
-          </div>
-        )}
+          </div>        )}
 
-        {/* Recitation Tab */}
         {activeTab === "recitation" && (
           <div 
             className="h-full flex flex-col"
             onTouchStart={handleTouchStart}
             onTouchEnd={handleTouchEnd}
           >
-            {/* Quran Scroll Area (pb-24 prevents overlap with controls) */}
-            <div className="flex-1 overflow-y-auto px-4 py-6 pb-24 scroll-smooth">
+            {/* Quran Scroll Area (pb-28 prevents overlap with permanent footer) */}
+            <div className="flex-1 overflow-y-auto px-4 py-6 pb-28 scroll-smooth">
               {loading ? (
                 <div className="flex items-center justify-center h-full text-[#7a9e88]">Loading Page {currentPage}...</div>
               ) : (
@@ -243,19 +263,17 @@ export default function HifdhRevision() {
                         onClick={(e) => { e.stopPropagation(); playAyah(ayah.numberInSurah); }}
                         className={cn("cursor-pointer transition-all", playingAyah === ayah.numberInSurah && "verse-active")}>
                         {ayah.text} <span className="ayah-marker">۝{toAr(ayah.numberInSurah)}</span>{" "}
-                      </span>                    ))}
+                      </span>
+                    ))}
                   </div>
                 </div>
               )}
             </div>
 
-            {/* ── AUTO-HIDING PLAYBACK CONTROLS ─────────────────────────── */}
-            <div className={cn(
-              "absolute bottom-0 left-0 right-0 bg-white/95 backdrop-blur-sm border-t border-gray-100 p-3 transition-all duration-300 ease-out z-40",
-              controlsVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-full pointer-events-none"
-            )}>
+            {/* ── PERMANENT FOOTER CONTROLS ─────────────────────────────── */}
+            <div className="absolute bottom-0 left-0 right-0 bg-white/95 backdrop-blur-sm border-t border-gray-100 p-3 z-40">
               <div className="max-w-2xl mx-auto flex items-center justify-between gap-2">
-                <div className="text-xs font-semibold text-[#0f2d1f] min-w-[60px]">
+                <div className="text-xs font-semibold text-[#0f2d1f] min-w-[60px] truncate">
                   {surahInfo.nameAr || "القرآن"} <span className="text-gray-400">Pg {currentPage}</span>
                 </div>
 
@@ -273,15 +291,14 @@ export default function HifdhRevision() {
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <select value={reciter} onChange={(e) => { setReciter(e.target.value); resetControlTimer(); }}
-                    className="text-xs bg-gray-50 border border-gray-200 rounded-lg px-2 py-1.5 outline-none" onClick={(e) => e.stopPropagation()}>
-                    {RECITERS.map((r) => <option key={r.id} value={r.id}>{r.name.split(" ")[0]}</option>)}
+                  <select value={reciter} onChange={(e) => setReciter(e.target.value)}
+                    className="text-xs bg-gray-50 border border-gray-200 rounded-lg px-2 py-1.5 outline-none max-w-[100px] truncate" onClick={(e) => e.stopPropagation()}>                    {RECITERS.map((r) => <option key={r.id} value={r.id}>{r.name.split(" ")[0]}</option>)}
                   </select>
-                  <button onClick={(e) => { e.stopPropagation(); setFontSize((v) => Math.max(20, v - 2)); resetControlTimer(); }} className="p-1.5 rounded bg-gray-100 active:scale-95">
-                    <Type size={14} className="text-[#0f2d1f]" />−
+                  <button onClick={(e) => { e.stopPropagation(); setFontSize((v) => Math.max(20, v - 2)); }} className="p-1.5 rounded bg-gray-100 active:scale-95 flex items-center gap-1">
+                    <Minus size={12} className="text-[#0f2d1f]" />
                   </button>
-                  <button onClick={(e) => { e.stopPropagation(); setFontSize((v) => Math.min(40, v + 2)); resetControlTimer(); }} className="p-1.5 rounded bg-gray-100 active:scale-95">
-                    <Type size={14} className="text-[#0f2d1f]" />+
+                  <button onClick={(e) => { e.stopPropagation(); setFontSize((v) => Math.min(40, v + 2)); }} className="p-1.5 rounded bg-gray-100 active:scale-95 flex items-center gap-1">
+                    <Plus size={12} className="text-[#0f2d1f]" />
                   </button>
                 </div>
               </div>
@@ -289,10 +306,10 @@ export default function HifdhRevision() {
           </div>
         )}
 
-        {/* Other Tabs */}
         {activeTab === "memorization" && (
           <div className="h-full overflow-y-auto">
-            <HifdhMemorization />          </div>
+            <HifdhMemorization />
+          </div>
         )}
         {activeTab === "exercise" && (
           <div className="h-full overflow-y-auto">
