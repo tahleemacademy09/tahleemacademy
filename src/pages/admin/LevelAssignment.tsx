@@ -91,68 +91,99 @@ const LevelAssignment = () => {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      // Get all profiles with registration paid
+      // ── Step 1: Get all users in the pipeline (level_assignment OR completed)
+      // This is the authoritative source — NOT enrollment.registration_paid
+      const { data: tasjeelRows } = await supabase
+        .from("tasjeel_progress" as any)
+        .select("user_id,current_step,level_assigned,payment_status")
+        .in("current_step", ["level_assignment", "completed"]);
+
+      if (!tasjeelRows || tasjeelRows.length === 0) { setStudents([]); setLoading(false); return; }
+
+      const uids = (tasjeelRows as any[]).map((t: any) => t.user_id);
+      const tasjeelMap = Object.fromEntries((tasjeelRows as any[]).map((t: any) => [t.user_id, t]));
+
+      // ── Step 2: Fetch profiles for those users
       const { data: profs } = await supabase
         .from("profiles")
-        .select("user_id,full_name,full_name_ar,email,student_id,avatar_url,level")
+        .select("user_id,full_name,full_name_ar,email,student_id,avatar_url,level,course_level")
+        .in("user_id", uids)
         .order("created_at", { ascending: false });
 
       if (!profs) { setStudents([]); return; }
 
-      // Get enrollment data
-      const uids = profs.map((p: any) => p.user_id);
+      // ── Step 3: Enrollment data (optional — only for registration_paid flag)
       const { data: enrs } = await supabase
         .from("enrollments" as any)
-        .select("user_id,registration_paid,level")
+        .select("user_id,registration_paid")
         .in("user_id", uids);
 
-      // Get recitation test data
+      // ── Step 4: Recitation test data
       const { data: recs } = await supabase
         .from("recitation_tests" as any)
         .select("*")
         .in("user_id", uids);
 
-      // Get entrance exam scores (latest attempt per user)
-      const { data: exams } = await supabase
-        .from("exam_attempts" as any)
-        .select("user_id,score,completed_at")
-        .in("user_id", uids)
-        .eq("exam_type", "entrance")
-        .order("completed_at", { ascending: false });
+      // ── Step 5: Entrance exam scores — join with exams table via is_entrance flag
+      // exam_attempts has NO exam_type column; the entrance exam is identified via exams.is_entrance
+      const { data: entranceExamIds } = await supabase
+        .from("exams" as any)
+        .select("id")
+        .eq("is_entrance", true);
 
-      // Build map
-      const enrMap   = Object.fromEntries((enrs  || []).map((e: any) => [e.user_id, e]));
-      const recMap   = Object.fromEntries((recs   || []).map((r: any) => [r.user_id, r]));
+      const eids = (entranceExamIds || []).map((e: any) => e.id);
+
+      let exams: any[] = [];
+      if (eids.length > 0) {
+        // submitted_at is the correct column (not completed_at which doesn't exist)
+        const { data: examData } = await supabase
+          .from("exam_attempts" as any)
+          .select("user_id,score,percentage,submitted_at,status")
+          .in("user_id", uids)
+          .in("exam_id", eids)
+          .not("submitted_at", "is", null)
+          .order("submitted_at", { ascending: false });
+        exams = examData || [];
+      }
+
+      // Build maps
+      const enrMap  = Object.fromEntries((enrs || []).map((e: any) => [e.user_id, e]));
+      const recMap  = Object.fromEntries((recs || []).map((r: any) => [r.user_id, r]));
       const examMap: Record<string, any> = {};
-      (exams || []).forEach((e: any) => { if (!examMap[e.user_id]) examMap[e.user_id] = e; });
+      exams.forEach((e: any) => { if (!examMap[e.user_id]) examMap[e.user_id] = e; });
 
       const built: StudentEval[] = profs.map((p: any) => {
-        const enr = enrMap[p.user_id] || {};
-        const rec = recMap[p.user_id] || {};
-        const ex  = examMap[p.user_id] || {};
+        const enr     = enrMap[p.user_id] || {};
+        const rec     = recMap[p.user_id] || {};
+        const ex      = examMap[p.user_id] || {};
+        const tasjeel = tasjeelMap[p.user_id] || {};
+        // registration_paid: true if enrollment says so OR if tasjeel payment_status = "paid"
+        const regPaid = !!enr.registration_paid || tasjeel.payment_status === "paid";
         return {
-          user_id:          p.user_id,
-          full_name:        p.full_name || "Unknown",
-          full_name_ar:     p.full_name_ar || "",
-          email:            p.email || "",
-          student_id:       p.student_id || "—",
-          avatar_url:       p.avatar_url || "",
-          exam_score:       ex.score ?? null,
-          exam_completed:   !!ex.completed_at,
-          rec_status:       rec.status || null,
-          rec_ai_score:     rec.ai_score ?? null,
-          rec_audio_path:   rec.audio_path || null,
+          user_id:           p.user_id,
+          full_name:         p.full_name || "Unknown",
+          full_name_ar:      p.full_name_ar || "",
+          email:             p.email || "",
+          student_id:        p.student_id || "—",
+          avatar_url:        p.avatar_url || "",
+          exam_score:        ex.score ?? (ex.percentage ?? null),
+          exam_completed:    !!ex.submitted_at,
+          rec_status:        rec.status || null,
+          rec_ai_score:      rec.ai_score ?? null,
+          rec_audio_path:    rec.audio_path || null,
           rec_teacher_score: rec.teacher_score ?? null,
           rec_teacher_notes: rec.teacher_notes || null,
-          rec_session_date: rec.stage3_session_date || null,
-          current_level:    p.level || enr.level || null,
-          admin_approved:   !!rec.admin_approved,
-          final_level:      rec.final_level || null,
-          registration_paid: !!enr.registration_paid,
+          rec_session_date:  rec.stage3_session_date || null,
+          current_level:     p.level || p.course_level || tasjeel.level_assigned || null,
+          admin_approved:    !!rec.admin_approved || tasjeel.current_step === "completed",
+          final_level:       rec.final_level || tasjeel.level_assigned || null,
+          registration_paid: regPaid,
         };
       });
 
-      setStudents(built.filter(s => s.registration_paid));
+      // Show ALL students in the pipeline — not just those with registration_paid
+      // (tasjeel_progress is the gate; enrollment.registration_paid is unreliable)
+      setStudents(built);
 
       // Pre-fill teacher notes/scores
       const notes: Record<string, string> = {};
@@ -199,20 +230,21 @@ const LevelAssignment = () => {
     const lvl = selectedLevels[student.user_id] || suggestLevel(calcFinal(student.exam_score, student.rec_ai_score, student.rec_teacher_score));
     setAssigning(student.user_id);
     try {
-      // Update profile level
-      await supabase.from("profiles").update({ level: lvl } as any).eq("user_id", student.user_id);
-      // Update recitation test
-      await supabase.from("recitation_tests" as any).update({
-        final_level: lvl,
-        admin_approved: true,
-        admin_approved_at: new Date().toISOString(),
-        status: "approved",
-      }).eq("user_id", student.user_id);
-      // Update enrollment
-      await supabase.from("enrollments" as any).update({
-        level: lvl, status: "grace",
-        grace_end_date: new Date(Date.now() + 7 * 86400000).toISOString(),
-      }).eq("user_id", student.user_id);
+      // Update profile level (both level AND course_level — used by banner checks)
+      await supabase.from("profiles").update({ level: lvl, course_level: lvl } as any).eq("user_id", student.user_id);
+      // Update recitation test (only if a recitation_test row exists for this user)
+      const { data: recRow } = await supabase
+        .from("recitation_tests" as any).select("id").eq("user_id", student.user_id).maybeSingle();
+      if (recRow) {
+        await supabase.from("recitation_tests" as any).update({
+          final_level: lvl,
+          admin_approved: true,
+          admin_approved_at: new Date().toISOString(),
+          status: "approved",
+        }).eq("user_id", student.user_id);
+      }
+      // NOTE: enrollments table does NOT have level/status/grace_end_date columns.
+      // Registration state is tracked via tasjeel_progress only.
       // ── Mark Tasjeel as completed ──────────────────────────────────────────
       await supabase.from("tasjeel_progress" as any).update({
         current_step:      "completed",
