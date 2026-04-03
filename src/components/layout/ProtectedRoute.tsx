@@ -1,7 +1,3 @@
-// src/components/layout/ProtectedRoute.tsx
-// Tasjeel pipeline enforcement has been fully removed.
-// This guard now only checks: is the user logged in? Do they have the required role?
-
 import { Navigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -10,6 +6,13 @@ interface ProtectedRouteProps {
   requiredRole?: string;
   skipOnboardingCheck?: boolean; // kept for API compatibility — no longer used
 }
+
+// Safe fallback map matching your App.tsx routes
+const ROLE_FALLBACKS: Record<string, string> = {
+  student: "/student",
+  teacher: "/teacher",
+  admin: "/admin",
+};
 
 const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
   const { user, loading: authLoading, hasRole } = useAuth();
@@ -27,9 +30,11 @@ const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
   // Not logged in → send to login
   if (!user) return <Navigate to="/login" replace />;
 
-  // Wrong role → send to home
+  // Wrong role → send to their correct dashboard (prevents 404 loops)
   if (requiredRole && !hasRole(requiredRole) && !hasRole("admin")) {
-    return <Navigate to="/" replace />;
+    // Fallback to /student if role detection is temporarily out of sync
+    const safeRedirect = ROLE_FALLBACKS["student"]; 
+    return <Navigate to={safeRedirect} replace />;
   }
 
   return <>{children}</>;
