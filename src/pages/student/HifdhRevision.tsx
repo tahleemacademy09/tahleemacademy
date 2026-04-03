@@ -96,7 +96,8 @@ export default function HifdhRevision() {
   var touchStartX = useRef(0);
   var touchStartY = useRef(0);
 
-  // Persistence  useEffect(function() {
+  // Persistence
+  useEffect(function() {
     var tab = localStorage.getItem("hifdh_tab");
     if (tab) setActiveTab(tab);
     var page = localStorage.getItem("hifdh_page");
@@ -128,7 +129,7 @@ export default function HifdhRevision() {
     });
   }, []);
 
-  // Fetch Page - Simplest possible syntax
+  // Fetch Page
   var fetchPage = useCallback(function(page) {
     setLoading(true);
     setPageData(null);
@@ -145,7 +146,8 @@ export default function HifdhRevision() {
         setLoading(false);
       })
       .catch(function(error) {
-        console.error("Fetch error:", error);        setLoading(false);
+        console.error("Fetch error:", error);
+        setLoading(false);
       });
   }, []);
 
@@ -194,7 +196,8 @@ export default function HifdhRevision() {
     if (!audioRef.current) return;
     if (isPlaying) {
       audioRef.current.pause();
-      setIsPlaying(false);    } else {
+      setIsPlaying(false);
+    } else {
       var target = playingAyah > 0 ? playingAyah : 1;
       playAyah(target);
     }
@@ -243,7 +246,8 @@ export default function HifdhRevision() {
         setCurrentPage(function(p) { return Math.min(604, p + 1); });
       } else {
         setCurrentPage(function(p) { return Math.max(1, p - 1); });
-      }    }
+      }
+    }
   };
 
   var surahInfo = pageData && pageData.ayahs && pageData.ayahs[0] ? pageData.ayahs[0].surah : {};
@@ -292,7 +296,8 @@ export default function HifdhRevision() {
       <div className="flex-1 overflow-hidden relative">
         
         {activeTab === "overview" && (
-          <div className="h-full overflow-y-auto">            <HifdhDashboard userId={userId} studentName={studentName} onNavigate={setActiveTab} activeTab={activeTab} />
+          <div className="h-full overflow-y-auto">
+            <HifdhDashboard userId={userId} studentName={studentName} onNavigate={setActiveTab} activeTab={activeTab} />
           </div>
         )}
 
@@ -341,7 +346,8 @@ export default function HifdhRevision() {
                   <button onClick={function(e) { e.stopPropagation(); setCurrentPage(function(p) { return Math.min(604, p + 1); }); }} 
                     className="p-1.5 rounded-full bg-gray-100 active:scale-95 transition">
                     <SkipForward size={16} className="text-[#0f2d1f]" />
-                  </button>                </div>
+                  </button>
+                </div>
 
                 <div className="flex items-center gap-1.5">
                   <select value={reciter} onChange={function(e) { setReciter(e.target.value); }}
