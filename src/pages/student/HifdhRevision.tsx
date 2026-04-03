@@ -12,14 +12,13 @@ import HifdhTest from "@/components/hifdh/HifdhTest";
 type Tab = "overview" | "recitation" | "memorization" | "exercise" | "test";
 
 const TABS = [
-  { id: "overview" as Tab, en: "Overview", ar: "لوحة", icon: BarChart3 },
-  { id: "recitation" as Tab, en: "Recitation", ar: "تلاوة", icon: Mic },
-  { id: "memorization" as Tab, en: "Memorization", ar: "حفظ", icon: Brain },
-  { id: "exercise" as Tab, en: "Exercise", ar: "تمرين", icon: Target },
-  { id: "test" as Tab, en: "Test", ar: "اختبار", icon: FileCheck },
+  { id: "overview" as Tab, ar: "لوحة", icon: BarChart3 },
+  { id: "recitation" as Tab, ar: "تلاوة", icon: Mic },
+  { id: "memorization" as Tab, ar: "حفظ", icon: Brain },
+  { id: "exercise" as Tab, ar: "تمرين", icon: Target },
+  { id: "test" as Tab, ar: "اختبار", icon: FileCheck },
 ];
 
-// Verified CDN-compatible reciter IDs
 const RECITERS = [
   { id: "ar.alafasy", name: "Mishary Rashid Alafasy" },
   { id: "ar.abdurrahmaansudais", name: "Abdurrahman As-Sudais" },
@@ -47,34 +46,44 @@ const audioUrl = (surah: number, ayah: number, reciter: string) => {
   return `https://cdn.islamic.network/quran/audio/128/${reciter}/${s}${a}.mp3`;
 };
 
-export default function HifdhRevision() {  const [activeTab, setActiveTab] = useState<Tab>("overview");
+export default function HifdhRevision() {
+  // ── Persistent State (localStorage) ─────────────────────────────────────  const [activeTab, setActiveTab] = useState<Tab>(() => {
+    const saved = localStorage.getItem('hifdh_tab');
+    return (saved as Tab) || "overview";
+  });
   const [userId, setUserId] = useState<string | null>(null);
   const [studentName, setStudentName] = useState("Student");
   
-  const [tabsVisible, setTabsVisible] = useState(true);
-  const tabTimerRef = useRef<ReturnType<typeof setTimeout>>();
-
-  const [currentPage, setCurrentPage] = useState(1);
+  const [currentPage, setCurrentPage] = useState(() => {
+    const saved = localStorage.getItem('hifdh_page');
+    return saved ? parseInt(saved, 10) : 1;
+  });
   const [pageData, setPageData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [playingAyah, setPlayingAyah] = useState(0);
-  const [reciter, setReciter] = useState("ar.alafasy");
+  const [reciter, setReciter] = useState(() => localStorage.getItem('hifdh_reciter') || "ar.alafasy");
   const [isPlaying, setIsPlaying] = useState(false);
-  const [fontSize, setFontSize] = useState(28);
+  const [fontSize, setFontSize] = useState(() => {
+    const saved = localStorage.getItem('hifdh_font');
+    return saved ? parseInt(saved, 10) : 28;
+  });
   const [isTransitioning, setIsTransitioning] = useState(false);
 
-  // Audio & Page Refs
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  // ── Refs ────────────────────────────────────────────────────────────────
+  const audioRef = useRef<HTMLAudioElement>(null);
   const playingRef = useRef(0);
   const pageDataRef = useRef<any>(null);
   const verseRefs = useRef<Record<number, HTMLSpanElement | null>>({});
-  
-  // Swipe Refs
   const touchStartX = useRef(0);
   const touchStartY = useRef(0);
 
+  // ── Persistence Effects ─────────────────────────────────────────────────
+  useEffect(() => { localStorage.setItem('hifdh_tab', activeTab); }, [activeTab]);
+  useEffect(() => { localStorage.setItem('hifdh_page', String(currentPage)); }, [currentPage]);
+  useEffect(() => { localStorage.setItem('hifdh_reciter', reciter); }, [reciter]);
+  useEffect(() => { localStorage.setItem('hifdh_font', String(fontSize)); }, [fontSize]);
+
   useEffect(() => { pageDataRef.current = pageData; }, [pageData]);
-  useEffect(() => () => { audioRef.current?.pause(); }, []);
 
   // Load user
   useEffect(() => {
@@ -82,42 +91,13 @@ export default function HifdhRevision() {  const [activeTab, setActiveTab] = use
       if (!data?.user) return;
       setUserId(data.user.id);
       supabase.from("profiles").select("full_name").eq("id", data.user.id).single()
-        .then(({ data: p }) => { if (p?.full_name) setStudentName(p.full_name); });
+        .then(({  p }) => { if (p?.full_name) setStudentName(p.full_name); });
     });
   }, []);
 
-  // Header auto-hide (optional)
-  const resetTabTimer = useCallback(() => {
-    setTabsVisible(true);
-    clearTimeout(tabTimerRef.current);
-    tabTimerRef.current = setTimeout(() => setTabsVisible(false), 3000);
-  }, []);
-
-  useEffect(() => {
-    resetTabTimer();
-    const events = ["touchstart", "scroll", "mousemove", "keydown", "click"];
-    const handler = () => resetTabTimer();    events.forEach((e) => window.addEventListener(e, handler, { passive: true }));
-    return () => {
-      events.forEach((e) => window.removeEventListener(e, handler));
-      clearTimeout(tabTimerRef.current);
-    };
-  }, [resetTabTimer]);
-
-  // ── FIXED AUDIO PLAYBACK (Mobile & CDN Compatible) ──────────────────────
-  const stopAll = useCallback(() => {
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current = null;
-    }
-    playingRef.current = 0;
-    setPlayingAyah(0);
-    setIsPlaying(false);
-  }, []);
-
-  const fetchPage = useCallback(async (page: number) => {
-    setLoading(true);
+  // ── Fetch Page ──────────────────────────────────────────────────────────
+  const fetchPage = useCallback(async (page: number) => {    setLoading(true);
     setPageData(null);
-    stopAll();
     setIsTransitioning(true);
     try {
       const res = await fetch(`https://api.alquran.cloud/v1/page/${page}/ar.uthmani`);
@@ -125,46 +105,62 @@ export default function HifdhRevision() {  const [activeTab, setActiveTab] = use
       if (json.code === 200) setPageData(json.data);
     } catch { /* silent */ }
     setLoading(false);
-  }, [stopAll]);
+  }, []);
 
   useEffect(() => { fetchPage(currentPage); }, [currentPage, fetchPage]);
 
   useEffect(() => {
     if (isTransitioning) {
-      const t = setTimeout(() => setIsTransitioning(false), 350);
+      const t = setTimeout(() => setIsTransitioning(false), 300);
       return () => clearTimeout(t);
     }
   }, [isTransitioning, currentPage]);
 
+  // ── FIXED AUDIO PLAYBACK (Mobile-Optimized) ─────────────────────────────
   const playAyah = useCallback((num: number) => {
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current = null;
-    }
     const pd = pageDataRef.current;
     if (!pd || !pd.ayahs) return;
     const ayah = pd.ayahs.find((a: any) => a.numberInSurah === num);
     if (!ayah) return;
+
     playingRef.current = num;
     setPlayingAyah(num);
-    setIsPlaying(true);
-
+    
     const url = audioUrl(ayah.surah.number, num, reciter);
-    console.log("🎵 Playing:", url); // Debug: check console to verify URL
+    console.log("🎵 Audio URL:", url); // Debug: verify in console
 
-    const audio = new Audio(url);
-    audio.crossOrigin = "anonymous"; // Fix CORS/CDN blocks
-    audio.volume = 1.0;
-    audioRef.current = audio;
+    if (audioRef.current) {
+      audioRef.current.src = url;
+      audioRef.current.load();
+      // Play synchronously within user gesture chain
+      audioRef.current.play()
+        .then(() => setIsPlaying(true))
+        .catch(err => {
+          console.warn("⚠️ Play blocked:", err.name);
+          setIsPlaying(false);
+        });
+    }
+  }, [reciter]);
 
-    // Mobile browsers require play() to be called synchronously in user gesture
-    audio.play().catch(err => {
-      console.error("❌ Audio failed:", err.name, err.message);
-      setIsPlaying(false);
-    });
+  const togglePlay = () => {
+    if (!audioRef.current) return;
+    if (isPlaying) {
+      audioRef.current.pause();      setIsPlaying(false);
+    } else {
+      const target = playingAyah > 0 ? playingAyah : 1;
+      playAyah(target);
+    }
+  };
 
-    audio.onended = () => {
-      const next = num + 1;
+  // Audio event listeners
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    
+    const onEnded = () => {
+      const pd = pageDataRef.current;
+      if (!pd || !pd.ayahs) return;
+      const next = playingRef.current + 1;
       if (next <= pd.ayahs[pd.ayahs.length - 1].numberInSurah) {
         playAyah(next);
       } else {
@@ -172,38 +168,35 @@ export default function HifdhRevision() {  const [activeTab, setActiveTab] = use
       }
     };
 
-    audio.onerror = () => {
-      console.error("🔇 Audio load failed. Check network or reciter availability.");
-      setIsPlaying(false);
+    const onPause = () => setIsPlaying(false);
+    const onPlay = () => setIsPlaying(true);
+
+    audio.addEventListener('ended', onEnded);
+    audio.addEventListener('pause', onPause);
+    audio.addEventListener('play', onPlay);
+    return () => {
+      audio.removeEventListener('ended', onEnded);
+      audio.removeEventListener('pause', onPause);
+      audio.removeEventListener('play', onPlay);
     };
-  }, [reciter]);
+  }, [playAyah]);
 
-  const togglePlay = () => {
-    if (isPlaying) {
-      audioRef.current?.pause();
-      setIsPlaying(false);
-    } else {
-      const target = playingAyah > 0 ? playingAyah : 1;
-      playAyah(target);
-    }
-  };
-
-  // ── FIXED SWIPE LOGIC (RTL Arabic Direction) ────────────────────────────
+  // ── RTL SWIPE LOGIC (Matches Physical Quran) ────────────────────────────
   const handleTouchStart = (e: React.TouchEvent) => {
     touchStartX.current = e.touches[0].clientX;
     touchStartY.current = e.touches[0].clientY;
   };
 
-  const handleTouchEnd = (e: React.TouchEvent) => {    const diffX = touchStartX.current - e.changedTouches[0].clientX;
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    const diffX = touchStartX.current - e.changedTouches[0].clientX;
     const diffY = touchStartY.current - e.changedTouches[0].clientY;
     
-    // Only trigger if horizontal movement is dominant & exceeds threshold
-    if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 60) {
+    // Horizontal swipe dominant & exceeds threshold
+    if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 50) {
       if (diffX > 0) {
-        // Swipe LEFT (finger moves left) → NEXT PAGE (matches Arabic book turning)
-        setCurrentPage(p => Math.min(604, p + 1));
+        // Swipe LEFT → NEXT PAGE (turn page forward in RTL)        setCurrentPage(p => Math.min(604, p + 1));
       } else {
-        // Swipe RIGHT (finger moves right) → PREVIOUS PAGE
+        // Swipe RIGHT → PREVIOUS PAGE
         setCurrentPage(p => Math.max(1, p - 1));
       }
     }
@@ -213,41 +206,49 @@ export default function HifdhRevision() {  const [activeTab, setActiveTab] = use
   const pageAyahs = pageData?.ayahs || [];
 
   return (
-    <div className="relative h-[100dvh] bg-[#faf6ee] flex flex-col overflow-hidden" onClick={resetTabTimer}>
+    <div className="relative h-[100dvh] bg-[#faf6ee] flex flex-col overflow-hidden">
+      {/* Hidden persistent audio element */}
+      <audio 
+        ref={audioRef} 
+        playsInline 
+        preload="metadata" 
+        crossOrigin="anonymous"
+        style={{ display: 'none' }}
+      />
+
       <style>{`
         .quran-text { 
           font-family: 'Amiri Quran', 'Scheherazade New', serif; 
-          line-height: 2.4; 
-          text-align: justify; /* Fully justified */
-          text-indent: 0;      /* Remove middle indent */
+          line-height: 2.2; 
+          text-align: justify; 
+          text-indent: 0;
+          direction: rtl;
         }
         .ayah-marker { font-family: 'Amiri', serif; color: ${GOLD}; font-size: 0.85em; margin: 0 4px; }
         .verse-active { background: #fffbeb; border-radius: 8px; padding: 2px 4px; box-shadow: 0 0 0 2px ${GOLD}33; }
-        @keyframes pageFade { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
-        .page-enter { animation: pageFade 0.35s ease-out forwards; }
+        @keyframes pageFade { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+        .page-enter { animation: pageFade 0.3s ease-out forwards; }
       `}</style>
 
-      {/* ── STICKY TAB BAR ──────────────────────────────────────────────── */}
-      <nav className={cn(
-        "sticky top-0 z-50 w-full bg-white border-b border-gray-100 shadow-sm transition-all duration-300 ease-out",
-        tabsVisible ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-full pointer-events-none"
-      )}>
-        <div className="flex items-stretch justify-between w-full px-0 py-2">
-          {TABS.map((item) => {
-            const isActive = activeTab === item.id;
-            return (
-              <button key={item.id} onClick={() => { setActiveTab(item.id); resetTabTimer(); }}
-                className={cn(
-                  "flex flex-col items-center justify-center flex-1 py-2.5 gap-0.5 transition-all",
-                  isActive ? "text-[#0f2d1f]" : "text-gray-400 hover:text-gray-600"
-                )}>
-                <item.icon size={20} strokeWidth={isActive ? 2.5 : 2} />
-                <span className="text-[11px] font-semibold leading-tight">{item.en}</span>
-                <span className="text-[9px] text-gray-400 leading-tight">{item.ar}</span>              </button>
-            );
-          })}
-        </div>
-      </nav>
+      {/* ── COMPACT HEADER (Hidden in Recitation Mode) ──────────────────── */}
+      {activeTab !== "recitation" && (
+        <nav className="sticky top-0 z-50 w-full bg-white border-b border-gray-100 py-1.5">
+          <div className="flex items-center justify-around px-2">
+            {TABS.map((item) => {
+              const isActive = activeTab === item.id;
+              return (
+                <button key={item.id} onClick={() => setActiveTab(item.id)}
+                  className={cn(
+                    "flex flex-col items-center gap-0.5 px-3 py-1 rounded-lg transition-all",
+                    isActive ? "text-[#0f2d1f] bg-gray-50" : "text-gray-400"
+                  )}>
+                  <item.icon size={16} strokeWidth={isActive ? 2.5 : 2} />
+                  <span className="text-[10px] font-semibold leading-none">{item.ar}</span>                </button>
+              );
+            })}
+          </div>
+        </nav>
+      )}
 
       {/* ── CONTENT AREA ────────────────────────────────────────────────── */}
       <div className="flex-1 overflow-hidden relative">
@@ -260,17 +261,17 @@ export default function HifdhRevision() {  const [activeTab, setActiveTab] = use
 
         {activeTab === "recitation" && (
           <div 
-            className="h-full flex flex-col"
+            className="h-full flex flex-col bg-[#faf6ee]"
             onTouchStart={handleTouchStart}
             onTouchEnd={handleTouchEnd}
           >
             {/* Quran Scroll Area */}
-            <div className="flex-1 overflow-y-auto px-4 py-6 pb-28 scroll-smooth">
+            <div className="flex-1 overflow-y-auto px-4 py-6 pb-24 scroll-smooth">
               {loading ? (
                 <div className="flex items-center justify-center h-full text-[#7a9e88]">Loading Page {currentPage}...</div>
               ) : (
                 <div className={cn("max-w-2xl mx-auto bg-white rounded-2xl p-6 shadow-sm min-h-full", isTransitioning && "page-enter")}>
-                  <div className="quran-text text-[#2d4a35]" style={{ fontSize, direction: "rtl" }}>
+                  <div className="quran-text text-[#2d4a35]" style={{ fontSize }}>
                     {pageAyahs.map((ayah: any) => (
                       <span key={ayah.numberInSurah} ref={(el) => { verseRefs.current[ayah.numberInSurah] = el; }}
                         onClick={(e) => { e.stopPropagation(); playAyah(ayah.numberInSurah); }}
@@ -284,38 +285,38 @@ export default function HifdhRevision() {  const [activeTab, setActiveTab] = use
             </div>
 
             {/* ── PERMANENT FOOTER CONTROLS ─────────────────────────────── */}
-            <div className="absolute bottom-0 left-0 right-0 bg-white/95 backdrop-blur-sm border-t border-gray-100 p-3 z-40">
+            <div className="absolute bottom-0 left-0 right-0 bg-white/95 backdrop-blur-sm border-t border-gray-100 p-2.5 z-40">
               <div className="max-w-2xl mx-auto flex items-center justify-between gap-2">
-                <div className="text-xs font-semibold text-[#0f2d1f] min-w-[60px] truncate">
-                  {surahInfo.nameAr || "القرآن"} <span className="text-gray-400">Pg {currentPage}</span>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  <button onClick={(e) => { e.stopPropagation(); setCurrentPage(p => Math.max(1, p - 1)); }} 
-                    className="p-2 rounded-full bg-gray-100 active:scale-95 transition">                    <SkipBack size={18} className="text-[#0f2d1f]" />
-                  </button>
-                  <button onClick={(e) => { e.stopPropagation(); togglePlay(); }} 
-                    className="w-10 h-10 rounded-full bg-[#0f2d1f] flex items-center justify-center active:scale-95 transition shadow-md">
-                    {isPlaying ? <Pause size={18} fill="#fff" /> : <Play size={18} fill="#fff" className="ml-0.5" />}
-                  </button>
-                  <button onClick={(e) => { e.stopPropagation(); setCurrentPage(p => Math.min(604, p + 1)); }} 
-                    className="p-2 rounded-full bg-gray-100 active:scale-95 transition">
-                    <SkipForward size={18} className="text-[#0f2d1f]" />
-                  </button>
+                <div className="text-xs font-semibold text-[#0f2d1f] min-w-[50px] truncate">
+                  {surahInfo.nameAr || "القرآن"} <span className="text-gray-400">{currentPage}</span>
                 </div>
 
                 <div className="flex items-center gap-2">
+                  <button onClick={(e) => { e.stopPropagation(); setCurrentPage(p => Math.max(1, p - 1)); }}                     className="p-1.5 rounded-full bg-gray-100 active:scale-95 transition">
+                    <SkipBack size={16} className="text-[#0f2d1f]" />
+                  </button>
+                  <button onClick={(e) => { e.stopPropagation(); togglePlay(); }} 
+                    className="w-9 h-9 rounded-full bg-[#0f2d1f] flex items-center justify-center active:scale-95 transition shadow-md">
+                    {isPlaying ? <Pause size={16} fill="#fff" /> : <Play size={16} fill="#fff" className="ml-0.5" />}
+                  </button>
+                  <button onClick={(e) => { e.stopPropagation(); setCurrentPage(p => Math.min(604, p + 1)); }} 
+                    className="p-1.5 rounded-full bg-gray-100 active:scale-95 transition">
+                    <SkipForward size={16} className="text-[#0f2d1f]" />
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-1.5">
                   <select value={reciter} onChange={(e) => setReciter(e.target.value)}
-                    className="text-xs bg-gray-50 border border-gray-200 rounded-lg px-2 py-1.5 outline-none max-w-[100px] truncate" 
+                    className="text-[10px] bg-gray-50 border border-gray-200 rounded px-1.5 py-1 outline-none max-w-[80px] truncate" 
                     onClick={(e) => e.stopPropagation()}>
                     {RECITERS.map((r) => <option key={r.id} value={r.id}>{r.name.split(" ")[0]}</option>)}
                   </select>
                   <button onClick={(e) => { e.stopPropagation(); setFontSize((v) => Math.max(20, v - 2)); }} 
-                    className="p-1.5 rounded bg-gray-100 active:scale-95 flex items-center gap-1">
+                    className="p-1 rounded bg-gray-100 active:scale-95">
                     <Minus size={12} className="text-[#0f2d1f]" />
                   </button>
                   <button onClick={(e) => { e.stopPropagation(); setFontSize((v) => Math.min(40, v + 2)); }} 
-                    className="p-1.5 rounded bg-gray-100 active:scale-95 flex items-center gap-1">
+                    className="p-1 rounded bg-gray-100 active:scale-95">
                     <Plus size={12} className="text-[#0f2d1f]" />
                   </button>
                 </div>
@@ -340,5 +341,5 @@ export default function HifdhRevision() {  const [activeTab, setActiveTab] = use
           </div>
         )}
       </div>
-    </div>
-  );}
+    </div>  );
+}
