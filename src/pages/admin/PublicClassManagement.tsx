@@ -91,8 +91,8 @@ const PublicClassManagement = () => {
     try {
       const session = await supabase.auth.getSession();
       const accessToken = session.data.session?.access_token;
-      const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
-      const res = await fetch(`https://${projectId}.supabase.co/functions/v1/public-class-token`, {
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || "https://wvqeubhupkddtkcdwqcm.supabase.co";
+      const res = await fetch(`${supabaseUrl}/functions/v1/public-class-token`, {
         method:"POST",
         headers:{ "Content-Type":"application/json", "apikey":import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY, "Authorization":`Bearer ${accessToken}` },
         body:JSON.stringify({ room_code:cls.room_code, guest_name:user?.user_metadata?.full_name||"Teacher" }),
