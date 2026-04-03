@@ -86,10 +86,11 @@ const JoinClass = () => {
     setError("");
 
     try {
-      const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
-      const res = await fetch(`https://${projectId}.supabase.co/functions/v1/public-class-token`, {
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || "https://wvqeubhupkddtkcdwqcm.supabase.co";
+      const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY || "";
+      const res = await fetch(`${supabaseUrl}/functions/v1/public-class-token`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "apikey": import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY },
+        headers: { "Content-Type": "application/json", "apikey": supabaseKey },
         body: JSON.stringify({
           room_code: roomCode,
           guest_name: guestName.trim(),
