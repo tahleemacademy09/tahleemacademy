@@ -10,7 +10,10 @@
    - Replace your src/App.tsx with this file
    - Keep all other code exactly the same — only the marked NEW lines are added
 ═══════════════════════════════════════════════════════════════════════════════*/
+import LevelSubjectMapping from "./pages/admin/LevelSubjectMapping";
 
+// ... inside <Route path="/admin" element={...}>
+<Route path="level-subject-mapping" element={<LevelSubjectMapping />} />
 import { lazy, Suspense } from "react";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
