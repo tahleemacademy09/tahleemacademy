@@ -101,7 +101,7 @@ const TeacherLayout = () => {
         {profile?.full_name && (
           <div className="px-3 py-2 mb-1">
             <p className="text-xs text-sidebar-foreground/50 truncate">{profile.full_name}</p>
-            <p className="text-xs text-sidebar-foreground/40 truncate">{profile.email}</p>
+            <p className="text-xs text-sidebar-foreground/40 truncate">{(profile as any).email}</p>
           </div>
         )}
         <Button variant="ghost" size="sm"

@@ -627,7 +627,7 @@ export default function HifdhDashboard({ userId, studentName, onNavigate }: Prop
                 ].map(([key, en, ar]) => (
                   <button
                     key={key}
-                    onClick={() => setTaskPlan(key)}
+                    onClick={() => setTaskPlan(key as "daily" | "weekly" | "biweekly" | "monthly")}
                     className={cn(
                       "py-2.5 px-2 rounded-xl text-center transition-all text-xs font-bold",
                       taskPlan === key

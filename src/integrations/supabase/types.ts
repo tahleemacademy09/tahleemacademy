@@ -971,6 +971,8 @@ export type Database = {
           integrity_score: number | null
           passed: boolean | null
           percentage: number | null
+          reviewed_at: string | null
+          reviewed_by: string | null
           score: number | null
           started_at: string
           status: string | null
@@ -988,6 +990,8 @@ export type Database = {
           integrity_score?: number | null
           passed?: boolean | null
           percentage?: number | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
           score?: number | null
           started_at?: string
           status?: string | null
@@ -1005,6 +1009,8 @@ export type Database = {
           integrity_score?: number | null
           passed?: boolean | null
           percentage?: number | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
           score?: number | null
           started_at?: string
           status?: string | null
