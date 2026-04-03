@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useParams, useSearchParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -14,7 +14,7 @@ import {
   ArrowLeft, Layers, FileText, StickyNote, BarChart3,
   Plus, CheckCircle, XCircle, RotateCcw, Loader2, Sparkles,
   BookOpen, Brain, Zap, ChevronRight, Clock, Trophy,
-  Star, Eye, EyeOff, Trash2, Edit, X, Check, AlertCircle
+  Star, Eye, EyeOff, Trash2, Edit, X, Check, AlertCircle, ChevronDown
 } from "lucide-react";
 import { format } from "date-fns";
 
@@ -75,14 +75,35 @@ const RevisionRoom = () => {
   const [showNewNote, setShowNewNote] = useState(false);
   const [noteForm, setNoteForm] = useState({ title:"", content:"" });
 
+  // ── Level-based subject navigator state ──
+  const [expandedLevels, setExpandedLevels] = useState<Record<string, boolean>>({});
+
   // Queries
-  const {  subject } = useQuery({
+  const { data: subject } = useQuery({
     queryKey: ["revision-subject", subjectId],
     queryFn: async () => {
       const { data } = await supabase.from("subjects").select("*").eq("id", subjectId!).single();
       return data;
     },
   });
+
+  // ✅ NEW: Fetch all active subjects for level grouping
+  const { data: allSubjects = [] } = useQuery({
+    queryKey: ["all-revision-subjects"],
+    queryFn: async () => {
+      const { data } = await supabase.from("subjects").select("*").eq("is_active", true).order("title");
+      return (data || []) as any[];
+    },
+  });
+
+  // ✅ NEW: Group subjects by level  const subjectsByLevel = useMemo(() => {
+    const grouped: Record<string, any[]> = { beginner: [], intermediate: [], advanced: [] };
+    allSubjects.forEach(s => {
+      const lvl = (s.level || "beginner").toLowerCase();
+      if (grouped[lvl]) grouped[lvl].push(s);
+    });
+    return grouped;
+  }, [allSubjects]);
 
   const { data: flashcards = [] } = useQuery({
     queryKey: ["revision-flashcards", subjectId],
@@ -96,7 +117,8 @@ const RevisionRoom = () => {
     queryKey: ["revision-fc-progress", subjectId, user?.id],
     enabled: !!user && flashcards.length > 0,
     queryFn: async () => {
-      const ids = flashcards.map(f=>f.id);      if (!ids.length) return [];
+      const ids = flashcards.map(f=>f.id);
+      if (!ids.length) return [];
       const { data } = await supabase.from("revision_flashcard_progress" as any).select("*").eq("student_id", user!.id).in("flashcard_id", ids);
       return (data||[]) as any[];
     },
@@ -110,7 +132,7 @@ const RevisionRoom = () => {
     },
   });
 
-  const {  notes = [] } = useQuery({
+  const { data: notes = [] } = useQuery({
     queryKey: ["revision-notes", subjectId, user?.id],
     enabled: !!user,
     queryFn: async () => {
@@ -123,12 +145,11 @@ const RevisionRoom = () => {
     queryKey: ["subject-materials-rev", subjectId],
     enabled: !!subjectId,
     queryFn: async () => {
-      const { data } = await supabase.from("subject_materials").select("*").eq("subject_id", subjectId!).order("created_at", { ascending: false });
-      return (data||[]) as any[];
+      const { data } = await supabase.from("subject_materials").select("*").eq("subject_id", subjectId!).order("created_at", { ascending: false });      return (data||[]) as any[];
     },
   });
 
-  const {  quizHistory = [] } = useQuery({
+  const { data: quizHistory = [] } = useQuery({
     queryKey: ["revision-quiz-history", subjectId, user?.id],
     enabled: !!user,
     queryFn: async () => {
@@ -141,11 +162,12 @@ const RevisionRoom = () => {
     queryKey: ["subject-exams-for-quiz", subjectId],
     enabled: !!subjectId,
     queryFn: async () => {
-      const {  courses } = await supabase.from("courses").select("id").eq("subject_id", subjectId!);
+      const { data: courses } = await supabase.from("courses").select("id").eq("subject_id", subjectId!);
       if (!courses?.length) return [];
       const { data } = await supabase.from("exams").select("id,title,title_ar").in("course_id", courses.map(c=>c.id)).eq("is_published", true);
       return (data||[]) as any[];
-    },  });
+    },
+  });
 
   const knownCount = fcProgress.filter((p:any)=>p.status==="known").length;
   const learningCount = fcProgress.filter((p:any)=>p.status==="learning").length;
@@ -156,7 +178,7 @@ const RevisionRoom = () => {
   const callClaude = async (prompt: string): Promise<string> => {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 20000); // 20s timeout
+      const timeoutId = setTimeout(() => controller.abort(), 20000);
       const { data, error } = await supabase.functions.invoke("ai-generate", {
         body: { prompt },
         signal: controller.signal,
@@ -172,7 +194,6 @@ const RevisionRoom = () => {
       throw err;
     }
   };
-
   const loadPdfJs = (): Promise<any> => new Promise((resolve, reject) => {
     const CDNBASE = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174";
     if ((window as any).pdfjsLib) { resolve((window as any).pdfjsLib); return; }
@@ -194,7 +215,8 @@ const RevisionRoom = () => {
     const start = Math.max(1, fromPage);
     const end   = Math.min(toPage, totalPages);
     const texts: string[] = [];
-    for (let i = start; i <= end; i++) {      const page = await pdf.getPage(i);
+    for (let i = start; i <= end; i++) {
+      const page = await pdf.getPage(i);
       const content = await page.getTextContent();
       const text = content.items.map((item: any) => item.str).join(" ").replace(/\s+/g," ").trim();
       if (text) texts.push(`[Page ${i}] ${text}`);
@@ -221,8 +243,7 @@ const RevisionRoom = () => {
       const signedUrl = await resolveMatUrl(selMaterial);
       const subjectName = subject?.title || "the subject";
       let contextText = "";
-      const fileExt = (selMaterial.file_url||"").split(".").pop()?.toLowerCase();
-      const isPdf = selMaterial.material_type==="PDF" || selMaterial.file_type?.includes("pdf") || fileExt==="pdf";
+      const fileExt = (selMaterial.file_url||"").split(".").pop()?.toLowerCase();      const isPdf = selMaterial.material_type==="PDF" || selMaterial.file_type?.includes("pdf") || fileExt==="pdf";
 
       if (isPdf) {
         setMatGenStatus(`Reading pages ${pageFrom}–${pageTo}…`);
@@ -243,7 +264,8 @@ CONTENT:
 ${contextText.slice(0, 6000)}
 Rules:
 - Focus on key concepts, vocabulary, definitions, and facts from the text
-- Questions should test understanding, not just memorization- Include Arabic translations where relevant
+- Questions should test understanding, not just memorization
+- Include Arabic translations where relevant
 - Return ONLY valid JSON array, no markdown:
 [{"front":"<question or term>","front_ar":"<Arabic>","back":"<answer>","back_ar":"<Arabic answer>","topic":"<topic from text>"}]`
         );
@@ -270,8 +292,7 @@ ${contextText.slice(0, 6000)}
 Rules:
 - Questions must be DIRECTLY based on the provided content
 - Test comprehension and application, not just recall
-- Each question should have 4 clear options with one correct answer
-- Include a brief explanation referencing the material
+- Each question should have 4 clear options with one correct answer- Include a brief explanation referencing the material
 - Return ONLY valid JSON array:
 [{"question":"<question>","options":["A","B","C","D"],"answer":"<exact option text>","explanation":"<why this is correct, referencing the text>"}]`
         );
@@ -293,6 +314,7 @@ Rules:
       setMatGenStatus("");
     }
   };
+
   const generateAiFlashcards = async () => {
     if (!aiCardTopic.trim() || !user) return;
     setAiCardLoading(true);
@@ -319,8 +341,7 @@ Make questions clear, concise, and educational. Include Arabic translations.`
       qc.invalidateQueries({ queryKey: ["revision-flashcards", subjectId] });
       toast({ title: `✅ ${inserted} flashcards generated!` });
       setShowAiCard(false); setAiCardTopic("");
-    } catch(e:any) {
-      setAiCardError(e.message);
+    } catch(e:any) {      setAiCardError(e.message);
     } finally { setAiCardLoading(false); }
   };
 
@@ -341,7 +362,8 @@ Make questions educational and progressively challenging.`
         id: `ai-${i}`, question:q.question, answer:q.answer,
         options: q.options, explanation:q.explanation, source:"ai" as const,
       }));
-      setQuizQs(qs); setQuizIdx(0); setQuizAnswers({}); setQuizDone(false);      setQuizSource("ai"); setQuizMode(true); setShowAiQuiz(false);
+      setQuizQs(qs); setQuizIdx(0); setQuizAnswers({}); setQuizDone(false);
+      setQuizSource("ai"); setQuizMode(true); setShowAiQuiz(false);
     } catch(e:any) {
       setAiQuizError(e.message);
     } finally { setQuizLoading(false); }
@@ -350,7 +372,7 @@ Make questions educational and progressively challenging.`
   const startExamQuiz = async (examId: string) => {
     setQuizLoading(true);
     try {
-      const {  qs } = await supabase.from("exam_questions").select("*").eq("exam_id", examId).order("created_at");
+      const { data: qs } = await supabase.from("exam_questions").select("*").eq("exam_id", examId).order("created_at");
       if (!qs?.length) { toast({ title:"No questions in this exam yet." }); setQuizLoading(false); return; }
       const questions: QuizQ[] = qs
         .filter((q:any) => q.question_type === "mcq" && q.options?.length >= 2)
@@ -368,8 +390,7 @@ Make questions educational and progressively challenging.`
       setQuizSource("exam"); setQuizMode(true);
     } catch(e:any) {
       toast({ title:"Error", description:e.message, variant:"destructive" });
-    } finally { setQuizLoading(false); }
-  };
+    } finally { setQuizLoading(false); }  };
 
   const startFlashcardQuiz = () => {
     if (flashcards.length < 2) return;
@@ -390,7 +411,8 @@ Make questions educational and progressively challenging.`
 
   const submitAnswer = (answer: string) => {
     const next = { ...quizAnswers, [quizIdx]: answer };
-    setQuizAnswers(next);    if (quizIdx < quizQs.length-1) {
+    setQuizAnswers(next);
+    if (quizIdx < quizQs.length-1) {
       setQuizIdx(i=>i+1);
     } else {
       setQuizDone(true);
@@ -417,8 +439,7 @@ Make questions educational and progressively challenging.`
       await supabase.from("revision_flashcard_progress" as any).insert({ student_id:user.id, flashcard_id:card.id, status, times_reviewed:1, last_reviewed_at:new Date().toISOString() } as any);
     }
     if (cardIdx < flashcards.length-1) { setCardIdx(i=>i+1); setFlipped(false); }
-    else { setStudyMode(false); qc.invalidateQueries({queryKey:["revision-fc-progress"]}); toast({title:"🎉 Session complete!"}); }
-  };
+    else { setStudyMode(false); qc.invalidateQueries({queryKey:["revision-fc-progress"]}); toast({title:"🎉 Session complete!"}); }  };
 
   const saveFlashcard = async () => {
     if (!user||!cardForm.front||!cardForm.back) return;
@@ -439,6 +460,7 @@ Make questions educational and progressively challenging.`
     qc.invalidateQueries({queryKey:["revision-notes"]});
     toast({title:"Note saved!"});
   };
+
   if (studyMode && flashcards.length>0) {
     const card = flashcards[cardIdx];
     const pct  = Math.round(((cardIdx+1)/flashcards.length)*100);
@@ -466,8 +488,7 @@ Make questions educational and progressively challenging.`
             {card.topic && <span style={{ marginTop:14, fontSize:11, padding:"3px 10px", borderRadius:20, background:"#F3F4F6", color:"#6B7280" }}>{card.topic}</span>}
           </div>
           {flipped && (
-            <div style={{ display:"flex", gap:10, justifyContent:"center" }}>
-              {[
+            <div style={{ display:"flex", gap:10, justifyContent:"center" }}>              {[
                 {label:"Still Learning",icon:"😕",status:"new" as const,bg:"#FEF2F2",border:"#FECACA",text:"#DC2626"},
                 {label:"Almost",icon:"🤔",status:"learning" as const,bg:"#FFFBEB",border:"#FDE68A",text:"#D97706"},
                 {label:"Know It!",icon:"✅",status:"known" as const,bg:"#F0FDF4",border:"#86EFAC",text:"#16A34A"},
@@ -488,10 +509,11 @@ Make questions educational and progressively challenging.`
     if (quizDone) {
       const score = quizQs.reduce((s,q,i)=>s+(quizAnswers[i]===q.answer?1:0),0);
       const pct   = Math.round((score/quizQs.length)*100);
-      return (        <div style={{ minHeight:"100svh", background:"#F8F9FA", padding:"24px 16px" }}>
+      return (
+        <div style={{ minHeight:"100svh", background:"#F8F9FA", padding:"24px 16px" }}>
           <div style={{ maxWidth:540, margin:"0 auto" }}>
             <div style={{ background:"#fff", borderRadius:20, padding:28, textAlign:"center", marginBottom:20, boxShadow:"0 4px 20px rgba(0,0,0,.06)" }}>
-              <div style={{ fontSize:56, marginBottom:12 }}>{pct>=80?"🏆":pct>=60?"👍":"📚"}</div>
+              <div style={{ fontSize:56, marginBottom:12 }}>{pct>=80?"🏆":pct>=60?"👍":""}</div>
               <h2 style={{ fontWeight:900, fontSize:24, color:G, margin:"0 0 8px" }}>Quiz Complete!</h2>
               <div style={{ fontSize:48, fontWeight:900, color:pct>=70?"#16A34A":"#DC2626", margin:"12px 0" }}>{score}/{quizQs.length}</div>
               <div style={{ fontSize:16, color:"#6B7280", marginBottom:20 }}>{pct}% correct</div>
@@ -515,8 +537,7 @@ Make questions educational and progressively challenging.`
                 return (
                   <div key={i} style={{ background:"#fff", borderRadius:14, border:`1.5px solid ${correct?"#86EFAC":"#FECACA"}`, padding:"14px 16px" }}>
                     <div style={{ display:"flex", alignItems:"flex-start", gap:10, marginBottom:6 }}>
-                      <span style={{ fontSize:18, flexShrink:0 }}>{correct?"✅":"❌"}</span>
-                      <p style={{ fontSize:13, fontWeight:600, color:"#111", margin:0, flex:1, lineHeight:1.5 }}>{q.question}</p>
+                      <span style={{ fontSize:18, flexShrink:0 }}>{correct?"✅":"❌"}</span>                      <p style={{ fontSize:13, fontWeight:600, color:"#111", margin:0, flex:1, lineHeight:1.5 }}>{q.question}</p>
                     </div>
                     {!correct && <p style={{ fontSize:12, color:"#DC2626", margin:"4px 0", paddingLeft:28 }}>Your answer: {quizAnswers[i]||"—"}</p>}
                     <p style={{ fontSize:12, color:"#16A34A", margin:"2px 0", paddingLeft:28, fontWeight:600 }}>Correct: {q.answer}</p>
@@ -537,7 +558,8 @@ Make questions educational and progressively challenging.`
           <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:14 }}>
             <button onClick={()=>setQuizMode(false)} style={{ display:"flex", alignItems:"center", gap:6, background:"none", border:"none", cursor:"pointer", fontSize:13, color:"#6B7280", fontWeight:600 }}>
               <X size={16}/> Exit Quiz
-            </button>            <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+            </button>
+            <div style={{ display:"flex", alignItems:"center", gap:10 }}>
               <span style={{ fontSize:11, padding:"3px 10px", borderRadius:20, background:"#F3F4F6", color:"#6B7280", fontWeight:700 }}>
                 {q.source==="ai"?"🤖 AI":q.source==="exam"?"📋 Exam":"🃏 Flashcard"}
               </span>
@@ -564,7 +586,6 @@ Make questions educational and progressively challenging.`
       </div>
     );
   }
-
   const tabs = [
     { id:"flashcards", icon:"🃏", label:"Flashcards", count:flashcards.length },
     { id:"quiz",       icon:"📝", label:"Quiz",       count:quizHistory.length },
@@ -586,7 +607,55 @@ Make questions educational and progressively challenging.`
           <div style={{ height:6, flex:1, background:"rgba(255,255,255,.2)", borderRadius:3, overflow:"hidden" }}>
             <div style={{ width:`${mastery}%`, height:"100%", background:"#4ADE80", borderRadius:3 }}/>
           </div>
-          <span style={{ fontSize:11, color:"rgba(255,255,255,.8)", fontWeight:700 }}>{mastery}% mastered</span>        </div>
+          <span style={{ fontSize:11, color:"rgba(255,255,255,.8)", fontWeight:700 }}>{mastery}% mastered</span>
+        </div>
+
+        {/* ✅ NEW: Level-Based Subject Navigator */}
+        <div style={{ background:"rgba(255,255,255,0.08)", borderRadius:12, padding:"10px 12px", marginBottom:12 }}>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8 }}>
+            <span style={{ fontSize:12, fontWeight:700, color:"rgba(255,255,255,0.9)" }}>📚 Switch Subject by Level</span>
+            <ChevronDown size={14} color="rgba(255,255,255,0.6)" />
+          </div>
+          <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+            {["beginner", "intermediate", "advanced"].map(lvl => {
+              const subs = subjectsByLevel[lvl] || [];
+              const isExpanded = expandedLevels[lvl];
+              const cfg = {
+                beginner:     { label: "Beginner",     color: "#86EFAC", bg: "rgba(34,197,94,0.15)" },
+                intermediate: { label: "Intermediate", color: "#93C5FD", bg: "rgba(59,130,246,0.15)" },
+                advanced:     { label: "Advanced",     color: "#C4B5FD", bg: "rgba(139,92,246,0.15)" },
+              }[lvl];
+              return (
+                <div key={lvl} style={{ background: cfg.bg, borderRadius:8, overflow:"hidden" }}>
+                  <button
+                    onClick={() => setExpandedLevels(p => ({ ...p, [lvl]: !p[lvl] }))}
+                    style={{ width:"100%", display:"flex", alignItems:"center", justifyContent:"space-between", padding:"8px 10px", background:"transparent", border:"none", cursor:"pointer", color: cfg.color, fontSize:12, fontWeight:700 }}
+                  >
+                    <span>{cfg.label} ({subs.length})</span>
+                    <ChevronDown size={12} style={{ transform: isExpanded ? "rotate(180deg)" : "none", transition: "transform 0.2s" }} />
+                  </button>
+                  {isExpanded && subs.length > 0 && (
+                    <div style={{ padding:"4px 8px 8px", display:"flex", flexWrap:"wrap", gap:6 }}>                      {subs.map(s => (
+                        <Link key={s.id} to={`/student/revision/${s.id}`}
+                          style={{
+                            fontSize:11, padding:"4px 8px", borderRadius:6,
+                            background: s.id === subjectId ? cfg.color : "rgba(255,255,255,0.1)",
+                            color: s.id === subjectId ? "#064E3B" : cfg.color,
+                            textDecoration: "none", fontWeight: s.id === subjectId ? 800 : 500,
+                            transition: "all 0.15s"
+                          }}
+                        >
+                          {language === "ar" ? s.title_ar || s.title : s.title}
+                        </Link>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
         <div style={{ display:"flex", gap:2, overflowX:"auto", paddingBottom:0 }}>
           {tabs.map(t=>(
             <button key={t.id} onClick={()=>setTab(t.id)}
@@ -615,8 +684,7 @@ Make questions educational and progressively challenging.`
                   <button onClick={()=>{setCardIdx(0);setFlipped(false);setStudyResults({});setStudyMode(true);}}
                     style={{ display:"flex", alignItems:"center", gap:6, padding:"9px 16px", borderRadius:10, border:"none", background:G, color:"#fff", cursor:"pointer", fontSize:13, fontWeight:700 }}>
                     <Layers size={14}/> Study Cards
-                  </button>
-                )}
+                  </button>                )}
                 <button onClick={()=>{ setMatGenMode("flashcard"); setMatGenStep("pick"); setShowMatGen(true); }} disabled={materials.length===0}
                   style={{ display:"flex", alignItems:"center", gap:6, padding:"9px 16px", borderRadius:10, border:"none", background:materials.length>0?"#0F766E":"#E5E7EB", color:materials.length>0?"#fff":"#9CA3AF", cursor:materials.length>0?"pointer":"not-allowed", fontSize:13, fontWeight:700 }}>
                   📚 From Material
@@ -635,7 +703,8 @@ Make questions educational and progressively challenging.`
               <div style={{ textAlign:"center", padding:"56px 24px", background:"#fff", borderRadius:20, border:"2px dashed #E5E7EB" }}>
                 <div style={{ fontSize:48, marginBottom:12 }}>🃏</div>
                 <p style={{ fontWeight:700, color:"#374151", marginBottom:6 }}>No flashcards yet</p>
-                <p style={{ fontSize:13, color:"#9CA3AF", marginBottom:20 }}>Generate from a topic using AI or add manually</p>                <div style={{ display:"flex", gap:10, justifyContent:"center" }}>
+                <p style={{ fontSize:13, color:"#9CA3AF", marginBottom:20 }}>Generate from a topic using AI or add manually</p>
+                <div style={{ display:"flex", gap:10, justifyContent:"center" }}>
                   <button onClick={()=>setShowAiCard(true)} style={{ display:"flex", alignItems:"center", gap:6, padding:"10px 18px", borderRadius:11, border:"none", background:GOLD, color:"#fff", cursor:"pointer", fontWeight:700, fontSize:13 }}>
                     <Sparkles size={14}/> Generate with AI
                   </button>
@@ -664,8 +733,7 @@ Make questions educational and progressively challenging.`
                       </div>
                       <p style={{ fontSize:12, color:"#6B7280", margin:0, lineHeight:1.5 }}>
                         {language==="ar"?card.back_text_ar||card.back_text:card.back_text}
-                      </p>
-                      {card.topic && <span style={{ display:"inline-block", marginTop:8, fontSize:10, padding:"2px 8px", borderRadius:20, background:"#EFF6FF", color:"#1D4ED8" }}>{card.topic}</span>}
+                      </p>                      {card.topic && <span style={{ display:"inline-block", marginTop:8, fontSize:10, padding:"2px 8px", borderRadius:20, background:"#EFF6FF", color:"#1D4ED8" }}>{card.topic}</span>}
                     </div>
                   );
                 })}
@@ -684,7 +752,8 @@ Make questions educational and progressively challenging.`
                     <div style={{ display:"flex", alignItems:"center", gap:10 }}>
                       <span style={{ fontSize:28 }}>📚</span>
                       <div>
-                        <p style={{ fontWeight:800, fontSize:15, color:"#fff", margin:0 }}>From Subject Materials</p>                        <p style={{ fontSize:12, color:"rgba(255,255,255,.7)", margin:0 }}>Quiz from uploaded PDFs &amp; docs</p>
+                        <p style={{ fontWeight:800, fontSize:15, color:"#fff", margin:0 }}>From Subject Materials</p>
+                        <p style={{ fontSize:12, color:"rgba(255,255,255,.7)", margin:0 }}>Quiz from uploaded PDFs &amp; docs</p>
                       </div>
                     </div>
                     <button onClick={()=>{ setMatGenMode("quiz"); setMatGenStep("pick"); setShowMatGen(true); }}
@@ -713,8 +782,7 @@ Make questions educational and progressively challenging.`
                       <p style={{ fontSize:12, color:"rgba(255,255,255,.7)", margin:0 }}>Practice on any topic instantly</p>
                     </div>
                   </div>
-                  <button onClick={()=>setShowAiQuiz(true)}
-                    style={{ padding:"8px 16px", borderRadius:9, border:"1px solid rgba(255,255,255,.3)", background:"rgba(255,255,255,.15)", color:"#fff", cursor:"pointer", fontSize:12, fontWeight:700 }}>
+                  <button onClick={()=>setShowAiQuiz(true)}                    style={{ padding:"8px 16px", borderRadius:9, border:"1px solid rgba(255,255,255,.3)", background:"rgba(255,255,255,.15)", color:"#fff", cursor:"pointer", fontSize:12, fontWeight:700 }}>
                     Start →
                   </button>
                 </div>
@@ -733,7 +801,8 @@ Make questions educational and progressively challenging.`
                     {flashcards.length<2?"Need 2+ cards":"Start →"}
                   </button>
                 </div>
-              </div>              {exams.length > 0 && (
+              </div>
+              {exams.length > 0 && (
                 <div style={{ background:"#fff", borderRadius:16, padding:"16px 18px", border:"1.5px solid #E5E7EB" }}>
                   <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:12 }}>
                     <span style={{ fontSize:24 }}>📋</span>
@@ -762,8 +831,7 @@ Make questions educational and progressively challenging.`
                     <div key={q.id} style={{ background:"#fff", borderRadius:12, border:"1px solid #E5E7EB", padding:"12px 14px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
                       <div>
                         <p style={{ fontSize:13, fontWeight:600, color:"#374151", margin:0 }}>{q.source} quiz</p>
-                        <p style={{ fontSize:11, color:"#9CA3AF", margin:0 }}>{q.completed_at?format(new Date(q.completed_at),"MMM d, h:mm a"):""}</p>
-                      </div>
+                        <p style={{ fontSize:11, color:"#9CA3AF", margin:0 }}>{q.completed_at?format(new Date(q.completed_at),"MMM d, h:mm a"):""}</p>                      </div>
                       <div style={{ textAlign:"right" }}>
                         <p style={{ fontSize:16, fontWeight:800, color:Number(q.percentage)>=70?"#16A34A":"#DC2626", margin:0 }}>{q.score}/{q.total}</p>
                         <p style={{ fontSize:11, color:"#9CA3AF", margin:0 }}>{Math.round(q.percentage||0)}%</p>
@@ -782,7 +850,8 @@ Make questions educational and progressively challenging.`
               <div style={{ fontSize:48, marginBottom:12 }}>📄</div>
               <p style={{ fontWeight:700, color:"#374151" }}>No summaries yet</p>
               <p style={{ fontSize:13, color:"#9CA3AF" }}>Your teacher will add summaries here</p>
-            </div>          ) : (
+            </div>
+          ) : (
             <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
               {summaries.map((s:any)=>(
                 <div key={s.id} style={{ background:"#fff", borderRadius:14, border:"1px solid #E5E7EB", padding:"16px" }}>
@@ -811,8 +880,7 @@ Make questions educational and progressively challenging.`
                 <Plus size={14}/> New Note
               </button>
             </div>
-            {notes.length===0 ? (
-              <div style={{ textAlign:"center", padding:"56px 24px", background:"#fff", borderRadius:20, border:"2px dashed #E5E7EB" }}>
+            {notes.length===0 ? (              <div style={{ textAlign:"center", padding:"56px 24px", background:"#fff", borderRadius:20, border:"2px dashed #E5E7EB" }}>
                 <div style={{ fontSize:48, marginBottom:12 }}>📓</div>
                 <p style={{ fontWeight:700, color:"#374151" }}>No notes yet</p>
                 <p style={{ fontSize:13, color:"#9CA3AF" }}>Write personal notes to reinforce your learning</p>
@@ -831,7 +899,8 @@ Make questions educational and progressively challenging.`
           </div>
         )}
 
-        {tab==="progress" && (          <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+        {tab==="progress" && (
+          <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
             <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:10 }}>
               {[
                 {label:"Cards Mastered",value:`${knownCount}/${flashcards.length}`,icon:"🃏",color:"#F0FDF4",text:"#166534"},
@@ -860,8 +929,7 @@ Make questions educational and progressively challenging.`
                   </div>
                   <div style={{ height:6, background:"#F3F4F6", borderRadius:3, overflow:"hidden" }}>
                     <div style={{ width:`${flashcards.length>0?Math.round((r.count/flashcards.length)*100):0}%`, height:"100%", background:r.color, borderRadius:3 }}/>
-                  </div>
-                </div>
+                  </div>                </div>
               ))}
             </div>
             {quizHistory.length>0 && (
@@ -881,6 +949,7 @@ Make questions educational and progressively challenging.`
           </div>
         )}
       </div>
+
       {/* Material Generation Dialog */}
       <Dialog open={showMatGen} onOpenChange={v=>{ if(!v){setShowMatGen(false);setSelMaterial(null);setMatGenStep("pick");setMatGenError(null);} }}>
         <DialogContent style={{ maxWidth:520, borderRadius:20, padding:0, maxHeight:"92vh", overflowY:"auto" }}>
@@ -909,9 +978,8 @@ Make questions educational and progressively challenging.`
                     const canRead = isPdf || isText;
                     return (
                       <button key={mat.id} onClick={()=>{ if(!canRead) return; setSelMaterial(mat); setPageFrom(1); setPageTo(5); setMatGenStep("config"); }}
-                        style={{ display:"flex", alignItems:"center", gap:12, padding:"14px 16px", borderRadius:14, border:`1.5px solid ${selMaterial?.id===mat.id?"#0D9488":"#E5E7EB"}`, background:selMaterial?.id===mat.id?"#F0FDFA":"#fff", cursor:canRead?"pointer":"not-allowed", textAlign:"left", opacity:canRead?1:.5 }}>
-                        <div style={{ width:40, height:40, borderRadius:10, background:isPdf?"#FEF2F2":isText?"#FFFBEB":"#F3F4F6", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
-                          <span style={{ fontSize:20 }}>{isPdf?"📄":isText?"📝":"📎"}</span>
+                        style={{ display:"flex", alignItems:"center", gap:12, padding:"14px 16px", borderRadius:14, border:`1.5px solid ${selMaterial?.id===mat.id?"#0D9488":"#E5E7EB"}`, background:selMaterial?.id===mat.id?"#F0FDFA":"#fff", cursor:canRead?"pointer":"not-allowed", textAlign:"left", opacity:canRead?1:.5 }}>                        <div style={{ width:40, height:40, borderRadius:10, background:isPdf?"#FEF2F2":isText?"#FFFBEB":"#F3F4F6", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                          <span style={{ fontSize:20 }}>{isPdf?"📄":isText?"📝":""}</span>
                         </div>
                         <div style={{ flex:1, minWidth:0 }}>
                           <p style={{ fontWeight:700, fontSize:13, color:"#111", margin:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{mat.title}</p>
@@ -929,7 +997,8 @@ Make questions educational and progressively challenging.`
             </div>
           )}
           {matGenStep==="config" && selMaterial && (
-            <div style={{ padding:20, display:"flex", flexDirection:"column", gap:16 }}>              <div style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 14px", background:"#F0FDFA", borderRadius:12, border:"1px solid #99F6E4" }}>
+            <div style={{ padding:20, display:"flex", flexDirection:"column", gap:16 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 14px", background:"#F0FDFA", borderRadius:12, border:"1px solid #99F6E4" }}>
                 <span style={{ fontSize:22 }}>📄</span>
                 <div style={{ flex:1, minWidth:0 }}>
                   <p style={{ fontWeight:700, fontSize:13, color:"#0F766E", margin:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{selMaterial.title}</p>
@@ -958,8 +1027,7 @@ Make questions educational and progressively challenging.`
                         style={{ fontSize:11, padding:"4px 10px", borderRadius:20, border:`1px solid ${pageFrom===f&&pageTo===t?"#0D9488":"#E5E7EB"}`, background:pageFrom===f&&pageTo===t?"#F0FDFA":"#fff", color:pageFrom===f&&pageTo===t?"#0F766E":"#6B7280", cursor:"pointer", fontWeight:600 }}>
                         p{f}–{t}
                       </button>
-                    ))}
-                  </div>
+                    ))}                  </div>
                   <div style={{ padding:"10px 12px", background:"#FFF7ED", borderRadius:10, border:"1px solid #FDE68A", marginTop:8 }}>
                     <p style={{ fontSize:11, color:"#A67C1E", margin:0 }}>⚠️ <strong>Note:</strong> Only text-based PDFs work. Scanned/image PDFs cannot be read. Limit to 10–15 pages for best results.</p>
                   </div>
@@ -978,7 +1046,8 @@ Make questions educational and progressively challenging.`
               </div>
               {matGenError && (
                 <div style={{ padding:"10px 12px", background:"#FEF2F2", borderRadius:10, border:"1px solid #FECACA", display:"flex", gap:8, alignItems:"center" }}>
-                  <AlertCircle size={16} color="#DC2626" />                  <p style={{ fontSize:12, color:"#DC2626", margin:0 }}>{matGenError}</p>
+                  <AlertCircle size={16} color="#DC2626" />
+                  <p style={{ fontSize:12, color:"#DC2626", margin:0 }}>{matGenError}</p>
                 </div>
               )}
               <button onClick={generateFromMaterial} disabled={matGenLoading}
@@ -1007,8 +1076,7 @@ Make questions educational and progressively challenging.`
             <h2 style={{ fontWeight:800, fontSize:16, color:"#fff", margin:0 }}>AI Flashcard Generator</h2>
           </div>
           <div style={{ padding:20, display:"flex", flexDirection:"column", gap:14 }}>
-            <div>
-              <label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:6 }}>Topic or concept *</label>
+            <div>              <label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:6 }}>Topic or concept *</label>
               <Input value={aiCardTopic} onChange={e=>setAiCardTopic(e.target.value)} placeholder="e.g. Arabic letters, Tajweed rules, Surah Al-Fatiha vocabulary…" style={{ borderRadius:10 }}/>
               <p style={{ fontSize:11, color:"#9CA3AF", marginTop:4 }}>AI will generate question-answer flashcard pairs from this topic</p>
             </div>
@@ -1027,7 +1095,8 @@ Make questions educational and progressively challenging.`
               <div style={{ padding:"10px 12px", background:"#FEF2F2", borderRadius:10, border:"1px solid #FECACA", display:"flex", gap:8, alignItems:"center" }}>
                 <AlertCircle size={16} color="#DC2626" />
                 <p style={{ fontSize:12, color:"#DC2626", margin:0 }}>{aiCardError}</p>
-              </div>            )}
+              </div>
+            )}
             <button onClick={generateAiFlashcards} disabled={!aiCardTopic.trim()||aiCardLoading}
               style={{ padding:"13px", borderRadius:12, border:"none", background:aiCardTopic.trim()?GOLD:"#E5E7EB", color:aiCardTopic.trim()?"#fff":"#9CA3AF", cursor:aiCardTopic.trim()?"pointer":"not-allowed", fontWeight:700, fontSize:14, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
               {aiCardLoading?<><Loader2 size={16} style={{ animation:"spin .8s linear infinite" }}/> Generating…</>:<><Sparkles size={15}/> Generate {aiCardCount} Flashcards</>}
@@ -1056,8 +1125,7 @@ Make questions educational and progressively challenging.`
               <label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:5 }}>Back / Answer *</label>
               <Textarea value={cardForm.back} onChange={e=>setCardForm(p=>({...p,back:e.target.value}))} rows={2} style={{ borderRadius:10 }}/>
             </div>
-            <div>
-              <label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:5 }}>Arabic (Back)</label>
+            <div>              <label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:5 }}>Arabic (Back)</label>
               <Textarea dir="rtl" value={cardForm.back_ar} onChange={e=>setCardForm(p=>({...p,back_ar:e.target.value}))} rows={2} style={{ borderRadius:10 }}/>
             </div>
             <div>
@@ -1076,7 +1144,8 @@ Make questions educational and progressively challenging.`
       <Dialog open={showAiQuiz} onOpenChange={v=>{setShowAiQuiz(v); if(!v) setAiQuizError(null);}}>
         <DialogContent style={{ maxWidth:440, borderRadius:20, padding:0 }}>
           <div style={{ background:`linear-gradient(135deg,${GOLD},#A67C1E)`, padding:"18px 20px", borderRadius:"20px 20px 0 0", display:"flex", alignItems:"center", gap:10 }}>
-            <Brain size={20} color="#fff"/>            <h2 style={{ fontWeight:800, fontSize:16, color:"#fff", margin:0 }}>AI Quiz Generator</h2>
+            <Brain size={20} color="#fff"/>
+            <h2 style={{ fontWeight:800, fontSize:16, color:"#fff", margin:0 }}>AI Quiz Generator</h2>
           </div>
           <div style={{ padding:20, display:"flex", flexDirection:"column", gap:14 }}>
             <div>
@@ -1105,7 +1174,6 @@ Make questions educational and progressively challenging.`
           </div>
         </DialogContent>
       </Dialog>
-
       {/* New Note Dialog */}
       <Dialog open={showNewNote} onOpenChange={setShowNewNote}>
         <DialogContent style={{ maxWidth:440, borderRadius:20, padding:0 }}>
@@ -1125,7 +1193,8 @@ Make questions educational and progressively challenging.`
             <button onClick={saveNote} disabled={!noteForm.content}
               style={{ padding:"13px", borderRadius:12, border:"none", background:noteForm.content?G:"#E5E7EB", color:noteForm.content?"#fff":"#9CA3AF", cursor:noteForm.content?"pointer":"not-allowed", fontWeight:700, fontSize:14 }}>
               Save Note
-            </button>          </div>
+            </button>
+          </div>
         </DialogContent>
       </Dialog>
 
