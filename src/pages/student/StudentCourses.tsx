@@ -53,7 +53,7 @@ const StudentCourses = () => {
   });
 
   // 3. Fetch Lessons
-  const {  lessons } = useQuery({
+  const { data: lessons } = useQuery({
     queryKey: ["all-lessons"],
     queryFn: async () => {
       const { data, error } = await supabase
