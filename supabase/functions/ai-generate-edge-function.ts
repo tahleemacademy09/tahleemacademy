@@ -14,11 +14,11 @@ serve(async (req) => {
     const { prompt } = await req.json();
     if (!prompt) throw new Error("prompt is required");
 
-    // Accepts either DASHSCOPE_API_KEY or QWEN_API_KEY
+    // ✅ Qwen/DashScope API Key
     const apiKey = Deno.env.get("DASHSCOPE_API_KEY") || Deno.env.get("QWEN_API_KEY");
     if (!apiKey) throw new Error("DASHSCOPE_API_KEY or QWEN_API_KEY not set in Supabase secrets");
 
-    // Qwen via DashScope OpenAI-compatible endpoint
+    // ✅ Call Qwen via OpenAI-compatible endpoint
     const response = await fetch("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -26,7 +26,7 @@ serve(async (req) => {
         "Authorization": `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: "qwen-plus", // Options: qwen-turbo (fast/cheap), qwen-plus (balanced), qwen-max (best quality)
+        model: "qwen-plus", // Options: qwen-turbo, qwen-plus, qwen-max
         messages: [{ role: "user", content: prompt }],
         temperature: 0.7,
         max_tokens: 4000,
