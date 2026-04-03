@@ -47,8 +47,7 @@ const VERSES = [
   { ar: "وَنُنَزِّلُ مِنَ الْقُرْآنِ مَا هُوَ شِفَاءٌ وَرَحْمَةٌ لِّلْمُؤْمِنِينَ", en: "We send down in the Quran that which is a healing and mercy for the believers.", ref: "Quran 17:82" },
   { ar: "أَلَا بِذِكْرِ اللَّهِ تَطْمَئِنُّ الْقُلُوبُ", en: "Verily, in the remembrance of Allah do hearts find rest.", ref: "Quran 13:28" },
   { ar: "وَقُل رَّبِّ ارْحَمْهُمَا كَمَا رَبَّيَانِي صَغِيرًا", en: "My Lord, have mercy upon them as they brought me up when I was small.", ref: "Quran 17:24" },
-  { ar: "إِنَّ أَكْرَمَكُمْ عِندَ اللَّهِ أَتْقَاكُمْ", en: "The most noble of you in the sight of Allah is the most righteous.", ref: "Quran 49:13" },
-  { ar: "وَلَا تَيْأَسُوا مِن رَّوْحِ اللَّهِ", en: "Do not despair of the mercy of Allah.", ref: "Quran 12:87" },
+  { ar: "إِنَّ أَكْرَمَكُمْ عِندَ اللَّهِ أَتْقَاكُمْ", en: "The most noble of you in the sight of Allah is the most righteous.", ref: "Quran 49:13" },  { ar: "وَلَا تَيْأَسُوا مِن رَّوْحِ اللَّهِ", en: "Do not despair of the mercy of Allah.", ref: "Quran 12:87" },
   { ar: "فَإِذَا فَرَغْتَ فَانصَبْ", en: "So when you have finished, then stand up for worship.", ref: "Quran 94:7" },
   { ar: "وَاسْتَعِينُوا بِالصَّبْرِ وَالصَّلَاةِ", en: "Seek help through patience and prayer.", ref: "Quran 2:45" },
 ];
@@ -87,16 +86,19 @@ const StudentDashboard = () => {
   const [showAllNotifs, setShowAllNotifs] = useState(false);
   const [greetingSpoken, setGreetingSpoken] = useState(false);
 
+  // ── GATEKEEPING: Redirect to awaiting-level if not yet assigned ─────────
+  useEffect(() => {
+    if (!loading && currentStep !== "completed") {
+      navigate("/student/awaiting-level", { replace: true });
+    }
+  }, [loading, currentStep, navigate]);
+
   // ── Voice greeting — short, simple, works everywhere ─────────
   useEffect(() => {
     if (!profile?.full_name || greetingSpoken || loading) return;
     const firstName = (profile.full_name || 'student').split(' ')[0];
-
     const doSpeak = (voices: SpeechSynthesisVoice[]) => {
       window.speechSynthesis.cancel();
-
-      // Pick the deepest male-sounding voice available
-      // Priority: explicit Arabic male > any Arabic > deep English male > any
       const pick = (filters: ((v: SpeechSynthesisVoice) => boolean)[]) => {
         for (const f of filters) { const v = voices.find(f); if (v) return v; }
         return voices[0] || null;
@@ -113,20 +115,15 @@ const StudentDashboard = () => {
       ]);
 
       const isArabicVoice = bestVoice?.lang?.startsWith('ar') ?? false;
-
-      // Simple short text — just what the user asked for
-      // Arabic version: "السلام عليكم [name] مرحبًا"
-      // Fallback: phonetic spelling that any engine pronounces recognizably
       const text = isArabicVoice
         ? "السلام عليكم " + firstName + " مرحبًا"
         : "As-salaamu alaykum. " + firstName + ". Marhaban.";
 
       const lang = isArabicVoice ? 'ar-SA' : 'en-US';
-
       const u = new SpeechSynthesisUtterance(text);
       u.lang   = lang;
       u.rate   = 0.78;
-      u.pitch  = 0.55; // deep male
+      u.pitch  = 0.55;
       u.volume = 1.0;
       if (bestVoice) u.voice = bestVoice;
       window.speechSynthesis.speak(u);
@@ -148,8 +145,7 @@ const StudentDashboard = () => {
           window.speechSynthesis.removeEventListener('voiceschanged', h);
           doSpeak(window.speechSynthesis.getVoices());
         }, 2000);
-      }
-    };
+      }    };
 
     const onGesture = () => {
       document.removeEventListener('click',      onGesture);
@@ -177,7 +173,6 @@ const StudentDashboard = () => {
     if (!user) return;
     const fetchData = async () => {
       setFetchError(null);
-      // Refresh profile so course_level reflects any admin assignment since last login
       await refreshProfile().catch(() => {});
       try {
         const [enrollRes, gradedAttemptsRes, pendingAttemptsRes, notifsRes, assignmentsRes,
@@ -199,8 +194,7 @@ const StudentDashboard = () => {
       const cgpa = gradedAttempts.length > 0 ? totalGP / gradedAttempts.length : 0;
       const attemptCounts: Record<string, number> = {};
       (allAttemptsRes.data || []).forEach((a: any) => { if (a.status !== "in_progress") attemptCounts[a.exam_id] = (attemptCounts[a.exam_id] || 0) + 1; });
-      const allAssigned = (assignmentsRes.data || []).map((a: any) => a.exams).filter((e: any) => e && e.is_published);
-      const upcoming = allAssigned.filter((e: any) => (attemptCounts[e.id] || 0) < (e.max_attempts || 1));
+      const allAssigned = (assignmentsRes.data || []).map((a: any) => a.exams).filter((e: any) => e && e.is_published);      const upcoming = allAssigned.filter((e: any) => (attemptCounts[e.id] || 0) < (e.max_attempts || 1));
       setStats({ enrollments: enrollRes.data?.length || 0, attemptsDone: gradedAttempts.length, avgScore: Math.round(avg), pendingGrading: pendingAttemptsRes.data?.length || 0, cgpa });
       setUpcomingExams(upcoming.slice(0, 5));
       setRecentResults(recentRes.data || []);
@@ -249,17 +243,14 @@ const StudentDashboard = () => {
 
   const sectionTitle = (en: string, ar: string) => (
     <div style={{ marginBottom: 14 }}>
-      <div style={{ fontSize: 16, fontWeight: 800, color: TEXT_DARK, fontFamily: "'Playfair Display', serif" }}>{t(en, ar)}</div>
-    </div>
+      <div style={{ fontSize: 16, fontWeight: 800, color: TEXT_DARK, fontFamily: "'Playfair Display', serif" }}>{t(en, ar)}</div>    </div>
   );
 
-  if (loading) return (
-    <div className="container mx-auto px-4 py-8">
-      <Skeleton className="h-20 w-full mb-4 rounded-2xl" />
-      <div className="grid gap-4 grid-cols-2 mb-4">
-        {[1,2,3,4].map(i => <Skeleton key={i} className="h-24 rounded-xl" />)}
-      </div>
-      <Skeleton className="h-40 w-full rounded-2xl" />
+  // ── Loading / Pending State ─────────
+  if (loading || currentStep !== "completed") return (
+    <div style={{ background: CREAM, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ width: 40, height: 40, borderRadius: "50%", border: "4px solid #064E3B", borderTopColor: "transparent", animation: "spin .7s linear infinite" }} />
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </div>
   );
 
@@ -285,67 +276,27 @@ const StudentDashboard = () => {
 
       <div style={{ maxWidth: 720, margin: "0 auto", padding: "20px 16px 40px", display: "flex", flexDirection: "column", gap: 18 }}>
 
-        {/* ── Awaiting Level Assignment Banner ── */}
-        {/* Uses currentStep from tasjeel_progress as single source of truth.
-            profile.course_level alone is stale (AuthContext cache from login).
-            refreshProfile() above ensures it's fresh, but currentStep is definitive. */}
-        {currentStep !== null && currentStep !== "completed" && (
-          <div style={{
-            background: "linear-gradient(135deg, #0f2d1f, #1a4731)",
-            borderRadius: 16, padding: "16px 20px",
-            border: "1px solid rgba(201,168,76,.25)",
-            boxShadow: "0 4px 20px rgba(15,45,31,.2)",
-            display: "flex", alignItems: "flex-start", gap: 14,
-          }}>
-            <div style={{ width: 40, height: 40, borderRadius: "50%", background: "rgba(201,168,76,.15)", border: "1.5px solid rgba(201,168,76,.35)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-              <Clock style={{ width: 18, height: 18, color: GOLD }} />
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 14, fontWeight: 800, color: GOLD, marginBottom: 3 }}>
-                Awaiting Level Assignment — جارٍ مراجعة ملفك
-              </div>
-              <div style={{ fontSize: 12, color: "rgba(255,255,255,.65)", lineHeight: 1.6, marginBottom: 10 }}>
-                Alhamdulillah — your application is complete and under review. An admin will assign your learning level within 48 hours. You'll receive an email notification, then your full dashboard unlocks.
-              </div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                {["✅ Account created", "✅ Onboarding submitted", "✅ Entrance exam done", "✅ Recitation submitted", "⏳ Level assignment pending"].map((s, i) => (
-                  <span key={i} style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: i < 4 ? "rgba(34,197,94,.15)" : "rgba(201,168,76,.15)", color: i < 4 ? "#86EFAC" : GOLD, border: `1px solid ${i < 4 ? "rgba(34,197,94,.2)" : "rgba(201,168,76,.25)"}`, fontWeight: 700 }}>
-                    {s}
-                  </span>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* ── Hero + Daily Verse — Merged Card ── */}
         <div style={{
           background: `linear-gradient(160deg, ${DARK_GREEN} 0%, ${MID_GREEN} 50%, #1a5c35 100%)`,
           borderRadius: 22, overflow: "hidden", position: "relative",
           boxShadow: "0 8px 32px rgba(15,45,31,0.25)"
         }}>
-          {/* Decorative circles */}
           <div style={{ position:"absolute", top:-50, right:-50, width:180, height:180, borderRadius:"50%", background:"rgba(255,255,255,0.03)", pointerEvents:"none" }} />
           <div style={{ position:"absolute", bottom:-40, left:-40, width:140, height:140, borderRadius:"50%", background:"rgba(255,255,255,0.03)", pointerEvents:"none" }} />
           <div style={{ position:"absolute", top:"40%", right:-20, width:80, height:80, borderRadius:"50%", background:"rgba(201,168,76,0.06)", pointerEvents:"none" }} />
 
-          {/* ── TOP: Greeting section ── */}
           <div style={{ padding: "24px 22px 20px", position:"relative", zIndex:1 }}>
-            {/* Top row: bismillah + hijri + notification bell */}
             <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16 }}>
               <span className="dwani-text" style={{ fontSize:12, color:"rgba(255,255,255,0.9)", fontWeight:700, letterSpacing:"0.06em", textShadow:"0 1px 6px rgba(0,0,0,0.3)", whiteSpace:"nowrap" as const }}>
                 بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ
               </span>
-              {/* Hijri date */}
               <div style={{ background:GOLD, borderRadius:30, padding:"6px 14px", display:"flex", alignItems:"center", gap:6, boxShadow:`0 2px 10px ${GOLD}66` }}>
-                <Calendar style={{ width:12, height:12, color:DARK_GREEN }} />
-                <span style={{ fontSize:12, color:DARK_GREEN, fontFamily:"'Amiri',serif", fontWeight:900 }} dir="rtl">{hijri.full}</span>
+                <Calendar style={{ width:12, height:12, color:DARK_GREEN }} />                <span style={{ fontSize:12, color:DARK_GREEN, fontFamily:"'Amiri',serif", fontWeight:900 }} dir="rtl">{hijri.full}</span>
               </div>
             </div>
 
-            {/* Greeting */}
             <div style={{ textAlign:"center" }}>
-              {/* السلام عليكم — Scheherazade New (Dwani-style calligraphy) */}
               <div style={{ margin:"0 auto 6px", textAlign:"center" }}>
                 <span className="dwani-text" style={{
                   fontSize: 28,
@@ -369,7 +320,6 @@ const StudentDashboard = () => {
             </div>
           </div>
 
-          {/* ── GOLD SPLICER DIVIDER ── */}
           <div style={{ position:"relative", zIndex:1, padding:"0 22px" }}>
             <div style={{ display:"flex", alignItems:"center", gap:10 }}>
               <div style={{ flex:1, height:"1.5px", background:`linear-gradient(90deg, transparent, ${GOLD}, transparent)` }} />
@@ -382,7 +332,6 @@ const StudentDashboard = () => {
             </div>
           </div>
 
-          {/* ── BOTTOM: Daily Verse section ── */}
           <div style={{ padding:"18px 22px 24px", textAlign:"center", position:"relative", zIndex:1 }}>
             <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:8, marginBottom:14 }}>
               <Star style={{ width:14, height:14, color:GOLD, fill:GOLD }} />
@@ -392,8 +341,7 @@ const StudentDashboard = () => {
               <Star style={{ width:14, height:14, color:GOLD, fill:GOLD }} />
             </div>
 
-            <p style={{ fontFamily:"'Amiri Quran',serif", fontSize:26, lineHeight:2.2, color:"#fff", margin:"0 0 12px", direction:"rtl" }}>
-              {dailyVerse.ar}
+            <p style={{ fontFamily:"'Amiri Quran',serif", fontSize:26, lineHeight:2.2, color:"#fff", margin:"0 0 12px", direction:"rtl" }}>              {dailyVerse.ar}
             </p>
 
             <div style={{ width:50, height:"1.5px", background:GOLD, margin:"0 auto 12px", borderRadius:2 }} />
@@ -414,7 +362,6 @@ const StudentDashboard = () => {
           </div>
           <div style={{ padding:"18px 16px" }}>
             <div style={{ display:"flex", alignItems:"center", gap:18, flexWrap:"wrap" as const }}>
-              {/* CGPA Ring */}
               <div style={{ position:"relative", flexShrink:0 }}>
                 <svg width={110} height={110} style={{ transform:"rotate(-90deg)" }}>
                   <circle cx={55} cy={55} r={45} stroke={BORDER} strokeWidth={9} fill="none" />
@@ -427,7 +374,6 @@ const StudentDashboard = () => {
                   <span style={{ fontSize:10, fontWeight:600, color:TEXT_LIGHT }}>CGPA</span>
                 </div>
               </div>
-              {/* Stats grid */}
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, flex:1 }}>
                 {[
                   { icon:BookOpen, label:t("Enrollments","التسجيلات"), value:stats.enrollments, color:"#276749", bg:"#f0fff4", link:"/student/courses" },
@@ -444,8 +390,7 @@ const StudentDashboard = () => {
                 ))}
               </div>
             </div>
-          </div>
-        </div>
+          </div>        </div>
 
         {/* ── Quick Actions ── */}
         <div>
@@ -482,7 +427,6 @@ const StudentDashboard = () => {
         {/* ── Quran Phrases Widget ── */}
         <QuranPhrasesWidget language={language} />
 
-
         <div style={card}>
           <div style={{ padding:"16px 18px", borderBottom:`1px solid ${BORDER}`, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
             <div style={{ display:"flex", alignItems:"center", gap:8 }}>
@@ -495,8 +439,7 @@ const StudentDashboard = () => {
             {notifications.length > 3 && (
               <button onClick={() => setShowAllNotifs(v=>!v)}
                 style={{ fontSize:11, fontWeight:600, color:GOLD, background:"none", border:"none", cursor:"pointer" }}>
-                {showAllNotifs ? t("Show less","عرض أقل") : t("View all","عرض الكل")}
-              </button>
+                {showAllNotifs ? t("Show less","عرض أقل") : t("View all","عرض الكل")}              </button>
             )}
           </div>
           <div style={{ padding:"12px 16px" }}>
@@ -545,8 +488,7 @@ const StudentDashboard = () => {
                 <div style={{ fontSize:12, fontWeight:700, color:TEXT_DARK }}>
                   {calendarMonth.toLocaleDateString(language==="ar"?"ar-SA":"en-US", { month:"long", year:"numeric" })}
                 </div>
-                <div style={{ fontSize:9, color:TEXT_LIGHT }} dir="rtl">
-                  {(() => { const h=toHijri(new Date(calendarYear,calendarMonthIdx,15)); return `${h.month} ${h.year} هـ`; })()}
+                <div style={{ fontSize:9, color:TEXT_LIGHT }} dir="rtl">                  {(() => { const h=toHijri(new Date(calendarYear,calendarMonthIdx,15)); return `${h.month} ${h.year} هـ`; })()}
                 </div>
               </div>
               <button onClick={nextMonth} style={{ width:28, height:28, borderRadius:8, border:`1px solid ${BORDER}`, background:"#f8fafb", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
@@ -583,7 +525,6 @@ const StudentDashboard = () => {
                 );
               })}
             </div>
-            {/* Legend */}
             <div style={{ display:"flex", gap:14, marginTop:12, flexWrap:"wrap" as const }}>
               {[["#c0392b","Exam","امتحان"],[GOLD,"Assignment","واجب"],[DARK_GREEN,"Today","اليوم"]].map(([col,en,ar],i)=>(
                 <div key={i} style={{ display:"flex", alignItems:"center", gap:4, fontSize:10, color:TEXT_LIGHT }}>
@@ -596,8 +537,7 @@ const StudentDashboard = () => {
         </div>
 
         {/* ── Agenda Tabs ── */}
-        <div style={card}>
-          <div style={{ padding:"16px 18px 0", borderBottom:`1px solid ${BORDER}`, paddingBottom:0 }}>
+        <div style={card}>          <div style={{ padding:"16px 18px 0", borderBottom:`1px solid ${BORDER}`, paddingBottom:0 }}>
             <div style={{ fontSize:15, fontWeight:800, color:TEXT_DARK, fontFamily:"'Playfair Display',serif", marginBottom:12 }}>
               {t("Agenda","الأجندة")}
             </div>
@@ -646,8 +586,7 @@ const StudentDashboard = () => {
                 </TabsContent>
                 <TabsContent value="results" className="mt-0">
                   {recentResults.length===0 ? (
-                    <p style={{ textAlign:"center", padding:"20px 0", fontSize:13, color:TEXT_LIGHT }}>{t("No results yet","لا توجد نتائج بعد")}</p>
-                  ) : recentResults.map(attempt=>(
+                    <p style={{ textAlign:"center", padding:"20px 0", fontSize:13, color:TEXT_LIGHT }}>{t("No results yet","لا توجد نتائج بعد")}</p>                  ) : recentResults.map(attempt=>(
                     <div key={attempt.id} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 12px", borderRadius:10, marginBottom:6, background:"#f8fafb", border:`1px solid ${BORDER}` }}>
                       <div>
                         <div style={{ fontSize:13, fontWeight:700, color:TEXT_DARK }} dir="auto">{language==="ar"?attempt.exams?.title_ar||attempt.exams?.title:attempt.exams?.title}</div>
