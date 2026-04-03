@@ -183,7 +183,7 @@ export default function HifdhDashboard({ userId, studentName, onNavigate, active
   return (
     <div className="min-h-screen bg-[#faf6ee] pb-20">
       
-      {/* ── Dashboard Content ────────────────────────────────────────────── */}
+      {/* ── Dashboard Content (Nav Bar Removed) ─────────────────────────── */}
       <div className="space-y-4 p-4 md:p-6 max-w-6xl mx-auto">
         
         {overdueCount > 0 && (
@@ -323,4 +323,362 @@ export default function HifdhDashboard({ userId, studentName, onNavigate, active
                     <div className="flex-1 min-w-0">
                       <div className={cn(
                         "font-bold text-sm",
-                        task.completed ? "text-[#2
+                        task.completed ? "text-[#276749] line-through" : "text-[#1a3d24]"
+                      )}>
+                        {task.task_type === "memorize" ? "📖 Memorize" : "🔄 Revise"} · {task.surah_name}
+                      </div>
+                      <div className="text-xs text-[#7a9e88] font-medium">{task.verses_count} verses</div>
+                    </div>
+                    <Badge 
+                      className={cn(
+                        "text-xs font-bold px-3 py-1",
+                        task.completed 
+                          ? "bg-gradient-to-r from-[#276749] to-[#1a3d24] text-white" 
+                          : "bg-[#f0f4f0] text-[#7a9e88]"
+                      )}
+                    >
+                      {task.completed ? "Done" : "Pending"}
+                    </Badge>
+                  </div>
+                ))}
+              </div>            )}
+
+            {tasks.length > 0 && (
+              <Button 
+                onClick={() => setShowAddTask(true)}
+                variant="outline"
+                className="w-full border-2 border-dashed border-[#c9a84c] text-[#b7791f] hover:bg-[#c9a84c]/10 font-semibold h-11"
+              >
+                <Plus className="w-4 h-4 mr-2" />
+                Add New Task
+              </Button>
+            )}
+          </div>
+        </Card>
+
+        <Card className="overflow-hidden border-2 border-[#e2e8f0] shadow-lg">
+          <div className="p-4 md:p-5">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#4299e1] to-[#2b6cb0] flex items-center justify-center">
+                  <BarChart3 className="w-5 h-5 text-white" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-lg text-[#1a3d24]">Weekly Activity</h3>
+                  <p className="text-sm text-[#7a9e88]">النشاط الأسبوعي</p>
+                </div>
+              </div>
+            </div>
+            
+            <div className="flex items-end justify-between gap-2 h-24">
+              {weeklyData.map((day, index) => {
+                const maxCount = Math.max(...weeklyData.map(d => d.count), 1);
+                const height = (day.count / maxCount) * 100;
+                const isToday = index === 6;
+                return (
+                  <div key={index} className="flex-1 flex flex-col items-center gap-2">
+                    <div className="w-full relative">
+                      <div 
+                        className={cn(
+                          "w-full rounded-t-lg transition-all duration-500",
+                          isToday 
+                            ? "bg-gradient-to-t from-[#1a3d24] to-[#276749]" 
+                            : "bg-gradient-to-t from-[#c9a84c]/40 to-[#b7791f]/40"
+                        )}
+                        style={{ height: `${Math.max(height, day.count > 0 ? 20 : 5)}%` }}
+                      />
+                    </div>
+                    <span className={cn(
+                      "text-xs font-bold",
+                      isToday ? "text-[#1a3d24]" : "text-[#a0aec0]"                    )}>
+                      {day.day}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </Card>
+
+        {currentSurah && (
+          <Card className="overflow-hidden border-2 border-[#e2e8f0] shadow-lg">
+            <div className="p-4 md:p-5">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#c9a84c] to-[#b7791f] flex items-center justify-center">
+                    <BookMarked className="w-5 h-5 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-lg text-[#1a3d24]">Current Progress</h3>
+                    <p className="text-sm text-[#7a9e88]">التقدم الحالي</p>
+                  </div>
+                </div>
+                <Button 
+                  variant="ghost" 
+                  size="sm"
+                  onClick={() => onNavigate("recitation")}
+                  className="text-[#c9a84c] hover:text-[#b7791f] hover:bg-[#c9a84c]/10 font-semibold"
+                >
+                  View All <ChevronRight className="w-4 h-4 ml-1" />
+                </Button>
+              </div>
+
+              <div className="bg-gradient-to-r from-[#1a3d24]/5 to-[#c9a84c]/5 rounded-xl p-4 border border-[#e2e8f0]">
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <h4 className="font-bold text-[#1a3d24] text-lg">Juz {currentJuz}</h4>
+                    <p className="text-sm text-[#7a9e88]">Surah {currentSurah.surah_name}</p>
+                  </div>
+                  <Trophy className="w-8 h-8 text-[#c9a84c]" />
+                </div>
+                <Progress 
+                  value={(currentSurah.verses_memorized || 0) / (currentSurah.total_verses || 1) * 100} 
+                  className="h-3 bg-white"
+                />
+                <div className="flex justify-between mt-2 text-sm">
+                  <span className="text-[#7a9e88] font-medium">
+                    {currentSurah.verses_memorized || 0} verses memorized
+                  </span>
+                  <span className="text-[#1a3d24] font-bold">                    {Math.round((currentSurah.verses_memorized || 0) / (currentSurah.total_verses || 1) * 100)}%
+                  </span>
+                </div>
+              </div>
+            </div>
+          </Card>
+        )}
+
+        {progress.length > 0 && (
+          <Card className="overflow-hidden border-2 border-[#e2e8f0] shadow-lg">
+            <div className="p-4 md:p-5">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#e74c3c] to-[#c0392b] flex items-center justify-center">
+                    <RotateCcw className="w-5 h-5 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-lg text-[#1a3d24]">Urgent Revisions</h3>
+                    <p className="text-sm text-[#7a9e88]">المراجعات العاجلة</p>
+                  </div>
+                </div>
+                <Button 
+                  variant="ghost" 
+                  size="sm"
+                  onClick={() => onNavigate("test")}
+                  className="text-[#c9a84c] hover:text-[#b7791f] hover:bg-[#c9a84c]/10 font-semibold"
+                >
+                  View All <ChevronRight className="w-4 h-4 ml-1" />
+                </Button>
+              </div>
+
+              <div className="space-y-2">
+                {progress
+                  .filter(p => daysSince(p.last_reviewed) < 10)
+                  .slice(0, 3)
+                  .map((item, index) => {
+                    const days = daysSince(item.last_reviewed);
+                    const isUrgent = days >= 5;
+                    return (
+                      <div
+                        key={index}
+                        onClick={() => onNavigate("test")}
+                        className={cn(
+                          "flex items-center gap-3 p-3 rounded-xl border-2 cursor-pointer transition-all hover:shadow-md",
+                          isUrgent 
+                            ? "bg-gradient-to-r from-amber-50 to-amber-100 border-amber-300" 
+                            : "bg-gradient-to-r from-emerald-50 to-emerald-100 border-emerald-300"
+                        )}
+                      >
+                        <div className={cn(                          "w-3 h-3 rounded-full flex-shrink-0",
+                          isUrgent ? "bg-amber-600" : "bg-emerald-600"
+                        )} />
+                        <div className="flex-1 min-w-0">
+                          <h4 className="font-bold text-sm text-[#1a3d24] truncate">{item.surah_name}</h4>
+                          <p className="text-xs text-[#7a9e88] font-medium">
+                            {days === 0 ? "Today" : `${days}d ago`} · Best: <span className="font-bold text-[#b7791f]">{item.best_accuracy}%</span>
+                          </p>
+                        </div>
+                        <Badge 
+                          className={cn(
+                            "text-xs font-bold px-3 py-1",
+                            isUrgent 
+                              ? "bg-amber-500 text-white" 
+                              : "bg-emerald-600 text-white"
+                          )}
+                        >
+                          {isUrgent ? "Soon" : "On Track"}
+                        </Badge>
+                      </div>
+                    );
+                  })}
+              </div>
+            </div>
+          </Card>
+        )}
+
+        {sessions.length > 0 && (
+          <Card className="overflow-hidden border-2 border-[#e2e8f0] shadow-lg">
+            <div className="p-4 md:p-5">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#2b6cb0] to-[#4299e1] flex items-center justify-center">
+                    <Headphones className="w-5 h-5 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-lg text-[#1a3d24]">Recent Sessions</h3>
+                    <p className="text-sm text-[#7a9e88]">الجلسات الأخيرة</p>
+                  </div>
+                </div>
+                <Button 
+                  variant="ghost" 
+                  size="sm"
+                  onClick={() => onNavigate("recitation")}
+                  className="text-[#c9a84c] hover:text-[#b7791f] hover:bg-[#c9a84c]/10 font-semibold"
+                >
+                  View History <ChevronRight className="w-4 h-4 ml-1" />
+                </Button>
+              </div>
+              <div className="space-y-2">
+                {sessions.slice(0, 3).map((session, index) => (
+                  <div
+                    key={index}
+                    onClick={() => onNavigate("recitation")}
+                    className="flex items-center gap-3 p-3 rounded-xl hover:bg-gradient-to-r hover:from-[#1a3d24]/5 hover:to-[#c9a84c]/5 cursor-pointer transition-all border border-transparent hover:border-[#e2e8f0]"
+                  >
+                    <div className={cn(
+                      "w-12 h-12 rounded-xl flex items-center justify-center font-bold text-sm flex-shrink-0 border-2 shadow-md",
+                      session.accuracy_score >= 80 
+                        ? "bg-gradient-to-br from-[#276749] to-[#1a3d24] text-white border-[#276749]" :
+                      session.accuracy_score >= 60 
+                        ? "bg-gradient-to-br from-[#b7791f] to-[#d69e2e] text-white border-[#b7791f]" :
+                        "bg-gradient-to-br from-[#c0392b] to-[#e74c3c] text-white border-[#c0392b]"
+                    )}>
+                      {session.accuracy_score}%
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h4 className="font-bold text-sm text-[#1a3d24] truncate">{session.surah_name}</h4>
+                      <p className="text-xs text-[#7a9e88] font-medium">
+                        Ayah {session.ayah_start} · {Math.round((session.duration || 0) / 60)}m
+                      </p>
+                    </div>
+                    {session.accuracy_score >= 80 && <Star className="w-4 h-4 text-[#c9a84c] fill-[#c9a84c]" />}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </Card>
+        )}
+
+        <Dialog open={showAddTask} onOpenChange={setShowAddTask}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle className="text-[#1a3d24] text-xl font-bold flex items-center gap-2">
+                <Plus className="w-5 h-5 text-[#c9a84c]" />
+                Add New Task
+                <span className="text-[#7a9e88] text-sm font-normal">إضافة مهمة جديدة</span>
+              </DialogTitle>
+            </DialogHeader>
+            
+            <div className="space-y-4 pt-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-bold text-[#1a3d24] mb-1.5 block">Type</label>
+                  <select
+                    value={taskType}
+                    onChange={(e) => setTaskType(e.target.value as any)}
+                    className="w-full rounded-lg border-2 border-[#e2e8f0] bg-white px-3 py-2.5 text-sm font-medium text-[#1a3d24] focus:border-[#c9a84c] focus:outline-none"
+                  >                    <option value="revise">🔄 Revise</option>
+                    <option value="memorize">📖 Memorize</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-[#1a3d24] mb-1.5 block">Verses per day</label>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={50}
+                    value={taskVerses}
+                    onChange={(e) => setTaskVerses(e.target.value)}
+                    className="h-10 border-2 border-[#e2e8f0] text-sm font-semibold text-[#1a3d24] focus:border-[#c9a84c]"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-[#1a3d24] mb-1.5 block">Surah name</label>
+                <Input
+                  value={taskSurah}
+                  onChange={(e) => setTaskSurah(e.target.value)}
+                  placeholder="e.g. Al-Baqarah"
+                  className="h-11 border-2 border-[#e2e8f0] text-sm font-medium text-[#1a3d24] placeholder:text-[#a0aec0] focus:border-[#c9a84c]"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-[#1a3d24] mb-2 block">Plan Duration</label>
+                <div className="grid grid-cols-4 gap-2">
+                  {[
+                    ["daily", "Daily", "يومي"],
+                    ["weekly", "Weekly", "أسبوعي"],
+                    ["biweekly", "2 Weeks", "أسبوعان"],
+                    ["monthly", "Monthly", "شهري"]
+                  ].map(([key, en, ar]) => (
+                    <button
+                      key={key}
+                      onClick={() => setTaskPlan(key as "daily" | "weekly" | "biweekly" | "monthly")}
+                      className={cn(
+                        "py-2.5 px-2 rounded-xl text-center transition-all text-xs font-bold",
+                        taskPlan === key
+                          ? "bg-gradient-to-br from-[#1a3d24] to-[#276749] text-white shadow-lg scale-105"
+                          : "bg-[#f8fafb] text-[#7a9e88] hover:bg-[#e2e8f0]"
+                      )}
+                    >
+                      <div>{en}</div>
+                      <div className="text-[10px] opacity-80 mt-0.5">{ar}</div>
+                    </button>
+                  ))}                </div>
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <Button 
+                  variant="outline" 
+                  onClick={() => setShowAddTask(false)}
+                  className="flex-1 h-11 border-2 font-semibold"
+                >
+                  Cancel
+                </Button>
+                <Button 
+                  onClick={addTask}
+                  disabled={savingTask || !taskSurah.trim()}
+                  className="flex-1 h-11 bg-gradient-to-r from-[#1a3d24] to-[#276749] hover:from-[#276749] hover:to-[#1a3d24] text-white font-bold shadow-lg disabled:opacity-50"
+                >
+                  {savingTask ? "Saving..." : "Add Task"}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+      </div>
+    </div>
+  );
+}
+
+function StatCard({ icon, value, label, labelAr, gradient, onClick }: any) {
+  return (
+    <Card 
+      onClick={onClick}
+      className={cn(
+        "p-4 cursor-pointer transition-all hover:shadow-xl hover:-translate-y-1 active:scale-95 overflow-hidden bg-gradient-to-br",
+        gradient
+      )}
+    >
+      <div className="space-y-2 text-center">
+        <div className="w-10 h-10 rounded-xl mx-auto flex items-center justify-center bg-white/20 backdrop-blur-sm">
+          {icon}
+        </div>
+        <div className="text-2xl md:text-3xl font-black text-white">{value}</div>
+        <div className="font-bold text-xs text-white/90 leading-tight">{label}</div>
+        <div className="text-[10px] text-white/70">{labelAr}</div>
+      </div>
+    </Card>
+  );
+}
