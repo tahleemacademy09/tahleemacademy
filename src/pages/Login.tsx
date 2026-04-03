@@ -44,10 +44,9 @@ const Login = () => {
     const isAdmin   = roles.includes("admin");
     const isTeacher = roles.includes("teacher");
     if (isAdmin)   navigate("/admin",              { replace: true });
-    else if (isTeacher) navigate("/teacher/dashboard", { replace: true });
+    else if (isTeacher) navigate("/teacher", { replace: true }); // ✅ FIXED
     else           navigate("/student",            { replace: true });
   }, [user, roles, authLoading, navigate]);
-
   const validateEmail = (val: string) => {
     if (!val) { setEmailValid(null); return; }
     setEmailValid(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val));
@@ -75,10 +74,10 @@ const Login = () => {
           variant: "destructive",
         });
       } else {
-        const { data: roles } = await supabase.from("user_roles").select("role").eq("user_id", data.user?.id);
+        const {  roles } = await supabase.from("user_roles").select("role").eq("user_id", data.user?.id);
         const isAdmin   = roles?.some((r: any) => r.role === "admin");
         const isTeacher = roles?.some((r: any) => r.role === "teacher");
-        navigate(isAdmin ? "/admin" : isTeacher ? "/teacher/dashboard" : "/student");
+        navigate(isAdmin ? "/admin" : isTeacher ? "/teacher" : "/student"); // ✅ FIXED
       }
     } catch (err: any) {
       toast({
@@ -98,7 +97,6 @@ const Login = () => {
     });
     if (error) toast({ title: t("Error", "خطأ"), description: error.message, variant: "destructive" });
   };
-
   const handleForgotPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setResetLoading(true);
@@ -147,8 +145,7 @@ const Login = () => {
         .gold-input:focus {
           border-color: ${GOLD};
           background: #fff;
-          box-shadow: 0 0 0 4px rgba(201,151,58,.12);
-        }
+          box-shadow: 0 0 0 4px rgba(201,151,58,.12);        }
         .gold-input::placeholder { color: #B0A898; }
 
         .sign-btn {
@@ -193,12 +190,11 @@ const Login = () => {
         .remember-check:checked {
           background: ${GOLD};
           border-color: ${GOLD};
-          background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 12 12' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M2 6l3 3 5-5' stroke='white' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+          background-image: url("image/svg+xml,%3Csvg viewBox='0 0 12 12' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M2 6l3 3 5-5' stroke='white' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
           background-repeat: no-repeat; background-position:center; background-size:12px;
         }
 
-        .geo-bg {
-          position:absolute; inset:0; opacity:.045;
+        .geo-bg {          position:absolute; inset:0; opacity:.045;
           background-image: url("data:image/svg+xml,%3Csvg width='80' height='80' viewBox='0 0 80 80' xmlns='http://www.w3.org/2000/svg'%3E%3Cpolygon points='40,4 76,22 76,58 40,76 4,58 4,22' fill='none' stroke='%23C9973A' stroke-width='1.2'/%3E%3Cpolygon points='40,14 66,28 66,52 40,66 14,52 14,28' fill='none' stroke='%23C9973A' stroke-width='.6'/%3E%3Ccircle cx='40' cy='40' r='12' fill='none' stroke='%23C9973A' stroke-width='.6'/%3E%3C/svg%3E");
         }
       `}</style>
@@ -247,8 +243,7 @@ const Login = () => {
               </motion.div>
 
               {/* Bismillah */}
-              <div style={{ fontFamily:"'Amiri',serif", fontSize:22, color:"rgba(232,192,112,.85)", marginBottom:24, direction:"rtl", letterSpacing:1, lineHeight:1.8 }}>
-                بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ
+              <div style={{ fontFamily:"'Amiri',serif", fontSize:22, color:"rgba(232,192,112,.85)", marginBottom:24, direction:"rtl", letterSpacing:1, lineHeight:1.8 }}>                بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ
               </div>
 
               {/* Name */}
@@ -297,8 +292,7 @@ const Login = () => {
               initial={{ opacity:0, y:20 }}
               animate={{ opacity:1, y:0 }}
               transition={{ duration:.55, delay:.15 }}
-              style={{ width:"100%", maxWidth:420 }}
-            >
+              style={{ width:"100%", maxWidth:420 }}            >
               {/* ── MOBILE TOP BRAND ── */}
               {/* Mobile brand hidden — PublicNav already shows the logo + hamburger */}
               <div style={{ display:"none" }} className="mobile-brand">
@@ -347,8 +341,7 @@ const Login = () => {
                 <button
                   onClick={() => setLanguage(language === "en" ? "ar" : "en")}
                   style={{ display:"flex", alignItems:"center", gap:6, background:"rgba(201,151,58,.08)", border:"1px solid rgba(201,151,58,.25)", borderRadius:20, padding:"5px 12px", fontSize:12, color:GOLD, fontWeight:600, cursor:"pointer", fontFamily:"'DM Sans',sans-serif" }}
-                >
-                  <Globe size={13} />
+                >                  <Globe size={13} />
                   {language === "en" ? "العربية" : "English"}
                 </button>
               </div>
@@ -397,8 +390,7 @@ const Login = () => {
                     style={{ position:"absolute", right:14, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", cursor:"pointer", color:"#B0A898", display:"flex", alignItems:"center" }}
                   >
                     {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-                  </button>
-                </div>
+                  </button>                </div>
 
                 {/* Remember + Forgot */}
                 <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
@@ -447,8 +439,7 @@ const Login = () => {
                 {t("Continue with Google", "المتابعة مع جوجل")}
               </button>
 
-              {/* ── REGISTER LINK ── */}
-              <p style={{ textAlign:"center", marginTop:24, fontSize:13.5, color:"#9a8c7c" }}>
+              {/* ── REGISTER LINK ── */}              <p style={{ textAlign:"center", marginTop:24, fontSize:13.5, color:"#9a8c7c" }}>
                 {t("Don't have an account?", "ليس لديك حساب؟")}{" "}
                 <Link to="/register" style={{ color:GOLD, fontWeight:700, textDecoration:"none" }}>
                   {t("Register now", "سجّل الآن")} →
@@ -497,8 +488,7 @@ const Login = () => {
               <div style={{ position:"relative" }}>
                 <Mail size={15} style={{ position:"absolute", left:14, top:"50%", transform:"translateY(-50%)", color:"#B0A898" }} />
                 <input
-                  className="gold-input"
-                  type="email"
+                  className="gold-input"                  type="email"
                   placeholder={t("Your email address", "بريدك الإلكتروني")}
                   value={resetEmail}
                   onChange={e => setResetEmail(e.target.value)}
@@ -520,4 +510,3 @@ const Login = () => {
 };
 
 export default Login;
-
