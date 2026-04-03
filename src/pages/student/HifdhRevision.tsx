@@ -92,22 +92,26 @@ export default function HifdhRevision() {
       if (!data?.user) return;
       setUserId(data.user.id);
       supabase.from("profiles").select("full_name").eq("id", data.user.id).single()
-        .then(({ data: p }) => { if (p?.full_name) setStudentName(p.full_name); });
+        .then(({  p }) => { if (p?.full_name) setStudentName(p.full_name); });
     });
   }, []);
 
-  // ── Fetch Page (ASYNC KEYWORD VERIFIED) ─────────────────────────────────  const fetchPage = useCallback(async (page: number): Promise<void> => {
+  // ── Fetch Page (Promise Chaining - NO ASYNC/AWAIT) ──────────────────────  const fetchPage = useCallback((page: number) => {
     setLoading(true);
     setPageData(null);
     setIsTransitioning(true);
-    try {
-      const res = await fetch(`https://api.alquran.cloud/v1/page/${page}/ar.uthmani`);
-      const json = await res.json();
-      if (json.code === 200) setPageData(json.data);
-    } catch (error) {
-      console.error("Fetch error:", error);
-    }
-    setLoading(false);
+    
+    fetch(`https://api.alquran.cloud/v1/page/${page}/ar.uthmani`)
+      .then((res) => res.json())
+      .then((json) => {
+        if (json.code === 200) setPageData(json.data);
+      })
+      .catch((error) => {
+        console.error("Fetch error:", error);
+      })
+      .finally(() => {
+        setLoading(false);
+      });
   }, []);
 
   useEffect(() => { fetchPage(currentPage); }, [currentPage, fetchPage]);
@@ -141,11 +145,11 @@ export default function HifdhRevision() {
           console.warn("⚠️ Play blocked:", err.name);
           setIsPlaying(false);
         });
-    }
-  }, [reciter]);
+    }  }, [reciter]);
 
   const togglePlay = () => {
-    if (!audioRef.current) return;    if (isPlaying) {
+    if (!audioRef.current) return;
+    if (isPlaying) {
       audioRef.current.pause();
       setIsPlaying(false);
     } else {
@@ -190,11 +194,11 @@ export default function HifdhRevision() {
 
   const handleTouchEnd = (e: React.TouchEvent) => {
     const diffX = touchStartX.current - e.changedTouches[0].clientX;
-    const diffY = touchStartY.current - e.changedTouches[0].clientY;
-    
+    const diffY = touchStartY.current - e.changedTouches[0].clientY;    
     if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 50) {
       if (diffX > 0) {
-        setCurrentPage(p => Math.min(604, p + 1));      } else {
+        setCurrentPage(p => Math.min(604, p + 1));
+      } else {
         setCurrentPage(p => Math.max(1, p - 1));
       }
     }
@@ -239,11 +243,11 @@ export default function HifdhRevision() {
               );
             })}
           </div>
-        </nav>
-      )}
+        </nav>      )}
 
       {/* ── CONTENT AREA ────────────────────────────────────────────────── */}
-      <div className="flex-1 overflow-hidden relative">        
+      <div className="flex-1 overflow-hidden relative">
+        
         {activeTab === "overview" && (
           <div className="h-full overflow-y-auto">
             <HifdhDashboard userId={userId} studentName={studentName} onNavigate={setActiveTab} activeTab={activeTab} />
@@ -288,11 +292,11 @@ export default function HifdhRevision() {
                   </button>
                   <button onClick={(e) => { e.stopPropagation(); togglePlay(); }} 
                     className="w-9 h-9 rounded-full bg-[#0f2d1f] flex items-center justify-center active:scale-95 transition shadow-md">
-                    {isPlaying ? <Pause size={16} fill="#fff" /> : <Play size={16} fill="#fff" className="ml-0.5" />}
-                  </button>
+                    {isPlaying ? <Pause size={16} fill="#fff" /> : <Play size={16} fill="#fff" className="ml-0.5" />}                  </button>
                   <button onClick={(e) => { e.stopPropagation(); setCurrentPage(p => Math.min(604, p + 1)); }} 
                     className="p-1.5 rounded-full bg-gray-100 active:scale-95 transition">
-                    <SkipForward size={16} className="text-[#0f2d1f]" />                  </button>
+                    <SkipForward size={16} className="text-[#0f2d1f]" />
+                  </button>
                 </div>
 
                 <div className="flex items-center gap-1.5">
