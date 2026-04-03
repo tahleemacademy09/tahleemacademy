@@ -1,3 +1,4 @@
+import { useTasjeel } from "@/hooks/useTasjeel";
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import QuranPhrasesWidget from "@/components/dashboard/QuranPhrasesWidget";
@@ -70,7 +71,8 @@ const BORDER      = "rgba(15,45,31,0.1)";
 
 const StudentDashboard = () => {
   const { t, language } = useLanguage();
-  const { user, profile } = useAuth();
+  const { user, profile, refreshProfile } = useAuth();
+  const { currentStep } = useTasjeel();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -175,6 +177,8 @@ const StudentDashboard = () => {
     if (!user) return;
     const fetchData = async () => {
       setFetchError(null);
+      // Refresh profile so course_level reflects any admin assignment since last login
+      await refreshProfile().catch(() => {});
       try {
         const [enrollRes, gradedAttemptsRes, pendingAttemptsRes, notifsRes, assignmentsRes,
           recentRes, allAttemptsRes, subjectsRes, calendarExamsRes, subAssignmentsRes] = await Promise.all([
@@ -282,7 +286,10 @@ const StudentDashboard = () => {
       <div style={{ maxWidth: 720, margin: "0 auto", padding: "20px 16px 40px", display: "flex", flexDirection: "column", gap: 18 }}>
 
         {/* ── Awaiting Level Assignment Banner ── */}
-        {(!(profile as any)?.course_level || (profile as any)?.course_level === "pending") && (
+        {/* Uses currentStep from tasjeel_progress as single source of truth.
+            profile.course_level alone is stale (AuthContext cache from login).
+            refreshProfile() above ensures it's fresh, but currentStep is definitive. */}
+        {currentStep !== null && currentStep !== "completed" && (
           <div style={{
             background: "linear-gradient(135deg, #0f2d1f, #1a4731)",
             borderRadius: 16, padding: "16px 20px",
