@@ -62,16 +62,20 @@ export default function HifdhRevision() {
   const [fontSize, setFontSize] = useState(28);
   const [isTransitioning, setIsTransitioning] = useState(false);
 
+  // Audio & Page Refs
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const playingRef = useRef(0);
   const pageDataRef = useRef<any>(null);
   const verseRefs = useRef<Record<number, HTMLSpanElement | null>>({});
+  
+  // Swipe Refs
   const touchStartX = useRef(0);
-  const touchStartTime = useRef(0);
+  const touchStartY = useRef(0);
 
   useEffect(() => { pageDataRef.current = pageData; }, [pageData]);
   useEffect(() => () => { audioRef.current?.pause(); }, []);
 
+  // Load user
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
       if (!data?.user) return;
@@ -81,6 +85,7 @@ export default function HifdhRevision() {
     });
   }, []);
 
+  // Header auto-hide (optional)
   const resetTabTimer = useCallback(() => {
     setTabsVisible(true);
     clearTimeout(tabTimerRef.current);
@@ -91,13 +96,13 @@ export default function HifdhRevision() {
     resetTabTimer();
     const events = ["touchstart", "scroll", "mousemove", "keydown", "click"];
     const handler = () => resetTabTimer();
-    events.forEach((e) => window.addEventListener(e, handler, { passive: true }));
-    return () => {
+    events.forEach((e) => window.addEventListener(e, handler, { passive: true }));    return () => {
       events.forEach((e) => window.removeEventListener(e, handler));
       clearTimeout(tabTimerRef.current);
     };
   }, [resetTabTimer]);
-  // ── FIXED AUDIO PLAYBACK ────────────────────────────────────────────────
+
+  // ── FIXED AUDIO PLAYBACK (Reverted to proven pattern) ───────────────────
   const stopAll = useCallback(() => {
     if (audioRef.current) {
       audioRef.current.pause();
@@ -140,21 +145,17 @@ export default function HifdhRevision() {
     const ayah = pd.ayahs.find((a: any) => a.numberInSurah === num);
     if (!ayah) return;
 
-    playingRef.current = num;
-    setPlayingAyah(num);
-    
-    const audio = new Audio();
-    audio.src = audioUrl(ayah.surah.number, num, reciter);
-    audio.preload = "auto";    audioRef.current = audio;
+    playingRef.current = num;    setPlayingAyah(num);
+    setIsPlaying(true);
 
-    // Explicit load + play promise handling
-    audio.load();
-    audio.play()
-      .then(() => setIsPlaying(true))
-      .catch(err => {
-        console.warn("Audio play failed:", err.name, err.message);
-        setIsPlaying(false);
-      });
+    // Simple, proven audio pattern that respects browser autoplay policies
+    const audio = new Audio(audioUrl(ayah.surah.number, num, reciter));
+    audioRef.current = audio;
+    
+    audio.play().catch(err => {
+      console.warn("Audio play interrupted:", err.name);
+      setIsPlaying(false);
+    });
 
     audio.onended = () => {
       const next = num + 1;
@@ -163,11 +164,6 @@ export default function HifdhRevision() {
       } else {
         setIsPlaying(false);
       }
-    };
-
-    audio.onerror = () => {
-      console.error("Audio load failed. Check network or reciter availability.");
-      setIsPlaying(false);
     };
   }, [reciter]);
 
@@ -181,31 +177,24 @@ export default function HifdhRevision() {
     }
   };
 
-  // ── SWIPE FOR PAGE NAVIGATION ───────────────────────────────────────────
+  // ── FIXED SWIPE LOGIC (Horizontal vs Vertical differentiation) ──────────
   const handleTouchStart = (e: React.TouchEvent) => {
     touchStartX.current = e.touches[0].clientX;
-    touchStartTime.current = Date.now();
+    touchStartY.current = e.touches[0].clientY;
   };
 
   const handleTouchEnd = (e: React.TouchEvent) => {
-    const touchEndX = e.changedTouches[0].clientX;
-    const diff = touchStartX.current - touchEndX;
-    const duration = Date.now() - touchStartTime.current;
-
-    // Ignore quick taps (< 150ms) to prevent accidental swipes
-    if (duration < 150) return;
-    if (Math.abs(diff) > 80) { // Swipe threshold
-      if (diff > 0) {
+    const diffX = touchStartX.current - e.changedTouches[0].clientX;
+    const diffY = touchStartY.current - e.changedTouches[0].clientY;
+    
+    // Only trigger page change if horizontal movement is dominant & exceeds threshold
+    if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 50) {
+      if (diffX > 0) {
         // Swipe Left → Next Page
-        if (currentPage < 604) {
-          setCurrentPage(p => p + 1);
-        }
+        setCurrentPage(p => Math.min(604, p + 1));
       } else {
         // Swipe Right → Previous Page
-        if (currentPage > 1) {
-          setCurrentPage(p => p - 1);
-        }
-      }
+        setCurrentPage(p => Math.max(1, p - 1));      }
     }
   };
 
@@ -244,6 +233,7 @@ export default function HifdhRevision() {
           })}
         </div>
       </nav>
+
       {/* ── CONTENT AREA ────────────────────────────────────────────────── */}
       <div className="flex-1 overflow-hidden relative">
         
@@ -253,8 +243,7 @@ export default function HifdhRevision() {
           </div>
         )}
 
-        {activeTab === "recitation" && (
-          <div 
+        {activeTab === "recitation" && (          <div 
             className="h-full flex flex-col"
             onTouchStart={handleTouchStart}
             onTouchEnd={handleTouchEnd}
@@ -292,7 +281,8 @@ export default function HifdhRevision() {
                   </button>
                   <button onClick={(e) => { e.stopPropagation(); togglePlay(); }} 
                     className="w-10 h-10 rounded-full bg-[#0f2d1f] flex items-center justify-center active:scale-95 transition shadow-md">
-                    {isPlaying ? <Pause size={18} fill="#fff" /> : <Play size={18} fill="#fff" className="ml-0.5" />}                  </button>
+                    {isPlaying ? <Pause size={18} fill="#fff" /> : <Play size={18} fill="#fff" className="ml-0.5" />}
+                  </button>
                   <button onClick={(e) => { e.stopPropagation(); setCurrentPage(p => Math.min(604, p + 1)); }} 
                     className="p-2 rounded-full bg-gray-100 active:scale-95 transition">
                     <SkipForward size={18} className="text-[#0f2d1f]" />
@@ -302,8 +292,7 @@ export default function HifdhRevision() {
                 <div className="flex items-center gap-2">
                   <select value={reciter} onChange={(e) => setReciter(e.target.value)}
                     className="text-xs bg-gray-50 border border-gray-200 rounded-lg px-2 py-1.5 outline-none max-w-[100px] truncate" 
-                    onClick={(e) => e.stopPropagation()}>
-                    {RECITERS.map((r) => <option key={r.id} value={r.id}>{r.name.split(" ")[0]}</option>)}
+                    onClick={(e) => e.stopPropagation()}>                    {RECITERS.map((r) => <option key={r.id} value={r.id}>{r.name.split(" ")[0]}</option>)}
                   </select>
                   <button onClick={(e) => { e.stopPropagation(); setFontSize((v) => Math.max(20, v - 2)); }} 
                     className="p-1.5 rounded bg-gray-100 active:scale-95 flex items-center gap-1">
