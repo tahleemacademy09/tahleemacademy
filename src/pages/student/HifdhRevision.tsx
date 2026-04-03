@@ -2,11 +2,12 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import {
   BarChart3, Mic, Brain, Target, FileCheck,
-  Play, Pause, SkipBack, SkipForward, Minus, Plus
+  Play, Pause, SkipBack, SkipForward, Minus, Plus,
+  Maximize2, Minimize2, BookOpen, Flame, Star, ChevronRight,
+  Moon, Award
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-import HifdhDashboard from "@/components/hifdh/HifdhDashboard";
 import HifdhMemorization from "@/components/hifdh/HifdhMemorization";
 import HifdhExercise from "@/components/hifdh/HifdhExercise";
 import HifdhTest from "@/components/hifdh/HifdhTest";
@@ -22,16 +23,16 @@ const TABS: { id: Tab; ar: string; icon: React.ElementType }[] = [
 ];
 
 const RECITERS = [
-  { id: "ar.alafasy",            name: "Mishary Alafasy"   },
-  { id: "ar.abdurrahmaansudais", name: "As-Sudais"         },
-  { id: "ar.husary",             name: "Al-Husary"         },
-  { id: "ar.minshawi",           name: "Al-Minshawi"       },
-  { id: "ar.shaatri",            name: "Ash-Shaatri"       },
-  { id: "ar.abdulsamad",         name: "Abdul Samad"       },
-  { id: "ar.muhammadjibreel",    name: "M. Jibreel"        },
-  { id: "ar.haniarrifai",        name: "Hani Ar-Rifai"     },
-  { id: "ar.maaboramadan",       name: "Al-Muaiqly"        },
-  { id: "ar.abdullahbasfar",     name: "Basfar"            },
+  { id: "ar.alafasy",            name: "Mishary Alafasy"  },
+  { id: "ar.abdurrahmaansudais", name: "As-Sudais"        },
+  { id: "ar.husary",             name: "Al-Husary"        },
+  { id: "ar.minshawi",           name: "Al-Minshawi"      },
+  { id: "ar.shaatri",            name: "Ash-Shaatri"      },
+  { id: "ar.abdulsamad",         name: "Abdul Samad"      },
+  { id: "ar.muhammadjibreel",    name: "M. Jibreel"       },
+  { id: "ar.haniarrifai",        name: "Hani Ar-Rifai"    },
+  { id: "ar.maaboramadan",       name: "Al-Muaiqly"       },
+  { id: "ar.abdullahbasfar",     name: "Basfar"           },
 ];
 
 const GOLD       = "#c9a84c";
@@ -39,33 +40,195 @@ const DARK_GREEN = "#0f2d1f";
 const PARCHMENT  = "#fdf6e3";
 const INK        = "#1c1208";
 
-/* ── helpers ── */
 const toAr = (n: number) =>
   String(n).replace(/[0-9]/g, (d) => "٠١٢٣٤٥٦٧٨٩"[+d]);
 
-/**
- * FIX — use ABSOLUTE ayah number (ayah.number, range 1-6236).
- * islamic.network CDN:
- *   https://cdn.islamic.network/quran/audio/128/{edition}/{absoluteNum}.mp3
- *
- * The old code used surah+ayah padded ("001001.mp3") which is the
- * everyayah.com format and does NOT work on this CDN.
- */
+/* absolute ayah number → islamic.network CDN */
 const buildAudioUrl = (absoluteNum: number, reciter: string) =>
   `https://cdn.islamic.network/quran/audio/128/${reciter}/${absoluteNum}.mp3`;
 
-/* ── group page ayahs by surah (a page can cross surah boundaries) ── */
 function groupBySurah(ayahs: any[]) {
   const groups: { surah: any; ayahs: any[] }[] = [];
   for (const ayah of ayahs) {
     const last = groups[groups.length - 1];
-    if (!last || last.surah.number !== ayah.surah.number) {
+    if (!last || last.surah.number !== ayah.surah.number)
       groups.push({ surah: ayah.surah, ayahs: [ayah] });
-    } else {
-      last.ayahs.push(ayah);
-    }
+    else last.ayahs.push(ayah);
   }
   return groups;
+}
+
+/* ─── Beautiful inline Dashboard ─────────────────────────────────────── */
+function HifdhDashboardInline({
+  userId,
+  studentName,
+  currentPage,
+  onNavigate,
+}: {
+  userId: string | null;
+  studentName: string;
+  currentPage: number;
+  onNavigate: (tab: Tab) => void;
+}) {
+  const progress = Math.round((currentPage / 604) * 100);
+  const juz = Math.ceil(currentPage / 20.13);
+
+  const stats = [
+    { icon: BookOpen, label: "Current Page", value: String(currentPage), sub: `of 604`, color: "#2196a6" },
+    { icon: Moon,     label: "Juz",           value: toAr(Math.min(juz, 30)), sub: "الجزء",   color: GOLD    },
+    { icon: Flame,    label: "Progress",      value: `${progress}%`,          sub: "complete", color: "#e05a1c" },
+  ];
+
+  const actions = [
+    { icon: Mic,       label: "Continue Recitation", tab: "recitation" as Tab,   desc: `Resume from page ${currentPage}` },
+    { icon: Brain,     label: "Memorize",             tab: "memorization" as Tab, desc: "Strengthen your hifdh"           },
+    { icon: Target,    label: "Practice Exercise",    tab: "exercise" as Tab,     desc: "Test what you know"              },
+    { icon: FileCheck, label: "Take a Test",          tab: "test" as Tab,         desc: "Formal assessment"               },
+  ];
+
+  return (
+    <div className="h-full overflow-y-auto" style={{ background: "linear-gradient(160deg,#0a1f13 0%,#0d1a0f 60%,#111008 100%)" }}>
+      {/* Islamic geometric pattern overlay */}
+      <div style={{
+        position: "fixed", inset: 0, pointerEvents: "none", zIndex: 0,
+        backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23c9a84c' fill-opacity='0.04'%3E%3Cpath d='M30 0l8.66 5v10L30 20l-8.66-5V5L30 0zm0 40l8.66 5v10L30 60l-8.66-5V45L30 40zm20-20l8.66 5v10L50 40l-8.66-5V25L50 20zM10 20l8.66 5v10L10 40l-8.66-5V25L10 20z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`,
+      }} />
+
+      <div className="relative z-10 px-4 pt-5 pb-24 max-w-md mx-auto">
+
+        {/* ── Greeting ── */}
+        <div className="mb-6">
+          <p style={{ fontFamily:"'Amiri',serif", color:GOLD, fontSize:"0.78em", direction:"rtl", marginBottom:2, opacity:0.85 }}>
+            السلام عليكم
+          </p>
+          <h1 className="text-white text-xl font-bold tracking-tight leading-tight">
+            {studentName.split(" ")[0]}
+          </h1>
+          <p style={{ color:"#5a8a6a", fontSize:"0.78em", marginTop:2 }}>
+            May Allah bless your hifdh journey
+          </p>
+        </div>
+
+        {/* ── Progress banner ── */}
+        <div
+          className="rounded-2xl p-4 mb-5 relative overflow-hidden"
+          style={{ background: `linear-gradient(135deg,${DARK_GREEN},#1a4a2e)`, border:`1px solid ${GOLD}33` }}
+        >
+          {/* Decorative arc */}
+          <div style={{
+            position:"absolute", top:-40, right:-40,
+            width:120, height:120, borderRadius:"50%",
+            border:`2px solid ${GOLD}22`, pointerEvents:"none"
+          }} />
+          <div style={{
+            position:"absolute", top:-20, right:-20,
+            width:80, height:80, borderRadius:"50%",
+            border:`1px solid ${GOLD}15`, pointerEvents:"none"
+          }} />
+
+          <div className="flex items-end justify-between mb-3">
+            <div>
+              <p style={{ color:`${GOLD}cc`, fontSize:"0.7em", fontWeight:600, letterSpacing:"0.08em", textTransform:"uppercase" }}>
+                Quran Journey
+              </p>
+              <p className="text-white text-2xl font-bold mt-0.5">
+                {progress}<span style={{ fontSize:"0.55em", color:"#9dc9a8", marginLeft:2 }}>%</span>
+              </p>
+            </div>
+            <div style={{ fontFamily:"'Amiri Quran','Amiri',serif", color:GOLD, fontSize:"1.5em", direction:"rtl" }}>
+              ﷽
+            </div>
+          </div>
+
+          {/* Progress bar */}
+          <div className="rounded-full overflow-hidden" style={{ height:6, background:"#0a1f13" }}>
+            <div
+              className="h-full rounded-full"
+              style={{
+                width:`${progress}%`,
+                background:`linear-gradient(to right,${GOLD}88,${GOLD})`,
+                transition:"width 0.6s ease",
+                minWidth: progress > 0 ? 6 : 0
+              }}
+            />
+          </div>
+          <p style={{ color:"#5a8a6a", fontSize:"0.68em", marginTop:6 }}>
+            Page {currentPage} of 604 · Juz {Math.min(juz, 30)} of 30
+          </p>
+        </div>
+
+        {/* ── Stats row ── */}
+        <div className="grid grid-cols-3 gap-2.5 mb-5">
+          {stats.map(({ icon: Icon, label, value, sub, color }) => (
+            <div
+              key={label}
+              className="rounded-xl p-3 flex flex-col items-center gap-1.5 text-center"
+              style={{ background:"#0f2010cc", border:"1px solid #1e4a28" }}
+            >
+              <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: color + "22" }}>
+                <Icon size={15} color={color} strokeWidth={2} />
+              </div>
+              <p className="font-bold text-white text-base leading-none" style={{ fontFamily:"'Amiri',serif" }}>{value}</p>
+              <p style={{ color:"#5a8a6a", fontSize:"0.62em", lineHeight:1.2 }}>{sub}</p>
+            </div>
+          ))}
+        </div>
+
+        {/* ── Section label ── */}
+        <div className="flex items-center gap-2 mb-3">
+          <div className="flex-1 h-px" style={{ background:`linear-gradient(to right,${GOLD}44,transparent)` }} />
+          <span style={{ color:GOLD, fontSize:"0.68em", fontWeight:700, letterSpacing:"0.1em", textTransform:"uppercase" }}>
+            Quick Actions
+          </span>
+          <div className="flex-1 h-px" style={{ background:`linear-gradient(to left,${GOLD}44,transparent)` }} />
+        </div>
+
+        {/* ── Action cards ── */}
+        <div className="flex flex-col gap-2.5">
+          {actions.map(({ icon: Icon, label, tab, desc }, i) => (
+            <button
+              key={tab}
+              onClick={() => onNavigate(tab)}
+              className="flex items-center gap-3.5 rounded-xl px-4 py-3.5 text-left w-full transition-all active:scale-[0.98]"
+              style={{
+                background: i === 0
+                  ? `linear-gradient(135deg,${DARK_GREEN},#1a4a2e)`
+                  : "#0f201088",
+                border: `1px solid ${i === 0 ? GOLD + "55" : "#1e4a2844"}`,
+              }}
+            >
+              <div
+                className="w-9 h-9 rounded-full flex-none flex items-center justify-center"
+                style={{ background: i === 0 ? GOLD + "22" : "#1e4a2888" }}
+              >
+                <Icon size={17} color={i === 0 ? GOLD : "#5a8a6a"} strokeWidth={2} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-semibold text-sm leading-tight" style={{ color: i === 0 ? "white" : "#c8d8cc" }}>
+                  {label}
+                </p>
+                <p style={{ color:"#4a7a5a", fontSize:"0.68em", marginTop:1 }}>{desc}</p>
+              </div>
+              <ChevronRight size={14} color={i === 0 ? GOLD : "#2a5a3a"} />
+            </button>
+          ))}
+        </div>
+
+        {/* ── Motivational footer ── */}
+        <div
+          className="mt-5 rounded-xl px-4 py-3 text-center"
+          style={{ background:"#0a150d", border:`1px solid ${GOLD}22` }}
+        >
+          <p style={{ fontFamily:"'Amiri',serif", color:GOLD, fontSize:"1.1em", direction:"rtl", lineHeight:2 }}>
+            ﴿ إِنَّا نَحۡنُ نَزَّلۡنَا ٱلذِّكۡرَ وَإِنَّا لَهُۥ لَحَٰفِظُونَ ﴾
+          </p>
+          <p style={{ color:"#3a6a4a", fontSize:"0.65em", marginTop:4 }}>
+            Al-Hijr 15:9 · Indeed, it is We who sent down the reminder, and indeed, We will be its guardian.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -76,19 +239,21 @@ export default function HifdhRevision() {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageData,    setPageData]    = useState<any>(null);
   const [loading,     setLoading]     = useState(false);
-  const [playingAyah, setPlayingAyah] = useState(0);   // absolute ayah number
+  const [playingAyah, setPlayingAyah] = useState(0);
   const [reciter,     setReciter]     = useState("ar.alafasy");
   const [isPlaying,   setIsPlaying]   = useState(false);
   const [fontSize,    setFontSize]    = useState(26);
-  const [slideDir,    setSlideDir]    = useState<"ltr" | "rtl" | null>(null);
+  const [flipDir,     setFlipDir]     = useState<"next" | "prev" | null>(null);
+  const [fullscreen,  setFullscreen]  = useState(false);
 
   const audioRef    = useRef<HTMLAudioElement>(null);
   const playingRef  = useRef(0);
   const pageDataRef = useRef<any>(null);
   const touchStartX = useRef(0);
   const touchStartY = useRef(0);
+  const flipTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  /* ── persist preferences ── */
+  /* ── persist ── */
   useEffect(() => {
     const tab  = localStorage.getItem("hifdh_tab");
     const page = localStorage.getItem("hifdh_page");
@@ -111,84 +276,56 @@ export default function HifdhRevision() {
     supabase.auth.getUser().then(({ data }) => {
       if (!data?.user) return;
       setUserId(data.user.id);
-      supabase
-        .from("profiles")
-        .select("full_name")
-        .eq("id", data.user.id)
-        .single()
+      supabase.from("profiles").select("full_name").eq("id", data.user.id).single()
         .then(({ data: p }) => { if (p?.full_name) setStudentName(p.full_name); });
     });
   }, []);
 
-  /* ── fetch page from alquran.cloud ── */
+  /* ── fetch page ── */
   const fetchPage = useCallback((page: number) => {
     setLoading(true);
     setPageData(null);
     fetch(`https://api.alquran.cloud/v1/page/${page}/ar.uthmani`)
-      .then((r) => r.json())
-      .then((json) => {
-        if (json?.code === 200) setPageData(json.data);
-        setLoading(false);
-      })
+      .then(r => r.json())
+      .then(json => { if (json?.code === 200) setPageData(json.data); setLoading(false); })
       .catch(() => setLoading(false));
   }, []);
 
   useEffect(() => { fetchPage(currentPage); }, [currentPage, fetchPage]);
 
-  /* ── clear slide animation ── */
-  useEffect(() => {
-    if (!slideDir) return;
-    const t = setTimeout(() => setSlideDir(null), 360);
-    return () => clearTimeout(t);
-  }, [slideDir, currentPage]);
-
-  /* ── page navigation
-     Arabic Quran direction:
-       swipe RIGHT (finger left→right) = advance to next page
-       swipe LEFT  (finger right→left) = go to previous page            ── */
-  const goNext = useCallback(() => {
-    setSlideDir("ltr");
-    setCurrentPage((p) => Math.min(604, p + 1));
-    setPlayingAyah(0);
-    playingRef.current = 0;
-  }, []);
-
-  const goPrev = useCallback(() => {
-    setSlideDir("rtl");
-    setCurrentPage((p) => Math.max(1, p - 1));
-    setPlayingAyah(0);
-    playingRef.current = 0;
+  /* ── page navigation with flip animation ── */
+  const navigate = useCallback((dir: "next" | "prev") => {
+    if (flipTimeout.current) return; // block during animation
+    setFlipDir(dir);
+    flipTimeout.current = setTimeout(() => {
+      setCurrentPage(p => dir === "next" ? Math.min(604, p + 1) : Math.max(1, p - 1));
+      setPlayingAyah(0);
+      playingRef.current = 0;
+      setFlipDir(null);
+      flipTimeout.current = null;
+    }, 260); // half-way through the flip, swap page
   }, []);
 
   /* ── audio ── */
   const playAyah = useCallback((absoluteNum: number) => {
-    const pd = pageDataRef.current;
-    if (!pd?.ayahs) return;
+    if (!pageDataRef.current?.ayahs) return;
     playingRef.current = absoluteNum;
     setPlayingAyah(absoluteNum);
-    const url   = buildAudioUrl(absoluteNum, reciter);
     const audio = audioRef.current;
     if (!audio) return;
     audio.pause();
-    audio.src = url;
+    audio.src = buildAudioUrl(absoluteNum, reciter);
     audio.load();
-    audio.play().catch((err) => {
-      console.warn("Audio blocked:", err.message);
-      setIsPlaying(false);
-    });
+    audio.play().catch(() => setIsPlaying(false));
   }, [reciter]);
 
   const togglePlay = useCallback(() => {
     const audio = audioRef.current;
     const pd    = pageDataRef.current;
     if (!audio) return;
-    if (isPlaying) {
-      audio.pause();
-    } else {
-      const target =
-        playingAyah > 0 ? playingAyah : pd?.ayahs?.[0]?.number ?? 1;
-      playAyah(target);
-    }
+    if (isPlaying) { audio.pause(); return; }
+    const target = playingAyah > 0 ? playingAyah : pd?.ayahs?.[0]?.number ?? 1;
+    playAyah(target);
   }, [isPlaying, playingAyah, playAyah]);
 
   useEffect(() => {
@@ -198,13 +335,8 @@ export default function HifdhRevision() {
       const pd  = pageDataRef.current;
       if (!pd?.ayahs) return;
       const idx = pd.ayahs.findIndex((a: any) => a.number === playingRef.current);
-      if (idx >= 0 && idx < pd.ayahs.length - 1) {
-        playAyah(pd.ayahs[idx + 1].number);
-      } else {
-        setIsPlaying(false);
-        setPlayingAyah(0);
-        playingRef.current = 0;
-      }
+      if (idx >= 0 && idx < pd.ayahs.length - 1) playAyah(pd.ayahs[idx + 1].number);
+      else { setIsPlaying(false); setPlayingAyah(0); playingRef.current = 0; }
     };
     const onPause = () => setIsPlaying(false);
     const onPlay  = () => setIsPlaying(true);
@@ -218,16 +350,13 @@ export default function HifdhRevision() {
     };
   }, [playAyah]);
 
-  /* stop audio when reciter changes */
   useEffect(() => {
     const audio = audioRef.current;
     if (audio) { audio.pause(); audio.src = ""; }
-    setIsPlaying(false);
-    setPlayingAyah(0);
-    playingRef.current = 0;
+    setIsPlaying(false); setPlayingAyah(0); playingRef.current = 0;
   }, [reciter]);
 
-  /* ── swipe handlers ── */
+  /* ── swipe: right = next page (Arabic Quran direction) ── */
   const onTouchStart = (e: React.TouchEvent) => {
     touchStartX.current = e.touches[0].clientX;
     touchStartY.current = e.touches[0].clientY;
@@ -236,11 +365,11 @@ export default function HifdhRevision() {
     const dx = e.changedTouches[0].clientX - touchStartX.current;
     const dy = e.changedTouches[0].clientY - touchStartY.current;
     if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 48) {
-      if (dx > 0) goNext(); else goPrev();
+      if (dx > 0) navigate("next"); else navigate("prev");
     }
   };
 
-  /* ── derived values ── */
+  /* ── derived ── */
   const pageAyahs   = pageData?.ayahs ?? [];
   const surahGroups = groupBySurah(pageAyahs);
   const firstSurah  = pageAyahs[0]?.surah;
@@ -249,31 +378,31 @@ export default function HifdhRevision() {
 
   /* ══════════════════════════════════════════════════════════════════ */
   return (
-    <div className="h-[100dvh] flex flex-col overflow-hidden" style={{ background: "#111" }}>
+    <div className="h-[100dvh] flex flex-col overflow-hidden" style={{ background: "#0a0f0b" }}>
       <audio ref={audioRef} playsInline preload="none" style={{ display: "none" }} />
 
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Amiri:wght@400;700&display=swap');
 
+        /* ── Mushaf text ── */
         .mushaf-text {
           font-family: 'Amiri Quran', 'Scheherazade New', 'Amiri', serif;
           direction: rtl;
           text-align: justify;
-          line-height: 2.6;
-          word-spacing: 1px;
+          line-height: 2.7;
           color: ${INK};
         }
         .ayah-marker {
           font-family: 'Amiri', serif;
           color: ${GOLD};
-          font-size: 0.72em;
-          display: inline;
+          font-size: 0.7em;
           margin: 0 1px;
         }
         .ayah-active {
           background: ${GOLD}28;
           border-radius: 3px;
           outline: 1.5px solid ${GOLD}66;
+          padding: 0 1px;
         }
         .surah-nameplate {
           margin: 10px 0 4px;
@@ -290,7 +419,7 @@ export default function HifdhRevision() {
         }
         .surah-nameplate small {
           display: block;
-          font-size: 0.62em;
+          font-size: 0.6em;
           color: #6b5520;
           font-weight: 400;
           font-family: Georgia, serif;
@@ -298,17 +427,15 @@ export default function HifdhRevision() {
         }
         .bismillah {
           font-family: 'Amiri Quran', 'Amiri', serif;
-          direction: rtl;
-          text-align: center;
-          color: ${INK};
-          margin: 4px 0 10px;
-          line-height: 2;
+          direction: rtl; text-align: center;
+          color: ${INK}; margin: 4px 0 10px; line-height: 2;
         }
-        .mushaf-page {
+        .mushaf-frame {
           background: ${PARCHMENT};
+          border: 2px solid ${GOLD}88;
           position: relative;
         }
-        .mushaf-page::before {
+        .mushaf-frame::before {
           content: '';
           position: absolute;
           inset: 7px;
@@ -317,71 +444,78 @@ export default function HifdhRevision() {
           pointer-events: none;
           z-index: 1;
         }
-        @keyframes slideInR {
-          from { opacity: 0; transform: translateX(40px);  }
-          to   { opacity: 1; transform: translateX(0);     }
+
+        /* ── Page flip animation ── */
+        @keyframes flipNext {
+          0%   { transform: perspective(900px) rotateY(0deg)   scaleX(1);    opacity: 1; }
+          48%  { transform: perspective(900px) rotateY(90deg)  scaleX(0.7);  opacity: 0; }
+          52%  { transform: perspective(900px) rotateY(-90deg) scaleX(0.7);  opacity: 0; }
+          100% { transform: perspective(900px) rotateY(0deg)   scaleX(1);    opacity: 1; }
         }
-        @keyframes slideInL {
-          from { opacity: 0; transform: translateX(-40px); }
-          to   { opacity: 1; transform: translateX(0);     }
+        @keyframes flipPrev {
+          0%   { transform: perspective(900px) rotateY(0deg)   scaleX(1);    opacity: 1; }
+          48%  { transform: perspective(900px) rotateY(-90deg) scaleX(0.7);  opacity: 0; }
+          52%  { transform: perspective(900px) rotateY(90deg)  scaleX(0.7);  opacity: 0; }
+          100% { transform: perspective(900px) rotateY(0deg)   scaleX(1);    opacity: 1; }
         }
-        .slide-ltr { animation: slideInR 0.32s ease-out forwards; }
-        .slide-rtl { animation: slideInL 0.32s ease-out forwards; }
-        .ctrl-btn {
+        .flip-next { animation: flipNext 0.52s cubic-bezier(.4,0,.2,1) forwards; }
+        .flip-prev { animation: flipPrev 0.52s cubic-bezier(.4,0,.2,1) forwards; }
+
+        /* ── Footer ── */
+        .ctrl { 
           display:flex; align-items:center; justify-content:center;
-          border-radius:50%; transition: transform 0.1s, opacity 0.12s;
+          border-radius:50%; cursor:pointer; flex-shrink:0;
+          transition: transform 0.1s, opacity 0.12s;
         }
-        .ctrl-btn:active { transform: scale(0.87); opacity: 0.75; }
+        .ctrl:active { transform: scale(0.84); }
+        .ctrl:disabled { opacity: 0.3; }
       `}</style>
 
       {/* ═══════════════════════════════════════════════════════════
-           STATIC TAB NAVIGATION — flex-none keeps it pinned
+           TAB NAV — hidden in fullscreen
           ═══════════════════════════════════════════════════════════ */}
-      <nav
-        className="flex-none w-full z-50 border-b"
-        style={{ background: DARK_GREEN, borderColor: GOLD + "44" }}
-      >
-        <div className="flex items-center justify-around px-1 py-1">
-          {TABS.map(({ id, ar, icon: Icon }) => {
-            const active = activeTab === id;
-            return (
-              <button
-                key={id}
-                onClick={() => setActiveTab(id)}
-                className="flex flex-col items-center gap-0.5 px-3 py-1 rounded-lg transition-all"
-                style={{
-                  color:      active ? GOLD      : "#5a7d6a",
-                  background: active ? "#ffffff14" : "transparent",
-                }}
-              >
-                <Icon size={16} strokeWidth={active ? 2.5 : 1.8} />
-                <span className="text-[10px] font-bold leading-none tracking-wide">{ar}</span>
-              </button>
-            );
-          })}
-        </div>
-      </nav>
+      {!fullscreen && (
+        <nav
+          className="flex-none w-full z-50 border-b"
+          style={{ background: DARK_GREEN, borderColor: GOLD + "44" }}
+        >
+          <div className="flex items-center justify-around px-1 py-1">
+            {TABS.map(({ id, ar, icon: Icon }) => {
+              const active = activeTab === id;
+              return (
+                <button
+                  key={id}
+                  onClick={() => setActiveTab(id)}
+                  className="flex flex-col items-center gap-0.5 px-3 py-1 rounded-lg transition-all"
+                  style={{ color: active ? GOLD : "#5a7d6a", background: active ? "#ffffff14" : "transparent" }}
+                >
+                  <Icon size={16} strokeWidth={active ? 2.5 : 1.8} />
+                  <span className="text-[10px] font-bold leading-none tracking-wide">{ar}</span>
+                </button>
+              );
+            })}
+          </div>
+        </nav>
+      )}
 
       {/* ═══════════════════════════════════════════════════════════
-           CONTENT AREA
+           CONTENT
           ═══════════════════════════════════════════════════════════ */}
       <div className="flex-1 overflow-hidden relative">
 
-        {/* ── Overview ── */}
+        {/* ── لوحة Dashboard ── */}
         {activeTab === "overview" && (
-          <div className="h-full overflow-y-auto bg-gray-50">
-            <HifdhDashboard
-              userId={userId}
-              studentName={studentName}
-              onNavigate={setActiveTab}
-              activeTab={activeTab}
-            />
-          </div>
+          <HifdhDashboardInline
+            userId={userId}
+            studentName={studentName}
+            currentPage={currentPage}
+            onNavigate={(tab) => { setActiveTab(tab); }}
+          />
         )}
 
-        {/* ════════════════════════════════════════════════════════
-             RECITATION — mushaf view
-            ════════════════════════════════════════════════════════ */}
+        {/* ══════════════════════════════════════════════════════════
+             RECITATION — mushaf reader
+            ══════════════════════════════════════════════════════════ */}
         {activeTab === "recitation" && (
           <div
             className="h-full flex flex-col"
@@ -389,32 +523,24 @@ export default function HifdhRevision() {
             onTouchStart={onTouchStart}
             onTouchEnd={onTouchEnd}
           >
-            {/* Scrollable page area */}
-            <div className="flex-1 overflow-y-auto px-3 pt-3 pb-2">
+            {/* Mushaf page scroll area */}
+            <div className="flex-1 overflow-y-auto px-3 pt-3 pb-1">
               {loading ? (
                 <div className="flex flex-col items-center justify-center h-full gap-3">
-                  <div
-                    style={{
-                      fontFamily: "'Amiri Quran','Amiri',serif",
-                      color: GOLD, direction: "rtl", fontSize: 28,
-                    }}
-                  >
+                  <div style={{ fontFamily:"'Amiri Quran','Amiri',serif", color:GOLD, fontSize:28, direction:"rtl" }}>
                     بسم الله الرحمن الرحيم
                   </div>
-                  <p style={{ color: "#7a9e88", fontSize: 13 }}>
-                    Loading page {currentPage}…
-                  </p>
+                  <p style={{ color:"#7a9e88", fontSize:13 }}>Loading page {currentPage}…</p>
                 </div>
               ) : (
                 <div
                   className={cn(
-                    "mushaf-page max-w-lg mx-auto rounded-sm shadow-2xl overflow-hidden",
-                    slideDir === "ltr" && "slide-ltr",
-                    slideDir === "rtl" && "slide-rtl"
+                    "mushaf-frame max-w-lg mx-auto rounded-sm shadow-2xl overflow-hidden",
+                    flipDir === "next" && "flip-next",
+                    flipDir === "prev" && "flip-prev"
                   )}
-                  style={{ border: `2px solid ${GOLD}88` }}
                 >
-                  {/* ── Page header ── */}
+                  {/* Page header */}
                   <div
                     className="flex items-center justify-between px-5 py-2"
                     style={{
@@ -433,10 +559,9 @@ export default function HifdhRevision() {
                     </span>
                   </div>
 
-                  {/* ── Decorative rule ── */}
                   <div className="mx-5 h-px" style={{ background:`linear-gradient(to right,transparent,${GOLD}88,transparent)` }} />
 
-                  {/* ── Quran text ── */}
+                  {/* Quran text */}
                   <div className="px-6 py-5">
                     {surahGroups.map((group, gi) => {
                       const isNewSurah    = group.ayahs[0].numberInSurah === 1;
@@ -446,9 +571,7 @@ export default function HifdhRevision() {
                           {isNewSurah && (
                             <div className="surah-nameplate">
                               سورة {group.surah.name}
-                              <small>
-                                {group.surah.englishName} · {group.surah.numberOfAyahs} verses
-                              </small>
+                              <small>{group.surah.englishName} · {group.surah.numberOfAyahs} verses</small>
                             </div>
                           )}
                           {showBismillah && (
@@ -462,14 +585,12 @@ export default function HifdhRevision() {
                                 key={ayah.number}
                                 onClick={() => playAyah(ayah.number)}
                                 className={cn(
-                                  "cursor-pointer transition-all rounded-sm",
+                                  "cursor-pointer transition-all",
                                   playingAyah === ayah.number && "ayah-active"
                                 )}
                               >
-                                {ayah.text}
-                                {" "}
-                                <span className="ayah-marker">۝{toAr(ayah.numberInSurah)}</span>
-                                {" "}
+                                {ayah.text}{" "}
+                                <span className="ayah-marker">۝{toAr(ayah.numberInSurah)}</span>{" "}
                               </span>
                             ))}
                           </p>
@@ -478,7 +599,6 @@ export default function HifdhRevision() {
                     })}
                   </div>
 
-                  {/* ── Decorative rule + page number ── */}
                   <div className="mx-5 h-px" style={{ background:`linear-gradient(to right,transparent,${GOLD}88,transparent)` }} />
                   <div className="py-2.5 text-center" style={{ fontFamily:"'Amiri',serif", color:GOLD, fontSize:"0.82em" }}>
                     ─── {toAr(currentPage)} ───
@@ -488,90 +608,85 @@ export default function HifdhRevision() {
             </div>
 
             {/* ═══════════════════════════════════════════════════════
-                 STATIC PLAYBACK FOOTER — flex-none keeps it pinned
+                 ONE-LINE STATIC FOOTER
                 ═══════════════════════════════════════════════════════ */}
             <div
               className="flex-none border-t z-50"
-              style={{ background: DARK_GREEN, borderColor: GOLD + "44" }}
+              style={{ background: DARK_GREEN, borderColor: GOLD + "55" }}
             >
-              <div className="px-4 pt-2.5 pb-3 max-w-lg mx-auto">
+              <div className="flex items-center gap-2 px-3 py-2 max-w-lg mx-auto">
 
-                {/* Row 1: surah label + font size */}
-                <div className="flex items-center justify-between mb-2">
-                  <span style={{ fontFamily:"'Amiri Quran','Amiri',serif", color:GOLD, fontSize:"0.85em", direction:"rtl" }}>
-                    {firstSurah?.nameAr ?? "القرآن الكريم"}
-                  </span>
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      onClick={() => setFontSize((v) => Math.max(18, v - 2))}
-                      className="ctrl-btn w-6 h-6"
-                      style={{ background: "#1e4030" }}
-                    >
-                      <Minus size={11} color={GOLD} />
-                    </button>
-                    <span style={{ color:GOLD, fontSize:"0.7em", minWidth:20, textAlign:"center" }}>{fontSize}</span>
-                    <button
-                      onClick={() => setFontSize((v) => Math.min(42, v + 2))}
-                      className="ctrl-btn w-6 h-6"
-                      style={{ background: "#1e4030" }}
-                    >
-                      <Plus size={11} color={GOLD} />
-                    </button>
-                  </div>
-                </div>
+                {/* Prev */}
+                <button
+                  className="ctrl w-8 h-8 flex-none"
+                  style={{ background:"#1e4030" }}
+                  onClick={() => navigate("prev")}
+                  disabled={currentPage <= 1}
+                >
+                  <SkipBack size={14} color={GOLD} />
+                </button>
 
-                {/* Row 2: transport + reciter */}
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={goPrev}
-                    className="ctrl-btn w-9 h-9 flex-none"
-                    style={{ background: "#1e4030", opacity: currentPage <= 1 ? 0.4 : 1 }}
-                    disabled={currentPage <= 1}
-                  >
-                    <SkipBack size={16} color={GOLD} />
-                  </button>
+                {/* Play / Pause */}
+                <button
+                  className="ctrl w-10 h-10 flex-none shadow-lg"
+                  style={{ background: GOLD }}
+                  onClick={togglePlay}
+                >
+                  {isPlaying
+                    ? <Pause size={16} fill={DARK_GREEN} color={DARK_GREEN} />
+                    : <Play  size={16} fill={DARK_GREEN} color={DARK_GREEN} className="ml-0.5" />
+                  }
+                </button>
 
-                  <button
-                    onClick={togglePlay}
-                    className="ctrl-btn w-12 h-12 flex-none shadow-lg"
-                    style={{ background: GOLD }}
-                  >
-                    {isPlaying
-                      ? <Pause size={19} fill={DARK_GREEN} color={DARK_GREEN} />
-                      : <Play  size={19} fill={DARK_GREEN} color={DARK_GREEN} className="ml-0.5" />
-                    }
-                  </button>
+                {/* Next */}
+                <button
+                  className="ctrl w-8 h-8 flex-none"
+                  style={{ background:"#1e4030" }}
+                  onClick={() => navigate("next")}
+                  disabled={currentPage >= 604}
+                >
+                  <SkipForward size={14} color={GOLD} />
+                </button>
 
-                  <button
-                    onClick={goNext}
-                    className="ctrl-btn w-9 h-9 flex-none"
-                    style={{ background: "#1e4030", opacity: currentPage >= 604 ? 0.4 : 1 }}
-                    disabled={currentPage >= 604}
-                  >
-                    <SkipForward size={16} color={GOLD} />
-                  </button>
+                {/* Reciter */}
+                <select
+                  value={reciter}
+                  onChange={(e) => setReciter(e.target.value)}
+                  className="flex-1 text-[10px] rounded-lg px-2 py-1.5 outline-none min-w-0"
+                  style={{ background:"#1e4030", color:GOLD, border:`1px solid ${GOLD}33`, fontFamily:"Georgia,serif" }}
+                >
+                  {RECITERS.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                </select>
 
-                  <select
-                    value={reciter}
-                    onChange={(e) => setReciter(e.target.value)}
-                    className="flex-1 text-[11px] rounded px-2 py-2 outline-none"
-                    style={{
-                      background: "#1e4030",
-                      color: GOLD,
-                      border: `1px solid ${GOLD}44`,
-                      fontFamily: "Georgia,serif",
-                    }}
-                  >
-                    {RECITERS.map((r) => (
-                      <option key={r.id} value={r.id}>{r.name}</option>
-                    ))}
-                  </select>
-                </div>
+                {/* Font – */}
+                <button
+                  className="ctrl w-7 h-7 flex-none"
+                  style={{ background:"#1e4030" }}
+                  onClick={() => setFontSize(v => Math.max(18, v - 2))}
+                >
+                  <Minus size={12} color={GOLD} />
+                </button>
 
-                {/* Hint */}
-                <p className="text-center mt-1.5" style={{ color:"#4a6b56", fontSize:"0.58em", letterSpacing:"0.04em" }}>
-                  swipe right → next page &nbsp;·&nbsp; tap any verse to play
-                </p>
+                {/* Font + */}
+                <button
+                  className="ctrl w-7 h-7 flex-none"
+                  style={{ background:"#1e4030" }}
+                  onClick={() => setFontSize(v => Math.min(42, v + 2))}
+                >
+                  <Plus size={12} color={GOLD} />
+                </button>
+
+                {/* Fullscreen toggle */}
+                <button
+                  className="ctrl w-7 h-7 flex-none"
+                  style={{ background:"#1e4030" }}
+                  onClick={() => setFullscreen(f => !f)}
+                >
+                  {fullscreen
+                    ? <Minimize2 size={12} color={GOLD} />
+                    : <Maximize2 size={12} color={GOLD} />
+                  }
+                </button>
               </div>
             </div>
           </div>
@@ -579,23 +694,17 @@ export default function HifdhRevision() {
 
         {/* ── Memorization ── */}
         {activeTab === "memorization" && (
-          <div className="h-full overflow-y-auto">
-            <HifdhMemorization />
-          </div>
+          <div className="h-full overflow-y-auto"><HifdhMemorization /></div>
         )}
 
         {/* ── Exercise ── */}
         {activeTab === "exercise" && (
-          <div className="h-full overflow-y-auto">
-            <HifdhExercise />
-          </div>
+          <div className="h-full overflow-y-auto"><HifdhExercise /></div>
         )}
 
         {/* ── Test ── */}
         {activeTab === "test" && (
-          <div className="h-full overflow-y-auto">
-            <HifdhTest />
-          </div>
+          <div className="h-full overflow-y-auto"><HifdhTest /></div>
         )}
       </div>
     </div>
