@@ -47,8 +47,7 @@
 
     --gold: 42 52% 55%;
     --gold-foreground: 42 80% 12%;
-    --gold-light: 42 45% 88%;
-    --emerald: 155 55% 15%;
+    --gold-light: 42 45% 88%;    --emerald: 155 55% 15%;
     --emerald-light: 150 18% 85%;
     --emerald-mid: 155 30% 35%;
     --cream: 40 30% 96%;
@@ -97,8 +96,7 @@
 
 @layer base {
   * {
-    @apply border-border;
-  }
+    @apply border-border;  }
 
   body {
     @apply bg-background text-foreground font-sans antialiased;
@@ -147,8 +145,7 @@
 
 /* Geometric pattern overlay — more refined */
 .geometric-pattern {
-  background-image: url("data:image/svg+xml,%3Csvg width='80' height='80' viewBox='0 0 80 80' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23c8a951' fill-opacity='0.04'%3E%3Cpath d='M40 0L80 40L40 80L0 40z'/%3E%3Ccircle cx='40' cy='40' r='8'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
-}
+  background-image: url("data:image/svg+xml,%3Csvg width='80' height='80' viewBox='0 0 80 80' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23c8a951' fill-opacity='0.04'%3E%3Cpath d='M40 0L80 40L40 80L0 40z'/%3E%3Ccircle cx='40' cy='40' r='8'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");}
 
 /* Premium card hover */
 .card-premium {
@@ -177,4 +174,28 @@
 /* Smooth scroll */
 html {
   scroll-behavior: smooth;
+}
+
+/* ── HEADER SCROLL BEHAVIOR (Hifdh Section) ──────────────────────────────── */
+.main-header {
+  transition: transform 0.3s ease, opacity 0.3s ease;
+  will-change: transform, opacity;
+}
+
+.main-header.header-hidden {
+  transform: translateY(-100%);
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Hifdh content area handles its own scroll so header can react */
+.hifdh-scroll-container {
+  overscroll-behavior: contain;
+  height: calc(100dvh - 60px); /* Adjust based on your header height */
+}
+
+/* Mobile safe area padding */@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
 }
