@@ -19,19 +19,19 @@ const RevisionHub = () => {
   const { user, profile } = useAuth();
   const navigate = useNavigate();
 
-  // Determine assigned level (course_level takes priority)
+  // Determine assigned level (course_level takes priority over legacy level)
   const assignedLevel = profile?.course_level || profile?.level;
   const isLevelAssigned = !!assignedLevel;
 
   // Fetch subjects based on level
-  const { data: subjects = [], isLoading, error } = useQuery({
+  const {  subjects = [], isLoading, error } = useQuery({
     queryKey: ["revision-subjects", assignedLevel],
     enabled: !!user && !!isLevelAssigned,
     queryFn: async () => {
       const level = assignedLevel || "beginner";
       
-      // 1. Try level_courses mapping
-      const { data: levelCourses, error: lcErr } = await supabase
+      // 1. Try level_courses mapping first
+      const {  levelCourses, error: lcErr } = await supabase
         .from("level_courses")
         .select("subject_id")
         .eq("level", level);
@@ -49,7 +49,7 @@ const RevisionHub = () => {
           return (data || []) as any[];
         }      }
 
-      // 2. Fallback: all active subjects (with console warning for admin)
+      // 2. Fallback: all active subjects (with console warning for admin debugging)
       console.warn(`⚠️ No subjects mapped to level "${level}". Falling back to all active subjects.`);
       const { data, error: fallbackErr } = await supabase
         .from("subjects")
@@ -62,7 +62,7 @@ const RevisionHub = () => {
 
   // Teacher profiles
   const teacherIds = [...new Set(subjects.map((s: any) => s.teacher_id).filter(Boolean))];
-  const { data: teachers = [] } = useQuery({
+  const {  teachers = [] } = useQuery({
     queryKey: ["revision-teachers", teacherIds],
     enabled: teacherIds.length > 0,
     queryFn: async () => {
@@ -71,8 +71,8 @@ const RevisionHub = () => {
     },
   });
 
-  // Stats queries (unchanged)
-  const { data: flashcardProgress = [] } = useQuery({
+  // Stats queries
+  const {  flashcardProgress = [] } = useQuery({
     queryKey: ["revision-fc-progress", user?.id],
     enabled: !!user,
     queryFn: async () => {
@@ -81,7 +81,7 @@ const RevisionHub = () => {
     },
   });
 
-  const { data: quizSessions = [] } = useQuery({
+  const {  quizSessions = [] } = useQuery({
     queryKey: ["revision-quizzes", user?.id],
     enabled: !!user,
     queryFn: async () => {
@@ -248,4 +248,56 @@ const RevisionHub = () => {
                       {teacher && <p className="text-xs text-gray-500">{language === "ar" ? teacher.full_name_ar || teacher.full_name : teacher.full_name}</p>}
 
                       <div className="flex items-center gap-3 text-xs text-gray-500">
-                        <span className="flex items-center gap-1"><Layers className="h-3 w-3"
+                        <span className="flex items-center gap-1"><Layers className="h-3 w-3" /> {t("Flashcards", "بطاقات")}</span>
+                        <span className="flex items-center gap-1"><FileText className="h-3 w-3" /> {t("Summaries", "ملخصات")}</span>
+                        {subjectQuizzes.length > 0 && <span className="font-medium">{t("Quiz avg", "معدل")}: {quizAvg}%</span>}
+                      </div>
+
+                      <div className="flex gap-2 pt-1">
+                        {["flashcards", "quiz", "summaries"].map(tab => (
+                          <Button key={tab} size="sm" variant="outline" className="text-xs h-7 gap-1 flex-1" style={{ borderRadius: 8, borderColor: "#E5E7EB" }} onClick={e => { e.stopPropagation(); navigate(`/student/revision/${subj.id}?tab=${tab}`); }}>
+                            {tab === "flashcards" ? "🃏" : tab === "quiz" ? "📝" : "📄"} {t(tab.charAt(0).toUpperCase() + tab.slice(1), tab === "flashcards" ? "بطاقات" : tab === "quiz" ? "اختبار" : "ملخص")}
+                          </Button>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Recent Activity */}
+        {quizSessions.length > 0 && (
+          <div>
+            <h2 className="text-lg font-semibold mb-3 flex items-center gap-2" style={{ color: "#064E3B" }}>
+              <Trophy className="h-5 w-5" style={{ color: "#E8C070" }} />
+              {t("Recent Activity", "النشاط الأخير")}
+            </h2>
+            <div className="space-y-2">
+              {quizSessions.slice(0, 5).map((q: any) => {
+                const subj = subjects.find((s: any) => s.id === q.subject_id);
+                return (
+                  <Card key={q.id} className="border-0" style={{ background: "#fff", borderRadius: 14 }}>
+                    <CardContent className="p-4 flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-semibold" style={{ color: "#064E3B" }}>{subj ? (language === "ar" ? subj.title_ar || subj.title : subj.title) : t("Quiz", "اختبار")}</p>
+                        <p className="text-xs text-gray-500">{q.source} • {format(new Date(q.completed_at), "MMM d, h:mm a")}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="font-bold text-sm" style={{ color: Number(q.percentage) >= 70 ? "#059669" : "#DC2626" }}>{q.score}/{q.total}</p>
+                        <p className="text-xs text-gray-500">{Math.round(q.percentage || 0)}%</p>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default RevisionHub;
