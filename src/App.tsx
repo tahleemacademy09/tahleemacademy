@@ -1,19 +1,7 @@
 /* ═══════════════════════════════════════════════════════════════════════════════
-   App.tsx — PATCHED VERSION
-   Changes from original:
-   1. Added: RegistrationSettings lazy import
-   2. Added: /admin/view-as-student/:userId  route (FIXES the 404)
-   3. Added: /admin/registration-settings    route
-   4. Added nav item to DashboardLayout handled separately
-
-   Instructions:
-   - Replace your src/App.tsx with this file
-   - Keep all other code exactly the same — only the marked NEW lines are added
+   App.tsx — Tahleem Academy
+   Routing configuration with lazy-loaded pages
 ═══════════════════════════════════════════════════════════════════════════════*/
-import LevelSubjectMapping from "./pages/admin/LevelSubjectMapping";
-
-// ... inside <Route path="/admin" element={...}>
-<Route path="level-subject-mapping" element={<LevelSubjectMapping />} />
 import { lazy, Suspense } from "react";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -59,8 +47,7 @@ const Transcripts         = lazy(() => import("./pages/student/Transcripts"));
 const Majlis              = lazy(() => import("./pages/student/Majlis"));
 const RecitationTest      = lazy(() => import("./pages/student/RecitationTest"));
 const LearningHub         = lazy(() => import("./pages/student/LearningHub"));
-const CourseView          = lazy(() => import("./pages/student/CourseView"));
-const SubjectView         = lazy(() => import("./pages/student/SubjectView"));
+const CourseView          = lazy(() => import("./pages/student/CourseView"));const SubjectView         = lazy(() => import("./pages/student/SubjectView"));
 const Onboarding          = lazy(() => import("./pages/student/Onboarding"));
 const EntranceExamTaking  = lazy(() => import("./pages/student/EntranceExamTaking"));
 const EntranceResults     = lazy(() => import("./pages/student/EntranceResults"));
@@ -100,6 +87,7 @@ const PublicClassManagement = lazy(() => import("./pages/admin/PublicClassManage
 const HifdhAdminReview      = lazy(() => import("./pages/admin/HifdhAdminReview"));
 const RecitationTestAdmin   = lazy(() => import("./pages/admin/RecitationTestAdmin"));
 const LevelAssignment       = lazy(() => import("./pages/admin/LevelAssignment"));
+const LevelSubjectMapping   = lazy(() => import("./pages/admin/LevelSubjectMapping")); // ✅ ADDED
 const PrivateSessions       = lazy(() => import("./pages/admin/PrivateSessions"));
 const MajlisAdmin           = lazy(() => import("./pages/admin/MajlisModeration"));
 // ── NEW ────────────────────────────────────────────────────────────────────
@@ -108,8 +96,7 @@ const RegistrationSettings  = lazy(() => import("./pages/admin/RegistrationSetti
 // ── Teacher pages ──────────────────────────────────────────────────────────
 const TeacherDashboard        = lazy(() => import("./pages/teacher/TeacherDashboard"));
 const TeacherStudents         = lazy(() => import("./pages/teacher/TeacherStudents"));
-const TeacherPrivateStudents  = lazy(() => import("./pages/teacher/TeacherPrivateStudents"));
-const TeacherSubjects         = lazy(() => import("./pages/teacher/TeacherSubjects"));
+const TeacherPrivateStudents  = lazy(() => import("./pages/teacher/TeacherPrivateStudents"));const TeacherSubjects         = lazy(() => import("./pages/teacher/TeacherSubjects"));
 const TeacherClasses          = lazy(() => import("./pages/teacher/TeacherClasses"));
 const TeacherAnnouncements    = lazy(() => import("./pages/teacher/TeacherAnnouncements"));
 const TeacherAttendance       = lazy(() => import("./pages/teacher/TeacherAttendance"));
@@ -158,7 +145,6 @@ const App = () => (
                   {/* Registration pipeline continuations — no auth guard needed */}
                   <Route path="/auth/register-continue" element={<RegisterContinue />} />
                   <Route path="/registration-complete"  element={<RegistrationComplete />} />
-
                   {/* Misc public */}
                   <Route path="/live-quiz"               element={<ProtectedRoute skipOnboardingCheck><LiveQuiz /></ProtectedRoute>} />
                   <Route path="/public/classes"          element={<LiveClasses />} />
@@ -208,8 +194,7 @@ const App = () => (
                     <Route path="/teacher/settings"         element={<TeacherSettings />} />
                     <Route path="/teacher/recordings"       element={<TeacherRecordings />} />
                     <Route path="/teacher/recitation"       element={<TeacherRecitation />} />
-                    <Route path="/teacher/transcripts"      element={<TeacherTranscript />} />
-                    <Route path="/teacher/private-sessions" element={<TeacherPrivateSessions />} />
+                    <Route path="/teacher/transcripts"      element={<TeacherTranscript />} />                    <Route path="/teacher/private-sessions" element={<TeacherPrivateSessions />} />
                   </Route>
 
                   {/* ── Admin routes ── */}
@@ -238,6 +223,7 @@ const App = () => (
                     <Route path="/admin/recitation-review"        element={<HifdhAdminReview />} />
                     <Route path="/admin/recitation-test-settings" element={<RecitationTestAdmin />} />
                     <Route path="/admin/level-assignment"         element={<LevelAssignment />} />
+                    <Route path="/admin/level-subject-mapping"    element={<LevelSubjectMapping />} /> {/* ✅ ADDED */}
                     <Route path="/admin/transcripts"              element={<TranscriptManagement />} />
                     <Route path="/admin/attendance"               element={<AttendanceManagement />} />
                     <Route path="/admin/payments"                 element={<PaymentManagement />} />
@@ -257,8 +243,7 @@ const App = () => (
             <IdleWarningModal />
           </BrowserRouter>
         </TooltipProvider>
-      </AuthProvider>
-    </LanguageProvider>
+      </AuthProvider>    </LanguageProvider>
   </QueryClientProvider>
 );
 
