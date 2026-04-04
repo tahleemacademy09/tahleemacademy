@@ -179,8 +179,8 @@ const RevisionRoom = () => {
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 20000);
-      const { data, error } = await supabase.functions.invoke("ai-generate", {
-        body: { prompt },
+      const { data, error } = await supabase.functions.invoke("tahleem-ai", {
+        body: { action: "revision", prompt },
         signal: controller.signal,
       });
       clearTimeout(timeoutId);
@@ -188,6 +188,7 @@ const RevisionRoom = () => {
         console.error("Edge Function Error:", error);
         throw new Error(error.message || "AI service unavailable. Please check your connection or try again.");
       }
+      if (data?.error) throw new Error(data.error);
       return data?.text || "";
     } catch (err: any) {
       if (err.name === "AbortError") throw new Error("Request timed out. The AI is taking too long. Please try again.");

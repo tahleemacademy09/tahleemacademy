@@ -350,8 +350,9 @@ const LiveQuiz = () => {
     if (!aiTopic.trim()) return;
     setAiLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke("ai-generate", {
+      const { data, error } = await supabase.functions.invoke("tahleem-ai", {
         body: {
+          action: "revision",
           prompt: `Create ${settings.numQ} multiple-choice quiz questions about "${aiTopic}" for Islamic education students.
 Return ONLY valid JSON array, no markdown, no explanation, nothing else:
 [{"question":"...","options":["A","B","C","D"],"correct_answer":"exact option text","explanation":"brief explanation","topic":"${aiTopic}"}]
@@ -359,6 +360,7 @@ Make questions educational, clearly worded, and accurate.`
         },
       });
       if (error) throw new Error(error.message);
+      if (data?.error) throw new Error(data.error);
       const text = data?.text || data?.content || "";
       const clean = text.replace(/```json\s*/gi,"").replace(/```\s*/g,"").trim();
       const parsed = JSON.parse(clean) as any[];

@@ -2,6 +2,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { SURAHS, audioUrl, DEFAULT_RECITER } from "./surahData";
 import { supabase } from "@/integrations/supabase/client";
+import { transcribeRecitationAudio } from "@/lib/recitationAi";
 
 const G      = "#1a3d24";
 const GM     = "#276749";
@@ -14,10 +15,6 @@ interface Ayah { numberInSurah: number; text: string; }
 interface Props { reciter?: string; }
 type StepType = "overview" | "single" | "pair" | "cumulative";
 interface MemStep { type: StepType; indices: number[]; reps: number; label: string; labelAr: string; }
-
-const QWEN_ENDPOINT =
-  "https://dashscope-intl.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation";
-const QWEN_MODEL = "qwen-audio-turbo";
 
 function buildSteps(count: number): MemStep[] {
   if (count === 0) return [];
@@ -97,7 +94,6 @@ export default function HifdhMemorization({ reciter = DEFAULT_RECITER }: Props) 
   const [liveText,    setLiveText]    = useState("");
   const [micError,    setMicError]    = useState("");
   const [apiKeyLoaded,setApiKeyLoaded]= useState(false);
-  const [qwenApiKey,  setQwenApiKey]  = useState("");
   const [micTime,     setMicTime]     = useState(0);
 
   const sessionAyahsRef = useRef<Ayah[]>([]);
@@ -113,14 +109,13 @@ export default function HifdhMemorization({ reciter = DEFAULT_RECITER }: Props) 
   const micTimerRef     = useRef<ReturnType<typeof setInterval> | null>(null);
   const prevStepIdxRef  = useRef(-1);
   const advanceStepRef  = useRef<() => void>(() => {});
+  const transcriptionPendingRef = useRef(false);
 
   const surah = SURAHS[surahNum - 1];
 
-  // ── Fetch API key (env var → Supabase table) ─────────────
+  // ── Prepare backend AI ────────────────────────────────────
   const fetchApiKey = useCallback(async () => {
-    const envKey = (import.meta as any).env?.VITE_DASHSCOPE_API_KEY || "";
-    if (envKey) { setQwenApiKey(envKey); setApiKeyLoaded(true); return; }
-    setApiKeyLoaded(true); // No external key needed - uses edge function
+    setApiKeyLoaded(true);
   }, []);
 
   const fetchAyahs = useCallback(async () => {
@@ -170,48 +165,11 @@ export default function HifdhMemorization({ reciter = DEFAULT_RECITER }: Props) 
 
   // ── Qwen ASR ──────────────────────────────────────────────
   const sendChunk = useCallback(async (blob: Blob) => {
-    if (!qwenApiKey) return;
+    if (transcriptionPendingRef.current) return;
+    transcriptionPendingRef.current = true;
+
     try {
-      const base64Full = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result as string);
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-      });
-      const mimeType   = blob.type || "audio/webm";
-      const base64Data = base64Full.split(",")[1];
-
-      const res = await fetch(QWEN_ENDPOINT, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${qwenApiKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: QWEN_MODEL,
-          input: {
-            messages: [{
-              role: "user",
-              content: [
-                { audio: `data:${mimeType};base64,${base64Data}` },
-                { text: "اكتب النص العربي المنطوق في هذا التسجيل فقط بدون أي شيء آخر." },
-              ],
-            }],
-          },
-        }),
-      });
-
-      if (!res.ok) { console.warn("Qwen error", res.status); return; }
-      const data = await res.json();
-
-      // Parse — handle qwen-audio-turbo output format AND legacy formats
-      let transcript = "";
-      const outContent = data?.output?.choices?.[0]?.message?.content;
-      if (Array.isArray(outContent)) {
-        transcript = outContent.find((c: any) => c.text)?.text || "";
-      } else if (typeof outContent === "string") {
-        transcript = outContent;
-      } else {
-        const legacy = data?.choices?.[0]?.message?.content;
-        transcript = typeof legacy === "string" ? legacy : "";
-      }
+      const transcript = await transcribeRecitationAudio(blob);
 
       if (transcript.trim().length > 0) {
         const step    = stepsRef.current[stepIdxRef.current];
@@ -226,8 +184,12 @@ export default function HifdhMemorization({ reciter = DEFAULT_RECITER }: Props) 
           setLiveText(`🔄 ${transcript.slice(0, 35)}…`);
         }
       }
-    } catch (err) { console.warn("Qwen ASR failed:", err); }
-  }, [qwenApiKey, countOneRep]);
+    } catch (err) {
+      console.warn("Recitation transcription failed:", err);
+    } finally {
+      transcriptionPendingRef.current = false;
+    }
+  }, [countOneRep]);
 
   // ── Start mic ─────────────────────────────────────────────
   const startMic = useCallback(async () => {
@@ -387,8 +349,8 @@ export default function HifdhMemorization({ reciter = DEFAULT_RECITER }: Props) 
               </div>
               <div style={{ fontSize:11, color:"#7a9e88", marginTop:1 }}>
                 {apiKeyLoaded
-                  ? "Qwen listens as you recite and counts repetitions automatically"
-                  : "Connecting to Qwen AI…"}
+                  ? "Recitation AI listens as you recite and counts repetitions automatically"
+                  : "Preparing recitation AI…"}
               </div>
             </div>
             {apiKeyLoaded && (
