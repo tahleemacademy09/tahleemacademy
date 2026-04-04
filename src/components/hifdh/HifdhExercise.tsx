@@ -2,15 +2,16 @@
 // Hear prompt fixed + voice recitation with AI evaluation
 import { useState, useCallback, useRef, useEffect } from "react";
 import { SURAHS, audioUrl, DEFAULT_RECITER } from "./surahData";
+import { supabase } from "@/integrations/supabase/client";
 
 const G = "#1a3d24"; const GM = "#276749"; const GOLD = "#b7791f";
 const LIGHT = "#f0fff4"; const BORDER = "#d4e8d4";
 
+const QWEN_ENDPOINT = "https://dashscope-intl.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation";
+const QWEN_MODEL = "qwen-audio-turbo";
+
 interface Ayah { numberInSurah: number; text: string; }
 interface Props { reciter?: string; }
-
-const DEEPGRAM_KEY = (import.meta as any).env?.VITE_DEEPGRAM_API_KEY || "";
-const GROQ_KEY     = (import.meta as any).env?.VITE_GROQ_API_KEY || "";
 
 function toAr(n: number) { return String(n).replace(/[0-9]/g, d => "٠١٢٣٤٥٦٧٨٩"[+d]); }
 
@@ -198,24 +199,57 @@ export default function HifdhExercise({ reciter = DEFAULT_RECITER }: Props) {
     if (!question) return;
     let tx = "";
     try {
-      if (DEEPGRAM_KEY) {
-        const r = await fetch(
-          "https://api.deepgram.com/v1/listen?model=nova-2&language=ar&punctuate=false",
-          { method: "POST", headers: { Authorization: `Token ${DEEPGRAM_KEY}`, "Content-Type": blob.type || "audio/webm" }, body: blob }
-        );
-        if (r.ok) tx = (await r.json())?.results?.channels?.[0]?.alternatives?.[0]?.transcript || "";
+      // Resolve Qwen API key: env var → Supabase table
+      let apiKey = (import.meta as any).env?.VITE_DASHSCOPE_API_KEY || "";
+      if (!apiKey) {
+        const { data } = await supabase
+          .from("user_api_keys").select("api_key")
+          .eq("provider", "dashscope_qwen").maybeSingle();
+        apiKey = data?.api_key || "";
       }
-      if (!tx && GROQ_KEY) {
-        const ext = blob.type.includes("mp4") ? "mp4" : "webm";
-        const fd = new FormData();
-        fd.append("file", new File([blob], `r.${ext}`, { type: blob.type }));
-        fd.append("model", "whisper-large-v3");
-        fd.append("language", "ar");
-        fd.append("response_format", "json");
-        const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions",
-          { method: "POST", headers: { Authorization: `Bearer ${GROQ_KEY}` }, body: fd });
-        if (r.ok) tx = (await r.json())?.text || "";
+
+      if (apiKey) {
+        const base64Full = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+        const mimeType   = blob.type || "audio/webm";
+        const base64Data = base64Full.split(",")[1];
+
+        const res = await fetch(QWEN_ENDPOINT, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: QWEN_MODEL,
+            input: {
+              messages: [{
+                role: "user",
+                content: [
+                  { audio: `data:${mimeType};base64,${base64Data}` },
+                  { text: "اكتب النص العربي المنطوق في هذا التسجيل فقط بدون ترجمة أو تعليق." },
+                ],
+              }],
+            },
+          }),
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          // Handle qwen-audio-turbo output format + legacy fallback
+          const outContent = data?.output?.choices?.[0]?.message?.content;
+          if (Array.isArray(outContent)) {
+            tx = outContent.find((c: any) => c.text)?.text || "";
+          } else if (typeof outContent === "string") {
+            tx = outContent;
+          } else {
+            const legacy = data?.choices?.[0]?.message?.content;
+            tx = typeof legacy === "string" ? legacy : "";
+          }
+        }
       }
+
       if (tx) {
         setTranscript(tx);
         const cleanAnswers = question.answer.map(a => a.replace("← (complete verse)", "").trim());
@@ -223,7 +257,6 @@ export default function HifdhExercise({ reciter = DEFAULT_RECITER }: Props) {
         setEvalScore(sc);
         const result = sc >= 70 ? "correct" : "wrong";
         setAutoResult(result);
-        // Auto-mark after 2s
         setTimeout(() => {
           setScore(s => ({ correct: s.correct + (result === "correct" ? 1 : 0), total: s.total + 1 }));
           nextQ();
@@ -404,7 +437,7 @@ export default function HifdhExercise({ reciter = DEFAULT_RECITER }: Props) {
             style={{ width: "100%", padding: "12px 0", borderRadius: 12, border: "none",
               background: `linear-gradient(135deg,${G},${GM})`, color: "#fff",
               fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
-            🎙 Recite — AI Will Evaluate
+            🎙 Recite — Qwen AI Will Evaluate
           </button>
         )}
 
@@ -427,7 +460,7 @@ export default function HifdhExercise({ reciter = DEFAULT_RECITER }: Props) {
 
         {micState === "evaluating" && (
           <div style={{ textAlign: "center", padding: "16px 0" }}>
-            <div style={{ fontSize: 13, color: GOLD, fontWeight: 700, marginBottom: 4 }}>🤖 AI Evaluating…</div>
+            <div style={{ fontSize: 13, color: GOLD, fontWeight: 700, marginBottom: 4 }}>🤖 Qwen AI Evaluating…</div>
             <div style={{ fontSize: 11, color: "#7a9e88" }}>Comparing your recitation</div>
           </div>
         )}
