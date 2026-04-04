@@ -133,7 +133,7 @@ const RevisionRoom = () => {
     },
   });
 
-  const {  notes = [] } = useQuery({
+  const { data: notes = [] } = useQuery({
     queryKey: ["revision-notes", subjectId, user?.id],
     enabled: !!user,
     queryFn: async () => {
