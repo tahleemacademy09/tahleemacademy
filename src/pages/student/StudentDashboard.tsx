@@ -217,6 +217,35 @@ const StudentDashboard = () => {
     fetchData();
   }, [user]);
 
+  // ── Realtime notifications — live updates ─────────
+  useEffect(() => {
+    if (!user?.id) return;
+    const channel = supabase
+      .channel('student-notifications')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${user.id}` },
+        (payload) => {
+          setNotifications(prev => [payload.new as any, ...prev]);
+          // Browser notification if permitted
+          if (Notification.permission === 'granted') {
+            new Notification(payload.new.title || 'Tahleem Academy', {
+              body: payload.new.message || '',
+              icon: '/favicon.ico',
+            });
+          }
+        }
+      )
+      .subscribe();
+
+    // Request notification permission
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+
+    return () => { supabase.removeChannel(channel); };
+  }, [user?.id]);
+
   const calendarYear = calendarMonth.getFullYear();
   const calendarMonthIdx = calendarMonth.getMonth();
   const daysInMonth = new Date(calendarYear, calendarMonthIdx + 1, 0).getDate();
