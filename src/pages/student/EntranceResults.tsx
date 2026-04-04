@@ -159,21 +159,26 @@ const EntranceResults = () => {
     }
   };
 
-  // ✅ FIX: Handle login redirect properly
+  // ✅ FIXED: Advance Tasjeel to level_assignment so admin sees the student in New Registrations
   const handleContinue = async () => {
-    // Show confirmation toast
-    toast({
-      title: "✅ Registration Complete!",
-      description: "Please login to access your dashboard and start learning.",
-    });
+    if (!user) return;
+    try {
+      // Advance Tasjeel pipeline step → level_assignment
+      await supabase.from("tasjeel_progress" as any).update({
+        current_step: "level_assignment",
+        updated_at:   new Date().toISOString(),
+      } as any).eq("user_id", user.id);
 
-    // Sign out current session to force fresh login
-    await signOut();
-    
-    // Small delay for toast to show
-    setTimeout(() => {
-      navigate("/login", { replace: true });
-    }, 1500);
+      toast({
+        title: "✅ Exam Submitted!",
+        description: "Your results are being reviewed. You will be notified when your level is assigned.",
+      });
+
+      // Navigate to awaiting-level page (no sign-out needed)
+      navigate("/student/awaiting-level", { replace: true });
+    } catch {
+      toast({ title: "Error", description: "Could not update status. Please try again.", variant: "destructive" });
+    }
   };
 
   if (loading) {
