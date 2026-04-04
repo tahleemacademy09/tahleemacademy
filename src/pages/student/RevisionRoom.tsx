@@ -114,7 +114,7 @@ const RevisionRoom = () => {
     },
   });
 
-  const {  fcProgress = [] } = useQuery({
+  const { data: fcProgress = [] } = useQuery({
     queryKey: ["revision-fc-progress", subjectId, user?.id],
     enabled: !!user && flashcards.length > 0,
     queryFn: async () => {
