@@ -199,14 +199,8 @@ export default function HifdhExercise({ reciter = DEFAULT_RECITER }: Props) {
     if (!question) return;
     let tx = "";
     try {
-      // Resolve Qwen API key: env var → Supabase table
+      // Use Qwen API key from env
       let apiKey = (import.meta as any).env?.VITE_DASHSCOPE_API_KEY || "";
-      if (!apiKey) {
-        const { data } = await supabase
-          .from("user_api_keys").select("api_key")
-          .eq("provider", "dashscope_qwen").maybeSingle();
-        apiKey = data?.api_key || "";
-      }
 
       if (apiKey) {
         const base64Full = await new Promise<string>((resolve, reject) => {

@@ -74,7 +74,7 @@ const Login = () => {
           variant: "destructive",
         });
       } else {
-        const {  roles } = await supabase.from("user_roles").select("role").eq("user_id", data.user?.id);
+        const { data: roles } = await supabase.from("user_roles").select("role").eq("user_id", data.user?.id);
         const isAdmin   = roles?.some((r: any) => r.role === "admin");
         const isTeacher = roles?.some((r: any) => r.role === "teacher");
         navigate(isAdmin ? "/admin" : isTeacher ? "/teacher" : "/student"); // ✅ FIXED

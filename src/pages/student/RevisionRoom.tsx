@@ -372,7 +372,7 @@ Make questions educational and progressively challenging.`
   const startExamQuiz = async (examId: string) => {
     setQuizLoading(true);
     try {
-      const {  qs } = await supabase.from("exam_questions").select("*").eq("exam_id", examId).order("created_at");
+      const { data: qs } = await supabase.from("exam_questions").select("*").eq("exam_id", examId).order("created_at");
       if (!qs?.length) { toast({ title:"No questions in this exam yet." }); setQuizLoading(false); return; }
       const questions: QuizQ[] = qs
         .filter((q:any) => q.question_type === "mcq" && q.options?.length >= 2)

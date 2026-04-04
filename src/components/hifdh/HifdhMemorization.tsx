@@ -603,7 +603,7 @@ export default function HifdhMemorization({ reciter = DEFAULT_RECITER }: Props) 
             </div>
           )}
 
-          {!micActive && apiKeyLoaded && currentStep.type !== "overview" && micError && (
+          {!micActive && apiKeyLoaded && currentStep.type !== ("overview" as string) && micError && (
             <div style={{ marginTop:6, fontSize:11, color:"#c0392b" }}>{micError}</div>
           )}
         </div>

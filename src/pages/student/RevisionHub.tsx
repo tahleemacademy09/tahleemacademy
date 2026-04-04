@@ -87,7 +87,7 @@ const RevisionHub = () => {
     },
   });
 
-  const {  todaySchedule = [] } = useQuery({
+  const { data: todaySchedule = [] } = useQuery({
     queryKey: ["revision-schedule-today", user?.id],
     enabled: !!user,
     queryFn: async () => {
