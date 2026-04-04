@@ -78,7 +78,7 @@ const RevisionHub = () => {
     },
   });
 
-  const {  quizSessions = [] } = useQuery({
+  const { data: quizSessions = [] } = useQuery({
     queryKey: ["revision-quizzes", user?.id],
     enabled: !!user,
     queryFn: async () => {
