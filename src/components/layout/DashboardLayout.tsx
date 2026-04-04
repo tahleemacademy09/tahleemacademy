@@ -58,19 +58,19 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     | { type:"group"; key:string; icon:any; label:string; children:{to:string;icon:any;label:string}[] };
 
   const studentNav: NavItem[] = [
-    { type:"link", to:"/student",         icon:LayoutDashboard, label:t("Dashboard","لوحة التحكم") },
-    { type:"link", to:"/student/courses", icon:BookOpenCheck,   label:t("Learning Hub","مركز التعلم") },
-    { type:"group", key:"revision", icon:RefreshCw, label:t("Revision","المراجعة"), children:[
-      { to:"/student/revision", icon:BookMarked, label:t("General Revision","المراجعة العامة") },
-      { to:"/student/hifdh",    icon:Headphones, label:t("Al-Hifdh","الحفظ") },
+    { type:"link", to:"/student",         icon:LayoutDashboard, label:t("Dashboard","الصفحة الرئيسية") },
+    { type:"link", to:"/student/courses", icon:BookOpenCheck,   label:t("At-Ta'allum","التعلّم") },
+    { type:"group", key:"revision", icon:RefreshCw, label:t("Al-Murāja'ah","المراجعة"), children:[
+      { to:"/student/revision", icon:BookMarked, label:t("At-Tadārus","التدارس") },
+      { to:"/student/hifdh",    icon:Headphones, label:t("Al-Ḥifẓ","الحفظ") },
     ]},
-    { type:"group", key:"exams", icon:ClipboardList, label:t("Exams","الامتحانات"), children:[
-      { to:"/student/exams",       icon:ClipboardList, label:t("My Exams","امتحاناتي") },
-      { to:"/student/transcripts", icon:GraduationCap, label:t("Transcripts","السجل الأكاديمي") },
+    { type:"group", key:"exams", icon:ClipboardList, label:t("Al-Ikhtibārāt","الاختبارات"), children:[
+      { to:"/student/exams",       icon:ClipboardList, label:t("Ikhtibārātī","اختباراتي") },
+      { to:"/student/transcripts", icon:GraduationCap, label:t("As-Sijill","السجل الأكاديمي") },
     ]},
     { type:"link", to:"/student/majlis",  icon:MessageCircle, label:t("Al-Majlis","المجلس") },
-    { type:"link", to:"/live-quiz",       icon:Trophy,        label:t("Al-Musabaqah 🏆","المسابقة الحية 🏆") },
-    { type:"link", to:"/student/profile", icon:UserCircle,    label:t("Settings","الإعدادات") },
+    { type:"link", to:"/live-quiz",       icon:Trophy,        label:t("Al-Musābaqah 🏆","المسابقة 🏆") },
+    { type:"link", to:"/student/profile", icon:UserCircle,    label:t("Al-I'dādāt","الإعدادات") },
   ];
 
   // ── Admin nav — grouped ──────────────────────────────────────
