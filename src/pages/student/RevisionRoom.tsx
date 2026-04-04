@@ -106,7 +106,7 @@ const RevisionRoom = () => {
     return grouped;
   }, [allSubjects]);
 
-  const {  flashcards = [] } = useQuery({
+  const { data: flashcards = [] } = useQuery({
     queryKey: ["revision-flashcards", subjectId],
     queryFn: async () => {
       const { data } = await supabase.from("revision_flashcards" as any).select("*").eq("subject_id", subjectId!).order("order_index");
