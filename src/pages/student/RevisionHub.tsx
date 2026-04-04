@@ -59,7 +59,7 @@ const RevisionHub = () => {
 
   // Teacher profiles
   const teacherIds = [...new Set(subjects.map((s: any) => s.teacher_id).filter(Boolean))];
-  const {  teachers = [] } = useQuery({
+  const { data: teachers = [] } = useQuery({
     queryKey: ["revision-teachers", teacherIds],
     enabled: teacherIds.length > 0,
     queryFn: async () => {
