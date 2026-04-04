@@ -69,7 +69,7 @@ const RevisionHub = () => {
   });
 
   // Stats queries
-  const {  flashcardProgress = [] } = useQuery({
+  const { data: flashcardProgress = [] } = useQuery({
     queryKey: ["revision-fc-progress", user?.id],
     enabled: !!user,
     queryFn: async () => {
