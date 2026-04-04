@@ -3,12 +3,10 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { SURAHS, audioUrl, DEFAULT_RECITER } from "./surahData";
 import { supabase } from "@/integrations/supabase/client";
+import { transcribeRecitationAudio } from "@/lib/recitationAi";
 
 const G = "#1a3d24"; const GM = "#276749"; const GOLD = "#b7791f";
 const LIGHT = "#f0fff4"; const BORDER = "#d4e8d4";
-
-const QWEN_ENDPOINT = "https://dashscope-intl.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation";
-const QWEN_MODEL = "qwen-audio-turbo";
 
 interface Ayah { numberInSurah: number; text: string; }
 interface Props { reciter?: string; }
@@ -197,52 +195,9 @@ export default function HifdhExercise({ reciter = DEFAULT_RECITER }: Props) {
 
   const transcribeAndEval = async (blob: Blob) => {
     if (!question) return;
-    let tx = "";
+
     try {
-      // Use Qwen API key from env
-      let apiKey = (import.meta as any).env?.VITE_DASHSCOPE_API_KEY || "";
-
-      if (apiKey) {
-        const base64Full = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onloadend = () => resolve(reader.result as string);
-          reader.onerror = reject;
-          reader.readAsDataURL(blob);
-        });
-        const mimeType   = blob.type || "audio/webm";
-        const base64Data = base64Full.split(",")[1];
-
-        const res = await fetch(QWEN_ENDPOINT, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model: QWEN_MODEL,
-            input: {
-              messages: [{
-                role: "user",
-                content: [
-                  { audio: `data:${mimeType};base64,${base64Data}` },
-                  { text: "اكتب النص العربي المنطوق في هذا التسجيل فقط بدون ترجمة أو تعليق." },
-                ],
-              }],
-            },
-          }),
-        });
-
-        if (res.ok) {
-          const data = await res.json();
-          // Handle qwen-audio-turbo output format + legacy fallback
-          const outContent = data?.output?.choices?.[0]?.message?.content;
-          if (Array.isArray(outContent)) {
-            tx = outContent.find((c: any) => c.text)?.text || "";
-          } else if (typeof outContent === "string") {
-            tx = outContent;
-          } else {
-            const legacy = data?.choices?.[0]?.message?.content;
-            tx = typeof legacy === "string" ? legacy : "";
-          }
-        }
-      }
+      const tx = await transcribeRecitationAudio(blob);
 
       if (tx) {
         setTranscript(tx);
