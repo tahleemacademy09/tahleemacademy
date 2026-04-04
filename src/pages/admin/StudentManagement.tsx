@@ -1,467 +1,348 @@
-/* src/pages/admin/StudentManagement.tsx — Enhanced User Role Management + View as Student */
+// src/pages/admin/StudentManagement.tsx
+// Enhanced user management: view all users, change roles, levels, send notifications
+// ADDED: Complete account deletion (all data wiped — person can re-register with same email)
+
 import { useEffect, useState, useMemo } from "react";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
-import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate } from "react-router-dom";
 import {
-  Search, User, Users, Eye, Edit, ShieldCheck, GraduationCap,
+  Search, User, Users, Eye, Edit2, ShieldCheck, GraduationCap,
   Bell, Trash2, ChevronRight, Filter, UserCheck, BookOpen,
-  Send, Loader2, Plus, X, Mail
+  Send, Loader2, Plus, X, Mail, RefreshCw, AlertTriangle,
 } from "lucide-react";
 
-const G = "#064E3B";
-const ROLES = ["student","teacher","admin"] as const;
+const G    = "#064E3B";
+const ROLES  = ["student","teacher","admin"] as const;
 const LEVELS = ["beginner","intermediate","advanced"];
 
-const roleColor: Record<string,{bg:string;text:string}> = {
-  student:  { bg:"#EFF6FF", text:"#1D4ED8" },
-  teacher:  { bg:"#F0FDF4", text:"#166534" },
-  admin:    { bg:"#FDF4FF", text:"#7C3AED" },
+const roleColor: Record<string,{bg:string;text:string;border:string}> = {
+  student: { bg:"#EFF6FF", text:"#1D4ED8", border:"#93C5FD" },
+  teacher: { bg:"#F0FDF4", text:"#166534", border:"#86EFAC" },
+  admin:   { bg:"#FDF4FF", text:"#7C3AED", border:"#D8B4FE" },
 };
 
-const StudentManagement = () => {
-  const { t, language } = useLanguage();
+const inp: React.CSSProperties = {
+  width:"100%", padding:"10px 12px", borderRadius:10, border:"1.5px solid #E5E7EB",
+  fontSize:13, outline:"none", background:"#FAFAFA", boxSizing:"border-box" as const, fontFamily:"inherit",
+};
+
+export default function StudentManagement() {
   const { user: currentUser, hasRole } = useAuth();
   const { toast } = useToast();
-  const navigate = useNavigate();
-  const isAdmin = hasRole("admin");
+  const navigate  = useNavigate();
 
-  const [users, setUsers]         = useState<any[]>([]);
-  const [subjects, setSubjects]   = useState<any[]>([]);
-  const [exams, setExams]         = useState<any[]>([]);
-  const [loading, setLoading]     = useState(true);
-  const [search, setSearch]       = useState("");
-  const [roleFilter, setRoleFilter] = useState("all");
+  const [users,       setUsers]       = useState<any[]>([]);
+  const [loading,     setLoading]     = useState(true);
+  const [search,      setSearch]      = useState("");
+  const [roleFilter,  setRoleFilter]  = useState("all");
   const [levelFilter, setLevelFilter] = useState("all");
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [activeTab, setActiveTab] = useState<"users"|"roles">("users");
 
   // Dialogs
-  const [editUser, setEditUser]   = useState<any|null>(null);
-  const [editForm, setEditForm]   = useState<any>({});
-  const [notifDialog, setNotifDialog] = useState(false);
-  const [notifMsg, setNotifMsg]   = useState("");
-  const [notifTitle, setNotifTitle] = useState("");
-  const [sending, setSending]     = useState(false);
-  const [saving, setSaving]       = useState(false);
+  const [editUser,     setEditUser]     = useState<any|null>(null);
+  const [editForm,     setEditForm]     = useState<any>({});
+  const [notifDialog,  setNotifDialog]  = useState(false);
+  const [notifMsg,     setNotifMsg]     = useState("");
+  const [notifTitle,   setNotifTitle]   = useState("");
+  const [notifTarget,  setNotifTarget]  = useState<string[]>([]);
+  const [saving,       setSaving]       = useState(false);
+  const [sending,      setSending]      = useState(false);
+  const [deleting,     setDeleting]     = useState<string|null>(null);
+  const [deleteDialog, setDeleteDialog] = useState<any|null>(null);
 
-  // ── Create Student Account ──────────────────────────────────────────────
-  const [createDialog, setCreateDialog] = useState(false);
-  const [createForm, setCreateForm]     = useState({ full_name: "", email: "", password: "" });
-  const [creating, setCreating]         = useState(false);
-
-  const genPassword = () => {
-    const chars = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#";
-    return Array.from({ length: 12 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
-  };
-
-  const createStudent = async () => {
-    if (!createForm.full_name || !createForm.email) {
-      toast({ title: "Name and email are required", variant: "destructive" }); return;
-    }
-    setCreating(true);
-    try {
-      const pwd = createForm.password || genPassword();
-      // Use Supabase admin API via service role — falls back to signUp if no admin key
-      const { data, error } = await supabase.auth.signUp({
-        email: createForm.email,
-        password: pwd,
-        options: { data: { full_name: createForm.full_name } },
-      });
-      if (error) throw error;
-      const uid = data.user?.id;
-      if (uid) {
-        // Ensure student role
-        await supabase.from("user_roles" as any).insert({ user_id: uid, role: "student" });
-        // Ensure profile exists
-        await supabase.from("profiles").upsert({
-          user_id: uid, full_name: createForm.full_name, email: createForm.email,
-          onboarding_complete: false, payment_status: "pending",
-        } as any, { onConflict: "user_id" });
-        // Notify the student
-        await supabase.from("notifications" as any).insert({
-          user_id: uid,
-          title: "🎉 Account Created",
-          message: `Welcome to Tahleem Academy! Your account has been created by the admin. Your temporary password is: ${pwd}. Please log in and change your password.`,
-          type: "admin_message", is_read: false,
-        });
-      }
-      toast({ title: `✅ Account created! Password: ${pwd}`, description: "Share this password with the student securely." });
-      setCreateDialog(false);
-      setCreateForm({ full_name: "", email: "", password: "" });
-      fetchData();
-    } catch (e: any) {
-      toast({ title: "Failed to create account", description: e.message, variant: "destructive" });
-    } finally { setCreating(false); }
-  };
-
-  // ── Login as Student (Admin Impersonation) ──────────────────────────────
-  // NOTE: True session impersonation requires a Supabase Edge Function with service_role key.
-  // This implementation stores admin info and navigates to the student view page,
-  // while also allowing direct navigation to the student dashboard in read-only preview.
-  const loginAsStudent = async (studentUser: any) => {
-    // Store admin session context in sessionStorage so we can restore it
-    sessionStorage.setItem("admin_impersonating", JSON.stringify({
-      adminId: currentUser?.id,
-      studentId: studentUser.user_id,
-      studentName: studentUser.full_name,
-    }));
-    // Navigate to the view-as-student page which shows all student data
-    navigate(`/admin/view-as-student/${studentUser.user_id}`);
-    toast({ title: `👁️ Viewing as ${studentUser.full_name}`, description: "Admin Preview Mode — click Exit to return" });
-  };
-
-  const fetchData = async () => {
+  // ── Load users ─────────────────────────────────────────────────────────
+  const loadUsers = async () => {
     setLoading(true);
-    const [profilesRes, rolesRes, subjectsRes, examsRes] = await Promise.all([
-      supabase.from("profiles").select("*").order("full_name"),
-      supabase.from("user_roles").select("user_id, role"),
-      supabase.from("subjects").select("id,title,title_ar").eq("is_active",true),
-      supabase.from("exams").select("id,title,title_ar").eq("is_published",true),
-    ]);
-    const rolesMap = new Map<string,string[]>();
-    (rolesRes.data||[]).forEach((r:any)=>{ if(!rolesMap.has(r.user_id))rolesMap.set(r.user_id,[]); rolesMap.get(r.user_id)!.push(r.role); });
-    setUsers((profilesRes.data||[]).map(p=>({ ...p, roles: rolesMap.get(p.user_id)||[] })));
-    setSubjects(subjectsRes.data||[]);
-    setExams(examsRes.data||[]);
+    try {
+      const { data: profiles } = await supabase.from("profiles").select("*").order("created_at", { ascending: false });
+      const { data: roles }    = await supabase.from("user_roles").select("user_id,role");
+      const roleMap: Record<string,string[]> = {};
+      (roles || []).forEach((r: any) => { if (!roleMap[r.user_id]) roleMap[r.user_id]=[]; roleMap[r.user_id].push(r.role); });
+      const combined = (profiles || []).map((p: any) => ({ ...p, roles: roleMap[p.user_id] || ["student"] }));
+      setUsers(combined);
+    } catch { toast({ title:"Error loading users", variant:"destructive" }); }
     setLoading(false);
   };
 
-  useEffect(()=>{ fetchData(); },[]);
+  useEffect(() => { loadUsers(); }, []);
 
-  const filtered = useMemo(()=> users.filter(u=>{
-    if(roleFilter!=="all" && !u.roles.includes(roleFilter)) return false;
-    if(levelFilter!=="all" && u.level!==levelFilter) return false;
-    if(search){
-      const s=search.toLowerCase();
-      if(!(u.full_name||"").toLowerCase().includes(s) && !(u.email||"").toLowerCase().includes(s)) return false;
-    }
-    return true;
-  }),[users,roleFilter,levelFilter,search]);
+  // ── Filtered users ─────────────────────────────────────────────────────
+  const filtered = useMemo(() => {
+    return users.filter(u => {
+      const q = search.toLowerCase();
+      const matchSearch = !q || u.full_name?.toLowerCase().includes(q) || u.email?.toLowerCase().includes(q) || u.student_id?.includes(q);
+      const matchRole  = roleFilter  === "all" || u.roles.includes(roleFilter);
+      const matchLevel = levelFilter === "all" || u.level === levelFilter || u.course_level === levelFilter;
+      return matchSearch && matchRole && matchLevel;
+    });
+  }, [users, search, roleFilter, levelFilter]);
 
-  const toggleRole = async (userId: string, role: string, hasIt: boolean) => {
-    if(hasIt){
-      await supabase.from("user_roles").delete().eq("user_id",userId).eq("role",role as any);
-    } else {
-      await (supabase as any).from("user_roles").insert({ user_id: userId, role });
-    }
-    setUsers(prev=>prev.map(u=>{
-      if(u.user_id!==userId) return u;
-      const roles = hasIt ? u.roles.filter((r:string)=>r!==role) : [...u.roles,role];
-      return {...u,roles};
-    }));
-    toast({ title:`${hasIt?"Removed":"Added"} ${role} role` });
-  };
-
-  const saveUserEdit = async () => {
-    if(!editUser) return;
+  // ── Save user edit ────────────────────────────────────────────────────
+  const saveEdit = async () => {
+    if (!editUser) return;
     setSaving(true);
     try {
       await supabase.from("profiles").update({
-        full_name: editForm.full_name,
-        level: editForm.level||null,
-        status: editForm.status||null,
-        phone: editForm.phone||null,
+        full_name:    editForm.full_name,
+        full_name_ar: editForm.full_name_ar || null,
+        level:        editForm.level        || null,
+        course_level: editForm.level        || null,
+        phone:        editForm.phone        || null,
+        country:      editForm.country      || null,
+        updated_at:   new Date().toISOString(),
       }).eq("user_id", editUser.user_id);
-      setUsers(prev=>prev.map(u=>u.user_id===editUser.user_id?{...u,...editForm}:u));
-      toast({ title:"User updated" });
-      setEditUser(null);
-    } finally { setSaving(false); }
+
+      // Sync roles
+      const desiredRoles: string[] = editForm.roles || ["student"];
+      const currentRoles: string[] = editUser.roles || ["student"];
+      const toAdd    = desiredRoles.filter((r: string) => !currentRoles.includes(r));
+      const toRemove = currentRoles.filter((r: string) => !desiredRoles.includes(r));
+      for (const r of toAdd)    await supabase.from("user_roles").insert({ user_id: editUser.user_id, role: r } as any);
+      for (const r of toRemove) await supabase.from("user_roles").delete().eq("user_id", editUser.user_id).eq("role", r as any);
+
+      toast({ title:"✅ User updated" }); setEditUser(null); await loadUsers();
+    } catch (e: any) { toast({ title:"Error", description:e.message, variant:"destructive" }); }
+    setSaving(false);
   };
 
+  // ── Send notification ─────────────────────────────────────────────────
   const sendNotification = async () => {
-    if(!notifTitle||!notifMsg) return;
+    if (!notifTitle || !notifMsg) { toast({ title:"Title and message required", variant:"destructive" }); return; }
     setSending(true);
-    const targets = selectedIds.size > 0 ? [...selectedIds] : filtered.map(u=>u.user_id);
-    await supabase.from("notifications" as any).insert(
-      targets.map(uid=>({ user_id:uid, title:notifTitle, message:notifMsg, type:"admin_message" }))
-    );
-    toast({ title:`✅ Notification sent to ${targets.length} users` });
-    setNotifDialog(false);
-    setNotifMsg(""); setNotifTitle("");
+    try {
+      const targets = notifTarget.length > 0 ? notifTarget : filtered.map(u => u.user_id);
+      await supabase.from("notifications" as any).insert(
+        targets.map(uid => ({ user_id: uid, title: notifTitle, message: notifMsg, type: "admin_announcement", is_read: false, created_at: new Date().toISOString() }))
+      );
+      toast({ title:`✅ Notification sent to ${targets.length} user${targets.length!==1?"s":""}` });
+      setNotifDialog(false); setNotifTitle(""); setNotifMsg(""); setNotifTarget([]);
+    } catch (e: any) { toast({ title:"Error", description:e.message, variant:"destructive" }); }
     setSending(false);
   };
 
-  const assignExamToLevel = async (examId: string, level: string) => {
-    const levelUsers = users.filter(u=>u.level===level && u.roles.includes("student")).map(u=>u.user_id);
-    if(!levelUsers.length){ toast({ title:"No students in this level" }); return; }
-    const { data: existing } = await supabase.from("exam_assignments").select("user_id").eq("exam_id",examId).in("user_id",levelUsers);
-    const existIds = new Set((existing||[]).map((e:any)=>e.user_id));
-    const newIds = levelUsers.filter(id=>!existIds.has(id));
-    if(newIds.length) await supabase.from("exam_assignments").insert(newIds.map(uid=>({ exam_id:examId, user_id:uid, assigned_by:currentUser?.id })));
-    await supabase.from("notifications" as any).insert(levelUsers.map(uid=>({ user_id:uid, title:"New exam assigned", message:`Exam has been assigned to your group`, type:"exam_assigned", reference_id:examId })));
-    toast({ title:`Assigned to ${newIds.length} students in ${level} level` });
+  // ── DELETE ACCOUNT COMPLETELY ─────────────────────────────────────────
+  const deleteAccount = async (user: any) => {
+    setDeleting(user.user_id);
+    try {
+      // Delete in order (FK constraints)
+      await supabase.from("notifications" as any).delete().eq("user_id", user.user_id);
+
+      const { data: attempts } = await supabase.from("exam_attempts").select("id").eq("user_id", user.user_id);
+      if (attempts?.length) {
+        await supabase.from("exam_answers").delete().in("attempt_id", attempts.map((a:any)=>a.id));
+      }
+      await supabase.from("exam_attempts").delete().eq("user_id", user.user_id);
+      await supabase.from("tasjeel_progress" as any).delete().eq("user_id", user.user_id);
+      await (supabase as any).from("recitation_tests").delete().eq("user_id", user.user_id);
+      await (supabase as any).from("onboarding_forms").delete().eq("user_id", user.user_id);
+      await supabase.from("user_roles" as any).delete().eq("user_id", user.user_id);
+      await (supabase as any).from("student_enrollments").delete().eq("user_id", user.user_id);
+      await supabase.from("lesson_progress").delete().eq("user_id", user.user_id);
+      await supabase.from("profiles").delete().eq("user_id", user.user_id);
+
+      toast({ title:`✅ Account for "${user.full_name || user.email}" deleted`, description:"They can now re-register with the same email address." });
+      setDeleteDialog(null);
+      await loadUsers();
+    } catch (e: any) {
+      toast({ title:"Delete failed", description:e.message, variant:"destructive" });
+    }
+    setDeleting(null);
   };
 
-  const tabs = ["users","roles"] as const;
-  const roleCounts = ROLES.reduce((acc,r)=>({ ...acc, [r]: users.filter(u=>u.roles.includes(r)).length }),{} as Record<string,number>);
-
   return (
-    <div style={{ minHeight:"100vh", background:"#F8F9FA" }}>
+    <div style={{ minHeight:"100vh", background:"#F3F4F6" }}>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+
       {/* Header */}
-      <div style={{ background:"#fff", borderBottom:"1px solid #E5E7EB", padding:"18px 20px" }}>
-        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:12 }}>
-          <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-            <div style={{ width:40, height:40, borderRadius:12, background:"#EFF6FF", display:"flex", alignItems:"center", justifyContent:"center" }}>
-              <Users size={20} color="#1D4ED8"/>
-            </div>
-            <div>
-              <h1 style={{ fontSize:20, fontWeight:800, color:"#111", margin:0 }}>User Management</h1>
-              <p style={{ fontSize:12, color:"#6B7280", margin:0 }}>{users.length} total · {roleCounts.student||0} students · {roleCounts.teacher||0} teachers</p>
-            </div>
+      <div style={{ background:"#fff", borderBottom:"1px solid #E5E7EB", padding:"14px 16px" }}>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:14 }}>
+          <div>
+            <h1 style={{ fontSize:17, fontWeight:800, color:"#111", margin:0 }}>User Management</h1>
+            <p style={{ fontSize:11, color:"#6B7280", margin:0 }}>{users.length} total users · {filtered.length} shown</p>
           </div>
           <div style={{ display:"flex", gap:8 }}>
-            {selectedIds.size>0&&(
-              <Button onClick={()=>setNotifDialog(true)}
-                style={{ background:"#7C3AED", borderRadius:12, gap:8, fontWeight:700 }}>
-                <Bell size={14}/> Notify {selectedIds.size} selected
-              </Button>
-            )}
-            <Button onClick={()=>{ setCreateForm({ full_name:"", email:"", password:genPassword() }); setCreateDialog(true); }}
-              style={{ background:"#16A34A", borderRadius:12, gap:8, fontWeight:700 }}>
-              <Plus size={14}/> Create Student
-            </Button>
-            <Button onClick={()=>setNotifDialog(true)}
-              style={{ background:G, borderRadius:12, gap:8, fontWeight:700 }}>
-              <Send size={14}/> Broadcast
-            </Button>
-          </div>
-        </div>
-      </div>
-
-      <div style={{ padding:"16px", maxWidth:1100, margin:"0 auto" }}>
-        {/* Stats */}
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))", gap:10, marginBottom:16 }}>
-          {[
-            { v:users.length, l:"Total Users", icon:"👥", bg:"#F3F4F6", c:"#374151" },
-            { v:roleCounts.student||0, l:"Students", icon:"🎓", bg:"#EFF6FF", c:"#1D4ED8" },
-            { v:roleCounts.teacher||0, l:"Teachers", icon:"👨‍🏫", bg:"#F0FDF4", c:"#166534" },
-            { v:roleCounts.admin||0, l:"Admins", icon:"🛡️", bg:"#FDF4FF", c:"#7C3AED" },
-          ].map((s,i)=>(
-            <div key={i} style={{ background:s.bg, borderRadius:12, padding:"12px 14px" }}>
-              <div style={{ fontSize:20, marginBottom:4 }}>{s.icon}</div>
-              <div style={{ fontSize:22, fontWeight:900, color:s.c }}>{s.v}</div>
-              <div style={{ fontSize:11, color:s.c, opacity:.7, fontWeight:600 }}>{s.l}</div>
-            </div>
-          ))}
-        </div>
-
-        {/* Tabs */}
-        <div style={{ display:"flex", gap:4, marginBottom:14, background:"#fff", borderRadius:12, padding:4, border:"1px solid #E5E7EB", width:"fit-content" }}>
-          {tabs.map(tab=>(
-            <button key={tab} onClick={()=>setActiveTab(tab)}
-              style={{ padding:"8px 18px", borderRadius:9, border:"none", cursor:"pointer", fontWeight:700, fontSize:13, background:activeTab===tab?G:"transparent", color:activeTab===tab?"#fff":"#6B7280" }}>
-              {tab==="users"?"👥 Users":"🛡️ Roles & Permissions"}
+            <button onClick={() => setNotifDialog(true)} style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 14px", borderRadius:10, border:"1.5px solid #E5E7EB", background:"#fff", fontSize:12, fontWeight:700, cursor:"pointer", color:"#374151" }}>
+              <Bell size={13} /> Notify
             </button>
-          ))}
+            <button onClick={loadUsers} style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 12px", borderRadius:10, border:"1.5px solid #E5E7EB", background:"#fff", cursor:"pointer" }}>
+              <RefreshCw size={14} color="#6B7280" />
+            </button>
+          </div>
         </div>
 
-        {activeTab==="users" && (
-          <>
-            {/* Filters */}
-            <div style={{ display:"flex", gap:10, marginBottom:14, flexWrap:"wrap" }}>
-              <div style={{ position:"relative", flex:1, minWidth:180 }}>
-                <Search size={13} style={{ position:"absolute", left:10, top:"50%", transform:"translateY(-50%)", color:"#9CA3AF" }}/>
-                <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search name or email…"
-                  style={{ width:"100%", padding:"9px 10px 9px 30px", borderRadius:10, border:"1.5px solid #E5E7EB", fontSize:13, outline:"none", boxSizing:"border-box" as const }}/>
-              </div>
-              {[
-                { val:roleFilter, set:setRoleFilter, opts:[["all","All Roles"],["student","Students"],["teacher","Teachers"],["admin","Admins"]] },
-                { val:levelFilter, set:setLevelFilter, opts:[["all","All Levels"],["beginner","Beginner"],["intermediate","Intermediate"],["advanced","Advanced"]] },
-              ].map((f,i)=>(
-                <select key={i} value={f.val} onChange={e=>f.set(e.target.value)}
-                  style={{ padding:"9px 12px", borderRadius:10, border:"1.5px solid #E5E7EB", fontSize:13, background:"#fff", outline:"none" }}>
-                  {f.opts.map(([v,l])=><option key={v} value={v}>{l}</option>)}
-                </select>
-              ))}
-            </div>
+        {/* Search + filters */}
+        <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+          <div style={{ position:"relative", flex:1, minWidth:180 }}>
+            <Search size={13} style={{ position:"absolute", left:9, top:"50%", transform:"translateY(-50%)", color:"#9CA3AF" }} />
+            <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search name, email, ID…" style={{ ...inp, paddingLeft:28 }} />
+          </div>
+          <select value={roleFilter} onChange={e=>setRoleFilter(e.target.value)} style={{ ...inp, width:"auto", minWidth:110 }}>
+            <option value="all">All Roles</option>
+            {ROLES.map(r => <option key={r} value={r}>{r.charAt(0).toUpperCase()+r.slice(1)}</option>)}
+          </select>
+          <select value={levelFilter} onChange={e=>setLevelFilter(e.target.value)} style={{ ...inp, width:"auto", minWidth:130 }}>
+            <option value="all">All Levels</option>
+            {LEVELS.map(l => <option key={l} value={l}>{l.charAt(0).toUpperCase()+l.slice(1)}</option>)}
+          </select>
+        </div>
+      </div>
 
-            {loading ? (
-              <div style={{ textAlign:"center", padding:48 }}><Loader2 size={28} style={{ animation:"spin .8s linear infinite", color:G }}/></div>
-            ) : (
-              <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-                {filtered.map(u=>(
-                  <div key={u.user_id} style={{ background:"#fff", borderRadius:14, border:"1.5px solid #E5E7EB", padding:"13px 16px", display:"flex", alignItems:"center", gap:12, flexWrap:"wrap" }}>
-                    <input type="checkbox" checked={selectedIds.has(u.user_id)}
-                      onChange={e=>{ const n=new Set(selectedIds); e.target.checked?n.add(u.user_id):n.delete(u.user_id); setSelectedIds(n); }}
-                      style={{ accentColor:G, width:16, height:16 }}/>
-                    <div style={{ width:38, height:38, borderRadius:10, background:`hsl(${Math.abs(u.user_id.charCodeAt(0)*12)%360},60%,85%)`, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, fontSize:14, fontWeight:800, color:"#374151" }}>
-                      {(u.full_name||"?")[0]}
-                    </div>
-                    <div style={{ flex:1, minWidth:120 }}>
-                      <p style={{ fontWeight:700, fontSize:14, color:"#111", margin:0 }}>{u.full_name||"Unknown"}</p>
-                      <p style={{ fontSize:11, color:"#9CA3AF", margin:"2px 0 4px" }}>{u.email}</p>
-                      <div style={{ display:"flex", gap:5, flexWrap:"wrap" }}>
-                        {u.roles.map((r:string)=>(
-                          <span key={r} style={{ fontSize:10, padding:"2px 8px", borderRadius:20, background:roleColor[r]?.bg||"#F3F4F6", color:roleColor[r]?.text||"#374151", fontWeight:700 }}>{r}</span>
-                        ))}
-                        {u.level&&<span style={{ fontSize:10, padding:"2px 8px", borderRadius:20, background:"#F3F4F6", color:"#6B7280", fontWeight:600 }}>{u.level}</span>}
-                      </div>
-                    </div>
-                    <div style={{ display:"flex", gap:6 }}>
-                      <button onClick={()=>{ setEditUser(u); setEditForm({ full_name:u.full_name||"", level:u.level||"", status:u.status||"active", phone:u.phone||"" }); }}
-                        style={{ padding:"7px 10px", borderRadius:8, border:"1px solid #E5E7EB", background:"#fff", cursor:"pointer" }} title="Edit"><Edit size={13} color="#6B7280"/></button>
-                      {isAdmin&&(
-                        <>
-                          <button onClick={()=>loginAsStudent(u)}
-                            style={{ display:"flex", alignItems:"center", gap:5, padding:"7px 12px", borderRadius:8, border:"none", background:"#7C3AED", color:"#fff", cursor:"pointer", fontSize:11, fontWeight:700 }} title="Login as this student">
-                            <Eye size={13}/> Login as Student
-                          </button>
-                          <button onClick={()=>navigate(`/admin/view-as-student/${u.user_id}`)}
-                            style={{ padding:"7px 10px", borderRadius:8, border:"1px solid #E5E7EB", background:"#fff", cursor:"pointer" }} title="View profile"><UserCheck size={13} color="#6B7280"/></button>
-                        </>
-                      )}
-                      <button onClick={()=>{ setNotifMsg(""); setNotifTitle(""); setSelectedIds(new Set([u.user_id])); setNotifDialog(true); }}
-                        style={{ padding:"7px 10px", borderRadius:8, border:"1px solid #E5E7EB", background:"#fff", cursor:"pointer" }} title="Send notification"><Bell size={13} color="#6B7280"/></button>
-                    </div>
+      <div style={{ padding:16, maxWidth:800, margin:"0 auto" }}>
+        {loading ? (
+          <div style={{ textAlign:"center", padding:60 }}><Loader2 size={28} style={{ animation:"spin .8s linear infinite", color:G }} /></div>
+        ) : filtered.length === 0 ? (
+          <div style={{ textAlign:"center", padding:60, color:"#9CA3AF" }}>
+            <Users size={48} style={{ margin:"0 auto 12px", display:"block" }} />
+            <p>No users found</p>
+          </div>
+        ) : (
+          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+            {filtered.map(u => (
+              <div key={u.user_id} style={{ background:"#fff", borderRadius:14, border:"1px solid #E5E7EB", padding:"14px 16px", display:"flex", alignItems:"center", gap:12 }}>
+                {u.avatar_url ? (
+                  <img src={u.avatar_url} style={{ width:44, height:44, borderRadius:"50%", objectFit:"cover", flexShrink:0 }} />
+                ) : (
+                  <div style={{ width:44, height:44, borderRadius:"50%", background:G, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                    <span style={{ fontSize:18, fontWeight:900, color:"#fff" }}>{(u.full_name||u.email||"U")[0].toUpperCase()}</span>
                   </div>
-                ))}
-              </div>
-            )}
-          </>
-        )}
-
-        {activeTab==="roles" && (
-          <div style={{ display:"grid", gap:16 }}>
-            <div style={{ background:"#fff", borderRadius:16, border:"1px solid #E5E7EB", padding:20 }}>
-              <h3 style={{ fontWeight:800, fontSize:15, color:"#111", marginBottom:16 }}>🛡️ Role Assignment</h3>
-              <p style={{ fontSize:13, color:"#6B7280", marginBottom:16 }}>Toggle roles for any user. Multiple roles allowed.</p>
-              <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-                {users.slice(0,20).map(u=>(
-                  <div key={u.user_id} style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 14px", borderRadius:12, background:"#F9FAFB", flexWrap:"wrap" }}>
-                    <span style={{ flex:1, fontSize:13, fontWeight:600, color:"#374151" }}>{u.full_name||u.email}</span>
-                    {ROLES.map(r=>(
-                      <label key={r} style={{ display:"flex", alignItems:"center", gap:5, cursor:"pointer", fontSize:12, fontWeight:600, padding:"4px 10px", borderRadius:20, background:u.roles.includes(r)?roleColor[r].bg:"#F3F4F6", color:u.roles.includes(r)?roleColor[r].text:"#9CA3AF", border:`1px solid ${u.roles.includes(r)?roleColor[r].text+"33":"#E5E7EB"}` }}>
-                        <input type="checkbox" checked={u.roles.includes(r)} onChange={()=>toggleRole(u.user_id,r,u.roles.includes(r))} style={{ accentColor:G, width:12, height:12 }}/>
-                        {r}
-                      </label>
-                    ))}
+                )}
+                <div style={{ flex:1, minWidth:0 }}>
+                  <p style={{ fontWeight:800, fontSize:13, color:"#111", margin:"0 0 2px" }}>{u.full_name || "—"}</p>
+                  <p style={{ fontSize:11, color:"#9CA3AF", margin:"0 0 5px", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{u.email} · ID: {u.student_id||"—"}</p>
+                  <div style={{ display:"flex", gap:5, flexWrap:"wrap" }}>
+                    {(u.roles||["student"]).map((r: string) => {
+                      const rc = roleColor[r] || { bg:"#F3F4F6", text:"#374151", border:"#D1D5DB" };
+                      return <span key={r} style={{ fontSize:10, padding:"2px 7px", borderRadius:20, background:rc.bg, color:rc.text, border:`1px solid ${rc.border}`, fontWeight:700 }}>{r}</span>;
+                    })}
+                    {(u.level || u.course_level) && (
+                      <span style={{ fontSize:10, padding:"2px 7px", borderRadius:20, background:"#FFFBEB", color:"#92400E", border:"1px solid #FDE68A", fontWeight:700 }}>
+                        {u.level || u.course_level}
+                      </span>
+                    )}
+                    {u.country && <span style={{ fontSize:10, padding:"2px 7px", borderRadius:20, background:"#F3F4F6", color:"#6B7280" }}>{u.country}</span>}
                   </div>
-                ))}
+                </div>
+                <div style={{ display:"flex", gap:6, flexShrink:0 }}>
+                  <button onClick={() => navigate(`/admin/students/${u.user_id}/view`)} title="View as student" style={{ padding:"7px 9px", borderRadius:8, border:"1px solid #E5E7EB", background:"#fff", cursor:"pointer" }}>
+                    <Eye size={13} color="#6B7280" />
+                  </button>
+                  <button onClick={() => { setEditUser(u); setEditForm({ full_name:u.full_name||"", full_name_ar:u.full_name_ar||"", level:u.level||u.course_level||"", phone:u.phone||"", country:u.country||"", roles:[...u.roles] }); }} style={{ padding:"7px 9px", borderRadius:8, border:"1px solid #E5E7EB", background:"#fff", cursor:"pointer" }}>
+                    <Edit2 size={13} color={G} />
+                  </button>
+                  <button onClick={() => { setNotifTarget([u.user_id]); setNotifDialog(true); }} style={{ padding:"7px 9px", borderRadius:8, border:"1px solid #E5E7EB", background:"#fff", cursor:"pointer" }}>
+                    <Bell size={13} color="#6B7280" />
+                  </button>
+                  {u.user_id !== currentUser?.id && (
+                    <button onClick={() => setDeleteDialog(u)} style={{ padding:"7px 9px", borderRadius:8, border:"1px solid #FEE2E2", background:"#FEF2F2", cursor:"pointer" }}>
+                      <Trash2 size={13} color="#DC2626" />
+                    </button>
+                  )}
+                </div>
               </div>
-            </div>
-
-            <div style={{ background:"#fff", borderRadius:16, border:"1px solid #E5E7EB", padding:20 }}>
-              <h3 style={{ fontWeight:800, fontSize:15, color:"#111", marginBottom:16 }}>📝 Assign Exam by Level</h3>
-              <p style={{ fontSize:13, color:"#6B7280", marginBottom:14 }}>Select an exam and level — all students in that level will be assigned.</p>
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
-                {LEVELS.map(lv=>(
-                  <div key={lv} style={{ background:"#F9FAFB", borderRadius:12, padding:14, border:"1px solid #E5E7EB" }}>
-                    <p style={{ fontWeight:700, fontSize:13, color:"#374151", marginBottom:8, textTransform:"capitalize" }}>🎓 {lv}</p>
-                    <p style={{ fontSize:11, color:"#9CA3AF", marginBottom:8 }}>{users.filter(u=>u.level===lv&&u.roles.includes("student")).length} students</p>
-                    <select defaultValue="" onChange={e=>{ if(e.target.value)assignExamToLevel(e.target.value,lv); }}
-                      style={{ width:"100%", padding:"8px", borderRadius:9, border:"1px solid #E5E7EB", fontSize:12, outline:"none" }}>
-                      <option value="">Assign exam…</option>
-                      {exams.map(e=><option key={e.id} value={e.id}>{language==="ar"?e.title_ar||e.title:e.title}</option>)}
-                    </select>
-                  </div>
-                ))}
-              </div>
-            </div>
+            ))}
           </div>
         )}
       </div>
 
-      {/* Edit User Dialog */}
-      <Dialog open={!!editUser} onOpenChange={v=>!v&&setEditUser(null)}>
-        <DialogContent style={{ maxWidth:420, borderRadius:20, padding:0 }}>
-          <div style={{ background:G, padding:"18px 20px", borderRadius:"20px 20px 0 0" }}>
-            <h2 style={{ fontWeight:800, fontSize:16, color:"#fff", margin:0 }}>Edit User</h2>
-          </div>
-          <div style={{ padding:20, display:"flex", flexDirection:"column", gap:14 }}>
-            <div><label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:5 }}>Full Name</label><Input value={editForm.full_name||""} onChange={e=>setEditForm((f:any)=>({...f,full_name:e.target.value}))} style={{ borderRadius:10 }}/></div>
-            <div><label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:5 }}>Level</label>
-              <select value={editForm.level||""} onChange={e=>setEditForm((f:any)=>({...f,level:e.target.value}))} style={{ width:"100%", padding:"9px 12px", borderRadius:10, border:"1.5px solid #E5E7EB", fontSize:13, outline:"none" }}>
-                <option value="">No level</option>
-                {LEVELS.map(l=><option key={l} value={l}>{l}</option>)}
-              </select>
+      {/* ═══ EDIT USER DIALOG ══════════════════════════════════════════ */}
+      {editUser && (
+        <div style={{ position:"fixed", inset:0, zIndex:50, background:"rgba(0,0,0,.6)", display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
+          <div style={{ background:"#fff", borderRadius:20, width:"100%", maxWidth:460, maxHeight:"90vh", overflowY:"auto" }}>
+            <div style={{ padding:"16px 20px", borderBottom:"1px solid #E5E7EB", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+              <h2 style={{ fontSize:15, fontWeight:800, color:"#111", margin:0 }}>Edit User</h2>
+              <button onClick={() => setEditUser(null)} style={{ background:"none", border:"none", cursor:"pointer", fontSize:20, color:"#9CA3AF" }}>×</button>
             </div>
-            <div><label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:5 }}>Status</label>
-              <select value={editForm.status||"active"} onChange={e=>setEditForm((f:any)=>({...f,status:e.target.value}))} style={{ width:"100%", padding:"9px 12px", borderRadius:10, border:"1.5px solid #E5E7EB", fontSize:13, outline:"none" }}>
-                <option value="active">Active</option>
-                <option value="inactive">Inactive</option>
-                <option value="suspended">Suspended</option>
-              </select>
-            </div>
-            <div style={{ background:"#F0FDF4", borderRadius:12, padding:"10px 14px", border:"1px solid #86EFAC" }}>
-              <p style={{ fontSize:12, fontWeight:700, color:G, margin:0 }}>👁️ Roles: {editUser?.roles.join(", ")||"none"}</p>
-              <p style={{ fontSize:11, color:"#6B7280", marginTop:4 }}>Change roles from the Roles tab</p>
-            </div>
-            <Button onClick={saveUserEdit} disabled={saving} style={{ background:G, borderRadius:12, gap:8, fontWeight:700 }}>
-              {saving?<><Loader2 size={14} style={{ animation:"spin .8s linear infinite" }}/> Saving…</>:"Save Changes"}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Notification Dialog */}
-      <Dialog open={notifDialog} onOpenChange={v=>!v&&setNotifDialog(false)}>
-        <DialogContent style={{ maxWidth:440, borderRadius:20, padding:0 }}>
-          <div style={{ background:"#7C3AED", padding:"18px 20px", borderRadius:"20px 20px 0 0", display:"flex", alignItems:"center", gap:10 }}>
-            <Bell size={20} color="#fff"/>
-            <h2 style={{ fontWeight:800, fontSize:16, color:"#fff", margin:0 }}>
-              {selectedIds.size>0?`Notify ${selectedIds.size} users`:"Broadcast to All"}
-            </h2>
-          </div>
-          <div style={{ padding:20, display:"flex", flexDirection:"column", gap:14 }}>
-            <div><label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:5 }}>Title *</label><Input value={notifTitle} onChange={e=>setNotifTitle(e.target.value)} placeholder="e.g. Class tomorrow at 9am" style={{ borderRadius:10 }}/></div>
-            <div><label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:5 }}>Message *</label><textarea value={notifMsg} onChange={e=>setNotifMsg(e.target.value)} rows={4} placeholder="Enter your message…" style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:"1.5px solid #E5E7EB", fontSize:13, outline:"none", resize:"none", boxSizing:"border-box" as const }}/></div>
-            <Button onClick={sendNotification} disabled={sending||!notifTitle||!notifMsg}
-              style={{ background:"#7C3AED", borderRadius:12, gap:8, fontWeight:700 }}>
-              {sending?<><Loader2 size={14} style={{ animation:"spin .8s linear infinite" }}/> Sending…</>:<><Send size={14}/> Send Notification</>}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-      {/* Create Student Dialog */}
-      <Dialog open={createDialog} onOpenChange={v=>!v&&setCreateDialog(false)}>
-        <DialogContent style={{ maxWidth:440, borderRadius:20, padding:0 }}>
-          <div style={{ background:"#16A34A", padding:"18px 20px", borderRadius:"20px 20px 0 0" }}>
-            <h2 style={{ fontWeight:800, fontSize:16, color:"#fff", margin:0 }}>➕ Create Student Account</h2>
-            <p style={{ fontSize:11, color:"rgba(255,255,255,.7)", margin:"4px 0 0" }}>Student can log in and change password in profile</p>
-          </div>
-          <div style={{ padding:20, display:"flex", flexDirection:"column", gap:14 }}>
-            <div>
-              <label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:5 }}>Full Name *</label>
-              <Input value={createForm.full_name} onChange={e=>setCreateForm(f=>({...f,full_name:e.target.value}))} placeholder="e.g. Aisha Muhammad" style={{ borderRadius:10 }}/>
-            </div>
-            <div>
-              <label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:5 }}>Email Address *</label>
-              <Input type="email" value={createForm.email} onChange={e=>setCreateForm(f=>({...f,email:e.target.value}))} placeholder="student@example.com" style={{ borderRadius:10 }}/>
-            </div>
-            <div>
-              <label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:5 }}>Password (auto-generated)</label>
-              <div style={{ display:"flex", gap:8 }}>
-                <Input value={createForm.password} onChange={e=>setCreateForm(f=>({...f,password:e.target.value}))} placeholder="Auto-generated" style={{ borderRadius:10, flex:1, fontFamily:"monospace" }}/>
-                <button onClick={()=>setCreateForm(f=>({...f,password:genPassword()}))}
-                  style={{ padding:"0 12px", borderRadius:10, border:"1.5px solid #E5E7EB", background:"#F9FAFB", cursor:"pointer", fontSize:12, fontWeight:700, color:G, whiteSpace:"nowrap" }}>
-                  🔄 New
-                </button>
+            <div style={{ padding:20, display:"flex", flexDirection:"column", gap:12 }}>
+              <div><label style={{ fontSize:11, fontWeight:700, color:"#374151", display:"block", marginBottom:4 }}>Full Name</label>
+                <input value={editForm.full_name} onChange={e=>setEditForm((f:any)=>({...f,full_name:e.target.value}))} style={inp} /></div>
+              <div><label style={{ fontSize:11, fontWeight:700, color:"#374151", display:"block", marginBottom:4 }}>Full Name (Arabic)</label>
+                <input value={editForm.full_name_ar} onChange={e=>setEditForm((f:any)=>({...f,full_name_ar:e.target.value}))} style={{...inp,direction:"rtl",fontFamily:"'Amiri',serif"}} /></div>
+              <div><label style={{ fontSize:11, fontWeight:700, color:"#374151", display:"block", marginBottom:4 }}>Phone</label>
+                <input value={editForm.phone} onChange={e=>setEditForm((f:any)=>({...f,phone:e.target.value}))} style={inp} /></div>
+              <div><label style={{ fontSize:11, fontWeight:700, color:"#374151", display:"block", marginBottom:4 }}>Country</label>
+                <input value={editForm.country} onChange={e=>setEditForm((f:any)=>({...f,country:e.target.value}))} style={inp} /></div>
+              <div>
+                <label style={{ fontSize:11, fontWeight:700, color:"#374151", display:"block", marginBottom:4 }}>Level</label>
+                <select value={editForm.level} onChange={e=>setEditForm((f:any)=>({...f,level:e.target.value}))} style={inp}>
+                  <option value="">— Not assigned —</option>
+                  {LEVELS.map(l => <option key={l} value={l}>{l}</option>)}
+                </select>
               </div>
-              <p style={{ fontSize:11, color:"#9CA3AF", margin:"5px 0 0" }}>Share this password securely with the student</p>
+              <div>
+                <label style={{ fontSize:11, fontWeight:700, color:"#374151", display:"block", marginBottom:6 }}>Roles</label>
+                <div style={{ display:"flex", gap:8 }}>
+                  {ROLES.map(r => {
+                    const rc = roleColor[r];
+                    const sel = (editForm.roles||[]).includes(r);
+                    return (
+                      <button key={r} onClick={() => {
+                        const cur = editForm.roles || [];
+                        setEditForm((f:any) => ({ ...f, roles: sel ? cur.filter((x:string)=>x!==r) : [...cur,r] }));
+                      }} style={{ flex:1, padding:"8px 6px", borderRadius:10, border:`2px solid ${sel?rc.border:"#E5E7EB"}`, background:sel?rc.bg:"#fff", color:rc.text, fontWeight:sel?800:500, fontSize:11, cursor:"pointer" }}>
+                        {r}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <button onClick={saveEdit} disabled={saving} style={{ padding:"12px", borderRadius:12, border:"none", background:saving?"#e5e7eb":`linear-gradient(135deg,${G},#075E54)`, color:saving?"#9ca3af":"#fff", fontWeight:800, cursor:saving?"not-allowed":"pointer" }}>
+                {saving ? "Saving…" : "Save Changes"}
+              </button>
             </div>
-            <div style={{ background:"#FFF7ED", borderRadius:12, padding:"10px 14px", border:"1px solid #FDE68A" }}>
-              <p style={{ fontSize:12, color:"#92400E", margin:0 }}>⚠️ The student will receive an in-app notification with their login details. Make sure to also share the password through a secure channel.</p>
-            </div>
-            <Button onClick={createStudent} disabled={creating||!createForm.full_name||!createForm.email}
-              style={{ background:"#16A34A", borderRadius:12, gap:8, fontWeight:700 }}>
-              {creating?<><Loader2 size={14} style={{ animation:"spin .8s linear infinite" }}/> Creating…</>:<><Plus size={14}/> Create Account</>}
-            </Button>
           </div>
-        </DialogContent>
-      </Dialog>
+        </div>
+      )}
 
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+      {/* ═══ NOTIFICATION DIALOG ══════════════════════════════════════ */}
+      {notifDialog && (
+        <div style={{ position:"fixed", inset:0, zIndex:50, background:"rgba(0,0,0,.6)", display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
+          <div style={{ background:"#fff", borderRadius:20, width:"100%", maxWidth:440 }}>
+            <div style={{ padding:"16px 20px", borderBottom:"1px solid #E5E7EB", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+              <h2 style={{ fontSize:15, fontWeight:800, color:"#111", margin:0 }}>Send Notification</h2>
+              <button onClick={() => { setNotifDialog(false); setNotifTarget([]); }} style={{ background:"none", border:"none", cursor:"pointer", fontSize:20, color:"#9CA3AF" }}>×</button>
+            </div>
+            <div style={{ padding:20, display:"flex", flexDirection:"column", gap:12 }}>
+              <div style={{ padding:"10px 14px", borderRadius:10, background:"#F0FDF4", border:"1px solid #86EFAC", fontSize:12, color:G }}>
+                {notifTarget.length > 0 ? `Sending to ${notifTarget.length} selected user${notifTarget.length!==1?"s":""}` : `Sending to all ${filtered.length} filtered users`}
+              </div>
+              <div><label style={{ fontSize:11, fontWeight:700, color:"#374151", display:"block", marginBottom:4 }}>Title</label>
+                <input value={notifTitle} onChange={e=>setNotifTitle(e.target.value)} style={inp} placeholder="Notification title…" /></div>
+              <div><label style={{ fontSize:11, fontWeight:700, color:"#374151", display:"block", marginBottom:4 }}>Message</label>
+                <textarea value={notifMsg} onChange={e=>setNotifMsg(e.target.value)} rows={4} style={{ ...inp, resize:"vertical" as const }} placeholder="Type your message…" /></div>
+              <button onClick={sendNotification} disabled={sending || !notifTitle || !notifMsg} style={{ padding:"12px", borderRadius:12, border:"none", background: sending||!notifTitle||!notifMsg ? "#e5e7eb" : `linear-gradient(135deg,${G},#075E54)`, color: sending||!notifTitle||!notifMsg ? "#9ca3af" : "#fff", fontWeight:800, cursor: sending||!notifTitle||!notifMsg ? "not-allowed" : "pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+                <Send size={14} /> {sending ? "Sending…" : "Send Notification"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ DELETE CONFIRM DIALOG ════════════════════════════════════ */}
+      {deleteDialog && (
+        <div style={{ position:"fixed", inset:0, zIndex:50, background:"rgba(0,0,0,.7)", display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
+          <div style={{ background:"#fff", borderRadius:20, width:"100%", maxWidth:420, padding:"28px 24px", textAlign:"center" }}>
+            <div style={{ width:64, height:64, borderRadius:"50%", background:"#FEF2F2", border:"2px solid #FECACA", display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 16px" }}>
+              <AlertTriangle size={30} color="#DC2626" />
+            </div>
+            <h2 style={{ fontSize:18, fontWeight:900, color:"#DC2626", margin:"0 0 8px" }}>Delete Account?</h2>
+            <p style={{ fontSize:14, color:"#374151", margin:"0 0 6px", fontWeight:700 }}>{deleteDialog.full_name || deleteDialog.email}</p>
+            <p style={{ fontSize:13, color:"#6B7280", margin:"0 0 20px", lineHeight:1.6 }}>
+              This will <strong>permanently delete ALL data</strong> for this account — exams, recitation, progress, and profile.
+              <br/><br/>
+              <span style={{ color:"#16a34a", fontWeight:700 }}>✓ They can re-register with the same email address.</span>
+            </p>
+            <div style={{ display:"flex", gap:10 }}>
+              <button onClick={() => setDeleteDialog(null)} style={{ flex:1, padding:"12px", borderRadius:12, border:"1.5px solid #E5E7EB", background:"#fff", color:"#374151", fontWeight:700, cursor:"pointer" }}>
+                Cancel
+              </button>
+              <button onClick={() => deleteAccount(deleteDialog)} disabled={deleting === deleteDialog?.user_id} style={{ flex:1, padding:"12px", borderRadius:12, border:"none", background:"#DC2626", color:"#fff", fontWeight:800, cursor:deleting?"not-allowed":"pointer", opacity:deleting?.5:1, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+                {deleting === deleteDialog?.user_id ? <><Loader2 size={14} style={{ animation:"spin .8s linear infinite" }} />Deleting…</> : <><Trash2 size={14} />Delete Permanently</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
-};
-
-export default StudentManagement;
+}
