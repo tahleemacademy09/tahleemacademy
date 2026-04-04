@@ -142,7 +142,7 @@ const RevisionRoom = () => {
     },
   });
 
-  const {  materials = [] } = useQuery({
+  const { data: materials = [] } = useQuery({
     queryKey: ["subject-materials-rev", subjectId],
     enabled: !!subjectId,
     queryFn: async () => {      const { data } = await supabase.from("subject_materials").select("*").eq("subject_id", subjectId!).order("created_at", { ascending: false });
