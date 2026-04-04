@@ -82,7 +82,7 @@ const RevisionRoom = () => {
   const [expandedLevels, setExpandedLevels] = useState<Record<string, boolean>>({});
 
   // ✅ FIXED: All useQuery destructuring now correctly uses ``
-  const {  subject } = useQuery({
+  const { data: subject } = useQuery({
     queryKey: ["revision-subject", subjectId],
     queryFn: async () => {
       const { data } = await supabase.from("subjects").select("*").eq("id", subjectId!).single();
@@ -106,7 +106,7 @@ const RevisionRoom = () => {
     return grouped;
   }, [allSubjects]);
 
-  const {  flashcards = [] } = useQuery({
+  const { data: flashcards = [] } = useQuery({
     queryKey: ["revision-flashcards", subjectId],
     queryFn: async () => {
       const { data } = await supabase.from("revision_flashcards" as any).select("*").eq("subject_id", subjectId!).order("order_index");
@@ -114,7 +114,7 @@ const RevisionRoom = () => {
     },
   });
 
-  const {  fcProgress = [] } = useQuery({
+  const { data: fcProgress = [] } = useQuery({
     queryKey: ["revision-fc-progress", subjectId, user?.id],
     enabled: !!user && flashcards.length > 0,
     queryFn: async () => {
@@ -133,7 +133,7 @@ const RevisionRoom = () => {
     },
   });
 
-  const {  notes = [] } = useQuery({
+  const { data: notes = [] } = useQuery({
     queryKey: ["revision-notes", subjectId, user?.id],
     enabled: !!user,
     queryFn: async () => {
@@ -142,7 +142,7 @@ const RevisionRoom = () => {
     },
   });
 
-  const {  materials = [] } = useQuery({
+  const { data: materials = [] } = useQuery({
     queryKey: ["subject-materials-rev", subjectId],
     enabled: !!subjectId,
     queryFn: async () => {      const { data } = await supabase.from("subject_materials").select("*").eq("subject_id", subjectId!).order("created_at", { ascending: false });
@@ -150,7 +150,7 @@ const RevisionRoom = () => {
     },
   });
 
-  const {  quizHistory = [] } = useQuery({
+  const { data: quizHistory = [] } = useQuery({
     queryKey: ["revision-quiz-history", subjectId, user?.id],
     enabled: !!user,
     queryFn: async () => {
@@ -163,7 +163,7 @@ const RevisionRoom = () => {
     queryKey: ["subject-exams-for-quiz", subjectId],
     enabled: !!subjectId,
     queryFn: async () => {
-      const {  courses } = await supabase.from("courses").select("id").eq("subject_id", subjectId!);
+      const { data: courses } = await supabase.from("courses").select("id").eq("subject_id", subjectId!);
       if (!courses?.length) return [];
       const { data } = await supabase.from("exams").select("id,title,title_ar").in("course_id", courses.map(c=>c.id)).eq("is_published", true);
       return (data||[]) as any[];
@@ -372,7 +372,7 @@ Make questions educational and progressively challenging.`
   const startExamQuiz = async (examId: string) => {
     setQuizLoading(true);
     try {
-      const {  qs } = await supabase.from("exam_questions").select("*").eq("exam_id", examId).order("created_at");
+      const { data: qs } = await supabase.from("exam_questions").select("*").eq("exam_id", examId).order("created_at");
       if (!qs?.length) { toast({ title:"No questions in this exam yet." }); setQuizLoading(false); return; }
       const questions: QuizQ[] = qs
         .filter((q:any) => q.question_type === "mcq" && q.options?.length >= 2)

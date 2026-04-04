@@ -120,12 +120,7 @@ export default function HifdhMemorization({ reciter = DEFAULT_RECITER }: Props) 
   const fetchApiKey = useCallback(async () => {
     const envKey = (import.meta as any).env?.VITE_DASHSCOPE_API_KEY || "";
     if (envKey) { setQwenApiKey(envKey); setApiKeyLoaded(true); return; }
-    try {
-      const { data } = await supabase
-        .from("user_api_keys").select("api_key, region")
-        .eq("provider", "dashscope_qwen").maybeSingle();
-      if (data?.api_key) { setQwenApiKey(data.api_key); setApiKeyLoaded(true); }
-    } catch { /* no key available */ }
+    setApiKeyLoaded(true); // No external key needed - uses edge function
   }, []);
 
   const fetchAyahs = useCallback(async () => {
@@ -608,7 +603,7 @@ export default function HifdhMemorization({ reciter = DEFAULT_RECITER }: Props) 
             </div>
           )}
 
-          {!micActive && apiKeyLoaded && currentStep.type !== "overview" && micError && (
+          {!micActive && apiKeyLoaded && currentStep.type !== ("overview" as string) && micError && (
             <div style={{ marginTop:6, fontSize:11, color:"#c0392b" }}>{micError}</div>
           )}
         </div>

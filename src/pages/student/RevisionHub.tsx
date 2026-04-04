@@ -59,7 +59,7 @@ const RevisionHub = () => {
 
   // Teacher profiles
   const teacherIds = [...new Set(subjects.map((s: any) => s.teacher_id).filter(Boolean))];
-  const {  teachers = [] } = useQuery({
+  const { data: teachers = [] } = useQuery({
     queryKey: ["revision-teachers", teacherIds],
     enabled: teacherIds.length > 0,
     queryFn: async () => {
@@ -69,7 +69,7 @@ const RevisionHub = () => {
   });
 
   // Stats queries
-  const {  flashcardProgress = [] } = useQuery({
+  const { data: flashcardProgress = [] } = useQuery({
     queryKey: ["revision-fc-progress", user?.id],
     enabled: !!user,
     queryFn: async () => {
@@ -78,7 +78,7 @@ const RevisionHub = () => {
     },
   });
 
-  const {  quizSessions = [] } = useQuery({
+  const { data: quizSessions = [] } = useQuery({
     queryKey: ["revision-quizzes", user?.id],
     enabled: !!user,
     queryFn: async () => {
@@ -87,7 +87,7 @@ const RevisionHub = () => {
     },
   });
 
-  const {  todaySchedule = [] } = useQuery({
+  const { data: todaySchedule = [] } = useQuery({
     queryKey: ["revision-schedule-today", user?.id],
     enabled: !!user,
     queryFn: async () => {

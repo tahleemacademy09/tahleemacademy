@@ -104,26 +104,28 @@ const StudentDashboard = () => {
         return voices[0] || null;
       };
 
+      // Prioritize male Arabic-accented voices
       const bestVoice = pick([
-        v => /Majed|Maged|Hatem|Tarik|Basem|Mehdi|Hamed|Naief|Mohammed/i.test(v.name),
-        v => v.lang === 'ar-SA',
-        v => v.lang === 'ar-EG',
+        v => /Majed|Maged|Hatem|Tarik|Basem|Mehdi|Hamed|Naief|Mohammed|Ahmad|Omar|Khalid|Ali|Zaid/i.test(v.name),
+        v => v.lang === 'ar-SA' && !(/female|Laila|Amira|Fatima|Maryam|Salma/i.test(v.name)),
+        v => v.lang === 'ar-EG' && !(/female|Laila|Amira|Fatima|Maryam|Salma/i.test(v.name)),
+        v => v.lang.startsWith('ar') && !(/female|Laila|Amira|Fatima|Maryam|Salma/i.test(v.name)),
         v => v.lang.startsWith('ar'),
         v => /Daniel|David|James|Thomas|George/i.test(v.name) && v.lang.startsWith('en'),
-        v => v.lang === 'en-GB',
+        v => v.lang === 'en-GB' && !(/female|Kate|Samantha|Victoria|Fiona/i.test(v.name)),
         v => true,
       ]);
 
       const isArabicVoice = bestVoice?.lang?.startsWith('ar') ?? false;
       const text = isArabicVoice
-        ? "السلام عليكم " + firstName + " مرحبًا"
-        : "As-salaamu alaykum. " + firstName + ". Marhaban.";
+        ? "السلام عليكم ورحمة الله " + firstName + " أهلًا وسهلًا بك في أكاديمية التحليم"
+        : "As-salaamu alaykum wa rahmatullah. " + firstName + ". Welcome to Tahleem Academy.";
 
       const lang = isArabicVoice ? 'ar-SA' : 'en-US';
       const u = new SpeechSynthesisUtterance(text);
       u.lang   = lang;
-      u.rate   = 0.78;
-      u.pitch  = 0.55;
+      u.rate   = 0.72;
+      u.pitch  = 0.45; // Deeper male voice
       u.volume = 1.0;
       if (bestVoice) u.voice = bestVoice;
       window.speechSynthesis.speak(u);
@@ -214,6 +216,35 @@ const StudentDashboard = () => {
     };
     fetchData();
   }, [user]);
+
+  // ── Realtime notifications — live updates ─────────
+  useEffect(() => {
+    if (!user?.id) return;
+    const channel = supabase
+      .channel('student-notifications')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${user.id}` },
+        (payload) => {
+          setNotifications(prev => [payload.new as any, ...prev]);
+          // Browser notification if permitted
+          if (Notification.permission === 'granted') {
+            new Notification(payload.new.title || 'Tahleem Academy', {
+              body: payload.new.message || '',
+              icon: '/favicon.ico',
+            });
+          }
+        }
+      )
+      .subscribe();
+
+    // Request notification permission
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+
+    return () => { supabase.removeChannel(channel); };
+  }, [user?.id]);
 
   const calendarYear = calendarMonth.getFullYear();
   const calendarMonthIdx = calendarMonth.getMonth();
