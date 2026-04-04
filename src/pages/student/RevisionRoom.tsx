@@ -82,7 +82,7 @@ const RevisionRoom = () => {
   const [expandedLevels, setExpandedLevels] = useState<Record<string, boolean>>({});
 
   // ✅ FIXED: All useQuery destructuring now correctly uses ``
-  const {  subject } = useQuery({
+  const { data: subject } = useQuery({
     queryKey: ["revision-subject", subjectId],
     queryFn: async () => {
       const { data } = await supabase.from("subjects").select("*").eq("id", subjectId!).single();
