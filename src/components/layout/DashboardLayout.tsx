@@ -80,8 +80,11 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
 
   const adminNav: AdminNavItem[] = [
     { type:"link",  to:"/admin",                  icon:LayoutDashboard, label:t("Dashboard","لوحة التحكم") },
-    { type:"link",  to:"/admin/level-assignment", icon:GraduationCap,   label:t("Level Assignment","تحديد المستوى") },
-    // ✅ ADDED: Subject Level Mapping
+    // ✅ New Registration group — replaces standalone Level Assignment + Finance > Registration
+    { type:"group", key:"newreg", icon:UserPlus, label:t("New Registration","التسجيل الجديد"), children:[
+      { to:"/admin/level-assignment",      icon:GraduationCap, label:t("New Registrations","الطلاب الجدد") },
+      { to:"/admin/registration-settings", icon:Settings,      label:t("Registration Settings","إعدادات التسجيل") },
+    ]},
     { type:"link",  to:"/admin/level-subject-mapping", icon:BookOpen, label:t("Subject Level Mapping","تعيين مستويات المواد") },
     { type:"group", key:"academic", icon:BookOpen, label:t("Academic","المحتوى الأكاديمي"), children:[
       { to:"/admin/subjects", icon:BookOpen,  label:t("Subjects","المواد") },
@@ -107,9 +110,8 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
       { to:"/admin/students",         icon:Users,     label:t("All Students","جميع الطلاب") },
       { to:"/admin/private-sessions", icon:UserCheck, label:t("Private Sessions","الجلسات الخاصة") },
     ]},
-    { type:"group", key:"finance", icon:CreditCard, label:"Finance", children:[
-      { to:"/admin/payments",              icon: CreditCard,  label:"Payment Settings" },
-      { to:"/admin/registration-settings", icon: UserPlus,    label:"Registration"     },
+    { type:"group", key:"finance", icon:CreditCard, label:t("Finance","المالية"), children:[
+      { to:"/admin/payments", icon:CreditCard, label:t("Payment Settings","إعدادات الدفع") },
     ]},
     { type:"link", to:"/admin/majlis-moderation", icon:MessageCircle, label:t("Al-Majlis","المجلس") },
     { type:"link", to:"/live-quiz",               icon:Trophy,        label:t("Al-Musabaqah 🏆","المسابقة الحية 🏆") },
@@ -220,7 +222,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
               );
             }
             const isActive = groupActive(item.children.map((c: any) => c.to));
-            const isOpen   = expanded[item.key] ?? false;
+            const isOpen   = expanded[item.key] ?? isActive; // auto-expand if a child is active
             const groupLocked = levelPending && item.children.every((c: any) => LOCKED_ROUTES.has(c.to));
             return (
               <div key={item.key}>
