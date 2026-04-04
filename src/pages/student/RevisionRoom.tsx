@@ -150,7 +150,7 @@ const RevisionRoom = () => {
     },
   });
 
-  const {  quizHistory = [] } = useQuery({
+  const { data: quizHistory = [] } = useQuery({
     queryKey: ["revision-quiz-history", subjectId, user?.id],
     enabled: !!user,
     queryFn: async () => {
