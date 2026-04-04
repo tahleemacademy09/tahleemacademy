@@ -1,190 +1,189 @@
 // src/pages/student/TasjeelAwaitingLevel.tsx
-// ═══════════════════════════════════════════════════════════════════════════
-// AWAITING LEVEL ASSIGNMENT PAGE
-// Route: /student/awaiting-level
-// Shown after review step when admin needs to manually assign level.
-// Polls Tasjeel progress every 30s and redirects when level_assigned.
-// ═══════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════
+// AWAITING ADMIN APPROVAL PAGE
+// Shown after schedule_session step — blocks dashboard until admin approves.
+// Polls every 30s. Shows session date booked + current status.
+// ══════════════════════════════════════════════════════════════════════════
 
-import { useEffect } from "react";
-import { useNavigate } from "react-router-dom";
-import { BookOpen, Clock } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
-import { useAuth } from "@/contexts/AuthContext";
-import { useTasjeel } from "@/hooks/useTasjeel";
+import { useEffect, useState } from "react";
+import { useNavigate }        from "react-router-dom";
+import { supabase }           from "@/integrations/supabase/client";
+import { useAuth }            from "@/contexts/AuthContext";
+import { useTasjeel }         from "@/hooks/useTasjeel";
 
 const G    = "#064E3B";
+const GM   = "#075E54";
 const GOLD = "#C9973A";
 
 const TasjeelAwaitingLevel = () => {
-  const { user } = useAuth();
-  const { currentStep, refresh } = useTasjeel();
-  const navigate = useNavigate();
+  const { user, profile }         = useAuth();
+  const { currentStep, refresh }  = useTasjeel();
+  const navigate                  = useNavigate();
+  const [recData,   setRecData]   = useState<any>(null);
+  const [checkTime, setCheckTime] = useState(0); // seconds since last check
 
-  // Redirect away if step has advanced
+  // Redirect if approved
   useEffect(() => {
-    if (currentStep === "completed") {
-      navigate("/student", { replace: true });
-    }
+    if (currentStep === "completed") navigate("/student", { replace: true });
   }, [currentStep, navigate]);
 
-  // Poll every 30 seconds for level assignment
+  // Load recitation data (session date etc.)
   useEffect(() => {
     if (!user) return;
-
-    const interval = setInterval(async () => {
-      await refresh();
-
-      // Also check profiles directly for level assignment
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("level")
+    (async () => {
+      const { data } = await (supabase as any)
+        .from("recitation_tests")
+        .select("virtual_session_date, virtual_session_time, ai_score, status, admin_approved")
         .eq("user_id", user.id)
-        .single();
+        .maybeSingle();
+      setRecData(data);
+    })();
+  }, [user]);
 
-      if ((profile as any)?.level && (profile as any).level !== "pending") {
-        // Admin has assigned a level — advance to completed
-        await supabase
-          .from("tasjeel_progress" as any)
-          .update({
-            current_step:     "completed",
-            level_assigned:   (profile as any).level,
-            level_assigned_at: new Date().toISOString(),
-            completed_at:     new Date().toISOString(),
-            updated_at:       new Date().toISOString(),
-          } as any)
-          .eq("user_id", user.id);
-
+  // Poll every 30s
+  useEffect(() => {
+    if (!user) return;
+    const iv = setInterval(async () => {
+      setCheckTime(0);
+      await refresh();
+      const { data: prof } = await supabase.from("profiles").select("level").eq("user_id", user.id).single();
+      if ((prof as any)?.level && (prof as any).level !== "pending") {
+        await supabase.from("tasjeel_progress" as any).update({
+          current_step: "completed",
+          level_assigned: (prof as any).level,
+          level_assigned_at: new Date().toISOString(),
+          completed_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        } as any).eq("user_id", user.id);
         navigate("/student", { replace: true });
       }
     }, 30_000);
 
-    return () => clearInterval(interval);
+    // Countdown display
+    const cnt = setInterval(() => setCheckTime(t => t + 1), 1000);
+    return () => { clearInterval(iv); clearInterval(cnt); };
   }, [user, refresh, navigate]);
+
+  const sessionDate = recData?.virtual_session_date;
+  const sessionTime = recData?.virtual_session_time;
+  const aiScore     = recData?.ai_score;
+
+  const steps = [
+    { icon: "📝", label: "Account Created",    done: true  },
+    { icon: "💳", label: "Payment Completed",  done: true  },
+    { icon: "📋", label: "Onboarding Done",    done: true  },
+    { icon: "📖", label: "Entrance Exam Done", done: true  },
+    { icon: "🎙️", label: "Recitation Done",    done: true  },
+    { icon: "📅", label: sessionDate ? `Session: ${sessionDate}${sessionTime ? " · " + sessionTime : ""}` : "Session Booked", done: !!sessionDate },
+    { icon: "✅", label: "Admin Approval",     done: false },
+  ];
 
   return (
     <>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=Amiri:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap');
-        @keyframes spin { to { transform: rotate(360deg); } }
-        @keyframes float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-8px)} }
-        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+        @import url('https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&family=Cairo:wght@400;600;700;800&display=swap');
+        @keyframes spin    { to { transform: rotate(360deg); } }
+        @keyframes float   { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-10px)} }
+        @keyframes pulse   { 0%,100%{opacity:1} 50%{opacity:.35} }
+        @keyframes shimmer { 0%{background-position:-200% 0} 100%{background-position:200% 0} }
       `}</style>
 
-      <div
-        style={{
-          minHeight: "100vh",
-          background: "#FDFCF9",
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          fontFamily: "'DM Sans', sans-serif",
-          padding: "24px 20px",
-        }}
-      >
+      <div style={{
+        minHeight: "100vh", background: "#FDFCF9",
+        fontFamily: "'Cairo',sans-serif",
+        display: "flex", flexDirection: "column", alignItems: "center",
+        justifyContent: "flex-start", padding: "32px 16px 48px",
+      }}>
         {/* Logo */}
-        <div
-          style={{
-            width: 80,
-            height: 80,
-            borderRadius: 22,
-            background: G,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            marginBottom: 32,
-            animation: "float 3s ease-in-out infinite",
-            boxShadow: `0 8px 32px rgba(6,78,59,.25)`,
-          }}
-        >
-          <BookOpen style={{ width: 38, height: 38, color: GOLD }} />
+        <div style={{
+          width: 80, height: 80, borderRadius: 22, background: G,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          marginBottom: 24, animation: "float 3.5s ease-in-out infinite",
+          boxShadow: `0 8px 32px rgba(6,78,59,.28)`,
+        }}>
+          <span style={{ fontSize: 36 }}>📖</span>
         </div>
 
-        {/* Clock icon */}
-        <div
-          style={{
-            width: 56,
-            height: 56,
-            borderRadius: "50%",
-            background: `rgba(201,151,58,.12)`,
-            border: `2px solid rgba(201,151,58,.3)`,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            marginBottom: 24,
-          }}
-        >
-          <Clock style={{ color: GOLD, width: 26, height: 26 }} />
-        </div>
-
-        <h1
-          style={{
-            fontFamily: "'Cormorant Garamond', serif",
-            fontSize: 28,
-            fontWeight: 700,
-            color: G,
-            textAlign: "center",
-            margin: "0 0 12px",
-          }}
-        >
-          Awaiting Level Assignment
-        </h1>
-
-        <p
-          style={{
-            fontSize: 14,
-            color: "#6b7280",
-            textAlign: "center",
-            maxWidth: 360,
-            lineHeight: 1.7,
-            marginBottom: 24,
-          }}
-        >
-          Your exam results are being reviewed by our instructors. We will assign
-          your learning level and activate your dashboard shortly.
+        {/* Bismillah */}
+        <p style={{ fontFamily: "'Amiri',serif", fontSize: 20, color: GOLD, margin: "0 0 8px", direction: "rtl", animation: "pulse 3s ease infinite" }}>
+          بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ
         </p>
 
-        {/* Arabic */}
-        <p
-          style={{
-            fontFamily: "'Amiri', serif",
-            fontSize: 18,
-            color: GOLD,
-            direction: "rtl",
-            marginBottom: 32,
-            animation: "pulse 2.5s ease infinite",
-          }}
-        >
+        <h1 style={{ fontSize: 26, fontWeight: 900, color: G, textAlign: "center", margin: "0 0 10px" }}>
+          Registration Under Review
+        </h1>
+        <p style={{ fontSize: 14, color: "#6b7280", textAlign: "center", maxWidth: 380, lineHeight: 1.8, margin: "0 0 28px" }}>
+          Your registration is complete! Our instructors are reviewing your exam and recitation results to assign your learning level.
+        </p>
+
+        {/* Progress steps */}
+        <div style={{ width: "100%", maxWidth: 440, background: "#fff", borderRadius: 20, border: "1px solid #e5e7eb", padding: "20px 20px 10px", marginBottom: 20, boxShadow: "0 2px 12px rgba(0,0,0,.05)" }}>
+          <p style={{ fontSize: 11, fontWeight: 700, color: "#9ca3af", margin: "0 0 14px", textTransform: "uppercase", letterSpacing: 1 }}>Your Progress</p>
+          {steps.map((s, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
+              <div style={{
+                width: 36, height: 36, borderRadius: "50%", flexShrink: 0,
+                background: s.done ? G : i === steps.length - 1 ? "rgba(6,78,59,.08)" : "#f3f4f6",
+                border: `2px solid ${s.done ? G : i === steps.length - 1 ? "rgba(6,78,59,.3)" : "#e5e7eb"}`,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 14,
+              }}>
+                {s.done ? <span style={{ color: "#fff", fontSize: 16 }}>✓</span> : <span>{s.icon}</span>}
+              </div>
+              <div style={{ flex: 1 }}>
+                <p style={{ margin: 0, fontSize: 13, fontWeight: s.done ? 700 : 600, color: s.done ? G : i === steps.length - 1 ? "#6b7280" : "#9ca3af" }}>
+                  {s.label}
+                </p>
+              </div>
+              {i === steps.length - 1 && (
+                <div style={{ width: 10, height: 10, borderRadius: "50%", background: GOLD, animation: "pulse 1.5s ease infinite" }} />
+              )}
+            </div>
+          ))}
+        </div>
+
+        {/* Session info card */}
+        {sessionDate && (
+          <div style={{ width: "100%", maxWidth: 440, background: "#F0FDF4", borderRadius: 16, border: "1px solid #86EFAC", padding: "16px 20px", marginBottom: 16 }}>
+            <p style={{ fontSize: 11, fontWeight: 700, color: "#166534", margin: "0 0 8px", textTransform: "uppercase", letterSpacing: 1 }}>📅 Virtual Session Scheduled</p>
+            <p style={{ fontSize: 15, fontWeight: 800, color: G, margin: "0 0 4px" }}>
+              {sessionDate}{sessionTime ? ` at ${sessionTime}` : ""}
+            </p>
+            <p style={{ fontSize: 12, color: "#16a34a", margin: 0 }}>
+              An instructor will join you via the platform at the scheduled time to complete your evaluation.
+            </p>
+          </div>
+        )}
+
+        {/* AI score */}
+        {aiScore !== null && aiScore !== undefined && (
+          <div style={{ width: "100%", maxWidth: 440, background: "#FFFBEB", borderRadius: 16, border: "1px solid #FDE68A", padding: "14px 20px", marginBottom: 16 }}>
+            <p style={{ fontSize: 11, fontWeight: 700, color: "#92400e", margin: "0 0 4px", textTransform: "uppercase", letterSpacing: 1 }}>🎙️ Recitation AI Score</p>
+            <p style={{ fontSize: 22, fontWeight: 900, color: "#b45309", margin: 0 }}>{aiScore}%</p>
+          </div>
+        )}
+
+        {/* Arabic du'a */}
+        <p style={{ fontFamily: "'Amiri',serif", fontSize: 18, color: GOLD, direction: "rtl", margin: "0 0 24px", textAlign: "center" }}>
           جَزَاكَ اللَّهُ خَيْرًا عَلَى صَبْرِكَ
         </p>
+        <p style={{ fontSize: 12, color: "#9ca3af", textAlign: "center", maxWidth: 320, lineHeight: 1.7, margin: "0 0 24px" }}>
+          "May Allah reward you for your patience." We will notify you as soon as your level has been assigned.
+        </p>
 
-        {/* Polling indicator */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            padding: "10px 20px",
-            background: "#F0FDF4",
-            border: `1px solid rgba(6,78,59,.15)`,
-            borderRadius: 12,
-            fontSize: 12,
-            color: G,
-          }}
-        >
-          <div
-            style={{
-              width: 14,
-              height: 14,
-              borderRadius: "50%",
-              border: `2px solid ${G}`,
-              borderTopColor: "transparent",
-              animation: "spin .8s linear infinite",
-            }}
-          />
-          Checking for updates every 30 seconds…
+        {/* Auto-check indicator */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 20px", background: "#F0FDF4", border: "1px solid rgba(6,78,59,.15)", borderRadius: 12, fontSize: 12, color: G }}>
+          <div style={{ width: 14, height: 14, borderRadius: "50%", border: `2px solid ${G}`, borderTopColor: "transparent", animation: "spin .8s linear infinite" }} />
+          Checking for approval… ({30 - (checkTime % 30)}s)
         </div>
+
+        {/* Sign out link */}
+        <button
+          onClick={async () => { await supabase.auth.signOut(); }}
+          style={{ marginTop: 24, background: "none", border: "none", color: "#9ca3af", fontSize: 12, cursor: "pointer", textDecoration: "underline" }}
+        >
+          Sign out and come back later
+        </button>
       </div>
     </>
   );
