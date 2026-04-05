@@ -211,9 +211,11 @@ const App = () => (
                   {/* ── Admin routes ── */}
                   <Route element={<ProtectedRoute requiredRole="admin"><DashboardLayout role="admin" /></ProtectedRoute>}>
                     <Route path="/admin"                          element={<AdminDashboard />} />
-                    <Route path="/admin/subjects"                 element={<SubjectManagement />} />
+                    {/* Subjects & Syllabus are now integrated into CourseManagement */}
+                    <Route path="/admin/subjects"                 element={<CourseManagement />} />
+                    <Route path="/admin/subjects/:subjectId"      element={<CourseManagement />} />
                     <Route path="/admin/courses"                  element={<CourseManagement />} />
-                    <Route path="/admin/syllabus"                 element={<SyllabusManager />} />
+                    <Route path="/admin/syllabus"                 element={<CourseManagement />} />
                     <Route path="/admin/live-classes"             element={<LiveClassManagement />} />
                     <Route path="/admin/exams"                    element={<ExamManager />} />
                     <Route path="/admin/exams/create"             element={<ExamEditor />} />
@@ -234,7 +236,7 @@ const App = () => (
                     <Route path="/admin/recitation-review"        element={<HifdhAdminReview />} />
                     <Route path="/admin/recitation-test-settings" element={<RecitationTestAdmin />} />
                     <Route path="/admin/level-assignment"         element={<LevelAssignment />} />
-                    <Route path="/admin/level-subject-mapping"    element={<LevelSubjectMapping />} /> {/* ✅ ADDED */}
+                    {/* level-subject-mapping removed — managed within Courses */}
                     <Route path="/admin/transcripts"              element={<TranscriptManagement />} />
                     <Route path="/admin/attendance"               element={<AttendanceManagement />} />
                     <Route path="/admin/payments"                 element={<PaymentManagement />} />
