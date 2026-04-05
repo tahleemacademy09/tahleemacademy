@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -13,7 +13,13 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "@/hooks/use-toast";
-import { ClipboardList, Plus, Upload, Clock, CheckCircle, AlertCircle, Send, Mic, MicOff, PenLine, Edit, Trash2, Save } from "lucide-react";
+import { ClipboardList, Plus, Upload, Clock, CheckCircle, AlertCircle, Send, Mic, MicOff, PenLine, Edit, Trash2, Save, Bell } from "lucide-react";
+
+// Track read feedback in localStorage
+const markFeedbackRead = (assignmentId: string) =>
+  localStorage.setItem(`feedback-read-${assignmentId}`, "1");
+const isFeedbackRead = (assignmentId: string) =>
+  !!localStorage.getItem(`feedback-read-${assignmentId}`);
 
 const SubjectAssignments = ({ subjectId }: { subjectId: string }) => {
   const { t } = useLanguage();
@@ -30,6 +36,8 @@ const SubjectAssignments = ({ subjectId }: { subjectId: string }) => {
   const [voiceBlob, setVoiceBlob] = useState<Blob | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  // Track which feedbacks have been "read" (acknowledged by user)
+  const [readFeedbacks, setReadFeedbacks] = useState<Record<string, boolean>>({});
 
   // Edit state
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -183,6 +191,19 @@ const SubjectAssignments = ({ subjectId }: { subjectId: string }) => {
   const getSubmission = (assignmentId: string) => submissions?.find((s) => s.assignment_id === assignmentId);
   const isOverdue = (deadline: string) => deadline && new Date() > new Date(deadline);
 
+  // Build read-state map from localStorage whenever submissions load
+  useEffect(() => {
+    if (!submissions) return;
+    const map: Record<string, boolean> = {};
+    submissions.forEach((s: any) => {
+      if (s.feedback) map[s.assignment_id] = isFeedbackRead(s.assignment_id);
+    });
+    setReadFeedbacks(map);
+  }, [submissions]);
+
+  // Count unread feedback notifications
+  const unreadCount = submissions?.filter((s: any) => s.feedback && !isFeedbackRead(s.assignment_id)).length || 0;
+
   const openEdit = (a: any) => {
     setEditForm({
       title: a.title,
@@ -216,6 +237,30 @@ const SubjectAssignments = ({ subjectId }: { subjectId: string }) => {
         </Dialog>
       )}
 
+      {/* Unread feedback notification banner */}
+      {!isPrivileged && unreadCount > 0 && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 10, padding: "10px 14px",
+          borderRadius: 12, background: "linear-gradient(135deg,#064E3B,#0a6644)",
+          border: "1px solid rgba(201,168,76,0.3)", marginBottom: 4,
+        }}>
+          <div style={{ position: "relative", flexShrink: 0 }}>
+            <Bell size={18} color="#C9A84C" />
+            <span style={{
+              position: "absolute", top: -6, right: -6, width: 16, height: 16,
+              borderRadius: "50%", background: "#ef4444", fontSize: 9, fontWeight: 800,
+              color: "#fff", display: "flex", alignItems: "center", justifyContent: "center",
+            }}>{unreadCount}</span>
+          </div>
+          <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#e8f5e9", flex: 1 }}>
+            {unreadCount === 1
+              ? "Your teacher left feedback on 1 assignment"
+              : `Your teacher left feedback on ${unreadCount} assignments`}
+          </p>
+          <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>↓ See below</span>
+        </div>
+      )}
+
       {!assignments?.length ? (
         <Card><CardContent className="py-8 text-center text-muted-foreground">
           <ClipboardList className="h-10 w-10 mx-auto mb-2 opacity-50" />
@@ -246,7 +291,37 @@ const SubjectAssignments = ({ subjectId }: { subjectId: string }) => {
                           {isOverdue(a.deadline) && <AlertCircle className="h-3 w-3 text-destructive" />}
                         </div>
                       )}
-                      {sub?.feedback && <p className="text-xs mt-2 p-2 bg-muted rounded">{t("Feedback:", "الملاحظات:")} {sub.feedback}</p>}
+                      {sub?.feedback && (() => {
+                        const isUnread = !readFeedbacks[a.id] && !isFeedbackRead(a.id);
+                        return (
+                          <div
+                            onClick={() => {
+                              markFeedbackRead(a.id);
+                              setReadFeedbacks(r => ({ ...r, [a.id]: true }));
+                            }}
+                            style={{
+                              marginTop: 10, padding: "10px 12px", borderRadius: 10, cursor: "pointer",
+                              background: isUnread ? "linear-gradient(135deg,#064E3B0d,#064E3B18)" : "#F9FAFB",
+                              border: isUnread ? "1.5px solid #064E3B30" : "1px solid #F3F4F6",
+                              transition: "all 0.2s",
+                            }}
+                          >
+                            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                              {isUnread && (
+                                <span style={{
+                                  width: 8, height: 8, borderRadius: "50%", background: "#ef4444",
+                                  flexShrink: 0, animation: "pulse 1.5s infinite",
+                                }} />
+                              )}
+                              <span style={{ fontSize: 11, fontWeight: 700, color: isUnread ? "#064E3B" : "#6B7280" }}>
+                                {isUnread ? "🔔 New teacher feedback" : t("Teacher feedback", "ملاحظات المعلم")}
+                              </span>
+                              {isUnread && <span style={{ fontSize: 10, color: "#9CA3AF", marginLeft: "auto" }}>click to mark read</span>}
+                            </div>
+                            <p style={{ margin: 0, fontSize: 13, color: "#374151", lineHeight: 1.6 }}>{sub.feedback}</p>
+                          </div>
+                        );
+                      })()}
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
                       {isPrivileged && (
@@ -361,6 +436,7 @@ const SubjectAssignments = ({ subjectId }: { subjectId: string }) => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}`}</style>
     </div>
   );
 };
