@@ -5,10 +5,11 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import {
   FileText, Video, Music, Link as LinkIcon, Image, Download,
-  File, ExternalLink, Play, Eye, X, Loader2
+  File, ExternalLink, Play, Eye, X, Loader2, Pause, Volume2, VolumeX,
+  Headphones, ChevronDown, ChevronUp, Radio
 } from "lucide-react";
 
-interface Props { materials: any[]; sessions?: any[]; }
+interface Props { materials: any[]; sessions?: any[]; recordings?: any[]; }
 
 type FileKind = "pdf"|"image"|"video"|"audio"|"youtube"|"link"|"office"|"text"|"other";
 
@@ -193,9 +194,225 @@ function PDFJsViewer({ url }: { url: string }) {
 }
 
 /* ════════════════════════════════════════════════════════
+   RECORDING MINI-PLAYER (Listen while reading)
+════════════════════════════════════════════════════════ */
+function RecordingMiniPlayer({ recordings }: { recordings: any[] }) {
+  const [expanded, setExpanded]       = useState(false);
+  const [selected, setSelected]       = useState<any | null>(null);
+  const [signedUrl, setSignedUrl]     = useState<string | null>(null);
+  const [loadingUrl, setLoadingUrl]   = useState(false);
+  const [playing, setPlaying]         = useState(false);
+  const [currentTime, setCurrent]     = useState(0);
+  const [duration, setDuration]       = useState(0);
+  const [volume, setVolume]           = useState(1);
+  const [muted, setMuted]             = useState(false);
+  const audioRef = useRef<HTMLAudioElement>(null);
+
+  const G    = "#064E3B";
+  const GOLD = "#C9A84C";
+
+  const loadRecording = async (rec: any) => {
+    setSelected(rec);
+    setPlaying(false);
+    setCurrent(0);
+    setSignedUrl(null);
+    if (!rec?.file_url) return;
+    setLoadingUrl(true);
+    if (rec.file_url.startsWith("http")) {
+      setSignedUrl(rec.file_url);
+    } else {
+      const { data } = await supabase.storage
+        .from("subject-files")
+        .createSignedUrl(rec.file_url, 7200);
+      setSignedUrl(data?.signedUrl || null);
+    }
+    setLoadingUrl(false);
+  };
+
+  const togglePlay = () => {
+    if (!audioRef.current) return;
+    if (playing) { audioRef.current.pause(); setPlaying(false); }
+    else         { audioRef.current.play();  setPlaying(true);  }
+  };
+
+  const seek = (v: string) => {
+    const t = parseFloat(v);
+    if (audioRef.current) { audioRef.current.currentTime = t; setCurrent(t); }
+  };
+
+  const fmt = (s: number) =>
+    `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+
+  const pct = duration > 0 ? (currentTime / duration) * 100 : 0;
+
+  if (!recordings.length) return null;
+
+  return (
+    <div style={{
+      margin: "0 0 0 0",
+      background: expanded ? "#0d1f14" : "transparent",
+      borderBottom: expanded ? "1px solid rgba(255,255,255,0.08)" : "none",
+      transition: "all 0.2s",
+    }}>
+      {/* Hidden audio element */}
+      {signedUrl && (
+        <audio
+          ref={audioRef}
+          src={signedUrl}
+          onTimeUpdate={() => setCurrent(audioRef.current?.currentTime || 0)}
+          onLoadedMetadata={() => setDuration(audioRef.current?.duration || 0)}
+          onEnded={() => setPlaying(false)}
+          style={{ display: "none" }}
+        />
+      )}
+
+      {/* Toggle bar */}
+      <button
+        onClick={() => setExpanded(e => !e)}
+        style={{
+          width: "100%", display: "flex", alignItems: "center", gap: 10,
+          padding: "10px 16px", border: "none", cursor: "pointer",
+          background: expanded ? "#0d1f14" : "linear-gradient(90deg,#0d1f14ee,#132e1eee)",
+          color: "#fff",
+        }}
+      >
+        <div style={{
+          width: 28, height: 28, borderRadius: 8,
+          background: playing ? GOLD : "rgba(201,164,76,0.2)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          transition: "background 0.2s", flexShrink: 0,
+        }}>
+          {playing
+            ? <Pause size={13} color="#111" />
+            : <Headphones size={13} color={GOLD} />}
+        </div>
+        <div style={{ flex: 1, textAlign: "left" }}>
+          <p style={{ margin: 0, fontSize: 12, fontWeight: 700, color: "#e8f5e9" }}>
+            🎙️ Listen while reading
+          </p>
+          {selected && !expanded && (
+            <p style={{ margin: 0, fontSize: 10, color: GOLD, opacity: 0.9 }}>
+              {playing ? `▶ Playing — ${fmt(currentTime)}` : selected.teacher_name || "Recording selected"}
+            </p>
+          )}
+        </div>
+        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginRight: 4 }}>
+          {recordings.length} recording{recordings.length !== 1 ? "s" : ""}
+        </span>
+        {expanded ? <ChevronUp size={14} color="rgba(255,255,255,0.5)" /> : <ChevronDown size={14} color="rgba(255,255,255,0.5)" />}
+      </button>
+
+      {/* Expanded panel */}
+      {expanded && (
+        <div style={{ padding: "0 16px 16px" }}>
+          {/* Recording list */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: selected ? 14 : 0 }}>
+            {recordings.map((rec: any) => {
+              const isActive = selected?.id === rec.id;
+              const dateStr  = rec.created_at
+                ? new Date(rec.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })
+                : "";
+              const mins = rec.duration_seconds ? Math.floor(rec.duration_seconds / 60) : null;
+              return (
+                <button
+                  key={rec.id}
+                  onClick={() => loadRecording(rec)}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 10, padding: "8px 12px",
+                    borderRadius: 10, border: `1.5px solid ${isActive ? GOLD + "60" : "rgba(255,255,255,0.07)"}`,
+                    background: isActive ? "rgba(201,164,76,0.12)" : "rgba(255,255,255,0.04)",
+                    cursor: "pointer", textAlign: "left",
+                  }}
+                >
+                  <div style={{
+                    width: 30, height: 30, borderRadius: 8, flexShrink: 0,
+                    background: isActive ? GOLD : "rgba(255,255,255,0.08)",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                  }}>
+                    {isActive && playing
+                      ? <Radio size={14} color="#111" style={{ animation: "pulse 1s infinite" }} />
+                      : <Play size={13} color={isActive ? "#111" : "rgba(255,255,255,0.5)"} />}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p style={{ margin: 0, fontSize: 12, fontWeight: 600, color: isActive ? GOLD : "#e8f5e9", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {rec.teacher_name || "Class Recording"}
+                    </p>
+                    <p style={{ margin: 0, fontSize: 10, color: "rgba(255,255,255,0.4)" }}>
+                      {dateStr}{mins ? ` · ${mins}m` : ""}
+                    </p>
+                  </div>
+                  {isActive && loadingUrl && <Loader2 size={13} color={GOLD} style={{ animation: "spin 0.8s linear infinite" }} />}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Mini player controls — shown when a recording is selected */}
+          {selected && signedUrl && (
+            <div style={{ background: "rgba(255,255,255,0.04)", borderRadius: 12, padding: "12px 14px", border: "1px solid rgba(255,255,255,0.08)" }}>
+              {/* Progress bar */}
+              <div style={{ marginBottom: 10 }}>
+                <input
+                  type="range" min={0} max={duration || 100} step={0.5} value={currentTime}
+                  onChange={e => seek(e.target.value)}
+                  style={{ width: "100%", accentColor: GOLD, height: 3, cursor: "pointer" }}
+                />
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
+                  <span>{fmt(currentTime)}</span>
+                  <span>{fmt(duration)}</span>
+                </div>
+              </div>
+
+              {/* Controls row */}
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                {/* Skip -10 */}
+                <button onClick={() => seek(String(Math.max(0, currentTime - 10)))}
+                  style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", cursor: "pointer", fontSize: 10, padding: "4px 6px", borderRadius: 6 }}>
+                  ⟪ 10s
+                </button>
+
+                {/* Play/Pause */}
+                <button onClick={togglePlay}
+                  style={{ width: 40, height: 40, borderRadius: "50%", background: GOLD, border: "none", color: G, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: "0 2px 12px rgba(201,164,76,0.4)" }}>
+                  {playing
+                    ? <Pause size={18} />
+                    : <Play size={18} style={{ marginLeft: 2 }} />}
+                </button>
+
+                {/* Skip +10 */}
+                <button onClick={() => seek(String(Math.min(duration, currentTime + 10)))}
+                  style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", cursor: "pointer", fontSize: 10, padding: "4px 6px", borderRadius: 6 }}>
+                  10s ⟫
+                </button>
+
+                {/* Volume */}
+                <button onClick={() => { setMuted(m => !m); if (audioRef.current) audioRef.current.muted = !muted; }}
+                  style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", cursor: "pointer", padding: 0, marginLeft: 4 }}>
+                  {muted || volume === 0 ? <VolumeX size={14} /> : <Volume2 size={14} />}
+                </button>
+                <input
+                  type="range" min={0} max={1} step={0.05} value={muted ? 0 : volume}
+                  onChange={e => {
+                    const v = parseFloat(e.target.value);
+                    setVolume(v); setMuted(v === 0);
+                    if (audioRef.current) audioRef.current.volume = v;
+                  }}
+                  style={{ flex: 1, accentColor: GOLD, height: 3, cursor: "pointer" }}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}} @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}`}</style>
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════════
    INLINE FILE VIEWER (shown inside Dialog)
 ════════════════════════════════════════════════════════ */
-function FileViewer({ mat, kind, onClose }: { mat: any; kind: FileKind; onClose: () => void }) {
+function FileViewer({ mat, kind, recordings = [], onClose }: { mat: any; kind: FileKind; recordings?: any[]; onClose: () => void }) {
   const [url,     setUrl]     = useState("");
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState("");
@@ -247,6 +464,9 @@ function FileViewer({ mat, kind, onClose }: { mat: any; kind: FileKind; onClose:
           </Button>
         </div>
       </div>
+
+      {/* Recording mini-player — listen while reading */}
+      {recordings.length > 0 && <RecordingMiniPlayer recordings={recordings} />}
 
       {/* Content area */}
       <div style={{ flex:1, overflow:"auto", background:"#f9fafb" }}>
@@ -341,7 +561,7 @@ function FileViewer({ mat, kind, onClose }: { mat: any; kind: FileKind; onClose:
 /* ════════════════════════════════════════════════════════
    MAIN COMPONENT
 ════════════════════════════════════════════════════════ */
-const MaterialsViewer = ({ materials, sessions = [] }: Props) => {
+const MaterialsViewer = ({ materials, sessions = [], recordings = [] }: Props) => {
   const { t } = useLanguage();
   const [viewing, setViewing] = useState<any|null>(null);
   const viewKind = viewing ? detectKind(viewing) : "other";
@@ -445,7 +665,7 @@ const MaterialsViewer = ({ materials, sessions = [] }: Props) => {
       {/* Viewer modal */}
       <Dialog open={!!viewing} onOpenChange={v => !v && setViewing(null)}>
         <DialogContent style={{ maxWidth:"92vw", width:"860px", padding:0, borderRadius:20, overflow:"hidden" }}>
-          {viewing && <FileViewer mat={viewing} kind={viewKind} onClose={() => setViewing(null)} />}
+          {viewing && <FileViewer mat={viewing} kind={viewKind} recordings={recordings} onClose={() => setViewing(null)} />}
         </DialogContent>
       </Dialog>
     </div>
