@@ -1,21 +1,23 @@
 // src/pages/admin/CourseManagement.tsx
 // Unified Course + Subject management
-// Structure: Course → Subjects → (students see subjects filtered by their level)
-// FIXED: Input focus issue resolved by extracting forms into memoized components
+// FIXED: 
+// 1. Input focus loss (extracted components + memo)
+// 2. Form data lost on minimize (removed reset on close)
+// 3. Subject saving issues (fixed course_id logic)
+
 import { useState, useRef, useEffect, useCallback, memo, useMemo } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "@/hooks/use-toast";
 import {
   Plus, BookOpen, Trash2, Edit2, ChevronRight, ChevronLeft,
   Loader2, Eye, EyeOff, Save, X, Image, Search,
-  Users, GraduationCap, Layers, FolderOpen, Check,
+  Layers, FolderOpen,
 } from "lucide-react";
 
 const G     = "#064E3B";
 const GM    = "#075E54";
-const GOLD  = "#C9A84C";
 const LEVELS = ["all","beginner","intermediate","advanced"] as const;
 type Level   = typeof LEVELS[number];
 
@@ -45,9 +47,9 @@ const Thumb = memo(({ url, title, height = 120, bg }: { url?: string|null; title
   const [resolved, setResolved] = useState<string|null>(null);
   const [failed,   setFailed]   = useState(false);
   useEffect(() => { resolveUrl(url).then(setResolved); }, [url]);
-  if (!resolved || failed) return (
-    <div style={{ height, background: bg, display:"flex", alignItems:"center", justifyContent:"center" }}>
-      <BookOpen size={22} style={{ opacity:.3 }} />    </div>
+  if (!resolved || failed) return (    <div style={{ height, background: bg, display:"flex", alignItems:"center", justifyContent:"center" }}>
+      <BookOpen size={22} style={{ opacity:.3 }} />
+    </div>
   );
   return <img src={resolved} alt={title} style={{ width:"100%", height, objectFit:"cover", display:"block" }} onError={() => setFailed(true)} />;
 });
@@ -60,14 +62,10 @@ const Field = memo(({ label, children }: { label: string; children: React.ReactN
   </div>
 ));
 
-// ═══════════════ COURSE FORM MODAL (Extracted & Memoized) ═════════════════
+// ═══════════════ COURSE FORM MODAL ═════════════════
 const CourseFormModal = memo(({ 
   cf, setCf, saving, editCourseId, onClose, onSave, imgUploading, thumbRef, uploadImage 
-}: {
-  cf: any; setCf: (fn: any) => void; saving: boolean; editCourseId: string|null;
-  onClose: () => void; onSave: (file?: File) => void; imgUploading: boolean;
-  thumbRef: React.RefObject<HTMLInputElement>; uploadImage: (f: File, b: string) => Promise<string|null>;
-}) => {
+}: any) => {
   return (
     <div style={{ position:"fixed", inset:0, zIndex:50, background:"rgba(0,0,0,.6)", display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
       <div style={{ background:"#fff", borderRadius:20, width:"100%", maxWidth:500, maxHeight:"90vh", overflowY:"auto" }}>
@@ -96,21 +94,17 @@ const CourseFormModal = memo(({
             <label htmlFor="cpub" style={{ fontSize:13, color:"#374151" }}>Published (visible to students)</label>
           </div>
           <button onClick={() => onSave()} disabled={saving || !cf.title} style={{ padding:"12px", borderRadius:12, border:"none", background: saving || !cf.title ? "#e5e7eb" : `linear-gradient(135deg,${G},${GM})`, color: saving || !cf.title ? "#9ca3af" : "#fff", fontWeight:800, cursor: saving || !cf.title ? "not-allowed" : "pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
-            <Save size={14} /> {saving ? "Saving…" : editCourseId ? "Update Course" : "Create Course"}          </button>
-        </div>
-      </div>
+            <Save size={14} /> {saving ? "Saving…" : editCourseId ? "Update Course" : "Create Course"}
+          </button>
+        </div>      </div>
     </div>
   );
 });
 
-// ═══════════════ SUBJECT FORM MODAL (Extracted & Memoized) ════════════════
+// ═══════════════ SUBJECT FORM MODAL ════════════════
 const SubjectFormModal = memo(({ 
   sf, setSf, saving, editSubjectId, onClose, onSave, imgUploading, sImgRef, teachers, uploadImage, G 
-}: {
-  sf: any; setSf: (fn: any) => void; saving: boolean; editSubjectId: string|null;
-  onClose: () => void; onSave: (file?: File) => void; imgUploading: boolean;
-  sImgRef: React.RefObject<HTMLInputElement>; teachers: any[]; uploadImage: (f: File, b: string) => Promise<string|null>; G: string;
-}) => {
+}: any) => {
   return (
     <div style={{ position:"fixed", inset:0, zIndex:50, background:"rgba(0,0,0,.6)", display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
       <div style={{ background:"#fff", borderRadius:20, width:"100%", maxWidth:500, maxHeight:"90vh", overflowY:"auto" }}>
@@ -145,20 +139,17 @@ const SubjectFormModal = memo(({
             <label htmlFor="sact" style={{ fontSize:13, color:"#374151" }}>Active (visible to students)</label>
           </div>
           <button onClick={() => onSave()} disabled={saving || !sf.title} style={{ padding:"12px", borderRadius:12, border:"none", background: saving || !sf.title ? "#e5e7eb" : `linear-gradient(135deg,${G},${GM})`, color: saving || !sf.title ? "#9ca3af" : "#fff", fontWeight:800, cursor:saving || !sf.title ? "not-allowed" : "pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
-            <Save size={14} /> {saving ? "Saving…" : editSubjectId ? "Update Subject" : "Create Subject"}          </button>
+            <Save size={14} /> {saving ? "Saving…" : editSubjectId ? "Update Subject" : "Create Subject"}
+          </button>
         </div>
       </div>
     </div>
   );
 });
-
-// ═══════════════ LESSON FORM MODAL (Extracted & Memoized) ═════════════════
+// ═══════════════ LESSON FORM MODAL ═════════════════
 const LessonFormModal = memo(({ 
-  lf, setLf, saving, editLessonId, onClose, onSave, selSubject 
-}: {
-  lf: any; setLf: (fn: any) => void; saving: boolean; editLessonId: string|null;
-  onClose: () => void; onSave: () => void; selSubject: any;
-}) => {
+  lf, setLf, saving, editLessonId, onClose, onSave 
+}: any) => {
   return (
     <div style={{ position:"fixed", inset:0, zIndex:50, background:"rgba(0,0,0,.6)", display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
       <div style={{ background:"#fff", borderRadius:20, width:"100%", maxWidth:480, maxHeight:"90vh", overflowY:"auto" }}>
@@ -190,41 +181,31 @@ export default function CourseManagement() {
   const { user } = useAuth();
   const qc       = useQueryClient();
 
-  // View state: list → course detail → subject detail
   type View = "courses" | "subjects" | "lessons";
   const [view,           setView]           = useState<View>("courses");
   const [selCourse,      setSelCourse]      = useState<any|null>(null);
-  const [selSubject,     setSelSubject]     = useState<any|null>(null);  const [search,         setSearch]         = useState("");
+  const [selSubject,     setSelSubject]     = useState<any|null>(null);
+  const [search,         setSearch]         = useState("");
   const [levelFilter,    setLevelFilter]    = useState<Level>("all");
 
-  // Forms open/close
   const [courseForm,    setCourseForm]    = useState(false);
   const [subjectForm,   setSubjectForm]   = useState(false);
   const [lessonForm,    setLessonForm]    = useState(false);
 
-  // Edit IDs
   const [editCourseId,  setEditCourseId]  = useState<string|null>(null);
   const [editSubjectId, setEditSubjectId] = useState<string|null>(null);
   const [editLessonId,  setEditLessonId]  = useState<string|null>(null);
-
-  // Saving
   const [saving, setSaving] = useState(false);
   const [imgUploading, setImgUploading] = useState(false);
 
-  // Course form state
   const [cf, setCf] = useState({ title:"", title_ar:"", description:"", level:"all" as Level, is_published:true, image_url:"", sort_order:0 });
-
-  // Subject form state
   const [sf, setSf] = useState({ title:"", title_ar:"", description:"", level:"all" as Level, is_active:true, image_url:"", teacher_id:"", color:G });
-
-  // Lesson form state
   const [lf, setLf] = useState({ title:"", title_ar:"", video_url:"", content:"", duration_minutes:0, sort_order:0, is_free:false });
 
   const thumbRef  = useRef<HTMLInputElement>(null);
   const sImgRef   = useRef<HTMLInputElement>(null);
 
-  // ── Data ─────────────────────────────────────────────────────────────────
-  const { data: courses = [], isLoading: cLoad } = useQuery({
+  const {  courses = [], isLoading: cLoad } = useQuery({
     queryKey: ["admin-courses-v2"],
     queryFn: async () => {
       const { data } = await supabase.from("courses").select("*").order("sort_order");
@@ -234,7 +215,7 @@ export default function CourseManagement() {
     refetchOnWindowFocus: false,
   });
 
-  const { data: subjects = [], isLoading: sLoad } = useQuery({
+  const {  subjects = [], isLoading: sLoad } = useQuery({
     queryKey: ["admin-subjects-v2", selCourse?.id],
     enabled:  view !== "courses",
     queryFn: async () => {
@@ -243,11 +224,11 @@ export default function CourseManagement() {
       const { data } = await q;
       return data || [];
     },
-    staleTime: 1000 * 60 * 5,    refetchOnWindowFocus: false,
+    staleTime: 1000 * 60 * 5,
+    refetchOnWindowFocus: false,
   });
 
-  // Subjects not yet linked to a course (for course detail view)
-  const { data: allSubjects = [] } = useQuery({
+  const {  allSubjects = [] } = useQuery({
     queryKey: ["admin-all-subjects"],
     queryFn: async () => {
       const { data } = await supabase.from("subjects").select("id,title,level,course_id").order("title");
@@ -257,13 +238,12 @@ export default function CourseManagement() {
     refetchOnWindowFocus: false,
   });
 
-  const { data: lessons = [], isLoading: lLoad } = useQuery({
+  const {  lessons = [], isLoading: lLoad } = useQuery({
     queryKey: ["admin-lessons-v2", selSubject?.id],
     enabled: !!selSubject,
     queryFn: async () => {
       const { data } = await supabase.from("lessons").select("*").eq("subject_id", selSubject?.id || "").order("sort_order");
-      return data || [];
-    },
+      return data || [];    },
     staleTime: 1000 * 60 * 5,
     refetchOnWindowFocus: false,
   });
@@ -271,7 +251,7 @@ export default function CourseManagement() {
   const { data: teachers = [] } = useQuery({
     queryKey: ["teachers-simple"],
     queryFn: async () => {
-      const { data: roles } = await supabase.from("user_roles").select("user_id").in("role", ["teacher","admin"]);
+      const {  roles } = await supabase.from("user_roles").select("user_id").in("role", ["teacher","admin"]);
       if (!roles?.length) return [];
       const { data } = await supabase.from("profiles").select("user_id,full_name").in("user_id", roles.map(r=>r.user_id));
       return data || [];
@@ -280,7 +260,6 @@ export default function CourseManagement() {
     refetchOnWindowFocus: false,
   });
 
-  // ── Upload image ──────────────────────────────────────────────────────────
   const uploadImage = useCallback(async (file: File, bucket: string): Promise<string|null> => {
     const ext = file.name.split(".").pop() || "jpg";
     const path = `items/${crypto.randomUUID()}.${ext}`;
@@ -290,9 +269,9 @@ export default function CourseManagement() {
     return data?.publicUrl || path;
   }, []);
 
-  // ── Course CRUD ───────────────────────────────────────────────────────────
   const saveCourse = useCallback(async (file?: File) => {
-    setSaving(true);    try {
+    setSaving(true);
+    try {
       let imgUrl = cf.image_url;
       if (file) { setImgUploading(true); imgUrl = (await uploadImage(file, "subject-files")) || imgUrl; setImgUploading(false); }
       const payload = { title: cf.title, title_ar: cf.title_ar||null, description: cf.description||null, level: cf.level, is_published: cf.is_published, image_url: imgUrl||null, sort_order: cf.sort_order, updated_at: new Date().toISOString() };
@@ -313,19 +292,41 @@ export default function CourseManagement() {
     toast({ title: "Course deleted" });
   }, [qc, selCourse]);
 
-  // ── Subject CRUD ──────────────────────────────────────────────────────────
-  const saveSubject = useCallback(async (file?: File) => {
+  const saveSubject = useCallback(async (file?: File) => {    // FIX: Ensure a course is selected before saving
+    if (!selCourse?.id) {
+      toast({ title: "Error", description: "No course selected", variant: "destructive" });
+      return;
+    }
     setSaving(true);
     try {
       let imgUrl = sf.image_url;
       if (file) { setImgUploading(true); imgUrl = (await uploadImage(file, "subject-images")) || imgUrl; setImgUploading(false); }
-      const payload = { title: sf.title, title_ar: sf.title_ar||null, description: sf.description||null, level: sf.level, is_active: sf.is_active, image_url: imgUrl||null, teacher_id: sf.teacher_id||null, color: sf.color||G, course_id: selCourse?.id||null, updated_at: new Date().toISOString() } as any;
-      if (editSubjectId) { await supabase.from("subjects").update(payload).eq("id", editSubjectId); }
-      else { await supabase.from("subjects").insert(payload); }
+      const payload = { 
+        title: sf.title, 
+        title_ar: sf.title_ar||null, 
+        description: sf.description||null, 
+        level: sf.level, 
+        is_active: sf.is_active, 
+        image_url: imgUrl||null, 
+        teacher_id: sf.teacher_id||null, 
+        color: sf.color||G, 
+        course_id: selCourse.id, // FIX: Explicitly set course_id
+        updated_at: new Date().toISOString() 
+      };
+      if (editSubjectId) { 
+        await supabase.from("subjects").update(payload).eq("id", editSubjectId); 
+      } else { 
+        await supabase.from("subjects").insert(payload); 
+      }
       qc.invalidateQueries({ queryKey: ["admin-subjects-v2"] });
-      setSubjectForm(false); setEditSubjectId(null); resetSf();
+      qc.invalidateQueries({ queryKey: ["admin-all-subjects"] });
+      setSubjectForm(false); 
+      setEditSubjectId(null); 
+      resetSf(); // Only reset after successful save
       toast({ title: "✅ Subject saved" });
-    } catch (e: any) { toast({ title: "Error", description: e.message, variant: "destructive" }); }
+    } catch (e: any) { 
+      toast({ title: "Error", description: e.message, variant: "destructive" }); 
+    }
     setSaving(false);
   }, [sf, editSubjectId, uploadImage, qc, selCourse, G]);
 
@@ -338,14 +339,12 @@ export default function CourseManagement() {
     toast({ title: "Subject deleted" });
   }, [qc, selSubject]);
 
-  // Link unlinked subject to current course
   const linkSubject = useCallback(async (subjectId: string) => {
-    await supabase.from("subjects").update({ course_id: selCourse?.id } as any).eq("id", subjectId);
+    await supabase.from("subjects").update({ course_id: selCourse?.id }).eq("id", subjectId);
     qc.invalidateQueries({ queryKey: ["admin-subjects-v2"] });    qc.invalidateQueries({ queryKey: ["admin-all-subjects"] });
     toast({ title: "Subject linked to course" });
   }, [qc, selCourse]);
 
-  // ── Lesson CRUD ───────────────────────────────────────────────────────────
   const saveLesson = useCallback(async () => {
     setSaving(true);
     const payload = { title: lf.title, title_ar: lf.title_ar||null, video_url: lf.video_url||null, duration_minutes: lf.duration_minutes, sort_order: lf.sort_order, subject_id: selSubject?.id, is_free: lf.is_free, updated_at: new Date().toISOString() };
@@ -371,6 +370,13 @@ export default function CourseManagement() {
   const openEditSubject = useCallback((s: any) => { setEditSubjectId(s.id); setSf({ title:s.title, title_ar:s.title_ar||"", description:s.description||"", level:s.level||"all", is_active:s.is_active, image_url:s.image_url||"", teacher_id:s.teacher_id||"", color:s.color||G }); setSubjectForm(true); }, [G]);
   const openEditLesson  = useCallback((l: any) => { setEditLessonId(l.id); setLf({ title:l.title, title_ar:l.title_ar||"", video_url:l.video_url||"", content:l.content||"", duration_minutes:l.duration_minutes||0, sort_order:l.sort_order||0, is_free:l.is_free||false }); setLessonForm(true); }, []);
 
+  // FIX: Don't reset if we are just reopening the form (persistence)
+  const openNewSubject = useCallback(() => {
+    // Only reset if we are NOT currently editing an existing subject
+    if (!editSubjectId) resetSf();
+    setSubjectForm(true);
+  }, [editSubjectId, resetSf]);
+
   const filteredCourses = useMemo(() => courses.filter((c: any) => {
     const matchLevel = levelFilter === "all" || c.level === levelFilter || c.level === "all";
     const matchSearch = !search || c.title.toLowerCase().includes(search.toLowerCase());
@@ -384,13 +390,12 @@ export default function CourseManagement() {
   }), [subjects, levelFilter, search]);
 
   const unlinkableSubjects = useMemo(() => allSubjects.filter((s: any) => !s.course_id && s.id !== selCourse?.id), [allSubjects, selCourse]);
-
   return (
     <div style={{ minHeight:"100vh", background:"#F3F4F6", fontFamily:"system-ui,sans-serif" }}>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}} .card-hover:hover{box-shadow:0 4px 16px rgba(0,0,0,.1);transform:translateY(-1px)} .card-hover{transition:all .2s}`}</style>
 
-      {/* ── Header with breadcrumb ─────────────────────────────────── */}
-      <div style={{ background:"#fff", borderBottom:"1px solid #E5E7EB", padding:"14px 16px", display:"flex", alignItems:"center", gap:10 }}>        {view !== "courses" && (
+      <div style={{ background:"#fff", borderBottom:"1px solid #E5E7EB", padding:"14px 16px", display:"flex", alignItems:"center", gap:10 }}>
+        {view !== "courses" && (
           <button onClick={() => { if (view === "lessons") { setView("subjects"); setSelSubject(null); } else { setView("courses"); setSelCourse(null); } }} style={{ width:34, height:34, borderRadius:8, border:"1.5px solid #E5E7EB", background:"#fff", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
             <ChevronLeft size={16} color="#6B7280" />
           </button>
@@ -405,12 +410,11 @@ export default function CourseManagement() {
             {view==="courses" ? "Courses" : view==="subjects" ? `${selCourse?.title} — Subjects` : `${selSubject?.title} — Lessons`}
           </h1>
         </div>
-        <button onClick={() => { if (view==="courses") setCourseForm(true); else if (view==="subjects") setSubjectForm(true); else setLessonForm(true); }} style={{ display:"flex", alignItems:"center", gap:6, padding:"9px 16px", borderRadius:10, border:"none", background:G, color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer" }}>
+        <button onClick={() => { if (view==="courses") setCourseForm(true); else if (view==="subjects") openNewSubject(); else setLessonForm(true); }} style={{ display:"flex", alignItems:"center", gap:6, padding:"9px 16px", borderRadius:10, border:"none", background:G, color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer" }}>
           <Plus size={14} /> Add {view==="courses" ? "Course" : view==="subjects" ? "Subject" : "Lesson"}
         </button>
       </div>
 
-      {/* ── Filters ────────────────────────────────────────────────── */}
       {view !== "lessons" && (
         <div style={{ background:"#fff", borderBottom:"1px solid #E5E7EB", padding:"10px 16px", display:"flex", gap:8, alignItems:"center", overflowX:"auto", scrollbarWidth:"none" }}>
           <div style={{ position:"relative", minWidth:180, flex:1 }}>
@@ -430,16 +434,15 @@ export default function CourseManagement() {
 
       <div style={{ padding:16, maxWidth:900, margin:"0 auto" }}>
 
-        {/* ═══════ COURSES VIEW ════════════════════════════════════════ */}
         {view === "courses" && (
           <>
             {cLoad ? (
               <div style={{ textAlign:"center", padding:40 }}><Loader2 size={28} style={{ animation:"spin .8s linear infinite", color:G }} /></div>
             ) : filteredCourses.length === 0 ? (
-              <div style={{ textAlign:"center", padding:40, color:"#9CA3AF" }}>
-                <FolderOpen size={48} style={{ margin:"0 auto 12px", display:"block" }} />
+              <div style={{ textAlign:"center", padding:40, color:"#9CA3AF" }}>                <FolderOpen size={48} style={{ margin:"0 auto 12px", display:"block" }} />
                 <p>No courses yet. Create your first course above.</p>
-              </div>            ) : (
+              </div>
+            ) : (
               <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))", gap:14 }}>
                 {filteredCourses.map((c: any) => {
                   const lvl = levelCfg[(c.level as Level) || "all"];
@@ -469,7 +472,6 @@ export default function CourseManagement() {
           </>
         )}
 
-        {/* ═══════ SUBJECTS VIEW ═══════════════════════════════════════ */}
         {view === "subjects" && (
           <>
             {sLoad ? (
@@ -486,9 +488,9 @@ export default function CourseManagement() {
                   {filteredSubjects.map((s: any) => {
                     const lvl = levelCfg[(s.level as Level) || "all"];
                     return (
-                      <div key={s.id} className="card-hover" style={{ background:"#fff", borderRadius:16, border:`1px solid ${lvl.border}`, overflow:"hidden" }}>
-                        <div style={{ position:"relative", cursor:"pointer" }} onClick={() => { setSelSubject(s); setView("lessons"); }}>
-                          <Thumb url={s.image_url} title={s.title} height={100} bg={lvl.bg} />                          <div style={{ position:"absolute", top:8, right:8, padding:"2px 8px", borderRadius:20, background:lvl.bg, color:lvl.text, fontSize:9, fontWeight:700, border:`1px solid ${lvl.border}` }}>{lvl.label}</div>
+                      <div key={s.id} className="card-hover" style={{ background:"#fff", borderRadius:16, border:`1px solid ${lvl.border}`, overflow:"hidden" }}>                        <div style={{ position:"relative", cursor:"pointer" }} onClick={() => { setSelSubject(s); setView("lessons"); }}>
+                          <Thumb url={s.image_url} title={s.title} height={100} bg={lvl.bg} />
+                          <div style={{ position:"absolute", top:8, right:8, padding:"2px 8px", borderRadius:20, background:lvl.bg, color:lvl.text, fontSize:9, fontWeight:700, border:`1px solid ${lvl.border}` }}>{lvl.label}</div>
                           {!s.is_active && <div style={{ position:"absolute", inset:0, background:"rgba(0,0,0,.4)", display:"flex", alignItems:"center", justifyContent:"center" }}><EyeOff size={20} color="#fff" /></div>}
                         </div>
                         <div style={{ padding:12 }}>
@@ -504,7 +506,6 @@ export default function CourseManagement() {
                   })}
                 </div>
 
-                {/* Link unlinked subjects */}
                 {unlinkableSubjects.length > 0 && (
                   <div style={{ background:"#fff", borderRadius:14, border:"1px solid #E5E7EB", padding:16 }}>
                     <p style={{ fontSize:12, fontWeight:700, color:"#374151", margin:"0 0 10px" }}>📎 Link existing subjects to this course:</p>
@@ -523,7 +524,6 @@ export default function CourseManagement() {
           </>
         )}
 
-        {/* ═══════ LESSONS VIEW ════════════════════════════════════════ */}
         {view === "lessons" && (
           <>
             {lLoad ? (
@@ -557,7 +557,6 @@ export default function CourseManagement() {
         )}
       </div>
 
-      {/* ═══════════════ MODALS (using extracted memoized components) ═══════════════ */}
       {courseForm && (
         <CourseFormModal 
           cf={cf} setCf={setCf} saving={saving} editCourseId={editCourseId}
@@ -569,7 +568,10 @@ export default function CourseManagement() {
       {subjectForm && (
         <SubjectFormModal 
           sf={sf} setSf={setSf} saving={saving} editSubjectId={editSubjectId}
-          onClose={() => { setSubjectForm(false); setEditSubjectId(null); resetSf(); }}
+          onClose={() => { 
+            setSubjectForm(false); 
+            // FIX: Don't reset on close, preserve user input
+          }}
           onSave={saveSubject} imgUploading={imgUploading} sImgRef={sImgRef} teachers={teachers} uploadImage={uploadImage} G={G}
         />
       )}
@@ -578,7 +580,7 @@ export default function CourseManagement() {
         <LessonFormModal 
           lf={lf} setLf={setLf} saving={saving} editLessonId={editLessonId}
           onClose={() => { setLessonForm(false); setEditLessonId(null); resetLf(); }}
-          onSave={saveLesson} selSubject={selSubject}
+          onSave={saveLesson}
         />
       )}
     </div>
