@@ -19,6 +19,7 @@ import { useToast } from "@/hooks/use-toast";
 import ClassroomView from "@/components/classroom/ClassroomView";
 import MaterialsViewer from "@/components/classroom/MaterialsViewer";
 import SubjectSyllabus from "@/components/classroom/SubjectSyllabus";
+import SubjectRecordings from "@/components/classroom/SubjectRecordings";
 import {
   ArrowLeft, BookOpen, FileText, Download, Play, ExternalLink, Video, Clock,
   Calendar, CheckCircle, XCircle, AlertCircle, Plus, Upload, Eye, BarChart3,
@@ -428,43 +429,12 @@ const SubjectView = () => {
 
         {/* ═══ TAB 3: Recordings ═══ */}
         <TabsContent value="recordings" className="mt-4">
-          {recordings.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-8">{t("No recordings available", "لا توجد تسجيلات")}</p>
-          ) : (
-            <div className="space-y-2">
-              {recordings.map((rec: any) => {
-                const session = sessions.find((s: any) => s.id === rec.session_id);
-                return (
-                  <Card key={rec.id}>
-                    <CardContent className="p-4 flex items-center justify-between">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <Video className="h-4 w-4 text-primary" />
-                          <span className="font-medium text-sm">
-                            {session ? `#${(session as any).session_number || "?"} — ${(session as any).topic || ""}` : rec.teacher_name || t("Recording", "تسجيل")}
-                          </span>
-                        </div>
-                        <p className="text-xs text-muted-foreground mt-1">
-                          {rec.created_at ? format(new Date(rec.created_at), "MMM d, yyyy") : ""}
-                          {rec.duration_seconds ? ` • ${Math.floor(rec.duration_seconds / 60)}m` : ""}
-                        </p>
-                      </div>
-                      {rec.file_url && (
-                        <Button size="sm" variant="outline" onClick={() => window.open(rec.file_url.startsWith("http") ? rec.file_url : `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/subject-files/${rec.file_url}`, "_blank")}>
-                          <Play className="h-3 w-3 me-1" />{t("Watch", "مشاهدة")}
-                        </Button>
-                      )}
-                    </CardContent>
-                  </Card>
-                );
-              })}
-            </div>
-          )}
+          <SubjectRecordings subjectId={subjectId!} />
         </TabsContent>
 
         {/* ═══ TAB 4: Materials ═══ */}
         <TabsContent value="materials" className="mt-4">
-          <MaterialsViewer materials={materials} sessions={sessions} />
+          <MaterialsViewer materials={materials} sessions={sessions} recordings={recordings} />
         </TabsContent>
 
         {/* ═══ TAB 5: Exams & Tests ═══ */}
