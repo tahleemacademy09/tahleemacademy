@@ -65,13 +65,26 @@ export default function TasjeelAdmin() {
     if (tab === "proctoring") loadProcStats();
   }, [tab]);
 
+  // ── Two-step join so newly-registered students always show their info ──
+  const mergeProfiles = async (rows: any[]) => {
+    if (!rows.length) return [];
+    const ids = [...new Set(rows.map((r: any) => r.user_id))];
+    const { data: profileRows } = await supabase
+      .from("profiles")
+      .select("user_id, full_name, full_name_ar, email, level, avatar_url, student_id, phone, country")
+      .in("user_id", ids);
+    const map: Record<string, any> = {};
+    (profileRows || []).forEach((p: any) => { map[p.user_id] = p; });
+    return rows.map((r: any) => ({ ...r, profiles: map[r.user_id] || null }));
+  };
+
   const loadStudents = async () => {
     setStdLoading(true);
     const { data } = await supabase
       .from("tasjeel_progress" as any)
-      .select("*, profiles:user_id(full_name, email, level, avatar_url)")
+      .select("*")
       .order("updated_at", { ascending: false });
-    setStudents(data || []);
+    setStudents(await mergeProfiles(data || []));
     setStdLoading(false);
   };
 
@@ -79,10 +92,10 @@ export default function TasjeelAdmin() {
     setStdLoading(true);
     const { data } = await supabase
       .from("tasjeel_progress" as any)
-      .select("*, profiles:user_id(full_name, email, level)")
+      .select("*")
       .eq("current_step", "review")
       .order("updated_at", { ascending: false });
-    setStudents(data || []);
+    setStudents(await mergeProfiles(data || []));
     setStdLoading(false);
   };
 
@@ -329,12 +342,19 @@ export default function TasjeelAdmin() {
                   const step = STEP_LABELS[s.current_step] || { label: s.current_step, icon: "?", color: "#9CA3AF" };
                   return (
                     <div key={s.user_id} style={{ background: "#fff", borderRadius: 14, border: "1.5px solid #E5E7EB", padding: "14px 16px", display: "flex", alignItems: "center", gap: 12 }}>
-                      <div style={{ width: 38, height: 38, borderRadius: 10, background: "#EFF6FF", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 16, fontWeight: 800, color: "#1D4ED8" }}>
-                        {(prof?.full_name || "?")[0]}
-                      </div>
-                      <div style={{ flex: 1 }}>
-                        <p style={{ fontWeight: 700, fontSize: 14, color: "#111", margin: 0 }}>{prof?.full_name || "Unknown"}</p>
-                        <p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>{prof?.email}</p>
+                      {prof?.avatar_url ? (
+                        <img src={prof.avatar_url} style={{ width: 38, height: 38, borderRadius: 10, objectFit: "cover", flexShrink: 0 }} />
+                      ) : (
+                        <div style={{ width: 38, height: 38, borderRadius: 10, background: "#EFF6FF", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 16, fontWeight: 800, color: "#1D4ED8" }}>
+                          {(prof?.full_name || prof?.email || "?")[0]?.toUpperCase()}
+                        </div>
+                      )}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <p style={{ fontWeight: 700, fontSize: 14, color: "#111", margin: "0 0 2px" }}>{prof?.full_name || prof?.email || "New Student"}</p>
+                        <p style={{ fontSize: 11, color: "#9CA3AF", margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {prof?.email}{prof?.student_id ? ` · ID: ${prof.student_id}` : ""}{prof?.country ? ` · ${prof.country}` : ""}
+                        </p>
+                        <p style={{ fontSize: 10, color: "#D1D5DB", margin: "2px 0 0" }}>Registered: {new Date(s.created_at || s.updated_at).toLocaleDateString()}</p>
                       </div>
                       <div style={{ padding: "4px 12px", borderRadius: 20, background: step.color + "18", border: `1px solid ${step.color}33`, fontSize: 11, fontWeight: 700, color: step.color }}>
                         {step.icon} {step.label}
@@ -379,12 +399,18 @@ export default function TasjeelAdmin() {
                   return (
                     <div key={s.user_id} style={{ background: "#fff", borderRadius: 16, border: "1.5px solid #E5E7EB", padding: 16 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
-                        <div style={{ width: 44, height: 44, borderRadius: 12, background: "#EFF6FF", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 800, color: "#1D4ED8" }}>
-                          {(prof?.full_name || "?")[0]}
-                        </div>
+                        {prof?.avatar_url ? (
+                          <img src={prof.avatar_url} style={{ width: 44, height: 44, borderRadius: 12, objectFit: "cover", flexShrink: 0 }} />
+                        ) : (
+                          <div style={{ width: 44, height: 44, borderRadius: 12, background: "#EFF6FF", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 800, color: "#1D4ED8" }}>
+                            {(prof?.full_name || prof?.email || "?")[0]?.toUpperCase()}
+                          </div>
+                        )}
                         <div style={{ flex: 1 }}>
-                          <p style={{ fontWeight: 800, fontSize: 14, color: "#111", margin: 0 }}>{prof?.full_name || "Unknown"}</p>
-                          <p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>{prof?.email}</p>
+                          <p style={{ fontWeight: 800, fontSize: 14, color: "#111", margin: "0 0 2px" }}>{prof?.full_name || prof?.email || "New Student"}</p>
+                          <p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>
+                            {prof?.email}{prof?.student_id ? ` · ${prof.student_id}` : ""}{prof?.country ? ` · ${prof.country}` : ""}
+                          </p>
                         </div>
                         <span style={{ fontSize: 11, padding: "4px 10px", borderRadius: 20, background: "#FFF7ED", color: "#C2410C", fontWeight: 700 }}>🔍 Under Review</span>
                       </div>
