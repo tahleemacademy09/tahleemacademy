@@ -608,83 +608,126 @@ export default function HifdhRevision() {
             </div>
 
             {/* ═══════════════════════════════════════════════════════
-                 ONE-LINE STATIC FOOTER
+                 ONE-LINE STATIC FOOTER with Surah selector
                 ═══════════════════════════════════════════════════════ */}
             <div
               className="flex-none border-t z-50"
               style={{ background: DARK_GREEN, borderColor: GOLD + "55" }}
             >
-              <div className="flex items-center gap-2 px-3 py-2 max-w-lg mx-auto">
+              <div className="flex items-center gap-1.5 px-2 py-2 max-w-lg mx-auto">
+
+                {/* Surah selector */}
+                <select
+                  value=""
+                  onChange={(e) => {
+                    const pageNum = parseInt(e.target.value, 10);
+                    if (pageNum >= 1 && pageNum <= 604) setCurrentPage(pageNum);
+                  }}
+                  className="text-[9px] rounded-lg px-1.5 py-1.5 outline-none min-w-0 w-[72px] flex-none"
+                  style={{ background: "#1e4030", color: GOLD, border: `1px solid ${GOLD}33`, fontFamily: "'Amiri',serif" }}
+                >
+                  <option value="" disabled>سورة</option>
+                  {[
+                    [1,1,"الفاتحة"],[2,2,"البقرة"],[3,50,"آل عمران"],[4,77,"النساء"],[5,106,"المائدة"],
+                    [6,128,"الأنعام"],[7,151,"الأعراف"],[8,177,"الأنفال"],[9,187,"التوبة"],[10,208,"يونس"],
+                    [11,221,"هود"],[12,235,"يوسف"],[13,249,"الرعد"],[14,255,"إبراهيم"],[15,262,"الحجر"],
+                    [16,267,"النحل"],[17,282,"الإسراء"],[18,293,"الكهف"],[19,305,"مريم"],[20,312,"طه"],
+                    [21,322,"الأنبياء"],[22,332,"الحج"],[23,342,"المؤمنون"],[24,350,"النور"],[25,359,"الفرقان"],
+                    [26,367,"الشعراء"],[27,377,"النمل"],[28,385,"القصص"],[29,396,"العنكبوت"],[30,404,"الروم"],
+                    [31,411,"لقمان"],[32,415,"السجدة"],[33,418,"الأحزاب"],[34,428,"سبأ"],[35,434,"فاطر"],
+                    [36,440,"يس"],[37,446,"الصافات"],[38,453,"ص"],[39,458,"الزمر"],[40,467,"غافر"],
+                    [41,477,"فصلت"],[42,483,"الشورى"],[43,489,"الزخرف"],[44,496,"الدخان"],[45,499,"الجاثية"],
+                    [46,502,"الأحقاف"],[47,507,"محمد"],[48,511,"الفتح"],[49,515,"الحجرات"],[50,518,"ق"],
+                    [51,520,"الذاريات"],[52,523,"الطور"],[53,526,"النجم"],[54,528,"القمر"],[55,531,"الرحمن"],
+                    [56,534,"الواقعة"],[57,537,"الحديد"],[58,542,"المجادلة"],[59,545,"الحشر"],[60,549,"الممتحنة"],
+                    [61,551,"الصف"],[62,553,"الجمعة"],[63,554,"المنافقون"],[64,556,"التغابن"],[65,558,"الطلاق"],
+                    [66,560,"التحريم"],[67,562,"الملك"],[68,564,"القلم"],[69,566,"الحاقة"],[70,568,"المعارج"],
+                    [71,570,"نوح"],[72,572,"الجن"],[73,574,"المزمل"],[74,575,"المدثر"],[75,577,"القيامة"],
+                    [76,578,"الإنسان"],[77,580,"المرسلات"],[78,582,"النبأ"],[79,583,"النازعات"],
+                    [80,585,"عبس"],[81,586,"التكوير"],[82,587,"الانفطار"],[83,587,"المطففين"],
+                    [84,589,"الانشقاق"],[85,590,"البروج"],[86,591,"الطارق"],[87,591,"الأعلى"],
+                    [88,592,"الغاشية"],[89,593,"الفجر"],[90,594,"البلد"],[91,595,"الشمس"],
+                    [92,595,"الليل"],[93,596,"الضحى"],[94,596,"الشرح"],[95,597,"التين"],
+                    [96,597,"العلق"],[97,598,"القدر"],[98,598,"البينة"],[99,599,"الزلزلة"],
+                    [100,600,"العاديات"],[101,600,"القارعة"],[102,600,"التكاثر"],
+                    [103,601,"العصر"],[104,601,"الهمزة"],[105,601,"الفيل"],
+                    [106,602,"قريش"],[107,602,"الماعون"],[108,602,"الكوثر"],
+                    [109,603,"الكافرون"],[110,603,"النصر"],[111,603,"المسد"],
+                    [112,604,"الإخلاص"],[113,604,"الفلق"],[114,604,"الناس"],
+                  ].map(([num, page, name]) => (
+                    <option key={num as number} value={page as number}>{name as string}</option>
+                  ))}
+                </select>
 
                 {/* Prev */}
                 <button
-                  className="ctrl w-8 h-8 flex-none"
-                  style={{ background:"#1e4030" }}
+                  className="ctrl w-7 h-7 flex-none"
+                  style={{ background: "#1e4030" }}
                   onClick={() => navigate("prev")}
                   disabled={currentPage <= 1}
                 >
-                  <SkipBack size={14} color={GOLD} />
+                  <SkipBack size={12} color={GOLD} />
                 </button>
 
                 {/* Play / Pause */}
                 <button
-                  className="ctrl w-10 h-10 flex-none shadow-lg"
+                  className="ctrl w-9 h-9 flex-none shadow-lg"
                   style={{ background: GOLD }}
                   onClick={togglePlay}
                 >
                   {isPlaying
-                    ? <Pause size={16} fill={DARK_GREEN} color={DARK_GREEN} />
-                    : <Play  size={16} fill={DARK_GREEN} color={DARK_GREEN} className="ml-0.5" />
+                    ? <Pause size={14} fill={DARK_GREEN} color={DARK_GREEN} />
+                    : <Play  size={14} fill={DARK_GREEN} color={DARK_GREEN} className="ml-0.5" />
                   }
                 </button>
 
                 {/* Next */}
                 <button
-                  className="ctrl w-8 h-8 flex-none"
-                  style={{ background:"#1e4030" }}
+                  className="ctrl w-7 h-7 flex-none"
+                  style={{ background: "#1e4030" }}
                   onClick={() => navigate("next")}
                   disabled={currentPage >= 604}
                 >
-                  <SkipForward size={14} color={GOLD} />
+                  <SkipForward size={12} color={GOLD} />
                 </button>
 
                 {/* Reciter */}
                 <select
                   value={reciter}
                   onChange={(e) => setReciter(e.target.value)}
-                  className="flex-1 text-[10px] rounded-lg px-2 py-1.5 outline-none min-w-0"
-                  style={{ background:"#1e4030", color:GOLD, border:`1px solid ${GOLD}33`, fontFamily:"Georgia,serif" }}
+                  className="flex-1 text-[9px] rounded-lg px-1.5 py-1.5 outline-none min-w-0"
+                  style={{ background: "#1e4030", color: GOLD, border: `1px solid ${GOLD}33`, fontFamily: "Georgia,serif" }}
                 >
                   {RECITERS.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
                 </select>
 
                 {/* Font – */}
                 <button
-                  className="ctrl w-7 h-7 flex-none"
-                  style={{ background:"#1e4030" }}
+                  className="ctrl w-6 h-6 flex-none"
+                  style={{ background: "#1e4030" }}
                   onClick={() => setFontSize(v => Math.max(18, v - 2))}
                 >
-                  <Minus size={12} color={GOLD} />
+                  <Minus size={10} color={GOLD} />
                 </button>
 
                 {/* Font + */}
                 <button
-                  className="ctrl w-7 h-7 flex-none"
-                  style={{ background:"#1e4030" }}
+                  className="ctrl w-6 h-6 flex-none"
+                  style={{ background: "#1e4030" }}
                   onClick={() => setFontSize(v => Math.min(42, v + 2))}
                 >
-                  <Plus size={12} color={GOLD} />
+                  <Plus size={10} color={GOLD} />
                 </button>
 
                 {/* Fullscreen toggle */}
                 <button
-                  className="ctrl w-7 h-7 flex-none"
-                  style={{ background:"#1e4030" }}
+                  className="ctrl w-6 h-6 flex-none"
+                  style={{ background: "#1e4030" }}
                   onClick={() => setFullscreen(f => !f)}
                 >
                   {fullscreen
-                    ? <Minimize2 size={12} color={GOLD} />
-                    : <Maximize2 size={12} color={GOLD} />
+                    ? <Minimize2 size={10} color={GOLD} />
+                    : <Maximize2 size={10} color={GOLD} />
                   }
                 </button>
               </div>
