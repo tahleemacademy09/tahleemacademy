@@ -167,14 +167,26 @@ const GradingPage = () => {
     fetchAttempts();
   };
 
-  // Batch release
+  // Batch release — fetch profiles separately (no FK from exam_attempts to profiles)
   const openBatchRelease = async (examId: string) => {
     setBatchExamId(examId);
-    const { data } = await supabase.from("exam_attempts")
-      .select("*, profiles:user_id(full_name)")
-      .eq("exam_id", examId).eq("status", "graded");
-    setBatchAttempts(data || []);
-    setBatchReleaseOpen(true);
+    if (!examId) { setBatchAttempts([]); return; }
+
+    const [attemptsRes, profilesRes] = await Promise.all([
+      supabase.from("exam_attempts").select("*").eq("exam_id", examId).eq("status", "graded"),
+      supabase.from("profiles").select("user_id, full_name, email"),
+    ]);
+
+    const profileMap = Object.fromEntries(
+      (profilesRes.data || []).map(p => [p.user_id, p])
+    );
+
+    setBatchAttempts(
+      (attemptsRes.data || []).map((a: any) => ({
+        ...a,
+        profiles: profileMap[a.user_id] || {},
+      }))
+    );
   };
 
   const executeBatchRelease = async () => {
@@ -393,7 +405,7 @@ const GradingPage = () => {
               <p style={{ fontSize: 12, color: "#6B7280", margin: 0 }}>{tabCounts.pending} pending · {tabCounts.graded} graded · {tabCounts.released} released</p>
             </div>
           </div>
-          <Button onClick={() => setBatchReleaseOpen(true)}
+          <Button onClick={() => { setBatchExamId(""); setBatchAttempts([]); setBatchReleaseOpen(true); }}
             style={{ background: "#16A34A", borderRadius: 12, gap: 8, fontWeight: 700 }}>
             <Unlock size={16} /> Batch Release
           </Button>
@@ -484,7 +496,7 @@ const GradingPage = () => {
       </div>
 
       {/* Batch Release Dialog */}
-      <Dialog open={batchReleaseOpen} onOpenChange={v => { if (!v) { setBatchReleaseOpen(false); setBatchAttempts([]); } }}>
+      <Dialog open={batchReleaseOpen} onOpenChange={v => { if (!v) { setBatchReleaseOpen(false); setBatchAttempts([]); setBatchExamId(""); } }}>
         <DialogContent style={{ maxWidth: 480, borderRadius: 20, padding: 0 }}>
           <div style={{ background: "#16A34A", padding: "18px 20px", borderRadius: "20px 20px 0 0", display: "flex", alignItems: "center", gap: 10 }}>
             <Unlock size={20} color="#fff" />
