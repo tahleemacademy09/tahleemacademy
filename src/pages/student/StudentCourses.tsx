@@ -20,6 +20,9 @@ const SUBJECT_EMOJIS: Record<string, string> = {
   "Fiqh & Aqeedah": "📚",
 };
 
+// Arabic font family for better readability
+const ARABIC_FONT = "'Tajawal', 'Cairo', sans-serif";
+
 const StudentCourses = () => {
   const { t, language } = useLanguage();
   const { user, profile } = useAuth();
@@ -39,15 +42,15 @@ const StudentCourses = () => {
     },
   });
 
-  // 2. Fetch Courses - Filtered by level on client (or use server-side filtering below)
+  // 2. Fetch Courses - Filtered by level on client
   const { data: courses, isLoading: loadingCourses } = useQuery({
     queryKey: ["all-courses-published"],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("courses")
-        .select("id, title, title_ar, description, description_ar, subject_id, level, image_url, thumbnail, is_published, sort_order")
+        .from("courses")        .select("id, title, title_ar, description, description_ar, subject_id, level, image_url, thumbnail, is_published, sort_order")
         .eq("is_published", true)
-        .order("sort_order");      if (error) throw error;
+        .order("sort_order");
+      if (error) throw error;
       return data;
     },
   });
@@ -93,9 +96,9 @@ const StudentCourses = () => {
 
   const getProgressPercent = (courseId: string) => {
     const total = getLessonCount(courseId);
-    if (total === 0) return 0;
-    return Math.round((getCompletedCount(courseId) / total) * 100);
+    if (total === 0) return 0;    return Math.round((getCompletedCount(courseId) / total) * 100);
   };
+
   const getCourseImage = (course: any) => {
     return course.image_url || course.thumbnail || course.cover_image || null;
   };
@@ -137,14 +140,22 @@ const StudentCourses = () => {
   return (
     <div className="container mx-auto px-4 py-6 md:py-8 space-y-8">
       {/* Header */}
-      <div>
-        <h1 className="text-2xl md:text-3xl font-bold" style={{ fontFamily: language === "ar" ? "'Amiri', serif" : "'Playfair Display', serif", color: '#064E3B' }}>
-          {t("My Courses", "دوراتي")}
+      <div className="text-center md:text-start">
+        <h1 
+          className="text-2xl md:text-3xl font-bold" 
+          style={{ 
+            fontFamily: language === "ar" ? ARABIC_FONT : "'Playfair Display', serif", 
+            color: '#064E3B'           }}
+        >
+          {language === "ar" ? "دوراتي" : "My Courses"}
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
-          {t(`Your level: ${levelLabel(studentLevel)}`, `مستواك: ${levelLabel(studentLevel)}`)}
+          {language === "ar" 
+            ? `مستواك: ${levelLabel(studentLevel)}` 
+            : `Your level: ${levelLabel(studentLevel)}`}
         </p>
       </div>
+
       {/* Courses grouped by subject - FILTERED BY STUDENT LEVEL */}
       {(subjects || []).map((subject: any) => {
         // ✅ Only show courses matching student's level OR courses with no level restriction
@@ -161,12 +172,15 @@ const StudentCourses = () => {
           <div key={subject.id} className="space-y-4">
             <div className="flex items-center gap-2">
               <span className="text-xl">{emoji}</span>
-              <h2 className="text-lg font-bold" style={{ fontFamily: language === "ar" ? "'Amiri', serif" : "'Playfair Display', serif" }}>
+              <h2 
+                className="text-lg font-bold" 
+                style={{ fontFamily: language === "ar" ? ARABIC_FONT : "'Playfair Display', serif" }}
+              >
                 {language === "ar" ? subject.title_ar || subject.title : subject.title}
               </h2>
               <Link to={`/student/subjects/${subject.id}`}>
                 <Button variant="ghost" size="sm" className="text-xs">
-                  {t("View All", "عرض الكل")} <ArrowRight className="h-3 w-3 ms-1" />
+                  {language === "ar" ? "عرض الكل" : "View All"} <ArrowRight className="h-3 w-3 ms-1" />
                 </Button>
               </Link>
             </div>
@@ -179,14 +193,15 @@ const StudentCourses = () => {
                 const imageUrl = getCourseImage(course);
 
                 return (
-                  <Card key={course.id} className="overflow-hidden transition-all hover:shadow-lg">
-                    
-                    {/* Image Header with Error Handling & Fallback */}
-                    <div className="h-28 relative overflow-hidden bg-gradient-to-br from-primary/20 to-secondary/20">
+                  <Card 
+                    key={course.id}                     className="overflow-hidden transition-all hover:shadow-lg bg-white border-0 shadow-md"
+                  >
+                    {/* ✅ Image Section - NO TEXT OVERLAY */}
+                    <div className="h-32 relative overflow-hidden bg-gradient-to-br from-primary/10 to-secondary/10">
                       {imageUrl ? (
                         <img
                           src={imageUrl}
-                          alt={language === "ar" ? course.title_ar || course.title : course.title}
+                          alt={course.title}
                           className="w-full h-full object-cover transition-opacity duration-300"
                           loading="lazy"
                           onError={(e) => {
@@ -194,57 +209,90 @@ const StudentCourses = () => {
                             const fallback = e.currentTarget.parentElement?.querySelector('.fallback-icon');
                             if (fallback) fallback.classList.remove('hidden');
                           }}
-                        />                      ) : (
+                        />
+                      ) : (
                         <div className="fallback-icon flex items-center justify-center w-full h-full">
-                          <BookOpen className="h-10 w-10 text-primary/40" />
+                          <BookOpen className="h-12 w-12 text-primary/30" />
                         </div>
                       )}
-                      
                       {/* Hidden fallback icon container (shown via JS on error) */}
-                      <div className="fallback-icon hidden absolute inset-0 flex items-center justify-center bg-gradient-to-br from-primary/20 to-secondary/20">
-                        <BookOpen className="h-10 w-10 text-primary/40" />
+                      <div className="fallback-icon hidden absolute inset-0 flex items-center justify-center bg-gradient-to-br from-primary/10 to-secondary/10">
+                        <BookOpen className="h-12 w-12 text-primary/30" />
                       </div>
                     </div>
 
-                    {/* Content */}
-                    <CardContent className="p-4 space-y-3">
-                      <div className="flex items-center gap-2 flex-wrap">
+                    {/* ✅ Content Section - WHITE BACKGROUND, ARABIC FIRST, CENTERED */}
+                    <CardContent className="p-4 space-y-3 text-center">
+                      {/* Level Badge */}
+                      <div className="flex justify-center">
                         <Badge className={levelColor(course.level || 'beginner')} variant="secondary">
                           {levelLabel(course.level || 'beginner')}
                         </Badge>
-                        <span className="text-xs text-muted-foreground">
-                          {lessonCount} {t("lessons", "درس")}
-                        </span>
                       </div>
-                      <h3 className="font-semibold text-sm line-clamp-2">
-                        {language === "ar" ? course.title_ar || course.title : course.title}
-                      </h3>
-                      {course.description && (
-                        <p className="text-xs text-muted-foreground line-clamp-2">
-                          {language === "ar" ? course.description_ar || course.description : course.description}
+
+                      {/* ✅ Arabic Title First - Tajawal Font */}
+                      {course.title_ar && (
+                        <h3 
+                          className="text-lg font-bold text-gray-800 leading-tight"
+                          style={{ fontFamily: ARABIC_FONT }}
+                          dir="rtl"
+                        >
+                          {course.title_ar}
+                        </h3>
+                      )}
+                      
+                      {/* ✅ English Title Below */}
+                      {course.title && (
+                        <h4 className="text-sm font-semibold text-gray-600">                          {course.title}
+                        </h4>
+                      )}
+
+                      {/* ✅ Arabic Description First */}
+                      {course.description_ar && (
+                        <p 
+                          className="text-xs text-gray-600 leading-relaxed line-clamp-2"
+                          style={{ fontFamily: ARABIC_FONT }}
+                          dir="rtl"
+                        >
+                          {course.description_ar}
                         </p>
                       )}
+
+                      {/* ✅ English Description Below */}
+                      {course.description && (
+                        <p className="text-xs text-gray-500 line-clamp-2">
+                          {course.description}
+                        </p>
+                      )}
+
+                      {/* Lesson Count */}
+                      <span className="text-xs text-muted-foreground block">
+                        {lessonCount} {language === "ar" ? "درس" : "lessons"}
+                      </span>
 
                       {/* Progress & Action Button */}
                       <>
                         {lessonCount > 0 && (
                           <div className="space-y-1">
-                            <div className="flex justify-between text-xs text-muted-foreground">
+                            <div className="flex justify-center text-xs text-muted-foreground gap-2">
                               <span>{completedCount}/{lessonCount}</span>
+                              <span>•</span>
                               <span>{progressPct}%</span>
                             </div>
-                            <Progress value={progressPct} className="h-2" />
+                            <Progress value={progressPct} className="h-1.5" />
                           </div>
                         )}
                         <Link to={`/student/courses/${course.id}`}>
-                          <Button size="sm" className="w-full mt-1">
+                          <Button size="sm" className="w-full mt-2 bg-emerald-800 hover:bg-emerald-900 text-white">
                             <Play className="h-3 w-3 me-1" />
-                            {completedCount > 0 ? t("Continue", "متابعة") : t("Start", "ابدأ")}
+                            {completedCount > 0 
+                              ? (language === "ar" ? "متابعة" : "Continue") 
+                              : (language === "ar" ? "ابدأ" : "Start")}
                           </Button>
                         </Link>
                       </>
-                    </CardContent>                  </Card>
-                );
+                    </CardContent>
+                  </Card>                );
               })}
             </div>
           </div>
@@ -260,11 +308,14 @@ const StudentCourses = () => {
       ) && (
         <div className="text-center py-16">
           <BookOpen className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-          <h3 className="text-lg font-semibold">
-            {t("No courses available for your level", "لا توجد دورات متاحة لمستواك")}
+          <h3 
+            className="text-lg font-semibold"
+            style={{ fontFamily: ARABIC_FONT }}
+          >
+            {language === "ar" ? "لا توجد دورات متاحة لمستواك" : "No courses available for your level"}
           </h3>
           <p className="text-sm text-muted-foreground">
-            {t("Complete your current level to unlock more!", "أكمل مستواك الحالي لفتح المزيد!")}
+            {language === "ar" ? "أكمل مستواك الحالي لفتح المزيد!" : "Complete your current level to unlock more!"}
           </p>
         </div>
       )}
