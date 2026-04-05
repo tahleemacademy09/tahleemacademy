@@ -8,7 +8,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import {
-  Users, ClipboardList, BookOpen, TrendingUp, Plus, AlertTriangle,
+  Users, ClipboardList, BookOpen, TrendingUp, Plus, AlertTriangle, Layers,
   CheckSquare, BarChart, Shield, Activity, ArrowRight, UserCheck,
   Video, CreditCard, Calendar, Bell, ChevronRight, Mic,
 } from "lucide-react";
@@ -279,9 +279,7 @@ const AdminDashboard = () => {
           <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">{t("Manage","إدارة")}</p>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
             {[
-              { to:"/admin/subjects",    icon:BookOpen,    label:t("Subjects","المواد"),         sub:t("Manage subjects","إدارة المواد") },
-              { to:"/admin/courses",     icon:BookOpen,    label:t("Courses","الدورات"),          sub:t("View all courses","عرض الدورات") },
-              { to:"/admin/syllabus",    icon:BookOpen,    label:t("Syllabus","المنهج"),          sub:t("Materials & files","المواد والملفات") },
+              { to:"/admin/courses",     icon:Layers,      label:t("Courses & Subjects","الدورات والمواد"), sub:t("Syllabus, materials & sessions","المنهج والمواد والحصص") },
               { to:"/admin/live-classes",icon:Video,       label:t("Live Classes","الفصول الحية"),sub:t("Schedule & manage","جدولة وإدارة") },
               { to:"/admin/exams",       icon:ClipboardList,label:t("Exams","الامتحانات"),       sub:t("All exams & tests","الامتحانات والاختبارات") },
               { to:"/admin/question-bank",icon:BookOpen,   label:t("Question Bank","بنك الأسئلة"),sub:t("Manage questions","إدارة الأسئلة") },
