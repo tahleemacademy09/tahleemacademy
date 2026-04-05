@@ -85,11 +85,8 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
       { to:"/admin/level-assignment",      icon:GraduationCap, label:t("New Registrations","الطلاب الجدد") },
       { to:"/admin/registration-settings", icon:Settings,      label:t("Registration Settings","إعدادات التسجيل") },
     ]},
-    { type:"link",  to:"/admin/level-subject-mapping", icon:BookOpen, label:t("Subject Level Mapping","تعيين مستويات المواد") },
     { type:"group", key:"academic", icon:BookOpen, label:t("Academic","المحتوى الأكاديمي"), children:[
-      { to:"/admin/subjects", icon:BookOpen,  label:t("Subjects","المواد") },
-      { to:"/admin/courses",  icon:Layers,    label:t("Courses","الدورات") },
-      { to:"/admin/syllabus", icon:FileText,  label:t("Syllabus & Materials","المنهج والمواد") },
+      { to:"/admin/courses",  icon:Layers,    label:t("Courses & Subjects","الدورات والمواد") },
       { to:"/admin/calendar", icon:Calendar,  label:t("Calendar","التقويم") },
     ]},
     { type:"group", key:"classes", icon:Video, label:t("Classes","الفصول"), children:[
