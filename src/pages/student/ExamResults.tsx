@@ -279,7 +279,8 @@ const ExamResults = () => {
               </div>
             )}
 
-
+            {/* Stats grid */}
+            {isGraded && (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
                 {[
                   { icon: <CheckCircle style={{ width: 20, height: 20 }} />, label: t("Correct", "صح"), value: answers.filter(a => a.is_correct).length, color: "#22c55e", bg: "#f0fff4" },
