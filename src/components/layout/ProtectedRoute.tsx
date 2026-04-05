@@ -1,21 +1,21 @@
-import { Navigate } from "react-router-dom";
+import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
   requiredRole?: string;
-  skipOnboardingCheck?: boolean; // kept for API compatibility — no longer used
+  skipOnboardingCheck?: boolean;
 }
 
-// Safe fallback map matching your App.tsx routes
 const ROLE_FALLBACKS: Record<string, string> = {
   student: "/student",
   teacher: "/teacher",
-  admin: "/admin",
+  admin:   "/admin",
 };
 
 const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
-  const { user, loading: authLoading, hasRole } = useAuth();
+  const { user, loading: authLoading, hasRole, roles } = useAuth();
+  const location = useLocation();
 
   // Wait for auth to finish loading before making any decision
   if (authLoading) {
@@ -30,11 +30,17 @@ const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
   // Not logged in → send to login
   if (!user) return <Navigate to="/login" replace />;
 
-  // Wrong role → send to their correct dashboard (prevents 404 loops)
+  // ── Issue 2 fix: admins must never land on /student/* ────────────────────
+  // If this user is an admin and they're navigating to a student-only path,
+  // send them straight to the admin dashboard.
+  if (hasRole("admin") && location.pathname.startsWith("/student")) {
+    return <Navigate to="/admin" replace />;
+  }
+
+  // Wrong role → redirect to the user's own dashboard (not always /student)
   if (requiredRole && !hasRole(requiredRole) && !hasRole("admin")) {
-    // Fallback to /student if role detection is temporarily out of sync
-    const safeRedirect = ROLE_FALLBACKS["student"]; 
-    return <Navigate to={safeRedirect} replace />;
+    const myRole = ["admin", "teacher"].find(r => hasRole(r)) || "student";
+    return <Navigate to={ROLE_FALLBACKS[myRole]} replace />;
   }
 
   return <>{children}</>;
