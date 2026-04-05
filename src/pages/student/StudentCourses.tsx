@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
-import { BookOpen, Lock, Play, ArrowRight } from "lucide-react";
+import { BookOpen, Play, ArrowRight } from "lucide-react";
 
 // Subject mapping for UI display
 const SUBJECT_EMOJIS: Record<string, string> = {
@@ -39,7 +39,7 @@ const StudentCourses = () => {
     },
   });
 
-  // 2. Fetch Courses - FIX: Explicitly select 'image_url'
+  // 2. Fetch Courses - Filtered by level on client (or use server-side filtering below)
   const { data: courses, isLoading: loadingCourses } = useQuery({
     queryKey: ["all-courses-published"],
     queryFn: async () => {
@@ -96,9 +96,7 @@ const StudentCourses = () => {
     if (total === 0) return 0;
     return Math.round((getCompletedCount(courseId) / total) * 100);
   };
-  // ✅ FIX: Helper to extract image URL
   const getCourseImage = (course: any) => {
-    // Checks for image_url, thumbnail, or cover_image fields in that order
     return course.image_url || course.thumbnail || course.cover_image || null;
   };
 
@@ -145,11 +143,16 @@ const StudentCourses = () => {
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
           {t(`Your level: ${levelLabel(studentLevel)}`, `مستواك: ${levelLabel(studentLevel)}`)}
-        </p>      </div>
-
-      {/* Courses grouped by subject */}
+        </p>
+      </div>
+      {/* Courses grouped by subject - FILTERED BY STUDENT LEVEL */}
       {(subjects || []).map((subject: any) => {
-        const subjectCourses = (courses || []).filter((c: any) => c.subject_id === subject.id);
+        // ✅ Only show courses matching student's level OR courses with no level restriction
+        const subjectCourses = (courses || []).filter((c: any) => 
+          c.subject_id === subject.id && 
+          (!c.level || c.level.toLowerCase() === studentLevel?.toLowerCase())
+        );
+        
         if (subjectCourses.length === 0) return null;
 
         const emoji = SUBJECT_EMOJIS[subject.title] || "📖";
@@ -170,16 +173,15 @@ const StudentCourses = () => {
 
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
               {subjectCourses.map((course: any) => {
-                const isAccessible = course.level?.toLowerCase() === studentLevel?.toLowerCase() || !course.level;
                 const lessonCount = getLessonCount(course.id);
                 const completedCount = getCompletedCount(course.id);
                 const progressPct = getProgressPercent(course.id);
-                const imageUrl = getCourseImage(course); // ✅ Get image URL
+                const imageUrl = getCourseImage(course);
 
                 return (
-                  <Card key={course.id} className={`overflow-hidden transition-all ${isAccessible ? 'hover:shadow-lg' : 'opacity-70'}`}>
+                  <Card key={course.id} className="overflow-hidden transition-all hover:shadow-lg">
                     
-                    {/* ✅ FIXED: Image Header with Error Handling & Fallback */}
+                    {/* Image Header with Error Handling & Fallback */}
                     <div className="h-28 relative overflow-hidden bg-gradient-to-br from-primary/20 to-secondary/20">
                       {imageUrl ? (
                         <img
@@ -188,13 +190,12 @@ const StudentCourses = () => {
                           className="w-full h-full object-cover transition-opacity duration-300"
                           loading="lazy"
                           onError={(e) => {
-                            // Hide broken image and show fallback icon
                             (e.target as HTMLImageElement).style.display = 'none';
                             const fallback = e.currentTarget.parentElement?.querySelector('.fallback-icon');
                             if (fallback) fallback.classList.remove('hidden');
                           }}
-                        />
-                      ) : (                        <div className="fallback-icon flex items-center justify-center w-full h-full">
+                        />                      ) : (
+                        <div className="fallback-icon flex items-center justify-center w-full h-full">
                           <BookOpen className="h-10 w-10 text-primary/40" />
                         </div>
                       )}
@@ -203,13 +204,6 @@ const StudentCourses = () => {
                       <div className="fallback-icon hidden absolute inset-0 flex items-center justify-center bg-gradient-to-br from-primary/20 to-secondary/20">
                         <BookOpen className="h-10 w-10 text-primary/40" />
                       </div>
-
-                      {/* Lock overlay */}
-                      {!isAccessible && (
-                        <div className="absolute inset-0 bg-background/60 backdrop-blur-sm flex items-center justify-center z-10">
-                          <Lock className="h-6 w-6 text-muted-foreground" />
-                        </div>
-                      )}
                     </div>
 
                     {/* Content */}
@@ -231,36 +225,25 @@ const StudentCourses = () => {
                         </p>
                       )}
 
-                      {isAccessible ? (
-                        <>
-                          {lessonCount > 0 && (
-                            <div className="space-y-1">
-                              <div className="flex justify-between text-xs text-muted-foreground">
-                                <span>{completedCount}/{lessonCount}</span>
-                                <span>{progressPct}%</span>
-                              </div>
-                              <Progress value={progressPct} className="h-2" />
+                      {/* Progress & Action Button */}
+                      <>
+                        {lessonCount > 0 && (
+                          <div className="space-y-1">
+                            <div className="flex justify-between text-xs text-muted-foreground">
+                              <span>{completedCount}/{lessonCount}</span>
+                              <span>{progressPct}%</span>
                             </div>
-                          )}
-                          <Link to={`/student/courses/${course.id}`}>
-                            <Button size="sm" className="w-full mt-1">                              <Play className="h-3 w-3 me-1" />
-                              {completedCount > 0 ? t("Continue", "متابعة") : t("Start", "ابدأ")}
-                            </Button>
-                          </Link>
-                        </>
-                      ) : (
-                        <div className="text-center space-y-2 pt-1">
-                          <p className="text-xs text-muted-foreground">
-                            {t(`Upgrade to ${levelLabel(course.level || '')} to access`, `ارتقِ إلى ${levelLabel(course.level || '')} للوصول`)}
-                          </p>
-                          <Button size="sm" variant="outline" className="w-full" disabled>
-                            <Lock className="h-3 w-3 me-1" />
-                            {t("Locked", "مقفل")}
+                            <Progress value={progressPct} className="h-2" />
+                          </div>
+                        )}
+                        <Link to={`/student/courses/${course.id}`}>
+                          <Button size="sm" className="w-full mt-1">
+                            <Play className="h-3 w-3 me-1" />
+                            {completedCount > 0 ? t("Continue", "متابعة") : t("Start", "ابدأ")}
                           </Button>
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
+                        </Link>
+                      </>
+                    </CardContent>                  </Card>
                 );
               })}
             </div>
@@ -268,12 +251,21 @@ const StudentCourses = () => {
         );
       })}
 
-      {/* Empty state */}
-      {(subjects || []).every((s: any) => (courses || []).filter((c: any) => c.subject_id === s.id).length === 0) && (
+      {/* Empty state - when no courses match student's level */}
+      {(subjects || []).every((s: any) => 
+        (courses || []).filter((c: any) => 
+          c.subject_id === s.id && 
+          (!c.level || c.level.toLowerCase() === studentLevel?.toLowerCase())
+        ).length === 0
+      ) && (
         <div className="text-center py-16">
           <BookOpen className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-          <h3 className="text-lg font-semibold">{t("No courses available yet", "لا توجد دورات متاحة بعد")}</h3>
-          <p className="text-sm text-muted-foreground">{t("Check back soon!", "تحقق قريبًا!")}</p>
+          <h3 className="text-lg font-semibold">
+            {t("No courses available for your level", "لا توجد دورات متاحة لمستواك")}
+          </h3>
+          <p className="text-sm text-muted-foreground">
+            {t("Complete your current level to unlock more!", "أكمل مستواك الحالي لفتح المزيد!")}
+          </p>
         </div>
       )}
     </div>
