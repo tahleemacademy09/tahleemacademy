@@ -3532,6 +3532,10 @@ export type Database = {
           teacher_notes: string | null
           teacher_score: number | null
           user_id: string | null
+          virtual_session_booked_at: string | null
+          virtual_session_date: string | null
+          virtual_session_notes: string | null
+          virtual_session_time: string | null
         }
         Insert: {
           admin_approved?: boolean | null
@@ -3553,6 +3557,10 @@ export type Database = {
           teacher_notes?: string | null
           teacher_score?: number | null
           user_id?: string | null
+          virtual_session_booked_at?: string | null
+          virtual_session_date?: string | null
+          virtual_session_notes?: string | null
+          virtual_session_time?: string | null
         }
         Update: {
           admin_approved?: boolean | null
@@ -3574,6 +3582,10 @@ export type Database = {
           teacher_notes?: string | null
           teacher_score?: number | null
           user_id?: string | null
+          virtual_session_booked_at?: string | null
+          virtual_session_date?: string | null
+          virtual_session_notes?: string | null
+          virtual_session_time?: string | null
         }
         Relationships: []
       }
@@ -4591,6 +4603,7 @@ export type Database = {
       }
       subjects: {
         Row: {
+          course_id: string | null
           course_syllabus: string | null
           course_syllabus_ar: string | null
           created_at: string | null
@@ -4615,6 +4628,7 @@ export type Database = {
           updated_at: string | null
         }
         Insert: {
+          course_id?: string | null
           course_syllabus?: string | null
           course_syllabus_ar?: string | null
           created_at?: string | null
@@ -4639,6 +4653,7 @@ export type Database = {
           updated_at?: string | null
         }
         Update: {
+          course_id?: string | null
           course_syllabus?: string | null
           course_syllabus_ar?: string | null
           created_at?: string | null
@@ -4662,10 +4677,20 @@ export type Database = {
           total_sessions?: number | null
           updated_at?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "subjects_course_id_fkey"
+            columns: ["course_id"]
+            isOneToOne: false
+            referencedRelation: "courses"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       tasjeel_progress: {
         Row: {
+          admin_approved_at: string | null
+          admin_notes: string | null
           completed_at: string | null
           created_at: string | null
           current_step: string
@@ -4684,6 +4709,8 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          admin_approved_at?: string | null
+          admin_notes?: string | null
           completed_at?: string | null
           created_at?: string | null
           current_step?: string
@@ -4702,6 +4729,8 @@ export type Database = {
           user_id: string
         }
         Update: {
+          admin_approved_at?: string | null
+          admin_notes?: string | null
           completed_at?: string | null
           created_at?: string | null
           current_step?: string
@@ -4914,6 +4943,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      admin_delete_user_account: {
+        Args: { target_user_id: string }
+        Returns: undefined
+      }
       extract_arabic_part: { Args: { txt: string }; Returns: string }
       extract_english_part: { Args: { txt: string }; Returns: string }
       get_exam_questions_for_review: {

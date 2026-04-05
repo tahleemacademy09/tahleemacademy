@@ -104,11 +104,21 @@ export default function ViewAsStudent() {
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
 
       {/* Admin Preview Banner */}
-      <div style={{ background: "#7c3aed", padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      <div style={{ background: "#7c3aed", padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
         <span style={{ fontSize: 13, fontWeight: 700, color: "#fff", display: "flex", alignItems: "center", gap: 8 }}>
           <Eye size={14} /> Admin Preview — viewing as: <strong style={{ color: "#e9d5ff" }}>{profile.full_name}</strong>
         </span>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button onClick={() => {
+            // Navigate to student dashboard as if logged in as student
+            // Store the admin's real user id so we can return
+            sessionStorage.setItem("admin_impersonate_student", userId || "");
+            sessionStorage.setItem("admin_impersonate_name", profile.full_name || "");
+            navigate("/student");
+          }}
+            style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,.4)", background: "rgba(34,197,94,.3)", color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 5 }}>
+            <Users size={11} /> Login as Student
+          </button>
           <button onClick={() => setMsgDialog(true)}
             style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,.4)", background: "rgba(255,255,255,.15)", color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 5 }}>
             <Send size={11} /> Message Student

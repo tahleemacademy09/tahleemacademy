@@ -104,7 +104,7 @@ export default function CourseManagement() {
     queryKey: ["admin-subjects-v2", selCourse?.id],
     enabled:  view !== "courses",
     queryFn: async () => {
-      let q = supabase.from("subjects").select("*, user_roles(user_id)").order("title");
+      let q = supabase.from("subjects").select("*").order("title");
       if (selCourse) q = q.eq("course_id", selCourse.id);
       const { data } = await q;
       return data || [];
@@ -179,7 +179,7 @@ export default function CourseManagement() {
     try {
       let imgUrl = sf.image_url;
       if (file) { setImgUploading(true); imgUrl = (await uploadImage(file, "subject-images")) || imgUrl; setImgUploading(false); }
-      const payload = { title: sf.title, title_ar: sf.title_ar||null, description: sf.description||null, level: sf.level, is_active: sf.is_active, image_url: imgUrl||null, teacher_id: sf.teacher_id||null, color: sf.color||G, course_id: selCourse?.id||null, updated_at: new Date().toISOString() };
+      const payload = { title: sf.title, title_ar: sf.title_ar||null, description: sf.description||null, level: sf.level, is_active: sf.is_active, image_url: imgUrl||null, teacher_id: sf.teacher_id||null, color: sf.color||G, course_id: selCourse?.id||null, updated_at: new Date().toISOString() } as any;
       if (editSubjectId) { await supabase.from("subjects").update(payload).eq("id", editSubjectId); }
       else { await supabase.from("subjects").insert(payload); }
       qc.invalidateQueries({ queryKey: ["admin-subjects-v2"] });
@@ -200,7 +200,7 @@ export default function CourseManagement() {
 
   // Link unlinked subject to current course
   const linkSubject = async (subjectId: string) => {
-    await supabase.from("subjects").update({ course_id: selCourse?.id }).eq("id", subjectId);
+    await supabase.from("subjects").update({ course_id: selCourse?.id } as any).eq("id", subjectId);
     qc.invalidateQueries({ queryKey: ["admin-subjects-v2"] });
     qc.invalidateQueries({ queryKey: ["admin-all-subjects"] });
     toast({ title: "Subject linked to course" });

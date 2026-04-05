@@ -96,6 +96,10 @@ const StudentDashboard = () => {
   // ── Voice greeting — short, simple, works everywhere ─────────
   useEffect(() => {
     if (!profile?.full_name || greetingSpoken || loading) return;
+    // Use sessionStorage to prevent double-play across re-renders and hot reloads
+    const key = 'tahleem-greeted-' + (user?.id || '');
+    if (sessionStorage.getItem(key)) { setGreetingSpoken(true); return; }
+
     const firstName = (profile.full_name || 'student').split(' ')[0];
     const doSpeak = (voices: SpeechSynthesisVoice[]) => {
       window.speechSynthesis.cancel();
@@ -104,31 +108,31 @@ const StudentDashboard = () => {
         return voices[0] || null;
       };
 
-      // Prioritize male Arabic-accented voices
+      // Strictly Arabic male voices only
       const bestVoice = pick([
-        v => /Majed|Maged|Hatem|Tarik|Basem|Mehdi|Hamed|Naief|Mohammed|Ahmad|Omar|Khalid|Ali|Zaid/i.test(v.name),
-        v => v.lang === 'ar-SA' && !(/female|Laila|Amira|Fatima|Maryam|Salma/i.test(v.name)),
-        v => v.lang === 'ar-EG' && !(/female|Laila|Amira|Fatima|Maryam|Salma/i.test(v.name)),
-        v => v.lang.startsWith('ar') && !(/female|Laila|Amira|Fatima|Maryam|Salma/i.test(v.name)),
+        v => /Majed|Maged|Hatem|Tarik|Basem|Mehdi|Hamed|Naief|Mohammed|Ahmad|Omar|Khalid|Ali|Zaid/i.test(v.name) && v.lang.startsWith('ar'),
+        v => v.lang === 'ar-SA' && !(/female|Laila|Amira|Fatima|Maryam|Salma|Hala|Lana/i.test(v.name)),
+        v => v.lang === 'ar-EG' && !(/female|Laila|Amira|Fatima|Maryam|Salma|Hala|Lana/i.test(v.name)),
+        v => v.lang.startsWith('ar') && !(/female|Laila|Amira|Fatima|Maryam|Salma|Hala|Lana/i.test(v.name)),
         v => v.lang.startsWith('ar'),
-        v => /Daniel|David|James|Thomas|George/i.test(v.name) && v.lang.startsWith('en'),
-        v => v.lang === 'en-GB' && !(/female|Kate|Samantha|Victoria|Fiona/i.test(v.name)),
-        v => true,
       ]);
 
-      const isArabicVoice = bestVoice?.lang?.startsWith('ar') ?? false;
-      const text = isArabicVoice
-        ? "السلام عليكم ورحمة الله " + firstName + " أهلًا وسهلًا بك في أكاديمية التحليم"
-        : "As-salaamu alaykum wa rahmatullah. " + firstName + ". Welcome to Tahleem Academy.";
+      // Only speak if we found an Arabic voice — skip otherwise to avoid non-Arabic accent
+      if (!bestVoice || !bestVoice.lang.startsWith('ar')) {
+        sessionStorage.setItem(key, '1');
+        setGreetingSpoken(true);
+        return;
+      }
 
-      const lang = isArabicVoice ? 'ar-SA' : 'en-US';
+      const text = "السلام عليكم ورحمة الله " + firstName + " أهلًا وسهلًا بك في أكاديمية التحليم";
       const u = new SpeechSynthesisUtterance(text);
-      u.lang   = lang;
-      u.rate   = 0.72;
-      u.pitch  = 0.45; // Deeper male voice
-      u.volume = 1.0;
-      if (bestVoice) u.voice = bestVoice;
+      u.lang   = 'ar-SA';
+      u.rate   = 0.68;
+      u.pitch  = 0.42;
+      u.volume = 0.9;
+      u.voice  = bestVoice;
       window.speechSynthesis.speak(u);
+      sessionStorage.setItem(key, '1');
       setGreetingSpoken(true);
     };
 
@@ -145,9 +149,10 @@ const StudentDashboard = () => {
         window.speechSynthesis.addEventListener('voiceschanged', h);
         setTimeout(() => {
           window.speechSynthesis.removeEventListener('voiceschanged', h);
-          doSpeak(window.speechSynthesis.getVoices());
+          if (!sessionStorage.getItem(key)) doSpeak(window.speechSynthesis.getVoices());
         }, 2000);
-      }    };
+      }
+    };
 
     const onGesture = () => {
       document.removeEventListener('click',      onGesture);
@@ -164,7 +169,7 @@ const StudentDashboard = () => {
       document.removeEventListener('touchstart', onGesture);
       document.removeEventListener('keydown',    onGesture);
     };
-  }, [profile?.full_name, greetingSpoken, loading, notifications.length]);
+  }, [profile?.full_name, greetingSpoken, loading, user?.id]);
 
   const dayOfYear = Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0).getTime()) / 86400000);
   const dailyVerse = VERSES[dayOfYear % VERSES.length];

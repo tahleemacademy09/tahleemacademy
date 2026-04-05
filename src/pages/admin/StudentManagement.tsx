@@ -125,27 +125,39 @@ export default function StudentManagement() {
   const deleteAccount = async (user: any) => {
     setDeleting(user.user_id);
     try {
-      // Delete in order (FK constraints)
-      await supabase.from("notifications" as any).delete().eq("user_id", user.user_id);
-
-      const { data: attempts } = await supabase.from("exam_attempts").select("id").eq("user_id", user.user_id);
-      if (attempts?.length) {
-        await supabase.from("exam_answers").delete().in("attempt_id", attempts.map((a:any)=>a.id));
+      // Use server-side function for cascading deletes
+      const { error: rpcError } = await supabase.rpc("admin_delete_user_account", { target_user_id: user.user_id });
+      if (rpcError) {
+        // Fallback: manual delete in order (FK constraints) with error swallowing
+        const tables = [
+          "notifications", "chat_members", "chat_messages", "hifdh_recordings",
+          "hifdh_progress", "hifdh_daily_tasks", "hifdh_plans",
+          "assignment_submissions", "enrollments", "exam_assignments",
+        ];
+        for (const t of tables) {
+          await (supabase as any).from(t).delete().eq("user_id", user.user_id).then(() => {});
+        }
+        // exam_answers depends on exam_attempts
+        const { data: attempts } = await supabase.from("exam_attempts").select("id").eq("user_id", user.user_id);
+        if (attempts?.length) {
+          await supabase.from("exam_answers").delete().in("attempt_id", attempts.map((a: any) => a.id));
+        }
+        await supabase.from("exam_attempts").delete().eq("user_id", user.user_id);
+        await (supabase as any).from("tasjeel_progress").delete().eq("user_id", user.user_id);
+        await (supabase as any).from("recitation_tests").delete().eq("user_id", user.user_id);
+        await (supabase as any).from("onboarding_forms").delete().eq("user_id", user.user_id);
+        await supabase.from("user_roles" as any).delete().eq("user_id", user.user_id);
+        await (supabase as any).from("student_enrollments").delete().eq("user_id", user.user_id);
+        // lesson_progress may not exist
+        await (supabase as any).from("lesson_progress").delete().eq("user_id", user.user_id).then(() => {});
+        await supabase.from("profiles").delete().eq("user_id", user.user_id);
       }
-      await supabase.from("exam_attempts").delete().eq("user_id", user.user_id);
-      await supabase.from("tasjeel_progress" as any).delete().eq("user_id", user.user_id);
-      await (supabase as any).from("recitation_tests").delete().eq("user_id", user.user_id);
-      await (supabase as any).from("onboarding_forms").delete().eq("user_id", user.user_id);
-      await supabase.from("user_roles" as any).delete().eq("user_id", user.user_id);
-      await (supabase as any).from("student_enrollments").delete().eq("user_id", user.user_id);
-      await supabase.from("lesson_progress").delete().eq("user_id", user.user_id);
-      await supabase.from("profiles").delete().eq("user_id", user.user_id);
 
-      toast({ title:`✅ Account for "${user.full_name || user.email}" deleted`, description:"They can now re-register with the same email address." });
+      toast({ title: `✅ Account for "${user.full_name || user.email}" deleted`, description: "They can now re-register with the same email address." });
       setDeleteDialog(null);
       await loadUsers();
     } catch (e: any) {
-      toast({ title:"Delete failed", description:e.message, variant:"destructive" });
+      toast({ title: "Delete failed", description: e.message, variant: "destructive" });
     }
     setDeleting(null);
   };
