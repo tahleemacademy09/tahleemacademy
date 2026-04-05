@@ -2,7 +2,7 @@
 // Unified Course + Subject management
 // Structure: Course → Subjects → (students see subjects filtered by their level)
 // FIXED: Input focus issue resolved by extracting forms into memoized components
-import { useState, useRef, useEffect, useCallback, memo } from "react";
+import { useState, useRef, useEffect, useCallback, memo, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -234,7 +234,7 @@ export default function CourseManagement() {
     refetchOnWindowFocus: false,
   });
 
-  const {  subjects = [], isLoading: sLoad } = useQuery({
+  const { data: subjects = [], isLoading: sLoad } = useQuery({
     queryKey: ["admin-subjects-v2", selCourse?.id],
     enabled:  view !== "courses",
     queryFn: async () => {
@@ -247,7 +247,7 @@ export default function CourseManagement() {
   });
 
   // Subjects not yet linked to a course (for course detail view)
-  const {  allSubjects = [] } = useQuery({
+  const { data: allSubjects = [] } = useQuery({
     queryKey: ["admin-all-subjects"],
     queryFn: async () => {
       const { data } = await supabase.from("subjects").select("id,title,level,course_id").order("title");
@@ -257,7 +257,7 @@ export default function CourseManagement() {
     refetchOnWindowFocus: false,
   });
 
-  const {  lessons = [], isLoading: lLoad } = useQuery({
+  const { data: lessons = [], isLoading: lLoad } = useQuery({
     queryKey: ["admin-lessons-v2", selSubject?.id],
     enabled: !!selSubject,
     queryFn: async () => {
@@ -268,10 +268,10 @@ export default function CourseManagement() {
     refetchOnWindowFocus: false,
   });
 
-  const {  teachers = [] } = useQuery({
+  const { data: teachers = [] } = useQuery({
     queryKey: ["teachers-simple"],
     queryFn: async () => {
-      const {  roles } = await supabase.from("user_roles").select("user_id").in("role", ["teacher","admin"]);
+      const { data: roles } = await supabase.from("user_roles").select("user_id").in("role", ["teacher","admin"]);
       if (!roles?.length) return [];
       const { data } = await supabase.from("profiles").select("user_id,full_name").in("user_id", roles.map(r=>r.user_id));
       return data || [];
@@ -410,7 +410,7 @@ export default function CourseManagement() {
         </button>
       </div>
 
-      {/* ── Filters ─────────────────────────────────────────────────── */}
+      {/* ── Filters ────────────────────────────────────────────────── */}
       {view !== "lessons" && (
         <div style={{ background:"#fff", borderBottom:"1px solid #E5E7EB", padding:"10px 16px", display:"flex", gap:8, alignItems:"center", overflowX:"auto", scrollbarWidth:"none" }}>
           <div style={{ position:"relative", minWidth:180, flex:1 }}>
