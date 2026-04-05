@@ -1,16 +1,15 @@
 // src/pages/admin/CourseManagement.tsx
 // Unified Course + Subject management
-// FIXED: Input focus issue - extracted components + stable keys + useCallback
-
-import { useState, useRef, useEffect, useCallback, memo } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+// Structure: Course → Subjects → (students see subjects filtered by their level)
+import { useState, useRef, useEffect } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "@/hooks/use-toast";
 import {
   Plus, BookOpen, Trash2, Edit2, ChevronRight, ChevronLeft,
   Loader2, Eye, EyeOff, Save, X, Image, Search,
-  Layers, FolderOpen,
+  Users, GraduationCap, Layers, FolderOpen, Check,
 } from "lucide-react";
 
 const G     = "#064E3B";
@@ -41,123 +40,117 @@ const resolveUrl = async (url: string | null | undefined): Promise<string | null
   } catch { return null; }
 };
 
-// ✅ FIX: Memoized Thumb component (defined OUTSIDE main component)
-const Thumb = memo(({ url, title, height = 120, bg }: { url?: string|null; title: string; height?: number; bg: string }) => {
+const Thumb = ({ url, title, height = 120, bg }: { url?: string|null; title: string; height?: number; bg: string }) => {
   const [resolved, setResolved] = useState<string|null>(null);
-  const [failed, setFailed] = useState(false);
+  const [failed,   setFailed]   = useState(false);
   useEffect(() => { resolveUrl(url).then(setResolved); }, [url]);
   if (!resolved || failed) return (
-    <div style={{ height, background: bg, display:"flex", alignItems:"center", justifyContent:"center" }}>      <BookOpen size={22} style={{ opacity:.3 }} />
+    <div style={{ height, background: bg, display:"flex", alignItems:"center", justifyContent:"center" }}>
+      <BookOpen size={22} style={{ opacity:.3 }} />
     </div>
   );
   return <img src={resolved} alt={title} style={{ width:"100%", height, objectFit:"cover", display:"block" }} onError={() => setFailed(true)} />;
-});
-
-// ✅ FIX: Memoized Field component (defined OUTSIDE main component)
-const Field = memo(({ label, children }: { label: string; children: React.ReactNode }) => (
-  <div>
-    <label style={{ fontSize:11, fontWeight:700, color:"#374151", display:"block", marginBottom:4 }}>{label}</label>
-    {children}
-  </div>
-));
+};
 
 // ══════════════════════════════════════════════════════════════════════════
 export default function CourseManagement() {
   const { user } = useAuth();
-  const qc = useQueryClient();
+  const qc       = useQueryClient();
 
+  // View state: list → course detail → subject detail
   type View = "courses" | "subjects" | "lessons";
-  const [view, setView] = useState<View>("courses");
-  const [selCourse, setSelCourse] = useState<any|null>(null);
-  const [selSubject, setSelSubject] = useState<any|null>(null);
-  const [search, setSearch] = useState("");
-  const [levelFilter, setLevelFilter] = useState<Level>("all");
+  const [view,           setView]           = useState<View>("courses");
+  const [selCourse,      setSelCourse]      = useState<any|null>(null);
+  const [selSubject,     setSelSubject]     = useState<any|null>(null);
+  const [search,         setSearch]         = useState("");
+  const [levelFilter,    setLevelFilter]    = useState<Level>("all");
 
-  const [courseForm, setCourseForm] = useState(false);
-  const [subjectForm, setSubjectForm] = useState(false);
-  const [lessonForm, setLessonForm] = useState(false);
+  // Forms open/close
+  const [courseForm,    setCourseForm]    = useState(false);
+  const [subjectForm,   setSubjectForm]   = useState(false);
+  const [lessonForm,    setLessonForm]    = useState(false);
 
-  const [editCourseId, setEditCourseId] = useState<string|null>(null);
+  // Edit IDs
+  const [editCourseId,  setEditCourseId]  = useState<string|null>(null);
   const [editSubjectId, setEditSubjectId] = useState<string|null>(null);
-  const [editLessonId, setEditLessonId] = useState<string|null>(null);
+  const [editLessonId,  setEditLessonId]  = useState<string|null>(null);
 
+  // Saving
   const [saving, setSaving] = useState(false);
   const [imgUploading, setImgUploading] = useState(false);
 
+  // Course form state
   const [cf, setCf] = useState({ title:"", title_ar:"", description:"", level:"all" as Level, is_published:true, image_url:"", sort_order:0 });
+
+  // Subject form state
   const [sf, setSf] = useState({ title:"", title_ar:"", description:"", level:"all" as Level, is_active:true, image_url:"", teacher_id:"", color:G });
+
+  // Lesson form state
   const [lf, setLf] = useState({ title:"", title_ar:"", video_url:"", content:"", duration_minutes:0, sort_order:0, is_free:false });
 
-  const thumbRef = useRef<HTMLInputElement>(null);
-  const sImgRef = useRef<HTMLInputElement>(null);
+  const thumbRef  = useRef<HTMLInputElement>(null);
+  const sImgRef   = useRef<HTMLInputElement>(null);
 
   // ── Data ─────────────────────────────────────────────────────────────────
   const { data: courses = [], isLoading: cLoad } = useQuery({
     queryKey: ["admin-courses-v2"],
     queryFn: async () => {
       const { data } = await supabase.from("courses").select("*").order("sort_order");
-      return data || [];    },
-    staleTime: 1000 * 60 * 5,
-    refetchOnWindowFocus: false,
+      return data || [];
+    },
   });
 
-  const {  subjects = [], isLoading: sLoad } = useQuery({
+  const { data: subjects = [], isLoading: sLoad } = useQuery({
     queryKey: ["admin-subjects-v2", selCourse?.id],
-    enabled: view !== "courses",
+    enabled:  view !== "courses",
     queryFn: async () => {
       let q = supabase.from("subjects").select("*").order("title");
       if (selCourse) q = q.eq("course_id", selCourse.id);
       const { data } = await q;
       return data || [];
     },
-    staleTime: 1000 * 60 * 5,
-    refetchOnWindowFocus: false,
   });
 
-  const {  allSubjects = [] } = useQuery({
+  // Subjects not yet linked to a course (for course detail view)
+  const { data: allSubjects = [] } = useQuery({
     queryKey: ["admin-all-subjects"],
     queryFn: async () => {
       const { data } = await supabase.from("subjects").select("id,title,level,course_id").order("title");
       return data || [];
     },
-    staleTime: 1000 * 60 * 5,
-    refetchOnWindowFocus: false,
   });
 
-  const {  lessons = [], isLoading: lLoad } = useQuery({
+  const { data: lessons = [], isLoading: lLoad } = useQuery({
     queryKey: ["admin-lessons-v2", selSubject?.id],
     enabled: !!selSubject,
     queryFn: async () => {
-      const { data } = await supabase.from("lessons").select("*").eq("subject_id", selSubject?.id || "").order("sort_order");
+      const { data } = await supabase.from("lessons").select("*").eq("course_id", selSubject?.id || "").order("sort_order");
       return data || [];
     },
-    staleTime: 1000 * 60 * 5,
-    refetchOnWindowFocus: false,
   });
 
-  const {  teachers = [] } = useQuery({
+  const { data: teachers = [] } = useQuery({
     queryKey: ["teachers-simple"],
     queryFn: async () => {
-      const {  roles } = await supabase.from("user_roles").select("user_id").in("role", ["teacher","admin"]);
+      const { data: roles } = await supabase.from("user_roles").select("user_id").in("role", ["teacher","admin"]);
       if (!roles?.length) return [];
       const { data } = await supabase.from("profiles").select("user_id,full_name").in("user_id", roles.map(r=>r.user_id));
       return data || [];
     },
-    staleTime: 1000 * 60 * 10,
-    refetchOnWindowFocus: false,
   });
+
   // ── Upload image ──────────────────────────────────────────────────────────
-  const uploadImage = useCallback(async (file: File, bucket: string): Promise<string|null> => {
+  const uploadImage = async (file: File, bucket: string): Promise<string|null> => {
     const ext = file.name.split(".").pop() || "jpg";
     const path = `items/${crypto.randomUUID()}.${ext}`;
     const { error } = await supabase.storage.from(bucket).upload(path, file, { upsert: true, contentType: file.type });
     if (error) return null;
     const { data } = supabase.storage.from(bucket).getPublicUrl(path);
     return data?.publicUrl || path;
-  }, []);
+  };
 
   // ── Course CRUD ───────────────────────────────────────────────────────────
-  const saveCourse = useCallback(async (file?: File) => {
+  const saveCourse = async (file?: File) => {
     setSaving(true);
     try {
       let imgUrl = cf.image_url;
@@ -170,93 +163,102 @@ export default function CourseManagement() {
       toast({ title: "✅ Course saved" });
     } catch (e: any) { toast({ title: "Error", description: e.message, variant: "destructive" }); }
     setSaving(false);
-  }, [cf, editCourseId, uploadImage, qc]);
+  };
 
-  const deleteCourse = useCallback(async (id: string) => {
+  const deleteCourse = async (id: string) => {
     if (!confirm("Delete this course? This will NOT delete its subjects.")) return;
     await supabase.from("courses").delete().eq("id", id);
     qc.invalidateQueries({ queryKey: ["admin-courses-v2"] });
     if (selCourse?.id === id) { setSelCourse(null); setView("courses"); }
     toast({ title: "Course deleted" });
-  }, [qc, selCourse]);
+  };
 
   // ── Subject CRUD ──────────────────────────────────────────────────────────
-  const saveSubject = useCallback(async (file?: File) => {
-    if (!selCourse?.id) { toast({ title: "Error", description: "No course selected", variant: "destructive" }); return; }
+  const saveSubject = async (file?: File) => {
     setSaving(true);
     try {
       let imgUrl = sf.image_url;
       if (file) { setImgUploading(true); imgUrl = (await uploadImage(file, "subject-images")) || imgUrl; setImgUploading(false); }
-      const payload = { title: sf.title, title_ar: sf.title_ar||null, description: sf.description||null, level: sf.level, is_active: sf.is_active, image_url: imgUrl||null, teacher_id: sf.teacher_id||null, color: sf.color||G, course_id: selCourse.id, updated_at: new Date().toISOString() };
+      const payload = { title: sf.title, title_ar: sf.title_ar||null, description: sf.description||null, level: sf.level, is_active: sf.is_active, image_url: imgUrl||null, teacher_id: sf.teacher_id||null, color: sf.color||G, course_id: selCourse?.id||null, updated_at: new Date().toISOString() } as any;
       if (editSubjectId) { await supabase.from("subjects").update(payload).eq("id", editSubjectId); }
       else { await supabase.from("subjects").insert(payload); }
       qc.invalidateQueries({ queryKey: ["admin-subjects-v2"] });
-      qc.invalidateQueries({ queryKey: ["admin-all-subjects"] });
       setSubjectForm(false); setEditSubjectId(null); resetSf();
       toast({ title: "✅ Subject saved" });
-    } catch (e: any) { toast({ title: "Error", description: e.message, variant: "destructive" }); }    setSaving(false);
-  }, [sf, editSubjectId, uploadImage, qc, selCourse, G]);
+    } catch (e: any) { toast({ title: "Error", description: e.message, variant: "destructive" }); }
+    setSaving(false);
+  };
 
-  const deleteSubject = useCallback(async (id: string) => {
+  const deleteSubject = async (id: string) => {
     if (!confirm("Delete this subject? Lessons inside will be deleted too.")) return;
-    await supabase.from("lessons").delete().eq("subject_id", id);
+    await supabase.from("lessons").delete().eq("course_id", id);
     await supabase.from("subjects").delete().eq("id", id);
     qc.invalidateQueries({ queryKey: ["admin-subjects-v2"] });
     if (selSubject?.id === id) { setSelSubject(null); setView("subjects"); }
     toast({ title: "Subject deleted" });
-  }, [qc, selSubject]);
+  };
 
-  const linkSubject = useCallback(async (subjectId: string) => {
-    await supabase.from("subjects").update({ course_id: selCourse?.id }).eq("id", subjectId);
+  // Link unlinked subject to current course
+  const linkSubject = async (subjectId: string) => {
+    await supabase.from("subjects").update({ course_id: selCourse?.id } as any).eq("id", subjectId);
     qc.invalidateQueries({ queryKey: ["admin-subjects-v2"] });
     qc.invalidateQueries({ queryKey: ["admin-all-subjects"] });
     toast({ title: "Subject linked to course" });
-  }, [qc, selCourse]);
+  };
 
   // ── Lesson CRUD ───────────────────────────────────────────────────────────
-  const saveLesson = useCallback(async () => {
+  const saveLesson = async () => {
     setSaving(true);
-    const payload = { title: lf.title, title_ar: lf.title_ar||null, video_url: lf.video_url||null, duration_minutes: lf.duration_minutes, sort_order: lf.sort_order, subject_id: selSubject?.id, is_free: lf.is_free, updated_at: new Date().toISOString() };
+    const payload = { title: lf.title, title_ar: lf.title_ar||null, video_url: lf.video_url||null, duration_minutes: lf.duration_minutes, sort_order: lf.sort_order, course_id: selSubject?.id, is_free: lf.is_free, updated_at: new Date().toISOString() };
     if (editLessonId) await supabase.from("lessons").update(payload).eq("id", editLessonId);
     else await supabase.from("lessons").insert(payload);
     qc.invalidateQueries({ queryKey: ["admin-lessons-v2", selSubject?.id] });
     setLessonForm(false); setEditLessonId(null); resetLf();
     toast({ title: "✅ Lesson saved" }); setSaving(false);
-  }, [lf, editLessonId, selSubject, qc]);
+  };
 
-  const deleteLesson = useCallback(async (id: string) => {
+  const deleteLesson = async (id: string) => {
     if (!confirm("Delete this lesson?")) return;
     await supabase.from("lessons").delete().eq("id", id);
     qc.invalidateQueries({ queryKey: ["admin-lessons-v2", selSubject?.id] });
     toast({ title: "Lesson deleted" });
-  }, [qc, selSubject]);
+  };
 
-  const resetCf = useCallback(() => setCf({ title:"", title_ar:"", description:"", level:"all", is_published:true, image_url:"", sort_order:0 }), []);
-  const resetSf = useCallback(() => setSf({ title:"", title_ar:"", description:"", level:"all", is_active:true, image_url:"", teacher_id:"", color:G }), [G]);
-  const resetLf = useCallback(() => setLf({ title:"", title_ar:"", video_url:"", content:"", duration_minutes:0, sort_order:0, is_free:false }), []);
+  const resetCf = () => setCf({ title:"", title_ar:"", description:"", level:"all", is_published:true, image_url:"", sort_order:0 });
+  const resetSf = () => setSf({ title:"", title_ar:"", description:"", level:"all", is_active:true, image_url:"", teacher_id:"", color:G });
+  const resetLf = () => setLf({ title:"", title_ar:"", video_url:"", content:"", duration_minutes:0, sort_order:0, is_free:false });
 
-  const openEditCourse = useCallback((c: any) => { setEditCourseId(c.id); setCf({ title:c.title, title_ar:c.title_ar||"", description:c.description||"", level:c.level||"all", is_published:c.is_published, image_url:c.image_url||"", sort_order:c.sort_order||0 }); setCourseForm(true); }, []);
-  const openEditSubject = useCallback((s: any) => { setEditSubjectId(s.id); setSf({ title:s.title, title_ar:s.title_ar||"", description:s.description||"", level:s.level||"all", is_active:s.is_active, image_url:s.image_url||"", teacher_id:s.teacher_id||"", color:s.color||G }); setSubjectForm(true); }, [G]);
-  const openEditLesson = useCallback((l: any) => { setEditLessonId(l.id); setLf({ title:l.title, title_ar:l.title_ar||"", video_url:l.video_url||"", content:l.content||"", duration_minutes:l.duration_minutes||0, sort_order:l.sort_order||0, is_free:l.is_free||false }); setLessonForm(true); }, []);
+  const openEditCourse  = (c: any) => { setEditCourseId(c.id); setCf({ title:c.title, title_ar:c.title_ar||"", description:c.description||"", level:c.level||"all", is_published:c.is_published, image_url:c.image_url||"", sort_order:c.sort_order||0 }); setCourseForm(true); };
+  const openEditSubject = (s: any) => { setEditSubjectId(s.id); setSf({ title:s.title, title_ar:s.title_ar||"", description:s.description||"", level:s.level||"all", is_active:s.is_active, image_url:s.image_url||"", teacher_id:s.teacher_id||"", color:s.color||G }); setSubjectForm(true); };
+  const openEditLesson  = (l: any) => { setEditLessonId(l.id); setLf({ title:l.title, title_ar:l.title_ar||"", video_url:l.video_url||"", content:l.content||"", duration_minutes:l.duration_minutes||0, sort_order:l.sort_order||0, is_free:l.is_free||false }); setLessonForm(true); };
 
-  const filteredCourses = useMemo(() => courses.filter((c: any) => {
+  const filteredCourses = courses.filter((c: any) => {
     const matchLevel = levelFilter === "all" || c.level === levelFilter || c.level === "all";
     const matchSearch = !search || c.title.toLowerCase().includes(search.toLowerCase());
     return matchLevel && matchSearch;
-  }), [courses, levelFilter, search]);
-  const filteredSubjects = useMemo(() => subjects.filter((s: any) => {
+  });
+
+  const filteredSubjects = subjects.filter((s: any) => {
     const matchLevel = levelFilter === "all" || s.level === levelFilter || s.level === "all";
     const matchSearch = !search || s.title.toLowerCase().includes(search.toLowerCase());
     return matchLevel && matchSearch;
-  }), [subjects, levelFilter, search]);
+  });
 
-  const unlinkableSubjects = useMemo(() => allSubjects.filter((s: any) => !s.course_id && s.id !== selCourse?.id), [allSubjects, selCourse]);
+  const unlinkableSubjects = allSubjects.filter((s: any) => !s.course_id && s.id !== selCourse?.id);
+
+  // ── Field component ───────────────────────────────────────────────────────
+  const Field = ({ label, children }: { label: string; children: React.ReactNode }) => (
+    <div>
+      <label style={{ fontSize:11, fontWeight:700, color:"#374151", display:"block", marginBottom:4 }}>{label}</label>
+      {children}
+    </div>
+  );
 
   return (
     <div style={{ minHeight:"100vh", background:"#F3F4F6", fontFamily:"system-ui,sans-serif" }}>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}} .card-hover:hover{box-shadow:0 4px 16px rgba(0,0,0,.1);transform:translateY(-1px)} .card-hover{transition:all .2s}`}</style>
 
-      {/* Header */}
+      {/* ── Header with breadcrumb ─────────────────────────────────── */}
       <div style={{ background:"#fff", borderBottom:"1px solid #E5E7EB", padding:"14px 16px", display:"flex", alignItems:"center", gap:10 }}>
         {view !== "courses" && (
           <button onClick={() => { if (view === "lessons") { setView("subjects"); setSelSubject(null); } else { setView("courses"); setSelCourse(null); } }} style={{ width:34, height:34, borderRadius:8, border:"1.5px solid #E5E7EB", background:"#fff", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
@@ -278,7 +280,7 @@ export default function CourseManagement() {
         </button>
       </div>
 
-      {/* Filters */}
+      {/* ── Filters ─────────────────────────────────────────────────── */}
       {view !== "lessons" && (
         <div style={{ background:"#fff", borderBottom:"1px solid #E5E7EB", padding:"10px 16px", display:"flex", gap:8, alignItems:"center", overflowX:"auto", scrollbarWidth:"none" }}>
           <div style={{ position:"relative", minWidth:180, flex:1 }}>
@@ -292,12 +294,13 @@ export default function CourseManagement() {
                 {cfg.label}
               </button>
             );
-          })}        </div>
+          })}
+        </div>
       )}
 
       <div style={{ padding:16, maxWidth:900, margin:"0 auto" }}>
 
-        {/* COURSES VIEW */}
+        {/* ═══════ COURSES VIEW ════════════════════════════════════════ */}
         {view === "courses" && (
           <>
             {cLoad ? (
@@ -337,11 +340,12 @@ export default function CourseManagement() {
           </>
         )}
 
-        {/* SUBJECTS VIEW */}
+        {/* ═══════ SUBJECTS VIEW ═══════════════════════════════════════ */}
         {view === "subjects" && (
           <>
             {sLoad ? (
-              <div style={{ textAlign:"center", padding:40 }}><Loader2 size={28} style={{ animation:"spin .8s linear infinite", color:G }} /></div>            ) : (
+              <div style={{ textAlign:"center", padding:40 }}><Loader2 size={28} style={{ animation:"spin .8s linear infinite", color:G }} /></div>
+            ) : (
               <>
                 {filteredSubjects.length === 0 && (
                   <div style={{ textAlign:"center", padding:40, color:"#9CA3AF" }}>
@@ -372,6 +376,7 @@ export default function CourseManagement() {
                   })}
                 </div>
 
+                {/* Link unlinked subjects */}
                 {unlinkableSubjects.length > 0 && (
                   <div style={{ background:"#fff", borderRadius:14, border:"1px solid #E5E7EB", padding:16 }}>
                     <p style={{ fontSize:12, fontWeight:700, color:"#374151", margin:"0 0 10px" }}>📎 Link existing subjects to this course:</p>
@@ -390,7 +395,8 @@ export default function CourseManagement() {
           </>
         )}
 
-        {/* LESSONS VIEW */}        {view === "lessons" && (
+        {/* ═══════ LESSONS VIEW ════════════════════════════════════════ */}
+        {view === "lessons" && (
           <>
             {lLoad ? (
               <div style={{ textAlign:"center", padding:40 }}><Loader2 size={28} style={{ animation:"spin .8s linear infinite", color:G }} /></div>
@@ -432,14 +438,14 @@ export default function CourseManagement() {
               <h2 style={{ fontSize:15, fontWeight:800, color:"#111", margin:0 }}>{editCourseId ? "Edit Course" : "New Course"}</h2>
               <button onClick={() => { setCourseForm(false); setEditCourseId(null); resetCf(); }} style={{ background:"none", border:"none", cursor:"pointer", fontSize:20, color:"#9CA3AF" }}>×</button>
             </div>
-            {/* ✅ FIX: Add stable key to prevent input remount */}
-            <div style={{ padding:20, display:"flex", flexDirection:"column", gap:14 }} key={editCourseId || 'new-course'}>
+            <div style={{ padding:20, display:"flex", flexDirection:"column", gap:14 }}>
               <input ref={thumbRef} type="file" accept="image/*" style={{ display:"none" }} onChange={async e => { const f = e.target.files?.[0]; if (f) { setImgUploading(true); const url = await uploadImage(f,"subject-files"); if(url) setCf(c=>({...c,image_url:url})); setImgUploading(false); } }} />
               <button onClick={() => thumbRef.current?.click()} style={{ height:100, borderRadius:12, border:"2px dashed #E5E7EB", background:"#F9FAFB", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8, color:"#9CA3AF", fontSize:13 }}>
                 {imgUploading ? <Loader2 size={20} style={{ animation:"spin .8s linear infinite" }} /> : cf.image_url ? <img src={cf.image_url} style={{ height:"100%", borderRadius:10 }} /> : <><Image size={20} /> Upload thumbnail</>}
               </button>
-              <Field label="Course Title (English)"><input key="course-title-en" autoFocus value={cf.title} onChange={e=>setCf(c=>({...c,title:e.target.value}))} style={inp} placeholder="e.g. Quran Memorisation" /></Field>
-              <Field label="Course Title (Arabic)"><input key="course-title-ar" value={cf.title_ar} onChange={e=>setCf(c=>({...c,title_ar:e.target.value}))} style={{...inp,direction:"rtl",fontFamily:"'Amiri',serif"}} placeholder="مثال: حفظ القرآن" /></Field>              <Field label="Description"><textarea key="course-desc" value={cf.description} onChange={e=>setCf(c=>({...c,description:e.target.value}))} rows={3} style={{...inp,resize:"vertical" as const}} /></Field>
+              <Field label="Course Title (English)"><input value={cf.title} onChange={e=>setCf(c=>({...c,title:e.target.value}))} style={inp} placeholder="e.g. Quran Memorisation" /></Field>
+              <Field label="Course Title (Arabic)"><input value={cf.title_ar} onChange={e=>setCf(c=>({...c,title_ar:e.target.value}))} style={{...inp,direction:"rtl",fontFamily:"'Amiri',serif"}} placeholder="مثال: حفظ القرآن" /></Field>
+              <Field label="Description"><textarea value={cf.description} onChange={e=>setCf(c=>({...c,description:e.target.value}))} rows={3} style={{...inp,resize:"vertical" as const}} /></Field>
               <Field label="Level">
                 <div style={{ display:"flex", gap:6 }}>
                   {(["all","beginner","intermediate","advanced"] as Level[]).map(lv => {
@@ -466,17 +472,16 @@ export default function CourseManagement() {
           <div style={{ background:"#fff", borderRadius:20, width:"100%", maxWidth:500, maxHeight:"90vh", overflowY:"auto" }}>
             <div style={{ padding:"16px 20px", borderBottom:"1px solid #E5E7EB", display:"flex", justifyContent:"space-between", alignItems:"center", position:"sticky", top:0, background:"#fff" }}>
               <h2 style={{ fontSize:15, fontWeight:800, color:"#111", margin:0 }}>{editSubjectId ? "Edit Subject" : "New Subject"}</h2>
-              <button onClick={() => { setSubjectForm(false); setEditSubjectId(null); }} style={{ background:"none", border:"none", cursor:"pointer", fontSize:20, color:"#9CA3AF" }}>×</button>
+              <button onClick={() => { setSubjectForm(false); setEditSubjectId(null); resetSf(); }} style={{ background:"none", border:"none", cursor:"pointer", fontSize:20, color:"#9CA3AF" }}>×</button>
             </div>
-            {/* ✅ FIX: Add stable key + don't reset on close */}
-            <div style={{ padding:20, display:"flex", flexDirection:"column", gap:14 }} key={editSubjectId || 'new-subject'}>
+            <div style={{ padding:20, display:"flex", flexDirection:"column", gap:14 }}>
               <input ref={sImgRef} type="file" accept="image/*" style={{ display:"none" }} onChange={async e => { const f=e.target.files?.[0]; if(f){setImgUploading(true); const url=await uploadImage(f,"subject-images"); if(url)setSf(s=>({...s,image_url:url})); setImgUploading(false);} }} />
               <button onClick={() => sImgRef.current?.click()} style={{ height:100, borderRadius:12, border:"2px dashed #E5E7EB", background:"#F9FAFB", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8, color:"#9CA3AF", fontSize:13 }}>
                 {imgUploading ? <Loader2 size={20} style={{ animation:"spin .8s linear infinite" }} /> : sf.image_url ? <img src={sf.image_url} style={{ height:"100%", borderRadius:10 }} /> : <><Image size={20} /> Upload image</>}
               </button>
-              <Field label="Subject Title (English)"><input key="subject-title-en" autoFocus value={sf.title} onChange={e=>setSf(s=>({...s,title:e.target.value}))} style={inp} placeholder="e.g. Tajweed Level 1" /></Field>
-              <Field label="Subject Title (Arabic)"><input key="subject-title-ar" value={sf.title_ar} onChange={e=>setSf(s=>({...s,title_ar:e.target.value}))} style={{...inp,direction:"rtl",fontFamily:"'Amiri',serif"}} placeholder="مثال: التجويد المستوى الأول" /></Field>
-              <Field label="Description"><textarea key="subject-desc" value={sf.description} onChange={e=>setSf(s=>({...s,description:e.target.value}))} rows={3} style={{...inp,resize:"vertical" as const}} /></Field>
+              <Field label="Subject Title (English)"><input value={sf.title} onChange={e=>setSf(s=>({...s,title:e.target.value}))} style={inp} placeholder="e.g. Tajweed Level 1" /></Field>
+              <Field label="Subject Title (Arabic)"><input value={sf.title_ar} onChange={e=>setSf(s=>({...s,title_ar:e.target.value}))} style={{...inp,direction:"rtl",fontFamily:"'Amiri',serif"}} placeholder="مثال: التجويد المستوى الأول" /></Field>
+              <Field label="Description"><textarea value={sf.description} onChange={e=>setSf(s=>({...s,description:e.target.value}))} rows={3} style={{...inp,resize:"vertical" as const}} /></Field>
               <Field label="Level (only students at this level see this subject)">
                 <div style={{ display:"flex", gap:6 }}>
                   {(["all","beginner","intermediate","advanced"] as Level[]).map(lv => {
@@ -486,9 +491,10 @@ export default function CourseManagement() {
                 </div>
               </Field>
               <Field label="Assign Teacher">
-                <select key="subject-teacher" value={sf.teacher_id} onChange={e=>setSf(s=>({...s,teacher_id:e.target.value}))} style={inp}>
+                <select value={sf.teacher_id} onChange={e=>setSf(s=>({...s,teacher_id:e.target.value}))} style={inp}>
                   <option value="">— No teacher assigned —</option>
-                  {teachers.map((t: any) => <option key={t.user_id} value={t.user_id}>{t.full_name}</option>)}                </select>
+                  {teachers.map((t: any) => <option key={t.user_id} value={t.user_id}>{t.full_name}</option>)}
+                </select>
               </Field>
               <div style={{ display:"flex", alignItems:"center", gap:10 }}>
                 <input type="checkbox" id="sact" checked={sf.is_active} onChange={e=>setSf(s=>({...s,is_active:e.target.checked}))} />
@@ -510,13 +516,12 @@ export default function CourseManagement() {
               <h2 style={{ fontSize:15, fontWeight:800, color:"#111", margin:0 }}>{editLessonId ? "Edit Lesson" : "New Lesson"}</h2>
               <button onClick={() => { setLessonForm(false); setEditLessonId(null); resetLf(); }} style={{ background:"none", border:"none", cursor:"pointer", fontSize:20, color:"#9CA3AF" }}>×</button>
             </div>
-            {/* ✅ FIX: Add stable key */}
-            <div style={{ padding:20, display:"flex", flexDirection:"column", gap:14 }} key={editLessonId || 'new-lesson'}>
-              <Field label="Lesson Title"><input key="lesson-title" autoFocus value={lf.title} onChange={e=>setLf(l=>({...l,title:e.target.value}))} style={inp} /></Field>
-              <Field label="Lesson Title (Arabic)"><input key="lesson-title-ar" value={lf.title_ar} onChange={e=>setLf(l=>({...l,title_ar:e.target.value}))} style={{...inp,direction:"rtl",fontFamily:"'Amiri',serif"}} /></Field>
-              <Field label="Video URL (YouTube/Vimeo)"><input key="lesson-video" value={lf.video_url} onChange={e=>setLf(l=>({...l,video_url:e.target.value}))} style={inp} placeholder="https://…" /></Field>
-              <Field label="Duration (minutes)"><input key="lesson-duration" type="number" value={lf.duration_minutes} onChange={e=>setLf(l=>({...l,duration_minutes:Number(e.target.value)}))} style={inp} min={0} /></Field>
-              <Field label="Sort Order"><input key="lesson-sort" type="number" value={lf.sort_order} onChange={e=>setLf(l=>({...l,sort_order:Number(e.target.value)}))} style={inp} min={0} /></Field>
+            <div style={{ padding:20, display:"flex", flexDirection:"column", gap:14 }}>
+              <Field label="Lesson Title"><input value={lf.title} onChange={e=>setLf(l=>({...l,title:e.target.value}))} style={inp} /></Field>
+              <Field label="Lesson Title (Arabic)"><input value={lf.title_ar} onChange={e=>setLf(l=>({...l,title_ar:e.target.value}))} style={{...inp,direction:"rtl",fontFamily:"'Amiri',serif"}} /></Field>
+              <Field label="Video URL (YouTube/Vimeo)"><input value={lf.video_url} onChange={e=>setLf(l=>({...l,video_url:e.target.value}))} style={inp} placeholder="https://…" /></Field>
+              <Field label="Duration (minutes)"><input type="number" value={lf.duration_minutes} onChange={e=>setLf(l=>({...l,duration_minutes:Number(e.target.value)}))} style={inp} min={0} /></Field>
+              <Field label="Sort Order"><input type="number" value={lf.sort_order} onChange={e=>setLf(l=>({...l,sort_order:Number(e.target.value)}))} style={inp} min={0} /></Field>
               <div style={{ display:"flex", alignItems:"center", gap:10 }}>
                 <input type="checkbox" id="lfree" checked={lf.is_free} onChange={e=>setLf(l=>({...l,is_free:e.target.checked}))} />
                 <label htmlFor="lfree" style={{ fontSize:13, color:"#374151" }}>Free preview (no subscription required)</label>
