@@ -1,11 +1,12 @@
 /*  src/pages/student/LearningHub.tsx
-    FIXED:
-    4) Courses show at top level; subjects within each course
-    5) Text & Arabic title below the image (not overlaid on it)
-    5) Subject description centered — Arabic paragraph first, English below
+    KEY FIX: Courses AND subjects are now filtered by the student's assigned level.
+    - level === 'all'  → visible to every student
+    - level === null/undefined/'' → visible to every student (no restriction)
+    - level === 'beginner'/'intermediate'/'advanced' → only that group sees it
+    - Admins/teachers bypass the filter and see everything
 */
 import { useState, useEffect } from "react";
-import { useParams, Link, useNavigate } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -28,13 +29,21 @@ const GM   = "#1a4731";
 const GOLD = "#c9a84c";
 
 const levelColor = (l: string) =>
-  ({ beginner: { bg:"#f0fff4", color:"#276749", border:"#9ae6b4" },
+  ({ beginner:     { bg:"#f0fff4", color:"#276749", border:"#9ae6b4" },
      intermediate: { bg:"#fffbeb", color:"#b7791f", border:"#f6d860" },
-     advanced: { bg:"#f5f0ff", color:"#6b46c1", border:"#d6bcfa" },
-   }[l?.toLowerCase()] || { bg:"#f0fff4", color:"#276749", border:"#9ae6b4" });
+     advanced:     { bg:"#f5f0ff", color:"#6b46c1", border:"#d6bcfa" },
+  }[l?.toLowerCase()] || { bg:"#f0fff4", color:"#276749", border:"#9ae6b4" });
 
-const lv = (l: string) =>
+const lvLabel = (l: string) =>
   ({ beginner:"Beginner", intermediate:"Intermediate", advanced:"Advanced" }[l] || l);
+
+/** Returns true when an item's level should be visible to the given student level.
+ *  level = 'all' / '' / null / undefined → always visible
+ *  otherwise must match exactly. */
+const levelMatch = (itemLevel: string | null | undefined, studentLevel: string): boolean => {
+  if (!itemLevel || itemLevel === "all") return true;
+  return itemLevel === studentLevel;
+};
 
 interface Props { defaultTab?: "courses" | "live"; }
 
@@ -47,41 +56,65 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
   const qc                         = useQueryClient();
   const isPrivileged               = hasRole("admin") || hasRole("teacher");
 
-  // state-based drill-down: course → subject
-  const [selCourse,      setSelCourse]      = useState<any|null>(null);
-  const [selectedSubject, setSelectedSubject] = useState<any|null>(null);
-  const [subjectTab,     setSubjectTab]     = useState("lessons");
-  const [inClass,        setInClass]        = useState(false);
-  const [viewMode,       setViewMode]       = useState<"list"|"grid">("grid");
-  const [activeLesson,   setActiveLesson]   = useState<string|null>(null);
+  const [selCourse,       setSelCourse]       = useState<any | null>(null);
+  const [selectedSubject, setSelectedSubject] = useState<any | null>(null);
+  const [subjectTab,      setSubjectTab]      = useState("lessons");
+  const [inClass,         setInClass]         = useState(false);
+  const [viewMode,        setViewMode]        = useState<"list" | "grid">("grid");
+  const [activeLesson,    setActiveLesson]    = useState<string | null>(null);
 
-  const studentLevel = profile?.level || "beginner";
+  // Student's assigned level (fallback to 'beginner' if not yet set)
+  const studentLevel = (profile?.level || profile?.course_level || "beginner") as string;
 
   // ── Queries ───────────────────────────────────────────────────────────────
-  const { data: courses,  isLoading: loadCourse } = useQuery({
+
+  // ALL published courses (we filter client-side so we can show the "nothing for your level" message)
+  const { data: allCourses, isLoading: loadCourse } = useQuery({
     queryKey: ["all-courses-published"],
     queryFn: async () => {
-      const { data } = await supabase.from("courses").select("*").eq("is_published", true).order("sort_order");
+      const { data } = await supabase
+        .from("courses")
+        .select("*")
+        .eq("is_published", true)
+        .order("sort_order");
       return data || [];
     },
   });
 
-  // Subjects for selected course (state-based navigation)
-  const { data: courseSubjects, isLoading: loadSubs } = useQuery({
+  // Apply level filter — admins/teachers see everything
+  const courses = isPrivileged
+    ? (allCourses || [])
+    : (allCourses || []).filter((c: any) => levelMatch(c.level, studentLevel));
+
+  // Subjects for selected course — filtered by student level
+  const { data: allCourseSubjects, isLoading: loadSubs } = useQuery({
     queryKey: ["course-subjects", selCourse?.id],
     enabled: !!selCourse,
     queryFn: async () => {
-      const { data } = await supabase.from("subjects").select("*").eq("course_id", selCourse!.id).eq("is_active", true).order("title");
+      const { data } = await supabase
+        .from("subjects")
+        .select("*")
+        .eq("course_id", selCourse!.id)
+        .eq("is_active", true)
+        .order("title");
       return data || [];
     },
   });
+
+  const courseSubjects = isPrivileged
+    ? (allCourseSubjects || [])
+    : (allCourseSubjects || []).filter((s: any) => levelMatch(s.level, studentLevel));
 
   // Lessons for selected subject
   const { data: subjectLessons, isLoading: loadLessons } = useQuery({
     queryKey: ["subject-lessons", selectedSubject?.id],
     enabled: !!selectedSubject,
     queryFn: async () => {
-      const { data } = await supabase.from("lessons").select("*").eq("course_id", selectedSubject!.id).order("sort_order");
+      const { data } = await supabase
+        .from("lessons")
+        .select("*")
+        .eq("course_id", selectedSubject!.id)
+        .order("sort_order");
       return data || [];
     },
   });
@@ -90,7 +123,11 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
     queryKey: ["my-progress", user?.id],
     enabled: !!user,
     queryFn: async () => {
-      const { data } = await supabase.from("lesson_progress").select("lesson_id,completed").eq("user_id", user!.id).eq("completed", true);
+      const { data } = await supabase
+        .from("lesson_progress")
+        .select("lesson_id,completed")
+        .eq("user_id", user!.id)
+        .eq("completed", true);
       return data || [];
     },
   });
@@ -104,17 +141,43 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
     refetchInterval: 5000,
   });
 
-  // ── For URL-based course detail (/student/courses/:courseId) ──────────────
-  const { data: urlCourse }        = useQuery({ queryKey: ["course", courseId], enabled: !!courseId, queryFn: async () => { const { data } = await supabase.from("courses").select("*").eq("id", courseId!).single(); return data; } });
-  const { data: urlCourseSubjects } = useQuery({ queryKey: ["url-course-subjects", courseId], enabled: !!courseId, queryFn: async () => { const { data } = await supabase.from("subjects").select("*").eq("course_id", courseId!).eq("is_active", true).order("title"); return data || []; } });
+  // URL-based course detail (/student/courses/:courseId)
+  const { data: urlCourse } = useQuery({
+    queryKey: ["course", courseId],
+    enabled: !!courseId,
+    queryFn: async () => {
+      const { data } = await supabase.from("courses").select("*").eq("id", courseId!).single();
+      return data;
+    },
+  });
 
-  // ── Mark lesson complete ──────────────────────────────────────────────────
+  const { data: allUrlCourseSubjects } = useQuery({
+    queryKey: ["url-course-subjects", courseId],
+    enabled: !!courseId,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("subjects")
+        .select("*")
+        .eq("course_id", courseId!)
+        .eq("is_active", true)
+        .order("title");
+      return data || [];
+    },
+  });
+
+  const urlCourseSubjects = isPrivileged
+    ? (allUrlCourseSubjects || [])
+    : (allUrlCourseSubjects || []).filter((s: any) => levelMatch(s.level, studentLevel));
+
+  // Mark lesson complete
   const markComplete = useMutation({
     mutationFn: async (lessonId: string) => {
-      const { error } = await supabase.from("lesson_progress").upsert(
-        { user_id: user!.id, lesson_id: lessonId, completed: true, completed_at: new Date().toISOString() },
-        { onConflict: "user_id,lesson_id" }
-      );
+      const { error } = await supabase
+        .from("lesson_progress")
+        .upsert(
+          { user_id: user!.id, lesson_id: lessonId, completed: true, completed_at: new Date().toISOString() },
+          { onConflict: "user_id,lesson_id" }
+        );
       if (error) throw error;
     },
     onSuccess: (_, lessonId) => {
@@ -139,12 +202,13 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
   }, [subjectLessons]);
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // URL-BASED COURSE VIEW (/student/courses/:courseId) → show its subjects
+  // URL-BASED COURSE VIEW (/student/courses/:courseId)
   // ═══════════════════════════════════════════════════════════════════════════
   if (courseId && urlCourse) {
-    if (selectedSubject) {
-      // fall through to subject detail below
-    } else {
+    if (!selectedSubject) {
+      // Guard: if the course itself is restricted to a level the student doesn't have
+      const courseRestricted = !isPrivileged && !levelMatch(urlCourse.level, studentLevel);
+
       return (
         <div style={{ fontFamily:"'Cairo',sans-serif", background:"#f8fafb", minHeight:"100vh" }}>
           <style>{`@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap');@keyframes spin{to{transform:rotate(360deg)}}`}</style>
@@ -154,19 +218,19 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
             </button>
             <h1 style={{ fontSize:20, fontWeight:900, color:"#fff", margin:"0 0 4px" }}>{language === "ar" ? urlCourse.title_ar || urlCourse.title : urlCourse.title}</h1>
             {urlCourse.title_ar && language !== "ar" && <p style={{ fontSize:14, color:GOLD, margin:"0 0 8px", fontFamily:"serif" }} dir="rtl">{urlCourse.title_ar}</p>}
-            {urlCourse.level && <span style={{ fontSize:11, padding:"3px 10px", borderRadius:20, fontWeight:700, ...levelColor(urlCourse.level) }}>{lv(urlCourse.level)}</span>}
+            {urlCourse.level && <span style={{ fontSize:11, padding:"3px 10px", borderRadius:20, fontWeight:700, ...levelColor(urlCourse.level) }}>{lvLabel(urlCourse.level)}</span>}
           </div>
           <div style={{ padding:16, maxWidth:720, margin:"0 auto" }}>
-            {loadLessons ? (
-              <div style={{ textAlign:"center", padding:40, color:"#9ca3af" }}>Loading subjects…</div>
-            ) : !(urlCourseSubjects || []).length ? (
+            {courseRestricted ? (
+              <LevelLockedCard studentLevel={studentLevel} requiredLevel={urlCourse.level} />
+            ) : urlCourseSubjects.length === 0 ? (
               <div style={{ background:"#fff", borderRadius:16, padding:"40px 20px", textAlign:"center", border:"1px solid #e5e7eb" }}>
                 <BookOpen style={{ width:36, height:36, color:"#d1d5db", margin:"0 auto 12px" }} />
                 <p style={{ color:"#9ca3af", fontSize:14 }}>{t("No subjects yet", "لا توجد مواد بعد")}</p>
               </div>
             ) : (
               <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))", gap:14 }}>
-                {(urlCourseSubjects || []).map((sub: any) => (
+                {urlCourseSubjects.map((sub: any) => (
                   <SubjectCard key={sub.id} subject={sub} onClick={() => setSelectedSubject(sub)} live={isLive(sub.id)} language={language} />
                 ))}
               </div>
@@ -181,26 +245,26 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
   // LIVE CLASS
   // ═══════════════════════════════════════════════════════════════════════════
   if (inClass && selectedSubject) {
-    return <ClassroomView subject={selectedSubject} onLeave={() => { setInClass(false); }} />;
+    return <ClassroomView subject={selectedSubject} onLeave={() => setInClass(false)} />;
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
   // SUBJECT DETAIL — with tabs
   // ═══════════════════════════════════════════════════════════════════════════
   if (selectedSubject) {
-    const live = isLive(selectedSubject.id);
-    const done = new Set((myProgress || []).filter((p: any) => p.completed).map((p: any) => p.lesson_id));
+    const live  = isLive(selectedSubject.id);
+    const done  = new Set((myProgress || []).filter((p: any) => p.completed).map((p: any) => p.lesson_id));
     const totalL = (subjectLessons || []).length;
     const doneL  = (subjectLessons || []).filter((l: any) => done.has(l.id)).length;
     const pct    = totalL > 0 ? Math.round((doneL / totalL) * 100) : 0;
 
     const TABS = [
-      { id:"lessons",       icon:BookOpen,      label:t("Lessons","الدروس"),         count:totalL },
-      { id:"recordings",    icon:Video,         label:t("Recordings","التسجيلات"),   count:null },
-      { id:"syllabus",      icon:Calendar,      label:t("Syllabus","المنهج"),        count:null },
-      { id:"materials",     icon:FileText,      label:t("Materials","المواد"),       count:null },
-      { id:"assignments",   icon:ClipboardList, label:t("Tasks","الواجبات"),         count:null },
-      { id:"announcements", icon:Megaphone,     label:t("News","الإعلانات"),         count:null },
+      { id:"lessons",       icon:BookOpen,      label:t("Lessons","الدروس"),        count:totalL },
+      { id:"recordings",    icon:Video,         label:t("Recordings","التسجيلات"),  count:null },
+      { id:"syllabus",      icon:Calendar,      label:t("Syllabus","المنهج"),       count:null },
+      { id:"materials",     icon:FileText,      label:t("Materials","المواد"),      count:null },
+      { id:"assignments",   icon:ClipboardList, label:t("Tasks","الواجبات"),        count:null },
+      { id:"announcements", icon:Megaphone,     label:t("News","الإعلانات"),        count:null },
     ];
 
     const activeL = subjectLessons?.find((l: any) => l.id === activeLesson);
@@ -209,7 +273,6 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
       <div style={{ fontFamily:"'Cairo',sans-serif", background:"#f8fafb", minHeight:"100vh" }}>
         <style>{`@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap');@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}`}</style>
 
-        {/* ── Subject header ── */}
         <div style={{ background:`linear-gradient(135deg,${G},${GM})`, padding:"14px 16px 0" }}>
           <button
             onClick={() => { setSelectedSubject(null); setActiveLesson(null); }}
@@ -217,7 +280,6 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
             <ArrowLeft style={{ width:13, height:13 }} />{t("Back", "رجوع")}
           </button>
 
-          {/* ── Issue 5: description centered, Arabic first then English ── */}
           <div style={{ textAlign:"center", padding:"0 8px 16px" }}>
             <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:10, flexWrap:"wrap", marginBottom:8 }}>
               <h1 style={{ fontSize:20, fontWeight:900, color:"#fff", margin:0 }}>
@@ -225,17 +287,21 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
               </h1>
               {live && <span style={{ fontSize:10, fontWeight:800, padding:"3px 9px", borderRadius:20, background:"#ef4444", color:"#fff", animation:"pulse 1.5s infinite" }}>● LIVE</span>}
             </div>
-
-            {/* Arabic description paragraph */}
+            {/* Arabic description first */}
+            {selectedSubject.title_ar && (
+              <p dir="rtl" style={{ fontSize:14, color:GOLD, margin:"0 0 4px", fontFamily:"'Amiri','Cairo',serif" }}>
+                {selectedSubject.title_ar}
+              </p>
+            )}
             {selectedSubject.description && (
               <p dir="rtl" style={{ fontSize:13, color:"rgba(255,255,255,.75)", margin:"0 0 6px", lineHeight:1.7, fontFamily:"'Amiri','Cairo',serif" }}>
                 {selectedSubject.description}
               </p>
             )}
-            {/* English description paragraph (if Arabic title is set, show English too) */}
+            {/* English below */}
             {selectedSubject.title_ar && selectedSubject.title_ar !== selectedSubject.title && language !== "ar" && (
               <p style={{ fontSize:12, color:"rgba(255,255,255,.55)", margin:0, lineHeight:1.6 }}>
-                {selectedSubject.title} — {selectedSubject.description || ""}
+                {selectedSubject.title}
               </p>
             )}
 
@@ -252,11 +318,10 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
               onClick={() => setInClass(true)}
               style={{ marginTop:14, display:"inline-flex", alignItems:"center", gap:6, padding:"10px 20px", borderRadius:12, background:GOLD, border:"none", color:G, fontSize:13, fontWeight:900, cursor:"pointer", fontFamily:"'Cairo',sans-serif", boxShadow:"0 4px 12px rgba(201,168,76,.4)" }}>
               <Video style={{ width:14, height:14 }} />
-              {live ? t("Join", "انضمام") : isPrivileged ? t("Start", "بدء") : t("Class", "الفصل")}
+              {live ? t("Join","انضمام") : isPrivileged ? t("Start","بدء") : t("Class","الفصل")}
             </button>
           </div>
 
-          {/* Tabs */}
           <div style={{ display:"flex", overflowX:"auto", scrollbarWidth:"none" }}>
             {TABS.map(tab => (
               <button key={tab.id} onClick={() => setSubjectTab(tab.id)}
@@ -269,7 +334,6 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
         </div>
 
         <div style={{ padding:"16px", maxWidth:720, margin:"0 auto" }}>
-          {/* ── LESSONS TAB ── */}
           {subjectTab === "lessons" && (
             <>
               {loadLessons ? (
@@ -306,7 +370,6 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
                     })}
                   </div>
 
-                  {/* Active lesson player */}
                   {activeL && (
                     <div style={{ background:"#fff", borderRadius:16, border:"1px solid #e5e7eb", overflow:"hidden" }}>
                       {activeL.video_url ? (
@@ -352,7 +415,7 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // COURSE SUBJECTS VIEW (state-based: selCourse is set)
+  // COURSE SUBJECTS VIEW (after clicking a course card)
   // ═══════════════════════════════════════════════════════════════════════════
   if (selCourse) {
     const lc = levelColor(selCourse.level);
@@ -367,21 +430,33 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
             {language === "ar" ? selCourse.title_ar || selCourse.title : selCourse.title}
           </h1>
           {selCourse.title_ar && language !== "ar" && <p style={{ fontSize:13, color:GOLD, margin:"0 0 8px", fontFamily:"serif" }} dir="rtl">{selCourse.title_ar}</p>}
-          {selCourse.level && <span style={{ fontSize:11, padding:"3px 10px", borderRadius:20, fontWeight:700, ...lc }}>{lv(selCourse.level)}</span>}
+          {selCourse.level && selCourse.level !== "all" && (
+            <span style={{ fontSize:11, padding:"3px 10px", borderRadius:20, fontWeight:700, ...lc }}>{lvLabel(selCourse.level)}</span>
+          )}
           {selCourse.description && <p style={{ fontSize:12, color:"rgba(255,255,255,.65)", marginTop:8 }}>{selCourse.description}</p>}
         </div>
         <div style={{ padding:16, maxWidth:720, margin:"0 auto" }}>
           {loadSubs ? (
             <div style={{ textAlign:"center", padding:40, color:"#9ca3af" }}>Loading subjects…</div>
-          ) : !(courseSubjects||[]).length ? (
+          ) : courseSubjects.length === 0 ? (
             <div style={{ background:"#fff", borderRadius:16, padding:"40px 20px", textAlign:"center", border:"1px solid #e5e7eb" }}>
               <BookOpen style={{ width:36, height:36, color:"#d1d5db", margin:"0 auto 12px" }} />
-              <p style={{ color:"#9ca3af", fontSize:14 }}>{t("No subjects yet","لا توجد مواد بعد")}</p>
+              <p style={{ color:"#9ca3af", fontSize:14 }}>
+                {isPrivileged
+                  ? t("No subjects yet", "لا توجد مواد بعد")
+                  : t("No subjects available for your level yet", "لا توجد مواد لمستواك بعد")}
+              </p>
             </div>
           ) : (
             <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))", gap:14 }}>
-              {(courseSubjects||[]).map((sub: any) => (
-                <SubjectCard key={sub.id} subject={sub} onClick={() => { setSelectedSubject(sub); setSubjectTab("lessons"); }} live={isLive(sub.id)} language={language} />
+              {courseSubjects.map((sub: any) => (
+                <SubjectCard
+                  key={sub.id}
+                  subject={sub}
+                  onClick={() => { setSelectedSubject(sub); setSubjectTab("lessons"); }}
+                  live={isLive(sub.id)}
+                  language={language}
+                />
               ))}
             </div>
           )}
@@ -391,10 +466,9 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // MAIN HUB — shows COURSES (Issue 4)
+  // MAIN HUB — COURSE CARDS (level-filtered)
   // ═══════════════════════════════════════════════════════════════════════════
-  const isLoading = loadCourse;
-  const anyLive   = (liveSessions||[]).length > 0;
+  const anyLive = (liveSessions || []).length > 0;
 
   return (
     <div style={{ fontFamily:"'Cairo',sans-serif", background:"#f8fafb", minHeight:"100vh" }}>
@@ -418,9 +492,20 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
             <p style={{ fontSize:12, color:"rgba(255,255,255,.5)", margin:"0 0 14px" }}>
               {t("Courses & subjects","الدورات والمواد")}
             </p>
-            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-              <span style={{ fontSize:11, color:"rgba(255,255,255,.5)" }}>{t("Level:","المستوى:")}</span>
-              <span style={{ fontSize:11, padding:"3px 12px", borderRadius:20, fontWeight:700, ...levelColor(studentLevel) }}>{lv(studentLevel)}</span>
+            <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+              {!isPrivileged && (
+                <>
+                  <span style={{ fontSize:11, color:"rgba(255,255,255,.5)" }}>{t("Your Level:","مستواك:")}</span>
+                  <span style={{ fontSize:11, padding:"3px 12px", borderRadius:20, fontWeight:700, ...levelColor(studentLevel) }}>
+                    {lvLabel(studentLevel)}
+                  </span>
+                </>
+              )}
+              {isPrivileged && (
+                <span style={{ fontSize:11, padding:"3px 12px", borderRadius:20, fontWeight:700, background:"rgba(255,255,255,.15)", color:"#fff" }}>
+                  {t("All Levels (Admin/Teacher)","جميع المستويات")}
+                </span>
+              )}
               {anyLive && (
                 <span style={{ marginLeft:4, fontSize:11, padding:"3px 11px", borderRadius:20, background:"#ef4444", color:"#fff", fontWeight:700, display:"flex", alignItems:"center", gap:5, animation:"pulse 1.5s infinite" }}>
                   <span style={{ width:6, height:6, borderRadius:"50%", background:"#fff", display:"inline-block" }} />{t("Live","مباشر")}
@@ -442,26 +527,23 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
 
       {/* ── COURSE CARDS ── */}
       <div style={{ padding:"16px", maxWidth:800, margin:"0 auto" }}>
-        {isLoading && (
+        {loadCourse && (
           <div style={{ display:"grid", gridTemplateColumns: viewMode==="grid" ? "repeat(auto-fill,minmax(180px,1fr))" : "1fr", gap:12 }}>
             {[1,2,3].map(i => <div key={i} style={{ height: viewMode==="grid" ? 220 : 120, borderRadius:16, background:"linear-gradient(90deg,#e5e7eb 25%,#f0f4f0 50%,#e5e7eb 75%)", backgroundSize:"200% 100%", animation:"shimmer 1.4s infinite" }} />)}
           </div>
         )}
 
-        {!isLoading && (
+        {!loadCourse && courses.length > 0 && (
           <div style={{ display:"grid", gridTemplateColumns: viewMode==="grid" ? "repeat(auto-fill,minmax(180px,1fr))" : "1fr", gap:14, animation:"fadeUp .3s ease" }}>
-            {(courses||[]).map((course: any) => {
+            {courses.map((course: any) => {
               const lc = levelColor(course.level);
               const courseName = language === "ar" ? course.title_ar || course.title : course.title;
 
-              // ── GRID CARD ──
               if (viewMode === "grid") {
                 return (
                   <div key={course.id} className="sc"
                     onClick={() => setSelCourse(course)}
                     style={{ background:"#fff", borderRadius:18, border:"1px solid #e5e7eb", overflow:"hidden", cursor:"pointer", boxShadow:"0 2px 8px rgba(0,0,0,.05)" }}>
-
-                    {/* Image — fixed height, no text overlay */}
                     <div style={{ height:120, overflow:"hidden", position:"relative", background:`linear-gradient(135deg,${G},${GM})` }}>
                       {course.image_url
                         ? <img src={course.image_url} alt="" style={{ width:"100%", height:"100%", objectFit:"cover" }} />
@@ -469,12 +551,12 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
                       }
                       {anyLive && <span style={{ position:"absolute", top:8, left:8, fontSize:9, fontWeight:800, padding:"3px 7px", borderRadius:20, background:"#ef4444", color:"#fff", animation:"pulse 1.5s infinite" }}>● LIVE</span>}
                     </div>
-
-                    {/* ── Issue 5: ALL text BELOW the image ── */}
+                    {/* ALL text BELOW the image */}
                     <div style={{ padding:"10px 12px 14px" }}>
-                      {course.level && <span style={{ fontSize:9, padding:"2px 7px", borderRadius:9, fontWeight:700, ...lc, display:"inline-block", marginBottom:6 }}>{lv(course.level)}</span>}
+                      {course.level && course.level !== "all" && (
+                        <span style={{ fontSize:9, padding:"2px 7px", borderRadius:9, fontWeight:700, ...lc, display:"inline-block", marginBottom:6 }}>{lvLabel(course.level)}</span>
+                      )}
                       <h3 style={{ fontSize:13, fontWeight:800, color:G, margin:"0 0 3px", lineHeight:1.4 }}>{courseName}</h3>
-                      {/* Arabic title below English */}
                       {course.title_ar && language !== "ar" && (
                         <p style={{ fontSize:11, color:GOLD, margin:"0 0 6px", fontFamily:"serif" }} dir="rtl">{course.title_ar}</p>
                       )}
@@ -491,13 +573,11 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
                 );
               }
 
-              // ── LIST CARD ──
+              // LIST CARD
               return (
                 <div key={course.id} className="sc"
                   style={{ background:"#fff", borderRadius:18, border:"1px solid #e5e7eb", overflow:"hidden", boxShadow:"0 2px 8px rgba(0,0,0,.05)", cursor:"pointer" }}
                   onClick={() => setSelCourse(course)}>
-
-                  {/* Image row — left thumbnail, right text */}
                   <div style={{ display:"flex", gap:0 }}>
                     <div style={{ width:100, flexShrink:0, background:`linear-gradient(135deg,${G},${GM})` }}>
                       {course.image_url
@@ -506,7 +586,9 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
                       }
                     </div>
                     <div style={{ flex:1, padding:"14px 16px" }}>
-                      {course.level && <span style={{ fontSize:9, padding:"2px 7px", borderRadius:9, fontWeight:700, ...lc, display:"inline-block", marginBottom:6 }}>{lv(course.level)}</span>}
+                      {course.level && course.level !== "all" && (
+                        <span style={{ fontSize:9, padding:"2px 7px", borderRadius:9, fontWeight:700, ...lc, display:"inline-block", marginBottom:6 }}>{lvLabel(course.level)}</span>
+                      )}
                       <h3 style={{ fontSize:14, fontWeight:800, color:G, margin:"0 0 2px" }}>{courseName}</h3>
                       {course.title_ar && language !== "ar" && (
                         <p style={{ fontSize:12, color:GOLD, margin:"0 0 4px", fontFamily:"serif" }} dir="rtl">{course.title_ar}</p>
@@ -528,11 +610,22 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
         )}
 
         {/* Empty state */}
-        {!isLoading && !(courses||[]).length && (
+        {!loadCourse && courses.length === 0 && (
           <div style={{ background:"#fff", borderRadius:18, padding:"60px 20px", textAlign:"center", border:"1px solid #e5e7eb" }}>
             <GraduationCap style={{ width:52, height:52, color:"#d1d5db", margin:"0 auto 14px" }} />
-            <div style={{ fontSize:17, color:G, fontWeight:700, marginBottom:6 }}>{t("No courses yet","لا توجد دورات بعد")}</div>
-            <p style={{ fontSize:13, color:"#9ca3af" }}>{t("Check back soon!","تحقق قريبًا!")}</p>
+            <div style={{ fontSize:17, color:G, fontWeight:700, marginBottom:6 }}>
+              {isPrivileged
+                ? t("No courses yet", "لا توجد دورات بعد")
+                : t("No courses available for your level yet", "لا توجد دورات لمستواك بعد")}
+            </div>
+            {!isPrivileged && (
+              <p style={{ fontSize:13, color:"#9ca3af", marginTop:6 }}>
+                {t(
+                  `Your current level is "${lvLabel(studentLevel)}". Courses for your level will appear here once the admin publishes them.`,
+                  `مستواك الحالي هو "${lvLabel(studentLevel)}". ستظهر هنا الدورات المخصصة لمستواك عند نشرها.`
+                )}
+              </p>
+            )}
           </div>
         )}
       </div>
@@ -541,17 +634,18 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Subject card — reused in both course-subjects view & URL-based view
-// Text is ALWAYS below the image (Issue 5)
+// SubjectCard — text always below image
 // ─────────────────────────────────────────────────────────────────────────────
-function SubjectCard({ subject, onClick, live, language }: { subject: any; onClick: () => void; live: boolean; language: string }) {
-  const lc = levelColor(subject.level);
+function SubjectCard({ subject, onClick, live, language }: {
+  subject: any; onClick: () => void; live: boolean; language: string;
+}) {
+  const lc   = levelColor(subject.level);
   const name = language === "ar" ? subject.title_ar || subject.title : subject.title;
   return (
     <div className="sc"
       onClick={onClick}
       style={{ background:"#fff", borderRadius:16, border:"1px solid #e5e7eb", overflow:"hidden", cursor:"pointer", boxShadow:"0 2px 8px rgba(0,0,0,.05)" }}>
-      {/* Image — no text on top */}
+      {/* Image only — no text overlay */}
       <div style={{ height:110, overflow:"hidden", background:`linear-gradient(135deg,#0f2d1f,#1a4731)`, position:"relative" }}>
         {subject.image_url
           ? <img src={subject.image_url} alt="" style={{ width:"100%", height:"100%", objectFit:"cover" }} />
@@ -559,15 +653,16 @@ function SubjectCard({ subject, onClick, live, language }: { subject: any; onCli
         }
         {live && <span style={{ position:"absolute", top:8, left:8, fontSize:9, fontWeight:800, padding:"3px 7px", borderRadius:20, background:"#ef4444", color:"#fff" }}>● LIVE</span>}
       </div>
-      {/* ALL text below image — Issue 5 */}
+      {/* All text below the image */}
       <div style={{ padding:"10px 12px 14px" }}>
         {subject.level && subject.level !== "all" && (
           <span style={{ fontSize:9, padding:"2px 7px", borderRadius:9, fontWeight:700, ...lc, display:"inline-block", marginBottom:5 }}>{subject.level}</span>
         )}
-        <h3 style={{ fontSize:13, fontWeight:800, color:"#0f2d1f", margin:"0 0 3px", lineHeight:1.4 }}>{name}</h3>
-        {subject.title_ar && language !== "ar" && (
-          <p style={{ fontSize:11, color:GOLD, margin:"0 0 6px", fontFamily:"serif" }} dir="rtl">{subject.title_ar}</p>
+        {/* Arabic title first */}
+        {subject.title_ar && (
+          <p style={{ fontSize:12, color:GOLD, margin:"0 0 2px", fontFamily:"'Amiri',serif" }} dir="rtl">{subject.title_ar}</p>
         )}
+        <h3 style={{ fontSize:13, fontWeight:800, color:"#0f2d1f", margin:"0 0 4px", lineHeight:1.4 }}>{name}</h3>
         {subject.description && (
           <p style={{ fontSize:11, color:"#9ca3af", margin:"0 0 8px", lineHeight:1.5, display:"-webkit-box", WebkitLineClamp:2, WebkitBoxOrient:"vertical" as any, overflow:"hidden" }}>
             {subject.description}
@@ -577,6 +672,23 @@ function SubjectCard({ subject, onClick, live, language }: { subject: any; onCli
           <BookOpen style={{ width:11, height:11 }} />Open Subject
         </button>
       </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Level-locked placeholder
+// ─────────────────────────────────────────────────────────────────────────────
+function LevelLockedCard({ studentLevel, requiredLevel }: { studentLevel: string; requiredLevel: string }) {
+  return (
+    <div style={{ background:"#fff", borderRadius:16, padding:"40px 20px", textAlign:"center", border:"2px solid #FDE68A" }}>
+      <Lock style={{ width:40, height:40, color:"#f59e0b", margin:"0 auto 14px" }} />
+      <p style={{ fontWeight:700, fontSize:15, color:"#92400E", marginBottom:8 }}>
+        This course is for {lvLabel(requiredLevel)} students
+      </p>
+      <p style={{ fontSize:13, color:"#9ca3af" }}>
+        Your current level is <strong>{lvLabel(studentLevel)}</strong>. Contact your instructor to upgrade your level.
+      </p>
     </div>
   );
 }
