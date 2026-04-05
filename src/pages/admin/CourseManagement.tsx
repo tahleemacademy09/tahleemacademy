@@ -104,7 +104,7 @@ export default function CourseManagement() {
     queryKey: ["admin-subjects-v2", selCourse?.id],
     enabled:  view !== "courses",
     queryFn: async () => {
-      let q = supabase.from("subjects").select("*, user_roles(user_id)").order("title");
+      let q = supabase.from("subjects").select("*").order("title");
       if (selCourse) q = q.eq("course_id", selCourse.id);
       const { data } = await q;
       return data || [];
