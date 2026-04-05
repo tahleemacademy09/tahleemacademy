@@ -200,7 +200,7 @@ export default function CourseManagement() {
 
   // Link unlinked subject to current course
   const linkSubject = async (subjectId: string) => {
-    await supabase.from("subjects").update({ course_id: selCourse?.id }).eq("id", subjectId);
+    await supabase.from("subjects").update({ course_id: selCourse?.id } as any).eq("id", subjectId);
     qc.invalidateQueries({ queryKey: ["admin-subjects-v2"] });
     qc.invalidateQueries({ queryKey: ["admin-all-subjects"] });
     toast({ title: "Subject linked to course" });
