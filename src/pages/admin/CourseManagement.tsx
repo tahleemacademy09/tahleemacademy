@@ -179,7 +179,7 @@ export default function CourseManagement() {
     try {
       let imgUrl = sf.image_url;
       if (file) { setImgUploading(true); imgUrl = (await uploadImage(file, "subject-images")) || imgUrl; setImgUploading(false); }
-      const payload = { title: sf.title, title_ar: sf.title_ar||null, description: sf.description||null, level: sf.level, is_active: sf.is_active, image_url: imgUrl||null, teacher_id: sf.teacher_id||null, color: sf.color||G, course_id: selCourse?.id||null, updated_at: new Date().toISOString() };
+      const payload = { title: sf.title, title_ar: sf.title_ar||null, description: sf.description||null, level: sf.level, is_active: sf.is_active, image_url: imgUrl||null, teacher_id: sf.teacher_id||null, color: sf.color||G, course_id: selCourse?.id||null, updated_at: new Date().toISOString() } as any;
       if (editSubjectId) { await supabase.from("subjects").update(payload).eq("id", editSubjectId); }
       else { await supabase.from("subjects").insert(payload); }
       qc.invalidateQueries({ queryKey: ["admin-subjects-v2"] });
