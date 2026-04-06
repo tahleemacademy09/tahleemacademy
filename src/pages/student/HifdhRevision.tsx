@@ -870,6 +870,18 @@ export default function HifdhRevision() {
                   <Plus size={10} color={GOLD} />
                 </button>
 
+                {/* Mic — AI Evaluation */}
+                <button
+                  className="ctrl w-7 h-7 flex-none"
+                  style={{ background: isRecording ? "#dc2626" : "#1e4030" }}
+                  onClick={isRecording ? stopRecording : startRecording}
+                >
+                  {isRecording ? <MicOff size={11} color="#fff" /> : <Mic size={11} color={GOLD} />}
+                </button>
+                {isRecording && (
+                  <span className="text-[9px] font-bold" style={{ color: "#dc2626" }}>{fmtTime(recTime)}</span>
+                )}
+
                 {/* Fullscreen toggle */}
                 <button
                   className="ctrl w-6 h-6 flex-none"
