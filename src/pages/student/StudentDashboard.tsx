@@ -87,6 +87,16 @@ const StudentDashboard = () => {
   const [calendarMonth, setCalendarMonth] = useState(new Date());
   const [showAllNotifs, setShowAllNotifs] = useState(false);
   const [greetingSpoken, setGreetingSpoken] = useState(false);
+  const [impersonatedProfile, setImpersonatedProfile] = useState<any>(null);
+
+  // Load impersonated student's profile
+  useEffect(() => {
+    if (!isImpersonating) return;
+    supabase.from("profiles").select("*").eq("user_id", effectiveUserId).maybeSingle()
+      .then(({ data }) => { if (data) setImpersonatedProfile(data); });
+  }, [isImpersonating, effectiveUserId]);
+
+  const displayProfile = isImpersonating ? impersonatedProfile : profile;
 
   // ── GATEKEEPING: Redirect to awaiting-level if not yet assigned ─────────
   useEffect(() => {
