@@ -1,4 +1,5 @@
 import { useTasjeel } from "@/hooks/useTasjeel";
+import { useImpersonation } from "@/hooks/useImpersonation";
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import QuranPhrasesWidget from "@/components/dashboard/QuranPhrasesWidget";
