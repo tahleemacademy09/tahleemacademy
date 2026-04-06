@@ -290,7 +290,7 @@ const MaterialModal=React.memo(({ed,subjectId,sortOrder,onClose,onSaved}:{ed?:an
         if(error) throw error;
         fileUrl=path; fileType=file.type; fileSize=file.size;
       }
-      const payload:any={subject_id:subjectId,title:f.title,material_type:f.material_type,file_url:fileUrl||null,content:f.content||null,is_downloadable:f.is_downloadable,sort_order:f.sort_order,...(fileType?{file_type:fileType}:{}),...(fileSize?{file_size:fileSize}:{})};
+      const payload:any={subject_id:subjectId,title:f.title,material_type:f.material_type,file_url:fileUrl||null,...(fileType?{file_type:fileType}:{}),...(fileSize?{file_size:fileSize}:{})};
       if(ed?.id){const {error}=await supabase.from("subject_materials").update(payload).eq("id",ed.id);if(error) throw error;}
       else{const {error}=await supabase.from("subject_materials").insert(payload);if(error) throw error;}
       toast({title:"✅ Material saved"});
@@ -406,7 +406,8 @@ export default function CourseManagement() {
     setBusy(true);
     try{
       const d={title:p.title,title_ar:p.title_ar||null,description:p.description||null,level:p.level,is_published:p.is_published,image_url:p.image_url||null,sort_order:p.sort_order,updated_at:new Date().toISOString()};
-      edCourse?await supabase.from("courses").update(d).eq("id",edCourse.id):await supabase.from("courses").insert(d);
+      const {error:courseErr}=edCourse?await supabase.from("courses").update(d).eq("id",edCourse.id):await supabase.from("courses").insert(d);
+      if(courseErr) throw courseErr;
       qc.invalidateQueries({queryKey:["adm-courses"]});setShowCourse(false);setEdCourse(null);
       toast({title:"✅ Course saved"});
     }catch(e:any){toast({title:"Error",description:e.message,variant:"destructive"});}
@@ -425,7 +426,8 @@ export default function CourseManagement() {
     setBusy(true);
     try{
       const d:any={title:p.title,title_ar:p.title_ar||null,description:p.description||null,level:p.level,is_active:p.is_active,image_url:p.image_url||null,teacher_id:p.teacher_id||null,color:G,course_id:selCourse?.id||null,updated_at:new Date().toISOString()};
-      edSubject?await supabase.from("subjects").update(d).eq("id",edSubject.id):await supabase.from("subjects").insert(d);
+      const {error:subjErr}=edSubject?await supabase.from("subjects").update(d).eq("id",edSubject.id):await supabase.from("subjects").insert(d);
+      if(subjErr) throw subjErr;
       qc.invalidateQueries({queryKey:["adm-subjects"]});qc.invalidateQueries({queryKey:["adm-all-subjects"]});
       setShowSubject(false);setEdSubject(null);toast({title:"✅ Subject saved"});
     }catch(e:any){toast({title:"Error",description:e.message,variant:"destructive"});}
@@ -444,7 +446,7 @@ export default function CourseManagement() {
   const saveLesson=useCallback(async(p:any)=>{
     setBusy(true);
     try{
-      const d={title:p.title,title_ar:p.title_ar||null,content:p.content||null,video_url:null,duration_minutes:p.duration_minutes,sort_order:p.sort_order,course_id:selSubject?.id,is_free:p.is_free,updated_at:new Date().toISOString()};
+      const d={title:p.title,title_ar:p.title_ar||null,duration_minutes:p.duration_minutes,sort_order:p.sort_order,course_id:selSubject?.id,is_free:p.is_free};
       const {error:lessonErr}=edLesson?await supabase.from("lessons").update(d).eq("id",edLesson.id):await supabase.from("lessons").insert(d);
       if(lessonErr) throw lessonErr;
       qc.invalidateQueries({queryKey:["adm-lessons",selSubject?.id]});
