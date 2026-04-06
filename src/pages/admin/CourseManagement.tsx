@@ -286,11 +286,18 @@ const MaterialModal=React.memo(({ed,subjectId,sortOrder,onClose,onSaved}:{ed?:an
       if(file){
         const ext=file.name.split(".").pop();
         const path=`materials/${subjectId}/${crypto.randomUUID()}.${ext}`;
-        const {error}=await supabase.storage.from("subject-files").upload(path,file);
+        const {error}=await supabase.storage.from("subject-files").upload(path,file,{upsert:true,contentType:file.type});
         if(error) throw error;
         fileUrl=path; fileType=file.type; fileSize=file.size;
       }
-      const payload:any={subject_id:subjectId,title:f.title,material_type:f.material_type,file_url:fileUrl||null,content:f.content||null,is_downloadable:f.is_downloadable,sort_order:f.sort_order,...(fileType?{file_type:fileType}:{}),...(fileSize?{file_size:fileSize}:{})};
+      const payload:any={
+        subject_id:subjectId,
+        title:f.title,
+        material_type:f.material_type,
+        file_url:fileUrl||null,
+        ...(fileType?{file_type:fileType}:{}),
+        ...(fileSize?{file_size:fileSize}:{}),
+      };
       if(ed?.id){const {error}=await supabase.from("subject_materials").update(payload).eq("id",ed.id);if(error) throw error;}
       else{const {error}=await supabase.from("subject_materials").insert(payload);if(error) throw error;}
       toast({title:"✅ Material saved"});
@@ -396,7 +403,7 @@ export default function CourseManagement() {
   const {data:courses=[],isLoading:cLoad}=useQuery({queryKey:["adm-courses"],queryFn:async()=>{const {data}=await supabase.from("courses").select("*").order("sort_order");return data||[];}});
   const {data:subjects=[],isLoading:sLoad}=useQuery({queryKey:["adm-subjects",selCourse?.id],enabled:view!=="courses",queryFn:async()=>{let q=supabase.from("subjects").select("*").order("title");if(selCourse)q=q.eq("course_id",selCourse.id);const {data}=await q;return data||[];}});
   const {data:allSubjects=[]}=useQuery({queryKey:["adm-all-subjects"],queryFn:async()=>{const {data}=await supabase.from("subjects").select("id,title,level,course_id").order("title");return data||[];}});
-  const {data:lessons=[],isLoading:lLoad}=useQuery({queryKey:["adm-lessons",selSubject?.id],enabled:!!selSubject,queryFn:async()=>{const {data}=await supabase.from("lessons").select("*").eq("course_id",selSubject?.id||"").order("sort_order");return data||[];}});
+  const {data:lessons=[],isLoading:lLoad}=useQuery({queryKey:["adm-lessons",selSubject?.id],enabled:!!selSubject,queryFn:async()=>{const {data}=await supabase.from("lessons").select("*").eq("subject_id",selSubject?.id||"").order("sort_order");return data||[];}});
   const {data:syllabus=[],isLoading:syllLoad}=useQuery({queryKey:["adm-syllabus",selSubject?.id],enabled:!!selSubject,queryFn:async()=>{const {data}=await supabase.from("subject_syllabus").select("*").eq("subject_id",selSubject!.id).order("week_number");return data||[];}});
   const {data:materials=[],isLoading:matLoad}=useQuery({queryKey:["adm-materials",selSubject?.id],enabled:!!selSubject,queryFn:async()=>{const {data}=await supabase.from("subject_materials").select("*").eq("subject_id",selSubject!.id).order("sort_order").order("created_at",{ascending:false});return data||[];}});
   const {data:teachers=[]}=useQuery({queryKey:["teachers-simple"],queryFn:async()=>{const {data:roles}=await supabase.from("user_roles").select("user_id").in("role",["teacher","admin"]);if(!roles?.length)return[];const {data}=await supabase.from("profiles").select("user_id,full_name").in("user_id",roles.map((r:any)=>r.user_id));return data||[];}});
@@ -434,7 +441,7 @@ export default function CourseManagement() {
 
   const delSubject=async(id:string)=>{
     if(!confirm("Delete subject and all its content?")) return;
-    await supabase.from("lessons").delete().eq("course_id",id);
+    await supabase.from("lessons").delete().eq("subject_id",id);
     await supabase.from("subjects").delete().eq("id",id);
     qc.invalidateQueries({queryKey:["adm-subjects"]});
     if(selSubject?.id===id){setSelSubject(null);setView("subjects");}
@@ -444,7 +451,7 @@ export default function CourseManagement() {
   const saveLesson=useCallback(async(p:any)=>{
     setBusy(true);
     try{
-      const d={title:p.title,title_ar:p.title_ar||null,content:p.content||null,video_url:null,duration_minutes:p.duration_minutes,sort_order:p.sort_order,course_id:selSubject?.id,is_free:p.is_free,updated_at:new Date().toISOString()};
+      const d={title:p.title,title_ar:p.title_ar||null,content:p.content||null,video_url:null,duration_minutes:p.duration_minutes,sort_order:p.sort_order,subject_id:selSubject?.id,is_free:p.is_free,updated_at:new Date().toISOString()};
       edLesson?await supabase.from("lessons").update(d).eq("id",edLesson.id):await supabase.from("lessons").insert(d);
       qc.invalidateQueries({queryKey:["adm-lessons",selSubject?.id]});
       setShowLesson(false);setEdLesson(null);toast({title:"✅ Lesson saved"});
