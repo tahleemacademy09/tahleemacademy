@@ -97,7 +97,7 @@ const StudentDashboard = () => {
 
   // ── Voice greeting — short, simple, works everywhere ─────────
   useEffect(() => {
-    if (!profile?.full_name || greetingSpoken || loading) return;
+    if (!profile?.full_name || greetingSpoken || loading || isImpersonating) return;
     // Use sessionStorage to prevent double-play across re-renders and hot reloads
     const key = 'tahleem-greeted-' + (user?.id || '');
     if (sessionStorage.getItem(key)) { setGreetingSpoken(true); return; }
