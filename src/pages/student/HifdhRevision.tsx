@@ -898,6 +898,83 @@ export default function HifdhRevision() {
           </div>
         )}
 
+        {/* ── AI Evaluation Results Overlay ── */}
+        {showResults && (
+          <div className="absolute inset-0 z-[60] flex items-center justify-center" style={{ background: "rgba(0,0,0,.85)" }}>
+            <div className="w-full max-w-md mx-4 rounded-2xl overflow-hidden" style={{ background: PARCHMENT, maxHeight: "85vh", overflowY: "auto" }}>
+              <div className="flex items-center justify-between px-5 py-4" style={{ background: DARK_GREEN }}>
+                <span className="text-white font-bold text-sm">🎙️ AI Recitation Evaluation</span>
+                <button onClick={() => setShowResults(false)} className="text-white/60 hover:text-white"><X size={18}/></button>
+              </div>
+              <div className="p-5">
+                {aiScoring ? (
+                  <div className="flex flex-col items-center gap-3 py-8">
+                    <Loader2 size={32} className="animate-spin" style={{ color: GOLD }} />
+                    <p className="text-sm font-bold" style={{ color: DARK_GREEN }}>Analyzing your recitation…</p>
+                  </div>
+                ) : (
+                  <>
+                    {/* Score circle */}
+                    {aiScore !== null && (
+                      <div className="flex flex-col items-center mb-5">
+                        <div className="w-24 h-24 rounded-full flex items-center justify-center mb-2" style={{
+                          background: aiScore >= 80 ? "#dcfce7" : aiScore >= 60 ? "#fef9c3" : "#fee2e2",
+                          border: `4px solid ${aiScore >= 80 ? "#16a34a" : aiScore >= 60 ? "#ca8a04" : "#dc2626"}`,
+                        }}>
+                          <span className="text-3xl font-black" style={{ color: aiScore >= 80 ? "#166534" : aiScore >= 60 ? "#854d0e" : "#dc2626" }}>
+                            {aiScore}%
+                          </span>
+                        </div>
+                        <span className="text-xs font-bold" style={{ color: aiScore >= 80 ? "#16a34a" : aiScore >= 60 ? "#ca8a04" : "#dc2626" }}>
+                          {aiScore >= 80 ? "ممتاز — Excellent" : aiScore >= 60 ? "جيد — Good" : "يحتاج تحسين — Needs Practice"}
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Word-level errors */}
+                    {wordErrors.length > 0 && (
+                      <div className="mb-4">
+                        <p className="text-xs font-bold mb-2" style={{ color: DARK_GREEN }}>Word Analysis:</p>
+                        <div className="flex flex-wrap gap-1 p-3 rounded-xl" style={{ background: "#fff", border: `1px solid ${GOLD}44`, direction: "rtl" }}>
+                          {wordErrors.filter(e => e.status !== "wrong").map((e, i) => (
+                            <span key={i} className="px-1.5 py-0.5 rounded text-sm font-semibold" style={{
+                              fontFamily: "'Amiri',serif",
+                              background: e.status === "correct" ? "#dcfce7" : "#fee2e2",
+                              color: e.status === "correct" ? "#166534" : "#dc2626",
+                            }}>
+                              {e.word}
+                            </span>
+                          ))}
+                        </div>
+                        <div className="flex gap-3 mt-2 text-[10px]">
+                          <span className="flex items-center gap-1"><CheckCircle2 size={10} color="#16a34a"/> Correct: {wordErrors.filter(e=>e.status==="correct").length}</span>
+                          <span className="flex items-center gap-1"><AlertTriangle size={10} color="#dc2626"/> Missing: {wordErrors.filter(e=>e.status==="missing").length}</span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Transcript */}
+                    {aiTranscript && (
+                      <div className="mb-4">
+                        <p className="text-xs font-bold mb-1" style={{ color: DARK_GREEN }}>Your Transcript:</p>
+                        <p className="text-sm p-3 rounded-xl" style={{ fontFamily: "'Amiri',serif", direction: "rtl", background: "#fff", border: "1px solid #e5e7eb", lineHeight: 2 }}>
+                          {aiTranscript}
+                        </p>
+                      </div>
+                    )}
+
+                    <button onClick={() => setShowResults(false)}
+                      className="w-full py-3 rounded-xl font-bold text-sm text-white"
+                      style={{ background: DARK_GREEN }}>
+                      Close & Try Again
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* ── Memorization ── */}
         {activeTab === "memorization" && (
           <div className="h-full overflow-y-auto"><HifdhMemorization /></div>
