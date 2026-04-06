@@ -1,7 +1,7 @@
 // src/components/hifdh/HifdhMemorization.tsx
-// CONTINUOUS RECORDING - AUTO-CLEAR AFTER COUNT
+// CONTINUOUS RECORDING - AUTO-RESTART AFTER COUNT
 //   • Press Start → Mic stays ON continuously
-//   • Recite → 2s silence → Count → Clear text → Mic stays ON
+//   • Recite → 2s silence → Count → Clear text → Auto-restart mic
 //   • Only stops when you press Stop or all reps completed
 
 import { useState, useCallback, useRef, useEffect } from "react";
@@ -17,7 +17,7 @@ const BORDER = "#d4e8d4";
 const PARCH  = "#faf6ec";
 const PARCH2 = "#f3ead8";
 
-const SESSION_KEY = "hifdh_mem_v16";
+const SESSION_KEY = "hifdh_mem_v17";
 
 /* ── Rep count options ───────────────────────────────────────── */
 const REP_OPTIONS = [5, 7, 10, 15, 20] as const;
@@ -152,7 +152,7 @@ const STEP_STYLE: Record<StepType, { bg: string; text: string; border: string; i
 };
 
 /* ══════════════════════════════════════════════════════════════
-   COMPONENT - CONTINUOUS RECORDING
+   COMPONENT - CONTINUOUS RECORDING WITH AUTO-RESTART
 ══════════════════════════════════════════════════════════════ */
 export default function HifdhMemorization({ reciter: reciterProp }: Props) {
 
@@ -297,7 +297,7 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
     repsDoneRef.current = done;
     setRepsDone(done);
     
-    // ✅ CLEAR TRANSCRIPTION FOR NEXT REP (but keep mic running!)
+    // ✅ CLEAR TRANSCRIPTION FOR NEXT REP
     setLiveText("");
     setRecitingVerses(new Set());
     setMatchProgress(0);
@@ -314,11 +314,11 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
     // If all reps done, advance after delay
     if (done >= totalRepsRef.current) {
       setTimeout(() => {
-        stopSR(); // Now stop the mic
+        stopSR();
         setTimeout(() => advanceStepRef.current(), 500);
       }, 300);
     }
-    // Otherwise, mic stays running - NO restart needed!
+    // Otherwise, mic will auto-restart in onend handler
   }, [saveSession]);
 
   /* ── Check for silence (2 seconds) ─────────────────────────── */
@@ -462,8 +462,7 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
         setMicError("🎤 Mic access denied");
         stopSR();
       } else if (e.error === "no-speech") {
-        // ✅ CONTINUOUS MODE: Don't restart, just keep going
-        // The mic will auto-restart internally
+        // Keep going - mic will restart internally
       } else if (e.error === "network") {
         setMicError("Network error");
         stopSR();
@@ -480,13 +479,14 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
       const stillActive = !!srRef.current;
       srRef.current = null;
       
-      // ✅ CONTINUOUS MODE: Don't auto-restart
-      // Only set inactive if user hasn't finished
+      // ✅ AUTO-RESTART MIC if we haven't finished all reps
       if (!stillActive && repsDoneRef.current < totalRepsRef.current) {
-        // Mic stopped unexpectedly - could restart if needed
-        // But for now, just update UI
-        setMicActive(false);
-        setIsListening(false);
+        // Mic ended but we still have reps to do - restart it!
+        setTimeout(() => {
+          if (!srRef.current && repsDoneRef.current < totalRepsRef.current) {
+            startSR();
+          }
+        }, 300);
       } else {
         setMicActive(false);        setIsListening(false);
       }
@@ -675,7 +675,7 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
                   {srAvailable ? "Continuous Recording" : "Speech Not Available"}
                 </div>
                 <div style={{ fontSize: 10, color: "#7a9e88" }}>
-                  {srAvailable ? "Mic stays ON · Auto-clears after each count" : "Use Chrome on Android"}
+                  {srAvailable ? "Mic stays ON · Auto-restarts after each count" : "Use Chrome on Android"}
                 </div>
               </div>
               <div style={{ padding: "2px 8px", borderRadius: 12,
