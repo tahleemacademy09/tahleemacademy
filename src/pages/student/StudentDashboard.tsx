@@ -223,7 +223,7 @@ const StudentDashboard = () => {
       }
     };
     fetchData();
-  }, [user]);
+  }, [effectiveUserId]);
 
   // ── Realtime notifications — live updates ─────────
   useEffect(() => {
