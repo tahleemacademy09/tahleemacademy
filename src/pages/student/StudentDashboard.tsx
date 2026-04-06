@@ -252,7 +252,7 @@ const StudentDashboard = () => {
     }
 
     return () => { supabase.removeChannel(channel); };
-  }, [user?.id]);
+  }, [effectiveUserId]);
 
   const calendarYear = calendarMonth.getFullYear();
   const calendarMonthIdx = calendarMonth.getMonth();
