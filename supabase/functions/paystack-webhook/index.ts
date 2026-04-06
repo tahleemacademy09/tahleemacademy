@@ -159,7 +159,7 @@ Deno.serve(async (req) => {
 // TASJEEL: Advance from 'payment' → 'onboarding' after successful payment
 // ─────────────────────────────────────────────────────────────────────────
 async function advanceTasjeelAfterPayment(
-  supabase: ReturnType<typeof createClient>,
+  supabase: any,
   userId: string,
   paymentMeta: {
     payment_ref: string;

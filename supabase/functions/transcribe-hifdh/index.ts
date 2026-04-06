@@ -40,8 +40,8 @@ serve(async (req) => {
     })
 
   } catch (error) {
-    console.error("transcribe-hifdh error:", error.message)
-    return new Response(JSON.stringify({ error: error.message }), {
+    console.error("transcribe-hifdh error:", (error as Error).message)
+    return new Response(JSON.stringify({ error: (error as Error).message }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400
     })
   }
