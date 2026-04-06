@@ -433,6 +433,8 @@ export default function TasjeelAdmin() {
                           { l: "Exam Completed", v: s.exam_completed_at ? new Date(s.exam_completed_at).toLocaleDateString() : "—" },
                           { l: "Payment", v: s.payment_status || "n/a" },
                           { l: "Onboarding", v: s.onboarding_completed_at ? "✓" : "—" },
+                          { l: "AI Score", v: s.recitation?.ai_score ? `${s.recitation.ai_score}%` : "—" },
+                          { l: "Session", v: s.recitation?.virtual_session_date ? `${s.recitation.virtual_session_date} ${s.recitation.virtual_session_time || ""}` : "Not booked" },
                         ].map(i => (
                           <div key={i.l} style={{ padding: "6px 12px", borderRadius: 8, background: "#F9FAFB", border: "1px solid #F3F4F6", fontSize: 11 }}>
                             <span style={{ color: "#9CA3AF" }}>{i.l}: </span>
@@ -440,6 +442,20 @@ export default function TasjeelAdmin() {
                           </div>
                         ))}
                       </div>
+
+                      {/* Join Session button for admin */}
+                      {s.recitation?.virtual_session_date && (
+                        <button onClick={() => {
+                          const roomName = `recitation-eval-${s.user_id}`;
+                          navigate(`/admin/live-classes?room=${roomName}&type=recitation`);
+                        }}
+                          style={{ marginBottom: 14, width: "100%", padding: "10px 16px", borderRadius: 10, border: "none",
+                            background: "linear-gradient(135deg,#064E3B,#075E54)", color: "#fff", cursor: "pointer",
+                            fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                          }}>
+                          <Video size={15} /> Join Virtual Session with {prof?.full_name || "Student"}
+                        </button>
+                      )}
 
                       {/* Level assignment */}
                       <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
