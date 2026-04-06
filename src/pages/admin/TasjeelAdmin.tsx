@@ -11,7 +11,7 @@ import {
   Settings, Users, Shield, BookOpen, GraduationCap,
   Mic, ToggleLeft, ToggleRight, Loader2, ChevronRight,
   CheckCircle, XCircle, Clock, Search, Eye, Send,
-  RefreshCw, AlertTriangle, Lock, Unlock, BarChart2
+  RefreshCw, AlertTriangle, Lock, Unlock, BarChart2, Video
 } from "lucide-react";
 
 const G    = "#064E3B";
