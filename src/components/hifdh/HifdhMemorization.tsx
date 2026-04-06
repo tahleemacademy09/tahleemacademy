@@ -475,20 +475,22 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
         clearInterval(silenceCheckRef.current);
         silenceCheckRef.current = null;
       }
-      
+
+      // stillActive = true  → SR ended naturally (no-speech timeout, Android killed it)
+      // stillActive = false → stopSR() was called intentionally (already set srRef to null)
       const stillActive = !!srRef.current;
       srRef.current = null;
-      
-      // ✅ AUTO-RESTART MIC if we haven't finished all reps
-      if (!stillActive && repsDoneRef.current < totalRepsRef.current) {
-        // Mic ended but we still have reps to do - restart it!
+
+      // AUTO-RESTART: only when naturally ended AND we still have reps left
+      if (stillActive && repsDoneRef.current < totalRepsRef.current) {
         setTimeout(() => {
           if (!srRef.current && repsDoneRef.current < totalRepsRef.current) {
             startSR();
           }
         }, 300);
       } else {
-        setMicActive(false);        setIsListening(false);
+        setMicActive(false);
+        setIsListening(false);
       }
     };
 
