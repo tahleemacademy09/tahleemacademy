@@ -344,6 +344,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
               </Link>            </div>
         </header>
 
+        <ImpersonationBanner/>
         <HolidayBanner/>
         {role === "student" && <PaymentBanner/>}
         {role === "admin"   && <AdminPaymentIndicator/>}
