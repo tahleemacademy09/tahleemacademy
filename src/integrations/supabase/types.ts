@@ -971,6 +971,7 @@ export type Database = {
           integrity_score: number | null
           passed: boolean | null
           percentage: number | null
+          results_released_at: string | null
           reviewed_at: string | null
           reviewed_by: string | null
           score: number | null
@@ -980,6 +981,7 @@ export type Database = {
           suspicion_level: string | null
           tab_switches: number | null
           total_points: number | null
+          updated_at: string | null
           user_id: string
         }
         Insert: {
@@ -990,6 +992,7 @@ export type Database = {
           integrity_score?: number | null
           passed?: boolean | null
           percentage?: number | null
+          results_released_at?: string | null
           reviewed_at?: string | null
           reviewed_by?: string | null
           score?: number | null
@@ -999,6 +1002,7 @@ export type Database = {
           suspicion_level?: string | null
           tab_switches?: number | null
           total_points?: number | null
+          updated_at?: string | null
           user_id: string
         }
         Update: {
@@ -1009,6 +1013,7 @@ export type Database = {
           integrity_score?: number | null
           passed?: boolean | null
           percentage?: number | null
+          results_released_at?: string | null
           reviewed_at?: string | null
           reviewed_by?: string | null
           score?: number | null
@@ -1018,6 +1023,7 @@ export type Database = {
           suspicion_level?: string | null
           tab_switches?: number | null
           total_points?: number | null
+          updated_at?: string | null
           user_id?: string
         }
         Relationships: [
@@ -1202,6 +1208,7 @@ export type Database = {
         Row: {
           allow_review: boolean | null
           auto_submit_on_violation: boolean | null
+          blur_detection: boolean | null
           course_id: string | null
           created_at: string
           created_by: string | null
@@ -1209,16 +1216,19 @@ export type Database = {
           description_ar: string | null
           display_mode: string | null
           end_date: string | null
+          face_detection: boolean | null
           fullscreen_required: boolean | null
           guidelines: string | null
           guidelines_ar: string | null
           id: string
+          idle_timeout_seconds: number | null
           is_entrance: boolean | null
           is_published: boolean | null
           level: string | null
           max_attempts: number | null
           max_review_views: number | null
           max_warnings: number | null
+          mic_required: boolean | null
           options_alignment: string | null
           options_bold: boolean | null
           options_font_size: number | null
@@ -1246,6 +1256,7 @@ export type Database = {
           tab_switch_limit: number | null
           term: string | null
           time_limit_minutes: number | null
+          timezone: string | null
           title: string
           title_ar: string | null
           type: string | null
@@ -1255,6 +1266,7 @@ export type Database = {
         Insert: {
           allow_review?: boolean | null
           auto_submit_on_violation?: boolean | null
+          blur_detection?: boolean | null
           course_id?: string | null
           created_at?: string
           created_by?: string | null
@@ -1262,16 +1274,19 @@ export type Database = {
           description_ar?: string | null
           display_mode?: string | null
           end_date?: string | null
+          face_detection?: boolean | null
           fullscreen_required?: boolean | null
           guidelines?: string | null
           guidelines_ar?: string | null
           id?: string
+          idle_timeout_seconds?: number | null
           is_entrance?: boolean | null
           is_published?: boolean | null
           level?: string | null
           max_attempts?: number | null
           max_review_views?: number | null
           max_warnings?: number | null
+          mic_required?: boolean | null
           options_alignment?: string | null
           options_bold?: boolean | null
           options_font_size?: number | null
@@ -1299,6 +1314,7 @@ export type Database = {
           tab_switch_limit?: number | null
           term?: string | null
           time_limit_minutes?: number | null
+          timezone?: string | null
           title: string
           title_ar?: string | null
           type?: string | null
@@ -1308,6 +1324,7 @@ export type Database = {
         Update: {
           allow_review?: boolean | null
           auto_submit_on_violation?: boolean | null
+          blur_detection?: boolean | null
           course_id?: string | null
           created_at?: string
           created_by?: string | null
@@ -1315,16 +1332,19 @@ export type Database = {
           description_ar?: string | null
           display_mode?: string | null
           end_date?: string | null
+          face_detection?: boolean | null
           fullscreen_required?: boolean | null
           guidelines?: string | null
           guidelines_ar?: string | null
           id?: string
+          idle_timeout_seconds?: number | null
           is_entrance?: boolean | null
           is_published?: boolean | null
           level?: string | null
           max_attempts?: number | null
           max_review_views?: number | null
           max_warnings?: number | null
+          mic_required?: boolean | null
           options_alignment?: string | null
           options_bold?: boolean | null
           options_font_size?: number | null
@@ -1352,6 +1372,7 @@ export type Database = {
           tab_switch_limit?: number | null
           term?: string | null
           time_limit_minutes?: number | null
+          timezone?: string | null
           title?: string
           title_ar?: string | null
           type?: string | null
@@ -4946,6 +4967,15 @@ export type Database = {
       admin_delete_user_account: {
         Args: { target_user_id: string }
         Returns: undefined
+      }
+      admin_grade_attempt: {
+        Args: {
+          _attempt_id: string
+          _passing?: number
+          _score: number
+          _total: number
+        }
+        Returns: Json
       }
       extract_arabic_part: { Args: { txt: string }; Returns: string }
       extract_english_part: { Args: { txt: string }; Returns: string }
