@@ -105,11 +105,11 @@ const CourseModal=React.memo(({ed,onClose,onSave,busy}:{ed?:any;onClose:()=>void
       <div style={{background:"#fff",borderRadius:20,width:"100%",maxWidth:500,maxHeight:"90vh",overflowY:"auto"}}>
         <div style={{padding:"16px 20px",borderBottom:"1px solid #E5E7EB",display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:"#fff"}}>
           <h2 style={{fontSize:15,fontWeight:800,color:"#111",margin:0}}>{ed?"Edit Course":"New Course"}</h2>
-          <button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:"#9CA3AF"}}>×</button>
+          <button type="button" onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:"#9CA3AF"}}>×</button>
         </div>
         <div style={{padding:20,display:"flex",flexDirection:"column",gap:14}}>
           <input ref={ref} type="file" accept="image/*" style={{display:"none"}} onChange={handleFile}/>
-          <button onClick={()=>ref.current?.click()} style={{height:100,borderRadius:12,border:"2px dashed #E5E7EB",background:"#F9FAFB",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8,color:"#9CA3AF",fontSize:13}}>
+          <button type="button" onClick={()=>ref.current?.click()} style={{height:100,borderRadius:12,border:"2px dashed #E5E7EB",background:"#F9FAFB",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8,color:"#9CA3AF",fontSize:13}}>
             {up?<Loader2 size={20} style={{animation:"spin .8s linear infinite"}}/>:f.image_url?<img src={f.image_url} alt="" style={{height:"100%",borderRadius:10}}/>:<><Image size={20}/> Upload thumbnail</>}
           </button>
           <Fld label="Course Title (English)"><input value={f.title} onChange={e=>setF(c=>({...c,title:e.target.value}))} style={inp} placeholder="e.g. Quran Memorisation" autoFocus/></Fld>
@@ -128,7 +128,7 @@ const CourseModal=React.memo(({ed,onClose,onSave,busy}:{ed?:any;onClose:()=>void
             <input type="checkbox" id="cpub" checked={f.is_published} onChange={e=>setF(c=>({...c,is_published:e.target.checked}))}/>
             <label htmlFor="cpub" style={{fontSize:13,color:"#374151"}}>Published (visible to students)</label>
           </div>
-          <button onClick={()=>onSave(f)} disabled={busy||!f.title}
+          <button type="button" onClick={()=>onSave(f)} disabled={busy||!f.title}
             style={{padding:"12px",borderRadius:12,border:"none",background:busy||!f.title?"#e5e7eb":`linear-gradient(135deg,${G},${GM})`,color:busy||!f.title?"#9ca3af":"#fff",fontWeight:800,cursor:busy||!f.title?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
             <Save size={14}/> {busy?"Saving…":ed?"Update Course":"Create Course"}
           </button>
@@ -155,11 +155,11 @@ const SubjectModal=React.memo(({ed,teachers,onClose,onSave,busy}:{ed?:any;teache
       <div style={{background:"#fff",borderRadius:20,width:"100%",maxWidth:500,maxHeight:"90vh",overflowY:"auto"}}>
         <div style={{padding:"16px 20px",borderBottom:"1px solid #E5E7EB",display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:"#fff"}}>
           <h2 style={{fontSize:15,fontWeight:800,color:"#111",margin:0}}>{ed?"Edit Subject":"New Subject"}</h2>
-          <button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:"#9CA3AF"}}>×</button>
+          <button type="button" onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:"#9CA3AF"}}>×</button>
         </div>
         <div style={{padding:20,display:"flex",flexDirection:"column",gap:14}}>
           <input ref={ref} type="file" accept="image/*" style={{display:"none"}} onChange={handleFile}/>
-          <button onClick={()=>ref.current?.click()} style={{height:100,borderRadius:12,border:"2px dashed #E5E7EB",background:"#F9FAFB",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8,color:"#9CA3AF",fontSize:13}}>
+          <button type="button" onClick={()=>ref.current?.click()} style={{height:100,borderRadius:12,border:"2px dashed #E5E7EB",background:"#F9FAFB",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8,color:"#9CA3AF",fontSize:13}}>
             {up?<Loader2 size={20} style={{animation:"spin .8s linear infinite"}}/>:f.image_url?<img src={f.image_url} alt="" style={{height:"100%",borderRadius:10}}/>:<><Image size={20}/> Upload image</>}
           </button>
           <Fld label="Subject Title (English)"><input value={f.title} onChange={e=>setF(s=>({...s,title:e.target.value}))} style={inp} placeholder="e.g. Tajweed Level 1" autoFocus/></Fld>
@@ -183,7 +183,7 @@ const SubjectModal=React.memo(({ed,teachers,onClose,onSave,busy}:{ed?:any;teache
             <input type="checkbox" id="sact" checked={f.is_active} onChange={e=>setF(s=>({...s,is_active:e.target.checked}))}/>
             <label htmlFor="sact" style={{fontSize:13,color:"#374151"}}>Active (visible to students)</label>
           </div>
-          <button onClick={()=>onSave(f)} disabled={busy||!f.title}
+          <button type="button" onClick={()=>onSave(f)} disabled={busy||!f.title}
             style={{padding:"12px",borderRadius:12,border:"none",background:busy||!f.title?"#e5e7eb":`linear-gradient(135deg,${G},${GM})`,color:busy||!f.title?"#9ca3af":"#fff",fontWeight:800,cursor:busy||!f.title?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
             <Save size={14}/> {busy?"Saving…":ed?"Update Subject":"Create Subject"}
           </button>
@@ -209,7 +209,7 @@ const LessonModal=React.memo(({ed,onClose,onSave,busy}:{ed?:any;onClose:()=>void
       <div style={{background:"#fff",borderRadius:20,width:"100%",maxWidth:480,maxHeight:"90vh",overflowY:"auto"}}>
         <div style={{padding:"16px 20px",borderBottom:"1px solid #E5E7EB",display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:"#fff"}}>
           <h2 style={{fontSize:15,fontWeight:800,color:"#111",margin:0}}>{ed?"Edit Lesson":"New Lesson"}</h2>
-          <button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:"#9CA3AF"}}>×</button>
+          <button type="button" onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:"#9CA3AF"}}>×</button>
         </div>
         <div style={{padding:20,display:"flex",flexDirection:"column",gap:14}}>
           <div style={{padding:"10px 14px",borderRadius:12,background:"#F0FDF4",border:"1px solid #86EFAC",fontSize:12,color:"#166534"}}>
@@ -227,7 +227,7 @@ const LessonModal=React.memo(({ed,onClose,onSave,busy}:{ed?:any;onClose:()=>void
             <input type="checkbox" id="lfree" checked={f.is_free} onChange={e=>setF(l=>({...l,is_free:e.target.checked}))}/>
             <label htmlFor="lfree" style={{fontSize:13,color:"#374151"}}>Free preview (visible without enrolment)</label>
           </div>
-          <button onClick={()=>onSave(f)} disabled={busy||!f.title}
+          <button type="button" onClick={()=>onSave(f)} disabled={busy||!f.title}
             style={{padding:"12px",borderRadius:12,border:"none",background:busy||!f.title?"#e5e7eb":`linear-gradient(135deg,${G},${GM})`,color:busy||!f.title?"#9ca3af":"#fff",fontWeight:800,cursor:busy||!f.title?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
             <Save size={14}/> {busy?"Saving…":ed?"Update Lesson":"Add Lesson"}
           </button>
@@ -247,7 +247,7 @@ const SyllabusModal=React.memo(({ed,nextWeek,onClose,onSave,busy}:{ed?:any;nextW
       <div style={{background:"#fff",borderRadius:20,width:"100%",maxWidth:480,maxHeight:"90vh",overflowY:"auto"}}>
         <div style={{padding:"16px 20px",borderBottom:"1px solid #E5E7EB",display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:"#fff"}}>
           <h2 style={{fontSize:15,fontWeight:800,color:"#111",margin:0,display:"flex",alignItems:"center",gap:8}}><Calendar size={16} color={G}/> {ed?"Edit Week":"Add Week"}</h2>
-          <button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:"#9CA3AF"}}>×</button>
+          <button type="button" onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:"#9CA3AF"}}>×</button>
         </div>
         <div style={{padding:20,display:"flex",flexDirection:"column",gap:14}}>
           <div style={{display:"grid",gridTemplateColumns:"76px 1fr",gap:12}}>
@@ -258,7 +258,7 @@ const SyllabusModal=React.memo(({ed,nextWeek,onClose,onSave,busy}:{ed?:any;nextW
           <Fld label="Learning Objectives (one per line)">
             <textarea value={f.objectives} onChange={e=>setF(s=>({...s,objectives:e.target.value}))} rows={4} style={{...inp,resize:"vertical",fontFamily:"monospace",fontSize:12}} placeholder={"Listen to each ayah 5 times\nRecite each ayah 10 times\nMemorize by end of week"}/>
           </Fld>
-          <button onClick={()=>onSave(f)} disabled={busy||!f.title}
+          <button type="button" onClick={()=>onSave(f)} disabled={busy||!f.title}
             style={{padding:"12px",borderRadius:12,border:"none",background:busy||!f.title?"#e5e7eb":`linear-gradient(135deg,${G},${GM})`,color:busy||!f.title?"#9ca3af":"#fff",fontWeight:800,cursor:busy||!f.title?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
             <Save size={14}/> {busy?"Saving…":ed?"Save Changes":"Add Week"}
           </button>
@@ -286,18 +286,11 @@ const MaterialModal=React.memo(({ed,subjectId,sortOrder,onClose,onSaved}:{ed?:an
       if(file){
         const ext=file.name.split(".").pop();
         const path=`materials/${subjectId}/${crypto.randomUUID()}.${ext}`;
-        const {error}=await supabase.storage.from("subject-files").upload(path,file,{upsert:true,contentType:file.type});
+        const {error}=await supabase.storage.from("subject-files").upload(path,file);
         if(error) throw error;
         fileUrl=path; fileType=file.type; fileSize=file.size;
       }
-      const payload:any={
-        subject_id:subjectId,
-        title:f.title,
-        material_type:f.material_type,
-        file_url:fileUrl||null,
-        ...(fileType?{file_type:fileType}:{}),
-        ...(fileSize?{file_size:fileSize}:{}),
-      };
+      const payload:any={subject_id:subjectId,title:f.title,material_type:f.material_type,file_url:fileUrl||null,content:f.content||null,is_downloadable:f.is_downloadable,sort_order:f.sort_order,...(fileType?{file_type:fileType}:{}),...(fileSize?{file_size:fileSize}:{})};
       if(ed?.id){const {error}=await supabase.from("subject_materials").update(payload).eq("id",ed.id);if(error) throw error;}
       else{const {error}=await supabase.from("subject_materials").insert(payload);if(error) throw error;}
       toast({title:"✅ Material saved"});
@@ -311,7 +304,7 @@ const MaterialModal=React.memo(({ed,subjectId,sortOrder,onClose,onSaved}:{ed?:an
       <div style={{background:"#fff",borderRadius:20,width:"100%",maxWidth:480,maxHeight:"92vh",overflowY:"auto"}}>
         <div style={{padding:"16px 20px",borderBottom:"1px solid #E5E7EB",display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:"#fff"}}>
           <h2 style={{fontSize:15,fontWeight:800,color:"#111",margin:0,display:"flex",alignItems:"center",gap:8}}><Upload size={15} color={G}/> {ed?"Edit Material":"Upload Material"}</h2>
-          <button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:"#9CA3AF"}}>×</button>
+          <button type="button" onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:"#9CA3AF"}}>×</button>
         </div>
         <div style={{padding:20,display:"flex",flexDirection:"column",gap:16}}>
           <Fld label="Title *"><input value={f.title} onChange={e=>setF(m=>({...m,title:e.target.value}))} style={inp} placeholder="e.g. Week 1 Worksheet" autoFocus/></Fld>
@@ -344,7 +337,7 @@ const MaterialModal=React.memo(({ed,subjectId,sortOrder,onClose,onSaved}:{ed?:an
                       <p style={{fontSize:13,fontWeight:600,color:"#374151",margin:0}}>{file.name}</p>
                       <p style={{fontSize:11,color:"#9CA3AF",margin:0}}>{fmtSize(file.size)}</p>
                     </div>
-                    <button onClick={e=>{e.stopPropagation();setFile(null);}} style={{background:"none",border:"none",cursor:"pointer",color:"#9CA3AF"}}><X size={15}/></button>
+                    <button type="button" onClick={e=>{e.stopPropagation();setFile(null);}} style={{background:"none",border:"none",cursor:"pointer",color:"#9CA3AF"}}><X size={15}/></button>
                   </div>
                 ):(
                   <><Upload size={26} style={{color:"#D1D5DB",margin:"0 auto 8px",display:"block"}}/><p style={{fontSize:13,color:"#6B7280",fontWeight:500,margin:"0 0 4px"}}>Drop file here or tap to browse</p><p style={{fontSize:11,color:"#9CA3AF",margin:0}}>PDF, Word, Images, Audio, Video — all formats</p></>
@@ -360,7 +353,7 @@ const MaterialModal=React.memo(({ed,subjectId,sortOrder,onClose,onSaved}:{ed?:an
             <div><p style={{fontSize:13,fontWeight:600,color:"#374151",margin:0}}>Allow Download</p><p style={{fontSize:11,color:"#9CA3AF",margin:"2px 0 0"}}>Students can save this file</p></div>
             <Switch checked={f.is_downloadable} onCheckedChange={v=>setF(m=>({...m,is_downloadable:v}))}/>
           </div>
-          <button onClick={doSave} disabled={!f.title||uploading}
+          <button type="button" onClick={doSave} disabled={!f.title||uploading}
             style={{padding:"13px",borderRadius:12,border:"none",background:!f.title||uploading?"#e5e7eb":`linear-gradient(135deg,${G},${GM})`,color:!f.title||uploading?"#9ca3af":"#fff",fontWeight:800,cursor:!f.title||uploading?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8,fontSize:14}}>
             {uploading?<><Loader2 size={15} style={{animation:"spin .8s linear infinite"}}/> Uploading…</>:<><Upload size={14}/> {ed?"Save Changes":"Upload Material"}</>}
           </button>
@@ -403,7 +396,7 @@ export default function CourseManagement() {
   const {data:courses=[],isLoading:cLoad}=useQuery({queryKey:["adm-courses"],queryFn:async()=>{const {data}=await supabase.from("courses").select("*").order("sort_order");return data||[];}});
   const {data:subjects=[],isLoading:sLoad}=useQuery({queryKey:["adm-subjects",selCourse?.id],enabled:view!=="courses",queryFn:async()=>{let q=supabase.from("subjects").select("*").order("title");if(selCourse)q=q.eq("course_id",selCourse.id);const {data}=await q;return data||[];}});
   const {data:allSubjects=[]}=useQuery({queryKey:["adm-all-subjects"],queryFn:async()=>{const {data}=await supabase.from("subjects").select("id,title,level,course_id").order("title");return data||[];}});
-  const {data:lessons=[],isLoading:lLoad}=useQuery({queryKey:["adm-lessons",selSubject?.id],enabled:!!selSubject,queryFn:async()=>{const {data}=await supabase.from("lessons").select("*").eq("subject_id",selSubject?.id||"").order("sort_order");return data||[];}});
+  const {data:lessons=[],isLoading:lLoad}=useQuery({queryKey:["adm-lessons",selSubject?.id],enabled:!!selSubject,queryFn:async()=>{const {data}=await supabase.from("lessons").select("*").eq("course_id",selSubject?.id||"").order("sort_order");return data||[];}});
   const {data:syllabus=[],isLoading:syllLoad}=useQuery({queryKey:["adm-syllabus",selSubject?.id],enabled:!!selSubject,queryFn:async()=>{const {data}=await supabase.from("subject_syllabus").select("*").eq("subject_id",selSubject!.id).order("week_number");return data||[];}});
   const {data:materials=[],isLoading:matLoad}=useQuery({queryKey:["adm-materials",selSubject?.id],enabled:!!selSubject,queryFn:async()=>{const {data}=await supabase.from("subject_materials").select("*").eq("subject_id",selSubject!.id).order("sort_order").order("created_at",{ascending:false});return data||[];}});
   const {data:teachers=[]}=useQuery({queryKey:["teachers-simple"],queryFn:async()=>{const {data:roles}=await supabase.from("user_roles").select("user_id").in("role",["teacher","admin"]);if(!roles?.length)return[];const {data}=await supabase.from("profiles").select("user_id,full_name").in("user_id",roles.map((r:any)=>r.user_id));return data||[];}});
@@ -441,7 +434,7 @@ export default function CourseManagement() {
 
   const delSubject=async(id:string)=>{
     if(!confirm("Delete subject and all its content?")) return;
-    await supabase.from("lessons").delete().eq("subject_id",id);
+    await supabase.from("lessons").delete().eq("course_id",id);
     await supabase.from("subjects").delete().eq("id",id);
     qc.invalidateQueries({queryKey:["adm-subjects"]});
     if(selSubject?.id===id){setSelSubject(null);setView("subjects");}
@@ -451,8 +444,9 @@ export default function CourseManagement() {
   const saveLesson=useCallback(async(p:any)=>{
     setBusy(true);
     try{
-      const d={title:p.title,title_ar:p.title_ar||null,content:p.content||null,video_url:null,duration_minutes:p.duration_minutes,sort_order:p.sort_order,subject_id:selSubject?.id,is_free:p.is_free,updated_at:new Date().toISOString()};
-      edLesson?await supabase.from("lessons").update(d).eq("id",edLesson.id):await supabase.from("lessons").insert(d);
+      const d={title:p.title,title_ar:p.title_ar||null,content:p.content||null,video_url:null,duration_minutes:p.duration_minutes,sort_order:p.sort_order,course_id:selSubject?.id,is_free:p.is_free,updated_at:new Date().toISOString()};
+      const {error:lessonErr}=edLesson?await supabase.from("lessons").update(d).eq("id",edLesson.id):await supabase.from("lessons").insert(d);
+      if(lessonErr) throw lessonErr;
       qc.invalidateQueries({queryKey:["adm-lessons",selSubject?.id]});
       setShowLesson(false);setEdLesson(null);toast({title:"✅ Lesson saved"});
     }catch(e:any){toast({title:"Error",description:e.message,variant:"destructive"});}
@@ -469,7 +463,8 @@ export default function CourseManagement() {
     setBusy(true);
     try{
       const d={subject_id:selSubject!.id,week_number:p.week_number,title:p.title,description:p.description||null,objectives:p.objectives?p.objectives.split("\n").filter(Boolean):null};
-      edSyllabus?await supabase.from("subject_syllabus").update(d).eq("id",edSyllabus.id):await supabase.from("subject_syllabus").insert(d);
+      const {error:syllErr}=edSyllabus?await supabase.from("subject_syllabus").update(d).eq("id",edSyllabus.id):await supabase.from("subject_syllabus").insert(d);
+      if(syllErr) throw syllErr;
       qc.invalidateQueries({queryKey:["adm-syllabus",selSubject!.id]});qc.invalidateQueries({queryKey:["syllabus"]});
       setShowSyllabus(false);setEdSyllabus(null);toast({title:"✅ Week saved"});
     }catch(e:any){toast({title:"Error",description:e.message,variant:"destructive"});}
@@ -518,7 +513,7 @@ export default function CourseManagement() {
       {/* Header */}
       <div style={{background:"#fff",borderBottom:"1px solid #E5E7EB",padding:"14px 16px",display:"flex",alignItems:"center",gap:10}}>
         {view!=="courses"&&(
-          <button onClick={()=>{if(view==="content"){setView("subjects");setSelSubject(null);}else{setView("courses");setSelCourse(null);}}}
+          <button type="button" onClick={()=>{if(view==="content"){setView("subjects");setSelSubject(null);}else{setView("courses");setSelCourse(null);}}}
             style={{width:34,height:34,borderRadius:8,border:"1.5px solid #E5E7EB",background:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
             <ChevronLeft size={16} color="#6B7280"/>
           </button>
@@ -533,7 +528,7 @@ export default function CourseManagement() {
             {view==="courses"?"Courses":view==="subjects"?`${selCourse?.title} — Subjects`:selSubject?.title}
           </h1>
         </div>
-        <button onClick={doAdd} style={{display:"flex",alignItems:"center",gap:6,padding:"9px 16px",borderRadius:10,border:"none",background:G,color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer"}}>
+        <button type="button" onClick={doAdd} style={{display:"flex",alignItems:"center",gap:6,padding:"9px 16px",borderRadius:10,border:"none",background:G,color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer"}}>
           <Plus size={14}/> {addLabel}
         </button>
       </div>
@@ -601,11 +596,11 @@ export default function CourseManagement() {
                     {c.title_ar&&<p style={{fontWeight:600,fontSize:12,color:GOLD,margin:"0 0 4px",direction:"rtl",fontFamily:"'Amiri',serif"}}>{c.title_ar}</p>}
                     {c.description&&<p style={{fontSize:12,color:"#9CA3AF",margin:"0 0 10px",lineHeight:1.5}}>{c.description.slice(0,80)}{c.description.length>80?"…":""}</p>}
                     <div style={{display:"flex",gap:6}}>
-                      <button onClick={()=>{setSelCourse(c);setView("subjects");}} style={{flex:1,padding:"7px",borderRadius:8,border:`1px solid ${G}`,background:G,color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
+                      <button type="button" onClick={()=>{setSelCourse(c);setView("subjects");}} style={{flex:1,padding:"7px",borderRadius:8,border:`1px solid ${G}`,background:G,color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
                         <Layers size={12}/> Manage
                       </button>
-                      <button onClick={()=>{setEdCourse(c);setShowCourse(true);}} style={{padding:"7px 10px",borderRadius:8,border:"1px solid #E5E7EB",background:"#fff",cursor:"pointer"}}><Edit2 size={13} color={G}/></button>
-                      <button onClick={()=>delCourse(c.id)} style={{padding:"7px 10px",borderRadius:8,border:"1px solid #FEE2E2",background:"#FEF2F2",cursor:"pointer"}}><Trash2 size={13} color="#DC2626"/></button>
+                      <button type="button" onClick={()=>{setEdCourse(c);setShowCourse(true);}} style={{padding:"7px 10px",borderRadius:8,border:"1px solid #E5E7EB",background:"#fff",cursor:"pointer"}}><Edit2 size={13} color={G}/></button>
+                      <button type="button" onClick={()=>delCourse(c.id)} style={{padding:"7px 10px",borderRadius:8,border:"1px solid #FEE2E2",background:"#FEF2F2",cursor:"pointer"}}><Trash2 size={13} color="#DC2626"/></button>
                     </div>
                   </div>
                 </div>
@@ -634,12 +629,12 @@ export default function CourseManagement() {
                       {s.title_ar&&<p style={{fontWeight:600,fontSize:11,color:GOLD,margin:"0 0 6px",direction:"rtl",fontFamily:"'Amiri',serif"}}>{s.title_ar}</p>}
                       {s.description&&<p style={{fontSize:11,color:"#9CA3AF",margin:"0 0 10px",lineHeight:1.4}}>{s.description.slice(0,60)}{s.description.length>60?"…":""}</p>}
                       <div style={{display:"flex",gap:6}}>
-                        <button onClick={()=>{setSelSubject(s);setView("content");setTab("syllabus");}}
+                        <button type="button" onClick={()=>{setSelSubject(s);setView("content");setTab("syllabus");}}
                           style={{flex:1,padding:"7px",borderRadius:8,border:`1px solid ${G}`,background:G,color:"#fff",fontSize:11,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
                           <ChevronRight size={12}/> Open
                         </button>
-                        <button onClick={()=>{setEdSubject(s);setShowSubject(true);}} style={{padding:"7px 9px",borderRadius:8,border:"1px solid #E5E7EB",background:"#fff",cursor:"pointer"}}><Edit2 size={13} color={G}/></button>
-                        <button onClick={()=>delSubject(s.id)} style={{padding:"7px 9px",borderRadius:8,border:"1px solid #FEE2E2",background:"#FEF2F2",cursor:"pointer"}}><Trash2 size={13} color="#DC2626"/></button>
+                        <button type="button" onClick={()=>{setEdSubject(s);setShowSubject(true);}} style={{padding:"7px 9px",borderRadius:8,border:"1px solid #E5E7EB",background:"#fff",cursor:"pointer"}}><Edit2 size={13} color={G}/></button>
+                        <button type="button" onClick={()=>delSubject(s.id)} style={{padding:"7px 9px",borderRadius:8,border:"1px solid #FEE2E2",background:"#FEF2F2",cursor:"pointer"}}><Trash2 size={13} color="#DC2626"/></button>
                       </div>
                     </div>
                   </div>
@@ -683,7 +678,7 @@ export default function CourseManagement() {
               <div style={{background:"#fff",borderRadius:16,padding:20}}>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>
                   <div><h3 style={{fontWeight:800,fontSize:15,color:"#111",margin:"0 0 2px"}}>Weekly Syllabus</h3><p style={{fontSize:12,color:"#9CA3AF",margin:0}}>Week-by-week course outline</p></div>
-                  <button onClick={()=>{setEdSyllabus(null);setShowSyllabus(true);}} style={{display:"flex",alignItems:"center",gap:6,padding:"8px 14px",borderRadius:10,border:"none",background:G,color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer"}}><Plus size={13}/> Add Week</button>
+                  <button type="button" onClick={()=>{setEdSyllabus(null);setShowSyllabus(true);}} style={{display:"flex",alignItems:"center",gap:6,padding:"8px 14px",borderRadius:10,border:"none",background:G,color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer"}}><Plus size={13}/> Add Week</button>
                 </div>
                 {syllLoad?<div style={{textAlign:"center",padding:40}}><Loader2 size={24} style={{animation:"spin .8s linear infinite",color:G}}/></div>
                 :(syllabus as any[]).length===0?<div style={{textAlign:"center",padding:48,color:"#9CA3AF"}}><Calendar size={44} style={{margin:"0 auto 14px",display:"block",opacity:.3}}/><p style={{fontWeight:600,margin:"0 0 4px"}}>No weeks added yet</p><p style={{fontSize:13,margin:0}}>Build the weekly plan for students</p></div>
@@ -704,9 +699,9 @@ export default function CourseManagement() {
                                 {!isEx&&s.description&&<p style={{fontSize:11,color:wc.badge,opacity:.65,margin:"2px 0 0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.description}</p>}
                               </div>
                               <div style={{display:"flex",gap:4,flexShrink:0}}>
-                                <button onClick={()=>{setEdSyllabus(s);setShowSyllabus(true);}} style={{width:28,height:28,borderRadius:8,border:"none",background:`${wc.badge}20`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><Edit2 size={12} color={wc.badge}/></button>
-                                <button onClick={()=>delSyllabus(s.id)} style={{width:28,height:28,borderRadius:8,border:"none",background:"#FEF2F2",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><Trash2 size={12} color="#DC2626"/></button>
-                                {hasD&&<button onClick={()=>setExpanded(prev=>{const n=new Set(prev);n.has(s.id)?n.delete(s.id):n.add(s.id);return n;})} style={{width:28,height:28,borderRadius:8,border:"none",background:`${wc.badge}20`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{isEx?<ChevronUp size={13} color={wc.badge}/>:<ChevronDown size={13} color={wc.badge}/>}</button>}
+                                <button type="button" onClick={()=>{setEdSyllabus(s);setShowSyllabus(true);}} style={{width:28,height:28,borderRadius:8,border:"none",background:`${wc.badge}20`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><Edit2 size={12} color={wc.badge}/></button>
+                                <button type="button" onClick={()=>delSyllabus(s.id)} style={{width:28,height:28,borderRadius:8,border:"none",background:"#FEF2F2",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><Trash2 size={12} color="#DC2626"/></button>
+                                {hasD&&<button type="button" onClick={()=>setExpanded(prev=>{const n=new Set(prev);n.has(s.id)?n.delete(s.id):n.add(s.id);return n;})} style={{width:28,height:28,borderRadius:8,border:"none",background:`${wc.badge}20`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{isEx?<ChevronUp size={13} color={wc.badge}/>:<ChevronDown size={13} color={wc.badge}/>}</button>}
                               </div>
                             </div>
                             {isEx&&hasD&&(
@@ -741,7 +736,7 @@ export default function CourseManagement() {
               <div style={{background:"#fff",borderRadius:16,padding:20}}>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>
                   <div><h3 style={{fontWeight:800,fontSize:15,color:"#111",margin:"0 0 2px"}}>Materials & Resources</h3><p style={{fontSize:12,color:"#9CA3AF",margin:0}}>{(materials as any[]).length} files</p></div>
-                  <button onClick={()=>{setEdMaterial(null);setShowMaterial(true);}} style={{display:"flex",alignItems:"center",gap:6,padding:"8px 14px",borderRadius:10,border:"none",background:G,color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer"}}><Upload size={13}/> Upload</button>
+                  <button type="button" onClick={()=>{setEdMaterial(null);setShowMaterial(true);}} style={{display:"flex",alignItems:"center",gap:6,padding:"8px 14px",borderRadius:10,border:"none",background:G,color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer"}}><Upload size={13}/> Upload</button>
                 </div>
                 {matLoad?<div style={{textAlign:"center",padding:40}}><Loader2 size={24} style={{animation:"spin .8s linear infinite",color:G}}/></div>
                 :(materials as any[]).length===0?<div style={{textAlign:"center",padding:48,color:"#9CA3AF"}}><File size={44} style={{margin:"0 auto 14px",display:"block",opacity:.3}}/><p style={{fontWeight:600,margin:"0 0 4px"}}>No materials yet</p><p style={{fontSize:13,margin:0}}>Upload files and links for students</p></div>
@@ -763,8 +758,8 @@ export default function CourseManagement() {
                         <div style={{display:"flex",gap:4,flexShrink:0}}>
                           {mat.file_url&&<button title="Open" onClick={async()=>{const u=await signedUrl(mat.file_url);window.open(u,"_blank");}} style={{width:32,height:32,borderRadius:8,border:"1px solid #E5E7EB",background:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><FileText size={13} color="#6B7280"/></button>}
                           {mat.is_downloadable&&mat.file_url&&<button title="Download" onClick={async()=>{const u=await signedUrl(mat.file_url);const a=document.createElement("a");a.href=u;a.download=mat.title;a.click();}} style={{width:32,height:32,borderRadius:8,border:"1px solid #E5E7EB",background:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><Download size={13} color="#6B7280"/></button>}
-                          <button onClick={()=>{setEdMaterial(mat);setShowMaterial(true);}} style={{width:32,height:32,borderRadius:8,border:"1px solid #E5E7EB",background:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><Edit2 size={13} color={G}/></button>
-                          <button onClick={()=>delMaterial(mat)} style={{width:32,height:32,borderRadius:8,border:"1px solid #FEE2E2",background:"#FEF2F2",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><Trash2 size={13} color="#DC2626"/></button>
+                          <button type="button" onClick={()=>{setEdMaterial(mat);setShowMaterial(true);}} style={{width:32,height:32,borderRadius:8,border:"1px solid #E5E7EB",background:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><Edit2 size={13} color={G}/></button>
+                          <button type="button" onClick={()=>delMaterial(mat)} style={{width:32,height:32,borderRadius:8,border:"1px solid #FEE2E2",background:"#FEF2F2",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><Trash2 size={13} color="#DC2626"/></button>
                         </div>
                       </div>
                     );
@@ -778,7 +773,7 @@ export default function CourseManagement() {
               <div style={{background:"#fff",borderRadius:16,padding:20}}>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
                   <div><h3 style={{fontWeight:800,fontSize:15,color:"#111",margin:"0 0 2px"}}>Live Sessions</h3><p style={{fontSize:12,color:"#9CA3AF",margin:0}}>What students will learn in each session</p></div>
-                  <button onClick={()=>{setEdLesson(null);setShowLesson(true);}} style={{display:"flex",alignItems:"center",gap:6,padding:"8px 14px",borderRadius:10,border:"none",background:G,color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer"}}><Plus size={13}/> Add Session</button>
+                  <button type="button" onClick={()=>{setEdLesson(null);setShowLesson(true);}} style={{display:"flex",alignItems:"center",gap:6,padding:"8px 14px",borderRadius:10,border:"none",background:G,color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer"}}><Plus size={13}/> Add Session</button>
                 </div>
                 {/* Info banner */}
                 <div style={{padding:"10px 14px",borderRadius:12,background:"#F0FDF4",border:"1px solid #86EFAC",fontSize:12,color:"#166534",marginBottom:16,display:"flex",gap:8,alignItems:"flex-start"}}>
@@ -809,8 +804,8 @@ export default function CourseManagement() {
                         </div>
                       </div>
                       <div style={{display:"flex",flexDirection:"column",gap:5,flexShrink:0}}>
-                        <button onClick={()=>{setEdLesson(l);setShowLesson(true);}} style={{width:30,height:30,borderRadius:8,border:"1px solid #E5E7EB",background:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><Edit2 size={12} color={G}/></button>
-                        <button onClick={()=>delLesson(l.id)} style={{width:30,height:30,borderRadius:8,border:"1px solid #FEE2E2",background:"#FEF2F2",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><Trash2 size={12} color="#DC2626"/></button>
+                        <button type="button" onClick={()=>{setEdLesson(l);setShowLesson(true);}} style={{width:30,height:30,borderRadius:8,border:"1px solid #E5E7EB",background:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><Edit2 size={12} color={G}/></button>
+                        <button type="button" onClick={()=>delLesson(l.id)} style={{width:30,height:30,borderRadius:8,border:"1px solid #FEE2E2",background:"#FEF2F2",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><Trash2 size={12} color="#DC2626"/></button>
                       </div>
                     </div>
                   ))}
