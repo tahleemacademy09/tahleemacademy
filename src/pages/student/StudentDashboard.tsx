@@ -227,12 +227,12 @@ const StudentDashboard = () => {
 
   // ── Realtime notifications — live updates ─────────
   useEffect(() => {
-    if (!user?.id) return;
+    if (!effectiveUserId) return;
     const channel = supabase
       .channel('student-notifications')
       .on(
         'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${user.id}` },
+        { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${effectiveUserId}` },
         (payload) => {
           setNotifications(prev => [payload.new as any, ...prev]);
           // Browser notification if permitted
