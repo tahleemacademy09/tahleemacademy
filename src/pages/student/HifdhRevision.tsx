@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import {
-  BarChart3, Mic, Brain, Target, FileCheck,
+  BarChart3, Mic, MicOff, Brain, Target, FileCheck,
   Play, Pause, SkipBack, SkipForward, Minus, Plus,
   Maximize2, Minimize2, BookOpen, Flame, Star, ChevronRight,
-  Moon, Award
+  Moon, Award, X, CheckCircle2, AlertTriangle, Loader2
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -245,6 +245,157 @@ export default function HifdhRevision() {
   const [fontSize,    setFontSize]    = useState(26);
   const [flipDir,     setFlipDir]     = useState<"next" | "prev" | null>(null);
   const [fullscreen,  setFullscreen]  = useState(false);
+
+  // ── AI Revision Recording State ──
+  const [isRecording,    setIsRecording]    = useState(false);
+  const [recTime,        setRecTime]        = useState(0);
+  const [showResults,    setShowResults]    = useState(false);
+  const [aiScoring,      setAiScoring]      = useState(false);
+  const [aiScore,        setAiScore]        = useState<number | null>(null);
+  const [aiTranscript,   setAiTranscript]   = useState<string | null>(null);
+  const [wordErrors,     setWordErrors]     = useState<{word: string; status: "correct"|"wrong"|"missing"}[]>([]);
+  const mediaRecRef  = useRef<MediaRecorder | null>(null);
+  const recChunksRef = useRef<Blob[]>([]);
+  const recTimerRef  = useRef<any>(null);
+
+  const GROQ_KEY = import.meta.env.VITE_GROQ_API_KEY || "";
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mime = ["audio/webm;codecs=opus","audio/webm","audio/mp4","audio/ogg"].find(t => {
+        try { return MediaRecorder.isTypeSupported(t); } catch { return false; }
+      }) || "";
+      const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      recChunksRef.current = [];
+      mr.ondataavailable = e => { if (e.data?.size > 0) recChunksRef.current.push(e.data); };
+      mr.onstop = () => {
+        stream.getTracks().forEach(t => t.stop());
+        clearInterval(recTimerRef.current);
+        const blob = new Blob(recChunksRef.current, { type: mime || "audio/webm" });
+        if (blob.size > 0) runAiEvaluation(blob);
+      };
+      mr.start(200);
+      mediaRecRef.current = mr;
+      setIsRecording(true);
+      setRecTime(0);
+      recTimerRef.current = setInterval(() => setRecTime(t => t + 1), 1000);
+    } catch {
+      console.error("Mic denied");
+    }
+  };
+
+  const stopRecording = () => {
+    mediaRecRef.current?.stop();
+    setIsRecording(false);
+    clearInterval(recTimerRef.current);
+  };
+
+  const runAiEvaluation = async (blob: Blob) => {
+    setAiScoring(true);
+    setShowResults(true);
+    setAiScore(null);
+    setAiTranscript(null);
+    setWordErrors([]);
+
+    try {
+      let transcript = "";
+
+      // Transcribe via Groq Whisper
+      if (GROQ_KEY) {
+        const fd = new FormData();
+        fd.append("file", new File([blob], "recitation.webm", { type: blob.type || "audio/webm" }));
+        fd.append("model", "whisper-large-v3");
+        fd.append("language", "ar");
+        fd.append("response_format", "json");
+        fd.append("temperature", "0");
+        fd.append("prompt", "بسم الله الرحمن الرحيم الحمد لله رب العالمين الرحمن الرحيم");
+        const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+          method: "POST", headers: { Authorization: `Bearer ${GROQ_KEY}` }, body: fd,
+        });
+        if (r.ok) transcript = (await r.json()).text || "";
+      }
+
+      // Fallback: transcribe-hifdh edge function
+      if (!transcript) {
+        try {
+          const b64 = await new Promise<string>(resolve => {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+              const result = reader.result as string;
+              resolve(result.split(",")[1] || "");
+            };
+            reader.readAsDataURL(blob);
+          });
+          const { data } = await supabase.functions.invoke("transcribe-hifdh", {
+            body: { audio: b64, mimeType: blob.type || "audio/webm" },
+          });
+          transcript = data?.transcript || "";
+        } catch { /* ignore */ }
+      }
+
+      setAiTranscript(transcript);
+
+      // Compare to reference Quran text on current page
+      const refText = (pageDataRef.current?.ayahs || []).map((a: any) => a.text).join(" ");
+      const refWords = refText.replace(/[^\u0600-\u06FF\s]/g, "").trim().split(/\s+/).filter(Boolean);
+      const gotWords = transcript.replace(/[^\u0600-\u06FF\s]/g, "").trim().split(/\s+/).filter(Boolean);
+
+      // Word-level comparison
+      const errors: {word: string; status: "correct"|"wrong"|"missing"}[] = [];
+      const usedGot = new Set<number>();
+
+      refWords.forEach(refW => {
+        const cleanRef = refW.replace(/[\u064B-\u065F\u0670]/g, ""); // strip tashkeel for comparison
+        let found = false;
+        for (let i = 0; i < gotWords.length; i++) {
+          if (usedGot.has(i)) continue;
+          const cleanGot = gotWords[i].replace(/[\u064B-\u065F\u0670]/g, "");
+          if (cleanRef === cleanGot || cleanRef.includes(cleanGot.slice(0, 3)) || cleanGot.includes(cleanRef.slice(0, 3))) {
+            errors.push({ word: refW, status: "correct" });
+            usedGot.add(i);
+            found = true;
+            break;
+          }
+        }
+        if (!found) errors.push({ word: refW, status: "missing" });
+      });
+
+      // Extra words said by student that don't match
+      gotWords.forEach((w, i) => {
+        if (!usedGot.has(i)) errors.push({ word: w, status: "wrong" });
+      });
+
+      setWordErrors(errors);
+
+      const correctCount = errors.filter(e => e.status === "correct").length;
+      const score = refWords.length > 0 ? Math.round((correctCount / refWords.length) * 100) : 0;
+      setAiScore(score);
+
+      // Save to hifdh_recordings
+      if (userId) {
+        const firstSurahOnPage = pageDataRef.current?.ayahs?.[0]?.surah;
+        await (supabase as any).from("hifdh_recordings").insert({
+          student_id: userId,
+          surah_name: firstSurahOnPage?.englishName || "",
+          surah_num: firstSurahOnPage?.number || 0,
+          ai_score: score,
+          transcript,
+          word_results: errors,
+          status: "completed",
+          created_at: new Date().toISOString(),
+        });
+      }
+    } catch (e) {
+      console.error("AI evaluation error:", e);
+      setAiTranscript("Evaluation failed — please try again");
+      setAiScore(0);
+    } finally {
+      setAiScoring(false);
+    }
+  };
+
+  const fmtTime = (s: number) => `${Math.floor(s/60).toString().padStart(2,"0")}:${(s%60).toString().padStart(2,"0")}`;
 
   const audioRef    = useRef<HTMLAudioElement>(null);
   const playingRef  = useRef(0);
@@ -719,6 +870,18 @@ export default function HifdhRevision() {
                   <Plus size={10} color={GOLD} />
                 </button>
 
+                {/* Mic — AI Evaluation */}
+                <button
+                  className="ctrl w-7 h-7 flex-none"
+                  style={{ background: isRecording ? "#dc2626" : "#1e4030" }}
+                  onClick={isRecording ? stopRecording : startRecording}
+                >
+                  {isRecording ? <MicOff size={11} color="#fff" /> : <Mic size={11} color={GOLD} />}
+                </button>
+                {isRecording && (
+                  <span className="text-[9px] font-bold" style={{ color: "#dc2626" }}>{fmtTime(recTime)}</span>
+                )}
+
                 {/* Fullscreen toggle */}
                 <button
                   className="ctrl w-6 h-6 flex-none"
@@ -730,6 +893,83 @@ export default function HifdhRevision() {
                     : <Maximize2 size={10} color={GOLD} />
                   }
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── AI Evaluation Results Overlay ── */}
+        {showResults && (
+          <div className="absolute inset-0 z-[60] flex items-center justify-center" style={{ background: "rgba(0,0,0,.85)" }}>
+            <div className="w-full max-w-md mx-4 rounded-2xl overflow-hidden" style={{ background: PARCHMENT, maxHeight: "85vh", overflowY: "auto" }}>
+              <div className="flex items-center justify-between px-5 py-4" style={{ background: DARK_GREEN }}>
+                <span className="text-white font-bold text-sm">🎙️ AI Recitation Evaluation</span>
+                <button onClick={() => setShowResults(false)} className="text-white/60 hover:text-white"><X size={18}/></button>
+              </div>
+              <div className="p-5">
+                {aiScoring ? (
+                  <div className="flex flex-col items-center gap-3 py-8">
+                    <Loader2 size={32} className="animate-spin" style={{ color: GOLD }} />
+                    <p className="text-sm font-bold" style={{ color: DARK_GREEN }}>Analyzing your recitation…</p>
+                  </div>
+                ) : (
+                  <>
+                    {/* Score circle */}
+                    {aiScore !== null && (
+                      <div className="flex flex-col items-center mb-5">
+                        <div className="w-24 h-24 rounded-full flex items-center justify-center mb-2" style={{
+                          background: aiScore >= 80 ? "#dcfce7" : aiScore >= 60 ? "#fef9c3" : "#fee2e2",
+                          border: `4px solid ${aiScore >= 80 ? "#16a34a" : aiScore >= 60 ? "#ca8a04" : "#dc2626"}`,
+                        }}>
+                          <span className="text-3xl font-black" style={{ color: aiScore >= 80 ? "#166534" : aiScore >= 60 ? "#854d0e" : "#dc2626" }}>
+                            {aiScore}%
+                          </span>
+                        </div>
+                        <span className="text-xs font-bold" style={{ color: aiScore >= 80 ? "#16a34a" : aiScore >= 60 ? "#ca8a04" : "#dc2626" }}>
+                          {aiScore >= 80 ? "ممتاز — Excellent" : aiScore >= 60 ? "جيد — Good" : "يحتاج تحسين — Needs Practice"}
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Word-level errors */}
+                    {wordErrors.length > 0 && (
+                      <div className="mb-4">
+                        <p className="text-xs font-bold mb-2" style={{ color: DARK_GREEN }}>Word Analysis:</p>
+                        <div className="flex flex-wrap gap-1 p-3 rounded-xl" style={{ background: "#fff", border: `1px solid ${GOLD}44`, direction: "rtl" }}>
+                          {wordErrors.filter(e => e.status !== "wrong").map((e, i) => (
+                            <span key={i} className="px-1.5 py-0.5 rounded text-sm font-semibold" style={{
+                              fontFamily: "'Amiri',serif",
+                              background: e.status === "correct" ? "#dcfce7" : "#fee2e2",
+                              color: e.status === "correct" ? "#166534" : "#dc2626",
+                            }}>
+                              {e.word}
+                            </span>
+                          ))}
+                        </div>
+                        <div className="flex gap-3 mt-2 text-[10px]">
+                          <span className="flex items-center gap-1"><CheckCircle2 size={10} color="#16a34a"/> Correct: {wordErrors.filter(e=>e.status==="correct").length}</span>
+                          <span className="flex items-center gap-1"><AlertTriangle size={10} color="#dc2626"/> Missing: {wordErrors.filter(e=>e.status==="missing").length}</span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Transcript */}
+                    {aiTranscript && (
+                      <div className="mb-4">
+                        <p className="text-xs font-bold mb-1" style={{ color: DARK_GREEN }}>Your Transcript:</p>
+                        <p className="text-sm p-3 rounded-xl" style={{ fontFamily: "'Amiri',serif", direction: "rtl", background: "#fff", border: "1px solid #e5e7eb", lineHeight: 2 }}>
+                          {aiTranscript}
+                        </p>
+                      </div>
+                    )}
+
+                    <button onClick={() => setShowResults(false)}
+                      className="w-full py-3 rounded-xl font-bold text-sm text-white"
+                      style={{ background: DARK_GREEN }}>
+                      Close & Try Again
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           </div>

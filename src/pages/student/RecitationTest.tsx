@@ -244,16 +244,21 @@ const RecitationTest = () => {
         status:                  "awaiting_teacher",
       }).eq("user_id", user.id);
 
-      // Notify admin
+      // Notify ALL admins about the booking
       try {
-        await (supabase as any).from("notifications").insert({
-          user_id:    user.id,
-          title:      "📅 Virtual Session Requested",
-          message:    `${(profile as any)?.full_name || "A student"} has booked a virtual session for ${sessionDate} at ${sessionTime}`,
-          type:       "recitation_booking",
-          is_read:    false,
-          created_at: new Date().toISOString(),
-        });
+        const { data: adminRoles } = await supabase.from("user_roles").select("user_id").eq("role", "admin");
+        const adminIds = (adminRoles || []).map((r: any) => r.user_id);
+        if (adminIds.length > 0) {
+          const notifications = adminIds.map((adminId: string) => ({
+            user_id:    adminId,
+            title:      "📅 Virtual Recitation Session Requested",
+            message:    `${(profile as any)?.full_name || "A student"} has booked a virtual recitation session for ${sessionDate} at ${sessionTime}. Go to Tasjeel → Reviews to join.`,
+            type:       "recitation_booking",
+            is_read:    false,
+            created_at: new Date().toISOString(),
+          }));
+          await (supabase as any).from("notifications").insert(notifications);
+        }
       } catch { /* non-critical */ }
 
       // Advance pipeline → level_assignment (awaiting admin approval)
