@@ -30,10 +30,9 @@ const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
   // Not logged in → send to login
   if (!user) return <Navigate to="/login" replace />;
 
-  // ── Issue 2 fix: admins must never land on /student/* ────────────────────
-  // If this user is an admin and they're navigating to a student-only path,
-  // send them straight to the admin dashboard.
-  if (hasRole("admin") && location.pathname.startsWith("/student")) {
+  // ── Admins must not land on /student/* UNLESS impersonating ───────────
+  const isImpersonating = !!sessionStorage.getItem("admin_impersonate_student");
+  if (hasRole("admin") && location.pathname.startsWith("/student") && !isImpersonating) {
     return <Navigate to="/admin" replace />;
   }
 

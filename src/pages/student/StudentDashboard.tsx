@@ -1,4 +1,5 @@
 import { useTasjeel } from "@/hooks/useTasjeel";
+import { useImpersonation } from "@/hooks/useImpersonation";
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import QuranPhrasesWidget from "@/components/dashboard/QuranPhrasesWidget";
@@ -72,6 +73,7 @@ const StudentDashboard = () => {
   const { t, language } = useLanguage();
   const { user, profile, refreshProfile } = useAuth();
   const { currentStep } = useTasjeel();
+  const { effectiveUserId, isImpersonating } = useImpersonation();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -85,17 +87,27 @@ const StudentDashboard = () => {
   const [calendarMonth, setCalendarMonth] = useState(new Date());
   const [showAllNotifs, setShowAllNotifs] = useState(false);
   const [greetingSpoken, setGreetingSpoken] = useState(false);
+  const [impersonatedProfile, setImpersonatedProfile] = useState<any>(null);
+
+  // Load impersonated student's profile
+  useEffect(() => {
+    if (!isImpersonating) return;
+    supabase.from("profiles").select("*").eq("user_id", effectiveUserId).maybeSingle()
+      .then(({ data }) => { if (data) setImpersonatedProfile(data); });
+  }, [isImpersonating, effectiveUserId]);
+
+  const displayProfile = isImpersonating ? impersonatedProfile : profile;
 
   // ── GATEKEEPING: Redirect to awaiting-level if not yet assigned ─────────
   useEffect(() => {
-    if (!loading && currentStep !== "completed") {
+    if (!loading && currentStep !== "completed" && !isImpersonating) {
       navigate("/student/awaiting-level", { replace: true });
     }
-  }, [loading, currentStep, navigate]);
+  }, [loading, currentStep, navigate, isImpersonating]);
 
   // ── Voice greeting — short, simple, works everywhere ─────────
   useEffect(() => {
-    if (!profile?.full_name || greetingSpoken || loading) return;
+    if (!profile?.full_name || greetingSpoken || loading || isImpersonating) return;
     // Use sessionStorage to prevent double-play across re-renders and hot reloads
     const key = 'tahleem-greeted-' + (user?.id || '');
     if (sessionStorage.getItem(key)) { setGreetingSpoken(true); return; }
@@ -177,20 +189,21 @@ const StudentDashboard = () => {
   const today = new Date();
 
   useEffect(() => {
-    if (!user) return;
+    if (!effectiveUserId) return;
     const fetchData = async () => {
       setFetchError(null);
-      await refreshProfile().catch(() => {});
+      if (!isImpersonating) await refreshProfile().catch(() => {});
       try {
+        const uid = effectiveUserId;
         const [enrollRes, gradedAttemptsRes, pendingAttemptsRes, notifsRes, assignmentsRes,
           recentRes, allAttemptsRes, subjectsRes, calendarExamsRes, subAssignmentsRes] = await Promise.all([
-          supabase.from("enrollments").select("id").eq("user_id", user.id),
-          supabase.from("exam_attempts").select("percentage").eq("user_id", user.id).eq("status", "graded"),
-          supabase.from("exam_attempts").select("id").eq("user_id", user.id).eq("status", "submitted"),
-          supabase.from("notifications").select("*").eq("user_id", user.id).order("created_at", { ascending: false }).limit(20),
-          supabase.from("exam_assignments").select("exam_id, exams(*)").eq("user_id", user.id),
-          supabase.from("exam_attempts").select("*, exams(title, title_ar)").eq("user_id", user.id).in("status", ["graded", "submitted"]).order("submitted_at", { ascending: false }).limit(5),
-          supabase.from("exam_attempts").select("exam_id, status, percentage").eq("user_id", user.id),
+          supabase.from("enrollments").select("id").eq("user_id", uid),
+          supabase.from("exam_attempts").select("percentage").eq("user_id", uid).eq("status", "graded"),
+          supabase.from("exam_attempts").select("id").eq("user_id", uid).eq("status", "submitted"),
+          supabase.from("notifications").select("*").eq("user_id", uid).order("created_at", { ascending: false }).limit(20),
+          supabase.from("exam_assignments").select("exam_id, exams(*)").eq("user_id", uid),
+          supabase.from("exam_attempts").select("*, exams(title, title_ar)").eq("user_id", uid).in("status", ["graded", "submitted"]).order("submitted_at", { ascending: false }).limit(5),
+          supabase.from("exam_attempts").select("exam_id, status, percentage").eq("user_id", uid),
           supabase.from("subjects").select("*").eq("is_active", true).limit(4),
           supabase.from("exams").select("id, title, title_ar, start_date, end_date, time_limit_minutes").eq("is_published", true),
           supabase.from("subject_assignments").select("id, title, deadline, subject_id, subjects(title, title_ar)"),
@@ -220,16 +233,16 @@ const StudentDashboard = () => {
       }
     };
     fetchData();
-  }, [user]);
+  }, [effectiveUserId]);
 
   // ── Realtime notifications — live updates ─────────
   useEffect(() => {
-    if (!user?.id) return;
+    if (!effectiveUserId) return;
     const channel = supabase
       .channel('student-notifications')
       .on(
         'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${user.id}` },
+        { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${effectiveUserId}` },
         (payload) => {
           setNotifications(prev => [payload.new as any, ...prev]);
           // Browser notification if permitted
@@ -249,7 +262,7 @@ const StudentDashboard = () => {
     }
 
     return () => { supabase.removeChannel(channel); };
-  }, [user?.id]);
+  }, [effectiveUserId]);
 
   const calendarYear = calendarMonth.getFullYear();
   const calendarMonthIdx = calendarMonth.getMonth();
@@ -348,7 +361,7 @@ const StudentDashboard = () => {
                 </span>
               </div>
               <p style={{ fontSize:17, fontWeight:700, color:"rgba(255,255,255,0.92)", margin:"0 0 5px", letterSpacing:"-0.2px" }}>
-                {t(`Marhaban, ${profile?.full_name || "Student"}! 👋`, `مرحباً، ${profile?.full_name || "طالب"}! 👋`)}
+                {t(`Marhaban, ${displayProfile?.full_name || "Student"}! 👋`, `مرحباً، ${displayProfile?.full_name || "طالب"}! 👋`)}
               </p>
               <p style={{ fontSize:12, color:"rgba(255,255,255,0.45)", margin:0 }}>
                 {today.toLocaleDateString(language === "ar" ? "ar-SA" : "en-US", { weekday:"long", month:"long", day:"numeric" })}
