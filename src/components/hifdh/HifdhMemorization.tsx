@@ -1,8 +1,8 @@
 // src/components/hifdh/HifdhMemorization.tsx
-// HANDS-FREE AUTO-RECORDING
-//   • Zero clicks required: starts listening automatically
-//   • Auto-detects silence (2s), counts if match, and restarts listening
-//   • Continuous loop: Listen -> Silence -> Count -> Listen
+// HANDS-FREE AUTO-RECORDING (FIXED CIRCULAR DEPENDENCY)
+//   • Uses useRef to break the cycle between startSR and startSilenceChecker
+//   • Starts listening automatically on step change
+//   • Loops: Listen -> Silence (2s) -> Count -> Listen
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import { SURAHS, RECITERS, audioUrl, DEFAULT_RECITER } from "./surahData";
@@ -17,7 +17,7 @@ const BORDER = "#d4e8d4";
 const PARCH  = "#faf6ec";
 const PARCH2 = "#f3ead8";
 
-const SESSION_KEY = "hifdh_mem_v13";
+const SESSION_KEY = "hifdh_mem_v14";
 
 /* ── Rep count options ───────────────────────────────────────── */
 const REP_OPTIONS = [5, 7, 10, 15, 20] as const;
@@ -152,7 +152,7 @@ const STEP_STYLE: Record<StepType, { bg: string; text: string; border: string; i
 };
 
 /* ══════════════════════════════════════════════════════════════
-   COMPONENT - HANDS-FREE AUTO-RECORDING
+   COMPONENT - HANDS-FREE AUTO-RECORDING (FIXED)
 ══════════════════════════════════════════════════════════════ */
 export default function HifdhMemorization({ reciter: reciterProp }: Props) {
 
@@ -200,10 +200,14 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
   const micTimerRef        = useRef<ReturnType<typeof setInterval> | null>(null);
   const verseRefs          = useRef<Record<number, HTMLDivElement | null>>({});
   
-  /* ── VOICE ACTIVATION REFS ─────────────────────────────────── */
+  /* ── VOICE ACTIVATION REFS (To break circular dependency) ─── */
   const lastVoiceTimeRef   = useRef<number>(0);
   const silenceCheckRef    = useRef<ReturnType<typeof setInterval> | null>(null);
   const currentTranscriptRef = useRef("");
+  
+  // Refs to hold the callback functions so they can call each other
+  const startSRRef = useRef<() => void>(() => {});
+  const startSilenceCheckerRef = useRef<() => void>(() => {});
 
   const surah = SURAHS[surahNum - 1];
 
@@ -239,11 +243,11 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
     } catch { /**/ }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
   /* ── Fetch ayahs ────────────────────────────────────────────── */
   const fetchAyahs = useCallback(async (num: number) => {
     setLoading(true); setFetchError("");
-    try {      const res  = await fetch(`https://api.alquran.cloud/v1/surah/${num}/ar.uthmani`);
+    try {
+      const res  = await fetch(`https://api.alquran.cloud/v1/surah/${num}/ar.uthmani`);
       const json = await res.json();
       if (json.code === 200) {
         const loaded: Ayah[] = json.data.ayahs;
@@ -288,11 +292,11 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
     au.play().catch(() => { playingRef.current = false; setIsPlaying(false); });
   }, [stopAudio]);
 
-  /* ── Count one rep ─────────────────────────────────────────── */
-  const countOneRep = useCallback(() => {
+  /* ── Count one rep ─────────────────────────────────────────── */  const countOneRep = useCallback(() => {
     if (cooldownRef.current) return;
     cooldownRef.current = true;
     setTimeout(() => { cooldownRef.current = false; }, 1200);
+
     const done = repsDoneRef.current + 1;
     repsDoneRef.current = done;
     setRepsDone(done);
@@ -311,10 +315,9 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
     saveSession({ repsDone: done });
 
     // Note: We do NOT stop the mic here. The silence handler will restart it.
-    // We only stop if the step is finished.
     if (done >= totalRepsRef.current) {
       setTimeout(() => {
-        stopSR(); // Stop mic if we are done with this step
+        stopSR(); 
         setTimeout(() => advanceStepRef.current(), 500);
       }, 300);
     }
@@ -322,27 +325,23 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
 
   /* ── Check for silence (2 seconds) ─────────────────────────── */
   const startSilenceChecker = useCallback(() => {
-    // Clear any existing checker
     if (silenceCheckRef.current) {
       clearInterval(silenceCheckRef.current);
     }
     
-    // Check every 500ms if 2s have passed since last voice
     silenceCheckRef.current = setInterval(() => {
       const silenceDuration = Date.now() - lastVoiceTimeRef.current;
       if (silenceDuration > 2000) {
-        // 2 seconds of silence - process what we have
+        // 2 seconds of silence
         
-        // Stop the mic first so we can restart it cleanly after processing
         if (silenceCheckRef.current) {
           clearInterval(silenceCheckRef.current);
           silenceCheckRef.current = null;
         }
-        stopSR(); // Stops mic and clears UI states like isListening
+        stopSR(); 
         
-        // Try to match and count
-        const step = stepsRef.current[stepIdxRef.current];        if (step && step.type !== "overview") {
-          const targets = step.indices.map(i => sessionAyahsRef.current[i]).filter(Boolean);
+        const step = stepsRef.current[stepIdxRef.current];
+        if (step && step.type !== "overview") {          const targets = step.indices.map(i => sessionAyahsRef.current[i]).filter(Boolean);
           if (targets.length > 0) {
             const combinedText = buildCombinedText(targets);
             const { isComplete } = isVerseComplete(currentTranscriptRef.current, combinedText);
@@ -353,16 +352,15 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
           }
         }
         
-        // ✅ AUTO-RESTART LISTENING if we haven't finished the step
-        // This creates the hands-free loop: Listen -> Silence -> Process -> Listen
+        // ✅ AUTO-RESTART LISTENING
         if (repsDoneRef.current < totalRepsRef.current) {
-          setTimeout(() => startSR(), 500);
+          setTimeout(() => startSRRef.current(), 500);
         }
       }
     }, 500);
-  }, [countOneRep, stopSR, startSR]);
+  }, [countOneRep, stopSR]);
 
-  /* ── Web Speech Recognition - AUTO VOICE ACTIVATION ───────── */
+  /* ── Web Speech Recognition ────────────────────────────────── */
   const stopSR = useCallback(() => {
     if (silenceCheckRef.current) {
       clearInterval(silenceCheckRef.current);
@@ -388,11 +386,11 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
     lastCountedText.current = "";
     cooldownRef.current = false;
     currentTranscriptRef.current = "";
-    lastVoiceTimeRef.current = Date.now(); // Initialize so timer starts
-    setIsListening(false); // Will turn true on first sound
+    lastVoiceTimeRef.current = Date.now(); 
+    setIsListening(false); 
+
     const sr = new SR();
-    sr.lang = "ar-SA";
-    sr.continuous = true;
+    sr.lang = "ar-SA";    sr.continuous = true;
     sr.interimResults = true;
     sr.maxAlternatives = 3;
 
@@ -427,7 +425,6 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
       lastVoiceTimeRef.current = Date.now();
       setIsListening(true);
       
-      // Accumulate transcript
       currentTranscriptRef.current = bestTranscript;
       setLiveText(bestTranscript.slice(-100));
 
@@ -439,17 +436,17 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
         const ayahNorm = norm(ayah.text);
         if (transcriptNorm.includes(ayahNorm) || ayahNorm.includes(transcriptNorm)) {
           activeVerses.add(ayah.numberInSurah);
-        }      });
+        }
+      });
       setRecitingVerses(activeVerses);
-
-      // Matching (Live feedback)
+      // Matching
       const { isComplete, progress, missingWords: missing } = isVerseComplete(bestTranscript, combinedText);
       setMatchProgress(progress);
       setMissingWords(missing.slice(0, 3));
 
-      // Start silence checker if not running
+      // Start silence checker
       if (!silenceCheckRef.current) {
-        startSilenceChecker();
+        startSilenceCheckerRef.current();
       }
     };
 
@@ -459,10 +456,9 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
         setMicError("🎤 Mic access denied");
         stopSR();
       } else if (e.error === "no-speech") {
-        // Auto-restart - keep listening (hands-free)
         setTimeout(() => {
           if (!srRef.current && repsDoneRef.current < totalRepsRef.current) {
-            startSR();
+            startSRRef.current();
           }
         }, 200);
       } else if (e.error === "network") {
@@ -481,25 +477,29 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
       const stillActive = !!srRef.current;
       srRef.current = null;
       
-      // Auto-restart if we haven't finished all reps (Safety net)
-      // The silence handler usually does this, but this catches cases where API stops unexpectedly
       if (!stillActive && repsDoneRef.current < totalRepsRef.current) {
         setTimeout(() => {
-          if (!srRef.current) startSR();
+          if (!srRef.current) startSRRef.current();
         }, 300);
       } else {
-        setMicActive(false);        setIsListening(false);
+        setMicActive(false);
+        setIsListening(false);
       }
     };
 
     srRef.current = sr;
-    try { sr.start(); }
-    catch (err) {
+    try { sr.start(); }    catch (err) {
       console.warn("SR start error:", err);
       srRef.current = null;
       setMicError("Could not start mic");
     }
-  }, [countOneRep, stopSR, startSilenceChecker]);
+  }, [countOneRep, stopSR]); // Removed startSilenceChecker from deps
+
+  // Update Refs so functions can call each other
+  useEffect(() => {
+    startSRRef.current = startSR;
+    startSilenceCheckerRef.current = startSilenceChecker;
+  }, [startSR, startSilenceChecker]);
 
   /* ── Step navigation ────────────────────────────────────────── */
   const advanceStep = useCallback(() => {
@@ -526,8 +526,6 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
   useEffect(() => { advanceStepRef.current = advanceStep; }, [advanceStep]);
 
   /* ── AUTO-START LISTENING ON STEP CHANGE ───────────────────── */
-  // This is the key for hands-free operation.
-  // Whenever stepIdx changes, or session starts, it immediately begins listening.
   useEffect(() => {
     if (!started || steps.length === 0) return;
     const step = steps[stepIdx];
@@ -535,12 +533,11 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
     if (stepIdx === prevStepIdxRef.current) return;
     
     prevStepIdxRef.current = stepIdx;
-    stopSR(); // Clean stop before starting new
+    stopSR(); 
     
-    // Small delay to ensure cleanup is done, then auto-start    const t = setTimeout(() => startSR(), 600);
+    const t = setTimeout(() => startSRRef.current(), 600);
     return () => clearTimeout(t);
-  }, [stepIdx, started, steps, startSR, stopSR]);
-
+  }, [stepIdx, started, steps, stopSR]); // Removed startSR from deps
   /* ── Scroll active verse into view ─────────────────────────── */
   useEffect(() => {
     const step = steps[stepIdx];
@@ -586,10 +583,10 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
       const au = new Audio(audioUrl(surahNum, toPlay[i].numberInSurah, selectedReciter));
       audioRef.current = au;
       au.play().catch(() => { setIsPlaying(false); playingRef.current = false; });
-      au.onended = () => { i++; playNext(); };    };
+      au.onended = () => { i++; playNext(); };
+    };
     playNext();
   };
-
   /* ── Session start ──────────────────────────────────────────── */
   const startSession = () => {
     const s     = Math.max(1, startVerse);
@@ -615,8 +612,9 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
     setIsListening(false);
     stopAudio(); stopSR();
     saveSession({ stepIdx: 0, repsDone: 0, started: true, surahNum, startVerse: s, endVerse: e, repsPerVerse });
-    // Auto-start listening immediately
-    setTimeout(() => startSR(), 600);
+    
+    // Auto-start listening
+    setTimeout(() => startSRRef.current(), 600);
   };
 
   const card = (ex?: React.CSSProperties): React.CSSProperties => ({
@@ -635,9 +633,9 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
         <div style={{ fontFamily: "'Amiri',serif", fontSize: 16, color: GOLD, marginTop: 4 }}>أحسنت! أكملت الجلسة</div>
       </div>
       <div style={{ display: "flex", gap: 8, marginTop: 16, width: "100%", maxWidth: 340 }}>
-        <button onClick={() => { clearSession(); setStarted(false); setCompleted(false); }}          style={{ flex: 1, padding: "12px 0", borderRadius: 10, border: `1px solid ${BORDER}`,
-            background: "#f8fafb", color: G, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
-          ← New
+        <button onClick={() => { clearSession(); setStarted(false); setCompleted(false); }}
+          style={{ flex: 1, padding: "12px 0", borderRadius: 10, border: `1px solid ${BORDER}`,
+            background: "#f8fafb", color: G, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>          ← New
         </button>
         <button onClick={() => { clearSession(); setStarted(false); setCompleted(false); setTimeout(startSession, 100); }}
           style={{ flex: 1, padding: "12px 0", borderRadius: 10, border: "none",
@@ -670,7 +668,7 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
           <div style={{ fontFamily: "'Amiri',serif", fontSize: 13, color: "rgba(255,255,255,.8)" }}>نظام الحفظ المنهجي</div>
         </div>
 
-        {/* Scrollable Content with extra padding at bottom */}
+        {/* Scrollable Content */}
         <div style={{ flex: 1, overflowY: "auto", padding: "10px 12px 140px", display: "flex", flexDirection: "column", gap: 8 }}>
           
           {/* Speech status */}
@@ -684,9 +682,9 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
                 <div style={{ fontSize: 10, color: "#7a9e88" }}>
                   {srAvailable ? "Starts on voice · Auto-counts on silence" : "Use Chrome on Android"}
                 </div>
-              </div>              <div style={{ padding: "2px 8px", borderRadius: 12,
-                background: srAvailable ? LIGHT : "#fff5f5",
-                border: `1px solid ${srAvailable ? BORDER : "#fca5a5"}`,
+              </div>
+              <div style={{ padding: "2px 8px", borderRadius: 12,
+                background: srAvailable ? LIGHT : "#fff5f5",                border: `1px solid ${srAvailable ? BORDER : "#fca5a5"}`,
                 fontSize: 10, fontWeight: 700, color: srAvailable ? G : "#c0392b" }}>
                 {srAvailable ? "✓" : "✗"}
               </div>
@@ -733,9 +731,9 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
                       background: repsPerVerse === opt ? G : "#f8fafb",
                       color: repsPerVerse === opt ? "#fff" : "#7a9e88",
                       fontSize: 13, fontWeight: 700,
-                    }}>                    {opt}
-                  </button>
-                ))}
+                    }}>
+                    {opt}
+                  </button>                ))}
               </div>
             </div>
 
@@ -768,7 +766,7 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
             </div>
           </div>
 
-          {/* BEGIN BUTTON - MOVED UP INSIDE SCROLLABLE AREA */}
+          {/* BEGIN BUTTON */}
           <div style={{ marginTop: 8 }}>
             <button onClick={startSession} disabled={!canStart}
               style={{ width: "100%", padding: "16px 0", borderRadius: 12, border: "none",
@@ -782,9 +780,9 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
                 border: "1px solid #fca5a5", fontSize: 12, color: "#c0392b", textAlign: "center" }}>
                 {fetchError} — <button onClick={() => fetchAyahs(surahNum)}
                   style={{ textDecoration: "underline", background: "none", border: "none", color: "#c0392b", cursor: "pointer" }}>
-                  Retry                </button>
-              </div>
-            )}
+                  Retry
+                </button>
+              </div>            )}
           </div>
         </div>
 
@@ -831,10 +829,10 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
         .verse-reciting {
           background: ${LIGHT};
         }
-        * { box-sizing: border-box; }        body { margin: 0; padding: 0; overflow: hidden; }
+        * { box-sizing: border-box; }
+        body { margin: 0; padding: 0; overflow: hidden; }
       `}</style>
-
-      {/* ── HEADER - STATIC ──────────────────────────────────── */}
+      {/* ── HEADER ───────────────────────────────────────────── */}
       <div style={{ background: "#fff", borderBottom: `2px solid ${BORDER}`, padding: "8px 12px", flexShrink: 0 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -865,14 +863,13 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
         </div>
       </div>
 
-      {/* ── MUSHAF PAGE - SCROLLABLE QURAN TEXT ──────────────── */}
+      {/* ── MUSHAF PAGE ──────────────────────────────────────── */}
       <div style={{
         flex: 1,
         overflowY: "auto",
         background: `linear-gradient(180deg, ${PARCH} 0%, ${PARCH2} 100%)`,
         padding: "10px 8px 16px",
       }}>
-        {/* Mushaf Frame */}
         <div style={{
           background: "#fdf6e3",
           border: `2px solid ${GOLD}88`,
@@ -880,17 +877,15 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
           position: "relative",
           maxWidth: 520,
           margin: "0 auto",
-          boxShadow: "0 4px 20px rgba(26,61,36,0.15)",        }}>
-          {/* inner border inset */}
+          boxShadow: "0 4px 20px rgba(26,61,36,0.15)",
+        }}>
           <div style={{
-            position: "absolute", inset: 7,
-            border: `1px solid ${GOLD}44`,
+            position: "absolute", inset: 7,            border: `1px solid ${GOLD}44`,
             borderRadius: 1,
             pointerEvents: "none",
             zIndex: 1,
           }} />
 
-          {/* Page top bar */}
           <div style={{
             display: "flex", alignItems: "center", justifyContent: "space-between",
             padding: "8px 16px",
@@ -915,7 +910,6 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
             </span>
           </div>
 
-          {/* Bismillah */}
           {startVerse === 1 && surahNum !== 1 && surahNum !== 9 && (
             <div style={{
               fontFamily: "'Amiri Quran','Amiri',serif",
@@ -927,16 +921,15 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
             </div>
           )}
 
-          {/* Continuous flowing Quran text */}
           <div style={{ padding: "8px 20px 16px" }}>
-            <p style={{              fontFamily: "'Amiri Quran','Scheherazade New','Amiri',serif",
+            <p style={{
+              fontFamily: "'Amiri Quran','Scheherazade New','Amiri',serif",
               direction: "rtl",
               textAlign: "justify",
               lineHeight: 2.8,
               color: "#1c1208",
               fontSize: 24,
-              margin: 0,
-              wordBreak: "break-word",
+              margin: 0,              wordBreak: "break-word",
             }}>
               {pool.map((ayah, poolIdx) => {
                 const isActive    = activeSet.has(poolIdx);
@@ -978,15 +971,14 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
                     </span>{" "}
                   </span>
                 );
-              })}            </p>
+              })}
+            </p>
           </div>
 
-          {/* Peek button */}
           {currentStep.type === "cumulative" && (
             <div style={{ padding: "0 16px 12px" }}>
               <button className="peek-btn"
-                onPointerDown={() => setPeeking(true)}
-                onPointerUp={() => setPeeking(false)}
+                onPointerDown={() => setPeeking(true)}                onPointerUp={() => setPeeking(false)}
                 onPointerLeave={() => setPeeking(false)}
                 onPointerCancel={() => setPeeking(false)}
                 style={{
@@ -1001,7 +993,6 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
             </div>
           )}
 
-          {/* Page number footer */}
           <div style={{
             borderTop: `1px solid ${GOLD}55`,
             padding: "4px 16px",
@@ -1015,7 +1006,6 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
           </div>
         </div>
 
-        {/* Live Text */}
         {isGoodText && (
           <div style={{
             margin: "10px auto 6px",
@@ -1027,18 +1017,17 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
             fontSize: 18,
             direction: "rtl",
             fontFamily: "'Amiri',serif",
-            color: G,            textAlign: "center",
+            color: G,
+            textAlign: "center",
             animation: "slideIn .25s ease",
           }}>
             {liveText}
           </div>
         )}
 
-        {/* Voice Status Indicator */}
         {micActive && (
           <div style={{
-            margin: "8px auto",
-            maxWidth: 520,
+            margin: "8px auto",            maxWidth: 520,
             padding: "10px 14px",
             borderRadius: 10,
             background: col.bg,
@@ -1076,9 +1065,9 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
                 Start speaking to begin · Silence &gt;2s will count
               </div>
             )}
-          </div>        )}
+          </div>
+        )}
 
-        {/* Multi-verse indicator */}
         {isMultiVerse && micActive && (
           <div style={{
             margin: "0 auto 8px",
@@ -1087,8 +1076,7 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
             borderRadius: 10,
             background: col.bg,
             border: `1.5px solid ${col.border}`,
-            fontSize: 11,
-            color: col.text,
+            fontSize: 11,            color: col.text,
             fontWeight: 600,
             textAlign: "center",
           }}>
@@ -1097,10 +1085,9 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
         )}
       </div>
 
-      {/* ── FOOTER - STATIC ──────────────────────────────────── */}
+      {/* ── FOOTER ───────────────────────────────────────────── */}
       <div style={{ background: "#fff", borderTop: `2px solid ${BORDER}`, flexShrink: 0 }}>
         
-        {/* Counting Strip */}
         {!isOverview && (
           <div style={{
             padding: "7px 10px",
@@ -1109,7 +1096,6 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
             gap: 6,
             borderBottom: `1px solid ${BORDER}`,
           }}>
-            {/* Mic waveform */}
             {micActive && (
               <div style={{ display: "flex", alignItems: "center", gap: 2, marginRight: 2, flexShrink: 0 }}>
                 {[4, 8, 6, 12, 7, 10, 5].map((h, i) => (
@@ -1119,13 +1105,13 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
               </div>
             )}
 
-            {/* Rep dots */}
             <div style={{ display: "flex", gap: 4, flex: 1, overflowX: "auto", scrollbarWidth: "none" } as React.CSSProperties}>
               {Array.from({ length: currentStep.reps }, (_, i) => {
                 const done    = i < repsDone;
                 const current = i === repsDone;
                 return (
-                  <div key={i} style={{                    width: 26, height: 26, borderRadius: "50%", flexShrink: 0,
+                  <div key={i} style={{
+                    width: 26, height: 26, borderRadius: "50%", flexShrink: 0,
                     display: "flex", alignItems: "center", justifyContent: "center",
                     fontSize: 10, fontWeight: 700,
                     background: done
@@ -1139,15 +1125,13 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
                     border: `2px solid ${current ? col.text : done ? "transparent" : "#e4e4e4"}`,
                     boxShadow: current ? `0 0 0 3px ${col.text}25` : "none",
                     animation: done && i === repsDone - 1 && justCounted ? "flashGreen .5s ease" : "none",
-                    transition: "all .3s ease",
-                  }}>
+                    transition: "all .3s ease",                  }}>
                     {done ? "✓" : i + 1}
                   </div>
                 );
               })}
             </div>
 
-            {/* Count */}
             <div style={{ textAlign: "center", minWidth: 34, flexShrink: 0 }}>
               <div style={{ fontSize: 18, fontWeight: 900, color: G, lineHeight: 1,
                 animation: justCounted ? "flashGreen .4s ease" : "none" }}>
@@ -1164,7 +1148,6 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
           </div>
         )}
 
-        {/* Mic error */}
         {micError && (
           <div style={{ margin: "4px 10px", padding: "5px 10px", borderRadius: 8, background: "#fffbeb",
             border: "1px solid #f6d860", fontSize: 11, color: "#856404", textAlign: "center" }}>
@@ -1172,16 +1155,16 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
           </div>
         )}
 
-        {/* Controls - Only Stop button really needed in hands-free mode */}
         <div style={{ display: "flex", gap: 8, padding: "8px 10px" }}>
-          {!isOverview && (            micActive ? (
+          {!isOverview && (
+            micActive ? (
               <button onClick={stopSR}
                 style={{ flex: 1, padding: "11px 0", borderRadius: 10, border: "none",
                   background: "#fee2e2", color: "#c0392b", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
                 ⏹ Stop Auto-Listen
               </button>
             ) : (
-              <button onClick={startSR}
+              <button onClick={() => startSRRef.current()}
                 style={{ flex: 1, padding: "11px 0", borderRadius: 10, border: "none",
                   background: `linear-gradient(135deg,${G},${GM})`, color: "#fff",
                   fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
@@ -1191,8 +1174,7 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
           )}
 
           <button onClick={markRep}
-            style={{ flex: isOverview ? 2 : 1, padding: "11px 0", borderRadius: 10, border: "none",
-              background: col.grad, color: "#fff", fontSize: 13, fontWeight: 800, cursor: "pointer" }}>
+            style={{ flex: isOverview ? 2 : 1, padding: "11px 0", borderRadius: 10, border: "none",              background: col.grad, color: "#fff", fontSize: 13, fontWeight: 800, cursor: "pointer" }}>
             {isOverview
               ? "Begin →"
               : repsDone + 1 >= currentStep.reps
@@ -1201,7 +1183,6 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
           </button>
         </div>
 
-        {/* Back button */}
         <button
           onClick={() => {
             stopAudio(); stopSR(); setPeeking(false); setRecitingVerses(new Set()); setMatchProgress(0); setMissingWords([]); setIsListening(false);
@@ -1223,5 +1204,6 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
           ← {stepIdx === 0 ? "Back to Setup" : "Previous Step"}
         </button>
       </div>
-    </div>  );
+    </div>
+  );
 }
