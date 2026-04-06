@@ -246,6 +246,157 @@ export default function HifdhRevision() {
   const [flipDir,     setFlipDir]     = useState<"next" | "prev" | null>(null);
   const [fullscreen,  setFullscreen]  = useState(false);
 
+  // ── AI Revision Recording State ──
+  const [isRecording,    setIsRecording]    = useState(false);
+  const [recTime,        setRecTime]        = useState(0);
+  const [showResults,    setShowResults]    = useState(false);
+  const [aiScoring,      setAiScoring]      = useState(false);
+  const [aiScore,        setAiScore]        = useState<number | null>(null);
+  const [aiTranscript,   setAiTranscript]   = useState<string | null>(null);
+  const [wordErrors,     setWordErrors]     = useState<{word: string; status: "correct"|"wrong"|"missing"}[]>([]);
+  const mediaRecRef  = useRef<MediaRecorder | null>(null);
+  const recChunksRef = useRef<Blob[]>([]);
+  const recTimerRef  = useRef<any>(null);
+
+  const GROQ_KEY = import.meta.env.VITE_GROQ_API_KEY || "";
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mime = ["audio/webm;codecs=opus","audio/webm","audio/mp4","audio/ogg"].find(t => {
+        try { return MediaRecorder.isTypeSupported(t); } catch { return false; }
+      }) || "";
+      const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      recChunksRef.current = [];
+      mr.ondataavailable = e => { if (e.data?.size > 0) recChunksRef.current.push(e.data); };
+      mr.onstop = () => {
+        stream.getTracks().forEach(t => t.stop());
+        clearInterval(recTimerRef.current);
+        const blob = new Blob(recChunksRef.current, { type: mime || "audio/webm" });
+        if (blob.size > 0) runAiEvaluation(blob);
+      };
+      mr.start(200);
+      mediaRecRef.current = mr;
+      setIsRecording(true);
+      setRecTime(0);
+      recTimerRef.current = setInterval(() => setRecTime(t => t + 1), 1000);
+    } catch {
+      console.error("Mic denied");
+    }
+  };
+
+  const stopRecording = () => {
+    mediaRecRef.current?.stop();
+    setIsRecording(false);
+    clearInterval(recTimerRef.current);
+  };
+
+  const runAiEvaluation = async (blob: Blob) => {
+    setAiScoring(true);
+    setShowResults(true);
+    setAiScore(null);
+    setAiTranscript(null);
+    setWordErrors([]);
+
+    try {
+      let transcript = "";
+
+      // Transcribe via Groq Whisper
+      if (GROQ_KEY) {
+        const fd = new FormData();
+        fd.append("file", new File([blob], "recitation.webm", { type: blob.type || "audio/webm" }));
+        fd.append("model", "whisper-large-v3");
+        fd.append("language", "ar");
+        fd.append("response_format", "json");
+        fd.append("temperature", "0");
+        fd.append("prompt", "بسم الله الرحمن الرحيم الحمد لله رب العالمين الرحمن الرحيم");
+        const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+          method: "POST", headers: { Authorization: `Bearer ${GROQ_KEY}` }, body: fd,
+        });
+        if (r.ok) transcript = (await r.json()).text || "";
+      }
+
+      // Fallback: transcribe-hifdh edge function
+      if (!transcript) {
+        try {
+          const b64 = await new Promise<string>(resolve => {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+              const result = reader.result as string;
+              resolve(result.split(",")[1] || "");
+            };
+            reader.readAsDataURL(blob);
+          });
+          const { data } = await supabase.functions.invoke("transcribe-hifdh", {
+            body: { audio: b64, mimeType: blob.type || "audio/webm" },
+          });
+          transcript = data?.transcript || "";
+        } catch { /* ignore */ }
+      }
+
+      setAiTranscript(transcript);
+
+      // Compare to reference Quran text on current page
+      const refText = (pageDataRef.current?.ayahs || []).map((a: any) => a.text).join(" ");
+      const refWords = refText.replace(/[^\u0600-\u06FF\s]/g, "").trim().split(/\s+/).filter(Boolean);
+      const gotWords = transcript.replace(/[^\u0600-\u06FF\s]/g, "").trim().split(/\s+/).filter(Boolean);
+
+      // Word-level comparison
+      const errors: {word: string; status: "correct"|"wrong"|"missing"}[] = [];
+      const usedGot = new Set<number>();
+
+      refWords.forEach(refW => {
+        const cleanRef = refW.replace(/[\u064B-\u065F\u0670]/g, ""); // strip tashkeel for comparison
+        let found = false;
+        for (let i = 0; i < gotWords.length; i++) {
+          if (usedGot.has(i)) continue;
+          const cleanGot = gotWords[i].replace(/[\u064B-\u065F\u0670]/g, "");
+          if (cleanRef === cleanGot || cleanRef.includes(cleanGot.slice(0, 3)) || cleanGot.includes(cleanRef.slice(0, 3))) {
+            errors.push({ word: refW, status: "correct" });
+            usedGot.add(i);
+            found = true;
+            break;
+          }
+        }
+        if (!found) errors.push({ word: refW, status: "missing" });
+      });
+
+      // Extra words said by student that don't match
+      gotWords.forEach((w, i) => {
+        if (!usedGot.has(i)) errors.push({ word: w, status: "wrong" });
+      });
+
+      setWordErrors(errors);
+
+      const correctCount = errors.filter(e => e.status === "correct").length;
+      const score = refWords.length > 0 ? Math.round((correctCount / refWords.length) * 100) : 0;
+      setAiScore(score);
+
+      // Save to hifdh_recordings
+      if (userId) {
+        const firstSurahOnPage = pageDataRef.current?.ayahs?.[0]?.surah;
+        await (supabase as any).from("hifdh_recordings").insert({
+          student_id: userId,
+          surah_name: firstSurahOnPage?.englishName || "",
+          surah_num: firstSurahOnPage?.number || 0,
+          ai_score: score,
+          transcript,
+          word_results: errors,
+          status: "completed",
+          created_at: new Date().toISOString(),
+        });
+      }
+    } catch (e) {
+      console.error("AI evaluation error:", e);
+      setAiTranscript("Evaluation failed — please try again");
+      setAiScore(0);
+    } finally {
+      setAiScoring(false);
+    }
+  };
+
+  const fmtTime = (s: number) => `${Math.floor(s/60).toString().padStart(2,"0")}:${(s%60).toString().padStart(2,"0")}`;
+
   const audioRef    = useRef<HTMLAudioElement>(null);
   const playingRef  = useRef(0);
   const pageDataRef = useRef<any>(null);
