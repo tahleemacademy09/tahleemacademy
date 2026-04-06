@@ -70,7 +70,7 @@ const AcademicCalendar = () => {
   const [form, setForm] = useState({
     title: "", title_ar: "", description: "",
     date: format(new Date(),"yyyy-MM-dd"), time_start: "09:00", time_end: "10:00",
-    event_type: "class", subject_id: "", notify_to: "all",
+    event_type: "class", subject_id: "none", notify_to: "all",
     send_notification: true, color: "#3B82F6", is_recurring: false,
     recurrence_days: [] as string[],
   });
@@ -79,15 +79,9 @@ const AcademicCalendar = () => {
     setLoading(true);
     const start = format(startOfMonth(currentDate),"yyyy-MM-dd");
     const end   = format(endOfMonth(currentDate),"yyyy-MM-dd");
-    const { data, error } = await supabase.from("academic_events" as any)
+    const { data } = await supabase.from("academic_events" as any)
       .select("*").gte("date", start).lte("date", end).order("date");
-    if (error) {
-      // Table doesn't exist yet — show empty state instead of crashing
-      console.warn("[AcademicCalendar] academic_events table missing:", error.message);
-      setEvents([]);
-    } else {
-      setEvents((data||[]) as any[]);
-    }
+    setEvents((data||[]) as any[]);
     setLoading(false);
   };
 
@@ -113,7 +107,7 @@ const AcademicCalendar = () => {
     setForm({
       title:"", title_ar:"", description:"",
       date: format(d,"yyyy-MM-dd"), time_start:"09:00", time_end:"10:00",
-      event_type:"class", subject_id:"", notify_to:"all",
+      event_type:"class", subject_id:"none", notify_to:"all",
       send_notification:true, color:"#3B82F6", is_recurring:false, recurrence_days:[],
     });
     setShowEventDialog(true);
@@ -124,7 +118,7 @@ const AcademicCalendar = () => {
     setForm({
       title: ev.title||"", title_ar: ev.title_ar||"", description: ev.description||"",
       date: ev.date, time_start: ev.time_start||"09:00", time_end: ev.time_end||"10:00",
-      event_type: ev.event_type||"event", subject_id: ev.subject_id||"", notify_to: ev.notify_to||"all",
+      event_type: ev.event_type||"event", subject_id: ev.subject_id||"none", notify_to: ev.notify_to||"all",
       send_notification: false, color: ev.color||"#3B82F6", is_recurring: false, recurrence_days:[],
     });
     setShowEventDialog(true);
@@ -137,16 +131,14 @@ const AcademicCalendar = () => {
       const payload = {
         title: form.title, title_ar: form.title_ar||null, description: form.description||null,
         date: form.date, time_start: form.time_start, time_end: form.time_end,
-        event_type: form.event_type, subject_id: form.subject_id||null,
+        event_type: form.event_type, subject_id: form.subject_id==="none" ? null : form.subject_id||null,
         notify_to: form.notify_to, color: form.color, created_by: user?.id,
       };
 
       if (editEvent) {
-        const { error } = await supabase.from("academic_events" as any).update(payload as any).eq("id", editEvent.id);
-        if (error) throw new Error(error.code === "42P01" ? "academic_events table not found — run the SQL migration first." : error.message);
+        await supabase.from("academic_events" as any).update(payload as any).eq("id", editEvent.id);
       } else {
-        const { error } = await supabase.from("academic_events" as any).insert(payload as any);
-        if (error) throw new Error(error.code === "42P01" ? "academic_events table not found — run the SQL migration first." : error.message);
+        await supabase.from("academic_events" as any).insert(payload as any);
       }
 
       // Send notifications
@@ -429,7 +421,7 @@ const AcademicCalendar = () => {
               <Select value={form.subject_id} onValueChange={v=>setForm(f=>({...f,subject_id:v}))}>
                 <SelectTrigger style={{ borderRadius:10 }}><SelectValue placeholder="Select subject"/></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">None</SelectItem>
+                  <SelectItem value="none">None</SelectItem>
                   {subjects.map(s=><SelectItem key={s.id} value={s.id}>{language==="ar"?s.title_ar||s.title:s.title}</SelectItem>)}
                 </SelectContent>
               </Select>
