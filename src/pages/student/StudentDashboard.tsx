@@ -179,20 +179,21 @@ const StudentDashboard = () => {
   const today = new Date();
 
   useEffect(() => {
-    if (!user) return;
+    if (!effectiveUserId) return;
     const fetchData = async () => {
       setFetchError(null);
-      await refreshProfile().catch(() => {});
+      if (!isImpersonating) await refreshProfile().catch(() => {});
       try {
+        const uid = effectiveUserId;
         const [enrollRes, gradedAttemptsRes, pendingAttemptsRes, notifsRes, assignmentsRes,
           recentRes, allAttemptsRes, subjectsRes, calendarExamsRes, subAssignmentsRes] = await Promise.all([
-          supabase.from("enrollments").select("id").eq("user_id", user.id),
-          supabase.from("exam_attempts").select("percentage").eq("user_id", user.id).eq("status", "graded"),
-          supabase.from("exam_attempts").select("id").eq("user_id", user.id).eq("status", "submitted"),
-          supabase.from("notifications").select("*").eq("user_id", user.id).order("created_at", { ascending: false }).limit(20),
-          supabase.from("exam_assignments").select("exam_id, exams(*)").eq("user_id", user.id),
-          supabase.from("exam_attempts").select("*, exams(title, title_ar)").eq("user_id", user.id).in("status", ["graded", "submitted"]).order("submitted_at", { ascending: false }).limit(5),
-          supabase.from("exam_attempts").select("exam_id, status, percentage").eq("user_id", user.id),
+          supabase.from("enrollments").select("id").eq("user_id", uid),
+          supabase.from("exam_attempts").select("percentage").eq("user_id", uid).eq("status", "graded"),
+          supabase.from("exam_attempts").select("id").eq("user_id", uid).eq("status", "submitted"),
+          supabase.from("notifications").select("*").eq("user_id", uid).order("created_at", { ascending: false }).limit(20),
+          supabase.from("exam_assignments").select("exam_id, exams(*)").eq("user_id", uid),
+          supabase.from("exam_attempts").select("*, exams(title, title_ar)").eq("user_id", uid).in("status", ["graded", "submitted"]).order("submitted_at", { ascending: false }).limit(5),
+          supabase.from("exam_attempts").select("exam_id, status, percentage").eq("user_id", uid),
           supabase.from("subjects").select("*").eq("is_active", true).limit(4),
           supabase.from("exams").select("id, title, title_ar, start_date, end_date, time_limit_minutes").eq("is_published", true),
           supabase.from("subject_assignments").select("id, title, deadline, subject_id, subjects(title, title_ar)"),
