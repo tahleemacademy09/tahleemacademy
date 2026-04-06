@@ -510,7 +510,7 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
      COMPLETED
   ───────────────────────────────────────────────────────────── */
   if (completed) return (
-    <div style={{ height: "100dvh", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", padding: "16px", background: LIGHT }}>
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", padding: "16px", background: LIGHT }}>
       <div style={card({ padding: "28px 20px", textAlign: "center", maxWidth: 340 })}>
         <div style={{ fontSize: 52, marginBottom: 8 }}>🎉</div>
         <div style={{ fontFamily: "'Amiri',serif", fontSize: 24, color: G, fontWeight: 700 }}>Session Complete!</div>
@@ -538,7 +538,7 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
   if (!started) {
     const verseCount = Math.max(0, endVerse - startVerse + 1);
     const canStart   = !loading && ayahs.length > 0 && endVerse >= startVerse;    return (
-      <div style={{ height: "100dvh", display: "flex", flexDirection: "column", background: LIGHT, overflow: "hidden" }}>
+      <div style={{ height: "100%", display: "flex", flexDirection: "column", background: LIGHT, overflow: "hidden" }}>
         <style>{`
           @import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Amiri:wght@400;700&display=swap');
           * { box-sizing: border-box; }
@@ -679,7 +679,7 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
   ───────────────────────────────────────────────────────────── */
   const currentStep = steps[stepIdx] ?? steps[0];
   if (!currentStep) return (
-    <div style={{ height: "100dvh", display: "flex", alignItems: "center", justifyContent: "center", background: LIGHT }}>
+    <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: LIGHT }}>
       <div style={{ fontSize: 12, color: "#7a9e88" }}>Starting…</div>
     </div>
   );
@@ -692,7 +692,7 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
   const isMultiVerse = currentStep.indices.length > 1;
 
   return (
-    <div style={{ height: "100dvh", display: "flex", flexDirection: "column", background: "#fff", overflow: "hidden" }}>
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "#fff", overflow: "hidden" }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Amiri:wght@400;700&display=swap');
         @keyframes wavePulse{0%,100%{transform:scaleY(.3)}50%{transform:scaleY(1.6)}}
