@@ -977,17 +977,17 @@ export default function HifdhRevision() {
 
         {/* ── Memorization ── */}
         {activeTab === "memorization" && (
-          <div className="h-full overflow-y-auto"><HifdhMemorization /></div>
+          <div className="h-full overflow-hidden"><HifdhMemorization /></div>
         )}
 
         {/* ── Exercise ── */}
         {activeTab === "exercise" && (
-          <div className="h-full overflow-y-auto"><HifdhExercise /></div>
+          <div className="h-full overflow-y-auto flex flex-col"><HifdhExercise /></div>
         )}
 
         {/* ── Test ── */}
         {activeTab === "test" && (
-          <div className="h-full overflow-y-auto"><HifdhTest /></div>
+          <div className="h-full overflow-y-auto flex flex-col"><HifdhTest /></div>
         )}
       </div>
     </div>
