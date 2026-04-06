@@ -73,6 +73,7 @@ const StudentDashboard = () => {
   const { t, language } = useLanguage();
   const { user, profile, refreshProfile } = useAuth();
   const { currentStep } = useTasjeel();
+  const { effectiveUserId, isImpersonating } = useImpersonation();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
