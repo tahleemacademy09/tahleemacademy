@@ -22,6 +22,7 @@ import { useState as useLayoutState, useEffect as useLayoutEffect } from "react"
 import PaymentBanner from "./PaymentBanner";
 import HolidayBanner from "./HolidayBanner";
 import AdminPaymentIndicator from "./AdminPaymentIndicator";
+import ImpersonationBanner from "./ImpersonationBanner";
 
 interface DashboardLayoutProps { role: "student" | "admin"; }
 
