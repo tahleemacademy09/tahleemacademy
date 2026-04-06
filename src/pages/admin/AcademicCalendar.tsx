@@ -79,9 +79,15 @@ const AcademicCalendar = () => {
     setLoading(true);
     const start = format(startOfMonth(currentDate),"yyyy-MM-dd");
     const end   = format(endOfMonth(currentDate),"yyyy-MM-dd");
-    const { data } = await supabase.from("academic_events" as any)
+    const { data, error } = await supabase.from("academic_events" as any)
       .select("*").gte("date", start).lte("date", end).order("date");
-    setEvents((data||[]) as any[]);
+    if (error) {
+      // Table doesn't exist yet — show empty state instead of crashing
+      console.warn("[AcademicCalendar] academic_events table missing:", error.message);
+      setEvents([]);
+    } else {
+      setEvents((data||[]) as any[]);
+    }
     setLoading(false);
   };
 
@@ -136,9 +142,11 @@ const AcademicCalendar = () => {
       };
 
       if (editEvent) {
-        await supabase.from("academic_events" as any).update(payload as any).eq("id", editEvent.id);
+        const { error } = await supabase.from("academic_events" as any).update(payload as any).eq("id", editEvent.id);
+        if (error) throw new Error(error.code === "42P01" ? "academic_events table not found — run the SQL migration first." : error.message);
       } else {
-        await supabase.from("academic_events" as any).insert(payload as any);
+        const { error } = await supabase.from("academic_events" as any).insert(payload as any);
+        if (error) throw new Error(error.code === "42P01" ? "academic_events table not found — run the SQL migration first." : error.message);
       }
 
       // Send notifications
