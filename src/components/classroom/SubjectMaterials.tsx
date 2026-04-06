@@ -4,7 +4,7 @@
   Fetches materials for a subject and renders them with the inline MaterialsViewer.
   Teachers/admins also see an upload button.
 */
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -27,6 +27,7 @@ const SubjectMaterials = ({ subjectId }: { subjectId: string }) => {
   const [title,     setTitle]     = useState("");
   const [file,      setFile]      = useState<File | null>(null);
   const [dragOver,  setDragOver]  = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   /* ── Fetch materials ── */
   const { data: materials = [], isLoading } = useQuery({
@@ -153,23 +154,25 @@ const SubjectMaterials = ({ subjectId }: { subjectId: string }) => {
               <Label className="text-xs font-semibold text-muted-foreground block mb-2">
                 {t("File", "الملف")}
               </Label>
-              <label
-                className="relative block rounded-2xl border-2 border-dashed transition-all cursor-pointer"
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="*/*"
+                style={{ display: "none" }}
+                onChange={e => { const f = e.target.files?.[0]; if (f) handleFileDrop(f); }}
+              />
+              <div
+                className="rounded-2xl border-2 border-dashed transition-all cursor-pointer"
                 style={{
                   borderColor: dragOver ? "#064E3B" : "#D1D5DB",
                   background:  dragOver ? "#F0FDF4" : "#FAFAFA",
                   padding: 24,
                 }}
+                onClick={() => fileInputRef.current?.click()}
                 onDragOver={e => { e.preventDefault(); setDragOver(true); }}
                 onDragLeave={() => setDragOver(false)}
                 onDrop={e => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files[0]; if (f) handleFileDrop(f); }}
               >
-                <input
-                  type="file"
-                  className="absolute inset-0 opacity-0 cursor-pointer"
-                  accept="*/*"
-                  onChange={e => { const f = e.target.files?.[0]; if (f) handleFileDrop(f); }}
-                />
                 {file ? (
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center shrink-0">
@@ -197,7 +200,7 @@ const SubjectMaterials = ({ subjectId }: { subjectId: string }) => {
                     </p>
                   </div>
                 )}
-              </label>
+              </div>
             </div>
 
             <Button
