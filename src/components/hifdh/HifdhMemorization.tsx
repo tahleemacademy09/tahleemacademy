@@ -545,7 +545,7 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
      COMPLETED
   ───────────────────────────────────────────────────────────── */
   if (completed) return (
-    <div style={{ height: "100dvh", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", padding: "16px", background: LIGHT }}>
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", padding: "16px", background: LIGHT }}>
       <div style={card({ padding: "28px 20px", textAlign: "center", maxWidth: 340 })}>
         <div style={{ fontSize: 52, marginBottom: 8 }}>🎉</div>
         <div style={{ fontFamily: "'Amiri',serif", fontSize: 24, color: G, fontWeight: 700 }}>Session Complete!</div>
@@ -574,7 +574,7 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
     const verseCount = Math.max(0, endVerse - startVerse + 1);
     const canStart   = !loading && ayahs.length > 0 && endVerse >= startVerse;
     return (
-      <div style={{ height: "100dvh", display: "flex", flexDirection: "column", background: LIGHT, overflow: "hidden" }}>
+      <div style={{ height: "100%", display: "flex", flexDirection: "column", background: LIGHT, overflow: "hidden" }}>
         <style>{`
           @import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Amiri:wght@400;700&display=swap');
           * { box-sizing: border-box; }
@@ -714,7 +714,7 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
   ───────────────────────────────────────────────────────────── */
   const currentStep = steps[stepIdx] ?? steps[0];
   if (!currentStep) return (
-    <div style={{ height: "100dvh", display: "flex", alignItems: "center", justifyContent: "center", background: LIGHT }}>
+    <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: LIGHT }}>
       <div style={{ fontSize: 12, color: "#7a9e88" }}>Starting…</div>
     </div>
   );
@@ -728,7 +728,7 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
   const isMultiVerse = currentStep.indices.length > 1;
 
   return (
-    <div style={{ height: "100dvh", display: "flex", flexDirection: "column", background: PARCH, overflow: "hidden" }}>
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", background: PARCH, overflow: "hidden" }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Amiri:wght@400;700&display=swap');
         @keyframes wavePulse{0%,100%{transform:scaleY(.3)}50%{transform:scaleY(1.6)}}
@@ -779,181 +779,166 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
         </div>
       </div>
 
-      {/* ── MUSHAF PAGE - SCROLLABLE QURAN TEXT ──────────────── */}
+      {/* ── MUSHAF PAGE - SCROLLABLE QURAN TEXT (same style as Recitation) ── */}
       <div style={{
         flex: 1,
-        overflowY: "auto",        background: `linear-gradient(180deg, ${PARCH} 0%, ${PARCH2} 100%)`,
-        padding: "16px 12px",
+        overflowY: "auto",
+        background: `linear-gradient(180deg, ${PARCH} 0%, ${PARCH2} 100%)`,
+        padding: "10px 8px 16px",
       }}>
-        {/* Surah Header */}
+        {/* Mushaf Frame — matches recitation tab aesthetic */}
         <div style={{
-          background: `linear-gradient(135deg,${G},${GM})`,
-          borderRadius: 12,
-          padding: "10px 16px",
-          marginBottom: 16,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          boxShadow: "0 4px 12px rgba(26,61,36,0.15)",
+          background: "#fdf6e3",
+          border: `2px solid ${GOLD}88`,
+          borderRadius: 4,
+          position: "relative",
+          maxWidth: 520,
+          margin: "0 auto",
+          boxShadow: "0 4px 20px rgba(26,61,36,0.15)",
         }}>
-          <div>
-            <div style={{ fontSize: 16, fontWeight: 800, color: "#fff" }}>
+          {/* inner border inset like a real mushaf */}
+          <div style={{
+            position: "absolute", inset: 7,
+            border: `1px solid ${GOLD}44`,
+            borderRadius: 1,
+            pointerEvents: "none",
+            zIndex: 1,
+          }} />
+
+          {/* Page top bar: surah name + listen button */}
+          <div style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+            padding: "8px 16px",
+            background: `linear-gradient(to bottom, ${GOLD}18, transparent)`,
+            borderBottom: `1px solid ${GOLD}55`,
+          }}>
+            <span style={{ fontFamily: "'Amiri',serif", color: "#1c1208", fontSize: "0.8em", fontWeight: 700, direction: "rtl" }}>
+              {SURAHS[surahNum - 1]?.nameAr}
+            </span>
+            <button onClick={() => isPlaying ? stopAudio() : playCurrentStep()}
+              style={{
+                padding: "4px 12px", borderRadius: 14,
+                border: `1.5px solid ${isPlaying ? "#dc2626" : GOLD + "88"}`,
+                background: isPlaying ? "#fee2e2" : `${GOLD}18`,
+                color: isPlaying ? "#dc2626" : GOLD,
+                fontSize: 11, fontWeight: 700, cursor: "pointer",
+              }}>
+              {isPlaying ? "⏹ Stop" : "🔊 Listen"}
+            </button>
+            <span style={{ fontFamily: "'Amiri',serif", color: "#5a4a20", fontSize: "0.72em" }}>
               {SURAHS[surahNum - 1]?.name}
-            </div>
-            <div style={{ fontFamily: "'Amiri',serif", fontSize: 12, color: "rgba(255,255,255,.8)", direction: "rtl" }}>
-              {SURAHS[surahNum - 1]?.nameAr} · {toAr(startVerse)}–{toAr(endVerse)}
-            </div>
+            </span>
           </div>
-          <button onClick={() => isPlaying ? stopAudio() : playCurrentStep()}
-            style={{ padding: "6px 14px", borderRadius: 20,
-              border: "2px solid rgba(255,255,255,.4)",
-              background: isPlaying ? "#dc2626" : "rgba(255,255,255,.15)",
-              color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-            {isPlaying ? "⏹ Stop" : "🔊 Listen"}
-          </button>
-        </div>
 
-        {/* Verses - Mushaf Style */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          {pool.map((ayah, poolIdx) => {
-            const isActive = activeSet.has(poolIdx);
-            const isReciting = recitingVerses.has(ayah.numberInSurah);
-            const isCumul  = currentStep.type === "cumulative";
-            const hideText = isCumul && !peeking && isActive;
-            const isHidden = !isActive;
+          {/* Bismillah — shown only when starting from verse 1 and not Al-Fatiha/At-Tawba */}
+          {startVerse === 1 && surahNum !== 1 && surahNum !== 9 && (
+            <div style={{
+              fontFamily: "'Amiri Quran','Amiri',serif",
+              direction: "rtl", textAlign: "center",
+              color: "#1c1208", margin: "8px 16px 4px",
+              fontSize: 22, lineHeight: 2,
+            }}>
+              بِسۡمِ ٱللَّهِ ٱلرَّحۡمَٰنِ ٱلرَّحِيمِ
+            </div>
+          )}
 
-            return (
-              <div 
-                key={ayah.numberInSurah}
-                ref={el => { verseRefs.current[ayah.numberInSurah] = el; }}
-                style={{
-                  background: isActive ? "#fff" : "rgba(255,255,255,0.5)",
-                  borderRadius: 16,
-                  padding: isActive ? "20px 16px" : "12px 16px",
-                  opacity: isHidden ? 0.4 : 1,
-                  filter: isHidden ? "blur(2px)" : "none",                  boxShadow: isActive 
-                    ? isReciting 
-                      ? "0 6px 20px rgba(183,121,31,0.25)" 
-                      : "0 4px 12px rgba(26,61,36,0.1)"
-                    : "none",
-                  border: isActive ? `2px solid ${isReciting ? GOLD : BORDER}` : "1px solid rgba(200,190,170,0.3)",
-                  transition: "all .3s ease",
-                  pointerEvents: isHidden ? "none" : "auto",
-                  position: "relative",
-                }}>
+          {/* ── Continuous flowing Quran text — exactly like recitation ── */}
+          <div style={{ padding: "8px 20px 16px" }}>
+            <p style={{
+              fontFamily: "'Amiri Quran','Scheherazade New','Amiri',serif",
+              direction: "rtl",
+              textAlign: "justify",
+              lineHeight: 2.8,
+              color: "#1c1208",
+              fontSize: 24,
+              margin: 0,
+              wordBreak: "break-word",
+            }}>
+              {pool.map((ayah, poolIdx) => {
+                const isActive    = activeSet.has(poolIdx);
+                const isReciting  = recitingVerses.has(ayah.numberInSurah);
+                const isCumul     = currentStep.type === "cumulative";
+                const hideText    = isCumul && !peeking && isActive;
 
-                {isActive && (
-                  <>
-                    {/* Verse Number Badge */}
-                    <div style={{
-                      position: "absolute",
-                      top: 8,
-                      right: 12,
-                      width: 32,
-                      height: 32,
-                      borderRadius: "50%",
-                      background: `linear-gradient(135deg, ${currentStep.type === "single" ? GOLD : G}, ${GM})`,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
-                    }}>
-                      <span style={{ fontFamily: "'Amiri',serif", fontSize: 14, fontWeight: 700, color: "#fff" }}>
-                        {toAr(ayah.numberInSurah)}
-                      </span>
-                    </div>
-
-                    {/* Play Button */}
-                    <button 
-                      onClick={() => playVerse(surahNum, ayah.numberInSurah, selectedReciter)}
-                      style={{
-                        position: "absolute",
-                        top: 8,
-                        left: 12,
-                        width: 32,
-                        height: 32,
-                        borderRadius: "50%",
-                        border: `2px solid ${BORDER}`,
-                        background: LIGHT,
-                        color: G,
-                        fontSize: 12,
-                        fontWeight: 700,
-                        cursor: "pointer",
-                        display: "flex",
-                        alignItems: "center",                        justifyContent: "center",
-                      }}>
-                      ▶
-                    </button>
-
-                    {/* Quran Text - Centered Mushaf Style */}
-                    <div style={{
-                      fontFamily: "'Amiri Quran','Amiri',serif",
-                      fontSize: 28,
-                      color: G,
-                      lineHeight: 2.6,
-                      textAlign: "center",
-                      direction: "rtl",
-                      marginTop: 24,
-                      marginBottom: 12,
-                      opacity: hideText ? 0.08 : 1,
-                      filter: hideText ? "blur(12px)" : "none",
-                      transition: "opacity .2s, filter .2s",
-                      wordBreak: "break-word",
-                      padding: "0 8px",
-                    }}>
-                      {ayah.text}
-                    </div>
-
-                    {/* End of Verse Marker */}
-                    <div style={{
-                      textAlign: "center",
-                      fontSize: 18,
-                      color: GOLD,
+                return (
+                  <span
+                    key={ayah.numberInSurah}
+                    ref={el => { verseRefs.current[ayah.numberInSurah] = el; }}
+                    style={{
+                      opacity:    isActive ? 1 : 0.16,
+                      filter:     hideText ? "blur(9px)" : "none",
+                      background: isActive
+                        ? isReciting
+                          ? `${GOLD}22`
+                          : `${GOLD}0d`
+                        : "transparent",
+                      borderRadius:  isActive ? 3 : 0,
+                      outline:       isActive ? `1.5px solid ${GOLD}55` : "none",
+                      padding:       isActive ? "0 3px" : undefined,
+                      transition:    "all .35s ease",
+                      cursor:        isActive ? "pointer" : "default",
+                      userSelect:    "none",
+                      WebkitUserSelect: "none",
+                    } as React.CSSProperties}
+                    onClick={() => isActive && playVerse(surahNum, ayah.numberInSurah, selectedReciter)}
+                  >
+                    {ayah.text}{" "}
+                    <span style={{
                       fontFamily: "'Amiri',serif",
-                      marginTop: 4,
-                      opacity: hideText ? 0.1 : 1,
+                      color: isActive ? GOLD : "#b0956a",
+                      fontSize: "0.68em",
+                      margin: "0 1px",
+                      opacity: isActive ? 1 : 0.5,
                     }}>
-                      ۝
-                    </div>
+                      ۝{toAr(ayah.numberInSurah)}
+                    </span>{" "}
+                  </span>
+                );
+              })}
+            </p>
+          </div>
 
-                    {isCumul && (
-                      <button className="peek-btn"
-                        onPointerDown={() => setPeeking(true)}
-                        onPointerUp={() => setPeeking(false)}
-                        onPointerLeave={() => setPeeking(false)}
-                        onPointerCancel={() => setPeeking(false)}
-                        style={{ width: "100%", padding: "8px 0", borderRadius: 10, marginTop: 12,
-                          border: `1.5px solid ${peeking ? G : BORDER}`,
-                          background: peeking ? LIGHT : "#f8fafb",
-                          color: peeking ? G : "#7a9e88",
-                          fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
-                        {peeking ? "👁 Showing…" : "👁 Hold to Reveal"}
-                      </button>
-                    )}                  </>
-                )}
+          {/* Peek button for cumulative mode — shown below the page */}
+          {currentStep.type === "cumulative" && (
+            <div style={{ padding: "0 16px 12px" }}>
+              <button className="peek-btn"
+                onPointerDown={() => setPeeking(true)}
+                onPointerUp={() => setPeeking(false)}
+                onPointerLeave={() => setPeeking(false)}
+                onPointerCancel={() => setPeeking(false)}
+                style={{
+                  width: "100%", padding: "8px 0", borderRadius: 10,
+                  border: `1.5px solid ${peeking ? G : BORDER}`,
+                  background: peeking ? LIGHT : "#fdf6e3",
+                  color: peeking ? G : "#7a9e88",
+                  fontSize: 11, fontWeight: 700, cursor: "pointer",
+                }}>
+                {peeking ? "👁 Showing…" : "👁 Hold to Reveal"}
+              </button>
+            </div>
+          )}
 
-                {isHidden && (
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <div style={{ width: 24, height: 24, borderRadius: "50%", background: "#d8cfc0",
-                      display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      <span style={{ fontFamily: "'Amiri',serif", fontSize: 11, color: "#888" }}>
-                        {toAr(ayah.numberInSurah)}
-                      </span>
-                    </div>
-                    <div style={{ flex: 1, height: 8, borderRadius: 4, background: "rgba(180,165,140,0.3)" }} />
-                  </div>
-                )}
-              </div>
-            );
-          })}
+          {/* Page number footer */}
+          <div style={{
+            borderTop: `1px solid ${GOLD}55`,
+            padding: "4px 16px",
+            textAlign: "center",
+            fontFamily: "'Amiri',serif",
+            color: GOLD,
+            fontSize: "0.78em",
+            background: `linear-gradient(to top, ${GOLD}12, transparent)`,
+          }}>
+            ─── {toAr(startVerse)}–{toAr(endVerse)} ───
+          </div>
         </div>
 
-        {/* Live Text */}
+        {/* Live Text — shown below the mushaf page */}
         {isGoodText && (
           <div style={{
-            margin: "16px 8px 8px",
-            padding: "12px 16px",
-            borderRadius: 12,
+            margin: "10px auto 6px",
+            maxWidth: 520,
+            padding: "10px 16px",
+            borderRadius: 10,
             background: "#f0fff4",
             border: `2px solid ${BORDER}`,
             fontSize: 18,
@@ -1008,37 +993,38 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
         )}
       </div>
 
-      {/* ── FOOTER - STATIC ──────────────────────────────────── */}
+      {/* ── FOOTER - STATIC (Fixed, compact for mobile) ──────── */}
       <div style={{ background: "#fff", borderTop: `2px solid ${BORDER}`, flexShrink: 0 }}>
         
         {/* Counting Strip */}
         {!isOverview && (
           <div style={{
-            padding: "10px 12px",
+            padding: "7px 10px",
             display: "flex",
             alignItems: "center",
-            gap: 8,
+            gap: 6,
             borderBottom: `1px solid ${BORDER}`,
           }}>
             {/* Mic waveform */}
             {micActive && (
-              <div style={{ display: "flex", alignItems: "center", gap: 2.5, marginRight: 2 }}>
-                {[5, 10, 7, 14, 8, 12, 6].map((h, i) => (
-                  <div key={i} style={{ width: 3, height: h, borderRadius: 2, background: "#ef4444",
+              <div style={{ display: "flex", alignItems: "center", gap: 2, marginRight: 2, flexShrink: 0 }}>
+                {[4, 8, 6, 12, 7, 10, 5].map((h, i) => (
+                  <div key={i} style={{ width: 2.5, height: h, borderRadius: 2, background: "#ef4444",
                     animation: `wavePulse .75s ease-in-out ${i * 0.09}s infinite alternate` }} />
                 ))}
-              </div>            )}
+              </div>
+            )}
 
             {/* Rep dots */}
-            <div style={{ display: "flex", gap: 5, flex: 1, overflowX: "auto", scrollbarWidth: "none" }}>
+            <div style={{ display: "flex", gap: 4, flex: 1, overflowX: "auto", scrollbarWidth: "none" } as React.CSSProperties}>
               {Array.from({ length: currentStep.reps }, (_, i) => {
                 const done    = i < repsDone;
                 const current = i === repsDone;
                 return (
                   <div key={i} style={{
-                    width: 32, height: 32, borderRadius: "50%", flexShrink: 0,
+                    width: 26, height: 26, borderRadius: "50%", flexShrink: 0,
                     display: "flex", alignItems: "center", justifyContent: "center",
-                    fontSize: 11, fontWeight: 700,
+                    fontSize: 10, fontWeight: 700,
                     background: done
                       ? col.grad
                       : current && justCounted
@@ -1059,16 +1045,16 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
             </div>
 
             {/* Count */}
-            <div style={{ textAlign: "center", minWidth: 40 }}>
-              <div style={{ fontSize: 22, fontWeight: 900, color: G, lineHeight: 1,
+            <div style={{ textAlign: "center", minWidth: 34, flexShrink: 0 }}>
+              <div style={{ fontSize: 18, fontWeight: 900, color: G, lineHeight: 1,
                 animation: justCounted ? "flashGreen .4s ease" : "none" }}>
                 {repsDone}
               </div>
-              <div style={{ fontSize: 11, color: "#7a9e88" }}>/ {currentStep.reps}</div>
+              <div style={{ fontSize: 10, color: "#7a9e88" }}>/ {currentStep.reps}</div>
             </div>
 
             {micActive && (
-              <div style={{ fontSize: 11, fontWeight: 700, color: "#ef4444", minWidth: 40, textAlign: "center" }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#ef4444", minWidth: 34, textAlign: "center", flexShrink: 0 }}>
                 {String(Math.floor(micTime / 60)).padStart(2, "0")}:{String(micTime % 60).padStart(2, "0")}
               </div>
             )}
@@ -1076,34 +1062,35 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
         )}
 
         {/* Mic error */}
-        {micError && (          <div style={{ margin: "6px 12px", padding: "6px 10px", borderRadius: 8, background: "#fffbeb",
+        {micError && (
+          <div style={{ margin: "4px 10px", padding: "5px 10px", borderRadius: 8, background: "#fffbeb",
             border: "1px solid #f6d860", fontSize: 11, color: "#856404", textAlign: "center" }}>
             {micError}
           </div>
         )}
 
         {/* Controls */}
-        <div style={{ display: "flex", gap: 8, padding: "12px" }}>
+        <div style={{ display: "flex", gap: 8, padding: "8px 10px" }}>
           {!isOverview && (
             micActive ? (
               <button onClick={stopSR}
-                style={{ flex: 1, padding: "14px 0", borderRadius: 12, border: "none",
-                  background: "#fee2e2", color: "#c0392b", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
+                style={{ flex: 1, padding: "11px 0", borderRadius: 10, border: "none",
+                  background: "#fee2e2", color: "#c0392b", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
                 🎙 Stop
               </button>
             ) : (
               <button onClick={startSR}
-                style={{ flex: 1, padding: "14px 0", borderRadius: 12, border: "none",
+                style={{ flex: 1, padding: "11px 0", borderRadius: 10, border: "none",
                   background: `linear-gradient(135deg,${G},${GM})`, color: "#fff",
-                  fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
+                  fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
                 🎙 Start
               </button>
             )
           )}
 
           <button onClick={markRep}
-            style={{ flex: isOverview ? 2 : 1, padding: "14px 0", borderRadius: 12, border: "none",
-              background: col.grad, color: "#fff", fontSize: 14, fontWeight: 800, cursor: "pointer" }}>
+            style={{ flex: isOverview ? 2 : 1, padding: "11px 0", borderRadius: 10, border: "none",
+              background: col.grad, color: "#fff", fontSize: 13, fontWeight: 800, cursor: "pointer" }}>
             {isOverview
               ? "Begin →"
               : repsDone + 1 >= currentStep.reps
@@ -1125,9 +1112,10 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
               saveSession({ stepIdx: prev, repsDone: 0 });
             } else {
               clearSession(); setStarted(false);
-            }          }}
-          style={{ margin: "0 12px 12px", padding: "10px 0", borderRadius: 10, border: `1px solid ${BORDER}`,
-            background: "#f8fafb", color: "#7a9e88", fontSize: 12, cursor: "pointer", width: "calc(100% - 24px)" }}>
+            }
+          }}
+          style={{ margin: "0 10px 8px", padding: "8px 0", borderRadius: 8, border: `1px solid ${BORDER}`,
+            background: "#f8fafb", color: "#7a9e88", fontSize: 11, cursor: "pointer", width: "calc(100% - 20px)" }}>
           ← {stepIdx === 0 ? "Back to Setup" : "Previous Step"}
         </button>
       </div>
