@@ -48,6 +48,7 @@ const matCfg: Record<MatType,{icon:React.ElementType;bg:string;text:string;borde
   Image:    {icon:Image,           bg:"#EFF6FF",text:"#2563EB",border:"#BFDBFE"},
   Document: {icon:FileSpreadsheet, bg:"#EFF6FF",text:"#1D4ED8",border:"#BFDBFE"},
 };
+
 const fmtSize = (b?:number) => !b?"":b<1024?`${b}B`:b<1048576?`${(b/1024).toFixed(0)}KB`:`${(b/1048576).toFixed(1)}MB`;
 
 const inp: React.CSSProperties = {
@@ -96,7 +97,8 @@ const CourseModal=React.memo(({ed,onClose,onSave,busy}:{ed?:any;onClose:()=>void
   const ref=useRef<HTMLInputElement>(null);
   const handleFile=useCallback(async(e:React.ChangeEvent<HTMLInputElement>)=>{
     const fi=e.target.files?.[0];if(!fi)return;setUp(true);
-    const url=await uploadImg(fi,"subject-files");    if(url)setF(c=>({...c,image_url:url}));setUp(false);
+    const url=await uploadImg(fi,"subject-files");
+    if(url)setF(c=>({...c,image_url:url}));setUp(false);
   },[]);
   return(
     <div style={{position:"fixed",inset:0,zIndex:50,background:"rgba(0,0,0,.6)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
@@ -145,7 +147,8 @@ const SubjectModal=React.memo(({ed,teachers,onClose,onSave,busy}:{ed?:any;teache
   const ref=useRef<HTMLInputElement>(null);
   const handleFile=useCallback(async(e:React.ChangeEvent<HTMLInputElement>)=>{
     const fi=e.target.files?.[0];if(!fi)return;setUp(true);
-    const url=await uploadImg(fi,"subject-images");    if(url)setF(s=>({...s,image_url:url}));setUp(false);
+    const url=await uploadImg(fi,"subject-images");
+    if(url)setF(s=>({...s,image_url:url}));setUp(false);
   },[]);
   return(
     <div style={{position:"fixed",inset:0,zIndex:50,background:"rgba(0,0,0,.6)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
@@ -191,10 +194,11 @@ const SubjectModal=React.memo(({ed,teachers,onClose,onSave,busy}:{ed?:any;teache
 });
 
 // ══════════════════════════════════════════════════════════════════════════
-// LESSON MODAL
+// LESSON MODAL  (virtual lessons: title + description of what to learn)
 // ══════════════════════════════════════════════════════════════════════════
 const LessonModal=React.memo(({ed,onClose,onSave,busy}:{ed?:any;onClose:()=>void;onSave:(p:any)=>Promise<void>;busy:boolean})=>{
-  const [f,setF]=useState({    title:ed?.title||"",title_ar:ed?.title_ar||"",
+  const [f,setF]=useState({
+    title:ed?.title||"",title_ar:ed?.title_ar||"",
     content:ed?.content||"",
     duration_minutes:ed?.duration_minutes||0,
     sort_order:ed?.sort_order||0,
@@ -243,7 +247,8 @@ const SyllabusModal=React.memo(({ed,nextWeek,onClose,onSave,busy}:{ed?:any;nextW
       <div style={{background:"#fff",borderRadius:20,width:"100%",maxWidth:480,maxHeight:"90vh",overflowY:"auto"}}>
         <div style={{padding:"16px 20px",borderBottom:"1px solid #E5E7EB",display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:"#fff"}}>
           <h2 style={{fontSize:15,fontWeight:800,color:"#111",margin:0,display:"flex",alignItems:"center",gap:8}}><Calendar size={16} color={G}/> {ed?"Edit Week":"Add Week"}</h2>
-          <button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:"#9CA3AF"}}>×</button>        </div>
+          <button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:"#9CA3AF"}}>×</button>
+        </div>
         <div style={{padding:20,display:"flex",flexDirection:"column",gap:14}}>
           <div style={{display:"grid",gridTemplateColumns:"76px 1fr",gap:12}}>
             <Fld label="Week #"><input type="number" value={f.week_number} onChange={e=>setF(s=>({...s,week_number:parseInt(e.target.value)||1}))} style={inp} min={1}/></Fld>
@@ -264,206 +269,100 @@ const SyllabusModal=React.memo(({ed,nextWeek,onClose,onSave,busy}:{ed?:any;nextW
 });
 
 // ══════════════════════════════════════════════════════════════════════════
-// MATERIAL MODAL - BUILD-SAFE VERSION
+// MATERIAL MODAL
 // ══════════════════════════════════════════════════════════════════════════
-const MaterialModal = React.memo(({ ed, subjectId, sortOrder, onClose, onSaved }: {
-  ed?: any;
-  subjectId: string;
-  sortOrder: number;
-  onClose: () => void;
-  onSaved: () => void;
-}) => {
-  const [f, setF] = useState({
-    title: ed?.title || "",
-    material_type: (ed?.material_type || "PDF") as MatType,
-    file_url: ed?.file_url || "",
-    content: ed?.content || "",
-    is_downloadable: ed?.is_downloadable ?? true,
-    sort_order: ed?.sort_order ?? sortOrder
-  });
-  const [file, setFile] = useState<File | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [drag, setDrag] = useState(false);
-  const ref = useRef<HTMLInputElement>(null);
+const MaterialModal=React.memo(({ed,subjectId,sortOrder,onClose,onSaved}:{ed?:any;subjectId:string;sortOrder:number;onClose:()=>void;onSaved:()=>void})=>{
+  const [f,setF]=useState({title:ed?.title||"",material_type:(ed?.material_type||"PDF") as MatType,file_url:ed?.file_url||"",content:ed?.content||"",is_downloadable:ed?.is_downloadable??true,sort_order:ed?.sort_order??sortOrder});
+  const [file,setFile]=useState<File|null>(null);
+  const [uploading,setUploading]=useState(false);
+  const [drag,setDrag]=useState(false);
+  const ref=useRef<HTMLInputElement>(null);
 
-  const getFileName = (fullName: string): string => {
-    const lastDot = fullName.lastIndexOf(".");
-    return lastDot > 0 ? fullName.substring(0, lastDot) : fullName;
-  };
-
-  const handleFileSelect = (selectedFile: File | null) => {
-    if (!selectedFile) return;    setFile(selectedFile);
-    if (!f.title) {
-      const name = getFileName(selectedFile.name);
-      setF((prev: any) => {
-        const updated = { ...prev };
-        updated.title = name;
-        return updated;
-      });
-    }
-  };
-
-  const doSave = async () => {
-    if (!f.title) {
-      toast({ title: "Error", description: "Please enter a title", variant: "destructive" });
-      return;
-    }
-    
+  const doSave=async()=>{
+    if(!f.title) return;
     setUploading(true);
     try {
-      let fileUrl = f.file_url;
-      let fileType = "";
-      let fileSize = 0;
-      
-      if (file) {
-        const ext = file.name.split(".").pop() || "bin";
-        const path = `materials/${subjectId}/${crypto.randomUUID()}.${ext}`;
-        
-        const { error: uploadError } = await supabase.storage
-          .from("subject-files")
-          .upload(path, file, { upsert: true, contentType: file.type });
-          
-        if (uploadError) {
-          console.error("Upload error:", uploadError);
-          throw new Error(`Failed to upload file: ${uploadError.message}`);
-        }
-        
-        fileUrl = path;
-        fileType = file.type;
-        fileSize = file.size;
+      let fileUrl=f.file_url,fileType="",fileSize=0;
+      if(file){
+        const ext=file.name.split(".").pop();
+        const path=`materials/${subjectId}/${crypto.randomUUID()}.${ext}`;
+        const {error}=await supabase.storage.from("subject-files").upload(path,file,{upsert:true,contentType:file.type});
+        if(error) throw error;
+        fileUrl=path; fileType=file.type; fileSize=file.size;
       }
-      
-      const payload: any = {
-        subject_id: subjectId,
-        title: f.title,
-        material_type: f.material_type,
-        file_url: fileUrl || null,
-        content: f.content || null,
-        is_downloadable: f.is_downloadable,
-        sort_order: f.sort_order,
-        ...(fileType ? { file_type: fileType } : {}),        ...(fileSize ? { file_size: fileSize } : {}),
+      const payload:any={
+        subject_id:subjectId,
+        title:f.title,
+        material_type:f.material_type,
+        file_url:fileUrl||null,
+        ...(fileType?{file_type:fileType}:{}),
+        ...(fileSize?{file_size:fileSize}:{}),
       };
-      
-      let saveError;
-      if (ed?.id) {
-        const { error } = await supabase
-          .from("subject_materials")
-          .update(payload)
-          .eq("id", ed.id);
-        saveError = error;
-      } else {
-        const { error } = await supabase
-          .from("subject_materials")
-          .insert(payload);
-        saveError = error;
-      }
-      
-      if (saveError) {
-        console.error("Save error:", saveError);
-        throw new Error(`Failed to save material: ${saveError.message}`);
-      }
-      
-      toast({ title: "✅ Material saved successfully" });
+      if(ed?.id){const {error}=await supabase.from("subject_materials").update(payload).eq("id",ed.id);if(error) throw error;}
+      else{const {error}=await supabase.from("subject_materials").insert(payload);if(error) throw error;}
+      toast({title:"✅ Material saved"});
       onSaved();
-      onClose();
-    } catch (e: any) {
-      console.error("Error in doSave:", e);
-      toast({
-        title: "❌ Error",
-        description: e.message || "Failed to save material",
-        variant: "destructive"
-      });
-    } finally {
-      setUploading(false);
-    }
+    } catch(e:any){toast({title:"Error",description:e.message,variant:"destructive"});}
+    setUploading(false);
   };
 
-  return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 60, background: "rgba(0,0,0,.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-      <div style={{ background: "#fff", borderRadius: 20, width: "100%", maxWidth: 480, maxHeight: "92vh", overflowY: "auto" }}>
-        <div style={{ padding: "16px 20px", borderBottom: "1px solid #E5E7EB", display: "flex", justifyContent: "space-between", alignItems: "center", position: "sticky", top: 0, background: "#fff" }}>
-          <h2 style={{ fontSize: 15, fontWeight: 800, color: "#111", margin: 0, display: "flex", alignItems: "center", gap: 8 }}><Upload size={15} color={G} /> {ed ? "Edit Material" : "Upload Material"}</h2>
-          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 20, color: "#9CA3AF" }}>×</button>
+  return(
+    <div style={{position:"fixed",inset:0,zIndex:60,background:"rgba(0,0,0,.6)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div style={{background:"#fff",borderRadius:20,width:"100%",maxWidth:480,maxHeight:"92vh",overflowY:"auto"}}>
+        <div style={{padding:"16px 20px",borderBottom:"1px solid #E5E7EB",display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:"#fff"}}>
+          <h2 style={{fontSize:15,fontWeight:800,color:"#111",margin:0,display:"flex",alignItems:"center",gap:8}}><Upload size={15} color={G}/> {ed?"Edit Material":"Upload Material"}</h2>
+          <button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:"#9CA3AF"}}>×</button>
         </div>
-        <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 16 }}>
-          <Fld label="Title *"><input value={f.title} onChange={e => setF(m => ({ ...m, title: e.target.value }))} style={inp} placeholder="e.g. Week 1 Worksheet" autoFocus /></Fld>
-          
+        <div style={{padding:20,display:"flex",flexDirection:"column",gap:16}}>
+          <Fld label="Title *"><input value={f.title} onChange={e=>setF(m=>({...m,title:e.target.value}))} style={inp} placeholder="e.g. Week 1 Worksheet" autoFocus/></Fld>
           <div>
-            <label style={{ fontSize: 11, fontWeight: 700, color: "#374151", display: "block", marginBottom: 8 }}>Type</label>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 6 }}>              {MATERIAL_TYPES.map(mt => {
-                const c = matCfg[mt], Icon = c.icon, sel = f.material_type === mt;
-                return (
-                  <button key={mt} onClick={() => setF(m => ({ ...m, material_type: mt }))}
-                    style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5, padding: "10px 4px", borderRadius: 12, border: `2px solid ${sel ? c.text : "#E5E7EB"}`, background: sel ? c.bg : "#fff", color: sel ? c.text : "#6B7280", fontSize: 10, fontWeight: sel ? 700 : 500, cursor: "pointer" }}>
-                    <Icon size={15} />{mt}
-                  </button>
-                );
+            <label style={{fontSize:11,fontWeight:700,color:"#374151",display:"block",marginBottom:8}}>Type</label>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:6}}>
+              {MATERIAL_TYPES.map(mt=>{
+                const c=matCfg[mt],Icon=c.icon,sel=f.material_type===mt;
+                return <button key={mt} onClick={()=>setF(m=>({...m,material_type:mt}))}
+                  style={{display:"flex",flexDirection:"column",alignItems:"center",gap:5,padding:"10px 4px",borderRadius:12,border:`2px solid ${sel?c.text:"#E5E7EB"}`,background:sel?c.bg:"#fff",color:sel?c.text:"#6B7280",fontSize:10,fontWeight:sel?700:500,cursor:"pointer"}}>
+                  <Icon size={15}/>{mt}
+                </button>;
               })}
             </div>
           </div>
-          
-          {f.material_type !== "Link" && f.material_type !== "Text" && (
+          {f.material_type!=="Link"&&f.material_type!=="Text"&&(
             <div>
-              <label style={{ fontSize: 11, fontWeight: 700, color: "#374151", display: "block", marginBottom: 8 }}>File Upload</label>
-              <div 
-                style={{ border: `2px dashed ${drag ? G : "#D1D5DB"}`, borderRadius: 16, padding: 20, textAlign: "center", cursor: "pointer", background: drag ? "#F0FDF4" : "#FAFAFA" }}
-                onClick={() => ref.current?.click()}
-                onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
-                onDragLeave={() => setDrag(false)}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  setDrag(false);
-                  const fi = e.dataTransfer.files?.[0] || null;
-                  handleFileSelect(fi);
-                }}
-              >
-                <input 
-                  ref={ref} 
-                  type="file" 
-                  style={{ display: "none" }} 
-                  accept="*/*"
-                  onChange={(e) => {
-                    const fi = e.target.files?.[0] || null;
-                    handleFileSelect(fi);
-                  }} 
-                />
-                {file ? (
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12 }}>
-                    <div style={{ width: 40, height: 40, borderRadius: 10, background: "#D1FAE5", display: "flex", alignItems: "center", justifyContent: "center" }}><Check size={18} color="#16A34A" /></div>
-                    <div style={{ textAlign: "left" }}>
-                      <p style={{ fontSize: 13, fontWeight: 600, color: "#374151", margin: 0 }}>{file.name}</p>
-                      <p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>{fmtSize(file.size)}</p>
+              <label style={{fontSize:11,fontWeight:700,color:"#374151",display:"block",marginBottom:8}}>File Upload</label>
+              <div style={{border:`2px dashed ${drag?G:"#D1D5DB"}`,borderRadius:16,padding:20,textAlign:"center",cursor:"pointer",background:drag?"#F0FDF4":"#FAFAFA"}}
+                onClick={()=>ref.current?.click()}
+                onDragOver={e=>{e.preventDefault();setDrag(true);}}
+                onDragLeave={()=>setDrag(false)}
+                onDrop={e=>{e.preventDefault();setDrag(false);const fi=e.dataTransfer.files[0];if(fi){setFile(fi);if(!f.title)setF(m=>({...m,title:fi.name.replace(/\.[^/.]+$/,"")}))};}}>
+                <input ref={ref} type="file" style={{display:"none"}} accept="*/*"
+                  onChange={e=>{const fi=e.target.files?.[0];if(fi){setFile(fi);if(!f.title)setF(m=>({...m,title:fi.name.replace(/\.[^/.]+$/,"")}))}}}/>
+                {file?(
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:12}}>
+                    <div style={{width:40,height:40,borderRadius:10,background:"#D1FAE5",display:"flex",alignItems:"center",justifyContent:"center"}}><Check size={18} color="#16A34A"/></div>
+                    <div style={{textAlign:"left"}}>
+                      <p style={{fontSize:13,fontWeight:600,color:"#374151",margin:0}}>{file.name}</p>
+                      <p style={{fontSize:11,color:"#9CA3AF",margin:0}}>{fmtSize(file.size)}</p>
                     </div>
-                    <button onClick={(e) => { e.stopPropagation(); setFile(null); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#9CA3AF" }}><X size={15} /></button>
+                    <button onClick={e=>{e.stopPropagation();setFile(null);}} style={{background:"none",border:"none",cursor:"pointer",color:"#9CA3AF"}}><X size={15}/></button>
                   </div>
-                ) : (
-                  <>
-                    <Upload size={26} style={{ color: "#D1D5DB", margin: "0 auto 8px", display: "block" }} />
-                    <p style={{ fontSize: 13, color: "#6B7280", fontWeight: 500, margin: "0 0 4px" }}>Drop file here or tap to browse</p>                    <p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>PDF, Word, Images, Audio, Video — all formats</p>
-                  </>
+                ):(
+                  <><Upload size={26} style={{color:"#D1D5DB",margin:"0 auto 8px",display:"block"}}/><p style={{fontSize:13,color:"#6B7280",fontWeight:500,margin:"0 0 4px"}}>Drop file here or tap to browse</p><p style={{fontSize:11,color:"#9CA3AF",margin:0}}>PDF, Word, Images, Audio, Video — all formats</p></>
                 )}
               </div>
-              {f.file_url && !file && (
-                <div style={{ marginTop: 8, padding: "8px 12px", borderRadius: 8, background: "#F0FDF4", border: "1px solid #86EFAC", fontSize: 11, color: "#166534", display: "flex", alignItems: "center", gap: 6 }}>
-                  <Check size={14} /> Current file: {f.file_url.split("/").pop()}
-                </div>
-              )}
-              <p style={{ fontSize: 11, color: "#9CA3AF", textAlign: "center", margin: "8px 0 0" }}>— or paste a URL —</p>
-              <input value={f.file_url} onChange={e => setF(m => ({ ...m, file_url: e.target.value }))} style={{ ...inp, marginTop: 6 }} placeholder="https://…" />
+              <p style={{fontSize:11,color:"#9CA3AF",textAlign:"center",margin:"8px 0 0"}}>— or paste a URL —</p>
+              <input value={f.file_url} onChange={e=>setF(m=>({...m,file_url:e.target.value}))} style={{...inp,marginTop:6}} placeholder="https://…"/>
             </div>
           )}
-          
-          {f.material_type === "Link" && <Fld label="URL *"><input value={f.file_url} onChange={e => setF(m => ({ ...m, file_url: e.target.value }))} style={inp} placeholder="https://…" /></Fld>}
-          {f.material_type === "Text" && <Fld label="Content"><textarea value={f.content} onChange={e => setF(m => ({ ...m, content: e.target.value }))} rows={5} style={{ ...inp, resize: "vertical" }} /></Fld>}
-          
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px", borderRadius: 12, background: "#F9FAFB", border: "1px solid #E5E7EB" }}>
-            <div><p style={{ fontSize: 13, fontWeight: 600, color: "#374151", margin: 0 }}>Allow Download</p><p style={{ fontSize: 11, color: "#9CA3AF", margin: "2px 0 0" }}>Students can save this file</p></div>
-            <Switch checked={f.is_downloadable} onCheckedChange={v => setF(m => ({ ...m, is_downloadable: v }))} />
+          {f.material_type==="Link"&&<Fld label="URL *"><input value={f.file_url} onChange={e=>setF(m=>({...m,file_url:e.target.value}))} style={inp} placeholder="https://…"/></Fld>}
+          {f.material_type==="Text"&&<Fld label="Content"><textarea value={f.content} onChange={e=>setF(m=>({...m,content:e.target.value}))} rows={5} style={{...inp,resize:"vertical"}}/></Fld>}
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"14px 16px",borderRadius:12,background:"#F9FAFB",border:"1px solid #E5E7EB"}}>
+            <div><p style={{fontSize:13,fontWeight:600,color:"#374151",margin:0}}>Allow Download</p><p style={{fontSize:11,color:"#9CA3AF",margin:"2px 0 0"}}>Students can save this file</p></div>
+            <Switch checked={f.is_downloadable} onCheckedChange={v=>setF(m=>({...m,is_downloadable:v}))}/>
           </div>
-          
-          <button onClick={doSave} disabled={!f.title || uploading}
-            style={{ padding: "13px", borderRadius: 12, border: "none", background: !f.title || uploading ? "#e5e7eb" : `linear-gradient(135deg,${G},${GM})`, color: !f.title || uploading ? "#9ca3af" : "#fff", fontWeight: 800, cursor: !f.title || uploading ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontSize: 14 }}>
-            {uploading ? <><Loader2 size={15} style={{ animation: "spin .8s linear infinite" }} /> Uploading…</> : <><Upload size={14} /> {ed ? "Save Changes" : "Upload Material"}</>}
+          <button onClick={doSave} disabled={!f.title||uploading}
+            style={{padding:"13px",borderRadius:12,border:"none",background:!f.title||uploading?"#e5e7eb":`linear-gradient(135deg,${G},${GM})`,color:!f.title||uploading?"#9ca3af":"#fff",fontWeight:800,cursor:!f.title||uploading?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8,fontSize:14}}>
+            {uploading?<><Loader2 size={15} style={{animation:"spin .8s linear infinite"}}/> Uploading…</>:<><Upload size={14}/> {ed?"Save Changes":"Upload Material"}</>}
           </button>
         </div>
       </div>
@@ -472,7 +371,7 @@ const MaterialModal = React.memo(({ ed, subjectId, sortOrder, onClose, onSaved }
 });
 
 // ══════════════════════════════════════════════════════════════════════════
-// MAIN COMPONENT
+// MAIN
 // ══════════════════════════════════════════════════════════════════════════
 export default function CourseManagement() {
   const qc = useQueryClient();
@@ -487,8 +386,10 @@ export default function CourseManagement() {
   const [sortBy,     setSortBy]     = useState<SortKey>("sort_order");
   const [expanded,   setExpanded]   = useState<Set<string>>(new Set());
 
+  // modal state
   const [showCourse,   setShowCourse]   = useState(false);
-  const [showSubject,  setShowSubject]  = useState(false);  const [showLesson,   setShowLesson]   = useState(false);
+  const [showSubject,  setShowSubject]  = useState(false);
+  const [showLesson,   setShowLesson]   = useState(false);
   const [showSyllabus, setShowSyllabus] = useState(false);
   const [showMaterial, setShowMaterial] = useState(false);
   const [edCourse,   setEdCourse]   = useState<any>(null);
@@ -499,13 +400,13 @@ export default function CourseManagement() {
   const [busy, setBusy] = useState(false);
 
   // ── Queries ───────────────────────────────────────────────────────────────
-  const {courses=[],isLoading:cLoad}=useQuery({queryKey:["adm-courses"],queryFn:async()=>{const {data}=await supabase.from("courses").select("*").order("sort_order");return data||[];}});
-  const {subjects=[],isLoading:sLoad}=useQuery({queryKey:["adm-subjects",selCourse?.id],enabled:view!=="courses",queryFn:async()=>{let q=supabase.from("subjects").select("*").order("title");if(selCourse)q=q.eq("course_id",selCourse.id);const {data}=await q;return data||[];}});
-  const {allSubjects=[]}=useQuery({queryKey:["adm-all-subjects"],queryFn:async()=>{const {data}=await supabase.from("subjects").select("id,title,level,course_id").order("title");return data||[];}});
-  const {lessons=[],isLoading:lLoad}=useQuery({queryKey:["adm-lessons",selSubject?.id],enabled:!!selSubject,queryFn:async()=>{const {data}=await supabase.from("lessons").select("*").eq("subject_id",selSubject?.id||"").order("sort_order");return data||[];}});
-  const {syllabus=[],isLoading:syllLoad}=useQuery({queryKey:["adm-syllabus",selSubject?.id],enabled:!!selSubject,queryFn:async()=>{const {data}=await supabase.from("subject_syllabus").select("*").eq("subject_id",selSubject!.id).order("week_number");return data||[];}});
-  const {materials=[],isLoading:matLoad}=useQuery({queryKey:["adm-materials",selSubject?.id],enabled:!!selSubject,queryFn:async()=>{const {data}=await supabase.from("subject_materials").select("*").eq("subject_id",selSubject!.id).order("sort_order").order("created_at",{ascending:false});return data||[];}});
-  const {teachers=[]}=useQuery({queryKey:["teachers-simple"],queryFn:async()=>{const {roles}=await supabase.from("user_roles").select("user_id").in("role",["teacher","admin"]);if(!roles?.length)return[];const {data}=await supabase.from("profiles").select("user_id,full_name").in("user_id",roles.map((r:any)=>r.user_id));return data||[];}});
+  const {data:courses=[],isLoading:cLoad}=useQuery({queryKey:["adm-courses"],queryFn:async()=>{const {data}=await supabase.from("courses").select("*").order("sort_order");return data||[];}});
+  const {data:subjects=[],isLoading:sLoad}=useQuery({queryKey:["adm-subjects",selCourse?.id],enabled:view!=="courses",queryFn:async()=>{let q=supabase.from("subjects").select("*").order("title");if(selCourse)q=q.eq("course_id",selCourse.id);const {data}=await q;return data||[];}});
+  const {data:allSubjects=[]}=useQuery({queryKey:["adm-all-subjects"],queryFn:async()=>{const {data}=await supabase.from("subjects").select("id,title,level,course_id").order("title");return data||[];}});
+  const {data:lessons=[],isLoading:lLoad}=useQuery({queryKey:["adm-lessons",selSubject?.id],enabled:!!selSubject,queryFn:async()=>{const {data}=await supabase.from("lessons").select("*").eq("subject_id",selSubject?.id||"").order("sort_order");return data||[];}});
+  const {data:syllabus=[],isLoading:syllLoad}=useQuery({queryKey:["adm-syllabus",selSubject?.id],enabled:!!selSubject,queryFn:async()=>{const {data}=await supabase.from("subject_syllabus").select("*").eq("subject_id",selSubject!.id).order("week_number");return data||[];}});
+  const {data:materials=[],isLoading:matLoad}=useQuery({queryKey:["adm-materials",selSubject?.id],enabled:!!selSubject,queryFn:async()=>{const {data}=await supabase.from("subject_materials").select("*").eq("subject_id",selSubject!.id).order("sort_order").order("created_at",{ascending:false});return data||[];}});
+  const {data:teachers=[]}=useQuery({queryKey:["teachers-simple"],queryFn:async()=>{const {data:roles}=await supabase.from("user_roles").select("user_id").in("role",["teacher","admin"]);if(!roles?.length)return[];const {data}=await supabase.from("profiles").select("user_id,full_name").in("user_id",roles.map((r:any)=>r.user_id));return data||[];}});
 
   // ── CRUD helpers ─────────────────────────────────────────────────────────
   const saveCourse=useCallback(async(p:any)=>{
@@ -537,6 +438,7 @@ export default function CourseManagement() {
     }catch(e:any){toast({title:"Error",description:e.message,variant:"destructive"});}
     setBusy(false);
   },[edSubject,selCourse,qc]);
+
   const delSubject=async(id:string)=>{
     if(!confirm("Delete subject and all its content?")) return;
     await supabase.from("lessons").delete().eq("subject_id",id);
@@ -586,6 +488,7 @@ export default function CourseManagement() {
     await supabase.from("subject_materials").delete().eq("id",mat.id);
     qc.invalidateQueries({queryKey:["adm-materials",selSubject?.id]});toast({title:"Material deleted"});
   };
+
   // ── Filtering / sorting ───────────────────────────────────────────────────
   const sortList=(list:any[])=>{
     const s=[...list];
@@ -635,7 +538,8 @@ export default function CourseManagement() {
         </button>
       </div>
 
-      {/* Content tabs */}      {view==="content"&&(
+      {/* Content tabs (only in content view) */}
+      {view==="content"&&(
         <div style={{background:"#fff",borderBottom:"1px solid #E5E7EB",padding:"0 16px",display:"flex",gap:0}}>
           {([
             {id:"syllabus",label:"📋 Syllabus",count:(syllabus as any[]).length},
@@ -654,7 +558,7 @@ export default function CourseManagement() {
         </div>
       )}
 
-      {/* Filters */}
+      {/* Filters (not content view) */}
       {view!=="content"&&(
         <div style={{background:"#fff",borderBottom:"1px solid #E5E7EB",padding:"10px 16px",display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
           <div style={{position:"relative",minWidth:160,flex:1}}>
@@ -684,7 +588,8 @@ export default function CourseManagement() {
           :fCourses.length===0?<div style={{textAlign:"center",padding:40,color:"#9CA3AF"}}><FolderOpen size={48} style={{margin:"0 auto 12px",display:"block"}}/><p>No courses yet. Create your first course above.</p></div>
           :<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:14}}>
             {fCourses.map((c:any)=>{
-              const lv=lvlCfg[(c.level as Level)||"all"];              return(
+              const lv=lvlCfg[(c.level as Level)||"all"];
+              return(
                 <div key={c.id} className="chov" style={{background:"#fff",borderRadius:16,border:`1px solid ${lv.border}`,overflow:"hidden"}}>
                   <div style={{position:"relative",cursor:"pointer"}} onClick={()=>{setSelCourse(c);setView("subjects");}}>
                     <Thumb url={c.image_url} title={c.title} height={120} bg={lv.bg}/>
@@ -733,7 +638,8 @@ export default function CourseManagement() {
                           style={{flex:1,padding:"7px",borderRadius:8,border:`1px solid ${G}`,background:G,color:"#fff",fontSize:11,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
                           <ChevronRight size={12}/> Open
                         </button>
-                        <button onClick={()=>{setEdSubject(s);setShowSubject(true);}} style={{padding:"7px 9px",borderRadius:8,border:"1px solid #E5E7EB",background:"#fff",cursor:"pointer"}}><Edit2 size={13} color={G}/></button>                        <button onClick={()=>delSubject(s.id)} style={{padding:"7px 9px",borderRadius:8,border:"1px solid #FEE2E2",background:"#FEF2F2",cursor:"pointer"}}><Trash2 size={13} color="#DC2626"/></button>
+                        <button onClick={()=>{setEdSubject(s);setShowSubject(true);}} style={{padding:"7px 9px",borderRadius:8,border:"1px solid #E5E7EB",background:"#fff",cursor:"pointer"}}><Edit2 size={13} color={G}/></button>
+                        <button onClick={()=>delSubject(s.id)} style={{padding:"7px 9px",borderRadius:8,border:"1px solid #FEE2E2",background:"#FEF2F2",cursor:"pointer"}}><Trash2 size={13} color="#DC2626"/></button>
                       </div>
                     </div>
                   </div>
@@ -756,9 +662,10 @@ export default function CourseManagement() {
           </>
         )}
 
-        {/* ═══ CONTENT ═══════════════════════════════════════ */}
+        {/* ═══ CONTENT (Syllabus / Materials / Lessons) ══════ */}
         {view==="content"&&selSubject&&(
           <div style={{maxWidth:720,margin:"0 auto"}}>
+            {/* Subject banner */}
             <div style={{background:"#fff",borderRadius:16,border:`1px solid ${lvlCfg[(selSubject.level as Level)||"all"].border}`,padding:"16px 20px",marginBottom:20,display:"flex",alignItems:"center",gap:14}}>
               {selSubject.image_url&&<img src={selSubject.image_url} alt="" style={{width:52,height:52,borderRadius:12,objectFit:"cover",flexShrink:0}} onError={e=>{(e.target as any).style.display="none";}}/>}
               <div style={{flex:1,minWidth:0}}>
@@ -771,7 +678,7 @@ export default function CourseManagement() {
               </span>
             </div>
 
-            {/* SYLLABUS */}
+            {/* ── SYLLABUS ──────────────────────────────────── */}
             {tab==="syllabus"&&(
               <div style={{background:"#fff",borderRadius:16,padding:20}}>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>
@@ -782,7 +689,8 @@ export default function CourseManagement() {
                 :(syllabus as any[]).length===0?<div style={{textAlign:"center",padding:48,color:"#9CA3AF"}}><Calendar size={44} style={{margin:"0 auto 14px",display:"block",opacity:.3}}/><p style={{fontWeight:600,margin:"0 0 4px"}}>No weeks added yet</p><p style={{fontSize:13,margin:0}}>Build the weekly plan for students</p></div>
                 :<div style={{position:"relative",paddingLeft:28}}>
                   <div style={{position:"absolute",left:21,top:22,bottom:22,width:2,background:"linear-gradient(to bottom,#86EFAC,transparent)"}}/>
-                  <div style={{display:"flex",flexDirection:"column",gap:12}}>                    {(syllabus as any[]).map((s,i)=>{
+                  <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                    {(syllabus as any[]).map((s,i)=>{
                       const wc=weekPalette[i%weekPalette.length],isEx=expanded.has(s.id),hasD=s.description||(s.objectives&&(s.objectives as string[]).length>0);
                       return(
                         <div key={s.id} style={{display:"flex",gap:12}}>
@@ -828,10 +736,11 @@ export default function CourseManagement() {
               </div>
             )}
 
-            {/* MATERIALS */}
+            {/* ── MATERIALS ─────────────────────────────────── */}
             {tab==="materials"&&(
               <div style={{background:"#fff",borderRadius:16,padding:20}}>
-                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>                  <div><h3 style={{fontWeight:800,fontSize:15,color:"#111",margin:"0 0 2px"}}>Materials & Resources</h3><p style={{fontSize:12,color:"#9CA3AF",margin:0}}>{(materials as any[]).length} files</p></div>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>
+                  <div><h3 style={{fontWeight:800,fontSize:15,color:"#111",margin:"0 0 2px"}}>Materials & Resources</h3><p style={{fontSize:12,color:"#9CA3AF",margin:0}}>{(materials as any[]).length} files</p></div>
                   <button onClick={()=>{setEdMaterial(null);setShowMaterial(true);}} style={{display:"flex",alignItems:"center",gap:6,padding:"8px 14px",borderRadius:10,border:"none",background:G,color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer"}}><Upload size={13}/> Upload</button>
                 </div>
                 {matLoad?<div style={{textAlign:"center",padding:40}}><Loader2 size={24} style={{animation:"spin .8s linear infinite",color:G}}/></div>
@@ -864,13 +773,14 @@ export default function CourseManagement() {
               </div>
             )}
 
-            {/* LESSONS */}
+            {/* ── LESSONS / SESSIONS ────────────────────────── */}
             {tab==="lessons"&&(
               <div style={{background:"#fff",borderRadius:16,padding:20}}>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
                   <div><h3 style={{fontWeight:800,fontSize:15,color:"#111",margin:"0 0 2px"}}>Live Sessions</h3><p style={{fontSize:12,color:"#9CA3AF",margin:0}}>What students will learn in each session</p></div>
                   <button onClick={()=>{setEdLesson(null);setShowLesson(true);}} style={{display:"flex",alignItems:"center",gap:6,padding:"8px 14px",borderRadius:10,border:"none",background:G,color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer"}}><Plus size={13}/> Add Session</button>
                 </div>
+                {/* Info banner */}
                 <div style={{padding:"10px 14px",borderRadius:12,background:"#F0FDF4",border:"1px solid #86EFAC",fontSize:12,color:"#166534",marginBottom:16,display:"flex",gap:8,alignItems:"flex-start"}}>
                   <span style={{fontSize:16}}>ℹ️</span>
                   <span>All lessons are delivered as live virtual sessions. Each entry below describes what students will learn in that session.</span>
@@ -880,7 +790,8 @@ export default function CourseManagement() {
                 :<div style={{display:"flex",flexDirection:"column",gap:10}}>
                   {(lessons as any[]).map((l:any,i:number)=>(
                     <div key={l.id} style={{background:"#F9FAFB",borderRadius:14,border:"1px solid #E5E7EB",padding:"14px 16px",display:"flex",gap:12}}>
-                      <div style={{width:34,height:34,borderRadius:10,background:"#F0FDF4",border:"1.5px solid #86EFAC",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:800,color:G,flexShrink:0,marginTop:1}}>{i+1}</div>                      <div style={{flex:1,minWidth:0}}>
+                      <div style={{width:34,height:34,borderRadius:10,background:"#F0FDF4",border:"1.5px solid #86EFAC",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:800,color:G,flexShrink:0,marginTop:1}}>{i+1}</div>
+                      <div style={{flex:1,minWidth:0}}>
                         <p style={{fontWeight:700,fontSize:13,color:"#111",margin:"0 0 2px"}}>{l.title}</p>
                         {l.title_ar&&<p style={{fontSize:11,color:GOLD,margin:"0 0 4px",direction:"rtl",fontFamily:"'Amiri',serif"}}>{l.title_ar}</p>}
                         {l.content&&(
