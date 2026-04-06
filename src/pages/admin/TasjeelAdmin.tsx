@@ -95,7 +95,19 @@ export default function TasjeelAdmin() {
       .select("*")
       .eq("current_step", "review")
       .order("updated_at", { ascending: false });
-    setStudents(await mergeProfiles(data || []));
+    const merged = await mergeProfiles(data || []);
+    // Also load recitation test data for session info
+    const ids = merged.map((m: any) => m.user_id);
+    if (ids.length > 0) {
+      const { data: recTests } = await (supabase as any)
+        .from("recitation_tests")
+        .select("user_id, virtual_session_date, virtual_session_time, ai_score, status")
+        .in("user_id", ids);
+      const recMap: Record<string, any> = {};
+      (recTests || []).forEach((r: any) => { recMap[r.user_id] = r; });
+      merged.forEach((m: any) => { m.recitation = recMap[m.user_id] || null; });
+    }
+    setStudents(merged);
     setStdLoading(false);
   };
 
