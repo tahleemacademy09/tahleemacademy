@@ -361,7 +361,7 @@ const StudentDashboard = () => {
                 </span>
               </div>
               <p style={{ fontSize:17, fontWeight:700, color:"rgba(255,255,255,0.92)", margin:"0 0 5px", letterSpacing:"-0.2px" }}>
-                {t(`Marhaban, ${profile?.full_name || "Student"}! 👋`, `مرحباً، ${profile?.full_name || "طالب"}! 👋`)}
+                {t(`Marhaban, ${displayProfile?.full_name || "Student"}! 👋`, `مرحباً، ${displayProfile?.full_name || "طالب"}! 👋`)}
               </p>
               <p style={{ fontSize:12, color:"rgba(255,255,255,0.45)", margin:0 }}>
                 {today.toLocaleDateString(language === "ar" ? "ar-SA" : "en-US", { weekday:"long", month:"long", day:"numeric" })}
