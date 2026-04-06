@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import {
-  BarChart3, Mic, Brain, Target, FileCheck,
+  BarChart3, Mic, MicOff, Brain, Target, FileCheck,
   Play, Pause, SkipBack, SkipForward, Minus, Plus,
   Maximize2, Minimize2, BookOpen, Flame, Star, ChevronRight,
-  Moon, Award
+  Moon, Award, X, CheckCircle2, AlertTriangle, Loader2
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
