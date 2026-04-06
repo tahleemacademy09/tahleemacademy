@@ -90,10 +90,10 @@ const StudentDashboard = () => {
 
   // ── GATEKEEPING: Redirect to awaiting-level if not yet assigned ─────────
   useEffect(() => {
-    if (!loading && currentStep !== "completed") {
+    if (!loading && currentStep !== "completed" && !isImpersonating) {
       navigate("/student/awaiting-level", { replace: true });
     }
-  }, [loading, currentStep, navigate]);
+  }, [loading, currentStep, navigate, isImpersonating]);
 
   // ── Voice greeting — short, simple, works everywhere ─────────
   useEffect(() => {
