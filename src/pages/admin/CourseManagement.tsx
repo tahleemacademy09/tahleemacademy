@@ -272,113 +272,462 @@ const SyllabusModal=React.memo(({ed,nextWeek,onClose,onSave,busy}:{ed?:any;nextW
 // ══════════════════════════════════════════════════════════════════════════
 // MATERIAL MODAL
 // ══════════════════════════════════════════════════════════════════════════
+// MATERIAL MODAL — Enhanced with real progress, preview & drag-and-drop
+// ══════════════════════════════════════════════════════════════════════════
+function autoDetectType(file: File): MatType {
+  const t = file.type.toLowerCase(), e = file.name.split(".").pop()?.toLowerCase() || "";
+  if (t.includes("pdf") || e === "pdf") return "PDF";
+  if (t.includes("video") || ["mp4","webm","mov","m4v","avi"].includes(e)) return "Video";
+  if (t.includes("audio") || ["mp3","wav","m4a","aac","ogg","flac"].includes(e)) return "Audio";
+  if (t.includes("image") || ["jpg","jpeg","png","gif","webp","svg","avif"].includes(e)) return "Image";
+  if (["doc","docx","xls","xlsx","ppt","pptx","odt","ods"].includes(e)) return "Document";
+  return "PDF";
+}
+
+const TYPE_ACCEPT: Record<MatType,string> = {
+  PDF: ".pdf", Video: "video/*,.mp4,.webm,.mov", Audio: "audio/*,.mp3,.wav,.m4a",
+  Image: "image/*", Document: ".doc,.docx,.xls,.xlsx,.ppt,.pptx,.odt,.ods",
+  Link: "", Text: "",
+};
+
 const MaterialModal=React.memo(({ed,subjectId,sortOrder,onClose,onSaved}:{ed?:any;subjectId:string;sortOrder:number;onClose:()=>void;onSaved:()=>void})=>{
   const {user}=useAuth();
-  const [f,setF]=useState({title:ed?.title||"",material_type:(ed?.material_type||"PDF") as MatType,file_url:ed?.file_url||"",content:ed?.content||"",is_downloadable:ed?.is_downloadable??true,sort_order:ed?.sort_order??sortOrder});
-  const [file,setFile]=useState<File|null>(null);
-  const [uploading,setUploading]=useState(false);
-  const [drag,setDrag]=useState(false);
-  const [saveErr,setSaveErr]=useState("");
-  const ref=useRef<HTMLInputElement>(null);
+  const [f,setF]=useState({
+    title:       ed?.title||"",
+    material_type:(ed?.material_type||"PDF") as MatType,
+    file_url:    ed?.file_url||"",
+    content:     ed?.content||"",
+    is_downloadable: ed?.is_downloadable??true,
+    sort_order:  ed?.sort_order??sortOrder,
+  });
+  const [file,       setFile]       = useState<File|null>(null);
+  const [preview,    setPreview]    = useState<string|null>(null); // data-URL for images
+  const [pct,        setPct]        = useState(0);          // 0–100
+  const [phase,      setPhase]      = useState<"idle"|"uploading"|"saving"|"done"|"error">("idle");
+  const [drag,       setDrag]       = useState(false);
+  const [dragCount,  setDragCount]  = useState(0);
+  const [saveErr,    setSaveErr]    = useState("");
+  const fileRef  = useRef<HTMLInputElement>(null);
+  const dragRef  = useRef<HTMLDivElement>(null);
 
-  const doSave=async()=>{
+  const cfg  = matCfg[f.material_type];
+  const Icon = cfg.icon;
+  const needFile = f.material_type!=="Link" && f.material_type!=="Text";
+  const needUrl  = f.material_type==="Link";
+  const needText = f.material_type==="Text";
+  const busy = phase==="uploading"||phase==="saving";
+
+  /* ── pick file ───────────────────────────────────────── */
+  const pickFile = useCallback((fi: File) => {
+    const detected = autoDetectType(fi);
+    setFile(fi);
+    setF(m => ({ ...m, material_type: detected, title: m.title || fi.name.replace(/\.[^/.]+$/,"") }));
     setSaveErr("");
-    if(!f.title){setSaveErr("Title is required.");return;}
-    if(f.material_type!=="Link"&&f.material_type!=="Text"&&!file&&!f.file_url){setSaveErr("Please select a file or paste a URL.");return;}
-    if(f.material_type==="Link"&&!f.file_url.trim()){setSaveErr("Please enter a URL.");return;}
-    if(f.material_type==="Text"&&!f.content.trim()){setSaveErr("Content cannot be empty.");return;}
-    setUploading(true);
+    // generate image preview
+    if (fi.type.startsWith("image/")) {
+      const r = new FileReader();
+      r.onload = ev => setPreview(ev.target?.result as string);
+      r.readAsDataURL(fi);
+    } else {
+      setPreview(null);
+    }
+  }, []);
+
+  const clearFile = useCallback(() => {
+    setFile(null); setPreview(null); setPct(0); setPhase("idle");
+    if (fileRef.current) fileRef.current.value = "";
+  }, []);
+
+  /* ── drag & drop ─────────────────────────────────────── */
+  const onDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault(); e.stopPropagation();
+    setDragCount(c => c + 1);
+    setDrag(true);
+  }, []);
+  const onDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault(); e.stopPropagation();
+    setDragCount(c => {
+      const next = c - 1;
+      if (next <= 0) setDrag(false);
+      return next;
+    });
+  }, []);
+  const onDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault(); e.stopPropagation();
+  }, []);
+  const onDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault(); e.stopPropagation();
+    setDrag(false); setDragCount(0);
+    const fi = e.dataTransfer.files?.[0];
+    if (fi) pickFile(fi);
+  }, [pickFile]);
+
+  /* ── upload with real XHR progress ──────────────────── */
+  const uploadWithProgress = useCallback((path: string, fi: File): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      const { data: { session } } = { data: { session: null } } as any; // placeholder
+      // Use Supabase storage REST endpoint directly for XHR progress
+      const SUPABASE_URL = (supabase as any).supabaseUrl as string;
+      const SUPABASE_KEY = (supabase as any).supabaseKey as string;
+
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", `${SUPABASE_URL}/storage/v1/object/subject-files/${path}`);
+      xhr.setRequestHeader("Authorization", `Bearer ${SUPABASE_KEY}`);
+      xhr.setRequestHeader("x-upsert", "false");
+      xhr.setRequestHeader("Cache-Control", "3600");
+
+      xhr.upload.addEventListener("progress", (ev) => {
+        if (ev.lengthComputable) setPct(Math.round((ev.loaded / ev.total) * 90));
+      });
+
+      xhr.addEventListener("load", () => {
+        if (xhr.status >= 200 && xhr.status < 300) { setPct(95); resolve(); }
+        else {
+          try { const err = JSON.parse(xhr.responseText); reject(new Error(err.error||err.message||"Upload failed")); }
+          catch { reject(new Error(`Upload failed (${xhr.status})`)); }
+        }
+      });
+      xhr.addEventListener("error", () => reject(new Error("Network error during upload")));
+      xhr.addEventListener("abort", () => reject(new Error("Upload aborted")));
+
+      const form = new FormData();
+      form.append("", fi, fi.name);
+      xhr.send(form);
+    });
+  }, []);
+
+  /* ── save ────────────────────────────────────────────── */
+  const doSave = async () => {
+    setSaveErr("");
+    if (!f.title.trim())                                              { setSaveErr("Title is required."); return; }
+    if (needFile && !file && !f.file_url.trim())                     { setSaveErr("Please select a file or paste a URL."); return; }
+    if (needUrl  && !f.file_url.trim())                              { setSaveErr("Please enter a URL."); return; }
+    if (needText && !f.content.trim())                               { setSaveErr("Content cannot be empty."); return; }
+
+    setPhase("uploading"); setPct(5);
+
     try {
-      let fileUrl=f.file_url.trim(),fileType="",fileSize=0;
-      if(file){
-        const ext=file.name.split(".").pop()||"bin";
-        const path=`materials/${subjectId}/${crypto.randomUUID()}.${ext}`;
-        const {error}=await supabase.storage.from("subject-files").upload(path,file,{cacheControl:"3600",upsert:false});
-        if(error) throw new Error("Storage: "+error.message);
-        fileUrl=path; fileType=file.type; fileSize=file.size;
+      let fileUrl = f.file_url.trim(), fileType = "", fileSize = 0;
+
+      if (needFile && file) {
+        const ext  = file.name.split(".").pop() || "bin";
+        const path = `materials/${subjectId}/${crypto.randomUUID()}.${ext}`;
+
+        // Try XHR-with-progress first, fall back to supabase SDK
+        try {
+          await uploadWithProgress(path, file);
+        } catch {
+          // Fallback: SDK upload (no progress bar but reliable)
+          setPct(50);
+          const { error } = await supabase.storage
+            .from("subject-files")
+            .upload(path, file, { cacheControl:"3600", upsert:false });
+          if (error) throw new Error("Storage: " + error.message);
+        }
+        fileUrl  = path;
+        fileType = file.type;
+        fileSize = file.size;
       }
-      const payload:any={
-        subject_id:subjectId,
-        title:f.title.trim(),
-        material_type:f.material_type,
-        file_url:fileUrl||null,
-        content:f.material_type==="Text"?f.content.trim():null,
-        is_downloadable:f.is_downloadable,
-        sort_order:f.sort_order,
-        ...(fileType?{file_type:fileType}:{}),
-        ...(fileSize?{file_size:fileSize}:{}),
+
+      setPct(97); setPhase("saving");
+
+      const payload: any = {
+        subject_id:      subjectId,
+        title:           f.title.trim(),
+        material_type:   f.material_type,
+        file_url:        fileUrl || null,
+        content:         needText ? f.content.trim() : null,
+        is_downloadable: f.is_downloadable,
+        sort_order:      f.sort_order,
+        ...(fileType ? { file_type: fileType } : {}),
+        ...(fileSize ? { file_size: fileSize } : {}),
       };
-      if(!ed?.id && user) payload.uploaded_by=user.id;
-      if(ed?.id){const {error}=await supabase.from("subject_materials").update(payload).eq("id",ed.id);if(error) throw new Error("Database: "+error.message);}
-      else{const {error}=await supabase.from("subject_materials").insert(payload);if(error) throw new Error("Database: "+error.message);}
-      toast({title:"✅ Material saved"});
-      onSaved();
-    } catch(e:any){setSaveErr(e.message||"Upload failed.");toast({title:"Error",description:e.message,variant:"destructive"});}
-    setUploading(false);
+      if (!ed?.id && user) payload.uploaded_by = user.id;
+
+      const { error: dbErr } = ed?.id
+        ? await supabase.from("subject_materials").update(payload).eq("id", ed.id)
+        : await supabase.from("subject_materials").insert(payload);
+      if (dbErr) throw new Error("Database: " + dbErr.message);
+
+      setPct(100); setPhase("done");
+      toast({ title: "✅ Material saved successfully" });
+      setTimeout(() => onSaved(), 600);
+    } catch (e: any) {
+      setPhase("error"); setPct(0);
+      setSaveErr(e.message || "Upload failed.");
+      toast({ title: "Upload Error", description: e.message, variant:"destructive" });
+    }
   };
 
-  return(
-    <div style={{position:"fixed",inset:0,zIndex:60,background:"rgba(0,0,0,.6)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-      <div style={{background:"#fff",borderRadius:20,width:"100%",maxWidth:480,maxHeight:"92vh",overflowY:"auto"}}>
-        <div style={{padding:"16px 20px",borderBottom:"1px solid #E5E7EB",display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:"#fff"}}>
-          <h2 style={{fontSize:15,fontWeight:800,color:"#111",margin:0,display:"flex",alignItems:"center",gap:8}}><Upload size={15} color={G}/> {ed?"Edit Material":"Upload Material"}</h2>
-          <button type="button" onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:"#9CA3AF"}}>×</button>
-        </div>
-        <div style={{padding:20,display:"flex",flexDirection:"column",gap:16}}>
-          {saveErr&&<div style={{display:"flex",alignItems:"flex-start",gap:8,padding:"10px 14px",borderRadius:10,background:"#FEF2F2",border:"1.5px solid #FECACA"}}><AlertCircle size={15} color="#DC2626" style={{marginTop:1,flexShrink:0}}/><p style={{fontSize:12,color:"#B91C1C",margin:0,fontWeight:600}}>{saveErr}</p></div>}
-          <Fld label="Title *"><input value={f.title} onChange={e=>{setF(m=>({...m,title:e.target.value}));setSaveErr("");}} style={inp} placeholder="e.g. Week 1 Worksheet" autoFocus/></Fld>
-          <div>
-            <label style={{fontSize:11,fontWeight:700,color:"#374151",display:"block",marginBottom:8}}>Type</label>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:6}}>
-              {MATERIAL_TYPES.map(mt=>{
-                const c=matCfg[mt],Icon=c.icon,sel=f.material_type===mt;
-                return <button type="button" key={mt} onClick={()=>setF(m=>({...m,material_type:mt}))}
-                  style={{display:"flex",flexDirection:"column",alignItems:"center",gap:5,padding:"10px 4px",borderRadius:12,border:`2px solid ${sel?c.text:"#E5E7EB"}`,background:sel?c.bg:"#fff",color:sel?c.text:"#6B7280",fontSize:10,fontWeight:sel?700:500,cursor:"pointer"}}>
-                  <Icon size={15}/>{mt}
-                </button>;
-              })}
+  /* ── file icon / preview card ────────────────────────── */
+  const FileCard = () => {
+    if (!file) return null;
+    const isImg = file.type.startsWith("image/");
+    return (
+      <div style={{ borderRadius:14, overflow:"hidden", border:`2px solid ${cfg.border}`, background:cfg.bg }}>
+        {isImg && preview && (
+          <img src={preview} alt="preview" style={{ width:"100%", maxHeight:140, objectFit:"cover", display:"block" }} />
+        )}
+        <div style={{ display:"flex", alignItems:"center", gap:12, padding:"13px 16px" }}>
+          <div style={{ width:44, height:44, borderRadius:12, background:"#fff", border:`1.5px solid ${cfg.border}`, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+            <Icon size={22} color={cfg.text} />
+          </div>
+          <div style={{ flex:1, minWidth:0 }}>
+            <p style={{ fontWeight:700, fontSize:13, color:"#111", margin:"0 0 2px", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{file.name}</p>
+            <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+              <span style={{ fontSize:11, color:cfg.text, fontWeight:700, background:"#fff", padding:"1px 7px", borderRadius:20, border:`1px solid ${cfg.border}` }}>{f.material_type}</span>
+              <span style={{ fontSize:11, color:"#9CA3AF" }}>{fmtSize(file.size)}</span>
             </div>
           </div>
-          {f.material_type!=="Link"&&f.material_type!=="Text"&&(
-            <div>
-              <label style={{fontSize:11,fontWeight:700,color:"#374151",display:"block",marginBottom:8}}>File Upload</label>
-              <div style={{border:`2px dashed ${drag?G:"#D1D5DB"}`,borderRadius:16,padding:20,textAlign:"center",cursor:"pointer",background:drag?"#F0FDF4":"#FAFAFA"}}
-                onClick={()=>ref.current?.click()}
-                onDragOver={e=>{e.preventDefault();setDrag(true);}}
-                onDragLeave={()=>setDrag(false)}
-                onDrop={e=>{e.preventDefault();setDrag(false);const fi=e.dataTransfer.files[0];if(fi){setFile(fi);if(!f.title)setF(m=>({...m,title:fi.name.replace(/\.[^/.]+$/,"")}))};}}>
-                <input ref={ref} type="file" style={{display:"none"}} accept="*/*"
-                  onChange={e=>{const fi=e.target.files?.[0];if(fi){setFile(fi);if(!f.title)setF(m=>({...m,title:fi.name.replace(/\.[^/.]+$/,"")}))}}}/>
-                {file?(
-                  <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:12}}>
-                    <div style={{width:40,height:40,borderRadius:10,background:"#D1FAE5",display:"flex",alignItems:"center",justifyContent:"center"}}><Check size={18} color="#16A34A"/></div>
-                    <div style={{textAlign:"left"}}>
-                      <p style={{fontSize:13,fontWeight:600,color:"#374151",margin:0}}>{file.name}</p>
-                      <p style={{fontSize:11,color:"#9CA3AF",margin:0}}>{fmtSize(file.size)}</p>
-                    </div>
-                    <button type="button" onClick={e=>{e.stopPropagation();setFile(null);}} style={{background:"none",border:"none",cursor:"pointer",color:"#9CA3AF"}}><X size={15}/></button>
-                  </div>
-                ):(
-                  <><Upload size={26} style={{color:"#D1D5DB",margin:"0 auto 8px",display:"block"}}/><p style={{fontSize:13,color:"#6B7280",fontWeight:500,margin:"0 0 4px"}}>Drop file here or tap to browse</p><p style={{fontSize:11,color:"#9CA3AF",margin:0}}>PDF, Word, Images, Audio, Video — all formats</p></>
-                )}
-              </div>
-              <p style={{fontSize:11,color:"#9CA3AF",textAlign:"center",margin:"8px 0 0"}}>— or paste a URL —</p>
-              <input value={f.file_url} onChange={e=>setF(m=>({...m,file_url:e.target.value}))} style={{...inp,marginTop:6}} placeholder="https://…"/>
-            </div>
+          {!busy && (
+            <button type="button" onClick={e=>{ e.stopPropagation(); clearFile(); }}
+              style={{ width:30, height:30, borderRadius:8, border:`1px solid ${cfg.border}`, background:"#fff", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+              <X size={14} color={cfg.text} />
+            </button>
           )}
-          {f.material_type==="Link"&&<Fld label="URL *"><input value={f.file_url} onChange={e=>setF(m=>({...m,file_url:e.target.value}))} style={inp} placeholder="https://…"/></Fld>}
-          {f.material_type==="Text"&&<Fld label="Content"><textarea value={f.content} onChange={e=>setF(m=>({...m,content:e.target.value}))} rows={5} style={{...inp,resize:"vertical"}}/></Fld>}
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"14px 16px",borderRadius:12,background:"#F9FAFB",border:"1px solid #E5E7EB"}}>
-            <div><p style={{fontSize:13,fontWeight:600,color:"#374151",margin:0}}>Allow Download</p><p style={{fontSize:11,color:"#9CA3AF",margin:"2px 0 0"}}>Students can save this file</p></div>
-            <Switch checked={f.is_downloadable} onCheckedChange={v=>setF(m=>({...m,is_downloadable:v}))}/>
-          </div>
-          <button type="button" onClick={doSave} disabled={!f.title||uploading}
-            style={{padding:"13px",borderRadius:12,border:"none",background:!f.title||uploading?"#e5e7eb":`linear-gradient(135deg,${G},${GM})`,color:!f.title||uploading?"#9ca3af":"#fff",fontWeight:800,cursor:!f.title||uploading?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8,fontSize:14}}>
-            {uploading?<><Loader2 size={15} style={{animation:"spin .8s linear infinite"}}/> Uploading…</>:<><Upload size={14}/> {ed?"Save Changes":"Upload Material"}</>}
-          </button>
         </div>
       </div>
-    </div>
+    );
+  };
+
+  /* ── progress bar ────────────────────────────────────── */
+  const ProgressBar = () => {
+    if (phase==="idle" || phase==="error") return null;
+    const label = phase==="saving" ? "Saving to database…" : phase==="done" ? "Done! ✓" : `Uploading… ${pct}%`;
+    const barColor = phase==="done" ? "#16A34A" : phase==="saving" ? GOLD : G;
+    return (
+      <div style={{ padding:"12px 16px", borderRadius:12, background:"#F0FDF4", border:"1px solid #BBF7D0" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", marginBottom:8, alignItems:"center" }}>
+          <span style={{ fontSize:12, fontWeight:700, color:"#166534" }}>{label}</span>
+          <span style={{ fontSize:12, fontWeight:800, color:barColor }}>{pct}%</span>
+        </div>
+        <div style={{ height:8, background:"#D1FAE5", borderRadius:99, overflow:"hidden" }}>
+          <div style={{ height:"100%", borderRadius:99, background:`linear-gradient(90deg,${barColor},${barColor}bb)`, width:`${pct}%`, transition:"width 0.3s ease" }} />
+        </div>
+        {phase==="uploading" && file && (
+          <p style={{ fontSize:11, color:"#6B7280", margin:"6px 0 0" }}>
+            {Math.round((pct / 100) * file.size / 1024)} KB / {Math.round(file.size / 1024)} KB
+          </p>
+        )}
+      </div>
+    );
+  };
+
+  /* ── render ──────────────────────────────────────────── */
+  return (
+    <>
+      <style>{`
+        @keyframes mm-fadein{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+        @keyframes mm-spin{to{transform:rotate(360deg)}}
+        @keyframes mm-pulse{0%,100%{opacity:1}50%{opacity:.55}}
+        .mm-type-btn{transition:all .15s ease;cursor:pointer;}
+        .mm-type-btn:hover{transform:translateY(-2px);}
+        .mm-drop-zone{transition:all .2s ease;}
+        .mm-submit{transition:all .2s ease;}
+        .mm-submit:hover:not(:disabled){transform:translateY(-2px);box-shadow:0 8px 28px rgba(6,78,59,.38)!important;}
+      `}</style>
+
+      {/* Backdrop */}
+      <div
+        onClick={e=>{ if(e.target===e.currentTarget && !busy) onClose(); }}
+        style={{ position:"fixed", inset:0, zIndex:60, background:"rgba(0,0,0,.55)", display:"flex", alignItems:"flex-end", justifyContent:"center" }}
+      >
+        {/* Sheet */}
+        <div style={{ background:"#fff", borderRadius:"24px 24px 0 0", width:"100%", maxWidth:520, maxHeight:"95vh", overflowY:"auto", animation:"mm-fadein .22s ease" }}
+          onClick={e=>e.stopPropagation()}>
+
+          {/* Header */}
+          <div style={{ background:`linear-gradient(135deg,${G},${GM})`, padding:"18px 20px", borderRadius:"24px 24px 0 0", display:"flex", alignItems:"center", justifyContent:"space-between", position:"sticky", top:0, zIndex:2 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+              <div style={{ width:40, height:40, borderRadius:12, background:"rgba(255,255,255,.15)", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                <Upload size={20} color="#fff" />
+              </div>
+              <div>
+                <h2 style={{ color:"#fff", fontWeight:800, fontSize:17, margin:0 }}>{ed ? "Edit Material" : "Upload Material"}</h2>
+                <p style={{ color:"rgba(255,255,255,.65)", fontSize:12, margin:"2px 0 0" }}>
+                  {ed ? "Update this resource" : "Add a file, link or text for students"}
+                </p>
+              </div>
+            </div>
+            <button type="button" onClick={onClose} disabled={busy}
+              style={{ width:34, height:34, borderRadius:9, border:"1px solid rgba(255,255,255,.25)", background:"rgba(255,255,255,.12)", color:"#fff", cursor:busy?"not-allowed":"pointer", display:"flex", alignItems:"center", justifyContent:"center", opacity:busy?.5:1 }}>
+              <X size={16} color="#fff" />
+            </button>
+          </div>
+
+          <div style={{ padding:"22px 20px 32px", display:"flex", flexDirection:"column", gap:18 }}>
+
+            {/* Error banner */}
+            {saveErr && (
+              <div style={{ display:"flex", alignItems:"flex-start", gap:10, padding:"13px 15px", borderRadius:12, background:"#FEF2F2", border:"1.5px solid #FECACA" }}>
+                <AlertCircle size={16} color="#DC2626" style={{ marginTop:1, flexShrink:0 }} />
+                <div style={{ flex:1 }}>
+                  <p style={{ fontSize:13, color:"#B91C1C", margin:0, fontWeight:700 }}>Upload failed</p>
+                  <p style={{ fontSize:12, color:"#DC2626", margin:"3px 0 0", opacity:.85 }}>{saveErr}</p>
+                </div>
+                <button type="button" onClick={()=>setSaveErr("")} style={{ background:"none", border:"none", cursor:"pointer", color:"#9CA3AF" }}><X size={14}/></button>
+              </div>
+            )}
+
+            {/* Title */}
+            <div>
+              <label style={{ fontSize:12, fontWeight:700, color:"#374151", display:"block", marginBottom:7 }}>
+                Title <span style={{ color:"#EF4444" }}>*</span>
+              </label>
+              <input
+                value={f.title}
+                onChange={e=>{ setF(m=>({...m,title:e.target.value})); setSaveErr(""); }}
+                placeholder="e.g. Week 1 Worksheet"
+                autoFocus
+                disabled={busy}
+                style={{ ...inp, fontSize:14, padding:"12px 14px", borderRadius:12, border:`1.5px solid ${f.title?"#E5E7EB":"#FECACA"}` }}
+              />
+            </div>
+
+            {/* Type selector */}
+            <div>
+              <label style={{ fontSize:12, fontWeight:700, color:"#374151", display:"block", marginBottom:10 }}>Type</label>
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8 }}>
+                {MATERIAL_TYPES.map(mt => {
+                  const c = matCfg[mt], Ic = c.icon, sel = f.material_type === mt;
+                  return (
+                    <button type="button" key={mt} className="mm-type-btn"
+                      onClick={()=>{ if(!busy) setF(m=>({...m,material_type:mt})); }}
+                      style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:7, padding:"12px 4px", borderRadius:14,
+                        border:`2px solid ${sel?c.text:"#EBEBEB"}`, background:sel?c.bg:"#FAFAFA",
+                        boxShadow:sel?`0 2px 12px ${c.text}22`:"none", opacity:busy?.6:1 }}>
+                      <div style={{ width:34, height:34, borderRadius:9, background:sel?c.text:"#E5E7EB", display:"flex", alignItems:"center", justifyContent:"center", transition:"all .15s" }}>
+                        <Ic size={16} color={sel?"#fff":"#9CA3AF"} />
+                      </div>
+                      <span style={{ fontSize:10, fontWeight:sel?700:500, color:sel?c.text:"#9CA3AF" }}>{mt}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* File zone */}
+            {needFile && (
+              <div>
+                <label style={{ fontSize:12, fontWeight:700, color:"#374151", display:"block", marginBottom:10 }}>File</label>
+
+                {file ? (
+                  <FileCard />
+                ) : (
+                  /* Drop zone */
+                  <div ref={dragRef} className="mm-drop-zone"
+                    onClick={()=>{ if(!busy) fileRef.current?.click(); }}
+                    onDragEnter={onDragEnter} onDragLeave={onDragLeave}
+                    onDragOver={onDragOver}   onDrop={onDrop}
+                    style={{
+                      padding:"32px 20px", borderRadius:18, textAlign:"center", cursor:busy?"not-allowed":"pointer",
+                      border:`2.5px dashed ${drag?G:"#D1D5DB"}`,
+                      background:drag?"linear-gradient(135deg,#ECFDF5,#F0FDF4)":"#FAFAFA",
+                      boxShadow:drag?`0 0 0 4px ${G}22`:"none",
+                      transform:drag?"scale(1.01)":"scale(1)",
+                    }}>
+                    <input ref={fileRef} type="file" style={{ display:"none" }} accept={TYPE_ACCEPT[f.material_type]||"*/*"}
+                      onChange={e=>{ const fi=e.target.files?.[0]; if(fi) pickFile(fi); }} />
+
+                    <div style={{ width:60, height:60, borderRadius:18, margin:"0 auto 16px", background:drag?cfg.bg:"#F3F4F6", border:`2px solid ${drag?cfg.border:"#E5E7EB"}`, display:"flex", alignItems:"center", justifyContent:"center", transition:"all .2s" }}>
+                      {drag
+                        ? <Icon size={28} color={cfg.text} />
+                        : <Upload size={28} color="#9CA3AF" />
+                      }
+                    </div>
+                    <p style={{ fontWeight:800, fontSize:14, color:drag?G:"#374151", margin:"0 0 6px", transition:"color .2s" }}>
+                      {drag ? "Drop to upload!" : "Tap to browse or drag file here"}
+                    </p>
+                    <p style={{ fontSize:12, color:"#9CA3AF", margin:0 }}>
+                      {f.material_type==="PDF" && "PDF files"}
+                      {f.material_type==="Video" && "MP4 · WebM · MOV · AVI"}
+                      {f.material_type==="Audio" && "MP3 · WAV · M4A · AAC · FLAC"}
+                      {f.material_type==="Image" && "JPG · PNG · GIF · WebP · SVG"}
+                      {f.material_type==="Document" && "Word · Excel · PowerPoint · ODF"}
+                    </p>
+                  </div>
+                )}
+
+                {/* URL fallback */}
+                <div style={{ display:"flex", alignItems:"center", gap:10, margin:"14px 0 8px" }}>
+                  <div style={{ flex:1, height:1, background:"#E5E7EB" }} />
+                  <span style={{ fontSize:11, color:"#9CA3AF", fontWeight:600, whiteSpace:"nowrap" }}>or paste a URL</span>
+                  <div style={{ flex:1, height:1, background:"#E5E7EB" }} />
+                </div>
+                <input value={f.file_url} disabled={busy}
+                  onChange={e=>setF(m=>({...m,file_url:e.target.value}))}
+                  style={{ ...inp, borderRadius:12, padding:"11px 14px" }} placeholder="https://…" />
+              </div>
+            )}
+
+            {/* Link URL */}
+            {needUrl && (
+              <div>
+                <label style={{ fontSize:12, fontWeight:700, color:"#374151", display:"block", marginBottom:7 }}>
+                  URL <span style={{ color:"#EF4444" }}>*</span>
+                </label>
+                <input value={f.file_url} disabled={busy}
+                  onChange={e=>{ setF(m=>({...m,file_url:e.target.value})); setSaveErr(""); }}
+                  style={{ ...inp, borderRadius:12, padding:"11px 14px" }} placeholder="https://…" />
+              </div>
+            )}
+
+            {/* Text content */}
+            {needText && (
+              <div>
+                <label style={{ fontSize:12, fontWeight:700, color:"#374151", display:"block", marginBottom:7 }}>
+                  Content <span style={{ color:"#EF4444" }}>*</span>
+                </label>
+                <textarea value={f.content} disabled={busy} rows={6}
+                  onChange={e=>{ setF(m=>({...m,content:e.target.value})); setSaveErr(""); }}
+                  style={{ ...inp, borderRadius:12, padding:"11px 14px", resize:"vertical" }}
+                  placeholder="Type your text content here…" />
+              </div>
+            )}
+
+            {/* Progress */}
+            <ProgressBar />
+
+            {/* Allow download toggle */}
+            <div onClick={()=>{ if(!busy) setF(m=>({...m,is_downloadable:!m.is_downloadable})); }}
+              style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"14px 16px", borderRadius:14, cursor:busy?"not-allowed":"pointer",
+                background:f.is_downloadable?"#F0FDF4":"#F9FAFB", border:`1.5px solid ${f.is_downloadable?"#A7F3D0":"#E5E7EB"}`, transition:"all .2s" }}>
+              <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+                <div style={{ width:38, height:38, borderRadius:10, background:f.is_downloadable?"#D1FAE5":"#F3F4F6", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                  <Download size={17} color={f.is_downloadable?G:"#9CA3AF"} />
+                </div>
+                <div>
+                  <p style={{ fontWeight:700, fontSize:13, color:"#374151", margin:0 }}>Allow Download</p>
+                  <p style={{ fontSize:11, color:"#9CA3AF", margin:"2px 0 0" }}>
+                    {f.is_downloadable ? "Students can save this file" : "View only — no download"}
+                  </p>
+                </div>
+              </div>
+              {/* Custom pill toggle */}
+              <div style={{ width:46, height:26, borderRadius:99, background:f.is_downloadable?G:"#CBD5E1", position:"relative", transition:"background .2s", flexShrink:0 }}>
+                <div style={{ width:20, height:20, borderRadius:99, background:"#fff", position:"absolute", top:3, left:f.is_downloadable?23:3, transition:"left .2s", boxShadow:"0 1px 4px rgba(0,0,0,.2)" }} />
+              </div>
+            </div>
+
+            {/* Submit */}
+            <button type="button" className="mm-submit" onClick={doSave} disabled={busy||phase==="done"}
+              style={{ width:"100%", padding:"15px", borderRadius:14, border:"none",
+                background:busy||phase==="done"?"#E5E7EB":`linear-gradient(135deg,${G},${GM})`,
+                color:busy||phase==="done"?"#9CA3AF":"#fff", fontWeight:800, fontSize:15,
+                cursor:busy||phase==="done"?"not-allowed":"pointer",
+                display:"flex", alignItems:"center", justifyContent:"center", gap:10,
+                boxShadow:busy||phase==="done"?"none":"0 4px 18px rgba(6,78,59,.28)" }}>
+              {phase==="uploading" && <><Loader2 size={18} style={{ animation:"mm-spin .8s linear infinite" }}/> Uploading {pct}%…</>}
+              {phase==="saving"    && <><Loader2 size={18} style={{ animation:"mm-spin .8s linear infinite" }}/> Saving…</>}
+              {phase==="done"      && <><Check size={18}/> Saved!</>}
+              {phase==="error"     && <><Upload size={18}/> Retry Upload</>}
+              {phase==="idle"      && <><Upload size={18}/> {ed ? "Save Changes" : "Upload Material"}</>}
+            </button>
+
+          </div>
+        </div>
+      </div>
+    </>
   );
 });
 
