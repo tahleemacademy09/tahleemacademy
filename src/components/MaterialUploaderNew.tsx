@@ -1,5 +1,10 @@
+/**
+ * MaterialUploaderNew.tsx
+ * Fixed: imports from correct Supabase client path.
+ * This component is kept minimal — the full upload UI is in MaterialManagerPro.
+ */
 import { useState } from "react";
-import { supabase } from "@/lib/supabaseClient";
+import { supabase } from "@/integrations/supabase/client";  // ← fixed path
 
 export default function MaterialUploaderNew({ courseId }: { courseId: string }) {
   const [uploading, setUploading] = useState(false);
@@ -7,21 +12,15 @@ export default function MaterialUploaderNew({ courseId }: { courseId: string }) 
   const handleUpload = async (file: File) => {
     try {
       setUploading(true);
-
       const filePath = `${courseId}/${Date.now()}-${file.name}`;
-
       const { data, error } = await supabase.storage
         .from("subject-files")
         .upload(filePath, file);
-
       if (error) throw error;
-
       console.log("Upload success:", data);
-      alert("Upload successful");
-
-    } catch (err: any) {
-      console.error(err);
-      alert(err.message || "Upload failed");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Upload failed";
+      console.error(msg);
     } finally {
       setUploading(false);
     }
@@ -31,13 +30,9 @@ export default function MaterialUploaderNew({ courseId }: { courseId: string }) 
     <div>
       <input
         type="file"
-        onChange={(e) => {
-          if (e.target.files?.[0]) {
-            handleUpload(e.target.files[0]);
-          }
-        }}
+        onChange={(e) => { if (e.target.files?.[0]) handleUpload(e.target.files[0]); }}
       />
-      {uploading && <p>Uploading...</p>}
+      {uploading && <p>Uploading…</p>}
     </div>
   );
 }
