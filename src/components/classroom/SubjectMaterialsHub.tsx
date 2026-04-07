@@ -1,6 +1,9 @@
 /**
  * SubjectMaterialsHub.tsx  — rebuilt from scratch
  * Upload ANY file to Supabase "subject-files" bucket + full library management.
+ * 
+ * 🔧 FIX APPLIED: Added e.stopPropagation() to prevent click events from 
+ * bubbling to parent components that may have navigation handlers.
  */
 import React, { useState, useRef, useCallback, useMemo, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -45,7 +48,6 @@ const TYPES: Record<MatType,{
 };
 
 const ALL_TYPES = Object.keys(TYPES) as MatType[];
-
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function autoDetect(file: File): MatType {
   const t = file.type.toLowerCase();
@@ -94,8 +96,7 @@ function xhrUpload(path: string, file: File, anonKey: string,
     };
     xhr.onerror = () => reject(new Error("Network error"));
     xhr.onabort = () => reject(new Error("Aborted"));
-    const fd = new FormData();
-    fd.append("", file, file.name);
+    const fd = new FormData();    fd.append("", file, file.name);
     xhr.send(fd);
   });
 }
@@ -140,13 +141,11 @@ function UploadPanel({ subjectId, count, onDone }: {
   const needFile = type !== "Link" && type !== "Text";
   const T        = TYPES[type];
 
-  // ── pick file ──────────────────────────────────────────────────────────────
   const pickFile = useCallback((f: File) => {
     setFile(f);
     const det = autoDetect(f);
     setType(det);
-    setTitle(prev => prev || f.name.replace(/\.[^/.]+$/, ""));
-    setErr(""); setThumb(null);
+    setTitle(prev => prev || f.name.replace(/\.[^/.]+$/, ""));    setErr(""); setThumb(null);
     if (f.type.startsWith("image/")) {
       const r = new FileReader();
       r.onload = ev => setThumb(ev.target?.result as string);
@@ -164,7 +163,6 @@ function UploadPanel({ subjectId, count, onDone }: {
     clearFile(); setPct(0); setPhase("idle"); setErr("");
   };
 
-  // ── drag & drop ────────────────────────────────────────────────────────────
   const onDE = (e: React.DragEvent) => { e.preventDefault(); dragCnt.current++; setDrag(true); };
   const onDL = (e: React.DragEvent) => {
     e.preventDefault(); dragCnt.current--;
@@ -176,7 +174,6 @@ function UploadPanel({ subjectId, count, onDone }: {
     if (f) pickFile(f);
   };
 
-  // ── submit ─────────────────────────────────────────────────────────────────
   const submit = async () => {
     setErr("");
     if (!title.trim()) { setErr("Title is required"); return; }
@@ -197,8 +194,7 @@ function UploadPanel({ subjectId, count, onDone }: {
         try {
           await xhrUpload(path, file, key, setPct);
         } catch {
-          setPct(45);
-          const { error } = await supabase.storage.from(BUCKET)
+          setPct(45);          const { error } = await supabase.storage.from(BUCKET)
             .upload(path, file, { cacheControl: "3600", upsert: false });
           if (error) throw new Error(error.message);
           setPct(90);
@@ -241,32 +237,29 @@ function UploadPanel({ subjectId, count, onDone }: {
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
 
-      {/* Error */}
       {err && (
         <div style={{
           display:"flex", gap:10, padding:"12px 14px",
           background:C.redL, border:`1.5px solid ${C.redB}`,
           borderRadius:11, alignItems:"flex-start",
           animation:"smh-pop .2s ease",
-        }}>
-          <span style={{ fontSize:16, flexShrink:0 }}>⚠️</span>
+        }}>          <span style={{ fontSize:16, flexShrink:0 }}>⚠️</span>
           <p style={{ margin:0, fontSize:13, color:"#991B1B", flex:1, fontWeight:600, lineHeight:1.4 }}>{err}</p>
-          <button onClick={() => setErr("")} style={{ background:"none", border:"none", cursor:"pointer", color:C.muted, flexShrink:0, fontSize:14 }}>✕</button>
+          <button onClick={(e) => { e.stopPropagation(); setErr(""); }} style={{ background:"none", border:"none", cursor:"pointer", color:C.muted, flexShrink:0, fontSize:14 }}>✕</button>
         </div>
       )}
 
-      {/* ── TITLE ─────────────────────────────────────────────────────────── */}
       <div>
         <label style={labelSt}>Title <span style={{ color:C.red }}>*</span></label>
         <input
           value={title} disabled={busy} autoFocus
           onChange={e => setTitle(e.target.value)}
+          onClick={(e) => e.stopPropagation()}
           placeholder="e.g. Week 4 Tajweed Notes"
           style={{ ...inputSt, borderColor: !title && err ? C.redB : C.border }}
         />
       </div>
 
-      {/* ── TYPE GRID ─────────────────────────────────────────────────────── */}
       <div>
         <label style={labelSt}>Type</label>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8 }}>
@@ -274,7 +267,7 @@ function UploadPanel({ subjectId, count, onDone }: {
             const tc = TYPES[mt], sel = type === mt;
             return (
               <button key={mt} type="button"
-                onClick={() => !busy && setType(mt)}
+                onClick={(e) => { e?.stopPropagation(); if (!busy) setType(mt); }}
                 style={{
                   display:"flex", flexDirection:"column", alignItems:"center", gap:7,
                   padding:"12px 4px", borderRadius:13,
@@ -295,15 +288,18 @@ function UploadPanel({ subjectId, count, onDone }: {
         </div>
       </div>
 
-      {/* ── FILE ZONE ─────────────────────────────────────────────────────── */}
       {needFile && (
         <div>
           <label style={labelSt}>File</label>
-          <input ref={fileRef} type="file" accept="*/*" style={{ display:"none" }}
-            onChange={e => { const f = e.target.files?.[0]; if (f) pickFile(f); }} />
+          {/* 🔧 FIX: Hidden file input with stopPropagation */}
+          <input ref={fileRef} type="file" accept="*/*" style={{ display:"none" }}            onClick={(e) => e.stopPropagation()}
+            onChange={(e) => {
+              e.stopPropagation();
+              const f = e.target.files?.[0];
+              if (f) pickFile(f);
+            }} />
 
           {file ? (
-            /* File selected card */
             <div style={{
               borderRadius:14, border:`2px solid ${T.border}`,
               background:T.light, overflow:"hidden",
@@ -335,7 +331,7 @@ function UploadPanel({ subjectId, count, onDone }: {
                   </div>
                 </div>
                 {!busy && (
-                  <button onClick={clearFile} style={{
+                  <button onClick={(e) => { e.stopPropagation(); clearFile(); }} style={{
                     width:30, height:30, borderRadius:8, flexShrink:0,
                     border:`1.5px solid ${T.border}`, background:"#fff",
                     cursor:"pointer", fontSize:14,
@@ -345,12 +341,14 @@ function UploadPanel({ subjectId, count, onDone }: {
                 )}
               </div>
             </div>
-          ) : (
-            /* Drop zone */
+          ) : (            /* 🔧 FIX: Drop zone with stopPropagation on click */
             <div
               onDragEnter={onDE} onDragLeave={onDL}
               onDragOver={e => e.preventDefault()} onDrop={onDrop}
-              onClick={() => !busy && fileRef.current?.click()}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!busy) fileRef.current?.click();
+              }}
               style={{
                 padding:"36px 20px", borderRadius:18, textAlign:"center",
                 cursor: busy ? "not-allowed" : "pointer",
@@ -364,9 +362,8 @@ function UploadPanel({ subjectId, count, onDone }: {
               }}>
 
               <div style={{
-                width:68, height:68, borderRadius:20,
-                margin:"0 auto 18px", fontSize:30,
-                background: drag ? T.light : "#F0F0F0",
+                width:68, height:68, borderRadius:20, fontSize:30,
+                margin:"0 auto 18px", background: drag ? T.light : "#F0F0F0",
                 border:`2px solid ${drag ? T.border : "#E0E0E0"}`,
                 display:"flex", alignItems:"center", justifyContent:"center",
                 transition:"all .2s",
@@ -385,7 +382,6 @@ function UploadPanel({ subjectId, count, onDone }: {
             </div>
           )}
 
-          {/* URL fallback */}
           <div style={{ display:"flex", alignItems:"center", gap:10, margin:"13px 0 9px" }}>
             <div style={{ flex:1, height:1, background:"#E5E7EB" }} />
             <span style={{ fontSize:11, color:C.muted, fontWeight:600, whiteSpace:"nowrap" }}>
@@ -394,35 +390,34 @@ function UploadPanel({ subjectId, count, onDone }: {
             <div style={{ flex:1, height:1, background:"#E5E7EB" }} />
           </div>
           <input value={url} disabled={busy}
-            onChange={e => setUrl(e.target.value)}
+            onChange={e => setUrl(e.target.value)}            onClick={(e) => e.stopPropagation()}
             placeholder="https://…"
             style={inputSt}
           />
         </div>
       )}
 
-      {/* Link URL */}
       {type === "Link" && (
         <div>
           <label style={labelSt}>URL <span style={{ color:C.red }}>*</span></label>
           <input value={url} disabled={busy}
             onChange={e => { setUrl(e.target.value); setErr(""); }}
+            onClick={(e) => e.stopPropagation()}
             placeholder="https://…" style={inputSt} />
         </div>
       )}
 
-      {/* Text body */}
       {type === "Text" && (
         <div>
           <label style={labelSt}>Content <span style={{ color:C.red }}>*</span></label>
           <textarea value={body} disabled={busy} rows={6}
             onChange={e => { setBody(e.target.value); setErr(""); }}
+            onClick={(e) => e.stopPropagation()}
             placeholder="Write your text content here…"
             style={{ ...inputSt, resize:"vertical" }} />
         </div>
       )}
 
-      {/* ── PROGRESS ──────────────────────────────────────────────────────── */}
       {phase !== "idle" && phase !== "err" && (
         <div style={{
           padding:"14px 16px", borderRadius:13,
@@ -444,14 +439,12 @@ function UploadPanel({ subjectId, count, onDone }: {
           </div>
           {phase === "up" && file && (
             <p style={{ fontSize:11, color:C.muted, margin:"6px 0 0" }}>
-              {fmtBytes(Math.round(pct / 100 * file.size))} / {fmtBytes(file.size)}
-            </p>
+              {fmtBytes(Math.round(pct / 100 * file.size))} / {fmtBytes(file.size)}            </p>
           )}
         </div>
       )}
 
-      {/* ── DOWNLOAD TOGGLE ───────────────────────────────────────────────── */}
-      <div onClick={() => !busy && setDl(v => !v)} style={{
+      <div onClick={(e) => { e.stopPropagation(); if (!busy) setDl(v => !v); }} style={{
         display:"flex", alignItems:"center", justifyContent:"space-between",
         padding:"13px 16px", borderRadius:13, cursor: busy ? "not-allowed" : "pointer",
         background: dl ? C.greenL : C.grayL,
@@ -486,8 +479,7 @@ function UploadPanel({ subjectId, count, onDone }: {
         </div>
       </div>
 
-      {/* ── SUBMIT ────────────────────────────────────────────────────────── */}
-      <button type="button" onClick={submit}
+      <button type="button" onClick={(e) => { e.stopPropagation(); submit(); }}
         disabled={busy || phase === "ok"}
         style={{
           width:"100%", padding:"16px", borderRadius:14, border:"none",
@@ -496,8 +488,7 @@ function UploadPanel({ subjectId, count, onDone }: {
             : `linear-gradient(135deg,${C.green} 0%,${C.green2} 100%)`,
           color: busy || phase === "ok" ? C.muted : "#fff",
           fontWeight:900, fontSize:15, letterSpacing:".03em",
-          cursor: busy || phase === "ok" ? "not-allowed" : "pointer",
-          display:"flex", alignItems:"center", justifyContent:"center", gap:10,
+          cursor: busy || phase === "ok" ? "not-allowed" : "pointer",          display:"flex", alignItems:"center", justifyContent:"center", gap:10,
           boxShadow: busy || phase === "ok" ? "none" : `0 6px 24px ${C.green}44`,
           transition:"all .2s",
         }}>
@@ -546,8 +537,7 @@ function MatCard({ mat, idx, onEdit, onDelete }: {
     if (!u.startsWith("http")) {
       const { data } = await supabase.storage.from(BUCKET).createSignedUrl(u, 3600);
       u = data?.signedUrl ?? u;
-    }
-    const a = document.createElement("a"); a.href = u; a.download = mat.title; a.click();
+    }    const a = document.createElement("a"); a.href = u; a.download = mat.title; a.click();
   };
 
   return (
@@ -593,18 +583,17 @@ function MatCard({ mat, idx, onEdit, onDelete }: {
             </div>
           </div>
 
-          {/* Menu */}
           <div style={{ position:"relative", flexShrink:0 }}>
-            <button onClick={() => setMenu(v => !v)} style={{
+            <button onClick={(e) => { e.stopPropagation(); setMenu(v => !v); }} style={{
               width:30, height:30, borderRadius:8,
-              border:`1.5px solid ${C.border}`, background:"#fff",
-              cursor:"pointer", fontSize:16, color:C.muted,
+              border:`1.5px solid ${C.border}`, background:"#fff",              cursor:"pointer", fontSize:16, color:C.muted,
               display:"flex", alignItems:"center", justifyContent:"center",
             }}>⋮</button>
 
             {menu && (
               <div
                 onMouseLeave={() => setMenu(false)}
+                onClick={(e) => e.stopPropagation()}
                 style={{
                   position:"absolute", right:0, top:34, zIndex:50, minWidth:140,
                   background:"#fff", borderRadius:12,
@@ -614,17 +603,17 @@ function MatCard({ mat, idx, onEdit, onDelete }: {
                 }}>
                 {mat.file_url && !["text-content"].includes(mat.file_url) && (
                   <MItem emoji="👁" color={C.gray}
-                    onClick={() => { openFile(); setMenu(false); }}>View</MItem>
+                    onClick={(e) => { e?.stopPropagation(); openFile(); setMenu(false); }}>View</MItem>
                 )}
                 {mat.is_downloadable && mat.file_url && !["text-content"].includes(mat.file_url) && (
                   <MItem emoji="⬇" color="#0D9488"
-                    onClick={() => { dlFile(); setMenu(false); }}>Download</MItem>
+                    onClick={(e) => { e?.stopPropagation(); dlFile(); setMenu(false); }}>Download</MItem>
                 )}
                 <MItem emoji="✏️" color={C.green}
-                  onClick={() => { onEdit(mat); setMenu(false); }}>Edit</MItem>
+                  onClick={(e) => { e?.stopPropagation(); onEdit(mat); setMenu(false); }}>Edit</MItem>
                 <div style={{ height:1, background:"#F3F4F6", margin:"4px 0" }} />
                 <MItem emoji="🗑" color={C.red}
-                  onClick={() => { onDelete(mat); setMenu(false); }}>Delete</MItem>
+                  onClick={(e) => { e?.stopPropagation(); onDelete(mat); setMenu(false); }}>Delete</MItem>
               </div>
             )}
           </div>
@@ -646,14 +635,13 @@ function MatCard({ mat, idx, onEdit, onDelete }: {
         )}
       </div>
     </div>
-  );
-}
+  );}
 
 function MItem({ emoji, color, onClick, children }: {
-  emoji:string; color:string; onClick:()=>void; children:React.ReactNode;
+  emoji:string; color:string; onClick:(e?: React.MouseEvent)=>void; children:React.ReactNode;
 }) {
   return (
-    <button onClick={onClick} style={{
+    <button onClick={(e) => { e?.stopPropagation(); onClick(e); }} style={{
       display:"flex", alignItems:"center", gap:8, width:"100%",
       padding:"9px 10px", borderRadius:8, border:"none",
       background:"none", cursor:"pointer", fontSize:12,
@@ -687,24 +675,23 @@ function EditModal({ mat, onClose, onSaved }: {
     <div style={{
       position:"fixed", inset:0, zIndex:200, background:"rgba(0,0,0,.5)",
       display:"flex", alignItems:"center", justifyContent:"center", padding:16,
-    }} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+    }} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div style={{
         background:"#fff", borderRadius:20, width:"100%", maxWidth:400, padding:24,
         boxShadow:"0 24px 80px rgba(0,0,0,.2)", animation:"smh-pop .2s ease",
-      }}>
+      }} onClick={(e) => e.stopPropagation()}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20 }}>
           <h3 style={{ fontSize:16, fontWeight:800, color:C.text, margin:0 }}>Edit Material</h3>
-          <button onClick={onClose}
+          <button onClick={(e) => { e.stopPropagation(); onClose(); }}
             style={{ background:"none", border:"none", cursor:"pointer", color:C.muted, fontSize:18 }}>✕</button>
-        </div>
-        <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+        </div>        <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
           <div>
             <label style={labelSt}>Title</label>
             <input value={title} onChange={e => setTitle(e.target.value)} autoFocus style={{
               ...inputSt, borderRadius:10,
-            }} />
+            }} onClick={(e) => e.stopPropagation()} />
           </div>
-          <div onClick={() => setDl(v => !v)} style={{
+          <div onClick={(e) => { e.stopPropagation(); setDl(v => !v); }} style={{
             display:"flex", alignItems:"center", justifyContent:"space-between",
             padding:"12px 14px", borderRadius:12, cursor:"pointer",
             background: dl ? C.greenL : C.grayL,
@@ -725,7 +712,7 @@ function EditModal({ mat, onClose, onSaved }: {
               }} />
             </div>
           </div>
-          <button onClick={save} disabled={busy || !title.trim()} style={{
+          <button onClick={(e) => { e.stopPropagation(); save(); }} disabled={busy || !title.trim()} style={{
             padding:"13px", borderRadius:12, border:"none",
             background: busy || !title.trim() ? "#E5E7EB"
               : `linear-gradient(135deg,${C.green},${C.green2})`,
@@ -746,7 +733,6 @@ function EditModal({ mat, onClose, onSaved }: {
 export default function SubjectMaterialsHub({
   subjectId, subjectTitle,
 }: { subjectId: string; subjectTitle?: string }) {
-
   const qc = useQueryClient();
   const [search,  setSearch]  = useState("");
   const [filter,  setFilter]  = useState<MatType|"All">("All");
@@ -796,7 +782,6 @@ export default function SubjectMaterialsHub({
     mats.forEach((m: any) => { c[m.material_type] = (c[m.material_type] ?? 0) + 1; });
     return c;
   }, [mats]);
-
   return (
     <>
       <style>{`
@@ -809,14 +794,13 @@ export default function SubjectMaterialsHub({
         .smh-card:hover{transform:translateY(-3px);box-shadow:0 10px 30px rgba(0,0,0,.1)!important;}
       `}</style>
 
-      {/* ══ HEADER ══════════════════════════════════════════════════════════ */}
       <div style={{
         background:`linear-gradient(135deg,${C.green},${C.green2})`,
         borderRadius:20, padding:"20px 24px", marginBottom:20,
         display:"flex", alignItems:"center", justifyContent:"space-between",
         flexWrap:"wrap", gap:12,
-      }}>
-        <div style={{ display:"flex", alignItems:"center", gap:14 }}>
+      }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display:"flex", alignItems:"center", gap:14 }} onClick={(e) => e.stopPropagation()}>
           <div style={{
             width:48, height:48, borderRadius:16, fontSize:26,
             background:"rgba(255,255,255,.15)",
@@ -832,7 +816,7 @@ export default function SubjectMaterialsHub({
             </p>
           </div>
         </div>
-        <button onClick={() => setShowUp(v => !v)} style={{
+        <button onClick={(e) => { e.stopPropagation(); setShowUp(v => !v); }} style={{
           padding:"9px 18px", borderRadius:11,
           border:"1.5px solid rgba(255,255,255,.3)",
           background:"rgba(255,255,255,.15)", backdropFilter:"blur(4px)",
@@ -843,17 +827,15 @@ export default function SubjectMaterialsHub({
         </button>
       </div>
 
-      {/* ══ TYPE STATS ══════════════════════════════════════════════════════ */}
       {Object.keys(counts).length > 0 && (
         <div style={{
           display:"grid",
           gridTemplateColumns:"repeat(auto-fill,minmax(96px,1fr))",
-          gap:10, marginBottom:20,
-        }}>
+          gap:10, marginBottom:20,        }} onClick={(e) => e.stopPropagation()}>
           {(Object.keys(counts) as MatType[]).map(t => {
             const tc = TYPES[t], active = filter === t;
             return (
-              <div key={t} onClick={() => setFilter(filter === t ? "All" : t)} style={{
+              <div key={t} onClick={(e) => { e.stopPropagation(); setFilter(filter === t ? "All" : t); }} style={{
                 background: active ? tc.light : "#fff",
                 border:`1.5px solid ${active ? tc.color : tc.border}`,
                 borderRadius:13, padding:"12px 14px", cursor:"pointer",
@@ -873,26 +855,24 @@ export default function SubjectMaterialsHub({
         </div>
       )}
 
-      {/* ══ MAIN GRID ═══════════════════════════════════════════════════════ */}
       <div style={{
         display:"grid",
         gridTemplateColumns: showUp ? "minmax(0,1fr) minmax(0,1fr)" : "1fr",
         gap:20, alignItems:"start",
-      }}>
+      }} onClick={(e) => e.stopPropagation()}>
 
-        {/* ── UPLOAD PANEL ─────────────────────────────────────────────── */}
         {showUp && (
           <div style={{
             background:"#fff", borderRadius:20, padding:24,
             border:`1.5px solid ${C.border}`,
             boxShadow:"0 4px 24px rgba(0,0,0,.06)",
             animation:"smh-fadein .25s ease",
-          }}>
+          }} onClick={(e) => e.stopPropagation()}>
             <div style={{
               display:"flex", alignItems:"center", gap:10,
               marginBottom:22, paddingBottom:16,
               borderBottom:`1px solid ${C.border}`,
-            }}>
+            }} onClick={(e) => e.stopPropagation()}>
               <div style={{
                 width:38, height:38, borderRadius:11, fontSize:20,
                 background:C.greenL,
@@ -900,8 +880,7 @@ export default function SubjectMaterialsHub({
               }}>⬆</div>
               <div>
                 <h3 style={{ fontWeight:800, fontSize:15, color:C.text, margin:0 }}>
-                  Upload Material
-                </h3>
+                  Upload Material                </h3>
                 <p style={{ fontSize:11, color:C.muted, margin:0 }}>
                   Any file, link, or text content
                 </p>
@@ -911,17 +890,15 @@ export default function SubjectMaterialsHub({
           </div>
         )}
 
-        {/* ── LIBRARY ──────────────────────────────────────────────────── */}
-        <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+        <div style={{ display:"flex", flexDirection:"column", gap:14 }} onClick={(e) => e.stopPropagation()}>
 
-          {/* Search + filter bar */}
           <div style={{
             background:"#fff", borderRadius:14, padding:"13px 14px",
             border:`1.5px solid ${C.border}`,
             boxShadow:"0 2px 10px rgba(0,0,0,.04)",
             display:"flex", flexDirection:"column", gap:10,
-          }}>
-            <div style={{ position:"relative" }}>
+          }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ position:"relative" }} onClick={(e) => e.stopPropagation()}>
               <span style={{
                 position:"absolute", left:11, top:"50%",
                 transform:"translateY(-50%)", fontSize:14, pointerEvents:"none",
@@ -931,30 +908,28 @@ export default function SubjectMaterialsHub({
                 style={{
                   ...inputSt, paddingLeft:34,
                   borderRadius:10,
-                }} />
+                }} onClick={(e) => e.stopPropagation()} />
             </div>
-            <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+            <div style={{ display:"flex", gap:6, flexWrap:"wrap" }} onClick={(e) => e.stopPropagation()}>
               <Chip active={filter==="All"} color={C.green}
-                onClick={() => setFilter("All")}>
+                onClick={(e) => { e?.stopPropagation(); setFilter("All"); }}>
                 All ({mats.length})
               </Chip>
               {(Object.keys(counts) as MatType[]).map(t => (
                 <Chip key={t} active={filter===t} color={TYPES[t].color}
-                  onClick={() => setFilter(filter===t ? "All" : t)}>
+                  onClick={(e) => { e?.stopPropagation(); setFilter(filter===t ? "All" : t); }}>
                   {TYPES[t].emoji} {t} ({counts[t]})
                 </Chip>
               ))}
             </div>
           </div>
 
-          {/* Cards grid */}
           {isLoading ? (
             <div style={{
               display:"grid",
               gridTemplateColumns: showUp ? "1fr" : "repeat(auto-fill,minmax(260px,1fr))",
               gap:12,
-            }}>
-              {[1,2,3].map(i => (
+            }}>              {[1,2,3].map(i => (
                 <div key={i} style={{
                   height:110, borderRadius:16, background:"#F0F0F0",
                   animation:"smh-pulse 1.4s infinite",
@@ -968,7 +943,7 @@ export default function SubjectMaterialsHub({
               border:`2px dashed ${C.border}`,
               padding:"52px 24px", textAlign:"center",
               animation:"smh-fadein .3s ease",
-            }}>
+            }} onClick={(e) => e.stopPropagation()}>
               <div style={{
                 width:68, height:68, borderRadius:20, fontSize:32,
                 margin:"0 auto 18px", background:C.greenL,
@@ -1003,15 +978,14 @@ export default function SubjectMaterialsHub({
           onClose={() => setEditMat(null)}
           onSaved={() => { setEditMat(null); invalidate(); }} />
       )}
-    </>
-  );
+    </>  );
 }
 
 function Chip({ active, color, onClick, children }: {
-  active:boolean; color:string; onClick:()=>void; children:React.ReactNode;
+  active:boolean; color:string; onClick:(e?: React.MouseEvent)=>void; children:React.ReactNode;
 }) {
   return (
-    <button onClick={onClick} style={{
+    <button onClick={(e) => { e?.stopPropagation(); onClick(e); }} style={{
       padding:"6px 12px", borderRadius:20,
       border:`1.5px solid ${active ? color : C.border}`,
       background: active ? `${color}18` : "#fff",
