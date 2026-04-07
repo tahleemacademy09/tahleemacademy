@@ -7,6 +7,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "@/hooks/use-toast";
 import { Switch } from "@/components/ui/switch";
+import SubjectMaterialsHub from "@/components/classroom/SubjectMaterialsHub";
 import {
   Plus, BookOpen, Trash2, Edit2, ChevronRight, ChevronLeft,
   Loader2, EyeOff, Save, Image, Search, Layers, FolderOpen,
@@ -1119,40 +1120,11 @@ export default function CourseManagement() {
             )}
 
             {/* ── MATERIALS ─────────────────────────────────── */}
-            {tab==="materials"&&(
-              <div style={{background:"#fff",borderRadius:16,padding:20}}>
-                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>
-                  <div><h3 style={{fontWeight:800,fontSize:15,color:"#111",margin:"0 0 2px"}}>Materials & Resources</h3><p style={{fontSize:12,color:"#9CA3AF",margin:0}}>{(materials as any[]).length} files</p></div>
-                  <button type="button" onClick={()=>{setEdMaterial(null);setShowMaterial(true);}} style={{display:"flex",alignItems:"center",gap:6,padding:"8px 14px",borderRadius:10,border:"none",background:G,color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer"}}><Upload size={13}/> Upload</button>
-                </div>
-                {matLoad?<div style={{textAlign:"center",padding:40}}><Loader2 size={24} style={{animation:"spin .8s linear infinite",color:G}}/></div>
-                :(materials as any[]).length===0?<div style={{textAlign:"center",padding:48,color:"#9CA3AF"}}><File size={44} style={{margin:"0 auto 14px",display:"block",opacity:.3}}/><p style={{fontWeight:600,margin:"0 0 4px"}}>No materials yet</p><p style={{fontSize:13,margin:0}}>Upload files and links for students</p></div>
-                :<div style={{display:"flex",flexDirection:"column",gap:10}}>
-                  {(materials as any[]).map((mat:any)=>{
-                    const tp=(mat.material_type||"PDF") as MatType;
-                    const c=matCfg[tp]||matCfg["PDF"],Icon=c.icon;
-                    return(
-                      <div key={mat.id} style={{display:"flex",alignItems:"center",gap:12,padding:"14px 16px",borderRadius:14,border:`1.5px solid ${c.border}`,background:c.bg}}>
-                        <div style={{width:44,height:44,borderRadius:12,background:`${c.text}18`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Icon size={20} style={{color:c.text}}/></div>
-                        <div style={{flex:1,minWidth:0}}>
-                          <p style={{fontWeight:700,fontSize:13,color:"#111",margin:"0 0 4px",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{mat.title}</p>
-                          <div style={{display:"flex",flexWrap:"wrap",gap:6,alignItems:"center"}}>
-                            <span style={{fontSize:10,fontWeight:700,padding:"2px 7px",borderRadius:20,background:`${c.text}18`,color:c.text}}>{tp}</span>
-                            {mat.file_size&&<span style={{fontSize:11,color:"#9CA3AF"}}>{fmtSize(mat.file_size)}</span>}
-                            {mat.is_downloadable&&<span style={{fontSize:10,color:"#9CA3AF"}}>• Downloadable</span>}
-                          </div>
-                        </div>
-                        <div style={{display:"flex",gap:4,flexShrink:0}}>
-                          {mat.file_url&&<button title="Open" onClick={async()=>{const u=await signedUrl(mat.file_url);window.open(u,"_blank");}} style={{width:32,height:32,borderRadius:8,border:"1px solid #E5E7EB",background:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><FileText size={13} color="#6B7280"/></button>}
-                          {mat.is_downloadable&&mat.file_url&&<button title="Download" onClick={async()=>{const u=await signedUrl(mat.file_url);const a=document.createElement("a");a.href=u;a.download=mat.title;a.click();}} style={{width:32,height:32,borderRadius:8,border:"1px solid #E5E7EB",background:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><Download size={13} color="#6B7280"/></button>}
-                          <button type="button" onClick={()=>{setEdMaterial(mat);setShowMaterial(true);}} style={{width:32,height:32,borderRadius:8,border:"1px solid #E5E7EB",background:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><Edit2 size={13} color={G}/></button>
-                          <button type="button" onClick={()=>delMaterial(mat)} style={{width:32,height:32,borderRadius:8,border:"1px solid #FEE2E2",background:"#FEF2F2",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><Trash2 size={13} color="#DC2626"/></button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>}
-              </div>
+            {tab==="materials"&&selSubject&&(
+              <SubjectMaterialsHub
+                subjectId={selSubject.id}
+                subjectTitle={selSubject.title}
+              />
             )}
 
             {/* ── LESSONS / SESSIONS ────────────────────────── */}
