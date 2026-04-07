@@ -23,7 +23,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "@/hooks/use-toast";
-
+import MaterialUploaderNew from "./MaterialUploaderNew";
 // ─── Supabase constants ───────────────────────────────────────────────────────
 const SB_URL = "https://wvqeubhupkddtkcdwqcm.supabase.co";
 const BUCKET = "subject-files";
