@@ -158,7 +158,7 @@ interface SubjectPickerProps {
 const SubjectPicker = memo(({ selected, onSelect }: SubjectPickerProps) => {
   const [search, setSearch] = useState("");
 
-  const { data: subjects = [], isLoading } = useQuery<SubjectRow[]>({
+  const {  subjects = [], isLoading } = useQuery<SubjectRow[]>({
     queryKey: ["mmp-subjects"],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -635,7 +635,7 @@ export default function MaterialManagerPro() {
   const [typeFilter,       setTypeFilter]      = useState<MatType | "All">("All");
   const [editTarget,       setEditTarget]      = useState<MaterialRow | null>(null);
 
-  // ── Fetch materials for selected subject ────────────────────────────────────  const { data: materials = [], isLoading: matsLoading } = useQuery<MaterialRow[]>({
+  // ── Fetch materials for selected subject ────────────────────────────────────  const {  materials = [], isLoading: matsLoading } = useQuery<MaterialRow[]>({
     queryKey: ["mmp-materials", selectedSubject?.id],
     enabled:  !!selectedSubject,
     queryFn: async () => {
