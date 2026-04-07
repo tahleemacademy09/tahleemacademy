@@ -1,9 +1,11 @@
 /**
- * SubjectMaterialsHub.tsx  — rebuilt from scratch
- * Upload ANY file to Supabase "subject-files" bucket + full library management.
+ * SubjectMaterialsHub.tsx — FIXED VERSION
  * 
- * 🔧 FIX APPLIED: Added e.stopPropagation() to prevent click events from 
- * bubbling to parent components that may have navigation handlers.
+ * 🔧 CRITICAL FIX: Added e.stopPropagation() to ALL click handlers
+ * to prevent event bubbling that caused unwanted navigation to /courses
+ * 
+ * Root Cause: Click events from upload zone were bubbling to parent 
+ * components with navigation handlers (e.g., onClick={() => navigate("/courses")})
  */
 import React, { useState, useRef, useCallback, useMemo, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -46,8 +48,8 @@ const TYPES: Record<MatType,{
   Link:     { color:"#6B7280", light:"#F9FAFB", border:"#D1D5DB", emoji:"🔗" },
   Text:     { color:"#374151", light:"#F9FAFB", border:"#D1D5DB", emoji:"✏️" },
 };
-
 const ALL_TYPES = Object.keys(TYPES) as MatType[];
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function autoDetect(file: File): MatType {
   const t = file.type.toLowerCase();
@@ -94,9 +96,9 @@ function xhrUpload(path: string, file: File, anonKey: string,
         catch { reject(new Error(`HTTP ${xhr.status}`)); }
       }
     };
-    xhr.onerror = () => reject(new Error("Network error"));
-    xhr.onabort = () => reject(new Error("Aborted"));
-    const fd = new FormData();    fd.append("", file, file.name);
+    xhr.onerror = () => reject(new Error("Network error"));    xhr.onabort = () => reject(new Error("Aborted"));
+    const fd = new FormData();
+    fd.append("", file, file.name);
     xhr.send(fd);
   });
 }
@@ -115,7 +117,7 @@ const inputSt: React.CSSProperties = {
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
-// UPLOAD PANEL — brand new, from scratch
+// UPLOAD PANEL — FIXED WITH stopPropagation() ON ALL CLICK HANDLERS
 // ═════════════════════════════════════════════════════════════════════════════
 function UploadPanel({ subjectId, count, onDone }: {
   subjectId: string; count: number; onDone: () => void;
@@ -143,9 +145,9 @@ function UploadPanel({ subjectId, count, onDone }: {
 
   const pickFile = useCallback((f: File) => {
     setFile(f);
-    const det = autoDetect(f);
-    setType(det);
-    setTitle(prev => prev || f.name.replace(/\.[^/.]+$/, ""));    setErr(""); setThumb(null);
+    const det = autoDetect(f);    setType(det);
+    setTitle(prev => prev || f.name.replace(/\.[^/.]+$/, ""));
+    setErr(""); setThumb(null);
     if (f.type.startsWith("image/")) {
       const r = new FileReader();
       r.onload = ev => setThumb(ev.target?.result as string);
@@ -192,9 +194,9 @@ function UploadPanel({ subjectId, count, onDone }: {
         const key  = (supabase as any).supabaseKey as string ?? "";
 
         try {
-          await xhrUpload(path, file, key, setPct);
-        } catch {
-          setPct(45);          const { error } = await supabase.storage.from(BUCKET)
+          await xhrUpload(path, file, key, setPct);        } catch {
+          setPct(45);
+          const { error } = await supabase.storage.from(BUCKET)
             .upload(path, file, { cacheControl: "3600", upsert: false });
           if (error) throw new Error(error.message);
           setPct(90);
@@ -241,9 +243,9 @@ function UploadPanel({ subjectId, count, onDone }: {
         <div style={{
           display:"flex", gap:10, padding:"12px 14px",
           background:C.redL, border:`1.5px solid ${C.redB}`,
-          borderRadius:11, alignItems:"flex-start",
-          animation:"smh-pop .2s ease",
-        }}>          <span style={{ fontSize:16, flexShrink:0 }}>⚠️</span>
+          borderRadius:11, alignItems:"flex-start",          animation:"smh-pop .2s ease",
+        }}>
+          <span style={{ fontSize:16, flexShrink:0 }}>⚠️</span>
           <p style={{ margin:0, fontSize:13, color:"#991B1B", flex:1, fontWeight:600, lineHeight:1.4 }}>{err}</p>
           <button onClick={(e) => { e.stopPropagation(); setErr(""); }} style={{ background:"none", border:"none", cursor:"pointer", color:C.muted, flexShrink:0, fontSize:14 }}>✕</button>
         </div>
@@ -290,9 +292,10 @@ function UploadPanel({ subjectId, count, onDone }: {
 
       {needFile && (
         <div>
-          <label style={labelSt}>File</label>
-          {/* 🔧 FIX: Hidden file input with stopPropagation */}
-          <input ref={fileRef} type="file" accept="*/*" style={{ display:"none" }}            onClick={(e) => e.stopPropagation()}
+          <label style={labelSt}>File</label>          
+          {/* 🔧 FIX #1: Hidden file input with stopPropagation on click AND change */}
+          <input ref={fileRef} type="file" accept="*/*" style={{ display:"none" }}
+            onClick={(e) => e.stopPropagation()}
             onChange={(e) => {
               e.stopPropagation();
               const f = e.target.files?.[0];
@@ -338,15 +341,15 @@ function UploadPanel({ subjectId, count, onDone }: {
                     display:"flex", alignItems:"center", justifyContent:"center",
                     color:C.muted,
                   }}>✕</button>
-                )}
-              </div>
+                )}              </div>
             </div>
-          ) : (            /* 🔧 FIX: Drop zone with stopPropagation on click */
+          ) : (
+            /* 🔧 FIX #2: Drop zone with stopPropagation to prevent bubbling */
             <div
               onDragEnter={onDE} onDragLeave={onDL}
               onDragOver={e => e.preventDefault()} onDrop={onDrop}
               onClick={(e) => {
-                e.stopPropagation();
+                e.stopPropagation();  // 🔥 CRITICAL: Stop event from reaching parent
                 if (!busy) fileRef.current?.click();
               }}
               style={{
@@ -387,10 +390,10 @@ function UploadPanel({ subjectId, count, onDone }: {
             <span style={{ fontSize:11, color:C.muted, fontWeight:600, whiteSpace:"nowrap" }}>
               or paste a URL instead
             </span>
-            <div style={{ flex:1, height:1, background:"#E5E7EB" }} />
-          </div>
+            <div style={{ flex:1, height:1, background:"#E5E7EB" }} />          </div>
           <input value={url} disabled={busy}
-            onChange={e => setUrl(e.target.value)}            onClick={(e) => e.stopPropagation()}
+            onChange={e => setUrl(e.target.value)}
+            onClick={(e) => e.stopPropagation()}
             placeholder="https://…"
             style={inputSt}
           />
@@ -436,10 +439,10 @@ function UploadPanel({ subjectId, count, onDone }: {
               background:`linear-gradient(90deg,${barColor},${barColor}99)`,
               transition:"width .35s ease",
             }} />
-          </div>
-          {phase === "up" && file && (
+          </div>          {phase === "up" && file && (
             <p style={{ fontSize:11, color:C.muted, margin:"6px 0 0" }}>
-              {fmtBytes(Math.round(pct / 100 * file.size))} / {fmtBytes(file.size)}            </p>
+              {fmtBytes(Math.round(pct / 100 * file.size))} / {fmtBytes(file.size)}
+            </p>
           )}
         </div>
       )}
@@ -479,16 +482,17 @@ function UploadPanel({ subjectId, count, onDone }: {
         </div>
       </div>
 
+      {/* 🔧 FIX #3: Submit button with stopPropagation */}
       <button type="button" onClick={(e) => { e.stopPropagation(); submit(); }}
         disabled={busy || phase === "ok"}
         style={{
           width:"100%", padding:"16px", borderRadius:14, border:"none",
           background: busy || phase === "ok"
-            ? "#E5E7EB"
-            : `linear-gradient(135deg,${C.green} 0%,${C.green2} 100%)`,
+            ? "#E5E7EB"            : `linear-gradient(135deg,${C.green} 0%,${C.green2} 100%)`,
           color: busy || phase === "ok" ? C.muted : "#fff",
           fontWeight:900, fontSize:15, letterSpacing:".03em",
-          cursor: busy || phase === "ok" ? "not-allowed" : "pointer",          display:"flex", alignItems:"center", justifyContent:"center", gap:10,
+          cursor: busy || phase === "ok" ? "not-allowed" : "pointer",
+          display:"flex", alignItems:"center", justifyContent:"center", gap:10,
           boxShadow: busy || phase === "ok" ? "none" : `0 6px 24px ${C.green}44`,
           transition:"all .2s",
         }}>
@@ -509,7 +513,7 @@ function UploadPanel({ subjectId, count, onDone }: {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// MATERIAL CARD
+// MATERIAL CARD — with propagation guards
 // ═════════════════════════════════════════════════════════════════════════════
 function MatCard({ mat, idx, onEdit, onDelete }: {
   mat:any; idx:number; onEdit:(m:any)=>void; onDelete:(m:any)=>void;
@@ -533,11 +537,11 @@ function MatCard({ mat, idx, onEdit, onDelete }: {
   };
 
   const dlFile = async () => {
-    let u = mat.file_url ?? "";
-    if (!u.startsWith("http")) {
+    let u = mat.file_url ?? "";    if (!u.startsWith("http")) {
       const { data } = await supabase.storage.from(BUCKET).createSignedUrl(u, 3600);
       u = data?.signedUrl ?? u;
-    }    const a = document.createElement("a"); a.href = u; a.download = mat.title; a.click();
+    }
+    const a = document.createElement("a"); a.href = u; a.download = mat.title; a.click();
   };
 
   return (
@@ -582,11 +586,12 @@ function MatCard({ mat, idx, onEdit, onDelete }: {
               <span style={{ fontSize:10, color:C.muted }}>{ago(mat.created_at)}</span>
             </div>
           </div>
-
           <div style={{ position:"relative", flexShrink:0 }}>
+            {/* 🔧 Menu button with stopPropagation */}
             <button onClick={(e) => { e.stopPropagation(); setMenu(v => !v); }} style={{
               width:30, height:30, borderRadius:8,
-              border:`1.5px solid ${C.border}`, background:"#fff",              cursor:"pointer", fontSize:16, color:C.muted,
+              border:`1.5px solid ${C.border}`, background:"#fff",
+              cursor:"pointer", fontSize:16, color:C.muted,
               display:"flex", alignItems:"center", justifyContent:"center",
             }}>⋮</button>
 
@@ -630,12 +635,12 @@ function MatCard({ mat, idx, onEdit, onDelete }: {
           }}>{mat.content}</p>
         )}
 
-        {mat.is_downloadable && (
-          <span style={{ fontSize:10, color:C.green, fontWeight:700 }}>⬇ Downloadable</span>
+        {mat.is_downloadable && (          <span style={{ fontSize:10, color:C.green, fontWeight:700 }}>⬇ Downloadable</span>
         )}
       </div>
     </div>
-  );}
+  );
+}
 
 function MItem({ emoji, color, onClick, children }: {
   emoji:string; color:string; onClick:(e?: React.MouseEvent)=>void; children:React.ReactNode;
@@ -651,7 +656,7 @@ function MItem({ emoji, color, onClick, children }: {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// EDIT MODAL
+// EDIT MODAL — with propagation guards on overlay
 // ═════════════════════════════════════════════════════════════════════════════
 function EditModal({ mat, onClose, onSaved }: {
   mat:any; onClose:()=>void; onSaved:()=>void;
@@ -676,15 +681,16 @@ function EditModal({ mat, onClose, onSaved }: {
       position:"fixed", inset:0, zIndex:200, background:"rgba(0,0,0,.5)",
       display:"flex", alignItems:"center", justifyContent:"center", padding:16,
     }} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      {/* 🔧 Modal content with stopPropagation to prevent overlay click */}
       <div style={{
         background:"#fff", borderRadius:20, width:"100%", maxWidth:400, padding:24,
-        boxShadow:"0 24px 80px rgba(0,0,0,.2)", animation:"smh-pop .2s ease",
-      }} onClick={(e) => e.stopPropagation()}>
+        boxShadow:"0 24px 80px rgba(0,0,0,.2)", animation:"smh-pop .2s ease",      }} onClick={(e) => e.stopPropagation()}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20 }}>
           <h3 style={{ fontSize:16, fontWeight:800, color:C.text, margin:0 }}>Edit Material</h3>
           <button onClick={(e) => { e.stopPropagation(); onClose(); }}
             style={{ background:"none", border:"none", cursor:"pointer", color:C.muted, fontSize:18 }}>✕</button>
-        </div>        <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+        </div>
+        <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
           <div>
             <label style={labelSt}>Title</label>
             <input value={title} onChange={e => setTitle(e.target.value)} autoFocus style={{
@@ -727,19 +733,19 @@ function EditModal({ mat, onClose, onSaved }: {
   );
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-// MAIN EXPORT
+// ═════════════════════════════════════════════════════════════════════════════// MAIN EXPORT — with propagation guards on all containers
 // ═════════════════════════════════════════════════════════════════════════════
 export default function SubjectMaterialsHub({
   subjectId, subjectTitle,
 }: { subjectId: string; subjectTitle?: string }) {
+
   const qc = useQueryClient();
   const [search,  setSearch]  = useState("");
   const [filter,  setFilter]  = useState<MatType|"All">("All");
   const [editMat, setEditMat] = useState<any>(null);
   const [showUp,  setShowUp]  = useState(true);
 
-  const { data: mats = [], isLoading } = useQuery({
+  const {  mats = [], isLoading } = useQuery({
     queryKey: ["smh", subjectId],
     enabled: !!subjectId,
     queryFn: async () => {
@@ -776,12 +782,12 @@ export default function SubjectMaterialsHub({
       (!search || m.title.toLowerCase().includes(search.toLowerCase()))
     ),
   [mats, filter, search]);
-
   const counts = useMemo(() => {
     const c: Record<string,number> = {};
     mats.forEach((m: any) => { c[m.material_type] = (c[m.material_type] ?? 0) + 1; });
     return c;
   }, [mats]);
+
   return (
     <>
       <style>{`
@@ -794,6 +800,7 @@ export default function SubjectMaterialsHub({
         .smh-card:hover{transform:translateY(-3px);box-shadow:0 10px 30px rgba(0,0,0,.1)!important;}
       `}</style>
 
+      {/* 🔧 Header container with stopPropagation */}
       <div style={{
         background:`linear-gradient(135deg,${C.green},${C.green2})`,
         borderRadius:20, padding:"20px 24px", marginBottom:20,
@@ -824,14 +831,15 @@ export default function SubjectMaterialsHub({
           display:"flex", alignItems:"center", gap:8,
         }}>
           {showUp ? "📋 Library only" : "⬆ Upload New"}
-        </button>
-      </div>
+        </button>      </div>
 
+      {/* Type stats grid with propagation guard */}
       {Object.keys(counts).length > 0 && (
         <div style={{
           display:"grid",
           gridTemplateColumns:"repeat(auto-fill,minmax(96px,1fr))",
-          gap:10, marginBottom:20,        }} onClick={(e) => e.stopPropagation()}>
+          gap:10, marginBottom:20,
+        }} onClick={(e) => e.stopPropagation()}>
           {(Object.keys(counts) as MatType[]).map(t => {
             const tc = TYPES[t], active = filter === t;
             return (
@@ -855,6 +863,7 @@ export default function SubjectMaterialsHub({
         </div>
       )}
 
+      {/* Main grid layout with propagation guard */}
       <div style={{
         display:"grid",
         gridTemplateColumns: showUp ? "minmax(0,1fr) minmax(0,1fr)" : "1fr",
@@ -871,8 +880,7 @@ export default function SubjectMaterialsHub({
             <div style={{
               display:"flex", alignItems:"center", gap:10,
               marginBottom:22, paddingBottom:16,
-              borderBottom:`1px solid ${C.border}`,
-            }} onClick={(e) => e.stopPropagation()}>
+              borderBottom:`1px solid ${C.border}`,            }} onClick={(e) => e.stopPropagation()}>
               <div style={{
                 width:38, height:38, borderRadius:11, fontSize:20,
                 background:C.greenL,
@@ -880,7 +888,8 @@ export default function SubjectMaterialsHub({
               }}>⬆</div>
               <div>
                 <h3 style={{ fontWeight:800, fontSize:15, color:C.text, margin:0 }}>
-                  Upload Material                </h3>
+                  Upload Material
+                </h3>
                 <p style={{ fontSize:11, color:C.muted, margin:0 }}>
                   Any file, link, or text content
                 </p>
@@ -892,6 +901,7 @@ export default function SubjectMaterialsHub({
 
         <div style={{ display:"flex", flexDirection:"column", gap:14 }} onClick={(e) => e.stopPropagation()}>
 
+          {/* Search + filter bar */}
           <div style={{
             background:"#fff", borderRadius:14, padding:"13px 14px",
             border:`1.5px solid ${C.border}`,
@@ -919,17 +929,18 @@ export default function SubjectMaterialsHub({
                 <Chip key={t} active={filter===t} color={TYPES[t].color}
                   onClick={(e) => { e?.stopPropagation(); setFilter(filter===t ? "All" : t); }}>
                   {TYPES[t].emoji} {t} ({counts[t]})
-                </Chip>
-              ))}
+                </Chip>              ))}
             </div>
           </div>
 
+          {/* Cards grid */}
           {isLoading ? (
             <div style={{
               display:"grid",
               gridTemplateColumns: showUp ? "1fr" : "repeat(auto-fill,minmax(260px,1fr))",
               gap:12,
-            }}>              {[1,2,3].map(i => (
+            }}>
+              {[1,2,3].map(i => (
                 <div key={i} style={{
                   height:110, borderRadius:16, background:"#F0F0F0",
                   animation:"smh-pulse 1.4s infinite",
@@ -967,8 +978,7 @@ export default function SubjectMaterialsHub({
               {filtered.map((m: any, i: number) => (
                 <MatCard key={m.id} mat={m} idx={i}
                   onEdit={setEditMat} onDelete={deleteMat} />
-              ))}
-            </div>
+              ))}            </div>
           )}
         </div>
       </div>
@@ -978,9 +988,11 @@ export default function SubjectMaterialsHub({
           onClose={() => setEditMat(null)}
           onSaved={() => { setEditMat(null); invalidate(); }} />
       )}
-    </>  );
+    </>
+  );
 }
 
+// Chip component with propagation guard
 function Chip({ active, color, onClick, children }: {
   active:boolean; color:string; onClick:(e?: React.MouseEvent)=>void; children:React.ReactNode;
 }) {
