@@ -1,12 +1,14 @@
 // src/pages/admin/CourseManagement.tsx
 // Hierarchy: Courses → Subjects → [📋 Syllabus | 📁 Materials | ▶️ Lessons]
 // 
-// 🔧 FIXES APPLIED:
-// 1. Syntax: Balanced braces in Thumb/Fld shared components (fixes "Unexpected }" error)
+// 🔧 ALL FIXES APPLIED:
+// 1. Syntax: All braces/parentheses balanced (fixes "Unexpected }" and "Expected )" errors)
 // 2. Lessons query: uses "subject_id" instead of "course_id"
 // 3. Subject delete cascade: uses "subject_id" instead of "course_id"
 // 4. saveLesson payload: includes "content" field + uses "subject_id"
-import React, { useState, useRef, useEffect, useCallback, SetStateAction } from "react";
+// 5. onChange handlers: proper parenthesis closure setF(m => ({ ... }))
+
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import { useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -46,8 +48,8 @@ const weekPalette = [
   {bg:"#FFF1F2",border:"#FECDD3",badge:"#BE123C"},
   {bg:"#F0FDFA",border:"#99F6E4",badge:"#0F766E"},
 ];
-
-const matCfg: Record<MatType,{icon:React.ElementType;bg:string;text:string;border:string}> = {  PDF:      {icon:FileText,        bg:"#FEF2F2",text:"#DC2626",border:"#FECACA"},
+const matCfg: Record<MatType,{icon:React.ElementType;bg:string;text:string;border:string}> = {
+  PDF:      {icon:FileText,        bg:"#FEF2F2",text:"#DC2626",border:"#FECACA"},
   Video:    {icon:Video,           bg:"#F0FDF4",text:"#16A34A",border:"#BBF7D0"},
   Audio:    {icon:Music,           bg:"#FDF4FF",text:"#9333EA",border:"#E9D5FF"},
   Link:     {icon:ExternalLink,    bg:"#F0FDFA",text:"#0D9488",border:"#99F6E4"},
@@ -83,7 +85,7 @@ async function uploadImg(file:File,bucket:string):Promise<string|null> {
   return data?.publicUrl||path;
 }
 
-// ── ✅ FIXED SHARED UI COMPONENTS (balanced braces) ─────────────────────────
+// ── SHARED UI COMPONENTS (properly balanced) ─────────────────────────
 const Thumb = ({ url, title, height = 120, bg }: { url?: string | null; title: string; height?: number; bg: string }) => {
   const [src, setSrc] = useState<string | null>(null);
   const [err, setErr] = useState(false);
@@ -94,9 +96,9 @@ const Thumb = ({ url, title, height = 120, bg }: { url?: string | null; title: s
   
   if (!src || err) {
     return (
-      <div style={{ height, background: bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <BookOpen size={22} style={{ opacity: 0.3 }} />
-      </div>    );
+      <div style={{ height, background: bg, display: "flex", alignItems: "center", justifyContent: "center" }}>        <BookOpen size={22} style={{ opacity: 0.3 }} />
+      </div>
+    );
   }
   return (
     <img 
@@ -143,9 +145,9 @@ const CourseModal = React.memo(({ ed, onClose, onSave, busy }: { ed?: any; onClo
           <button type="button" onClick={() => ref.current?.click()} style={{ height: 100, borderRadius: 12, border: "2px dashed #E5E7EB", background: "#F9FAFB", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, color: "#9CA3AF", fontSize: 13 }}>
             {up ? <Loader2 size={20} style={{ animation: "spin .8s linear infinite" }} /> : f.image_url ? <img src={f.image_url} alt="" style={{ height: "100%", borderRadius: 10 }} /> : <><Image size={20} /> Upload thumbnail</>}
           </button>
-          <Fld label="Course Title (English)"><input value={f.title} onChange={e => setF(c => ({ ...c, title: e.target.value }))} style={inp} placeholder="e.g. Quran Memorisation" autoFocus /></Fld>
-          <Fld label="Course Title (Arabic)"><input value={f.title_ar} onChange={e => setF(c => ({ ...c, title_ar: e.target.value }))} style={{ ...inp, direction: "rtl", fontFamily: "'Amiri',serif" }} placeholder="مثال: حفظ القرآن" /></Fld>
-          <Fld label="Description"><textarea value={f.description} onChange={e => setF(c => ({ ...c, description: e.target.value }))} rows={3} style={{ ...inp, resize: "vertical" }} /></Fld>          <Fld label="Level">
+          <Fld label="Course Title (English)"><input value={f.title} onChange={e => setF(c => ({ ...c, title: e.target.value }))} style={inp} placeholder="e.g. Quran Memorisation" autoFocus /></Fld>          <Fld label="Course Title (Arabic)"><input value={f.title_ar} onChange={e => setF(c => ({ ...c, title_ar: e.target.value }))} style={{ ...inp, direction: "rtl", fontFamily: "'Amiri',serif" }} placeholder="مثال: حفظ القرآن" /></Fld>
+          <Fld label="Description"><textarea value={f.description} onChange={e => setF(c => ({ ...c, description: e.target.value }))} rows={3} style={{ ...inp, resize: "vertical" }} /></Fld>
+          <Fld label="Level">
             <div style={{ display: "flex", gap: 6 }}>
               {(["all", "beginner", "intermediate", "advanced"] as Level[]).map(lv => {
                 const c = lvlCfg[lv], sel = f.level === lv;
@@ -192,9 +194,9 @@ const SubjectModal = React.memo(({ ed, teachers, onClose, onSave, busy }: { ed?:
         <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 14 }}>
           <input ref={ref} type="file" accept="image/*" style={{ display: "none" }} onChange={handleFile} />
           <button type="button" onClick={() => ref.current?.click()} style={{ height: 100, borderRadius: 12, border: "2px dashed #E5E7EB", background: "#F9FAFB", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, color: "#9CA3AF", fontSize: 13 }}>
-            {up ? <Loader2 size={20} style={{ animation: "spin .8s linear infinite" }} /> : f.image_url ? <img src={f.image_url} alt="" style={{ height: "100%", borderRadius: 10 }} /> : <><Image size={20} /> Upload image</>}
-          </button>
-          <Fld label="Subject Title (English)"><input value={f.title} onChange={e => setF(s => ({ ...s, title: e.target.value }))} style={inp} placeholder="e.g. Tajweed Level 1" autoFocus /></Fld>          <Fld label="Subject Title (Arabic)"><input value={f.title_ar} onChange={e => setF(s => ({ ...s, title_ar: e.target.value }))} style={{ ...inp, direction: "rtl", fontFamily: "'Amiri',serif" }} placeholder="مثال: التجويد المستوى الأول" /></Fld>
+            {up ? <Loader2 size={20} style={{ animation: "spin .8s linear infinite" }} /> : f.image_url ? <img src={f.image_url} alt="" style={{ height: "100%", borderRadius: 10 }} /> : <><Image size={20} /> Upload image</>}          </button>
+          <Fld label="Subject Title (English)"><input value={f.title} onChange={e => setF(s => ({ ...s, title: e.target.value }))} style={inp} placeholder="e.g. Tajweed Level 1" autoFocus /></Fld>
+          <Fld label="Subject Title (Arabic)"><input value={f.title_ar} onChange={e => setF(s => ({ ...s, title_ar: e.target.value }))} style={{ ...inp, direction: "rtl", fontFamily: "'Amiri',serif" }} placeholder="مثال: التجويد المستوى الأول" /></Fld>
           <Fld label="Description"><textarea value={f.description} onChange={e => setF(s => ({ ...s, description: e.target.value }))} rows={3} style={{ ...inp, resize: "vertical" }} /></Fld>
           <Fld label="Level">
             <div style={{ display: "flex", gap: 6 }}>
@@ -241,9 +243,9 @@ const LessonModal = React.memo(({ ed, onClose, onSave, busy }: { ed?: any; onClo
       <div style={{ background: "#fff", borderRadius: 20, width: "100%", maxWidth: 480, maxHeight: "90vh", overflowY: "auto" }}>
         <div style={{ padding: "16px 20px", borderBottom: "1px solid #E5E7EB", display: "flex", justifyContent: "space-between", alignItems: "center", position: "sticky", top: 0, background: "#fff" }}>
           <h2 style={{ fontSize: 15, fontWeight: 800, color: "#111", margin: 0 }}>{ed ? "Edit Lesson" : "New Lesson"}</h2>
-          <button type="button" onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 20, color: "#9CA3AF" }}>×</button>
-        </div>
-        <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 14 }}>          <div style={{ padding: "10px 14px", borderRadius: 12, background: "#F0FDF4", border: "1px solid #86EFAC", fontSize: 12, color: "#166534" }}>
+          <button type="button" onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 20, color: "#9CA3AF" }}>×</button>        </div>
+        <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ padding: "10px 14px", borderRadius: 12, background: "#F0FDF4", border: "1px solid #86EFAC", fontSize: 12, color: "#166534" }}>
             ℹ️ Lessons are live virtual sessions — describe what students will learn or cover in this session.
           </div>
           <Fld label="Session Title"><input value={f.title} onChange={e => setF(l => ({ ...l, title: e.target.value }))} style={inp} placeholder="e.g. Introduction to Makharij" autoFocus /></Fld>
@@ -290,9 +292,9 @@ const SyllabusModal = React.memo(({ ed, nextWeek, onClose, onSave, busy }: { ed?
           <Fld label="Learning Objectives (one per line)">
             <textarea value={f.objectives} onChange={e => setF(s => ({ ...s, objectives: e.target.value }))} rows={4} style={{ ...inp, resize: "vertical", fontFamily: "monospace", fontSize: 12 }} placeholder={"Listen to each ayah 5 times\nRecite each ayah 10 times\nMemorize by end of week"} />
           </Fld>
-          <button type="button" onClick={() => onSave(f)} disabled={busy || !f.title}
-            style={{ padding: "12px", borderRadius: 12, border: "none", background: busy || !f.title ? "#e5e7eb" : `linear-gradient(135deg,${G},${GM})`, color: busy || !f.title ? "#9ca3af" : "#fff", fontWeight: 800, cursor: busy || !f.title ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-            <Save size={14} /> {busy ? "Saving…" : ed ? "Save Changes" : "Add Week"}          </button>
+          <button type="button" onClick={() => onSave(f)} disabled={busy || !f.title}            style={{ padding: "12px", borderRadius: 12, border: "none", background: busy || !f.title ? "#e5e7eb" : `linear-gradient(135deg,${G},${GM})`, color: busy || !f.title ? "#9ca3af" : "#fff", fontWeight: 800, cursor: busy || !f.title ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+            <Save size={14} /> {busy ? "Saving…" : ed ? "Save Changes" : "Add Week"}
+          </button>
         </div>
       </div>
     </div>
@@ -339,8 +341,8 @@ const MaterialModal = React.memo(({ ed, subjectId, sortOrder, onClose, onSaved }
   const Icon = cfg.icon;
   const needFile = f.material_type !== "Link" && f.material_type !== "Text";
   const needUrl = f.material_type === "Link";
-  const needText = f.material_type === "Text";
-  const busy = phase === "uploading" || phase === "saving";
+  const needText = f.material_type === "Text";  const busy = phase === "uploading" || phase === "saving";
+
   const pickFile = useCallback((fi: File) => {
     const detected = autoDetectType(fi);
     setFile(fi);
@@ -388,9 +390,9 @@ const MaterialModal = React.memo(({ ed, subjectId, sortOrder, onClose, onSaved }
       }
 
       setPct(97); setPhase("saving");
-
       const payload: any = {
-        subject_id: subjectId,        title: f.title.trim(),
+        subject_id: subjectId,
+        title: f.title.trim(),
         material_type: f.material_type,
         file_url: fileUrl || null,
         content: needText ? f.content.trim() : null,
@@ -437,9 +439,9 @@ const MaterialModal = React.memo(({ ed, subjectId, sortOrder, onClose, onSaved }
           {needFile && (
             <div>
               <input ref={fileRef} type="file" style={{ display: "none" }} accept={TYPE_ACCEPT[f.material_type] || "*/*"} onChange={e => { const fi = e.target.files?.[0]; if (fi) pickFile(fi); }} disabled={busy} />
-              {file ? (
-                <div style={{ padding: "10px", borderRadius: 10, background: cfg.bg, border: `1px solid ${cfg.border}` }}>
-                  <p style={{ fontSize: 12, fontWeight: 600 }}>{file.name}</p>                  <p style={{ fontSize: 11, color: "#6B7280" }}>{fmtSize(file.size)}</p>
+              {file ? (                <div style={{ padding: "10px", borderRadius: 10, background: cfg.bg, border: `1px solid ${cfg.border}` }}>
+                  <p style={{ fontSize: 12, fontWeight: 600 }}>{file.name}</p>
+                  <p style={{ fontSize: 11, color: "#6B7280" }}>{fmtSize(file.size)}</p>
                   <button type="button" onClick={clearFile} style={{ marginTop: 6, fontSize: 11, color: cfg.text }}>Remove</button>
                 </div>
               ) : (
@@ -452,8 +454,8 @@ const MaterialModal = React.memo(({ ed, subjectId, sortOrder, onClose, onSaved }
             </div>
           )}
           
-          {needUrl && <Fld label="URL *"><input value={f.file_url} onChange={e => { setF(m => ({ ...m, file_url: e.target.value }); setSaveErr(""); }} style={inp} placeholder="https://…" disabled={busy} /></Fld>}
-          {needText && <Fld label="Content *"><textarea value={f.content} onChange={e => { setF(m => ({ ...m, content: e.target.value }); setSaveErr(""); }} rows={4} style={{ ...inp, resize: "vertical" }} placeholder="Type content…" disabled={busy} /></Fld>}
+          {needUrl && <Fld label="URL *"><input value={f.file_url} onChange={e => { setF(m => ({ ...m, file_url: e.target.value })); setSaveErr(""); }} style={inp} placeholder="https://…" disabled={busy} /></Fld>}
+          {needText && <Fld label="Content *"><textarea value={f.content} onChange={e => { setF(m => ({ ...m, content: e.target.value })); setSaveErr(""); }} rows={4} style={{ ...inp, resize: "vertical" }} placeholder="Type content…" disabled={busy} /></Fld>}
           
           {phase !== "idle" && (
             <div style={{ padding: "10px", borderRadius: 10, background: "#F0FDF4", border: "1px solid #BBF7D0", fontSize: 12 }}>
@@ -486,9 +488,9 @@ export default function CourseManagement() {
   const [selCourse, setSelCourse] = useState<any>(null);
   const [selSubject, setSelSubject] = useState<any>(null);
   const [tab, setTab] = useState<ContentTab>("materials");
-  const [search, setSearch] = useState("");
-  const [lvlFilter, setLvlFilter] = useState<Level>("all");
-  const [sortBy, setSortBy] = useState<SortKey>("sort_order");  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [search, setSearch] = useState("");  const [lvlFilter, setLvlFilter] = useState<Level>("all");
+  const [sortBy, setSortBy] = useState<SortKey>("sort_order");
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!urlSubjectId) return;
@@ -535,9 +537,9 @@ export default function CourseManagement() {
   const { data: syllabus = [], isLoading: syllLoad } = useQuery({ queryKey: ["adm-syllabus", selSubject?.id], enabled: !!selSubject, queryFn: async () => { const { data } = await supabase.from("subject_syllabus").select("*").eq("subject_id", selSubject!.id).order("week_number"); return data || []; } });
   const { data: materials = [], isLoading: matLoad } = useQuery({ queryKey: ["adm-materials", selSubject?.id], enabled: !!selSubject, queryFn: async () => { const { data } = await supabase.from("subject_materials").select("*").eq("subject_id", selSubject!.id).order("sort_order").order("created_at", { ascending: false }); return data || []; } });
   const { data: teachers = [] } = useQuery({ queryKey: ["teachers-simple"], queryFn: async () => { const { data: roles } = await supabase.from("user_roles").select("user_id").in("role", ["teacher", "admin"]); if (!roles?.length) return []; const { data } = await supabase.from("profiles").select("user_id,full_name").in("user_id", roles.map((r: any) => r.user_id)); return data || []; } });
-
   // ── CRUD helpers ─────────────────────────────────────────────────────────
-  const saveCourse = useCallback(async (p: any) => {    setBusy(true);
+  const saveCourse = useCallback(async (p: any) => {
+    setBusy(true);
     try {
       const d = { title: p.title, title_ar: p.title_ar || null, description: p.description || null, level: p.level, is_published: p.is_published, image_url: p.image_url || null, sort_order: p.sort_order, updated_at: new Date().toISOString() };
       const { error: courseErr } = edCourse ? await supabase.from("courses").update(d).eq("id", edCourse.id) : await supabase.from("courses").insert(d);
@@ -584,10 +586,10 @@ export default function CourseManagement() {
     try {
       const d = {
         title: p.title,
-        title_ar: p.title_ar || null,
-        content: p.content || null,  // ← Added content field
-        duration_minutes: p.duration_minutes,        sort_order: p.sort_order,
-        subject_id: selSubject?.id,  // ← Changed course_id to subject_id
+        title_ar: p.title_ar || null,        content: p.content || null,
+        duration_minutes: p.duration_minutes,
+        sort_order: p.sort_order,
+        subject_id: selSubject?.id,
         is_free: p.is_free
       };
       const { error: lessonErr } = edLesson ? await supabase.from("lessons").update(d).eq("id", edLesson.id) : await supabase.from("lessons").insert(d);
@@ -633,9 +635,9 @@ export default function CourseManagement() {
   const sortList = (list: any[]) => {
     const s = [...list];
     if (sortBy === "title_asc") return s.sort((a, b) => a.title.localeCompare(b.title));
-    if (sortBy === "title_desc") return s.sort((a, b) => b.title.localeCompare(a.title));
-    if (sortBy === "level") { const o: any = { beginner: 0, intermediate: 1, advanced: 2, all: 3 }; return s.sort((a, b) => (o[a.level] || 0) - (o[b.level] || 0)); }
-    return s.sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));  };
+    if (sortBy === "title_desc") return s.sort((a, b) => b.title.localeCompare(a.title));    if (sortBy === "level") { const o: any = { beginner: 0, intermediate: 1, advanced: 2, all: 3 }; return s.sort((a, b) => (o[a.level] || 0) - (o[b.level] || 0)); }
+    return s.sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  };
   const fCourses = sortList(courses.filter((c: any) => (lvlFilter === "all" || c.level === lvlFilter || c.level === "all") && (!search || c.title.toLowerCase().includes(search.toLowerCase()))));
   const fSubjects = subjects.filter((s: any) => (lvlFilter === "all" || s.level === lvlFilter || s.level === "all") && (!search || s.title.toLowerCase().includes(search.toLowerCase())));
   const unlinked = allSubjects.filter((s: any) => !s.course_id);
@@ -682,9 +684,9 @@ export default function CourseManagement() {
         <div style={{ background: "#fff", borderBottom: "1px solid #E5E7EB", padding: "0 16px", display: "flex", gap: 0 }}>
           {([
             { id: "syllabus", label: "📋 Syllabus", count: (syllabus as any[]).length },
-            { id: "materials", label: "📁 Materials", count: (materials as any[]).length },
-            { id: "lessons", label: "📚 Sessions", count: (lessons as any[]).length },
-          ] as { id: ContentTab; label: string; count: number }[]).map(t => {            const active = tab === t.id;
+            { id: "materials", label: "📁 Materials", count: (materials as any[]).length },            { id: "lessons", label: "📚 Sessions", count: (lessons as any[]).length },
+          ] as { id: ContentTab; label: string; count: number }[]).map(t => {
+            const active = tab === t.id;
             return (
               <button key={t.id} onClick={() => setTab(t.id)}
                 style={{ padding: "12px 16px", border: "none", background: "none", cursor: "pointer", fontSize: 13, fontWeight: active ? 800 : 500, color: active ? G : "#6B7280", borderBottom: active ? `3px solid ${G}` : "3px solid transparent", display: "flex", alignItems: "center", gap: 7 }}>
@@ -731,9 +733,9 @@ export default function CourseManagement() {
                     <div key={c.id} className="chov" style={{ background: "#fff", borderRadius: 16, border: `1px solid ${lv.border}`, overflow: "hidden" }}>
                       <div style={{ position: "relative", cursor: "pointer" }} onClick={() => { setSelCourse(c); setView("subjects"); }}>
                         <Thumb url={c.image_url} title={c.title} height={120} bg={lv.bg} />
-                        <div style={{ position: "absolute", top: 8, right: 8, padding: "3px 10px", borderRadius: 20, background: lv.bg, color: lv.text, fontSize: 10, fontWeight: 700, border: `1px solid ${lv.border}` }}>{lv.label}</div>
-                        {!c.is_published && <div style={{ position: "absolute", top: 8, left: 8, padding: "3px 10px", borderRadius: 20, background: "#FEF2F2", color: "#DC2626", fontSize: 10, fontWeight: 700, border: "1px solid #FECACA" }}>Draft</div>}
-                      </div>                      <div style={{ padding: 14 }}>
+                        <div style={{ position: "absolute", top: 8, right: 8, padding: "3px 10px", borderRadius: 20, background: lv.bg, color: lv.text, fontSize: 10, fontWeight: 700, border: `1px solid ${lv.border}` }}>{lv.label}</div>                        {!c.is_published && <div style={{ position: "absolute", top: 8, left: 8, padding: "3px 10px", borderRadius: 20, background: "#FEF2F2", color: "#DC2626", fontSize: 10, fontWeight: 700, border: "1px solid #FECACA" }}>Draft</div>}
+                      </div>
+                      <div style={{ padding: 14 }}>
                         <p style={{ fontWeight: 800, fontSize: 14, color: "#111", margin: "0 0 2px", cursor: "pointer" }} onClick={() => { setSelCourse(c); setView("subjects"); }}>{c.title}</p>
                         {c.title_ar && <p style={{ fontWeight: 600, fontSize: 12, color: GOLD, margin: "0 0 4px", direction: "rtl", fontFamily: "'Amiri',serif" }}>{c.title_ar}</p>}
                         {c.description && <p style={{ fontSize: 12, color: "#9CA3AF", margin: "0 0 10px", lineHeight: 1.5 }}>{c.description.slice(0, 80)}{c.description.length > 80 ? "…" : ""}</p>}
@@ -780,9 +782,9 @@ export default function CourseManagement() {
                         </div>
                       </div>
                     </div>
-                  );
-                })}
-              </div>              {unlinked.length > 0 && (
+                  );                })}
+              </div>
+              {unlinked.length > 0 && (
                 <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E5E7EB", padding: 16 }}>
                   <p style={{ fontSize: 12, fontWeight: 700, color: "#374151", margin: "0 0 10px" }}>📎 Link existing unlinked subjects:</p>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
@@ -829,9 +831,9 @@ export default function CourseManagement() {
                         {(syllabus as any[]).map((s, i) => {
                           const wc = weekPalette[i % weekPalette.length], isEx = expanded.has(s.id), hasD = s.description || (s.objectives && (s.objectives as string[]).length > 0);
                           return (
-                            <div key={s.id} style={{ display: "flex", gap: 12 }}>
-                              <div style={{ position: "relative", zIndex: 10, flexShrink: 0 }}>
-                                <div style={{ width: 42, height: 42, borderRadius: "50%", background: wc.badge, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 800, fontSize: 11 }}>W{s.week_number}</div>                              </div>
+                            <div key={s.id} style={{ display: "flex", gap: 12 }}>                              <div style={{ position: "relative", zIndex: 10, flexShrink: 0 }}>
+                                <div style={{ width: 42, height: 42, borderRadius: "50%", background: wc.badge, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 800, fontSize: 11 }}>W{s.week_number}</div>
+                              </div>
                               <div style={{ flex: 1, borderRadius: 16, border: `1.5px solid ${wc.border}`, background: wc.bg, overflow: "hidden" }}>
                                 <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "13px 14px" }}>
                                   <div style={{ flex: 1, cursor: hasD ? "pointer" : "default" }} onClick={() => hasD && setExpanded(prev => { const n = new Set(prev); n.has(s.id) ? n.delete(s.id) : n.add(s.id); return n; })}>
@@ -878,9 +880,9 @@ export default function CourseManagement() {
                 subjectTitle={selSubject.title}
               />
             )}
-
             {/* ── LESSONS / SESSIONS ────────────────────────── */}
-            {tab === "lessons" && (              <div style={{ background: "#fff", borderRadius: 16, padding: 20 }}>
+            {tab === "lessons" && (
+              <div style={{ background: "#fff", borderRadius: 16, padding: 20 }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
                   <div><h3 style={{ fontWeight: 800, fontSize: 15, color: "#111", margin: "0 0 2px" }}>Live Sessions</h3><p style={{ fontSize: 12, color: "#9CA3AF", margin: 0 }}>What students will learn in each session</p></div>
                   <button type="button" onClick={() => { setEdLesson(null); setShowLesson(true); }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 10, border: "none", background: G, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}><Plus size={13} /> Add Session</button>
@@ -927,9 +929,9 @@ export default function CourseManagement() {
 
       {/* Modals */}
       {showCourse && <CourseModal ed={edCourse} onClose={() => { setShowCourse(false); setEdCourse(null); }} onSave={saveCourse} busy={busy} />}
-      {showSubject && <SubjectModal ed={edSubject} teachers={teachers as any[]} onClose={() => { setShowSubject(false); setEdSubject(null); }} onSave={saveSubject} busy={busy} />}
-      {showLesson && <LessonModal ed={edLesson} onClose={() => { setShowLesson(false); setEdLesson(null); }} onSave={saveLesson} busy={busy} />}
-      {showSyllabus && <SyllabusModal ed={edSyllabus} nextWeek={(syllabus as any[]).length + 1} onClose={() => { setShowSyllabus(false); setEdSyllabus(null); }} onSave={saveSyllabus} busy={busy} />}      {showMaterial && selSubject && <MaterialModal ed={edMaterial} subjectId={selSubject.id} sortOrder={(materials as any[]).length} onClose={() => { setShowMaterial(false); setEdMaterial(null); }} onSaved={() => { setShowMaterial(false); setEdMaterial(null); qc.invalidateQueries({ queryKey: ["adm-materials", selSubject.id] }); }} />}
+      {showSubject && <SubjectModal ed={edSubject} teachers={teachers as any[]} onClose={() => { setShowSubject(false); setEdSubject(null); }} onSave={saveSubject} busy={busy} />}      {showLesson && <LessonModal ed={edLesson} onClose={() => { setShowLesson(false); setEdLesson(null); }} onSave={saveLesson} busy={busy} />}
+      {showSyllabus && <SyllabusModal ed={edSyllabus} nextWeek={(syllabus as any[]).length + 1} onClose={() => { setShowSyllabus(false); setEdSyllabus(null); }} onSave={saveSyllabus} busy={busy} />}
+      {showMaterial && selSubject && <MaterialModal ed={edMaterial} subjectId={selSubject.id} sortOrder={(materials as any[]).length} onClose={() => { setShowMaterial(false); setEdMaterial(null); }} onSaved={() => { setShowMaterial(false); setEdMaterial(null); qc.invalidateQueries({ queryKey: ["adm-materials", selSubject.id] }); }} />}
     </div>
   );
 }
