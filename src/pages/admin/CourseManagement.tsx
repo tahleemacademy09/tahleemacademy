@@ -1,6 +1,7 @@
 // src/pages/admin/CourseManagement.tsx
 // Hierarchy: Courses → Subjects → [📋 Syllabus | 📁 Materials | ▶️ Lessons]
 import React, { useState, useRef, useEffect, useCallback } from "react";
+import { useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -386,16 +387,33 @@ const MaterialModal=React.memo(({ed,subjectId,sortOrder,onClose,onSaved}:{ed?:an
 // ══════════════════════════════════════════════════════════════════════════
 export default function CourseManagement() {
   const qc = useQueryClient();
+  const { subjectId: urlSubjectId } = useParams<{ subjectId?: string }>();
   type View = "courses"|"subjects"|"content";
 
   const [view,       setView]       = useState<View>("courses");
   const [selCourse,  setSelCourse]  = useState<any>(null);
   const [selSubject, setSelSubject] = useState<any>(null);
-  const [tab,        setTab]        = useState<ContentTab>("syllabus");
+  const [tab,        setTab]        = useState<ContentTab>("materials");
   const [search,     setSearch]     = useState("");
   const [lvlFilter,  setLvlFilter]  = useState<Level>("all");
   const [sortBy,     setSortBy]     = useState<SortKey>("sort_order");
   const [expanded,   setExpanded]   = useState<Set<string>>(new Set());
+
+  // ── Auto-navigate to subject when URL has :subjectId ──────────────────
+  useEffect(() => {
+    if (!urlSubjectId) return;
+    (async () => {
+      const { data: subj } = await supabase.from("subjects").select("*").eq("id", urlSubjectId).single();
+      if (!subj) return;
+      if (subj.course_id) {
+        const { data: course } = await supabase.from("courses").select("*").eq("id", subj.course_id).single();
+        if (course) setSelCourse(course);
+      }
+      setSelSubject(subj);
+      setView("content");
+      setTab("materials");
+    })();
+  }, [urlSubjectId]);
 
   // modal state
   const [showCourse,   setShowCourse]   = useState(false);
@@ -443,7 +461,7 @@ export default function CourseManagement() {
   const saveSubject=useCallback(async(p:any)=>{
     setBusy(true);
     try{
-      const d:any={title:p.title,title_ar:p.title_ar||null,description:p.description||null,level:p.level,is_active:p.is_active,image_url:p.image_url||null,teacher_id:p.teacher_id||null,color:G,course_id:selCourse?.id||null,updated_at:new Date().toISOString()};
+      const d:any={title:p.title,title_ar:p.title_ar||null,description:p.description||null,level:p.level,is_active:p.is_active,image_url:p.image_url||null,teacher_id:p.teacher_id||null,course_id:selCourse?.id||null,updated_at:new Date().toISOString()};
       const {error:subjErr}=edSubject?await supabase.from("subjects").update(d).eq("id",edSubject.id):await supabase.from("subjects").insert(d);
       if(subjErr) throw subjErr;
       qc.invalidateQueries({queryKey:["adm-subjects"]});qc.invalidateQueries({queryKey:["adm-all-subjects"]});
