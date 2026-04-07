@@ -1,8 +1,8 @@
 /**
- * MaterialManagerPro.tsx - WITH SUBJECT DEBUG
+ * MaterialManagerPro.tsx - FIXED IMPORTS
  */
 
-import React, { useState, useCallback, useMemo, memo, useEffect } from "react";
+import React, { useState, useCallback, useMemo, memo, useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -68,7 +68,7 @@ interface SubjectRow {
   level:    string | null;
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── Helpers ────────────────────────────────────────────────────────────────
 function fmtSize(bytes?: number | null): string {
   if (!bytes) return "";
   if (bytes < 1_024) return `${bytes} B`;
@@ -111,17 +111,15 @@ const card: React.CSSProperties = {
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
-// SUBJECT PICKER - WITH DETAILED ERROR MESSAGES
+// SUBJECT PICKER
 // ═════════════════════════════════════════════════════════════════════════════
 const SubjectPicker = memo(({ selected, onSelect }: { 
   selected: SubjectRow | null; 
   onSelect: (s: SubjectRow) => void;
 }) => {
-  const { data: subjects = [], isLoading, error, refetch } = useQuery<SubjectRow[]>({
+  const {  subjects = [], isLoading, error, refetch } = useQuery<SubjectRow[]>({
     queryKey: ["mmp-subjects"],
     queryFn: async () => {
-      console.log("📡 Fetching subjects from database...");
-      
       const { data, error } = await supabase
         .from("subjects")
         .select("id, title, title_ar, is_active, image_url, level")
@@ -145,24 +143,9 @@ const SubjectPicker = memo(({ selected, onSelect }: {
         📚 Select a Subject
       </h3>
       
-      {/* Show Auth Status */}      <div style={{
-        background: B.bg,
-        borderRadius: 12,
-        padding: 12,
-        marginBottom: 16,
-        fontSize: 12,
-      }}>
-        <p style={{ margin: "0 0 4px", color: B.sub }}>Authentication:</p>
-        <p style={{ margin: 0, fontWeight: 600, color: B.text }}>
-          👤 Checking...
-        </p>
-      </div>
-
-      {/* Show Error Details */}
       {error && (
         <div style={{
-          background: B.redL,
-          border: `1px solid ${B.red}`,
+          background: B.redL,          border: `1px solid ${B.red}`,
           borderRadius: 12,
           padding: 16,
           color: B.red,
@@ -173,10 +156,7 @@ const SubjectPicker = memo(({ selected, onSelect }: {
             ❌ Failed to Load Subjects
           </p>
           <p style={{ margin: "0 0 8px", fontSize: 12 }}>
-            <strong>Error:</strong> {error.message}
-          </p>
-          <p style={{ margin: "0 0 12px", fontSize: 12 }}>
-            <strong>Details:</strong> {error.details || "No details"}
+            {error.message}
           </p>
           <button
             onClick={() => refetch()}
@@ -195,15 +175,13 @@ const SubjectPicker = memo(({ selected, onSelect }: {
           </button>
         </div>
       )}
-      {/* Show Loading State */}
+
       {isLoading && (
         <div style={{ textAlign: "center", padding: "40px 0" }}>
-          <p style={{ fontSize: 32, marginBottom: 12 }}>⏳</p>
           <p style={{ color: B.muted }}>Loading subjects...</p>
         </div>
       )}
 
-      {/* Show Empty State */}
       {!isLoading && !error && subjects.length === 0 && (
         <div style={{
           background: B.greenXL,
@@ -213,12 +191,10 @@ const SubjectPicker = memo(({ selected, onSelect }: {
           textAlign: "center",
           marginBottom: 16,
         }}>
-          <p style={{ fontSize: 32, marginBottom: 8 }}>📭</p>
-          <p style={{ fontWeight: 700, color: B.text, margin: "0 0 4px" }}>
+          <p style={{ fontWeight: 700, color: B.text, margin: "0 0 8px" }}>
             No Subjects Found
           </p>
-          <p style={{ fontSize: 12, color: B.sub, margin: "0 0 12px" }}>
-            The subjects table is empty. Run the SQL setup script in Supabase.
+          <p style={{ fontSize: 12, color: B.sub, margin: "0 0 12px" }}>            Run SQL setup in Supabase
           </p>
           <button
             onClick={() => refetch()}
@@ -238,12 +214,12 @@ const SubjectPicker = memo(({ selected, onSelect }: {
         </div>
       )}
 
-      {/* Show Subjects List */}
       {!isLoading && !error && subjects.length > 0 && (
         <div style={{ display: "grid", gap: 10 }}>
           {subjects.map(s => (
             <button
-              key={s.id}              onClick={() => onSelect(s)}
+              key={s.id}
+              onClick={() => onSelect(s)}
               style={{
                 padding: "14px 16px",
                 borderRadius: 12,
@@ -257,11 +233,6 @@ const SubjectPicker = memo(({ selected, onSelect }: {
               <p style={{ fontWeight: 700, fontSize: 14, color: B.text, margin: "0 0 4px" }}>
                 {s.title}
               </p>
-              {s.title_ar && (
-                <p style={{ fontSize: 12, color: B.sub, margin: "0 0 4px", direction: "rtl" }}>
-                  {s.title_ar}
-                </p>
-              )}
               {s.level && (
                 <span style={{
                   fontSize: 10,
@@ -272,8 +243,7 @@ const SubjectPicker = memo(({ selected, onSelect }: {
                   color: B.green,
                 }}>
                   {s.level}
-                </span>
-              )}
+                </span>              )}
             </button>
           ))}
         </div>
@@ -292,7 +262,8 @@ interface UploadModalProps {
 }
 
 const UploadModal = ({ subject, onClose, onUploaded }: UploadModalProps) => {
-  const [file, setFile] = useState<File | null>(null);  const [uploading, setUploading] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [errorMessage, setErrorMessage] = useState<string>("");
   const [successMessage, setSuccessMessage] = useState<string>("");
@@ -321,7 +292,6 @@ const UploadModal = ({ subject, onClose, onUploaded }: UploadModalProps) => {
       setErrorMessage("❌ Please select a file first");
       return;
     }
-
     if (!user) {
       setErrorMessage("❌ You must be logged in");
       return;
@@ -341,7 +311,8 @@ const UploadModal = ({ subject, onClose, onUploaded }: UploadModalProps) => {
       const {  uploadData, error: uploadError } = await supabase.storage
         .from(BUCKET)
         .upload(filePath, file, {
-          cacheControl: "3600",          upsert: false,
+          cacheControl: "3600",
+          upsert: false,
         });
 
       if (uploadError) {
@@ -371,7 +342,6 @@ const UploadModal = ({ subject, onClose, onUploaded }: UploadModalProps) => {
       if (dbError) {
         throw new Error(`Database: ${dbError.message}`);
       }
-
       setUploadProgress(100);
       setSuccessMessage("✅ Upload successful!");
 
@@ -390,7 +360,8 @@ const UploadModal = ({ subject, onClose, onUploaded }: UploadModalProps) => {
   return (
     <div
       style={{
-        position: "fixed",        inset: 0,
+        position: "fixed",
+        inset: 0,
         zIndex: 9999,
         background: "rgba(0,0,0,.7)",
         display: "flex",
@@ -419,8 +390,7 @@ const UploadModal = ({ subject, onClose, onUploaded }: UploadModalProps) => {
             onClick={onClose}
             disabled={uploading}
             style={{
-              background: "none",
-              border: "none",
+              background: "none",              border: "none",
               cursor: uploading ? "not-allowed" : "pointer",
               color: B.muted,
               fontSize: 24,
@@ -439,7 +409,8 @@ const UploadModal = ({ subject, onClose, onUploaded }: UploadModalProps) => {
           marginBottom: 20,
         }}>
           <p style={{ fontSize: 11, color: B.green, fontWeight: 700, margin: "0 0 4px" }}>
-            UPLOADING TO:          </p>
+            UPLOADING TO:
+          </p>
           <p style={{ fontSize: 14, fontWeight: 600, color: B.text, margin: 0 }}>
             {subject.title}
           </p>
@@ -468,8 +439,7 @@ const UploadModal = ({ subject, onClose, onUploaded }: UploadModalProps) => {
             padding: 12,
             marginBottom: 20,
             color: B.green,
-            fontSize: 13,
-            fontWeight: 600,
+            fontSize: 13,            fontWeight: 600,
           }}>
             {successMessage}
           </div>
@@ -488,7 +458,8 @@ const UploadModal = ({ subject, onClose, onUploaded }: UploadModalProps) => {
           }}
         >
           <input
-            ref={fileInputRef}            type="file"
+            ref={fileInputRef}
+            type="file"
             style={{ display: "none" }}
             onChange={handleFileSelect}
             disabled={uploading}
@@ -517,8 +488,7 @@ const UploadModal = ({ subject, onClose, onUploaded }: UploadModalProps) => {
               background: B.bg,
               borderRadius: 4,
               overflow: "hidden",
-              marginBottom: 8,
-            }}>
+              marginBottom: 8,            }}>
               <div style={{
                 width: `${uploadProgress}%`,
                 height: "100%",
@@ -537,7 +507,8 @@ const UploadModal = ({ subject, onClose, onUploaded }: UploadModalProps) => {
             type="button"
             onClick={onClose}
             disabled={uploading}
-            style={{              flex: 1,
+            style={{
+              flex: 1,
               padding: "14px 20px",
               borderRadius: 12,
               border: `1.5px solid ${B.border}`,
@@ -566,8 +537,7 @@ const UploadModal = ({ subject, onClose, onUploaded }: UploadModalProps) => {
               cursor: !file || uploading ? "not-allowed" : "pointer",
             }}
           >
-            {uploading ? "⏳ Uploading..." : `📤 Upload`}
-          </button>
+            {uploading ? "⏳ Uploading..." : `📤 Upload`}          </button>
         </div>
       </div>
     </div>
@@ -586,7 +556,8 @@ const MaterialCard = memo(({ material, onDelete }: {
   return (
     <div style={{
       ...card,
-      padding: 16,      borderTop: `4px solid ${T.color}`,
+      padding: 16,
+      borderTop: `4px solid ${T.color}`,
     }}>
       <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
         <div style={{
@@ -615,8 +586,7 @@ const MaterialCard = memo(({ material, onDelete }: {
           onClick={() => onDelete(material)}
           style={{
             background: "none",
-            border: "none",
-            color: B.red,
+            border: "none",            color: B.red,
             cursor: "pointer",
             fontSize: 20,
             padding: "4px 8px",
@@ -636,6 +606,7 @@ const MaterialCard = memo(({ material, onDelete }: {
 export default function MaterialManagerPro() {
   const qc = useQueryClient();
   const { user, isLoading: authLoading } = useAuth();
+
   const [selectedSubject, setSelectedSubject] = useState<SubjectRow | null>(null);
   const [showUpload, setShowUpload] = useState(false);
 
@@ -664,8 +635,7 @@ export default function MaterialManagerPro() {
     qc.invalidateQueries({ queryKey: ["mmp-materials", selectedSubject?.id] });
   };
 
-  const invalidateAll = useCallback(() => {
-    if (selectedSubject) {
+  const invalidateAll = useCallback(() => {    if (selectedSubject) {
       qc.invalidateQueries({ queryKey: ["mmp-materials", selectedSubject.id] });
     }
   }, [qc, selectedSubject]);
@@ -684,7 +654,8 @@ export default function MaterialManagerPro() {
           padding: "24px 20px",
           marginBottom: 20,
         }}>
-          <div>            <h1 style={{ color: "#fff", fontWeight: 900, fontSize: 22, margin: "0 0 4px" }}>
+          <div>
+            <h1 style={{ color: "#fff", fontWeight: 900, fontSize: 22, margin: "0 0 4px" }}>
               📚 Material Manager
             </h1>
             <p style={{ color: "rgba(255,255,255,.7)", fontSize: 13, margin: 0 }}>
@@ -713,8 +684,7 @@ export default function MaterialManagerPro() {
               onSelect={(s) => {
                 setSelectedSubject(s);
               }} 
-            />
-          ) : (
+            />          ) : (
             <>
               {/* Upload Button */}
               <button
@@ -733,7 +703,8 @@ export default function MaterialManagerPro() {
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  gap: 10,                }}
+                  gap: 10,
+                }}
               >
                 📤 Upload Material
               </button>
@@ -762,8 +733,7 @@ export default function MaterialManagerPro() {
                 <div style={{
                   ...card,
                   padding: 20,
-                  background: B.redL,
-                  border: `1px solid ${B.red}`,
+                  background: B.redL,                  border: `1px solid ${B.red}`,
                   color: B.red,
                   marginBottom: 16,
                 }}>
@@ -782,7 +752,8 @@ export default function MaterialManagerPro() {
                   <p style={{ fontSize: 13, color: B.muted }}>Tap Upload to add your first material</p>
                 </div>
               ) : (
-                <div style={{ display: "grid", gap: 12 }}>                  {materials.map(m => (
+                <div style={{ display: "grid", gap: 12 }}>
+                  {materials.map(m => (
                     <MaterialCard 
                       key={m.id} 
                       material={m} 
