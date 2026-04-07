@@ -47,8 +47,7 @@ interface TypeMeta {
   border: string;
   accept: string;
 }
-const TYPE_META: Record<MatType, TypeMeta> = {
-  PDF:      { emoji:"📄", color:"#DC2626", light:"#FEF2F2", border:"#FCA5A5", accept:".pdf,application/pdf" },
+const TYPE_META: Record<MatType, TypeMeta> = {  PDF:      { emoji:"📄", color:"#DC2626", light:"#FEF2F2", border:"#FCA5A5", accept:".pdf,application/pdf" },
   Video:    { emoji:"🎬", color:"#7C3AED", light:"#F5F3FF", border:"#C4B5FD", accept:"video/*,.mp4,.webm,.mov,.avi,.m4v,.mkv" },
   Audio:    { emoji:"🎵", color:"#0D9488", light:"#F0FDFA", border:"#99F6E4", accept:"audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac" },
   Image:    { emoji:"🖼️", color:"#2563EB", light:"#EFF6FF", border:"#BFDBFE", accept:"image/*,.heic,.heif" },
@@ -97,8 +96,7 @@ function fmtSize(bytes?: number | null): string {
 }
 
 function timeAgo(iso?: string | null): string {  if (!iso) return "";
-  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
-  if (s <    60) return "just now";
+  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);  if (s <    60) return "just now";
   if (s <  3600) return `${Math.floor(s / 60)}m ago`;
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
   return `${Math.floor(s / 86400)}d ago`;
@@ -147,8 +145,7 @@ const inputSt: React.CSSProperties = {
   background:  "#fff",
   color:       B.text,};
 
-// ═════════════════════════════════════════════════════════════════════════════
-// SUB-COMPONENT: Subject Picker
+// ═════════════════════════════════════════════════════════════════════════════// SUB-COMPONENT: Subject Picker
 // ═════════════════════════════════════════════════════════════════════════════
 interface SubjectPickerProps {
   selected: SubjectRow | null;
@@ -197,8 +194,7 @@ const SubjectPicker = memo(({ selected, onSelect }: SubjectPickerProps) => {
       <div style={{ position: "relative", marginBottom: 14 }}>        <span style={{
           position: "absolute", left: 11, top: "50%",
           transform: "translateY(-50%)", fontSize: 14, color: B.muted,
-          pointerEvents: "none",
-        }}>🔍</span>
+          pointerEvents: "none",        }}>🔍</span>
         <input
           value={search}
           onChange={e => setSearch(e.target.value)}
@@ -247,8 +243,7 @@ const SubjectPicker = memo(({ selected, onSelect }: SubjectPickerProps) => {
                   background:   active ? B.greenXL : "#FAFAFA",
                   cursor:       "pointer",
                   textAlign:    "left",
-                  transition:   "all .14s",
-                  boxShadow:    active ? `0 0 0 3px ${B.green}22` : "none",
+                  transition:   "all .14s",                  boxShadow:    active ? `0 0 0 3px ${B.green}22` : "none",
                 }}
               >
                 {/* Subject thumbnail / icon */}
@@ -297,8 +292,7 @@ const SubjectPicker = memo(({ selected, onSelect }: SubjectPickerProps) => {
 // ═════════════════════════════════════════════════════════════════════════════
 // SUB-COMPONENT: Material Card (library item)
 // ═════════════════════════════════════════════════════════════════════════════
-interface MaterialCardProps {
-  material: MaterialRow;
+interface MaterialCardProps {  material: MaterialRow;
   index:    number;
   onEdit:   (m: MaterialRow) => void;
   onDelete: (m: MaterialRow) => void;
@@ -347,8 +341,7 @@ const MaterialCard = memo(({ material: m, index, onEdit, onDelete }: MaterialCar
         animation:     "mmp-slidein .3s ease both",
         animationDelay:`${index * 50}ms`,
         position:      "relative",
-      }}
-    >
+      }}    >
       {/* Colour accent bar */}
       <div style={{ height: 3, background: T.color }} />
 
@@ -397,8 +390,7 @@ const MaterialCard = memo(({ material: m, index, onEdit, onDelete }: MaterialCar
           <div style={{ position: "relative", flexShrink: 0 }}>
             <button
               type="button"
-              aria-label="More options"
-              onClick={() => setMenuOpen(v => !v)}
+              aria-label="More options"              onClick={() => setMenuOpen(v => !v)}
               style={{
                 width: 30, height: 30, borderRadius: 8,
                 border: `1.5px solid ${B.border}`, background: "#fff",
@@ -447,8 +439,7 @@ const MaterialCard = memo(({ material: m, index, onEdit, onDelete }: MaterialCar
         {m.content && (
           <p style={{
             fontSize: 11, color: B.sub, margin: "0 0 8px", lineHeight: 1.5,
-            padding: "8px 10px", background: B.bg, borderRadius: 8,
-            border: `1px solid ${B.border}`,
+            padding: "8px 10px", background: B.bg, borderRadius: 8,            border: `1px solid ${B.border}`,
             display: "-webkit-box" as React.CSSProperties["display"],
             WebkitLineClamp: 2,
             WebkitBoxOrient: "vertical" as React.CSSProperties["WebkitBoxOrient"],
@@ -497,8 +488,7 @@ function CtxItem({ emoji, color, onClick, children }: {
       }}
     >
       <span>{emoji}</span> {children}
-    </button>
-  );
+    </button>  );
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -547,8 +537,7 @@ const EditModal = memo(({ material, onClose, onSaved }: EditModalProps) => {
       }}>
         <div style={{
           display: "flex", justifyContent: "space-between",
-          alignItems: "center", marginBottom: 20,
-        }}>
+          alignItems: "center", marginBottom: 20,        }}>
           <h3 style={{ fontSize: 16, fontWeight: 800, color: B.text, margin: 0 }}>
             Edit Material
           </h3>
@@ -598,7 +587,6 @@ const EditModal = memo(({ material, onClose, onSaved }: EditModalProps) => {
               }} />
             </div>
           </div>
-
           <button
             type="button"
             onClick={save}
@@ -635,7 +623,8 @@ export default function MaterialManagerPro() {
   const [typeFilter,       setTypeFilter]      = useState<MatType | "All">("All");
   const [editTarget,       setEditTarget]      = useState<MaterialRow | null>(null);
 
-  // ── Fetch materials for selected subject ────────────────────────────────────  const { data: materials = [], isLoading: matsLoading } = useQuery<MaterialRow[]>({
+  // ── Fetch materials for selected subject ────────────────────────────────────
+  const { data: materials = [], isLoading: matsLoading } = useQuery<MaterialRow[]>({
     queryKey: ["mmp-materials", selectedSubject?.id],
     enabled:  !!selectedSubject,
     queryFn: async () => {
@@ -646,8 +635,7 @@ export default function MaterialManagerPro() {
         .order("sort_order")
         .order("created_at", { ascending: false });
       if (error) throw error;
-      return (data ?? []) as MaterialRow[];
-    },
+      return (data ?? []) as MaterialRow[];    },
   });
 
   // ── Invalidate all relevant query keys ─────────────────────────────────────
@@ -696,8 +684,7 @@ export default function MaterialManagerPro() {
     return c;
   }, [materials]);
 
-  return (
-    <>
+  return (    <>
       <style>{`
         @keyframes mmp-pop{
           from{opacity:0;transform:scale(.93)}
@@ -746,8 +733,7 @@ export default function MaterialManagerPro() {
               <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
                 <div style={{
                   width:          52,
-                  height:         52,
-                  borderRadius:   16,
+                  height:         52,                  borderRadius:   16,
                   background:     "rgba(255,255,255,.15)",
                   display:        "flex",
                   alignItems:     "center",
@@ -796,8 +782,7 @@ export default function MaterialManagerPro() {
                 setSelectedSubject(s);
                 setSearch("");
                 setTypeFilter("All");
-              }} />
-            </div>
+              }} />            </div>
           ) : (
             <>
               {/* ════ TYPE STAT CHIPS ══════════════════════════════════════ */}
@@ -846,8 +831,7 @@ export default function MaterialManagerPro() {
                 {/* Search + filter bar */}
                 <div style={{
                   ...card,
-                  padding: "13px 14px",
-                  display: "flex", flexDirection: "column", gap: 10,
+                  padding: "13px 14px",                  display: "flex", flexDirection: "column", gap: 10,
                 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <div style={{ position: "relative", flex: 1 }}>
@@ -896,8 +880,7 @@ export default function MaterialManagerPro() {
                   </div>
                 </div>
 
-                {/* Material cards */}
-                {matsLoading ? (
+                {/* Material cards */}                {matsLoading ? (
                   <div style={{
                     display:             "grid",
                     gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))",
@@ -946,8 +929,7 @@ export default function MaterialManagerPro() {
                     {filtered.map((m, i) => (
                       <MaterialCard
                         key={m.id}
-                        material={m}
-                        index={i}
+                        material={m}                        index={i}
                         onEdit={setEditTarget}
                         onDelete={handleDelete}
                       />
