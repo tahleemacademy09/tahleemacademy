@@ -1,7 +1,5 @@
 /**
- * MaterialManagerPro.tsx
- * ─────────────────────────────────────────────────────────────────
- * Library view for managing subject materials with upload support.
+ * MaterialManagerPro.tsx - MOBILE OPTIMIZED
  */
 
 import React, { useState, useCallback, useMemo, memo, useEffect, useRef } from "react";
@@ -10,22 +8,16 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "@/hooks/use-toast";
 
-// ─── Constants ────────────────────────────────────────────────────────────────
-const SB_URL = "https://wvqeubhupkddtkcdwqcm.supabase.co";
+// ─── Constants ───────────────────────────────────────────────────────────────
 const BUCKET = "subject-files";
 
-/** Brand colours — match existing Tahleem green theme */
 const B = {
   green:   "#064E3B",
   green2:  "#065F46",
   greenXL: "#ECFDF5",
   greenL:  "#D1FAE5",
-  gold:    "#92700A",
   red:     "#DC2626",
   redL:    "#FEF2F2",
-  redB:    "#FECACA",
-  blue:    "#2563EB",
-  blueL:   "#EFF6FF",
   border:  "#E5E7EB",
   bg:      "#F3F4F6",
   card:    "#FFFFFF",
@@ -34,34 +26,28 @@ const B = {
   muted:   "#9CA3AF",
 };
 
-// ─── Material-type registry ───────────────────────────────────────────────────
-type MatType =
-  | "PDF" | "Video" | "Audio" | "Image"
-  | "Document" | "Link" | "Text";
+type MatType = "PDF" | "Video" | "Audio" | "Image" | "Document" | "Link" | "Text";
 
 interface TypeMeta {
   emoji:  string;
   color:  string;
   light:  string;
   border: string;
-  accept: string;
 }
+
 const TYPE_META: Record<MatType, TypeMeta> = {
-  PDF:      { emoji:"📄", color:"#DC2626", light:"#FEF2F2", border:"#FCA5A5", accept:".pdf,application/pdf" },  Video:    { emoji:"🎬", color:"#7C3AED", light:"#F5F3FF", border:"#C4B5FD", accept:"video/*,.mp4,.webm,.mov,.avi,.m4v,.mkv" },
-  Audio:    { emoji:"🎵", color:"#0D9488", light:"#F0FDFA", border:"#99F6E4", accept:"audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac" },
-  Image:    { emoji:"🖼️", color:"#2563EB", light:"#EFF6FF", border:"#BFDBFE", accept:"image/*,.heic,.heif" },
-  Document: { emoji:"📝", color:"#D97706", light:"#FFFBEB", border:"#FDE68A", accept:".doc,.docx,.xls,.xlsx,.ppt,.pptx,.odt,.ods,.csv" },
-  Link:     { emoji:"🔗", color:"#6B7280", light:"#F9FAFB", border:"#D1D5DB", accept:"" },
-  Text:     { emoji:"✏️", color:"#374151", light:"#F9FAFB", border:"#D1D5DB", accept:"" },
+  PDF:      { emoji:"📄", color:"#DC2626", light:"#FEF2F2", border:"#FCA5A5" },
+  Video:    { emoji:"🎬", color:"#7C3AED", light:"#F5F3FF", border:"#C4B5FD" },
+  Audio:    { emoji:"🎵", color:"#0D9488", light:"#F0FDFA", border:"#99F6E4" },
+  Image:    { emoji:"🖼️", color:"#2563EB", light:"#EFF6FF", border:"#BFDBFE" },
+  Document: { emoji:"📝", color:"#D97706", light:"#FFFBEB", border:"#FDE68A" },
+  Link:     { emoji:"🔗", color:"#6B7280", light:"#F9FAFB", border:"#D1D5DB" },
+  Text:     { emoji:"✏️", color:"#374151", light:"#F9FAFB", border:"#D1D5DB" },
 };
 
-const ALL_TYPES = Object.keys(TYPE_META) as MatType[];
-
-// ─── Supabase DB row type ─────────────────────────────────────────────────────
 interface MaterialRow {
   id:             string;
-  subject_id:     string;
-  title:          string;
+  subject_id:     string;  title:          string;
   material_type:  string | null;
   file_url:       string;
   file_type:      string | null;
@@ -71,9 +57,6 @@ interface MaterialRow {
   sort_order:     number | null;
   uploaded_by:    string;
   created_at:     string | null;
-  topic:          string | null;
-  level:          string | null;
-  session_id:     string | null;
 }
 
 interface SubjectRow {
@@ -88,234 +71,163 @@ interface SubjectRow {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function fmtSize(bytes?: number | null): string {
   if (!bytes) return "";
-  if (bytes < 1_024)       return `${bytes} B`;
-  if (bytes < 1_048_576)   return `${(bytes / 1_024).toFixed(0)} KB`;
+  if (bytes < 1_024) return `${bytes} B`;
+  if (bytes < 1_048_576) return `${(bytes / 1_024).toFixed(0)} KB`;
   if (bytes < 1_073_741_824) return `${(bytes / 1_048_576).toFixed(1)} MB`;
   return `${(bytes / 1_073_741_824).toFixed(2)} GB`;
 }
 
 function timeAgo(iso?: string | null): string {
   if (!iso) return "";
-  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);  if (s <    60) return "just now";
-  if (s <  3600) return `${Math.floor(s / 60)}m ago`;
+  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
   return `${Math.floor(s / 86400)}d ago`;
 }
 
-// Detect material type from file
 function detectMaterialType(file: File): MatType {
   const type = file.type.toLowerCase();
   const name = file.name.toLowerCase();
-  
   if (type.includes("pdf") || name.endsWith(".pdf")) return "PDF";
-  if (type.startsWith("video/") || /\.(mp4|webm|mov|avi|m4v|mkv)$/i.test(name)) return "Video";
-  if (type.startsWith("audio/") || /\.(mp3|wav|m4a|aac|ogg|flac)$/i.test(name)) return "Audio";
-  if (type.startsWith("image/") || /\.(jpg|jpeg|png|gif|webp|heic|heif)$/i.test(name)) return "Image";
-  if (/\.(doc|docx|xls|xlsx|ppt|pptx|odt|ods|csv)$/i.test(name)) return "Document";
-  return "Document"; // Default
+  if (type.startsWith("video/")) return "Video";
+  if (type.startsWith("audio/")) return "Audio";
+  if (type.startsWith("image/")) return "Image";
+  return "Document";
 }
 
-// Generate unique file path
-function generateFilePath(subjectId: string, file: File): string {
-  const timestamp = Date.now();
+function generateFilePath(subjectId: string, file: File): string {  const timestamp = Date.now();
   const randomStr = Math.random().toString(36).substring(2, 8);
   const ext = file.name.split(".").pop() || "";
   return `${subjectId}/${timestamp}-${randomStr}.${ext}`;
 }
 
-// ─── Shared CSS-in-JS helpers ────────────────────────────────────────────────
-const pill = (active: boolean, color: string): React.CSSProperties => ({
-  padding:      "6px 12px",
-  borderRadius: 20,
-  fontSize:     11,
-  fontWeight:   700,
-  cursor:       "pointer",
-  border:       `1.5px solid ${active ? color : B.border}`,
-  background:   active ? `${color}18` : B.card,
-  color:        active ? color : B.sub,
-  transition:   "all .14s",
-  whiteSpace:   "nowrap",
-});
-
+// ─── Styles ──────────────────────────────────────────────────────────────────
 const card: React.CSSProperties = {
-  background:   B.card,
+  background: B.card,
   borderRadius: 16,
-  border:       `1.5px solid ${B.border}`,
-  boxShadow:    "0 2px 10px rgba(0,0,0,.05)",
-};
-
-const labelSt: React.CSSProperties = {
-  display:       "block",  fontSize:      11,
-  fontWeight:    800,
-  color:         "#374151",
-  textTransform: "uppercase",
-  letterSpacing: ".07em",
-  marginBottom:  8,
-};
-
-const inputSt: React.CSSProperties = {
-  width:       "100%",
-  boxSizing:   "border-box",
-  fontFamily:  "inherit",
-  padding:     "11px 14px",
-  fontSize:    14,
-  outline:     "none",
-  border:      `1.5px solid ${B.border}`,
-  borderRadius: 10,
-  background:  "#fff",
-  color:       B.text,
+  border: `1.5px solid ${B.border}`,
+  boxShadow: "0 2px 10px rgba(0,0,0,.05)",
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
-// SUB-COMPONENT: Upload Modal
+// UPLOAD MODAL - MOBILE OPTIMIZED
 // ═════════════════════════════════════════════════════════════════════════════
 interface UploadModalProps {
-  subject:  SubjectRow;
-  onClose:  () => void;
+  subject: SubjectRow;
+  onClose: () => void;
   onUploaded: () => void;
 }
 
-const UploadModal = memo(({ subject, onClose, onUploaded }: UploadModalProps) => {
-  const [files, setFiles] = useState<File[]>([]);
+const UploadModal = ({ subject, onClose, onUploaded }: UploadModalProps) => {
+  const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
-  const [progress, setProgress] = useState<Record<string, number>>({});
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  const [titles, setTitles] = useState<Record<string, string>>({});
-  const [downloadable, setDownloadable] = useState<Record<string, boolean>>({});
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [errorMessage, setErrorMessage] = useState<string>("");
+  const [successMessage, setSuccessMessage] = useState<string>("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { user } = useAuth();
 
-  const handleFileSelect = (selectedFiles: FileList | null) => {
-    if (!selectedFiles) return;
-    const newFiles = Array.from(selectedFiles);
-    setFiles(prev => [...prev, ...newFiles]);
+  // Check prerequisites on mount
+  useEffect(() => {
+    if (!user) {
+      setErrorMessage("❌ You must be logged in to upload");
+    } else if (!subject) {
+      setErrorMessage("❌ No subject selected");
+    } else {
+      setErrorMessage("");
+    }
+  }, [user, subject]);
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setErrorMessage("");
+    setSuccessMessage("");
     
-    // Initialize states for new files
-    newFiles.forEach(file => {
-      const id = `${file.name}-${file.size}-${file.lastModified}`;
-      setTitles(prev => ({ ...prev, [id]: file.name.replace(/\.[^/.]+$/, "") }));
-      setDownloadable(prev => ({ ...prev, [id]: true }));    });
-  };
-
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    handleFileSelect(e.dataTransfer.files);
-  }, []);
-
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-  }, []);
-
-  const removeFile = (index: number) => {
-    setFiles(prev => prev.filter((_, i) => i !== index));
-  };
-
-  const uploadFile = async (file: File, fileId: string): Promise<void> => {
-    const filePath = generateFilePath(subject.id, file);
-    const materialType = detectMaterialType(file);
-
-    // Upload to Supabase Storage
-    const { data: uploadData, error: uploadError } = await supabase.storage
-      .from(BUCKET)
-      .upload(filePath, file, {
-        cacheControl: "3600",
-        upsert: false,
-        contentType: file.type || undefined,
-      });
-
-    if (uploadError) throw uploadError;
-
-    // Get public URL or signed URL
-    const { data: urlData } = supabase.storage
-      .from(BUCKET)
-      .getPublicUrl(filePath);
-
-    // Create database entry
-    const { error: dbError } = await supabase
-      .from("subject_materials")
-      .insert({
-        subject_id: subject.id,
-        title: titles[fileId] || file.name.replace(/\.[^/.]+$/, ""),
-        material_type: materialType,
-        file_url: urlData.publicUrl,
-        file_type: file.type,
-        file_size: file.size,
-        is_downloadable: downloadable[fileId] ?? true,
-        uploaded_by: user?.id || "",
-        sort_order: 0,
-      });
-    if (dbError) {
-      // Rollback: delete uploaded file
-      await supabase.storage.from(BUCKET).remove([filePath]);
-      throw dbError;
+    if (e.target.files && e.target.files.length > 0) {
+      const selectedFile = e.target.files[0];
+            // Check file size (max 50MB)
+      if (selectedFile.size > 50 * 1024 * 1024) {
+        setErrorMessage("❌ File too large (max 50MB)");
+        return;
+      }
+      
+      setFile(selectedFile);
+      setSuccessMessage(`✅ Selected: ${selectedFile.name} (${fmtSize(selectedFile.size)})`);
     }
   };
 
   const handleUpload = async () => {
-    if (files.length === 0) return;
+    if (!file) {
+      setErrorMessage("❌ Please select a file first");
+      return;
+    }
+
+    if (!user) {
+      setErrorMessage("❌ You must be logged in");
+      return;
+    }
+
     setUploading(true);
-    setErrors({});
+    setErrorMessage("");
+    setSuccessMessage("");
+    setUploadProgress(10);
 
-    const results: { success: number; failed: number } = { success: 0, failed: 0 };
+    try {
+      const filePath = generateFilePath(subject.id, file);
+      const materialType = detectMaterialType(file);
 
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      const fileId = `${file.name}-${file.size}-${file.lastModified}`;
-      
-      try {
-        setProgress(prev => ({ ...prev, [fileId]: 0 }));
-        
-        // Simulate progress (Supabase doesn't provide progress for small files)
-        const progressInterval = setInterval(() => {
-          setProgress(prev => {
-            const current = prev[fileId] || 0;
-            if (current >= 90) {
-              clearInterval(progressInterval);
-              return prev;
-            }
-            return { ...prev, [fileId]: current + 10 };
-          });
-        }, 200);
+      setUploadProgress(30);
 
-        await uploadFile(file, fileId);
-        clearInterval(progressInterval);
-        setProgress(prev => ({ ...prev, [fileId]: 100 }));
-        results.success++;
-      } catch (error: any) {
-        setErrors(prev => ({
-          ...prev,
-          [fileId]: error.message || "Upload failed",
-        }));
-        results.failed++;
+      // Upload to Storage
+      const {  uploadData, error: uploadError } = await supabase.storage
+        .from(BUCKET)
+        .upload(filePath, file, {
+          cacheControl: "3600",
+          upsert: false,
+        });
+
+      if (uploadError) {
+        throw new Error(`Storage: ${uploadError.message}`);
       }
-    }
 
-    setUploading(false);
-    
-    if (results.success > 0) {      toast({
-        title: "✅ Upload Complete",
-        description: `${results.success} file(s) uploaded successfully`,
-      });
-      onUploaded();
-    }
-    
-    if (results.failed > 0) {
-      toast({
-        title: "⚠️ Some uploads failed",
-        description: `${results.failed} file(s) could not be uploaded`,
-        variant: "destructive",
-      });
-    }
-  };
+      setUploadProgress(60);
 
-  const getFileIcon = (file: File) => {
-    const type = detectMaterialType(file);
-    return TYPE_META[type].emoji;
-  };
+      // Get Public URL
+      const {  urlData } = supabase.storage
+        .from(BUCKET)        .getPublicUrl(filePath);
 
-  const getFileColor = (file: File) => {
-    const type = detectMaterialType(file);
-    return TYPE_META[type].color;
+      // Insert to Database
+      const { error: dbError } = await supabase
+        .from("subject_materials")
+        .insert({
+          subject_id: subject.id,
+          title: file.name.replace(/\.[^/.]+$/, ""),
+          material_type: materialType,
+          file_url: urlData.publicUrl,
+          file_type: file.type,
+          file_size: file.size,
+          is_downloadable: true,
+          uploaded_by: user.id,
+          sort_order: 0,
+        });
+
+      if (dbError) {
+        throw new Error(`Database: ${dbError.message}`);
+      }
+
+      setUploadProgress(100);
+      setSuccessMessage("✅ Upload successful!");
+
+      setTimeout(() => {
+        onUploaded();
+      }, 1000);
+
+    } catch (error: any) {
+      setErrorMessage(`❌ ${error.message || "Upload failed"}`);
+      setUploadProgress(0);
+    } finally {
+      setUploading(false);
+    }
   };
 
   return (
@@ -323,43 +235,29 @@ const UploadModal = memo(({ subject, onClose, onUploaded }: UploadModalProps) =>
       style={{
         position: "fixed",
         inset: 0,
-        zIndex: 200,
-        background: "rgba(0,0,0,.6)",
+        zIndex: 9999,
+        background: "rgba(0,0,0,.7)",
         display: "flex",
-        alignItems: "center",
+        alignItems: "flex-end",
         justifyContent: "center",
-        padding: 16,
-        overflowY: "auto",
       }}
-      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div
-        style={{
-          background: "#fff",
-          borderRadius: 20,
+        style={{          background: "#fff",
+          borderRadius: "20px 20px 0 0",
           width: "100%",
-          maxWidth: 600,
-          maxHeight: "90vh",
+          maxWidth: 500,
+          padding: 24,
+          paddingBottom: 40,
+          maxHeight: "85vh",
           overflowY: "auto",
-          padding: 24,          boxShadow: "0 24px 80px rgba(0,0,0,.3)",
-          animation: "mmp-pop .2s ease",
         }}
       >
         {/* Header */}
-        <div style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          marginBottom: 20,
-        }}>
-          <div>
-            <h3 style={{ fontSize: 18, fontWeight: 800, color: B.text, margin: 0 }}>
-              Upload Materials
-            </h3>
-            <p style={{ fontSize: 12, color: B.muted, margin: "4px 0 0" }}>
-              {subject.title}
-            </p>
-          </div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+          <h3 style={{ fontSize: 18, fontWeight: 800, color: B.text, margin: 0 }}>
+            📤 Upload Material
+          </h3>
           <button
             type="button"
             onClick={onClose}
@@ -369,225 +267,146 @@ const UploadModal = memo(({ subject, onClose, onUploaded }: UploadModalProps) =>
               border: "none",
               cursor: uploading ? "not-allowed" : "pointer",
               color: B.muted,
-              fontSize: 20,
-              padding: 4,
+              fontSize: 24,
+              padding: "0 8px",
             }}
           >
             ✕
           </button>
         </div>
 
-        {/* Drop Zone */}
+        {/* Subject Info */}
+        <div style={{
+          background: B.greenXL,
+          border: `1px solid ${B.greenL}`,
+          borderRadius: 12,
+          padding: 12,
+          marginBottom: 20,
+        }}>
+          <p style={{ fontSize: 11, color: B.green, fontWeight: 700, margin: "0 0 4px" }}>
+            UPLOADING TO:
+          </p>
+          <p style={{ fontSize: 14, fontWeight: 600, color: B.text, margin: 0 }}>
+            {subject.title}
+          </p>
+        </div>
+
+        {/* User Info */}
+        <div style={{          background: B.bg,
+          borderRadius: 12,
+          padding: 12,
+          marginBottom: 20,
+          fontSize: 12,
+          color: B.sub,
+        }}>
+          👤 {user?.email || "Not logged in"}
+        </div>
+
+        {/* Error Message */}
+        {errorMessage && (
+          <div style={{
+            background: B.redL,
+            border: `1px solid ${B.red}`,
+            borderRadius: 12,
+            padding: 12,
+            marginBottom: 20,
+            color: B.red,
+            fontSize: 13,
+            fontWeight: 600,
+          }}>
+            {errorMessage}
+          </div>
+        )}
+
+        {/* Success Message */}
+        {successMessage && (
+          <div style={{
+            background: B.greenXL,
+            border: `1px solid ${B.greenL}`,
+            borderRadius: 12,
+            padding: 12,
+            marginBottom: 20,
+            color: B.green,
+            fontSize: 13,
+            fontWeight: 600,
+          }}>
+            {successMessage}
+          </div>
+        )}
+
+        {/* File Selection */}
         <div
-          onDrop={handleDrop}
-          onDragOver={handleDragOver}
           onClick={() => !uploading && fileInputRef.current?.click()}
           style={{
-            border: `2px dashed ${B.border}`,
+            border: `2px dashed ${file ? B.green : B.border}`,
             borderRadius: 16,
-            padding: "32px 24px",
-            textAlign: "center",
-            cursor: uploading ? "not-allowed" : "pointer",
-            background: B.bg,
-            transition: "all .2s",
-            marginBottom: 20,          }}
-          onMouseEnter={e => {
-            if (!uploading) {
-              (e.currentTarget as HTMLElement).style.borderColor = B.green;
-              (e.currentTarget as HTMLElement).style.background = B.greenXL;
-            }
-          }}
-          onMouseLeave={e => {
-            (e.currentTarget as HTMLElement).style.borderColor = B.border;
-            (e.currentTarget as HTMLElement).style.background = B.bg;
+            padding: "30px 20px",
+            textAlign: "center",            cursor: uploading ? "not-allowed" : "pointer",
+            background: file ? B.greenXL : B.bg,
+            marginBottom: 20,
           }}
         >
           <input
             ref={fileInputRef}
             type="file"
-            multiple
             style={{ display: "none" }}
-            onChange={e => handleFileSelect(e.target.files)}
+            onChange={handleFileSelect}
             disabled={uploading}
+            accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,image/*,video/*,audio/*"
           />
-          <div style={{ fontSize: 48, marginBottom: 12 }}>📁</div>
-          <p style={{ fontWeight: 700, color: B.text, margin: "0 0 4px" }}>
-            Drop files here or click to browse
+          <div style={{ fontSize: 40, marginBottom: 10 }}>
+            {file ? "📎" : "📁"}
+          </div>
+          <p style={{ fontWeight: 700, color: B.text, margin: "0 0 4px", fontSize: 14 }}>
+            {file ? "File Selected" : "Tap to Select File"}
           </p>
-          <p style={{ fontSize: 12, color: B.muted, margin: 0 }}>
-            Supports: PDF, Images, Videos, Audio, Documents
+          <p style={{ fontSize: 11, color: B.muted, margin: 0 }}>
+            {file ? file.name : "PDF, Images, Video, Audio, Documents"}
           </p>
+          {file && (
+            <p style={{ fontSize: 11, color: B.green, marginTop: 8, fontWeight: 600 }}>
+              {fmtSize(file.size)}
+            </p>
+          )}
         </div>
 
-        {/* File List */}
-        {files.length > 0 && (
+        {/* Progress Bar */}
+        {uploading && (
           <div style={{ marginBottom: 20 }}>
-            <p style={{
-              fontSize: 11,
-              fontWeight: 800,
-              color: B.sub,
-              textTransform: "uppercase",
-              letterSpacing: ".07em",
-              marginBottom: 12,
+            <div style={{
+              height: 8,
+              background: B.bg,
+              borderRadius: 4,
+              overflow: "hidden",
+              marginBottom: 8,
             }}>
-              {files.length} file{files.length !== 1 ? "s" : ""} selected
-            </p>
-            
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              {files.map((file, index) => {
-                const fileId = `${file.name}-${file.size}-${file.lastModified}`;
-                const error = errors[fileId];
-                const prog = progress[fileId] || 0;
-                const color = getFileColor(file);
-                                return (
-                  <div
-                    key={fileId}
-                    style={{
-                      background: B.card,
-                      border: `1.5px solid ${error ? B.red : B.border}`,
-                      borderRadius: 12,
-                      padding: 14,
-                      position: "relative",
-                    }}
-                  >
-                    <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-                      <div style={{
-                        width: 44,
-                        height: 44,
-                        borderRadius: 10,
-                        background: `${color}18`,
-                        border: `1.5px solid ${color}`,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        fontSize: 20,
-                        flexShrink: 0,
-                      }}>
-                        {getFileIcon(file)}
-                      </div>
-                      
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <input
-                          type="text"
-                          value={titles[fileId] || ""}
-                          onChange={e => setTitles(prev => ({ ...prev, [fileId]: e.target.value }))}
-                          disabled={uploading}
-                          style={{
-                            ...inputSt,
-                            fontSize: 13,
-                            fontWeight: 600,
-                            padding: "6px 10px",
-                            marginBottom: 6,
-                          }}
-                          placeholder="Enter title..."
-                        />
-                        
-                        <div style={{
-                          display: "flex",
-                          gap: 8,
-                          alignItems: "center",
-                          fontSize: 11,
-                          color: B.muted,
-                        }}>                          <span>{fmtSize(file.size)}</span>
-                          <span>•</span>
-                          <span>{file.type || "Unknown type"}</span>
-                        </div>
-
-                        {/* Progress bar */}
-                        {uploading && prog > 0 && prog < 100 && (
-                          <div style={{
-                            marginTop: 8,
-                            height: 4,
-                            background: B.bg,
-                            borderRadius: 2,
-                            overflow: "hidden",
-                          }}>
-                            <div style={{
-                              width: `${prog}%`,
-                              height: "100%",
-                              background: color,
-                              transition: "width .3s",
-                            }} />
-                          </div>
-                        )}
-
-                        {error && (
-                          <p style={{
-                            color: B.red,
-                            fontSize: 11,
-                            margin: "6px 0 0",
-                          }}>
-                            {error}
-                          </p>
-                        )}
-                      </div>
-
-                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                        <label
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 6,
-                            fontSize: 11,
-                            cursor: uploading ? "not-allowed" : "pointer",
-                            color: B.sub,
-                          }}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={downloadable[fileId] ?? true}
-                            onChange={e => setDownloadable(prev => ({
-                              ...prev,                              [fileId]: e.target.checked,
-                            }))}
-                            disabled={uploading}
-                            style={{ accentColor: B.green }}
-                          />
-                          Downloadable
-                        </label>
-
-                        {!uploading && (
-                          <button
-                            type="button"
-                            onClick={() => removeFile(index)}
-                            style={{
-                              background: "none",
-                              border: "none",
-                              color: B.red,
-                              cursor: "pointer",
-                              fontSize: 18,
-                              padding: 4,
-                              alignSelf: "flex-end",
-                            }}
-                          >
-                            🗑
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+              <div style={{
+                width: `${uploadProgress}%`,
+                height: "100%",
+                background: B.green,
+                transition: "width .3s",
+              }} />
             </div>
-          </div>
-        )}
+            <p style={{ fontSize: 12, color: B.sub, textAlign: "center" }}>
+              Uploading... {uploadProgress}%
+            </p>
+          </div>        )}
 
-        {/* Actions */}
-        <div style={{
-          display: "flex",
-          gap: 12,
-          justifyContent: "flex-end",
-        }}>
+        {/* Action Buttons */}
+        <div style={{ display: "flex", gap: 12 }}>
           <button
             type="button"
             onClick={onClose}
             disabled={uploading}
             style={{
-              padding: "12px 24px",
+              flex: 1,
+              padding: "14px 20px",
               borderRadius: 12,
               border: `1.5px solid ${B.border}`,
               background: "#fff",
-              color: B.text,              fontWeight: 700,
-              fontSize: 14,
+              color: B.text,
+              fontWeight: 700,
+              fontSize: 15,
               cursor: uploading ? "not-allowed" : "pointer",
             }}
           >
@@ -596,67 +415,34 @@ const UploadModal = memo(({ subject, onClose, onUploaded }: UploadModalProps) =>
           <button
             type="button"
             onClick={handleUpload}
-            disabled={files.length === 0 || uploading}
+            disabled={!file || uploading}
             style={{
-              padding: "12px 24px",
+              flex: 2,
+              padding: "14px 20px",
               borderRadius: 12,
               border: "none",
-              background: files.length === 0 || uploading
-                ? "#E5E7EB"
-                : `linear-gradient(135deg, ${B.green}, ${B.green2})`,
+              background: !file || uploading ? "#E5E7EB" : B.green,
               color: "#fff",
               fontWeight: 800,
-              fontSize: 14,
-              cursor: files.length === 0 || uploading ? "not-allowed" : "pointer",
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              minWidth: 140,
-              justifyContent: "center",
+              fontSize: 15,
+              cursor: !file || uploading ? "not-allowed" : "pointer",
             }}
           >
-            {uploading ? (
-              <>
-                <span style={{
-                  width: 16,
-                  height: 16,
-                  border: "2px solid rgba(255,255,255,.3)",
-                  borderTopColor: "#fff",
-                  borderRadius: "50%",
-                  animation: "spin 1s linear infinite",
-                }} />
-                Uploading...
-              </>
-            ) : (
-              <>
-                📤 Upload {files.length > 0 && `(${files.length})`}
-              </>
-            )}
+            {uploading ? "⏳ Uploading..." : `📤 Upload`}
           </button>
         </div>
       </div>
-      <style>{`
-        @keyframes spin {
-          to { transform: rotate(360deg); }
-        }
-      `}</style>
     </div>
   );
-});
-UploadModal.displayName = "UploadModal";
+};
 
 // ═════════════════════════════════════════════════════════════════════════════
-// SUB-COMPONENT: Subject Picker
+// SUBJECT PICKER - MOBILE
 // ═════════════════════════════════════════════════════════════════════════════
-interface SubjectPickerProps {
-  selected: SubjectRow | null;
+const SubjectPicker = memo(({ selected, onSelect }: {   selected: SubjectRow | null; 
   onSelect: (s: SubjectRow) => void;
-}
-
-const SubjectPicker = memo(({ selected, onSelect }: SubjectPickerProps) => {
-  const [search, setSearch] = useState("");
-
-  const { data: subjects = [], isLoading } = useQuery<SubjectRow[]>({
+}) => {
+  const { data: subjects = [], isLoading, error } = useQuery<SubjectRow[]>({
     queryKey: ["mmp-subjects"],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -669,837 +455,291 @@ const SubjectPicker = memo(({ selected, onSelect }: SubjectPickerProps) => {
     staleTime: 60_000,
   });
 
-  const filtered = useMemo(
-    () => subjects.filter(s =>
-      s.title.toLowerCase().includes(search.toLowerCase()) ||
-      (s.title_ar ?? "").includes(search)
-    ),
-    [subjects, search],
-  );
-
   return (
     <div style={{ ...card, padding: 20 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
-        <span style={{ fontSize: 22 }}>📂</span>
-        <div>
-          <h3 style={{ fontWeight: 800, fontSize: 15, color: B.text, margin: 0 }}>
-            Select Subject
-          </h3>          <p style={{ fontSize: 11, color: B.muted, margin: 0 }}>
-            {subjects.length} subject{subjects.length !== 1 ? "s" : ""} available
-          </p>
+      <h3 style={{ fontWeight: 800, fontSize: 16, color: B.text, margin: "0 0 16px" }}>
+        📚 Select a Subject
+      </h3>
+      
+      {error && (
+        <div style={{
+          background: B.redL,
+          border: `1px solid ${B.red}`,
+          borderRadius: 12,
+          padding: 12,
+          color: B.red,
+          fontSize: 13,
+          marginBottom: 16,
+        }}>
+          ❌ Failed to load subjects
         </div>
-      </div>
-
-      {/* Search */}
-      <div style={{ position: "relative", marginBottom: 14 }}>
-        <span style={{
-          position: "absolute", left: 11, top: "50%",
-          transform: "translateY(-50%)", fontSize: 14, color: B.muted,
-          pointerEvents: "none",
-        }}>🔍</span>
-        <input
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder="Search subjects…"
-          style={{ ...inputSt, paddingLeft: 34, fontSize: 13 }}
-        />
-      </div>
-
-      {/* Subject grid */}
+      )}
+      
       {isLoading ? (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-          {[1,2,3,4].map(i => (
-            <div key={i} style={{
-              height: 70, borderRadius: 12, background: "#F0F0F0",
-              animation: "mmp-pulse 1.4s infinite",
-              animationDelay: `${i * 100}ms`,
-            }} />
+        <p style={{ color: B.muted, textAlign: "center" }}>Loading...</p>
+      ) : subjects.length === 0 ? (
+        <p style={{ color: B.muted, textAlign: "center" }}>No subjects found</p>
+      ) : (
+        <div style={{ display: "grid", gap: 10 }}>
+          {subjects.map(s => (
+            <button
+              key={s.id}
+              onClick={() => onSelect(s)}
+              style={{
+                padding: "14px 16px",
+                borderRadius: 12,
+                border: `2px solid ${selected?.id === s.id ? B.green : B.border}`,                background: selected?.id === s.id ? B.greenXL : "#fff",
+                cursor: "pointer",
+                textAlign: "left",
+                width: "100%",
+              }}
+            >
+              <p style={{ fontWeight: 700, fontSize: 14, color: B.text, margin: "0 0 4px" }}>
+                {s.title}
+              </p>
+              {s.level && (
+                <span style={{
+                  fontSize: 10,
+                  fontWeight: 700,
+                  padding: "2px 8px",
+                  borderRadius: 10,
+                  background: B.greenL,
+                  color: B.green,
+                }}>
+                  {s.level}
+                </span>
+              )}
+            </button>
           ))}
         </div>
-      ) : filtered.length === 0 ? (
-        <p style={{ textAlign: "center", color: B.muted, fontSize: 13, padding: "20px 0" }}>
-          No subjects found
-        </p>
-      ) : (
-        <div style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
-          gap: 8,
-          maxHeight: 320,
-          overflowY: "auto",
-          paddingRight: 4,
-        }}>
-          {filtered.map(s => {
-            const active = selected?.id === s.id;
-            return (
-              <button
-                key={s.id}                type="button"
-                onClick={() => onSelect(s)}
-                style={{
-                  display:      "flex",
-                  alignItems:   "center",
-                  gap:          10,
-                  padding:      "11px 13px",
-                  borderRadius: 12,
-                  border:       `2px solid ${active ? B.green : B.border}`,
-                  background:   active ? B.greenXL : "#FAFAFA",
-                  cursor:       "pointer",
-                  textAlign:    "left",
-                  transition:   "all .14s",
-                  boxShadow:    active ? `0 0 0 3px ${B.green}22` : "none",
-                }}
-              >
-                {/* Subject thumbnail / icon */}
-                <div style={{
-                  width:          36,
-                  height:         36,
-                  borderRadius:   9,
-                  flexShrink:     0,
-                  background:     s.image_url ? `url(${s.image_url}) center/cover` : B.greenL,
-                  border:         `1.5px solid ${B.border}`,
-                  display:        "flex",
-                  alignItems:     "center",
-                  justifyContent: "center",
-                  fontSize:       18,
-                  overflow:       "hidden",
-                }}>
-                  {!s.image_url && "📖"}
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <p style={{
-                    fontWeight: 700, fontSize: 12, color: active ? B.green : B.text,
-                    margin: "0 0 2px",
-                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                  }}>{s.title}</p>
-                  {s.level && (
-                    <span style={{
-                      fontSize: 9, fontWeight: 700, padding: "1px 6px",
-                      borderRadius: 20,
-                      background: s.level === "beginner" ? "#F0FDF4"
-                        : s.level === "intermediate" ? "#EFF6FF" : "#FDF4FF",
-                      color: s.level === "beginner" ? "#166534"
-                        : s.level === "intermediate" ? "#1E40AF" : "#6B21A8",
-                    }}>{s.level}</span>
-                  )}
-                </div>
-                {active && <span style={{ fontSize: 16, flexShrink: 0 }}>✅</span>}              </button>
-            );
-          })}
-        </div>
       )}
     </div>
   );
 });
-SubjectPicker.displayName = "SubjectPicker";
 
 // ═════════════════════════════════════════════════════════════════════════════
-// SUB-COMPONENT: Material Card (library item)
+// MATERIAL CARD - MOBILE
 // ═════════════════════════════════════════════════════════════════════════════
-interface MaterialCardProps {
-  material: MaterialRow;
-  index:    number;
-  onEdit:   (m: MaterialRow) => void;
+const MaterialCard = memo(({ material, onDelete }: { 
+  material: MaterialRow; 
   onDelete: (m: MaterialRow) => void;
-}
-
-const MaterialCard = memo(({ material: m, index, onEdit, onDelete }: MaterialCardProps) => {
-  const T = TYPE_META[(m.material_type as MatType) ?? "PDF"];
-  const [imgSrc,  setImgSrc]  = useState<string | null>(null);
-  const [menuOpen,setMenuOpen]= useState(false);
-
-  // Resolve signed URL for Image thumbnails
-  useEffect(() => {
-    if (m.material_type !== "Image" || !m.file_url) return;
-    if (m.file_url.startsWith("http")) { setImgSrc(m.file_url); return; }
-    supabase.storage.from(BUCKET).createSignedUrl(m.file_url, 3600)
-      .then(({ data }) => { if (data?.signedUrl) setImgSrc(data.signedUrl); });
-  }, [m.file_url, m.material_type]);
-
-  const openFile = async () => {
-    if (!m.file_url) return;
-    if (m.file_url.startsWith("http")) { window.open(m.file_url, "_blank"); return; }
-    const { data } = await supabase.storage.from(BUCKET).createSignedUrl(m.file_url, 3600);
-    if (data?.signedUrl) window.open(data.signedUrl, "_blank");
-  };
-
-  const downloadFile = async () => {
-    let url = m.file_url ?? "";
-    const safe = ["_text_", "link", "placeholder", "text-content"];
-    if (!url.startsWith("http") && !safe.includes(url)) {
-      const { data } = await supabase.storage.from(BUCKET).createSignedUrl(url, 3600);
-      url = data?.signedUrl ?? url;
-    }
-    const a = document.createElement("a");
-    a.href = url; a.download = m.title; a.click();
-  };
-  const hasFileUrl = !!m.file_url && !["_text_","link","placeholder","text-content"].includes(m.file_url);
+}) => {
+  const T = TYPE_META[(material.material_type as MatType) ?? "PDF"];
 
   return (
-    <div
-      className="mmp-card"
-      style={{
-        background:    "#fff",
-        borderRadius:  16,
-        border:        `1.5px solid ${T.border}`,
-        overflow:      "hidden",
-        animation:     "mmp-slidein .3s ease both",
-        animationDelay:`${index * 50}ms`,
-        position:      "relative",
-      }}
-    >
-      {/* Colour accent bar */}
-      <div style={{ height: 3, background: T.color }} />
-
-      {/* Image thumbnail */}
-      {m.material_type === "Image" && imgSrc && (
-        <div style={{ height: 110, overflow: "hidden", background: T.light }}>
-          <img
-            src={imgSrc}
-            alt={m.title}
-            loading="lazy"
-            style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-            onError={() => setImgSrc(null)}
-          />
-        </div>
-      )}
-
-      <div style={{ padding: "14px 16px" }}>
-        {/* Header row */}
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 11, marginBottom: 10 }}>
-          <div style={{
-            width: 42, height: 42, borderRadius: 12, flexShrink: 0, fontSize: 22,
-            background: T.light, border: `1.5px solid ${T.border}`,
-            display: "flex", alignItems: "center", justifyContent: "center",
-          }}>
-            {T.emoji}
-          </div>
-
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <p style={{
-              fontWeight: 700, fontSize: 13, color: B.text,
-              margin: "0 0 4px",
-              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-            }}>{m.title}</p>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 5, alignItems: "center" }}>              <span style={{
-                fontSize: 10, fontWeight: 800, padding: "2px 7px", borderRadius: 20,
-                background: `${T.color}18`, color: T.color,
-              }}>{m.material_type}</span>
-              {(m.file_size ?? 0) > 0 && (
-                <span style={{ fontSize: 10, color: B.muted }}>{fmtSize(m.file_size)}</span>
-              )}
-              <span style={{ fontSize: 10, color: B.muted }}>{timeAgo(m.created_at)}</span>
-            </div>
-          </div>
-
-          {/* Context menu */}
-          <div style={{ position: "relative", flexShrink: 0 }}>
-            <button
-              type="button"
-              aria-label="More options"
-              onClick={() => setMenuOpen(v => !v)}
-              style={{
-                width: 30, height: 30, borderRadius: 8,
-                border: `1.5px solid ${B.border}`, background: "#fff",
-                cursor: "pointer", fontSize: 16, color: B.muted,
-                display: "flex", alignItems: "center", justifyContent: "center",
-              }}
-            >⋮</button>
-
-            {menuOpen && (
-              <div
-                onMouseLeave={() => setMenuOpen(false)}
-                style={{
-                  position: "absolute", right: 0, top: 34, zIndex: 50, minWidth: 145,
-                  background: "#fff", borderRadius: 12,
-                  border: `1.5px solid ${B.border}`,
-                  boxShadow: "0 10px 32px rgba(0,0,0,.14)",
-                  padding: 6, animation: "mmp-pop .15s ease",
-                }}
-              >
-                {hasFileUrl && (
-                  <CtxItem emoji="👁" color={B.sub}
-                    onClick={() => { openFile(); setMenuOpen(false); }}>
-                    View
-                  </CtxItem>
-                )}
-                {m.is_downloadable && hasFileUrl && (
-                  <CtxItem emoji="⬇" color="#0D9488"
-                    onClick={() => { downloadFile(); setMenuOpen(false); }}>
-                    Download
-                  </CtxItem>
-                )}
-                <CtxItem emoji="✏️" color={B.green}
-                  onClick={() => { onEdit(m); setMenuOpen(false); }}>                  Edit
-                </CtxItem>
-                <div style={{ height: 1, background: "#F3F4F6", margin: "4px 0" }} />
-                <CtxItem emoji="🗑" color={B.red}
-                  onClick={() => { onDelete(m); setMenuOpen(false); }}>
-                  Delete
-                </CtxItem>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Text content preview */}
-        {m.content && (
-          <p style={{
-            fontSize: 11, color: B.sub, margin: "0 0 8px", lineHeight: 1.5,
-            padding: "8px 10px", background: B.bg, borderRadius: 8,
-            border: `1px solid ${B.border}`,
-            display: "-webkit-box" as React.CSSProperties["display"],
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: "vertical" as React.CSSProperties["WebkitBoxOrient"],
-            overflow: "hidden",
-          }}>
-            {m.content}
-          </p>
-        )}
-
-        {m.is_downloadable && (
-          <span style={{ fontSize: 10, color: B.green, fontWeight: 700 }}>
-            ⬇ Downloadable
-          </span>
-        )}
-      </div>
-    </div>
-  );
-});
-MaterialCard.displayName = "MaterialCard";
-
-/** Tiny context-menu button */
-function CtxItem({ emoji, color, onClick, children }: {
-  emoji:    string;
-  color:    string;
-  onClick:  () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{        display:    "flex",
-        alignItems: "center",
-        gap:        8,
-        width:      "100%",
-        padding:    "9px 10px",
-        borderRadius: 8,
-        border:     "none",
-        background: "none",
-        cursor:     "pointer",
-        fontSize:   12,
-        fontWeight: 600,
-        color,
-        textAlign:  "left",
-        minHeight:  36,
-      }}
-    >
-      <span>{emoji}</span> {children}
-    </button>
-  );
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-// SUB-COMPONENT: Edit Modal
-// ═════════════════════════════════════════════════════════════════════════════
-interface EditModalProps {
-  material: MaterialRow;
-  onClose:  () => void;
-  onSaved:  () => void;
-}
-
-const EditModal = memo(({ material, onClose, onSaved }: EditModalProps) => {
-  const [title, setTitle] = useState(material.title);
-  const [dl,    setDl]    = useState(material.is_downloadable ?? true);
-  const [busy,  setBusy]  = useState(false);
-
-  const save = async () => {
-    if (!title.trim()) return;
-    setBusy(true);
-    const { error } = await supabase
-      .from("subject_materials")
-      .update({ title: title.trim(), is_downloadable: dl })
-      .eq("id", material.id);
-    setBusy(false);
-    if (error) {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
-      return;
-    }
-    toast({ title: "✅ Updated" });
-    onSaved();
-  };
-  return (
-    <div
-      style={{
-        position: "fixed", inset: 0, zIndex: 200,
-        background: "rgba(0,0,0,.5)",
-        display: "flex", alignItems: "center", justifyContent: "center",
-        padding: 16,
-      }}
-      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
-    >
-      <div style={{
-        background: "#fff", borderRadius: 20, width: "100%", maxWidth: 400,
-        padding: 24, boxShadow: "0 24px 80px rgba(0,0,0,.2)",
-        animation: "mmp-pop .2s ease",
-      }}>
+    <div style={{
+      ...card,
+      padding: 16,
+      borderTop: `4px solid ${T.color}`,
+    }}>
+      <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
         <div style={{
-          display: "flex", justifyContent: "space-between",
-          alignItems: "center", marginBottom: 20,
+          width: 44,
+          height: 44,
+          borderRadius: 10,
+          background: T.light,          border: `1.5px solid ${T.border}`,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontSize: 20,
+          flexShrink: 0,
         }}>
-          <h3 style={{ fontSize: 16, fontWeight: 800, color: B.text, margin: 0 }}>
-            Edit Material
-          </h3>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            style={{ background: "none", border: "none", cursor: "pointer", color: B.muted, fontSize: 18 }}
-          >✕</button>
+          {T.emoji}
         </div>
-
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <div>
-            <label style={labelSt}>Title</label>
-            <input
-              value={title}
-              onChange={e => setTitle(e.target.value)}
-              autoFocus
-              style={inputSt}
-            />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <p style={{ fontWeight: 700, fontSize: 14, color: B.text, margin: "0 0 4px" }}>
+            {material.title}
+          </p>
+          <div style={{ fontSize: 11, color: B.muted }}>
+            {material.material_type} • {fmtSize(material.file_size)} • {timeAgo(material.created_at)}
           </div>
-
-          <div
-            onClick={() => setDl(v => !v)}
-            role="button"
-            tabIndex={0}
-            onKeyDown={e => { if (e.key === "Enter" || e.key === " ") setDl(v => !v); }}
-            style={{
-              display: "flex", alignItems: "center", justifyContent: "space-between",
-              padding: "12px 14px", borderRadius: 12, cursor: "pointer",              background: dl ? B.greenXL : B.bg,
-              border: `1.5px solid ${dl ? "#86EFAC" : B.border}`,
-              transition: "all .2s", minHeight: 44,
-            }}
-          >
-            <span style={{ fontSize: 13, fontWeight: 600, color: B.text }}>
-              {dl ? "⬇ Download allowed" : "👁 View only"}
-            </span>
-            <div style={{
-              width: 42, height: 24, borderRadius: 99,
-              background: dl ? B.green : "#CBD5E1",
-              position: "relative", transition: "background .2s",
-            }}>
-              <div style={{
-                width: 18, height: 18, borderRadius: 99, background: "#fff",
-                position: "absolute", top: 3, left: dl ? 21 : 3,
-                transition: "left .2s", boxShadow: "0 1px 3px rgba(0,0,0,.2)",
-              }} />
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={save}
-            disabled={busy || !title.trim()}
-            style={{
-              padding: "13px", borderRadius: 12, border: "none",
-              background: busy || !title.trim() ? "#E5E7EB"
-                : `linear-gradient(135deg, ${B.green}, ${B.green2})`,
-              color: busy || !title.trim() ? B.muted : "#fff",
-              fontWeight: 800, fontSize: 14,
-              cursor: busy || !title.trim() ? "not-allowed" : "pointer",
-              display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-              minHeight: 48,
-            }}
-          >
-            {busy ? "Saving…" : "✓ Save Changes"}
-          </button>
         </div>
+        <button
+          onClick={() => onDelete(material)}
+          style={{
+            background: "none",
+            border: "none",
+            color: B.red,
+            cursor: "pointer",
+            fontSize: 20,
+            padding: "4px 8px",
+            flexShrink: 0,
+          }}
+        >
+          🗑
+        </button>
       </div>
     </div>
   );
 });
-EditModal.displayName = "EditModal";
 
 // ═════════════════════════════════════════════════════════════════════════════
-// MAIN PAGE EXPORT — MaterialManagerPro
+// MAIN COMPONENT
 // ═════════════════════════════════════════════════════════════════════════════
 export default function MaterialManagerPro() {
-  const qc = useQueryClient();  const { user } = useAuth();
+  const qc = useQueryClient();
+  const { user } = useAuth();
 
-  // ── State ──────────────────────────────────────────────────────────────────
   const [selectedSubject, setSelectedSubject] = useState<SubjectRow | null>(null);
-  const [search,           setSearch]          = useState("");
-  const [typeFilter,       setTypeFilter]      = useState<MatType | "All">("All");
-  const [editTarget,       setEditTarget]      = useState<MaterialRow | null>(null);
-  const [showUpload,       setShowUpload]      = useState(false);
+  const [showUpload, setShowUpload] = useState(false);
 
-  // ── Fetch materials for selected subject ────────────────────────────────────
-  const { data: materials = [], isLoading: matsLoading } = useQuery<MaterialRow[]>({
+  const {  materials = [], isLoading, error } = useQuery<MaterialRow[]>({
     queryKey: ["mmp-materials", selectedSubject?.id],
-    enabled:  !!selectedSubject,
-    queryFn: async () => {
-      const { data, error } = await supabase
+    enabled: !!selectedSubject,
+    queryFn: async () => {      const { data, error } = await supabase
         .from("subject_materials")
         .select("*")
         .eq("subject_id", selectedSubject!.id)
-        .order("sort_order")
         .order("created_at", { ascending: false });
       if (error) throw error;
       return (data ?? []) as MaterialRow[];
     },
   });
 
-  // ── Invalidate all relevant query keys ─────────────────────────────────────
-  const invalidateAll = useCallback(() => {
-    if (!selectedSubject) return;
-    const id = selectedSubject.id;
-    qc.invalidateQueries({ queryKey: ["mmp-materials", id] });
-    qc.invalidateQueries({ queryKey: ["smh", id] });
-    qc.invalidateQueries({ queryKey: ["subject-materials-all", id] });
-    qc.invalidateQueries({ queryKey: ["adm-materials", id] });
-    qc.invalidateQueries({ queryKey: ["materials", id] });
-  }, [qc, selectedSubject]);
-
-  // ── Delete ────────────────────────────────────────────────────────────────
-  const handleDelete = useCallback(async (m: MaterialRow) => {
+  const handleDelete = async (m: MaterialRow) => {
     if (!confirm(`Delete "${m.title}"?`)) return;
-
-    const safeUrls = ["_text_", "link", "placeholder", "text-content"];
-    if (m.file_url && !m.file_url.startsWith("http") && !safeUrls.includes(m.file_url)) {
-      await supabase.storage.from(BUCKET).remove([m.file_url]);
-    }
-
     const { error } = await supabase.from("subject_materials").delete().eq("id", m.id);
     if (error) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
       return;
-    }    toast({ title: "🗑 Deleted" });
-    invalidateAll();
-  }, [invalidateAll]);
+    }
+    toast({ title: "🗑 Deleted" });
+    qc.invalidateQueries({ queryKey: ["mmp-materials", selectedSubject?.id] });
+  };
 
-  // ── Filtered materials ─────────────────────────────────────────────────────
-  const filtered = useMemo(
-    () => materials.filter(m =>
-      (typeFilter === "All" || m.material_type === typeFilter) &&
-      (!search || m.title.toLowerCase().includes(search.toLowerCase()))
-    ),
-    [materials, typeFilter, search],
-  );
-
-  // ── Type counts for filter chips ──────────────────────────────────────────
-  const typeCounts = useMemo(() => {
-    const c: Record<string, number> = {};
-    materials.forEach(m => {
-      if (m.material_type) c[m.material_type] = (c[m.material_type] ?? 0) + 1;
-    });
-    return c;
-  }, [materials]);
+  const invalidateAll = useCallback(() => {
+    if (selectedSubject) {
+      qc.invalidateQueries({ queryKey: ["mmp-materials", selectedSubject.id] });
+    }
+  }, [qc, selectedSubject]);
 
   return (
     <>
-      <style>{`
-        @keyframes mmp-pop{
-          from{opacity:0;transform:scale(.93)}
-          to  {opacity:1;transform:scale(1)}
-        }
-        @keyframes mmp-slidein{
-          from{opacity:0;transform:translateY(16px)}
-          to  {opacity:1;transform:translateY(0)}
-        }
-        @keyframes mmp-pulse{
-          0%,100%{opacity:1}
-          50%{opacity:.35}
-        }
-        .mmp-card{
-          transition:transform .18s ease, box-shadow .18s ease;
-        }
-        .mmp-card:hover{
-          transform:translateY(-3px);
-          box-shadow:0 10px 30px rgba(0,0,0,.09)!important;
-        }
-        .mmp-pill:hover{
-          filter:brightness(.95);
-        }
-      `}</style>
-
-      <div style={{        minHeight:   "100vh",
-        background:  B.bg,
-        fontFamily:  "system-ui, sans-serif",
-        padding:     "0 0 40px",
+      <div style={{
+        minHeight: "100vh",
+        background: B.bg,
+        fontFamily: "system-ui, sans-serif",
+        paddingBottom: 40,
       }}>
-
-        {/* ════ TOP BANNER ════════════════════════════════════════════════ */}
+        {/* Header */}
         <div style={{
-          background:    `linear-gradient(135deg, ${B.green} 0%, ${B.green2} 100%)`,
-          padding:       "22px 20px",
-          marginBottom:  24,
+          background: `linear-gradient(135deg, ${B.green} 0%, ${B.green2} 100%)`,
+          padding: "24px 20px",
+          marginBottom: 20,
         }}>
-          <div style={{ maxWidth: 1100, margin: "0 auto" }}>
-            <div style={{
-              display:        "flex",
-              alignItems:     "center",
-              justifyContent: "space-between",
-              flexWrap:       "wrap",
-              gap:            12,
-            }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                <div style={{
-                  width:          52,
-                  height:         52,
-                  borderRadius:   16,
-                  background:     "rgba(255,255,255,.15)",
-                  display:        "flex",
-                  alignItems:     "center",
-                  justifyContent: "center",
-                  fontSize:       26,
-                }}>📚</div>
-                <div>
-                  <h1 style={{ color: "#fff", fontWeight: 900, fontSize: 20, margin: 0 }}>
-                    Material Manager Pro
-                  </h1>
-                  <p style={{ color: "rgba(255,255,255,.65)", fontSize: 12, margin: "3px 0 0" }}>
-                    {selectedSubject
-                      ? `Library: ${selectedSubject.title}`
-                      : "Select a subject to view materials"}
-                  </p>
-                </div>
-              </div>
-
-              <div style={{ display: "flex", gap: 10 }}>
-                {selectedSubject && (
-                  <button
-                    type="button"
-                    onClick={() => setShowUpload(true)}
-                    style={{
-                      padding:    "9px 16px",                      borderRadius: 11,
-                      border:     "1.5px solid rgba(255,255,255,.3)",
-                      background: "rgba(255,255,255,.2)",
-                      color:      "#fff",
-                      fontWeight: 700,
-                      fontSize:   13,
-                      cursor:     "pointer",
-                      display:    "flex",
-                      alignItems: "center",
-                      gap:        6,
-                    }}
-                  >
-                    📤 Upload
-                  </button>
-                )}
-                {selectedSubject && (
-                  <button
-                    type="button"
-                    onClick={() => { setSelectedSubject(null); setSearch(""); setTypeFilter("All"); }}
-                    style={{
-                      padding:    "9px 16px",
-                      borderRadius: 11,
-                      border:     "1.5px solid rgba(255,255,255,.3)",
-                      background: "rgba(255,255,255,.12)",
-                      color:      "#fff",
-                      fontWeight: 700,
-                      fontSize:   13,
-                      cursor:     "pointer",
-                    }}
-                  >
-                    🔄 Change Subject
-                  </button>
-                )}
-              </div>
-            </div>
+          <div>
+            <h1 style={{ color: "#fff", fontWeight: 900, fontSize: 22, margin: "0 0 4px" }}>
+              📚 Material Manager
+            </h1>
+            <p style={{ color: "rgba(255,255,255,.7)", fontSize: 13, margin: 0 }}>
+              {selectedSubject ? `Library: ${selectedSubject.title}` : "Select a subject to begin"}
+            </p>
+            {user && (
+              <p style={{ color: "rgba(255,255,255,.5)", fontSize: 11, margin: "8px 0 0" }}>                👤 {user.email}
+              </p>
+            )}
           </div>
         </div>
 
-        <div style={{ maxWidth: 1100, margin: "0 auto", padding: "0 16px" }}>
-
-          {/* ════ SUBJECT PICKER (shown when no subject selected) ════════ */}
+        <div style={{ padding: "0 16px" }}>
           {!selectedSubject ? (
-            <div style={{ maxWidth: 700, margin: "0 auto", animation: "mmp-pop .25s ease" }}>
-              <SubjectPicker selected={selectedSubject} onSelect={s => {
+            <SubjectPicker 
+              selected={selectedSubject} 
+              onSelect={(s) => {
                 setSelectedSubject(s);
-                setSearch("");
-                setTypeFilter("All");
-              }} />
-            </div>
-          ) : (            <>
-              {/* ════ TYPE STAT CHIPS ══════════════════════════════════════ */}
-              {Object.keys(typeCounts).length > 0 && (
+              }} 
+            />
+          ) : (
+            <>
+              {/* Upload Button */}
+              <button
+                onClick={() => setShowUpload(true)}
+                style={{
+                  width: "100%",
+                  padding: "16px 20px",
+                  borderRadius: 12,
+                  border: "none",
+                  background: B.green,
+                  color: "#fff",
+                  fontWeight: 800,
+                  fontSize: 16,
+                  cursor: "pointer",
+                  marginBottom: 20,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 10,
+                }}
+              >
+                📤 Upload Material
+              </button>
+
+              {/* Change Subject Button */}
+              <button
+                onClick={() => setSelectedSubject(null)}
+                style={{
+                  width: "100%",
+                  padding: "12px 20px",
+                  borderRadius: 12,
+                  border: `1.5px solid ${B.border}`,
+                  background: "#fff",
+                  color: B.text,
+                  fontWeight: 600,                  fontSize: 14,
+                  cursor: "pointer",
+                  marginBottom: 20,
+                }}
+              >
+                🔄 Change Subject
+              </button>
+
+              {/* Materials List */}
+              {error && (
                 <div style={{
-                  display:             "grid",
-                  gridTemplateColumns: "repeat(auto-fill, minmax(96px, 1fr))",
-                  gap:                 10,
-                  marginBottom:        20,
+                  ...card,
+                  padding: 20,
+                  background: B.redL,
+                  border: `1px solid ${B.red}`,
+                  color: B.red,
+                  marginBottom: 16,
                 }}>
-                  {(Object.keys(typeCounts) as MatType[]).map(t => {
-                    const tm     = TYPE_META[t];
-                    const active = typeFilter === t;
-                    return (
-                      <div
-                        key={t}
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => setTypeFilter(typeFilter === t ? "All" : t)}
-                        onKeyDown={e => { if (e.key === "Enter") setTypeFilter(typeFilter === t ? "All" : t); }}
-                        style={{
-                          background:   active ? tm.light  : "#fff",
-                          border:       `1.5px solid ${active ? tm.color : tm.border}`,
-                          borderRadius: 13,
-                          padding:      "12px 14px",
-                          cursor:       "pointer",
-                          boxShadow:    active ? `0 0 0 3px ${tm.color}33` : "none",
-                          transition:   "all .15s",
-                        }}
-                      >
-                        <div style={{ fontSize: 20, marginBottom: 5 }}>{tm.emoji}</div>
-                        <div style={{ fontSize: 22, fontWeight: 900, color: active ? tm.color : B.text, lineHeight: 1 }}>
-                          {typeCounts[t]}
-                        </div>
-                        <div style={{ fontSize: 10, fontWeight: 700, color: active ? tm.color : B.muted, marginTop: 3 }}>
-                          {t}
-                        </div>
-                      </div>
-                    );
-                  })}
+                  ❌ Failed to load materials
                 </div>
               )}
 
-              {/* ════ LIBRARY WITH UPLOAD ══════════════════════════════════ */}
-              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-
-                {/* Search + filter bar */}
-                <div style={{
-                  ...card,
-                  padding: "13px 14px",
-                  display: "flex", flexDirection: "column", gap: 10,                }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <div style={{ position: "relative", flex: 1 }}>
-                      <span style={{
-                        position: "absolute", left: 11, top: "50%",
-                        transform: "translateY(-50%)", fontSize: 14,
-                        color: B.muted, pointerEvents: "none",
-                      }}>🔍</span>
-                      <input
-                        value={search}
-                        onChange={e => setSearch(e.target.value)}
-                        placeholder="Search materials…"
-                        style={{ ...inputSt, paddingLeft: 34, fontSize: 13 }}
-                      />
-                    </div>
-                    <span style={{
-                      fontSize:     11,
-                      color:        B.muted,
-                      whiteSpace:   "nowrap",
-                      padding:      "0 4px",
-                    }}>
-                      {filtered.length} / {materials.length}
-                    </span>
-                  </div>
-
-                  {/* Filter chips */}
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                    <button
-                      type="button"
-                      className="mmp-pill"
-                      onClick={() => setTypeFilter("All")}
-                      style={pill(typeFilter === "All", B.green)}
-                    >
-                      All ({materials.length})
-                    </button>
-                    {(Object.keys(typeCounts) as MatType[]).map(t => (
-                      <button
-                        key={t}
-                        type="button"
-                        className="mmp-pill"
-                        onClick={() => setTypeFilter(typeFilter === t ? "All" : t)}
-                        style={pill(typeFilter === t, TYPE_META[t].color)}
-                      >
-                        {TYPE_META[t].emoji} {t} ({typeCounts[t]})
-                      </button>
-                    ))}
-                  </div>
+              {isLoading ? (
+                <div style={{ ...card, padding: 40, textAlign: "center" }}>
+                  <p style={{ color: B.muted }}>Loading...</p>
                 </div>
-
-                {/* Material cards */}                {matsLoading ? (
-                  <div style={{
-                    display:             "grid",
-                    gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))",
-                    gap:                 12,
-                  }}>
-                    {[1,2,3].map(i => (
-                      <div key={i} style={{
-                        height:         110,
-                        borderRadius:   16,
-                        background:     "#F0F0F0",
-                        animation:      "mmp-pulse 1.4s infinite",
-                        animationDelay: `${i * 100}ms`,
-                      }} />
-                    ))}
-                  </div>
-                ) : filtered.length === 0 ? (
-                  <div style={{
-                    ...card,
-                    padding:   "52px 24px",
-                    textAlign: "center",
-                    border:    `2px dashed ${B.border}`,
-                    animation: "mmp-pop .3s ease",
-                  }}>
-                    <div style={{
-                      width:          68, height: 68, borderRadius: 20,
-                      margin:         "0 auto 18px", fontSize: 32,
-                      background:     B.greenXL,
-                      display:        "flex",
-                      alignItems:     "center",
-                      justifyContent: "center",
-                    }}>📭</div>
-                    <p style={{ fontWeight: 800, color: B.text, margin: "0 0 6px", fontSize: 15 }}>
-                      {search || typeFilter !== "All" ? "No matches found" : "No materials yet"}
-                    </p>
-                    <p style={{ fontSize: 13, color: B.muted, margin: 0 }}>
-                      {search || typeFilter !== "All"
-                        ? "Try a different search or filter"
-                        : "Click the Upload button to add materials"}
-                    </p>
-                  </div>
-                ) : (
-                  <div style={{
-                    display:             "grid",
-                    gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))",
-                    gap:                 12,
-                  }}>
-                    {filtered.map((m, i) => (
-                      <MaterialCard
-                        key={m.id}                        material={m}
-                        index={i}
-                        onEdit={setEditTarget}
-                        onDelete={handleDelete}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
+              ) : materials.length === 0 ? (
+                <div style={{ ...card, padding: 40, textAlign: "center" }}>
+                  <p style={{ fontSize: 48, marginBottom: 16 }}>📭</p>
+                  <p style={{ fontWeight: 700, color: B.text, marginBottom: 8 }}>No materials yet</p>
+                  <p style={{ fontSize: 13, color: B.muted }}>Tap Upload to add your first material</p>
+                </div>
+              ) : (
+                <div style={{ display: "grid", gap: 12 }}>
+                  {materials.map(m => (
+                    <MaterialCard 
+                      key={m.id} 
+                      material={m} 
+                      onDelete={handleDelete} 
+                    />
+                  ))}
+                </div>
+              )}
             </>
           )}
         </div>
       </div>
 
-      {/* ════ UPLOAD MODAL ════════════════════════════════════════════════ */}
-      {showUpload && selectedSubject && (
-        <UploadModal
+      {/* Upload Modal */}
+      {showUpload && selectedSubject && (        <UploadModal
           subject={selectedSubject}
           onClose={() => setShowUpload(false)}
           onUploaded={() => {
             setShowUpload(false);
             invalidateAll();
           }}
-        />
-      )}
-
-      {/* ════ EDIT MODAL ═══════════════════════════════════════════════════ */}
-      {editTarget && (
-        <EditModal
-          material={editTarget}
-          onClose={() => setEditTarget(null)}
-          onSaved={() => { setEditTarget(null); invalidateAll(); }}
         />
       )}
     </>
