@@ -1,5 +1,10 @@
 // src/pages/admin/CourseManagement.tsx
 // Hierarchy: Courses → Subjects → [📋 Syllabus | 📁 Materials | ▶️ Lessons]
+// 
+// 🔧 FIXES APPLIED:
+// 1. Line ~785: lessons query uses "subject_id" instead of "course_id"
+// 2. Line ~825: delete cascade uses "subject_id" instead of "course_id"
+// 3. Line ~835: saveLesson payload includes "content" field + uses "subject_id"
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -42,8 +47,7 @@ const weekPalette = [
 ];
 
 const matCfg: Record<MatType,{icon:React.ElementType;bg:string;text:string;border:string}> = {
-  PDF:      {icon:FileText,        bg:"#FEF2F2",text:"#DC2626",border:"#FECACA"},
-  Video:    {icon:Video,           bg:"#F0FDF4",text:"#16A34A",border:"#BBF7D0"},
+  PDF:      {icon:FileText,        bg:"#FEF2F2",text:"#DC2626",border:"#FECACA"},  Video:    {icon:Video,           bg:"#F0FDF4",text:"#16A34A",border:"#BBF7D0"},
   Audio:    {icon:Music,           bg:"#FDF4FF",text:"#9333EA",border:"#E9D5FF"},
   Link:     {icon:ExternalLink,    bg:"#F0FDFA",text:"#0D9488",border:"#99F6E4"},
   Text:     {icon:Type,            bg:"#FFFBEB",text:"#B45309",border:"#FDE68A"},
@@ -92,8 +96,7 @@ const Fld=({label,children}:{label:string;children:React.ReactNode})=>(
 
 // ══════════════════════════════════════════════════════════════════════════
 // COURSE MODAL
-// ══════════════════════════════════════════════════════════════════════════
-const CourseModal=React.memo(({ed,onClose,onSave,busy}:{ed?:any;onClose:()=>void;onSave:(p:any)=>Promise<void>;busy:boolean})=>{
+// ══════════════════════════════════════════════════════════════════════════const CourseModal=React.memo(({ed,onClose,onSave,busy}:{ed?:any;onClose:()=>void;onSave:(p:any)=>Promise<void>;busy:boolean})=>{
   const [f,setF]=useState({title:ed?.title||"",title_ar:ed?.title_ar||"",description:ed?.description||"",level:(ed?.level||"all") as Level,is_published:ed?.is_published??true,image_url:ed?.image_url||"",sort_order:ed?.sort_order||0});
   const [up,setUp]=useState(false);
   const ref=useRef<HTMLInputElement>(null);
@@ -142,8 +145,7 @@ const CourseModal=React.memo(({ed,onClose,onSave,busy}:{ed?:any;onClose:()=>void
 
 // ══════════════════════════════════════════════════════════════════════════
 // SUBJECT MODAL
-// ══════════════════════════════════════════════════════════════════════════
-const SubjectModal=React.memo(({ed,teachers,onClose,onSave,busy}:{ed?:any;teachers:any[];onClose:()=>void;onSave:(p:any)=>Promise<void>;busy:boolean})=>{
+// ══════════════════════════════════════════════════════════════════════════const SubjectModal=React.memo(({ed,teachers,onClose,onSave,busy}:{ed?:any;teachers:any[];onClose:()=>void;onSave:(p:any)=>Promise<void>;busy:boolean})=>{
   const [f,setF]=useState({title:ed?.title||"",title_ar:ed?.title_ar||"",description:ed?.description||"",level:(ed?.level||"all") as Level,is_active:ed?.is_active??true,image_url:ed?.image_url||"",teacher_id:ed?.teacher_id||""});
   const [up,setUp]=useState(false);
   const ref=useRef<HTMLInputElement>(null);
@@ -192,8 +194,7 @@ const SubjectModal=React.memo(({ed,teachers,onClose,onSave,busy}:{ed?:any;teache
         </div>
       </div>
     </div>
-  );
-});
+  );});
 
 // ══════════════════════════════════════════════════════════════════════════
 // LESSON MODAL  (virtual lessons: title + description of what to learn)
@@ -242,8 +243,7 @@ const LessonModal=React.memo(({ed,onClose,onSave,busy}:{ed?:any;onClose:()=>void
 // ══════════════════════════════════════════════════════════════════════════
 // SYLLABUS MODAL
 // ══════════════════════════════════════════════════════════════════════════
-const SyllabusModal=React.memo(({ed,nextWeek,onClose,onSave,busy}:{ed?:any;nextWeek:number;onClose:()=>void;onSave:(p:any)=>Promise<void>;busy:boolean})=>{
-  const [f,setF]=useState({week_number:ed?.week_number||nextWeek,title:ed?.title||"",description:ed?.description||"",objectives:ed?.objectives?(ed.objectives as string[]).join("\n"):""});
+const SyllabusModal=React.memo(({ed,nextWeek,onClose,onSave,busy}:{ed?:any;nextWeek:number;onClose:()=>void;onSave:(p:any)=>Promise<void>;busy:boolean})=>{  const [f,setF]=useState({week_number:ed?.week_number||nextWeek,title:ed?.title||"",description:ed?.description||"",objectives:ed?.objectives?(ed.objectives as string[]).join("\n"):""});
   return(
     <div style={{position:"fixed",inset:0,zIndex:60,background:"rgba(0,0,0,.6)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
       <div style={{background:"#fff",borderRadius:20,width:"100%",maxWidth:480,maxHeight:"90vh",overflowY:"auto"}}>
@@ -271,8 +271,6 @@ const SyllabusModal=React.memo(({ed,nextWeek,onClose,onSave,busy}:{ed?:any;nextW
 });
 
 // ══════════════════════════════════════════════════════════════════════════
-// MATERIAL MODAL
-// ══════════════════════════════════════════════════════════════════════════
 // MATERIAL MODAL — Enhanced with real progress, preview & drag-and-drop
 // ══════════════════════════════════════════════════════════════════════════
 function autoDetectType(file: File): MatType {
@@ -294,8 +292,7 @@ const TYPE_ACCEPT: Record<MatType,string> = {
 const MaterialModal=React.memo(({ed,subjectId,sortOrder,onClose,onSaved}:{ed?:any;subjectId:string;sortOrder:number;onClose:()=>void;onSaved:()=>void})=>{
   const {user}=useAuth();
   const [f,setF]=useState({
-    title:       ed?.title||"",
-    material_type:(ed?.material_type||"PDF") as MatType,
+    title:       ed?.title||"",    material_type:(ed?.material_type||"PDF") as MatType,
     file_url:    ed?.file_url||"",
     content:     ed?.content||"",
     is_downloadable: ed?.is_downloadable??true,
@@ -318,13 +315,11 @@ const MaterialModal=React.memo(({ed,subjectId,sortOrder,onClose,onSaved}:{ed?:an
   const needText = f.material_type==="Text";
   const busy = phase==="uploading"||phase==="saving";
 
-  /* ── pick file ───────────────────────────────────────── */
   const pickFile = useCallback((fi: File) => {
     const detected = autoDetectType(fi);
     setFile(fi);
     setF(m => ({ ...m, material_type: detected, title: m.title || fi.name.replace(/\.[^/.]+$/,"") }));
     setSaveErr("");
-    // generate image preview
     if (fi.type.startsWith("image/")) {
       const r = new FileReader();
       r.onload = ev => setPreview(ev.target?.result as string);
@@ -339,7 +334,6 @@ const MaterialModal=React.memo(({ed,subjectId,sortOrder,onClose,onSaved}:{ed?:an
     if (fileRef.current) fileRef.current.value = "";
   }, []);
 
-  /* ── drag & drop ─────────────────────────────────────── */
   const onDragEnter = useCallback((e: React.DragEvent) => {
     e.preventDefault(); e.stopPropagation();
     setDragCount(c => c + 1);
@@ -347,8 +341,7 @@ const MaterialModal=React.memo(({ed,subjectId,sortOrder,onClose,onSaved}:{ed?:an
   }, []);
   const onDragLeave = useCallback((e: React.DragEvent) => {
     e.preventDefault(); e.stopPropagation();
-    setDragCount(c => {
-      const next = c - 1;
+    setDragCount(c => {      const next = c - 1;
       if (next <= 0) setDrag(false);
       return next;
     });
@@ -363,11 +356,8 @@ const MaterialModal=React.memo(({ed,subjectId,sortOrder,onClose,onSaved}:{ed?:an
     if (fi) pickFile(fi);
   }, [pickFile]);
 
-  /* ── upload with real XHR progress ──────────────────── */
   const uploadWithProgress = useCallback((path: string, fi: File): Promise<void> => {
     return new Promise((resolve, reject) => {
-      const { data: { session } } = { data: { session: null } } as any; // placeholder
-      // Use Supabase storage REST endpoint directly for XHR progress
       const SUPABASE_URL = (supabase as any).supabaseUrl as string;
       const SUPABASE_KEY = (supabase as any).supabaseKey as string;
 
@@ -392,17 +382,15 @@ const MaterialModal=React.memo(({ed,subjectId,sortOrder,onClose,onSaved}:{ed?:an
       xhr.addEventListener("abort", () => reject(new Error("Upload aborted")));
 
       const form = new FormData();
-      form.append("", fi, fi.name);
+      form.append("file", fi, fi.name); // 🔧 Fixed: was append("", ...)
       xhr.send(form);
     });
   }, []);
 
-  /* ── save ────────────────────────────────────────────── */
   const doSave = async () => {
     setSaveErr("");
     if (!f.title.trim())                                              { setSaveErr("Title is required."); return; }
-    if (needFile && !file && !f.file_url.trim())                     { setSaveErr("Please select a file or paste a URL."); return; }
-    if (needUrl  && !f.file_url.trim())                              { setSaveErr("Please enter a URL."); return; }
+    if (needFile && !file && !f.file_url.trim())                     { setSaveErr("Please select a file or paste a URL."); return; }    if (needUrl  && !f.file_url.trim())                              { setSaveErr("Please enter a URL."); return; }
     if (needText && !f.content.trim())                               { setSaveErr("Content cannot be empty."); return; }
 
     setPhase("uploading"); setPct(5);
@@ -414,11 +402,9 @@ const MaterialModal=React.memo(({ed,subjectId,sortOrder,onClose,onSaved}:{ed?:an
         const ext  = file.name.split(".").pop() || "bin";
         const path = `materials/${subjectId}/${crypto.randomUUID()}.${ext}`;
 
-        // Try XHR-with-progress first, fall back to supabase SDK
         try {
           await uploadWithProgress(path, file);
         } catch {
-          // Fallback: SDK upload (no progress bar but reliable)
           setPct(50);
           const { error } = await supabase.storage
             .from("subject-files")
@@ -453,14 +439,12 @@ const MaterialModal=React.memo(({ed,subjectId,sortOrder,onClose,onSaved}:{ed?:an
       setPct(100); setPhase("done");
       toast({ title: "✅ Material saved successfully" });
       setTimeout(() => onSaved(), 600);
-    } catch (e: any) {
-      setPhase("error"); setPct(0);
+    } catch (e: any) {      setPhase("error"); setPct(0);
       setSaveErr(e.message || "Upload failed.");
       toast({ title: "Upload Error", description: e.message, variant:"destructive" });
     }
   };
 
-  /* ── file icon / preview card ────────────────────────── */
   const FileCard = () => {
     if (!file) return null;
     const isImg = file.type.startsWith("image/");
@@ -491,7 +475,6 @@ const MaterialModal=React.memo(({ed,subjectId,sortOrder,onClose,onSaved}:{ed?:an
     );
   };
 
-  /* ── progress bar ────────────────────────────────────── */
   const ProgressBar = () => {
     if (phase==="idle" || phase==="error") return null;
     const label = phase==="saving" ? "Saving to database…" : phase==="done" ? "Done! ✓" : `Uploading… ${pct}%`;
@@ -505,8 +488,7 @@ const MaterialModal=React.memo(({ed,subjectId,sortOrder,onClose,onSaved}:{ed?:an
         <div style={{ height:8, background:"#D1FAE5", borderRadius:99, overflow:"hidden" }}>
           <div style={{ height:"100%", borderRadius:99, background:`linear-gradient(90deg,${barColor},${barColor}bb)`, width:`${pct}%`, transition:"width 0.3s ease" }} />
         </div>
-        {phase==="uploading" && file && (
-          <p style={{ fontSize:11, color:"#6B7280", margin:"6px 0 0" }}>
+        {phase==="uploading" && file && (          <p style={{ fontSize:11, color:"#6B7280", margin:"6px 0 0" }}>
             {Math.round((pct / 100) * file.size / 1024)} KB / {Math.round(file.size / 1024)} KB
           </p>
         )}
@@ -514,7 +496,6 @@ const MaterialModal=React.memo(({ed,subjectId,sortOrder,onClose,onSaved}:{ed?:an
     );
   };
 
-  /* ── render ──────────────────────────────────────────── */
   return (
     <>
       <style>{`
@@ -528,16 +509,13 @@ const MaterialModal=React.memo(({ed,subjectId,sortOrder,onClose,onSaved}:{ed?:an
         .mm-submit:hover:not(:disabled){transform:translateY(-2px);box-shadow:0 8px 28px rgba(6,78,59,.38)!important;}
       `}</style>
 
-      {/* Backdrop */}
       <div
         onClick={e=>{ if(e.target===e.currentTarget && !busy) onClose(); }}
         style={{ position:"fixed", inset:0, zIndex:60, background:"rgba(0,0,0,.55)", display:"flex", alignItems:"flex-end", justifyContent:"center" }}
       >
-        {/* Sheet */}
         <div style={{ background:"#fff", borderRadius:"24px 24px 0 0", width:"100%", maxWidth:520, maxHeight:"95vh", overflowY:"auto", animation:"mm-fadein .22s ease" }}
           onClick={e=>e.stopPropagation()}>
 
-          {/* Header */}
           <div style={{ background:`linear-gradient(135deg,${G},${GM})`, padding:"18px 20px", borderRadius:"24px 24px 0 0", display:"flex", alignItems:"center", justifyContent:"space-between", position:"sticky", top:0, zIndex:2 }}>
             <div style={{ display:"flex", alignItems:"center", gap:12 }}>
               <div style={{ width:40, height:40, borderRadius:12, background:"rgba(255,255,255,.15)", display:"flex", alignItems:"center", justifyContent:"center" }}>
@@ -558,10 +536,8 @@ const MaterialModal=React.memo(({ed,subjectId,sortOrder,onClose,onSaved}:{ed?:an
 
           <div style={{ padding:"22px 20px 32px", display:"flex", flexDirection:"column", gap:18 }}>
 
-            {/* Error banner */}
             {saveErr && (
-              <div style={{ display:"flex", alignItems:"flex-start", gap:10, padding:"13px 15px", borderRadius:12, background:"#FEF2F2", border:"1.5px solid #FECACA" }}>
-                <AlertCircle size={16} color="#DC2626" style={{ marginTop:1, flexShrink:0 }} />
+              <div style={{ display:"flex", alignItems:"flex-start", gap:10, padding:"13px 15px", borderRadius:12, background:"#FEF2F2", border:"1.5px solid #FECACA" }}>                <AlertCircle size={16} color="#DC2626" style={{ marginTop:1, flexShrink:0 }} />
                 <div style={{ flex:1 }}>
                   <p style={{ fontSize:13, color:"#B91C1C", margin:0, fontWeight:700 }}>Upload failed</p>
                   <p style={{ fontSize:12, color:"#DC2626", margin:"3px 0 0", opacity:.85 }}>{saveErr}</p>
@@ -570,7 +546,6 @@ const MaterialModal=React.memo(({ed,subjectId,sortOrder,onClose,onSaved}:{ed?:an
               </div>
             )}
 
-            {/* Title */}
             <div>
               <label style={{ fontSize:12, fontWeight:700, color:"#374151", display:"block", marginBottom:7 }}>
                 Title <span style={{ color:"#EF4444" }}>*</span>
@@ -585,7 +560,6 @@ const MaterialModal=React.memo(({ed,subjectId,sortOrder,onClose,onSaved}:{ed?:an
               />
             </div>
 
-            {/* Type selector */}
             <div>
               <label style={{ fontSize:12, fontWeight:700, color:"#374151", display:"block", marginBottom:10 }}>Type</label>
               <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8 }}>
@@ -607,15 +581,12 @@ const MaterialModal=React.memo(({ed,subjectId,sortOrder,onClose,onSaved}:{ed?:an
               </div>
             </div>
 
-            {/* File zone */}
             {needFile && (
               <div>
                 <label style={{ fontSize:12, fontWeight:700, color:"#374151", display:"block", marginBottom:10 }}>File</label>
 
                 {file ? (
-                  <FileCard />
-                ) : (
-                  /* Drop zone */
+                  <FileCard />                ) : (
                   <div ref={dragRef} className="mm-drop-zone"
                     onClick={()=>{ if(!busy) fileRef.current?.click(); }}
                     onDragEnter={onDragEnter} onDragLeave={onDragLeave}
@@ -649,7 +620,6 @@ const MaterialModal=React.memo(({ed,subjectId,sortOrder,onClose,onSaved}:{ed?:an
                   </div>
                 )}
 
-                {/* URL fallback */}
                 <div style={{ display:"flex", alignItems:"center", gap:10, margin:"14px 0 8px" }}>
                   <div style={{ flex:1, height:1, background:"#E5E7EB" }} />
                   <span style={{ fontSize:11, color:"#9CA3AF", fontWeight:600, whiteSpace:"nowrap" }}>or paste a URL</span>
@@ -661,19 +631,16 @@ const MaterialModal=React.memo(({ed,subjectId,sortOrder,onClose,onSaved}:{ed?:an
               </div>
             )}
 
-            {/* Link URL */}
             {needUrl && (
               <div>
                 <label style={{ fontSize:12, fontWeight:700, color:"#374151", display:"block", marginBottom:7 }}>
                   URL <span style={{ color:"#EF4444" }}>*</span>
-                </label>
-                <input value={f.file_url} disabled={busy}
+                </label>                <input value={f.file_url} disabled={busy}
                   onChange={e=>{ setF(m=>({...m,file_url:e.target.value})); setSaveErr(""); }}
                   style={{ ...inp, borderRadius:12, padding:"11px 14px" }} placeholder="https://…" />
               </div>
             )}
 
-            {/* Text content */}
             {needText && (
               <div>
                 <label style={{ fontSize:12, fontWeight:700, color:"#374151", display:"block", marginBottom:7 }}>
@@ -686,10 +653,8 @@ const MaterialModal=React.memo(({ed,subjectId,sortOrder,onClose,onSaved}:{ed?:an
               </div>
             )}
 
-            {/* Progress */}
             <ProgressBar />
 
-            {/* Allow download toggle */}
             <div onClick={()=>{ if(!busy) setF(m=>({...m,is_downloadable:!m.is_downloadable})); }}
               style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"14px 16px", borderRadius:14, cursor:busy?"not-allowed":"pointer",
                 background:f.is_downloadable?"#F0FDF4":"#F9FAFB", border:`1.5px solid ${f.is_downloadable?"#A7F3D0":"#E5E7EB"}`, transition:"all .2s" }}>
@@ -704,13 +669,11 @@ const MaterialModal=React.memo(({ed,subjectId,sortOrder,onClose,onSaved}:{ed?:an
                   </p>
                 </div>
               </div>
-              {/* Custom pill toggle */}
               <div style={{ width:46, height:26, borderRadius:99, background:f.is_downloadable?G:"#CBD5E1", position:"relative", transition:"background .2s", flexShrink:0 }}>
                 <div style={{ width:20, height:20, borderRadius:99, background:"#fff", position:"absolute", top:3, left:f.is_downloadable?23:3, transition:"left .2s", boxShadow:"0 1px 4px rgba(0,0,0,.2)" }} />
               </div>
             </div>
 
-            {/* Submit */}
             <button type="button" className="mm-submit" onClick={doSave} disabled={busy||phase==="done"}
               style={{ width:"100%", padding:"15px", borderRadius:14, border:"none",
                 background:busy||phase==="done"?"#E5E7EB":`linear-gradient(135deg,${G},${GM})`,
@@ -721,8 +684,7 @@ const MaterialModal=React.memo(({ed,subjectId,sortOrder,onClose,onSaved}:{ed?:an
               {phase==="uploading" && <><Loader2 size={18} style={{ animation:"mm-spin .8s linear infinite" }}/> Uploading {pct}%…</>}
               {phase==="saving"    && <><Loader2 size={18} style={{ animation:"mm-spin .8s linear infinite" }}/> Saving…</>}
               {phase==="done"      && <><Check size={18}/> Saved!</>}
-              {phase==="error"     && <><Upload size={18}/> Retry Upload</>}
-              {phase==="idle"      && <><Upload size={18}/> {ed ? "Save Changes" : "Upload Material"}</>}
+              {phase==="error"     && <><Upload size={18}/> Retry Upload</>}              {phase==="idle"      && <><Upload size={18}/> {ed ? "Save Changes" : "Upload Material"}</>}
             </button>
 
           </div>
@@ -749,7 +711,6 @@ export default function CourseManagement() {
   const [sortBy,     setSortBy]     = useState<SortKey>("sort_order");
   const [expanded,   setExpanded]   = useState<Set<string>>(new Set());
 
-  // ── Auto-navigate to subject when URL has :subjectId ──────────────────
   useEffect(() => {
     if (!urlSubjectId) return;
     (async () => {
@@ -765,7 +726,6 @@ export default function CourseManagement() {
     })();
   }, [urlSubjectId]);
 
-  // modal state
   const [showCourse,   setShowCourse]   = useState(false);
   const [showSubject,  setShowSubject]  = useState(false);
   const [showLesson,   setShowLesson]   = useState(false);
@@ -773,8 +733,7 @@ export default function CourseManagement() {
   const [showMaterial, setShowMaterial] = useState(false);
   const [edCourse,   setEdCourse]   = useState<any>(null);
   const [edSubject,  setEdSubject]  = useState<any>(null);
-  const [edLesson,   setEdLesson]   = useState<any>(null);
-  const [edSyllabus, setEdSyllabus] = useState<any>(null);
+  const [edLesson,   setEdLesson]   = useState<any>(null);  const [edSyllabus, setEdSyllabus] = useState<any>(null);
   const [edMaterial, setEdMaterial] = useState<any>(null);
   const [busy, setBusy] = useState(false);
 
@@ -782,7 +741,10 @@ export default function CourseManagement() {
   const {data:courses=[],isLoading:cLoad}=useQuery({queryKey:["adm-courses"],queryFn:async()=>{const {data}=await supabase.from("courses").select("*").order("sort_order");return data||[];}});
   const {data:subjects=[],isLoading:sLoad}=useQuery({queryKey:["adm-subjects",selCourse?.id],enabled:view!=="courses",queryFn:async()=>{let q=supabase.from("subjects").select("*").order("title");if(selCourse)q=q.eq("course_id",selCourse.id);const {data}=await q;return data||[];}});
   const {data:allSubjects=[]}=useQuery({queryKey:["adm-all-subjects"],queryFn:async()=>{const {data}=await supabase.from("subjects").select("id,title,level,course_id").order("title");return data||[];}});
-  const {data:lessons=[],isLoading:lLoad}=useQuery({queryKey:["adm-lessons",selSubject?.id],enabled:!!selSubject,queryFn:async()=>{const {data}=await supabase.from("lessons").select("*").eq("course_id",selSubject?.id||"").order("sort_order");return data||[];}});
+  
+  // 🔧 FIX #1: lessons query uses "subject_id" instead of "course_id"
+  const {data:lessons=[],isLoading:lLoad}=useQuery({queryKey:["adm-lessons",selSubject?.id],enabled:!!selSubject,queryFn:async()=>{const {data}=await supabase.from("lessons").select("*").eq("subject_id",selSubject?.id||"").order("sort_order");return data||[];}});
+  
   const {data:syllabus=[],isLoading:syllLoad}=useQuery({queryKey:["adm-syllabus",selSubject?.id],enabled:!!selSubject,queryFn:async()=>{const {data}=await supabase.from("subject_syllabus").select("*").eq("subject_id",selSubject!.id).order("week_number");return data||[];}});
   const {data:materials=[],isLoading:matLoad}=useQuery({queryKey:["adm-materials",selSubject?.id],enabled:!!selSubject,queryFn:async()=>{const {data}=await supabase.from("subject_materials").select("*").eq("subject_id",selSubject!.id).order("sort_order").order("created_at",{ascending:false});return data||[];}});
   const {data:teachers=[]}=useQuery({queryKey:["teachers-simple"],queryFn:async()=>{const {data:roles}=await supabase.from("user_roles").select("user_id").in("role",["teacher","admin"]);if(!roles?.length)return[];const {data}=await supabase.from("profiles").select("user_id,full_name").in("user_id",roles.map((r:any)=>r.user_id));return data||[];}});
@@ -820,19 +782,20 @@ export default function CourseManagement() {
     setBusy(false);
   },[edSubject,selCourse,qc]);
 
-  const delSubject=async(id:string)=>{
-    if(!confirm("Delete subject and all its content?")) return;
-    await supabase.from("lessons").delete().eq("course_id",id);
+  const delSubject=async(id:string)=>{    if(!confirm("Delete subject and all its content?")) return;
+    // 🔧 FIX #2: delete lessons by "subject_id" instead of "course_id"
+    await supabase.from("lessons").delete().eq("subject_id",id);
     await supabase.from("subjects").delete().eq("id",id);
     qc.invalidateQueries({queryKey:["adm-subjects"]});
     if(selSubject?.id===id){setSelSubject(null);setView("subjects");}
     toast({title:"Subject deleted"});
   };
 
+  // 🔧 FIX #3: saveLesson payload includes "content" field + uses "subject_id"
   const saveLesson=useCallback(async(p:any)=>{
     setBusy(true);
     try{
-      const d={title:p.title,title_ar:p.title_ar||null,duration_minutes:p.duration_minutes,sort_order:p.sort_order,course_id:selSubject?.id,is_free:p.is_free};
+      const d={title:p.title,title_ar:p.title_ar||null,content:p.content||null,duration_minutes:p.duration_minutes,sort_order:p.sort_order,subject_id:selSubject?.id,is_free:p.is_free};
       const {error:lessonErr}=edLesson?await supabase.from("lessons").update(d).eq("id",edLesson.id):await supabase.from("lessons").insert(d);
       if(lessonErr) throw lessonErr;
       qc.invalidateQueries({queryKey:["adm-lessons",selSubject?.id]});
@@ -868,8 +831,7 @@ export default function CourseManagement() {
   const delMaterial=async(mat:any)=>{
     if(!confirm("Delete this material?")) return;
     if(mat.file_url&&!mat.file_url.startsWith("http")) await supabase.storage.from("subject-files").remove([mat.file_url]);
-    await supabase.from("subject_materials").delete().eq("id",mat.id);
-    qc.invalidateQueries({queryKey:["adm-materials",selSubject?.id]});toast({title:"Material deleted"});
+    await supabase.from("subject_materials").delete().eq("id",mat.id);    qc.invalidateQueries({queryKey:["adm-materials",selSubject?.id]});toast({title:"Material deleted"});
   };
 
   // ── Filtering / sorting ───────────────────────────────────────────────────
@@ -918,8 +880,7 @@ export default function CourseManagement() {
         </div>
         <button type="button" onClick={doAdd} style={{display:"flex",alignItems:"center",gap:6,padding:"9px 16px",borderRadius:10,border:"none",background:G,color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer"}}>
           <Plus size={14}/> {addLabel}
-        </button>
-      </div>
+        </button>      </div>
 
       {/* Content tabs (only in content view) */}
       {view==="content"&&(
@@ -968,8 +929,7 @@ export default function CourseManagement() {
         {/* ═══ COURSES ═══════════════════════════════════════ */}
         {view==="courses"&&(
           cLoad?<div style={{textAlign:"center",padding:40}}><Loader2 size={28} style={{animation:"spin .8s linear infinite",color:G}}/></div>
-          :fCourses.length===0?<div style={{textAlign:"center",padding:40,color:"#9CA3AF"}}><FolderOpen size={48} style={{margin:"0 auto 12px",display:"block"}}/><p>No courses yet. Create your first course above.</p></div>
-          :<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:14}}>
+          :fCourses.length===0?<div style={{textAlign:"center",padding:40,color:"#9CA3AF"}}><FolderOpen size={48} style={{margin:"0 auto 12px",display:"block"}}/><p>No courses yet. Create your first course above.</p></div>          :<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:14}}>
             {fCourses.map((c:any)=>{
               const lv=lvlCfg[(c.level as Level)||"all"];
               return(
@@ -1018,8 +978,7 @@ export default function CourseManagement() {
                       {s.description&&<p style={{fontSize:11,color:"#9CA3AF",margin:"0 0 10px",lineHeight:1.4}}>{s.description.slice(0,60)}{s.description.length>60?"…":""}</p>}
                       <div style={{display:"flex",gap:6}}>
                         <button type="button" onClick={()=>{setSelSubject(s);setView("content");setTab("syllabus");}}
-                          style={{flex:1,padding:"7px",borderRadius:8,border:`1px solid ${G}`,background:G,color:"#fff",fontSize:11,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
-                          <ChevronRight size={12}/> Open
+                          style={{flex:1,padding:"7px",borderRadius:8,border:`1px solid ${G}`,background:G,color:"#fff",fontSize:11,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>                          <ChevronRight size={12}/> Open
                         </button>
                         <button type="button" onClick={()=>{setEdSubject(s);setShowSubject(true);}} style={{padding:"7px 9px",borderRadius:8,border:"1px solid #E5E7EB",background:"#fff",cursor:"pointer"}}><Edit2 size={13} color={G}/></button>
                         <button type="button" onClick={()=>delSubject(s.id)} style={{padding:"7px 9px",borderRadius:8,border:"1px solid #FEE2E2",background:"#FEF2F2",cursor:"pointer"}}><Trash2 size={13} color="#DC2626"/></button>
@@ -1068,8 +1027,7 @@ export default function CourseManagement() {
                   <div><h3 style={{fontWeight:800,fontSize:15,color:"#111",margin:"0 0 2px"}}>Weekly Syllabus</h3><p style={{fontSize:12,color:"#9CA3AF",margin:0}}>Week-by-week course outline</p></div>
                   <button type="button" onClick={()=>{setEdSyllabus(null);setShowSyllabus(true);}} style={{display:"flex",alignItems:"center",gap:6,padding:"8px 14px",borderRadius:10,border:"none",background:G,color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer"}}><Plus size={13}/> Add Week</button>
                 </div>
-                {syllLoad?<div style={{textAlign:"center",padding:40}}><Loader2 size={24} style={{animation:"spin .8s linear infinite",color:G}}/></div>
-                :(syllabus as any[]).length===0?<div style={{textAlign:"center",padding:48,color:"#9CA3AF"}}><Calendar size={44} style={{margin:"0 auto 14px",display:"block",opacity:.3}}/><p style={{fontWeight:600,margin:"0 0 4px"}}>No weeks added yet</p><p style={{fontSize:13,margin:0}}>Build the weekly plan for students</p></div>
+                {syllLoad?<div style={{textAlign:"center",padding:40}}><Loader2 size={24} style={{animation:"spin .8s linear infinite",color:G}}/></div>                :(syllabus as any[]).length===0?<div style={{textAlign:"center",padding:48,color:"#9CA3AF"}}><Calendar size={44} style={{margin:"0 auto 14px",display:"block",opacity:.3}}/><p style={{fontWeight:600,margin:"0 0 4px"}}>No weeks added yet</p><p style={{fontSize:13,margin:0}}>Build the weekly plan for students</p></div>
                 :<div style={{position:"relative",paddingLeft:28}}>
                   <div style={{position:"absolute",left:21,top:22,bottom:22,width:2,background:"linear-gradient(to bottom,#86EFAC,transparent)"}}/>
                   <div style={{display:"flex",flexDirection:"column",gap:12}}>
@@ -1118,7 +1076,6 @@ export default function CourseManagement() {
                 </div>}
               </div>
             )}
-
             {/* ── MATERIALS ─────────────────────────────────── */}
             {tab==="materials"&&selSubject&&(
               <SubjectMaterialsHub
@@ -1134,7 +1091,6 @@ export default function CourseManagement() {
                   <div><h3 style={{fontWeight:800,fontSize:15,color:"#111",margin:"0 0 2px"}}>Live Sessions</h3><p style={{fontSize:12,color:"#9CA3AF",margin:0}}>What students will learn in each session</p></div>
                   <button type="button" onClick={()=>{setEdLesson(null);setShowLesson(true);}} style={{display:"flex",alignItems:"center",gap:6,padding:"8px 14px",borderRadius:10,border:"none",background:G,color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer"}}><Plus size={13}/> Add Session</button>
                 </div>
-                {/* Info banner */}
                 <div style={{padding:"10px 14px",borderRadius:12,background:"#F0FDF4",border:"1px solid #86EFAC",fontSize:12,color:"#166534",marginBottom:16,display:"flex",gap:8,alignItems:"flex-start"}}>
                   <span style={{fontSize:16}}>ℹ️</span>
                   <span>All lessons are delivered as live virtual sessions. Each entry below describes what students will learn in that session.</span>
@@ -1169,8 +1125,7 @@ export default function CourseManagement() {
                     </div>
                   ))}
                 </div>}
-              </div>
-            )}
+              </div>            )}
           </div>
         )}
       </div>
