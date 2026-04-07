@@ -1,8 +1,11 @@
 /**
- * SubjectMaterialsHub.tsx
- * Beautiful standalone materials upload + library section for subjects.
- * Linked to Supabase storage bucket "subject-files".
+ * SubjectMaterialsHub.tsx  — NEW BUILD
+ * Step-wizard material uploader + library, fully wired to
+ * Supabase storage bucket "subject-files" + table "subject_materials".
+ *
+ * REPLACE the old SubjectMaterialsHub.tsx with this file.
  */
+
 import React, {
   useState, useRef, useEffect, useCallback, useMemo,
 } from "react";
@@ -11,47 +14,58 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "@/hooks/use-toast";
 import {
-  Upload, FileText, Video, Music, Image as ImgIcon,
-  ExternalLink, Type, FileSpreadsheet, Download, Trash2,
-  Edit2, Check, X, AlertCircle, Search, Filter,
-  Eye, Clock, HardDrive, ChevronDown, GripVertical,
-  Folder, Sparkles, ArrowUpFromLine,
+  FileText, Video, Music, Image as ImgIcon,
+  FileSpreadsheet, ExternalLink, Type,
+  Upload, Check, X, AlertTriangle, Download,
+  Eye, Trash2, Edit3, Search, ChevronRight,
+  ArrowLeft, Loader, FilePlus, BookOpen,
+  HardDrive, Clock, RefreshCw, MoreVertical,
 } from "lucide-react";
 
-// ─── Brand ────────────────────────────────────────────────────────────────
-const G   = "#064E3B";
-const G2  = "#065F46";
-const G3  = "#ECFDF5";
-const GOLD = "#B8973A";
+// ─── Constants ───────────────────────────────────────────────────────────────
+const SUPABASE_URL = "https://wvqeubhupkddtkcdwqcm.supabase.co";
 
-// ─── Types ─────────────────────────────────────────────────────────────────
+const TEAL  = "#0D7377";
+const TEAL2 = "#14A085";
+const DARK  = "#0B2B2B";
+const GOLD  = "#C9A84C";
+const LIGHT = "#F0FAF9";
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 type MatType = "PDF" | "Video" | "Audio" | "Image" | "Document" | "Link" | "Text";
 
-const TYPE_CFG: Record<MatType, {
+const TYPE_META: Record<MatType, {
   icon: React.ElementType; label: string; accept: string;
-  bg: string; border: string; text: string; glow: string;
+  color: string; bg: string; border: string;
+  desc: string;
 }> = {
-  PDF:      { icon: FileText,      label:"PDF",      accept:".pdf",
-               bg:"#FEF2F2", border:"#FCA5A5", text:"#DC2626", glow:"rgba(220,38,38,.15)" },
-  Video:    { icon: Video,         label:"Video",    accept:"video/*,.mp4,.webm,.mov",
-               bg:"#F0FDF4", border:"#86EFAC", text:"#16A34A", glow:"rgba(22,163,74,.15)" },
-  Audio:    { icon: Music,         label:"Audio",    accept:"audio/*,.mp3,.wav,.m4a",
-               bg:"#FDF4FF", border:"#D8B4FE", text:"#9333EA", glow:"rgba(147,51,234,.15)" },
-  Image:    { icon: ImgIcon,       label:"Image",    accept:"image/*",
-               bg:"#EFF6FF", border:"#93C5FD", text:"#2563EB", glow:"rgba(37,99,235,.15)" },
-  Document: { icon: FileSpreadsheet,label:"Document",accept:".doc,.docx,.xls,.xlsx,.ppt,.pptx",
-               bg:"#FFFBEB", border:"#FDE68A", text:"#B45309", glow:"rgba(180,83,9,.15)" },
-  Link:     { icon: ExternalLink,  label:"Link",     accept:"",
-               bg:"#F0FDFA", border:"#5EEAD4", text:"#0D9488", glow:"rgba(13,148,136,.15)" },
-  Text:     { icon: Type,          label:"Text",     accept:"",
-               bg:"#F9FAFB", border:"#D1D5DB", text:"#374151", glow:"rgba(55,65,81,.1)"  },
+  PDF:      { icon: FileText,       label: "PDF",      accept: ".pdf",
+    color: "#E53E3E", bg: "#FFF5F5", border: "#FEB2B2",
+    desc: "Lecture notes, worksheets, handouts" },
+  Video:    { icon: Video,          label: "Video",    accept: "video/*,.mp4,.webm,.mov",
+    color: "#38A169", bg: "#F0FFF4", border: "#9AE6B4",
+    desc: "Lesson recordings, tutorials" },
+  Audio:    { icon: Music,          label: "Audio",    accept: "audio/*,.mp3,.wav,.m4a",
+    color: "#805AD5", bg: "#FAF5FF", border: "#D6BCFA",
+    desc: "Recitations, lectures, podcasts" },
+  Image:    { icon: ImgIcon,        label: "Image",    accept: "image/*",
+    color: "#3182CE", bg: "#EBF8FF", border: "#90CDF4",
+    desc: "Charts, diagrams, photos" },
+  Document: { icon: FileSpreadsheet,label: "Document", accept: ".doc,.docx,.xls,.xlsx,.ppt,.pptx",
+    color: "#D69E2E", bg: "#FFFFF0", border: "#F6E05E",
+    desc: "Word, Excel, PowerPoint files" },
+  Link:     { icon: ExternalLink,   label: "Link",     accept: "",
+    color: "#319795", bg: "#E6FFFA", border: "#81E6D9",
+    desc: "External websites, YouTube, Google Drive" },
+  Text:     { icon: Type,           label: "Text",     accept: "",
+    color: "#718096", bg: "#F7FAFC", border: "#CBD5E0",
+    desc: "Inline notes, instructions" },
 };
+const ALL_TYPES = Object.keys(TYPE_META) as MatType[];
 
-const ALL_TYPES = Object.keys(TYPE_CFG) as MatType[];
-
-function detectType(file: File): MatType {
-  const t = file.type.toLowerCase();
-  const e = file.name.split(".").pop()?.toLowerCase() ?? "";
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function detectType(f: File): MatType {
+  const t = f.type.toLowerCase(), e = f.name.split(".").pop()?.toLowerCase() ?? "";
   if (t.includes("pdf") || e === "pdf") return "PDF";
   if (t.includes("video") || ["mp4","webm","mov","avi","m4v"].includes(e)) return "Video";
   if (t.includes("audio") || ["mp3","wav","m4a","aac","ogg","flac"].includes(e)) return "Audio";
@@ -69,8 +83,7 @@ function fmtSize(b?: number | null) {
 
 function timeAgo(iso?: string | null) {
   if (!iso) return "";
-  const diff = Date.now() - new Date(iso).getTime();
-  const m = Math.floor(diff / 60000);
+  const m = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
   if (m < 1) return "just now";
   if (m < 60) return `${m}m ago`;
   const h = Math.floor(m / 60);
@@ -78,354 +91,456 @@ function timeAgo(iso?: string | null) {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-// ─── Upload helper (XHR for real progress) ─────────────────────────────────
+// XHR upload for real progress tracking
 function xhrUpload(
-  supabaseUrl: string, anonKey: string,
   bucket: string, path: string, file: File,
-  onProgress: (pct: number) => void,
+  onProgress: (p: number) => void, anonKey: string,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", `${supabaseUrl}/storage/v1/object/${bucket}/${path}`);
+    xhr.open("POST", `${SUPABASE_URL}/storage/v1/object/${bucket}/${path}`);
     xhr.setRequestHeader("Authorization", `Bearer ${anonKey}`);
     xhr.setRequestHeader("x-upsert", "false");
-    xhr.upload.addEventListener("progress", ev => {
-      if (ev.lengthComputable) onProgress(Math.round(ev.loaded / ev.total * 88));
-    });
-    xhr.addEventListener("load", () => {
-      if (xhr.status >= 200 && xhr.status < 300) { onProgress(92); resolve(); }
+    xhr.upload.onprogress = (ev) => {
+      if (ev.lengthComputable) onProgress(Math.round((ev.loaded / ev.total) * 85));
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) { onProgress(90); resolve(); }
       else {
         try { const e = JSON.parse(xhr.responseText); reject(new Error(e.error ?? e.message ?? "Upload failed")); }
         catch { reject(new Error(`Upload failed (${xhr.status})`)); }
       }
-    });
-    xhr.addEventListener("error", () => reject(new Error("Network error")));
-    xhr.addEventListener("abort", () => reject(new Error("Aborted")));
+    };
+    xhr.onerror = () => reject(new Error("Network error"));
+    xhr.onabort = () => reject(new Error("Aborted"));
     const fd = new FormData();
     fd.append("", file, file.name);
     xhr.send(fd);
   });
 }
 
-// ─── EDIT MODAL ─────────────────────────────────────────────────────────────
-const EditModal = React.memo(({ mat, onClose, onSaved }: {
-  mat: any; onClose: () => void; onSaved: () => void;
-}) => {
-  const [title, setTitle] = useState(mat.title ?? "");
-  const [downloadable, setDownloadable] = useState(mat.is_downloadable ?? true);
-  const [saving, setSaving] = useState(false);
+// ─── CSS ──────────────────────────────────────────────────────────────────────
+const CSS = `
+  @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');
+  .smh-root { font-family: 'Plus Jakarta Sans', system-ui, sans-serif; }
+  @keyframes smh-in   { from { opacity:0; transform:translateY(12px) } to { opacity:1; transform:translateY(0) } }
+  @keyframes smh-pop  { from { opacity:0; transform:scale(.94) } to { opacity:1; transform:scale(1) } }
+  @keyframes smh-spin { to { transform:rotate(360deg) } }
+  @keyframes smh-bar  { 0%{background-position:0 0} 100%{background-position:60px 0} }
+  @keyframes smh-pulse { 0%,100%{opacity:.5} 50%{opacity:1} }
+  .smh-type-card { transition:transform .15s,box-shadow .15s; }
+  .smh-type-card:hover:not(.smh-type-card--sel) { transform:translateY(-2px); box-shadow:0 6px 20px rgba(0,0,0,.08); }
+  .smh-type-card--sel { transform:scale(1.02); }
+  .smh-mat-card { transition:transform .18s,box-shadow .18s; }
+  .smh-mat-card:hover { transform:translateY(-3px); box-shadow:0 10px 32px rgba(0,0,0,.1); }
+  .smh-btn-primary { transition:transform .15s,box-shadow .15s,opacity .15s; }
+  .smh-btn-primary:hover:not(:disabled) { transform:translateY(-1px); box-shadow:0 6px 22px rgba(13,115,119,.45); }
+  .smh-btn-primary:active:not(:disabled) { transform:translateY(0); }
+  .smh-filter-pill { transition:all .15s; }
+  .smh-filter-pill:hover { opacity:.85; }
+  .smh-drop-active { border-color:${TEAL}!important; background:${LIGHT}!important; transform:scale(1.01); }
+  .smh-progress-bar {
+    background: linear-gradient(90deg, ${TEAL} 25%, ${TEAL2} 50%, ${TEAL} 75%);
+    background-size: 60px 100%;
+    animation: smh-bar .9s linear infinite;
+  }
+  .smh-skeleton { animation:smh-pulse 1.4s ease-in-out infinite; background:#E2E8F0; border-radius:10px; }
+`;
 
-  const save = async () => {
-    if (!title.trim()) return;
-    setSaving(true);
-    const { error } = await supabase.from("subject_materials")
-      .update({ title: title.trim(), is_downloadable: downloadable })
-      .eq("id", mat.id);
-    setSaving(false);
-    if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return; }
-    toast({ title: "✅ Updated" });
-    onSaved();
+// ─── Step indicator ───────────────────────────────────────────────────────────
+const STEPS = ["Choose Type", "Add File", "Details"];
+
+const StepBar = ({ step }: { step: number }) => (
+  <div style={{ display: "flex", alignItems: "center", gap: 0, marginBottom: 28 }}>
+    {STEPS.map((label, i) => {
+      const active = i === step, done = i < step;
+      return (
+        <React.Fragment key={i}>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5 }}>
+            <div style={{
+              width: 34, height: 34, borderRadius: "50%",
+              background: done ? TEAL : active ? DARK : "#E2E8F0",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              transition: "all .25s",
+            }}>
+              {done
+                ? <Check size={15} color="#fff" strokeWidth={3} />
+                : <span style={{ fontSize: 13, fontWeight: 800,
+                    color: active ? "#fff" : "#94A3B8" }}>{i + 1}</span>}
+            </div>
+            <span style={{ fontSize: 10, fontWeight: active ? 700 : 500,
+              color: active ? DARK : done ? TEAL : "#94A3B8",
+              whiteSpace: "nowrap", transition: "color .25s" }}>
+              {label}
+            </span>
+          </div>
+          {i < STEPS.length - 1 && (
+            <div style={{ flex: 1, height: 2, margin: "0 8px",
+              background: i < step ? TEAL : "#E2E8F0",
+              transition: "background .3s", marginBottom: 20 }} />
+          )}
+        </React.Fragment>
+      );
+    })}
+  </div>
+);
+
+// ─── Step 1: Type selector ────────────────────────────────────────────────────
+const TypeStep = ({ selected, onSelect }: { selected: MatType; onSelect: (t: MatType) => void }) => (
+  <div style={{ animation: "smh-in .25s ease" }}>
+    <p style={{ fontSize: 14, color: "#64748B", marginBottom: 20, lineHeight: 1.6 }}>
+      What kind of material are you sharing?
+    </p>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+      {ALL_TYPES.map((t) => {
+        const m = TYPE_META[t], Icon = m.icon, sel = selected === t;
+        return (
+          <button key={t} type="button"
+            className={`smh-type-card${sel ? " smh-type-card--sel" : ""}`}
+            onClick={() => onSelect(t)}
+            style={{
+              padding: "14px 14px", borderRadius: 14, textAlign: "left",
+              border: `2px solid ${sel ? m.color : "#E2E8F0"}`,
+              background: sel ? m.bg : "#fff",
+              cursor: "pointer", display: "flex", alignItems: "flex-start", gap: 12,
+              boxShadow: sel ? `0 0 0 3px ${m.color}22` : "none",
+              transition: "all .18s",
+            }}>
+            <div style={{
+              width: 38, height: 38, borderRadius: 10, flexShrink: 0,
+              background: sel ? m.color : "#F1F5F9",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              transition: "all .18s",
+            }}>
+              <Icon size={18} color={sel ? "#fff" : "#94A3B8"} />
+            </div>
+            <div>
+              <p style={{ fontWeight: 700, fontSize: 13, color: sel ? m.color : "#1E293B",
+                margin: "0 0 2px", transition: "color .18s" }}>{m.label}</p>
+              <p style={{ fontSize: 10, color: "#94A3B8", margin: 0, lineHeight: 1.4 }}>{m.desc}</p>
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  </div>
+);
+
+// ─── Step 2: File / URL / Text ────────────────────────────────────────────────
+const FileStep = ({
+  matType, file, setFile, url, setUrl, content, setContent,
+}: {
+  matType: MatType; file: File | null; setFile: (f: File | null) => void;
+  url: string; setUrl: (s: string) => void;
+  content: string; setContent: (s: string) => void;
+}) => {
+  const m       = TYPE_META[matType];
+  const Icon    = m.icon;
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [drag, setDrag] = useState(false);
+  const [preview, setPreview] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!file || !file.type.startsWith("image/")) { setPreview(null); return; }
+    const r = new FileReader();
+    r.onload = (ev) => setPreview(ev.target?.result as string);
+    r.readAsDataURL(file);
+  }, [file]);
+
+  const pickFile = (f: File) => {
+    setFile(f);
   };
 
-  return (
-    <div style={{ position:"fixed", inset:0, zIndex:200, background:"rgba(0,0,0,.5)",
-      display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}
-      onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div style={{ background:"#fff", borderRadius:20, width:"100%", maxWidth:400, padding:24,
-        boxShadow:"0 24px 80px rgba(0,0,0,.2)", animation:"hub-pop .2s ease" }}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20 }}>
-          <h3 style={{ fontSize:16, fontWeight:800, color:"#111", margin:0 }}>Edit Material</h3>
-          <button onClick={onClose} style={{ background:"none", border:"none", cursor:"pointer", color:"#9CA3AF" }}>
-            <X size={18} />
-          </button>
-        </div>
-        <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
-          <div>
-            <label style={{ fontSize:12, fontWeight:700, color:"#374151", display:"block", marginBottom:6 }}>Title</label>
-            <input value={title} onChange={e => setTitle(e.target.value)} autoFocus
-              style={{ width:"100%", padding:"11px 14px", borderRadius:12, border:"1.5px solid #E5E7EB",
-                fontSize:14, outline:"none", boxSizing:"border-box" as const }} />
-          </div>
-          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between",
-            padding:"12px 14px", borderRadius:12, background:downloadable?"#F0FDF4":"#F9FAFB",
-            border:`1.5px solid ${downloadable?"#86EFAC":"#E5E7EB"}`, cursor:"pointer", transition:"all .2s" }}
-            onClick={() => setDownloadable(v => !v)}>
-            <div>
-              <p style={{ fontWeight:700, fontSize:13, color:"#374151", margin:0 }}>Allow Download</p>
-              <p style={{ fontSize:11, color:"#9CA3AF", margin:"2px 0 0" }}>
-                {downloadable ? "Students can save this file" : "View only"}
-              </p>
-            </div>
-            <div style={{ width:44, height:24, borderRadius:99, background:downloadable?G:"#CBD5E1",
-              position:"relative", transition:"background .2s", flexShrink:0 }}>
-              <div style={{ width:18, height:18, borderRadius:99, background:"#fff",
-                position:"absolute", top:3, left:downloadable?23:3, transition:"left .2s",
-                boxShadow:"0 1px 4px rgba(0,0,0,.2)" }} />
-            </div>
-          </div>
-          <button onClick={save} disabled={saving || !title.trim()}
-            style={{ padding:"13px", borderRadius:12, border:"none",
-              background:saving||!title.trim()?"#E5E7EB":`linear-gradient(135deg,${G},${G2})`,
-              color:saving||!title.trim()?"#9CA3AF":"#fff", fontWeight:800, fontSize:14,
-              cursor:saving||!title.trim()?"not-allowed":"pointer",
-              display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
-            {saving ? "Saving…" : <><Check size={15}/> Save Changes</>}
-          </button>
-        </div>
-      </div>
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault(); setDrag(false);
+    const f = e.dataTransfer.files?.[0];
+    if (f) pickFile(f);
+  };
+
+  if (matType === "Text") return (
+    <div style={{ animation: "smh-in .25s ease" }}>
+      <label style={labelStyle}>Your Text Content <Req /></label>
+      <textarea
+        value={content} onChange={(e) => setContent(e.target.value)}
+        rows={7} placeholder="Type or paste your content here…"
+        style={{ ...inputStyle, resize: "vertical", lineHeight: 1.7, fontSize: 13 }}
+      />
+      <p style={{ fontSize: 11, color: "#94A3B8", marginTop: 6 }}>
+        {content.length} characters
+      </p>
     </div>
   );
-});
 
-// ─── MATERIAL CARD ──────────────────────────────────────────────────────────
-const MaterialCard = React.memo(({ mat, index, onEdit, onDelete }: {
-  mat: any; index: number; onEdit: (m: any) => void; onDelete: (m: any) => void;
-}) => {
-  const cfg = TYPE_CFG[(mat.material_type as MatType) ?? "PDF"];
-  const Icon = cfg.icon;
-  const [imgSrc, setImgSrc] = useState<string | null>(null);
-  const [imgErr, setImgErr] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
+  if (matType === "Link") return (
+    <div style={{ animation: "smh-in .25s ease" }}>
+      <label style={labelStyle}>URL <Req /></label>
+      <div style={{ position: "relative" }}>
+        <ExternalLink size={14} color="#94A3B8"
+          style={{ position: "absolute", left: 13, top: "50%", transform: "translateY(-50%)" }} />
+        <input
+          type="url" value={url} onChange={(e) => setUrl(e.target.value)}
+          placeholder="https://…"
+          style={{ ...inputStyle, paddingLeft: 36 }}
+        />
+      </div>
+      <p style={{ fontSize: 11, color: "#94A3B8", marginTop: 6 }}>
+        Paste any publicly accessible URL
+      </p>
+    </div>
+  );
 
-  // Resolve image previews
-  useEffect(() => {
-    if (mat.material_type !== "Image" || !mat.file_url) return;
-    if (mat.file_url.startsWith("http")) { setImgSrc(mat.file_url); return; }
-    supabase.storage.from("subject-files").createSignedUrl(mat.file_url, 3600)
-      .then(({ data }) => { if (data?.signedUrl) setImgSrc(data.signedUrl); });
-  }, [mat.file_url, mat.material_type]);
-
-  const openFile = async () => {
-    if (!mat.file_url) return;
-    if (mat.file_url.startsWith("http")) { window.open(mat.file_url, "_blank"); return; }
-    const { data } = await supabase.storage.from("subject-files").createSignedUrl(mat.file_url, 3600);
-    if (data?.signedUrl) window.open(data.signedUrl, "_blank");
-  };
-
-  const downloadFile = async () => {
-    if (!mat.file_url) return;
-    let url = mat.file_url;
-    if (!url.startsWith("http")) {
-      const { data } = await supabase.storage.from("subject-files").createSignedUrl(mat.file_url, 3600);
-      url = data?.signedUrl ?? url;
-    }
-    const a = document.createElement("a");
-    a.href = url; a.download = mat.title; a.click();
-  };
-
+  // File types
   return (
-    <div className="mat-card" style={{
-      background:"#fff", borderRadius:16, border:`1.5px solid ${cfg.border}`,
-      overflow:"hidden", position:"relative", animation:`hub-slidein .3s ease both`,
-      animationDelay:`${index * 60}ms`,
-    }}>
-      {/* Image thumbnail for Image type */}
-      {mat.material_type === "Image" && imgSrc && !imgErr && (
-        <div style={{ height:110, overflow:"hidden", background:cfg.bg }}>
-          <img src={imgSrc} alt={mat.title} onError={() => setImgErr(true)}
-            style={{ width:"100%", height:"100%", objectFit:"cover" }} />
+    <div style={{ animation: "smh-in .25s ease" }}>
+      <input ref={fileRef} type="file" style={{ display: "none" }}
+        accept={m.accept || "*/*"}
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) pickFile(f); }}
+      />
+
+      {file ? (
+        /* Selected file preview */
+        <div style={{
+          borderRadius: 16, border: `2px solid ${m.border}`,
+          background: m.bg, overflow: "hidden", animation: "smh-pop .2s ease",
+        }}>
+          {preview && (
+            <img src={preview} alt="preview"
+              style={{ width: "100%", maxHeight: 160, objectFit: "cover", display: "block" }} />
+          )}
+          <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "16px 18px" }}>
+            <div style={{
+              width: 46, height: 46, borderRadius: 13, background: "#fff",
+              border: `2px solid ${m.border}`,
+              display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+            }}>
+              <Icon size={22} color={m.color} />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <p style={{ fontWeight: 700, fontSize: 14, color: "#1E293B", margin: "0 0 3px",
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {file.name}
+              </p>
+              <p style={{ fontSize: 11, color: "#64748B", margin: 0 }}>
+                {fmtSize(file.size)} · {m.label}
+              </p>
+            </div>
+            <button type="button" onClick={() => { setFile(null); if (fileRef.current) fileRef.current.value = ""; }}
+              style={{
+                width: 32, height: 32, borderRadius: 9, flexShrink: 0,
+                border: "none", background: "#fff", cursor: "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                boxShadow: "0 1px 4px rgba(0,0,0,.1)",
+              }}>
+              <X size={14} color="#94A3B8" />
+            </button>
+          </div>
+        </div>
+      ) : (
+        /* Drop zone */
+        <div
+          className={drag ? "smh-drop-active" : ""}
+          onDragEnter={(e) => { e.preventDefault(); setDrag(true); }}
+          onDragLeave={(e) => { e.preventDefault(); setDrag(false); }}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={onDrop}
+          onClick={() => fileRef.current?.click()}
+          style={{
+            borderRadius: 18, border: `2.5px dashed ${drag ? m.color : "#CBD5E0"}`,
+            background: drag ? m.bg : "#FAFBFC", padding: "40px 24px",
+            textAlign: "center", cursor: "pointer", transition: "all .2s",
+          }}>
+          <div style={{
+            width: 62, height: 62, borderRadius: 18, margin: "0 auto 14px",
+            background: drag ? m.bg : "#F1F5F9",
+            border: `2px solid ${drag ? m.border : "#E2E8F0"}`,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            transition: "all .2s",
+          }}>
+            {drag
+              ? <Icon size={28} color={m.color} />
+              : <Upload size={28} color="#94A3B8" />}
+          </div>
+          <p style={{ fontWeight: 800, fontSize: 15, color: drag ? m.color : "#374151", margin: "0 0 6px" }}>
+            {drag ? "Drop it here!" : "Tap to browse or drag & drop"}
+          </p>
+          <p style={{ fontSize: 12, color: "#94A3B8", margin: 0 }}>
+            {m.accept.split(",").map(x => x.replace(".", "").toUpperCase()).join(" · ") || "Any file"}
+          </p>
         </div>
       )}
 
-      {/* Type stripe */}
-      <div style={{ height:4, background:`linear-gradient(90deg,${cfg.text},${cfg.text}88)` }} />
-
-      <div style={{ padding:"14px 16px" }}>
-        {/* Header row */}
-        <div style={{ display:"flex", alignItems:"flex-start", gap:12, marginBottom:10 }}>
-          <div style={{ width:40, height:40, borderRadius:11, background:cfg.bg,
-            border:`1.5px solid ${cfg.border}`, display:"flex", alignItems:"center",
-            justifyContent:"center", flexShrink:0 }}>
-            <Icon size={20} color={cfg.text} />
-          </div>
-          <div style={{ flex:1, minWidth:0 }}>
-            <p style={{ fontWeight:700, fontSize:13, color:"#111", margin:"0 0 3px",
-              overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{mat.title}</p>
-            <div style={{ display:"flex", gap:6, flexWrap:"wrap", alignItems:"center" }}>
-              <span style={{ fontSize:10, fontWeight:700, padding:"2px 7px", borderRadius:20,
-                background:cfg.bg, color:cfg.text, border:`1px solid ${cfg.border}` }}>
-                {mat.material_type}
-              </span>
-              {mat.file_size && (
-                <span style={{ fontSize:10, color:"#9CA3AF", display:"flex", alignItems:"center", gap:3 }}>
-                  <HardDrive size={10}/>{fmtSize(mat.file_size)}
-                </span>
-              )}
-              {mat.created_at && (
-                <span style={{ fontSize:10, color:"#9CA3AF", display:"flex", alignItems:"center", gap:3 }}>
-                  <Clock size={10}/>{timeAgo(mat.created_at)}
-                </span>
-              )}
-            </div>
-          </div>
-
-          {/* Menu */}
-          <div style={{ position:"relative" }}>
-            <button onClick={() => setMenuOpen(v => !v)}
-              style={{ width:28, height:28, borderRadius:8, border:"1.5px solid #E5E7EB",
-                background:"#fff", cursor:"pointer", display:"flex", alignItems:"center",
-                justifyContent:"center", color:"#9CA3AF" }}>
-              <ChevronDown size={13} />
-            </button>
-            {menuOpen && (
-              <div style={{ position:"absolute", right:0, top:34, background:"#fff",
-                borderRadius:12, border:"1.5px solid #E5E7EB", padding:6, zIndex:50,
-                boxShadow:"0 8px 28px rgba(0,0,0,.12)", minWidth:140,
-                animation:"hub-pop .15s ease" }}
-                onMouseLeave={() => setMenuOpen(false)}>
-                {mat.file_url && (
-                  <button onClick={() => { openFile(); setMenuOpen(false); }}
-                    style={menuItemStyle("#6B7280")}>
-                    <Eye size={13}/> View
-                  </button>
-                )}
-                {mat.is_downloadable && mat.file_url && (
-                  <button onClick={() => { downloadFile(); setMenuOpen(false); }}
-                    style={menuItemStyle("#0D9488")}>
-                    <Download size={13}/> Download
-                  </button>
-                )}
-                <button onClick={() => { onEdit(mat); setMenuOpen(false); }}
-                  style={menuItemStyle(G)}>
-                  <Edit2 size={13}/> Edit
-                </button>
-                <div style={{ height:1, background:"#F3F4F6", margin:"4px 0" }} />
-                <button onClick={() => { onDelete(mat); setMenuOpen(false); }}
-                  style={menuItemStyle("#DC2626")}>
-                  <Trash2 size={13}/> Delete
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Content preview */}
-        {mat.content && (
-          <p style={{ fontSize:11, color:"#6B7280", margin:0, lineHeight:1.5,
-            display:"-webkit-box", WebkitLineClamp:2, WebkitBoxOrient:"vertical" as const,
-            overflow:"hidden", padding:"8px 10px", background:"#F9FAFB",
-            borderRadius:8, border:"1px solid #E5E7EB" }}>
-            {mat.content}
-          </p>
-        )}
-
-        {/* Download badge */}
-        {mat.is_downloadable && (
-          <div style={{ marginTop:8, display:"flex", alignItems:"center", gap:5,
-            fontSize:10, color:G, fontWeight:600 }}>
-            <Download size={10}/> Downloadable
-          </div>
-        )}
+      {/* URL fallback */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "14px 0 10px" }}>
+        <div style={{ flex: 1, height: 1, background: "#E2E8F0" }} />
+        <span style={{ fontSize: 11, color: "#94A3B8", fontWeight: 600, whiteSpace: "nowrap" }}>
+          or paste a URL
+        </span>
+        <div style={{ flex: 1, height: 1, background: "#E2E8F0" }} />
       </div>
+      <input
+        type="url" value={url} onChange={(e) => setUrl(e.target.value)}
+        placeholder="https://…"
+        style={inputStyle}
+      />
     </div>
   );
-});
+};
 
-function menuItemStyle(color: string): React.CSSProperties {
-  return {
-    display:"flex", alignItems:"center", gap:8, width:"100%", padding:"8px 10px",
-    borderRadius:8, border:"none", background:"none", cursor:"pointer",
-    fontSize:12, fontWeight:600, color, textAlign:"left",
-  };
-}
+// ─── Step 3: Details ──────────────────────────────────────────────────────────
+const DetailsStep = ({
+  title, setTitle, downloadable, setDownloadable,
+}: {
+  title: string; setTitle: (s: string) => void;
+  downloadable: boolean; setDownloadable: (v: boolean) => void;
+}) => (
+  <div style={{ animation: "smh-in .25s ease", display: "flex", flexDirection: "column", gap: 18 }}>
+    <div>
+      <label style={labelStyle}>Material Title <Req /></label>
+      <input
+        value={title} onChange={(e) => setTitle(e.target.value)}
+        placeholder="e.g. Week 3 Worksheet"
+        style={inputStyle} autoFocus
+      />
+    </div>
 
-// ─── UPLOAD ZONE ────────────────────────────────────────────────────────────
-type UploadPhase = "idle" | "uploading" | "saving" | "done" | "error";
+    <button type="button" onClick={() => setDownloadable(!downloadable)}
+      style={{
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        padding: "14px 16px", borderRadius: 14, cursor: "pointer",
+        background: downloadable ? LIGHT : "#F8FAFC",
+        border: `2px solid ${downloadable ? TEAL : "#E2E8F0"}`,
+        transition: "all .2s",
+      }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, textAlign: "left" }}>
+        <div style={{
+          width: 38, height: 38, borderRadius: 10,
+          background: downloadable ? `${TEAL}22` : "#F1F5F9",
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          <Download size={17} color={downloadable ? TEAL : "#94A3B8"} />
+        </div>
+        <div>
+          <p style={{ fontWeight: 700, fontSize: 13, color: "#1E293B", margin: 0 }}>Allow Download</p>
+          <p style={{ fontSize: 11, color: "#64748B", margin: "2px 0 0" }}>
+            {downloadable ? "Students can save this file" : "View only — no download"}
+          </p>
+        </div>
+      </div>
+      {/* Toggle */}
+      <div style={{
+        width: 46, height: 26, borderRadius: 99, position: "relative", flexShrink: 0,
+        background: downloadable ? TEAL : "#CBD5E0", transition: "background .2s",
+      }}>
+        <div style={{
+          width: 20, height: 20, borderRadius: "50%", background: "#fff",
+          position: "absolute", top: 3, left: downloadable ? 23 : 3,
+          transition: "left .2s", boxShadow: "0 1px 4px rgba(0,0,0,.25)",
+        }} />
+      </div>
+    </button>
+  </div>
+);
 
-const UploadZone = ({ subjectId, totalMaterials, onUploaded }: {
-  subjectId: string; totalMaterials: number; onUploaded: () => void;
+// ─── Small helpers ────────────────────────────────────────────────────────────
+const Req = () => <span style={{ color: "#E53E3E", marginLeft: 3 }}>*</span>;
+
+const labelStyle: React.CSSProperties = {
+  display: "block", fontSize: 12, fontWeight: 700, color: "#374151",
+  letterSpacing: ".04em", textTransform: "uppercase", marginBottom: 8,
+};
+
+const inputStyle: React.CSSProperties = {
+  width: "100%", padding: "12px 14px", borderRadius: 12,
+  border: "2px solid #E2E8F0", fontSize: 14, outline: "none",
+  boxSizing: "border-box", background: "#FAFBFC", fontFamily: "inherit",
+  transition: "border-color .15s",
+  color: "#1E293B",
+};
+
+// ─── Upload wizard panel ──────────────────────────────────────────────────────
+type Phase = "idle" | "uploading" | "saving" | "done" | "error";
+
+const UploadWizard = ({
+  subjectId, totalMaterials, onUploaded, onCancel,
+}: {
+  subjectId: string; totalMaterials: number;
+  onUploaded: () => void; onCancel: () => void;
 }) => {
   const { user } = useAuth();
-  const [form, setForm] = useState({
-    title: "", material_type: "PDF" as MatType,
-    file_url: "", content: "", is_downloadable: true,
-  });
-  const [file,    setFile]    = useState<File | null>(null);
-  const [preview, setPreview] = useState<string | null>(null);
-  const [phase,   setPhase]   = useState<UploadPhase>("idle");
-  const [pct,     setPct]     = useState(0);
-  const [err,     setErr]     = useState("");
-  const [drag,    setDrag]    = useState(false);
-  const [dc,      setDc]      = useState(0); // drag enter count
-  const fileRef = useRef<HTMLInputElement>(null);
+  const [step, setStep]           = useState(0);
+  const [matType, setMatType]     = useState<MatType>("PDF");
+  const [file, setFile]           = useState<File | null>(null);
+  const [url, setUrl]             = useState("");
+  const [content, setContent]     = useState("");
+  const [title, setTitle]         = useState("");
+  const [downloadable, setDownloadable] = useState(true);
+  const [phase, setPhase]         = useState<Phase>("idle");
+  const [pct, setPct]             = useState(0);
+  const [errMsg, setErrMsg]       = useState("");
 
-  const cfg      = TYPE_CFG[form.material_type];
-  const Icon     = cfg.icon;
-  const needFile = form.material_type !== "Link" && form.material_type !== "Text";
-  const busy     = phase === "uploading" || phase === "saving";
+  const m = TYPE_META[matType];
+  const needFile = matType !== "Link" && matType !== "Text";
 
-  const pickFile = useCallback((fi: File) => {
-    const t = detectType(fi);
-    setFile(fi);
-    setForm(f => ({ ...f, material_type: t, title: f.title || fi.name.replace(/\.[^/.]+$/, "") }));
-    setErr("");
-    if (fi.type.startsWith("image/")) {
-      const r = new FileReader();
-      r.onload = ev => setPreview(ev.target?.result as string);
-      r.readAsDataURL(fi);
-    } else { setPreview(null); }
-  }, []);
+  // Auto-fill title from filename
+  useEffect(() => {
+    if (file && !title) setTitle(file.name.replace(/\.[^/.]+$/, ""));
+  }, [file]);
 
-  const resetForm = useCallback(() => {
-    setForm({ title:"", material_type:"PDF", file_url:"", content:"", is_downloadable:true });
-    setFile(null); setPreview(null); setPct(0); setPhase("idle"); setErr("");
-    if (fileRef.current) fileRef.current.value = "";
-  }, []);
+  const canProceed = useMemo(() => {
+    if (step === 0) return true;
+    if (step === 1) {
+      if (matType === "Text") return content.trim().length > 0;
+      if (matType === "Link") return url.trim().length > 0;
+      return !!file || url.trim().length > 0;
+    }
+    if (step === 2) return title.trim().length > 0;
+    return false;
+  }, [step, matType, file, url, content, title]);
 
-  const onDragEnter = (e: React.DragEvent) => {
-    e.preventDefault(); setDc(c => c + 1); setDrag(true);
-  };
-  const onDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    setDc(c => { const n = c - 1; if (n <= 0) setDrag(false); return n; });
-  };
-  const onDrop = (e: React.DragEvent) => {
-    e.preventDefault(); setDrag(false); setDc(0);
-    const fi = e.dataTransfer.files?.[0];
-    if (fi) pickFile(fi);
+  const handleNext = () => {
+    if (step < 2) { setStep(s => s + 1); return; }
+    doUpload();
   };
 
   const doUpload = async () => {
-    setErr("");
-    if (!form.title.trim())                            { setErr("Title is required"); return; }
-    if (needFile && !file && !form.file_url.trim())   { setErr("Please select a file or paste a URL"); return; }
-    if (form.material_type === "Link" && !form.file_url.trim()) { setErr("Please enter a URL"); return; }
-    if (form.material_type === "Text" && !form.content.trim())  { setErr("Content cannot be empty"); return; }
-
-    setPhase("uploading"); setPct(5);
+    setErrMsg(""); setPhase("uploading"); setPct(5);
     try {
-      let fileUrl = form.file_url.trim(), fileType = "", fileSize = 0;
+      let fileUrl = url.trim(), fileType = "", fileSize = 0;
 
       if (needFile && file) {
         const ext  = file.name.split(".").pop() ?? "bin";
         const path = `materials/${subjectId}/${crypto.randomUUID()}.${ext}`;
 
-        // Supabase URL/key for XHR
-        const sbUrl = (supabase as any).supabaseUrl as string ?? "https://wvqeubhupkddtkcdwqcm.supabase.co";
-        const sbKey = (supabase as any).supabaseKey as string ?? "";
+        // get anon key from client env
+        const anonKey = (import.meta as any).env?.VITE_SUPABASE_PUBLISHABLE_KEY
+          || (import.meta as any).env?.VITE_SUPABASE_ANON_KEY
+          || "";
 
         try {
-          await xhrUpload(sbUrl, sbKey, "subject-files", path, file, setPct);
+          await xhrUpload("subject-files", path, file, setPct, anonKey);
         } catch {
-          // fallback
-          setPct(50);
+          // fallback to supabase-js
+          setPct(45);
           const { error } = await supabase.storage
             .from("subject-files")
-            .upload(path, file, { cacheControl:"3600", upsert:false });
+            .upload(path, file, { cacheControl: "3600", upsert: false });
           if (error) throw new Error("Storage: " + error.message);
+          setPct(88);
         }
-        fileUrl = path; fileType = file.type; fileSize = file.size;
+        fileUrl  = path;
+        fileType = file.type;
+        fileSize = file.size;
       }
 
-      setPct(96); setPhase("saving");
+      setPct(95); setPhase("saving");
 
       const payload: Record<string, unknown> = {
         subject_id:      subjectId,
-        title:           form.title.trim(),
-        material_type:   form.material_type,
+        title:           title.trim(),
+        material_type:   matType,
         file_url:        fileUrl || "placeholder",
-        content:         form.material_type === "Text" ? form.content.trim() : null,
-        is_downloadable: form.is_downloadable,
+        content:         matType === "Text" ? content.trim() : null,
+        is_downloadable: downloadable,
         sort_order:      totalMaterials,
         uploaded_by:     user?.id ?? "",
         ...(fileType ? { file_type: fileType } : {}),
@@ -437,302 +552,380 @@ const UploadZone = ({ subjectId, totalMaterials, onUploaded }: {
 
       setPct(100); setPhase("done");
       toast({ title: "✅ Material uploaded successfully!" });
-      setTimeout(() => { onUploaded(); resetForm(); }, 900);
+      setTimeout(() => { onUploaded(); }, 1200);
+
     } catch (e: any) {
       setPhase("error"); setPct(0);
-      setErr(e.message ?? "Upload failed");
-      toast({ title: "Upload Error", description: e.message, variant: "destructive" });
+      setErrMsg(e.message ?? "Upload failed");
+      toast({ title: "Upload failed", description: e.message, variant: "destructive" });
     }
   };
 
-  const pctLabel = phase === "uploading" ? `Uploading… ${pct}%`
+  const busy = phase === "uploading" || phase === "saving";
+  const barLabel = phase === "uploading" ? `Uploading… ${pct}%`
     : phase === "saving" ? "Saving to database…"
-    : phase === "done"   ? "Done ✓"
+    : phase === "done"   ? "Complete!"
     : "";
 
-  const barColor = phase === "done" ? "#16A34A" : phase === "saving" ? GOLD : G;
-
   return (
-    <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
-
-      {/* ── Error ── */}
-      {err && (
-        <div style={{ display:"flex", gap:10, padding:"12px 14px", borderRadius:12,
-          background:"#FEF2F2", border:"1.5px solid #FCA5A5", alignItems:"flex-start",
-          animation:"hub-pop .2s ease" }}>
-          <AlertCircle size={15} color="#DC2626" style={{ marginTop:1, flexShrink:0 }} />
-          <p style={{ fontSize:12, color:"#B91C1C", margin:0, fontWeight:600, flex:1 }}>{err}</p>
-          <button onClick={() => setErr("")} style={{ background:"none", border:"none",
-            cursor:"pointer", color:"#9CA3AF", padding:0 }}><X size={13}/></button>
+    <div style={{
+      background: "#fff", borderRadius: 22,
+      boxShadow: "0 8px 48px rgba(0,0,0,.1)",
+      border: "1px solid #E2E8F0",
+      overflow: "hidden", animation: "smh-pop .25s ease",
+    }}>
+      {/* Header */}
+      <div style={{
+        background: `linear-gradient(135deg, ${DARK} 0%, #183030 100%)`,
+        padding: "20px 24px",
+        display: "flex", alignItems: "center", gap: 14,
+      }}>
+        <div style={{
+          width: 40, height: 40, borderRadius: 12,
+          background: "rgba(255,255,255,.1)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          <FilePlus size={20} color="#fff" />
         </div>
-      )}
-
-      {/* ── Title ── */}
-      <div>
-        <label style={{ fontSize:11, fontWeight:800, color:"#374151", letterSpacing:".06em",
-          textTransform:"uppercase", display:"block", marginBottom:7 }}>
-          Title <span style={{ color:"#EF4444" }}>*</span>
-        </label>
-        <input value={form.title} disabled={busy}
-          onChange={e => { setForm(f => ({ ...f, title: e.target.value })); setErr(""); }}
-          placeholder="e.g. Week 3 Worksheet"
-          style={{ width:"100%", padding:"12px 14px", borderRadius:12,
-            border:`1.5px solid ${!form.title && err ? "#FCA5A5" : "#E5E7EB"}`,
-            fontSize:14, outline:"none", boxSizing:"border-box" as const,
-            background:"#FAFAFA", fontFamily:"inherit" }}
-        />
+        <div style={{ flex: 1 }}>
+          <h3 style={{ color: "#fff", fontWeight: 800, fontSize: 16, margin: 0 }}>
+            Upload New Material
+          </h3>
+          <p style={{ color: "rgba(255,255,255,.55)", fontSize: 11, margin: "2px 0 0" }}>
+            Step {step + 1} of {STEPS.length} · {STEPS[step]}
+          </p>
+        </div>
+        <button type="button" onClick={onCancel}
+          style={{
+            width: 32, height: 32, borderRadius: 9, border: "none",
+            background: "rgba(255,255,255,.12)", cursor: "pointer",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>
+          <X size={15} color="rgba(255,255,255,.7)" />
+        </button>
       </div>
 
-      {/* ── Type selector ── */}
-      <div>
-        <label style={{ fontSize:11, fontWeight:800, color:"#374151", letterSpacing:".06em",
-          textTransform:"uppercase", display:"block", marginBottom:10 }}>Type</label>
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:7 }}>
-          {ALL_TYPES.map(mt => {
-            const c = TYPE_CFG[mt], Ic = c.icon, sel = form.material_type === mt;
-            return (
-              <button key={mt} type="button" disabled={busy}
-                onClick={() => !busy && setForm(f => ({ ...f, material_type: mt }))}
-                className="hub-type-btn"
-                style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:6,
-                  padding:"11px 4px", borderRadius:13,
-                  border:`2px solid ${sel ? c.text : "#EBEBEB"}`,
-                  background:sel ? c.bg : "#FAFAFA",
-                  boxShadow:sel ? `0 2px 14px ${c.glow}` : "none",
-                  cursor:busy?"not-allowed":"pointer", transition:"all .15s",
-                  opacity:busy ? .6 : 1 }}>
-                <div style={{ width:32, height:32, borderRadius:9,
-                  background:sel ? c.text : "#E5E7EB",
-                  display:"flex", alignItems:"center", justifyContent:"center",
-                  transition:"all .15s" }}>
-                  <Ic size={15} color={sel ? "#fff" : "#9CA3AF"} />
-                </div>
-                <span style={{ fontSize:10, fontWeight:sel?800:500,
-                  color:sel ? c.text : "#9CA3AF" }}>{c.label}</span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
+      <div style={{ padding: "24px 24px 20px" }}>
+        <StepBar step={step} />
 
-      {/* ── File zone ── */}
-      {needFile && (
-        <div>
-          <label style={{ fontSize:11, fontWeight:800, color:"#374151", letterSpacing:".06em",
-            textTransform:"uppercase", display:"block", marginBottom:10 }}>File</label>
+        {/* Error banner */}
+        {errMsg && (
+          <div style={{
+            display: "flex", gap: 10, padding: "12px 14px", borderRadius: 12,
+            background: "#FFF5F5", border: "1.5px solid #FEB2B2",
+            marginBottom: 20, animation: "smh-pop .2s ease",
+          }}>
+            <AlertTriangle size={15} color="#E53E3E" style={{ marginTop: 1, flexShrink: 0 }} />
+            <p style={{ fontSize: 12, color: "#C53030", fontWeight: 600, margin: 0, flex: 1 }}>
+              {errMsg}
+            </p>
+            <button type="button" onClick={() => { setErrMsg(""); setPhase("idle"); }}
+              style={{ background: "none", border: "none", cursor: "pointer", padding: 0 }}>
+              <X size={13} color="#94A3B8" />
+            </button>
+          </div>
+        )}
 
-          {file ? (
-            /* ── Selected file card ── */
-            <div style={{ borderRadius:14, border:`2px solid ${cfg.border}`,
-              background:cfg.bg, overflow:"hidden",
-              animation:"hub-pop .2s ease" }}>
-              {preview && (
-                <img src={preview} alt="preview"
-                  style={{ width:"100%", maxHeight:130, objectFit:"cover", display:"block" }} />
-              )}
-              <div style={{ display:"flex", alignItems:"center", gap:12, padding:"13px 16px" }}>
-                <div style={{ width:42, height:42, borderRadius:11, background:"#fff",
-                  border:`1.5px solid ${cfg.border}`,
-                  display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
-                  <Icon size={21} color={cfg.text} />
-                </div>
-                <div style={{ flex:1, minWidth:0 }}>
-                  <p style={{ fontWeight:700, fontSize:13, color:"#111", margin:"0 0 3px",
-                    overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{file.name}</p>
-                  <div style={{ display:"flex", gap:7, alignItems:"center" }}>
-                    <span style={{ fontSize:10, fontWeight:700, padding:"1px 7px", borderRadius:20,
-                      background:"#fff", color:cfg.text, border:`1px solid ${cfg.border}` }}>
-                      {form.material_type}
-                    </span>
-                    <span style={{ fontSize:11, color:"#9CA3AF" }}>{fmtSize(file.size)}</span>
-                  </div>
-                </div>
-                {!busy && (
-                  <button type="button" onClick={() => { setFile(null); setPreview(null); if(fileRef.current) fileRef.current.value=""; }}
-                    style={{ width:30, height:30, borderRadius:8, border:`1px solid ${cfg.border}`,
-                      background:"#fff", cursor:"pointer", display:"flex",
-                      alignItems:"center", justifyContent:"center", flexShrink:0 }}>
-                    <X size={13} color={cfg.text} />
-                  </button>
-                )}
-              </div>
+        {/* Step content */}
+        {step === 0 && <TypeStep selected={matType} onSelect={(t) => { setMatType(t); setFile(null); setUrl(""); setContent(""); }} />}
+        {step === 1 && (
+          <FileStep
+            matType={matType} file={file} setFile={setFile}
+            url={url} setUrl={setUrl} content={content} setContent={setContent}
+          />
+        )}
+        {step === 2 && (
+          <DetailsStep
+            title={title} setTitle={setTitle}
+            downloadable={downloadable} setDownloadable={setDownloadable}
+          />
+        )}
+
+        {/* Progress bar */}
+        {(phase === "uploading" || phase === "saving" || phase === "done") && (
+          <div style={{
+            marginTop: 18, padding: "14px 16px", borderRadius: 14,
+            background: "#F0FAF9", border: "1px solid #B2DFDB",
+            animation: "smh-pop .2s ease",
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: "#065F46" }}>{barLabel}</span>
+              <span style={{ fontSize: 12, fontWeight: 800, color: TEAL }}>{pct}%</span>
             </div>
-          ) : (
-            /* ── Drop zone ── */
-            <div
-              onDragEnter={onDragEnter} onDragLeave={onDragLeave}
-              onDragOver={e => e.preventDefault()} onDrop={onDrop}
-              onClick={() => !busy && fileRef.current?.click()}
+            <div style={{ height: 8, background: "#B2DFDB", borderRadius: 99, overflow: "hidden" }}>
+              <div
+                className={phase === "uploading" ? "smh-progress-bar" : ""}
+                style={{
+                  height: "100%", borderRadius: 99, width: `${pct}%`,
+                  background: phase === "done" ? "#38A169" : phase === "saving" ? GOLD : TEAL,
+                  transition: "width .35s ease",
+                  backgroundSize: phase === "uploading" ? "60px 100%" : undefined,
+                }} />
+            </div>
+          </div>
+        )}
+
+        {/* Nav buttons */}
+        <div style={{ display: "flex", gap: 10, marginTop: 22 }}>
+          {step > 0 && phase === "idle" && (
+            <button type="button" onClick={() => setStep(s => s - 1)}
               style={{
-                padding:"30px 20px", borderRadius:18, textAlign:"center",
-                cursor:busy ? "not-allowed" : "pointer",
-                border:`2.5px dashed ${drag ? G : "#D1D5DB"}`,
-                background:drag
-                  ? "linear-gradient(135deg,#ECFDF5,#D1FAE5)"
-                  : "#FAFAFA",
-                boxShadow:drag ? `0 0 0 5px ${G}18` : "none",
-                transform:drag ? "scale(1.015)" : "scale(1)",
-                transition:"all .2s ease",
+                padding: "12px 18px", borderRadius: 12,
+                border: "2px solid #E2E8F0", background: "#fff",
+                fontWeight: 700, fontSize: 14, color: "#64748B",
+                cursor: "pointer", display: "flex", alignItems: "center", gap: 7,
               }}>
-              <input ref={fileRef} type="file" style={{ display:"none" }}
-                accept={TYPE_CFG[form.material_type].accept || "*/*"}
-                onChange={e => { const fi = e.target.files?.[0]; if (fi) pickFile(fi); }} />
-
-              <div style={{ width:58, height:58, borderRadius:17, margin:"0 auto 14px",
-                background:drag ? cfg.bg : "#F3F4F6",
-                border:`2px solid ${drag ? cfg.border : "#E5E7EB"}`,
-                display:"flex", alignItems:"center", justifyContent:"center",
-                transition:"all .2s" }}>
-                {drag
-                  ? <Icon size={26} color={cfg.text} />
-                  : <ArrowUpFromLine size={26} color="#9CA3AF" />
-                }
-              </div>
-              <p style={{ fontWeight:800, fontSize:14, margin:"0 0 5px",
-                color:drag ? G : "#374151", transition:"color .2s" }}>
-                {drag ? "Release to upload!" : "Tap to browse or drag file here"}
-              </p>
-              <p style={{ fontSize:12, color:"#9CA3AF", margin:0 }}>
-                {form.material_type === "PDF"      && "PDF files"}
-                {form.material_type === "Video"    && "MP4 · WebM · MOV · AVI"}
-                {form.material_type === "Audio"    && "MP3 · WAV · M4A · AAC · FLAC"}
-                {form.material_type === "Image"    && "JPG · PNG · GIF · WebP · SVG"}
-                {form.material_type === "Document" && "Word · Excel · PowerPoint"}
-              </p>
-            </div>
+              <ArrowLeft size={15} /> Back
+            </button>
           )}
-
-          {/* URL fallback */}
-          <div style={{ display:"flex", alignItems:"center", gap:10, margin:"12px 0 8px" }}>
-            <div style={{ flex:1, height:1, background:"#E5E7EB" }} />
-            <span style={{ fontSize:11, color:"#9CA3AF", fontWeight:600, whiteSpace:"nowrap" }}>or paste a URL</span>
-            <div style={{ flex:1, height:1, background:"#E5E7EB" }} />
-          </div>
-          <input value={form.file_url} disabled={busy}
-            onChange={e => setForm(f => ({ ...f, file_url: e.target.value }))}
-            placeholder="https://…"
-            style={{ width:"100%", padding:"11px 14px", borderRadius:12,
-              border:"1.5px solid #E5E7EB", fontSize:13, outline:"none",
-              boxSizing:"border-box" as const, background:"#FAFAFA", fontFamily:"inherit" }} />
-        </div>
-      )}
-
-      {/* URL (Link type) */}
-      {form.material_type === "Link" && (
-        <div>
-          <label style={{ fontSize:11, fontWeight:800, color:"#374151", letterSpacing:".06em",
-            textTransform:"uppercase", display:"block", marginBottom:7 }}>
-            URL <span style={{ color:"#EF4444" }}>*</span>
-          </label>
-          <input value={form.file_url} disabled={busy}
-            onChange={e => { setForm(f => ({ ...f, file_url: e.target.value })); setErr(""); }}
-            placeholder="https://…"
-            style={{ width:"100%", padding:"12px 14px", borderRadius:12,
-              border:"1.5px solid #E5E7EB", fontSize:14, outline:"none",
-              boxSizing:"border-box" as const, fontFamily:"inherit" }} />
-        </div>
-      )}
-
-      {/* Text content */}
-      {form.material_type === "Text" && (
-        <div>
-          <label style={{ fontSize:11, fontWeight:800, color:"#374151", letterSpacing:".06em",
-            textTransform:"uppercase", display:"block", marginBottom:7 }}>
-            Content <span style={{ color:"#EF4444" }}>*</span>
-          </label>
-          <textarea value={form.content} disabled={busy} rows={5}
-            onChange={e => { setForm(f => ({ ...f, content: e.target.value })); setErr(""); }}
-            placeholder="Type your text content here…"
-            style={{ width:"100%", padding:"12px 14px", borderRadius:12,
-              border:"1.5px solid #E5E7EB", fontSize:14, outline:"none",
-              boxSizing:"border-box" as const, resize:"vertical", fontFamily:"inherit" }} />
-        </div>
-      )}
-
-      {/* Progress */}
-      {(phase === "uploading" || phase === "saving" || phase === "done") && (
-        <div style={{ padding:"12px 16px", borderRadius:12, background:"#F0FDF4",
-          border:"1px solid #BBF7D0", animation:"hub-pop .2s ease" }}>
-          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
-            <span style={{ fontSize:12, fontWeight:700, color:"#166534" }}>{pctLabel}</span>
-            <span style={{ fontSize:12, fontWeight:800, color:barColor }}>{pct}%</span>
-          </div>
-          <div style={{ height:8, background:"#D1FAE5", borderRadius:99, overflow:"hidden" }}>
-            <div style={{ height:"100%", borderRadius:99, width:`${pct}%`,
-              background:`linear-gradient(90deg,${barColor},${barColor}99)`,
-              transition:"width .3s ease",
-              ...(phase === "uploading" ? {} : {}) }} />
-          </div>
-          {phase === "uploading" && file && (
-            <p style={{ fontSize:10, color:"#6B7280", margin:"5px 0 0" }}>
-              {Math.round(pct / 100 * file.size / 1024)} KB / {Math.round(file.size / 1024)} KB transferred
-            </p>
-          )}
-        </div>
-      )}
-
-      {/* Download toggle */}
-      <div onClick={() => !busy && setForm(f => ({ ...f, is_downloadable: !f.is_downloadable }))}
-        style={{ display:"flex", alignItems:"center", justifyContent:"space-between",
-          padding:"13px 16px", borderRadius:13, cursor:busy?"not-allowed":"pointer",
-          background:form.is_downloadable ? "#F0FDF4" : "#F9FAFB",
-          border:`1.5px solid ${form.is_downloadable ? "#86EFAC" : "#E5E7EB"}`,
-          transition:"all .2s", opacity:busy?.6:1 }}>
-        <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-          <div style={{ width:36, height:36, borderRadius:10,
-            background:form.is_downloadable ? "#D1FAE5" : "#F3F4F6",
-            display:"flex", alignItems:"center", justifyContent:"center" }}>
-            <Download size={16} color={form.is_downloadable ? G : "#9CA3AF"} />
-          </div>
-          <div>
-            <p style={{ fontWeight:700, fontSize:13, color:"#374151", margin:0 }}>Allow Download</p>
-            <p style={{ fontSize:11, color:"#9CA3AF", margin:"2px 0 0" }}>
-              {form.is_downloadable ? "Students can save this file" : "View only"}
-            </p>
-          </div>
-        </div>
-        <div style={{ width:44, height:24, borderRadius:99,
-          background:form.is_downloadable ? G : "#CBD5E1",
-          position:"relative", transition:"background .2s", flexShrink:0 }}>
-          <div style={{ width:18, height:18, borderRadius:99, background:"#fff",
-            position:"absolute", top:3, left:form.is_downloadable ? 23 : 3,
-            transition:"left .2s", boxShadow:"0 1px 4px rgba(0,0,0,.2)" }} />
+          <button type="button"
+            className="smh-btn-primary"
+            onClick={handleNext}
+            disabled={!canProceed || busy || phase === "done"}
+            style={{
+              flex: 1, padding: "13px", borderRadius: 12, border: "none",
+              background: !canProceed || busy || phase === "done"
+                ? "#E2E8F0"
+                : `linear-gradient(135deg, ${TEAL} 0%, ${TEAL2} 100%)`,
+              color: !canProceed || busy || phase === "done" ? "#94A3B8" : "#fff",
+              fontWeight: 800, fontSize: 14, cursor: !canProceed || busy || phase === "done" ? "not-allowed" : "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 9,
+              letterSpacing: ".02em",
+              boxShadow: !canProceed || busy || phase === "done" ? "none" : `0 4px 20px ${TEAL}44`,
+            }}>
+            {phase === "uploading" && <><span style={{ animation: "smh-spin .8s linear infinite", display: "flex" }}><Loader size={16} /></span> Uploading {pct}%…</>}
+            {phase === "saving"    && <><span style={{ animation: "smh-spin .8s linear infinite", display: "flex" }}><Loader size={16} /></span> Saving…</>}
+            {phase === "done"      && <><Check size={16} /> Done!</>}
+            {phase === "error"     && <><RefreshCw size={16} /> Retry</>}
+            {phase === "idle" && step < 2 && <>Continue <ChevronRight size={16} /></>}
+            {phase === "idle" && step === 2 && <><Upload size={16} /> Upload Material</>}
+          </button>
         </div>
       </div>
-
-      {/* Upload button */}
-      <button type="button" onClick={doUpload} disabled={busy || phase === "done"}
-        className="hub-upload-btn"
-        style={{ width:"100%", padding:"15px", borderRadius:14, border:"none",
-          background:busy||phase==="done" ? "#E5E7EB"
-            : `linear-gradient(135deg,${G} 0%,${G2} 100%)`,
-          color:busy||phase==="done" ? "#9CA3AF" : "#fff",
-          fontWeight:800, fontSize:15,
-          cursor:busy||phase==="done" ? "not-allowed" : "pointer",
-          display:"flex", alignItems:"center", justifyContent:"center", gap:10,
-          boxShadow:busy||phase==="done" ? "none" : `0 4px 20px ${G}44`,
-          letterSpacing:".02em" }}>
-        {phase === "uploading" && <><span style={{ animation:"hub-spin .8s linear infinite", display:"flex" }}><Upload size={18}/></span> Uploading {pct}%…</>}
-        {phase === "saving"    && <><span style={{ animation:"hub-spin .8s linear infinite", display:"flex" }}><Sparkles size={18}/></span> Saving…</>}
-        {phase === "done"      && <><Check size={18}/> Uploaded!</>}
-        {phase === "error"     && <><Upload size={18}/> Retry</>}
-        {phase === "idle"      && <><Upload size={18}/> Upload Material</>}
-      </button>
     </div>
   );
 };
 
-// ─── MAIN HUB COMPONENT ─────────────────────────────────────────────────────
-export default function SubjectMaterialsHub({ subjectId, subjectTitle }: {
-  subjectId: string; subjectTitle?: string;
-}) {
-  const qc = useQueryClient();
-  const [search,    setSearch]    = useState("");
-  const [typeFilter,setTypeFilter]= useState<MatType|"All">("All");
-  const [editMat,   setEditMat]   = useState<any>(null);
-  const [showUpload,setShowUpload]= useState(true);
+// ─── Material card ────────────────────────────────────────────────────────────
+const EditModal = React.memo(({
+  mat, onClose, onSaved,
+}: { mat: any; onClose: () => void; onSaved: () => void }) => {
+  const [title, setTitle]       = useState(mat.title ?? "");
+  const [downloadable, setDl]   = useState(mat.is_downloadable ?? true);
+  const [saving, setSaving]     = useState(false);
 
-  // Fetch materials
+  const save = async () => {
+    if (!title.trim()) return;
+    setSaving(true);
+    const { error } = await supabase.from("subject_materials")
+      .update({ title: title.trim(), is_downloadable: downloadable })
+      .eq("id", mat.id);
+    setSaving(false);
+    if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return; }
+    toast({ title: "✅ Saved" });
+    onSaved();
+  };
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 300, background: "rgba(0,0,0,.55)",
+      display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
+      backdropFilter: "blur(4px)",
+    }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={{
+        background: "#fff", borderRadius: 22, width: "100%", maxWidth: 400, padding: 26,
+        boxShadow: "0 32px 80px rgba(0,0,0,.25)", animation: "smh-pop .2s ease",
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 22 }}>
+          <h3 style={{ fontSize: 16, fontWeight: 800, color: "#1E293B", margin: 0 }}>Edit Material</h3>
+          <button type="button" onClick={onClose}
+            style={{ background: "none", border: "none", cursor: "pointer", color: "#94A3B8" }}>
+            <X size={18} />
+          </button>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div>
+            <label style={labelStyle}>Title</label>
+            <input value={title} onChange={(e) => setTitle(e.target.value)} autoFocus style={inputStyle} />
+          </div>
+          <button type="button" onClick={() => setDl(v => !v)}
+            style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              padding: "13px 15px", borderRadius: 13, cursor: "pointer",
+              background: downloadable ? LIGHT : "#F8FAFC",
+              border: `2px solid ${downloadable ? TEAL : "#E2E8F0"}`,
+              transition: "all .18s",
+            }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, textAlign: "left" }}>
+              <Download size={15} color={downloadable ? TEAL : "#94A3B8"} />
+              <div>
+                <p style={{ fontWeight: 700, fontSize: 13, color: "#374151", margin: 0 }}>Allow Download</p>
+                <p style={{ fontSize: 11, color: "#94A3B8", margin: "1px 0 0" }}>
+                  {downloadable ? "Students can save this file" : "View only"}
+                </p>
+              </div>
+            </div>
+            <div style={{
+              width: 42, height: 24, borderRadius: 99, position: "relative", flexShrink: 0,
+              background: downloadable ? TEAL : "#CBD5E0", transition: "background .2s",
+            }}>
+              <div style={{
+                width: 18, height: 18, borderRadius: "50%", background: "#fff",
+                position: "absolute", top: 3, left: downloadable ? 21 : 3,
+                transition: "left .2s", boxShadow: "0 1px 4px rgba(0,0,0,.2)",
+              }} />
+            </div>
+          </button>
+          <button type="button" onClick={save} disabled={saving || !title.trim()}
+            style={{
+              padding: "13px", borderRadius: 12, border: "none",
+              background: saving || !title.trim() ? "#E2E8F0" : `linear-gradient(135deg, ${TEAL}, ${TEAL2})`,
+              color: saving || !title.trim() ? "#94A3B8" : "#fff",
+              fontWeight: 800, fontSize: 14, cursor: saving || !title.trim() ? "not-allowed" : "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+            }}>
+            {saving ? "Saving…" : <><Check size={15} /> Save Changes</>}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+});
+
+const MatCard = React.memo(({
+  mat, idx, onEdit, onDelete,
+}: { mat: any; idx: number; onEdit: (m: any) => void; onDelete: (m: any) => void }) => {
+  const meta  = TYPE_META[(mat.material_type as MatType) ?? "PDF"];
+  const Icon  = meta.icon;
+  const [menu, setMenu] = useState(false);
+
+  const openFile = async () => {
+    if (!mat.file_url) return;
+    if (mat.file_url.startsWith("http")) { window.open(mat.file_url, "_blank"); return; }
+    const { data } = await supabase.storage.from("subject-files").createSignedUrl(mat.file_url, 3600);
+    if (data?.signedUrl) window.open(data.signedUrl, "_blank");
+  };
+
+  const downloadFile = async () => {
+    let url = mat.file_url;
+    if (!url?.startsWith("http")) {
+      const { data } = await supabase.storage.from("subject-files").createSignedUrl(mat.file_url, 3600);
+      url = data?.signedUrl ?? url;
+    }
+    const a = document.createElement("a"); a.href = url; a.download = mat.title; a.click();
+  };
+
+  return (
+    <div className="smh-mat-card" style={{
+      background: "#fff", borderRadius: 16,
+      border: `1.5px solid ${meta.border}`,
+      overflow: "hidden",
+      animation: `smh-in .3s ease both`,
+      animationDelay: `${idx * 50}ms`,
+    }}>
+      {/* type stripe */}
+      <div style={{ height: 3, background: `linear-gradient(90deg, ${meta.color}, ${meta.color}66)` }} />
+
+      <div style={{ padding: "14px 16px" }}>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+          <div style={{
+            width: 42, height: 42, borderRadius: 12, flexShrink: 0,
+            background: meta.bg, border: `1.5px solid ${meta.border}`,
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>
+            <Icon size={20} color={meta.color} />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <p style={{
+              fontWeight: 700, fontSize: 13, color: "#1E293B", margin: "0 0 5px",
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            }}>{mat.title}</p>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+              <span style={{
+                fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 20,
+                background: meta.bg, color: meta.color, border: `1px solid ${meta.border}`,
+              }}>{mat.material_type}</span>
+              {mat.file_size && (
+                <span style={{ fontSize: 10, color: "#94A3B8", display: "flex", alignItems: "center", gap: 3 }}>
+                  <HardDrive size={9} />{fmtSize(mat.file_size)}
+                </span>
+              )}
+              {mat.created_at && (
+                <span style={{ fontSize: 10, color: "#94A3B8", display: "flex", alignItems: "center", gap: 3 }}>
+                  <Clock size={9} />{timeAgo(mat.created_at)}
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* menu */}
+          <div style={{ position: "relative", flexShrink: 0 }}>
+            <button type="button" onClick={() => setMenu(v => !v)}
+              style={{
+                width: 30, height: 30, borderRadius: 8, border: "1.5px solid #E2E8F0",
+                background: "#fff", cursor: "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>
+              <MoreVertical size={14} color="#94A3B8" />
+            </button>
+            {menu && (
+              <div style={{
+                position: "absolute", right: 0, top: 36,
+                background: "#fff", borderRadius: 13, border: "1.5px solid #E2E8F0",
+                padding: "6px", zIndex: 50,
+                boxShadow: "0 10px 36px rgba(0,0,0,.12)", minWidth: 150,
+                animation: "smh-pop .15s ease",
+              }} onMouseLeave={() => setMenu(false)}>
+                {mat.file_url && mat.file_url !== "placeholder" && (
+                  <button type="button" onClick={() => { openFile(); setMenu(false); }}
+                    style={menuBtn("#475569")}><Eye size={13} /> View</button>
+                )}
+                {mat.is_downloadable && mat.file_url && mat.file_url !== "placeholder" && (
+                  <button type="button" onClick={() => { downloadFile(); setMenu(false); }}
+                    style={menuBtn(TEAL)}><Download size={13} /> Download</button>
+                )}
+                <button type="button" onClick={() => { onEdit(mat); setMenu(false); }}
+                  style={menuBtn(DARK)}><Edit3 size={13} /> Edit</button>
+                <div style={{ height: 1, background: "#F1F5F9", margin: "4px 0" }} />
+                <button type="button" onClick={() => { onDelete(mat); setMenu(false); }}
+                  style={menuBtn("#E53E3E")}><Trash2 size={13} /> Delete</button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {mat.content && (
+          <p style={{
+            fontSize: 11, color: "#64748B", margin: "10px 0 0", lineHeight: 1.55,
+            display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const,
+            overflow: "hidden", padding: "8px 10px",
+            background: "#F8FAFC", borderRadius: 8, border: "1px solid #E2E8F0",
+          }}>{mat.content}</p>
+        )}
+      </div>
+    </div>
+  );
+});
+
+function menuBtn(color: string): React.CSSProperties {
+  return {
+    display: "flex", alignItems: "center", gap: 8, width: "100%",
+    padding: "8px 11px", borderRadius: 9, border: "none", background: "none",
+    cursor: "pointer", fontSize: 12, fontWeight: 600, color, textAlign: "left",
+  };
+}
+
+// ─── MAIN EXPORT ──────────────────────────────────────────────────────────────
+export default function SubjectMaterialsHub({
+  subjectId, subjectTitle,
+}: { subjectId: string; subjectTitle?: string }) {
+  const qc = useQueryClient();
+  const [showWizard, setShowWizard] = useState(false);
+  const [search, setSearch]         = useState("");
+  const [typeFilter, setTypeFilter] = useState<MatType | "All">("All");
+  const [editMat, setEditMat]       = useState<any>(null);
+
   const { data: materials = [], isLoading } = useQuery({
     queryKey: ["hub-materials", subjectId],
     queryFn: async () => {
@@ -759,215 +952,199 @@ export default function SubjectMaterialsHub({ subjectId, subjectTitle }: {
     if (mat.file_url && !mat.file_url.startsWith("http") && mat.file_url !== "placeholder")
       await supabase.storage.from("subject-files").remove([mat.file_url]);
     const { error } = await supabase.from("subject_materials").delete().eq("id", mat.id);
-    if (error) { toast({ title: "Error", description: error.message, variant:"destructive" }); return; }
-    toast({ title: "🗑 Material deleted" });
+    if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return; }
+    toast({ title: "🗑 Deleted" });
     invalidate();
   }, [invalidate]);
 
-  const filtered = useMemo(() => {
-    return materials.filter((m: any) => {
-      const matchType  = typeFilter === "All" || m.material_type === typeFilter;
-      const matchSearch = !search || m.title.toLowerCase().includes(search.toLowerCase());
-      return matchType && matchSearch;
-    });
-  }, [materials, search, typeFilter]);
+  const filtered = useMemo(() => materials.filter((m: any) => {
+    const matchType   = typeFilter === "All" || m.material_type === typeFilter;
+    const matchSearch = !search || m.title.toLowerCase().includes(search.toLowerCase());
+    return matchType && matchSearch;
+  }), [materials, search, typeFilter]);
 
-  // Count by type for filter badges
   const typeCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
-    materials.forEach((m: any) => {
-      counts[m.material_type] = (counts[m.material_type] ?? 0) + 1;
-    });
-    return counts;
+    const c: Record<string, number> = {};
+    materials.forEach((m: any) => { c[m.material_type] = (c[m.material_type] ?? 0) + 1; });
+    return c;
   }, [materials]);
 
   return (
     <>
-      <style>{`
-        @keyframes hub-slidein{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
-        @keyframes hub-pop{from{opacity:0;transform:scale(.95)}to{opacity:1;transform:scale(1)}}
-        @keyframes hub-spin{to{transform:rotate(360deg)}}
-        @keyframes hub-pulse{0%,100%{opacity:1}50%{opacity:.45}}
-        .hub-type-btn:hover:not(:disabled){transform:translateY(-2px)!important;box-shadow:0 4px 12px rgba(0,0,0,.08)!important;}
-        .hub-upload-btn:hover:not(:disabled){transform:translateY(-2px);box-shadow:0 10px 32px rgba(6,78,59,.42)!important;}
-        .mat-card{transition:transform .18s ease,box-shadow .18s ease;}
-        .mat-card:hover{transform:translateY(-3px);box-shadow:0 8px 28px rgba(0,0,0,.09);}
-        .hub-filter-btn:hover{background:#F3F4F6!important;}
-      `}</style>
+      <style>{CSS}</style>
+      <div className="smh-root">
 
-      <div style={{ fontFamily:"system-ui,sans-serif" }}>
-
-        {/* ═══ HEADER ═══════════════════════════════════════════════════════ */}
-        <div style={{ background:`linear-gradient(135deg,${G} 0%,${G2} 100%)`,
-          borderRadius:20, padding:"22px 24px", marginBottom:20,
-          display:"flex", alignItems:"center", justifyContent:"space-between",
-          flexWrap:"wrap", gap:12 }}>
-          <div style={{ display:"flex", alignItems:"center", gap:14 }}>
-            <div style={{ width:48, height:48, borderRadius:15,
-              background:"rgba(255,255,255,.15)",
-              display:"flex", alignItems:"center", justifyContent:"center" }}>
-              <Folder size={24} color="#fff" />
+        {/* ── TOP BAR ── */}
+        <div style={{
+          background: `linear-gradient(135deg, ${DARK} 0%, #183030 100%)`,
+          borderRadius: 20, padding: "20px 22px", marginBottom: 20,
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          flexWrap: "wrap", gap: 12,
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <div style={{
+              width: 46, height: 46, borderRadius: 14,
+              background: "rgba(255,255,255,.1)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}>
+              <BookOpen size={22} color="#fff" />
             </div>
             <div>
-              <h2 style={{ color:"#fff", fontWeight:900, fontSize:18, margin:0 }}>
-                Materials Library
+              <h2 style={{ color: "#fff", fontWeight: 900, fontSize: 17, margin: 0 }}>
+                {subjectTitle ? `${subjectTitle} — ` : ""}Materials
               </h2>
-              <p style={{ color:"rgba(255,255,255,.65)", fontSize:12, margin:"3px 0 0" }}>
-                {subjectTitle ? `${subjectTitle} · ` : ""}{materials.length} resource{materials.length !== 1 ? "s" : ""}
+              <p style={{ color: "rgba(255,255,255,.5)", fontSize: 12, margin: "3px 0 0" }}>
+                {materials.length} resource{materials.length !== 1 ? "s" : ""} uploaded
               </p>
             </div>
           </div>
-          <div style={{ display:"flex", gap:8 }}>
-            <button onClick={() => setShowUpload(v => !v)}
-              style={{ display:"flex", alignItems:"center", gap:7, padding:"9px 16px",
-                borderRadius:11, border:"1.5px solid rgba(255,255,255,.3)",
-                background:"rgba(255,255,255,.15)", color:"#fff", fontWeight:700,
-                fontSize:13, cursor:"pointer", backdropFilter:"blur(4px)" }}>
-              <ArrowUpFromLine size={14}/>
-              {showUpload ? "Hide Upload" : "Upload New"}
-            </button>
-          </div>
+
+          <button type="button" onClick={() => setShowWizard(true)}
+            className="smh-btn-primary"
+            style={{
+              display: "flex", alignItems: "center", gap: 8, padding: "11px 18px",
+              borderRadius: 12, border: "none",
+              background: `linear-gradient(135deg, ${TEAL}, ${TEAL2})`,
+              color: "#fff", fontWeight: 800, fontSize: 13, cursor: "pointer",
+              boxShadow: `0 4px 18px ${TEAL}66`,
+            }}>
+            <FilePlus size={15} /> Add Material
+          </button>
         </div>
 
-        {/* ═══ STATS ROW ════════════════════════════════════════════════════ */}
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(110px,1fr))",
-          gap:10, marginBottom:20 }}>
-          {(["PDF","Video","Audio","Image","Document","Link","Text"] as MatType[])
-            .filter(t => (typeCounts[t] ?? 0) > 0)
-            .map(t => {
-              const c = TYPE_CFG[t], Ic = c.icon;
-              return (
-                <div key={t} style={{ background:c.bg, borderRadius:13,
-                  border:`1.5px solid ${c.border}`, padding:"12px 14px",
-                  cursor:"pointer", transition:"all .15s",
-                  boxShadow:typeFilter===t?`0 0 0 2px ${c.text}`:"none" }}
-                  onClick={() => setTypeFilter(typeFilter === t ? "All" : t)}>
-                  <Ic size={18} color={c.text} style={{ marginBottom:6 }} />
-                  <p style={{ fontSize:20, fontWeight:900, color:c.text, margin:0 }}>
-                    {typeCounts[t]}
-                  </p>
-                  <p style={{ fontSize:10, color:c.text, opacity:.75, margin:0, fontWeight:700 }}>
-                    {c.label}
-                  </p>
-                </div>
-              );
-            })}
-        </div>
-
-        {/* ═══ MAIN LAYOUT ═════════════════════════════════════════════════ */}
-        <div style={{ display:"grid",
-          gridTemplateColumns:showUpload ? "1fr 1fr" : "1fr",
-          gap:20, alignItems:"start" }}>
-
-          {/* ── UPLOAD PANEL ── */}
-          {showUpload && (
-            <div style={{ background:"#fff", borderRadius:20, padding:24,
-              border:"1.5px solid #E5E7EB",
-              boxShadow:"0 4px 24px rgba(0,0,0,.06)",
-              animation:"hub-slidein .25s ease" }}>
-              <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:20 }}>
-                <div style={{ width:36, height:36, borderRadius:10,
-                  background:G3, display:"flex", alignItems:"center", justifyContent:"center" }}>
-                  <Upload size={18} color={G} />
-                </div>
-                <div>
-                  <h3 style={{ fontWeight:800, fontSize:15, color:"#111", margin:0 }}>
-                    Upload Material
-                  </h3>
-                  <p style={{ fontSize:11, color:"#9CA3AF", margin:0 }}>
-                    Files, links or text content
-                  </p>
-                </div>
-              </div>
-              <UploadZone
+        {/* ── UPLOAD WIZARD (modal) ── */}
+        {showWizard && (
+          <div style={{
+            position: "fixed", inset: 0, zIndex: 200,
+            background: "rgba(0,0,0,.6)", backdropFilter: "blur(6px)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            padding: 16, overflowY: "auto",
+          }}
+            onClick={(e) => { if (e.target === e.currentTarget) setShowWizard(false); }}>
+            <div style={{ width: "100%", maxWidth: 540, margin: "auto" }}>
+              <UploadWizard
                 subjectId={subjectId}
                 totalMaterials={materials.length}
-                onUploaded={invalidate}
+                onUploaded={() => { setShowWizard(false); invalidate(); }}
+                onCancel={() => setShowWizard(false)}
               />
             </div>
-          )}
+          </div>
+        )}
 
-          {/* ── LIBRARY PANEL ── */}
-          <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
-
-            {/* Search + filter bar */}
-            <div style={{ background:"#fff", borderRadius:16, padding:"12px 14px",
-              border:"1.5px solid #E5E7EB",
-              boxShadow:"0 2px 10px rgba(0,0,0,.04)",
-              display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" }}>
-              <div style={{ position:"relative", flex:1, minWidth:160 }}>
-                <Search size={13} style={{ position:"absolute", left:10, top:"50%",
-                  transform:"translateY(-50%)", color:"#9CA3AF" }} />
-                <input value={search} onChange={e => setSearch(e.target.value)}
-                  placeholder="Search materials…"
-                  style={{ width:"100%", padding:"9px 12px 9px 30px", borderRadius:10,
-                    border:"1.5px solid #E5E7EB", fontSize:13, outline:"none",
-                    boxSizing:"border-box" as const }} />
-              </div>
-              <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
-                <button className="hub-filter-btn"
-                  onClick={() => setTypeFilter("All")}
-                  style={{ padding:"7px 12px", borderRadius:20,
-                    border:`1.5px solid ${typeFilter==="All"?G:"#E5E7EB"}`,
-                    background:typeFilter==="All"?G3:"#fff",
-                    color:typeFilter==="All"?G:"#6B7280",
-                    fontSize:11, fontWeight:700, cursor:"pointer" }}>
-                  All ({materials.length})
+        {/* ── TYPE STAT CHIPS ── */}
+        {Object.keys(typeCounts).length > 0 && (
+          <div style={{
+            display: "flex", gap: 8, marginBottom: 18, flexWrap: "wrap",
+          }}>
+            {(Object.keys(typeCounts) as MatType[]).map((t) => {
+              const m = TYPE_META[t], Icon = m.icon, sel = typeFilter === t;
+              return (
+                <button key={t} type="button" className="smh-filter-pill"
+                  onClick={() => setTypeFilter(sel ? "All" : t)}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 6,
+                    padding: "7px 14px", borderRadius: 99,
+                    border: `1.5px solid ${sel ? m.color : m.border}`,
+                    background: sel ? m.bg : "#fff",
+                    color: sel ? m.color : "#64748B",
+                    fontWeight: 700, fontSize: 11, cursor: "pointer",
+                    boxShadow: sel ? `0 2px 10px ${m.color}22` : "none",
+                  }}>
+                  <Icon size={12} /> {t} ({typeCounts[t]})
                 </button>
-                {(Object.keys(typeCounts) as MatType[]).map(t => (
-                  <button key={t} className="hub-filter-btn"
-                    onClick={() => setTypeFilter(typeFilter === t ? "All" : t)}
-                    style={{ padding:"7px 12px", borderRadius:20,
-                      border:`1.5px solid ${typeFilter===t?TYPE_CFG[t].text:TYPE_CFG[t].border}`,
-                      background:typeFilter===t?TYPE_CFG[t].bg:"#fff",
-                      color:typeFilter===t?TYPE_CFG[t].text:"#6B7280",
-                      fontSize:11, fontWeight:700, cursor:"pointer" }}>
-                    {t} ({typeCounts[t]})
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Grid */}
-            {isLoading ? (
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
-                {[1,2,3,4].map(i => (
-                  <div key={i} style={{ height:120, borderRadius:16, background:"#F3F4F6",
-                    animation:"hub-pulse 1.4s infinite", animationDelay:`${i*120}ms` }} />
-                ))}
-              </div>
-            ) : filtered.length === 0 ? (
-              <div style={{ background:"#fff", borderRadius:20,
-                border:"2px dashed #E5E7EB", padding:"48px 24px", textAlign:"center" }}>
-                <div style={{ width:64, height:64, borderRadius:20, margin:"0 auto 16px",
-                  background:G3, display:"flex", alignItems:"center", justifyContent:"center" }}>
-                  <Folder size={28} color={G} />
-                </div>
-                <p style={{ fontWeight:800, color:"#374151", margin:"0 0 6px", fontSize:15 }}>
-                  {search || typeFilter !== "All" ? "No matches found" : "No materials yet"}
-                </p>
-                <p style={{ fontSize:13, color:"#9CA3AF", margin:0 }}>
-                  {search || typeFilter !== "All"
-                    ? "Try adjusting your search or filter"
-                    : "Upload your first file using the panel on the left"}
-                </p>
-              </div>
-            ) : (
-              <div style={{ display:"grid",
-                gridTemplateColumns:showUpload ? "1fr" : "repeat(auto-fill,minmax(260px,1fr))",
-                gap:12 }}>
-                {filtered.map((mat: any, i: number) => (
-                  <MaterialCard key={mat.id} mat={mat} index={i}
-                    onEdit={setEditMat} onDelete={deleteMaterial} />
-                ))}
-              </div>
+              );
+            })}
+            {typeFilter !== "All" && (
+              <button type="button" className="smh-filter-pill"
+                onClick={() => setTypeFilter("All")}
+                style={{
+                  padding: "7px 14px", borderRadius: 99,
+                  border: "1.5px solid #E2E8F0", background: "#fff",
+                  color: "#64748B", fontWeight: 700, fontSize: 11, cursor: "pointer",
+                }}>
+                Clear filter
+              </button>
             )}
           </div>
+        )}
+
+        {/* ── SEARCH ── */}
+        <div style={{
+          position: "relative", marginBottom: 18,
+        }}>
+          <Search size={14} color="#94A3B8"
+            style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)" }} />
+          <input
+            value={search} onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search materials…"
+            style={{ ...inputStyle, paddingLeft: 38, paddingTop: 11, paddingBottom: 11 }}
+          />
+          {search && (
+            <button type="button" onClick={() => setSearch("")}
+              style={{
+                position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)",
+                background: "none", border: "none", cursor: "pointer",
+              }}>
+              <X size={14} color="#94A3B8" />
+            </button>
+          )}
         </div>
+
+        {/* ── GRID ── */}
+        {isLoading ? (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            {[1,2,3,4].map(i => (
+              <div key={i} className="smh-skeleton" style={{ height: 110, animationDelay: `${i*100}ms` }} />
+            ))}
+          </div>
+        ) : filtered.length === 0 ? (
+          <div style={{
+            textAlign: "center", padding: "60px 24px",
+            background: "#fff", borderRadius: 20,
+            border: "2px dashed #E2E8F0",
+          }}>
+            <div style={{
+              width: 68, height: 68, borderRadius: 20, margin: "0 auto 18px",
+              background: LIGHT, display: "flex", alignItems: "center", justifyContent: "center",
+            }}>
+              <BookOpen size={30} color={TEAL} />
+            </div>
+            <p style={{ fontWeight: 800, color: "#374151", fontSize: 16, margin: "0 0 8px" }}>
+              {search || typeFilter !== "All" ? "No matches found" : "No materials yet"}
+            </p>
+            <p style={{ fontSize: 13, color: "#94A3B8", margin: "0 0 22px" }}>
+              {search || typeFilter !== "All"
+                ? "Try a different search or clear the filter"
+                : "Click "Add Material" above to upload your first resource"}
+            </p>
+            {!search && typeFilter === "All" && (
+              <button type="button" onClick={() => setShowWizard(true)}
+                className="smh-btn-primary"
+                style={{
+                  padding: "12px 22px", borderRadius: 12, border: "none",
+                  background: `linear-gradient(135deg, ${TEAL}, ${TEAL2})`,
+                  color: "#fff", fontWeight: 800, fontSize: 13, cursor: "pointer",
+                  display: "inline-flex", alignItems: "center", gap: 8,
+                  boxShadow: `0 4px 18px ${TEAL}44`,
+                }}>
+                <FilePlus size={15} /> Upload First Material
+              </button>
+            )}
+          </div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))", gap: 12 }}>
+            {filtered.map((mat: any, i: number) => (
+              <MatCard key={mat.id} mat={mat} idx={i}
+                onEdit={setEditMat} onDelete={deleteMaterial} />
+            ))}
+          </div>
+        )}
 
         {/* ── Edit modal ── */}
         {editMat && (
-          <EditModal mat={editMat} onClose={() => setEditMat(null)}
+          <EditModal mat={editMat}
+            onClose={() => setEditMat(null)}
             onSaved={() => { setEditMat(null); invalidate(); }} />
         )}
       </div>
