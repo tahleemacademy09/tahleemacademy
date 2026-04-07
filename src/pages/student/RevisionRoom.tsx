@@ -194,7 +194,7 @@ const RevisionRoom = () => {
   const mastery = flashcards.length > 0 ? Math.round((knownCount / flashcards.length) * 100) : 0;
   const quizAvg = quizHistory.length > 0 ? Math.round(quizHistory.reduce((s: number, q: any) => s + Number(q.percentage || 0), 0) / quizHistory.length) : 0;
 
-  // ✅ FIXED: AI Helper — ensure "async" keyword is present  const callClaude = async (prompt: string): Promise<string> => {
+  // ✅ FIXED: AI Helper — uses explicit async function declaration  async function callClaude(prompt: string): Promise<string> {
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 20000);
@@ -213,7 +213,7 @@ const RevisionRoom = () => {
       if (err.name === "AbortError") throw new Error("Request timed out. The AI is taking too long. Please try again.");
       throw err;
     }
-  };
+  }
 
   // PDF.js Loader
   const loadPdfJs = (): Promise<any> => new Promise((resolve, reject) => {
