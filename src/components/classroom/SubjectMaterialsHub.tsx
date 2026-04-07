@@ -5,6 +5,7 @@
  * • XHR Upload: Added missing "apikey" header for Supabase Storage
  * • Auth Safety: Validate session + env vars before upload, fail gracefully
  * • Error Handling: 401/403 errors show clear messages, NO unintended redirects
+ * • Build Fix: submit() properly marked async for esbuild/vite compatibility
  * • Event Propagation: stopPropagation() on ALL interactive elements
  * • Mobile UI: Touch-friendly, responsive layout, optimized spacing
  * • Accessibility: ARIA labels, focus states, reduced motion support
@@ -46,8 +47,8 @@ if (import.meta.env.DEV) {
 
 // ─── Brand palette ────────────────────────────────────────────────────────────
 const C = {
-  green:  "#064E3B", green2: "#065F46", greenL: "#ECFDF5", greenM: "#D1FAE5",
-  gold: "#B8860B", red: "#DC2626", redL: "#FEF2F2", redB: "#FECACA",  gray: "#6B7280", grayL: "#F9FAFB", border: "#E5E7EB",
+  green:  "#064E3B", green2: "#065F46", greenL: "#ECFDF5", greenM: "#D1FAE5",  gold: "#B8860B", red: "#DC2626", redL: "#FEF2F2", redB: "#FECACA",
+  gray: "#6B7280", grayL: "#F9FAFB", border: "#E5E7EB",
   text: "#111827", muted: "#9CA3AF",
 };
 
@@ -95,8 +96,8 @@ function validateEnvVars(): { valid: boolean; missing: string[] } {
 }
 
 // ─── FIXED XHR Upload — Supabase requires "file" field + apikey header ─────
-function xhrUpload(path: string, file: File, token: string, onPct: (n:number)=>void): Promise<void> {
-  return new Promise((resolve, reject) => {    // 🔐 Validate environment before proceeding
+function xhrUpload(path: string, file: File, token: string, onPct: (n:number)=>void): Promise<void> {  return new Promise((resolve, reject) => {
+    // 🔐 Validate environment before proceeding
     const env = validateEnvVars();
     if (!env.valid) {
       console.error("❌ Missing environment variables:", env.missing);
@@ -144,8 +145,8 @@ function xhrUpload(path: string, file: File, token: string, onPct: (n:number)=>v
           response: xhr.responseText?.slice(0, 200)
         });
       }
-
-      if (xhr.status >= 200 && xhr.status < 300) {         onPct(93); 
+      if (xhr.status >= 200 && xhr.status < 300) { 
+        onPct(93); 
         resolve(); 
       }
       else {
@@ -193,8 +194,8 @@ function xhrUpload(path: string, file: File, token: string, onPct: (n:number)=>v
     
     xhr.onerror = () => {
       console.error("❌ XHR network error");
-      reject(new Error("Network error: Please check your connection and try again."));
-    };    
+      reject(new Error("Network error: Please check your connection and try again."));    };
+    
     xhr.onabort = () => {
       if (DEBUG) console.log("⚠️ Upload aborted by user");
       reject(new Error("Upload cancelled"));
@@ -242,17 +243,23 @@ const inputSt: React.CSSProperties = {
   background:"#fff", color:C.text, minHeight:44 // ✅ Mobile touch target
 };
 
+// ═════════════════════════════════════════════════════════════════════════════// UPLOAD PANEL — Fixed storage + auth + mobile UI + no unintended redirects
 // ═════════════════════════════════════════════════════════════════════════════
-// UPLOAD PANEL — Fixed storage + auth + mobile UI + no unintended redirects// ═════════════════════════════════════════════════════════════════════════════
 function UploadPanel({ subjectId, count, onDone }: { subjectId:string; count:number; onDone:()=>void }) {
   const { user, session } = useAuth();
-  const [title, setTitle] = useState(""); const [type, setType] = useState<MatType>("PDF");
-  const [url, setUrl] = useState(""); const [body, setBody] = useState("");
-  const [dl, setDl] = useState(true); const [file, setFile] = useState<File|null>(null);
-  const [thumb, setThumb] = useState<string|null>(null); const [pct, setPct] = useState(0);
+  const [title, setTitle] = useState(""); 
+  const [type, setType] = useState<MatType>("PDF");
+  const [url, setUrl] = useState(""); 
+  const [body, setBody] = useState("");
+  const [dl, setDl] = useState(true); 
+  const [file, setFile] = useState<File|null>(null);
+  const [thumb, setThumb] = useState<string|null>(null); 
+  const [pct, setPct] = useState(0);
   const [phase, setPhase] = useState<"idle"|"up"|"db"|"ok"|"err">("idle");
-  const [err, setErr] = useState(""); const [drag, setDrag] = useState(false);
-  const dragCnt = useRef(0); const fileRef = useRef<HTMLInputElement>(null);
+  const [err, setErr] = useState(""); 
+  const [drag, setDrag] = useState(false);
+  const dragCnt = useRef(0); 
+  const fileRef = useRef<HTMLInputElement>(null);
   const busy = phase === "up" || phase === "db";
   const needFile = type !== "Link" && type !== "Text";
   const T = TYPES[type];
@@ -269,20 +276,49 @@ function UploadPanel({ subjectId, count, onDone }: { subjectId:string; count:num
   }, [user, session]);
 
   const pickFile = useCallback((f: File) => {
-    setFile(f); setType(autoDetect(f)); setTitle(prev => prev || f.name.replace(/\.[^/.]+$/, ""));
-    setErr(""); setThumb(null);
-    if (f.type.startsWith("image/")) { const r = new FileReader(); r.onload = ev => setThumb(ev.target?.result as string); r.readAsDataURL(f); }
+    setFile(f); 
+    setType(autoDetect(f)); 
+    setTitle(prev => prev || f.name.replace(/\.[^/.]+$/, ""));
+    setErr(""); 
+    setThumb(null);
+    if (f.type.startsWith("image/")) { 
+      const r = new FileReader(); 
+      r.onload = ev => setThumb(ev.target?.result as string); 
+      r.readAsDataURL(f); 
+    }
     if (DEBUG) console.log("📁 File selected:", { name: f.name, type: f.type, size: f.size });
   }, []);
 
-  const clearFile = () => { setFile(null); setThumb(null); if (fileRef.current) fileRef.current.value = ""; };
-  const reset = () => { setTitle(""); setType("PDF"); setUrl(""); setBody(""); setDl(true); clearFile(); setPct(0); setPhase("idle"); setErr(""); };
+  const clearFile = () => { 
+    setFile(null); 
+    setThumb(null); 
+    if (fileRef.current) fileRef.current.value = "";   };
+  
+  const reset = () => { 
+    setTitle(""); 
+    setType("PDF"); 
+    setUrl(""); 
+    setBody(""); 
+    setDl(true); 
+    clearFile(); 
+    setPct(0); 
+    setPhase("idle"); 
+    setErr(""); 
+  };
 
   const onDE = (e: React.DragEvent) => { e.preventDefault(); dragCnt.current++; setDrag(true); };
   const onDL = (e: React.DragEvent) => { e.preventDefault(); dragCnt.current--; if (dragCnt.current <= 0) { dragCnt.current = 0; setDrag(false); } };
-  const onDrop = (e: React.DragEvent) => { e.preventDefault(); dragCnt.current = 0; setDrag(false); const f = e.dataTransfer.files?.[0]; if (f) pickFile(f); };
+  const onDrop = (e: React.DragEvent) => { 
+    e.preventDefault(); 
+    dragCnt.current = 0; 
+    setDrag(false); 
+    const f = e.dataTransfer.files?.[0]; 
+    if (f) pickFile(f); 
+  };
 
-  const submit = async () => {    
+  // 🔧 BUILD FIX: Properly async function with event parameter for esbuild/vite
+  const submit = async (e?: React.FormEvent) => {
+    e?.preventDefault();
     setErr("");
     
     // 🔐 Auth check BEFORE upload — fail gracefully, don't redirect
@@ -292,7 +328,8 @@ function UploadPanel({ subjectId, count, onDone }: { subjectId:string; count:num
       return;
     }
     
-    // 🔐 Env var check    if (!SUPABASE_ANON_KEY) {
+    // 🔐 Env var check
+    if (!SUPABASE_ANON_KEY) {
       setErr("Configuration error: Missing API key");
       toast({ title: "⚠️ Config error", description: "Contact support", variant: "destructive" });
       return;
@@ -303,8 +340,8 @@ function UploadPanel({ subjectId, count, onDone }: { subjectId:string; count:num
     if (type === "Link" && !url.trim()) { setErr("Enter a URL"); return; }
     if (type === "Text" && !body.trim()) { setErr("Content cannot be empty"); return; }
 
-    setPhase("up"); setPct(5);
-
+    setPhase("up"); 
+    setPct(5);
     try {
       let fileUrl = url.trim(), fileType = "", fileSize = 0;
 
@@ -341,7 +378,8 @@ function UploadPanel({ subjectId, count, onDone }: { subjectId:string; count:num
               throw new Error("Upload failed: Unauthorized. Check API key configuration.");
             } else if (error.statusCode === "403") {
               throw new Error("Upload failed: Bucket permission denied.");
-            } else if (error.statusCode === "413") {              throw new Error("File too large. Please upload a smaller file.");
+            } else if (error.statusCode === "413") {
+              throw new Error("File too large. Please upload a smaller file.");
             } else {
               throw new Error(error.message || "Upload failed");
             }
@@ -349,22 +387,30 @@ function UploadPanel({ subjectId, count, onDone }: { subjectId:string; count:num
           setPct(90);
           if (DEBUG) console.log("✅ Fallback upload succeeded:", data);
         }
-        fileUrl = path; fileType = file.type; fileSize = file.size;
+        fileUrl = path; 
+        fileType = file.type; 
+        fileSize = file.size;
       }
-
-      setPct(96); setPhase("db");
+      setPct(96); 
+      setPhase("db");
 
       const row: Record<string, unknown> = {
-        subject_id: subjectId, title: title.trim(), material_type: type,
-        file_url: fileUrl || "text-content", content: type === "Text" ? body.trim() : null,
-        is_downloadable: dl, sort_order: count, uploaded_by: user.id,
+        subject_id: subjectId, 
+        title: title.trim(), 
+        material_type: type,
+        file_url: fileUrl || "text-content", 
+        content: type === "Text" ? body.trim() : null,
+        is_downloadable: dl, 
+        sort_order: count, 
+        uploaded_by: user.id,
       };
       if (fileType) row.file_type = fileType;
       if (fileSize) row.file_size = fileSize;
 
       const { error: dbErr } = await supabase.from("subject_materials").insert(row as any);
       if (dbErr) throw new Error(dbErr.message);
-      setPct(100); setPhase("ok");
+      setPct(100); 
+      setPhase("ok");
       toast({ title: "✅ Material uploaded!" });
       setTimeout(() => { onDone(); reset(); }, 700);
 
@@ -382,7 +428,6 @@ function UploadPanel({ subjectId, count, onDone }: { subjectId:string; count:num
         userMsg = "Configuration error: Please contact support.";
       } else if (e.message?.includes("Authentication expired")) {
         userMsg = "Session expired. Please refresh and try again.";
-        // ⚠️ Do NOT auto-redirect - let user decide
       } else if (e.message?.includes("Permission denied")) {
         userMsg = "Permission error: This file type or size may not be allowed.";
       } else if (e.message?.includes("Network error")) {
@@ -390,14 +435,14 @@ function UploadPanel({ subjectId, count, onDone }: { subjectId:string; count:num
       } else if (e.message?.includes("File too large")) {
         userMsg = "File too large. Please upload a smaller file.";
       } else {
-        userMsg = e.message || "An unexpected error occurred";      }
+        userMsg = e.message || "An unexpected error occurred";
+      }
       
       setErr(userMsg);
-      toast({ 
-        title: "⚠️ Upload failed", 
+      toast({         title: "⚠️ Upload failed", 
         description: userMsg, 
         variant: "destructive",
-        duration: 5000 // Longer for error visibility
+        duration: 5000
       });
       
       // ❌ CRITICAL: Do NOT call navigate() or trigger auth logout here
@@ -439,11 +484,11 @@ function UploadPanel({ subjectId, count, onDone }: { subjectId:string; count:num
         </div>
       </div>
       {needFile && (
-        <div>          <label style={labelSt}>File</label>
+        <div>
+          <label style={labelSt}>File</label>
           <input ref={fileRef} type="file" accept="*/*" style={{ display:"none" }}
             onClick={(e) => e.stopPropagation()}
-            onChange={(e) => { e.stopPropagation(); const f = e.target.files?.[0]; if (f) pickFile(f); }} aria-label="Select file to upload" />
-          {file ? (
+            onChange={(e) => { e.stopPropagation(); const f = e.target.files?.[0]; if (f) pickFile(f); }} aria-label="Select file to upload" />          {file ? (
             <div style={{ borderRadius:14, border:`2px solid ${T.border}`, background:T.light, overflow:"hidden", animation:"smh-pop .2s ease" }}>
               {thumb && <img src={thumb} alt="" style={{ width:"100%", maxHeight:150, objectFit:"cover", display:"block" }} />}
               <div style={{ display:"flex", alignItems:"center", gap:12, padding:"14px 16px" }}>
@@ -488,12 +533,12 @@ function UploadPanel({ subjectId, count, onDone }: { subjectId:string; count:num
       )}
       <div onClick={(e) => { e.stopPropagation(); if (!busy) setDl(v => !v); }} role="switch" aria-checked={dl} tabIndex={0} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"clamp(10px, 2.5vw, 13px) clamp(12px, 3vw, 16px)", borderRadius:13, cursor: busy ? "not-allowed" : "pointer", background: dl ? C.greenL : C.grayL, border:`1.5px solid ${dl ? "#86EFAC" : C.border}`, transition:"all .2s", opacity: busy ? .6 : 1, minHeight:44 }}>
         <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-          <div style={{ width:36, height:36, borderRadius:10, fontSize:18, background: dl ? C.greenM : "#E9E9E9", display:"flex", alignItems:"center", justifyContent:"center" }} aria-hidden="true">{dl ? "⬇️" : "👁️"}</div>          <div><p style={{ fontWeight:700, fontSize:"clamp(12px, 3vw, 13px)", color:C.text, margin:0 }}>{dl ? "Download allowed" : "View only"}</p><p style={{ fontSize:"clamp(10px, 2.8vw, 11px)", color:C.muted, margin:"2px 0 0" }}>{dl ? "Students can save" : "View only"}</p></div>
+          <div style={{ width:36, height:36, borderRadius:10, fontSize:18, background: dl ? C.greenM : "#E9E9E9", display:"flex", alignItems:"center", justifyContent:"center" }} aria-hidden="true">{dl ? "⬇️" : "👁️"}</div>
+          <div><p style={{ fontWeight:700, fontSize:"clamp(12px, 3vw, 13px)", color:C.text, margin:0 }}>{dl ? "Download allowed" : "View only"}</p><p style={{ fontSize:"clamp(10px, 2.8vw, 11px)", color:C.muted, margin:"2px 0 0" }}>{dl ? "Students can save" : "View only"}</p></div>
         </div>
         <div style={{ width:44, height:24, borderRadius:99, flexShrink:0, background: dl ? C.green : "#CBD5E1", position:"relative", transition:"background .2s" }}><div style={{ width:18, height:18, borderRadius:99, background:"#fff", position:"absolute", top:3, left: dl ? 23 : 3, transition:"left .2s", boxShadow:"0 1px 4px rgba(0,0,0,.25)" }} /></div>
       </div>
-
-      <button type="button" onClick={(e) => { e.stopPropagation(); submit(); }} disabled={busy || phase === "ok"} aria-busy={busy} aria-disabled={busy || phase === "ok"}
+      <button type="button" onClick={(e) => { e?.stopPropagation(); submit(e); }} disabled={busy || phase === "ok"} aria-busy={busy} aria-disabled={busy || phase === "ok"}
         style={{ width:"100%", padding:"clamp(14px, 4vw, 16px)", borderRadius:14, border:"none", background: busy || phase === "ok" ? "#E5E7EB" : `linear-gradient(135deg,${C.green} 0%,${C.green2} 100%)`, color: busy || phase === "ok" ? C.muted : "#fff", fontWeight:900, fontSize:"clamp(14px, 4vw, 15px)", letterSpacing:".03em", cursor: busy || phase === "ok" ? "not-allowed" : "pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:10, boxShadow: busy || phase === "ok" ? "none" : `0 6px 24px ${C.green}44`, transition:"all .2s", minHeight:48 }}>
         <span style={{ display:"inline-flex", fontSize:"clamp(16px, 4.5vw, 18px)", animation: busy ? "smh-spin .7s linear infinite" : "none" }}>{phase === "ok" ? "✅" : phase === "err" ? "🔄" : busy ? "⟳" : "⬆"}</span>
         {phase === "up" ? `Uploading ${pct}%…` : phase === "db" ? "Saving…" : phase === "ok" ? "Uploaded!" : phase === "err" ? "Retry" : "Upload"}
@@ -534,14 +579,14 @@ function MatCard({ mat, idx, onEdit, onDelete }: { mat:any; idx:number; onEdit:(
   };
 
   return (
-    <article className="smh-card" style={{      background:"#fff", borderRadius:16, border:`1.5px solid ${T.border}`, overflow:"hidden",
+    <article className="smh-card" style={{ background:"#fff", borderRadius:16, border:`1.5px solid ${T.border}`, overflow:"hidden",
       animation:`smh-slidein .3s ease both`, animationDelay:`${idx * 55}ms`, position:"relative"
     }}>
-      <div style={{ height:3, background:T.color }} aria-hidden="true" />      {mat.material_type === "Image" && imgSrc && (
+      <div style={{ height:3, background:T.color }} aria-hidden="true" />
+      {mat.material_type === "Image" && imgSrc && (
         <div style={{ height:"clamp(90px, 25vw, 110px)", overflow:"hidden", background:T.light }}>
           <img src={imgSrc} alt={mat.title} style={{ width:"100%", height:"100%", objectFit:"cover", display:"block" }} onError={() => setImgSrc(null)} />
-        </div>
-      )}
+        </div>      )}
       <div style={{ padding:"clamp(10px, 2.5vw, 14px) clamp(12px, 3vw, 16px)" }}>
         <div style={{ display:"flex", alignItems:"flex-start", gap:"clamp(8px, 2vw, 11px)", marginBottom:10 }}>
           <div style={{ width:"clamp(36px, 9vw, 42px)", height:"clamp(36px, 9vw, 42px)", borderRadius:12, flexShrink:0, fontSize:"clamp(18px, 5vw, 22px)", background:T.light, border:`1.5px solid ${T.border}`, display:"flex", alignItems:"center", justifyContent:"center" }} aria-hidden="true">{T.emoji}</div>
@@ -586,11 +631,11 @@ function EditModal({ mat, onClose, onSaved }: { mat:any; onClose:()=>void; onSav
   const [title, setTitle] = useState(mat.title ?? "");
   const [dl, setDl] = useState(mat.is_downloadable ?? true);
   const [busy, setBusy] = useState(false);
+
   const save = async () => {
     if (!title.trim()) return;
     setBusy(true);
-    const { error } = await supabase.from("subject_materials").update({ title: title.trim(), is_downloadable: dl }).eq("id", mat.id);
-    setBusy(false);
+    const { error } = await supabase.from("subject_materials").update({ title: title.trim(), is_downloadable: dl }).eq("id", mat.id);    setBusy(false);
     if (error) { toast({ title:"Error", description:error.message, variant:"destructive" }); return; }
     toast({ title:"✅ Updated" }); onSaved();
   };
@@ -636,10 +681,10 @@ export default function SubjectMaterialsHub({ subjectId, subjectTitle }: { subje
   const [filter, setFilter] = useState<MatType|"All">("All");
   const [editMat, setEditMat] = useState<any>(null); 
   const [showUp, setShowUp] = useState(true);
-  const { data: mats = [], isLoading } = useQuery({
+
+  const {  mats = [], isLoading } = useQuery({
     queryKey: ["smh", subjectId], 
-    enabled: !!subjectId,
-    queryFn: async () => {
+    enabled: !!subjectId,    queryFn: async () => {
       const { data, error } = await supabase.from("subject_materials").select("*").eq("subject_id", subjectId).order("sort_order").order("created_at", { ascending: false });
       if (error) throw error; 
       return data ?? [];
@@ -684,11 +729,11 @@ export default function SubjectMaterialsHub({ subjectId, subjectTitle }: { subje
         @keyframes smh-pop{from{opacity:0;transform:scale(.93)}to{opacity:1;transform:scale(1)}}
         @keyframes smh-slidein{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:translateY(0)}}
         @keyframes smh-spin{to{transform:rotate(360deg)}}
-        @keyframes smh-pulse{0%,100%{opacity:1}50%{opacity:.38}}        .smh-card{transition:transform .18s ease,box-shadow .18s ease;}
+        @keyframes smh-pulse{0%,100%{opacity:1}50%{opacity:.38}}
+        .smh-card{transition:transform .18s ease,box-shadow .18s ease;}
         .smh-card:hover{transform:translateY(-3px);box-shadow:0 10px 30px rgba(0,0,0,.1)!important;}
         @media (prefers-reduced-motion: reduce) {
-          * { animation: none !important; transition: none !important; }
-        }
+          * { animation: none !important; transition: none !important; }        }
         @media (max-width: 640px) {
           .smh-grid { grid-template-columns: 1fr !important; }
         }
@@ -734,10 +779,10 @@ export default function SubjectMaterialsHub({ subjectId, subjectTitle }: { subje
             <UploadPanel subjectId={subjectId} count={mats.length} onDone={invalidate} />
           </section>
         )}
+
         <section style={{ display:"flex", flexDirection:"column", gap:"clamp(12px, 3vw, 14px)" }} onClick={(e) => e.stopPropagation()}>
           {/* Search + filters */}
-          <div style={{ background:"#fff", borderRadius:14, padding:"clamp(10px, 2.5vw, 13px) clamp(12px, 3vw, 14px)", border:`1.5px solid ${C.border}`, boxShadow:"0 2px 10px rgba(0,0,0,.04)", display:"flex", flexDirection:"column", gap:8 }} onClick={(e) => e.stopPropagation()}>
-            <div style={{ position:"relative" }} onClick={(e) => e.stopPropagation()}>
+          <div style={{ background:"#fff", borderRadius:14, padding:"clamp(10px, 2.5vw, 13px) clamp(12px, 3vw, 14px)", border:`1.5px solid ${C.border}`, boxShadow:"0 2px 10px rgba(0,0,0,.04)", display:"flex", flexDirection:"column", gap:8 }} onClick={(e) => e.stopPropagation()}>            <div style={{ position:"relative" }} onClick={(e) => e.stopPropagation()}>
               <span style={{ position:"absolute", left:11, top:"50%", transform:"translateY(-50%)", fontSize:16, pointerEvents:"none" }} aria-hidden="true">🔍</span>
               <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search materials…" style={{ ...inputSt, paddingLeft:34, borderRadius:10 }} aria-label="Search materials" />
             </div>
