@@ -1,6 +1,5 @@
-
 /**
- * MaterialManagerPro.tsx - FIXED IMPORTS
+ * MaterialManagerPro.tsx - WITH VISIBLE DEBUG LOGS
  */
 
 import React, { useState, useCallback, useMemo, memo, useEffect, useRef } from "react";
@@ -9,7 +8,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "@/hooks/use-toast";
 
-// ─── Constants ───────────────────────────────────────────────────────────────
+// ─── Constants ──────────────────────────────────────────────────────────────
 const BUCKET = "subject-files";
 
 const B = {
@@ -69,7 +68,14 @@ interface SubjectRow {
   level:    string | null;
 }
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
+interface DebugLog {
+  id: number;
+  time: string;
+  message: string;
+  type: 'info' | 'success' | 'error' | 'warning' | 'query';
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 function fmtSize(bytes?: number | null): string {
   if (!bytes) return "";
   if (bytes < 1_024) return `${bytes} B`;
@@ -90,14 +96,14 @@ function timeAgo(iso?: string | null): string {
 function detectMaterialType(file: File): MatType {
   const type = file.type.toLowerCase();
   const name = file.name.toLowerCase();
-  if (type.includes("pdf") || name.endsWith(".pdf")) return "PDF";
-  if (type.startsWith("video/")) return "Video";
+  if (type.includes("pdf") || name.endsWith(".pdf")) return "PDF";  if (type.startsWith("video/")) return "Video";
   if (type.startsWith("audio/")) return "Audio";
   if (type.startsWith("image/")) return "Image";
   return "Document";
 }
 
-function generateFilePath(subjectId: string, file: File): string {  const timestamp = Date.now();
+function generateFilePath(subjectId: string, file: File): string {
+  const timestamp = Date.now();
   const randomStr = Math.random().toString(36).substring(2, 8);
   const ext = file.name.split(".").pop() || "";
   return `${subjectId}/${timestamp}-${randomStr}.${ext}`;
@@ -112,29 +118,153 @@ const card: React.CSSProperties = {
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
-// SUBJECT PICKER
+// DEBUG PANEL COMPONENT
 // ═════════════════════════════════════════════════════════════════════════════
-const SubjectPicker = memo(({ selected, onSelect }: { 
+const DebugPanel = ({ logs, onClear, showDebug, onToggle }: {
+  logs: DebugLog[];
+  onClear: () => void;
+  showDebug: boolean;
+  onToggle: () => void;
+}) => {
+  if (!showDebug) {
+    return (
+      <button
+        onClick={onToggle}
+        style={{
+          position: "fixed",
+          bottom: 16,
+          right: 16,
+          padding: "10px 16px",
+          borderRadius: 8,
+          border: "none",
+          background: B.green,
+          color: "#fff",
+          fontWeight: 700,
+          fontSize: 12,
+          cursor: "pointer",
+          zIndex: 9999,
+          boxShadow: "0 4px 12px rgba(0,0,0,.2)",
+        }}
+      >        🐛 Show Debug
+      </button>
+    );
+  }
+
+  return (
+    <div style={{
+      position: "fixed",
+      bottom: 0,
+      left: 0,
+      right: 0,
+      background: "#1a1a2e",
+      color: "#fff",
+      padding: 12,
+      fontSize: 11,
+      maxHeight: 250,
+      overflowY: "auto",
+      zIndex: 10000,
+      borderTop: "3px solid #064E3B",
+      fontFamily: "monospace",
+    }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+        <strong style={{ fontSize: 12 }}>🔍 DEBUG LOG ({logs.length})</strong>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button
+            onClick={onClear}
+            style={{
+              background: "#6B7280",
+              border: "none",
+              color: "#fff",
+              padding: "4px 10px",
+              borderRadius: 6,
+              fontSize: 10,
+              cursor: "pointer",
+            }}
+          >
+            CLEAR
+          </button>
+          <button
+            onClick={onToggle}
+            style={{
+              background: "#DC2626",
+              border: "none",
+              color: "#fff",
+              padding: "4px 10px",
+              borderRadius: 6,
+              fontSize: 10,
+              cursor: "pointer",
+            }}
+          >            HIDE
+          </button>
+        </div>
+      </div>
+      {logs.length === 0 ? (
+        <p style={{ color: "#6B7280", margin: 0 }}>No logs yet - waiting for actions...</p>
+      ) : (
+        logs.slice(-15).map((log) => (
+          <div
+            key={log.id}
+            style={{
+              padding: "4px 0",
+              borderBottom: "1px solid #333",
+              color: log.type === 'error' ? '#FCA5A5' 
+                   : log.type === 'success' ? '#86EFAC' 
+                   : log.type === 'warning' ? '#FDE68A'
+                   : log.type === 'query' ? '#93C5FD'
+                   : '#fff',
+            }}
+          >
+            <span style={{ color: "#6B7280", marginRight: 8 }}>{log.time}</span>
+            {log.message}
+          </div>
+        ))
+      )}
+    </div>
+  );
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
+// SUBJECT PICKER - WITH DEBUG
+// ═════════════════════════════════════════════════════════════════════════════
+const SubjectPicker = memo(({ selected, onSelect, addLog }: { 
   selected: SubjectRow | null; 
   onSelect: (s: SubjectRow) => void;
+  addLog: (message: string, type?: DebugLog['type']) => void;
 }) => {
-  const {  subjects = [], isLoading, error, refetch } = useQuery<SubjectRow[]>({
+  const {  subjects = [], isLoading, error, refetch, isFetching } = useQuery<SubjectRow[]>({
     queryKey: ["mmp-subjects"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("subjects")
-        .select("id, title, title_ar, is_active, image_url, level")
-        .order("title");
+      addLog("📡 QUERY: Fetching subjects from database...", "query");
+      addLog("🔍 Checking Supabase connection...", "info");
       
-      if (error) {
-        console.error("❌ Subjects query error:", error);
-        throw error;
+      try {
+        const { data, error } = await supabase
+          .from("subjects")
+          .select("id, title, title_ar, is_active, image_url, level")
+          .order("title");
+        
+        if (error) {          addLog(`❌ QUERY ERROR: ${error.message}`, "error");
+          addLog(`📋 Error details: ${error.details || "No details"}`, "error");
+          throw error;
+        }
+        
+        const count = data?.length || 0;
+        addLog(`✅ QUERY SUCCESS: Loaded ${count} subjects`, "success");
+        
+        if (count > 0) {
+          addLog(`📋 First subject: ${data[0]?.title}`, "info");
+        } else {
+          addLog("⚠️ WARNING: Table exists but no subjects found", "warning");
+          addLog("💡 Run SQL setup script in Supabase SQL Editor", "warning");
+        }
+        
+        return (data ?? []) as SubjectRow[];
+      } catch (err: any) {
+        addLog(`💥 EXCEPTION: ${err.message}`, "error");
+        throw err;
       }
-      
-      console.log(`✅ Loaded ${data?.length || 0} subjects`);
-      return (data ?? []) as SubjectRow[];
     },
-    staleTime: 60_000,
+    staleTime: 30_000,
     retry: 2,
   });
 
@@ -144,25 +274,47 @@ const SubjectPicker = memo(({ selected, onSelect }: {
         📚 Select a Subject
       </h3>
       
+      {/* Query Status */}
+      <div style={{
+        background: isFetching ? B.blueL : B.bg,
+        borderRadius: 12,
+        padding: 12,
+        marginBottom: 16,
+        fontSize: 12,
+      }}>
+        <p style={{ margin: 0, color: B.sub }}>
+          {isFetching ? "🔄 Refreshing..." : isLoading ? "⏳ Loading..." : "✅ Ready"}
+        </p>
+      </div>
+
+      {/* Error Display */}
       {error && (
         <div style={{
-          background: B.redL,          border: `1px solid ${B.red}`,
-          borderRadius: 12,
-          padding: 16,
+          background: B.redL,
+          border: `2px solid ${B.red}`,
+          borderRadius: 12,          padding: 16,
           color: B.red,
-          fontSize: 13,
+          fontSize: 12,
           marginBottom: 16,
         }}>
-          <p style={{ fontWeight: 700, margin: "0 0 8px" }}>
+          <p style={{ fontWeight: 800, margin: "0 0 8px", fontSize: 14 }}>
             ❌ Failed to Load Subjects
           </p>
-          <p style={{ margin: "0 0 8px", fontSize: 12 }}>
+          <p style={{ margin: "0 0 8px", fontFamily: "monospace" }}>
             {error.message}
           </p>
+          {error.details && (
+            <p style={{ margin: "0 0 12px", fontSize: 11, opacity: 0.8 }}>
+              {error.details}
+            </p>
+          )}
           <button
-            onClick={() => refetch()}
+            onClick={() => {
+              addLog("🔄 User clicked retry button", "info");
+              refetch();
+            }}
             style={{
-              padding: "8px 16px",
+              padding: "10px 20px",
               borderRadius: 8,
               border: "none",
               background: B.red,
@@ -172,42 +324,75 @@ const SubjectPicker = memo(({ selected, onSelect }: {
               cursor: "pointer",
             }}
           >
-            🔄 Retry
+            🔄 Retry Query
           </button>
         </div>
       )}
 
+      {/* Loading State */}
       {isLoading && (
         <div style={{ textAlign: "center", padding: "40px 0" }}>
-          <p style={{ color: B.muted }}>Loading subjects...</p>
+          <p style={{ fontSize: 48, marginBottom: 12 }}>⏳</p>
+          <p style={{ color: B.muted, fontWeight: 600 }}>Loading subjects...</p>
+          <p style={{ fontSize: 11, color: B.sub }}>Querying database</p>
         </div>
       )}
 
+      {/* Empty State */}
       {!isLoading && !error && subjects.length === 0 && (
         <div style={{
-          background: B.greenXL,
-          border: `1px solid ${B.greenL}`,
+          background: B.greenXL,          border: `2px solid ${B.greenL}`,
           borderRadius: 12,
-          padding: 20,
+          padding: 24,
           textAlign: "center",
           marginBottom: 16,
         }}>
-          <p style={{ fontWeight: 700, color: B.text, margin: "0 0 8px" }}>
+          <p style={{ fontSize: 48, marginBottom: 12 }}>📭</p>
+          <p style={{ fontWeight: 800, color: B.text, margin: "0 0 8px", fontSize: 16 }}>
             No Subjects Found
           </p>
-          <p style={{ fontSize: 12, color: B.sub, margin: "0 0 12px" }}>            Run SQL setup in Supabase
+          <p style={{ fontSize: 12, color: B.sub, margin: "0 0 16px", lineHeight: 1.5 }}>
+            The subjects table is empty or doesn't exist.
+            <br />
+            Run the SQL setup script in Supabase.
           </p>
+          
+          <div style={{
+            background: "#fff",
+            borderRadius: 8,
+            padding: 12,
+            marginBottom: 16,
+            fontSize: 11,
+            textAlign: "left",
+            fontFamily: "monospace",
+          }}>
+            <p style={{ margin: "0 0 8px", fontWeight: 700, color: B.green }}>
+              📋 Quick Setup:
+            </p>
+            <ol style={{ margin: 0, paddingLeft: 20 }}>
+              <li>Go to Supabase Dashboard</li>
+              <li>Open SQL Editor</li>
+              <li>Run the CREATE TABLE script</li>
+              <li>Insert sample subjects</li>
+            </ol>
+          </div>
+          
           <button
-            onClick={() => refetch()}
+            onClick={() => {
+              addLog("🔄 User clicked refresh button", "info");
+              refetch();
+            }}
             style={{
-              padding: "8px 16px",
-              borderRadius: 8,
+              padding: "12px 24px",
+              borderRadius: 10,
               border: "none",
               background: B.green,
               color: "#fff",
-              fontWeight: 700,
-              fontSize: 12,
-              cursor: "pointer",
+              fontWeight: 800,
+              fontSize: 13,
+              cursor: "pointer",              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
             }}
           >
             🔄 Refresh
@@ -215,36 +400,47 @@ const SubjectPicker = memo(({ selected, onSelect }: {
         </div>
       )}
 
+      {/* Subjects List */}
       {!isLoading && !error && subjects.length > 0 && (
         <div style={{ display: "grid", gap: 10 }}>
           {subjects.map(s => (
             <button
               key={s.id}
-              onClick={() => onSelect(s)}
+              onClick={() => {
+                addLog(`✅ Subject selected: ${s.title}`, "success");
+                onSelect(s);
+              }}
               style={{
-                padding: "14px 16px",
+                padding: "16px 16px",
                 borderRadius: 12,
                 border: `2px solid ${selected?.id === s.id ? B.green : B.border}`,
                 background: selected?.id === s.id ? B.greenXL : "#fff",
                 cursor: "pointer",
                 textAlign: "left",
                 width: "100%",
+                transition: "all 0.2s",
               }}
             >
               <p style={{ fontWeight: 700, fontSize: 14, color: B.text, margin: "0 0 4px" }}>
                 {s.title}
               </p>
+              {s.title_ar && (
+                <p style={{ fontSize: 12, color: B.sub, margin: "0 0 4px", direction: "rtl" }}>
+                  {s.title_ar}
+                </p>
+              )}
               {s.level && (
                 <span style={{
                   fontSize: 10,
                   fontWeight: 700,
-                  padding: "2px 8px",
+                  padding: "3px 10px",
                   borderRadius: 10,
                   background: B.greenL,
                   color: B.green,
+                  display: "inline-block",
                 }}>
-                  {s.level}
-                </span>              )}
+                  {s.level}                </span>
+              )}
             </button>
           ))}
         </div>
@@ -254,15 +450,16 @@ const SubjectPicker = memo(({ selected, onSelect }: {
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
-// UPLOAD MODAL
+// UPLOAD MODAL - WITH DEBUG
 // ═════════════════════════════════════════════════════════════════════════════
 interface UploadModalProps {
   subject: SubjectRow;
   onClose: () => void;
   onUploaded: () => void;
+  addLog: (message: string, type?: DebugLog['type']) => void;
 }
 
-const UploadModal = ({ subject, onClose, onUploaded }: UploadModalProps) => {
+const UploadModal = ({ subject, onClose, onUploaded, addLog }: UploadModalProps) => {
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -271,30 +468,57 @@ const UploadModal = ({ subject, onClose, onUploaded }: UploadModalProps) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { user } = useAuth();
 
+  useEffect(() => {
+    addLog("📦 Upload modal opened", "info");
+    addLog(`📚 Subject: ${subject.title}`, "info");
+    addLog(`👤 User: ${user?.email || "NOT LOGGED IN"}`, user ? "info" : "error");
+  }, []);
+
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    addLog("📁 File input triggered", "info");
     setErrorMessage("");
     setSuccessMessage("");
     
     if (e.target.files && e.target.files.length > 0) {
       const selectedFile = e.target.files[0];
+      addLog(`✅ File selected: ${selectedFile.name}`, "success");
+      addLog(`📊 Size: ${fmtSize(selectedFile.size)}`, "info");
+      addLog(`📄 Type: ${selectedFile.type || "Unknown"}`, "info");
       
       if (selectedFile.size > 50 * 1024 * 1024) {
-        setErrorMessage("❌ File too large (max 50MB)");
-        return;
+        const msg = "❌ File too large (max 50MB)";
+        setErrorMessage(msg);
+        addLog(msg, "error");        return;
       }
       
       setFile(selectedFile);
       setSuccessMessage(`✅ Ready: ${selectedFile.name}`);
+    } else {
+      addLog("⚠️ No file selected", "warning");
     }
   };
 
   const handleUpload = async () => {
+    addLog("🚀 Upload button clicked", "info");
+
     if (!file) {
-      setErrorMessage("❌ Please select a file first");
+      const msg = "❌ Please select a file first";
+      setErrorMessage(msg);
+      addLog(msg, "error");
       return;
     }
+
     if (!user) {
-      setErrorMessage("❌ You must be logged in");
+      const msg = "❌ You must be logged in";
+      setErrorMessage(msg);
+      addLog(msg, "error");
+      return;
+    }
+
+    if (!subject?.id) {
+      const msg = "❌ No subject selected";
+      setErrorMessage(msg);
+      addLog(msg, "error");
       return;
     }
 
@@ -302,13 +526,19 @@ const UploadModal = ({ subject, onClose, onUploaded }: UploadModalProps) => {
     setErrorMessage("");
     setSuccessMessage("");
     setUploadProgress(10);
+    addLog("⏳ Starting upload process...", "info");
 
     try {
+      // Step 1: Generate file path
       const filePath = generateFilePath(subject.id, file);
       const materialType = detectMaterialType(file);
+      addLog(`📍 Generated path: ${filePath}`, "info");
+      addLog(`🏷️ Material type: ${materialType}`, "info");
 
       setUploadProgress(30);
 
+      // Step 2: Upload to Storage      addLog("📤 Uploading to Supabase Storage...", "query");
+      
       const {  uploadData, error: uploadError } = await supabase.storage
         .from(BUCKET)
         .upload(filePath, file, {
@@ -317,14 +547,24 @@ const UploadModal = ({ subject, onClose, onUploaded }: UploadModalProps) => {
         });
 
       if (uploadError) {
-        throw new Error(`Storage: ${uploadError.message}`);
+        const msg = `❌ Storage Error: ${uploadError.message}`;
+        addLog(msg, "error");
+        throw new Error(msg);
       }
 
+      addLog("✅ Storage upload successful", "success");
+      addLog(`🔗 Path: ${uploadData?.path}`, "info");
       setUploadProgress(60);
 
+      // Step 3: Get Public URL
       const {  urlData } = supabase.storage
         .from(BUCKET)
         .getPublicUrl(filePath);
+
+      addLog(`🌐 Public URL generated`, "info");
+
+      // Step 4: Insert to Database
+      addLog("💾 Inserting record into database...", "query");
 
       const { error: dbError } = await supabase
         .from("subject_materials")
@@ -341,17 +581,23 @@ const UploadModal = ({ subject, onClose, onUploaded }: UploadModalProps) => {
         });
 
       if (dbError) {
-        throw new Error(`Database: ${dbError.message}`);
+        const msg = `❌ Database Error: ${dbError.message}`;
+        addLog(msg, "error");
+        throw new Error(msg);
       }
-      setUploadProgress(100);
+
+      addLog("✅ Database insert successful", "success");      setUploadProgress(100);
       setSuccessMessage("✅ Upload successful!");
+      addLog("🎉 Upload complete!", "success");
 
       setTimeout(() => {
         onUploaded();
       }, 1500);
 
     } catch (error: any) {
-      setErrorMessage(`❌ ${error.message || "Upload failed"}`);
+      const msg = `❌ ${error.message || "Upload failed"}`;
+      setErrorMessage(msg);
+      addLog(msg, "error");
       setUploadProgress(0);
     } finally {
       setUploading(false);
@@ -388,10 +634,13 @@ const UploadModal = ({ subject, onClose, onUploaded }: UploadModalProps) => {
           </h3>
           <button
             type="button"
-            onClick={onClose}
+            onClick={() => {
+              addLog("❌ Upload modal closed by user", "warning");              onClose();
+            }}
             disabled={uploading}
             style={{
-              background: "none",              border: "none",
+              background: "none",
+              border: "none",
               cursor: uploading ? "not-allowed" : "pointer",
               color: B.muted,
               fontSize: 24,
@@ -435,19 +684,24 @@ const UploadModal = ({ subject, onClose, onUploaded }: UploadModalProps) => {
         {successMessage && (
           <div style={{
             background: B.greenXL,
-            border: `1px solid ${B.greenL}`,
-            borderRadius: 12,
+            border: `1px solid ${B.greenL}`,            borderRadius: 12,
             padding: 12,
             marginBottom: 20,
             color: B.green,
-            fontSize: 13,            fontWeight: 600,
+            fontSize: 13,
+            fontWeight: 600,
           }}>
             {successMessage}
           </div>
         )}
 
         <div
-          onClick={() => !uploading && fileInputRef.current?.click()}
+          onClick={() => {
+            addLog("🖱️ File selection area clicked", "info");
+            if (!uploading && fileInputRef.current) {
+              fileInputRef.current.click();
+            }
+          }}
           style={{
             border: `2px dashed ${file ? B.green : B.border}`,
             borderRadius: 16,
@@ -464,6 +718,10 @@ const UploadModal = ({ subject, onClose, onUploaded }: UploadModalProps) => {
             style={{ display: "none" }}
             onChange={handleFileSelect}
             disabled={uploading}
+            onClick={(e) => {
+              e.stopPropagation();
+              addLog("🖱️ Native file picker opened", "info");
+            }}
             accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,image/*,video/*,audio/*"
           />
           <div style={{ fontSize: 40, marginBottom: 10 }}>
@@ -475,8 +733,7 @@ const UploadModal = ({ subject, onClose, onUploaded }: UploadModalProps) => {
           <p style={{ fontSize: 11, color: B.muted, margin: 0 }}>
             {file ? file.name : "PDF, Images, Video, Audio, Documents"}
           </p>
-          {file && (
-            <p style={{ fontSize: 11, color: B.green, marginTop: 8, fontWeight: 600 }}>
+          {file && (            <p style={{ fontSize: 11, color: B.green, marginTop: 8, fontWeight: 600 }}>
               {fmtSize(file.size)}
             </p>
           )}
@@ -485,11 +742,12 @@ const UploadModal = ({ subject, onClose, onUploaded }: UploadModalProps) => {
         {uploading && (
           <div style={{ marginBottom: 20 }}>
             <div style={{
-              height: 8,
+              height: 10,
               background: B.bg,
-              borderRadius: 4,
+              borderRadius: 5,
               overflow: "hidden",
-              marginBottom: 8,            }}>
+              marginBottom: 8,
+            }}>
               <div style={{
                 width: `${uploadProgress}%`,
                 height: "100%",
@@ -497,7 +755,7 @@ const UploadModal = ({ subject, onClose, onUploaded }: UploadModalProps) => {
                 transition: "width .3s",
               }} />
             </div>
-            <p style={{ fontSize: 12, color: B.sub, textAlign: "center" }}>
+            <p style={{ fontSize: 12, color: B.sub, textAlign: "center", fontWeight: 600 }}>
               Uploading... {uploadProgress}%
             </p>
           </div>
@@ -506,7 +764,10 @@ const UploadModal = ({ subject, onClose, onUploaded }: UploadModalProps) => {
         <div style={{ display: "flex", gap: 12 }}>
           <button
             type="button"
-            onClick={onClose}
+            onClick={() => {
+              addLog("❌ Cancel clicked", "warning");
+              onClose();
+            }}
             disabled={uploading}
             style={{
               flex: 1,
@@ -521,8 +782,7 @@ const UploadModal = ({ subject, onClose, onUploaded }: UploadModalProps) => {
             }}
           >
             Cancel
-          </button>
-          <button
+          </button>          <button
             type="button"
             onClick={handleUpload}
             disabled={!file || uploading}
@@ -538,7 +798,8 @@ const UploadModal = ({ subject, onClose, onUploaded }: UploadModalProps) => {
               cursor: !file || uploading ? "not-allowed" : "pointer",
             }}
           >
-            {uploading ? "⏳ Uploading..." : `📤 Upload`}          </button>
+            {uploading ? "⏳ Uploading..." : `📤 Upload`}
+          </button>
         </div>
       </div>
     </div>
@@ -570,8 +831,7 @@ const MaterialCard = memo(({ material, onDelete }: {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          fontSize: 20,
-          flexShrink: 0,
+          fontSize: 20,          flexShrink: 0,
         }}>
           {T.emoji}
         </div>
@@ -587,7 +847,8 @@ const MaterialCard = memo(({ material, onDelete }: {
           onClick={() => onDelete(material)}
           style={{
             background: "none",
-            border: "none",            color: B.red,
+            border: "none",
+            color: B.red,
             cursor: "pointer",
             fontSize: 20,
             padding: "4px 8px",
@@ -610,33 +871,74 @@ export default function MaterialManagerPro() {
 
   const [selectedSubject, setSelectedSubject] = useState<SubjectRow | null>(null);
   const [showUpload, setShowUpload] = useState(false);
+  const [showDebug, setShowDebug] = useState(true);
+  const [debugLogs, setDebugLogs] = useState<DebugLog[]>([]);
+  const logIdCounter = useRef(0);
+
+  const addLog = useCallback((message: string, type: DebugLog['type'] = 'info') => {
+    const time = new Date().toLocaleTimeString();
+    const newLog: DebugLog = {
+      id: logIdCounter.current++,
+      time,
+      message,      type,
+    };
+    setDebugLogs(prev => [...prev, newLog]);
+    console.log(`[${type.toUpperCase()}] ${message}`);
+  }, []);
+
+  const clearLogs = useCallback(() => {
+    setDebugLogs([]);
+    addLog("️ Debug logs cleared", "info");
+  }, [addLog]);
+
+  useEffect(() => {
+    addLog("🚀 MaterialManagerPro mounted", "info");
+    addLog(`👤 User: ${user?.email || "NOT LOGGED IN"}`, user ? "success" : "error");
+  }, [user]);
+
+  useEffect(() => {
+    if (user) {
+      addLog(`✅ User authenticated: ${user.email}`, "success");
+    } else if (!authLoading) {
+      addLog(`⚠️ User not authenticated`, "warning");
+    }
+  }, [user, authLoading]);
 
   const {  materials = [], isLoading: materialsLoading, error: materialsError } = useQuery<MaterialRow[]>({
     queryKey: ["mmp-materials", selectedSubject?.id],
     enabled: !!selectedSubject,
     queryFn: async () => {
+      addLog(`📡 Fetching materials for: ${selectedSubject?.title}`, "query");
       const { data, error } = await supabase
         .from("subject_materials")
         .select("*")
         .eq("subject_id", selectedSubject!.id)
         .order("created_at", { ascending: false });
-      if (error) throw error;
+      if (error) {
+        addLog(`❌ Materials error: ${error.message}`, "error");
+        throw error;
+      }
+      addLog(`✅ Loaded ${data?.length || 0} materials`, "success");
       return (data ?? []) as MaterialRow[];
     },
   });
 
   const handleDelete = async (m: MaterialRow) => {
     if (!confirm(`Delete "${m.title}"?`)) return;
+    addLog(`🗑 Deleting: ${m.title}`, "warning");
     const { error } = await supabase.from("subject_materials").delete().eq("id", m.id);
     if (error) {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
-      return;
+      addLog(`❌ Delete error: ${error.message}`, "error");
+      toast({ title: "Error", description: error.message, variant: "destructive" });      return;
     }
+    addLog(`✅ Deleted: ${m.title}`, "success");
     toast({ title: "🗑 Deleted" });
     qc.invalidateQueries({ queryKey: ["mmp-materials", selectedSubject?.id] });
   };
 
-  const invalidateAll = useCallback(() => {    if (selectedSubject) {
+  const invalidateAll = useCallback(() => {
+    if (selectedSubject) {
+      addLog("🔄 Invalidating queries...", "info");
       qc.invalidateQueries({ queryKey: ["mmp-materials", selectedSubject.id] });
     }
   }, [qc, selectedSubject]);
@@ -647,7 +949,7 @@ export default function MaterialManagerPro() {
         minHeight: "100vh",
         background: B.bg,
         fontFamily: "system-ui, sans-serif",
-        paddingBottom: 40,
+        paddingBottom: showDebug ? 270 : 40,
       }}>
         {/* Header */}
         <div style={{
@@ -677,19 +979,24 @@ export default function MaterialManagerPro() {
             )}
           </div>
         </div>
-
         <div style={{ padding: "0 16px" }}>
           {!selectedSubject ? (
             <SubjectPicker 
               selected={selectedSubject} 
               onSelect={(s) => {
+                addLog(`✅ Subject selected: ${s.title}`, "success");
                 setSelectedSubject(s);
               }} 
-            />          ) : (
+              addLog={addLog}
+            />
+          ) : (
             <>
               {/* Upload Button */}
               <button
-                onClick={() => setShowUpload(true)}
+                onClick={() => {
+                  addLog("📤 Upload button clicked", "info");
+                  setShowUpload(true);
+                }}
                 style={{
                   width: "100%",
                   padding: "16px 20px",
@@ -712,13 +1019,15 @@ export default function MaterialManagerPro() {
 
               {/* Change Subject Button */}
               <button
-                onClick={() => setSelectedSubject(null)}
+                onClick={() => {
+                  addLog("🔄 Changing subject", "info");
+                  setSelectedSubject(null);
+                }}
                 style={{
                   width: "100%",
                   padding: "12px 20px",
                   borderRadius: 12,
-                  border: `1.5px solid ${B.border}`,
-                  background: "#fff",
+                  border: `1.5px solid ${B.border}`,                  background: "#fff",
                   color: B.text,
                   fontWeight: 600,
                   fontSize: 14,
@@ -734,7 +1043,8 @@ export default function MaterialManagerPro() {
                 <div style={{
                   ...card,
                   padding: 20,
-                  background: B.redL,                  border: `1px solid ${B.red}`,
+                  background: B.redL,
+                  border: `1px solid ${B.red}`,
                   color: B.red,
                   marginBottom: 16,
                 }}>
@@ -767,18 +1077,30 @@ export default function MaterialManagerPro() {
           )}
         </div>
       </div>
-
       {/* Upload Modal */}
       {showUpload && selectedSubject && (
         <UploadModal
           subject={selectedSubject}
-          onClose={() => setShowUpload(false)}
+          onClose={() => {
+            addLog("❌ Upload modal closed", "warning");
+            setShowUpload(false);
+          }}
           onUploaded={() => {
+            addLog("✅ Upload completed", "success");
             setShowUpload(false);
             invalidateAll();
           }}
+          addLog={addLog}
         />
       )}
+
+      {/* Debug Panel */}
+      <DebugPanel
+        logs={debugLogs}
+        onClear={clearLogs}
+        showDebug={showDebug}
+        onToggle={() => setShowDebug(!showDebug)}
+      />
     </>
   );
 }
