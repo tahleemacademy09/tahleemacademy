@@ -1,13 +1,14 @@
 /**
- * SubjectMaterialsHub.tsx — FINAL PRODUCTION VERSION
+ * SubjectMaterialsHub.tsx — PRODUCTION-READY FIXED VERSION
  * 
- * 🔧 Fixes Applied:
- * • Supabase Storage: fd.append("file", file) — correct field name
- * • Auth Safety: Validate session before upload, fail gracefully
+ * 🔧 Critical Fixes Applied:
+ * • XHR Upload: Added missing "apikey" header for Supabase Storage
+ * • Auth Safety: Validate session + env vars before upload, fail gracefully
+ * • Error Handling: 401/403 errors show clear messages, NO unintended redirects
  * • Event Propagation: stopPropagation() on ALL interactive elements
- * • Error Handling: Catch errors WITHOUT triggering navigation
  * • Mobile UI: Touch-friendly, responsive layout, optimized spacing
  * • Accessibility: ARIA labels, focus states, reduced motion support
+ * • Debug Logging: Guarded by DEBUG flag, zero production overhead
  * 
  * 📱 Mobile Enhancements:
  * • Minimum 44px touch targets
@@ -29,11 +30,24 @@ const BUCKET = "subject-files";
 // ─── Debug mode — logs upload flow to console (disable in production) ─────────
 const DEBUG = false;
 
+// ─── Environment Variables — Safe Access with Validation ─────────────────────
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || SB_URL;
+
+// Warn on missing vars in development only
+if (import.meta.env.DEV) {
+  if (!SUPABASE_ANON_KEY) {
+    console.warn("⚠️ VITE_SUPABASE_ANON_KEY not set - uploads will fail with 401");
+  }
+  if (!SUPABASE_URL) {
+    console.warn("⚠️ VITE_SUPABASE_URL not set - using hardcoded fallback");
+  }
+}
+
 // ─── Brand palette ────────────────────────────────────────────────────────────
 const C = {
   green:  "#064E3B", green2: "#065F46", greenL: "#ECFDF5", greenM: "#D1FAE5",
-  gold: "#B8860B", red: "#DC2626", redL: "#FEF2F2", redB: "#FECACA",
-  gray: "#6B7280", grayL: "#F9FAFB", border: "#E5E7EB",
+  gold: "#B8860B", red: "#DC2626", redL: "#FEF2F2", redB: "#FECACA",  gray: "#6B7280", grayL: "#F9FAFB", border: "#E5E7EB",
   text: "#111827", muted: "#9CA3AF",
 };
 
@@ -47,7 +61,8 @@ const TYPES: Record<MatType, { color:string; light:string; border:string; emoji:
   Document: { color:"#D97706", light:"#FFFBEB", border:"#FDE68A", emoji:"📝" },
   Link: { color:"#6B7280", light:"#F9FAFB", border:"#D1D5DB", emoji:"🔗" },
   Text: { color:"#374151", light:"#F9FAFB", border:"#D1D5DB", emoji:"✏️" },
-};const ALL_TYPES = Object.keys(TYPES) as MatType[];
+};
+const ALL_TYPES = Object.keys(TYPES) as MatType[];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function autoDetect(file: File): MatType {
@@ -72,33 +87,147 @@ function ago(iso?: string|null) {
   if (s<86400) return `${Math.floor(s/3600)}h ago`; return `${Math.floor(s/86400)}d ago`;
 }
 
-// ─── FIXED XHR Upload — Supabase requires "file" field ────────────────────────
+// ─── Environment Validation Helper ──────────────────────────────────────────
+function validateEnvVars(): { valid: boolean; missing: string[] } {
+  const required = ['VITE_SUPABASE_ANON_KEY', 'VITE_SUPABASE_URL'];
+  const missing = required.filter(key => !import.meta.env[key]);
+  return { valid: missing.length === 0, missing };
+}
+
+// ─── FIXED XHR Upload — Supabase requires "file" field + apikey header ─────
 function xhrUpload(path: string, file: File, token: string, onPct: (n:number)=>void): Promise<void> {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve, reject) => {    // 🔐 Validate environment before proceeding
+    const env = validateEnvVars();
+    if (!env.valid) {
+      console.error("❌ Missing environment variables:", env.missing);
+      reject(new Error(`Configuration error: Missing ${env.missing.join(', ')}`));
+      return;
+    }
+
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", `${SB_URL}/storage/v1/object/${BUCKET}/${path}`);
+    const uploadUrl = `${SUPABASE_URL}/storage/v1/object/${BUCKET}/${path}`;
+    
+    if (DEBUG) {
+      console.log("🔍 Upload debug:", {
+        hasToken: !!token,
+        tokenLength: token?.length,
+        hasApikey: !!SUPABASE_ANON_KEY,
+        apikeyPrefix: SUPABASE_ANON_KEY?.slice(0, 10) + '...',
+        url: uploadUrl,
+        path,
+        fileName: file.name,
+        fileSize: file.size
+      });
+    }
+
+    xhr.open("POST", uploadUrl);
+    
+    // 🔧 FIX: Add BOTH required headers for Supabase Storage
     xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    xhr.setRequestHeader("apikey", SUPABASE_ANON_KEY); // ← CRITICAL FIX
     xhr.setRequestHeader("x-upsert", "false");
+    xhr.setRequestHeader("Content-Type", "multipart/form-data");
     
-    xhr.upload.onprogress = ev => { if (ev.lengthComputable) onPct(Math.round(ev.loaded/ev.total*88)); };
-    
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) { onPct(93); resolve(); }
-      else {
-        let msg = `HTTP ${xhr.status}`;
-        try { const j = JSON.parse(xhr.responseText); msg = j.error || j.message || msg; } catch {}
-        reject(new Error(msg));
+    xhr.upload.onprogress = ev => { 
+      if (ev.lengthComputable) {
+        const pct = Math.round(ev.loaded / ev.total * 88);
+        if (DEBUG && pct % 20 === 0) console.log(`📊 Upload progress: ${pct}%`);
+        onPct(pct); 
       }
     };
-    xhr.onerror = () => reject(new Error("Network error"));
-    xhr.onabort = () => reject(new Error("Aborted"));
     
-    // 🔧 FIX: Use "file" as field name (Supabase Storage requirement)
+    xhr.onload = () => {
+      if (DEBUG) {
+        console.log("📥 XHR response:", {
+          status: xhr.status,
+          statusText: xhr.statusText,
+          response: xhr.responseText?.slice(0, 200)
+        });
+      }
+
+      if (xhr.status >= 200 && xhr.status < 300) {         onPct(93); 
+        resolve(); 
+      }
+      else {
+        let msg = `HTTP ${xhr.status}`;
+        let errorCode = null;
+        
+        try { 
+          const j = JSON.parse(xhr.responseText); 
+          msg = j.error || j.message || msg;
+          errorCode = j.errorCode || j.code;
+        } catch (e) {
+          if (DEBUG) console.warn("⚠️ Could not parse error response:", xhr.responseText);
+        }
+
+        // 🔧 FIX: Distinguish 401 as config/auth issue, NOT session expiry
+        if (xhr.status === 401) {
+          const isApikeyIssue = !SUPABASE_ANON_KEY || 
+                               msg.toLowerCase().includes('apikey') ||
+                               msg.toLowerCase().includes('invalid api');
+          
+          if (isApikeyIssue) {
+            console.error("❌ Upload 401: API key configuration issue");
+            reject(new Error("Upload failed: Unauthorized. Check your Supabase API key configuration."));
+          } else {
+            console.error("❌ Upload 401: Token/auth issue (not redirecting)");
+            reject(new Error("Upload failed: Authentication expired. Please refresh the page."));
+          }
+        }
+        // Handle 403 as bucket permission issue
+        else if (xhr.status === 403) {
+          console.error("❌ Upload 403: Bucket permission issue");
+          reject(new Error("Upload failed: Permission denied. Contact administrator."));
+        }
+        // Handle 400/409 as client errors (duplicate, invalid path, etc.)
+        else if (xhr.status === 400 || xhr.status === 409) {
+          console.warn("⚠️ Upload client error:", msg);
+          reject(new Error(`Upload failed: ${msg}`));
+        }
+        else {
+          console.error(`❌ Upload failed with status ${xhr.status}:`, msg);
+          reject(new Error(msg));
+        }
+      }
+    };
+    
+    xhr.onerror = () => {
+      console.error("❌ XHR network error");
+      reject(new Error("Network error: Please check your connection and try again."));
+    };    
+    xhr.onabort = () => {
+      if (DEBUG) console.log("⚠️ Upload aborted by user");
+      reject(new Error("Upload cancelled"));
+    };
+    
+    // ✅ Correct field name for Supabase Storage
     const fd = new FormData();
     fd.append("file", file, file.name);
-    xhr.send(fd);    
-    if (DEBUG) console.log("📤 XHR upload started:", { path, size: file.size });
+    
+    if (DEBUG) console.log("📤 XHR upload started:", { path, size: file.size, type: file.type });
+    xhr.send(fd);
   });
+}
+
+// ─── Bucket Access Check Helper (for diagnostics) ───────────────────────────
+async function verifyBucketAccess(bucket: string, token: string): Promise<{ ok: boolean; issues: string[] }> {
+  const issues: string[] = [];
+  
+  try {
+    // Test list policy by attempting a metadata request
+    const { error: policyError } = await supabase
+      .storage
+      .from(bucket)
+      .list('', { limit: 1 });
+      
+    if (policyError) {
+      issues.push(`Bucket list failed: ${policyError.message}`);
+    }
+  } catch (e: any) {
+    issues.push(`Access check error: ${e.message}`);
+  }
+  
+  return { ok: issues.length === 0, issues };
 }
 
 // ─── Mobile-optimized styles ──────────────────────────────────────────────────
@@ -114,8 +243,7 @@ const inputSt: React.CSSProperties = {
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
-// UPLOAD PANEL — Fixed storage + auth + mobile UI
-// ═════════════════════════════════════════════════════════════════════════════
+// UPLOAD PANEL — Fixed storage + auth + mobile UI + no unintended redirects// ═════════════════════════════════════════════════════════════════════════════
 function UploadPanel({ subjectId, count, onDone }: { subjectId:string; count:number; onDone:()=>void }) {
   const { user, session } = useAuth();
   const [title, setTitle] = useState(""); const [type, setType] = useState<MatType>("PDF");
@@ -129,7 +257,16 @@ function UploadPanel({ subjectId, count, onDone }: { subjectId:string; count:num
   const needFile = type !== "Link" && type !== "Text";
   const T = TYPES[type];
 
-  useEffect(() => { if (DEBUG && user) console.log("🔐 Auth state:", { id: user.id, hasSession: !!session }); }, [user, session]);
+  useEffect(() => { 
+    if (DEBUG && user) console.log("🔐 Auth state:", { id: user.id, hasSession: !!session });
+    
+    // Optional: Verify bucket access on mount for diagnostics
+    if (DEBUG && session?.access_token) {
+      verifyBucketAccess(BUCKET, session.access_token).then(({ ok, issues }) => {
+        if (!ok) console.warn("⚠️ Bucket access warnings:", issues);
+      });
+    }
+  }, [user, session]);
 
   const pickFile = useCallback((f: File) => {
     setFile(f); setType(autoDetect(f)); setTitle(prev => prev || f.name.replace(/\.[^/.]+$/, ""));
@@ -145,12 +282,19 @@ function UploadPanel({ subjectId, count, onDone }: { subjectId:string; count:num
   const onDL = (e: React.DragEvent) => { e.preventDefault(); dragCnt.current--; if (dragCnt.current <= 0) { dragCnt.current = 0; setDrag(false); } };
   const onDrop = (e: React.DragEvent) => { e.preventDefault(); dragCnt.current = 0; setDrag(false); const f = e.dataTransfer.files?.[0]; if (f) pickFile(f); };
 
-  const submit = async () => {    setErr("");
+  const submit = async () => {    
+    setErr("");
     
     // 🔐 Auth check BEFORE upload — fail gracefully, don't redirect
     if (!user || !session?.access_token) {
       setErr("Please sign in to upload");
       toast({ title: "⚠️ Sign in required", variant: "destructive" });
+      return;
+    }
+    
+    // 🔐 Env var check    if (!SUPABASE_ANON_KEY) {
+      setErr("Configuration error: Missing API key");
+      toast({ title: "⚠️ Config error", description: "Contact support", variant: "destructive" });
       return;
     }
     
@@ -175,9 +319,35 @@ function UploadPanel({ subjectId, count, onDone }: { subjectId:string; count:num
         } catch (xhrErr: any) {
           if (DEBUG) console.warn("⚠️ XHR failed, falling back to supabase.storage.upload:", xhrErr.message);
           setPct(45);
-          const { error } = await supabase.storage.from(BUCKET).upload(path, file, { cacheControl: "3600", upsert: false });
-          if (error) throw new Error(error.message);
+          
+          // 🔧 FIX: Validate session before fallback attempt
+          if (!session?.access_token) {
+            throw new Error("Authentication required for upload");
+          }
+          
+          const { data, error } = await supabase.storage
+            .from(BUCKET)
+            .upload(path, file, { 
+              cacheControl: "3600", 
+              upsert: false,
+              contentType: file.type || "application/octet-stream"
+            });
+            
+          if (error) {
+            if (DEBUG) console.error("❌ Fallback upload error:", error);
+            
+            // 🔧 FIX: Map Supabase error codes to user-friendly messages
+            if (error.statusCode === "401") {
+              throw new Error("Upload failed: Unauthorized. Check API key configuration.");
+            } else if (error.statusCode === "403") {
+              throw new Error("Upload failed: Bucket permission denied.");
+            } else if (error.statusCode === "413") {              throw new Error("File too large. Please upload a smaller file.");
+            } else {
+              throw new Error(error.message || "Upload failed");
+            }
+          }
           setPct(90);
+          if (DEBUG) console.log("✅ Fallback upload succeeded:", data);
         }
         fileUrl = path; fileType = file.type; fileSize = file.size;
       }
@@ -202,11 +372,36 @@ function UploadPanel({ subjectId, count, onDone }: { subjectId:string; count:num
       console.error("❌ Upload failed:", e);
       if (DEBUG) console.trace("Upload error stack");
       
-      setPhase("err"); setPct(0);
-      const msg = e.message?.includes("JWT") ? "Session expired — please refresh" : (e.message || "Upload failed");
-      setErr(msg);
-      toast({ title: "Upload failed", description: msg, variant: "destructive" });
-      // ❌ DO NOT navigate — let user stay and retry
+      setPhase("err"); 
+      setPct(0);
+      
+      // 🔧 FIX: Classify errors without triggering navigation
+      let userMsg = "Upload failed";
+      
+      if (e.message?.includes("API key") || e.message?.includes("Configuration error")) {
+        userMsg = "Configuration error: Please contact support.";
+      } else if (e.message?.includes("Authentication expired")) {
+        userMsg = "Session expired. Please refresh and try again.";
+        // ⚠️ Do NOT auto-redirect - let user decide
+      } else if (e.message?.includes("Permission denied")) {
+        userMsg = "Permission error: This file type or size may not be allowed.";
+      } else if (e.message?.includes("Network error")) {
+        userMsg = "Connection error: Please check your internet and retry.";
+      } else if (e.message?.includes("File too large")) {
+        userMsg = "File too large. Please upload a smaller file.";
+      } else {
+        userMsg = e.message || "An unexpected error occurred";      }
+      
+      setErr(userMsg);
+      toast({ 
+        title: "⚠️ Upload failed", 
+        description: userMsg, 
+        variant: "destructive",
+        duration: 5000 // Longer for error visibility
+      });
+      
+      // ❌ CRITICAL: Do NOT call navigate() or trigger auth logout here
+      // Let the user stay on page and retry
     }
   };
 
@@ -244,8 +439,7 @@ function UploadPanel({ subjectId, count, onDone }: { subjectId:string; count:num
         </div>
       </div>
       {needFile && (
-        <div>
-          <label style={labelSt}>File</label>
+        <div>          <label style={labelSt}>File</label>
           <input ref={fileRef} type="file" accept="*/*" style={{ display:"none" }}
             onClick={(e) => e.stopPropagation()}
             onChange={(e) => { e.stopPropagation(); const f = e.target.files?.[0]; if (f) pickFile(f); }} aria-label="Select file to upload" />
@@ -294,8 +488,7 @@ function UploadPanel({ subjectId, count, onDone }: { subjectId:string; count:num
       )}
       <div onClick={(e) => { e.stopPropagation(); if (!busy) setDl(v => !v); }} role="switch" aria-checked={dl} tabIndex={0} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"clamp(10px, 2.5vw, 13px) clamp(12px, 3vw, 16px)", borderRadius:13, cursor: busy ? "not-allowed" : "pointer", background: dl ? C.greenL : C.grayL, border:`1.5px solid ${dl ? "#86EFAC" : C.border}`, transition:"all .2s", opacity: busy ? .6 : 1, minHeight:44 }}>
         <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-          <div style={{ width:36, height:36, borderRadius:10, fontSize:18, background: dl ? C.greenM : "#E9E9E9", display:"flex", alignItems:"center", justifyContent:"center" }} aria-hidden="true">{dl ? "⬇️" : "👁️"}</div>
-          <div><p style={{ fontWeight:700, fontSize:"clamp(12px, 3vw, 13px)", color:C.text, margin:0 }}>{dl ? "Download allowed" : "View only"}</p><p style={{ fontSize:"clamp(10px, 2.8vw, 11px)", color:C.muted, margin:"2px 0 0" }}>{dl ? "Students can save" : "View only"}</p></div>
+          <div style={{ width:36, height:36, borderRadius:10, fontSize:18, background: dl ? C.greenM : "#E9E9E9", display:"flex", alignItems:"center", justifyContent:"center" }} aria-hidden="true">{dl ? "⬇️" : "👁️"}</div>          <div><p style={{ fontWeight:700, fontSize:"clamp(12px, 3vw, 13px)", color:C.text, margin:0 }}>{dl ? "Download allowed" : "View only"}</p><p style={{ fontSize:"clamp(10px, 2.8vw, 11px)", color:C.muted, margin:"2px 0 0" }}>{dl ? "Students can save" : "View only"}</p></div>
         </div>
         <div style={{ width:44, height:24, borderRadius:99, flexShrink:0, background: dl ? C.green : "#CBD5E1", position:"relative", transition:"background .2s" }}><div style={{ width:18, height:18, borderRadius:99, background:"#fff", position:"absolute", top:3, left: dl ? 23 : 3, transition:"left .2s", boxShadow:"0 1px 4px rgba(0,0,0,.25)" }} /></div>
       </div>
@@ -344,8 +537,7 @@ function MatCard({ mat, idx, onEdit, onDelete }: { mat:any; idx:number; onEdit:(
     <article className="smh-card" style={{      background:"#fff", borderRadius:16, border:`1.5px solid ${T.border}`, overflow:"hidden",
       animation:`smh-slidein .3s ease both`, animationDelay:`${idx * 55}ms`, position:"relative"
     }}>
-      <div style={{ height:3, background:T.color }} aria-hidden="true" />
-      {mat.material_type === "Image" && imgSrc && (
+      <div style={{ height:3, background:T.color }} aria-hidden="true" />      {mat.material_type === "Image" && imgSrc && (
         <div style={{ height:"clamp(90px, 25vw, 110px)", overflow:"hidden", background:T.light }}>
           <img src={imgSrc} alt={mat.title} style={{ width:"100%", height:"100%", objectFit:"cover", display:"block" }} onError={() => setImgSrc(null)} />
         </div>
@@ -390,10 +582,10 @@ function MItem({ emoji, color, onClick, children }: { emoji:string; color:string
 // ═════════════════════════════════════════════════════════════════════════════
 // EDIT MODAL — mobile-safe overlay
 // ═════════════════════════════════════════════════════════════════════════════
-function EditModal({ mat, onClose, onSaved }: { mat:any; onClose:()=>void; onSaved:()=>void }) {  const [title, setTitle] = useState(mat.title ?? "");
+function EditModal({ mat, onClose, onSaved }: { mat:any; onClose:()=>void; onSaved:()=>void }) {
+  const [title, setTitle] = useState(mat.title ?? "");
   const [dl, setDl] = useState(mat.is_downloadable ?? true);
   const [busy, setBusy] = useState(false);
-
   const save = async () => {
     if (!title.trim()) return;
     setBusy(true);
@@ -439,14 +631,18 @@ function Chip({ active, color, onClick, children }: { active:boolean; color:stri
 // MAIN EXPORT — mobile-responsive layout
 // ═════════════════════════════════════════════════════════════════════════════
 export default function SubjectMaterialsHub({ subjectId, subjectTitle }: { subjectId: string; subjectTitle?: string }) {
-  const qc = useQueryClient();  const [search, setSearch] = useState(""); const [filter, setFilter] = useState<MatType|"All">("All");
-  const [editMat, setEditMat] = useState<any>(null); const [showUp, setShowUp] = useState(true);
-
-  const {  mats = [], isLoading } = useQuery({
-    queryKey: ["smh", subjectId], enabled: !!subjectId,
+  const qc = useQueryClient();
+  const [search, setSearch] = useState(""); 
+  const [filter, setFilter] = useState<MatType|"All">("All");
+  const [editMat, setEditMat] = useState<any>(null); 
+  const [showUp, setShowUp] = useState(true);
+  const { data: mats = [], isLoading } = useQuery({
+    queryKey: ["smh", subjectId], 
+    enabled: !!subjectId,
     queryFn: async () => {
       const { data, error } = await supabase.from("subject_materials").select("*").eq("subject_id", subjectId).order("sort_order").order("created_at", { ascending: false });
-      if (error) throw error; return data ?? [];
+      if (error) throw error; 
+      return data ?? [];
     },
   });
 
@@ -462,11 +658,24 @@ export default function SubjectMaterialsHub({ subjectId, subjectTitle }: { subje
     if (mat.file_url && !mat.file_url.startsWith("http") && !safeUrls.includes(mat.file_url))
       await supabase.storage.from(BUCKET).remove([mat.file_url]);
     await supabase.from("subject_materials").delete().eq("id", mat.id);
-    toast({ title: "🗑 Deleted" }); invalidate();
+    toast({ title: "🗑 Deleted" }); 
+    invalidate();
   }, [invalidate]);
 
-  const filtered = useMemo(() => mats.filter((m: any) => (filter === "All" || m.material_type === filter) && (!search || m.title.toLowerCase().includes(search.toLowerCase()))), [mats, filter, search]);
-  const counts = useMemo(() => { const c: Record<string,number> = {}; mats.forEach((m: any) => { c[m.material_type] = (c[m.material_type] ?? 0) + 1; }); return c; }, [mats]);
+  const filtered = useMemo(() => 
+    mats.filter((m: any) => 
+      (filter === "All" || m.material_type === filter) && 
+      (!search || m.title.toLowerCase().includes(search.toLowerCase()))
+    ), 
+  [mats, filter, search]);
+  
+  const counts = useMemo(() => { 
+    const c: Record<string,number> = {}; 
+    mats.forEach((m: any) => { 
+      c[m.material_type] = (c[m.material_type] ?? 0) + 1; 
+    }); 
+    return c; 
+  }, [mats]);
 
   return (
     <>
@@ -475,8 +684,7 @@ export default function SubjectMaterialsHub({ subjectId, subjectTitle }: { subje
         @keyframes smh-pop{from{opacity:0;transform:scale(.93)}to{opacity:1;transform:scale(1)}}
         @keyframes smh-slidein{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:translateY(0)}}
         @keyframes smh-spin{to{transform:rotate(360deg)}}
-        @keyframes smh-pulse{0%,100%{opacity:1}50%{opacity:.38}}
-        .smh-card{transition:transform .18s ease,box-shadow .18s ease;}
+        @keyframes smh-pulse{0%,100%{opacity:1}50%{opacity:.38}}        .smh-card{transition:transform .18s ease,box-shadow .18s ease;}
         .smh-card:hover{transform:translateY(-3px);box-shadow:0 10px 30px rgba(0,0,0,.1)!important;}
         @media (prefers-reduced-motion: reduce) {
           * { animation: none !important; transition: none !important; }
@@ -488,7 +696,8 @@ export default function SubjectMaterialsHub({ subjectId, subjectTitle }: { subje
 
       {/* Header — mobile optimized */}
       <header style={{ background:`linear-gradient(135deg,${C.green},${C.green2})`, borderRadius:"clamp(16px, 4vw, 20px)", padding:"clamp(16px, 4vw, 20px) clamp(18px, 4.5vw, 24px)", marginBottom:"clamp(16px, 4vw, 20px)", display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:12 }} onClick={(e) => e.stopPropagation()}>
-        <div style={{ display:"flex", alignItems:"center", gap:"clamp(10px, 2.5vw, 14px)" }} onClick={(e) => e.stopPropagation()}>          <div style={{ width:"clamp(40px, 10vw, 48px)", height:"clamp(40px, 10vw, 48px)", borderRadius:"clamp(12px, 3vw, 16px)", fontSize:"clamp(20px, 5.5vw, 26px)", background:"rgba(255,255,255,.15)", display:"flex", alignItems:"center", justifyContent:"center" }} aria-hidden="true">📚</div>
+        <div style={{ display:"flex", alignItems:"center", gap:"clamp(10px, 2.5vw, 14px)" }} onClick={(e) => e.stopPropagation()}>
+          <div style={{ width:"clamp(40px, 10vw, 48px)", height:"clamp(40px, 10vw, 48px)", borderRadius:"clamp(12px, 3vw, 16px)", fontSize:"clamp(20px, 5.5vw, 26px)", background:"rgba(255,255,255,.15)", display:"flex", alignItems:"center", justifyContent:"center" }} aria-hidden="true">📚</div>
           <div>
             <h2 style={{ color:"#fff", fontWeight:900, fontSize:"clamp(16px, 4.5vw, 18px)", margin:0 }}>Materials</h2>
             <p style={{ color:"rgba(255,255,255,.65)", fontSize:"clamp(11px, 3vw, 12px)", margin:"3px 0 0" }}>{subjectTitle ? `${subjectTitle} · ` : ""}{mats.length} item{mats.length !== 1 ? "s" : ""}</p>
@@ -525,7 +734,6 @@ export default function SubjectMaterialsHub({ subjectId, subjectTitle }: { subje
             <UploadPanel subjectId={subjectId} count={mats.length} onDone={invalidate} />
           </section>
         )}
-
         <section style={{ display:"flex", flexDirection:"column", gap:"clamp(12px, 3vw, 14px)" }} onClick={(e) => e.stopPropagation()}>
           {/* Search + filters */}
           <div style={{ background:"#fff", borderRadius:14, padding:"clamp(10px, 2.5vw, 13px) clamp(12px, 3vw, 14px)", border:`1.5px solid ${C.border}`, boxShadow:"0 2px 10px rgba(0,0,0,.04)", display:"flex", flexDirection:"column", gap:8 }} onClick={(e) => e.stopPropagation()}>
@@ -537,7 +745,8 @@ export default function SubjectMaterialsHub({ subjectId, subjectTitle }: { subje
               <Chip active={filter==="All"} color={C.green} onClick={(e) => { e?.stopPropagation(); setFilter("All"); }}>All ({mats.length})</Chip>
               {(Object.keys(counts) as MatType[]).map(t => (
                 <Chip key={t} active={filter===t} color={TYPES[t].color} onClick={(e) => { e?.stopPropagation(); setFilter(filter===t ? "All" : t); }}>{TYPES[t].emoji} {t} ({counts[t]})</Chip>
-              ))}            </div>
+              ))}
+            </div>
           </div>
 
           {/* Cards grid */}
