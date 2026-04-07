@@ -1,625 +1,497 @@
 /*
-  SubjectMaterials.tsx — Enhanced upload dialog + material list
-  Supports: PDF · Video · Audio · Image · Document · Link · Text
-  Fixed: ref-based file input (no label/Dialog conflict), full column set,
-         URL mode, allow-download toggle, upload progress, proper error display.
+  SubjectMaterials.tsx
+  - NO Radix Dialog: uses a plain fixed overlay so Android file picker
+    never triggers Radix focus-management and closes the sheet.
+  - Full payload: subject_id, title, material_type, file_url, content,
+    is_downloadable, sort_order, uploaded_by, file_type, file_size.
+  - Clear inline validation + error display before any DB call.
 */
 import { useState, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { toast } from "@/hooks/use-toast";
 import MaterialsViewer from "@/components/classroom/MaterialsViewer";
 import {
   Upload, Loader2, X, FileText, Video, Music,
-  Image as ImageIcon, Link as LinkIcon, File, AlignLeft,
-  Download, ToggleLeft, ToggleRight, Plus, AlertCircle,
+  Image as Img, Link as LinkIcon, AlignLeft, File,
+  Download, Plus, AlertCircle, Check,
 } from "lucide-react";
 
-/* ── Constants ─────────────────────────────────────── */
+/* ─── palette ──────────────────────────────────────── */
 const G  = "#064E3B";
 const GM = "#065F46";
 
-type MatType = "PDF" | "Video" | "Audio" | "Image" | "Document" | "Link" | "Text";
+/* ─── types ─────────────────────────────────────────── */
+type MatType = "PDF"|"Video"|"Audio"|"Image"|"Document"|"Link"|"Text";
 
-const TYPE_CONFIG: Record<MatType, {
-  icon: any; bg: string; border: string; color: string; accept: string; label: string; labelAr: string;
-}> = {
-  PDF:      { icon: FileText,   bg: "#FEF2F2", border: "#FECACA", color: "#DC2626", accept: ".pdf",                                           label: "PDF",      labelAr: "PDF"      },
-  Video:    { icon: Video,      bg: "#F0FDF4", border: "#BBF7D0", color: "#16A34A", accept: "video/*,.mp4,.webm,.mov",                        label: "Video",    labelAr: "فيديو"    },
-  Audio:    { icon: Music,      bg: "#FDF4FF", border: "#E9D5FF", color: "#9333EA", accept: "audio/*,.mp3,.wav,.m4a,.aac",                    label: "Audio",    labelAr: "صوت"      },
-  Image:    { icon: ImageIcon,  bg: "#EFF6FF", border: "#BFDBFE", color: "#2563EB", accept: "image/*",                                        label: "Image",    labelAr: "صورة"     },
-  Document: { icon: File,       bg: "#FFFBEB", border: "#FDE68A", color: "#D97706", accept: ".doc,.docx,.xls,.xlsx,.ppt,.pptx,.odt,.ods,.odp", label: "Document", labelAr: "مستند"    },
-  Link:     { icon: LinkIcon,   bg: "#F0FDFA", border: "#99F6E4", color: "#0D9488", accept: "",                                                label: "Link",     labelAr: "رابط"     },
-  Text:     { icon: AlignLeft,  bg: "#F9FAFB", border: "#E5E7EB", color: "#374151", accept: ".txt,.md",                                        label: "Text",     labelAr: "نص"       },
+const TC: Record<MatType,{icon:any;bg:string;border:string;clr:string;accept:string;en:string;ar:string}> = {
+  PDF:      {icon:FileText, bg:"#FEF2F2",border:"#FECACA",clr:"#DC2626",accept:".pdf",              en:"PDF",      ar:"PDF"},
+  Video:    {icon:Video,    bg:"#F0FDF4",border:"#BBF7D0",clr:"#16A34A",accept:"video/*,.mp4,.webm", en:"Video",    ar:"فيديو"},
+  Audio:    {icon:Music,    bg:"#FDF4FF",border:"#E9D5FF",clr:"#9333EA",accept:"audio/*,.mp3,.wav",  en:"Audio",    ar:"صوت"},
+  Image:    {icon:Img,      bg:"#EFF6FF",border:"#BFDBFE",clr:"#2563EB",accept:"image/*",            en:"Image",    ar:"صورة"},
+  Document: {icon:File,     bg:"#FFFBEB",border:"#FDE68A",clr:"#D97706",accept:".doc,.docx,.xls,.xlsx,.ppt,.pptx", en:"Document", ar:"مستند"},
+  Link:     {icon:LinkIcon, bg:"#F0FDFA",border:"#99F6E4",clr:"#0D9488",accept:"",                  en:"Link",     ar:"رابط"},
+  Text:     {icon:AlignLeft,bg:"#F9FAFB",border:"#E5E7EB",clr:"#374151",accept:"",                  en:"Text",     ar:"نص"},
 };
+const TYPES = Object.keys(TC) as MatType[];
 
-const ALL_TYPES = Object.keys(TYPE_CONFIG) as MatType[];
+/* ─── helpers ────────────────────────────────────────── */
+const fmt = (b:number) => b<1048576?`${(b/1024).toFixed(0)} KB`:`${(b/1048576).toFixed(1)} MB`;
 
-/* ── Helpers ────────────────────────────────────────── */
-const fmtSize = (b: number) =>
-  b < 1048576 ? `${(b / 1024).toFixed(0)} KB` : `${(b / 1048576).toFixed(1)} MB`;
-
-function detectType(f: File): MatType {
-  const t = f.type.toLowerCase();
-  const e = f.name.split(".").pop()?.toLowerCase() || "";
-  if (t.includes("pdf") || e === "pdf")                                          return "PDF";
-  if (t.includes("video") || ["mp4","webm","mov","m4v"].includes(e))             return "Video";
-  if (t.includes("audio") || ["mp3","wav","m4a","aac","ogg"].includes(e))        return "Audio";
-  if (t.includes("image") || ["jpg","jpeg","png","gif","webp","svg"].includes(e)) return "Image";
-  if (["doc","docx","xls","xlsx","ppt","pptx"].includes(e))                      return "Document";
+function autoType(f:File): MatType {
+  const t=f.type.toLowerCase(), e=f.name.split(".").pop()?.toLowerCase()||"";
+  if(t.includes("pdf")||e==="pdf")                                            return "PDF";
+  if(t.includes("video")||["mp4","webm","mov","m4v"].includes(e))             return "Video";
+  if(t.includes("audio")||["mp3","wav","m4a","aac","ogg"].includes(e))        return "Audio";
+  if(t.includes("image")||["jpg","jpeg","png","gif","webp","svg"].includes(e))return "Image";
+  if(["doc","docx","xls","xlsx","ppt","pptx"].includes(e))                    return "Document";
   return "PDF";
 }
 
-/* ══════════════════════════════════════════════════════
-   MAIN COMPONENT
-══════════════════════════════════════════════════════ */
-const SubjectMaterials = ({ subjectId }: { subjectId: string }) => {
-  const { t } = useLanguage();
-  const { user, hasRole } = useAuth();
-  const qc = useQueryClient();
-  const isPrivileged = hasRole("admin") || hasRole("teacher");
-  const fileInputRef = useRef<HTMLInputElement>(null);
+/* ══════════════════════════════════════════════════════════
+   COMPONENT
+══════════════════════════════════════════════════════════ */
+const SubjectMaterials = ({subjectId}:{subjectId:string}) => {
+  const {t}         = useLanguage();
+  const {user,hasRole} = useAuth();
+  const qc          = useQueryClient();
+  const isPriv      = hasRole("admin")||hasRole("teacher");
+  const fileRef     = useRef<HTMLInputElement>(null);
 
-  /* dialog state */
-  const [open,        setOpen]        = useState(false);
-  const [title,       setTitle]       = useState("");
-  const [matType,     setMatType]     = useState<MatType>("PDF");
-  const [file,        setFile]        = useState<File | null>(null);
-  const [url,         setUrl]         = useState("");
-  const [textContent, setTextContent] = useState("");
-  const [allowDl,     setAllowDl]     = useState(true);
-  const [dragOver,    setDragOver]    = useState(false);
-  const [uploadPct,   setUploadPct]   = useState(0);
-  const [fieldErr,    setFieldErr]    = useState("");
+  /* ── form state ─────────────────────────────────── */
+  const [open,    setOpen]    = useState(false);
+  const [typ,     setTyp]     = useState<MatType>("PDF");
+  const [title,   setTitle]   = useState("");
+  const [file,    setFile]    = useState<File|null>(null);
+  const [url,     setUrl]     = useState("");
+  const [body,    setBody]    = useState("");
+  const [dl,      setDl]      = useState(true);
+  const [drag,    setDrag]    = useState(false);
+  const [pct,     setPct]     = useState(0);
+  const [err,     setErr]     = useState("");
 
-  const cfg       = TYPE_CONFIG[matType];
-  const Icon      = cfg.icon;
-  const needsFile = matType !== "Link" && matType !== "Text";
-  const needsUrl  = matType === "Link";
-  const needsText = matType === "Text";
+  const cfg      = TC[typ];
+  const Icon     = cfg.icon;
+  const needFile = typ!=="Link"&&typ!=="Text";
+  const needUrl  = typ==="Link";
+  const needText = typ==="Text";
 
-  /* ── queries ── */
-  const { data: materials = [], isLoading } = useQuery({
-    queryKey: ["materials", subjectId],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("subject_materials")
-        .select("*")
-        .eq("subject_id", subjectId)
-        .order("sort_order")
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      return data;
+  /* ── queries ─────────────────────────────────────── */
+  const {data:materials=[],isLoading} = useQuery({
+    queryKey:["materials",subjectId],
+    queryFn:async()=>{
+      const {data,error}=await supabase.from("subject_materials")
+        .select("*").eq("subject_id",subjectId)
+        .order("sort_order").order("created_at",{ascending:false});
+      if(error) throw error; return data;
+    },
+  });
+  const {data:sessions=[]} = useQuery({
+    queryKey:["sessions-light",subjectId],
+    queryFn:async()=>{
+      const {data}=await (supabase as any).from("class_sessions")
+        .select("id,session_number,topic").eq("subject_id",subjectId).order("session_number");
+      return data||[];
     },
   });
 
-  const { data: sessions = [] } = useQuery({
-    queryKey: ["sessions-light", subjectId],
-    queryFn: async () => {
-      const { data } = await (supabase as any)
-        .from("class_sessions")
-        .select("id, session_number, topic")
-        .eq("subject_id", subjectId)
-        .order("session_number");
-      return data || [];
-    },
-  });
-
-  /* ── upload mutation ── */
-  const uploadMutation = useMutation({
+  /* ── upload ─────────────────────────────────────── */
+  const mut = useMutation({
     mutationFn: async () => {
-      setFieldErr("");
-      if (!title.trim())                       throw new Error("Title is required.");
-      if (needsFile && !file && !url.trim())   throw new Error("Please select a file or paste a URL.");
-      if (needsUrl  && !url.trim())            throw new Error("Please enter a valid URL.");
-      if (needsText && !textContent.trim())    throw new Error("Text content cannot be empty.");
-      if (!user)                               throw new Error("You must be logged in.");
+      setErr("");
+      /* validate */
+      if (!title.trim())                      { setErr("Title is required.");                        throw new Error(""); }
+      if (!user)                              { setErr("You must be logged in.");                    throw new Error(""); }
+      if (needFile && !file && !url.trim())   { setErr("Please select a file or paste a URL.");     throw new Error(""); }
+      if (needUrl  && !url.trim())            { setErr("Please enter a URL.");                       throw new Error(""); }
+      if (needText && !body.trim())           { setErr("Content cannot be empty.");                  throw new Error(""); }
 
-      let fileUrl  = url.trim();
-      let fileType = "";
-      let fileSize = 0;
+      let fileUrl=url.trim(), fileType="", fileSize=0;
 
-      if (needsFile && file) {
-        const ext  = file.name.split(".").pop() || "bin";
+      if (needFile && file) {
+        const ext  = file.name.split(".").pop()||"bin";
         const path = `materials/${subjectId}/${crypto.randomUUID()}.${ext}`;
-        setUploadPct(15);
-
-        const { error: storageErr } = await supabase.storage
-          .from("subject-files")
-          .upload(path, file, { cacheControl: "3600", upsert: false });
-
-        if (storageErr) throw new Error(`Storage: ${storageErr.message}`);
-
-        setUploadPct(80);
-        fileUrl  = path;
-        fileType = file.type;
-        fileSize = file.size;
+        setPct(15);
+        const {error:storErr} = await supabase.storage
+          .from("subject-files").upload(path, file, {cacheControl:"3600",upsert:false});
+        if (storErr) throw new Error(`Storage: ${storErr.message}`);
+        setPct(80); fileUrl=path; fileType=file.type; fileSize=file.size;
       }
 
-      setUploadPct(90);
-      const { error: dbErr } = await supabase.from("subject_materials").insert({
-        subject_id:      subjectId,
-        title:           title.trim(),
-        material_type:   matType,
-        file_url:        fileUrl || null,
-        content:         needsText ? textContent.trim() : null,
-        is_downloadable: allowDl,
-        sort_order:      (materials as any[]).length,
-        uploaded_by:     user.id,
-        ...(fileType ? { file_type: fileType } : {}),
-        ...(fileSize ? { file_size: fileSize } : {}),
+      setPct(90);
+      const {error:dbErr} = await supabase.from("subject_materials").insert({
+        subject_id:    subjectId,
+        title:         title.trim(),
+        material_type: typ,
+        file_url:      fileUrl||null,
+        content:       needText ? body.trim() : null,
+        is_downloadable: dl,
+        sort_order:    (materials as any[]).length,
+        uploaded_by:   user.id,
+        ...(fileType ? {file_type:fileType} : {}),
+        ...(fileSize ? {file_size:fileSize} : {}),
       });
-
       if (dbErr) throw new Error(`Database: ${dbErr.message}`);
-      setUploadPct(100);
+      setPct(100);
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["materials", subjectId] });
-      qc.invalidateQueries({ queryKey: ["subject-materials-all", subjectId] });
-      closeDialog();
-      toast({ title: t("Material uploaded!", "تم رفع المادة بنجاح!") });
+      qc.invalidateQueries({queryKey:["materials",subjectId]});
+      qc.invalidateQueries({queryKey:["subject-materials-all",subjectId]});
+      close();
+      toast({title:t("Material uploaded!","تم رفع المادة بنجاح!")});
     },
-    onError: (e: any) => {
-      setUploadPct(0);
-      setFieldErr(e.message || "Upload failed. Please try again.");
+    onError: (e:any) => {
+      setPct(0);
+      if (e.message) setErr(e.message);
     },
   });
 
-  /* ── helpers ── */
-  const handleFilePicked = (f: File) => {
-    setFile(f);
-    setMatType(detectType(f));
-    if (!title) setTitle(f.name.replace(/\.[^/.]+$/, ""));
-    setFieldErr("");
+  /* ── helpers ─────────────────────────────────────── */
+  const pickFile = (f:File) => {
+    setFile(f); setTyp(autoType(f));
+    if(!title) setTitle(f.name.replace(/\.[^/.]+$/,""));
+    setErr("");
+  };
+  const close = () => {
+    setOpen(false); setTitle(""); setFile(null); setUrl(""); setBody("");
+    setTyp("PDF"); setDl(true); setDrag(false); setPct(0); setErr("");
+    if(fileRef.current) fileRef.current.value="";
+  };
+  const changeType = (tp:MatType) => {
+    setTyp(tp); setFile(null); setErr("");
+    if(fileRef.current) fileRef.current.value="";
   };
 
-  const closeDialog = () => {
-    setOpen(false);
-    setTitle(""); setFile(null); setUrl(""); setTextContent("");
-    setMatType("PDF"); setAllowDl(true); setDragOver(false);
-    setUploadPct(0); setFieldErr("");
-    if (fileInputRef.current) fileInputRef.current.value = "";
+  /* ── input style ─────────────────────────────────── */
+  const inp:React.CSSProperties = {
+    width:"100%",padding:"11px 14px",borderRadius:12,
+    border:"1.5px solid #E5E7EB",fontSize:14,
+    boxSizing:"border-box",background:"#fff",color:"#111",
+    fontFamily:"inherit",outline:"none",transition:"border-color .15s",
   };
 
-  const onTypeChange = (tp: MatType) => {
-    setMatType(tp); setFile(null); setFieldErr("");
-    if (fileInputRef.current) fileInputRef.current.value = "";
-  };
-
-  /* ── loading skeleton ── */
-  if (isLoading) return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      {[1, 2, 3].map(i => (
-        <div key={i} style={{ height: 64, background: "#F3F4F6", borderRadius: 16, animation: "pulse 1.5s infinite" }} />
-      ))}
+  if(isLoading) return(
+    <div style={{display:"flex",flexDirection:"column",gap:10}}>
+      {[1,2,3].map(i=><div key={i} style={{height:64,background:"#F3F4F6",borderRadius:16}}/>)}
     </div>
   );
 
-  /* ══════════════════════════════════════════════════════
-     RENDER
-  ══════════════════════════════════════════════════════ */
-  return (
+  return(
     <div>
       <style>{`
-        @keyframes fadeSlide { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
-        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
-        @keyframes matSpin { to{transform:rotate(360deg)} }
-        .sm-type-btn { transition:all .15s ease; }
-        .sm-type-btn:hover { transform:translateY(-2px); box-shadow:0 4px 12px rgba(0,0,0,.1); }
-        .sm-zone { transition:all .15s ease; }
-        .sm-zone:hover { border-color:#064E3B !important; background:#F0FDF4 !important; }
-        .sm-input:focus { border-color:#064E3B !important; outline:none !important; }
-        .sm-submit:hover:not(:disabled) { opacity:.92; transform:translateY(-1px); box-shadow:0 6px 20px rgba(6,78,59,.4) !important; }
-        .sm-submit { transition:all .2s ease; }
+        @keyframes sm-pop{from{opacity:0;transform:scale(.97)translateY(8px)}to{opacity:1;transform:scale(1)translateY(0)}}
+        @keyframes sm-spin{to{transform:rotate(360deg)}}
+        @keyframes sm-bar{from{width:0}to{width:100%}}
+        .sm-tb{transition:all .15s ease;cursor:pointer;}
+        .sm-tb:hover{transform:translateY(-2px);box-shadow:0 4px 14px rgba(0,0,0,.1);}
+        .sm-zone{transition:all .15s ease;cursor:pointer;}
+        .sm-zone:hover{border-color:#064E3B!important;background:#F0FDF4!important;}
+        .sm-inp:focus{border-color:#064E3B!important;}
+        .sm-btn:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 8px 24px rgba(6,78,59,.4)!important;}
+        .sm-btn{transition:all .2s ease;}
       `}</style>
 
-      {/* ── Upload trigger ── */}
-      {isPrivileged && (
-        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
-          <button
-            type="button"
-            onClick={() => setOpen(true)}
-            style={{
-              display: "flex", alignItems: "center", gap: 8,
-              padding: "10px 20px", borderRadius: 12, border: "none",
-              background: `linear-gradient(135deg, ${G}, ${GM})`,
-              color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer",
-              boxShadow: "0 4px 14px rgba(6,78,59,.3)",
-            }}
-          >
-            <Plus size={16} />
-            {t("Upload Material", "رفع مادة")}
+      {/* trigger */}
+      {isPriv&&(
+        <div style={{display:"flex",justifyContent:"flex-end",marginBottom:16}}>
+          <button type="button" onClick={()=>setOpen(true)} style={{
+            display:"flex",alignItems:"center",gap:8,
+            padding:"10px 20px",borderRadius:12,border:"none",
+            background:`linear-gradient(135deg,${G},${GM})`,
+            color:"#fff",fontWeight:700,fontSize:14,cursor:"pointer",
+            boxShadow:"0 4px 14px rgba(6,78,59,.3)",
+          }}>
+            <Plus size={16}/>{t("Upload Material","رفع مادة")}
           </button>
         </div>
       )}
 
-      {/* ── Material list ── */}
-      <MaterialsViewer materials={materials as any[]} sessions={sessions as any[]} />
+      <MaterialsViewer materials={materials as any[]} sessions={sessions as any[]}/>
 
-      {/* ══════════════════════════════════════════════════
-          UPLOAD DIALOG
-      ══════════════════════════════════════════════════ */}
-      <Dialog open={open} onOpenChange={v => { if (!v) closeDialog(); }}>
-        <DialogContent style={{
-          maxWidth: 520, borderRadius: 24, padding: 0,
-          maxHeight: "94vh", overflowY: "auto",
-          border: "none", boxShadow: "0 24px 80px rgba(0,0,0,.2)",
-        }}>
-
-          {/* Header */}
+      {/* ── OVERLAY (NO Radix Dialog — avoids Android focus-trap bug) ── */}
+      {open&&(
+        <div
+          style={{
+            position:"fixed",inset:0,zIndex:9999,
+            background:"rgba(0,0,0,.55)",
+            display:"flex",alignItems:"flex-end",justifyContent:"center",
+            padding:"0",
+          }}
+          onClick={e=>{ if(e.target===e.currentTarget) close(); }}
+        >
+          {/* Sheet */}
           <div style={{
-            background: `linear-gradient(135deg, ${G}, ${GM})`,
-            padding: "22px 24px", borderRadius: "24px 24px 0 0",
-            display: "flex", alignItems: "center", justifyContent: "space-between",
+            background:"#fff",width:"100%",maxWidth:520,
+            maxHeight:"93vh",overflowY:"auto",
+            borderRadius:"24px 24px 0 0",
+            animation:"sm-pop .22s ease",
           }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-              <div style={{
-                width: 44, height: 44, borderRadius: 14,
-                background: "rgba(255,255,255,.15)",
-                display: "flex", alignItems: "center", justifyContent: "center",
-              }}>
-                <Upload size={22} color="#fff" />
-              </div>
-              <div>
-                <h2 style={{ color: "#fff", fontWeight: 800, fontSize: 18, margin: 0, letterSpacing: "-.3px" }}>
-                  {t("Upload Material", "رفع مادة تعليمية")}
-                </h2>
-                <p style={{ color: "rgba(255,255,255,.65)", fontSize: 12, margin: "2px 0 0" }}>
-                  {t("Add files, links or text for students", "أضف ملفات أو روابط للطلاب")}
-                </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={closeDialog}
-              style={{
-                width: 34, height: 34, borderRadius: 9, border: "1px solid rgba(255,255,255,.25)",
-                background: "rgba(255,255,255,.12)", color: "#fff",
-                cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
-              }}
-            >
-              <X size={16} />
-            </button>
-          </div>
 
-          <div style={{ padding: "24px", display: "flex", flexDirection: "column", gap: 22 }}>
-
-            {/* ── Error banner ── */}
-            {fieldErr && (
-              <div style={{
-                display: "flex", alignItems: "flex-start", gap: 10,
-                padding: "13px 15px", borderRadius: 12,
-                background: "#FEF2F2", border: "1.5px solid #FECACA",
-                animation: "fadeSlide .2s ease",
-              }}>
-                <AlertCircle size={16} color="#DC2626" style={{ marginTop: 1, flexShrink: 0 }} />
-                <p style={{ fontSize: 13, color: "#B91C1C", margin: 0, fontWeight: 600 }}>{fieldErr}</p>
-              </div>
-            )}
-
-            {/* ── Type selector ── */}
-            <div>
-              <p style={{
-                fontSize: 11, fontWeight: 700, color: "#9CA3AF", marginBottom: 10,
-                textTransform: "uppercase", letterSpacing: "1px",
-              }}>
-                {t("Material Type", "نوع المادة")}
-              </p>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8 }}>
-                {ALL_TYPES.map(tp => {
-                  const c   = TYPE_CONFIG[tp];
-                  const Ic  = c.icon;
-                  const sel = matType === tp;
-                  return (
-                    <button
-                      key={tp}
-                      type="button"
-                      className="sm-type-btn"
-                      onClick={() => onTypeChange(tp)}
-                      style={{
-                        display: "flex", flexDirection: "column", alignItems: "center",
-                        gap: 7, padding: "11px 6px", borderRadius: 14,
-                        border: `2px solid ${sel ? c.color : "#EBEBEB"}`,
-                        background: sel ? c.bg : "#FAFAFA",
-                        cursor: "pointer",
-                        boxShadow: sel ? `0 2px 12px ${c.color}28` : "none",
-                      }}
-                    >
-                      <div style={{
-                        width: 34, height: 34, borderRadius: 9,
-                        background: sel ? c.color : "#E5E7EB",
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                        transition: "all .15s",
-                      }}>
-                        <Ic size={17} color={sel ? "#fff" : "#9CA3AF"} />
-                      </div>
-                      <span style={{
-                        fontSize: 10, fontWeight: sel ? 700 : 500,
-                        color: sel ? c.color : "#9CA3AF", lineHeight: 1,
-                      }}>
-                        {t(c.label, c.labelAr)}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* ── Title ── */}
-            <div>
-              <label style={{ fontSize: 12, fontWeight: 700, color: "#374151", display: "block", marginBottom: 8 }}>
-                {t("Title", "العنوان")} <span style={{ color: "#EF4444" }}>*</span>
-              </label>
-              <input
-                className="sm-input"
-                value={title}
-                onChange={e => { setTitle(e.target.value); if (fieldErr) setFieldErr(""); }}
-                placeholder={t("e.g. Week 1 Worksheet", "مثال: ورقة عمل الأسبوع الأول")}
-                autoFocus
-                style={{
-                  width: "100%", padding: "11px 14px", borderRadius: 12,
-                  border: `1.5px solid ${!title && fieldErr ? "#FCA5A5" : "#E5E7EB"}`,
-                  fontSize: 14, boxSizing: "border-box",
-                  background: "#fff", color: "#111",
-                  transition: "border-color .15s",
-                }}
-              />
-            </div>
-
-            {/* ── File drop zone ── */}
-            {needsFile && (
-              <div>
-                <label style={{ fontSize: 12, fontWeight: 700, color: "#374151", display: "block", marginBottom: 8 }}>
-                  {t("File", "الملف")} <span style={{ color: "#9CA3AF", fontWeight: 400 }}>
-                    {t("(or paste URL below)", "(أو الصق رابطًا أدناه)")}
-                  </span>
-                </label>
-
-                {/* hidden input — safe pattern for Radix dialogs */}
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept={cfg.accept || "*/*"}
-                  style={{ display: "none" }}
-                  onChange={e => { const f = e.target.files?.[0]; if (f) handleFilePicked(f); }}
-                />
-
-                {file ? (
-                  /* selected state */
-                  <div style={{
-                    display: "flex", alignItems: "center", gap: 14,
-                    padding: "14px 16px", borderRadius: 14,
-                    background: cfg.bg, border: `2px solid ${cfg.border}`,
-                    animation: "fadeSlide .2s ease",
-                  }}>
-                    <div style={{
-                      width: 44, height: 44, borderRadius: 11,
-                      background: "#fff", border: `1.5px solid ${cfg.border}`,
-                      display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-                    }}>
-                      <Icon size={22} color={cfg.color} />
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <p style={{
-                        fontWeight: 700, fontSize: 13, color: "#111", margin: "0 0 3px",
-                        whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-                      }}>
-                        {file.name}
-                      </p>
-                      <p style={{ fontSize: 11, color: "#6B7280", margin: 0 }}>
-                        {fmtSize(file.size)} &nbsp;·&nbsp; {matType}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => { setFile(null); if (fileInputRef.current) fileInputRef.current.value = ""; }}
-                      style={{
-                        background: "#fff", border: `1px solid ${cfg.border}`,
-                        borderRadius: 8, cursor: "pointer", padding: 6,
-                        display: "flex", alignItems: "center",
-                      }}
-                    >
-                      <X size={14} color={cfg.color} />
-                    </button>
-                  </div>
-                ) : (
-                  /* drop zone */
-                  <div
-                    className="sm-zone"
-                    onClick={() => fileInputRef.current?.click()}
-                    onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-                    onDragLeave={() => setDragOver(false)}
-                    onDrop={e => {
-                      e.preventDefault(); setDragOver(false);
-                      const f = e.dataTransfer.files[0];
-                      if (f) handleFilePicked(f);
-                    }}
-                    style={{
-                      padding: "30px 20px", borderRadius: 16, cursor: "pointer",
-                      border: `2px dashed ${dragOver ? G : "#D1D5DB"}`,
-                      background: dragOver ? "#F0FDF4" : "#FAFAFA",
-                      textAlign: "center",
-                    }}
-                  >
-                    <div style={{
-                      width: 54, height: 54, borderRadius: 14, margin: "0 auto 14px",
-                      background: cfg.bg, border: `2px solid ${cfg.border}`,
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                    }}>
-                      <Icon size={26} color={cfg.color} />
-                    </div>
-                    <p style={{ fontWeight: 700, fontSize: 14, color: "#374151", margin: "0 0 5px" }}>
-                      {t("Drop file here or tap to browse", "اسحب الملف أو انقر للاختيار")}
-                    </p>
-                    <p style={{ fontSize: 12, color: "#9CA3AF", margin: 0 }}>
-                      {matType === "PDF"      && "PDF files"}
-                      {matType === "Video"    && "MP4, WebM, MOV"}
-                      {matType === "Audio"    && "MP3, WAV, M4A, AAC"}
-                      {matType === "Image"    && "JPG, PNG, GIF, WebP, SVG"}
-                      {matType === "Document" && "Word, Excel, PowerPoint, ODF"}
-                    </p>
-                  </div>
-                )}
-
-                {/* divider */}
-                <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "12px 0" }}>
-                  <div style={{ flex: 1, height: 1, background: "#E5E7EB" }} />
-                  <span style={{ fontSize: 11, color: "#9CA3AF", fontWeight: 500 }}>
-                    {t("or paste a URL", "أو الصق رابطًا")}
-                  </span>
-                  <div style={{ flex: 1, height: 1, background: "#E5E7EB" }} />
-                </div>
-                <input
-                  className="sm-input"
-                  value={url}
-                  onChange={e => setUrl(e.target.value)}
-                  placeholder="https://..."
-                  style={{
-                    width: "100%", padding: "10px 14px", borderRadius: 12,
-                    border: "1.5px solid #E5E7EB", fontSize: 14,
-                    boxSizing: "border-box", background: "#fff", color: "#111",
-                    transition: "border-color .15s",
-                  }}
-                />
-              </div>
-            )}
-
-            {/* ── Link mode ── */}
-            {needsUrl && (
-              <div>
-                <label style={{ fontSize: 12, fontWeight: 700, color: "#374151", display: "block", marginBottom: 8 }}>
-                  URL <span style={{ color: "#EF4444" }}>*</span>
-                </label>
-                <input
-                  className="sm-input"
-                  value={url}
-                  onChange={e => { setUrl(e.target.value); if (fieldErr) setFieldErr(""); }}
-                  placeholder="https://..."
-                  style={{
-                    width: "100%", padding: "11px 14px", borderRadius: 12,
-                    border: "1.5px solid #E5E7EB", fontSize: 14,
-                    boxSizing: "border-box", background: "#fff", color: "#111",
-                  }}
-                />
-              </div>
-            )}
-
-            {/* ── Text mode ── */}
-            {needsText && (
-              <div>
-                <label style={{ fontSize: 12, fontWeight: 700, color: "#374151", display: "block", marginBottom: 8 }}>
-                  {t("Content", "المحتوى")} <span style={{ color: "#EF4444" }}>*</span>
-                </label>
-                <textarea
-                  className="sm-input"
-                  rows={6}
-                  value={textContent}
-                  onChange={e => { setTextContent(e.target.value); if (fieldErr) setFieldErr(""); }}
-                  placeholder={t("Type your text content here…", "اكتب المحتوى هنا…")}
-                  style={{
-                    width: "100%", padding: "11px 14px", borderRadius: 12,
-                    border: "1.5px solid #E5E7EB", fontSize: 14,
-                    boxSizing: "border-box", resize: "vertical",
-                    background: "#fff", color: "#111", fontFamily: "inherit",
-                  }}
-                />
-              </div>
-            )}
-
-            {/* ── Allow download ── */}
+            {/* header */}
             <div style={{
-              display: "flex", alignItems: "center", justifyContent: "space-between",
-              padding: "14px 16px", borderRadius: 14,
-              background: allowDl ? "#F0FDF4" : "#F9FAFB",
-              border: `1.5px solid ${allowDl ? "#A7F3D0" : "#E5E7EB"}`,
-              transition: "all .2s",
+              background:`linear-gradient(135deg,${G},${GM})`,
+              padding:"20px 22px",borderRadius:"24px 24px 0 0",
+              display:"flex",alignItems:"center",justifyContent:"space-between",
+              position:"sticky",top:0,zIndex:2,
             }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <div style={{
-                  width: 38, height: 38, borderRadius: 10,
-                  background: allowDl ? "#D1FAE5" : "#F3F4F6",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  transition: "background .2s",
-                }}>
-                  <Download size={17} color={allowDl ? G : "#9CA3AF"} />
+              <div style={{display:"flex",alignItems:"center",gap:12}}>
+                <div style={{width:40,height:40,borderRadius:12,background:"rgba(255,255,255,.15)",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  <Upload size={20} color="#fff"/>
                 </div>
                 <div>
-                  <p style={{ fontWeight: 700, fontSize: 13, color: "#374151", margin: 0 }}>
-                    {t("Allow Download", "السماح بالتنزيل")}
-                  </p>
-                  <p style={{ fontSize: 11, color: "#9CA3AF", margin: "2px 0 0" }}>
-                    {allowDl
-                      ? t("Students can save this file", "يمكن للطلاب تنزيل الملف")
-                      : t("View only — no download", "مشاهدة فقط")}
+                  <h2 style={{color:"#fff",fontWeight:800,fontSize:17,margin:0}}>
+                    {t("Upload Material","رفع مادة تعليمية")}
+                  </h2>
+                  <p style={{color:"rgba(255,255,255,.65)",fontSize:12,margin:"2px 0 0"}}>
+                    {t("Files, links or text for students","ملفات أو روابط للطلاب")}
                   </p>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => setAllowDl(v => !v)}
-                style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}
-              >
-                {allowDl
-                  ? <ToggleRight size={34} color={G} />
-                  : <ToggleLeft  size={34} color="#CBD5E1" />}
-              </button>
+              <button type="button" onClick={close} style={{
+                width:34,height:34,borderRadius:9,border:"1px solid rgba(255,255,255,.25)",
+                background:"rgba(255,255,255,.12)",color:"#fff",
+                cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",
+              }}><X size={16}/></button>
             </div>
 
-            {/* ── Progress bar ── */}
-            {uploadMutation.isPending && uploadPct > 0 && (
-              <div style={{ animation: "fadeSlide .2s ease" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 7 }}>
-                  <span style={{ fontSize: 12, color: "#6B7280", fontWeight: 600 }}>
-                    {t("Uploading…", "جاري الرفع…")}
-                  </span>
-                  <span style={{ fontSize: 12, color: G, fontWeight: 800 }}>{uploadPct}%</span>
+            <div style={{padding:"22px 22px 32px",display:"flex",flexDirection:"column",gap:20}}>
+
+              {/* error */}
+              {err&&(
+                <div style={{
+                  display:"flex",alignItems:"flex-start",gap:10,
+                  padding:"13px 15px",borderRadius:12,
+                  background:"#FEF2F2",border:"1.5px solid #FECACA",
+                }}>
+                  <AlertCircle size={16} color="#DC2626" style={{marginTop:1,flexShrink:0}}/>
+                  <p style={{fontSize:13,color:"#B91C1C",margin:0,fontWeight:600}}>{err}</p>
                 </div>
-                <div style={{ height: 7, background: "#E5E7EB", borderRadius: 99, overflow: "hidden" }}>
-                  <div style={{
-                    height: "100%", borderRadius: 99,
-                    background: `linear-gradient(90deg, ${G}, #10B981)`,
-                    width: `${uploadPct}%`, transition: "width .5s ease",
-                  }} />
+              )}
+
+              {/* type grid */}
+              <div>
+                <p style={{fontSize:11,fontWeight:700,color:"#9CA3AF",marginBottom:10,textTransform:"uppercase",letterSpacing:"1px"}}>
+                  {t("Type","النوع")}
+                </p>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8}}>
+                  {TYPES.map(tp=>{
+                    const c=TC[tp],Ic=c.icon,sel=typ===tp;
+                    return(
+                      <button key={tp} type="button" className="sm-tb"
+                        onClick={()=>changeType(tp)}
+                        style={{
+                          display:"flex",flexDirection:"column",alignItems:"center",gap:7,
+                          padding:"11px 4px",borderRadius:14,
+                          border:`2px solid ${sel?c.clr:"#EBEBEB"}`,
+                          background:sel?c.bg:"#FAFAFA",
+                          boxShadow:sel?`0 2px 12px ${c.clr}25`:"none",
+                        }}>
+                        <div style={{
+                          width:34,height:34,borderRadius:9,
+                          background:sel?c.clr:"#E5E7EB",
+                          display:"flex",alignItems:"center",justifyContent:"center",
+                          transition:"all .15s",
+                        }}><Ic size={17} color={sel?"#fff":"#9CA3AF"}/></div>
+                        <span style={{fontSize:10,fontWeight:sel?700:500,color:sel?c.clr:"#9CA3AF"}}>
+                          {t(c.en,c.ar)}
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
-            )}
 
-            {/* ── Submit ── */}
-            <button
-              type="button"
-              className="sm-submit"
-              onClick={() => uploadMutation.mutate()}
-              disabled={uploadMutation.isPending}
-              style={{
-                width: "100%", padding: "15px", borderRadius: 14, border: "none",
-                background: uploadMutation.isPending
-                  ? "#E5E7EB"
-                  : `linear-gradient(135deg, ${G}, ${GM})`,
-                color: uploadMutation.isPending ? "#9CA3AF" : "#fff",
-                fontWeight: 800, fontSize: 15, cursor: uploadMutation.isPending ? "not-allowed" : "pointer",
-                display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
-                boxShadow: uploadMutation.isPending ? "none" : "0 4px 16px rgba(6,78,59,.3)",
-              }}
-            >
-              {uploadMutation.isPending ? (
-                <>
-                  <Loader2 size={18} style={{ animation: "matSpin .8s linear infinite" }} />
-                  {t("Uploading…", "جاري الرفع…")}
-                </>
-              ) : (
-                <>
-                  <Upload size={18} />
-                  {t("Upload Material", "رفع المادة")}
-                </>
+              {/* title */}
+              <div>
+                <label style={{fontSize:12,fontWeight:700,color:"#374151",display:"block",marginBottom:8}}>
+                  {t("Title","العنوان")} <span style={{color:"#EF4444"}}>*</span>
+                </label>
+                <input
+                  className="sm-inp"
+                  style={{...inp,borderColor:!title&&err?"#FCA5A5":"#E5E7EB"}}
+                  value={title}
+                  onChange={e=>{setTitle(e.target.value);if(err)setErr("");}}
+                  placeholder={t("e.g. Week 1 Worksheet","مثال: ورقة عمل الأسبوع الأول")}
+                  autoFocus
+                />
+              </div>
+
+              {/* file zone */}
+              {needFile&&(
+                <div>
+                  <label style={{fontSize:12,fontWeight:700,color:"#374151",display:"block",marginBottom:8}}>
+                    {t("File","الملف")}
+                    <span style={{color:"#9CA3AF",fontWeight:400,marginLeft:6}}>
+                      {t("(or paste URL below)","(أو الصق رابطًا أدناه)")}
+                    </span>
+                  </label>
+
+                  {/* CRITICAL: input is OUTSIDE any clickable container — prevents Android event issues */}
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    accept={cfg.accept||"*/*"}
+                    style={{display:"none"}}
+                    onChange={e=>{const f=e.target.files?.[0];if(f)pickFile(f);}}
+                  />
+
+                  {file?(
+                    /* selected */
+                    <div style={{
+                      display:"flex",alignItems:"center",gap:14,
+                      padding:"14px 16px",borderRadius:14,
+                      background:cfg.bg,border:`2px solid ${cfg.border}`,
+                    }}>
+                      <div style={{width:44,height:44,borderRadius:11,background:"#fff",border:`1.5px solid ${cfg.border}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                        <Icon size={22} color={cfg.clr}/>
+                      </div>
+                      <div style={{flex:1,minWidth:0}}>
+                        <p style={{fontWeight:700,fontSize:13,color:"#111",margin:"0 0 3px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{file.name}</p>
+                        <p style={{fontSize:11,color:"#6B7280",margin:0}}>{fmt(file.size)} · {typ}</p>
+                      </div>
+                      <button type="button"
+                        onClick={()=>{setFile(null);if(fileRef.current)fileRef.current.value="";}}
+                        style={{background:"#fff",border:`1px solid ${cfg.border}`,borderRadius:8,cursor:"pointer",padding:6,display:"flex",alignItems:"center"}}>
+                        <X size={14} color={cfg.clr}/>
+                      </button>
+                    </div>
+                  ):(
+                    /* drop zone — onClick fires directly, no nested button */
+                    <div
+                      className="sm-zone"
+                      onClick={()=>fileRef.current?.click()}
+                      onDragOver={e=>{e.preventDefault();setDrag(true);}}
+                      onDragLeave={()=>setDrag(false)}
+                      onDrop={e=>{e.preventDefault();setDrag(false);const f=e.dataTransfer.files[0];if(f)pickFile(f);}}
+                      style={{
+                        padding:"30px 20px",borderRadius:16,
+                        border:`2px dashed ${drag?G:"#D1D5DB"}`,
+                        background:drag?"#F0FDF4":"#FAFAFA",
+                        textAlign:"center",
+                      }}
+                    >
+                      <div style={{width:54,height:54,borderRadius:14,margin:"0 auto 14px",background:cfg.bg,border:`2px solid ${cfg.border}`,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                        <Icon size={26} color={cfg.clr}/>
+                      </div>
+                      <p style={{fontWeight:700,fontSize:14,color:"#374151",margin:"0 0 5px"}}>
+                        {t("Tap to browse or drag file here","انقر للاختيار أو اسحب الملف")}
+                      </p>
+                      <p style={{fontSize:12,color:"#9CA3AF",margin:0}}>
+                        {typ==="PDF"&&"PDF files"}
+                        {typ==="Video"&&"MP4, WebM, MOV"}
+                        {typ==="Audio"&&"MP3, WAV, M4A, AAC"}
+                        {typ==="Image"&&"JPG, PNG, GIF, WebP, SVG"}
+                        {typ==="Document"&&"Word, Excel, PowerPoint"}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* URL fallback */}
+                  <div style={{display:"flex",alignItems:"center",gap:10,margin:"12px 0 8px"}}>
+                    <div style={{flex:1,height:1,background:"#E5E7EB"}}/>
+                    <span style={{fontSize:11,color:"#9CA3AF",fontWeight:500,whiteSpace:"nowrap"}}>
+                      {t("or paste a URL","أو الصق رابطًا")}
+                    </span>
+                    <div style={{flex:1,height:1,background:"#E5E7EB"}}/>
+                  </div>
+                  <input className="sm-inp" style={inp} value={url}
+                    onChange={e=>setUrl(e.target.value)}
+                    placeholder="https://..."/>
+                </div>
               )}
-            </button>
 
+              {/* link mode */}
+              {needUrl&&(
+                <div>
+                  <label style={{fontSize:12,fontWeight:700,color:"#374151",display:"block",marginBottom:8}}>
+                    URL <span style={{color:"#EF4444"}}>*</span>
+                  </label>
+                  <input className="sm-inp" style={inp} value={url}
+                    onChange={e=>{setUrl(e.target.value);if(err)setErr("");}}
+                    placeholder="https://..."/>
+                </div>
+              )}
+
+              {/* text mode */}
+              {needText&&(
+                <div>
+                  <label style={{fontSize:12,fontWeight:700,color:"#374151",display:"block",marginBottom:8}}>
+                    {t("Content","المحتوى")} <span style={{color:"#EF4444"}}>*</span>
+                  </label>
+                  <textarea className="sm-inp" rows={6}
+                    style={{...inp,resize:"vertical"}}
+                    value={body}
+                    onChange={e=>{setBody(e.target.value);if(err)setErr("");}}
+                    placeholder={t("Type your text content here…","اكتب المحتوى هنا…")}/>
+                </div>
+              )}
+
+              {/* allow download */}
+              <div
+                onClick={()=>setDl(v=>!v)}
+                style={{
+                  display:"flex",alignItems:"center",justifyContent:"space-between",
+                  padding:"14px 16px",borderRadius:14,cursor:"pointer",
+                  background:dl?"#F0FDF4":"#F9FAFB",
+                  border:`1.5px solid ${dl?"#A7F3D0":"#E5E7EB"}`,
+                  transition:"all .2s",
+                }}
+              >
+                <div style={{display:"flex",alignItems:"center",gap:12}}>
+                  <div style={{width:38,height:38,borderRadius:10,background:dl?"#D1FAE5":"#F3F4F6",display:"flex",alignItems:"center",justifyContent:"center",transition:"background .2s"}}>
+                    <Download size={17} color={dl?G:"#9CA3AF"}/>
+                  </div>
+                  <div>
+                    <p style={{fontWeight:700,fontSize:13,color:"#374151",margin:0}}>{t("Allow Download","السماح بالتنزيل")}</p>
+                    <p style={{fontSize:11,color:"#9CA3AF",margin:"2px 0 0"}}>
+                      {dl?t("Students can save this file","يمكن للطلاب تنزيل الملف"):t("View only","مشاهدة فقط")}
+                    </p>
+                  </div>
+                </div>
+                {/* custom toggle */}
+                <div style={{width:44,height:24,borderRadius:99,background:dl?G:"#CBD5E1",position:"relative",transition:"background .2s",flexShrink:0}}>
+                  <div style={{width:18,height:18,borderRadius:99,background:"#fff",position:"absolute",top:3,left:dl?23:3,transition:"left .2s",boxShadow:"0 1px 4px rgba(0,0,0,.2)"}}/>
+                </div>
+              </div>
+
+              {/* progress */}
+              {mut.isPending&&pct>0&&(
+                <div>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:7}}>
+                    <span style={{fontSize:12,color:"#6B7280",fontWeight:600}}>{t("Uploading…","جاري الرفع…")}</span>
+                    <span style={{fontSize:12,color:G,fontWeight:800}}>{pct}%</span>
+                  </div>
+                  <div style={{height:7,background:"#E5E7EB",borderRadius:99,overflow:"hidden"}}>
+                    <div style={{height:"100%",borderRadius:99,background:`linear-gradient(90deg,${G},#10B981)`,width:`${pct}%`,transition:"width .5s ease"}}/>
+                  </div>
+                </div>
+              )}
+
+              {/* submit */}
+              <button type="button" className="sm-btn"
+                onClick={()=>mut.mutate()}
+                disabled={mut.isPending}
+                style={{
+                  width:"100%",padding:"15px",borderRadius:14,border:"none",
+                  background:mut.isPending?"#E5E7EB":`linear-gradient(135deg,${G},${GM})`,
+                  color:mut.isPending?"#9CA3AF":"#fff",
+                  fontWeight:800,fontSize:15,cursor:mut.isPending?"not-allowed":"pointer",
+                  display:"flex",alignItems:"center",justifyContent:"center",gap:10,
+                  boxShadow:mut.isPending?"none":"0 4px 16px rgba(6,78,59,.3)",
+                }}>
+                {mut.isPending?(
+                  <><Loader2 size={18} style={{animation:"sm-spin .8s linear infinite"}}/>{t("Uploading…","جاري الرفع…")}</>
+                ):(
+                  <><Upload size={18}/>{t("Upload Material","رفع المادة")}</>
+                )}
+              </button>
+
+            </div>
           </div>
-        </DialogContent>
-      </Dialog>
+        </div>
+      )}
     </div>
   );
 };
