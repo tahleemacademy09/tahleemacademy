@@ -10,7 +10,7 @@ import {
   Plus, BookOpen, Trash2, Edit2, ChevronRight, ChevronLeft,
   Loader2, EyeOff, Save, Image, Search, Layers, FolderOpen,
   FileText, Video, Music, ExternalLink, Type, FileSpreadsheet,
-  Upload, Download, File, Check, Calendar, ChevronDown, ChevronUp, X,
+  Upload, Download, File, Check, Calendar, ChevronDown, ChevronUp, X, AlertCircle,
 } from "lucide-react";
 
 const G    = "#064E3B";
@@ -272,30 +272,47 @@ const SyllabusModal=React.memo(({ed,nextWeek,onClose,onSave,busy}:{ed?:any;nextW
 // MATERIAL MODAL
 // ══════════════════════════════════════════════════════════════════════════
 const MaterialModal=React.memo(({ed,subjectId,sortOrder,onClose,onSaved}:{ed?:any;subjectId:string;sortOrder:number;onClose:()=>void;onSaved:()=>void})=>{
+  const {user}=useAuth();
   const [f,setF]=useState({title:ed?.title||"",material_type:(ed?.material_type||"PDF") as MatType,file_url:ed?.file_url||"",content:ed?.content||"",is_downloadable:ed?.is_downloadable??true,sort_order:ed?.sort_order??sortOrder});
   const [file,setFile]=useState<File|null>(null);
   const [uploading,setUploading]=useState(false);
   const [drag,setDrag]=useState(false);
+  const [saveErr,setSaveErr]=useState("");
   const ref=useRef<HTMLInputElement>(null);
 
   const doSave=async()=>{
-    if(!f.title) return;
+    setSaveErr("");
+    if(!f.title){setSaveErr("Title is required.");return;}
+    if(f.material_type!=="Link"&&f.material_type!=="Text"&&!file&&!f.file_url){setSaveErr("Please select a file or paste a URL.");return;}
+    if(f.material_type==="Link"&&!f.file_url.trim()){setSaveErr("Please enter a URL.");return;}
+    if(f.material_type==="Text"&&!f.content.trim()){setSaveErr("Content cannot be empty.");return;}
     setUploading(true);
     try {
-      let fileUrl=f.file_url,fileType="",fileSize=0;
+      let fileUrl=f.file_url.trim(),fileType="",fileSize=0;
       if(file){
-        const ext=file.name.split(".").pop();
+        const ext=file.name.split(".").pop()||"bin";
         const path=`materials/${subjectId}/${crypto.randomUUID()}.${ext}`;
-        const {error}=await supabase.storage.from("subject-files").upload(path,file);
-        if(error) throw error;
+        const {error}=await supabase.storage.from("subject-files").upload(path,file,{cacheControl:"3600",upsert:false});
+        if(error) throw new Error("Storage: "+error.message);
         fileUrl=path; fileType=file.type; fileSize=file.size;
       }
-      const payload:any={subject_id:subjectId,title:f.title,material_type:f.material_type,file_url:fileUrl||null,...(fileType?{file_type:fileType}:{}),...(fileSize?{file_size:fileSize}:{})};
-      if(ed?.id){const {error}=await supabase.from("subject_materials").update(payload).eq("id",ed.id);if(error) throw error;}
-      else{const {error}=await supabase.from("subject_materials").insert(payload);if(error) throw error;}
+      const payload:any={
+        subject_id:subjectId,
+        title:f.title.trim(),
+        material_type:f.material_type,
+        file_url:fileUrl||null,
+        content:f.material_type==="Text"?f.content.trim():null,
+        is_downloadable:f.is_downloadable,
+        sort_order:f.sort_order,
+        ...(fileType?{file_type:fileType}:{}),
+        ...(fileSize?{file_size:fileSize}:{}),
+      };
+      if(!ed?.id && user) payload.uploaded_by=user.id;
+      if(ed?.id){const {error}=await supabase.from("subject_materials").update(payload).eq("id",ed.id);if(error) throw new Error("Database: "+error.message);}
+      else{const {error}=await supabase.from("subject_materials").insert(payload);if(error) throw new Error("Database: "+error.message);}
       toast({title:"✅ Material saved"});
       onSaved();
-    } catch(e:any){toast({title:"Error",description:e.message,variant:"destructive"});}
+    } catch(e:any){setSaveErr(e.message||"Upload failed.");toast({title:"Error",description:e.message,variant:"destructive"});}
     setUploading(false);
   };
 
@@ -307,13 +324,14 @@ const MaterialModal=React.memo(({ed,subjectId,sortOrder,onClose,onSaved}:{ed?:an
           <button type="button" onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:"#9CA3AF"}}>×</button>
         </div>
         <div style={{padding:20,display:"flex",flexDirection:"column",gap:16}}>
-          <Fld label="Title *"><input value={f.title} onChange={e=>setF(m=>({...m,title:e.target.value}))} style={inp} placeholder="e.g. Week 1 Worksheet" autoFocus/></Fld>
+          {saveErr&&<div style={{display:"flex",alignItems:"flex-start",gap:8,padding:"10px 14px",borderRadius:10,background:"#FEF2F2",border:"1.5px solid #FECACA"}}><AlertCircle size={15} color="#DC2626" style={{marginTop:1,flexShrink:0}}/><p style={{fontSize:12,color:"#B91C1C",margin:0,fontWeight:600}}>{saveErr}</p></div>}
+          <Fld label="Title *"><input value={f.title} onChange={e=>{setF(m=>({...m,title:e.target.value}));setSaveErr("");}} style={inp} placeholder="e.g. Week 1 Worksheet" autoFocus/></Fld>
           <div>
             <label style={{fontSize:11,fontWeight:700,color:"#374151",display:"block",marginBottom:8}}>Type</label>
             <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:6}}>
               {MATERIAL_TYPES.map(mt=>{
                 const c=matCfg[mt],Icon=c.icon,sel=f.material_type===mt;
-                return <button key={mt} onClick={()=>setF(m=>({...m,material_type:mt}))}
+                return <button type="button" key={mt} onClick={()=>setF(m=>({...m,material_type:mt}))}
                   style={{display:"flex",flexDirection:"column",alignItems:"center",gap:5,padding:"10px 4px",borderRadius:12,border:`2px solid ${sel?c.text:"#E5E7EB"}`,background:sel?c.bg:"#fff",color:sel?c.text:"#6B7280",fontSize:10,fontWeight:sel?700:500,cursor:"pointer"}}>
                   <Icon size={15}/>{mt}
                 </button>;
