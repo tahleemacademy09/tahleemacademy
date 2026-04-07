@@ -14,7 +14,7 @@ import {
   CheckSquare, BarChart, UserCircle, Library, GraduationCap, MessageCircle,
   Menu, Video, Mic, Layers, FileText, UserCheck, BookMarked, Settings,
   CreditCard, Calendar, ChevronDown, ChevronRight, Wallet, Bell,
-  BookOpenCheck, RefreshCw, Headphones, Trophy, X, Lock, Clock,
+  BookOpenCheck, RefreshCw, Headphones, Trophy, X, Lock, Clock, FolderOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
@@ -87,8 +87,9 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
       { to:"/admin/registration-settings", icon:Settings,      label:t("Registration Settings","إعدادات التسجيل") },
     ]},
     { type:"group", key:"academic", icon:BookOpen, label:t("Academic","المحتوى الأكاديمي"), children:[
-      { to:"/admin/courses",  icon:Layers,    label:t("Courses & Subjects","الدورات والمواد") },
-      { to:"/admin/calendar", icon:Calendar,  label:t("Calendar","التقويم") },
+      { to:"/admin/courses",          icon:Layers,      label:t("Courses & Subjects","الدورات والمواد") },
+      { to:"/admin/material-manager", icon:FolderOpen,  label:t("Material Manager","مدير المواد") },
+      { to:"/admin/calendar",         icon:Calendar,    label:t("Calendar","التقويم") },
     ]},
     { type:"group", key:"classes", icon:Video, label:t("Classes","الفصول"), children:[
       { to:"/admin/live-classes",   icon:Video, label:t("Live Classes","الفصول الحية") },
