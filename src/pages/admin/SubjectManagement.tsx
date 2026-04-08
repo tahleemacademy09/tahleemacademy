@@ -302,13 +302,16 @@ const SubjectManagement = () => {
             {/* Cover image */}
             <div>
               <label style={{ fontSize:12, fontWeight:700, color:"#6B7280", display:"block", marginBottom:8 }}>Cover Image</label>
-              <div onClick={()=>fileRef.current?.click()}
-                style={{ height:120, borderRadius:14, border:"2px dashed #E5E7EB", background:imagePreview?`url(${imagePreview}) center/cover`:"#FAFAFA", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", overflow:"hidden", position:"relative" }}>
+              {/* label htmlFor = native gesture, no history push on Android */}
+              <input ref={fileRef} id="sm-cover-img" type="file" accept="image/*"
+                style={{ position:"absolute", width:1, height:1, opacity:0, overflow:"hidden" }}
+                onChange={handleImage}/>
+              <label htmlFor={uploading ? undefined : "sm-cover-img"}
+                style={{ height:120, borderRadius:14, border:"2px dashed #E5E7EB", background:imagePreview?`url(${imagePreview}) center/cover`:"#FAFAFA", cursor:uploading?"not-allowed":"pointer", display:"flex", alignItems:"center", justifyContent:"center", overflow:"hidden", position:"relative" }}>
                 {uploading&&<div style={{ position:"absolute", inset:0, background:"rgba(0,0,0,.4)", display:"flex", alignItems:"center", justifyContent:"center" }}><Loader2 size={24} color="#fff" style={{ animation:"spin .8s linear infinite" }}/></div>}
                 {!imagePreview&&<div style={{ textAlign:"center", color:"#9CA3AF" }}><Image size={24} style={{ marginBottom:6 }}/><p style={{ fontSize:12, margin:0 }}>Click to upload</p></div>}
-                {imagePreview&&<button onClick={e=>{e.stopPropagation();setImagePreview(null);setForm(f=>({...f,image_url:""}));}} style={{ position:"absolute", top:8, right:8, width:26, height:26, borderRadius:"50%", background:"rgba(0,0,0,.5)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}><X size={13} color="#fff"/></button>}
-              </div>
-              <input ref={fileRef} type="file" accept="image/*" style={{ display:"none" }} onChange={handleImage}/>
+                {imagePreview&&<button onClick={e=>{e.preventDefault();e.stopPropagation();setImagePreview(null);setForm(f=>({...f,image_url:""}));}} style={{ position:"absolute", top:8, right:8, width:26, height:26, borderRadius:"50%", background:"rgba(0,0,0,.5)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}><X size={13} color="#fff"/></button>}
+              </label>
               <Input value={form.image_url} onChange={e=>{setForm(f=>({...f,image_url:e.target.value}));setImagePreview(e.target.value||null);}} placeholder="Or paste image URL…" style={{ marginTop:8, borderRadius:10 }}/>
             </div>
             {/* Color picker */}
