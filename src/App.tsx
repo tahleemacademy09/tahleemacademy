@@ -59,6 +59,7 @@ const RecordingPlayer     = lazy(() => import("./pages/student/RecordingPlayer")
 const EnrollmentPayment   = lazy(() => import("./pages/student/EnrollmentPayment"));
 const StudentCourses      = lazy(() => import("./pages/student/StudentCourses"));
 const TasjeelAwaitingLevel = lazy(() => import("./pages/student/TasjeelAwaitingLevel"));
+const StudentTimetable     = lazy(() => import("./pages/student/StudentTimetable"));
 const TasjeelAdmin         = lazy(() => import("./pages/admin/TasjeelAdmin"));
 
 // ── Admin pages ────────────────────────────────────────────────────────────
@@ -66,6 +67,7 @@ const AdminDashboard        = lazy(() => import("./pages/admin/AdminDashboard"))
 const SubjectManagement     = lazy(() => import("./pages/admin/SubjectManagement"));
 const CourseManagement      = lazy(() => import("./pages/admin/CourseManagement"));
 const SyllabusManager       = lazy(() => import("./pages/admin/SyllabusManager"));
+const TimetableManagement   = lazy(() => import("./pages/admin/TimetableManagement"));
 const ExamManager           = lazy(() => import("./pages/admin/ExamManager"));
 const ExamEditor            = lazy(() => import("./pages/admin/ExamEditor"));
 const GradingPage           = lazy(() => import("./pages/admin/GradingPage"));
@@ -176,6 +178,7 @@ const App = () => (
                     <Route path="/student/revision"              element={<RevisionHub />} />
                     <Route path="/student/hifdh"                 element={<HifdhRevision />} />
                     <Route path="/student/revision/:subjectId"   element={<RevisionRoom />} />
+                    <Route path="/student/timetable"             element={<StudentTimetable />} />
                     <Route path="/student/profile"               element={<ProfileSettings />} />
                     <Route path="/student/enrollment-payment"    element={<EnrollmentPayment />} />
                   </Route>
@@ -216,6 +219,7 @@ const App = () => (
                     <Route path="/admin/subjects/:subjectId"      element={<CourseManagement />} />
                     <Route path="/admin/courses"                  element={<CourseManagement />} />
                     <Route path="/admin/syllabus"                 element={<CourseManagement />} />
+                    <Route path="/admin/timetable"               element={<TimetableManagement />} />
                     <Route path="/admin/live-classes"             element={<LiveClassManagement />} />
                     <Route path="/admin/exams"                    element={<ExamManager />} />
                     <Route path="/admin/exams/create"             element={<ExamEditor />} />
