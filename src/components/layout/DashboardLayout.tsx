@@ -39,6 +39,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
 
   const LOCKED_ROUTES = new Set([
     "/student/courses",
+    "/student/timetable",
     "/student/revision",
     "/student/hifdh",
     "/student/majlis",
@@ -59,8 +60,9 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     | { type:"group"; key:string; icon:any; label:string; children:{to:string;icon:any;label:string}[] };
 
   const studentNav: NavItem[] = [
-    { type:"link", to:"/student",         icon:LayoutDashboard, label:t("Dashboard","الصفحة الرئيسية") },
-    { type:"link", to:"/student/courses", icon:BookOpenCheck,   label:t("At-Ta'allum","التعلّم") },
+    { type:"link", to:"/student",          icon:LayoutDashboard, label:t("Dashboard","الصفحة الرئيسية") },
+    { type:"link", to:"/student/courses",  icon:BookOpenCheck,   label:t("At-Ta'allum","التعلّم") },
+    { type:"link", to:"/student/timetable", icon:Calendar,       label:t("Jadwal (Timetable)","الجدول الدراسي") },
     { type:"group", key:"revision", icon:RefreshCw, label:t("Al-Murāja'ah","المراجعة"), children:[
       { to:"/student/revision", icon:BookMarked, label:t("At-Tadārus","التدارس") },
       { to:"/student/hifdh",    icon:Headphones, label:t("Al-Ḥifẓ","الحفظ") },
@@ -88,6 +90,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     ]},
     { type:"group", key:"academic", icon:BookOpen, label:t("Academic","المحتوى الأكاديمي"), children:[
       { to:"/admin/courses",          icon:Layers,      label:t("Courses & Subjects","الدورات والمواد") },
+      { to:"/admin/timetable",        icon:Clock,       label:t("Timetable","الجدول الدراسي") },
       { to:"/admin/material-manager", icon:FolderOpen,  label:t("Material Manager","مدير المواد") },
       { to:"/admin/calendar",         icon:Calendar,    label:t("Calendar","التقويم") },
     ]},
@@ -397,31 +400,42 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                 {notifList.length === 0 ? (
                   <div className="text-center py-10 text-muted-foreground text-sm">No notifications yet</div>
                 ) : notifList.map((n: any) => (
-                  <div key={n.id} onClick={() => !n.is_read && markRead(n.id)}
-                    className="flex items-start gap-3 px-5 py-3.5 border-b cursor-pointer transition-colors"
-                    style={{ background: n.is_read ? "#fafafa" : "#fffbeb" }}>
-                    <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5"
-                      style={{ background: n.is_read ? "#f0f4f0" : "#fffbeb", border:`1.5px solid ${n.is_read ? "#e0e0e0" : "#c9a84c88"}` }}>
-                      <span className="text-sm">
-                        {n.type === "warning" ? "⚠️"
-                          : n.type === "exam_assigned" ? "📋"
-                          : n.type === "result_released" ? "🎯"
-                          : n.type === "exam" ? "📋"
-                          : n.type === "payment" ? "💳"
-                          : "🔔"}
-                      </span>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <p className={`text-sm leading-tight ${n.is_read ? "font-medium" : "font-bold"} text-gray-900`}>{n.title}</p>
-                        {!n.is_read && <div className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0"/>}
+                    <div key={n.id} onClick={() => {
+                        if (!n.is_read) markRead(n.id);
+                        if (n.link) { setShowNotifPanel(false); window.location.href = n.link; }
+                      }}
+                      className="flex items-start gap-3 px-5 py-3.5 border-b cursor-pointer transition-colors"
+                      style={{ background: n.is_read ? "#fafafa" : n.type === "class_reminder" ? "#f0fff4" : "#fffbeb" }}>
+                      <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5"
+                        style={{ background: n.is_read ? "#f0f4f0" : "#fffbeb", border:`1.5px solid ${n.is_read ? "#e0e0e0" : "#c9a84c88"}` }}>
+                        <span className="text-sm">
+                          {n.type === "class_reminder"  ? "📚"
+                            : n.type === "warning"        ? "⚠️"
+                            : n.type === "exam_assigned"  ? "📋"
+                            : n.type === "result_released"? "🎯"
+                            : n.type === "exam"           ? "📋"
+                            : n.type === "payment"        ? "💳"
+                            : "🔔"}
+                        </span>
                       </div>
-                      <p className="text-xs text-gray-500 mt-0.5">{n.message}</p>
-                      <p className="text-[10px] text-gray-400 mt-1">
-                        {new Date(n.created_at).toLocaleDateString("en-US", { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" })}
-                      </p>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className={`text-sm leading-tight ${n.is_read ? "font-medium" : "font-bold"} text-gray-900`}>{n.title}</p>
+                          {!n.is_read && <div className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0"/>}
+                        </div>
+                        <p className="text-xs text-gray-500 mt-0.5">{n.message}</p>
+                        <div className="flex items-center justify-between mt-1">
+                          <p className="text-[10px] text-gray-400">
+                            {new Date(n.created_at).toLocaleDateString("en-US", { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" })}
+                          </p>
+                          {n.type === "class_reminder" && n.link && (
+                            <span style={{ fontSize:10, padding:"2px 8px", borderRadius:9, background:"#0f2d1f", color:"#c9a84c", fontWeight:700 }}>
+                              Join →
+                            </span>
+                          )}
+                        </div>
+                      </div>
                     </div>
-                  </div>
                 ))}
               </div>
             </div>
