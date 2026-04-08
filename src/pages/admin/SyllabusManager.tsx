@@ -590,15 +590,15 @@ const SyllabusManager = () => {
             {matForm.material_type !== "Link" && matForm.material_type !== "Text" && (
               <div>
                 <Label className="text-xs font-semibold text-gray-600 block mb-2">File Upload</Label>
-                <div
-                  className="relative border-2 border-dashed rounded-2xl p-6 text-center transition-all cursor-pointer"
+                <input ref={fileRef} id="sm-syllabus-file" type="file"
+                  style={{ position:"absolute",width:1,height:1,opacity:0,overflow:"hidden",pointerEvents:"none" }} accept="*/*"
+                  onChange={e => { const f = e.target.files?.[0]; if (f) { setUploadFile(f); if (!matForm.title) setMatForm(p => ({ ...p, title: f.name.replace(/\.[^/.]+$/, "") })); } }} />
+                <label htmlFor="sm-syllabus-file"
+                  className="block relative border-2 border-dashed rounded-2xl p-6 text-center transition-all cursor-pointer"
                   style={{ borderColor: dragOver ? "#064E3B" : "#D1D5DB", background: dragOver ? "#F0FDF4" : "#FAFAFA" }}
-                  onClick={() => fileRef.current?.click()}
                   onDragOver={e => { e.preventDefault(); setDragOver(true); }}
                   onDragLeave={() => setDragOver(false)}
                   onDrop={e => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files[0]; if (f) { setUploadFile(f); if (!matForm.title) setMatForm(p => ({ ...p, title: f.name.replace(/\.[^/.]+$/, "") })); } }}>
-                  <input ref={fileRef} type="file" className="hidden" accept="*/*"
-                    onChange={e => { const f = e.target.files?.[0]; if (f) { setUploadFile(f); if (!matForm.title) setMatForm(p => ({ ...p, title: f.name.replace(/\.[^/.]+$/, "") })); } }} />
                   {uploadFile ? (
                     <div className="flex items-center justify-center gap-3">
                       <div className="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center">
@@ -620,7 +620,7 @@ const SyllabusManager = () => {
                       <p className="text-xs text-gray-400 mt-1">PDF, Word, Excel, Images, Audio, Video — all formats supported</p>
                     </>
                   )}
-                </div>
+                </label>
                 <p className="text-xs text-gray-400 mt-2 text-center">— or paste a URL below —</p>
                 <Input className="mt-2 rounded-xl" value={matForm.file_url}
                   onChange={e => setMatForm({ ...matForm, file_url: e.target.value })}
