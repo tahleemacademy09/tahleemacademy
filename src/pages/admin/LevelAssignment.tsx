@@ -17,7 +17,7 @@ import {
   RefreshCw, Play, Eye, Check, X as XIcon, Filter,
   Phone, Calendar, Globe, BookOpen, Target, AlertTriangle,
   UserCheck, ChevronRight, Award, Music, ClipboardList,
-  Heart, Layers, Download, ExternalLink, Search,
+  Heart, Layers, Download, ExternalLink, Search, Video, Bell,
 } from "lucide-react";
 
 const G    = "#064E3B";
@@ -49,6 +49,8 @@ interface StudentEval {
   rec_teacher_score: number | null;
   rec_teacher_notes: string | null;
   rec_session_date:  string | null;
+  rec_session_time:  string | null;
+  rec_session_booked_at: string | null;
   rec_approved:      boolean;
   current_level:     string | null;
   admin_approved:    boolean;
@@ -127,7 +129,31 @@ const LevelAssignment = () => {
   const [teacherNotes, setTeacherNotes]   = useState<Record<string, string>>({});
   const [teacherScores, setTeacherScores] = useState<Record<string, string>>({});
   const [savingTeacher, setSavingTeacher] = useState<string | null>(null);
+  const [acceptingSession, setAcceptingSession] = useState<string | null>(null);
   const [searchQ, setSearchQ]       = useState("");
+
+  // ── Session timing helpers ─────────────────────────────────────────────────
+  const isSessionLive = (date: string | null, time: string | null) => {
+    if (!date || !time) return false;
+    try {
+      const dt = new Date(`${date}T${time}:00`);
+      const diff = (dt.getTime() - Date.now()) / 60000;
+      return diff <= 15 && diff >= -120;
+    } catch { return false; }
+  };
+
+  const sessionCountdown = (date: string | null, time: string | null): string => {
+    if (!date || !time) return "";
+    try {
+      const dt = new Date(`${date}T${time}:00`);
+      const diff = Math.round((dt.getTime() - Date.now()) / 60000);
+      if (diff < 0) return "Session time passed";
+      if (diff === 0) return "Starting NOW";
+      if (diff < 60) return `In ${diff} min`;
+      const h = Math.floor(diff / 60); const m = diff % 60;
+      return `In ${h}h${m > 0 ? ` ${m}m` : ""}`;
+    } catch { return ""; }
+  };
 
   // ── Load ALL students from profiles (not filtered by tasjeel step) ─────────
   const load = useCallback(async () => {
@@ -222,7 +248,9 @@ const LevelAssignment = () => {
           rec_audio_path:    r.audio_path || null,
           rec_teacher_score: r.teacher_score ?? null,
           rec_teacher_notes: r.teacher_notes || null,
-          rec_session_date:  r.stage3_session_date || null,
+          rec_session_date:  r.virtual_session_date || r.stage3_session_date || null,
+          rec_session_time:  r.virtual_session_time || null,
+          rec_session_booked_at: r.virtual_session_booked_at || r.stage3_requested_at || null,
           rec_approved:      !!r.admin_approved,
           current_level:     p.level || p.course_level || t.level_assigned || null,
           admin_approved:    t.current_step === "completed",
@@ -252,6 +280,39 @@ const LevelAssignment = () => {
 
   useEffect(() => { load(); }, [load]);
 
+  // ── Tick every 30s to re-evaluate session active state ────────────────────
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const iv = setInterval(() => setTick(t => t + 1), 30_000);
+    return () => clearInterval(iv);
+  }, []);
+
+  // ── Ask for browser notification permission once ───────────────────────────
+  useEffect(() => {
+    if ("Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+  }, []);
+
+  // ── Fire browser notification when a session is within 15 min ─────────────
+  useEffect(() => {
+    if (!students.length) return;
+    students.forEach(s => {
+      if (s.rec_session_date && s.rec_session_time && s.rec_approved) {
+        const dt   = new Date(`${s.rec_session_date}T${s.rec_session_time}:00`);
+        const diff = (dt.getTime() - Date.now()) / 60000;
+        if (diff > 14 && diff < 16) {
+          if ("Notification" in window && Notification.permission === "granted") {
+            new Notification("🟢 Virtual Session Starting Soon!", {
+              body: `${s.full_name}'s recitation session starts in ~15 minutes (${s.rec_session_time}). Join now!`,
+              icon: "/favicon.ico",
+            });
+          }
+        }
+      }
+    });
+  }, [students]); // eslint-disable-line
+
   // ── Resolve audio URL ──────────────────────────────────────────────────────
   const resolveAudio = async (path: string, uid: string) => {
     if (audioUrls[uid]) return;
@@ -277,6 +338,32 @@ const LevelAssignment = () => {
     await load();
     setSavingTeacher(null);
     toast({ title: "✅ Teacher evaluation saved" });
+  };
+
+  // ── Accept virtual session ────────────────────────────────────────────────
+  const acceptSession = async (student: StudentEval) => {
+    setAcceptingSession(student.user_id);
+    try {
+      await (supabase as any).from("recitation_tests").update({
+        admin_approved:    true,
+        admin_approved_at: new Date().toISOString(),
+        status:            "session_confirmed",
+      }).eq("user_id", student.user_id);
+
+      await (supabase as any).from("notifications").insert({
+        user_id:    student.user_id,
+        title:      "✅ Virtual Session Confirmed!",
+        message:    `Your virtual recitation session on ${student.rec_session_date} at ${student.rec_session_time || "—"} has been confirmed by your instructor. A Join button will appear on your screen 15 minutes before.`,
+        type:       "session_confirmed",
+        is_read:    false,
+        created_at: new Date().toISOString(),
+      });
+
+      toast({ title: `✅ Session confirmed — ${student.full_name} has been notified` });
+      await load();
+    } catch (e: any) {
+      toast({ title: "Error confirming session", description: e.message, variant: "destructive" });
+    } finally { setAcceptingSession(null); }
   };
 
   // ── Assign level ───────────────────────────────────────────────────────────
@@ -348,7 +435,7 @@ const LevelAssignment = () => {
   // ─────────────────────────────────────────────────────────────────────────
   return (
     <div style={{ fontFamily: "'Segoe UI', system-ui, sans-serif", minHeight: "100vh", background: "#F0F4F0" }}>
-      <style>{"@keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}} @keyframes spin{to{transform:rotate(360deg)}}"}</style>
+      <style>{"@keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}} @keyframes spin{to{transform:rotate(360deg)}} @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}} @media(max-width:600px){.score-pills-row{flex-direction:column!important;align-items:flex-start!important} .score-pills-row>div{flex-direction:row!important;flex-wrap:wrap!important} .grid-2col{grid-template-columns:1fr!important} .hide-mobile{display:none!important}}"}</style>
 
       {/* ── HEADER ── */}
       <div style={{ background: `linear-gradient(135deg,${G},${GM})`, padding: "24px 20px 20px" }}>
@@ -477,7 +564,7 @@ const LevelAssignment = () => {
                 </div>
 
                 {/* Score pills — compact */}
-                <div style={{ display: "flex", gap: 5, flexShrink: 0, flexDirection: "column", alignItems: "flex-end" }}>
+                <div className="score-pills-row" style={{ display: "flex", gap: 5, flexShrink: 0, flexDirection: "column", alignItems: "flex-end" }}>
                   <div style={{ display: "flex", gap: 5 }}>
                     <ScorePill score={student.exam_score}        label="Exam"    bg="#FFFBEB" />
                     <ScorePill score={student.rec_ai_score}      label="AI"      bg="#EFF6FF" />
@@ -504,6 +591,7 @@ const LevelAssignment = () => {
                       { id: "onboarding", label: "👤 Onboarding Form", show: !!student.onboarding },
                       { id: "exam",       label: "📝 Entrance Exam" },
                       { id: "recitation", label: "🎤 Recitation" },
+                      { id: "session",    label: student.rec_session_date ? (student.rec_approved ? "📅 Session ✓" : "📅 Session ⚠️") : "📅 Virtual Session" },
                       { id: "assign",     label: "🎓 Assign Level" },
                     ].filter((t: any) => t.show !== false).map(t => (
                       <button key={t.id} onClick={() => setTab(student.user_id, t.id)}
@@ -517,7 +605,7 @@ const LevelAssignment = () => {
 
                     {/* ══ FULL PROFILE TAB (Issue 7: shows ALL info) ══ */}
                     {tab === "overview" && (
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+                      <div className="grid-2col" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
 
                         {/* Personal Info */}
                         <div style={{ background: "#F9FAFB", borderRadius: 14, padding: 16, border: "1px solid #E5E7EB" }}>
@@ -729,10 +817,109 @@ const LevelAssignment = () => {
                       </div>
                     )}
 
+                    {/* ══ VIRTUAL SESSION TAB ══ */}
+                    {tab === "session" && (() => {
+                      const live        = isSessionLive(student.rec_session_date, student.rec_session_time);
+                      const countdown   = sessionCountdown(student.rec_session_date, student.rec_session_time);
+                      const roomName    = `recitation-eval-${student.user_id}`;
+                      const sessionStr  = student.rec_session_date
+                        ? `${student.rec_session_date}${student.rec_session_time ? " at " + student.rec_session_time : ""}`
+                        : null;
+                      return (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+
+                          {/* Session booked card */}
+                          {student.rec_session_date ? (<>
+                            {/* Status banner */}
+                            <div style={{ borderRadius: 14, padding: "14px 16px", background: student.rec_approved ? "#ECFDF5" : "#FFFBEB", border: `2px solid ${student.rec_approved ? "#6EE7B7" : "#FDE68A"}`, display: "flex", alignItems: "center", gap: 12 }}>
+                              {student.rec_approved
+                                ? <CheckCircle2 size={22} color="#16A34A" style={{ flexShrink: 0 }} />
+                                : <Bell size={22} color="#D97706" style={{ flexShrink: 0 }} />}
+                              <div style={{ flex: 1 }}>
+                                <div style={{ fontWeight: 800, fontSize: 14, color: student.rec_approved ? "#166534" : "#92400E", marginBottom: 2 }}>
+                                  {student.rec_approved ? "Session Confirmed ✅" : "⚠️ Session Awaiting Your Confirmation"}
+                                </div>
+                                <div style={{ fontSize: 13, color: student.rec_approved ? "#15803D" : "#B45309", fontWeight: 700 }}>{sessionStr}</div>
+                                {countdown && <div style={{ fontSize: 11, color: student.rec_approved ? "#16A34A" : "#D97706", marginTop: 3, fontWeight: 600 }}>{countdown}</div>}
+                              </div>
+                              {live && student.rec_approved && (
+                                <div style={{ width: 12, height: 12, borderRadius: "50%", background: "#22c55e", animation: "pulse 1s infinite", flexShrink: 0 }} />
+                              )}
+                            </div>
+
+                            {/* Session details */}
+                            <div style={{ background: "#F9FAFB", borderRadius: 12, padding: "14px 16px", border: "1px solid #E5E7EB" }}>
+                              <div style={{ fontSize: 11, fontWeight: 800, color: "#374151", marginBottom: 10, textTransform: "uppercase" as const, letterSpacing: .4 }}>Session Details</div>
+                              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                {[
+                                  { l: "Date",         v: student.rec_session_date || "—" },
+                                  { l: "Time",         v: student.rec_session_time || "—" },
+                                  { l: "Booked At",    v: student.rec_session_booked_at ? new Date(student.rec_session_booked_at).toLocaleDateString("en-NG", { day: "numeric", month: "short" }) : "—" },
+                                  { l: "Status",       v: student.rec_approved ? "✅ Confirmed" : "⏳ Pending" },
+                                ].map(i => (
+                                  <div key={i.l} style={{ padding: "6px 12px", borderRadius: 8, background: "#fff", border: "1px solid #E5E7EB", fontSize: 12 }}>
+                                    <span style={{ color: "#9CA3AF" }}>{i.l}: </span>
+                                    <strong style={{ color: "#374151" }}>{i.v}</strong>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+
+                            {/* Accept button — only if not yet confirmed */}
+                            {!student.rec_approved && (
+                              <button
+                                onClick={() => acceptSession(student)}
+                                disabled={acceptingSession === student.user_id}
+                                style={{ width: "100%", padding: "14px 16px", borderRadius: 14, border: "none", background: "linear-gradient(135deg,#D97706,#B45309)", color: "#fff", cursor: acceptingSession === student.user_id ? "not-allowed" : "pointer", fontWeight: 800, fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+                                {acceptingSession === student.user_id
+                                  ? <><Loader2 size={16} style={{ animation: "spin .8s linear infinite" }} /> Confirming…</>
+                                  : <><CheckCircle2 size={16} /> Accept & Confirm Session — Notify Student</>}
+                              </button>
+                            )}
+
+                            {/* Join button — admin side */}
+                            {student.rec_approved && (
+                              <div>
+                                <button
+                                  onClick={() => live && navigate(`/admin/live-classes?room=${roomName}&type=recitation`)}
+                                  style={{
+                                    width: "100%", padding: "14px 16px", borderRadius: 14, border: "none",
+                                    background: live ? `linear-gradient(135deg,${G},${GM})` : "#E5E7EB",
+                                    color: live ? "#fff" : "#9CA3AF",
+                                    cursor: live ? "pointer" : "not-allowed",
+                                    fontWeight: 800, fontSize: 14,
+                                    display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+                                    boxShadow: live ? "0 4px 20px rgba(6,78,59,.35)" : "none",
+                                    transition: "all .3s",
+                                  }}>
+                                  <Video size={17} />
+                                  {live
+                                    ? `🟢 Join Live Session with ${student.full_name}`
+                                    : `Join activates at ${student.rec_session_time} (15 min before) — ${countdown}`}
+                                </button>
+                                {!live && (
+                                  <div style={{ marginTop: 8, padding: "10px 14px", borderRadius: 10, background: "#F0FDF4", border: "1px solid #86EFAC", fontSize: 12, color: "#166534", textAlign: "center" as const }}>
+                                    ✅ Session confirmed. This Join button — and the student's Join button — will both activate automatically 15 minutes before the session time.
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                          </>) : (
+                            <div style={{ textAlign: "center", padding: "40px 20px", background: "#F9FAFB", borderRadius: 14, border: "2px dashed #E5E7EB" }}>
+                              <Calendar size={36} color="#D1D5DB" style={{ margin: "0 auto 12px", display: "block" }} />
+                              <div style={{ fontWeight: 700, color: "#374151", marginBottom: 6 }}>No Virtual Session Booked</div>
+                              <div style={{ fontSize: 13, color: "#9CA3AF" }}>The student has not yet scheduled a virtual recitation session. They do this in Stage 3 of the Recitation Test.</div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+
                     {/* ══ ASSIGN LEVEL TAB ══ */}
                     {tab === "assign" && (
                       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10 }}>
                           {[
                             { label: "Exam (40%)",    score: student.exam_score,        bg: "#FFFBEB" },
                             { label: "AI Rec (20%)",  score: student.rec_ai_score,      bg: "#EFF6FF" },
