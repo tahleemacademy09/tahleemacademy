@@ -15,7 +15,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "@/hooks/use-toast";
 import { Switch } from "@/components/ui/switch";
-import SubjectMaterialsHub from "@/components/classroom/SubjectMaterialsHub";
+import SubjectMaterials from "@/components/classroom/SubjectMaterials";
 import {
   Plus, BookOpen, Trash2, Edit2, ChevronRight, ChevronLeft,
   Loader2, EyeOff, Save, Image, Search, Layers, FolderOpen,
@@ -875,7 +875,7 @@ export default function CourseManagement() {
 
             {/* ── MATERIALS ─────────────────────────────────── */}
             {tab === "materials" && selSubject && (
-              <SubjectMaterialsHub
+              <SubjectMaterials
                 subjectId={selSubject.id}
                 subjectTitle={selSubject.title}
               />
