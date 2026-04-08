@@ -282,13 +282,32 @@ export default function LiveClassFilePanel({ subjectId }: Props) {
         .lcfp-overlay { position:fixed; inset:0; background:rgba(0,0,0,.82); z-index:9999; display:flex; flex-direction:column; align-items:center; justify-content:center; }
       `}</style>
 
-      {/* ─── Upload Zone ─── */}
-      <div
+      {/* ─── Upload Zone ───
+           ANDROID FIX: Use <label htmlFor> instead of div onClick → inputRef.click().
+           Programmatic .click() inside a div's onClick pushes a history entry on
+           Android — React Router fires popstate and navigates the user back when
+           the file picker closes. A <label htmlFor> is a native browser gesture
+           and does NOT push history. (Same fix used in SubjectMaterialsHub.tsx)
+      ─── */}
+
+      {/* Hidden input — give it a stable id so label can target it */}
+      <input
+        ref={inputRef}
+        id="lcfp-file-input"
+        type="file"
+        style={{ position:"absolute", width:1, height:1, opacity:0, pointerEvents:"none" }}
+        onChange={onFileInput}
+        accept="*/*"
+        disabled={uploading}
+      />
+
+      <label
+        htmlFor={uploading ? undefined : "lcfp-file-input"}
         onDragOver={onDragOver}
         onDragLeave={onDragLeave}
         onDrop={onDrop}
-        onClick={() => !uploading && inputRef.current?.click()}
         style={{
+          display: "block",
           border: `2px dashed ${dragging ? P.gold : P.border}`,
           borderRadius: 16,
           background: dragging ? P.goldL : P.bg,
@@ -300,9 +319,6 @@ export default function LiveClassFilePanel({ subjectId }: Props) {
           userSelect: "none",
         }}
       >
-        <input ref={inputRef} type="file" style={{ display:"none" }} onChange={onFileInput}
-          accept="*/*"/>
-
         {uploading ? (
           <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:10 }}>
             <div style={{ fontSize:28 }}>⏫</div>
@@ -325,7 +341,7 @@ export default function LiveClassFilePanel({ subjectId }: Props) {
             </p>
           </>
         )}
-      </div>
+      </label>
 
       {/* ─── Error ─── */}
       {error && (
