@@ -206,6 +206,30 @@ const UploadModal = memo(({ subject, count, onClose, onDone }: UploadModalProps)
   const [drag,   setDrag]   = useState(false);
   const dragCnt = useRef(0);
   const fileRef = useRef<HTMLInputElement>(null);
+  // ── Android file-picker guard ────────────────────────────────────────────
+  // On Android (Chrome/Kiwi), opening the file picker fires window "blur".
+  // When the user returns after picking, the browser fires a synthetic click
+  // that lands on the backdrop and incorrectly closes the modal.
+  // We track whether the file picker is open and block backdrop dismissal.
+  const filePickerOpen = useRef(false);
+
+  useEffect(() => {
+    const onWindowBlur = () => {
+      // Window lost focus = file picker (or another dialog) just opened
+      filePickerOpen.current = true;
+    };
+    const onWindowFocus = () => {
+      // Window regained focus = user returned from file picker.
+      // Delay the reset so the onChange fires before we allow backdrop clicks.
+      setTimeout(() => { filePickerOpen.current = false; }, 800);
+    };
+    window.addEventListener("blur",  onWindowBlur);
+    window.addEventListener("focus", onWindowFocus);
+    return () => {
+      window.removeEventListener("blur",  onWindowBlur);
+      window.removeEventListener("focus", onWindowFocus);
+    };
+  }, []);
 
   const busy = phase === "uploading" || phase === "saving";
 
@@ -296,7 +320,10 @@ const UploadModal = memo(({ subject, count, onClose, onDone }: UploadModalProps)
         background: "rgba(0,0,0,.6)",
         display: "flex", alignItems: "flex-end", justifyContent: "center",
       }}
-      onClick={e => { if (e.target === e.currentTarget && !busy) onClose(); }}
+      onClick={e => {
+        // Guard: ignore backdrop clicks while file picker is open (Android bug)
+        if (e.target === e.currentTarget && !busy && !filePickerOpen.current) onClose();
+      }}
     >
       <div style={{
         background: "#fff", borderRadius: "22px 22px 0 0",
@@ -389,6 +416,7 @@ const UploadModal = memo(({ subject, count, onClose, onDone }: UploadModalProps)
               <label htmlFor={busy ? undefined : "mmp-file-input"}
                 onDragEnter={onDE} onDragLeave={onDL}
                 onDragOver={e => e.preventDefault()} onDrop={onDrop}
+                onClick={() => { if (!busy) filePickerOpen.current = true; }}
                 style={{
                   display:"block", padding: "36px 20px", borderRadius: 18, textAlign: "center",
                   cursor: busy ? "not-allowed" : "pointer",
