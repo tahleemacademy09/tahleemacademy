@@ -14,7 +14,7 @@ const ROLE_FALLBACKS: Record<string, string> = {
 };
 
 const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
-  const { user, loading: authLoading, hasRole, roles } = useAuth();
+  const { user, loading: authLoading, hasRole, roles, mustChangePassword } = useAuth();
   const location = useLocation();
 
   // Wait for auth to finish loading before making any decision
@@ -29,6 +29,11 @@ const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
 
   // Not logged in → send to login
   if (!user) return <Navigate to="/login" replace />;
+
+  // Admin created this account → force password change before anything else
+  if (mustChangePassword && location.pathname !== "/change-password") {
+    return <Navigate to="/change-password" replace />;
+  }
 
   // ── Admins must not land on /student/* UNLESS impersonating ───────────
   const isImpersonating = !!sessionStorage.getItem("admin_impersonate_student");
