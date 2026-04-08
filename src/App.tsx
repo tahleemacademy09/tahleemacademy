@@ -92,7 +92,6 @@ const PrivateSessions       = lazy(() => import("./pages/admin/PrivateSessions")
 const MajlisAdmin           = lazy(() => import("./pages/admin/MajlisModeration"));
 // ── NEW ────────────────────────────────────────────────────────────────────
 const RegistrationSettings  = lazy(() => import("./pages/admin/RegistrationSettings"));
-const MaterialManagerPro    = lazy(() => import("./pages/admin/MaterialManagerPro"));
 
 // ── Teacher pages ──────────────────────────────────────────────────────────
 const TeacherDashboard        = lazy(() => import("./pages/teacher/TeacherDashboard"));
@@ -246,7 +245,6 @@ const App = () => (
                     <Route path="/admin/public-classes"           element={<PublicClassManagement />} />
                     {/* NEW: Registration settings */}
                     <Route path="/admin/registration-settings"    element={<RegistrationSettings />} />
-                    <Route path="/admin/material-manager"         element={<MaterialManagerPro />} />
                     {/* TASJEEL admin control panel */}
                     <Route path="/admin/tasjeel"                  element={<TasjeelAdmin />} />
                   </Route>
