@@ -277,9 +277,21 @@ const RecitationTest = () => {
   const scoreLabel = (s: number) => s >= 80 ? "Excellent" : s >= 60 ? "Good" : "Needs Practice";
 
   // ── Available session slots ──────────────────────────────────────────────
-  const availableSlots = (settings.available_times || "09:00,10:00,11:00,14:00,15:00,16:00,17:00").split(",").map(t => t.trim()).filter(Boolean);
-  const sessionDates   = Array.from({ length: 14 }, (_, i) => {
-    const d = new Date(); d.setDate(d.getDate() + i + 1);
+  // ── Fixed time slots: 20:30 → 22:00 every 15 min ───────────────────────────
+  const availableSlots = (() => {
+    const slots: string[] = [];
+    // 20:30, 20:45, 21:00, 21:15, 21:30, 21:45, 22:00
+    for (let h = 20; h <= 22; h++) {
+      const mins = h === 20 ? [30, 45] : h === 22 ? [0] : [0, 15, 30, 45];
+      mins.forEach(m => {
+        slots.push(`${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`);
+      });
+    }
+    return slots;
+  })();
+  // ── Available dates: today + tomorrow ────────────────────────────────────────
+  const sessionDates = Array.from({ length: 2 }, (_, i) => {
+    const d = new Date(); d.setDate(d.getDate() + i);
     return d.toISOString().split("T")[0];
   });
   const parsedTips = (settings.tips || "").split(/,|\n/).map(t => t.trim()).filter(Boolean);
