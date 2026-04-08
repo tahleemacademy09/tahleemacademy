@@ -405,7 +405,7 @@ const EntranceExamTaking = () => {
 
   // ── Main exam UI ─────────────────────────────────────────────────────────
   return (
-    <div style={{ minHeight: "100vh", background: "#0b1f14", fontFamily: "'Cairo',sans-serif", paddingBottom: isMobile ? 130 : 16 }}>
+    <div style={{ minHeight: "100vh", background: "#FFFFFF", fontFamily: "'Cairo',sans-serif", paddingBottom: isMobile ? 130 : 16 }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&family=Amiri:wght@400;700&display=swap');
         @keyframes spin{to{transform:rotate(360deg)}}
@@ -418,21 +418,22 @@ const EntranceExamTaking = () => {
 
       {/* ── TOP BAR ─────────────────────────────────────────────────────── */}
       <div style={{
-        position: "sticky", top: 0, zIndex: 30, background: "rgba(11,31,20,.98)",
-        borderBottom: "1px solid rgba(255,255,255,.08)",
-        backdropFilter: "blur(12px)", padding: isMobile ? "10px 14px" : "12px 20px",
+        position: "sticky", top: 0, zIndex: 30, background: "#FFFFFF",
+        borderBottom: "2px solid #E5E7EB",
+        padding: isMobile ? "10px 14px" : "12px 20px",
         display: "flex", alignItems: "center", gap: 12,
+        boxShadow: "0 2px 8px rgba(0,0,0,.06)",
       }}>
         {/* Timer */}
         <div style={{
           display: "flex", alignItems: "center", gap: 6,
-          background: isCrit ? "rgba(239,68,68,.2)" : isWarn ? "rgba(245,158,11,.15)" : "rgba(255,255,255,.06)",
-          border: `1px solid ${isCrit ? "rgba(239,68,68,.4)" : isWarn ? "rgba(245,158,11,.3)" : "rgba(255,255,255,.1)"}`,
+          background: isCrit ? "#FEF2F2" : isWarn ? "#FFFBEB" : "#F0FDF4",
+          border: `2px solid ${isCrit ? "#FECACA" : isWarn ? "#FDE68A" : "#86EFAC"}`,
           borderRadius: 10, padding: isMobile ? "7px 12px" : "8px 14px",
           animation: isCrit ? "timerPulse 1s ease infinite" : "none",
         }}>
-          <Clock size={isMobile ? 14 : 15} color={isCrit ? RED : isWarn ? "#f59e0b" : "rgba(255,255,255,.6)"} />
-          <span style={{ fontSize: isMobile ? 14 : 15, fontWeight: 900, color: isCrit ? RED : isWarn ? "#f59e0b" : "#fff", letterSpacing: 1 }}>
+          <Clock size={isMobile ? 14 : 15} color={isCrit ? RED : isWarn ? "#D97706" : G} />
+          <span style={{ fontSize: isMobile ? 15 : 16, fontWeight: 900, color: isCrit ? RED : isWarn ? "#D97706" : G, letterSpacing: 1 }}>
             {fmtTime(timeLeft)}
           </span>
         </div>
@@ -440,17 +441,17 @@ const EntranceExamTaking = () => {
         {/* Progress */}
         <div style={{ flex: 1 }}>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-            <span style={{ fontSize: 11, color: "rgba(255,255,255,.45)" }}>Q {currentIdx + 1} / {questions.length}</span>
-            <span style={{ fontSize: 11, color: "rgba(255,255,255,.45)" }}>{answered} answered</span>
+            <span style={{ fontSize: 12, color: "#6B7280", fontWeight: 700 }}>Q {currentIdx + 1} / {questions.length}</span>
+            <span style={{ fontSize: 12, color: "#6B7280", fontWeight: 700 }}>{answered} answered</span>
           </div>
-          <div style={{ height: 3, background: "rgba(255,255,255,.1)", borderRadius: 3, overflow: "hidden" }}>
+          <div style={{ height: 4, background: "#E5E7EB", borderRadius: 4, overflow: "hidden" }}>
             <div style={{ width: `${questions.length ? (answered / questions.length) * 100 : 0}%`, height: "100%", background: `linear-gradient(90deg,${G},${GOLD})`, transition: "width .4s" }} />
           </div>
         </div>
 
         {/* Violation badge */}
         {violationCount > 0 && (
-          <div style={{ padding: "4px 8px", borderRadius: 8, background: "rgba(239,68,68,.15)", border: "1px solid rgba(239,68,68,.3)", fontSize: 11, fontWeight: 700, color: RED }}>
+          <div style={{ padding: "4px 10px", borderRadius: 8, background: "#FEF2F2", border: "1.5px solid #FECACA", fontSize: 12, fontWeight: 700, color: RED }}>
             ⚠️ {violationCount}/3
           </div>
         )}
@@ -458,11 +459,11 @@ const EntranceExamTaking = () => {
         {/* Submit */}
         {!isMobile && (
           <button onClick={() => setShowConfirm(true)} style={{
-            padding: "8px 16px", borderRadius: 10, border: "none",
-            background: `linear-gradient(135deg,${GOLD},#b8902a)`,
-            color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer",
+            padding: "8px 18px", borderRadius: 10, border: "none",
+            background: `linear-gradient(135deg,${G},${GM})`,
+            color: "#fff", fontSize: 13, fontWeight: 800, cursor: "pointer",
           }}>
-            <Send size={12} style={{ display: "inline", marginRight: 4, verticalAlign: "middle" }} />
+            <Send size={13} style={{ display: "inline", marginRight: 5, verticalAlign: "middle" }} />
             Submit
           </button>
         )}
@@ -471,40 +472,40 @@ const EntranceExamTaking = () => {
       {/* ── QUESTION AREA ───────────────────────────────────────────────── */}
       <div style={{ maxWidth: 760, margin: "0 auto", padding: isMobile ? "16px 12px" : "24px 20px" }}>
         {q ? (
-          <div style={{ background: "rgba(255,255,255,.03)", border: "1px solid rgba(255,255,255,.08)", borderRadius: 18, overflow: "hidden" }}>
+          <div style={{ background: "#FFFFFF", border: "2px solid #E5E7EB", borderRadius: 18, overflow: "hidden", boxShadow: "0 4px 16px rgba(0,0,0,.06)" }}>
             {/* Question header */}
-            <div style={{ padding: isMobile ? "14px 16px" : "18px 22px", background: "rgba(255,255,255,.02)", borderBottom: "1px solid rgba(255,255,255,.06)", display: "flex", alignItems: "flex-start", gap: 12 }}>
-              <div style={{ width: 34, height: 34, borderRadius: "50%", background: GOLD, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                <span style={{ fontSize: 13, fontWeight: 900, color: "#1a0a00" }}>{currentIdx + 1}</span>
+            <div style={{ padding: isMobile ? "16px" : "20px 24px", background: "#F8F9FA", borderBottom: "2px solid #E5E7EB", display: "flex", alignItems: "flex-start", gap: 14 }}>
+              <div style={{ width: 40, height: 40, borderRadius: "50%", background: G, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <span style={{ fontSize: 15, fontWeight: 900, color: "#fff" }}>{currentIdx + 1}</span>
               </div>
               <div style={{ flex: 1 }}>
-                <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-                  <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, background: "rgba(255,255,255,.08)", color: "rgba(255,255,255,.5)", textTransform: "uppercase" }}>
+                <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                  <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: "#EFF6FF", color: "#1D4ED8", textTransform: "uppercase" as const, fontWeight: 700 }}>
                     {q.question_type?.replace("_", " ")}
                   </span>
-                  <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, background: "rgba(201,168,76,.1)", color: GOLD }}>
+                  <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: "#FFF7ED", color: "#C2410C", fontWeight: 700 }}>
                     {q.points || 1} pt{(q.points || 1) !== 1 ? "s" : ""}
                   </span>
                 </div>
-                <p style={{ fontSize: isMobile ? 14 : 16, color: "#fff", margin: 0, lineHeight: 1.7, fontWeight: 600 }}>
+                <p style={{ fontSize: isMobile ? 17 : 19, color: "#111827", margin: 0, lineHeight: 1.65, fontWeight: 800 }}>
                   {q.question_text || q.question_text_ar || "Question text missing"}
                 </p>
                 {q.question_text_ar && q.question_text && (
-                  <p style={{ fontSize: 14, color: "rgba(255,255,255,.5)", margin: "6px 0 0", direction: "rtl", fontFamily: "'Amiri',serif", lineHeight: 1.8 }}>
+                  <p style={{ fontSize: 16, color: "#374151", margin: "10px 0 0", direction: "rtl", fontFamily: "'Amiri',serif", lineHeight: 2, fontWeight: 700 }}>
                     {q.question_text_ar}
                   </p>
                 )}
               </div>
-              <button onClick={() => toggleFlag(q.id)} style={{ background: "none", border: "none", cursor: "pointer", padding: 4, flexShrink: 0 }}>
-                <Flag size={16} color={flagged.has(q.id) ? "#f59e0b" : "rgba(255,255,255,.25)"} fill={flagged.has(q.id) ? "#f59e0b" : "none"} />
+              <button onClick={() => toggleFlag(q.id)} style={{ background: "none", border: "none", cursor: "pointer", padding: 6, flexShrink: 0 }}>
+                <Flag size={18} color={flagged.has(q.id) ? "#F59E0B" : "#D1D5DB"} fill={flagged.has(q.id) ? "#F59E0B" : "none"} />
               </button>
             </div>
 
             {/* Answer area */}
-            <div style={{ padding: isMobile ? "16px" : "20px 22px" }}>
+            <div style={{ padding: isMobile ? "18px 16px" : "22px 24px" }}>
               {/* MCQ / True-False */}
               {(q.question_type === "mcq" || q.question_type === "true_false") && (
-                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                   {(q.question_type === "true_false"
                     ? [{ id: "true", text: "True ✓" }, { id: "false", text: "False ✗" }]
                     : (q.options as any[] || [])
@@ -514,23 +515,24 @@ const EntranceExamTaking = () => {
                     const isSel  = answers[q.id] === optId;
                     return (
                       <button key={optId} onClick={() => saveAnswer(q.id, optId)} style={{
-                        width: "100%", padding: isMobile ? "12px 14px" : "14px 18px",
-                        borderRadius: 12, textAlign: "left", cursor: "pointer",
-                        border: `2px solid ${isSel ? GOLD : "rgba(255,255,255,.1)"}`,
-                        background: isSel ? "rgba(201,168,76,.15)" : "rgba(255,255,255,.04)",
-                        color: isSel ? GOLD : "rgba(255,255,255,.8)", fontWeight: isSel ? 700 : 500,
-                        fontSize: isMobile ? 13 : 14, display: "flex", alignItems: "center", gap: 12,
-                        transition: "all .2s", minHeight: isMobile ? 48 : "auto",
+                        width: "100%", padding: isMobile ? "14px 16px" : "16px 20px",
+                        borderRadius: 14, textAlign: "left", cursor: "pointer",
+                        border: `2.5px solid ${isSel ? G : "#E5E7EB"}`,
+                        background: isSel ? "#F0FDF4" : "#FFFFFF",
+                        color: isSel ? G : "#1F2937", fontWeight: isSel ? 800 : 600,
+                        fontSize: isMobile ? 15 : 16, display: "flex", alignItems: "center", gap: 14,
+                        transition: "all .2s", minHeight: isMobile ? 56 : 52,
+                        boxShadow: isSel ? "0 2px 8px rgba(6,78,59,.12)" : "none",
                       }}>
                         <span style={{
-                          width: 22, height: 22, borderRadius: "50%",
-                          border: `2px solid ${isSel ? GOLD : "rgba(255,255,255,.3)"}`,
-                          background: isSel ? GOLD : "transparent",
+                          width: 24, height: 24, borderRadius: "50%",
+                          border: `2.5px solid ${isSel ? G : "#D1D5DB"}`,
+                          background: isSel ? G : "#fff",
                           display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
                         }}>
-                          {isSel && <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#fff", display: "block" }} />}
+                          {isSel && <span style={{ width: 9, height: 9, borderRadius: "50%", background: "#fff", display: "block" }} />}
                         </span>
-                        <span style={{ flex: 1 }}>{optTxt}</span>
+                        <span style={{ flex: 1, lineHeight: 1.5 }}>{optTxt}</span>
                       </button>
                     );
                   })}
@@ -541,57 +543,59 @@ const EntranceExamTaking = () => {
               {["short_answer", "essay", "fill_blank"].includes(q.question_type) && (
                 <textarea value={answers[q.id] || ""} onChange={e => saveAnswer(q.id, e.target.value)}
                   placeholder="Type your answer here… اكتب إجابتك هنا"
-                  rows={q.question_type === "essay" ? (isMobile ? 5 : 7) : 3}
+                  rows={q.question_type === "essay" ? (isMobile ? 6 : 8) : 4}
                   dir="auto"
                   style={{
-                    width: "100%", padding: isMobile ? "12px" : "14px",
-                    borderRadius: 12, border: "2px solid rgba(255,255,255,.15)",
-                    background: "rgba(255,255,255,.06)", color: "#fff",
-                    fontSize: isMobile ? 13 : 14, outline: "none", resize: "vertical",
-                    fontFamily: "inherit", boxSizing: "border-box",
+                    width: "100%", padding: isMobile ? "14px" : "16px",
+                    borderRadius: 14, border: "2.5px solid #E5E7EB",
+                    background: "#FFFFFF", color: "#111827",
+                    fontSize: isMobile ? 15 : 16, fontWeight: 600,
+                    outline: "none", resize: "vertical" as const,
+                    fontFamily: "inherit", boxSizing: "border-box" as const,
+                    lineHeight: 1.7,
                   }} />
               )}
             </div>
 
             {/* Question navigation arrows */}
             <div style={{
-              padding: isMobile ? "12px 16px" : "14px 22px",
-              borderTop: "1px solid rgba(255,255,255,.06)",
+              padding: isMobile ? "14px 16px" : "16px 24px",
+              borderTop: "2px solid #E5E7EB", background: "#F8F9FA",
               display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10,
             }}>
               <button onClick={() => setCurrentIdx(Math.max(0, currentIdx - 1))} disabled={currentIdx === 0} style={{
-                display: "flex", alignItems: "center", gap: 6,
-                padding: isMobile ? "11px 16px" : "10px 18px", borderRadius: 10,
-                border: "1.5px solid rgba(255,255,255,.15)", background: "transparent",
-                color: "rgba(255,255,255,.7)", cursor: currentIdx === 0 ? "not-allowed" : "pointer",
-                opacity: currentIdx === 0 ? .4 : 1, fontWeight: 700, fontSize: 13, minHeight: 44,
+                display: "flex", alignItems: "center", gap: 8,
+                padding: isMobile ? "12px 18px" : "11px 20px", borderRadius: 10,
+                border: "2px solid #E5E7EB", background: "#fff",
+                color: "#374151", cursor: currentIdx === 0 ? "not-allowed" : "pointer",
+                opacity: currentIdx === 0 ? .4 : 1, fontWeight: 700, fontSize: 14, minHeight: 48,
               }}>
-                <ChevronLeft size={14} /> Prev
+                <ChevronLeft size={16} /> Prev
               </button>
-              <span style={{ fontSize: 12, color: "rgba(255,255,255,.35)" }}>{currentIdx + 1} / {questions.length}</span>
+              <span style={{ fontSize: 13, color: "#6B7280", fontWeight: 700 }}>{currentIdx + 1} / {questions.length}</span>
               {currentIdx < questions.length - 1 ? (
                 <button onClick={() => setCurrentIdx(currentIdx + 1)} style={{
-                  display: "flex", alignItems: "center", gap: 6,
-                  padding: isMobile ? "11px 16px" : "10px 18px", borderRadius: 10,
+                  display: "flex", alignItems: "center", gap: 8,
+                  padding: isMobile ? "12px 18px" : "11px 20px", borderRadius: 10,
                   border: "none", background: G, color: "#fff",
-                  cursor: "pointer", fontWeight: 700, fontSize: 13, minHeight: 44,
+                  cursor: "pointer", fontWeight: 700, fontSize: 14, minHeight: 48,
                 }}>
-                  Next <ChevronRight size={14} />
+                  Next <ChevronRight size={16} />
                 </button>
               ) : (
                 <button onClick={() => setShowConfirm(true)} style={{
-                  display: "flex", alignItems: "center", gap: 6,
-                  padding: isMobile ? "11px 18px" : "10px 20px", borderRadius: 10,
-                  border: "none", background: `linear-gradient(135deg,${GOLD},#b8902a)`,
-                  color: "#fff", cursor: "pointer", fontWeight: 800, fontSize: 13, minHeight: 44,
+                  display: "flex", alignItems: "center", gap: 8,
+                  padding: isMobile ? "12px 20px" : "11px 22px", borderRadius: 10,
+                  border: "none", background: `linear-gradient(135deg,${G},${GM})`,
+                  color: "#fff", cursor: "pointer", fontWeight: 800, fontSize: 14, minHeight: 48,
                 }}>
-                  <Send size={13} /> Submit
+                  <Send size={14} /> Submit
                 </button>
               )}
             </div>
           </div>
         ) : (
-          <div style={{ padding: "60px 20px", textAlign: "center", color: "rgba(255,255,255,.4)" }}>
+          <div style={{ padding: "60px 20px", textAlign: "center", color: "#9CA3AF" }}>
             <p>No questions found for this exam.</p>
           </div>
         )}
@@ -601,9 +605,9 @@ const EntranceExamTaking = () => {
       {isMobile && (
         <div style={{
           position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 25,
-          background: "rgba(11,31,20,.99)", borderTop: "1px solid rgba(255,255,255,.08)",
+          background: "#FFFFFF", borderTop: "2px solid #E5E7EB",
           borderRadius: navOpen ? "16px 16px 0 0" : "16px 16px 0 0",
-          boxShadow: "0 -4px 24px rgba(0,0,0,.4)",
+          boxShadow: "0 -4px 24px rgba(0,0,0,.1)",
           transition: "all .3s ease",
         }}>
           {/* Collapse toggle bar */}
@@ -615,14 +619,14 @@ const EntranceExamTaking = () => {
             onClick={() => setNavOpen(v => !v)}
           >
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span style={{ fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,.4)", textTransform: "uppercase", letterSpacing: 1 }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: "#6B7280", textTransform: "uppercase", letterSpacing: 1 }}>
                 Questions
               </span>
-              <span style={{ padding: "2px 8px", borderRadius: 20, background: "rgba(34,197,94,.15)", color: "#22c55e", fontSize: 11, fontWeight: 700 }}>
+              <span style={{ padding: "2px 8px", borderRadius: 20, background: "#F0FDF4", color: "#16A34A", fontSize: 12, fontWeight: 700 }}>
                 {answered}/{questions.length}
               </span>
               {flagged.size > 0 && (
-                <span style={{ padding: "2px 8px", borderRadius: 20, background: "rgba(245,158,11,.15)", color: "#f59e0b", fontSize: 11, fontWeight: 700 }}>
+                <span style={{ padding: "2px 8px", borderRadius: 20, background: "#FFFBEB", color: "#D97706", fontSize: 12, fontWeight: 700 }}>
                   🏳 {flagged.size}
                 </span>
               )}
@@ -636,7 +640,7 @@ const EntranceExamTaking = () => {
                 <Send size={11} style={{ display: "inline", marginRight: 4, verticalAlign: "middle" }} />
                 Submit
               </button>
-              {navOpen ? <ChevronDown size={18} color="rgba(255,255,255,.4)" /> : <ChevronUp size={18} color="rgba(255,255,255,.4)" />}
+              {navOpen ? <ChevronDown size={18} color="#9CA3AF" /> : <ChevronUp size={18} color="#9CA3AF" />}
             </div>
           </div>
 
@@ -654,9 +658,9 @@ const EntranceExamTaking = () => {
                       style={{
                         aspectRatio: "1", borderRadius: 8, border: "none",
                         fontWeight: 800, fontSize: 12, cursor: "pointer",
-                        background: isCur ? GOLD : isFl ? "rgba(245,158,11,.2)" : isAns ? "rgba(34,197,94,.2)" : "rgba(255,255,255,.06)",
-                        color: isCur ? "#fff" : isFl ? "#f59e0b" : isAns ? "#22c55e" : "rgba(255,255,255,.4)",
-                        outline: isCur ? `2px solid ${GOLD}` : "none",
+                        background: isCur ? G : isFl ? "#FFFBEB" : isAns ? "#F0FDF4" : "#F9FAFB",
+                        color: isCur ? "#fff" : isFl ? "#D97706" : isAns ? "#16A34A" : "#9CA3AF",
+                        outline: isCur ? `2px solid ${G}` : "none",
                         minHeight: 38, transition: "all .15s",
                       }}>
                       {idx + 1}
@@ -664,8 +668,8 @@ const EntranceExamTaking = () => {
                   );
                 })}
               </div>
-              <div style={{ display: "flex", gap: 10, fontSize: 10, color: "rgba(255,255,255,.3)", justifyContent: "center" }}>
-                <span>🟡 Current</span><span>🟢 Answered</span><span>🟠 Flagged</span><span>⚪ Unanswered</span>
+              <div style={{ display: "flex", gap: 12, fontSize: 11, color: "#6B7280", justifyContent: "center" }}>
+                <span>🟢 Current</span><span>✅ Answered</span><span>⚠️ Flagged</span><span>⬜ Unanswered</span>
               </div>
             </div>
           )}
