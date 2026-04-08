@@ -2,6 +2,8 @@
 // CHANGE: emailRedirectTo now points to /auth/register-continue
 // so that clicking the verification email lands the user in the registration pipeline
 // (payment → onboarding → exam → recitation → welcome)
+// ADDED: Detects must_change_password flag set by admin-create-user edge function
+// and redirects to /change-password before anything else loads.
 
 import React, { createContext, useContext, useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
@@ -28,6 +30,7 @@ interface AuthContextType {
   loading: boolean;
   roles: string[];
   profile: UserProfile | null;
+  mustChangePassword: boolean;
   signUp: (email: string, password: string, fullName: string) => Promise<any>;
   signIn: (email: string, password: string) => Promise<any>;
   signOut: () => Promise<void>;
@@ -38,11 +41,12 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user,    setUser]    = useState<User | null>(null);
-  const [session, setSession] = useState<Session | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [roles,   setRoles]   = useState<string[]>([]);
-  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [user,               setUser]               = useState<User | null>(null);
+  const [session,            setSession]            = useState<Session | null>(null);
+  const [loading,            setLoading]            = useState(true);
+  const [roles,              setRoles]              = useState<string[]>([]);
+  const [profile,            setProfile]            = useState<UserProfile | null>(null);
+  const [mustChangePassword, setMustChangePassword] = useState(false);
 
   const fetchUserData = async (userId: string, setLoadingFalse = false) => {
     try {
@@ -69,12 +73,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       setUser(session?.user ?? null);
+
+      // Check must_change_password flag set by admin when creating the account
+      const mustChange = session?.user?.user_metadata?.must_change_password === true;
+      setMustChangePassword(mustChange);
+
       if (session?.user) {
         setLoading(true);
         fetchUserData(session.user.id, true);
       } else {
         setRoles([]);
         setProfile(null);
+        setMustChangePassword(false);
         setLoading(false);
       }
     });
@@ -82,6 +92,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setUser(session?.user ?? null);
+
+      const mustChange = session?.user?.user_metadata?.must_change_password === true;
+      setMustChangePassword(mustChange);
+
       if (session?.user) {
         fetchUserData(session.user.id, true);
       } else {
@@ -97,12 +111,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       email,
       password,
       options: {
-        // ── KEY CHANGE ────────────────────────────────────────────────────────
-        // After email verification, land the user on RegisterContinue which
-        // handles payment → onboarding routing without requiring a separate login.
-        // IMPORTANT: Add this URL to your Supabase project's "Redirect URLs" whitelist:
-        //   Authentication → URL Configuration → Redirect URLs → add:
-        //   https://your-domain.com/auth/register-continue
         emailRedirectTo: `${window.location.origin}/auth/register-continue`,
         data: { full_name: fullName },
       },
@@ -115,13 +123,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signOut = async () => {
     await supabase.auth.signOut();
-    setUser(null); setSession(null); setRoles([]); setProfile(null);
+    setUser(null); setSession(null); setRoles([]); setProfile(null); setMustChangePassword(false);
   };
 
   const hasRole = (role: string) => roles.includes(role);
 
   return (
-    <AuthContext.Provider value={{ user, session, loading, roles, profile, signUp, signIn, signOut, hasRole, refreshProfile }}>
+    <AuthContext.Provider value={{ user, session, loading, roles, profile, mustChangePassword, signUp, signIn, signOut, hasRole, refreshProfile }}>
       {children}
     </AuthContext.Provider>
   );
