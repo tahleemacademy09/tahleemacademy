@@ -52,6 +52,7 @@ interface StudentEval {
   rec_session_time:  string | null;
   rec_session_booked_at: string | null;
   rec_approved:      boolean;
+  rec_assigned_page: number | null;
   current_level:     string | null;
   admin_approved:    boolean;
   final_level:       string | null;
@@ -126,6 +127,7 @@ const LevelAssignment = () => {
   const [assigning, setAssigning]   = useState<string | null>(null);
   const [selectedLevels, setSelectedLevels] = useState<Record<string, Level>>({});
   const [audioUrls, setAudioUrls]   = useState<Record<string, string>>({});
+  const [quranPages, setQuranPages] = useState<Record<string, {ayahs:{n:number;text:string}[]; surahEn:string; surahAr:string; juz:number; page:number} | null>>({});
   const [teacherNotes, setTeacherNotes]   = useState<Record<string, string>>({});
   const [teacherScores, setTeacherScores] = useState<Record<string, string>>({});
   const [savingTeacher, setSavingTeacher] = useState<string | null>(null);
@@ -252,6 +254,7 @@ const LevelAssignment = () => {
           rec_session_time:  r.virtual_session_time || null,
           rec_session_booked_at: r.virtual_session_booked_at || r.stage3_requested_at || null,
           rec_approved:      !!r.admin_approved,
+          rec_assigned_page: r.assigned_page || null,
           current_level:     p.level || p.course_level || t.level_assigned || null,
           admin_approved:    t.current_step === "completed",
           final_level:       r.final_level || t.level_assigned || p.level || null,
@@ -324,7 +327,27 @@ const LevelAssignment = () => {
     if (data?.signedUrl) setAudioUrls(p => ({ ...p, [uid]: data.signedUrl }));
   };
 
-  // ── Save teacher evaluation ────────────────────────────────────────────────
+  // ── Load Quran page for admin view ──────────────────────────────────────────
+  const loadQuranPage = async (pageNum: number, uid: string) => {
+    if (quranPages[uid] !== undefined) return;
+    setQuranPages(p => ({ ...p, [uid]: null })); // mark loading
+    try {
+      const r = await fetch(`https://api.alquran.cloud/v1/page/${pageNum}/quran-uthmani`);
+      const d = await r.json();
+      const ayahs = d?.data?.ayahs || [];
+      if (!ayahs.length) return;
+      setQuranPages(p => ({
+        ...p,
+        [uid]: {
+          ayahs:   ayahs.map((a: any) => ({ n: a.numberInSurah, text: a.text })),
+          surahEn: ayahs[0].surah?.englishName || "",
+          surahAr: ayahs[0].surah?.name        || "",
+          juz:     ayahs[0].juz                || 1,
+          page:    pageNum,
+        },
+      }));
+    } catch (_) {}
+  };
   const saveTeacherEval = async (uid: string) => {
     setSavingTeacher(uid);
     const score = parseInt(teacherScores[uid] || "0");
@@ -771,6 +794,51 @@ const LevelAssignment = () => {
                     {/* ══ RECITATION TAB ══ */}
                     {tab === "recitation" && (
                       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+
+                        {/* ── Assigned Quran Page ── */}
+                        {student.rec_assigned_page ? (
+                          <div style={{ background: "#FFFEF5", borderRadius: 14, border: "2px solid #E8D5A3", overflow: "hidden" }}>
+                            <div style={{ background: "linear-gradient(135deg,#F5ECD5,#EDD9A3)", padding: "10px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #DBC580" }}>
+                              <span style={{ fontSize: 12, fontWeight: 700, color: "#7D5A1E", fontFamily: "'Amiri',serif" }}>
+                                {quranPages[student.user_id]?.juz ? `الجزء ${quranPages[student.user_id]!.juz}` : "الجزء"}
+                              </span>
+                              <span style={{ fontSize: 11, fontWeight: 800, color: "#5C3D11" }}>
+                                {quranPages[student.user_id]?.surahEn || `Page ${student.rec_assigned_page}`}
+                              </span>
+                            </div>
+                            <div style={{ padding: "16px", minHeight: 100, direction: "rtl" as const }}>
+                              {!quranPages[student.user_id] ? (
+                                <div style={{ display: "flex", gap: 10, alignItems: "center", justifyContent: "center", padding: "20px 0" }}>
+                                  <button onClick={() => loadQuranPage(student.rec_assigned_page!, student.user_id)}
+                                    style={{ padding: "9px 18px", borderRadius: 10, border: "none", background: "#7D5A1E", color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}>
+                                    <BookOpen size={14} /> Load Student's Page {student.rec_assigned_page}
+                                  </button>
+                                </div>
+                              ) : quranPages[student.user_id]?.ayahs?.length ? (
+                                <div style={{ fontSize: 20, fontFamily: "'Amiri Quran','Amiri',serif", lineHeight: 2.6, color: "#1A1A1A", textAlign: "justify" as const }}>
+                                  {quranPages[student.user_id]!.ayahs.map((a, i) => (
+                                    <span key={i}>
+                                      {a.text}
+                                      <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 24, height: 24, margin: "0 3px", fontSize: 10, fontWeight: 800, color: "#7D5A1E", fontFamily: "'Cairo',sans-serif", background: "#F5ECD5", borderRadius: "50%", border: "1px solid #DBC580", verticalAlign: "middle" }}>
+                                        {a.n}
+                                      </span>
+                                    </span>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p style={{ fontSize: 12, color: "#9CA3AF", textAlign: "center" as const }}>Loading…</p>
+                              )}
+                            </div>
+                            <div style={{ borderTop: "1px solid #DBC580", padding: "6px 16px", background: "#F9F0DC", textAlign: "center" as const }}>
+                              <span style={{ fontSize: 10, fontWeight: 700, color: "#9C7722", letterSpacing: .8 }}>PAGE {student.rec_assigned_page} · THIS IS WHAT THE STUDENT WAS ASKED TO RECITE</span>
+                            </div>
+                          </div>
+                        ) : (
+                          <div style={{ background: "#FFFEF5", borderRadius: 12, border: "1px dashed #E8D5A3", padding: "14px 16px", fontSize: 12, color: "#9CA3AF", textAlign: "center" as const }}>
+                            No Quran page assigned yet (student hasn't reached Stage 1)
+                          </div>
+                        )}
+
                         <div style={{ background: "#EFF6FF", borderRadius: 14, padding: 20, border: "1px solid #93C5FD" }}>
                           <div style={{ fontWeight: 800, fontSize: 15, color: "#1E3A5F", marginBottom: 16 }}>🎤 Recitation Audio</div>
                           {student.rec_audio_path ? (
