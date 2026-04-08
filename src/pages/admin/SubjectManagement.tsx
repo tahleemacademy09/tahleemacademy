@@ -1,55 +1,87 @@
+/*
+  src/pages/admin/SubjectManagement.tsx — Tahleem Academy
+  ─────────────────────────────────────────────────────────
+  Full subject CRUD with multi-level selection (levels TEXT[]),
+  teacher assignment, and timetable slot count badges.
+*/
+
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
-import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
 import { toast } from "@/hooks/use-toast";
-import { Plus, BookOpen, Users, Trash2, Edit, Video } from "lucide-react";
+import { Plus, BookOpen, Users, Trash2, Edit, X, Save, Calendar } from "lucide-react";
+
+const G    = "#0f2d1f";
+const GM   = "#1a4731";
+const GOLD = "#c9a84c";
+
+const LEVELS = [
+  { value: "beginner",     label: "Beginner",     ar: "مبتدئ",  color: "#22c55e" },
+  { value: "intermediate", label: "Intermediate", ar: "متوسط",  color: "#f59e0b" },
+  { value: "advanced",     label: "Advanced",     ar: "متقدم",  color: "#8b5cf6" },
+];
+
+interface SubForm {
+  title: string; title_ar: string; description: string; description_ar: string;
+  teacher_id: string; levels: string[]; is_active: boolean;
+}
+const EMPTY: SubForm = { title:"", title_ar:"", description:"", description_ar:"", teacher_id:"", levels:[], is_active:true };
+
+const labelSt: React.CSSProperties = { display:"block", fontSize:12, fontWeight:700, color:"#374151", marginBottom:5 };
+const inputSt: React.CSSProperties = { width:"100%", padding:"10px 12px", borderRadius:10, border:"1.5px solid #e5e7eb", fontSize:13, fontFamily:"'Cairo',sans-serif", color:"#111827", background:"#fafafa", outline:"none", boxSizing:"border-box" };
 
 const SubjectManagement = () => {
-  const { t } = useLanguage();
-  const { user } = useAuth();
-  const qc = useQueryClient();
-  const [open, setOpen] = useState(false);
+  const { t, language } = useLanguage();
+  const { user }        = useAuth();
+  const qc              = useQueryClient();
+  const [open,   setOpen]   = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
-  const [form, setForm] = useState({ title: "", title_ar: "", description: "", description_ar: "", teacher_id: "", is_active: true });
+  const [form,   setForm]   = useState<SubForm>(EMPTY);
+  const [search, setSearch] = useState("");
 
   const { data: subjects, isLoading } = useQuery({
-    queryKey: ["subjects"],
+    queryKey: ["subjects-admin"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("subjects").select("*").order("created_at", { ascending: false });
-      if (error) throw error;
-      return data;
+      const { data } = await supabase.from("subjects").select("*").order("created_at", { ascending: false });
+      return data || [];
     },
   });
 
   const { data: teachers } = useQuery({
     queryKey: ["teachers"],
     queryFn: async () => {
-      const { data: teacherRoles } = await supabase.from("user_roles").select("user_id").in("role", ["teacher", "admin"]);
-      if (!teacherRoles?.length) return [];
-      const ids = teacherRoles.map((r) => r.user_id);
-      const { data } = await supabase.from("profiles").select("*").in("user_id", ids);
+      const { data: roles } = await supabase.from("user_roles").select("user_id").in("role", ["teacher", "admin"]);
+      if (!roles?.length) return [];
+      const ids = roles.map((r: any) => r.user_id);
+      const { data } = await supabase.from("profiles").select("user_id, full_name").in("user_id", ids);
       return data || [];
     },
   });
 
+  const { data: timetableSlots } = useQuery({
+    queryKey: ["timetable-counts"],
+    queryFn: async () => {
+      const { data } = await supabase.from("subject_timetable").select("subject_id");
+      const counts: Record<string, number> = {};
+      (data || []).forEach((r: any) => { counts[r.subject_id] = (counts[r.subject_id] || 0) + 1; });
+      return counts;
+    },
+  });
+
   const saveMutation = useMutation({
-    mutationFn: async (values: typeof form) => {
+    mutationFn: async (values: SubForm) => {
       const payload = {
-        ...values,
+        title: values.title, title_ar: values.title_ar || null,
+        description: values.description || null, description_ar: values.description_ar || null,
         teacher_id: values.teacher_id || null,
-        livekit_room_name: `subject-${editId || crypto.randomUUID()}`,
+        levels: values.levels,
+        level: values.levels[0] || null,   // keep legacy field in sync
+        is_active: values.is_active,
         created_by: user?.id,
+        updated_at: new Date().toISOString(),
+        ...(!editId && { livekit_room_name: `subject-${crypto.randomUUID()}` }),
       };
       if (editId) {
         const { error } = await supabase.from("subjects").update(payload).eq("id", editId);
@@ -60,13 +92,12 @@ const SubjectManagement = () => {
       }
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["subjects"] });
-      setOpen(false);
-      setEditId(null);
-      setForm({ title: "", title_ar: "", description: "", description_ar: "", teacher_id: "", is_active: true });
-      toast({ title: t("Subject saved", "تم حفظ المادة") });
+      qc.invalidateQueries({ queryKey: ["subjects-admin"] });
+      qc.invalidateQueries({ queryKey: ["subjects-active"] });
+      closeForm();
+      toast({ title: t("Subject saved ✅", "تم حفظ المادة ✅") });
     },
-    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+    onError: (e: any) => toast({ title:"Error", description:e.message, variant:"destructive" }),
   });
 
   const deleteMutation = useMutation({
@@ -74,98 +105,163 @@ const SubjectManagement = () => {
       const { error } = await supabase.from("subjects").delete().eq("id", id);
       if (error) throw error;
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["subjects"] });
-      toast({ title: t("Subject deleted", "تم حذف المادة") });
-    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey:["subjects-admin"] }); toast({ title: t("Deleted","تم الحذف") }); },
+    onError: (e: any) => toast({ title:"Error", description:e.message, variant:"destructive" }),
   });
+
+  const closeForm = () => { setOpen(false); setEditId(null); setForm(EMPTY); };
 
   const openEdit = (s: any) => {
     setEditId(s.id);
-    setForm({ title: s.title, title_ar: s.title_ar || "", description: s.description || "", description_ar: s.description_ar || "", teacher_id: s.teacher_id || "", is_active: s.is_active });
+    const lvs: string[] = Array.isArray(s.levels) && s.levels.length > 0 ? s.levels : s.level ? [s.level] : [];
+    setForm({ title:s.title||"", title_ar:s.title_ar||"", description:s.description||"", description_ar:s.description_ar||"", teacher_id:s.teacher_id||"", levels:lvs, is_active:s.is_active!==false });
     setOpen(true);
   };
 
+  const toggleLevel = (lv: string) =>
+    setForm(f => ({ ...f, levels: f.levels.includes(lv) ? f.levels.filter(x=>x!==lv) : [...f.levels, lv] }));
+
+  const filtered = (subjects||[]).filter((s:any) => {
+    const q = search.toLowerCase();
+    return !q || s.title?.toLowerCase().includes(q) || s.title_ar?.includes(q);
+  });
+
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">{t("Subject Management", "إدارة المواد")}</h1>
-          <p className="text-muted-foreground text-sm">{t("Create and manage live class subjects", "إنشاء وإدارة مواد الفصول الحية")}</p>
-        </div>
-        <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) { setEditId(null); setForm({ title: "", title_ar: "", description: "", description_ar: "", teacher_id: "", is_active: true }); } }}>
-          <DialogTrigger asChild>
-            <Button><Plus className="h-4 w-4 me-2" />{t("Add Subject", "إضافة مادة")}</Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-lg">
-            <DialogHeader>
-              <DialogTitle>{editId ? t("Edit Subject", "تعديل المادة") : t("New Subject", "مادة جديدة")}</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div><Label>{t("Title (EN)", "العنوان (إنجليزي)")}</Label><Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></div>
-                <div><Label>{t("Title (AR)", "العنوان (عربي)")}</Label><Input value={form.title_ar} onChange={(e) => setForm({ ...form, title_ar: e.target.value })} dir="rtl" /></div>
-              </div>
-              <div><Label>{t("Description", "الوصف")}</Label><Textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></div>
-              <div>
-                <Label>{t("Assign Teacher", "تعيين المعلم")}</Label>
-                <Select value={form.teacher_id} onValueChange={(v) => setForm({ ...form, teacher_id: v })}>
-                  <SelectTrigger><SelectValue placeholder={t("Select teacher", "اختر المعلم")} /></SelectTrigger>
-                  <SelectContent>
-                    {teachers?.map((tc) => (
-                      <SelectItem key={tc.user_id} value={tc.user_id}>{tc.full_name || tc.email}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex items-center gap-2">
-                <Switch checked={form.is_active} onCheckedChange={(v) => setForm({ ...form, is_active: v })} />
-                <Label>{t("Active", "نشط")}</Label>
-              </div>
-              <Button className="w-full" onClick={() => saveMutation.mutate(form)} disabled={!form.title || saveMutation.isPending}>
-                {saveMutation.isPending ? t("Saving...", "جاري الحفظ...") : t("Save", "حفظ")}
-              </Button>
+    <div style={{ fontFamily:"'Cairo',sans-serif", background:"#f8fafb", minHeight:"100vh" }}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap');`}</style>
+
+      {/* Header */}
+      <div style={{ background:`linear-gradient(135deg,${G},${GM})`, padding:"20px 20px 24px" }}>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:12 }}>
+          <div>
+            <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:4 }}>
+              <BookOpen style={{ width:22, height:22, color:GOLD }} />
+              <h1 style={{ fontSize:20, fontWeight:900, color:"#fff", margin:0 }}>{t("Subject Management","إدارة المواد")}</h1>
             </div>
-          </DialogContent>
-        </Dialog>
+            <p style={{ fontSize:12, color:"rgba(255,255,255,.5)", margin:0 }}>{filtered.length} {t("subjects","مواد")}</p>
+          </div>
+          <button onClick={() => { setEditId(null); setForm(EMPTY); setOpen(true); }}
+            style={{ display:"flex", alignItems:"center", gap:8, padding:"10px 18px", borderRadius:12, background:GOLD, border:"none", color:G, fontSize:13, fontWeight:900, cursor:"pointer", fontFamily:"'Cairo',sans-serif" }}>
+            <Plus style={{ width:16, height:16 }} />{t("Add Subject","إضافة مادة")}
+          </button>
+        </div>
+        <input placeholder={t("Search subjects…","ابحث…")} value={search} onChange={e=>setSearch(e.target.value)}
+          style={{ marginTop:14, width:"100%", maxWidth:360, padding:"9px 14px", borderRadius:10, border:"none", fontSize:13, fontFamily:"'Cairo',sans-serif", background:"rgba(255,255,255,.12)", color:"#fff", outline:"none", boxSizing:"border-box" as const }} />
       </div>
 
-      {isLoading ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {[1, 2, 3].map((i) => <div key={i} className="h-40 rounded-xl bg-muted animate-pulse" />)}
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {subjects?.map((s) => (
-            <Card key={s.id} className="card-premium">
-              <CardHeader className="pb-2">
-                <div className="flex items-start justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
-                      <BookOpen className="h-5 w-5 text-primary" />
-                    </div>
-                    <div>
-                      <CardTitle className="text-base">{s.title}</CardTitle>
-                      {s.title_ar && <p className="text-xs text-muted-foreground font-arabic" dir="rtl">{s.title_ar}</p>}
-                    </div>
-                  </div>
-                  <Badge variant={s.is_active ? "default" : "secondary"}>{s.is_active ? t("Active", "نشط") : t("Inactive", "غير نشط")}</Badge>
+      {/* Form modal */}
+      {open && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.5)", zIndex:100, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }} onClick={closeForm}>
+          <div style={{ background:"#fff", borderRadius:20, padding:24, width:"100%", maxWidth:540, maxHeight:"90vh", overflowY:"auto" }} onClick={e=>e.stopPropagation()}>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:20 }}>
+              <h2 style={{ fontSize:17, fontWeight:800, color:G, margin:0 }}>{editId ? t("Edit Subject","تعديل المادة") : t("New Subject","مادة جديدة")}</h2>
+              <button onClick={closeForm} style={{ background:"none", border:"none", cursor:"pointer", color:"#9ca3af" }}><X style={{ width:20, height:20 }} /></button>
+            </div>
+            <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+                <div><label style={labelSt}>{t("Title (EN)","العنوان EN")} *</label><input style={inputSt} value={form.title} onChange={e=>setForm(f=>({...f,title:e.target.value}))} /></div>
+                <div><label style={labelSt}>{t("Title (AR)","العنوان AR")}</label><input style={{...inputSt,direction:"rtl"}} value={form.title_ar} onChange={e=>setForm(f=>({...f,title_ar:e.target.value}))} /></div>
+              </div>
+              <div><label style={labelSt}>{t("Description","الوصف")}</label><textarea style={{...inputSt,height:64,resize:"vertical"as const}} value={form.description} onChange={e=>setForm(f=>({...f,description:e.target.value}))} /></div>
+              <div><label style={labelSt}>{t("Description AR","الوصف AR")}</label><textarea style={{...inputSt,height:56,resize:"vertical"as const,direction:"rtl"}} value={form.description_ar} onChange={e=>setForm(f=>({...f,description_ar:e.target.value}))} /></div>
+              <div>
+                <label style={labelSt}>{t("Assign Teacher","تعيين المعلم")}</label>
+                <select style={inputSt} value={form.teacher_id} onChange={e=>setForm(f=>({...f,teacher_id:e.target.value}))}>
+                  <option value="">{t("No teacher","بدون معلم")}</option>
+                  {(teachers||[]).map((tc:any)=>(<option key={tc.user_id} value={tc.user_id}>{tc.full_name||tc.user_id}</option>))}
+                </select>
+              </div>
+              <div>
+                <label style={labelSt}>{t("Levels (empty = all students see this subject)","المستويات (فارغ = جميع الطلاب)")}</label>
+                <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginTop:6 }}>
+                  {LEVELS.map(lv => {
+                    const active = form.levels.includes(lv.value);
+                    return (
+                      <button key={lv.value} type="button" onClick={()=>toggleLevel(lv.value)}
+                        style={{ padding:"6px 16px", borderRadius:20, fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"'Cairo',sans-serif", border:`2px solid ${lv.color}`, background:active?lv.color:"transparent", color:active?"#fff":lv.color, transition:"all .15s" }}>
+                        {language==="ar"?lv.ar:lv.label}
+                      </button>
+                    );
+                  })}
                 </div>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground line-clamp-2 mb-3">{s.description || t("No description", "لا يوجد وصف")}</p>
-                <div className="flex gap-2">
-                  <Button size="sm" variant="outline" onClick={() => openEdit(s)}><Edit className="h-3 w-3 me-1" />{t("Edit", "تعديل")}</Button>
-                  <Button size="sm" variant="destructive" onClick={() => deleteMutation.mutate(s.id)}><Trash2 className="h-3 w-3" /></Button>
+                {form.levels.length===0 && <p style={{ fontSize:11, color:"#9ca3af", marginTop:5 }}>{t("All students will see this subject","سيرى جميع الطلاب هذه المادة")}</p>}
+              </div>
+              <label style={{ display:"flex", alignItems:"center", gap:10, cursor:"pointer" }}>
+                <div onClick={()=>setForm(f=>({...f,is_active:!f.is_active}))}
+                  style={{ width:40, height:22, borderRadius:11, background:form.is_active?GM:"#d1d5db", position:"relative", cursor:"pointer", transition:"background .2s" }}>
+                  <div style={{ position:"absolute", top:2, left:form.is_active?20:2, width:18, height:18, borderRadius:"50%", background:"#fff", transition:"left .2s" }} />
                 </div>
-              </CardContent>
-            </Card>
-          ))}
+                <span style={{ fontSize:13, fontWeight:600, color:G }}>{t("Active","نشط")}</span>
+              </label>
+              <button disabled={!form.title||saveMutation.isPending} onClick={()=>saveMutation.mutate(form)}
+                style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:12, borderRadius:12, background:G, border:"none", color:"#fff", fontSize:14, fontWeight:800, cursor:"pointer", fontFamily:"'Cairo',sans-serif", opacity:!form.title?.5:1 }}>
+                <Save style={{ width:15, height:15 }} />
+                {saveMutation.isPending?t("Saving…","جارٍ الحفظ…"):t("Save Subject","حفظ المادة")}
+              </button>
+            </div>
+          </div>
         </div>
       )}
+
+      {/* Cards */}
+      <div style={{ padding:16, maxWidth:900, margin:"0 auto" }}>
+        {isLoading ? (
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))", gap:14 }}>
+            {[1,2,3].map(i=><div key={i} style={{ height:160, borderRadius:16, background:"#e5e7eb" }} />)}
+          </div>
+        ) : filtered.length===0 ? (
+          <div style={{ textAlign:"center", padding:"60px 20px", color:"#9ca3af" }}>
+            <BookOpen style={{ width:40, height:40, color:"#d1d5db", margin:"0 auto 12px" }} />
+            <p style={{ fontSize:14 }}>{t("No subjects yet","لا توجد مواد")}</p>
+          </div>
+        ) : (
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))", gap:14 }}>
+            {filtered.map((s:any) => {
+              const sLevels:string[] = Array.isArray(s.levels)&&s.levels.length>0 ? s.levels : s.level?[s.level]:[];
+              const teacherName = (teachers||[]).find((tc:any)=>tc.user_id===s.teacher_id)?.full_name;
+              const slotCount = timetableSlots?.[s.id] || 0;
+              return (
+                <div key={s.id} style={{ background:"#fff", borderRadius:16, border:`1.5px solid ${s.is_active?"#e5e7eb":"#fee2e2"}`, padding:16, display:"flex", flexDirection:"column", gap:10, boxShadow:"0 1px 4px rgba(0,0,0,.04)" }}>
+                  <div style={{ display:"flex", alignItems:"flex-start", gap:10 }}>
+                    <div style={{ width:40, height:40, borderRadius:10, background:`linear-gradient(135deg,${G},${GM})`, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                      <BookOpen style={{ width:18, height:18, color:GOLD }} />
+                    </div>
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <p style={{ fontSize:14, fontWeight:800, color:G, margin:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{s.title}</p>
+                      {s.title_ar && <p dir="rtl" style={{ fontSize:12, color:GOLD, margin:"2px 0 0", fontFamily:"'Amiri',serif" }}>{s.title_ar}</p>}
+                    </div>
+                    <span style={{ fontSize:10, padding:"3px 8px", borderRadius:9, fontWeight:700, background:s.is_active?"#f0fff4":"#fef2f2", color:s.is_active?"#16a34a":"#ef4444", flexShrink:0 }}>
+                      {s.is_active?t("Active","نشط"):t("Inactive","معطل")}
+                    </span>
+                  </div>
+                  {s.description && <p style={{ fontSize:12, color:"#6b7280", margin:0, display:"-webkit-box", WebkitLineClamp:2, WebkitBoxOrient:"vertical"as any, overflow:"hidden", lineHeight:1.5 }}>{s.description}</p>}
+                  <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+                    {sLevels.length===0 ? (
+                      <span style={{ fontSize:10, padding:"2px 8px", borderRadius:9, background:"#f0fff4", color:"#22c55e", fontWeight:700 }}>{t("All Levels","جميع المستويات")}</span>
+                    ) : sLevels.map(lv => {
+                      const lc = LEVELS.find(l=>l.value===lv);
+                      return <span key={lv} style={{ fontSize:10, padding:"2px 8px", borderRadius:9, fontWeight:700, background:`${lc?.color}18`, color:lc?.color||"#374151" }}>{language==="ar"?lc?.ar||lv:lc?.label||lv}</span>;
+                    })}
+                    {teacherName && <span style={{ fontSize:10, padding:"2px 8px", borderRadius:9, background:"#eff6ff", color:"#3b82f6", fontWeight:700, display:"flex", alignItems:"center", gap:4 }}><Users style={{ width:9, height:9 }} />{teacherName}</span>}
+                    {slotCount>0 && <span style={{ fontSize:10, padding:"2px 8px", borderRadius:9, background:"#fdf4ff", color:"#9333ea", fontWeight:700, display:"flex", alignItems:"center", gap:4 }}><Calendar style={{ width:9, height:9 }} />{slotCount} {t("slots","حصص")}</span>}
+                  </div>
+                  <div style={{ display:"flex", gap:8 }}>
+                    <button onClick={()=>openEdit(s)} style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", gap:6, padding:8, borderRadius:10, background:"#f0f4f0", border:"none", cursor:"pointer", color:G, fontSize:12, fontWeight:700, fontFamily:"'Cairo',sans-serif" }}>
+                      <Edit style={{ width:13, height:13 }} />{t("Edit","تعديل")}
+                    </button>
+                    <button onClick={()=>{ if(confirm(t("Delete?","حذف؟"))) deleteMutation.mutate(s.id); }}
+                      style={{ width:36, height:36, borderRadius:10, background:"#fef2f2", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", color:"#ef4444" }}>
+                      <Trash2 style={{ width:14, height:14 }} />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 };
 
 export default SubjectManagement;
-
