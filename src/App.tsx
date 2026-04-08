@@ -19,23 +19,23 @@ import IdleWarningModal from "@/components/IdleWarningModal";
 import ErrorBoundary from "@/components/ErrorBoundary";
 
 // ── Public pages ───────────────────────────────────────────────────────────
-const Index           = lazy(() => import("./pages/Index"));
-const Login           = lazy(() => import("./pages/Login"));
-const AdminLogin      = lazy(() => import("./pages/AdminLogin"));
-const Register        = lazy(() => import("./pages/Register"));
-const RegisterContinue    = lazy(() => import("./pages/RegisterContinue"));
+const Index                = lazy(() => import("./pages/Index"));
+const Login                = lazy(() => import("./pages/Login"));
+const AdminLogin           = lazy(() => import("./pages/AdminLogin"));
+const Register             = lazy(() => import("./pages/Register"));
+const RegisterContinue     = lazy(() => import("./pages/RegisterContinue"));
 const RegistrationComplete = lazy(() => import("./pages/RegistrationComplete"));
-const ResetPassword         = lazy(() => import("./pages/ResetPassword"));
-const ForceChangePassword   = lazy(() => import("./pages/ForceChangePassword"));
-const About           = lazy(() => import("./pages/About"));
-const Courses         = lazy(() => import("./pages/Courses"));
-const Contact         = lazy(() => import("./pages/Contact"));
-const RecordingsPage  = lazy(() => import("./pages/RecordingsPage"));
-const LiveQuiz        = lazy(() => import("./pages/LiveQuiz"));
-const Pricing         = lazy(() => import("./pages/Pricing"));
-const GuestClassroom  = lazy(() => import("./pages/public/GuestClassroom"));
-const JoinClass       = lazy(() => import("./pages/public/JoinClass"));
-const LiveClasses     = lazy(() => import("./pages/public/LiveClasses"));
+const ResetPassword        = lazy(() => import("./pages/ResetPassword"));
+const ForceChangePassword  = lazy(() => import("./pages/ForceChangePassword"));
+const About                = lazy(() => import("./pages/About"));
+const Courses              = lazy(() => import("./pages/Courses"));
+const Contact              = lazy(() => import("./pages/Contact"));
+const RecordingsPage       = lazy(() => import("./pages/RecordingsPage"));
+const LiveQuiz             = lazy(() => import("./pages/LiveQuiz"));
+const Pricing              = lazy(() => import("./pages/Pricing"));
+const GuestClassroom       = lazy(() => import("./pages/public/GuestClassroom"));
+const JoinClass            = lazy(() => import("./pages/public/JoinClass"));
+const LiveClasses          = lazy(() => import("./pages/public/LiveClasses"));
 
 // ── Student pages ──────────────────────────────────────────────────────────
 const StudentDashboard    = lazy(() => import("./pages/student/StudentDashboard"));
@@ -47,7 +47,8 @@ const PreExamVerification = lazy(() => import("./pages/student/PreExamVerificati
 const Transcripts         = lazy(() => import("./pages/student/Transcripts"));
 const Majlis              = lazy(() => import("./pages/student/Majlis"));
 const RecitationTest      = lazy(() => import("./pages/student/RecitationTest"));
-const LearningHub         = lazy(() => import("./pages/student/LearningHub"));const CourseView          = lazy(() => import("./pages/student/CourseView"));
+const LearningHub         = lazy(() => import("./pages/student/LearningHub"));
+const CourseView          = lazy(() => import("./pages/student/CourseView"));
 const SubjectView         = lazy(() => import("./pages/student/SubjectView"));
 const Onboarding          = lazy(() => import("./pages/student/Onboarding"));
 const EntranceExamTaking  = lazy(() => import("./pages/student/EntranceExamTaking"));
@@ -93,23 +94,23 @@ const LevelAssignment       = lazy(() => import("./pages/admin/LevelAssignment")
 const LevelSubjectMapping   = lazy(() => import("./pages/admin/LevelSubjectMapping"));
 const PrivateSessions       = lazy(() => import("./pages/admin/PrivateSessions"));
 const MajlisAdmin           = lazy(() => import("./pages/admin/MajlisModeration"));
-// ── NEW ────────────────────────────────────────────────────────────────────
 const RegistrationSettings  = lazy(() => import("./pages/admin/RegistrationSettings"));
 
-// ── Teacher pages ──────────────────────────────────────────────────────────const TeacherDashboard        = lazy(() => import("./pages/teacher/TeacherDashboard"));
-const TeacherStudents         = lazy(() => import("./pages/teacher/TeacherStudents"));
-const TeacherPrivateStudents  = lazy(() => import("./pages/teacher/TeacherPrivateStudents"));
-const TeacherSubjects         = lazy(() => import("./pages/teacher/TeacherSubjects"));
-const TeacherClasses          = lazy(() => import("./pages/teacher/TeacherClasses"));
-const TeacherAnnouncements    = lazy(() => import("./pages/teacher/TeacherAnnouncements"));
-const TeacherAttendance       = lazy(() => import("./pages/teacher/TeacherAttendance"));
-const TeacherExamsPage        = lazy(() => import("./pages/teacher/TeacherExamsPage"));
-const TeacherResults          = lazy(() => import("./pages/teacher/TeacherResults"));
-const TeacherSettings         = lazy(() => import("./pages/teacher/TeacherSettings"));
-const TeacherRecordings       = lazy(() => import("./pages/teacher/TeacherRecordings"));
-const TeacherRecitation       = lazy(() => import("./pages/teacher/TeacherRecitation"));
-const TeacherTranscript       = lazy(() => import("./pages/teacher/TeacherTranscript"));
-const TeacherPrivateSessions  = lazy(() => import("./pages/teacher/TeacherPrivateSessions"));
+// ── Teacher pages ──────────────────────────────────────────────────────────
+const TeacherDashboard       = lazy(() => import("./pages/teacher/TeacherDashboard"));
+const TeacherStudents        = lazy(() => import("./pages/teacher/TeacherStudents"));
+const TeacherPrivateStudents = lazy(() => import("./pages/teacher/TeacherPrivateStudents"));
+const TeacherSubjects        = lazy(() => import("./pages/teacher/TeacherSubjects"));
+const TeacherClasses         = lazy(() => import("./pages/teacher/TeacherClasses"));
+const TeacherAnnouncements   = lazy(() => import("./pages/teacher/TeacherAnnouncements"));
+const TeacherAttendance      = lazy(() => import("./pages/teacher/TeacherAttendance"));
+const TeacherExamsPage       = lazy(() => import("./pages/teacher/TeacherExamsPage"));
+const TeacherResults         = lazy(() => import("./pages/teacher/TeacherResults"));
+const TeacherSettings        = lazy(() => import("./pages/teacher/TeacherSettings"));
+const TeacherRecordings      = lazy(() => import("./pages/teacher/TeacherRecordings"));
+const TeacherRecitation      = lazy(() => import("./pages/teacher/TeacherRecitation"));
+const TeacherTranscript      = lazy(() => import("./pages/teacher/TeacherTranscript"));
+const TeacherPrivateSessions = lazy(() => import("./pages/teacher/TeacherPrivateSessions"));
 
 const queryClient = new QueryClient();
 
@@ -136,7 +137,6 @@ const App = () => (
                     <Route path="/about"          element={<About />} />
                     <Route path="/contact"        element={<Contact />} />
                     <Route path="/pricing"        element={<Pricing />} />
-                    {/* Auth pages inside PublicLayout so hamburger appears */}
                     <Route path="/login"          element={<Login />} />
                     <Route path="/register"       element={<Register />} />
                     <Route path="/reset-password" element={<ResetPassword />} />
@@ -144,44 +144,41 @@ const App = () => (
                   </Route>
 
                   {/* Admin login — standalone, no public nav */}
-                  <Route path="/admin-secure"   element={<AdminLogin />} />
-                  {/* Registration pipeline continuations — no auth guard needed */}
+                  <Route path="/admin-secure" element={<AdminLogin />} />
+
+                  {/* Registration pipeline */}
                   <Route path="/auth/register-continue" element={<RegisterContinue />} />
                   <Route path="/registration-complete"  element={<RegistrationComplete />} />
-                  {/* Misc public */}
-                  <Route path="/live-quiz"               element={<ProtectedRoute skipOnboardingCheck><LiveQuiz /></ProtectedRoute>} />
 
-                  {/* ── Public Live Classes (/live/ prefix — matches all links in codebase) ── */}
-                  {/* Listing page */}
-                  <Route path="/live"                        element={<LiveClasses />} />
-                  <Route path="/public/classes"              element={<LiveClasses />} />
+                  {/* Misc protected */}
+                  <Route path="/live-quiz" element={<ProtectedRoute skipOnboardingCheck><LiveQuiz /></ProtectedRoute>} />
 
-                  {/* Join / detail page — :roomCode matches JoinClass useParams + all Link hrefs */}
-                  <Route path="/live/:roomCode"              element={<JoinClass />} />
-                  <Route path="/public/join/:roomCode"       element={<JoinClass />} />
-
-                  {/* Guest classroom — navigated to from JoinClass after token exchange */}
-                  <Route path="/live/:roomCode/classroom"    element={<GuestClassroom />} />
-                  <Route path="/public/classroom/:roomCode"  element={<GuestClassroom />} />
+                  {/* Public Live Classes */}
+                  <Route path="/live"                       element={<LiveClasses />} />
+                  <Route path="/public/classes"             element={<LiveClasses />} />
+                  <Route path="/live/:roomCode"             element={<JoinClass />} />
+                  <Route path="/public/join/:roomCode"      element={<JoinClass />} />
+                  <Route path="/live/:roomCode/classroom"   element={<GuestClassroom />} />
+                  <Route path="/public/classroom/:roomCode" element={<GuestClassroom />} />
 
                   <Route path="/recordings/:recordingId" element={<ProtectedRoute><RecordingPlayer /></ProtectedRoute>} />
 
                   {/* ── Student routes ── */}
                   <Route element={<ProtectedRoute><DashboardLayout role="student" /></ProtectedRoute>}>
-                    <Route path="/student"                       element={<StudentDashboard />} />
-                    <Route path="/student/courses"               element={<LearningHub />} />
-                    <Route path="/student/courses/:courseId"     element={<LearningHub />} />
-                    <Route path="/student/subjects/:subjectId"   element={<SubjectView />} />
-                    <Route path="/student/exams"                 element={<StudentExams />} />
-                    <Route path="/student/transcripts"           element={<Transcripts />} />
-                    <Route path="/student/majlis"                element={<Majlis />} />
-                    <Route path="/student/live-classes"          element={<LearningHub defaultTab="live" />} />
-                    <Route path="/student/revision"              element={<RevisionHub />} />
-                    <Route path="/student/hifdh"                 element={<HifdhRevision />} />
-                    <Route path="/student/revision/:subjectId"   element={<RevisionRoom />} />
-                    <Route path="/student/timetable"             element={<StudentTimetable />} />
-                    <Route path="/student/profile"               element={<ProfileSettings />} />
-                    <Route path="/student/enrollment-payment"    element={<EnrollmentPayment />} />
+                    <Route path="/student"                     element={<StudentDashboard />} />
+                    <Route path="/student/courses"             element={<LearningHub />} />
+                    <Route path="/student/courses/:courseId"   element={<LearningHub />} />
+                    <Route path="/student/subjects/:subjectId" element={<SubjectView />} />
+                    <Route path="/student/exams"               element={<StudentExams />} />
+                    <Route path="/student/transcripts"         element={<Transcripts />} />
+                    <Route path="/student/majlis"              element={<Majlis />} />
+                    <Route path="/student/live-classes"        element={<LearningHub defaultTab="live" />} />
+                    <Route path="/student/revision"            element={<RevisionHub />} />
+                    <Route path="/student/hifdh"               element={<HifdhRevision />} />
+                    <Route path="/student/revision/:subjectId" element={<RevisionRoom />} />
+                    <Route path="/student/timetable"           element={<StudentTimetable />} />
+                    <Route path="/student/profile"             element={<ProfileSettings />} />
+                    <Route path="/student/enrollment-payment"  element={<EnrollmentPayment />} />
                   </Route>
 
                   {/* Student standalone (skip onboarding guard) */}
@@ -193,7 +190,8 @@ const App = () => (
                   <Route path="/student/entrance-exam/:attemptId"    element={<ProtectedRoute skipOnboardingCheck><EntranceExamTaking /></ProtectedRoute>} />
                   <Route path="/student/entrance-results/:attemptId" element={<ProtectedRoute skipOnboardingCheck><EntranceResults /></ProtectedRoute>} />
                   <Route path="/student/payment"                     element={<ProtectedRoute skipOnboardingCheck><PaymentScreen /></ProtectedRoute>} />
-                  <Route path="/student/awaiting-level"               element={<ProtectedRoute skipOnboardingCheck><TasjeelAwaitingLevel /></ProtectedRoute>} />
+                  <Route path="/student/awaiting-level"              element={<ProtectedRoute skipOnboardingCheck><TasjeelAwaitingLevel /></ProtectedRoute>} />
+
                   {/* ── Teacher routes ── */}
                   <Route element={<ProtectedRoute requiredRole="teacher"><TeacherLayout /></ProtectedRoute>}>
                     <Route path="/teacher"                  element={<TeacherDashboard />} />
@@ -214,43 +212,39 @@ const App = () => (
 
                   {/* ── Admin routes ── */}
                   <Route element={<ProtectedRoute requiredRole="admin"><DashboardLayout role="admin" /></ProtectedRoute>}>
-                    <Route path="/admin"                          element={<AdminDashboard />} />
-                    {/* Subjects & Syllabus are now integrated into CourseManagement */}
-                    <Route path="/admin/subjects"                 element={<CourseManagement />} />
-                    <Route path="/admin/subjects/:subjectId"      element={<CourseManagement />} />
-                    <Route path="/admin/courses"                  element={<CourseManagement />} />
-                    <Route path="/admin/syllabus"                 element={<CourseManagement />} />
-                    <Route path="/admin/timetable"                element={<TimetableManagement />} />
-                    <Route path="/admin/live-classes"             element={<LiveClassManagement />} />
-                    <Route path="/admin/exams"                    element={<ExamManager />} />
-                    <Route path="/admin/exams/create"             element={<ExamEditor />} />
-                    <Route path="/admin/exams/:examId/edit"       element={<ExamEditor />} />
-                    <Route path="/admin/grading"                  element={<GradingPage />} />
-                    <Route path="/admin/question-bank"            element={<QuestionBank />} />
-                    <Route path="/admin/proctoring"               element={<ProctoringDashboard />} />
-                    <Route path="/admin/private-sessions"         element={<PrivateSessions />} />
-                    <Route path="/admin/students"                 element={<StudentManagement />} />
-                    {/* FIX: both URL patterns resolve to ViewAsStudent */}
-                    <Route path="/admin/students/:userId/view"    element={<ViewAsStudent />} />
-                    <Route path="/admin/view-as-student/:userId"  element={<ViewAsStudent />} />
-                    <Route path="/admin/recordings"               element={<RecordingManagement />} />
-                    <Route path="/admin/live-class-management"    element={<LiveClassManagement />} />
-                    <Route path="/admin/majlis-moderation"        element={<MajlisModeration />} />
-                    <Route path="/admin/notifications"            element={<NotificationManagement />} />
-                    <Route path="/admin/entrance-exam"            element={<EntranceExamAdmin />} />
-                    <Route path="/admin/recitation-review"        element={<HifdhAdminReview />} />
-                    <Route path="/admin/recitation-test-settings" element={<RecitationTestAdmin />} />
-                    <Route path="/admin/level-assignment"         element={<LevelAssignment />} />
-                    {/* level-subject-mapping removed — managed within Courses */}
-                    <Route path="/admin/transcripts"              element={<TranscriptManagement />} />
-                    <Route path="/admin/attendance"               element={<AttendanceManagement />} />                    <Route path="/admin/payments"                 element={<PaymentManagement />} />
-                    <Route path="/admin/calendar"                 element={<AcademicCalendar />} />
-                    <Route path="/admin/payment-settings"         element={<PaymentSettings />} />
-                    <Route path="/admin/public-classes"           element={<PublicClassManagement />} />
-                    {/* NEW: Registration settings */}
-                    <Route path="/admin/registration-settings"    element={<RegistrationSettings />} />
-                    {/* TASJEEL admin control panel */}
-                    <Route path="/admin/tasjeel"                  element={<TasjeelAdmin />} />
+                    <Route path="/admin"                             element={<AdminDashboard />} />
+                    <Route path="/admin/subjects"                    element={<CourseManagement />} />
+                    <Route path="/admin/subjects/:subjectId"         element={<CourseManagement />} />
+                    <Route path="/admin/courses"                     element={<CourseManagement />} />
+                    <Route path="/admin/syllabus"                    element={<CourseManagement />} />
+                    <Route path="/admin/timetable"                   element={<TimetableManagement />} />
+                    <Route path="/admin/live-classes"                element={<LiveClassManagement />} />
+                    <Route path="/admin/exams"                       element={<ExamManager />} />
+                    <Route path="/admin/exams/create"                element={<ExamEditor />} />
+                    <Route path="/admin/exams/:examId/edit"          element={<ExamEditor />} />
+                    <Route path="/admin/grading"                     element={<GradingPage />} />
+                    <Route path="/admin/question-bank"               element={<QuestionBank />} />
+                    <Route path="/admin/proctoring"                  element={<ProctoringDashboard />} />
+                    <Route path="/admin/private-sessions"            element={<PrivateSessions />} />
+                    <Route path="/admin/students"                    element={<StudentManagement />} />
+                    <Route path="/admin/students/:userId/view"       element={<ViewAsStudent />} />
+                    <Route path="/admin/view-as-student/:userId"     element={<ViewAsStudent />} />
+                    <Route path="/admin/recordings"                  element={<RecordingManagement />} />
+                    <Route path="/admin/live-class-management"       element={<LiveClassManagement />} />
+                    <Route path="/admin/majlis-moderation"           element={<MajlisModeration />} />
+                    <Route path="/admin/notifications"               element={<NotificationManagement />} />
+                    <Route path="/admin/entrance-exam"               element={<EntranceExamAdmin />} />
+                    <Route path="/admin/recitation-review"           element={<HifdhAdminReview />} />
+                    <Route path="/admin/recitation-test-settings"    element={<RecitationTestAdmin />} />
+                    <Route path="/admin/level-assignment"            element={<LevelAssignment />} />
+                    <Route path="/admin/transcripts"                 element={<TranscriptManagement />} />
+                    <Route path="/admin/attendance"                  element={<AttendanceManagement />} />
+                    <Route path="/admin/payments"                    element={<PaymentManagement />} />
+                    <Route path="/admin/calendar"                    element={<AcademicCalendar />} />
+                    <Route path="/admin/payment-settings"            element={<PaymentSettings />} />
+                    <Route path="/admin/public-classes"              element={<PublicClassManagement />} />
+                    <Route path="/admin/registration-settings"       element={<RegistrationSettings />} />
+                    <Route path="/admin/tasjeel"                     element={<TasjeelAdmin />} />
                   </Route>
 
                   <Route path="*" element={<NotFound />} />
