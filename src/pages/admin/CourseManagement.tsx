@@ -141,10 +141,10 @@ const CourseModal = React.memo(({ ed, onClose, onSave, busy }: { ed?: any; onClo
           <button type="button" onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 20, color: "#9CA3AF" }}>×</button>
         </div>
         <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 14 }}>
-          <input ref={ref} type="file" accept="image/*" style={{ display: "none" }} onChange={handleFile} />
-          <button type="button" onClick={() => ref.current?.click()} style={{ height: 100, borderRadius: 12, border: "2px dashed #E5E7EB", background: "#F9FAFB", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, color: "#9CA3AF", fontSize: 13 }}>
+          <input ref={ref} id="cm-course-img" type="file" accept="image/*" style={{ position:"absolute",width:1,height:1,opacity:0,overflow:"hidden",pointerEvents:"none" }} onChange={handleFile} />
+          <label htmlFor="cm-course-img" style={{ height: 100, borderRadius: 12, border: "2px dashed #E5E7EB", background: "#F9FAFB", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, color: "#9CA3AF", fontSize: 13 }}>
             {up ? <Loader2 size={20} style={{ animation: "spin .8s linear infinite" }} /> : f.image_url ? <img src={f.image_url} alt="" style={{ height: "100%", borderRadius: 10 }} /> : <><Image size={20} /> Upload thumbnail</>}
-          </button>
+          </label>
           <Fld label="Course Title (English)"><input value={f.title} onChange={e => setF(c => ({ ...c, title: e.target.value }))} style={inp} placeholder="e.g. Quran Memorisation" autoFocus /></Fld>          <Fld label="Course Title (Arabic)"><input value={f.title_ar} onChange={e => setF(c => ({ ...c, title_ar: e.target.value }))} style={{ ...inp, direction: "rtl", fontFamily: "'Amiri',serif" }} placeholder="مثال: حفظ القرآن" /></Fld>
           <Fld label="Description"><textarea value={f.description} onChange={e => setF(c => ({ ...c, description: e.target.value }))} rows={3} style={{ ...inp, resize: "vertical" }} /></Fld>
           <Fld label="Level">
@@ -192,9 +192,9 @@ const SubjectModal = React.memo(({ ed, teachers, onClose, onSave, busy }: { ed?:
           <button type="button" onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 20, color: "#9CA3AF" }}>×</button>
         </div>
         <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 14 }}>
-          <input ref={ref} type="file" accept="image/*" style={{ display: "none" }} onChange={handleFile} />
-          <button type="button" onClick={() => ref.current?.click()} style={{ height: 100, borderRadius: 12, border: "2px dashed #E5E7EB", background: "#F9FAFB", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, color: "#9CA3AF", fontSize: 13 }}>
-            {up ? <Loader2 size={20} style={{ animation: "spin .8s linear infinite" }} /> : f.image_url ? <img src={f.image_url} alt="" style={{ height: "100%", borderRadius: 10 }} /> : <><Image size={20} /> Upload image</>}          </button>
+          <input ref={ref} id="cm-subj-img" type="file" accept="image/*" style={{ position:"absolute",width:1,height:1,opacity:0,overflow:"hidden",pointerEvents:"none" }} onChange={handleFile} />
+          <label htmlFor="cm-subj-img" style={{ height: 100, borderRadius: 12, border: "2px dashed #E5E7EB", background: "#F9FAFB", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, color: "#9CA3AF", fontSize: 13 }}>
+            {up ? <Loader2 size={20} style={{ animation: "spin .8s linear infinite" }} /> : f.image_url ? <img src={f.image_url} alt="" style={{ height: "100%", borderRadius: 10 }} /> : <><Image size={20} /> Upload image</>}          </label>
           <Fld label="Subject Title (English)"><input value={f.title} onChange={e => setF(s => ({ ...s, title: e.target.value }))} style={inp} placeholder="e.g. Tajweed Level 1" autoFocus /></Fld>
           <Fld label="Subject Title (Arabic)"><input value={f.title_ar} onChange={e => setF(s => ({ ...s, title_ar: e.target.value }))} style={{ ...inp, direction: "rtl", fontFamily: "'Amiri',serif" }} placeholder="مثال: التجويد المستوى الأول" /></Fld>
           <Fld label="Description"><textarea value={f.description} onChange={e => setF(s => ({ ...s, description: e.target.value }))} rows={3} style={{ ...inp, resize: "vertical" }} /></Fld>
@@ -438,16 +438,16 @@ const MaterialModal = React.memo(({ ed, subjectId, sortOrder, onClose, onSaved }
           
           {needFile && (
             <div>
-              <input ref={fileRef} type="file" style={{ display: "none" }} accept={TYPE_ACCEPT[f.material_type] || "*/*"} onChange={e => { const fi = e.target.files?.[0]; if (fi) pickFile(fi); }} disabled={busy} />
+              <input ref={fileRef} id="cm-mat-file" type="file" style={{ position:"absolute",width:1,height:1,opacity:0,overflow:"hidden",pointerEvents:"none" }} accept={TYPE_ACCEPT[f.material_type] || "*/*"} onChange={e => { const fi = e.target.files?.[0]; if (fi) pickFile(fi); }} disabled={busy} />
               {file ? (                <div style={{ padding: "10px", borderRadius: 10, background: cfg.bg, border: `1px solid ${cfg.border}` }}>
                   <p style={{ fontSize: 12, fontWeight: 600 }}>{file.name}</p>
                   <p style={{ fontSize: 11, color: "#6B7280" }}>{fmtSize(file.size)}</p>
                   <button type="button" onClick={clearFile} style={{ marginTop: 6, fontSize: 11, color: cfg.text }}>Remove</button>
                 </div>
               ) : (
-                <button type="button" onClick={() => fileRef.current?.click()} style={{ padding: "12px", borderRadius: 10, border: `2px dashed ${cfg.border}`, background: cfg.bg, color: cfg.text, fontSize: 12 }}>
-                  {file ? file.name : "Select file"}
-                </button>
+                <label htmlFor={busy ? undefined : "cm-mat-file"} style={{ display:"block", padding: "12px", borderRadius: 10, border: `2px dashed ${cfg.border}`, background: cfg.bg, color: cfg.text, fontSize: 12, cursor: busy ? "not-allowed" : "pointer", textAlign:"center" }}>
+                  Select file
+                </label>
               )}
               <div style={{ margin: "8px 0", fontSize: 11, color: "#9CA3AF" }}>or paste URL:</div>
               <input value={f.file_url} onChange={e => setF(m => ({ ...m, file_url: e.target.value }))} style={inp} placeholder="https://…" disabled={busy} />
