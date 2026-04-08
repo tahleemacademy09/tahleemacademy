@@ -389,13 +389,14 @@ function UploadSheet({ subject, materialCount, onClose, onSuccess }: UploadSheet
         {/* Body */}
         <div style={{ padding: "24px 22px 40px", display: "flex", flexDirection: "column", gap: 20 }}>
 
-          {/* Hidden file input — triggered ONLY via openPicker(), never by <label> */}
+          {/* Hidden file input — triggered via <label htmlFor> (native gesture, no history push on Android) */}
           <input
             ref={inputRef}
+            id="mmp-file-input"
             type="file"
             accept="*/*"
             onChange={onFileSelected}
-            style={{ position: "absolute", width: 1, height: 1, opacity: 0, pointerEvents: "none" }}
+            style={{ position: "absolute", width: 1, height: 1, opacity: 0, overflow: "hidden" }}
           />
 
           {/* ─── STAGE: PICK ─────────────────────────────────────────────── */}
@@ -421,18 +422,23 @@ function UploadSheet({ subject, materialCount, onClose, onSuccess }: UploadSheet
               <p style={{ fontSize: 13, color: C.muted, margin: "0 0 28px", lineHeight: 1.6 }}>
                 PDF · Word · Video · Audio · Image<br />Any format accepted
               </p>
-              <button
-                onClick={openPicker}
+              {/* label htmlFor = native browser gesture — does NOT push history on Android.
+                  Never use inputRef.current?.click() from a button onClick here;
+                  that programmatic call pushes a history entry and React Router
+                  fires popstate/navigates-back when the picker closes. */}
+              <label
+                htmlFor={busy ? undefined : "mmp-file-input"}
                 style={{
                   padding: "14px 40px", borderRadius: 50, border: "none",
                   background: `linear-gradient(135deg, ${C.green}, ${C.green2})`,
                   color: "#fff", fontWeight: 800, fontSize: 15,
-                  cursor: "pointer", letterSpacing: ".02em",
+                  cursor: busy ? "not-allowed" : "pointer", letterSpacing: ".02em",
                   boxShadow: `0 6px 22px ${C.shadow}`,
                   display: "inline-flex", alignItems: "center", gap: 8,
+                  opacity: busy ? 0.5 : 1,
                 }}>
                 📁 Browse Files
-              </button>
+              </label>
             </div>
           )}
 
