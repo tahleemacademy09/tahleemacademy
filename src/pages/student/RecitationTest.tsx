@@ -4,7 +4,7 @@
     Stage 2: AI accuracy scoring  
     Stage 3: Book virtual session with admin → advance to level_assignment
 */
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
@@ -12,7 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useRecitationSettings } from "@/hooks/useRecitationSettings";
 import { useTasjeel } from "@/hooks/useTasjeel";
 import {
-  Mic, MicOff, Upload, CheckCircle2, Clock, Video,
+  Mic, Upload, CheckCircle2, Video,
   Star, ArrowRight, Loader2, RotateCcw, BookOpen,
   AlertCircle, Calendar,
 } from "lucide-react";
@@ -54,6 +54,46 @@ const RecitationTest = () => {
   const chunksRef = useRef<Blob[]>([]);
   const timerRef  = useRef<any>(null);
   const cancelRef = useRef(false);
+
+  // ── Quran mushaf page — deterministic per user ────────────────────────────
+  const [quranAyahs,   setQuranAyahs]   = useState<{n: number; text: string}[]>([]);
+  const [quranMeta,    setQuranMeta]    = useState<{surahEn: string; surahAr: string; juz: number; page: number} | null>(null);
+  const [loadingQuran, setLoadingQuran] = useState(false);
+
+  const assignedPage = useMemo(() => {
+    if (!user?.id) return 1;
+    let h = 0;
+    for (let i = 0; i < user.id.length; i++) {
+      h = Math.imul(31, h) + user.id.charCodeAt(i) | 0;
+    }
+    return (Math.abs(h) % 604) + 1;           // pages 1–604
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    setLoadingQuran(true);
+    fetch(`https://api.alquran.cloud/v1/page/${assignedPage}/quran-uthmani`)
+      .then(r => r.json())
+      .then(d => {
+        const ayahs = d?.data?.ayahs || [];
+        if (!ayahs.length) return;
+        setQuranAyahs(ayahs.map((a: any) => ({ n: a.numberInSurah, text: a.text })));
+        const first = ayahs[0];
+        setQuranMeta({
+          surahEn: first.surah?.englishName || "",
+          surahAr: first.surah?.name       || "",
+          juz:     first.juz               || 1,
+          page:    assignedPage,
+        });
+        // Save assigned page so admin can see same page
+        (supabase as any).from("recitation_tests").upsert(
+          { user_id: user!.id, assigned_page: assignedPage },
+          { onConflict: "user_id" }
+        ).then(() => {});
+      })
+      .catch(() => {})
+      .finally(() => setLoadingQuran(false));
+  }, [user?.id, assignedPage]); // eslint-disable-line
 
   const fr = (s: number) => `${Math.floor(s/60).toString().padStart(2,"0")}:${(s%60).toString().padStart(2,"0")}`;
 
@@ -363,14 +403,48 @@ const RecitationTest = () => {
                   </div>
                 </div>
 
-                {/* Reference text */}
-                <div style={{ background:"#FFFBEB", borderRadius:14, padding:"14px 16px", border:"1px solid #F9D46A", marginBottom:20, textAlign:"center" }}>
-                  <div style={{ fontSize:11, fontWeight:700, color:"#92400E", marginBottom:8, textTransform:"uppercase", letterSpacing:.5 }}>
-                    {settings.surah_name || "Al-Fatihah"} · {settings.surah_arabic || "الفاتحة"}
+                {/* ── Mushaf Page Display ── */}
+                <div style={{ background:"#FFFEF5", borderRadius:16, border:"2px solid #E8D5A3", marginBottom:18, overflow:"hidden", boxShadow:"0 4px 20px rgba(0,0,0,.08)" }}>
+                  {/* Page header */}
+                  <div style={{ background:"linear-gradient(135deg,#F5ECD5,#EDD9A3)", padding:"10px 16px", display:"flex", justifyContent:"space-between", alignItems:"center", borderBottom:"1px solid #DBC580" }}>
+                    <span style={{ fontSize:12, fontWeight:700, color:"#7D5A1E", fontFamily:"'Amiri',serif" }}>
+                      {quranMeta ? `الجزء ${quranMeta.juz}` : "الجزء"}
+                    </span>
+                    <span style={{ fontSize:11, fontWeight:800, color:"#5C3D11", letterSpacing:.5 }}>
+                      {quranMeta?.surahEn || settings.surah_name || "Al-Fatiha"}
+                    </span>
                   </div>
-                  <div style={{ fontSize:20, fontFamily:"'Amiri Quran','Amiri',serif", direction:"rtl", lineHeight:2.4, color:G }}>
-                    {settings.surah_arabic || "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ"}
+                  {/* Verses */}
+                  <div style={{ padding:"18px 16px", minHeight:180, direction:"rtl" as const }}>
+                    {loadingQuran ? (
+                      <div style={{ textAlign:"center", padding:"30px 0", display:"flex", flexDirection:"column", alignItems:"center", gap:10 }}>
+                        <Loader2 size={24} style={{ animation:"spin .8s linear infinite", color:"#C9A84C" }} />
+                        <span style={{ fontSize:12, color:"#9CA3AF" }}>Loading page {assignedPage}…</span>
+                      </div>
+                    ) : quranAyahs.length > 0 ? (
+                      <div style={{ fontSize:22, fontFamily:"'Amiri Quran','Amiri',serif", lineHeight:2.6, color:"#1A1A1A", textAlign:"justify" as const }}>
+                        {quranAyahs.map((a, i) => (
+                          <span key={i}>
+                            {a.text}
+                            <span style={{ display:"inline-flex", alignItems:"center", justifyContent:"center", width:28, height:28, margin:"0 4px", fontSize:11, fontWeight:800, color:"#7D5A1E", fontFamily:"'Cairo',sans-serif", background:"#F5ECD5", borderRadius:"50%", border:"1px solid #DBC580", verticalAlign:"middle" }}>
+                              {a.n}
+                            </span>
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      /* Fallback to settings text if API fails */
+                      <div style={{ fontSize:22, fontFamily:"'Amiri Quran','Amiri',serif", lineHeight:2.6, color:"#1A1A1A", textAlign:"justify" as const }}>
+                        {settings.surah_arabic || "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ الرَّحْمَٰنِ الرَّحِيمِ مَالِكِ يَوْمِ الدِّينِ"}
+                      </div>
+                    )}
                   </div>
+                  {/* Page footer */}
+                  {quranMeta && (
+                    <div style={{ borderTop:"1px solid #DBC580", padding:"6px 16px", background:"#F9F0DC", textAlign:"center" as const }}>
+                      <span style={{ fontSize:10, fontWeight:700, color:"#9C7722", letterSpacing:.8 }}>PAGE {quranMeta.page} · RECITE THIS PAGE</span>
+                    </div>
+                  )}
                 </div>
 
                 {/* Tips */}
