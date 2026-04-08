@@ -52,6 +52,7 @@ const CourseView          = lazy(() => import("./pages/student/CourseView"));
 const SubjectView         = lazy(() => import("./pages/student/SubjectView"));
 const Onboarding          = lazy(() => import("./pages/student/Onboarding"));
 const EntranceExamTaking  = lazy(() => import("./pages/student/EntranceExamTaking"));
+const EntranceExamResume  = lazy(() => import("./pages/student/EntranceExamResume"));
 const EntranceResults     = lazy(() => import("./pages/student/EntranceResults"));
 const RevisionHub         = lazy(() => import("./pages/student/RevisionHub"));
 const HifdhRevision       = lazy(() => import("./pages/student/HifdhRevision"));
@@ -188,6 +189,7 @@ const App = () => (
                   <Route path="/onboarding"                          element={<ProtectedRoute skipOnboardingCheck><Onboarding /></ProtectedRoute>} />
                   <Route path="/student/recitation-test"             element={<ProtectedRoute skipOnboardingCheck><RecitationTest /></ProtectedRoute>} />
                   <Route path="/student/entrance-exam/:attemptId"    element={<ProtectedRoute skipOnboardingCheck><EntranceExamTaking /></ProtectedRoute>} />
+                  <Route path="/student/entrance-exam"              element={<ProtectedRoute skipOnboardingCheck><EntranceExamResume /></ProtectedRoute>} />
                   <Route path="/student/entrance-results/:attemptId" element={<ProtectedRoute skipOnboardingCheck><EntranceResults /></ProtectedRoute>} />
                   <Route path="/student/payment"                     element={<ProtectedRoute skipOnboardingCheck><PaymentScreen /></ProtectedRoute>} />
                   <Route path="/student/awaiting-level"              element={<ProtectedRoute skipOnboardingCheck><TasjeelAwaitingLevel /></ProtectedRoute>} />
