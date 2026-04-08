@@ -174,6 +174,8 @@ function UploadPanel({ subjectId, count, onDone }: { subjectId: string; count: n
   const reset = () => {
     setTitle(""); setType("PDF"); setUrl(""); setBody("");
     setDl(true); clearFile(); setPct(0); setPhase("idle"); setErr("");
+    // Ensure file input is fully cleared so the same file can be re-selected
+    if (fileRef.current) { fileRef.current.value = ""; }
   };
 
   const onDE   = (e: React.DragEvent) => { e.preventDefault(); dragCnt.current++; setDrag(true); };
@@ -304,9 +306,20 @@ function UploadPanel({ subjectId, count, onDone }: { subjectId: string; count: n
       {needFile && (
         <div>
           <label style={labelSt}>File</label>
-          <input ref={fileRef} type="file" accept="*/*" style={{ display: "none" }}
-            onClick={e => e.stopPropagation()}
-            onChange={e => { e.stopPropagation(); const f = e.target.files?.[0]; if (f) pickFile(f); }}
+          {/* 
+            ANDROID FIX: Use <label htmlFor> instead of programmatic .click().
+            Calling fileRef.current?.click() from inside a div's onClick pushes a
+            history entry on Android — React Router then fires popstate and navigates
+            the user back when the file picker closes.
+            A <label htmlFor> is a native browser gesture and does NOT push history.
+          */}
+          <input
+            ref={fileRef}
+            id="smh-file-input"
+            type="file"
+            accept="*/*"
+            style={{ position: "absolute", width: 1, height: 1, opacity: 0, overflow: "hidden", pointerEvents: "none" }}
+            onChange={e => { const f = e.target.files?.[0]; if (f) pickFile(f); }}
           />
           {file ? (
             <div style={{ borderRadius: 14, border: `2px solid ${T.border}`, background: T.light, overflow: "hidden" }}>
@@ -321,23 +334,23 @@ function UploadPanel({ subjectId, count, onDone }: { subjectId: string; count: n
                   </div>
                 </div>
                 {!busy && (
-                  <button onClick={e => { e.stopPropagation(); clearFile(); }}
+                  <button type="button" onClick={() => clearFile()}
                     style={{ width: 36, height: 36, borderRadius: 10, flexShrink: 0, border: `1.5px solid ${T.border}`, background: "#fff", cursor: "pointer", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center", color: C.muted, padding: 0 }}>✕</button>
                 )}
               </div>
             </div>
           ) : (
-            <div
+            /* label htmlFor = native click on the input — no popstate on Android */
+            <label
+              htmlFor={busy ? undefined : "smh-file-input"}
               onDragEnter={onDE} onDragLeave={onDL} onDragOver={e => e.preventDefault()} onDrop={onDrop}
-              onClick={e => { e.stopPropagation(); if (!busy) fileRef.current?.click(); }}
-              role="button" tabIndex={0}
-              style={{ padding: "clamp(24px,6vw,36px) clamp(16px,4vw,20px)", borderRadius: 18, textAlign: "center", cursor: busy ? "not-allowed" : "pointer", border: `2.5px dashed ${drag ? C.green : "#CFCFCF"}`, background: drag ? `linear-gradient(135deg,${C.greenL},${C.greenM})` : "#FAFAFA", transform: drag ? "scale(1.025)" : "scale(1)", boxShadow: drag ? `0 0 0 6px ${C.green}18` : "none", transition: "all .2s ease", minHeight: 140 }}>
+              style={{ display: "block", padding: "clamp(24px,6vw,36px) clamp(16px,4vw,20px)", borderRadius: 18, textAlign: "center", cursor: busy ? "not-allowed" : "pointer", border: `2.5px dashed ${drag ? C.green : "#CFCFCF"}`, background: drag ? `linear-gradient(135deg,${C.greenL},${C.greenM})` : "#FAFAFA", transform: drag ? "scale(1.025)" : "scale(1)", boxShadow: drag ? `0 0 0 6px ${C.green}18` : "none", transition: "all .2s ease", minHeight: 140 }}>
               <div style={{ width: "clamp(56px,14vw,68px)", height: "clamp(56px,14vw,68px)", borderRadius: 20, fontSize: "clamp(24px,6vw,30px)", margin: "0 auto clamp(12px,3vw,18px)", background: drag ? T.light : "#F0F0F0", border: `2px solid ${drag ? T.border : "#E0E0E0"}`, display: "flex", alignItems: "center", justifyContent: "center", transition: "all .2s" }}>
                 {drag ? T.emoji : "📂"}
               </div>
               <p style={{ fontWeight: 900, fontSize: "clamp(14px,4vw,16px)", margin: "0 0 clamp(4px,1vw,7px)", color: drag ? C.green : C.text }}>{drag ? "Drop it! 🎯" : "Tap to browse or drag any file"}</p>
               <p style={{ fontSize: "clamp(10px,2.8vw,12px)", color: C.muted, margin: 0, lineHeight: 1.5 }}>PDF · Word · Video · Audio · Image<br /><strong style={{ color: C.green }}>Any file type</strong></p>
-            </div>
+            </label>
           )}
 
           <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "clamp(8px,2vw,13px) 0 clamp(6px,1.5vw,9px)" }}>
