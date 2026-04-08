@@ -358,7 +358,8 @@ const UploadModal = memo(({ subject, count, onClose, onDone }: UploadModalProps)
           {/* File zone */}
           <div>
             <label style={labelSt}>File <span style={{ color: RED }}>*</span></label>
-            <input ref={fileRef} type="file" accept="*/*" style={{ display: "none" }}
+            <input ref={fileRef} id="mmp-file-input" type="file" accept="*/*"
+              style={{ position:"absolute",width:1,height:1,opacity:0,overflow:"hidden",pointerEvents:"none" }}
               onChange={e => { const f = e.target.files?.[0]; if (f) pickFile(f); }} />
 
             {file ? (
@@ -385,12 +386,11 @@ const UploadModal = memo(({ subject, count, onClose, onDone }: UploadModalProps)
                 </div>
               </div>
             ) : (
-              <div
+              <label htmlFor={busy ? undefined : "mmp-file-input"}
                 onDragEnter={onDE} onDragLeave={onDL}
                 onDragOver={e => e.preventDefault()} onDrop={onDrop}
-                onClick={() => !busy && fileRef.current?.click()}
                 style={{
-                  padding: "36px 20px", borderRadius: 18, textAlign: "center",
+                  display:"block", padding: "36px 20px", borderRadius: 18, textAlign: "center",
                   cursor: busy ? "not-allowed" : "pointer",
                   border: `2.5px dashed ${drag ? G : "#CFCFCF"}`,
                   background: drag ? `linear-gradient(135deg,${GL},${GM})` : BG,
@@ -411,7 +411,7 @@ const UploadModal = memo(({ subject, count, onClose, onDone }: UploadModalProps)
                 <p style={{ fontSize: 12, color: MUTED, margin: 0 }}>
                   PDF · Word · Video · Audio · Image — any file type accepted
                 </p>
-              </div>
+              </label>
             )}
           </div>
 
