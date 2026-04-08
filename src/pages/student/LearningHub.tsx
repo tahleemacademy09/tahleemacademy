@@ -1,9 +1,14 @@
 /*  src/pages/student/LearningHub.tsx
-    KEY FIX: Courses AND subjects are now filtered by the student's assigned level.
-    - level === 'all'  → visible to every student
-    - level === null/undefined/'' → visible to every student (no restriction)
-    - level === 'beginner'/'intermediate'/'advanced' → only that group sees it
-    - Admins/teachers bypass the filter and see everything
+    LEVEL LOGIC (updated):
+    - COURSES are visible to ALL students regardless of level.
+      Level filtering only applies at the subject level.
+    - SUBJECTS support BOTH single `level` TEXT (legacy) and
+      new `levels` TEXT[] (multi-level). A subject is visible when:
+        • levels[] is empty / null  →  all students see it
+        • levels[] contains student's level → visible
+        • levels[] contains 'all'           → visible
+        • Fallback: old `level` TEXT === student's level or 'all'/null
+    - Admins/teachers bypass all filters and see everything.
 */
 import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
@@ -23,6 +28,7 @@ import SubjectMaterials     from "@/components/classroom/SubjectMaterials";
 import SubjectSyllabus      from "@/components/classroom/SubjectSyllabus";
 import SubjectAssignments   from "@/components/classroom/SubjectAssignments";
 import SubjectAnnouncements from "@/components/classroom/SubjectAnnouncements";
+import { useTimetableNotifications } from "@/hooks/useTimetableNotifications";
 
 const G    = "#0f2d1f";
 const GM   = "#1a4731";
@@ -37,13 +43,31 @@ const levelColor = (l: string) =>
 const lvLabel = (l: string) =>
   ({ beginner:"Beginner", intermediate:"Intermediate", advanced:"Advanced" }[l] || l);
 
-/** Returns true when an item's level should be visible to the given student level.
- *  level = 'all' / '' / null / undefined → always visible
- *  otherwise must match exactly. */
-const levelMatch = (itemLevel: string | null | undefined, studentLevel: string): boolean => {
-  if (!itemLevel || itemLevel === "all") return true;
-  return itemLevel === studentLevel;
+/**
+ * Returns true when a SUBJECT should be visible to the given student level.
+ * Priority: new `levels` TEXT[] array > old `level` TEXT (legacy).
+ *
+ * subject.levels (array):
+ *   empty / null → all levels
+ *   contains studentLevel → visible
+ *   contains 'all'        → visible
+ * Fallback subject.level (string):
+ *   null / 'all' / '' → all levels
+ *   must match exactly
+ */
+const subjectLevelMatch = (subject: any, studentLevel: string): boolean => {
+  const lvs: string[] = subject?.levels ?? [];
+  if (lvs.length > 0) {
+    return lvs.includes(studentLevel) || lvs.includes("all");
+  }
+  // Legacy single-level field
+  const lv = subject?.level;
+  if (!lv || lv === "all") return true;
+  return lv === studentLevel;
 };
+
+/** Courses are now visible to ALL levels — only subjects are level-filtered. */
+const levelMatch = (_itemLevel: string | null | undefined, _studentLevel: string): boolean => true;
 
 interface Props { defaultTab?: "courses" | "live"; }
 
@@ -55,6 +79,9 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
   const navigate                   = useNavigate();
   const qc                         = useQueryClient();
   const isPrivileged               = hasRole("admin") || hasRole("teacher");
+
+  // Active class reminders while browsing Learning Hub
+  useTimetableNotifications();
 
   const [selCourse,       setSelCourse]       = useState<any | null>(null);
   const [selectedSubject, setSelectedSubject] = useState<any | null>(null);
@@ -103,7 +130,7 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
 
   const courseSubjects = isPrivileged
     ? (allCourseSubjects || [])
-    : (allCourseSubjects || []).filter((s: any) => levelMatch(s.level, studentLevel));
+    : (allCourseSubjects || []).filter((s: any) => subjectLevelMatch(s, studentLevel));
 
   // Lessons for selected subject
   const { data: subjectLessons, isLoading: loadLessons } = useQuery({
@@ -167,7 +194,7 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
 
   const urlCourseSubjects = isPrivileged
     ? (allUrlCourseSubjects || [])
-    : (allUrlCourseSubjects || []).filter((s: any) => levelMatch(s.level, studentLevel));
+    : (allUrlCourseSubjects || []).filter((s: any) => subjectLevelMatch(s, studentLevel));
 
   // Mark lesson complete
   const markComplete = useMutation({
@@ -206,8 +233,8 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
   // ═══════════════════════════════════════════════════════════════════════════
   if (courseId && urlCourse) {
     if (!selectedSubject) {
-      // Guard: if the course itself is restricted to a level the student doesn't have
-      const courseRestricted = !isPrivileged && !levelMatch(urlCourse.level, studentLevel);
+      // No course-level restriction — courses visible to all students
+      const courseRestricted = false;
 
       return (
         <div style={{ fontFamily:"'Cairo',sans-serif", background:"#f8fafb", minHeight:"100vh" }}>
