@@ -26,6 +26,7 @@ import SubjectSyllabus      from "@/components/classroom/SubjectSyllabus";
 import SubjectAssignments   from "@/components/classroom/SubjectAssignments";
 import SubjectAnnouncements from "@/components/classroom/SubjectAnnouncements";
 import ClassroomView        from "@/components/classroom/ClassroomView";
+import LiveClassFilePanel   from "@/components/classroom/LiveClassFilePanel";
 
 /* ── helpers ── */
 const G    = "hsl(155,55%,15%)";
@@ -408,12 +409,14 @@ const LiveClassManagement = () => {
               <TabsTrigger value="syllabus"    className="gap-1 text-xs"><BookOpen className="h-3 w-3"/>{t("Syllabus","المنهج")}</TabsTrigger>
               <TabsTrigger value="assignments" className="gap-1 text-xs"><ClipboardList className="h-3 w-3"/>{t("Tasks","المهام")}</TabsTrigger>
               <TabsTrigger value="announce"    className="gap-1 text-xs"><Megaphone className="h-3 w-3"/>{t("News","الإعلانات")}</TabsTrigger>
+              <TabsTrigger value="files"       className="gap-1 text-xs">📂 {t("Files","الملفات")}</TabsTrigger>
             </TabsList>
             <TabsContent value="recordings"><SubjectRecordings    subjectId={selectedSubjectId}/></TabsContent>
             <TabsContent value="materials"><SubjectMaterials      subjectId={selectedSubjectId}/></TabsContent>
             <TabsContent value="syllabus"><SubjectSyllabus        subjectId={selectedSubjectId}/></TabsContent>
             <TabsContent value="assignments"><SubjectAssignments  subjectId={selectedSubjectId}/></TabsContent>
             <TabsContent value="announce"><SubjectAnnouncements   subjectId={selectedSubjectId}/></TabsContent>
+            <TabsContent value="files"><LiveClassFilePanel        subjectId={selectedSubjectId}/></TabsContent>
           </Tabs>
         </div>
 
