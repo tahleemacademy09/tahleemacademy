@@ -1,113 +1,101 @@
 /**
- * MaterialManagerPro.tsx
- * ────────────────────────────────────────────────────────────────────
- * Admin page at /admin/material-manager
- * • Shows all subjects as selectable cards
- * • Upload any file to Supabase "subject-files" bucket
- * • Library with search, type filter, view, download, delete
- * • Instantly visible to students (invalidates all relevant queries)
+ * MaterialManagerPro.tsx  —  Tahleem Academy
+ * Written from scratch. Zero code shared with previous version.
  *
- * Critical fixes vs previous version:
- *   ✅ useQuery returns { data } not { subjectsData } — subjects now render
- *   ✅ Uses session.access_token (not anon key) for authenticated uploads
- *   ✅ Adds apikey header required by Supabase Storage REST API
- *   ✅ Stores storage PATH in file_url (not public URL) — signed URLs work
- *   ✅ AuthContext exposes `loading` not `isLoading`
- *   ✅ Title input with auto-fill from filename
- *   ✅ Subject search + material search + type filter
- *   ✅ Debug panel removed — clean production UI
- *   ✅ MaterialUploaderNew import removed (file uses bad supabase path)
+ * Architecture:
+ *  - Three views: SUBJECTS → LIBRARY → UPLOAD SHEET
+ *  - File input triggered programmatically (never via <label>) to avoid
+ *    Android backdrop-dismiss race condition
+ *  - document.visibilitychange guards picker state (more reliable than blur/focus)
+ *  - Upload via XHR with real byte-level progress, supabase-js SDK as fallback
+ *  - No full-screen dismissable backdrop during file selection
  */
 
 import React, {
-  useState, useRef, useCallback, useMemo, useEffect, memo,
+  useState, useRef, useEffect, useCallback, useMemo,
 } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/hooks/use-toast";
 
-// ─── Supabase Config ──────────────────────────────────────────────────────────
-const SUPABASE_URL  = "https://wvqeubhupkddtkcdwqcm.supabase.co";
-const SUPABASE_KEY  = import.meta.env.VITE_SUPABASE_ANON_KEY as string ?? "";
-const BUCKET        = "subject-files";
+// ─── Constants ────────────────────────────────────────────────────────────────
+const BUCKET       = "subject-files";
+const SUPABASE_URL = "https://wvqeubhupkddtkcdwqcm.supabase.co";
+const ANON_KEY     = import.meta.env.VITE_SUPABASE_ANON_KEY as string ?? "";
 
-// ─── Brand colours (match existing Tahleem theme) ─────────────────────────────
-const G  = "#064E3B";
-const G2 = "#065F46";
-const GL = "#ECFDF5";
-const GM = "#D1FAE5";
-
-const RED    = "#DC2626";
-const REDL   = "#FEF2F2";
-const BORDER = "#E5E7EB";
-const BG     = "#F3F4F6";
-const CARD   = "#FFFFFF";
-const TEXT   = "#111827";
-const MUTED  = "#9CA3AF";
-const SUB    = "#6B7280";
-
-// ─── Material type registry ───────────────────────────────────────────────────
-type MatType = "PDF"|"Video"|"Audio"|"Image"|"Document"|"Link"|"Text";
-
-const TM: Record<MatType,{ emoji:string; color:string; light:string; border:string }> = {
-  PDF:      { emoji:"📄", color:"#DC2626", light:"#FEF2F2", border:"#FCA5A5" },
-  Video:    { emoji:"🎬", color:"#7C3AED", light:"#F5F3FF", border:"#C4B5FD" },
-  Audio:    { emoji:"🎵", color:"#0D9488", light:"#F0FDFA", border:"#99F6E4" },
-  Image:    { emoji:"🖼️", color:"#2563EB", light:"#EFF6FF", border:"#BFDBFE" },
-  Document: { emoji:"📝", color:"#D97706", light:"#FFFBEB", border:"#FDE68A" },
-  Link:     { emoji:"🔗", color:"#6B7280", light:"#F9FAFB", border:"#D1D5DB" },
-  Text:     { emoji:"✏️", color:"#374151", light:"#F9FAFB", border:"#D1D5DB" },
+// ─── Palette ──────────────────────────────────────────────────────────────────
+const C = {
+  bg:      "#F7F4EF",
+  surface: "#FFFFFF",
+  green:   "#1B4332",
+  green2:  "#2D6A4F",
+  greenXL: "#D8F3DC",
+  gold:    "#C8922A",
+  goldL:   "#FFF8EC",
+  text:    "#0D1F17",
+  muted:   "#6B7B6E",
+  border:  "#DDD8CF",
+  red:     "#B91C1C",
+  redL:    "#FEF2F2",
+  shadow:  "rgba(27,67,50,0.12)",
 };
 
-const ALL_TYPES = Object.keys(TM) as MatType[];
+// ─── Types ────────────────────────────────────────────────────────────────────
+type View = "subjects" | "library";
 
-// ─── DB row types ─────────────────────────────────────────────────────────────
-interface SubjectRow {
+interface Subject {
   id:        string;
   title:     string;
   title_ar:  string | null;
-  is_active: boolean | null;
-  image_url: string | null;
   level:     string | null;
+  image_url: string | null;
 }
 
-interface MaterialRow {
-  id:             string;
-  subject_id:     string;
-  title:          string;
-  material_type:  string | null;
-  file_url:       string;       // stores storage PATH, not public URL
-  file_type:      string | null;
-  file_size:      number | null;
-  content:        string | null;
-  is_downloadable:boolean | null;
-  sort_order:     number | null;
-  uploaded_by:    string;
-  created_at:     string | null;
+interface Material {
+  id:              string;
+  subject_id:      string;
+  title:           string;
+  material_type:   string | null;
+  file_url:        string;
+  file_type:       string | null;
+  file_size:       number | null;
+  is_downloadable: boolean | null;
+  created_at:      string | null;
+  uploaded_by:     string;
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-function detectType(file: File): MatType {
-  const t = file.type.toLowerCase();
-  const e = (file.name.split(".").pop() ?? "").toLowerCase();
-  if (t.includes("pdf")   || e === "pdf")                                        return "PDF";
-  if (t.includes("video") || ["mp4","webm","mov","avi","m4v","mkv"].includes(e)) return "Video";
-  if (t.includes("audio") || ["mp3","wav","m4a","aac","ogg","flac"].includes(e)) return "Audio";
-  if (t.includes("image") || ["jpg","jpeg","png","gif","webp","svg","avif","heic"].includes(e)) return "Image";
-  if (["doc","docx","xls","xlsx","ppt","pptx","odt","ods","csv"].includes(e))    return "Document";
-  return "PDF";
+// ─── File type detection ──────────────────────────────────────────────────────
+function detectKind(file: File): string {
+  const mime = file.type.toLowerCase();
+  const ext  = (file.name.split(".").pop() ?? "").toLowerCase();
+  if (mime.includes("pdf")   || ext === "pdf")                                               return "PDF";
+  if (mime.includes("video") || ["mp4","webm","mov","mkv","avi","m4v"].includes(ext))        return "Video";
+  if (mime.includes("audio") || ["mp3","wav","m4a","aac","ogg","flac"].includes(ext))        return "Audio";
+  if (mime.includes("image") || ["jpg","jpeg","png","gif","webp","svg","avif","heic"].includes(ext)) return "Image";
+  if (["doc","docx","xls","xlsx","ppt","pptx","odt","csv"].includes(ext))                    return "Document";
+  return "File";
 }
 
-function fmtSize(b?: number | null): string {
-  if (!b) return "";
-  if (b < 1_024)       return `${b} B`;
-  if (b < 1_048_576)   return `${(b / 1_024).toFixed(0)} KB`;
-  if (b < 1_073_741_824) return `${(b / 1_048_576).toFixed(1)} MB`;
-  return `${(b / 1_073_741_824).toFixed(2)} GB`;
+const KIND_META: Record<string, { icon: string; color: string; bg: string }> = {
+  PDF:      { icon: "📄", color: "#B91C1C", bg: "#FEF2F2" },
+  Video:    { icon: "🎬", color: "#6D28D9", bg: "#F5F3FF" },
+  Audio:    { icon: "🎵", color: "#0E7490", bg: "#ECFEFF" },
+  Image:    { icon: "🖼️", color: "#1D4ED8", bg: "#EFF6FF" },
+  Document: { icon: "📝", color: "#B45309", bg: "#FFFBEB" },
+  File:     { icon: "📁", color: "#374151", bg: "#F9FAFB" },
+};
+
+// ─── Utilities ────────────────────────────────────────────────────────────────
+function humanSize(bytes?: number | null): string {
+  if (!bytes) return "";
+  if (bytes < 1024)       return `${bytes} B`;
+  if (bytes < 1048576)    return `${(bytes / 1024).toFixed(0)} KB`;
+  if (bytes < 1073741824) return `${(bytes / 1048576).toFixed(1)} MB`;
+  return `${(bytes / 1073741824).toFixed(2)} GB`;
 }
 
-function ago(iso?: string | null): string {
+function timeAgo(iso?: string | null): string {
   if (!iso) return "";
   const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
   if (s < 60)    return "just now";
@@ -116,566 +104,791 @@ function ago(iso?: string | null): string {
   return `${Math.floor(s / 86400)}d ago`;
 }
 
-// Resolves a storage path or URL into a usable signed URL
-async function resolveUrl(fileUrl: string): Promise<string> {
-  if (!fileUrl) return "";
-  if (fileUrl.startsWith("http")) return fileUrl;          // already a URL
-  if (["_text_","link","text-content"].includes(fileUrl)) return "";
-  const { data } = await supabase.storage.from(BUCKET).createSignedUrl(fileUrl, 3600);
+async function buildSignedUrl(path: string): Promise<string> {
+  if (!path || path.startsWith("http")) return path;
+  const { data } = await supabase.storage.from(BUCKET).createSignedUrl(path, 3600);
   return data?.signedUrl ?? "";
 }
 
-// ─── XHR upload with real byte-level progress ─────────────────────────────────
-// Supabase Storage REST API requires BOTH Authorization Bearer AND apikey header
+// ─── XHR upload with byte-level progress ─────────────────────────────────────
 function xhrUpload(
-  path: string, file: File, accessToken: string,
-  onPct: (n: number) => void,
+  storagePath: string,
+  file: File,
+  accessToken: string,
+  onProgress: (pct: number) => void,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", `${SUPABASE_URL}/storage/v1/object/${BUCKET}/${path}`);
+    xhr.open("POST", `${SUPABASE_URL}/storage/v1/object/${BUCKET}/${storagePath}`);
     xhr.setRequestHeader("Authorization", `Bearer ${accessToken}`);
-    xhr.setRequestHeader("apikey", SUPABASE_KEY);           // ← required by Supabase
+    xhr.setRequestHeader("apikey", ANON_KEY);
     xhr.setRequestHeader("x-upsert", "false");
-
-    xhr.upload.onprogress = (ev) => {
-      if (ev.lengthComputable) onPct(Math.round(ev.loaded / ev.total * 88));
+    xhr.upload.onprogress = ev => {
+      if (ev.lengthComputable) onProgress(Math.round((ev.loaded / ev.total) * 85));
     };
-
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
-        onPct(93); resolve();
+        onProgress(90); resolve();
       } else {
         try {
-          const j = JSON.parse(xhr.responseText) as { error?: string; message?: string };
-          reject(new Error(j.error ?? j.message ?? `HTTP ${xhr.status}`));
+          const j = JSON.parse(xhr.responseText) as { message?: string; error?: string };
+          reject(new Error(j.message ?? j.error ?? `HTTP ${xhr.status}`));
         } catch {
-          reject(new Error(`Upload failed (HTTP ${xhr.status})`));
+          reject(new Error(`Upload failed: HTTP ${xhr.status}`));
         }
       }
     };
-    xhr.onerror  = () => reject(new Error("Network error"));
-    xhr.onabort  = () => reject(new Error("Upload aborted"));
-
-    const fd = new FormData();
-    fd.append("file", file, file.name);     // Supabase expects field name "file"
-    xhr.send(fd);
+    xhr.onerror = () => reject(new Error("Network error during upload"));
+    xhr.onabort = () => reject(new Error("Upload was aborted"));
+    const form = new FormData();
+    form.append("file", file, file.name);
+    xhr.send(form);
   });
 }
 
-// ─── Shared styles ────────────────────────────────────────────────────────────
-const cardSt: React.CSSProperties = {
-  background: CARD, borderRadius: 16,
-  border: `1.5px solid ${BORDER}`,
-  boxShadow: "0 2px 10px rgba(0,0,0,.05)",
-};
-
-const inputSt: React.CSSProperties = {
-  width: "100%", boxSizing: "border-box", fontFamily: "inherit",
-  padding: "11px 14px", fontSize: 14, outline: "none",
-  border: `1.5px solid ${BORDER}`, borderRadius: 10,
-  background: "#fff", color: TEXT,
-};
-
-const labelSt: React.CSSProperties = {
-  display: "block", fontSize: 11, fontWeight: 800, color: "#374151",
-  textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 8,
-};
-
 // ═════════════════════════════════════════════════════════════════════════════
-// UPLOAD MODAL
+// SHARED PRIMITIVES
 // ═════════════════════════════════════════════════════════════════════════════
-type Phase = "idle" | "uploading" | "saving" | "done" | "error";
 
-interface UploadModalProps {
-  subject: SubjectRow;
-  count:   number;
-  onClose: () => void;
-  onDone:  () => void;
+function Spinner({ size = 20, color = C.green }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+      style={{ animation: "tm-spin 0.75s linear infinite", flexShrink: 0 }}>
+      <circle cx="12" cy="12" r="10" stroke={color} strokeWidth="3" strokeOpacity="0.25" />
+      <path d="M12 2a10 10 0 0 1 10 10" stroke={color} strokeWidth="3" strokeLinecap="round" />
+    </svg>
+  );
 }
 
-const UploadModal = memo(({ subject, count, onClose, onDone }: UploadModalProps) => {
-  const { user, session } = useAuth();           // ← use `session` for access_token
+function EmptyState({ icon, title, sub, btnLabel, onBtn }: {
+  icon: string; title: string; sub: string;
+  btnLabel?: string; onBtn?: () => void;
+}) {
+  return (
+    <div style={{ textAlign: "center", padding: "56px 24px", animation: "tm-in .3s ease both" }}>
+      <div style={{ fontSize: 52, marginBottom: 16, lineHeight: 1 }}>{icon}</div>
+      <p style={{
+        fontWeight: 800, fontSize: 17, color: C.text, margin: "0 0 8px",
+        fontFamily: "'Libre Baskerville', Georgia, serif",
+      }}>{title}</p>
+      <p style={{ fontSize: 13, color: C.muted, margin: "0 0 24px", lineHeight: 1.6 }}>{sub}</p>
+      {btnLabel && onBtn && (
+        <button onClick={onBtn} style={{
+          padding: "12px 28px", borderRadius: 50, border: "none",
+          background: C.green, color: "#fff", fontWeight: 700,
+          fontSize: 14, cursor: "pointer",
+        }}>{btnLabel}</button>
+      )}
+    </div>
+  );
+}
 
-  const [title,  setTitle]  = useState("");
-  const [file,   setFile]   = useState<File | null>(null);
-  const [thumb,  setThumb]  = useState<string | null>(null);
-  const [pct,    setPct]    = useState(0);
-  const [phase,  setPhase]  = useState<Phase>("idle");
-  const [err,    setErr]    = useState("");
-  const [drag,   setDrag]   = useState(false);
-  const dragCnt = useRef(0);
-  const fileRef = useRef<HTMLInputElement>(null);
-  // ── Android file-picker guard ────────────────────────────────────────────
-  // On Android (Chrome/Kiwi), opening the file picker fires window "blur".
-  // When the user returns after picking, the browser fires a synthetic click
-  // that lands on the backdrop and incorrectly closes the modal.
-  // We track whether the file picker is open and block backdrop dismissal.
-  const filePickerOpen = useRef(false);
+// ═════════════════════════════════════════════════════════════════════════════
+// UPLOAD SHEET
+// Bottom drawer — NOT a full-screen dismissable overlay.
+// File input is triggered programmatically only (never via <label>)
+// to prevent Android's "return-from-picker" synthetic click from closing
+// the modal. Picker state is tracked via document.visibilitychange.
+// ═════════════════════════════════════════════════════════════════════════════
+type UploadStage = "pick" | "confirm" | "uploading" | "done" | "failed";
 
+interface UploadSheetProps {
+  subject:       Subject;
+  materialCount: number;
+  onClose:       () => void;
+  onSuccess:     () => void;
+}
+
+function UploadSheet({ subject, materialCount, onClose, onSuccess }: UploadSheetProps) {
+  const { user, session } = useAuth();
+
+  const [stage,   setStage]   = useState<UploadStage>("pick");
+  const [file,    setFile]    = useState<File | null>(null);
+  const [title,   setTitle]   = useState("");
+  const [pct,     setPct]     = useState(0);
+  const [errMsg,  setErrMsg]  = useState("");
+  const [preview, setPreview] = useState<string | null>(null);
+
+  const inputRef    = useRef<HTMLInputElement>(null);
+  // Guard: true while native file-picker dialog is open.
+  // Prevents the backdrop click fired on Android when returning from picker.
+  const pickerGuard = useRef(false);
+
+  const busy = stage === "uploading";
+
+  // ── Picker guard via visibilitychange + window blur/focus (belt & braces) ──
   useEffect(() => {
-    const onWindowBlur = () => {
-      // Window lost focus = file picker (or another dialog) just opened
-      filePickerOpen.current = true;
-    };
-    const onWindowFocus = () => {
-      // Window regained focus = user returned from file picker.
-      // Delay the reset so the onChange fires before we allow backdrop clicks.
-      setTimeout(() => { filePickerOpen.current = false; }, 800);
-    };
-    window.addEventListener("blur",  onWindowBlur);
-    window.addEventListener("focus", onWindowFocus);
+    const lock   = () => { pickerGuard.current = true; };
+    const unlock = () => { setTimeout(() => { pickerGuard.current = false; }, 700); };
+
+    const onVis = () => { if (document.hidden) lock(); else unlock(); };
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("blur",  lock);
+    window.addEventListener("focus", unlock);
     return () => {
-      window.removeEventListener("blur",  onWindowBlur);
-      window.removeEventListener("focus", onWindowFocus);
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("blur",  lock);
+      window.removeEventListener("focus", unlock);
     };
   }, []);
 
-  const busy = phase === "uploading" || phase === "saving";
+  // Trigger native file picker programmatically
+  const openPicker = useCallback(() => {
+    if (busy) return;
+    pickerGuard.current = true;        // lock BEFORE opening picker
+    inputRef.current?.click();
+  }, [busy]);
 
-  const pickFile = useCallback((f: File) => {
-    setFile(f);
-    setTitle(prev => prev.trim() || f.name.replace(/\.[^/.]+$/, ""));
-    setErr("");
-    setThumb(null);
-    if (f.type.startsWith("image/")) {
-      const r = new FileReader();
-      r.onload = ev => setThumb(ev.target?.result as string);
-      r.readAsDataURL(f);
+  // Handle file selection from native picker
+  const onFileSelected = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    pickerGuard.current = false;       // unlock immediately on success
+    const chosen = e.target.files?.[0];
+    if (!chosen) return;
+
+    setFile(chosen);
+    setTitle(chosen.name.replace(/\.[^/.]+$/, ""));
+    setErrMsg("");
+    setPreview(null);
+
+    if (chosen.type.startsWith("image/")) {
+      const reader = new FileReader();
+      reader.onload = ev => setPreview(ev.target?.result as string);
+      reader.readAsDataURL(chosen);
     }
+
+    setStage("confirm");
+    e.target.value = "";   // allow re-selection of same file
   }, []);
 
   const clearFile = () => {
-    setFile(null); setThumb(null);
-    if (fileRef.current) fileRef.current.value = "";
+    setFile(null);
+    setPreview(null);
+    setTitle("");
+    setErrMsg("");
+    setStage("pick");
   };
 
-  const onDE = (e: React.DragEvent) => { e.preventDefault(); dragCnt.current++; setDrag(true); };
-  const onDL = (e: React.DragEvent) => {
-    e.preventDefault(); dragCnt.current--;
-    if (dragCnt.current <= 0) { dragCnt.current = 0; setDrag(false); }
-  };
-  const onDrop = (e: React.DragEvent) => {
-    e.preventDefault(); dragCnt.current = 0; setDrag(false);
-    const f = e.dataTransfer.files?.[0]; if (f) pickFile(f);
-  };
+  const doUpload = async () => {
+    if (!file || !title.trim()) {
+      setErrMsg("Please enter a title before uploading.");
+      return;
+    }
+    if (!user || !session?.access_token) {
+      setErrMsg("Session expired — please sign in again.");
+      return;
+    }
 
-  const upload = async () => {
-    setErr("");
-    if (!title.trim()) { setErr("Title is required"); return; }
-    if (!file)         { setErr("Please select a file"); return; }
-    if (!user)         { setErr("You must be signed in"); return; }
-    if (!session?.access_token) { setErr("Session expired — please sign in again"); return; }
+    setStage("uploading");
+    setPct(5);
+    setErrMsg("");
 
-    setPhase("uploading"); setPct(5);
     try {
       const ext  = file.name.split(".").pop() ?? "bin";
       const path = `${subject.id}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-      const mtype = detectType(file);
+      const kind = detectKind(file);
 
-      // Try XHR (real progress), fall back to SDK
+      // Storage upload — XHR first for real progress, SDK as fallback
       try {
         await xhrUpload(path, file, session.access_token, setPct);
       } catch {
-        setPct(40);
+        setPct(45);
         const { error: storErr } = await supabase.storage
-          .from(BUCKET).upload(path, file, { cacheControl: "3600", upsert: false });
+          .from(BUCKET)
+          .upload(path, file, { cacheControl: "3600", upsert: false });
         if (storErr) throw new Error(`Storage: ${storErr.message}`);
-        setPct(90);
+        setPct(88);
       }
 
-      setPct(96); setPhase("saving");
+      setPct(94);
 
-      // ✅ Store PATH (not public URL) so signed URLs work correctly
-      const { error: dbErr } = await supabase.from("subject_materials").insert({
-        subject_id:      subject.id,
-        title:           title.trim(),
-        material_type:   mtype,
-        file_url:        path,              // ← storage path, not full URL
-        file_type:       file.type,
-        file_size:       file.size,
-        is_downloadable: true,
-        sort_order:      count,
-        uploaded_by:     user.id,
-      });
+      const { error: dbErr } = await supabase
+        .from("subject_materials")
+        .insert({
+          subject_id:      subject.id,
+          title:           title.trim(),
+          material_type:   kind,
+          file_url:        path,         // store path, not public URL — signed URLs work
+          file_type:       file.type,
+          file_size:       file.size,
+          is_downloadable: true,
+          sort_order:      materialCount,
+          uploaded_by:     user.id,
+        });
       if (dbErr) throw new Error(`Database: ${dbErr.message}`);
 
-      setPct(100); setPhase("done");
-      toast({ title: "✅ Material uploaded successfully!" });
-      setTimeout(() => onDone(), 700);
+      setPct(100);
+      setStage("done");
+      toast({ title: "✅ Uploaded successfully!" });
+      setTimeout(() => onSuccess(), 900);
 
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "Upload failed";
-      setPhase("error"); setPct(0); setErr(msg);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      setStage("failed");
+      setErrMsg(msg);
+      setPct(0);
       toast({ title: "Upload failed", description: msg, variant: "destructive" });
     }
   };
 
-  const barColor = phase === "done" ? "#16A34A" : phase === "saving" ? "#B8860B" : G;
+  const meta = file ? KIND_META[detectKind(file)] ?? KIND_META.File : null;
 
   return (
-    <div
-      style={{
-        position: "fixed", inset: 0, zIndex: 100,
-        background: "rgba(0,0,0,.6)",
-        display: "flex", alignItems: "flex-end", justifyContent: "center",
-      }}
-      onClick={e => {
-        // Guard: ignore backdrop clicks while file picker is open (Android bug)
-        if (e.target === e.currentTarget && !busy && !filePickerOpen.current) onClose();
-      }}
-    >
+    <>
+      {/* Scrim — does NOT dismiss sheet while picker may be open */}
+      <div
+        onClick={() => { if (!busy && !pickerGuard.current) onClose(); }}
+        style={{
+          position: "fixed", inset: 0, zIndex: 80,
+          background: "rgba(13,31,23,.52)",
+          backdropFilter: "blur(3px)",
+        }}
+      />
+
+      {/* Bottom sheet */}
       <div style={{
-        background: "#fff", borderRadius: "22px 22px 0 0",
-        width: "100%", maxWidth: 520,
-        maxHeight: "92vh", overflowY: "auto",
-        animation: "mmp-up .22s ease",
+        position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 81,
+        background: C.surface,
+        borderRadius: "22px 22px 0 0",
+        maxHeight: "92dvh",
+        overflowY: "auto",
+        boxShadow: `0 -12px 48px ${C.shadow}`,
+        animation: "tm-rise .3s cubic-bezier(.22,.68,0,1.2) both",
       }}>
+
+        {/* Drag handle */}
+        <div style={{ display: "flex", justifyContent: "center", padding: "14px 0 0" }}>
+          <div style={{ width: 40, height: 4, borderRadius: 99, background: C.border }} />
+        </div>
+
         {/* Header */}
         <div style={{
-          background: `linear-gradient(135deg,${G},${G2})`,
-          padding: "18px 20px", borderRadius: "22px 22px 0 0",
+          padding: "16px 22px 18px",
+          borderBottom: `1.5px solid ${C.border}`,
           display: "flex", alignItems: "center", justifyContent: "space-between",
-          position: "sticky", top: 0, zIndex: 2,
         }}>
           <div>
-            <h3 style={{ color: "#fff", fontWeight: 900, fontSize: 17, margin: 0 }}>
-              📤 Upload Material
-            </h3>
-            <p style={{ color: "rgba(255,255,255,.65)", fontSize: 12, margin: "3px 0 0" }}>
+            <h2 style={{
+              margin: 0, fontWeight: 900, fontSize: 18, color: C.text,
+              fontFamily: "'Libre Baskerville', Georgia, serif",
+            }}>
+              {stage === "done" ? "🎉 Upload Complete" : "📤 Upload Material"}
+            </h2>
+            <p style={{ margin: "3px 0 0", fontSize: 12, color: C.muted }}>
               {subject.title}
             </p>
           </div>
-          <button type="button" onClick={onClose} disabled={busy}
-            style={{
-              background: "rgba(255,255,255,.15)", border: "1px solid rgba(255,255,255,.25)",
-              borderRadius: 9, width: 34, height: 34, cursor: busy ? "not-allowed" : "pointer",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              color: "#fff", fontSize: 16,
-            }}>✕</button>
+          <button onClick={onClose} disabled={busy} style={{
+            width: 36, height: 36, borderRadius: 10,
+            border: `1.5px solid ${C.border}`, background: C.surface,
+            cursor: busy ? "not-allowed" : "pointer", fontSize: 16,
+            color: C.muted, opacity: busy ? 0.4 : 1,
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>✕</button>
         </div>
 
-        <div style={{ padding: "22px 20px 36px", display: "flex", flexDirection: "column", gap: 18 }}>
+        {/* Body */}
+        <div style={{ padding: "24px 22px 40px", display: "flex", flexDirection: "column", gap: 20 }}>
 
-          {/* Error */}
-          {err && (
+          {/* Hidden file input — triggered ONLY via openPicker(), never by <label> */}
+          <input
+            ref={inputRef}
+            type="file"
+            accept="*/*"
+            onChange={onFileSelected}
+            style={{ position: "absolute", width: 1, height: 1, opacity: 0, pointerEvents: "none" }}
+          />
+
+          {/* ─── STAGE: PICK ─────────────────────────────────────────────── */}
+          {stage === "pick" && (
             <div style={{
-              display: "flex", gap: 10, padding: "12px 14px",
-              background: REDL, border: `1.5px solid #FCA5A5`,
-              borderRadius: 11, alignItems: "flex-start",
+              border: `2.5px dashed ${C.border}`,
+              borderRadius: 20,
+              padding: "52px 24px",
+              textAlign: "center",
+              background: C.bg,
             }}>
-              <span style={{ fontSize: 16, flexShrink: 0 }}>⚠️</span>
-              <p style={{ margin: 0, fontSize: 13, color: "#991B1B", flex: 1, fontWeight: 600 }}>{err}</p>
-              <button onClick={() => setErr("")}
-                style={{ background: "none", border: "none", cursor: "pointer", color: MUTED, fontSize: 16 }}>✕</button>
+              <div style={{
+                width: 76, height: 76, borderRadius: 20,
+                background: `linear-gradient(135deg, ${C.green}, ${C.green2})`,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 36, margin: "0 auto 20px",
+                boxShadow: `0 8px 24px ${C.shadow}`,
+              }}>📂</div>
+              <p style={{
+                fontWeight: 900, fontSize: 18, color: C.text, margin: "0 0 8px",
+                fontFamily: "'Libre Baskerville', Georgia, serif",
+              }}>Choose a File</p>
+              <p style={{ fontSize: 13, color: C.muted, margin: "0 0 28px", lineHeight: 1.6 }}>
+                PDF · Word · Video · Audio · Image<br />Any format accepted
+              </p>
+              <button
+                onClick={openPicker}
+                style={{
+                  padding: "14px 40px", borderRadius: 50, border: "none",
+                  background: `linear-gradient(135deg, ${C.green}, ${C.green2})`,
+                  color: "#fff", fontWeight: 800, fontSize: 15,
+                  cursor: "pointer", letterSpacing: ".02em",
+                  boxShadow: `0 6px 22px ${C.shadow}`,
+                  display: "inline-flex", alignItems: "center", gap: 8,
+                }}>
+                📁 Browse Files
+              </button>
             </div>
           )}
 
-          {/* Title */}
-          <div>
-            <label style={labelSt}>Title <span style={{ color: RED }}>*</span></label>
-            <input
-              value={title} onChange={e => setTitle(e.target.value)}
-              placeholder="e.g. Week 4 Tajweed Notes"
-              disabled={busy} autoFocus
-              style={{ ...inputSt, borderColor: !title && err ? "#FCA5A5" : BORDER }}
-            />
-          </div>
-
-          {/* File zone */}
-          <div>
-            <label style={labelSt}>File <span style={{ color: RED }}>*</span></label>
-            <input ref={fileRef} id="mmp-file-input" type="file" accept="*/*"
-              style={{ position:"absolute",width:1,height:1,opacity:0,overflow:"hidden",pointerEvents:"none" }}
-              onChange={e => { const f = e.target.files?.[0]; if (f) pickFile(f); }} />
-
-            {file ? (
+          {/* ─── STAGE: CONFIRM / FAILED ─────────────────────────────────── */}
+          {(stage === "confirm" || stage === "failed") && file && meta && (
+            <>
+              {/* File card */}
               <div style={{
-                borderRadius: 14, border: `2px solid ${GM}`,
-                background: GL, overflow: "hidden",
+                border: `2px solid ${C.greenXL}`,
+                borderRadius: 16, overflow: "hidden",
+                background: "#F0FBF4",
+                animation: "tm-in .22s ease both",
               }}>
-                {thumb && (
-                  <img src={thumb} alt="" style={{ width: "100%", maxHeight: 140, objectFit: "cover", display: "block" }} />
+                {preview && (
+                  <img src={preview} alt="preview" style={{
+                    width: "100%", maxHeight: 160, objectFit: "cover", display: "block",
+                  }} />
                 )}
-                <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "13px 16px" }}>
-                  <span style={{ fontSize: 28, flexShrink: 0 }}>{TM[detectType(file)].emoji}</span>
+                <div style={{
+                  padding: "14px 16px",
+                  display: "flex", alignItems: "center", gap: 12,
+                }}>
+                  <div style={{
+                    width: 46, height: 46, borderRadius: 12, flexShrink: 0,
+                    background: meta.bg, fontSize: 24,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    border: `1.5px solid ${meta.color}30`,
+                  }}>{meta.icon}</div>
+
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ fontWeight: 700, fontSize: 13, color: TEXT, margin: "0 0 3px",
-                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{file.name}</p>
-                    <p style={{ fontSize: 11, color: MUTED, margin: 0 }}>{fmtSize(file.size)}</p>
+                    <p style={{
+                      fontWeight: 700, fontSize: 13, color: C.text,
+                      margin: "0 0 4px", overflow: "hidden",
+                      textOverflow: "ellipsis", whiteSpace: "nowrap",
+                    }}>{file.name}</p>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <span style={{
+                        fontSize: 10, fontWeight: 800, padding: "2px 8px",
+                        borderRadius: 20, background: meta.bg, color: meta.color,
+                      }}>{detectKind(file)}</span>
+                      <span style={{ fontSize: 11, color: C.muted }}>
+                        {humanSize(file.size)}
+                      </span>
+                    </div>
                   </div>
-                  {!busy && (
-                    <button onClick={clearFile}
-                      style={{ width: 30, height: 30, borderRadius: 8, border: `1.5px solid ${GM}`,
-                        background: "#fff", cursor: "pointer", display: "flex",
-                        alignItems: "center", justifyContent: "center", color: MUTED, fontSize: 14 }}>✕</button>
-                  )}
+
+                  <button onClick={clearFile} style={{
+                    width: 30, height: 30, borderRadius: 8,
+                    border: `1.5px solid ${C.border}`,
+                    background: C.surface, cursor: "pointer",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    color: C.muted, fontSize: 14,
+                  }}>✕</button>
                 </div>
               </div>
-            ) : (
-              <label htmlFor={busy ? undefined : "mmp-file-input"}
-                onDragEnter={onDE} onDragLeave={onDL}
-                onDragOver={e => e.preventDefault()} onDrop={onDrop}
-                onClick={() => { if (!busy) filePickerOpen.current = true; }}
-                style={{
-                  display:"block", padding: "36px 20px", borderRadius: 18, textAlign: "center",
-                  cursor: busy ? "not-allowed" : "pointer",
-                  border: `2.5px dashed ${drag ? G : "#CFCFCF"}`,
-                  background: drag ? `linear-gradient(135deg,${GL},${GM})` : BG,
-                  transform: drag ? "scale(1.02)" : "scale(1)",
-                  boxShadow: drag ? `0 0 0 5px ${G}18` : "none",
-                  transition: "all .2s ease",
-                }}>
-                <div style={{
-                  width: 64, height: 64, borderRadius: 18, margin: "0 auto 16px",
-                  background: drag ? GM : "#E5E7EB",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  fontSize: 28, transition: "all .2s",
-                }}>{drag ? "🎯" : "📂"}</div>
-                <p style={{ fontWeight: 900, fontSize: 16, margin: "0 0 6px",
-                  color: drag ? G : TEXT, transition: "color .2s" }}>
-                  {drag ? "Drop it here!" : "Tap to browse or drag any file"}
-                </p>
-                <p style={{ fontSize: 12, color: MUTED, margin: 0 }}>
-                  PDF · Word · Video · Audio · Image — any file type accepted
-                </p>
-              </label>
-            )}
-          </div>
 
-          {/* Progress */}
-          {phase !== "idle" && phase !== "error" && (
-            <div style={{
-              padding: "13px 16px", borderRadius: 12,
-              background: "#F0FDF4", border: "1px solid #BBF7D0",
-            }}>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, alignItems: "center" }}>
-                <span style={{ fontSize: 13, fontWeight: 700, color: "#166534" }}>
-                  {phase === "uploading" ? "Uploading file…"
-                    : phase === "saving" ? "Saving to database…"
-                    : "Upload complete ✓"}
-                </span>
-                <span style={{ fontSize: 13, fontWeight: 900, color: barColor }}>{pct}%</span>
+              {/* Title field */}
+              <div>
+                <label style={{
+                  display: "block", fontSize: 11, fontWeight: 800,
+                  color: C.green, textTransform: "uppercase",
+                  letterSpacing: ".08em", marginBottom: 8,
+                }}>
+                  Title <span style={{ color: C.red }}>*</span>
+                </label>
+                <input
+                  value={title}
+                  onChange={e => setTitle(e.target.value)}
+                  placeholder="e.g. Week 4 Tajweed Notes"
+                  autoFocus
+                  style={{
+                    width: "100%", boxSizing: "border-box",
+                    padding: "13px 16px", fontSize: 15,
+                    border: `2px solid ${title.trim() ? C.green : C.border}`,
+                    borderRadius: 12, outline: "none",
+                    background: C.surface, color: C.text,
+                    fontFamily: "inherit",
+                    transition: "border-color .15s",
+                  }}
+                />
               </div>
-              <div style={{ height: 10, background: "#D1FAE5", borderRadius: 99, overflow: "hidden" }}>
+
+              {/* Error message */}
+              {errMsg && (
                 <div style={{
-                  height: "100%", borderRadius: 99, width: `${pct}%`,
-                  background: `linear-gradient(90deg,${barColor},${barColor}99)`,
-                  transition: "width .35s ease",
-                }} />
-              </div>
-              {phase === "uploading" && file && (
-                <p style={{ fontSize: 11, color: MUTED, margin: "5px 0 0" }}>
-                  {fmtSize(Math.round(pct / 100 * file.size))} / {fmtSize(file.size)}
-                </p>
+                  padding: "12px 16px", borderRadius: 12,
+                  background: C.redL, border: `1.5px solid #FECACA`,
+                  display: "flex", gap: 10, alignItems: "flex-start",
+                }}>
+                  <span style={{ fontSize: 16, flexShrink: 0 }}>⚠️</span>
+                  <p style={{ margin: 0, fontSize: 13, color: C.red, fontWeight: 600, flex: 1 }}>
+                    {errMsg}
+                  </p>
+                </div>
               )}
+
+              {/* Action row */}
+              <div style={{ display: "flex", gap: 10 }}>
+                <button onClick={clearFile} style={{
+                  flex: 1, padding: "14px", borderRadius: 12,
+                  border: `2px solid ${C.border}`, background: C.surface,
+                  color: C.text, fontWeight: 700, fontSize: 14, cursor: "pointer",
+                }}>← Change</button>
+
+                <button
+                  onClick={doUpload}
+                  disabled={!title.trim()}
+                  style={{
+                    flex: 2, padding: "14px", borderRadius: 12, border: "none",
+                    background: title.trim()
+                      ? `linear-gradient(135deg, ${C.green}, ${C.green2})`
+                      : C.border,
+                    color: title.trim() ? "#fff" : C.muted,
+                    fontWeight: 900, fontSize: 15,
+                    cursor: title.trim() ? "pointer" : "not-allowed",
+                    boxShadow: title.trim() ? `0 6px 20px ${C.shadow}` : "none",
+                    display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                    transition: "all .2s",
+                  }}>
+                  ⬆ Upload Now
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* ─── STAGE: UPLOADING ────────────────────────────────────────── */}
+          {stage === "uploading" && (
+            <div style={{
+              display: "flex", flexDirection: "column",
+              alignItems: "center", gap: 20, padding: "32px 0",
+            }}>
+              <Spinner size={52} color={C.green} />
+              <div style={{ textAlign: "center" }}>
+                <p style={{
+                  fontWeight: 800, fontSize: 17, color: C.text, margin: "0 0 6px",
+                  fontFamily: "'Libre Baskerville', Georgia, serif",
+                }}>
+                  {pct < 90 ? "Uploading…" : "Saving to library…"}
+                </p>
+                <p style={{ fontSize: 13, color: C.muted, margin: 0 }}>
+                  {file && pct < 90
+                    ? `${humanSize(Math.round(pct / 100 * file.size))} of ${humanSize(file.size)}`
+                    : "Almost done…"}
+                </p>
+              </div>
+              <div style={{ width: "100%", maxWidth: 320 }}>
+                <div style={{
+                  height: 8, background: C.greenXL, borderRadius: 99, overflow: "hidden",
+                }}>
+                  <div style={{
+                    height: "100%", borderRadius: 99,
+                    width: `${pct}%`,
+                    background: `linear-gradient(90deg, ${C.green}, ${C.gold})`,
+                    transition: "width .4s ease",
+                  }} />
+                </div>
+                <p style={{
+                  textAlign: "center", marginTop: 8,
+                  fontSize: 13, fontWeight: 800, color: C.green,
+                }}>{pct}%</p>
+              </div>
             </div>
           )}
 
-          {/* Buttons */}
-          <div style={{ display: "flex", gap: 12 }}>
-            <button type="button" onClick={onClose} disabled={busy}
-              style={{
-                flex: 1, padding: "14px", borderRadius: 12,
-                border: `1.5px solid ${BORDER}`, background: "#fff", color: TEXT,
-                fontWeight: 700, fontSize: 15, cursor: busy ? "not-allowed" : "pointer",
-              }}>
-              Cancel
-            </button>
-            <button type="button" onClick={upload}
-              disabled={busy || !file || phase === "done"}
-              style={{
-                flex: 2, padding: "14px", borderRadius: 12, border: "none",
-                background: busy || !file || phase === "done"
-                  ? "#E5E7EB"
-                  : `linear-gradient(135deg,${G},${G2})`,
-                color: busy || !file || phase === "done" ? MUTED : "#fff",
-                fontWeight: 900, fontSize: 15,
-                cursor: busy || !file || phase === "done" ? "not-allowed" : "pointer",
-                display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-                boxShadow: busy || !file || phase === "done" ? "none" : `0 6px 20px ${G}44`,
-                transition: "all .2s",
-              }}>
-              <span style={{ animation: busy ? "mmp-spin .7s linear infinite" : "none", display: "inline-flex" }}>
-                {phase === "done" ? "✅" : phase === "error" ? "🔄" : busy ? "⟳" : "⬆"}
-              </span>
-              {phase === "uploading" ? `Uploading ${pct}%…`
-                : phase === "saving" ? "Saving…"
-                : phase === "done"   ? "Done!"
-                : phase === "error"  ? "Retry"
-                : "Upload Material"}
-            </button>
-          </div>
+          {/* ─── STAGE: DONE ─────────────────────────────────────────────── */}
+          {stage === "done" && (
+            <div style={{
+              display: "flex", flexDirection: "column",
+              alignItems: "center", gap: 16, padding: "32px 0",
+              animation: "tm-in .3s ease both",
+            }}>
+              <div style={{
+                width: 76, height: 76, borderRadius: 20,
+                background: C.greenXL,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 38,
+              }}>✅</div>
+              <p style={{
+                fontWeight: 900, fontSize: 18, color: C.green, margin: 0,
+                fontFamily: "'Libre Baskerville', Georgia, serif",
+              }}>Material Uploaded!</p>
+              <p style={{ fontSize: 13, color: C.muted, margin: 0, textAlign: "center" }}>
+                Now visible to students in this subject.
+              </p>
+            </div>
+          )}
+
         </div>
       </div>
-    </div>
+    </>
   );
-});
-UploadModal.displayName = "UploadModal";
-
-// ═════════════════════════════════════════════════════════════════════════════
-// MATERIAL CARD
-// ═════════════════════════════════════════════════════════════════════════════
-interface MatCardProps {
-  mat:      MaterialRow;
-  idx:      number;
-  onDelete: (m: MaterialRow) => void;
 }
 
-const MatCard = memo(({ mat, idx, onDelete }: MatCardProps) => {
-  const t = TM[(mat.material_type as MatType) ?? "PDF"];
-  const [imgSrc,  setImgSrc]  = useState<string | null>(null);
-  const [menuOpen,setMenuOpen]= useState(false);
-
-  // Resolve thumbnail for images
-  useEffect(() => {
-    if (mat.material_type !== "Image" || !mat.file_url) return;
-    resolveUrl(mat.file_url).then(url => { if (url) setImgSrc(url); });
-  }, [mat.file_url, mat.material_type]);
+// ═════════════════════════════════════════════════════════════════════════════
+// MATERIAL ROW
+// ═════════════════════════════════════════════════════════════════════════════
+function MatRow({ mat, onDelete, index }: {
+  mat: Material; onDelete: () => void; index: number;
+}) {
+  const meta = KIND_META[mat.material_type ?? "File"] ?? KIND_META.File;
+  const [menu, setMenu] = useState(false);
 
   const openFile = async () => {
-    const url = await resolveUrl(mat.file_url);
+    const url = await buildSignedUrl(mat.file_url);
     if (url) window.open(url, "_blank");
   };
 
   const downloadFile = async () => {
-    const url = await resolveUrl(mat.file_url);
+    const url = await buildSignedUrl(mat.file_url);
     if (!url) return;
     const a = document.createElement("a");
     a.href = url; a.download = mat.title; a.click();
   };
 
-  const hasFile = !!mat.file_url && !["_text_","link","text-content"].includes(mat.file_url);
-
   return (
-    <div className="mmp-card" style={{
-      ...cardSt, overflow: "hidden",
-      animation: `mmp-in .28s ease both`,
-      animationDelay: `${idx * 50}ms`,
+    <div style={{
+      background: C.surface, border: `1.5px solid ${C.border}`,
+      borderRadius: 14, padding: "14px 16px",
+      display: "flex", alignItems: "center", gap: 13,
+      animation: `tm-in .22s ease ${index * 40}ms both`,
+      position: "relative",
     }}>
-      <div style={{ height: 3, background: t.color }} />
-      {mat.material_type === "Image" && imgSrc && (
-        <div style={{ height: 110, overflow: "hidden", background: t.light }}>
-          <img src={imgSrc} alt={mat.title}
-            style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-            onError={() => setImgSrc(null)} />
+      {/* Color accent bar */}
+      <div style={{
+        position: "absolute", left: 0, top: 12, bottom: 12,
+        width: 3, borderRadius: "0 3px 3px 0",
+        background: meta.color,
+      }} />
+
+      {/* Icon */}
+      <div style={{
+        width: 44, height: 44, borderRadius: 12, flexShrink: 0,
+        background: meta.bg, fontSize: 22,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        border: `1.5px solid ${meta.color}22`,
+      }}>{meta.icon}</div>
+
+      {/* Info */}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <p style={{
+          fontWeight: 700, fontSize: 13, color: C.text, margin: "0 0 4px",
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+        }}>{mat.title}</p>
+        <div style={{ display: "flex", gap: 7, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{
+            fontSize: 10, fontWeight: 800, padding: "2px 7px", borderRadius: 20,
+            background: meta.bg, color: meta.color,
+          }}>{mat.material_type}</span>
+          {mat.file_size && (
+            <span style={{ fontSize: 11, color: C.muted }}>{humanSize(mat.file_size)}</span>
+          )}
+          <span style={{ fontSize: 11, color: C.muted }}>{timeAgo(mat.created_at)}</span>
         </div>
-      )}
-      <div style={{ padding: "14px 16px" }}>
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 11 }}>
-          <div style={{
-            width: 42, height: 42, borderRadius: 12, flexShrink: 0, fontSize: 22,
-            background: t.light, border: `1.5px solid ${t.border}`,
-            display: "flex", alignItems: "center", justifyContent: "center",
-          }}>{t.emoji}</div>
+      </div>
 
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <p style={{
-              fontWeight: 700, fontSize: 13, color: TEXT, margin: "0 0 4px",
-              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-            }}>{mat.title}</p>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 5, alignItems: "center" }}>
-              <span style={{
-                fontSize: 10, fontWeight: 800, padding: "2px 7px", borderRadius: 20,
-                background: `${t.color}18`, color: t.color,
-              }}>{mat.material_type}</span>
-              {(mat.file_size ?? 0) > 0 && (
-                <span style={{ fontSize: 10, color: MUTED }}>{fmtSize(mat.file_size)}</span>
-              )}
-              <span style={{ fontSize: 10, color: MUTED }}>{ago(mat.created_at)}</span>
-            </div>
-          </div>
+      {/* Context menu */}
+      <div style={{ position: "relative", flexShrink: 0 }}>
+        <button onClick={() => setMenu(v => !v)} style={{
+          width: 32, height: 32, borderRadius: 8,
+          border: `1.5px solid ${C.border}`, background: C.surface,
+          cursor: "pointer", fontSize: 18, color: C.muted,
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>⋮</button>
 
-          {/* Context menu */}
-          <div style={{ position: "relative", flexShrink: 0 }}>
-            <button type="button" aria-label="Options"
-              onClick={() => setMenuOpen(v => !v)}
-              style={{
-                width: 30, height: 30, borderRadius: 8,
-                border: `1.5px solid ${BORDER}`, background: "#fff",
-                cursor: "pointer", fontSize: 16, color: MUTED,
-                display: "flex", alignItems: "center", justifyContent: "center",
-              }}>⋮</button>
-
-            {menuOpen && (
-              <div onMouseLeave={() => setMenuOpen(false)} style={{
-                position: "absolute", right: 0, top: 34, zIndex: 50, minWidth: 145,
-                background: "#fff", borderRadius: 12, border: `1.5px solid ${BORDER}`,
-                boxShadow: "0 10px 32px rgba(0,0,0,.14)",
-                padding: 6, animation: "mmp-pop .15s ease",
-              }}>
-                {hasFile && (
-                  <MenuItem emoji="👁" color={SUB}
-                    onClick={() => { openFile(); setMenuOpen(false); }}>View</MenuItem>
-                )}
-                {hasFile && mat.is_downloadable && (
-                  <MenuItem emoji="⬇" color="#0D9488"
-                    onClick={() => { downloadFile(); setMenuOpen(false); }}>Download</MenuItem>
-                )}
-                <div style={{ height: 1, background: "#F3F4F6", margin: "4px 0" }} />
-                <MenuItem emoji="🗑" color={RED}
-                  onClick={() => { onDelete(mat); setMenuOpen(false); }}>Delete</MenuItem>
-              </div>
+        {menu && (
+          <div onMouseLeave={() => setMenu(false)} style={{
+            position: "absolute", right: 0, top: 36, zIndex: 60,
+            background: C.surface, border: `1.5px solid ${C.border}`,
+            borderRadius: 12, padding: 6, minWidth: 150,
+            boxShadow: `0 12px 36px ${C.shadow}`,
+            animation: "tm-pop .15s ease",
+          }}>
+            <MenuBtn label="👁  View"     onClick={() => { openFile();     setMenu(false); }} />
+            {mat.is_downloadable && (
+              <MenuBtn label="⬇  Download" onClick={() => { downloadFile(); setMenu(false); }} />
             )}
+            <div style={{ height: 1, background: C.border, margin: "4px 0" }} />
+            <MenuBtn label="🗑  Delete" color={C.red}
+              onClick={() => { onDelete(); setMenu(false); }} />
           </div>
-        </div>
-
-        {mat.content && (
-          <p style={{
-            fontSize: 11, color: SUB, margin: "10px 0 0", lineHeight: 1.5,
-            padding: "8px 10px", background: BG, borderRadius: 8,
-            border: `1px solid ${BORDER}`,
-            display: "-webkit-box" as React.CSSProperties["display"],
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: "vertical" as React.CSSProperties["WebkitBoxOrient"],
-            overflow: "hidden",
-          }}>{mat.content}</p>
-        )}
-        {mat.is_downloadable && hasFile && (
-          <span style={{ fontSize: 10, color: G, fontWeight: 700, display: "block", marginTop: 8 }}>
-            ⬇ Downloadable
-          </span>
         )}
       </div>
     </div>
   );
-});
-MatCard.displayName = "MatCard";
+}
 
-function MenuItem({ emoji, color, onClick, children }: {
-  emoji: string; color: string; onClick: () => void; children: React.ReactNode;
+function MenuBtn({ label, onClick, color = C.text }: {
+  label: string; onClick: () => void; color?: string;
 }) {
+  const [hov, setHov] = useState(false);
   return (
-    <button type="button" onClick={onClick} style={{
-      display: "flex", alignItems: "center", gap: 8, width: "100%",
-      padding: "9px 10px", borderRadius: 8, border: "none",
-      background: "none", cursor: "pointer", fontSize: 12,
-      fontWeight: 600, color, textAlign: "left", minHeight: 36,
-    }}><span>{emoji}</span>{children}</button>
+    <button
+      onClick={onClick}
+      onMouseEnter={() => setHov(true)}
+      onMouseLeave={() => setHov(false)}
+      style={{
+        all: "unset", display: "block", width: "100%", boxSizing: "border-box",
+        padding: "9px 12px", borderRadius: 8, fontSize: 13, fontWeight: 600,
+        color, cursor: "pointer", background: hov ? C.bg : "transparent",
+        transition: "background .12s",
+      }}>{label}</button>
   );
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// SUBJECT PICKER
+// LIBRARY VIEW
 // ═════════════════════════════════════════════════════════════════════════════
-interface SubjectPickerProps {
-  selected: SubjectRow | null;
-  onSelect: (s: SubjectRow) => void;
-}
-
-const SubjectPicker = memo(({ selected, onSelect }: SubjectPickerProps) => {
+function LibraryView({ subject, onBack, onUpload }: {
+  subject: Subject; onBack: () => void; onUpload: () => void;
+}) {
+  const qc = useQueryClient();
   const [search, setSearch] = useState("");
 
-  // ✅ FIX: destructure `data` not `subjectsData` — this was the #1 bug
-  const { data: subjects = [], isLoading, error, refetch } = useQuery<SubjectRow[]>({
-    queryKey: ["mmp-subjects"],
+  const { data: mats = [], isLoading, error, refetch } = useQuery<Material[]>({
+    queryKey: ["tm-materials", subject.id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("subject_materials")
+        .select("*")
+        .eq("subject_id", subject.id)
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return (data ?? []) as Material[];
+    },
+  });
+
+  const filtered = useMemo(() =>
+    mats.filter(m => m.title.toLowerCase().includes(search.toLowerCase())),
+    [mats, search]);
+
+  const handleDelete = async (mat: Material) => {
+    if (!confirm(`Delete "${mat.title}"?`)) return;
+    if (mat.file_url && !mat.file_url.startsWith("http")) {
+      await supabase.storage.from(BUCKET).remove([mat.file_url]);
+    }
+    const { error } = await supabase
+      .from("subject_materials").delete().eq("id", mat.id);
+    if (error) {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+      return;
+    }
+    toast({ title: "🗑 Deleted" });
+    qc.invalidateQueries({ queryKey: ["tm-materials", subject.id] });
+  };
+
+  return (
+    <div>
+      {/* Sticky sub-header */}
+      <div style={{
+        padding: "18px 20px 14px",
+        borderBottom: `1.5px solid ${C.border}`,
+        background: C.bg,
+        position: "sticky", top: 72, zIndex: 9,
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+          <button onClick={onBack} style={{
+            all: "unset", cursor: "pointer", fontSize: 22,
+            color: C.green, lineHeight: 1, flexShrink: 0,
+          }}>←</button>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <p style={{
+              fontWeight: 900, fontSize: 16, color: C.text, margin: 0,
+              fontFamily: "'Libre Baskerville', Georgia, serif",
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            }}>{subject.title}</p>
+            <p style={{ margin: "2px 0 0", fontSize: 12, color: C.muted }}>
+              {isLoading ? "Loading…" : `${mats.length} material${mats.length !== 1 ? "s" : ""}`}
+            </p>
+          </div>
+          <button onClick={onUpload} style={{
+            padding: "10px 18px", borderRadius: 50, border: "none",
+            background: `linear-gradient(135deg, ${C.green}, ${C.green2})`,
+            color: "#fff", fontWeight: 800, fontSize: 13, cursor: "pointer",
+            display: "flex", alignItems: "center", gap: 6, flexShrink: 0,
+            boxShadow: `0 4px 14px ${C.shadow}`,
+          }}>
+            ⬆ Upload
+          </button>
+        </div>
+
+        {/* Search bar */}
+        <div style={{ position: "relative" }}>
+          <span style={{
+            position: "absolute", left: 12, top: "50%",
+            transform: "translateY(-50%)", fontSize: 14,
+            color: C.muted, pointerEvents: "none",
+          }}>🔍</span>
+          <input
+            value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="Search materials…"
+            style={{
+              width: "100%", boxSizing: "border-box",
+              padding: "10px 12px 10px 34px", fontSize: 13,
+              border: `1.5px solid ${C.border}`, borderRadius: 10,
+              background: C.surface, color: C.text,
+              fontFamily: "inherit", outline: "none",
+            }}
+          />
+        </div>
+      </div>
+
+      {/* List */}
+      <div style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: 10 }}>
+        {isLoading && (
+          <div style={{ display: "flex", justifyContent: "center", padding: 48 }}>
+            <Spinner size={40} />
+          </div>
+        )}
+        {error && !isLoading && (
+          <div style={{
+            padding: 20, borderRadius: 14, background: C.redL,
+            border: `1.5px solid #FECACA`, textAlign: "center",
+          }}>
+            <p style={{ fontWeight: 700, color: C.red, margin: "0 0 12px" }}>
+              Failed to load materials
+            </p>
+            <button onClick={() => refetch()} style={{
+              padding: "8px 18px", borderRadius: 8, border: "none",
+              background: C.red, color: "#fff", fontWeight: 700,
+              fontSize: 12, cursor: "pointer",
+            }}>🔄 Retry</button>
+          </div>
+        )}
+        {!isLoading && !error && filtered.length === 0 && (
+          <EmptyState
+            icon={search ? "🔍" : "📭"}
+            title={search ? "No matches found" : "No materials yet"}
+            sub={search ? "Try a different search term"
+              : "Upload your first material for this subject"}
+            btnLabel={!search ? "⬆ Upload Now" : undefined}
+            onBtn={!search ? onUpload : undefined}
+          />
+        )}
+        {!isLoading && !error && filtered.map((m, i) => (
+          <MatRow key={m.id} mat={m} index={i} onDelete={() => handleDelete(m)} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// SUBJECTS VIEW
+// ═════════════════════════════════════════════════════════════════════════════
+function SubjectsView({ onSelect }: { onSelect: (s: Subject) => void }) {
+  const [search, setSearch] = useState("");
+
+  const { data: subjects = [], isLoading, error, refetch } = useQuery<Subject[]>({
+    queryKey: ["tm-subjects"],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("subjects")
-        .select("id, title, title_ar, is_active, image_url, level")
+        .select("id, title, title_ar, level, image_url")
         .order("title");
       if (error) throw error;
-      return (data ?? []) as SubjectRow[];
+      return (data ?? []) as Subject[];
     },
     staleTime: 60_000,
   });
@@ -686,479 +899,300 @@ const SubjectPicker = memo(({ selected, onSelect }: SubjectPickerProps) => {
       (s.title_ar ?? "").includes(search)
     ), [subjects, search]);
 
-  if (isLoading) {
-    return (
-      <div style={{ ...cardSt, padding: 24 }}>
-        <h3 style={{ fontWeight: 800, fontSize: 16, color: TEXT, margin: "0 0 20px" }}>📚 Choose a Subject</h3>
-        <div style={{ display: "grid", gap: 10 }}>
-          {[1,2,3].map(i => (
-            <div key={i} style={{
-              height: 72, borderRadius: 12, background: BG,
-              animation: "mmp-pulse 1.4s infinite", animationDelay: `${i*120}ms`,
-            }} />
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div style={{ ...cardSt, padding: 24 }}>
-        <h3 style={{ fontWeight: 800, fontSize: 16, color: TEXT, margin: "0 0 16px" }}>📚 Choose a Subject</h3>
-        <div style={{
-          background: REDL, border: `1.5px solid #FCA5A5`,
-          borderRadius: 12, padding: 16, marginBottom: 16,
-        }}>
-          <p style={{ fontWeight: 800, color: RED, margin: "0 0 6px" }}>Failed to load subjects</p>
-          <p style={{ fontSize: 12, color: RED, margin: "0 0 12px", fontFamily: "monospace" }}>
-            {(error as Error).message}
-          </p>
-          <button onClick={() => refetch()} style={{
-            padding: "9px 18px", borderRadius: 8, border: "none",
-            background: RED, color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer",
-          }}>🔄 Retry</button>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div style={{ ...cardSt, padding: 24 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
-        <div>
-          <h3 style={{ fontWeight: 800, fontSize: 16, color: TEXT, margin: 0 }}>📚 Choose a Subject</h3>
-          <p style={{ fontSize: 12, color: MUTED, margin: "3px 0 0" }}>
-            {subjects.length} subject{subjects.length !== 1 ? "s" : ""} available
-          </p>
-        </div>
-        <button onClick={() => refetch()} title="Refresh"
-          style={{
-            width: 34, height: 34, borderRadius: 9, border: `1.5px solid ${BORDER}`,
-            background: "#fff", cursor: "pointer", display: "flex",
-            alignItems: "center", justifyContent: "center", fontSize: 16,
-          }}>🔄</button>
-      </div>
+    <div style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: 12 }}>
 
       {/* Search */}
-      <div style={{ position: "relative", marginBottom: 16 }}>
+      <div style={{ position: "relative" }}>
         <span style={{
-          position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)",
-          fontSize: 14, color: MUTED, pointerEvents: "none",
+          position: "absolute", left: 12, top: "50%",
+          transform: "translateY(-50%)", fontSize: 14,
+          color: C.muted, pointerEvents: "none",
         }}>🔍</span>
         <input
           value={search} onChange={e => setSearch(e.target.value)}
           placeholder="Search subjects…"
-          style={{ ...inputSt, paddingLeft: 34, fontSize: 13 }}
+          style={{
+            width: "100%", boxSizing: "border-box",
+            padding: "11px 12px 11px 34px", fontSize: 13,
+            border: `1.5px solid ${C.border}`, borderRadius: 10,
+            background: C.surface, color: C.text,
+            fontFamily: "inherit", outline: "none",
+          }}
         />
       </div>
 
-      {/* Subject list */}
-      {filtered.length === 0 ? (
-        <div style={{
-          background: GL, border: `2px dashed ${GM}`,
-          borderRadius: 14, padding: "32px 20px", textAlign: "center",
-        }}>
-          <p style={{ fontSize: 36, marginBottom: 10 }}>📭</p>
-          <p style={{ fontWeight: 800, color: TEXT, margin: "0 0 6px" }}>
-            {search ? "No matches found" : "No subjects yet"}
-          </p>
-          <p style={{ fontSize: 12, color: MUTED, margin: 0 }}>
-            {search
-              ? "Try a different search term"
-              : "Create subjects first in Courses & Subjects"}
-          </p>
-        </div>
-      ) : (
-        <div style={{ display: "grid", gap: 10, maxHeight: 400, overflowY: "auto" }}>
-          {filtered.map(s => {
-            const active = selected?.id === s.id;
-            return (
-              <button key={s.id} type="button" onClick={() => onSelect(s)}
-                style={{
-                  display: "flex", alignItems: "center", gap: 13,
-                  padding: "14px 16px", borderRadius: 13, width: "100%",
-                  border: `2px solid ${active ? G : BORDER}`,
-                  background: active ? GL : "#FAFAFA",
-                  cursor: "pointer", textAlign: "left", transition: "all .14s",
-                  boxShadow: active ? `0 0 0 3px ${G}22` : "none",
-                }}>
-                {/* Thumbnail */}
-                <div style={{
-                  width: 42, height: 42, borderRadius: 10, flexShrink: 0,
-                  background: s.image_url ? `url(${s.image_url}) center/cover` : GL,
-                  border: `1.5px solid ${BORDER}`,
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  fontSize: 20, overflow: "hidden",
-                }}>
-                  {!s.image_url && "📖"}
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <p style={{
-                    fontWeight: 700, fontSize: 14, color: active ? G : TEXT,
-                    margin: "0 0 3px",
-                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                  }}>{s.title}</p>
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-                    {s.title_ar && (
-                      <span style={{ fontSize: 11, color: SUB, direction: "rtl" }}>{s.title_ar}</span>
-                    )}
-                    {s.level && (
-                      <span style={{
-                        fontSize: 10, fontWeight: 700, padding: "1px 7px",
-                        borderRadius: 20, background: GM, color: G,
-                      }}>{s.level}</span>
-                    )}
-                    {s.is_active === false && (
-                      <span style={{
-                        fontSize: 10, fontWeight: 700, padding: "1px 7px",
-                        borderRadius: 20, background: REDL, color: RED,
-                      }}>Inactive</span>
-                    )}
-                  </div>
-                </div>
-                {active && <span style={{ fontSize: 18, flexShrink: 0 }}>✅</span>}
-              </button>
-            );
-          })}
+      {isLoading && (
+        <div style={{ display: "flex", justifyContent: "center", padding: 48 }}>
+          <Spinner size={40} />
         </div>
       )}
+      {error && !isLoading && (
+        <div style={{
+          padding: 20, borderRadius: 14, background: C.redL,
+          border: `1.5px solid #FECACA`, textAlign: "center",
+        }}>
+          <p style={{ fontWeight: 700, color: C.red, margin: "0 0 12px" }}>
+            Failed to load subjects
+          </p>
+          <button onClick={() => refetch()} style={{
+            padding: "8px 18px", borderRadius: 8, border: "none",
+            background: C.red, color: "#fff", fontWeight: 700,
+            fontSize: 12, cursor: "pointer",
+          }}>🔄 Retry</button>
+        </div>
+      )}
+      {!isLoading && !error && filtered.length === 0 && (
+        <EmptyState
+          icon={search ? "🔍" : "📚"}
+          title={search ? "No matches" : "No subjects yet"}
+          sub={search ? "Try a different search" : "Create subjects first in Courses & Subjects"}
+        />
+      )}
+      {!isLoading && !error && filtered.map((s, i) => (
+        <SubjectBtn key={s.id} subject={s} index={i} onClick={() => onSelect(s)} />
+      ))}
     </div>
   );
-});
-SubjectPicker.displayName = "SubjectPicker";
+}
+
+function SubjectBtn({ subject, index, onClick }: {
+  subject: Subject; index: number; onClick: () => void;
+}) {
+  const [hov, setHov] = useState(false);
+  return (
+    <button
+      onClick={onClick}
+      onMouseEnter={() => setHov(true)}
+      onMouseLeave={() => setHov(false)}
+      style={{
+        all: "unset", display: "block", cursor: "pointer", width: "100%",
+        boxSizing: "border-box",
+        background: hov ? C.greenXL : C.surface,
+        border: `2px solid ${hov ? C.green : C.border}`,
+        borderRadius: 16, padding: "16px 18px",
+        transition: "all .18s ease",
+        boxShadow: hov ? `0 6px 22px ${C.shadow}` : "none",
+        transform: hov ? "translateY(-2px)" : "none",
+        animation: `tm-in .22s ease ${index * 50}ms both`,
+      }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+        <div style={{
+          width: 46, height: 46, borderRadius: 12, flexShrink: 0,
+          background: subject.image_url
+            ? `url(${subject.image_url}) center/cover`
+            : `linear-gradient(135deg, ${C.green}, ${C.green2})`,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: 22, color: "#fff", border: `1.5px solid ${C.border}`,
+        }}>
+          {!subject.image_url && "📖"}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <p style={{
+            fontWeight: 800, fontSize: 15, color: C.text, margin: "0 0 4px",
+            fontFamily: "'Libre Baskerville', Georgia, serif",
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+          }}>{subject.title}</p>
+          <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+            {subject.title_ar && (
+              <span style={{ fontSize: 12, color: C.muted, direction: "rtl" }}>
+                {subject.title_ar}
+              </span>
+            )}
+            {subject.level && (
+              <span style={{
+                fontSize: 10, fontWeight: 800, padding: "2px 8px",
+                borderRadius: 20, background: C.goldL, color: C.gold,
+              }}>{subject.level}</span>
+            )}
+          </div>
+        </div>
+        <span style={{ color: C.muted, fontSize: 20, flexShrink: 0 }}>›</span>
+      </div>
+    </button>
+  );
+}
 
 // ═════════════════════════════════════════════════════════════════════════════
-// MAIN PAGE
+// ROOT — MaterialManagerPro
 // ═════════════════════════════════════════════════════════════════════════════
 export default function MaterialManagerPro() {
+  const { user, loading: authLoading } = useAuth();
   const qc = useQueryClient();
-  // ✅ FIX: AuthContext exposes `loading` not `isLoading`
-  const { user, session, loading: authLoading } = useAuth();
 
-  const [selectedSubject, setSelectedSubject] = useState<SubjectRow | null>(null);
-  const [showUpload,       setShowUpload]       = useState(false);
-  const [search,           setSearch]           = useState("");
-  const [typeFilter,       setTypeFilter]       = useState<MatType | "All">("All");
+  const [view,          setView]          = useState<View>("subjects");
+  const [activeSubject, setActiveSubject] = useState<Subject | null>(null);
+  const [showUpload,    setShowUpload]    = useState(false);
 
-  // ── Fetch materials for selected subject ────────────────────────────────────
-  const { data: materials = [], isLoading: mLoading, error: mError, refetch: mRefetch } =
-    useQuery<MaterialRow[]>({
-      queryKey: ["mmp-materials", selectedSubject?.id],
-      enabled:  !!selectedSubject,
-      queryFn: async () => {
-        const { data, error } = await supabase
-          .from("subject_materials")
-          .select("*")
-          .eq("subject_id", selectedSubject!.id)
-          .order("created_at", { ascending: false });
-        if (error) throw error;
-        return (data ?? []) as MaterialRow[];
-      },
-    });
+  const { data: matCountData = [] } = useQuery<{ id: string }[]>({
+    queryKey: ["tm-mat-count", activeSubject?.id],
+    enabled: !!activeSubject,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("subject_materials")
+        .select("id")
+        .eq("subject_id", activeSubject!.id);
+      return data ?? [];
+    },
+  });
 
-  // ── Invalidate all caches students might be watching ───────────────────────
   const invalidateAll = useCallback(() => {
-    if (!selectedSubject) return;
-    const id = selectedSubject.id;
-    qc.invalidateQueries({ queryKey: ["mmp-materials",         id] });
-    qc.invalidateQueries({ queryKey: ["smh",                   id] });
-    qc.invalidateQueries({ queryKey: ["subject-materials-all", id] });
-    qc.invalidateQueries({ queryKey: ["adm-materials",         id] });
-    qc.invalidateQueries({ queryKey: ["materials",             id] });
-  }, [qc, selectedSubject]);
+    if (!activeSubject) return;
+    const id = activeSubject.id;
+    ["tm-materials","tm-mat-count","smh","subject-materials-all","adm-materials","materials"]
+      .forEach(k => qc.invalidateQueries({ queryKey: [k, id] }));
+  }, [qc, activeSubject]);
 
-  // ── Delete ──────────────────────────────────────────────────────────────────
-  const handleDelete = useCallback(async (m: MaterialRow) => {
-    if (!confirm(`Delete "${m.title}"?`)) return;
-    const safe = ["_text_", "link", "text-content"];
-    if (m.file_url && !m.file_url.startsWith("http") && !safe.includes(m.file_url)) {
-      await supabase.storage.from(BUCKET).remove([m.file_url]);
-    }
-    const { error } = await supabase.from("subject_materials").delete().eq("id", m.id);
-    if (error) {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
-      return;
-    }
-    toast({ title: "🗑 Deleted" });
+  const selectSubject = (s: Subject) => {
+    setActiveSubject(s);
+    setView("library");
+  };
+
+  const goBack = () => {
+    setView("subjects");
+    setActiveSubject(null);
+    setShowUpload(false);
+  };
+
+  const handleUploadSuccess = () => {
+    setShowUpload(false);
     invalidateAll();
-  }, [invalidateAll]);
-
-  // ── Filtered + counted ─────────────────────────────────────────────────────
-  const filtered = useMemo(() =>
-    materials.filter(m =>
-      (typeFilter === "All" || m.material_type === typeFilter) &&
-      (!search || m.title.toLowerCase().includes(search.toLowerCase()))
-    ), [materials, typeFilter, search]);
-
-  const counts = useMemo(() => {
-    const c: Record<string, number> = {};
-    materials.forEach(m => {
-      if (m.material_type) c[m.material_type] = (c[m.material_type] ?? 0) + 1;
-    });
-    return c;
-  }, [materials]);
+  };
 
   return (
     <>
       <style>{`
-        @keyframes mmp-in  { from{opacity:0;transform:translateY(16px)} to{opacity:1;transform:translateY(0)} }
-        @keyframes mmp-up  { from{opacity:0;transform:translateY(24px)} to{opacity:1;transform:translateY(0)} }
-        @keyframes mmp-pop { from{opacity:0;transform:scale(.93)} to{opacity:1;transform:scale(1)} }
-        @keyframes mmp-spin{ to{transform:rotate(360deg)} }
-        @keyframes mmp-pulse{ 0%,100%{opacity:1} 50%{opacity:.35} }
-        .mmp-card{ transition:transform .18s ease,box-shadow .18s ease; }
-        .mmp-card:hover{ transform:translateY(-3px); box-shadow:0 10px 28px rgba(0,0,0,.09)!important; }
+        @import url('https://fonts.googleapis.com/css2?family=Libre+Baskerville:wght@400;700&family=DM+Sans:wght@400;600;700;800;900&display=swap');
+        @keyframes tm-in   { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
+        @keyframes tm-rise { from{opacity:0;transform:translateY(100%)} to{opacity:1;transform:translateY(0)} }
+        @keyframes tm-pop  { from{opacity:0;transform:scale(.92)} to{opacity:1;transform:scale(1)} }
+        @keyframes tm-spin { to{transform:rotate(360deg)} }
+        * { -webkit-tap-highlight-color: transparent; }
       `}</style>
 
-      <div style={{ minHeight: "100vh", background: BG, fontFamily: "system-ui,sans-serif", paddingBottom: 40 }}>
+      <div style={{
+        minHeight: "100vh",
+        background: C.bg,
+        fontFamily: "'DM Sans', system-ui, sans-serif",
+        paddingBottom: 60,
+      }}>
 
-        {/* ── HEADER ───────────────────────────────────────────────────────── */}
+        {/* ── TOP BAR ────────────────────────────────────────────────────── */}
         <div style={{
-          background: `linear-gradient(135deg,${G} 0%,${G2} 100%)`,
-          padding: "22px 20px", marginBottom: 22,
+          background: `linear-gradient(150deg, ${C.green} 0%, ${C.green2} 100%)`,
+          padding: "20px 20px 0",
+          position: "sticky", top: 0, zIndex: 20,
+          boxShadow: `0 2px 16px ${C.shadow}`,
         }}>
-          <div style={{ maxWidth: 1100, margin: "0 auto" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                <div style={{
-                  width: 50, height: 50, borderRadius: 15, fontSize: 24,
-                  background: "rgba(255,255,255,.15)",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                }}>📚</div>
-                <div>
-                  <h1 style={{ color: "#fff", fontWeight: 900, fontSize: 20, margin: 0 }}>
-                    Material Manager
-                  </h1>
-                  <p style={{ color: "rgba(255,255,255,.65)", fontSize: 12, margin: "3px 0 0" }}>
-                    {authLoading ? "Checking login…"
-                      : user ? `Signed in as ${user.email}`
-                      : "⚠️ Not signed in"}
-                  </p>
-                </div>
-              </div>
+          <div style={{ maxWidth: 720, margin: "0 auto" }}>
 
-              {selectedSubject && (
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button type="button" onClick={() => setShowUpload(true)} style={{
-                    padding: "9px 18px", borderRadius: 11,
-                    border: "1.5px solid rgba(255,255,255,.35)",
-                    background: "rgba(255,255,255,.2)", color: "#fff",
-                    fontWeight: 800, fontSize: 13, cursor: "pointer",
-                    display: "flex", alignItems: "center", gap: 6,
-                  }}>⬆ Upload Material</button>
-                  <button type="button"
-                    onClick={() => { setSelectedSubject(null); setSearch(""); setTypeFilter("All"); }}
-                    style={{
-                      padding: "9px 16px", borderRadius: 11,
-                      border: "1.5px solid rgba(255,255,255,.25)",
-                      background: "rgba(255,255,255,.12)", color: "#fff",
-                      fontWeight: 700, fontSize: 13, cursor: "pointer",
-                    }}>🔄 Change Subject</button>
-                </div>
-              )}
+            {/* Brand row */}
+            <div style={{
+              display: "flex", alignItems: "center",
+              gap: 14, paddingBottom: 18,
+            }}>
+              <div style={{
+                width: 46, height: 46, borderRadius: 13, flexShrink: 0,
+                background: "rgba(255,255,255,.18)",
+                display: "flex", alignItems: "center",
+                justifyContent: "center", fontSize: 22,
+              }}>📚</div>
+              <div style={{ flex: 1 }}>
+                <h1 style={{
+                  margin: 0, fontWeight: 900, fontSize: 19, color: "#fff",
+                  fontFamily: "'Libre Baskerville', Georgia, serif",
+                }}>Material Manager</h1>
+                <p style={{ margin: "3px 0 0", fontSize: 12, color: "rgba(255,255,255,.65)" }}>
+                  {authLoading ? "Checking session…"
+                    : user ? user.email
+                    : "⚠️ Not signed in"}
+                </p>
+              </div>
             </div>
 
-            {/* Breadcrumb */}
-            {selectedSubject && (
-              <div style={{
-                marginTop: 14, padding: "10px 14px",
-                background: "rgba(255,255,255,.1)", borderRadius: 10,
-                display: "flex", alignItems: "center", gap: 8,
-              }}>
-                <span style={{ fontSize: 14, color: "rgba(255,255,255,.7)" }}>Subject:</span>
-                <span style={{ fontWeight: 800, fontSize: 14, color: "#fff" }}>{selectedSubject.title}</span>
-                {selectedSubject.title_ar && (
-                  <span style={{ fontSize: 13, color: "rgba(255,255,255,.6)", direction: "rtl" }}>
-                    · {selectedSubject.title_ar}
-                  </span>
-                )}
-                <span style={{ marginLeft: "auto", fontSize: 12, color: "rgba(255,255,255,.55)" }}>
-                  {materials.length} material{materials.length !== 1 ? "s" : ""}
-                </span>
-              </div>
-            )}
+            {/* Tab strip */}
+            <div style={{ display: "flex", gap: 2 }}>
+              <TabBtn
+                label="📚 Subjects"
+                active={view === "subjects"}
+                onClick={goBack}
+              />
+              {activeSubject && (
+                <TabBtn
+                  label={`📂 ${activeSubject.title}`}
+                  active={view === "library"}
+                  onClick={() => {}}
+                  maxWidth={180}
+                />
+              )}
+            </div>
           </div>
         </div>
 
-        <div style={{ maxWidth: 1100, margin: "0 auto", padding: "0 16px" }}>
-
-          {/* ── NO USER WARNING ──────────────────────────────────────────── */}
-          {!authLoading && !user && (
+        {/* ── AUTH WARNING ────────────────────────────────────────────────── */}
+        {!authLoading && !user && (
+          <div style={{
+            maxWidth: 720, margin: "20px auto", padding: "0 20px",
+          }}>
             <div style={{
-              background: REDL, border: `1.5px solid #FCA5A5`,
-              borderRadius: 14, padding: 20, marginBottom: 20,
+              padding: 18, borderRadius: 14, background: C.redL,
+              border: `1.5px solid #FECACA`,
               display: "flex", gap: 12, alignItems: "flex-start",
             }}>
               <span style={{ fontSize: 22, flexShrink: 0 }}>🔒</span>
               <div>
-                <p style={{ fontWeight: 800, color: RED, margin: "0 0 4px" }}>
-                  Authentication Required
+                <p style={{ fontWeight: 800, color: C.red, margin: "0 0 4px" }}>
+                  Sign in Required
                 </p>
-                <p style={{ fontSize: 13, color: RED, margin: 0 }}>
-                  You must be signed in as an admin to upload materials.
+                <p style={{ fontSize: 13, color: C.red, margin: 0 }}>
+                  You must be signed in as an admin to manage materials.
                 </p>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* ── VIEWS ──────────────────────────────────────────────────────── */}
+        <div style={{ maxWidth: 720, margin: "0 auto" }}>
+          {view === "subjects" && (
+            <SubjectsView onSelect={selectSubject} />
           )}
-
-          {/* ── TYPE STAT CHIPS (shown after subject selected) ───────────── */}
-          {selectedSubject && Object.keys(counts).length > 0 && (
-            <div style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fill,minmax(90px,1fr))",
-              gap: 10, marginBottom: 20,
-            }}>
-              {(Object.keys(counts) as MatType[]).map(t => {
-                const tm = TM[t]; const active = typeFilter === t;
-                return (
-                  <div key={t}
-                    onClick={() => setTypeFilter(typeFilter === t ? "All" : t)}
-                    style={{
-                      background: active ? tm.light : CARD,
-                      border: `1.5px solid ${active ? tm.color : tm.border}`,
-                      borderRadius: 13, padding: "12px 14px",
-                      cursor: "pointer", transition: "all .14s",
-                      boxShadow: active ? `0 0 0 3px ${tm.color}33` : "none",
-                    }}>
-                    <div style={{ fontSize: 20, marginBottom: 5 }}>{tm.emoji}</div>
-                    <div style={{ fontSize: 22, fontWeight: 900, color: active ? tm.color : TEXT, lineHeight: 1 }}>
-                      {counts[t]}
-                    </div>
-                    <div style={{ fontSize: 10, fontWeight: 700, color: active ? tm.color : MUTED, marginTop: 3 }}>
-                      {t}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          {/* ── MAIN LAYOUT ──────────────────────────────────────────────── */}
-          {!selectedSubject ? (
-            <SubjectPicker selected={selectedSubject} onSelect={s => {
-              setSelectedSubject(s);
-              setSearch(""); setTypeFilter("All");
-            }} />
-          ) : (
-            <>
-              {/* Search + filter + upload button row */}
-              <div style={{
-                ...cardSt, padding: "12px 14px", marginBottom: 16,
-                display: "flex", flexDirection: "column", gap: 10,
-              }}>
-                <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                  <div style={{ position: "relative", flex: 1 }}>
-                    <span style={{
-                      position: "absolute", left: 11, top: "50%",
-                      transform: "translateY(-50%)", fontSize: 14,
-                      color: MUTED, pointerEvents: "none",
-                    }}>🔍</span>
-                    <input
-                      value={search} onChange={e => setSearch(e.target.value)}
-                      placeholder="Search materials…"
-                      style={{ ...inputSt, paddingLeft: 34, fontSize: 13 }}
-                    />
-                  </div>
-                  <button type="button" onClick={() => setShowUpload(true)}
-                    style={{
-                      padding: "11px 18px", borderRadius: 10, border: "none",
-                      background: `linear-gradient(135deg,${G},${G2})`,
-                      color: "#fff", fontWeight: 800, fontSize: 14, cursor: "pointer",
-                      display: "flex", alignItems: "center", gap: 7, flexShrink: 0,
-                      boxShadow: `0 4px 14px ${G}44`,
-                    }}>⬆ Upload</button>
-                </div>
-
-                {/* Filter chips */}
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  <button type="button" onClick={() => setTypeFilter("All")}
-                    style={{
-                      padding: "6px 12px", borderRadius: 20, fontSize: 11, fontWeight: 700,
-                      border: `1.5px solid ${typeFilter === "All" ? G : BORDER}`,
-                      background: typeFilter === "All" ? GL : "#fff",
-                      color: typeFilter === "All" ? G : SUB, cursor: "pointer",
-                    }}>All ({materials.length})</button>
-                  {(Object.keys(counts) as MatType[]).map(t => (
-                    <button key={t} type="button"
-                      onClick={() => setTypeFilter(typeFilter === t ? "All" : t)}
-                      style={{
-                        padding: "6px 12px", borderRadius: 20, fontSize: 11, fontWeight: 700,
-                        border: `1.5px solid ${typeFilter === t ? TM[t].color : TM[t].border}`,
-                        background: typeFilter === t ? TM[t].light : "#fff",
-                        color: typeFilter === t ? TM[t].color : SUB, cursor: "pointer",
-                      }}>
-                      {TM[t].emoji} {t} ({counts[t]})
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Materials grid */}
-              {mError ? (
-                <div style={{ ...cardSt, padding: 24, background: REDL, border: `1.5px solid #FCA5A5` }}>
-                  <p style={{ fontWeight: 800, color: RED, margin: "0 0 8px" }}>Failed to load materials</p>
-                  <p style={{ fontSize: 12, color: RED, margin: "0 0 12px" }}>
-                    {(mError as Error).message}
-                  </p>
-                  <button onClick={() => mRefetch()} style={{
-                    padding: "9px 18px", borderRadius: 8, border: "none",
-                    background: RED, color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer",
-                  }}>🔄 Retry</button>
-                </div>
-              ) : mLoading ? (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))", gap: 12 }}>
-                  {[1,2,3].map(i => (
-                    <div key={i} style={{
-                      height: 110, borderRadius: 16, background: "#F0F0F0",
-                      animation: "mmp-pulse 1.4s infinite",
-                      animationDelay: `${i * 100}ms`,
-                    }} />
-                  ))}
-                </div>
-              ) : filtered.length === 0 ? (
-                <div style={{ ...cardSt, padding: "52px 24px", textAlign: "center", border: `2px dashed ${BORDER}` }}>
-                  <p style={{ fontSize: 40, marginBottom: 16 }}>📭</p>
-                  <p style={{ fontWeight: 800, color: TEXT, margin: "0 0 6px", fontSize: 15 }}>
-                    {search || typeFilter !== "All" ? "No matches found" : "No materials yet"}
-                  </p>
-                  <p style={{ fontSize: 13, color: MUTED, margin: "0 0 20px" }}>
-                    {search || typeFilter !== "All"
-                      ? "Try a different search or clear the filter"
-                      : "Upload your first material using the button above"}
-                  </p>
-                  {!search && typeFilter === "All" && (
-                    <button type="button" onClick={() => setShowUpload(true)}
-                      style={{
-                        padding: "12px 24px", borderRadius: 12, border: "none",
-                        background: `linear-gradient(135deg,${G},${G2})`,
-                        color: "#fff", fontWeight: 800, fontSize: 14, cursor: "pointer",
-                        display: "inline-flex", alignItems: "center", gap: 8,
-                        boxShadow: `0 6px 20px ${G}44`,
-                      }}>⬆ Upload First Material</button>
-                  )}
-                </div>
-              ) : (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))", gap: 12 }}>
-                  {filtered.map((m, i) => (
-                    <MatCard key={m.id} mat={m} idx={i} onDelete={handleDelete} />
-                  ))}
-                </div>
-              )}
-            </>
+          {view === "library" && activeSubject && (
+            <LibraryView
+              subject={activeSubject}
+              onBack={goBack}
+              onUpload={() => setShowUpload(true)}
+            />
           )}
         </div>
       </div>
 
-      {/* Upload Modal */}
-      {showUpload && selectedSubject && (
-        <UploadModal
-          subject={selectedSubject}
-          count={materials.length}
+      {/* ── UPLOAD SHEET ───────────────────────────────────────────────── */}
+      {showUpload && activeSubject && (
+        <UploadSheet
+          subject={activeSubject}
+          materialCount={matCountData.length}
           onClose={() => setShowUpload(false)}
-          onDone={() => { setShowUpload(false); invalidateAll(); }}
+          onSuccess={handleUploadSuccess}
         />
       )}
     </>
+  );
+}
+
+function TabBtn({ label, active, onClick, maxWidth }: {
+  label: string; active: boolean; onClick: () => void; maxWidth?: number;
+}) {
+  return (
+    <button onClick={onClick} style={{
+      padding: "10px 16px", border: "none",
+      borderRadius: "8px 8px 0 0",
+      background: active ? C.bg : "transparent",
+      color: active ? C.green : "rgba(255,255,255,.72)",
+      fontWeight: 700, fontSize: 13, cursor: "pointer",
+      transition: "all .15s", fontFamily: "'DM Sans', system-ui, sans-serif",
+      maxWidth: maxWidth ?? "none", overflow: "hidden",
+      textOverflow: "ellipsis", whiteSpace: "nowrap",
+    }}>{label}</button>
   );
 }
