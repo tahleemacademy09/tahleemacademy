@@ -318,9 +318,9 @@ const RecitationTest = () => {
 
   // ── Available session slots ──────────────────────────────────────────────
   // ── Fixed time slots: 20:30 → 22:00 every 15 min ───────────────────────────
+  // ── Time slots: 20:30–22:00 every 15 min, stored as 24h, displayed as 12h AM/PM ──
   const availableSlots = (() => {
     const slots: string[] = [];
-    // 20:30, 20:45, 21:00, 21:15, 21:30, 21:45, 22:00
     for (let h = 20; h <= 22; h++) {
       const mins = h === 20 ? [30, 45] : h === 22 ? [0] : [0, 15, 30, 45];
       mins.forEach(m => {
@@ -329,6 +329,17 @@ const RecitationTest = () => {
     }
     return slots;
   })();
+
+  // Convert "20:30" → "8:30 PM"
+  const fmt12h = (t: string) => {
+    const [hStr, mStr] = t.split(":");
+    let h = parseInt(hStr, 10);
+    const m = mStr || "00";
+    const ampm = h >= 12 ? "PM" : "AM";
+    h = h % 12 || 12;
+    return `${h}:${m} ${ampm}`;
+  };
+
   // ── Available dates: today + tomorrow ────────────────────────────────────────
   const sessionDates = Array.from({ length: 2 }, (_, i) => {
     const d = new Date(); d.setDate(d.getDate() + i);
@@ -591,11 +602,13 @@ const RecitationTest = () => {
                       </label>
                       <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
                         {sessionDates.map(d => {
-                          const date  = new Date(d + "T00:00:00");
-                          const label = date.toLocaleDateString("en-NG", { weekday:"short", month:"short", day:"numeric" });
+                          const date  = new Date(d + "T12:00:00"); // noon avoids timezone shift
+                          const isToday = d === new Date().toISOString().split("T")[0];
+                          const label = (isToday ? "Today · " : "Tomorrow · ") +
+                            date.toLocaleDateString("en-NG", { weekday:"short", day:"numeric", month:"short" });
                           const sel   = sessionDate === d;
                           return (
-                            <button key={d} onClick={() => setSessionDate(d)} style={{ padding:"8px 12px", borderRadius:10, border:`2px solid ${sel ? GM : "#e5e7eb"}`, background: sel ? "#F0FDF4" : "#fafafa", color: sel ? G : "#555", fontSize:12, fontWeight: sel ? 700 : 500, cursor:"pointer", transition:"all .15s" }}>
+                            <button key={d} onClick={() => setSessionDate(d)} style={{ padding:"10px 16px", borderRadius:10, border:`2px solid ${sel ? GM : "#e5e7eb"}`, background: sel ? "#F0FDF4" : "#fafafa", color: sel ? G : "#555", fontSize:13, fontWeight: sel ? 700 : 500, cursor:"pointer", transition:"all .15s" }}>
                               {label}
                             </button>
                           );
@@ -614,8 +627,8 @@ const RecitationTest = () => {
                           {availableSlots.map(t => {
                             const sel = sessionTime === t;
                             return (
-                              <button key={t} onClick={() => setSessionTime(t)} style={{ padding:"8px 14px", borderRadius:10, border:`2px solid ${sel ? GM : "#e5e7eb"}`, background: sel ? "#F0FDF4" : "#fafafa", color: sel ? G : "#555", fontSize:12, fontWeight: sel ? 700 : 500, cursor:"pointer", transition:"all .15s" }}>
-                                {t}
+                              <button key={t} onClick={() => setSessionTime(t)} style={{ padding:"10px 16px", borderRadius:10, border:`2px solid ${sel ? GM : "#e5e7eb"}`, background: sel ? "#F0FDF4" : "#fafafa", color: sel ? G : "#555", fontSize:13, fontWeight: sel ? 700 : 500, cursor:"pointer", transition:"all .15s" }}>
+                                {fmt12h(t)}
                               </button>
                             );
                           })}
@@ -640,7 +653,7 @@ const RecitationTest = () => {
                     </div>
                     <div style={{ fontSize:20, fontWeight:800, color:G, marginBottom:8 }}>All 3 Stages Complete!</div>
                     <div style={{ fontSize:14, color:"#666", lineHeight:1.6, marginBottom:20 }}>
-                      Session requested for <strong>{sessionDate}</strong> at <strong>{sessionTime}</strong>.<br/>
+                      Session requested for <strong>{sessionDate && new Date(sessionDate + "T12:00:00").toLocaleDateString("en-NG", { weekday:"long", day:"numeric", month:"long" })}</strong> at <strong>{sessionTime ? fmt12h(sessionTime) : ""}</strong>.<br/>
                       Admin will confirm within 24 hours via notification.<br/>
                       <span style={{ fontFamily:"'Amiri',serif", fontSize:16, color:GOLD }}>جَزَاكَ اللَّهُ خَيْرًا</span>
                     </div>
