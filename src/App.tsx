@@ -25,7 +25,8 @@ const AdminLogin      = lazy(() => import("./pages/AdminLogin"));
 const Register        = lazy(() => import("./pages/Register"));
 const RegisterContinue    = lazy(() => import("./pages/RegisterContinue"));
 const RegistrationComplete = lazy(() => import("./pages/RegistrationComplete"));
-const ResetPassword   = lazy(() => import("./pages/ResetPassword"));
+const ResetPassword         = lazy(() => import("./pages/ResetPassword"));
+const ForceChangePassword   = lazy(() => import("./pages/ForceChangePassword"));
 const About           = lazy(() => import("./pages/About"));
 const Courses         = lazy(() => import("./pages/Courses"));
 const Contact         = lazy(() => import("./pages/Contact"));
@@ -46,8 +47,8 @@ const PreExamVerification = lazy(() => import("./pages/student/PreExamVerificati
 const Transcripts         = lazy(() => import("./pages/student/Transcripts"));
 const Majlis              = lazy(() => import("./pages/student/Majlis"));
 const RecitationTest      = lazy(() => import("./pages/student/RecitationTest"));
-const LearningHub         = lazy(() => import("./pages/student/LearningHub"));
-const CourseView          = lazy(() => import("./pages/student/CourseView"));const SubjectView         = lazy(() => import("./pages/student/SubjectView"));
+const LearningHub         = lazy(() => import("./pages/student/LearningHub"));const CourseView          = lazy(() => import("./pages/student/CourseView"));
+const SubjectView         = lazy(() => import("./pages/student/SubjectView"));
 const Onboarding          = lazy(() => import("./pages/student/Onboarding"));
 const EntranceExamTaking  = lazy(() => import("./pages/student/EntranceExamTaking"));
 const EntranceResults     = lazy(() => import("./pages/student/EntranceResults"));
@@ -89,16 +90,16 @@ const PublicClassManagement = lazy(() => import("./pages/admin/PublicClassManage
 const HifdhAdminReview      = lazy(() => import("./pages/admin/HifdhAdminReview"));
 const RecitationTestAdmin   = lazy(() => import("./pages/admin/RecitationTestAdmin"));
 const LevelAssignment       = lazy(() => import("./pages/admin/LevelAssignment"));
-const LevelSubjectMapping   = lazy(() => import("./pages/admin/LevelSubjectMapping")); // ✅ ADDED
+const LevelSubjectMapping   = lazy(() => import("./pages/admin/LevelSubjectMapping"));
 const PrivateSessions       = lazy(() => import("./pages/admin/PrivateSessions"));
 const MajlisAdmin           = lazy(() => import("./pages/admin/MajlisModeration"));
 // ── NEW ────────────────────────────────────────────────────────────────────
 const RegistrationSettings  = lazy(() => import("./pages/admin/RegistrationSettings"));
 
-// ── Teacher pages ──────────────────────────────────────────────────────────
-const TeacherDashboard        = lazy(() => import("./pages/teacher/TeacherDashboard"));
+// ── Teacher pages ──────────────────────────────────────────────────────────const TeacherDashboard        = lazy(() => import("./pages/teacher/TeacherDashboard"));
 const TeacherStudents         = lazy(() => import("./pages/teacher/TeacherStudents"));
-const TeacherPrivateStudents  = lazy(() => import("./pages/teacher/TeacherPrivateStudents"));const TeacherSubjects         = lazy(() => import("./pages/teacher/TeacherSubjects"));
+const TeacherPrivateStudents  = lazy(() => import("./pages/teacher/TeacherPrivateStudents"));
+const TeacherSubjects         = lazy(() => import("./pages/teacher/TeacherSubjects"));
 const TeacherClasses          = lazy(() => import("./pages/teacher/TeacherClasses"));
 const TeacherAnnouncements    = lazy(() => import("./pages/teacher/TeacherAnnouncements"));
 const TeacherAttendance       = lazy(() => import("./pages/teacher/TeacherAttendance"));
@@ -139,11 +140,11 @@ const App = () => (
                     <Route path="/login"          element={<Login />} />
                     <Route path="/register"       element={<Register />} />
                     <Route path="/reset-password" element={<ResetPassword />} />
+                    <Route path="/change-password" element={<ForceChangePassword />} />
                   </Route>
 
                   {/* Admin login — standalone, no public nav */}
                   <Route path="/admin-secure"   element={<AdminLogin />} />
-
                   {/* Registration pipeline continuations — no auth guard needed */}
                   <Route path="/auth/register-continue" element={<RegisterContinue />} />
                   <Route path="/registration-complete"  element={<RegistrationComplete />} />
@@ -193,7 +194,6 @@ const App = () => (
                   <Route path="/student/entrance-results/:attemptId" element={<ProtectedRoute skipOnboardingCheck><EntranceResults /></ProtectedRoute>} />
                   <Route path="/student/payment"                     element={<ProtectedRoute skipOnboardingCheck><PaymentScreen /></ProtectedRoute>} />
                   <Route path="/student/awaiting-level"               element={<ProtectedRoute skipOnboardingCheck><TasjeelAwaitingLevel /></ProtectedRoute>} />
-
                   {/* ── Teacher routes ── */}
                   <Route element={<ProtectedRoute requiredRole="teacher"><TeacherLayout /></ProtectedRoute>}>
                     <Route path="/teacher"                  element={<TeacherDashboard />} />
@@ -208,7 +208,8 @@ const App = () => (
                     <Route path="/teacher/settings"         element={<TeacherSettings />} />
                     <Route path="/teacher/recordings"       element={<TeacherRecordings />} />
                     <Route path="/teacher/recitation"       element={<TeacherRecitation />} />
-                    <Route path="/teacher/transcripts"      element={<TeacherTranscript />} />                    <Route path="/teacher/private-sessions" element={<TeacherPrivateSessions />} />
+                    <Route path="/teacher/transcripts"      element={<TeacherTranscript />} />
+                    <Route path="/teacher/private-sessions" element={<TeacherPrivateSessions />} />
                   </Route>
 
                   {/* ── Admin routes ── */}
@@ -219,7 +220,7 @@ const App = () => (
                     <Route path="/admin/subjects/:subjectId"      element={<CourseManagement />} />
                     <Route path="/admin/courses"                  element={<CourseManagement />} />
                     <Route path="/admin/syllabus"                 element={<CourseManagement />} />
-                    <Route path="/admin/timetable"               element={<TimetableManagement />} />
+                    <Route path="/admin/timetable"                element={<TimetableManagement />} />
                     <Route path="/admin/live-classes"             element={<LiveClassManagement />} />
                     <Route path="/admin/exams"                    element={<ExamManager />} />
                     <Route path="/admin/exams/create"             element={<ExamEditor />} />
@@ -242,8 +243,7 @@ const App = () => (
                     <Route path="/admin/level-assignment"         element={<LevelAssignment />} />
                     {/* level-subject-mapping removed — managed within Courses */}
                     <Route path="/admin/transcripts"              element={<TranscriptManagement />} />
-                    <Route path="/admin/attendance"               element={<AttendanceManagement />} />
-                    <Route path="/admin/payments"                 element={<PaymentManagement />} />
+                    <Route path="/admin/attendance"               element={<AttendanceManagement />} />                    <Route path="/admin/payments"                 element={<PaymentManagement />} />
                     <Route path="/admin/calendar"                 element={<AcademicCalendar />} />
                     <Route path="/admin/payment-settings"         element={<PaymentSettings />} />
                     <Route path="/admin/public-classes"           element={<PublicClassManagement />} />
@@ -260,9 +260,9 @@ const App = () => (
             <IdleWarningModal />
           </BrowserRouter>
         </TooltipProvider>
-      </AuthProvider>    </LanguageProvider>
+      </AuthProvider>
+    </LanguageProvider>
   </QueryClientProvider>
 );
 
 export default App;
-
