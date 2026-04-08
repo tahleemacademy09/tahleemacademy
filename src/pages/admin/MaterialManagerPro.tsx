@@ -1,11 +1,8 @@
 /**
- * MaterialManagerPro.tsx
- * 
- * Features:
- * - Subjects loading from 'subjects' table
- * - File upload to 'subject-files' bucket with XHR progress
- * - Comprehensive debug logging in the upload modal
- * - RLS-compliant policies (assuming you ran the Safe SQL script)
+ * MaterialManagerPro.tsx - FINAL DEBUGGING VERSION
+ * - Auto-shows debug logs on error
+ * - Includes "Test Connection" button
+ * - Fixes XHR/SDK fallback logic
  */
 
 import React, {
@@ -18,7 +15,8 @@ import { toast } from "@/hooks/use-toast";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const BUCKET = "subject-files";
-// Note: These are usually handled by the supabase client instance
+// We rely on the supabase client instance for URLs to avoid manual errors
+// But we need the project URL for the manual XHR request
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || "https://wvqeubhupkddtkcdwqcm.supabase.co";
 const ANON_KEY     = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
 
@@ -37,7 +35,6 @@ const C = {
   red:     "#B91C1C",
   redL:    "#FEF2F2",
   shadow:  "rgba(27,67,50,0.12)",
-  purple:  "#7C3AED", // Added for debug buttons
 };
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -47,9 +44,9 @@ interface Subject {
   id:        string;
   title:     string;
   title_ar:  string | null;
-  level:     string | null;  image_url: string | null;
+  level:     string | null;
+  image_url: string | null;
 }
-
 interface Material {
   id:              string;
   subject_id:      string;
@@ -84,7 +81,7 @@ const KIND_META: Record<string, { icon: string; color: string; bg: string }> = {
   File:     { icon: "📁", color: "#374151", bg: "#F9FAFB" },
 };
 
-// ─── Utilities ────────────────────────────────────────────────────────────────
+// ─── Utilities ───────────────────────────────────────────────────────────────
 function humanSize(bytes?: number | null): string {
   if (!bytes) return "";
   if (bytes < 1024)       return `${bytes} B`;
@@ -96,10 +93,10 @@ function humanSize(bytes?: number | null): string {
 function timeAgo(iso?: string | null): string {
   if (!iso) return "";
   const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
-  if (s < 60)    return "just now";  if (s < 3600)  return `${Math.floor(s / 60)}m ago`;
+  if (s < 60)    return "just now";
+  if (s < 3600)  return `${Math.floor(s / 60)}m ago`;
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-  return `${Math.floor(s / 86400)}d ago`;
-}
+  return `${Math.floor(s / 86400)}d ago`;}
 
 async function buildSignedUrl(path: string): Promise<string> {
   if (!path || path.startsWith("http")) return path;
@@ -107,7 +104,7 @@ async function buildSignedUrl(path: string): Promise<string> {
   return data?.signedUrl ?? "";
 }
 
-// ─── XHR upload with byte-level progress ─────────────────────────────────────
+// ─── XHR upload ──────────────────────────────────────────────────────────────
 function xhrUpload(
   storagePath: string,
   file: File,
@@ -115,10 +112,13 @@ function xhrUpload(
   onProgress: (pct: number) => void,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
+    // Ensure URL doesn't have double slashes
+    const baseUrl = SUPABASE_URL.replace(/\/$/, "");
+    const targetUrl = `${baseUrl}/storage/v1/object/${BUCKET}/${storagePath}`;
+    
+    console.log(`[XHR] Targeting: ${targetUrl.substring(0, 40)}...`);
+    
     const xhr = new XMLHttpRequest();
-    // Note: Ensure the URL format matches your project exactly. 
-    // Using the imported constant is safer if available, otherwise hardcoded logic.
-    const targetUrl = `${SUPABASE_URL}/storage/v1/object/${BUCKET}/${storagePath}`;
     xhr.open("POST", targetUrl);
     xhr.setRequestHeader("Authorization", `Bearer ${accessToken}`);
     xhr.setRequestHeader("apikey", ANON_KEY);
@@ -134,14 +134,14 @@ function xhrUpload(
         resolve();
       } else {
         try {
-          const j = JSON.parse(xhr.responseText) as { message?: string; error?: string };
+          const j = JSON.parse(xhr.responseText);
           reject(new Error(j.message ?? j.error ?? `HTTP ${xhr.status}`));
         } catch {
           reject(new Error(`Upload failed: HTTP ${xhr.status}`));
         }
       }
     };
-    xhr.onerror = () => reject(new Error("Network error during upload"));
+    xhr.onerror = () => reject(new Error("Network error (CORS or Connection)"));
     xhr.onabort = () => reject(new Error("Upload was aborted"));
     
     const form = new FormData();
@@ -187,7 +187,7 @@ function EmptyState({ icon, title, sub, btnLabel, onBtn }: {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// UPLOAD SHEET - ENHANCED WITH DEBUG LOGGING
+// UPLOAD SHEET - AUTO-EXPANDS ERRORS
 // ═════════════════════════════════════════════════════════════════════════════
 type UploadStage = "pick" | "confirm" | "uploading" | "done" | "failed";
 
@@ -212,39 +212,43 @@ function UploadSheet({ subject, materialCount, onClose, onSuccess }: UploadSheet
   const pickerGuard = useRef(false);
   const busy = stage === "uploading";
 
-  // Helper to log debug messages
   const addLog = useCallback((msg: string) => {
     const timestamp = new Date().toLocaleTimeString();
     setDebugLogs(prev => [...prev, `[${timestamp}] ${msg}`]);
-    console.log(`[UPLOAD LOG] ${msg}`);
-  }, []);
-
-  // ── Picker guard ──
-  useEffect(() => {
-    const lock   = () => { pickerGuard.current = true; };
-    const unlock = () => { setTimeout(() => { pickerGuard.current = false; }, 700); };
-    const onVis = () => { if (document.hidden) lock(); else unlock(); };
-    document.addEventListener("visibilitychange", onVis);
-    window.addEventListener("blur",  lock);
-    window.addEventListener("focus", unlock);
-    return () => {
-      document.removeEventListener("visibilitychange", onVis);
-      window.removeEventListener("blur",  lock);
-      window.removeEventListener("focus", unlock);
-    };
   }, []);
 
   useEffect(() => {
     addLog("Upload Sheet Mounted");
-    addLog(`Subject: ${subject.title} (${subject.id})`);
-    addLog(`User: ${user?.email || "Not logged in"}`);
+    addLog(`Supabase URL: ${SUPABASE_URL.substring(0, 20)}...`);
+    addLog(`Bucket Name: ${BUCKET}`);
   }, []);
 
+  // Test Connection Function
+  const testConnection = async () => {
+    addLog("🧪 Starting connection test...");
+    try {
+      // 1. Test DB
+      const {  dbData, error: dbErr } = await supabase.from("subjects").select("count").single();
+      if (dbErr) throw new Error(`DB Error: ${dbErr.message}`);
+      addLog("✅ Database connected");
+
+      // 2. Test Storage List
+      const {  list, error: storErr } = await supabase.storage.from(BUCKET).list();
+      if (storErr) throw new Error(`Storage Error: ${storErr.message}`);
+      addLog(`✅ Storage connected (${list?.length || 0} files)`);
+      
+      toast({ title: "✅ Connection OK", description: "Database and Storage are accessible." });
+    } catch (err: any) {
+      addLog(`❌ Connection Test Failed: ${err.message}`);
+      toast({ title: "❌ Connection Failed", description: err.message, variant: "destructive" });
+    }
+  };
   const openPicker = useCallback(() => {
     if (busy) return;
     addLog("📁 Opening file picker");
-    pickerGuard.current = true;    inputRef.current?.click();
-  }, [busy, addLog]);
+    pickerGuard.current = true;
+    inputRef.current?.click();
+  }, [busy]);
 
   const onFileSelected = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     pickerGuard.current = false;
@@ -256,7 +260,6 @@ function UploadSheet({ subject, materialCount, onClose, onSuccess }: UploadSheet
 
     addLog(`✅ File: ${chosen.name}`);
     addLog(`📊 Size: ${humanSize(chosen.size)}`);
-    addLog(`📄 Type: ${chosen.type || "unknown"}`);
     
     setFile(chosen);
     setTitle(chosen.name.replace(/\.[^/.]+$/, ""));
@@ -270,11 +273,10 @@ function UploadSheet({ subject, materialCount, onClose, onSuccess }: UploadSheet
     }
     setStage("confirm");
     e.target.value = "";
-  }, [addLog]);
+  }, []);
 
   const clearFile = () => {
     setFile(null); setPreview(null); setTitle(""); setErrMsg(""); setStage("pick");
-    addLog("🗑️ File selection cleared");
   };
 
   const doUpload = async () => {
@@ -282,7 +284,6 @@ function UploadSheet({ subject, materialCount, onClose, onSuccess }: UploadSheet
     
     if (!file || !title.trim()) {
       setErrMsg("Please enter a title before uploading.");
-      addLog("❌ Validation failed: Missing title or file");
       return;
     }
     if (!user || !session?.access_token) {
@@ -291,8 +292,8 @@ function UploadSheet({ subject, materialCount, onClose, onSuccess }: UploadSheet
       return;
     }
 
-    setStage("uploading");
-    setPct(5);    setErrMsg("");
+    setStage("uploading");    setPct(5);
+    setErrMsg("");
     
     try {
       const ext  = file.name.split(".").pop() ?? "bin";
@@ -300,39 +301,39 @@ function UploadSheet({ subject, materialCount, onClose, onSuccess }: UploadSheet
       const kind = detectKind(file);
       
       addLog(`📍 Target path: ${path}`);
-      addLog(`🏷️ Material type: ${kind}`);
       setPct(15);
 
       // ── STEP 1: Upload to Storage ──
       addLog("📤 Uploading to Supabase Storage...");
       
       try {
-        // Try XHR upload first (for progress)
+        // Try XHR first
         await xhrUpload(path, file, session.access_token, (p) => {
           setPct(15 + Math.round(p * 0.7));
         });
-        addLog("✅ Storage upload successful (via XHR)");
+        addLog("✅ Storage upload successful (XHR)");
       } catch (xhrErr: any) {
         addLog(`⚠️ XHR failed: ${xhrErr.message}. Trying SDK fallback...`);
         
-        // Fallback to supabase-js SDK
+        // Fallback to SDK
         const { error: storErr } = await supabase.storage
           .from(BUCKET)
           .upload(path, file, { cacheControl: "3600", upsert: false });
         
         if (storErr) {
           addLog(`❌ Storage SDK error: ${storErr.message}`);
+          // Check for common bucket errors
           if (storErr.message.includes("not found") || storErr.message.includes("bucket")) {
-            throw new Error("Storage bucket 'subject-files' not found or inaccessible.");
+            throw new Error(`Bucket '${BUCKET}' not found. Check SQL setup.`);
           }
           throw new Error(`Storage: ${storErr.message}`);
         }
-        addLog("✅ Storage upload successful (via SDK)");
+        addLog("✅ Storage upload successful (SDK)");
         setPct(85);
       }
 
       setPct(90);
-      addLog("🔗 Inserting record into database...");
+      addLog("💾 Inserting into database...");
 
       // ── STEP 2: Insert DB Record ──
       const { error: dbErr } = await supabase
@@ -340,8 +341,8 @@ function UploadSheet({ subject, materialCount, onClose, onSuccess }: UploadSheet
         .insert({
           subject_id:      subject.id,
           title:           title.trim(),
-          material_type:   kind,
-          file_url:        path,  // Store path, not full URL          file_type:       file.type,
+          material_type:   kind,          file_url:        path, 
+          file_type:       file.type,
           file_size:       file.size,
           is_downloadable: true,
           sort_order:      materialCount,
@@ -351,12 +352,12 @@ function UploadSheet({ subject, materialCount, onClose, onSuccess }: UploadSheet
       if (dbErr) {
         addLog(`❌ Database error: ${dbErr.message}`);
         if (dbErr.message.includes("row-level security")) {
-           throw new Error("Permission denied: Check database RLS policies.");
+           throw new Error("Permission denied: Check RLS policies for 'subject_materials'.");
         }
         throw new Error(`Database: ${dbErr.message}`);
       }
 
-      addLog("✅ Database record created successfully!");
+      addLog("✅ Done!");
       setPct(100);
       setStage("done");
       toast({ title: "✅ Uploaded successfully!" });
@@ -369,7 +370,6 @@ function UploadSheet({ subject, materialCount, onClose, onSuccess }: UploadSheet
       setStage("failed");
       setErrMsg(msg);
       setPct(0);
-      toast({ title: "❌ Upload failed", description: msg, variant: "destructive" });
     }
   };
 
@@ -413,13 +413,20 @@ function UploadSheet({ subject, materialCount, onClose, onSuccess }: UploadSheet
             </h2>
             <p style={{ margin: "3px 0 0", fontSize: 12, color: C.muted }}>{subject.title}</p>
           </div>
-          <button onClick={onClose} disabled={busy} style={{
-            width: 36, height: 36, borderRadius: 10,
-            border: `1.5px solid ${C.border}`, background: C.surface,
-            cursor: busy ? "not-allowed" : "pointer", fontSize: 16,
-            color: C.muted, opacity: busy ? 0.4 : 1,
-            display: "flex", alignItems: "center", justifyContent: "center",
-          }}>✕</button>
+          <div style={{ display: "flex", gap: 8 }}>
+             {/* TEST BUTTON */}
+             <button onClick={testConnection} style={{
+              width: 32, height: 32, borderRadius: 8, border: `1px solid ${C.muted}`,
+              background: "transparent", cursor: "pointer", fontSize: 14,
+            }}>🧪</button>
+            <button onClick={onClose} disabled={busy} style={{
+              width: 36, height: 36, borderRadius: 10,
+              border: `1.5px solid ${C.border}`, background: C.surface,
+              cursor: busy ? "not-allowed" : "pointer", fontSize: 16,
+              color: C.muted, opacity: busy ? 0.4 : 1,
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}>✕</button>
+          </div>
         </div>
 
         {/* Body */}
@@ -432,14 +439,14 @@ function UploadSheet({ subject, materialCount, onClose, onSuccess }: UploadSheet
             onChange={onFileSelected}
             style={{ position: "absolute", width: 1, height: 1, opacity: 0, pointerEvents: "none" }}
           />
-
           {/* PICK stage */}
           {stage === "pick" && (
             <div style={{
               border: `2.5px dashed ${C.border}`,
               borderRadius: 20,
               padding: "52px 24px",
-              textAlign: "center",              background: C.bg,
+              textAlign: "center",
+              background: C.bg,
             }}>
               <div style={{
                 width: 76, height: 76, borderRadius: 20,
@@ -449,9 +456,6 @@ function UploadSheet({ subject, materialCount, onClose, onSuccess }: UploadSheet
               }}>📂</div>
               <p style={{ fontWeight: 900, fontSize: 18, color: C.text, margin: "0 0 8px" }}>
                 Choose a File
-              </p>
-              <p style={{ fontSize: 13, color: C.muted, margin: "0 0 28px" }}>
-                PDF · Word · Video · Audio · Image
               </p>
               <button onClick={openPicker} style={{
                 padding: "14px 40px", borderRadius: 50, border: "none",
@@ -484,11 +488,11 @@ function UploadSheet({ subject, materialCount, onClose, onSuccess }: UploadSheet
                   }}>{meta.icon}</div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <p style={{ fontWeight: 700, fontSize: 13, color: C.text, margin: "0 0 4px" }}>
-                      {file.name}
-                    </p>
+                      {file.name}                    </p>
                     <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                       <span style={{
-                        fontSize: 10, fontWeight: 800, padding: "2px 8px",                        borderRadius: 20, background: meta.bg, color: meta.color,
+                        fontSize: 10, fontWeight: 800, padding: "2px 8px",
+                        borderRadius: 20, background: meta.bg, color: meta.color,
                       }}>{detectKind(file)}</span>
                       <span style={{ fontSize: 11, color: C.muted }}>{humanSize(file.size)}</span>
                     </div>
@@ -521,23 +525,24 @@ function UploadSheet({ subject, materialCount, onClose, onSuccess }: UploadSheet
               {errMsg && (
                 <div style={{
                   padding: "12px 16px", borderRadius: 12, background: C.redL,
-                  border: `1.5px solid #FECACA`, display: "flex", gap: 10, alignItems: "flex-start",
+                  border: `1.5px solid #FECACA`, 
                 }}>
-                  <span style={{ fontSize: 16 }}>⚠️</span>
-                  <div style={{ flex: 1 }}>
-                    <p style={{ margin: 0, fontSize: 13, color: C.red, fontWeight: 600 }}>{errMsg}</p>
-                    <details style={{ marginTop: 8 }}>
-                      <summary style={{ fontSize: 11, color: C.muted, cursor: "pointer" }}>Show Debug Logs</summary>
-                      <pre style={{ fontSize: 10, color: "#666", whiteSpace: "pre-wrap", marginTop: 4 }}>
-                        {debugLogs.slice(-5).join("\n")}
-                      </pre>
-                    </details>
-                  </div>
-                </div>
+                  <p style={{ margin: "0 0 8px", fontSize: 13, color: C.red, fontWeight: 700 }}>
+                    ❌ {errMsg}
+                  </p>
+                  {/* AUTO-SHOW LOGS ON ERROR */}
+                  <div style={{ 
+                    background: "#1a1a2e", color: "#a0f0c0", padding: 10, borderRadius: 8, 
+                    fontSize: 10, fontFamily: "monospace", maxHeight: 150, overflowY: "auto",
+                    whiteSpace: "pre-wrap"
+                  }}>
+                    {debugLogs.slice(-8).join("\n")}
+                  </div>                </div>
               )}
 
               <div style={{ display: "flex", gap: 10 }}>
-                <button onClick={clearFile} style={{                  flex: 1, padding: "14px", borderRadius: 12,
+                <button onClick={clearFile} style={{
+                  flex: 1, padding: "14px", borderRadius: 12,
                   border: `2px solid ${C.border}`, background: C.surface,
                   color: C.text, fontWeight: 700, fontSize: 14, cursor: "pointer",
                 }}>← Change</button>
@@ -582,11 +587,11 @@ function UploadSheet({ subject, materialCount, onClose, onSuccess }: UploadSheet
               <p style={{ fontWeight: 900, fontSize: 18, color: C.green }}>Material Uploaded!</p>
             </div>
           )}
-
         </div>
       </div>
     </>
-  );}
+  );
+}
 
 // ═════════════════════════════════════════════════════════════════════════════
 // MATERIAL ROW
@@ -617,14 +622,12 @@ function MatRow({ mat, onDelete, index }: {
       animation: `tm-in .22s ease ${index * 40}ms both`,
       position: "relative",
     }}>
-      {/* Color accent bar */}
       <div style={{
         position: "absolute", left: 0, top: 12, bottom: 12,
         width: 3, borderRadius: "0 3px 3px 0",
         background: meta.color,
       }} />
 
-      {/* Icon */}
       <div style={{
         width: 44, height: 44, borderRadius: 12, flexShrink: 0,
         background: meta.bg, fontSize: 22,
@@ -632,10 +635,9 @@ function MatRow({ mat, onDelete, index }: {
         border: `1.5px solid ${meta.color}22`,
       }}>{meta.icon}</div>
 
-      {/* Info */}
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <p style={{
-          fontWeight: 700, fontSize: 13, color: C.text, margin: "0 0 4px",          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+      <div style={{ flex: 1, minWidth: 0 }}>        <p style={{
+          fontWeight: 700, fontSize: 13, color: C.text, margin: "0 0 4px",
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
         }}>{mat.title}</p>
         <div style={{ display: "flex", gap: 7, alignItems: "center", flexWrap: "wrap" }}>
           <span style={{
@@ -649,7 +651,6 @@ function MatRow({ mat, onDelete, index }: {
         </div>
       </div>
 
-      {/* Context menu */}
       <div style={{ position: "relative", flexShrink: 0 }}>
         <button onClick={() => setMenu(v => !v)} style={{
           width: 32, height: 32, borderRadius: 8,
@@ -683,8 +684,8 @@ function MatRow({ mat, onDelete, index }: {
 function MenuBtn({ label, onClick, color = C.text }: {
   label: string; onClick: () => void; color?: string;
 }) {
-  const [hov, setHov] = useState(false);
-  return (    <button
+  const [hov, setHov] = useState(false);  return (
+    <button
       onClick={onClick}
       onMouseEnter={() => setHov(true)}
       onMouseLeave={() => setHov(false)}
@@ -706,7 +707,7 @@ function LibraryView({ subject, onBack, onUpload }: {
   const qc = useQueryClient();
   const [search, setSearch] = useState("");
 
-  const { data: mats = [], isLoading, error, refetch } = useQuery<Material[]>({
+  const {  mats = [], isLoading, error, refetch } = useQuery<Material[]>({
     queryKey: ["tm-materials", subject.id],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -726,7 +727,6 @@ function LibraryView({ subject, onBack, onUpload }: {
   const handleDelete = async (mat: Material) => {
     if (!confirm(`Delete "${mat.title}"?`)) return;
     
-    // Try to remove from storage
     if (mat.file_url && !mat.file_url.startsWith("http")) {
       await supabase.storage.from(BUCKET).remove([mat.file_url]);
     }
@@ -742,7 +742,6 @@ function LibraryView({ subject, onBack, onUpload }: {
 
   return (
     <div>
-      {/* Sticky sub-header */}
       <div style={{
         padding: "18px 20px 14px",
         borderBottom: `1.5px solid ${C.border}`,
@@ -775,16 +774,15 @@ function LibraryView({ subject, onBack, onUpload }: {
           </button>
         </div>
 
-        {/* Search bar */}
         <div style={{ position: "relative" }}>
           <span style={{
             position: "absolute", left: 12, top: "50%",
             transform: "translateY(-50%)", fontSize: 14,
             color: C.muted, pointerEvents: "none",
           }}>🔍</span>
-          <input            value={search} onChange={e => setSearch(e.target.value)}
-            placeholder="Search materials…"
-            style={{
+          <input
+            value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="Search materials…"            style={{
               width: "100%", boxSizing: "border-box",
               padding: "10px 12px 10px 34px", fontSize: 13,
               border: `1.5px solid ${C.border}`, borderRadius: 10,
@@ -795,7 +793,6 @@ function LibraryView({ subject, onBack, onUpload }: {
         </div>
       </div>
 
-      {/* List */}
       <div style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: 10 }}>
         {isLoading && (
           <div style={{ display: "flex", justifyContent: "center", padding: 48 }}>
@@ -831,16 +828,16 @@ function LibraryView({ subject, onBack, onUpload }: {
           <MatRow key={m.id} mat={m} index={i} onDelete={() => handleDelete(m)} />
         ))}
       </div>
-    </div>  );
+    </div>
+  );
 }
-
 // ═════════════════════════════════════════════════════════════════════════════
 // SUBJECTS VIEW
 // ═════════════════════════════════════════════════════════════════════════════
 function SubjectsView({ onSelect }: { onSelect: (s: Subject) => void }) {
   const [search, setSearch] = useState("");
 
-  const { data: subjects = [], isLoading, error, refetch } = useQuery<Subject[]>({
+  const {  subjects = [], isLoading, error, refetch } = useQuery<Subject[]>({
     queryKey: ["tm-subjects"],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -862,7 +859,6 @@ function SubjectsView({ onSelect }: { onSelect: (s: Subject) => void }) {
   return (
     <div style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: 12 }}>
 
-      {/* Search */}
       <div style={{ position: "relative" }}>
         <span style={{
           position: "absolute", left: 12, top: "50%",
@@ -881,10 +877,10 @@ function SubjectsView({ onSelect }: { onSelect: (s: Subject) => void }) {
           }}
         />
       </div>
+
       {isLoading && (
         <div style={{ display: "flex", justifyContent: "center", padding: 48 }}>
-          <Spinner size={40} />
-        </div>
+          <Spinner size={40} />        </div>
       )}
       {error && !isLoading && (
         <div style={{
@@ -929,11 +925,11 @@ function SubjectBtn({ subject, index, onClick }: {
         boxSizing: "border-box",
         background: hov ? C.greenXL : C.surface,
         border: `2px solid ${hov ? C.green : C.border}`,
-        borderRadius: 16, padding: "16px 18px",        transition: "all .18s ease",
+        borderRadius: 16, padding: "16px 18px",
+        transition: "all .18s ease",
         boxShadow: hov ? `0 6px 22px ${C.shadow}` : "none",
         transform: hov ? "translateY(-2px)" : "none",
-        animation: `tm-in .22s ease ${index * 50}ms both`,
-      }}>
+        animation: `tm-in .22s ease ${index * 50}ms both`,      }}>
       <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
         <div style={{
           width: 46, height: 46, borderRadius: 12, flexShrink: 0,
@@ -972,17 +968,17 @@ function SubjectBtn({ subject, index, onClick }: {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// ROOT — MaterialManagerPro
+// ROOT
 // ═════════════════════════════════════════════════════════════════════════════
 export default function MaterialManagerPro() {
   const { user, loading: authLoading } = useAuth();
   const qc = useQueryClient();
 
-  const [view,          setView]          = useState<View>("subjects");  const [activeSubject, setActiveSubject] = useState<Subject | null>(null);
+  const [view,          setView]          = useState<View>("subjects");
+  const [activeSubject, setActiveSubject] = useState<Subject | null>(null);
   const [showUpload,    setShowUpload]    = useState(false);
 
-  const { data: matCountData = [] } = useQuery<{ id: string }[]>({
-    queryKey: ["tm-mat-count", activeSubject?.id],
+  const {  matCountData = [] } = useQuery<{ id: string }[]>({    queryKey: ["tm-mat-count", activeSubject?.id],
     enabled: !!activeSubject,
     queryFn: async () => {
       const { data } = await supabase
@@ -1027,13 +1023,12 @@ export default function MaterialManagerPro() {
         * { -webkit-tap-highlight-color: transparent; }
       `}</style>
 
-      <div style={{        minHeight: "100vh",
+      <div style={{
+        minHeight: "100vh",
         background: C.bg,
         fontFamily: "'DM Sans', system-ui, sans-serif",
-        paddingBottom: 60,
-      }}>
+        paddingBottom: 60,      }}>
 
-        {/* ── TOP BAR ────────────────────────────────────────────────────── */}
         <div style={{
           background: `linear-gradient(150deg, ${C.green} 0%, ${C.green2} 100%)`,
           padding: "20px 20px 0",
@@ -1041,8 +1036,6 @@ export default function MaterialManagerPro() {
           boxShadow: `0 2px 16px ${C.shadow}`,
         }}>
           <div style={{ maxWidth: 720, margin: "0 auto" }}>
-
-            {/* Brand row */}
             <div style={{
               display: "flex", alignItems: "center",
               gap: 14, paddingBottom: 18,
@@ -1066,7 +1059,6 @@ export default function MaterialManagerPro() {
               </div>
             </div>
 
-            {/* Tab strip */}
             <div style={{ display: "flex", gap: 2 }}>
               <TabBtn
                 label="📚 Subjects"
@@ -1076,15 +1068,14 @@ export default function MaterialManagerPro() {
               {activeSubject && (
                 <TabBtn
                   label={`📂 ${activeSubject.title}`}
-                  active={view === "library"}                  onClick={() => {}}
+                  active={view === "library"}
+                  onClick={() => {}}
                   maxWidth={180}
                 />
               )}
             </div>
           </div>
         </div>
-
-        {/* ── AUTH WARNING ────────────────────────────────────────────────── */}
         {!authLoading && !user && (
           <div style={{
             maxWidth: 720, margin: "20px auto", padding: "0 20px",
@@ -1107,7 +1098,6 @@ export default function MaterialManagerPro() {
           </div>
         )}
 
-        {/* ── VIEWS ──────────────────────────────────────────────────────── */}
         <div style={{ maxWidth: 720, margin: "0 auto" }}>
           {view === "subjects" && (
             <SubjectsView onSelect={selectSubject} />
@@ -1122,10 +1112,10 @@ export default function MaterialManagerPro() {
         </div>
       </div>
 
-      {/* ── UPLOAD SHEET ───────────────────────────────────────────────── */}
       {showUpload && activeSubject && (
         <UploadSheet
-          subject={activeSubject}          materialCount={matCountData.length}
+          subject={activeSubject}
+          materialCount={matCountData.length}
           onClose={() => setShowUpload(false)}
           onSuccess={handleUploadSuccess}
         />
@@ -1135,8 +1125,7 @@ export default function MaterialManagerPro() {
 }
 
 function TabBtn({ label, active, onClick, maxWidth }: {
-  label: string; active: boolean; onClick: () => void; maxWidth?: number;
-}) {
+  label: string; active: boolean; onClick: () => void; maxWidth?: number;}) {
   return (
     <button onClick={onClick} style={{
       padding: "10px 16px", border: "none",
