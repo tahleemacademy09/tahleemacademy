@@ -147,14 +147,10 @@ const CourseModal = React.memo(({ ed, onClose, onSave, busy }: { ed?: any; onClo
           </label>
           <Fld label="Course Title (English)"><input value={f.title} onChange={e => setF(c => ({ ...c, title: e.target.value }))} style={inp} placeholder="e.g. Quran Memorisation" autoFocus /></Fld>          <Fld label="Course Title (Arabic)"><input value={f.title_ar} onChange={e => setF(c => ({ ...c, title_ar: e.target.value }))} style={{ ...inp, direction: "rtl", fontFamily: "'Amiri',serif" }} placeholder="مثال: حفظ القرآن" /></Fld>
           <Fld label="Description"><textarea value={f.description} onChange={e => setF(c => ({ ...c, description: e.target.value }))} rows={3} style={{ ...inp, resize: "vertical" }} /></Fld>
-          <Fld label="Level">
-            <div style={{ display: "flex", gap: 6 }}>
-              {(["all", "beginner", "intermediate", "advanced"] as Level[]).map(lv => {
-                const c = lvlCfg[lv], sel = f.level === lv;
-                return <button key={lv} onClick={() => setF(x => ({ ...x, level: lv }))} style={{ flex: 1, padding: "8px 4px", borderRadius: 10, border: `2px solid ${sel ? c.border : "#E5E7EB"}`, background: sel ? c.bg : "#fff", color: c.text, fontWeight: sel ? 800 : 500, fontSize: 10, cursor: "pointer" }}>{c.label}</button>;
-              })}
-            </div>
-          </Fld>
+          {/* Courses are always visible to all levels — subjects carry the level restriction */}
+          <div style={{ padding: "10px 14px", borderRadius: 10, background: "#F0FDF4", border: "1px solid #86EFAC", fontSize: 12, color: "#166534" }}>
+            ℹ️ Courses are visible to all student levels. Restrict access per-subject below.
+          </div>
           <Fld label="Sort Order"><input type="number" value={f.sort_order} onChange={e => setF(c => ({ ...c, sort_order: Number(e.target.value) }))} style={inp} min={0} /></Fld>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <input type="checkbox" id="cpub" checked={f.is_published} onChange={e => setF(c => ({ ...c, is_published: e.target.checked }))} />
@@ -174,7 +170,13 @@ const CourseModal = React.memo(({ ed, onClose, onSave, busy }: { ed?: any; onClo
 // SUBJECT MODAL
 // ══════════════════════════════════════════════════════════════════════════
 const SubjectModal = React.memo(({ ed, teachers, onClose, onSave, busy }: { ed?: any; teachers: any[]; onClose: () => void; onSave: (p: any) => Promise<void>; busy: boolean }) => {
-  const [f, setF] = useState({ title: ed?.title || "", title_ar: ed?.title_ar || "", description: ed?.description || "", level: (ed?.level || "all") as Level, is_active: ed?.is_active ?? true, image_url: ed?.image_url || "", teacher_id: ed?.teacher_id || "" });
+  const LEVELS_LIST = ["beginner", "intermediate", "advanced"] as const;
+  // Parse stored level into a set — "all" means all three, comma-separated means multiple
+  const parseStoredLevel = (stored?: string): Set<string> => {
+    if (!stored || stored === "all") return new Set(["beginner", "intermediate", "advanced"]);
+    return new Set(stored.split(",").map(s => s.trim()).filter(Boolean));
+  };
+  const [f, setF] = useState({ title: ed?.title || "", title_ar: ed?.title_ar || "", description: ed?.description || "", selectedLevels: parseStoredLevel(ed?.level), is_active: ed?.is_active ?? true, image_url: ed?.image_url || "", teacher_id: ed?.teacher_id || "" });
   const [up, setUp] = useState(false);
   const ref = useRef<HTMLInputElement>(null);
   
@@ -183,6 +185,22 @@ const SubjectModal = React.memo(({ ed, teachers, onClose, onSave, busy }: { ed?:
     const url = await uploadImg(fi, "subject-images");
     if (url) setF(s => ({ ...s, image_url: url })); setUp(false);
   }, []);
+
+  const toggleLevel = (lv: string) => {
+    setF(s => {
+      const next = new Set(s.selectedLevels);
+      next.has(lv) ? next.delete(lv) : next.add(lv);
+      return { ...s, selectedLevels: next };
+    });
+  };
+
+  const buildLevelValue = (): string => {
+    const all = new Set(["beginner", "intermediate", "advanced"]);
+    const sel = f.selectedLevels;
+    if (sel.size === 0 || (sel.size === 3 && [...all].every(l => sel.has(l)))) return "all";
+    if (sel.size === 1) return [...sel][0];
+    return [...sel].join(",");
+  };
   
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 50, background: "rgba(0,0,0,.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
@@ -198,12 +216,22 @@ const SubjectModal = React.memo(({ ed, teachers, onClose, onSave, busy }: { ed?:
           <Fld label="Subject Title (English)"><input value={f.title} onChange={e => setF(s => ({ ...s, title: e.target.value }))} style={inp} placeholder="e.g. Tajweed Level 1" autoFocus /></Fld>
           <Fld label="Subject Title (Arabic)"><input value={f.title_ar} onChange={e => setF(s => ({ ...s, title_ar: e.target.value }))} style={{ ...inp, direction: "rtl", fontFamily: "'Amiri',serif" }} placeholder="مثال: التجويد المستوى الأول" /></Fld>
           <Fld label="Description"><textarea value={f.description} onChange={e => setF(s => ({ ...s, description: e.target.value }))} rows={3} style={{ ...inp, resize: "vertical" }} /></Fld>
-          <Fld label="Level">
-            <div style={{ display: "flex", gap: 6 }}>
-              {(["all", "beginner", "intermediate", "advanced"] as Level[]).map(lv => {
-                const c = lvlCfg[lv], sel = f.level === lv;
-                return <button key={lv} onClick={() => setF(s => ({ ...s, level: lv }))} style={{ flex: 1, padding: "8px 4px", borderRadius: 10, border: `2px solid ${sel ? c.border : "#E5E7EB"}`, background: sel ? c.bg : "#fff", color: c.text, fontWeight: sel ? 800 : 500, fontSize: 10, cursor: "pointer" }}>{c.label}</button>;
+          <Fld label="Visible to Levels (select all that apply)">
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {LEVELS_LIST.map(lv => {
+                const c = lvlCfg[lv], sel = f.selectedLevels.has(lv);
+                return (
+                  <button key={lv} type="button" onClick={() => toggleLevel(lv)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 10, border: `2px solid ${sel ? c.border : "#E5E7EB"}`, background: sel ? c.bg : "#fff", cursor: "pointer", textAlign: "left" as const }}>
+                    <div style={{ width: 18, height: 18, borderRadius: 5, border: `2px solid ${sel ? c.border : "#D1D5DB"}`, background: sel ? c.text : "#fff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                      {sel && <Check size={11} color="#fff" />}
+                    </div>
+                    <span style={{ fontWeight: sel ? 800 : 500, fontSize: 13, color: sel ? c.text : "#374151" }}>{c.label}</span>
+                  </button>
+                );
               })}
+              {f.selectedLevels.size === 0 && (
+                <p style={{ fontSize: 11, color: "#DC2626", margin: "2px 0 0" }}>Select at least one level</p>
+              )}
             </div>
           </Fld>
           <Fld label="Assign Teacher">
@@ -216,8 +244,8 @@ const SubjectModal = React.memo(({ ed, teachers, onClose, onSave, busy }: { ed?:
             <input type="checkbox" id="sact" checked={f.is_active} onChange={e => setF(s => ({ ...s, is_active: e.target.checked }))} />
             <label htmlFor="sact" style={{ fontSize: 13, color: "#374151" }}>Active (visible to students)</label>
           </div>
-          <button type="button" onClick={() => onSave(f)} disabled={busy || !f.title}
-            style={{ padding: "12px", borderRadius: 12, border: "none", background: busy || !f.title ? "#e5e7eb" : `linear-gradient(135deg,${G},${GM})`, color: busy || !f.title ? "#9ca3af" : "#fff", fontWeight: 800, cursor: busy || !f.title ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+          <button type="button" onClick={() => onSave({ ...f, level: buildLevelValue() })} disabled={busy || !f.title || f.selectedLevels.size === 0}
+            style={{ padding: "12px", borderRadius: 12, border: "none", background: busy || !f.title || f.selectedLevels.size === 0 ? "#e5e7eb" : `linear-gradient(135deg,${G},${GM})`, color: busy || !f.title || f.selectedLevels.size === 0 ? "#9ca3af" : "#fff", fontWeight: 800, cursor: busy || !f.title || f.selectedLevels.size === 0 ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
             <Save size={14} /> {busy ? "Saving…" : ed ? "Update Subject" : "Create Subject"}
           </button>
         </div>
@@ -541,7 +569,7 @@ export default function CourseManagement() {
   const saveCourse = useCallback(async (p: any) => {
     setBusy(true);
     try {
-      const d = { title: p.title, title_ar: p.title_ar || null, description: p.description || null, level: p.level, is_published: p.is_published, image_url: p.image_url || null, sort_order: p.sort_order, updated_at: new Date().toISOString() };
+      const d = { title: p.title, title_ar: p.title_ar || null, description: p.description || null, level: "all", is_published: p.is_published, image_url: p.image_url || null, sort_order: p.sort_order, updated_at: new Date().toISOString() };
       const { error: courseErr } = edCourse ? await supabase.from("courses").update(d).eq("id", edCourse.id) : await supabase.from("courses").insert(d);
       if (courseErr) throw courseErr;
       qc.invalidateQueries({ queryKey: ["adm-courses"] }); setShowCourse(false); setEdCourse(null);
@@ -639,7 +667,12 @@ export default function CourseManagement() {
     return s.sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
   };
   const fCourses = sortList(courses.filter((c: any) => (lvlFilter === "all" || c.level === lvlFilter || c.level === "all") && (!search || c.title.toLowerCase().includes(search.toLowerCase()))));
-  const fSubjects = subjects.filter((s: any) => (lvlFilter === "all" || s.level === lvlFilter || s.level === "all") && (!search || s.title.toLowerCase().includes(search.toLowerCase())));
+  const fSubjects = subjects.filter((s: any) => {
+    // level can be "all", "beginner", "beginner,intermediate", etc.
+    const subjectLevels = s.level === "all" || !s.level ? ["beginner","intermediate","advanced"] : s.level.split(",").map((l: string) => l.trim());
+    const levelMatch = lvlFilter === "all" || subjectLevels.includes(lvlFilter);
+    return levelMatch && (!search || s.title.toLowerCase().includes(search.toLowerCase()));
+  });
   const unlinked = allSubjects.filter((s: any) => !s.course_id);
 
   const addLabel = view === "courses" ? "Add Course" : view === "subjects" ? "Add Subject" : tab === "syllabus" ? "Add Week" : tab === "materials" ? "Upload" : "Add Lesson";
