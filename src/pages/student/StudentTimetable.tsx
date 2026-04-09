@@ -126,27 +126,38 @@ export default function StudentTimetable() {
     }
     if (!slot.subject_id) return;
 
-    // Always ensure a live_session exists (all roles)
-    try {
-      const { data: existing } = await supabase
-        .from("live_sessions")
-        .select("id, status")
-        .eq("subject_id", slot.subject_id)
-        .in("status", ["live", "active", "scheduled"])
-        .maybeSingle();
+    // Auto-create or find a live/scheduled session for this timetable slot
+    const today = new Date().toISOString().split("T")[0];
+    const scheduledAt = `${today}T${slot.start_time}`;
 
-      if (!existing) {
-        await supabase.from("live_sessions").insert({
-          subject_id: slot.subject_id,
-          status: "scheduled",
-          scheduled_at: new Date().toISOString(),
-          title: slot.subjects?.title || "Live Class",
-          session_number: 1,
-        });
-      }
-    } catch (_) { /* proceed anyway */ }
+    // Check for existing live or scheduled session for this subject today
+    const { data: existing } = await supabase
+      .from("live_sessions")
+      .select("id, status")
+      .eq("subject_id", slot.subject_id)
+      .in("status", ["live", "scheduled", "active"])
+      .order("scheduled_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
-    navigate(`/student/live-classes?subject=${slot.subject_id}&autoJoin=true`);
+    if (!existing) {
+      // Auto-create the session so everyone can join directly
+      await supabase.from("live_sessions").insert({
+        subject_id:          slot.subject_id,
+        topic:               slot.notes || null,
+        scheduled_at:        scheduledAt,
+        duration_minutes:    slot.duration_minutes || 60,
+        status:              "scheduled",
+        recording_enabled:   true,
+        chat_enabled:        true,
+        hand_raise_enabled:  true,
+        waiting_room_enabled:false,
+        whiteboard_enabled:  false,
+      } as any);
+    }
+
+    // Navigate directly to live class page for this subject
+    navigate(`/student/live-classes?subject=${slot.subject_id}`);
   };
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -331,22 +342,19 @@ export default function StudentTimetable() {
                     )}
                   </div>
 
-                  {/* Action — always show Join for non-past slots */}
-                  {!isPast && (
-                    <button onClick={() => handleJoin(slot)}
-                      style={{
-                        display: "flex", alignItems: "center", gap: 5,
-                        padding: "9px 14px", borderRadius: 11, border: "none",
-                        background: isNow ? G : isSoon ? GOLD : GM,
-                        color: "#fff",
-                        fontSize: 11, fontWeight: 800, cursor: "pointer",
-                        flexShrink: 0, fontFamily: "'Cairo', sans-serif",
-                        opacity: isNow || isSoon ? 1 : 0.72,
-                      }}>
-                      <Video style={{ width: 12, height: 12 }} />
-                      {t("Join", "انضمام")}
-                    </button>
-                  )}
+                  {/* Action — always show Join button for all roles */}
+                  <button onClick={() => handleJoin(slot)}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 5,
+                      padding: "9px 14px", borderRadius: 11, border: "none",
+                      background: isNow ? G : isSoon ? GOLD : isPast ? "#F3F4F6" : "#f0f4f0",
+                      color: isNow ? "#fff" : isSoon ? G : isPast ? "#9CA3AF" : "#6b7280",
+                      fontSize: 11, fontWeight: 800, cursor: "pointer",
+                      flexShrink: 0, fontFamily: "'Cairo', sans-serif",
+                    }}>
+                    <Video style={{ width: 12, height: 12 }} />
+                    {isNow ? t("Join", "انضمام") : isPast ? t("Ended", "انتهت") : t("Join", "انضمام")}
+                  </button>
                 </div>
               );
             })}
