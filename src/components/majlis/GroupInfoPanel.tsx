@@ -24,6 +24,7 @@ interface GroupInfoPanelProps {
   memberCount: number;
   onEditName: () => void;
   onAvatarClick: () => void;
+  avatarInputId?: string;
   onDeleteGroup: () => void;
   onLeaveGroup: () => void;
   onMemberClick: (member: any) => void;
@@ -31,7 +32,7 @@ interface GroupInfoPanelProps {
 
 const WA_GREEN = "#075E54";
 
-const GroupInfoPanel = ({ channel, onClose, canModerate, memberCount, onEditName, onAvatarClick, onDeleteGroup, onLeaveGroup, onMemberClick }: GroupInfoPanelProps) => {
+const GroupInfoPanel = ({ channel, onClose, canModerate, memberCount, onEditName, onAvatarClick, avatarInputId, onDeleteGroup, onLeaveGroup, onMemberClick }: GroupInfoPanelProps) => {
   const { toast } = useToast();
   const [members, setMembers] = useState<any[]>([]);
   const [allMembers, setAllMembers] = useState<any[]>([]);
@@ -152,9 +153,9 @@ const GroupInfoPanel = ({ channel, onClose, canModerate, memberCount, onEditName
             : <div style={{ width: 110, height: 110, borderRadius: "50%", background: WA_GREEN, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 42 }}>👥</div>
           }
           {canModerate && (
-            <button onClick={onAvatarClick} style={{ position: "absolute", bottom: 4, right: 4, width: 34, height: 34, borderRadius: "50%", background: "#25D366", border: "3px solid #fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+            <label htmlFor={avatarInputId} style={{ position: "absolute", bottom: 4, right: 4, width: 34, height: 34, borderRadius: "50%", background: "#25D366", border: "3px solid #fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
               <Camera size={15} color="#fff" />
-            </button>
+            </label>
           )}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
