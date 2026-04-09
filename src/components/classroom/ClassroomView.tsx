@@ -36,7 +36,7 @@ import LiveQuizOverlay  from "./LiveQuizOverlay";
 import { useIsMobile }  from "@/hooks/use-mobile";
 import { useState, useEffect, useRef, useCallback } from "react";
 
-interface ClassroomViewProps { subject: any; onLeave: () => void; }
+interface ClassroomViewProps { subject: any; onLeave: () => void; onMinimize?: () => void; }
 
 const G     = "#075E54";
 const G2    = "#064E3B";
@@ -402,6 +402,7 @@ const BottomBar = ({
   onGroupRecite, groupReciteMode,
   onShareMaterial, isPrivileged,
   canStudentRec, canStudentWriteProp, canStudentRecProp, onPermChange,
+  onMinimize,
 }: any) => {
   const room = useRoomContext();
   const { user } = useAuth();
@@ -534,6 +535,13 @@ const BottomBar = ({
         <Btn onClick={()=>setEmojis(v=>!v)}><Smile style={IS}/></Btn>
 
         <Btn onClick={()=>setMenu(v=>!v)}><MoreVertical style={IS}/></Btn>
+
+        {/* Minimize (PiP) button */}
+        {onMinimize && (
+          <Btn onClick={onMinimize}>
+            <span style={{ fontSize:16 }}>⤵</span>
+          </Btn>
+        )}
 
         {/* Red leave button */}
         <button onClick={isPrivileged?onEndClass:onLeaveClass}
@@ -767,7 +775,7 @@ const VideoGrid = () => {
 /* ══════════════════════════════════════════
    MAIN COMPONENT
 ══════════════════════════════════════════ */
-const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
+const ClassroomView = ({ subject, onLeave, onMinimize }: ClassroomViewProps) => {
   const { user, hasRole } = useAuth();
   const { t }             = useLanguage();
   const isMobile          = useIsMobile();
@@ -815,6 +823,27 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
   }, [subject.id]);
 
   useEffect(() => { if(phase!=="live") return; const t=setInterval(()=>setDuration(d=>d+1),1000); return()=>clearInterval(t); }, [phase]);
+
+  // Resume camera/mic when user returns to the tab/app after minimizing
+  useEffect(() => {
+    if (phase !== "live") return;
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        // Small delay lets WebRTC renegotiate after backgrounding
+        setTimeout(() => {
+          try {
+            const lp = (window as any).__livekitRoom?.localParticipant;
+            if (lp && lp.isCameraEnabled !== undefined) {
+              lp.setCameraEnabled(lp.isCameraEnabled);
+              lp.setMicrophoneEnabled(lp.isMicrophoneEnabled);
+            }
+          } catch { /* silent */ }
+        }, 400);
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [phase]);
 
   const connect = async (action:string, settings?:any) => {
     setLoading(true); setError(null);
@@ -945,7 +974,18 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
                 <span style={{ fontSize:11, color:"#fca5a5", fontWeight:700 }}>{fmtT(duration)}</span>
               </div>
             </div>
-            {isPrivileged && <RecController sessionId={sessionId} subjectId={subject.id} userEmail={user?.email||""} onSavingChange={setSavingRec}/>}
+            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+              {isPrivileged && <RecController sessionId={sessionId} subjectId={subject.id} userEmail={user?.email||""} onSavingChange={setSavingRec}/>}
+              {/* Minimize — Google Meet style */}
+              {onMinimize && (
+                <button
+                  onClick={onMinimize}
+                  title="Minimize"
+                  style={{ width:30, height:30, borderRadius:8, background:"rgba(255,255,255,.1)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", color:"rgba(255,255,255,.7)" }}>
+                  <ArrowLeft style={{ width:14, height:14, transform:"rotate(-90deg)" }}/>
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Content */}
@@ -995,6 +1035,7 @@ const ClassroomView = ({ subject, onLeave }: ClassroomViewProps) => {
             canStudentWriteProp={canStudentWrite}
             canStudentRecProp={canStudentRec}
             onPermChange={handlePermChange}
+            onMinimize={onMinimize}
           />
 
           {isMobile && chatOpen && (
@@ -1064,7 +1105,7 @@ const BottomBarBridge = (props:any) => {
   const handlePermChange = (type:"write"|"rec", allow:boolean) => {
     props.onPermChange?.(type, allow, room);
   };
-  return <BottomBar {...props} room={room} onPermChange={handlePermChange}/>;
+  return <BottomBar {...props} room={room} onPermChange={handlePermChange} onMinimize={props.onMinimize}/>;
 };
 
 const MaterialShareBridge = ({ subjectId, onShare, onClose }:any) => {
