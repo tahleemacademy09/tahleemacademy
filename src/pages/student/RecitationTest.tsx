@@ -12,7 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useRecitationSettings } from "@/hooks/useRecitationSettings";
 import { useTasjeel } from "@/hooks/useTasjeel";
 import {
-  Mic, Upload, CheckCircle2, Video,
+  Mic, Upload, CheckCircle2, Video, Clock,
   Star, ArrowRight, Loader2, RotateCcw, BookOpen,
   AlertCircle, Calendar,
 } from "lucide-react";
@@ -594,47 +594,40 @@ const RecitationTest = () => {
                       ))}
                     </div>
 
-                    {/* Date picker */}
+                    {/* Date + Time — always fully visible, tap any slot to pick both at once */}
                     <div>
-                      <label style={{ fontSize:13, fontWeight:700, color:"#374151", marginBottom:6, display:"block" }}>
+                      <label style={{ fontSize:13, fontWeight:700, color:"#374151", marginBottom:12, display:"block" }}>
                         <Calendar size={14} style={{ display:"inline", marginRight:6, verticalAlign:"middle" }} />
-                        Select a preferred date:
+                        Select a date &amp; time:
                       </label>
-                      <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
-                        {sessionDates.map(d => {
-                          const date  = new Date(d + "T12:00:00"); // noon avoids timezone shift
-                          const isToday = d === new Date().toISOString().split("T")[0];
-                          const label = (isToday ? "Today · " : "Tomorrow · ") +
-                            date.toLocaleDateString("en-NG", { weekday:"short", day:"numeric", month:"short" });
-                          const sel   = sessionDate === d;
-                          return (
-                            <button key={d} onClick={() => setSessionDate(d)} style={{ padding:"10px 16px", borderRadius:10, border:`2px solid ${sel ? GM : "#e5e7eb"}`, background: sel ? "#F0FDF4" : "#fafafa", color: sel ? G : "#555", fontSize:13, fontWeight: sel ? 700 : 500, cursor:"pointer", transition:"all .15s" }}>
-                              {label}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
 
-                    {/* Time slots */}
-                    {sessionDate && (
-                      <div>
-                        <label style={{ fontSize:13, fontWeight:700, color:"#374151", marginBottom:6, display:"block" }}>
-                          <Clock size={14} style={{ display:"inline", marginRight:6, verticalAlign:"middle" }} />
-                          Select a preferred time:
-                        </label>
-                        <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
-                          {availableSlots.map(t => {
-                            const sel = sessionTime === t;
-                            return (
-                              <button key={t} onClick={() => setSessionTime(t)} style={{ padding:"10px 16px", borderRadius:10, border:`2px solid ${sel ? GM : "#e5e7eb"}`, background: sel ? "#F0FDF4" : "#fafafa", color: sel ? G : "#555", fontSize:13, fontWeight: sel ? 700 : 500, cursor:"pointer", transition:"all .15s" }}>
-                                {fmt12h(t)}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
+                      {sessionDates.map(d => {
+                        const date    = new Date(d + "T12:00:00");
+                        const isToday = d === new Date().toISOString().split("T")[0];
+                        const dayLabel = (isToday ? "Today" : "Tomorrow") + " · " +
+                          date.toLocaleDateString("en-NG", { weekday:"short", day:"numeric", month:"short" });
+                        const isDateSel = sessionDate === d;
+                        return (
+                          <div key={d} style={{ marginBottom:16 }}>
+                            <div style={{ display:"inline-flex", alignItems:"center", gap:8, marginBottom:10, padding:"5px 14px", borderRadius:20, background: isDateSel ? G : "#F3F4F6", color: isDateSel ? "#fff" : "#374151", fontSize:13, fontWeight:800 }}>
+                              {dayLabel}
+                            </div>
+                            <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                              {availableSlots.map(t => {
+                                const isSel = sessionDate === d && sessionTime === t;
+                                return (
+                                  <button key={t}
+                                    onClick={() => { setSessionDate(d); setSessionTime(t); }}
+                                    style={{ padding:"10px 16px", borderRadius:10, border:`2px solid ${isSel ? GM : "#E5E7EB"}`, background: isSel ? "#F0FDF4" : "#FAFAFA", color: isSel ? G : "#555", fontSize:13, fontWeight: isSel ? 800 : 500, cursor:"pointer", transition:"all .15s", minWidth:88 }}>
+                                    {fmt12h(t)}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
 
                     <div style={{ background:"#FFFBEB", borderRadius:12, padding:"12px 14px", border:"1px solid #F9D46A", fontSize:12, color:"#78350F", lineHeight:1.6, display:"flex", gap:8, alignItems:"flex-start" }}>
                       <AlertCircle size={14} color={GOLD} style={{ flexShrink:0, marginTop:1 }} />
