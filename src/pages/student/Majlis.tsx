@@ -1404,10 +1404,10 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
                     ? <img src={myProfile.avatar_url} style={{ width: 90, height: 90, borderRadius: "50%", objectFit: "cover" }} alt="" />
                     : <div style={{ width: 90, height: 90, borderRadius: "50%", background: WA_GREEN, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 36, fontWeight: 700 }}>{myInitial}</div>
                   }
-                  <button onClick={() => profileAvatarRef.current?.click()} style={{ position: "absolute", bottom: 0, right: 0, width: 30, height: 30, borderRadius: "50%", background: "#25D366", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <input ref={profileAvatarRef} id="majlis-profile-avatar" type="file" accept="image/*" style={{ position: "absolute", width: 1, height: 1, opacity: 0, overflow: "hidden" }} onChange={e => e.target.files?.[0] && handleProfileAvatarUpload(e.target.files[0])} />
+                  <label htmlFor="majlis-profile-avatar" style={{ position: "absolute", bottom: 0, right: 0, width: 30, height: 30, borderRadius: "50%", background: "#25D366", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
                     <Camera style={{ width: 14, height: 14, color: "#fff" }} />
-                  </button>
-                  <input ref={profileAvatarRef} type="file" accept="image/*" style={{ display: "none" }} onChange={e => e.target.files?.[0] && handleProfileAvatarUpload(e.target.files[0])} />
+                  </label>
                 </div>
               </div>
               {[
@@ -1492,10 +1492,10 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
                   {WALLPAPERS.map(w => (
                     <div key={w.id} onClick={() => saveSetting("wallpaper", w.id)} style={{ width: 44, height: 44, borderRadius: 10, background: w.bg, backgroundImage: w.pattern, border: settings.wallpaper === w.id ? `3px solid ${WA_GREEN}` : "3px solid transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: "#888", boxSizing: "border-box" }}>{settings.wallpaper === w.id && <Check size={14} color="#fff" />}</div>
                   ))}
-                  <div onClick={() => bgImageRef.current?.click()} style={{ width: 44, height: 44, borderRadius: 10, border: `2px dashed ${divider}`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                  <input ref={bgImageRef} id="majlis-bg-image" type="file" accept="image/*" style={{ position: "absolute", width: 1, height: 1, opacity: 0, overflow: "hidden" }} onChange={e => e.target.files?.[0] && handleBgImageUpload(e.target.files[0])} />
+                  <label htmlFor="majlis-bg-image" style={{ width: 44, height: 44, borderRadius: 10, border: `2px dashed ${divider}`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
                     <Camera size={16} color={textSub} />
-                  </div>
-                  <input ref={bgImageRef} type="file" accept="image/*" style={{ display: "none" }} onChange={e => e.target.files?.[0] && handleBgImageUpload(e.target.files[0])} />
+                  </label>
                 </div>
                 <div style={{ fontSize: 12, color: textSub }}>Selected: {WALLPAPERS.find(w => w.id === settings.wallpaper)?.label || "Custom"}</div>
               </div>
@@ -1951,12 +1951,12 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
                   style={{ flex: 1, border: "none", background: "transparent", fontSize: msgFontSz, color: textMain, outline: "none", resize: "none", lineHeight: "1.4", maxHeight: 100, overflow: "auto", paddingTop: 2, fontFamily: "inherit" }}
                 />
                 <div style={{ display: "flex", gap: 2, marginBottom: 2, flexShrink: 0 }}>
-                  <button onClick={() => imageInputRef.current?.click()} disabled={!canSend()} style={{ background: "none", border: "none", cursor: "pointer", color: textSub, padding: "3px 4px", display: "flex" }}>
+                  <label htmlFor={canSend() ? "majlis-image-input" : undefined} style={{ background: "none", border: "none", cursor: canSend() ? "pointer" : "not-allowed", color: textSub, padding: "3px 4px", display: "flex", opacity: canSend() ? 1 : 0.4 }}>
                     <Camera size={20} />
-                  </button>
-                  <button onClick={() => fileInputRef.current?.click()} disabled={!canSend()} style={{ background: "none", border: "none", cursor: "pointer", color: textSub, padding: "3px 4px", display: "flex" }}>
+                  </label>
+                  <label htmlFor={canSend() ? "majlis-file-input" : undefined} style={{ background: "none", border: "none", cursor: canSend() ? "pointer" : "not-allowed", color: textSub, padding: "3px 4px", display: "flex", opacity: canSend() ? 1 : 0.4 }}>
                     <Paperclip size={20} />
-                  </button>
+                  </label>
                 </div>
               </div>
 
@@ -1989,9 +1989,9 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
             </div>
 
             {/* Hidden file inputs */}
-            <input ref={fileInputRef} type="file" style={{ display: "none" }} onChange={e => e.target.files?.[0] && handleFileUpload(e.target.files[0], "file")} />
-            <input ref={imageInputRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={e => e.target.files?.[0] && handleFileUpload(e.target.files[0], "image")} />
-            <input ref={avatarInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={e => e.target.files?.[0] && handleAvatarUpload(e.target.files[0])} />
+            <input ref={fileInputRef} id="majlis-file-input" type="file" style={{ position: "absolute", width: 1, height: 1, opacity: 0, overflow: "hidden" }} onChange={e => e.target.files?.[0] && handleFileUpload(e.target.files[0], "file")} />
+            <input ref={imageInputRef} id="majlis-image-input" type="file" accept="image/*" capture="environment" style={{ position: "absolute", width: 1, height: 1, opacity: 0, overflow: "hidden" }} onChange={e => e.target.files?.[0] && handleFileUpload(e.target.files[0], "image")} />
+            <input ref={avatarInputRef} id="majlis-group-avatar" type="file" accept="image/*" style={{ position: "absolute", width: 1, height: 1, opacity: 0, overflow: "hidden" }} onChange={e => e.target.files?.[0] && handleAvatarUpload(e.target.files[0])} />
           </>
         )}
       </div>
@@ -2149,7 +2149,7 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
       {showGroupInfo && activeChannel && (
         <GroupInfoPanel channel={activeChannel} onClose={() => setShowGroupInfo(false)} canModerate={canModerate} memberCount={memberCounts[activeChannel.id] || 0}
           onEditName={() => { setEditName(getCN(activeChannel)); setEditDesc((activeChannel as any).description || ""); setEditingChannel(true); setShowGroupInfo(false); }}
-          onAvatarClick={() => avatarInputRef.current?.click()} onDeleteGroup={deleteGroup} onLeaveGroup={() => leaveChannel(activeChannel.id)}
+          onAvatarClick={() => avatarInputRef.current?.click()} avatarInputId="majlis-group-avatar" onDeleteGroup={deleteGroup} onLeaveGroup={() => leaveChannel(activeChannel.id)}
           onMemberClick={(m: any) => { setSelectedMember(m); setShowStudentProfile(true); setShowGroupInfo(false); }}
         />
       )}
