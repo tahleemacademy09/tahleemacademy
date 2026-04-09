@@ -119,12 +119,34 @@ export default function StudentTimetable() {
     .filter((s: any) => s.day_of_week === todayIndex && minutesUntil(s.start_time) > -30)
     .sort((a: any, b: any) => (a.start_time > b.start_time ? 1 : -1))[0];
 
-  const handleJoin = (slot: any) => {
+  const handleJoin = async (slot: any) => {
     if (slot.live_url) {
       window.open(slot.live_url, "_blank", "noopener");
-    } else if (slot.subject_id) {
-      navigate(`/student/courses`);
+      return;
     }
+    if (!slot.subject_id) return;
+
+    // Always ensure a live_session exists (all roles)
+    try {
+      const { data: existing } = await supabase
+        .from("live_sessions")
+        .select("id, status")
+        .eq("subject_id", slot.subject_id)
+        .in("status", ["live", "active", "scheduled"])
+        .maybeSingle();
+
+      if (!existing) {
+        await supabase.from("live_sessions").insert({
+          subject_id: slot.subject_id,
+          status: "scheduled",
+          scheduled_at: new Date().toISOString(),
+          title: slot.subjects?.title || "Live Class",
+          session_number: 1,
+        });
+      }
+    } catch (_) { /* proceed anyway */ }
+
+    navigate(`/student/live-classes?subject=${slot.subject_id}&autoJoin=true`);
   };
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -309,19 +331,20 @@ export default function StudentTimetable() {
                     )}
                   </div>
 
-                  {/* Action */}
+                  {/* Action — always show Join for non-past slots */}
                   {!isPast && (
                     <button onClick={() => handleJoin(slot)}
                       style={{
                         display: "flex", alignItems: "center", gap: 5,
                         padding: "9px 14px", borderRadius: 11, border: "none",
-                        background: isNow ? G : isSoon ? GOLD : "#f0f4f0",
-                        color: isNow ? "#fff" : isSoon ? G : "#6b7280",
+                        background: isNow ? G : isSoon ? GOLD : GM,
+                        color: "#fff",
                         fontSize: 11, fontWeight: 800, cursor: "pointer",
                         flexShrink: 0, fontFamily: "'Cairo', sans-serif",
+                        opacity: isNow || isSoon ? 1 : 0.72,
                       }}>
                       <Video style={{ width: 12, height: 12 }} />
-                      {isNow ? t("Join", "انضمام") : t("View", "عرض")}
+                      {t("Join", "انضمام")}
                     </button>
                   )}
                 </div>
