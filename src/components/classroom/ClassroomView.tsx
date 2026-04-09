@@ -402,7 +402,6 @@ const BottomBar = ({
   onGroupRecite, groupReciteMode,
   onShareMaterial, isPrivileged,
   canStudentRec, canStudentWriteProp, canStudentRecProp, onPermChange,
-  onMinimize,
 }: any) => {
   const room = useRoomContext();
   const { user } = useAuth();
@@ -536,11 +535,12 @@ const BottomBar = ({
 
         <Btn onClick={()=>setMenu(v=>!v)}><MoreVertical style={IS}/></Btn>
 
-        {/* Minimize (PiP) button */}
-        {onMinimize && (
-          <Btn onClick={onMinimize}>
-            <span style={{ fontSize:16 }}>⤵</span>
-          </Btn>
+        {/* Minimize — Google Meet style */}
+        {props?.onMinimize && (
+          <button onClick={props.onMinimize}
+            style={{ height:36, padding:"0 14px", borderRadius:18, border:"1.5px solid rgba(255,255,255,.2)", cursor:"pointer", background:"rgba(255,255,255,.08)", color:"rgba(255,255,255,.8)", display:"flex", alignItems:"center", gap:5, fontWeight:600, fontSize:12, flexShrink:0 }}>
+            ⊟ Minimize
+          </button>
         )}
 
         {/* Red leave button */}
@@ -786,6 +786,19 @@ const ClassroomView = ({ subject, onLeave, onMinimize }: ClassroomViewProps) => 
   const [wsUrl,    setWsUrl]    = useState<string|null>(null);
   const [error,    setError]    = useState<string|null>(null);
   const [loading,  setLoading]  = useState(false);
+
+  // Resume from minimize — re-render triggers LiveKit reconnect automatically
+  useEffect(() => {
+    const onVisible = () => {
+      // When user returns from background while live, LiveKit auto-reconnects
+      // Force a state tick so React re-evaluates the LiveKitRoom connect prop
+      if (phase === "live" && document.visibilityState === "visible") {
+        setToken(t => t ? t + "" : t); // identity re-render
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [phase]);
   const [sessionId,setSessionId]= useState<string|null>(null);
   const [sessionInfo,setSessionInfo] = useState<any>(null);
   const [attendanceId,setAttendanceId] = useState<string|null>(null);
@@ -823,27 +836,6 @@ const ClassroomView = ({ subject, onLeave, onMinimize }: ClassroomViewProps) => 
   }, [subject.id]);
 
   useEffect(() => { if(phase!=="live") return; const t=setInterval(()=>setDuration(d=>d+1),1000); return()=>clearInterval(t); }, [phase]);
-
-  // Resume camera/mic when user returns to the tab/app after minimizing
-  useEffect(() => {
-    if (phase !== "live") return;
-    const handleVisibility = () => {
-      if (document.visibilityState === "visible") {
-        // Small delay lets WebRTC renegotiate after backgrounding
-        setTimeout(() => {
-          try {
-            const lp = (window as any).__livekitRoom?.localParticipant;
-            if (lp && lp.isCameraEnabled !== undefined) {
-              lp.setCameraEnabled(lp.isCameraEnabled);
-              lp.setMicrophoneEnabled(lp.isMicrophoneEnabled);
-            }
-          } catch { /* silent */ }
-        }, 400);
-      }
-    };
-    document.addEventListener("visibilitychange", handleVisibility);
-    return () => document.removeEventListener("visibilitychange", handleVisibility);
-  }, [phase]);
 
   const connect = async (action:string, settings?:any) => {
     setLoading(true); setError(null);
@@ -974,18 +966,7 @@ const ClassroomView = ({ subject, onLeave, onMinimize }: ClassroomViewProps) => 
                 <span style={{ fontSize:11, color:"#fca5a5", fontWeight:700 }}>{fmtT(duration)}</span>
               </div>
             </div>
-            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-              {isPrivileged && <RecController sessionId={sessionId} subjectId={subject.id} userEmail={user?.email||""} onSavingChange={setSavingRec}/>}
-              {/* Minimize — Google Meet style */}
-              {onMinimize && (
-                <button
-                  onClick={onMinimize}
-                  title="Minimize"
-                  style={{ width:30, height:30, borderRadius:8, background:"rgba(255,255,255,.1)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", color:"rgba(255,255,255,.7)" }}>
-                  <ArrowLeft style={{ width:14, height:14, transform:"rotate(-90deg)" }}/>
-                </button>
-              )}
-            </div>
+            {isPrivileged && <RecController sessionId={sessionId} subjectId={subject.id} userEmail={user?.email||""} onSavingChange={setSavingRec}/>}
           </div>
 
           {/* Content */}
@@ -1105,7 +1086,7 @@ const BottomBarBridge = (props:any) => {
   const handlePermChange = (type:"write"|"rec", allow:boolean) => {
     props.onPermChange?.(type, allow, room);
   };
-  return <BottomBar {...props} room={room} onPermChange={handlePermChange} onMinimize={props.onMinimize}/>;
+  return <BottomBar {...props} room={room} onPermChange={handlePermChange}/>;
 };
 
 const MaterialShareBridge = ({ subjectId, onShare, onClose }:any) => {
