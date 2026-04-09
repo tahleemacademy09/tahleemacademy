@@ -573,7 +573,7 @@ export default function CourseManagement() {
   const saveCourse = useCallback(async (p: any) => {
     setBusy(true);
     try {
-      const d = { title: p.title, title_ar: p.title_ar || null, description: p.description || null, level: "all", is_published: p.is_published, image_url: p.image_url || null, sort_order: p.sort_order, updated_at: new Date().toISOString() };
+      const d = { title: p.title, title_ar: p.title_ar || null, description: p.description || null, level: "all" as const, is_published: p.is_published, image_url: p.image_url || null, sort_order: p.sort_order, updated_at: new Date().toISOString() };
       const { error: courseErr } = edCourse ? await supabase.from("courses").update(d).eq("id", edCourse.id) : await supabase.from("courses").insert(d);
       if (courseErr) throw courseErr;
       qc.invalidateQueries({ queryKey: ["adm-courses"] }); setShowCourse(false); setEdCourse(null);
