@@ -870,7 +870,7 @@ const ExamEditor = () => {
                   <Badge variant="secondary" className="bg-emerald-100 text-emerald-800 ml-1 text-xs">{questions.length}</Badge>
                 </h2>
                 <div className="flex items-center gap-2 flex-wrap">
-                  <input ref={bulkFileInputRef} type="file" accept=".csv,.xlsx,.xls" className="hidden" onChange={handleBulkImport} />
+                  <input ref={bulkFileInputRef} id="exam-bulk-file" type="file" accept=".csv,.xlsx,.xls" className="hidden" onChange={handleBulkImport} />
 
                   {/* Bulk Import */}
                   <Dialog>
@@ -887,9 +887,9 @@ const ExamEditor = () => {
                       <div className="space-y-4 py-4">
                         <div className="flex flex-col sm:flex-row gap-3">
                           <BulkTemplateDownload />
-                          <Button variant="outline" size="sm" onClick={() => bulkFileInputRef.current?.click()} className="gap-2 flex-1 sm:flex-initial">
+                          <label htmlFor="exam-bulk-file" className="gap-2 flex-1 sm:flex-initial inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-9 px-3 cursor-pointer">
                             <Upload className="h-4 w-4"/>{t("Choose File","اختر ملف")}
-                          </Button>
+                          </label>
                         </div>
                         <div className="text-xs text-slate-500 space-y-1 bg-slate-50 p-3 rounded-lg">
                           <p><strong>Tahleem CSV format:</strong></p>
@@ -1034,11 +1034,18 @@ const ExamEditor = () => {
                         </div>
                       ) : (
                         <div className="flex items-center gap-2 flex-wrap">
-                          <Button variant="secondary" size="sm" className="gap-1.5 rounded-lg font-bold bg-white border border-slate-200 hover:bg-slate-50 text-[10px] sm:text-xs h-7 sm:h-8 px-2 sm:px-3" disabled={uploadingMedia===idx}
-                            onClick={()=>{ const i=document.createElement("input"); i.type="file"; i.accept="audio/*,image/*"; i.onchange=(e:any)=>{const f=e.target.files?.[0]; if(f) uploadMedia(f,idx);}; i.click(); }}>
+                          <input
+                            id={`exam-media-${idx}`}
+                            type="file"
+                            accept="audio/*,image/*"
+                            className="hidden"
+                            disabled={uploadingMedia === idx}
+                            onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadMedia(f, idx); e.target.value = ""; }}
+                          />
+                          <label htmlFor={uploadingMedia === idx ? undefined : `exam-media-${idx}`} className={`gap-1.5 inline-flex items-center justify-center rounded-lg font-bold bg-white border border-slate-200 text-[10px] sm:text-xs h-7 sm:h-8 px-2 sm:px-3 ${uploadingMedia === idx ? "opacity-50 cursor-not-allowed" : "hover:bg-slate-50 cursor-pointer"}`}>
                             {uploadingMedia===idx ? <Loader2 className="h-3 w-3 animate-spin text-emerald-600"/> : <Upload className="h-3 w-3 text-emerald-600"/>}
                             {t("Upload","رفع")}
-                          </Button>
+                          </label>
                           <Input placeholder="URL..." value={q.media_url} onChange={e=>updateQuestion(idx,{media_url:e.target.value})} className="flex-1 min-w-[120px] h-7 sm:h-9 rounded-lg text-[10px] sm:text-sm" />
                         </div>
                       )}
