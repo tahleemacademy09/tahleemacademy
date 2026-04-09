@@ -192,10 +192,10 @@ export default function ProfileSettings() {
               {form.avatar_url ? <img src={form.avatar_url} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt="" /> : <span style={{ fontSize: 22, fontWeight: 800, color: "#fff" }}>{(form.full_name || user?.email || "?")[0].toUpperCase()}</span>}
               {avatarUploading && <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,.5)", display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "50%" }}><Loader2 size={18} color="#fff" style={{ animation: "spin .8s linear infinite" }} /></div>}
             </div>
-            <button onClick={() => avatarRef.current?.click()} style={{ position: "absolute", bottom: 0, right: 0, width: 22, height: 22, borderRadius: "50%", background: "#fff", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <input ref={avatarRef} id="ps-avatar-input" type="file" accept="image/*" style={{ position: "absolute", width: 1, height: 1, opacity: 0, overflow: "hidden" }} onChange={uploadAvatar} />
+            <label htmlFor="ps-avatar-input" style={{ position: "absolute", bottom: 0, right: 0, width: 22, height: 22, borderRadius: "50%", background: "#fff", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
               <Camera size={11} color={G} />
-            </button>
-            <input ref={avatarRef} type="file" accept="image/*" style={{ display: "none" }} onChange={uploadAvatar} />
+            </label>
           </div>
           <div>
             <p style={{ fontWeight: 800, fontSize: 17, color: "#fff", margin: 0 }}>{form.full_name || "My Settings"}</p>
