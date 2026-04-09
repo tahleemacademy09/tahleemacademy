@@ -58,24 +58,15 @@ const TasjeelAwaitingLevel = () => {
 
   useEffect(() => { loadRec(); }, [user]); // eslint-disable-line
 
-  // Poll every 30s: check level + session confirmation
+  // Poll every 30s — only advances when admin sets tasjeel_progress to "completed"
   useEffect(() => {
     if (!user) return;
     const poll = setInterval(async () => {
       setCheckTime(0);
-      await refresh();
-      await loadRec();
-      const { data: prof } = await supabase.from("profiles").select("level").eq("user_id", user.id).single();
-      if ((prof as any)?.level && (prof as any).level !== "pending") {
-        await (supabase as any).from("tasjeel_progress").update({
-          current_step:      "completed",
-          level_assigned:    (prof as any).level,
-          level_assigned_at: new Date().toISOString(),
-          completed_at:      new Date().toISOString(),
-          updated_at:        new Date().toISOString(),
-        }).eq("user_id", user.id);
-        navigate("/student", { replace: true });
-      }
+      await refresh();   // useTasjeel re-fetches tasjeel_progress.current_step
+      await loadRec();   // refresh session confirmation status
+      // Navigation happens automatically via the useEffect above
+      // that watches currentStep === "completed" — set only by admin
     }, 30_000);
 
     const cnt = setInterval(() => {
