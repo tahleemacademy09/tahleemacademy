@@ -158,11 +158,8 @@ const StudentCourses = () => {
 
       {/* Courses grouped by subject - FILTERED BY STUDENT LEVEL */}
       {(subjects || []).map((subject: any) => {
-        // ✅ Only show courses matching student's level OR courses with no level restriction
-        const subjectCourses = (courses || []).filter((c: any) => 
-          c.subject_id === subject.id && 
-          (!c.level || c.level.toLowerCase() === studentLevel?.toLowerCase())
-        );
+        // ✅ Show ALL published courses for this subject — no level restriction
+        const subjectCourses = (courses || []).filter((c: any) => c.subject_id === subject.id);
         
         if (subjectCourses.length === 0) return null;
 
@@ -299,12 +296,9 @@ const StudentCourses = () => {
         );
       })}
 
-      {/* Empty state - when no courses match student's level */}
-      {(subjects || []).every((s: any) => 
-        (courses || []).filter((c: any) => 
-          c.subject_id === s.id && 
-          (!c.level || c.level.toLowerCase() === studentLevel?.toLowerCase())
-        ).length === 0
+      {/* Empty state - when no courses exist */}
+      {(subjects || []).every((s: any) =>
+        (courses || []).filter((c: any) => c.subject_id === s.id).length === 0
       ) && (
         <div className="text-center py-16">
           <BookOpen className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
@@ -312,10 +306,10 @@ const StudentCourses = () => {
             className="text-lg font-semibold"
             style={{ fontFamily: ARABIC_FONT }}
           >
-            {language === "ar" ? "لا توجد دورات متاحة لمستواك" : "No courses available for your level"}
+            {language === "ar" ? "لا توجد دورات متاحة حالياً" : "No courses available yet"}
           </h3>
           <p className="text-sm text-muted-foreground">
-            {language === "ar" ? "أكمل مستواك الحالي لفتح المزيد!" : "Complete your current level to unlock more!"}
+            {language === "ar" ? "ترقّب المزيد من الدورات قريباً!" : "Check back soon for new courses!"}
           </p>
         </div>
       )}
