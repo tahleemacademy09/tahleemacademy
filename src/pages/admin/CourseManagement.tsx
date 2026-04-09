@@ -40,7 +40,9 @@ const lvlCfg: Record<Level,{label:string;bg:string;text:string;border:string}> =
   advanced:     {label:"Advanced",     bg:"#FDF4FF",text:"#6B21A8",border:"#D8B4FE"},
 };
 
-const weekPalette = [
+// Safe lookup — comma-separated or unknown levels fall back to "all"
+const safeLvl = (level?: string | null) =>
+  lvlCfg[(level as Level)] ?? lvlCfg["all"];
   {bg:"#EFF6FF",border:"#BFDBFE",badge:"#1D4ED8"},
   {bg:"#F0FDF4",border:"#BBF7D0",badge:"#15803D"},
   {bg:"#FDF4FF",border:"#E9D5FF",badge:"#7C3AED"},
@@ -793,7 +795,7 @@ export default function CourseManagement() {
               {fSubjects.length === 0 && <div style={{ textAlign: "center", padding: 40, color: "#9CA3AF" }}><BookOpen size={48} style={{ margin: "0 auto 12px", display: "block" }} /><p>No subjects in this course yet.</p></div>}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))", gap: 14, marginBottom: 20 }}>
                 {fSubjects.map((s: any) => {
-                  const lv = lvlCfg[(s.level as Level) || "all"];
+                  const lv = safeLvl(s.level);
                   return (
                     <div key={s.id} className="chov" style={{ background: "#fff", borderRadius: 16, border: `1px solid ${lv.border}`, overflow: "hidden" }}>
                       <div style={{ position: "relative" }}>
@@ -837,15 +839,15 @@ export default function CourseManagement() {
         {view === "content" && selSubject && (
           <div style={{ maxWidth: 720, margin: "0 auto" }}>
             {/* Subject banner */}
-            <div style={{ background: "#fff", borderRadius: 16, border: `1px solid ${lvlCfg[(selSubject.level as Level) || "all"].border}`, padding: "16px 20px", marginBottom: 20, display: "flex", alignItems: "center", gap: 14 }}>
+            <div style={{ background: "#fff", borderRadius: 16, border: `1px solid ${safeLvl(selSubject.level).border}`, padding: "16px 20px", marginBottom: 20, display: "flex", alignItems: "center", gap: 14 }}>
               {selSubject.image_url && <img src={selSubject.image_url} alt="" style={{ width: 52, height: 52, borderRadius: 12, objectFit: "cover", flexShrink: 0 }} onError={e => { (e.target as any).style.display = "none"; }} />}
               <div style={{ flex: 1, minWidth: 0 }}>
                 <p style={{ fontWeight: 800, fontSize: 15, color: "#111", margin: "0 0 2px" }}>{selSubject.title}</p>
                 {selSubject.title_ar && <p style={{ fontWeight: 600, fontSize: 12, color: GOLD, margin: "0 0 3px", direction: "rtl", fontFamily: "'Amiri',serif" }}>{selSubject.title_ar}</p>}
                 {selSubject.description && <p style={{ fontSize: 12, color: "#9CA3AF", margin: 0, lineHeight: 1.4 }}>{selSubject.description}</p>}
               </div>
-              <span style={{ flexShrink: 0, padding: "4px 12px", borderRadius: 20, fontSize: 11, fontWeight: 700, background: lvlCfg[(selSubject.level as Level) || "all"].bg, color: lvlCfg[(selSubject.level as Level) || "all"].text, border: `1px solid ${lvlCfg[(selSubject.level as Level) || "all"].border}` }}>
-                {lvlCfg[(selSubject.level as Level) || "all"].label}
+              <span style={{ flexShrink: 0, padding: "4px 12px", borderRadius: 20, fontSize: 11, fontWeight: 700, background: safeLvl(selSubject.level).bg, color: safeLvl(selSubject.level).text, border: `1px solid ${safeLvl(selSubject.level).border}` }}>
+                {safeLvl(selSubject.level).label}
               </span>
             </div>
 
