@@ -291,7 +291,7 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
               </Card>
             </>
           ) : (
-            /* Student pre-class view — can join early */
+            /* Student waiting view */
             <Card className="bg-primary-foreground/5 border-primary-foreground/10">
               <CardContent className="p-6 text-center space-y-4">
                 {isLive ? (
@@ -310,20 +310,26 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
                   </>
                 ) : (
                   <>
-                    <div className="h-16 w-16 rounded-full bg-secondary/20 flex items-center justify-center mx-auto">
-                      <Monitor className="h-8 w-8 text-secondary" />
+                    <div className="flex items-center justify-center gap-1">
+                      {[0, 1, 2].map(i => (
+                        <div
+                          key={i}
+                          className="h-2 w-2 rounded-full bg-secondary animate-pulse"
+                          style={{ animationDelay: `${i * 0.3}s` }}
+                        />
+                      ))}
                     </div>
                     <div>
                       <p className="text-primary-foreground font-semibold">
-                        {t("You can join early!", "يمكنك الانضمام مبكراً!")}
+                        {t("Class not started yet — you can join early!", "الحصة لم تبدأ بعد — يمكنك الدخول مبكراً!")}
                       </p>
-                      <p className="text-primary-foreground/50 text-sm mt-1">
-                        {t("Enter the classroom and wait — teacher will start soon.", "ادخل الفصل وانتظر — سيبدأ المعلم قريباً.")}
+                      <p className="text-primary-foreground/50 text-sm font-arabic mt-1" dir="rtl">
+                        انضم مبكراً وانتظر داخل الفصل
                       </p>
                     </div>
                     {waitingStudents.length > 0 && (
                       <div className="text-primary-foreground/40 text-sm">
-                        {waitingStudents.length} {t("students already inside", "طلاب داخل الفصل")}
+                        {waitingStudents.length} {t("already inside", "داخل الفصل بالفعل")}
                       </div>
                     )}
                   </>
@@ -338,7 +344,7 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
         </div>
       </div>
 
-          {/* Bottom: Start/Join Button */}
+      {/* Bottom: Start/Join Button */}
       <div className="p-4 bg-primary border-t border-primary-foreground/10">
         <div className="max-w-md mx-auto">
           {isPrivileged ? (
@@ -352,8 +358,7 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
                 {t("START LIVE CLASS NOW", "ابدأ الدرس المباشر")}
               </span>
             </Button>
-          ) : (
-            /* Students can always join — no waiting gate */
+          ) : isLive ? (
             <Button
               size="lg"
               className="w-full h-14 bg-secondary text-secondary-foreground hover:bg-secondary/90 text-lg font-bold gap-3"
@@ -361,6 +366,16 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
             >
               <Video className="h-5 w-5" />
               {t("JOIN CLASS", "انضم للفصل")}
+            </Button>
+          ) : (
+            // Students can join before teacher — they enter the room and wait inside
+            <Button
+              size="lg"
+              className="w-full h-14 bg-secondary text-secondary-foreground hover:bg-secondary/90 text-lg font-bold gap-3"
+              onClick={handleJoin}
+            >
+              <Video className="h-5 w-5" />
+              {t("JOIN CLASS NOW", "انضم الآن")}
             </Button>
           )}
         </div>
