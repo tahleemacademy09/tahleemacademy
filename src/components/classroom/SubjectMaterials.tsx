@@ -1,17 +1,11 @@
 // src/components/classroom/SubjectMaterials.tsx
 // ─────────────────────────────────────────────────────────────────────────────
-// Shared component used by:
-//   - Admin: CourseManagement (materials tab), LiveClassManagement
-//   - Student: LearningHub, LiveClasses, public/LiveClasses
+// Shared component for managing subject materials (PDFs, videos, audio, images)
+// DB columns used (EXACT match with tahleem_full_restore.sql):
+//   subject_id, title, title_ar, description, material_type, content,
+//   file_url, file_size, level, sort_order, is_downloadable, uploaded_by
 //
-// DB columns used (exact match with types.ts / subject_materials table):
-//   subject_id, title, file_url, uploaded_by, material_type, file_type,
-//   file_size, content, is_downloadable, sort_order, level, topic
-//
-// NOTE on "level": stored as comma-separated TEXT ("beginner,intermediate")
-//   or "all" when all three are selected. Parsed on read with parseLevels().
-//
-// Storage bucket: subject-files (private — uses signed URLs for download)
+// Storage bucket: subject-materials (must exist in Supabase Storage)
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useState, useRef, useCallback, useEffect } from "react";
@@ -53,8 +47,7 @@ const MAT_CFG: Record<MatType, { icon: React.ElementType; bg: string; text: stri
 
 const LVL_CFG: Record<Level, { label: string; bg: string; text: string; border: string }> = {
   beginner:     { label: "Beginner",     bg: "#F0FDF4", text: "#166534", border: "#86EFAC" },
-  intermediate: { label: "Intermediate", bg: "#EFF6FF", text: "#1E40AF", border: "#93C5FD" },
-  advanced:     { label: "Advanced",     bg: "#FDF4FF", text: "#6B21A8", border: "#D8B4FE" },
+  intermediate: { label: "Intermediate", bg: "#EFF6FF", text: "#1E40AF", border: "#93C5FD" },  advanced:     { label: "Advanced",     bg: "#FDF4FF", text: "#6B21A8", border: "#D8B4FE" },
 };
 
 const ACCEPT: Record<MatType, string> = {
@@ -93,18 +86,17 @@ function parseLevels(raw?: string | null): Set<Level> {
   );
 }
 
-/** Encode Set<Level> → DB string */
+/** Encode Set<Level> → DB string (matches SQL: level TEXT DEFAULT 'beginner') */
 function encodeLevels(sel: Set<Level>): string {
-  if (sel.size === 0) return "all";
+  if (sel.size === 0) return "beginner";
   if (sel.size === 3) return "all";
   return [...sel].join(",");
 }
 
 async function getSignedUrl(path: string): Promise<string | null> {
   if (path.startsWith("http")) return path;
-  const { data } = await supabase.storage.from("subject-files").createSignedUrl(path, 3600);
-  return data?.signedUrl || null;
-}
+  const { data } = await supabase.storage.from("subject-materials").createSignedUrl(path, 3600);
+  return data?.signedUrl || null;}
 
 // ── Input style ────────────────────────────────────────────────────────────
 const inp: React.CSSProperties = {
@@ -130,6 +122,7 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
   const [f, setF] = useState({
     title:          ed?.title          || "",
     title_ar:       ed?.title_ar       || "",
+    description:    ed?.description    || "",  // ✅ Added: matches SQL schema
     material_type:  (ed?.material_type || "PDF") as MatType,
     content:        ed?.content        || "",
     file_url:       ed?.file_url       || "",
@@ -152,8 +145,7 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
   const Icon    = cfg.icon;
   const needFile = !["Link", "Text"].includes(f.material_type);
   const needUrl  = f.material_type === "Link";
-  const needText = f.material_type === "Text";
-  const busy     = phase === "uploading" || phase === "saving";
+  const needText = f.material_type === "Text";  const busy     = phase === "uploading" || phase === "saving";
 
   const pickFile = useCallback((picked: File) => {
     const detected = autoDetectType(picked);
@@ -197,46 +189,40 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
 
     try {
       let fileUrl  = f.file_url.trim();
-      let fileType = "";
       let fileSize = 0;
 
       if (needFile && file) {
         const ext  = file.name.split(".").pop() || "bin";
         const path = `materials/${subjectId}/${crypto.randomUUID()}.${ext}`;
-        setPct(50);
+        setPct(50);        
+        // ✅ CORRECT BUCKET NAME: subject-materials (matches our setup)
         const { error: upErr } = await supabase.storage
-          .from("subject-files")
+          .from("subject-materials")
           .upload(path, file, { cacheControl: "3600", upsert: false });
+        
         if (upErr) throw new Error("Storage: " + upErr.message);
         fileUrl  = path;
-        fileType = file.type;
         fileSize = file.size;
       }
 
       setPct(90); setPhase("saving");
 
-      // Only columns that exist in the DB schema
+      // ✅ PAYLOAD MATCHES SQL SCHEMA EXACTLY (subject_materials table)
       const payload: any = {
-        subject_id:     subjectId,
-        title:          f.title.trim(),
-        material_type:  f.material_type,
-        file_url:       fileUrl || null,
-        content:        needText ? f.content.trim() : null,
+        subject_id:      subjectId,
+        title:           f.title.trim(),
+        title_ar:        f.title_ar.trim() || null,
+        description:     f.description?.trim() || null,  // ✅ Added: exists in SQL
+        material_type:   f.material_type,                 // ✅ Correct column (NOT file_type)
+        content:         needText ? f.content.trim() : null,
+        file_url:        fileUrl || null,
+        file_size:       fileSize || null,
+        level:           encodeLevels(selectedLevels),    // ✅ Stored as TEXT: "beginner" or "all"
+        sort_order:      f.sort_order,
         is_downloadable: f.is_downloadable,
-        sort_order:     f.sort_order,
-        level:          encodeLevels(selectedLevels),
-        ...(fileType ? { file_type: fileType } : {}),
-        ...(fileSize ? { file_size: fileSize } : {}),
+        uploaded_by:     !ed?.id && user ? user.id : undefined,
+        // ❌ REMOVED: file_type (does NOT exist in SQL schema)
       };
-
-      // title_ar — only include if it exists in DB (added via SQL migration)
-      // Safe to always include — Supabase will ignore unknown cols IF using
-      // the JS client's auto-trim, but to be safe we check ed?.title_ar existence
-      if (f.title_ar.trim()) {
-        payload.title_ar = f.title_ar.trim();
-      }
-
-      if (!ed?.id && user) payload.uploaded_by = user.id;
 
       const { error: dbErr } = ed?.id
         ? await supabase.from("subject_materials").update(payload).eq("id", ed.id)
@@ -257,8 +243,7 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
   return (
     <div
       style={{
-        position: "fixed", inset: 0, zIndex: 50,
-        background: "rgba(0,0,0,.6)",
+        position: "fixed", inset: 0, zIndex: 50,        background: "rgba(0,0,0,.6)",
         display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
       }}
       onClick={e => { if (e.target === e.currentTarget && !busy) onClose(); }}
@@ -307,8 +292,7 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
                 const Ic  = c.icon;
                 const sel = f.material_type === mt;
                 return (
-                  <button key={mt} type="button" disabled={busy}
-                    onClick={() => setF(x => ({ ...x, material_type: mt }))}
+                  <button key={mt} type="button" disabled={busy}                    onClick={() => setF(x => ({ ...x, material_type: mt }))}
                     style={{
                       display: "flex", alignItems: "center", gap: 5,
                       padding: "6px 11px", borderRadius: 20, fontSize: 11, fontWeight: sel ? 800 : 500,
@@ -357,8 +341,7 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
                   cursor: busy ? "not-allowed" : "pointer",
                   transition: "all .2s",
                   minHeight: file && preview ? "auto" : 130,
-                  display: "flex", flexDirection: "column",
-                  alignItems: "center", justifyContent: "center",
+                  display: "flex", flexDirection: "column",                  alignItems: "center", justifyContent: "center",
                   padding: 16, textAlign: "center", position: "relative",
                 }}
               >
@@ -407,8 +390,7 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
                       Remove file
                     </button>
                   </div>
-                ) : (
-                  /* Empty state */
+                ) : (                  /* Empty state */
                   <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10, color: "#9CA3AF" }}>
                     <div style={{
                       width: 52, height: 52, borderRadius: 14,
@@ -457,8 +439,7 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
                 onChange={e => { setF(x => ({ ...x, file_url: e.target.value })); setErr(""); }}
                 placeholder="https://…" style={inp}
               />
-            </div>
-          )}
+            </div>          )}
 
           {/* Text content mode */}
           {needText && (
@@ -497,6 +478,18 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
                 dir="rtl" style={{ ...inp, fontFamily: "'Amiri', serif" }}
               />
             </div>
+          </div>
+
+          {/* ── DESCRIPTION (matches SQL schema) ─────────────────────── */}
+          <div>
+            <label style={{ fontSize: 11, fontWeight: 700, color: "#374151", display: "block", marginBottom: 5 }}>
+              DESCRIPTION
+            </label>
+            <textarea
+              value={f.description} disabled={busy} rows={2}
+              onChange={e => setF(x => ({ ...x, description: e.target.value }))}
+              placeholder="Brief description of this material..."              style={{ ...inp, resize: "vertical", fontFamily: "inherit" }}
+            />
           </div>
 
           {/* ── LEVELS ──────────────────────────────────────────────── */}
@@ -544,8 +537,7 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
 
           {/* ── OPTIONS ROW ─────────────────────────────────────────── */}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", borderRadius: 12, background: "#F9FAFB", border: "1px solid #E5E7EB" }}>
-            <div>
-              <p style={{ fontWeight: 700, fontSize: 13, color: "#374151", margin: 0 }}>Allow Download</p>
+            <div>              <p style={{ fontWeight: 700, fontSize: 13, color: "#374151", margin: 0 }}>Allow Download</p>
               <p style={{ fontSize: 11, color: "#9CA3AF", margin: "2px 0 0" }}>Students can download this file</p>
             </div>
             <Switch
@@ -594,8 +586,7 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
                 flex: 2, padding: "12px", borderRadius: 12, border: "none",
                 background: busy || phase === "done" || !f.title || selectedLevels.size === 0
                   ? "#E5E7EB"
-                  : `linear-gradient(135deg, ${G}, ${GM})`,
-                color: busy || phase === "done" || !f.title || selectedLevels.size === 0
+                  : `linear-gradient(135deg, ${G}, ${GM})`,                color: busy || phase === "done" || !f.title || selectedLevels.size === 0
                   ? "#9CA3AF" : "#fff",
                 fontSize: 13, fontWeight: 800, cursor: "pointer",
                 display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
@@ -629,7 +620,7 @@ function MaterialCard({
   const Icon = cfg.icon;
 
   const levels    = parseLevels(m.level);
-  const isImg     = m.material_type === "Image" || m.file_type?.startsWith("image/");
+  const isImg     = m.material_type === "Image" || (m.file_url?.match(/\.(jpg|jpeg|png|gif|webp)$/i) && !m.file_url.startsWith("http"));
   const isText    = m.material_type === "Text";
   const isLink    = m.material_type === "Link";
   const [expanded, setExpanded] = useState(false);
@@ -644,8 +635,7 @@ function MaterialCard({
 
   return (
     <div style={{
-      background: "#fff", borderRadius: 16,
-      border: `1px solid ${cfg.border}`,
+      background: "#fff", borderRadius: 16,      border: `1px solid ${cfg.border}`,
       overflow: "hidden", transition: "box-shadow .18s",
     }}>
       {/* Main row */}
@@ -675,6 +665,11 @@ function MaterialCard({
               {m.title_ar}
             </p>
           )}
+          {m.description && (
+            <p style={{ fontSize: 11, color: "#6B7280", margin: "0 0 4px", fontStyle: "italic" }}>
+              {m.description}
+            </p>
+          )}
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
             <span style={{
               padding: "2px 8px", borderRadius: 20, fontSize: 10, fontWeight: 700,
@@ -689,8 +684,7 @@ function MaterialCard({
                 border: `1px solid ${LVL_CFG[lv].border}`,
               }}>
                 {LVL_CFG[lv].label}
-              </span>
-            ))}
+              </span>            ))}
             {m.file_size && (
               <span style={{ fontSize: 10, color: "#9CA3AF" }}>{fmtSize(m.file_size)}</span>
             )}
@@ -739,8 +733,7 @@ function MaterialCard({
             <>
               <button
                 type="button" onClick={onEdit}
-                style={{
-                  width: 34, height: 34, borderRadius: 10,
+                style={{                  width: 34, height: 34, borderRadius: 10,
                   border: "1px solid #E5E7EB", background: "#fff",
                   cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
                 }}
@@ -789,7 +782,6 @@ export default function SubjectMaterials({ subjectId, subjectTitle }: SubjectMat
   const { user, hasRole } = useAuth();
   const { t } = useLanguage();
   const qc = useQueryClient();
-
   const isPrivileged = hasRole("admin") || hasRole("teacher");
 
   const [showModal, setShowModal] = useState(false);
@@ -818,7 +810,7 @@ export default function SubjectMaterials({ subjectId, subjectTitle }: SubjectMat
     try {
       // Remove from storage if it's a relative path (not a URL)
       if (m.file_url && !m.file_url.startsWith("http")) {
-        await supabase.storage.from("subject-files").remove([m.file_url]);
+        await supabase.storage.from("subject-materials").remove([m.file_url]);
       }
       const { error } = await supabase.from("subject_materials").delete().eq("id", m.id);
       if (error) throw error;
@@ -839,8 +831,7 @@ export default function SubjectMaterials({ subjectId, subjectTitle }: SubjectMat
   });
 
   // ── Loading skeleton ─────────────────────────────────────────────────
-  if (isLoading) {
-    return (
+  if (isLoading) {    return (
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {[1, 2, 3].map(i => (
           <div key={i} style={{
@@ -889,8 +880,7 @@ export default function SubjectMaterials({ subjectId, subjectTitle }: SubjectMat
             type="button"
             onClick={() => { setEditing(null); setShowModal(true); }}
             style={{
-              display: "flex", alignItems: "center", gap: 6,
-              padding: "9px 16px", borderRadius: 10, border: "none",
+              display: "flex", alignItems: "center", gap: 6,              padding: "9px 16px", borderRadius: 10, border: "none",
               background: `linear-gradient(135deg, ${G}, ${GM})`,
               color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer",
               whiteSpace: "nowrap",
@@ -939,8 +929,7 @@ export default function SubjectMaterials({ subjectId, subjectTitle }: SubjectMat
               ? t("No matching materials", "لا توجد مواد مطابقة")
               : t("No materials yet", "لا توجد مواد بعد")}
           </p>
-          <p style={{ fontSize: 12, color: "#9CA3AF", margin: 0 }}>
-            {isPrivileged && !search && typeFilter === "all"
+          <p style={{ fontSize: 12, color: "#9CA3AF", margin: 0 }}>            {isPrivileged && !search && typeFilter === "all"
               ? t("Click 'Upload' to add the first material", "اضغط 'رفع مادة' لإضافة أول مادة")
               : t("Try changing your search or filter", "جرب تغيير البحث أو المرشح")}
           </p>
