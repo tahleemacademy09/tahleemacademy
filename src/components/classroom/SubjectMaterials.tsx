@@ -120,13 +120,22 @@ function PreviewOverlay({ url, type, title, onClose }: {
   const isVid  = type === "Video"  || /\.(mp4|webm|mov|m4v|avi)$/i.test(url);
   const isAud  = type === "Audio"  || /\.(mp3|wav|m4a|aac|ogg|flac)$/i.test(url);
 
+  // Prevent the same click that opens the overlay from immediately closing it.
+  // React portals bubble events through the React tree — the Eye button click
+  // reaches this backdrop and fires onClose in the same event cycle.
+  const gateRef = useRef(true);
+  useEffect(() => {
+    const t = setTimeout(() => { gateRef.current = false; }, 80);
+    return () => clearTimeout(t);
+  }, []);
+
   return createPortal(
     <div
       style={{
         position: "fixed", inset: 0, zIndex: 9999,
         background: "rgba(0,0,0,.88)", display: "flex", flexDirection: "column",
       }}
-      onClick={onClose}
+      onClick={() => { if (!gateRef.current) onClose(); }}
     >
       {/* Header */}
       <div
@@ -144,7 +153,7 @@ function PreviewOverlay({ url, type, title, onClose }: {
           Download
         </a>
         <button
-          onClick={onClose}
+          onClick={(e) => { e.stopPropagation(); onClose(); }}
           style={{
             width: 36, height: 36, borderRadius: "50%",
             background: "rgba(239,68,68,.25)", border: "1.5px solid rgba(239,68,68,.6)",
@@ -413,11 +422,14 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
       }}
       onClick={e => { if (e.target === e.currentTarget && !busy) onClose(); }}
     >
-      <div style={{
-        background: "#fff", borderRadius: 20, width: "100%", maxWidth: 580,
-        maxHeight: "94vh", overflowY: "auto",
-        boxShadow: "0 20px 60px rgba(0,0,0,.35)",
-      }}>
+      <div
+        style={{
+          background: "#fff", borderRadius: 20, width: "100%", maxWidth: 580,
+          maxHeight: "94vh", overflowY: "auto",
+          boxShadow: "0 20px 60px rgba(0,0,0,.35)",
+        }}
+        onClick={e => e.stopPropagation()}
+      >
         {/* ── Header ── */}
         <div style={{
           padding: "16px 20px", borderBottom: "1px solid #E5E7EB",
@@ -490,7 +502,7 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
                 type="file"
                 accept={ACCEPT[f.material_type] || "*/*"}
                 disabled={busy}
-                style={{ position: "absolute", width: 1, height: 1, opacity: 0, overflow: "hidden" }}
+                style={{ position: "fixed", left: "-9999px", top: "-9999px", width: 1, height: 1, opacity: 0 }}
                 onChange={e => { const fi = e.target.files?.[0]; if (fi) pickFile(fi); }}
               />
 
@@ -504,12 +516,15 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
                 />
               ) : (
                 /* Empty drop zone */
-                <label
-                  htmlFor={busy ? undefined : "sm-file-input"}
-                  onDragOver={e => { e.preventDefault(); setIsDragOver(true); }}
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={(e) => { e.stopPropagation(); if (!busy) fileRef.current?.click(); }}
+                  onKeyDown={e => { if (e.key === "Enter" || e.key === " ") fileRef.current?.click(); }}
+                  onDragOver={e => { e.preventDefault(); e.stopPropagation(); setIsDragOver(true); }}
                   onDragLeave={() => setIsDragOver(false)}
                   onDrop={e => {
-                    e.preventDefault(); setIsDragOver(false);
+                    e.preventDefault(); e.stopPropagation(); setIsDragOver(false);
                     const fi = e.dataTransfer.files?.[0]; if (fi) pickFile(fi);
                   }}
                   style={{
@@ -540,7 +555,7 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
                      f.material_type === "Document" ? "Word, Excel, PowerPoint, ODT, CSV, RTF" :
                      "Any file type"}
                   </p>
-                </label>
+                </div>
               )}
 
               {/* URL fallback */}
@@ -806,7 +821,7 @@ function MaterialCard({
             {!isText && (
               <button
                 type="button"
-                onClick={handlePreview}
+                onClick={(e) => { e.stopPropagation(); handlePreview(); }}
                 title="Preview"
                 style={{
                   width: 34, height: 34, borderRadius: 10,
