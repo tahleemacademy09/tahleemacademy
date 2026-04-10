@@ -11,7 +11,7 @@ import {
   Users, UserCheck, BookOpen, Video, FileText, ClipboardList,
   Clock, BarChart, CheckSquare, Calendar, ChevronRight,
   Mic, GraduationCap, MessageSquare, Radio, Trophy, Star,
-  AlertTriangle, CheckCircle, XCircle, Bell, TrendingUp,
+  AlertTriangle, CheckCircle, XCircle, Bell, TrendingUp, Megaphone,
 } from "lucide-react";
 
 // ── Theme ──────────────────────────────────────────────────────────────────
