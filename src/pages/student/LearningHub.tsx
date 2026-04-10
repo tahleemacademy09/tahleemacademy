@@ -306,12 +306,15 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
         {minimized && (
           <>
             <style>{`@keyframes lhPulse{0%,100%{opacity:1}50%{opacity:.35}}`}</style>
-            <div style={{ position:"fixed", bottom:20, left:"50%", transform:"translateX(-50%)", background:"rgba(8,25,15,.97)", border:"1px solid rgba(201,168,76,.4)", borderRadius:50, padding:"11px 20px", display:"flex", alignItems:"center", gap:12, zIndex:9999, boxShadow:"0 6px 32px rgba(0,0,0,.7)", minWidth:260, maxWidth:"90vw", fontFamily:"'Cairo',sans-serif" }}>
-              <span style={{ width:8, height:8, borderRadius:"50%", background:"#ef4444", flexShrink:0, animation:"lhPulse 1.4s ease-in-out infinite" }}/>
-              <span style={{ color:"#fff", fontSize:13, fontWeight:700, flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{selectedSubject.title}</span>
-              <button onClick={() => setMinimized(false)} style={{ width:34, height:34, borderRadius:"50%", background:GOLD, border:"none", display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer", flexShrink:0, fontSize:16, color:G }}>⤢</button>
-              <button onClick={() => { setInClass(false); setMinimized(false); }} style={{ width:34, height:34, borderRadius:"50%", background:"rgba(239,68,68,.22)", border:"1px solid rgba(239,68,68,.5)", display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer", flexShrink:0 }}>
-                <span style={{ color:"#ef4444", fontSize:18, lineHeight:1 }}>✕</span>
+            <div style={{ position:"fixed", bottom:24, right:20, display:"flex", alignItems:"center", gap:8, zIndex:99999 }}>
+              <span style={{ width:10, height:10, borderRadius:"50%", background:"#ef4444", display:"block", animation:"lhPulse 1.4s ease-in-out infinite", boxShadow:"0 0 8px #ef4444" }}/>
+              <button onClick={() => setMinimized(false)} title="Return to class"
+                style={{ width:44, height:44, borderRadius:"50%", background:"#075E54", border:"2px solid rgba(255,255,255,.25)", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", boxShadow:"0 4px 16px rgba(0,0,0,.45)" }}>
+                <Video style={{ width:20, height:20, color:"#fff" }}/>
+              </button>
+              <button onClick={() => { setInClass(false); setMinimized(false); }} title="Leave class"
+                style={{ width:44, height:44, borderRadius:"50%", background:"#ef4444", border:"2px solid rgba(255,255,255,.25)", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", boxShadow:"0 4px 16px rgba(239,68,68,.5)" }}>
+                <span style={{ color:"#fff", fontSize:20, lineHeight:1 }}>✕</span>
               </button>
             </div>
           </>
