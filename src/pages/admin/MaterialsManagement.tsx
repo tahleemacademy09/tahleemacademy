@@ -29,7 +29,7 @@ export default function MaterialsManagement() {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
 
-  // Form State - matches SQL schema exactly
+  // Form State - matches SQL schema exactly for subject_materials table
   const [formData, setFormData] = useState({
     title: "",
     title_ar: "",
@@ -41,13 +41,14 @@ export default function MaterialsManagement() {
     level: "beginner" as Level,
     sort_order: 0,
     is_downloadable: true,
+    session_id: null as string | null, // Optional field from SQL schema
   });
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<{ type: "success" | "error" | ""; message: string }>({ type: "", message: "" });
-
-  // ── Fetch Materials ─────────────────────────────────────────────────────  useEffect(() => {
+  // ── Fetch Materials ─────────────────────────────────────────────────────
+  useEffect(() => {
     if (subjectId) fetchMaterials();
   }, [subjectId]);
 
@@ -73,7 +74,7 @@ export default function MaterialsManagement() {
     const mimeType = file.type.toLowerCase();
     const fileName = file.name.toLowerCase();
     
-    // Check MIME type first
+    // Check MIME type first, then fallback to extension
     if (mimeType === "application/pdf" || mimeType.includes("pdf") || fileName.endsWith(".pdf")) return "PDF";
     if (mimeType.startsWith("video/") || fileName.match(/\.(mp4|webm|mov|avi)$/)) return "Video";
     if (mimeType.startsWith("audio/") || fileName.match(/\.(mp3|wav|ogg|m4a)$/)) return "Audio";
@@ -95,8 +96,8 @@ export default function MaterialsManagement() {
   };
 
   const processFile = (file: File) => {
-    // Validate file size (50MB limit)
-    const maxSize = 50 * 1024 * 1024;    if (file.size > maxSize) {
+    // Validate file size (50MB limit)    const maxSize = 50 * 1024 * 1024;
+    if (file.size > maxSize) {
       setFeedback({
         type: "error",
         message: `File too large. Maximum size is 50MB. Your file is ${(file.size / 1024 / 1024).toFixed(1)}MB.`,
@@ -134,6 +135,7 @@ export default function MaterialsManagement() {
       title: "", title_ar: "", description: "",
       material_type: "PDF", content: "", file_url: "", file_size: 0,
       level: "beginner", sort_order: 0, is_downloadable: true,
+      session_id: null,
     });
     setSelectedFile(null);
     setPreviewUrl(null);
@@ -143,9 +145,9 @@ export default function MaterialsManagement() {
   };
 
   // ── Upload Logic ────────────────────────────────────────────────────────
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (e: React.FormEvent) => {    e.preventDefault();
     if (!subjectId || !user) return;
+
     setUploading(true);
     setFeedback({ type: "", message: "" });
 
@@ -192,13 +194,14 @@ export default function MaterialsManagement() {
         title: formData.title,
         title_ar: formData.title_ar,
         description: formData.description,
-        material_type: formData.material_type,  // ✅ Correct column name
-        content: formData.content,
-        file_url: finalFileUrl,        file_size: formData.file_size,
-        level: formData.level,                   // ✅ Single level (TEXT), not array
+        material_type: formData.material_type,  // ✅ Correct column name (not file_type)        content: formData.content,
+        file_url: finalFileUrl,
+        file_size: formData.file_size,
+        level: formData.level,                   // ✅ Single level TEXT column
         sort_order: formData.sort_order,
         is_downloadable: formData.is_downloadable,
-        uploaded_by: user.id,
+        uploaded_by: user.id,                    // ✅ Required by schema
+        session_id: formData.session_id,         // ✅ Optional field
       };
 
       let error;
@@ -240,10 +243,11 @@ export default function MaterialsManagement() {
       description: material.description,
       material_type: material.material_type,
       content: material.content,
-      file_url: material.file_url,
-      file_size: material.file_size,
+      file_url: material.file_url,      file_size: material.file_size,
       level: material.level,
-      sort_order: material.sort_order,      is_downloadable: material.is_downloadable,
+      sort_order: material.sort_order,
+      is_downloadable: material.is_downloadable,
+      session_id: material.session_id,
     });
     setEditingId(material.id);
     setShowForm(true);
@@ -288,11 +292,11 @@ export default function MaterialsManagement() {
       <div className="flex items-center justify-center min-h-[400px]">
         <Loader2 className="w-8 h-8 animate-spin text-emerald-600" />
       </div>
-    );
-  }
+    );  }
 
   return (
-    <div className="space-y-6">      {/* Header */}
+    <div className="space-y-6">
+      {/* Header */}
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-2xl font-bold">Subject Materials</h1>
@@ -337,11 +341,11 @@ export default function MaterialsManagement() {
                   
                   {previewUrl ? (
                     <div className="relative">
-                      <img src={previewUrl} alt="Preview" className="max-h-48 mx-auto rounded-md shadow-sm object-contain" />
-                      <button
+                      <img src={previewUrl} alt="Preview" className="max-h-48 mx-auto rounded-md shadow-sm object-contain" />                      <button
                         type="button"
                         onClick={(e) => { e.stopPropagation(); clearFile(); }}
-                        className="absolute -top-2 -right-2 bg-red-500 text-white p-1 rounded-full shadow-sm hover:bg-red-600"                      >
+                        className="absolute -top-2 -right-2 bg-red-500 text-white p-1 rounded-full shadow-sm hover:bg-red-600"
+                      >
                         <X className="h-3 w-3" />
                       </button>
                       <p className="mt-2 text-sm font-medium text-green-600">Image Selected</p>
@@ -386,11 +390,11 @@ export default function MaterialsManagement() {
                 <Label>Description</Label>
                 <Textarea value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} />
               </div>
-
               {/* Type & Level */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label>Type</Label>                  <Select value={formData.material_type} onValueChange={(val: any) => setFormData({...formData, material_type: val})}>
+                  <Label>Type</Label>
+                  <Select value={formData.material_type} onValueChange={(val: any) => setFormData({...formData, material_type: val})}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
                       {MATERIAL_TYPES.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
@@ -435,10 +439,10 @@ export default function MaterialsManagement() {
                   )}
                 </Button>
               </div>
-            </form>
-          </CardContent>
+            </form>          </CardContent>
         </Card>
       )}
+
       {/* Materials List */}
       <div className="grid gap-3">
         {materials.length === 0 ? (
