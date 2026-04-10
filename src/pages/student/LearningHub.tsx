@@ -11,7 +11,7 @@
     - Admins/teachers bypass all filters and see everything.
 */
 import { useState, useEffect } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -74,6 +74,7 @@ interface Props { defaultTab?: "courses" | "live"; }
 // ─────────────────────────────────────────────────────────────────────────────
 const LearningHub = ({ defaultTab = "courses" }: Props) => {
   const { courseId }               = useParams();
+  const [searchParams]             = useSearchParams();
   const { t, language }            = useLanguage();
   const { user, profile, hasRole } = useAuth();
   const navigate                   = useNavigate();
@@ -87,6 +88,7 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
   const [selectedSubject, setSelectedSubject] = useState<any | null>(null);
   const [subjectTab,      setSubjectTab]      = useState("lessons");
   const [inClass,         setInClass]         = useState(false);
+  const [minimized,       setMinimized]       = useState(false);
   const [viewMode,        setViewMode]        = useState<"list" | "grid">("grid");
   const [activeLesson,    setActiveLesson]    = useState<string | null>(null);
 
@@ -167,6 +169,26 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
     },
     refetchInterval: 5000,
   });
+
+  // All subjects — needed so ?subject=ID can find and open any subject directly
+  const { data: allSubjects } = useQuery({
+    queryKey: ["all-subjects-flat"],
+    queryFn: async () => {
+      const { data } = await supabase.from("subjects").select("*").eq("is_active", true);
+      return data || [];
+    },
+  });
+
+  // When navigated from timetable with ?subject=ID, auto-open that subject
+  useEffect(() => {
+    const subjectId = searchParams.get("subject");
+    if (!subjectId || !allSubjects?.length || selectedSubject) return;
+    const found = allSubjects.find((s: any) => s.id === subjectId);
+    if (found) {
+      setSelectedSubject(found);
+      setSubjectTab("lessons");
+    }
+  }, [allSubjects, searchParams]);
 
   // URL-based course detail (/student/courses/:courseId)
   const { data: urlCourse } = useQuery({
@@ -272,7 +294,30 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
   // LIVE CLASS
   // ═══════════════════════════════════════════════════════════════════════════
   if (inClass && selectedSubject) {
-    return <ClassroomView subject={selectedSubject} onLeave={() => setInClass(false)} />;
+    return (
+      <>
+        <div style={{ display: minimized ? "none" : "block" }}>
+          <ClassroomView
+            subject={selectedSubject}
+            onLeave={() => { setInClass(false); setMinimized(false); }}
+            onMinimize={() => setMinimized(true)}
+          />
+        </div>
+        {minimized && (
+          <>
+            <style>{`@keyframes lhPulse{0%,100%{opacity:1}50%{opacity:.35}}`}</style>
+            <div style={{ position:"fixed", bottom:20, left:"50%", transform:"translateX(-50%)", background:"rgba(8,25,15,.97)", border:"1px solid rgba(201,168,76,.4)", borderRadius:50, padding:"11px 20px", display:"flex", alignItems:"center", gap:12, zIndex:9999, boxShadow:"0 6px 32px rgba(0,0,0,.7)", minWidth:260, maxWidth:"90vw", fontFamily:"'Cairo',sans-serif" }}>
+              <span style={{ width:8, height:8, borderRadius:"50%", background:"#ef4444", flexShrink:0, animation:"lhPulse 1.4s ease-in-out infinite" }}/>
+              <span style={{ color:"#fff", fontSize:13, fontWeight:700, flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{selectedSubject.title}</span>
+              <button onClick={() => setMinimized(false)} style={{ width:34, height:34, borderRadius:"50%", background:GOLD, border:"none", display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer", flexShrink:0, fontSize:16, color:G }}>⤢</button>
+              <button onClick={() => { setInClass(false); setMinimized(false); }} style={{ width:34, height:34, borderRadius:"50%", background:"rgba(239,68,68,.22)", border:"1px solid rgba(239,68,68,.5)", display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer", flexShrink:0 }}>
+                <span style={{ color:"#ef4444", fontSize:18, lineHeight:1 }}>✕</span>
+              </button>
+            </div>
+          </>
+        )}
+      </>
+    );
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
