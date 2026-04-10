@@ -112,6 +112,11 @@ const TeacherRecordings      = lazy(() => import("./pages/teacher/TeacherRecordi
 const TeacherRecitation      = lazy(() => import("./pages/teacher/TeacherRecitation"));
 const TeacherTranscript      = lazy(() => import("./pages/teacher/TeacherTranscript"));
 const TeacherPrivateSessions = lazy(() => import("./pages/teacher/TeacherPrivateSessions"));
+const TeacherGrading         = lazy(() => import("./pages/teacher/TeacherGrading"));
+const TeacherTimetable       = lazy(() => import("./pages/teacher/TeacherTimetable"));
+const TeacherPublicClasses   = lazy(() => import("./pages/teacher/TeacherPublicClasses"));
+const TeacherHifdhReview     = lazy(() => import("./pages/teacher/TeacherHifdhReview"));
+const TeacherMajlis          = lazy(() => import("./pages/teacher/TeacherMajlis"));
 
 const queryClient = new QueryClient();
 
@@ -201,15 +206,21 @@ const App = () => (
                     <Route path="/teacher/private-students" element={<TeacherPrivateStudents />} />
                     <Route path="/teacher/subjects"         element={<TeacherSubjects />} />
                     <Route path="/teacher/classes"          element={<TeacherClasses />} />
+                    <Route path="/teacher/timetable"        element={<TeacherTimetable />} />
                     <Route path="/teacher/announcements"    element={<TeacherAnnouncements />} />
                     <Route path="/teacher/attendance"       element={<TeacherAttendance />} />
                     <Route path="/teacher/exams"            element={<TeacherExamsPage type="exam" />} />
+                    <Route path="/teacher/tests"            element={<TeacherExamsPage type="test" />} />
+                    <Route path="/teacher/grading"          element={<TeacherGrading />} />
                     <Route path="/teacher/results"          element={<TeacherResults />} />
                     <Route path="/teacher/settings"         element={<TeacherSettings />} />
                     <Route path="/teacher/recordings"       element={<TeacherRecordings />} />
                     <Route path="/teacher/recitation"       element={<TeacherRecitation />} />
                     <Route path="/teacher/transcripts"      element={<TeacherTranscript />} />
                     <Route path="/teacher/private-sessions" element={<TeacherPrivateSessions />} />
+                    <Route path="/teacher/public-classes"   element={<TeacherPublicClasses />} />
+                    <Route path="/teacher/hifdh"            element={<TeacherHifdhReview />} />
+                    <Route path="/teacher/majlis"           element={<TeacherMajlis />} />
                   </Route>
 
                   {/* ── Admin routes ── */}
