@@ -1,3 +1,4 @@
+
 /* src/pages/admin/ViewAsStudent.tsx
    Admin can VIEW a student's full profile AND navigate as if they ARE that student.
    Route: /admin/students/:userId/view
