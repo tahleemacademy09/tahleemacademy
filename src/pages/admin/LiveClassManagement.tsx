@@ -16,7 +16,7 @@ import {
   Plus, Trash2, Download, Calendar, Users, Clock, Edit, Video, Eye,
   BookOpen, FileText, ClipboardList, Megaphone, Play, Search,
   Radio, ChevronRight, Mic, CheckCircle, XCircle, AlertCircle,
-  ArrowLeft, Filter, MoreVertical,
+  ArrowLeft, Filter, MoreVertical, Phone,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
@@ -81,6 +81,7 @@ const LiveClassManagement = () => {
   const [showCreate,     setShowCreate]     = useState(false);
   const [editingSession, setEditingSession] = useState<any>(null);
   const [activeClassroom, setActiveClassroom] = useState<any>(null);
+  const [minimized,       setMinimized]       = useState(false);
   const [selectedSubjectId, setSelectedSubjectId] = useState<string | null>(null);
   const [attendanceView, setAttendanceView] = useState<any>(null);
   const [attendanceLogs, setAttendanceLogs] = useState<any[]>([]);
@@ -244,10 +245,48 @@ const LiveClassManagement = () => {
     a.download = "attendance.csv"; a.click();
   };
 
-  /* ── Active classroom takeover ── */
-  if (activeClassroom) {
-    return <ClassroomView subject={activeClassroom} onLeave={() => { setActiveClassroom(null); fetchData(); }}/>;
-  }
+  /* ── Active classroom — hidden when minimized, PiP strip shown instead ── */
+  const classroomEl = activeClassroom ? (
+    <>
+      <div style={{ display: minimized ? "none" : "block" }}>
+        <ClassroomView
+          subject={activeClassroom}
+          onLeave={() => { setActiveClassroom(null); setMinimized(false); fetchData(); }}
+          onMinimize={() => setMinimized(true)}
+        />
+      </div>
+
+      {/* Floating icon-only PiP — works even if user navigates away */}
+      {minimized && (
+        <div style={{
+          position: "fixed", bottom: 24, right: 20,
+          display: "flex", alignItems: "center", gap: 8,
+          zIndex: 99999,
+          fontFamily: "sans-serif",
+        }}>
+          <style>{`@keyframes pipPulse{0%,100%{opacity:1}50%{opacity:.4}}`}</style>
+          {/* Live dot */}
+          <span style={{ width:10, height:10, borderRadius:"50%", background:"#ef4444", display:"block", animation:"pipPulse 1.4s ease-in-out infinite", boxShadow:"0 0 8px #ef4444" }}/>
+          {/* Return to class */}
+          <button
+            onClick={() => setMinimized(false)}
+            title="Return to class"
+            style={{ width:44, height:44, borderRadius:"50%", background:"#075E54", border:"2px solid rgba(255,255,255,.25)", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", boxShadow:"0 4px 16px rgba(0,0,0,.45)" }}>
+            <Video style={{ width:20, height:20, color:"#fff" }}/>
+          </button>
+          {/* Leave */}
+          <button
+            onClick={() => { setActiveClassroom(null); setMinimized(false); fetchData(); }}
+            title="Leave class"
+            style={{ width:44, height:44, borderRadius:"50%", background:"#ef4444", border:"2px solid rgba(255,255,255,.25)", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", boxShadow:"0 4px 16px rgba(239,68,68,.5)" }}>
+            <Phone style={{ width:18, height:18, color:"#fff", transform:"rotate(135deg)" }}/>
+          </button>
+        </div>
+      )}
+    </>
+  ) : null;
+
+  if (activeClassroom && !minimized) return classroomEl;
 
   /* ── Loading ── */
   if (loading) return (
@@ -487,12 +526,12 @@ const LiveClassManagement = () => {
           </p>
           <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))", gap:10 }}>
             {subjects.map(sub => {
-              const cnt  = sessions.filter(s => s.subject_id === sub.id).length;
-              const live = sessions.filter(s => s.subject_id === sub.id && s.status === "live").length;
+              const cnt     = sessions.filter(s => s.subject_id === sub.id).length;
+              const liveSess = sessions.find(s => s.subject_id === sub.id && s.status === "live");
               return (
                 <div key={sub.id} className="lc-card" onClick={() => setSelectedSubjectId(sub.id)}
                   style={{ padding:"14px", cursor:"pointer", position:"relative" }}>
-                  {live > 0 && (
+                  {liveSess && (
                     <span style={{ position:"absolute", top:10, right:10, width:8, height:8, borderRadius:"50%", background:"#ef4444", animation:"lc-pulse 1s infinite" }}/>
                   )}
                   <div style={{ width:36, height:36, borderRadius:10, background:`${G}15`, display:"flex", alignItems:"center", justifyContent:"center", marginBottom:10 }}>
@@ -502,7 +541,15 @@ const LiveClassManagement = () => {
                   {sub.title_ar && <p style={{ fontSize:11, color:"hsl(var(--muted-foreground))", margin:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{sub.title_ar}</p>}
                   <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:10 }}>
                     <span style={{ fontSize:11, color:"hsl(var(--muted-foreground))" }}>{cnt} sessions</span>
-                    <ChevronRight style={{ width:14, height:14, color:"hsl(var(--muted-foreground))" }}/>
+                    {liveSess ? (
+                      <button
+                        onClick={e => { e.stopPropagation(); goLive(liveSess); }}
+                        style={{ display:"flex", alignItems:"center", gap:4, padding:"5px 10px", borderRadius:8, background:"#ef4444", border:"none", color:"#fff", fontSize:11, fontWeight:700, cursor:"pointer" }}>
+                        <Play style={{ width:10, height:10 }}/> Join
+                      </button>
+                    ) : (
+                      <ChevronRight style={{ width:14, height:14, color:"hsl(var(--muted-foreground))" }}/>
+                    )}
                   </div>
                 </div>
               );
@@ -561,6 +608,9 @@ const LiveClassManagement = () => {
       </div>
 
       <CreateEditDialog open={showCreate} onClose={() => setShowCreate(false)} form={form} setForm={setForm} subjects={subjects} editing={editingSession} onSave={handleSave}/>
+
+      {/* PiP overlay persists while admin browses — only shown when minimized */}
+      {classroomEl}
     </div>
   );
 };
