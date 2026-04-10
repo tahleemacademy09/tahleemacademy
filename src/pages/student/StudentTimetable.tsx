@@ -119,18 +119,22 @@ export default function StudentTimetable() {
     .filter((s: any) => s.day_of_week === todayIndex && minutesUntil(s.start_time) > -30)
     .sort((a: any, b: any) => (a.start_time > b.start_time ? 1 : -1))[0];
 
+  // Only the next upcoming class is joinable — all others are locked
+  const isNextClass = (slot: any) =>
+    upcomingToday?.id === slot.id;
+
+  // Navigate directly to this specific subject's classroom
   const handleJoin = async (slot: any) => {
+    if (!slot.subject_id) return;
     if (slot.live_url) {
       window.open(slot.live_url, "_blank", "noopener");
       return;
     }
-    if (!slot.subject_id) return;
 
-    // Auto-create or find a live/scheduled session for this timetable slot
-    const today = new Date().toISOString().split("T")[0];
+    const today       = new Date().toISOString().split("T")[0];
     const scheduledAt = `${today}T${slot.start_time}`;
 
-    // Check for existing live or scheduled session for this subject today
+    // Find or create a session for this subject
     const { data: existing } = await supabase
       .from("live_sessions")
       .select("id, status")
@@ -141,22 +145,21 @@ export default function StudentTimetable() {
       .maybeSingle();
 
     if (!existing) {
-      // Auto-create the session so everyone can join directly
       await supabase.from("live_sessions").insert({
-        subject_id:          slot.subject_id,
-        topic:               slot.notes || null,
-        scheduled_at:        scheduledAt,
-        duration_minutes:    slot.duration_minutes || 60,
-        status:              "scheduled",
-        recording_enabled:   true,
-        chat_enabled:        true,
-        hand_raise_enabled:  true,
-        waiting_room_enabled:false,
-        whiteboard_enabled:  false,
+        subject_id:           slot.subject_id,
+        topic:                slot.notes || null,
+        scheduled_at:         scheduledAt,
+        duration_minutes:     slot.duration_minutes || 60,
+        status:               "scheduled",
+        recording_enabled:    true,
+        chat_enabled:         true,
+        hand_raise_enabled:   true,
+        waiting_room_enabled: false,
+        whiteboard_enabled:   false,
       } as any);
     }
 
-    // Navigate directly to live class page for this subject
+    // Go directly to THIS subject's live class
     navigate(`/student/live-classes?subject=${slot.subject_id}`);
   };
 
@@ -342,19 +345,39 @@ export default function StudentTimetable() {
                     )}
                   </div>
 
-                  {/* Action — always show Join button for all roles */}
-                  <button onClick={() => handleJoin(slot)}
-                    style={{
-                      display: "flex", alignItems: "center", gap: 5,
-                      padding: "9px 14px", borderRadius: 11, border: "none",
-                      background: isNow ? G : isSoon ? GOLD : isPast ? "#F3F4F6" : "#f0f4f0",
-                      color: isNow ? "#fff" : isSoon ? G : isPast ? "#9CA3AF" : "#6b7280",
-                      fontSize: 11, fontWeight: 800, cursor: "pointer",
-                      flexShrink: 0, fontFamily: "'Cairo', sans-serif",
-                    }}>
-                    <Video style={{ width: 12, height: 12 }} />
-                    {isNow ? t("Join", "انضمام") : isPast ? t("Ended", "انتهت") : t("Join", "انضمام")}
-                  </button>
+                  {/* Join button — only active for next upcoming class or live now */}
+                  {(() => {
+                    const canJoin  = isNow || (!isPast && isNextClass(slot));
+                    const isLocked = !isPast && !isNow && !isNextClass(slot);
+                    return (
+                      <button
+                        onClick={canJoin ? () => handleJoin(slot) : undefined}
+                        disabled={!canJoin}
+                        style={{
+                          display: "flex", alignItems: "center", gap: 5,
+                          padding: "9px 14px", borderRadius: 11, border: "none",
+                          background: isPast    ? "#F3F4F6"
+                                    : isNow     ? G
+                                    : canJoin   ? GOLD
+                                    : "#F3F4F6",
+                          color: isPast    ? "#9CA3AF"
+                               : isNow     ? "#fff"
+                               : canJoin   ? G
+                               : "#C4C4C4",
+                          fontSize: 11, fontWeight: 800,
+                          cursor: canJoin ? "pointer" : "not-allowed",
+                          flexShrink: 0, fontFamily: "'Cairo', sans-serif",
+                          opacity: isLocked ? 0.45 : 1,
+                        }}>
+                        {isLocked
+                          ? <span style={{ fontSize: 12 }}>🔒</span>
+                          : <Video style={{ width: 12, height: 12 }} />}
+                        {isPast    ? t("Ended",  "انتهت")
+                        : isLocked ? t("Locked", "مقفل")
+                        : t("Join", "انضمام")}
+                      </button>
+                    );
+                  })()}
                 </div>
               );
             })}
