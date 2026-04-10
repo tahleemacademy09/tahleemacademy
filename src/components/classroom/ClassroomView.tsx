@@ -402,6 +402,7 @@ const BottomBar = ({
   onGroupRecite, groupReciteMode,
   onShareMaterial, isPrivileged,
   canStudentRec, canStudentWriteProp, canStudentRecProp, onPermChange,
+  onMinimize,
 }: any) => {
   const room = useRoomContext();
   const { user } = useAuth();
@@ -536,8 +537,8 @@ const BottomBar = ({
         <Btn onClick={()=>setMenu(v=>!v)}><MoreVertical style={IS}/></Btn>
 
         {/* Minimize — Google Meet style */}
-        {props?.onMinimize && (
-          <button onClick={props.onMinimize}
+        {onMinimize && (
+          <button onClick={onMinimize}
             style={{ height:36, padding:"0 14px", borderRadius:18, border:"1.5px solid rgba(255,255,255,.2)", cursor:"pointer", background:"rgba(255,255,255,.08)", color:"rgba(255,255,255,.8)", display:"flex", alignItems:"center", gap:5, fontWeight:600, fontSize:12, flexShrink:0 }}>
             ⊟ Minimize
           </button>
