@@ -191,8 +191,25 @@ const LiveClassManagement = () => {
   const goLive = async (session: any) => {
     const subject = subjects.find(s => s.id === session.subject_id);
     if (!subject) { toast({ title:"Subject not found", variant:"destructive" }); return; }
-    await supabase.from("live_sessions").update({ status:"live", actual_start_time:new Date().toISOString(), started_at:new Date().toISOString() }).eq("id", session.id);
+    if (session.id) {
+      await supabase.from("live_sessions").update({ status:"live", actual_start_time:new Date().toISOString(), started_at:new Date().toISOString() }).eq("id", session.id);
+    } else {
+      // No session yet — create one on the fly
+      const { data: newSess } = await supabase.from("live_sessions").insert({
+        subject_id: session.subject_id,
+        status: "live",
+        started_at: new Date().toISOString(),
+        actual_start_time: new Date().toISOString(),
+        title: subject.title,
+        session_number: 1,
+        recording_enabled: true,
+        chat_enabled: true,
+        hand_raise_enabled: true,
+      }).select("id").single();
+      if (newSess) fetchData();
+    }
     setActiveClassroom(subject);
+    setMinimized(false);
   };
 
   const viewAttendance = async (session: any) => {
@@ -381,85 +398,129 @@ const LiveClassManagement = () => {
 
   /* ── Subject Detail View ── */
   if (selectedSubjectId) {
-    const sub = subjects.find(s => s.id === selectedSubjectId);
-    const subSess = sessions.filter(s => s.subject_id === selectedSubjectId);
-    const liveSess = subSess.filter(s => s.status === "live");
-    return (
-      <div style={{ minHeight:"100vh", background:"hsl(var(--muted)/0.4)", paddingBottom:40 }}>
-        <style>{CSS}</style>
+    const sub      = subjects.find(s => s.id === selectedSubjectId);
+    const subSess  = sessions.filter(s => s.subject_id === selectedSubjectId);
+    const liveSess = subSess.find(s => s.status === "live");
+    const schedSess = subSess.filter(s => s.status === "scheduled");
 
-        {/* Header */}
-        <div style={{ background:G, padding:"48px 16px 20px" }}>
-          <button onClick={() => setSelectedSubjectId(null)} style={{ display:"flex", alignItems:"center", gap:6, background:"rgba(255,255,255,.15)", border:"none", borderRadius:10, padding:"7px 14px", color:"#fff", fontWeight:700, fontSize:13, cursor:"pointer", marginBottom:16 }}>
-            <ArrowLeft style={{ width:15, height:15 }}/> {t("All Subjects","كل المواد")}
+    return (
+      <div style={{ minHeight:"100vh", background:"hsl(var(--muted)/0.4)", paddingBottom:40, fontFamily:"'Cairo',sans-serif" }}>
+        <style>{CSS + `@keyframes pipPulse2{0%,100%{opacity:1}50%{opacity:.4}} @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap');`}</style>
+
+        {/* ── Header — matches student subject view ── */}
+        <div style={{ background:`linear-gradient(135deg,${G},#1a4731)`, padding:"48px 16px 0" }}>
+
+          {/* Back button */}
+          <button onClick={() => setSelectedSubjectId(null)}
+            style={{ display:"flex", alignItems:"center", gap:6, background:"rgba(255,255,255,.12)", border:"none", borderRadius:20, padding:"6px 14px", color:"rgba(255,255,255,.8)", fontWeight:700, fontSize:12, cursor:"pointer", marginBottom:18, fontFamily:"'Cairo',sans-serif" }}>
+            <ArrowLeft style={{ width:13, height:13 }}/> {t("All Subjects","كل المواد")}
           </button>
-          <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:12 }}>
-            <div>
-              <h1 style={{ fontSize:20, fontWeight:900, color:"#fff", margin:0 }}>{sub?.title}</h1>
-              {sub?.title_ar && <p style={{ fontSize:13, color:"rgba(255,255,255,.6)", margin:"4px 0 0", fontFamily:"serif" }}>{sub.title_ar}</p>}
+
+          {/* Subject title — centered like student view */}
+          <div style={{ textAlign:"center", padding:"0 8px 16px" }}>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:10, flexWrap:"wrap", marginBottom:6 }}>
+              <h1 style={{ fontSize:22, fontWeight:900, color:"#fff", margin:0 }}>{sub?.title}</h1>
+              {liveSess && (
+                <span style={{ fontSize:10, fontWeight:800, padding:"3px 9px", borderRadius:20, background:"#ef4444", color:"#fff", animation:"pipPulse2 1.5s infinite" }}>● LIVE</span>
+              )}
             </div>
-            <button onClick={() => { setForm(f => ({...f, subject_id:selectedSubjectId})); setEditingSession(null); setShowCreate(true); }}
-              className="lc-btn" style={{ background:GOLD, color:"#fff", flexShrink:0 }}>
-              <Plus style={{ width:14, height:14 }}/> {t("Schedule","جدولة")}
-            </button>
+            {sub?.title_ar && (
+              <p dir="rtl" style={{ fontSize:14, color:"#c9a84c", margin:"0 0 4px", fontFamily:"'Amiri','Cairo',serif" }}>
+                {sub.title_ar}
+              </p>
+            )}
+
+            {/* Stats row */}
+            <div style={{ display:"flex", justifyContent:"center", gap:20, marginBottom:16, marginTop:8 }}>
+              {[
+                { label:"Total",     v:subSess.length,    c:"rgba(255,255,255,.9)" },
+                { label:"Live now",  v:liveSess ? 1 : 0,  c:"#ef4444" },
+                { label:"Scheduled", v:schedSess.length,  c:"#60a5fa" },
+              ].map((x,i) => (
+                <div key={i} style={{ textAlign:"center" }}>
+                  <div style={{ fontSize:20, fontWeight:900, color:x.c }}>{x.v}</div>
+                  <div style={{ fontSize:10, color:"rgba(255,255,255,.5)", fontWeight:600 }}>{x.label}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* ── BIG ACTION BUTTONS — exactly like student ── */}
+            <div style={{ display:"flex", gap:10, justifyContent:"center", flexWrap:"wrap" }}>
+              {/* Go Live / Join — gold prominent button */}
+              {liveSess ? (
+                <button
+                  onClick={() => goLive(liveSess)}
+                  style={{ display:"inline-flex", alignItems:"center", gap:8, padding:"12px 28px", borderRadius:14, background:"#c9a84c", border:"none", color:"#0f2d1f", fontSize:14, fontWeight:900, cursor:"pointer", fontFamily:"'Cairo',sans-serif", boxShadow:"0 4px 16px rgba(201,168,76,.5)", animation:"pipPulse2 2s infinite" }}>
+                  <Video style={{ width:16, height:16 }}/> {t("Join Live Class","انضم للحصة المباشرة")}
+                </button>
+              ) : (
+                <button
+                  onClick={() => goLive(subSess.find(s => s.status === "scheduled") || { subject_id: selectedSubjectId, id: null })}
+                  style={{ display:"inline-flex", alignItems:"center", gap:8, padding:"12px 28px", borderRadius:14, background:"#c9a84c", border:"none", color:"#0f2d1f", fontSize:14, fontWeight:900, cursor:"pointer", fontFamily:"'Cairo',sans-serif", boxShadow:"0 4px 16px rgba(201,168,76,.4)" }}>
+                  <Video style={{ width:16, height:16 }}/> {t("Start Class","ابدأ الحصة")}
+                </button>
+              )}
+              {/* Schedule button */}
+              <button
+                onClick={() => { setForm(f => ({...f, subject_id:selectedSubjectId})); setEditingSession(null); setShowCreate(true); }}
+                style={{ display:"inline-flex", alignItems:"center", gap:8, padding:"12px 20px", borderRadius:14, background:"rgba(255,255,255,.15)", border:"1.5px solid rgba(255,255,255,.25)", color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"'Cairo',sans-serif" }}>
+                <Plus style={{ width:14, height:14 }}/> {t("Schedule","جدولة")}
+              </button>
+            </div>
           </div>
-          {/* Quick stats */}
-          <div style={{ display:"flex", gap:12, marginTop:16 }}>
+
+          {/* Tabs — scrollable, same style as student */}
+          <div style={{ display:"flex", overflowX:"auto", scrollbarWidth:"none", borderTop:"1px solid rgba(255,255,255,.1)", marginTop:4 }}>
             {[
-              { label:"Total",     v:subSess.length,                                    c:"rgba(255,255,255,.9)" },
-              { label:"Live now",  v:liveSess.length,                                   c:"#ef4444" },
-              { label:"Scheduled", v:subSess.filter(s=>s.status==="scheduled").length,  c:"#60a5fa" },
-            ].map((x,i) => (
-              <div key={i} style={{ textAlign:"center" }}>
-                <div style={{ fontSize:22, fontWeight:900, color:x.c }}>{x.v}</div>
-                <div style={{ fontSize:10, color:"rgba(255,255,255,.5)", fontWeight:600 }}>{x.label}</div>
-              </div>
+              { val:"sessions",     label:t("Sessions","الحصص"),          icon:"📅" },
+              { val:"recordings",   label:t("Recordings","التسجيلات"),    icon:"🎬" },
+              { val:"materials",    label:t("Materials","المواد"),         icon:"📄" },
+              { val:"syllabus",     label:t("Syllabus","المنهج"),          icon:"📖" },
+              { val:"assignments",  label:t("Tasks","المهام"),             icon:"📋" },
+              { val:"announce",     label:t("News","الإعلانات"),           icon:"📢" },
+              { val:"files",        label:t("Files","الملفات"),            icon:"📂" },
+            ].map(tab => (
+              <button key={tab.val}
+                onClick={() => (document.getElementById(`admin-tab-${tab.val}`) as HTMLElement)?.scrollIntoView({ behavior:"smooth" })}
+                style={{ display:"flex", alignItems:"center", gap:5, padding:"10px 14px", border:"none", background:"none", cursor:"pointer", fontFamily:"'Cairo',sans-serif", fontSize:12, fontWeight:600, color:"rgba(255,255,255,.7)", whiteSpace:"nowrap", flexShrink:0, borderBottom:"2.5px solid transparent" }}>
+                {tab.icon} {tab.label}
+              </button>
             ))}
           </div>
         </div>
 
-        <div style={{ padding:"0 16px", marginTop:-4 }}>
-          {/* Live sessions first */}
-          {liveSess.length > 0 && (
-            <div style={{ marginBottom:20 }}>
-              {liveSess.map(s => <SessionCard key={s.id} s={s} onGoLive={goLive} onEdit={openEdit} onDelete={handleDelete} onAttendance={viewAttendance} onUpdateStatus={updateStatus} subjects={subjects} menu={sessionMenu} setMenu={setSessionMenu}/>)}
-            </div>
-          )}
+        {/* ── Content ── */}
+        <div style={{ padding:"16px", maxWidth:720, margin:"0 auto" }}>
 
-          {/* Upcoming sessions */}
-          <div style={{ marginBottom:20 }}>
-            <p style={{ fontSize:12, fontWeight:700, color:"hsl(var(--muted-foreground))", textTransform:"uppercase", letterSpacing:.6, marginBottom:10 }}>Sessions</p>
-            {subSess.filter(s=>s.status!=="live").map(s => (
-              <SessionCard key={s.id} s={s} onGoLive={goLive} onEdit={openEdit} onDelete={handleDelete} onAttendance={viewAttendance} onUpdateStatus={updateStatus} subjects={subjects} menu={sessionMenu} setMenu={setSessionMenu}/>
-            ))}
-            {subSess.length === 0 && (
-              <div className="lc-card" style={{ padding:32, textAlign:"center", color:"hsl(var(--muted-foreground))" }}>
+          {/* Sessions section */}
+          <div id="admin-tab-sessions" style={{ marginBottom:24 }}>
+            <p style={{ fontSize:12, fontWeight:700, color:"hsl(var(--muted-foreground))", textTransform:"uppercase", letterSpacing:.6, marginBottom:10 }}>
+              {t("Sessions","الحصص")} · {subSess.length}
+            </p>
+            {subSess.length === 0 ? (
+              <div className="lc-card" style={{ padding:36, textAlign:"center", color:"hsl(var(--muted-foreground))" }}>
                 <Video style={{ width:28, height:28, margin:"0 auto 8px", opacity:.4 }}/>
                 <p style={{ fontSize:13 }}>No sessions yet</p>
               </div>
+            ) : (
+              subSess.map(s => (
+                <SessionCard key={s.id} s={s} onGoLive={goLive} onEdit={openEdit} onDelete={handleDelete} onAttendance={viewAttendance} onUpdateStatus={updateStatus} subjects={subjects} menu={sessionMenu} setMenu={setSessionMenu}/>
+              ))
             )}
           </div>
 
-          {/* Resource tabs */}
-          <Tabs defaultValue="recordings" className="space-y-3">
-            <TabsList className="w-full overflow-x-auto flex-nowrap justify-start h-auto gap-1 p-1">
-              <TabsTrigger value="recordings"  className="gap-1 text-xs"><Video className="h-3 w-3"/>{t("Recordings","التسجيلات")}</TabsTrigger>
-              <TabsTrigger value="materials"   className="gap-1 text-xs"><FileText className="h-3 w-3"/>{t("Materials","المواد")}</TabsTrigger>
-              <TabsTrigger value="syllabus"    className="gap-1 text-xs"><BookOpen className="h-3 w-3"/>{t("Syllabus","المنهج")}</TabsTrigger>
-              <TabsTrigger value="assignments" className="gap-1 text-xs"><ClipboardList className="h-3 w-3"/>{t("Tasks","المهام")}</TabsTrigger>
-              <TabsTrigger value="announce"    className="gap-1 text-xs"><Megaphone className="h-3 w-3"/>{t("News","الإعلانات")}</TabsTrigger>
-              <TabsTrigger value="files"       className="gap-1 text-xs">📂 {t("Files","الملفات")}</TabsTrigger>
-            </TabsList>
-            <TabsContent value="recordings"><SubjectRecordings    subjectId={selectedSubjectId}/></TabsContent>
-            <TabsContent value="materials"><SubjectMaterials      subjectId={selectedSubjectId}/></TabsContent>
-            <TabsContent value="syllabus"><SubjectSyllabus        subjectId={selectedSubjectId}/></TabsContent>
-            <TabsContent value="assignments"><SubjectAssignments  subjectId={selectedSubjectId}/></TabsContent>
-            <TabsContent value="announce"><SubjectAnnouncements   subjectId={selectedSubjectId}/></TabsContent>
-            <TabsContent value="files"><LiveClassFilePanel        subjectId={selectedSubjectId}/></TabsContent>
-          </Tabs>
+          <div id="admin-tab-recordings"><SubjectRecordings    subjectId={selectedSubjectId}/></div>
+          <div id="admin-tab-materials"  style={{ marginTop:24 }}><SubjectMaterials   subjectId={selectedSubjectId}/></div>
+          <div id="admin-tab-syllabus"   style={{ marginTop:24 }}><SubjectSyllabus    subjectId={selectedSubjectId}/></div>
+          <div id="admin-tab-assignments" style={{ marginTop:24 }}><SubjectAssignments subjectId={selectedSubjectId}/></div>
+          <div id="admin-tab-announce"   style={{ marginTop:24 }}><SubjectAnnouncements subjectId={selectedSubjectId}/></div>
+          <div id="admin-tab-files"      style={{ marginTop:24 }}><LiveClassFilePanel  subjectId={selectedSubjectId}/></div>
         </div>
 
         <CreateEditDialog open={showCreate} onClose={() => setShowCreate(false)} form={form} setForm={setForm} subjects={subjects} editing={editingSession} onSave={handleSave}/>
+
+        {/* PiP overlay if already in a class */}
+        {classroomEl}
       </div>
     );
   }
