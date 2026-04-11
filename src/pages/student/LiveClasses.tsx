@@ -20,7 +20,7 @@ import {
   BookOpen, Video, FileText, ClipboardList, Megaphone,
   Calendar, ArrowLeft, Users, Clock, Maximize2, X,
 } from "lucide-react";
-import ClassroomView from "@/components/classroom/ClassroomView";
+import { useLiveClass } from "@/contexts/LiveClassContext";
 import SubjectRecordings from "@/components/classroom/SubjectRecordings";
 import SubjectMaterials from "@/components/classroom/SubjectMaterials";
 import SubjectSyllabus from "@/components/classroom/SubjectSyllabus";
@@ -36,10 +36,11 @@ const LiveClasses = () => {
   const [searchParams] = useSearchParams();
 
   const [selectedSubject, setSelectedSubject] = useState<any>(null);
-  const [inClass,   setInClass]   = useState(false);
-  const [minimized, setMinimized] = useState(false);
+  // Global call context — call persists across ALL navigation
+  const { joinClass, leaveClass, setMinimized, inCall, minimized } = useLiveClass();
 
   const isPrivileged = hasRole("admin") || hasRole("teacher");
+  const inClass = inCall; // alias for backward compat
 
   // ── Subjects ────────────────────────────────────────
   const { data: subjects, isLoading } = useQuery({
@@ -76,86 +77,15 @@ const LiveClasses = () => {
   const isSubjectLive = (subjectId: string) =>
     liveSessions?.some((s: any) => s.subject_id === subjectId);
 
-  const handleJoinClass  = () => { setInClass(true); setMinimized(false); };
-  const handleLeaveClass = () => { setInClass(false); setMinimized(false); setSelectedSubject(null); };
-  const handleBack       = () => { setSelectedSubject(null); setInClass(false); setMinimized(false); };
+  const handleJoinClass  = () => { if (selectedSubject) joinClass(selectedSubject); };
+  const handleLeaveClass = () => { leaveClass(); setSelectedSubject(null); };
+  const handleBack       = () => { setSelectedSubject(null); };
 
-  // ── CLASSROOM (full or minimized via PiP) ───────────
-  if (inClass && selectedSubject) {
-    return (
-      <>
-        {/* Full-screen classroom — hidden (not unmounted) when minimized */}
-        <div style={{ display: minimized ? "none" : "block" }}>
-          <ClassroomView
-            subject={selectedSubject}
-            onLeave={handleLeaveClass}
-            onMinimize={() => setMinimized(true)}
-          />
-        </div>
-
-        {/* Google Meet-style PiP strip */}
-        {minimized && (
-          <>
-            <style>{`@keyframes livePulse{0%,100%{opacity:1}50%{opacity:.35}}`}</style>
-            <div style={{
-              position: "fixed", bottom: 20, left: "50%",
-              transform: "translateX(-50%)",
-              background: "rgba(8,25,15,.97)",
-              border: "1px solid rgba(201,168,76,.4)",
-              borderRadius: 50,
-              padding: "11px 20px",
-              display: "flex", alignItems: "center", gap: 12,
-              zIndex: 9999,
-              boxShadow: "0 6px 32px rgba(0,0,0,.7)",
-              fontFamily: "'Cairo', sans-serif",
-              minWidth: 260, maxWidth: "90vw",
-            }}>
-              {/* Live pulse */}
-              <span style={{
-                width: 8, height: 8, borderRadius: "50%",
-                background: "#ef4444", flexShrink: 0,
-                animation: "livePulse 1.4s ease-in-out infinite",
-              }}/>
-              {/* Subject name */}
-              <span style={{
-                color: "#fff", fontSize: 13, fontWeight: 700,
-                flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-              }}>
-                {selectedSubject.title}
-              </span>
-              {/* Expand back */}
-              <button
-                onClick={() => setMinimized(false)}
-                title="Return to class"
-                style={{
-                  width: 34, height: 34, borderRadius: "50%",
-                  background: GOLD, border: "none",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  cursor: "pointer", flexShrink: 0,
-                }}>
-                <Maximize2 style={{ width: 15, height: 15, color: G }}/>
-              </button>
-              {/* Leave */}
-              <button
-                onClick={handleLeaveClass}
-                title="Leave class"
-                style={{
-                  width: 34, height: 34, borderRadius: "50%",
-                  background: "rgba(239,68,68,.22)", border: "1px solid rgba(239,68,68,.5)",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  cursor: "pointer", flexShrink: 0,
-                }}>
-                <X style={{ width: 15, height: 15, color: "#ef4444" }}/>
-              </button>
-            </div>
-          </>
-        )}
-      </>
-    );
-  }
+  // ── CLASSROOM is now handled globally by GlobalClassroomOverlay in App.tsx ───
+  // It persists across ALL navigation until the user ends the call.
 
   // ── SUBJECT VIEW (tabs) ──────────────────────────────
-  if (selectedSubject && !inClass) {
+  if (selectedSubject && !inCall) {
     return (
       <div className="p-4 md:p-6 space-y-6 bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-950 dark:to-teal-950 min-h-screen">
         <div className="flex items-center gap-3 flex-wrap">
