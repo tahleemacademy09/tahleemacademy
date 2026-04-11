@@ -44,7 +44,7 @@ const levelColors: Record<string, string> = {
 
 interface SlotForm {
   subject_id: string;
-  teacher_id: string;
+  teacher_ids: string[];  // multiple teachers
   day_of_week: number;
   start_time: string;
   end_time: string;
@@ -56,7 +56,7 @@ interface SlotForm {
 
 const EMPTY: SlotForm = {
   subject_id: "",
-  teacher_id: "",
+  teacher_ids: [],
   day_of_week: 1,
   start_time: "09:00",
   end_time: "10:00",
@@ -138,7 +138,8 @@ export default function TimetableManagement() {
     mutationFn: async (values: SlotForm) => {
       const payload = {
         subject_id:  values.subject_id,
-        teacher_id:  values.teacher_id || null,
+        teacher_ids: values.teacher_ids.length > 0 ? values.teacher_ids : null,
+        teacher_id:  values.teacher_ids[0] || null,  // keep backward compat
         day_of_week: values.day_of_week,
         start_time:  values.start_time,
         end_time:    values.end_time,
@@ -196,7 +197,7 @@ export default function TimetableManagement() {
     setEditId(slot.id);
     setForm({
       subject_id:  slot.subject_id,
-      teacher_id:  slot.teacher_id || "",
+      teacher_ids: slot.teacher_ids || (slot.teacher_id ? [slot.teacher_id] : []),
       day_of_week: slot.day_of_week,
       start_time:  slot.start_time?.slice(0, 5) || "09:00",
       end_time:    slot.end_time?.slice(0, 5)   || "10:00",
@@ -285,16 +286,39 @@ export default function TimetableManagement() {
                 </select>
               </div>
 
-              {/* Teacher */}
+              {/* Teachers — multi-select */}
               <div>
-                <label style={labelStyle}>{t("Teacher", "المعلم")}</label>
-                <select style={inputStyle} value={form.teacher_id}
-                  onChange={e => setForm(f => ({ ...f, teacher_id: e.target.value }))}>
-                  <option value="">{t("Select teacher…", "اختر المعلم…")}</option>
-                  {(teachers || []).map((tc: any) => (
-                    <option key={tc.user_id} value={tc.user_id}>{tc.full_name || tc.user_id}</option>
-                  ))}
-                </select>
+                <label style={labelStyle}>{t("Teachers (select multiple)", "المعلمون (يمكن اختيار أكثر من معلم)")}</label>
+                <div style={{ display:"flex", flexDirection:"column", gap:6, maxHeight:160, overflowY:"auto", padding:"6px 0" }}>
+                  {(teachers || []).map((tc: any) => {
+                    const selected = form.teacher_ids.includes(tc.user_id);
+                    return (
+                      <button key={tc.user_id} type="button"
+                        onClick={() => setForm(f => ({
+                          ...f,
+                          teacher_ids: selected
+                            ? f.teacher_ids.filter(id => id !== tc.user_id)
+                            : [...f.teacher_ids, tc.user_id]
+                        }))}
+                        style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 12px", borderRadius:10, border:`1.5px solid ${selected?"#064E3B":"#E5E7EB"}`, background:selected?"#F0FDF4":"#fff", cursor:"pointer", textAlign:"left" }}>
+                        <div style={{ width:20, height:20, borderRadius:6, border:`2px solid ${selected?"#064E3B":"#D1D5DB"}`, background:selected?"#064E3B":"#fff", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                          {selected && <Save style={{ width:11, height:11, color:"#fff" }} />}
+                        </div>
+                        <span style={{ fontSize:13, fontWeight:selected?700:400, color:selected?"#064E3B":"#374151" }}>
+                          {tc.full_name || tc.user_id}
+                        </span>
+                      </button>
+                    );
+                  })}
+                  {(teachers || []).length === 0 && (
+                    <p style={{ fontSize:12, color:"#9CA3AF", padding:"8px 0" }}>No teachers found</p>
+                  )}
+                </div>
+                {form.teacher_ids.length > 0 && (
+                  <p style={{ fontSize:11, color:"#064E3B", marginTop:4, fontWeight:600 }}>
+                    ✓ {form.teacher_ids.length} teacher{form.teacher_ids.length > 1 ? "s" : ""} selected
+                  </p>
+                )}
               </div>
 
               {/* Day */}
@@ -458,7 +482,16 @@ export default function TimetableManagement() {
                               )}
                             </div>
 
-                            {slot.teacher && (
+                            {/* Show all assigned teachers */}
+                            {(slot.teacher_ids && slot.teacher_ids.length > 0) ? (
+                              <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 4, color: "#6b7280", fontSize: 12, flexWrap:"wrap" }}>
+                                <Users style={{ width: 11, height: 11 }} />
+                                {slot.teacher_ids.map((tid: string, i: number) => {
+                                  const tc = (teachers || []).find((t:any) => t.user_id === tid);
+                                  return <span key={tid}>{tc?.full_name || "Teacher"}{i < slot.teacher_ids.length - 1 ? ", " : ""}</span>;
+                                })}
+                              </div>
+                            ) : slot.teacher && (
                               <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 4, color: "#6b7280", fontSize: 12 }}>
                                 <Users style={{ width: 11, height: 11 }} />
                                 {slot.teacher.full_name}
