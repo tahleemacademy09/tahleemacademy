@@ -129,8 +129,8 @@ const App = () => (
         <TooltipProvider>
           <Toaster />
           <Sonner />
-          <LiveClassProvider>
           <BrowserRouter>
+            <LiveClassProvider>
             <ErrorBoundary>
               <Suspense fallback={
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
@@ -267,10 +267,10 @@ const App = () => (
                 </Routes>
               </Suspense>
             </ErrorBoundary>
-            <IdleWarningModal />
             <GlobalClassroomOverlay />
+            <IdleWarningModal />
+            </LiveClassProvider>
           </BrowserRouter>
-          </LiveClassProvider>
         </TooltipProvider>
       </AuthProvider>
     </LanguageProvider>
