@@ -9,14 +9,9 @@ const corsHeaders = {
 
 /**
  * Unified AI Edge Function for Tahleem Academy
- * Handles: revision AI, transcription comparison, notifications AI, general prompts
+ * Actions: revision | transcribe | notify | chat | generate
  *
- * Actions:
- *  - "revision"       → AI-powered revision assistance (flashcards, summaries, quiz generation)
- *  - "transcribe"     → Compare recitation audio transcription with Quran text
- *  - "notify"         → Generate notification text via AI
- *  - "chat"           → General AI chat (Mu'allim style)
- *  - "generate"       → Generic prompt completion
+ * NEW: revision action now supports imageData + imageMimeType for vision
  */
 
 serve(async (req) => {
@@ -26,14 +21,13 @@ serve(async (req) => {
 
   try {
     const body = await req.json();
-    const { action, prompt, messages, context } = body;
+    const { action, prompt, messages, context, imageData, imageMimeType } = body;
 
-    if (!action) throw new Error("action is required (revision|transcribe|notify|chat|generate)");
+    if (!action) throw new Error("action is required");
 
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
 
-    // Optional auth for user-specific actions
     let userId: string | null = null;
     const authHeader = req.headers.get("Authorization");
     if (authHeader) {
@@ -46,30 +40,51 @@ serve(async (req) => {
       userId = user?.id || null;
     }
 
-    // Build system prompt based on action
     let systemPrompt = "";
-    let userContent = prompt || "";
-    let model = "google/gemini-3-flash-preview";
+    let userContent: any = prompt || "";
+    let model = "google/gemini-2.5-flash-preview";
     let stream = false;
 
     switch (action) {
       case "revision": {
         systemPrompt = `You are an Islamic academic revision assistant for Tahleem Academy students.
 You help with:
-- Generating flashcards from subject content
+- Generating flashcards from subject content (text or images)
 - Creating quiz questions from materials
 - Summarizing lessons and topics
 - Explaining difficult concepts in Arabic and English
 - Providing study tips based on Islamic pedagogy
 
+When given an image, carefully analyze ALL text, diagrams, tables, and visual information in it.
 Always be scholarly, cite Quranic and Hadith references where relevant.
-Respond in the same language the student uses. If Arabic, use formal فصحى.`;
-        userContent = prompt || context?.prompt || "";
+Respond in the same language the student uses. If Arabic, use formal فصحى.
+Return ONLY valid JSON when asked for structured output — no markdown fences.`;
+
+        // Build user content — with or without image
+        if (imageData && imageMimeType) {
+          // Vision input — Gemini / GPT-4V compatible format
+          userContent = [
+            {
+              type: "image_url",
+              image_url: {
+                url: `data:${imageMimeType};base64,${imageData}`,
+                detail: "high",
+              },
+            },
+            {
+              type: "text",
+              text: prompt || "Analyze this image and generate educational content as requested.",
+            },
+          ];
+          // Use a vision-capable model
+          model = "google/gemini-2.5-flash-preview";
+        } else {
+          userContent = prompt || context?.prompt || "";
+        }
         break;
       }
 
       case "transcribe": {
-        // Compare student recitation with expected Quran text
         systemPrompt = `You are a Quran recitation evaluator. You will receive:
 1. The expected Arabic Quran text (ayahs)
 2. A transcription of the student's recitation
@@ -81,7 +96,7 @@ Your task:
 - Return a JSON object with: { "correct": number, "wrong": number, "total": number, "accuracy": number, "errors": [{"word": "...", "expected": "...", "position": number}], "passed": boolean, "feedback_ar": "...", "feedback_en": "..." }
 - "passed" is true if accuracy >= 80%
 - Always respond with valid JSON only, no markdown`;
-        model = "google/gemini-2.5-flash";
+        model = "google/gemini-2.5-flash-preview";
         userContent = JSON.stringify({
           expected_text: context?.expected_text || "",
           student_transcription: context?.transcription || prompt || "",
@@ -119,12 +134,16 @@ ${context?.studentContext || ""}`;
       }
     }
 
-    const aiMessages = messages
-      ? [{ role: "system", content: systemPrompt }, ...messages]
-      : [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userContent },
-        ];
+    // Build messages array
+    let aiMessages: any[];
+    if (messages) {
+      aiMessages = [{ role: "system", content: systemPrompt }, ...messages];
+    } else {
+      aiMessages = [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userContent },
+      ];
+    }
 
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
@@ -136,6 +155,7 @@ ${context?.studentContext || ""}`;
         model,
         messages: aiMessages,
         stream,
+        max_tokens: 4096,
         ...(action === "transcribe" || action === "notify"
           ? { response_format: { type: "json_object" } }
           : {}),
@@ -162,7 +182,6 @@ ${context?.studentContext || ""}`;
     const data = await response.json();
     const text = data.choices?.[0]?.message?.content || "";
 
-    // For transcribe/notify actions, parse JSON
     if (action === "transcribe" || action === "notify") {
       try {
         const parsed = JSON.parse(text);
