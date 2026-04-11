@@ -9,8 +9,13 @@
   When minimized:
   - A floating pill overlay appears on every page
   - The full ClassroomView is hidden (display:none) but still running
-  - Clicking the pill brings the full view back
+  - Clicking the pill brings the full view back (NOT the lobby!)
   - Clicking X on the pill ends the call
+
+  Persistence:
+  - If the page is refreshed while in a call, LiveClassContext restores from
+    sessionStorage and sets autoJoin=true, which tells ClassroomView to
+    skip the lobby and connect immediately.
 */
 
 import { useLiveClass } from "@/contexts/LiveClassContext";
@@ -22,7 +27,7 @@ const DARK  = "#08190f";
 const RED   = "#ef4444";
 
 export default function GlobalClassroomOverlay() {
-  const { activeSubject, inCall, minimized, leaveClass, setMinimized } = useLiveClass();
+  const { activeSubject, inCall, minimized, autoJoin, leaveClass, setMinimized } = useLiveClass();
 
   // Nothing to show if not in a call
   if (!inCall || !activeSubject) return null;
@@ -35,13 +40,15 @@ export default function GlobalClassroomOverlay() {
           position: "fixed",
           inset: 0,
           zIndex: 8000,
-          display: minimized ? "none" : "block",
+          display: minimized ? "none" : "flex",
+          flexDirection: "column",
         }}
       >
         <ClassroomView
           subject={activeSubject}
           onLeave={leaveClass}
           onMinimize={() => setMinimized(true)}
+          autoJoin={autoJoin}
         />
       </div>
 
@@ -99,7 +106,7 @@ export default function GlobalClassroomOverlay() {
               LIVE
             </span>
 
-            {/* Return to class */}
+            {/* Return to class — goes back to live view, NOT lobby */}
             <button
               onClick={() => setMinimized(false)}
               title="Return to class"
