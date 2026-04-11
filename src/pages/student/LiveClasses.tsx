@@ -46,7 +46,8 @@ const LiveClasses = () => {
   const { data: subjects, isLoading } = useQuery({
     queryKey: ["active-subjects"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("subjects").select("*").order("title");
+      const { data, error } = await supabase
+        .from("subjects").select("*").eq("is_active", true).order("title");
       if (error) throw error;
       return data;
     },
