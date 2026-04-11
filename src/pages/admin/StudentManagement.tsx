@@ -11,7 +11,7 @@ import { useNavigate } from "react-router-dom";
 import {
   Search, User, Users, Eye, Edit2,
   Bell, Trash2, Filter, Plus, X, RefreshCw, AlertTriangle,
-  Send, Loader2, Copy, CheckCheck, ShieldCheck,
+  Send, Loader2, Copy, CheckCheck, ShieldCheck, Clock, Activity,
 } from "lucide-react";
 
 const G      = "#064E3B";
@@ -217,9 +217,15 @@ export default function StudentManagement() {
     try {
       const { data: profiles } = await supabase.from("profiles").select("*").order("created_at", { ascending: false });
       const { data: roles }    = await supabase.from("user_roles").select("user_id,role");
+      // Fetch last sign-in via RPC (reads auth.users safely)
+      let loginMap: Record<string, string> = {};
+      try {
+        const { data: loginData } = await supabase.rpc("get_users_last_login" as any);
+        if (loginData) loginData.forEach((r: any) => { loginMap[r.user_id] = r.last_sign_in_at; });
+      } catch { /* RPC may not exist yet — graceful fallback */ }
       const roleMap: Record<string, string[]> = {};
       (roles || []).forEach((r: any) => { if (!roleMap[r.user_id]) roleMap[r.user_id] = []; roleMap[r.user_id].push(r.role); });
-      setUsers((profiles || []).map((p: any) => ({ ...p, roles: roleMap[p.user_id] || ["student"] })));
+      setUsers((profiles || []).map((p: any) => ({ ...p, roles: roleMap[p.user_id] || ["student"], last_sign_in_at: loginMap[p.user_id] || null })));
     } catch { toast({ title: "Error loading users", variant: "destructive" }); }
     setLoading(false);
   };
@@ -365,6 +371,11 @@ export default function StudentManagement() {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <p style={{ fontWeight: 800, fontSize: 13, color: "#111", margin: "0 0 2px" }}>{u.full_name || "—"}</p>
                   <p style={{ fontSize: 11, color: "#9CA3AF", margin: "0 0 5px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.email} · ID: {u.student_id || "—"}</p>
+                  {u.last_sign_in_at && (
+                    <p style={{ fontSize: 10, color: "#059669", margin: "0 0 5px", display:"flex", alignItems:"center", gap:3 }}>
+                      <Activity size={9} /> Last login: {new Date(u.last_sign_in_at).toLocaleString()}
+                    </p>
+                  )}
                   <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
                     {(u.roles || ["student"]).map((r: string) => {
                       const rc = roleColor[r] || { bg: "#F3F4F6", text: "#374151", border: "#D1D5DB" };
