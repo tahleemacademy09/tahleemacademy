@@ -67,14 +67,17 @@ Deno.serve(async (req) => {
     // Build JWT token manually for LiveKit
     const header = { alg: 'HS256', typ: 'JWT' };
     const now = Math.floor(Date.now() / 1000);
-    const exp = now + 3600; // 1 hour
+    // FIX: 8-hour expiry so token never expires mid-class (was 1 hour)
+    const exp = now + 28800;
 
     const claims: any = {
       iss: LIVEKIT_API_KEY,
       sub: user.id,
       nbf: now,
       exp,
-      jti: user.id,
+      // FIX: Unique JTI per request — old code used user.id alone which caused
+      // LiveKit to reject reconnects as "token already used"
+      jti: `${user.id}-${now}-${Math.random().toString(36).slice(2, 9)}`,
       name: participantName,
       video: {
         roomJoin: true,
