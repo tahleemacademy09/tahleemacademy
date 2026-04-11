@@ -11,6 +11,7 @@ import SubjectMaterials     from "@/components/classroom/SubjectMaterials";
 import SubjectSyllabus      from "@/components/classroom/SubjectSyllabus";
 import SubjectAssignments   from "@/components/classroom/SubjectAssignments";
 import SubjectAnnouncements from "@/components/classroom/SubjectAnnouncements";
+import ClassroomView        from "@/components/classroom/ClassroomView";
 import { useToast } from "@/hooks/use-toast";
 import {
   BookOpen, Users, Mic, ClipboardList, FileText, ChevronLeft,
@@ -42,6 +43,10 @@ const lvlColor: Record<string, { bg: string; color: string; border: string }> = 
   all:          { bg: "#F3F4F6", color: "#374151", border: "#D1D5DB" },
 };
 
+// Safe lookup — never returns undefined regardless of DB value
+const safeLevel = (lv: string | undefined | null) =>
+  lvlColor[lv as string] ?? lvlColor["all"];
+
 export default function TeacherSubjects() {
   const { t, language } = useLanguage();
   const { user } = useAuth();
@@ -50,6 +55,7 @@ export default function TeacherSubjects() {
 
   const [subjects, setSubjects] = useState<any[]>([]);
   const [selectedSubject, setSelectedSubject] = useState<any>(null);
+  const [classroomSubject, setClassroomSubject] = useState<any>(null);
   const [activeTab, setActiveTab] = useState<SubjectTab>("students");
   const [subjectData, setSubjectData] = useState<{
     students: any[]; exams: any[]; tests: any[];
@@ -62,16 +68,13 @@ export default function TeacherSubjects() {
   useEffect(() => {
     if (!user) return;
     const fetchSubjects = async () => {
-      // FIX: fetch subjects by BOTH direct teacher_id assignment AND
-      // via subject_timetable.teacher_id slots assigned by admin
       const { data: owned } = await supabase
         .from("subjects").select("*").eq("teacher_id", user.id).order("title");
 
-      // Also get subjects the teacher is assigned to via timetable slots
       const { data: ttSlots } = await supabase
         .from("subject_timetable" as any).select("subject_id").eq("teacher_id", user.id);
       const ttSubjectIds = [...new Set((ttSlots || []).map((s: any) => s.subject_id).filter(Boolean))];
-      
+
       let extra: any[] = [];
       if (ttSubjectIds.length > 0) {
         const ownedIds = (owned || []).map((s: any) => s.id);
@@ -83,9 +86,7 @@ export default function TeacherSubjects() {
         }
       }
 
-      const allSubjects = [...(owned || []), ...extra];
-      const data = allSubjects;
-      const subs = data || [];
+      const subs = [...(owned || []), ...extra];
       const counts: Record<string, any> = {};
       for (const sub of subs) {
         const { data: courses } = await supabase.from("courses").select("id").eq("subject_id", sub.id);
@@ -121,7 +122,6 @@ export default function TeacherSubjects() {
     const { data: courses } = await supabase.from("courses").select("id").eq("subject_id", sub.id);
     const courseIds = (courses || []).map((c: any) => c.id);
 
-    // Students
     let students: any[] = [];
     if (courseIds.length > 0) {
       const { data: enrollments } = await supabase.from("enrollments").select("user_id").in("course_id", courseIds);
@@ -132,7 +132,6 @@ export default function TeacherSubjects() {
       }
     }
 
-    // Exams and tests
     let exams: any[] = [], tests: any[] = [];
     if (courseIds.length > 0) {
       const { data } = await supabase.from("exams").select("*").in("course_id", courseIds).order("created_at", { ascending: false });
@@ -150,6 +149,16 @@ export default function TeacherSubjects() {
     s.title_ar?.includes(search)
   );
 
+  // ── Classroom overlay ─────────────────────────────────────────
+  if (classroomSubject) {
+    return (
+      <ClassroomView
+        subject={classroomSubject}
+        onLeave={() => setClassroomSubject(null)}
+      />
+    );
+  }
+
   // ── Loading ───────────────────────────────────────────────────
   if (loading) return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: 400 }}>
@@ -160,7 +169,7 @@ export default function TeacherSubjects() {
 
   // ── Subject detail ────────────────────────────────────────────
   if (selectedSubject) {
-    const lc = lvlColor[(selectedSubject.level as string) || "all"];
+    const lc = safeLevel(selectedSubject.level);
     return (
       <div style={{ minHeight: "100vh", background: "#F3F4F6", fontFamily: "system-ui, sans-serif" }}>
         <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
@@ -184,6 +193,19 @@ export default function TeacherSubjects() {
                 </p>
               )}
             </div>
+            {/* Start Live Class button */}
+            <button
+              onClick={() => setClassroomSubject(selectedSubject)}
+              style={{
+                display: "flex", alignItems: "center", gap: 6,
+                padding: "8px 14px", borderRadius: 10, border: "none",
+                background: `linear-gradient(135deg, ${G}, ${GM})`,
+                color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer",
+              }}
+            >
+              <Video size={13} />
+              {t("Start Class", "ابدأ الحصة")}
+            </button>
             <span style={{
               padding: "4px 12px", borderRadius: 20, fontSize: 11, fontWeight: 700,
               background: lc.bg, color: lc.color, border: `1px solid ${lc.border}`,
@@ -230,7 +252,7 @@ export default function TeacherSubjects() {
                       <p style={{ color: "#9CA3AF", fontSize: 14 }}>{t("No students enrolled", "لا يوجد طلاب مسجلين")}</p>
                     </div>
                   ) : subjectData.students.map(s => {
-                    const lv = lvlColor[(s.level as string) || "beginner"];
+                    const lv = safeLevel(s.level);
                     return (
                       <div key={s.id} style={{
                         background: "#fff", borderRadius: 12, border: "1px solid #E5E7EB",
@@ -406,7 +428,7 @@ export default function TeacherSubjects() {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 14 }}>
             {filteredSubjects.map(sub => {
               const counts = subjectCounts[sub.id] || {};
-              const lc = lvlColor[(sub.level as string) || "all"];
+              const lc = safeLevel(sub.level);
               return (
                 <div
                   key={sub.id}
