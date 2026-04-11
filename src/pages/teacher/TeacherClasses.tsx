@@ -14,8 +14,11 @@ import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { format, isFuture, isPast } from "date-fns";
 import { useLiveClass } from "@/contexts/LiveClassContext";
+import ClassroomView from "@/components/classroom/ClassroomView";
+import { useLiveClass } from "@/contexts/LiveClassContext";
 
 const TeacherClasses = () => {
+  const { joinClass, leaveClass, setMinimized: setLCMinimized, inCall, minimized, activeSubject } = useLiveClass();
   const { t } = useLanguage();
   const { user } = useAuth();
   const { toast } = useToast();
@@ -115,8 +118,33 @@ const TeacherClasses = () => {
     </div>
   );
 
+  // Live class PiP overlay (persists while browsing)
+  if (inCall && !minimized && activeSubject) {
+    return (
+      <ClassroomView
+        subject={activeSubject}
+        onLeave={leaveClass}
+        onMinimize={() => setLCMinimized(true)}
+        autoJoin
+      />
+    );
+  }
+
   return (
     <div className="p-4 md:p-6 space-y-6">
+      {/* Floating PiP pill when class is minimized */}
+      {inCall && minimized && (
+        <div style={{ position:"fixed",bottom:24,right:20,zIndex:99999,display:"flex",alignItems:"center",gap:8 }}>
+          <style>{`@keyframes pipP{0%,100%{opacity:1}50%{opacity:.4}}`}</style>
+          <span style={{width:10,height:10,borderRadius:"50%",background:"#ef4444",display:"block",animation:"pipP 1.4s ease-in-out infinite",boxShadow:"0 0 8px #ef4444"}}/>
+          <button onClick={()=>setLCMinimized(false)} style={{width:44,height:44,borderRadius:"50%",background:"#075E54",border:"2px solid rgba(255,255,255,.25)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 4px 16px rgba(0,0,0,.45)"}}>
+            <Video style={{width:20,height:20,color:"#fff"}}/>
+          </button>
+          <button onClick={leaveClass} style={{width:44,height:44,borderRadius:"50%",background:"#ef4444",border:"2px solid rgba(255,255,255,.25)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 4px 16px rgba(239,68,68,.5)"}}>
+            <Phone style={{width:18,height:18,color:"#fff",transform:"rotate(135deg)"}}/>
+          </button>
+        </div>
+      )}
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">{t("Live Classes", "الفصول المباشرة")}</h1>
         <Dialog open={showCreate} onOpenChange={setShowCreate}>
@@ -174,6 +202,12 @@ const TeacherClasses = () => {
                     {(s as any).subjects?.title} •{" "}
                     {s.scheduled_at ? format(new Date(s.scheduled_at), "EEE, MMM d 'at' h:mm a") : new Date(s.created_at).toLocaleDateString()}
                     {(s as any).duration_minutes ? ` • ${(s as any).duration_minutes}m` : ""}
+                    {s.scheduled_at && !isActive && isFuture(new Date(s.scheduled_at)) && (() => {
+                      const diff = new Date(s.scheduled_at).getTime() - Date.now();
+                      const mins = Math.floor(diff / 60000);
+                      const label = mins < 60 ? `${mins}m` : `${Math.floor(mins/60)}h ${mins%60}m`;
+                      return <span className="ms-1 text-amber-600 font-bold">⏱ in {label}</span>;
+                    })()}
                   </p>
                 </div>
                 <Button
