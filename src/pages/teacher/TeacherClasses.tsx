@@ -31,11 +31,35 @@ const TeacherClasses = () => {
 
   const fetchSessions = async () => {
     if (!user) return;
-    const { data: subs } = await supabase.from("subjects").select("id, title, title_ar").eq("teacher_id", user.id);
-    setSubjects(subs || []);
-    const subjectIds = (subs || []).map(s => s.id);
+    // FIX: gather subjects from BOTH direct ownership AND timetable assignments
+    const { data: ownedSubs } = await supabase
+      .from("subjects").select("id, title, title_ar").eq("teacher_id", user.id);
+    
+    // Also check timetable for direct teacher assignments
+    const { data: ttSlots } = await supabase
+      .from("subject_timetable" as any).select("subject_id").eq("teacher_id", user.id);
+    const ttSubjectIds = [...new Set((ttSlots || []).map((s: any) => s.subject_id).filter(Boolean))];
+    
+    let extraSubs: any[] = [];
+    if (ttSubjectIds.length > 0) {
+      const ownedIds = (ownedSubs || []).map((s: any) => s.id);
+      const missingIds = ttSubjectIds.filter((id: string) => !ownedIds.includes(id));
+      if (missingIds.length > 0) {
+        const { data: es } = await supabase
+          .from("subjects").select("id, title, title_ar").in("id", missingIds);
+        extraSubs = es || [];
+      }
+    }
+
+    const allSubs = [...(ownedSubs || []), ...extraSubs];
+    setSubjects(allSubs);
+    const subjectIds = allSubs.map((s: any) => s.id);
     if (subjectIds.length > 0) {
-      const { data } = await supabase.from("live_sessions").select("*, subjects(title, title_ar)").in("subject_id", subjectIds).order("scheduled_at", { ascending: false, nullsFirst: false });
+      const { data } = await supabase
+        .from("live_sessions")
+        .select("*, subjects(title, title_ar)")
+        .in("subject_id", subjectIds)
+        .order("scheduled_at", { ascending: false, nullsFirst: false });
       setSessions(data || []);
     }
     setLoading(false);
