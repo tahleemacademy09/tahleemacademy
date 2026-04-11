@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
-import { Video, Plus, Calendar, Clock } from "lucide-react";
+import { Video, Plus, Calendar, Clock, Phone } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -15,14 +15,12 @@ import { useToast } from "@/hooks/use-toast";
 import { format, isFuture, isPast } from "date-fns";
 import { useLiveClass } from "@/contexts/LiveClassContext";
 import ClassroomView from "@/components/classroom/ClassroomView";
-import { useLiveClass } from "@/contexts/LiveClassContext";
 
 const TeacherClasses = () => {
   const { joinClass, leaveClass, setMinimized: setLCMinimized, inCall, minimized, activeSubject } = useLiveClass();
   const { t } = useLanguage();
   const { user } = useAuth();
   const { toast } = useToast();
-  const { joinClass } = useLiveClass();
   const [sessions, setSessions] = useState<any[]>([]);
   const [subjects, setSubjects] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -50,7 +48,6 @@ const TeacherClasses = () => {
         extraSubs = es || [];
       }
     }
-
     const allSubs = [...(ownedSubs || []), ...extraSubs];
     setSubjects(allSubs);
     const subjectIds = allSubs.map((s: any) => s.id);
@@ -99,8 +96,7 @@ const TeacherClasses = () => {
     joinClass({
       id: s.subject_id,
       title: sub?.title || "Class",
-      title_ar: sub?.title_ar || "",
-    });
+      title_ar: sub?.title_ar || "",    });
   };
 
   const upcoming = sessions.filter(s =>
@@ -149,8 +145,7 @@ const TeacherClasses = () => {
         <h1 className="text-2xl font-bold">{t("Live Classes", "الفصول المباشرة")}</h1>
         <Dialog open={showCreate} onOpenChange={setShowCreate}>
           <DialogTrigger asChild>
-            <Button><Plus className="h-4 w-4 me-2" />{t("Schedule Class", "جدولة حصة")}</Button>
-          </DialogTrigger>
+            <Button><Plus className="h-4 w-4 me-2" />{t("Schedule Class", "جدولة حصة")}</Button>          </DialogTrigger>
           <DialogContent className="max-w-md">
             <DialogHeader><DialogTitle>{t("Schedule New Class", "جدولة حصة جديدة")}</DialogTitle></DialogHeader>
             <div className="space-y-4">
@@ -199,8 +194,7 @@ const TeacherClasses = () => {
                     {isActive && <Badge className="bg-green-500 text-white animate-pulse">🔴 LIVE</Badge>}
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">
-                    {(s as any).subjects?.title} •{" "}
-                    {s.scheduled_at ? format(new Date(s.scheduled_at), "EEE, MMM d 'at' h:mm a") : new Date(s.created_at).toLocaleDateString()}
+                    {(s as any).subjects?.title} •{" "}                    {s.scheduled_at ? format(new Date(s.scheduled_at), "EEE, MMM d 'at' h:mm a") : new Date(s.created_at).toLocaleDateString()}
                     {(s as any).duration_minutes ? ` • ${(s as any).duration_minutes}m` : ""}
                     {s.scheduled_at && !isActive && isFuture(new Date(s.scheduled_at)) && (() => {
                       const diff = new Date(s.scheduled_at).getTime() - Date.now();
@@ -249,8 +243,7 @@ const TeacherClasses = () => {
                 </p>
               </div>
               <Badge variant="outline">{t("Ended", "انتهت")}</Badge>
-            </div>
-          ))}
+            </div>          ))}
           {past.length === 0 && (
             <p className="text-muted-foreground text-sm">{t("No past classes", "لا توجد حصص سابقة")}</p>
           )}
