@@ -417,14 +417,35 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   const wbBuffer=useRef<any[]|null>(null);const prefetch=useRef<{token:string;url:string}|null>(null);
   useEffect(()=>{supabase.functions.invoke("livekit-token",{body:{subject_id:subject.id,action:isPrivileged?"start_session":"join"}}).then(({data})=>{if(data?.token&&data?.url)prefetch.current={token:data.token,url:data.url};}).catch(()=>{});},[subject.id,isPrivileged]);
   // Auto-connect when restored from sessionStorage (page refresh / browser minimize)
+  // Fires immediately on mount when autoJoin=true, skipping lobby entirely
   useEffect(()=>{
-    if(autoJoin&&phase==="lobby"&&!loading&&!error){
-      connect(isPrivileged?"start_session":"join");
-    }
+    if(!autoJoin)return;
+    const t=setTimeout(()=>{
+      if(phase==="lobby"&&!loading&&!error){
+        connect(isPrivileged?"start_session":"join");
+      }
+    },120); // small delay to let prefetch complete
+    return()=>clearTimeout(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[autoJoin]);
   useEffect(()=>{const check=async()=>{const{data}=await supabase.from("live_sessions").select("*").eq("subject_id",subject.id).eq("status","live").maybeSingle();if(data){setSessionInfo(data);setSessionId(data.id);setIsSessionLive(true);}else setIsSessionLive(false);};check();const iv=setInterval(check,4000);return()=>clearInterval(iv);},[subject.id]);
   useEffect(()=>{if(phase!=="live")return;const ti=setInterval(()=>setDuration(d=>d+1),1000);return()=>clearInterval(ti);},[phase]);
+  // Media Session API — shows call info in Android notification shade & lock screen
+  useEffect(()=>{
+    if(phase!=="live"||!("mediaSession"in navigator))return;
+    try{
+      (navigator as any).mediaSession.metadata=new(window as any).MediaMetadata({
+        title:subject.title,artist:"Tahleem Academy — Live Class",album:"In Progress",
+      });
+      (navigator as any).mediaSession.playbackState="playing";
+      (navigator as any).mediaSession.setActionHandler("stop",()=>leaveSession());
+      (navigator as any).mediaSession.setActionHandler("pause",()=>leaveSession());
+    }catch{}
+    return()=>{
+      try{(navigator as any).mediaSession.playbackState="none";}catch{}
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[phase,subject.title]);
   const connect=async(action:string,settings?:any)=>{
     setLoading(true);setError(null);
     try{
@@ -450,7 +471,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   const handleGroupRecite=async()=>{const n=!groupRecite;setGroupRecite(n);toast({title:n?"Group Recitation ON":"Group Recitation OFF"});if(sessionId&&user)await supabase.from("class_chat_messages").insert({session_id:sessionId,sender_id:user.id,message:n?"🎙️ Group Recitation Mode":"🔇 Recitation ended",type:"system"});};
   const fmtT=(s:number)=>`${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
   if(phase==="ended")return<ClassEndScreen subject={subject} session={sessionInfo} duration={duration} participantCount={0} onGoToDashboard={onLeave} onGoToRevision={()=>{window.location.href=`/student/revision/${subject.id}`;}} />;
-  if(phase==="lobby"&&!loading&&!error)return<ClassLobby subject={subject} session={sessionInfo} onStartClass={(s:any)=>connect("start_session",s)} onJoinClass={()=>connect("join")} onBack={onLeave} isLive={isSessionLive}/>;
+  if(phase==="lobby"&&!loading&&!error&&!autoJoin)return<ClassLobby subject={subject} session={sessionInfo} onStartClass={(s:any)=>connect("start_session",s)} onJoinClass={()=>connect("join")} onBack={onLeave} isLive={isSessionLive}/>;
   if(loading)return(<div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100dvh",background:DARK}}><style>{CSS}</style><div style={{textAlign:"center"}}><div style={{width:52,height:52,border:`3px solid ${TEAL}`,borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .8s linear infinite",margin:"0 auto 16px"}}/><p style={{color:"rgba(255,255,255,.5)",fontSize:14}}>{t("Connecting…","جاري الاتصال…")}</p></div></div>);
   if(error)return(<div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100dvh",background:DARK}}><style>{CSS}</style><div style={{textAlign:"center",maxWidth:320,padding:28}}><div style={{width:64,height:64,borderRadius:"50%",background:"rgba(239,68,68,.12)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px"}}><X style={{width:28,height:28,color:RED}}/></div><h2 style={{fontSize:20,fontWeight:700,color:"#fff",marginBottom:8}}>Connection Failed</h2><p style={{color:"rgba(255,255,255,.45)",fontSize:14,marginBottom:22}}>{error}</p><div style={{display:"flex",gap:10,justifyContent:"center"}}><button onClick={()=>{setError(null);setPhase("lobby");}} style={{padding:"10px 22px",borderRadius:10,background:TEAL,border:"none",color:"#fff",fontSize:14,cursor:"pointer",fontWeight:600}}>Try Again</button><button onClick={onLeave} style={{padding:"10px 22px",borderRadius:10,background:GLASSB,border:"1px solid rgba(255,255,255,.12)",color:"#fff",fontSize:14,cursor:"pointer"}}>Go Back</button></div></div></div>);
   return(
