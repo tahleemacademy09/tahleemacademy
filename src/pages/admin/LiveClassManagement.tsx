@@ -706,6 +706,13 @@ const SessionCard = ({ s, onGoLive, onEdit, onDelete, onAttendance, onUpdateStat
               {s.scheduled_at && (
                 <span style={{ display:"flex", alignItems:"center", gap:4, fontSize:11, color:"hsl(var(--muted-foreground))" }}>
                   <Calendar style={{ width:11, height:11 }}/>{fmtDate(s.scheduled_at)}
+                  {s.status === "scheduled" && (() => {
+                    const diff = new Date(s.scheduled_at).getTime() - Date.now();
+                    if (diff <= 0) return null;
+                    const mins = Math.floor(diff / 60000);
+                    const label = mins < 60 ? `${mins}m` : `${Math.floor(mins/60)}h ${mins%60}m`;
+                    return <span style={{ marginLeft:6, color:"#D97706", fontWeight:800 }}>⏱ {label}</span>;
+                  })()}
                 </span>
               )}
               {s.duration_minutes && (
