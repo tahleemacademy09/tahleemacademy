@@ -255,9 +255,10 @@ const RecController=({sessionId,subjectId,userEmail,onSavingChange}:any)=>{
       const recMime=mr.mimeType||"audio/webm";const recExt=recMime.includes("mp4")?"mp4":recMime.includes("ogg")?"ogg":"webm";
       const blob=new Blob(chunksRef.current,{type:recMime});
       const path=`recordings/${sessionId||subjectId}/${Date.now()}.${recExt}`;
-      await supabase.storage.from("recordings").upload(path,blob);
-      const{data:{publicUrl}}=supabase.storage.from("recordings").getPublicUrl(path);
-      if(sessionId){await supabase.from("live_sessions").update({recording_url:publicUrl,is_recording:false}as any).eq("id",sessionId);await supabase.from("recordings"as any).insert({session_id:sessionId,subject_id:subjectId,url:publicUrl,recorded_by:userEmail,duration_seconds:time});}
+      const{error:upErr}=await supabase.storage.from("subject-files").upload(path,blob);
+      if(upErr)throw upErr;
+      if(sessionId)await supabase.from("live_sessions").update({is_recording:false}as any).eq("id",sessionId);
+      await supabase.from("session_recordings").insert({session_id:sessionId||null,subject_id:subjectId,file_url:path,teacher_name:userEmail,duration_seconds:time}as any);
       toast({title:t("Recording saved ✅","تم حفظ التسجيل ✅")});
     }catch(e:any){toast({title:"Save failed",description:e?.message,variant:"destructive"});}onSavingChange?.(false);};
     acRef.current?.close();setRecording(false);setPaused(false);
