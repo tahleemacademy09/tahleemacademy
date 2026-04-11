@@ -22,13 +22,13 @@ import {
   Video, FileText, ClipboardList, Megaphone, Calendar,
   ChevronRight, LayoutGrid, List, GraduationCap, Layers,
 } from "lucide-react";
-import ClassroomView        from "@/components/classroom/ClassroomView";
 import SubjectRecordings    from "@/components/classroom/SubjectRecordings";
 import SubjectMaterials     from "@/components/classroom/SubjectMaterials";
 import SubjectSyllabus      from "@/components/classroom/SubjectSyllabus";
 import SubjectAssignments   from "@/components/classroom/SubjectAssignments";
 import SubjectAnnouncements from "@/components/classroom/SubjectAnnouncements";
 import { useTimetableNotifications } from "@/hooks/useTimetableNotifications";
+import { useLiveClass } from "@/contexts/LiveClassContext";
 
 const G    = "#0f2d1f";
 const GM   = "#1a4731";
@@ -43,30 +43,16 @@ const levelColor = (l: string) =>
 const lvLabel = (l: string) =>
   ({ beginner:"Beginner", intermediate:"Intermediate", advanced:"Advanced" }[l] || l);
 
-/**
- * Returns true when a SUBJECT should be visible to the given student level.
- * Priority: new `levels` TEXT[] array > old `level` TEXT (legacy).
- *
- * subject.levels (array):
- *   empty / null → all levels
- *   contains studentLevel → visible
- *   contains 'all'        → visible
- * Fallback subject.level (string):
- *   null / 'all' / '' → all levels
- *   must match exactly
- */
 const subjectLevelMatch = (subject: any, studentLevel: string): boolean => {
   const lvs: string[] = subject?.levels ?? [];
   if (lvs.length > 0) {
     return lvs.includes(studentLevel) || lvs.includes("all");
   }
-  // Legacy single-level field
   const lv = subject?.level;
   if (!lv || lv === "all") return true;
   return lv === studentLevel;
 };
 
-/** Courses are now visible to ALL levels — only subjects are level-filtered. */
 const levelMatch = (_itemLevel: string | null | undefined, _studentLevel: string): boolean => true;
 
 interface Props { defaultTab?: "courses" | "live"; }
@@ -80,24 +66,20 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
   const navigate                   = useNavigate();
   const qc                         = useQueryClient();
   const isPrivileged               = hasRole("admin") || hasRole("teacher");
+  const { joinClass }              = useLiveClass();
 
-  // Active class reminders while browsing Learning Hub
   useTimetableNotifications();
 
   const [selCourse,       setSelCourse]       = useState<any | null>(null);
   const [selectedSubject, setSelectedSubject] = useState<any | null>(null);
   const [subjectTab,      setSubjectTab]      = useState("lessons");
-  const [inClass,         setInClass]         = useState(false);
-  const [minimized,       setMinimized]       = useState(false);
   const [viewMode,        setViewMode]        = useState<"list" | "grid">("grid");
   const [activeLesson,    setActiveLesson]    = useState<string | null>(null);
 
-  // Student's assigned level (fallback to 'beginner' if not yet set)
   const studentLevel = (profile?.level || profile?.course_level || "beginner") as string;
 
   // ── Queries ───────────────────────────────────────────────────────────────
 
-  // ALL published courses (we filter client-side so we can show the "nothing for your level" message)
   const { data: allCourses, isLoading: loadCourse } = useQuery({
     queryKey: ["all-courses-published"],
     queryFn: async () => {
@@ -110,12 +92,10 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
     },
   });
 
-  // Apply level filter — admins/teachers see everything
   const courses = isPrivileged
     ? (allCourses || [])
     : (allCourses || []).filter((c: any) => levelMatch(c.level, studentLevel));
 
-  // Subjects for selected course — filtered by student level
   const { data: allCourseSubjects, isLoading: loadSubs } = useQuery({
     queryKey: ["course-subjects", selCourse?.id],
     enabled: !!selCourse,
@@ -134,7 +114,6 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
     ? (allCourseSubjects || [])
     : (allCourseSubjects || []).filter((s: any) => subjectLevelMatch(s, studentLevel));
 
-  // Lessons for selected subject
   const { data: subjectLessons, isLoading: loadLessons } = useQuery({
     queryKey: ["subject-lessons", selectedSubject?.id],
     enabled: !!selectedSubject,
@@ -170,7 +149,6 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
     refetchInterval: 5000,
   });
 
-  // All subjects — needed so ?subject=ID can find and open any subject directly
   const { data: allSubjects } = useQuery({
     queryKey: ["all-subjects-flat"],
     queryFn: async () => {
@@ -179,7 +157,6 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
     },
   });
 
-  // When navigated from timetable with ?subject=ID, auto-open that subject
   useEffect(() => {
     const subjectId = searchParams.get("subject");
     if (!subjectId || !allSubjects?.length || selectedSubject) return;
@@ -190,7 +167,6 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
     }
   }, [allSubjects, searchParams]);
 
-  // URL-based course detail (/student/courses/:courseId)
   const { data: urlCourse } = useQuery({
     queryKey: ["course", courseId],
     enabled: !!courseId,
@@ -218,7 +194,6 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
     ? (allUrlCourseSubjects || [])
     : (allUrlCourseSubjects || []).filter((s: any) => subjectLevelMatch(s, studentLevel));
 
-  // Mark lesson complete
   const markComplete = useMutation({
     mutationFn: async (lessonId: string) => {
       const { error } = await supabase
@@ -255,9 +230,6 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
   // ═══════════════════════════════════════════════════════════════════════════
   if (courseId && urlCourse) {
     if (!selectedSubject) {
-      // No course-level restriction — courses visible to all students
-      const courseRestricted = false;
-
       return (
         <div style={{ fontFamily:"'Cairo',sans-serif", background:"#f8fafb", minHeight:"100vh" }}>
           <style>{`@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap');@keyframes spin{to{transform:rotate(360deg)}}`}</style>
@@ -270,9 +242,7 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
             {urlCourse.level && <span style={{ fontSize:11, padding:"3px 10px", borderRadius:20, fontWeight:700, ...levelColor(urlCourse.level) }}>{lvLabel(urlCourse.level)}</span>}
           </div>
           <div style={{ padding:16, maxWidth:720, margin:"0 auto" }}>
-            {courseRestricted ? (
-              <LevelLockedCard studentLevel={studentLevel} requiredLevel={urlCourse.level} />
-            ) : urlCourseSubjects.length === 0 ? (
+            {urlCourseSubjects.length === 0 ? (
               <div style={{ background:"#fff", borderRadius:16, padding:"40px 20px", textAlign:"center", border:"1px solid #e5e7eb" }}>
                 <BookOpen style={{ width:36, height:36, color:"#d1d5db", margin:"0 auto 12px" }} />
                 <p style={{ color:"#9ca3af", fontSize:14 }}>{t("No subjects yet", "لا توجد مواد بعد")}</p>
@@ -288,39 +258,6 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
         </div>
       );
     }
-  }
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // LIVE CLASS
-  // ═══════════════════════════════════════════════════════════════════════════
-  if (inClass && selectedSubject) {
-    return (
-      <>
-        <div style={{ display: minimized ? "none" : "block" }}>
-          <ClassroomView
-            subject={selectedSubject}
-            onLeave={() => { setInClass(false); setMinimized(false); }}
-            onMinimize={() => setMinimized(true)}
-          />
-        </div>
-        {minimized && (
-          <>
-            <style>{`@keyframes lhPulse{0%,100%{opacity:1}50%{opacity:.35}}`}</style>
-            <div style={{ position:"fixed", bottom:24, right:20, display:"flex", alignItems:"center", gap:8, zIndex:99999 }}>
-              <span style={{ width:10, height:10, borderRadius:"50%", background:"#ef4444", display:"block", animation:"lhPulse 1.4s ease-in-out infinite", boxShadow:"0 0 8px #ef4444" }}/>
-              <button onClick={() => setMinimized(false)} title="Return to class"
-                style={{ width:44, height:44, borderRadius:"50%", background:"#075E54", border:"2px solid rgba(255,255,255,.25)", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", boxShadow:"0 4px 16px rgba(0,0,0,.45)" }}>
-                <Video style={{ width:20, height:20, color:"#fff" }}/>
-              </button>
-              <button onClick={() => { setInClass(false); setMinimized(false); }} title="Leave class"
-                style={{ width:44, height:44, borderRadius:"50%", background:"#ef4444", border:"2px solid rgba(255,255,255,.25)", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", boxShadow:"0 4px 16px rgba(239,68,68,.5)" }}>
-                <span style={{ color:"#fff", fontSize:20, lineHeight:1 }}>✕</span>
-              </button>
-            </div>
-          </>
-        )}
-      </>
-    );
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -362,7 +299,6 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
               </h1>
               {live && <span style={{ fontSize:10, fontWeight:800, padding:"3px 9px", borderRadius:20, background:"#ef4444", color:"#fff", animation:"pulse 1.5s infinite" }}>● LIVE</span>}
             </div>
-            {/* Arabic description first */}
             {selectedSubject.title_ar && (
               <p dir="rtl" style={{ fontSize:14, color:GOLD, margin:"0 0 4px", fontFamily:"'Amiri','Cairo',serif" }}>
                 {selectedSubject.title_ar}
@@ -373,7 +309,6 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
                 {selectedSubject.description}
               </p>
             )}
-            {/* English below */}
             {selectedSubject.title_ar && selectedSubject.title_ar !== selectedSubject.title && language !== "ar" && (
               <p style={{ fontSize:12, color:"rgba(255,255,255,.55)", margin:0, lineHeight:1.6 }}>
                 {selectedSubject.title}
@@ -389,8 +324,9 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
               </div>
             )}
 
+            {/* Join/Start class — uses global LiveClassContext, persists across navigation */}
             <button
-              onClick={() => setInClass(true)}
+              onClick={() => joinClass(selectedSubject)}
               style={{ marginTop:14, display:"inline-flex", alignItems:"center", gap:6, padding:"10px 20px", borderRadius:12, background:GOLD, border:"none", color:G, fontSize:13, fontWeight:900, cursor:"pointer", fontFamily:"'Cairo',sans-serif", boxShadow:"0 4px 12px rgba(201,168,76,.4)" }}>
               <Video style={{ width:14, height:14 }} />
               {live ? t("Join","انضمام") : isPrivileged ? t("Start","بدء") : t("Class","الفصل")}
@@ -541,7 +477,7 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // MAIN HUB — COURSE CARDS (level-filtered)
+  // MAIN HUB — COURSE CARDS
   // ═══════════════════════════════════════════════════════════════════════════
   const anyLive = (liveSessions || []).length > 0;
 
@@ -556,7 +492,6 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
         .sc       { transition: box-shadow .2s, transform .2s; }
       `}</style>
 
-      {/* ── HEADER ── */}
       <div style={{ background:`linear-gradient(135deg,${G} 0%,${GM} 100%)`, padding:"20px 18px 22px" }}>
         <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between" }}>
           <div>
@@ -588,7 +523,6 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
               )}
             </div>
           </div>
-          {/* Grid/List toggle */}
           <div style={{ display:"flex", background:"rgba(255,255,255,.12)", borderRadius:11, padding:3, gap:2 }}>
             <button onClick={() => setViewMode("grid")} style={{ width:36, height:36, borderRadius:8, border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", background: viewMode==="grid" ? "#fff" : "transparent", color: viewMode==="grid" ? G : "rgba(255,255,255,.6)", transition:"all .15s" }}>
               <LayoutGrid style={{ width:17, height:17 }} />
@@ -600,7 +534,6 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
         </div>
       </div>
 
-      {/* ── COURSE CARDS ── */}
       <div style={{ padding:"16px", maxWidth:800, margin:"0 auto" }}>
         {loadCourse && (
           <div style={{ display:"grid", gridTemplateColumns: viewMode==="grid" ? "repeat(auto-fill,minmax(180px,1fr))" : "1fr", gap:12 }}>
@@ -626,7 +559,6 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
                       }
                       {anyLive && <span style={{ position:"absolute", top:8, left:8, fontSize:9, fontWeight:800, padding:"3px 7px", borderRadius:20, background:"#ef4444", color:"#fff", animation:"pulse 1.5s infinite" }}>● LIVE</span>}
                     </div>
-                    {/* ALL text BELOW the image */}
                     <div style={{ padding:"10px 12px 14px" }}>
                       {course.level && course.level !== "all" && (
                         <span style={{ fontSize:9, padding:"2px 7px", borderRadius:9, fontWeight:700, ...lc, display:"inline-block", marginBottom:6 }}>{lvLabel(course.level)}</span>
@@ -648,7 +580,6 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
                 );
               }
 
-              // LIST CARD
               return (
                 <div key={course.id} className="sc"
                   style={{ background:"#fff", borderRadius:18, border:"1px solid #e5e7eb", overflow:"hidden", boxShadow:"0 2px 8px rgba(0,0,0,.05)", cursor:"pointer" }}
@@ -684,7 +615,6 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
           </div>
         )}
 
-        {/* Empty state */}
         {!loadCourse && courses.length === 0 && (
           <div style={{ background:"#fff", borderRadius:18, padding:"60px 20px", textAlign:"center", border:"1px solid #e5e7eb" }}>
             <GraduationCap style={{ width:52, height:52, color:"#d1d5db", margin:"0 auto 14px" }} />
@@ -709,8 +639,6 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SubjectCard — text always below image
-// ─────────────────────────────────────────────────────────────────────────────
 function SubjectCard({ subject, onClick, live, language }: {
   subject: any; onClick: () => void; live: boolean; language: string;
 }) {
@@ -720,7 +648,6 @@ function SubjectCard({ subject, onClick, live, language }: {
     <div className="sc"
       onClick={onClick}
       style={{ background:"#fff", borderRadius:16, border:"1px solid #e5e7eb", overflow:"hidden", cursor:"pointer", boxShadow:"0 2px 8px rgba(0,0,0,.05)" }}>
-      {/* Image only — no text overlay */}
       <div style={{ height:110, overflow:"hidden", background:`linear-gradient(135deg,#0f2d1f,#1a4731)`, position:"relative" }}>
         {subject.image_url
           ? <img src={subject.image_url} alt="" style={{ width:"100%", height:"100%", objectFit:"cover" }} />
@@ -728,14 +655,12 @@ function SubjectCard({ subject, onClick, live, language }: {
         }
         {live && <span style={{ position:"absolute", top:8, left:8, fontSize:9, fontWeight:800, padding:"3px 7px", borderRadius:20, background:"#ef4444", color:"#fff" }}>● LIVE</span>}
       </div>
-      {/* All text below the image */}
       <div style={{ padding:"10px 12px 14px" }}>
         {subject.level && subject.level !== "all" && (
           <span style={{ fontSize:9, padding:"2px 7px", borderRadius:9, fontWeight:700, ...lc, display:"inline-block", marginBottom:5 }}>{subject.level}</span>
         )}
-        {/* Arabic title first */}
         {subject.title_ar && (
-          <p style={{ fontSize:12, color:GOLD, margin:"0 0 2px", fontFamily:"'Amiri',serif" }} dir="rtl">{subject.title_ar}</p>
+          <p style={{ fontSize:12, color:"#c9a84c", margin:"0 0 2px", fontFamily:"'Amiri',serif" }} dir="rtl">{subject.title_ar}</p>
         )}
         <h3 style={{ fontSize:13, fontWeight:800, color:"#0f2d1f", margin:"0 0 4px", lineHeight:1.4 }}>{name}</h3>
         {subject.description && (
@@ -751,9 +676,6 @@ function SubjectCard({ subject, onClick, live, language }: {
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Level-locked placeholder
-// ─────────────────────────────────────────────────────────────────────────────
 function LevelLockedCard({ studentLevel, requiredLevel }: { studentLevel: string; requiredLevel: string }) {
   return (
     <div style={{ background:"#fff", borderRadius:16, padding:"40px 20px", textAlign:"center", border:"2px solid #FDE68A" }}>
