@@ -175,12 +175,18 @@ const RevisionRoom = () => {
   const mastery = flashcards.length > 0 ? Math.round((knownCount/flashcards.length)*100) : 0;
   const quizAvg = quizHistory.length > 0 ? Math.round(quizHistory.reduce((s:number,q:any)=>s+Number(q.percentage||0),0)/quizHistory.length) : 0;
 
-  const callClaude = async (prompt: string): Promise<string> => {
+  const callClaude = async (
+    prompt: string,
+    opts?: { imageData?: string; imageMimeType?: string }
+  ): Promise<string> => {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 20000);
+      const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s for vision
+      const body: any = { action: "revision", prompt };
+      if (opts?.imageData)     body.imageData     = opts.imageData;
+      if (opts?.imageMimeType) body.imageMimeType = opts.imageMimeType;
       const { data, error } = await supabase.functions.invoke("tahleem-ai", {
-        body: { action: "revision", prompt },
+        body,
         signal: controller.signal,
       });
       clearTimeout(timeoutId);
@@ -194,6 +200,22 @@ const RevisionRoom = () => {
       if (err.name === "AbortError") throw new Error("Request timed out. The AI is taking too long. Please try again.");
       throw err;
     }
+  };
+
+  /** Convert an image URL to base64 for vision AI */
+  const imageUrlToBase64 = async (url: string): Promise<{ data: string; mimeType: string }> => {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error("Could not fetch image file");
+    const blob = await resp.blob();
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const b64 = (reader.result as string).split(",")[1];
+        resolve({ data: b64, mimeType: blob.type || "image/jpeg" });
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
   };
   const loadPdfJs = (): Promise<any> => new Promise((resolve, reject) => {
     const CDNBASE = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174";
@@ -424,7 +446,7 @@ Make questions educational and progressively challenging.`
           score, total:quizQs.length,
           percentage:Math.round((score/quizQs.length)*100),
           answers:next, completed_at:new Date().toISOString(),
-        } as any).then(()=>qc.invalidateQueries({queryKey:["revision-quiz-history"]}));
+        } as any).then(()=>qc.invalidateQueries({queryKey:["revision-quiz-history", subjectId, user.id]}));
       }
     }
   };
@@ -973,17 +995,22 @@ Make questions educational and progressively challenging.`
                   {materials.map((mat:any)=>{
                     const ext = (mat.file_url||"").split(".").pop()?.toLowerCase();
                     const isPdf = mat.material_type==="PDF"||mat.file_type?.includes("pdf")||ext==="pdf";
+                    const isImg = mat.material_type==="Image"||mat.file_type?.startsWith("image/")||["jpg","jpeg","png","gif","webp"].includes(ext||"");
                     const isText = !!mat.content;
-                    const canRead = isPdf || isText;
+                    const canRead = isPdf || isImg || isText;
+                    const readLabel = isPdf?"PDF — select page range":isImg?"🖼️ Image — AI vision":isText?"Text content":"Audio/Video — not readable";
+                    const iconBg = isPdf?"#FEF2F2":isImg?"#EFF6FF":isText?"#FFFBEB":"#F3F4F6";
+                    const icon = isPdf?"📄":isImg?"🖼️":isText?"📝":"🎵";
                     return (
                       <button key={mat.id} onClick={()=>{ if(!canRead) return; setSelMaterial(mat); setPageFrom(1); setPageTo(5); setMatGenStep("config"); }}
-                        style={{ display:"flex", alignItems:"center", gap:12, padding:"14px 16px", borderRadius:14, border:`1.5px solid ${selMaterial?.id===mat.id?"#0D9488":"#E5E7EB"}`, background:selMaterial?.id===mat.id?"#F0FDFA":"#fff", cursor:canRead?"pointer":"not-allowed", textAlign:"left", opacity:canRead?1:.5 }}>
-                        <div style={{ width:40, height:40, borderRadius:10, background:isPdf?"#FEF2F2":isText?"#FFFBEB":"#F3F4F6", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
-                          <span style={{ fontSize:20 }}>{isPdf?"📄":isText?"📝":""}</span>                        </div>
+                        style={{ display:"flex", alignItems:"center", gap:12, padding:"14px 16px", borderRadius:14, border:`1.5px solid ${selMaterial?.id===mat.id?"#0D9488":canRead?"#E5E7EB":"#F3F4F6"}`, background:selMaterial?.id===mat.id?"#F0FDFA":"#fff", cursor:canRead?"pointer":"not-allowed", textAlign:"left", opacity:canRead?1:.5 }}>
+                        <div style={{ width:40, height:40, borderRadius:10, background:iconBg, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                          <span style={{ fontSize:20 }}>{icon}</span>
+                        </div>
                         <div style={{ flex:1, minWidth:0 }}>
                           <p style={{ fontWeight:700, fontSize:13, color:"#111", margin:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{mat.title}</p>
-                          <p style={{ fontSize:11, color:"#9CA3AF", margin:0 }}>
-                            {isPdf?"PDF — select page range":isText?"Text content":"Not readable by AI"}
+                          <p style={{ fontSize:11, color:canRead?"#0F766E":"#9CA3AF", margin:0 }}>
+                            {readLabel}
                             {mat.file_size?" · "+((mat.file_size/1048576).toFixed(1))+" MB":""}
                           </p>
                         </div>
