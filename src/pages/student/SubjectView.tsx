@@ -16,7 +16,7 @@ import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
-import ClassroomView from "@/components/classroom/ClassroomView";
+import { useLiveClass } from "@/contexts/LiveClassContext";
 import MaterialsViewer from "@/components/classroom/MaterialsViewer";
 import SubjectSyllabus from "@/components/classroom/SubjectSyllabus";
 import SubjectRecordings from "@/components/classroom/SubjectRecordings";
@@ -40,9 +40,8 @@ const SubjectView = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { joinClass } = useLiveClass();
   const isTeacher = hasRole("teacher") || hasRole("admin");
-  const [inClassroom, setInClassroom] = useState(false);
-  const [classroomSubject, setClassroomSubject] = useState<any>(null);
   const [showSchedule, setShowSchedule] = useState(false);
   const [scheduleForm, setScheduleForm] = useState({
     topic: "", topic_ar: "", date: "", time: "", duration: 60, is_recorded: true, homework: "", homework_ar: "",
@@ -195,7 +194,6 @@ const SubjectView = () => {
     } as any);
 
     if (!error) {
-      // Update subject next_session_at
       await supabase.from("subjects").update({ next_session_at: scheduledAt, total_sessions: sessionNum } as any).eq("id", subjectId!);
       toast({ title: t("Class scheduled!", "تم جدولة الحصة!") });
       setShowSchedule(false);
@@ -206,15 +204,10 @@ const SubjectView = () => {
     }
   };
 
-  const joinClassroom = (s?: any) => {
-    setClassroomSubject(subject);
-    setInClassroom(true);
+  // ─── Join Classroom (global — persists across navigation) ───
+  const joinClassroom = () => {
+    if (subject) joinClass(subject);
   };
-
-  // ─── Classroom Mode ───
-  if (inClassroom && classroomSubject) {
-    return <ClassroomView subject={classroomSubject} onLeave={() => setInClassroom(false)} />;
-  }
 
   if (isLoading) return <div className="container mx-auto px-4 py-8"><Skeleton className="h-64" /></div>;
   if (!subject) return <div className="container mx-auto px-4 py-16 text-center"><h2>{t("Subject not found", "المادة غير موجودة")}</h2></div>;
@@ -243,8 +236,8 @@ const SubjectView = () => {
           )}
         </div>
         <div className="flex gap-2">
-          {nextSession && canJoin && (
-            <Button onClick={() => joinClassroom()} className="gap-1"><Video className="h-4 w-4" />{t("Join Class", "انضم للحصة")}</Button>
+          {(nextSession && canJoin || isTeacher) && (
+            <Button onClick={joinClassroom} className="gap-1"><Video className="h-4 w-4" />{t("Join Class", "انضم للحصة")}</Button>
           )}
           {isTeacher && (
             <Dialog open={showSchedule} onOpenChange={setShowSchedule}>
@@ -334,8 +327,8 @@ const SubjectView = () => {
                       <p className="text-xs text-muted-foreground">{(nextSession as any).duration_minutes || 60} {t("minutes", "دقيقة")}</p>
                     </div>
                     <div className="flex gap-2">
-                      <Button onClick={() => joinClassroom()} disabled={!canJoin} className="gap-1">
-                        <Video className="h-4 w-4" />{canJoin ? t("Join Class", "انضم") : t("Not yet", "لم يحن الوقت")}
+                      <Button onClick={joinClassroom} disabled={!canJoin && !isTeacher} className="gap-1">
+                        <Video className="h-4 w-4" />{(canJoin || isTeacher) ? t("Join Class", "انضم") : t("Not yet", "لم يحن الوقت")}
                       </Button>
                     </div>
                   </>
@@ -363,7 +356,7 @@ const SubjectView = () => {
             ) : (
               <div className="space-y-2">
                 {upcomingSessions.map((s: any) => {
-                  const canJoinThis = s.scheduled_at && differenceInMinutes(new Date(s.scheduled_at), now) <= 10;
+                  const canJoinThis = isTeacher || (s.scheduled_at && differenceInMinutes(new Date(s.scheduled_at), now) <= 10) || s.status === "active";
                   return (
                     <Card key={s.id}>
                       <CardContent className="p-4 flex items-center justify-between">
@@ -378,7 +371,7 @@ const SubjectView = () => {
                             {s.scheduled_at ? format(new Date(s.scheduled_at), "EEE, MMM d 'at' h:mm a") : ""} • {s.duration_minutes || 60}m
                           </p>
                         </div>
-                        <Button size="sm" onClick={() => joinClassroom()} disabled={!canJoinThis && s.status !== "active"}>
+                        <Button size="sm" onClick={joinClassroom} disabled={!canJoinThis}>
                           <Video className="h-3 w-3 me-1" />{t("Join", "انضم")}
                         </Button>
                       </CardContent>
@@ -541,7 +534,6 @@ const SubjectView = () => {
               {attendanceRate >= 80 ? t("Good", "جيد") : attendanceRate >= 60 ? t("Average", "متوسط") : t("Poor", "ضعيف")}
             </Badge>
           </div>
-
           <div className="space-y-2">
             {pastSessions.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-6">{t("No sessions yet", "لا توجد حصص بعد")}</p>
@@ -564,61 +556,30 @@ const SubjectView = () => {
         {/* ═══ TAB 8: Progress ═══ */}
         <TabsContent value="progress" className="mt-4 space-y-4">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <Card>
-              <CardContent className="p-4 text-center">
-                <p className="text-2xl font-bold text-primary">{Math.round(avgExam * 0.7)}/70</p>
-                <p className="text-xs text-muted-foreground">{t("Avg Exam Score", "معدل الامتحانات")}</p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4 text-center">
-                <p className="text-2xl font-bold text-secondary">{Math.round(avgTest * 0.3)}/30</p>
-                <p className="text-xs text-muted-foreground">{t("Avg Test Score", "معدل التمرينات")}</p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4 text-center">
-                <p className="text-2xl font-bold">{attendanceRate}%</p>
-                <p className="text-xs text-muted-foreground">{t("Attendance", "الحضور")}</p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4 text-center">
-                <p className="text-2xl font-bold" style={{ color: '#D4AF37' }}>{completionPct}%</p>
-                <p className="text-xs text-muted-foreground">{t("Overall Progress", "التقدم الكلي")}</p>
-              </CardContent>
-            </Card>
+            <Card><CardContent className="p-4 text-center"><p className="text-2xl font-bold text-primary">{Math.round(avgExam * 0.7)}/70</p><p className="text-xs text-muted-foreground">{t("Avg Exam Score", "معدل الامتحانات")}</p></CardContent></Card>
+            <Card><CardContent className="p-4 text-center"><p className="text-2xl font-bold text-secondary">{Math.round(avgTest * 0.3)}/30</p><p className="text-xs text-muted-foreground">{t("Avg Test Score", "معدل التمرينات")}</p></CardContent></Card>
+            <Card><CardContent className="p-4 text-center"><p className="text-2xl font-bold">{attendanceRate}%</p><p className="text-xs text-muted-foreground">{t("Attendance", "الحضور")}</p></CardContent></Card>
+            <Card><CardContent className="p-4 text-center"><p className="text-2xl font-bold" style={{ color: '#D4AF37' }}>{completionPct}%</p><p className="text-xs text-muted-foreground">{t("Overall Progress", "التقدم الكلي")}</p></CardContent></Card>
           </div>
-
           <Card>
             <CardContent className="p-5">
               <h3 className="font-semibold mb-3">{t("Completion Breakdown", "تفصيل الإنجاز")}</h3>
               <div className="space-y-3">
                 <div>
-                  <div className="flex justify-between text-sm mb-1">
-                    <span>{t("Sessions Attended", "الحصص المحضورة")}</span>
-                    <span>{completedSessions}/{totalSessions}</span>
-                  </div>
+                  <div className="flex justify-between text-sm mb-1"><span>{t("Sessions Attended", "الحصص المحضورة")}</span><span>{completedSessions}/{totalSessions}</span></div>
                   <Progress value={totalSessions > 0 ? (completedSessions / totalSessions) * 100 : 0} className="h-2" />
                 </div>
                 <div>
-                  <div className="flex justify-between text-sm mb-1">
-                    <span>{t("Exams Completed", "الامتحانات المكتملة")}</span>
-                    <span>{examAttempts.length}/{examsList.length}</span>
-                  </div>
+                  <div className="flex justify-between text-sm mb-1"><span>{t("Exams Completed", "الامتحانات المكتملة")}</span><span>{examAttempts.length}/{examsList.length}</span></div>
                   <Progress value={examsList.length > 0 ? (examAttempts.length / examsList.length) * 100 : 0} className="h-2" />
                 </div>
                 <div>
-                  <div className="flex justify-between text-sm mb-1">
-                    <span>{t("Tests Completed", "التمرينات المكتملة")}</span>
-                    <span>{testAttempts.length}/{testsList.length}</span>
-                  </div>
+                  <div className="flex justify-between text-sm mb-1"><span>{t("Tests Completed", "التمرينات المكتملة")}</span><span>{testAttempts.length}/{testsList.length}</span></div>
                   <Progress value={testsList.length > 0 ? (testAttempts.length / testsList.length) * 100 : 0} className="h-2" />
                 </div>
               </div>
             </CardContent>
           </Card>
-
           <Card>
             <CardContent className="p-5">
               <h3 className="font-semibold mb-3">{t("Current Level", "المستوى الحالي")}</h3>
