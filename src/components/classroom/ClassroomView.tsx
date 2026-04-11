@@ -14,7 +14,7 @@ import {
 } from "@livekit/components-react";
 // @ts-ignore
 import "@livekit/components-styles";
-import { Track, RoomEvent } from "livekit-client";
+import { Track, RoomEvent, ConnectionState } from "livekit-client";
 import { createPortal } from "react-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -41,10 +41,27 @@ interface ClassroomViewProps { subject: any; onLeave: () => void; onMinimize?: (
 const G     = "#075E54";
 const G2    = "#064E3B";
 const BAR_H = 72;
+// iOS safe area inset for bottom bar (iPhone home indicator)
+const SAFE_BOTTOM = "env(safe-area-inset-bottom, 0px)";
 const CSS   = `
   @keyframes cv-spin { to { transform: rotate(360deg); } }
   @keyframes wb-spin  { to { transform: rotate(360deg); } }
   [data-lk-theme] { height: 100% !important; display: flex !important; flex-direction: column !important; }
+
+  /* iOS Safari: prevent elastic overscroll inside the classroom */
+  [data-classroom-root] { overscroll-behavior: none; -webkit-overflow-scrolling: touch; }
+
+  /* iOS Safari: disable tap highlight on interactive elements */
+  [data-classroom-root] button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+
+  /* iOS: prevent text selection during pointer events on canvas */
+  [data-classroom-root] canvas { -webkit-user-select: none; user-select: none; }
+
+  /* Prevent iOS from zooming on double-tap in classroom */
+  [data-classroom-root] { touch-action: pan-y; }
+
+  /* Safe-area insets for iPhone notch/home bar */
+  [data-classroom-root] { padding-bottom: env(safe-area-inset-bottom, 0px); }
 `;
 
 /* ══════════════════════════════════════════
@@ -322,7 +339,10 @@ const RecController = ({ sessionId, subjectId, userEmail, onSavingChange }: any)
 
   const collectAudio = useCallback(() => {
     try {
-      const ac = new AudioContext(); acRef.current = ac;
+      // iOS Safari suspends AudioContext until user gesture — always resume
+      const ac = new (window.AudioContext || (window as any).webkitAudioContext)();
+      acRef.current = ac;
+      ac.resume().catch(() => {});
       const dest = ac.createMediaStreamDestination(); let n = 0;
       [room.localParticipant, ...Array.from(room.remoteParticipants.values())].forEach((p:any) => {
         p.trackPublications?.forEach?.((pub:any) => {
@@ -338,7 +358,11 @@ const RecController = ({ sessionId, subjectId, userEmail, onSavingChange }: any)
   const startRec = async () => {
     const audio = collectAudio(); if (!audio) { toast({ title:"No audio tracks" }); return; }
     chunksRef.current = [];
-    const mr = new MediaRecorder(audio, { mimeType:"audio/webm;codecs=opus" });
+    // iOS Safari does not support webm — pick the first supported format
+    const mimeType = ["audio/webm;codecs=opus","audio/webm","audio/mp4","audio/ogg"].find(t => {
+      try { return MediaRecorder.isTypeSupported(t); } catch { return false; }
+    }) || "";
+    const mr = new MediaRecorder(audio, mimeType ? { mimeType } : undefined);
     mr.ondataavailable = e => { if (e.data.size>0) chunksRef.current.push(e.data); };
     mr.start(1000); mrRef.current = mr; setRecording(true); setPaused(false); setTime(0);
     timerRef.current = setInterval(()=>setTime(t=>t+1), 1000);
@@ -350,8 +374,10 @@ const RecController = ({ sessionId, subjectId, userEmail, onSavingChange }: any)
     onSavingChange?.(true); mr.stop();
     mr.onstop = async () => {
       try {
-        const blob = new Blob(chunksRef.current, { type:"audio/webm" });
-        const path = `recordings/${sessionId||subjectId}/${Date.now()}.webm`;
+        const recMime = mrRef.current?.mimeType || "audio/webm";
+        const blob = new Blob(chunksRef.current, { type: recMime });
+        const recExt = recMime.includes("mp4") ? "mp4" : recMime.includes("ogg") ? "ogg" : "webm";
+        const path = `recordings/${sessionId||subjectId}/${Date.now()}.${recExt}`;
         await supabase.storage.from("recordings").upload(path, blob);
         const { data:{ publicUrl } } = supabase.storage.from("recordings").getPublicUrl(path);
         if (sessionId) {
@@ -435,10 +461,14 @@ const BottomBar = ({
       // Stop and save locally
       stuMrRef.current?.stop();
       stuMrRef.current!.onstop = () => {
-        const blob = new Blob(stuChunks.current, { type:"audio/webm" });
+        // Use the actual recorded mimeType (may be mp4 on iOS)
+        const blobType = stuMrRef.current?.mimeType || "audio/webm";
+        const blob = new Blob(stuChunks.current, { type: blobType });
         const url  = URL.createObjectURL(blob);
         const a    = document.createElement("a");
-        a.href = url; a.download = `class-recording-${Date.now()}.webm`; a.click();
+        // Use appropriate extension for iOS (mp4) vs desktop (webm)
+        const ext = blobType.includes("mp4") ? "mp4" : blobType.includes("ogg") ? "ogg" : "webm";
+        a.href = url; a.download = `class-recording-${Date.now()}.${ext}`; a.click();
         URL.revokeObjectURL(url);
         stuChunks.current = [];
       };
@@ -446,7 +476,11 @@ const BottomBar = ({
     } else {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio:true });
-        const mr = new MediaRecorder(stream, { mimeType:"audio/webm" });
+        // iOS Safari does not support webm — pick the first supported format
+        const stuMime = ["audio/webm","audio/mp4","audio/ogg"].find(t => {
+          try { return MediaRecorder.isTypeSupported(t); } catch { return false; }
+        }) || "";
+        const mr = new MediaRecorder(stream, stuMime ? { mimeType: stuMime } : undefined);
         stuChunks.current = [];
         mr.ondataavailable = e => { if(e.data.size>0) stuChunks.current.push(e.data); };
         mr.start(1000); stuMrRef.current = mr; setStuRec(true);
@@ -507,7 +541,7 @@ const BottomBar = ({
       )}
 
       {/* Main bar */}
-      <div style={{ height:BAR_H, background:`linear-gradient(135deg,${G2},${G})`, display:"flex", alignItems:"center", justifyContent:"space-around", padding:"0 8px", flexShrink:0, boxShadow:"0 -2px 16px rgba(0,0,0,.4)" }}>
+      <div style={{ height:BAR_H, background:`linear-gradient(135deg,${G2},${G})`, display:"flex", alignItems:"center", justifyContent:"space-around", padding:`0 8px 0 8px`, paddingBottom:`calc(8px + ${SAFE_BOTTOM})`, flexShrink:0, boxShadow:"0 -2px 16px rgba(0,0,0,.4)" }}>
 
         <Btn active={micOn} danger={!micOn} label={micOn?"Mic Off":"Mic On"} onClick={toggleMic}>
           {micOn ? <Mic style={IS}/> : <MicOff style={IS}/>}
@@ -574,8 +608,12 @@ const ParticipantTileCustom = ({ participant, isLocal }: { participant: any; isL
                   || participant.trackPublications?.get(Track.Source.Camera);
       const track = camPub?.videoTrack || camPub?.track;
       if (track?.mediaStreamTrack?.readyState === "live" && videoRef.current) {
-        videoRef.current.srcObject = new MediaStream([track.mediaStreamTrack]);
-        videoRef.current.play().catch(() => {});
+        const ms = new MediaStream([track.mediaStreamTrack]);
+        videoRef.current.srcObject = ms;
+        // iOS: muted must be set before play() to avoid NotAllowedError
+        if (isLocal) videoRef.current.muted = true;
+        const pp = videoRef.current.play();
+        if (pp !== undefined) pp.catch(() => {});
         setHasVideo(true);
       } else {
         if (videoRef.current) videoRef.current.srcObject = null;
@@ -773,6 +811,51 @@ const VideoGrid = () => {
 };
 
 /* ══════════════════════════════════════════
+   RECONNECT MONITOR — listens to LiveKit reconnect events
+   Surfaces reconnecting UI so user knows to stay on page
+══════════════════════════════════════════ */
+const ReconnectMonitor = ({ onReconnecting, onReconnected }: { onReconnecting:()=>void; onReconnected:()=>void }) => {
+  const room = useRoomContext();
+  useEffect(() => {
+    const onR  = () => onReconnecting();
+    const onRd = () => onReconnected();
+    const onDc = () => {
+      // If fully disconnected (all retries failed), show it but don't kick user
+      // They can manually leave if needed
+      onReconnecting();
+    };
+    room.on(RoomEvent.Reconnecting,  onR);
+    room.on(RoomEvent.Reconnected,   onRd);
+    // Also handle visibility change — on iOS, when app comes back from background
+    // the room may need a nudge to restore tracks
+    const onVisible = async () => {
+      if (document.visibilityState !== "visible") return;
+      // If room connection is still alive, re-enable local tracks that iOS may have muted
+      try {
+        if (room.state === ConnectionState.Connected) {
+          // Kick local participant tracks to re-establish audio on iOS
+          const lp = room.localParticipant;
+          if (lp.isMicrophoneEnabled) {
+            // Toggle off/on to force iOS to re-acquire audio session
+            await lp.setMicrophoneEnabled(false);
+            await new Promise(r => setTimeout(r, 150));
+            await lp.setMicrophoneEnabled(true);
+          }
+          onReconnected(); // clear any reconnecting UI
+        }
+      } catch { /* non-critical */ }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      room.off(RoomEvent.Reconnecting, onR);
+      room.off(RoomEvent.Reconnected,  onRd);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [room, onReconnecting, onReconnected]);
+  return null;
+};
+
+/* ══════════════════════════════════════════
    MAIN COMPONENT
 ══════════════════════════════════════════ */
 const ClassroomView = ({ subject, onLeave, onMinimize }: ClassroomViewProps) => {
@@ -787,22 +870,31 @@ const ClassroomView = ({ subject, onLeave, onMinimize }: ClassroomViewProps) => 
   const [error,    setError]    = useState<string|null>(null);
   const [loading,  setLoading]  = useState(false);
 
-  // Resume from minimize — re-render triggers LiveKit reconnect automatically
+  // Wake Lock — keep screen alive during class (prevents iOS background kill)
+  const wakeLockRef = useRef<any>(null);
   useEffect(() => {
-    const onVisible = () => {
-      // When user returns from background while live, LiveKit auto-reconnects
-      // Force a state tick so React re-evaluates the LiveKitRoom connect prop
-      if (phase === "live" && document.visibilityState === "visible") {
-        setToken(t => t ? t + "" : t); // identity re-render
-      }
+    if (phase !== "live") return;
+    const acquire = async () => {
+      try {
+        if ("wakeLock" in navigator) {
+          wakeLockRef.current = await (navigator as any).wakeLock.request("screen");
+        }
+      } catch { /* not critical */ }
     };
+    acquire();
+    // Re-acquire when page becomes visible (iOS releases wake lock on background)
+    const onVisible = () => { if (document.visibilityState === "visible") acquire(); };
     document.addEventListener("visibilitychange", onVisible);
-    return () => document.removeEventListener("visibilitychange", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      wakeLockRef.current?.release().catch(() => {});
+    };
   }, [phase]);
   const [sessionId,setSessionId]= useState<string|null>(null);
   const [sessionInfo,setSessionInfo] = useState<any>(null);
   const [attendanceId,setAttendanceId] = useState<string|null>(null);
   const [joinedAt] = useState(Date.now());
+  const [reconnecting, setReconnecting] = useState(false);
   const [savingRec,setSavingRec] = useState(false);
   const [isSessionLive,setIsSessionLive] = useState(false);
   const [duration, setDuration] = useState(0);
@@ -933,14 +1025,44 @@ const ClassroomView = ({ subject, onLeave, onMinimize }: ClassroomViewProps) => 
   );
 
   return (
-    <div style={{ height:"100vh", display:"flex", flexDirection:"column", background:"#0d1117", overflow:"hidden" }}>
-      <style>{CSS}</style>
+    <div data-classroom-root style={{ height:"100dvh", display:"flex", flexDirection:"column", background:"#0d1117", overflow:"hidden" }}>
+      <style>{CSS + `
+        /* iOS Safari 100vh fix — use dvh with -webkit-fill-available fallback */
+        @supports not (height: 100dvh) {
+          [data-classroom-root] { height: -webkit-fill-available !important; }
+        }
+      `}</style>
 
       {token && wsUrl && (
         <LiveKitRoom
-          serverUrl={wsUrl} token={token} connect={true}
-          options={{ adaptiveStream:{pixelDensity:"screen"}, dynacast:true, disconnectOnPageLeave:true, audioCaptureDefaults:{echoCancellation:true,noiseSuppression:true,autoGainControl:true,sampleRate:48000,channelCount:1}, publishDefaults:{audioPreset:{maxBitrate:32000},dtx:true,red:false,stopMicTrackOnMute:false,videoEncoding:{maxBitrate:700_000,maxFramerate:20},backupCodec:true}, videoCaptureDefaults:{resolution:{width:640,height:480,frameRate:20},facingMode:"user"} }}
-          style={{ flex:1, display:"flex", flexDirection:"column", minHeight:0 }}
+          serverUrl={wsUrl} token={token} connect={phase === "live"}
+          options={{
+            adaptiveStream:        { pixelDensity: "screen" },
+            dynacast:              true,
+            // CRITICAL FIX: false = never disconnect when student minimizes/backgrounds app
+            // "true" was the root cause of all kick-outs on iOS/mobile
+            disconnectOnPageLeave: false,
+            audioCaptureDefaults: {
+              echoCancellation: true,
+              noiseSuppression:  true,
+              autoGainControl:   true,
+              sampleRate:        48000,
+              channelCount:      1,
+            },
+            publishDefaults: {
+              audioPreset:        { maxBitrate: 32000 },
+              dtx:                true,
+              red:                false,
+              stopMicTrackOnMute: false,
+              videoEncoding:      { maxBitrate: 700_000, maxFramerate: 20 },
+              backupCodec:        true,
+            },
+            videoCaptureDefaults: {
+              resolution: { width: 640, height: 480, frameRate: 20 },
+              facingMode: "user",
+            },
+          }}
+          style={{ flex:1, display:"flex", flexDirection:"column", minHeight:0, position:"relative" }}
           data-lk-theme="default"
         >
           <RoomAudioRenderer/>
@@ -953,6 +1075,7 @@ const ClassroomView = ({ subject, onLeave, onMinimize }: ClassroomViewProps) => 
             onWbAllowWrite={(allow)=>setCanStudentWrite(allow)}
             onRecAllowed={(allow)=>setCanStudentRec(allow)}
           />
+          <ReconnectMonitor onReconnecting={()=>setReconnecting(true)} onReconnected={()=>setReconnecting(false)}/>
 
           {/* Top bar */}
           <div style={{ height:46, background:"rgba(0,0,0,.75)", backdropFilter:"blur(12px)", display:"flex", alignItems:"center", justifyContent:"space-between", padding:"0 14px", flexShrink:0, borderBottom:"1px solid rgba(255,255,255,.06)" }}>
@@ -969,6 +1092,14 @@ const ClassroomView = ({ subject, onLeave, onMinimize }: ClassroomViewProps) => 
             {isPrivileged && <RecController sessionId={sessionId} subjectId={subject.id} userEmail={user?.email||""} onSavingChange={setSavingRec}/>}
           </div>
 
+          {/* Reconnecting overlay — shown when LiveKit is trying to restore connection */}
+          {reconnecting && (
+            <div style={{ position:"absolute", top:0, left:0, right:0, bottom:0, zIndex:200, background:"rgba(0,0,0,.75)", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:12 }}>
+              <div style={{ width:44, height:44, border:"4px solid #22c55e", borderTopColor:"transparent", borderRadius:"50%", animation:"cv-spin .8s linear infinite" }}/>
+              <p style={{ color:"#fff", fontSize:14, fontWeight:700 }}>Reconnecting…</p>
+              <p style={{ color:"rgba(255,255,255,.5)", fontSize:12 }}>Please stay on the page</p>
+            </div>
+          )}
           {/* Content */}
           <div style={{ flex:1, display:"flex", minHeight:0, overflow:"hidden" }}>
             <div style={{ flex:1, position:"relative", minWidth:0 }}>
