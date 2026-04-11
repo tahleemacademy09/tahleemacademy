@@ -43,8 +43,22 @@ const TeacherStudents = () => {
     const fetch = async () => {
       // Teacher's subjects
       const { data: subs } = await supabase.from("subjects").select("id, title, title_ar").eq("teacher_id", user.id);
-      setSubjects(subs || []);
-      const subjectIds = (subs || []).map(s => s.id);
+      // Also grab subjects assigned via timetable
+      const { data: ttSlots } = await supabase
+        .from("subject_timetable" as any).select("subject_id").eq("teacher_id", user.id);
+      const ttIds = [...new Set((ttSlots || []).map((s: any) => s.subject_id).filter(Boolean))];
+      let extraSubs: any[] = [];
+      if (ttIds.length > 0) {
+        const ownedIds = (subs || []).map((s: any) => s.id);
+        const missing = ttIds.filter((id: string) => !ownedIds.includes(id));
+        if (missing.length > 0) {
+          const { data: es } = await supabase.from("subjects").select("id, title, title_ar").in("id", missing);
+          extraSubs = es || [];
+        }
+      }
+      const allSubs = [...(subs || []), ...extraSubs];
+      setSubjects(allSubs);
+      const subjectIds = allSubs.map((s: any) => s.id);
       if (subjectIds.length === 0) { setLoading(false); return; }
 
       const { data: courses } = await supabase.from("courses").select("id, subject_id").in("subject_id", subjectIds);
