@@ -1,6 +1,4 @@
 // src/pages/teacher/TeacherSubjects.tsx
-// Enhanced with full classroom tabs matching LearningHub/LiveClassManagement
-
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -11,7 +9,7 @@ import SubjectMaterials     from "@/components/classroom/SubjectMaterials";
 import SubjectSyllabus      from "@/components/classroom/SubjectSyllabus";
 import SubjectAssignments   from "@/components/classroom/SubjectAssignments";
 import SubjectAnnouncements from "@/components/classroom/SubjectAnnouncements";
-import ClassroomView        from "@/components/classroom/ClassroomView";
+import { useLiveClass } from "@/contexts/LiveClassContext";
 import { useToast } from "@/hooks/use-toast";
 import {
   BookOpen, Users, Mic, ClipboardList, FileText, ChevronLeft,
@@ -43,7 +41,6 @@ const lvlColor: Record<string, { bg: string; color: string; border: string }> = 
   all:          { bg: "#F3F4F6", color: "#374151", border: "#D1D5DB" },
 };
 
-// Safe lookup — never returns undefined regardless of DB value
 const safeLevel = (lv: string | undefined | null) =>
   lvlColor[lv as string] ?? lvlColor["all"];
 
@@ -52,10 +49,10 @@ export default function TeacherSubjects() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { joinClass } = useLiveClass();
 
   const [subjects, setSubjects] = useState<any[]>([]);
   const [selectedSubject, setSelectedSubject] = useState<any>(null);
-  const [classroomSubject, setClassroomSubject] = useState<any>(null);
   const [activeTab, setActiveTab] = useState<SubjectTab>("students");
   const [subjectData, setSubjectData] = useState<{
     students: any[]; exams: any[]; tests: any[];
@@ -149,16 +146,6 @@ export default function TeacherSubjects() {
     s.title_ar?.includes(search)
   );
 
-  // ── Classroom overlay ─────────────────────────────────────────
-  if (classroomSubject) {
-    return (
-      <ClassroomView
-        subject={classroomSubject}
-        onLeave={() => setClassroomSubject(null)}
-      />
-    );
-  }
-
   // ── Loading ───────────────────────────────────────────────────
   if (loading) return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: 400 }}>
@@ -193,9 +180,9 @@ export default function TeacherSubjects() {
                 </p>
               )}
             </div>
-            {/* Start Live Class button */}
+            {/* Start/Join Live Class — global, persists across navigation */}
             <button
-              onClick={() => setClassroomSubject(selectedSubject)}
+              onClick={() => joinClass(selectedSubject)}
               style={{
                 display: "flex", alignItems: "center", gap: 6,
                 padding: "8px 14px", borderRadius: 10, border: "none",
@@ -279,20 +266,11 @@ export default function TeacherSubjects() {
                 </div>
               )}
 
-              {/* Materials tab */}
-              {activeTab === "materials" && <SubjectMaterials subjectId={selectedSubject.id} subjectTitle={selectedSubject.title} />}
-
-              {/* Syllabus tab */}
-              {activeTab === "syllabus" && <SubjectSyllabus subjectId={selectedSubject.id} />}
-
-              {/* Assignments tab */}
-              {activeTab === "assignments" && <SubjectAssignments subjectId={selectedSubject.id} />}
-
-              {/* Announcements tab */}
+              {activeTab === "materials"     && <SubjectMaterials subjectId={selectedSubject.id} subjectTitle={selectedSubject.title} />}
+              {activeTab === "syllabus"      && <SubjectSyllabus subjectId={selectedSubject.id} />}
+              {activeTab === "assignments"   && <SubjectAssignments subjectId={selectedSubject.id} />}
               {activeTab === "announcements" && <SubjectAnnouncements subjectId={selectedSubject.id} />}
-
-              {/* Recordings tab */}
-              {activeTab === "recordings" && <SubjectRecordings subjectId={selectedSubject.id} />}
+              {activeTab === "recordings"    && <SubjectRecordings subjectId={selectedSubject.id} />}
 
               {/* Exams tab */}
               {activeTab === "exams" && (
@@ -301,33 +279,20 @@ export default function TeacherSubjects() {
                     <div style={{ textAlign: "center", padding: "48px 24px", borderRadius: 16, border: "2px dashed #E5E7EB", background: "#FAFAFA" }}>
                       <ClipboardList size={40} style={{ margin: "0 auto 12px", display: "block", opacity: 0.3, color: G }} />
                       <p style={{ color: "#9CA3AF", fontSize: 14 }}>{t("No exams yet", "لا توجد امتحانات بعد")}</p>
-                      <button onClick={() => navigate("/teacher/exams")} style={{
-                        marginTop: 12, padding: "8px 16px", borderRadius: 10, background: G,
-                        color: "#fff", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 700,
-                      }}>
+                      <button onClick={() => navigate("/teacher/exams")} style={{ marginTop: 12, padding: "8px 16px", borderRadius: 10, background: G, color: "#fff", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 700 }}>
                         {t("Create Exam", "إنشاء امتحان")}
                       </button>
                     </div>
                   ) : subjectData.exams.map(e => (
-                    <div key={e.id} style={{
-                      background: "#fff", borderRadius: 12, border: "1px solid #E5E7EB",
-                      padding: "14px 16px", display: "flex", alignItems: "center", gap: 14,
-                    }}>
+                    <div key={e.id} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E5E7EB", padding: "14px 16px", display: "flex", alignItems: "center", gap: 14 }}>
                       <div style={{ width: 36, height: 36, borderRadius: 10, background: "#FEF2F2", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                         <ClipboardList size={16} color="#DC2626" />
                       </div>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <p style={{ fontWeight: 700, fontSize: 14, color: G, margin: 0 }}>{e.title}</p>
-                        <p style={{ fontSize: 11, color: "#9CA3AF", margin: "2px 0 0" }}>
-                          {e.term || "first"} term • {e.is_published ? t("Published", "منشور") : t("Draft", "مسودة")}
-                        </p>
+                        <p style={{ fontSize: 11, color: "#9CA3AF", margin: "2px 0 0" }}>{e.term || "first"} term • {e.is_published ? t("Published", "منشور") : t("Draft", "مسودة")}</p>
                       </div>
-                      <span style={{
-                        padding: "3px 10px", borderRadius: 20, fontSize: 10, fontWeight: 700,
-                        background: e.is_published ? "#F0FDF4" : "#F3F4F6",
-                        color: e.is_published ? "#16A34A" : "#6B7280",
-                        border: `1px solid ${e.is_published ? "#86EFAC" : "#D1D5DB"}`,
-                      }}>
+                      <span style={{ padding: "3px 10px", borderRadius: 20, fontSize: 10, fontWeight: 700, background: e.is_published ? "#F0FDF4" : "#F3F4F6", color: e.is_published ? "#16A34A" : "#6B7280", border: `1px solid ${e.is_published ? "#86EFAC" : "#D1D5DB"}` }}>
                         {e.is_published ? t("Published", "منشور") : t("Draft", "مسودة")}
                       </span>
                     </div>
@@ -342,33 +307,20 @@ export default function TeacherSubjects() {
                     <div style={{ textAlign: "center", padding: "48px 24px", borderRadius: 16, border: "2px dashed #E5E7EB", background: "#FAFAFA" }}>
                       <FileText size={40} style={{ margin: "0 auto 12px", display: "block", opacity: 0.3, color: G }} />
                       <p style={{ color: "#9CA3AF", fontSize: 14 }}>{t("No tests yet", "لا توجد تمرينات بعد")}</p>
-                      <button onClick={() => navigate("/teacher/tests")} style={{
-                        marginTop: 12, padding: "8px 16px", borderRadius: 10, background: G,
-                        color: "#fff", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 700,
-                      }}>
+                      <button onClick={() => navigate("/teacher/tests")} style={{ marginTop: 12, padding: "8px 16px", borderRadius: 10, background: G, color: "#fff", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 700 }}>
                         {t("Create Test", "إنشاء تمرين")}
                       </button>
                     </div>
                   ) : subjectData.tests.map(e => (
-                    <div key={e.id} style={{
-                      background: "#fff", borderRadius: 12, border: "1px solid #E5E7EB",
-                      padding: "14px 16px", display: "flex", alignItems: "center", gap: 14,
-                    }}>
+                    <div key={e.id} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E5E7EB", padding: "14px 16px", display: "flex", alignItems: "center", gap: 14 }}>
                       <div style={{ width: 36, height: 36, borderRadius: 10, background: "#EFF6FF", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                         <FileText size={16} color="#2563EB" />
                       </div>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <p style={{ fontWeight: 700, fontSize: 14, color: G, margin: 0 }}>{e.title}</p>
-                        <p style={{ fontSize: 11, color: "#9CA3AF", margin: "2px 0 0" }}>
-                          {e.term || "first"} term • {e.is_published ? t("Published", "منشور") : t("Draft", "مسودة")}
-                        </p>
+                        <p style={{ fontSize: 11, color: "#9CA3AF", margin: "2px 0 0" }}>{e.term || "first"} term • {e.is_published ? t("Published", "منشور") : t("Draft", "مسودة")}</p>
                       </div>
-                      <span style={{
-                        padding: "3px 10px", borderRadius: 20, fontSize: 10, fontWeight: 700,
-                        background: e.is_published ? "#EFF6FF" : "#F3F4F6",
-                        color: e.is_published ? "#2563EB" : "#6B7280",
-                        border: `1px solid ${e.is_published ? "#93C5FD" : "#D1D5DB"}`,
-                      }}>
+                      <span style={{ padding: "3px 10px", borderRadius: 20, fontSize: 10, fontWeight: 700, background: e.is_published ? "#EFF6FF" : "#F3F4F6", color: e.is_published ? "#2563EB" : "#6B7280", border: `1px solid ${e.is_published ? "#93C5FD" : "#D1D5DB"}` }}>
                         {e.is_published ? t("Published", "منشور") : t("Draft", "مسودة")}
                       </span>
                     </div>
@@ -387,27 +339,18 @@ export default function TeacherSubjects() {
     <div style={{ minHeight: "100vh", background: "#F3F4F6", fontFamily: "system-ui, sans-serif" }}>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
 
-      {/* Header */}
       <div style={{ background: "#fff", borderBottom: "1px solid #E5E7EB", padding: "16px 20px" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <div>
-            <h1 style={{ fontSize: 22, fontWeight: 900, color: G, margin: 0 }}>
-              {t("My Subjects", "موادي")}
-            </h1>
-            <p style={{ fontSize: 13, color: "#9CA3AF", margin: "2px 0 0" }}>
-              {subjects.length} {t("subjects assigned", "مادة مسندة")}
-            </p>
+            <h1 style={{ fontSize: 22, fontWeight: 900, color: G, margin: 0 }}>{t("My Subjects", "موادي")}</h1>
+            <p style={{ fontSize: 13, color: "#9CA3AF", margin: "2px 0 0" }}>{subjects.length} {t("subjects assigned", "مادة مسندة")}</p>
           </div>
           <div style={{ position: "relative" }}>
             <Search size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#9CA3AF" }} />
             <input
               value={search} onChange={e => setSearch(e.target.value)}
               placeholder={t("Search subjects…", "ابحث في المواد…")}
-              style={{
-                paddingLeft: 32, paddingRight: 12, paddingTop: 8, paddingBottom: 8,
-                borderRadius: 10, border: "1.5px solid #E5E7EB", background: "#FAFAFA",
-                fontSize: 13, outline: "none", width: 220,
-              }}
+              style={{ paddingLeft: 32, paddingRight: 12, paddingTop: 8, paddingBottom: 8, borderRadius: 10, border: "1.5px solid #E5E7EB", background: "#FAFAFA", fontSize: 13, outline: "none", width: 220 }}
             />
           </div>
         </div>
@@ -420,9 +363,7 @@ export default function TeacherSubjects() {
             <p style={{ fontWeight: 700, fontSize: 16, color: "#374151", margin: "0 0 4px" }}>
               {search ? t("No matching subjects", "لا توجد مواد مطابقة") : t("No subjects assigned", "لا توجد مواد مسندة")}
             </p>
-            <p style={{ fontSize: 13, color: "#9CA3AF", margin: 0 }}>
-              {t("Contact admin to be assigned to subjects", "تواصل مع المدير لتعيين مواد")}
-            </p>
+            <p style={{ fontSize: 13, color: "#9CA3AF", margin: 0 }}>{t("Contact admin to be assigned to subjects", "تواصل مع المدير لتعيين مواد")}</p>
           </div>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 14 }}>
@@ -433,16 +374,10 @@ export default function TeacherSubjects() {
                 <div
                   key={sub.id}
                   onClick={() => loadSubjectDetails(sub)}
-                  style={{
-                    background: "#fff", borderRadius: 18, border: `1px solid ${lc.border}`,
-                    overflow: "hidden", cursor: "pointer",
-                    boxShadow: "0 1px 6px rgba(0,0,0,.04)",
-                    transition: "all .2s",
-                  }}
+                  style={{ background: "#fff", borderRadius: 18, border: `1px solid ${lc.border}`, overflow: "hidden", cursor: "pointer", boxShadow: "0 1px 6px rgba(0,0,0,.04)", transition: "all .2s" }}
                   onMouseEnter={e => (e.currentTarget as HTMLElement).style.boxShadow = "0 6px 24px rgba(0,0,0,.1)"}
                   onMouseLeave={e => (e.currentTarget as HTMLElement).style.boxShadow = "0 1px 6px rgba(0,0,0,.04)"}
                 >
-                  {/* Cover */}
                   <div style={{ height: 90, background: `linear-gradient(135deg, ${G} 0%, ${GM} 100%)`, position: "relative" }}>
                     {sub.image_url && (
                       <img src={sub.image_url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
@@ -456,18 +391,14 @@ export default function TeacherSubjects() {
                     </div>
                   </div>
 
-                  {/* Content */}
                   <div style={{ padding: 16 }}>
-                    <p style={{ fontWeight: 800, fontSize: 15, color: G, margin: "0 0 4px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {sub.title}
-                    </p>
+                    <p style={{ fontWeight: 800, fontSize: 15, color: G, margin: "0 0 4px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sub.title}</p>
                     {sub.title_ar && (
                       <p style={{ fontSize: 12, color: GOLD, margin: "0 0 10px", fontFamily: "'Amiri', serif", direction: "rtl", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {sub.title_ar}
                       </p>
                     )}
 
-                    {/* Stats */}
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 14 }}>
                       {[
                         { icon: Users,        count: counts.studentCount  || 0, label: t("students",   "طلاب") },
@@ -482,12 +413,7 @@ export default function TeacherSubjects() {
                       ))}
                     </div>
 
-                    <button style={{
-                      width: "100%", padding: "10px", borderRadius: 12, border: "none",
-                      background: `linear-gradient(135deg, ${G}, ${GM})`,
-                      color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer",
-                      display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-                    }}>
+                    <button style={{ width: "100%", padding: "10px", borderRadius: 12, border: "none", background: `linear-gradient(135deg, ${G}, ${GM})`, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
                       {t("Open Subject", "فتح المادة")}
                       <Star size={13} />
                     </button>
