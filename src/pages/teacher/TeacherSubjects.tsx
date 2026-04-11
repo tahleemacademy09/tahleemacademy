@@ -62,7 +62,29 @@ export default function TeacherSubjects() {
   useEffect(() => {
     if (!user) return;
     const fetchSubjects = async () => {
-      const { data } = await supabase.from("subjects").select("*").eq("teacher_id", user.id).order("title");
+      // FIX: fetch subjects by BOTH direct teacher_id assignment AND
+      // via subject_timetable.teacher_id slots assigned by admin
+      const { data: owned } = await supabase
+        .from("subjects").select("*").eq("teacher_id", user.id).order("title");
+
+      // Also get subjects the teacher is assigned to via timetable slots
+      const { data: ttSlots } = await supabase
+        .from("subject_timetable" as any).select("subject_id").eq("teacher_id", user.id);
+      const ttSubjectIds = [...new Set((ttSlots || []).map((s: any) => s.subject_id).filter(Boolean))];
+      
+      let extra: any[] = [];
+      if (ttSubjectIds.length > 0) {
+        const ownedIds = (owned || []).map((s: any) => s.id);
+        const missingIds = ttSubjectIds.filter((id: string) => !ownedIds.includes(id));
+        if (missingIds.length > 0) {
+          const { data: extraSubs } = await supabase
+            .from("subjects").select("*").in("id", missingIds).order("title");
+          extra = extraSubs || [];
+        }
+      }
+
+      const allSubjects = [...(owned || []), ...extra];
+      const data = allSubjects;
       const subs = data || [];
       const counts: Record<string, any> = {};
       for (const sub of subs) {
