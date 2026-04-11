@@ -52,26 +52,56 @@ export default function TeacherTimetable() {
     return () => clearInterval(iv);
   }, []);
 
-  // Get teacher's subjects
+  // Get teacher's subjects — both owned (teacher_id on subject) and via timetable assignment
   useEffect(() => {
     if (!user) return;
-    supabase.from("subjects").select("id").eq("teacher_id", user.id)
-      .then(({ data }) => setSubjectIds((data || []).map(s => s.id)));
+    const fetchIds = async () => {
+      // Direct subject ownership
+      const { data: owned } = await supabase.from("subjects").select("id").eq("teacher_id", user.id);
+      const ownedIds = (owned || []).map((s: any) => s.id);
+
+      // Also subjects assigned via timetable teacher_id
+      const { data: ttSlots } = await supabase
+        .from("subject_timetable" as any).select("subject_id").eq("teacher_id", user.id);
+      const ttIds = (ttSlots || []).map((s: any) => s.subject_id).filter(Boolean);
+
+      const merged = [...new Set([...ownedIds, ...ttIds])];
+      setSubjectIds(merged);
+    };
+    fetchIds();
   }, [user]);
 
-  // Fetch timetable slots for teacher's subjects
+  // Fetch timetable slots for teacher — by subject_id OR direct teacher_id
   const { data: timetableSlots, isLoading: ttLoading } = useQuery({
     queryKey: ["teacher-timetable", subjectIds],
-    enabled: subjectIds.length > 0,
+    enabled: !!user,
     queryFn: async () => {
       try {
-        const { data } = await supabase
+        // Slots from owned/assigned subjects
+        let rows: any[] = [];
+        if (subjectIds.length > 0) {
+          const { data: bySubject } = await supabase
+            .from("subject_timetable" as any)
+            .select("*, subjects(id, title, title_ar, image_url)")
+            .in("subject_id", subjectIds)
+            .eq("is_active", true)
+            .order("day_of_week").order("start_time");
+          rows = bySubject || [];
+        }
+        // Also fetch slots directly assigned to this teacher (may overlap, dedupe by id)
+        const { data: byTeacher } = await supabase
           .from("subject_timetable" as any)
           .select("*, subjects(id, title, title_ar, image_url)")
-          .in("subject_id", subjectIds)
+          .eq("teacher_id", user!.id)
           .eq("is_active", true)
           .order("day_of_week").order("start_time");
-        return data || [];
+        const byTeacherRows = byTeacher || [];
+        // Merge, deduplicate by id
+        const seen = new Set(rows.map((r: any) => r.id));
+        for (const r of byTeacherRows) {
+          if (!seen.has(r.id)) { rows.push(r); seen.add(r.id); }
+        }
+        return rows;
       } catch {
         return [];
       }
