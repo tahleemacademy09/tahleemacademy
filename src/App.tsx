@@ -17,6 +17,8 @@ import PublicLayout from "@/components/layout/PublicLayout";
 import NotFound from "@/pages/NotFound";
 import IdleWarningModal from "@/components/IdleWarningModal";
 import ErrorBoundary from "@/components/ErrorBoundary";
+import { LiveClassProvider } from "@/contexts/LiveClassContext";
+import GlobalClassroomOverlay from "@/components/classroom/GlobalClassroomOverlay";
 
 // ── Public pages ───────────────────────────────────────────────────────────
 const Index                = lazy(() => import("./pages/Index"));
@@ -127,6 +129,7 @@ const App = () => (
         <TooltipProvider>
           <Toaster />
           <Sonner />
+          <LiveClassProvider>
           <BrowserRouter>
             <ErrorBoundary>
               <Suspense fallback={
@@ -265,7 +268,9 @@ const App = () => (
               </Suspense>
             </ErrorBoundary>
             <IdleWarningModal />
+            <GlobalClassroomOverlay />
           </BrowserRouter>
+          </LiveClassProvider>
         </TooltipProvider>
       </AuthProvider>
     </LanguageProvider>
