@@ -46,7 +46,10 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
   useEffect(() => {
     const initMedia = async () => {
       try {
-        const s = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        const s = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
+          audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 48000 },
+        });
         setStream(s);
         if (videoRef.current) videoRef.current.srcObject = s;
 
@@ -57,8 +60,9 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
           speakers: devs.filter(d => d.kind === "audiooutput"),
         });
 
-        // Mic level
-        const ctx = new AudioContext();
+        // Mic level — iOS Safari suspends AudioContext, must resume after gesture
+        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        await ctx.resume();
         const analyser = ctx.createAnalyser();
         analyser.fftSize = 256;
         const source = ctx.createMediaStreamSource(s);
@@ -71,8 +75,9 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
           requestAnimationFrame(check);
         };
         check();
-      } catch {
-        // Permission denied
+      } catch (err: any) {
+        // Permission denied or not available (e.g. iOS camera in background)
+        console.warn("Media access:", err?.message || err);
       }
     };
     initMedia();
