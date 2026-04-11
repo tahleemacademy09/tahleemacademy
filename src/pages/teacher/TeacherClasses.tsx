@@ -10,21 +10,20 @@ import { supabase } from "@/integrations/supabase/client";
 import { Video, Plus, Calendar, Clock } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { format, isFuture, isPast } from "date-fns";
-import ClassroomView from "@/components/classroom/ClassroomView";
+import { useLiveClass } from "@/contexts/LiveClassContext";
 
 const TeacherClasses = () => {
   const { t } = useLanguage();
   const { user } = useAuth();
   const { toast } = useToast();
+  const { joinClass } = useLiveClass();
   const [sessions, setSessions] = useState<any[]>([]);
   const [subjects, setSubjects] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
-  const [classroomSubject, setClassroomSubject] = useState<any>(null);
   const [form, setForm] = useState({
     subject_id: "", topic: "", topic_ar: "", date: "", time: "", duration: 60, is_recorded: true,
   });
@@ -93,26 +92,22 @@ const TeacherClasses = () => {
   };
 
   const openClassroom = (s: any) => {
-    const sub = subjects.find(sub => sub.id === s.subject_id) || s.subjects;
-    setClassroomSubject({
+    const sub = subjects.find(sub => sub.id === s.subject_id) || (s as any).subjects;
+    joinClass({
       id: s.subject_id,
       title: sub?.title || "Class",
       title_ar: sub?.title_ar || "",
     });
   };
 
-  const upcoming = sessions.filter(s => s.status === "scheduled" || s.status === "active" || (s.scheduled_at && isFuture(new Date(s.scheduled_at))));
-  const past = sessions.filter(s => s.status === "ended" || s.status === "completed" || (s.scheduled_at && isPast(new Date(s.scheduled_at)) && s.status !== "active"));
-
-  // ── Classroom overlay ─────────────────────────────────────────
-  if (classroomSubject) {
-    return (
-      <ClassroomView
-        subject={classroomSubject}
-        onLeave={() => setClassroomSubject(null)}
-      />
-    );
-  }
+  const upcoming = sessions.filter(s =>
+    s.status === "scheduled" || s.status === "active" ||
+    (s.scheduled_at && isFuture(new Date(s.scheduled_at)))
+  );
+  const past = sessions.filter(s =>
+    s.status === "ended" || s.status === "completed" ||
+    (s.scheduled_at && isPast(new Date(s.scheduled_at)) && s.status !== "active")
+  );
 
   if (loading) return (
     <div className="flex items-center justify-center min-h-[400px]">
