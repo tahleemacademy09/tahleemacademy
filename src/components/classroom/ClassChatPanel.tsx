@@ -183,6 +183,7 @@ const ClassChatPanel = ({ sessionId }: ClassChatPanelProps) => {
           onChange={e => setInput(e.target.value)}
           placeholder={t("Message the class...", "أرسل رسالة...")}
           className="text-sm"
+          style={{ color: "#111", backgroundColor: "#fff" }}
           onKeyDown={e => e.key === "Enter" && sendMessage()}
         />
         <Button size="icon" onClick={() => sendMessage()} disabled={!input.trim()} className="shrink-0">
