@@ -26,8 +26,8 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
   const isPrivileged = hasRole("admin") || hasRole("teacher");
 
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [cameraOn, setCameraOn] = useState(true);
-  const [micOn, setMicOn] = useState(true);
+  const [cameraOn, setCameraOn] = useState(false); // starts off — user enables via footer
+  const [micOn, setMicOn] = useState(false);    // starts off — user enables via footer
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [micLevel, setMicLevel] = useState(0);
   const [devices, setDevices] = useState<{ cameras: MediaDeviceInfo[]; mics: MediaDeviceInfo[]; speakers: MediaDeviceInfo[] }>({ cameras: [], mics: [], speakers: [] });
