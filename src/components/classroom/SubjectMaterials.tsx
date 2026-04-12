@@ -307,7 +307,11 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
   const [pct,        setPct]        = useState(0);
   const [err,        setErr]        = useState("");
   const [isDragOver, setIsDragOver] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
+  const fileRef      = useRef<HTMLInputElement>(null);
+  // Guard ref — blocks backdrop onClose for 800ms after file picker is opened.
+  // On Android/iOS, the native file picker dismissal fires a synthetic click that
+  // lands on the backdrop and calls onClose() before the file is even processed.
+  const pickerGuard = useRef(false);
 
   const cfg      = MAT_CFG[f.material_type];
   const Icon     = cfg.icon;
@@ -355,27 +359,23 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
 
   const doSave = async () => {
     setErr("");
-
-    // ── Validation ──────────────────────────────────────────────────────────
     if (!f.title.trim())                         { setErr("Title is required."); return; }
     if (needFile && !file && !f.file_url.trim()) { setErr("Please choose a file or paste a URL."); return; }
-    if (needUrl  && !f.file_url.trim())          { setErr("Please enter a valid URL."); return; }
+    if (needUrl  && !f.file_url.trim())          { setErr("Please enter a URL."); return; }
     if (needText && !f.content.trim())           { setErr("Content cannot be empty."); return; }
     if (selectedLevels.size === 0)               { setErr("Select at least one level."); return; }
 
     setPhase("uploading"); setPct(5);
 
     try {
-      // ── Resolve file_url ─────────────────────────────────────────────────
-      // BUG FIX: file_url column is NOT NULL in DB.
-      //   Text → no file needed, store "" (empty string satisfies constraint)
-      //   Link → user-entered URL from f.file_url
-      //   File → storage path after upload
+      // BUG FIX: file_url column is NOT NULL in the DB.
+      // Text type has no file/URL → must send "" not null.
+      // Link type → user's entered URL.
+      // File types → storage path after upload.
       let fileUrl  = needText ? "" : f.file_url.trim();
       let fileSize = 0;
 
       if (needFile && file) {
-        // Upload file to Supabase Storage bucket "subject-files"
         const rawExt = file.name.split(".").pop()?.toLowerCase() || "bin";
         const safeExt = rawExt.replace(/[^a-z0-9]/g, "").slice(0, 10) || "bin";
         const path = `materials/${subjectId}/${crypto.randomUUID()}.${safeExt}`;
@@ -390,13 +390,14 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
           });
 
         if (upErr) {
-          // Provide a clear, actionable error message
           throw new Error(
-            upErr.message.includes("row-level security")
-              ? "Storage permission denied. Ask your admin to check bucket RLS policies."
+            upErr.message.includes("row-level security") || upErr.message.includes("policy")
+              ? "Storage permission denied. Contact admin to check bucket RLS policies for subject-files."
               : upErr.message.includes("already exists")
-              ? "A file with that name already exists. Rename your file and try again."
-              : `Storage error: ${upErr.message}`
+              ? "File already exists. Rename your file and try again."
+              : upErr.message.includes("quota") || upErr.message.includes("exceeded")
+              ? "Storage quota exceeded. Contact admin to free up space."
+              : `Upload failed: ${upErr.message}`
           );
         }
 
@@ -405,24 +406,22 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
         setPct(80);
       }
 
-      // ── Save to DB ───────────────────────────────────────────────────────
       setPhase("saving"); setPct(90);
 
       const payload: any = {
         subject_id:      subjectId,
         title:           f.title.trim(),
-        title_ar:        f.title_ar.trim()    || null,
+        title_ar:        f.title_ar.trim()     || null,
         description:     f.description?.trim() || null,
         material_type:   f.material_type,
-        // content only stored for Text type
         content:         needText ? f.content.trim() : null,
-        // file_url: never null (NOT NULL constraint) — use "" for Text type
+        // Never null — satisfies NOT NULL constraint; Text uses "", files use path
         file_url:        fileUrl,
         file_size:       fileSize || null,
         level:           encodeLevels(selectedLevels),
         sort_order:      f.sort_order,
         is_downloadable: f.is_downloadable,
-        ...((!ed?.id && user) ? { uploaded_by: user.id } : {}),
+        ...(!ed?.id && user ? { uploaded_by: user.id } : {}),
       };
 
       const { error: dbErr } = ed?.id
@@ -432,7 +431,7 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
       if (dbErr) {
         throw new Error(
           dbErr.message.includes("file_url")
-            ? "Database rejected empty file URL. Make sure you've selected a file or entered a URL."
+            ? "DB rejected empty file URL. Select a file or enter a URL."
             : `Database error: ${dbErr.message}`
         );
       }
@@ -440,12 +439,10 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
       setPct(100); setPhase("done");
       toast({ title: "✅ Material saved successfully" });
       setTimeout(() => onSaved(), 600);
-
     } catch (e: any) {
       setPhase("error"); setPct(0);
-      const msg = e.message || "Upload failed — please try again.";
-      setErr(msg);
-      toast({ title: "Upload Error", description: msg, variant: "destructive" });
+      setErr(e.message || "Upload failed.");
+      toast({ title: "Upload Error", description: e.message, variant: "destructive" });
     }
   };
 
@@ -456,7 +453,11 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
         background: "rgba(0,0,0,.65)", backdropFilter: "blur(3px)",
         display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
       }}
-      onClick={e => { if (e.target === e.currentTarget && !busy) onClose(); }}
+      onClick={e => {
+        // Never close if uploading, saving, or within 800ms of file picker opening
+        if (busy || pickerGuard.current) return;
+        if (e.target === e.currentTarget) onClose();
+      }}
     >
       <div
         style={{
@@ -538,8 +539,21 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
                 type="file"
                 accept={ACCEPT[f.material_type] || "*/*"}
                 disabled={busy}
-                style={{ position: "fixed", left: "-9999px", top: "-9999px", width: 1, height: 1, opacity: 0 }}
-                onChange={e => { const fi = e.target.files?.[0]; if (fi) pickFile(fi); }}
+                // Use clip+opacity hiding instead of position:fixed left:-9999px.
+                // The -9999px trick places the input near screen origin on mobile,
+                // causing the file picker's dismiss event to fire a phantom click
+                // on the backdrop (which closes the modal before file is processed).
+                style={{
+                  position: "absolute", width: 0, height: 0,
+                  opacity: 0, overflow: "hidden", clip: "rect(0,0,0,0)",
+                  pointerEvents: "none",
+                }}
+                onChange={e => {
+                  const fi = e.target.files?.[0];
+                  if (fi) pickFile(fi);
+                  // Reset guard after file is picked — allow backdrop close again
+                  pickerGuard.current = false;
+                }}
               />
 
               {/* Show file preview if file selected */}
@@ -555,8 +569,21 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
                 <div
                   role="button"
                   tabIndex={0}
-                  onClick={(e) => { e.stopPropagation(); if (!busy) fileRef.current?.click(); }}
-                  onKeyDown={e => { if (e.key === "Enter" || e.key === " ") fileRef.current?.click(); }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (busy) return;
+                    // Block backdrop from closing modal — Android fires phantom click on picker dismiss
+                    pickerGuard.current = true;
+                    setTimeout(() => { pickerGuard.current = false; }, 800);
+                    fileRef.current?.click();
+                  }}
+                  onKeyDown={e => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      pickerGuard.current = true;
+                      setTimeout(() => { pickerGuard.current = false; }, 800);
+                      fileRef.current?.click();
+                    }
+                  }}
                   onDragOver={e => { e.preventDefault(); e.stopPropagation(); setIsDragOver(true); }}
                   onDragLeave={() => setIsDragOver(false)}
                   onDrop={e => {
