@@ -16,7 +16,7 @@ import {
   Plus, Trash2, Download, Calendar, Users, Clock, Edit, Video, Eye,
   BookOpen, FileText, ClipboardList, Megaphone, Play, Search,
   Radio, ChevronRight, Mic, CheckCircle, XCircle, AlertCircle,
-  ArrowLeft, Filter, MoreVertical, Phone,
+  ArrowLeft, Filter, MoreVertical,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
@@ -25,8 +25,8 @@ import SubjectMaterials     from "@/components/classroom/SubjectMaterials";
 import SubjectSyllabus      from "@/components/classroom/SubjectSyllabus";
 import SubjectAssignments   from "@/components/classroom/SubjectAssignments";
 import SubjectAnnouncements from "@/components/classroom/SubjectAnnouncements";
-import ClassroomView        from "@/components/classroom/ClassroomView";
 import LiveClassFilePanel   from "@/components/classroom/LiveClassFilePanel";
+import { useLiveClass }     from "@/contexts/LiveClassContext";
 
 /* ── helpers ── */
 const G    = "hsl(155,55%,15%)";
@@ -71,6 +71,11 @@ const LiveClassManagement = () => {
   const { toast } = useToast();
   const navigate = useNavigate();
 
+  // ── Live class state lives in GlobalClassroomOverlay context ──
+  // joinClass() → overlay mounts full-screen classroom (persists on refresh via sessionStorage)
+  // leaveClass() → overlay unmounts classroom
+  const { joinClass, leaveClass } = useLiveClass();
+
   const [sessions,       setSessions]       = useState<any[]>([]);
   const [subjects,       setSubjects]       = useState<any[]>([]);
   const [loading,        setLoading]        = useState(true);
@@ -80,8 +85,6 @@ const LiveClassManagement = () => {
   const [showFilters,    setShowFilters]    = useState(false);
   const [showCreate,     setShowCreate]     = useState(false);
   const [editingSession, setEditingSession] = useState<any>(null);
-  const [activeClassroom, setActiveClassroom] = useState<any>(null);
-  const [minimized,       setMinimized]       = useState(false);
   const [selectedSubjectId, setSelectedSubjectId] = useState<string | null>(null);
   const [attendanceView, setAttendanceView] = useState<any>(null);
   const [attendanceLogs, setAttendanceLogs] = useState<any[]>([]);
@@ -208,8 +211,13 @@ const LiveClassManagement = () => {
       }).select("id").single();
       if (newSess) fetchData();
     }
-    setActiveClassroom(subject);
-    setMinimized(false);
+    // GlobalClassroomOverlay takes over — persists across navigation + refresh
+    joinClass({
+      id: subject.id,
+      title: subject.title,
+      title_ar: subject.title_ar || "",
+      livekit_room_name: subject.livekit_room_name,
+    });
   };
 
   const viewAttendance = async (session: any) => {
@@ -262,48 +270,9 @@ const LiveClassManagement = () => {
     a.download = "attendance.csv"; a.click();
   };
 
-  /* ── Active classroom — hidden when minimized, PiP strip shown instead ── */
-  const classroomEl = activeClassroom ? (
-    <>
-      <div style={{ display: minimized ? "none" : "block" }}>
-        <ClassroomView
-          subject={activeClassroom}
-          onLeave={() => { setActiveClassroom(null); setMinimized(false); fetchData(); }}
-          onMinimize={() => setMinimized(true)}
-        />
-      </div>
-
-      {/* Floating icon-only PiP — works even if user navigates away */}
-      {minimized && (
-        <div style={{
-          position: "fixed", bottom: 24, right: 20,
-          display: "flex", alignItems: "center", gap: 8,
-          zIndex: 99999,
-          fontFamily: "sans-serif",
-        }}>
-          <style>{`@keyframes pipPulse{0%,100%{opacity:1}50%{opacity:.4}}`}</style>
-          {/* Live dot */}
-          <span style={{ width:10, height:10, borderRadius:"50%", background:"#ef4444", display:"block", animation:"pipPulse 1.4s ease-in-out infinite", boxShadow:"0 0 8px #ef4444" }}/>
-          {/* Return to class */}
-          <button
-            onClick={() => setMinimized(false)}
-            title="Return to class"
-            style={{ width:44, height:44, borderRadius:"50%", background:"#075E54", border:"2px solid rgba(255,255,255,.25)", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", boxShadow:"0 4px 16px rgba(0,0,0,.45)" }}>
-            <Video style={{ width:20, height:20, color:"#fff" }}/>
-          </button>
-          {/* Leave */}
-          <button
-            onClick={() => { setActiveClassroom(null); setMinimized(false); fetchData(); }}
-            title="Leave class"
-            style={{ width:44, height:44, borderRadius:"50%", background:"#ef4444", border:"2px solid rgba(255,255,255,.25)", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", boxShadow:"0 4px 16px rgba(239,68,68,.5)" }}>
-            <Phone style={{ width:18, height:18, color:"#fff", transform:"rotate(135deg)" }}/>
-          </button>
-        </div>
-      )}
-    </>
-  ) : null;
-
-  if (activeClassroom && !minimized) return classroomEl;
+  // NOTE: No classroomEl or early return needed here.
+  // GlobalClassroomOverlay at App root handles the full-screen classroom + PiP pill
+  // for ALL roles (student, teacher, admin) through LiveClassContext.
 
   /* ── Loading ── */
   if (loading) return (
@@ -518,9 +487,6 @@ const LiveClassManagement = () => {
         </div>
 
         <CreateEditDialog open={showCreate} onClose={() => setShowCreate(false)} form={form} setForm={setForm} subjects={subjects} editing={editingSession} onSave={handleSave}/>
-
-        {/* PiP overlay if already in a class */}
-        {classroomEl}
       </div>
     );
   }
@@ -669,9 +635,6 @@ const LiveClassManagement = () => {
       </div>
 
       <CreateEditDialog open={showCreate} onClose={() => setShowCreate(false)} form={form} setForm={setForm} subjects={subjects} editing={editingSession} onSave={handleSave}/>
-
-      {/* PiP overlay persists while admin browses — only shown when minimized */}
-      {classroomEl}
     </div>
   );
 };
