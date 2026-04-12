@@ -70,7 +70,7 @@ const LiveClasses = () => {
     const found = subjects.find((s: any) => s.id === subjectId);
     if (found && !inClass) {
       setSelectedSubject(found);
-      if (autoJoin) setInClass(true);
+      if (autoJoin) joinClass(found);  // FIX: was setInClass(true) — not defined
     }
   }, [subjects, searchParams]);
 
