@@ -355,61 +355,97 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
 
   const doSave = async () => {
     setErr("");
+
+    // ── Validation ──────────────────────────────────────────────────────────
     if (!f.title.trim())                         { setErr("Title is required."); return; }
     if (needFile && !file && !f.file_url.trim()) { setErr("Please choose a file or paste a URL."); return; }
-    if (needUrl  && !f.file_url.trim())          { setErr("Please enter a URL."); return; }
+    if (needUrl  && !f.file_url.trim())          { setErr("Please enter a valid URL."); return; }
     if (needText && !f.content.trim())           { setErr("Content cannot be empty."); return; }
     if (selectedLevels.size === 0)               { setErr("Select at least one level."); return; }
 
     setPhase("uploading"); setPct(5);
 
     try {
-      let fileUrl  = f.file_url.trim();
+      // ── Resolve file_url ─────────────────────────────────────────────────
+      // BUG FIX: file_url column is NOT NULL in DB.
+      //   Text → no file needed, store "" (empty string satisfies constraint)
+      //   Link → user-entered URL from f.file_url
+      //   File → storage path after upload
+      let fileUrl  = needText ? "" : f.file_url.trim();
       let fileSize = 0;
 
       if (needFile && file) {
-        const ext  = file.name.split(".").pop() || "bin";
-        const path = `materials/${subjectId}/${crypto.randomUUID()}.${ext}`;
-        setPct(40);
-        const { error: upErr } = await supabase.storage
+        // Upload file to Supabase Storage bucket "subject-files"
+        const rawExt = file.name.split(".").pop()?.toLowerCase() || "bin";
+        const safeExt = rawExt.replace(/[^a-z0-9]/g, "").slice(0, 10) || "bin";
+        const path = `materials/${subjectId}/${crypto.randomUUID()}.${safeExt}`;
+        setPct(30);
+
+        const { data: upData, error: upErr } = await supabase.storage
           .from(BUCKET)
-          .upload(path, file, { cacheControl: "3600", upsert: false });
-        if (upErr) throw new Error("Storage: " + upErr.message);
-        fileUrl  = path;
+          .upload(path, file, {
+            cacheControl: "3600",
+            upsert: false,
+            contentType: file.type || "application/octet-stream",
+          });
+
+        if (upErr) {
+          // Provide a clear, actionable error message
+          throw new Error(
+            upErr.message.includes("row-level security")
+              ? "Storage permission denied. Ask your admin to check bucket RLS policies."
+              : upErr.message.includes("already exists")
+              ? "A file with that name already exists. Rename your file and try again."
+              : `Storage error: ${upErr.message}`
+          );
+        }
+
+        fileUrl  = upData?.path || path;
         fileSize = file.size;
         setPct(80);
       }
 
-      setPhase("saving");
+      // ── Save to DB ───────────────────────────────────────────────────────
+      setPhase("saving"); setPct(90);
 
       const payload: any = {
         subject_id:      subjectId,
         title:           f.title.trim(),
-        title_ar:        f.title_ar.trim() || null,
+        title_ar:        f.title_ar.trim()    || null,
         description:     f.description?.trim() || null,
         material_type:   f.material_type,
+        // content only stored for Text type
         content:         needText ? f.content.trim() : null,
-        file_url:        fileUrl || null,
+        // file_url: never null (NOT NULL constraint) — use "" for Text type
+        file_url:        fileUrl,
         file_size:       fileSize || null,
         level:           encodeLevels(selectedLevels),
         sort_order:      f.sort_order,
         is_downloadable: f.is_downloadable,
-        uploaded_by:     !ed?.id && user ? user.id : undefined,
+        ...((!ed?.id && user) ? { uploaded_by: user.id } : {}),
       };
 
       const { error: dbErr } = ed?.id
         ? await supabase.from("subject_materials").update(payload).eq("id", ed.id)
         : await supabase.from("subject_materials").insert(payload);
 
-      if (dbErr) throw new Error("Database: " + dbErr.message);
+      if (dbErr) {
+        throw new Error(
+          dbErr.message.includes("file_url")
+            ? "Database rejected empty file URL. Make sure you've selected a file or entered a URL."
+            : `Database error: ${dbErr.message}`
+        );
+      }
 
       setPct(100); setPhase("done");
       toast({ title: "✅ Material saved successfully" });
-      setTimeout(() => onSaved(), 500);
+      setTimeout(() => onSaved(), 600);
+
     } catch (e: any) {
       setPhase("error"); setPct(0);
-      setErr(e.message || "Upload failed.");
-      toast({ title: "Upload Error", description: e.message, variant: "destructive" });
+      const msg = e.message || "Upload failed — please try again.";
+      setErr(msg);
+      toast({ title: "Upload Error", description: msg, variant: "destructive" });
     }
   };
 
