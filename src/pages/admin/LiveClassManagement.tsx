@@ -92,6 +92,8 @@ const LiveClassManagement = () => {
   const [students,    setStudents]    = useState<any[]>([]);
   const [editAtt,     setEditAtt]     = useState<Record<string, string>>({});
   const [sessionMenu, setSessionMenu] = useState<string | null>(null);
+  // ── Subject detail tab — proper state-driven switching (scrollIntoView unreliable on mobile)
+  const [activeSubjectTab, setActiveSubjectTab] = useState<string>("sessions");
 
   const [form, setForm] = useState({
     subject_id:"", topic:"", topic_ar:"", scheduled_at:"",
@@ -372,118 +374,143 @@ const LiveClassManagement = () => {
     const liveSess = subSess.find(s => s.status === "live");
     const schedSess = subSess.filter(s => s.status === "scheduled");
 
+    const TABS = [
+      { val:"sessions",    label:t("Sessions","الحصص"),       icon:"📅" },
+      { val:"recordings",  label:t("Recordings","التسجيلات"), icon:"🎬" },
+      { val:"materials",   label:t("Materials","المواد"),      icon:"📄" },
+      { val:"syllabus",    label:t("Syllabus","المنهج"),       icon:"📖" },
+      { val:"assignments", label:t("Tasks","المهام"),          icon:"📋" },
+      { val:"announce",    label:t("News","الإعلانات"),        icon:"📢" },
+      { val:"files",       label:t("Files","الملفات"),         icon:"📂" },
+    ];
+
     return (
-      <div style={{ minHeight:"100vh", background:"hsl(var(--muted)/0.4)", paddingBottom:40, fontFamily:"'Cairo',sans-serif" }}>
+      <div style={{ display:"flex", flexDirection:"column", height:"100%", background:"hsl(var(--muted)/0.4)", fontFamily:"'Cairo',sans-serif" }}>
         <style>{CSS + `@keyframes pipPulse2{0%,100%{opacity:1}50%{opacity:.4}} @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap');`}</style>
 
-        {/* ── Header — matches student subject view ── */}
-        <div style={{ background:`linear-gradient(135deg,${G},#1a4731)`, padding:"48px 16px 0" }}>
+        {/* ── Header ── */}
+        <div style={{ background:`linear-gradient(135deg,${G},#1a4731)`, flexShrink:0 }}>
+          <div style={{ padding:"16px 16px 0" }}>
+            {/* Back button */}
+            <button
+              onClick={() => { setSelectedSubjectId(null); setActiveSubjectTab("sessions"); }}
+              style={{ display:"flex", alignItems:"center", gap:6, background:"rgba(255,255,255,.12)", border:"none", borderRadius:20, padding:"6px 14px", color:"rgba(255,255,255,.8)", fontWeight:700, fontSize:12, cursor:"pointer", marginBottom:14, fontFamily:"'Cairo',sans-serif" }}>
+              <ArrowLeft style={{ width:13, height:13 }}/> {t("All Subjects","كل المواد")}
+            </button>
 
-          {/* Back button */}
-          <button onClick={() => setSelectedSubjectId(null)}
-            style={{ display:"flex", alignItems:"center", gap:6, background:"rgba(255,255,255,.12)", border:"none", borderRadius:20, padding:"6px 14px", color:"rgba(255,255,255,.8)", fontWeight:700, fontSize:12, cursor:"pointer", marginBottom:18, fontFamily:"'Cairo',sans-serif" }}>
-            <ArrowLeft style={{ width:13, height:13 }}/> {t("All Subjects","كل المواد")}
-          </button>
-
-          {/* Subject title — centered like student view */}
-          <div style={{ textAlign:"center", padding:"0 8px 16px" }}>
-            <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:10, flexWrap:"wrap", marginBottom:6 }}>
-              <h1 style={{ fontSize:22, fontWeight:900, color:"#fff", margin:0 }}>{sub?.title}</h1>
-              {liveSess && (
-                <span style={{ fontSize:10, fontWeight:800, padding:"3px 9px", borderRadius:20, background:"#ef4444", color:"#fff", animation:"pipPulse2 1.5s infinite" }}>● LIVE</span>
+            {/* Subject title */}
+            <div style={{ textAlign:"center", paddingBottom:14 }}>
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:10, flexWrap:"wrap", marginBottom:4 }}>
+                <h1 style={{ fontSize:20, fontWeight:900, color:"#fff", margin:0 }}>{sub?.title}</h1>
+                {liveSess && (
+                  <span style={{ fontSize:10, fontWeight:800, padding:"3px 9px", borderRadius:20, background:"#ef4444", color:"#fff", animation:"pipPulse2 1.5s infinite" }}>● LIVE</span>
+                )}
+              </div>
+              {sub?.title_ar && (
+                <p dir="rtl" style={{ fontSize:13, color:"#c9a84c", margin:"0 0 10px", fontFamily:"'Amiri','Cairo',serif" }}>{sub.title_ar}</p>
               )}
-            </div>
-            {sub?.title_ar && (
-              <p dir="rtl" style={{ fontSize:14, color:"#c9a84c", margin:"0 0 4px", fontFamily:"'Amiri','Cairo',serif" }}>
-                {sub.title_ar}
-              </p>
-            )}
 
-            {/* Stats row */}
-            <div style={{ display:"flex", justifyContent:"center", gap:20, marginBottom:16, marginTop:8 }}>
-              {[
-                { label:"Total",     v:subSess.length,    c:"rgba(255,255,255,.9)" },
-                { label:"Live now",  v:liveSess ? 1 : 0,  c:"#ef4444" },
-                { label:"Scheduled", v:schedSess.length,  c:"#60a5fa" },
-              ].map((x,i) => (
-                <div key={i} style={{ textAlign:"center" }}>
-                  <div style={{ fontSize:20, fontWeight:900, color:x.c }}>{x.v}</div>
-                  <div style={{ fontSize:10, color:"rgba(255,255,255,.5)", fontWeight:600 }}>{x.label}</div>
-                </div>
-              ))}
-            </div>
+              {/* Stats */}
+              <div style={{ display:"flex", justifyContent:"center", gap:24, marginBottom:14 }}>
+                {[
+                  { label:"Total",     v:subSess.length,    c:"rgba(255,255,255,.9)" },
+                  { label:"Live now",  v:liveSess ? 1 : 0,  c:"#ef4444" },
+                  { label:"Scheduled", v:schedSess.length,  c:"#60a5fa" },
+                ].map((x,i) => (
+                  <div key={i} style={{ textAlign:"center" }}>
+                    <div style={{ fontSize:18, fontWeight:900, color:x.c }}>{x.v}</div>
+                    <div style={{ fontSize:10, color:"rgba(255,255,255,.5)", fontWeight:600 }}>{x.label}</div>
+                  </div>
+                ))}
+              </div>
 
-            {/* ── BIG ACTION BUTTONS — exactly like student ── */}
-            <div style={{ display:"flex", gap:10, justifyContent:"center", flexWrap:"wrap" }}>
-              {/* Go Live / Join — gold prominent button */}
-              {liveSess ? (
+              {/* Action buttons */}
+              <div style={{ display:"flex", gap:8, justifyContent:"center", flexWrap:"wrap" }}>
+                {liveSess ? (
+                  <button onClick={() => goLive(liveSess)}
+                    style={{ display:"inline-flex", alignItems:"center", gap:8, padding:"10px 24px", borderRadius:12, background:"#c9a84c", border:"none", color:"#0f2d1f", fontSize:13, fontWeight:900, cursor:"pointer", boxShadow:"0 4px 16px rgba(201,168,76,.5)", animation:"pipPulse2 2s infinite" }}>
+                    <Video style={{ width:15, height:15 }}/> {t("Join Live","انضم الآن")}
+                  </button>
+                ) : (
+                  <button onClick={() => goLive(subSess.find(s => s.status === "scheduled") || { subject_id: selectedSubjectId, id: null })}
+                    style={{ display:"inline-flex", alignItems:"center", gap:8, padding:"10px 24px", borderRadius:12, background:"#c9a84c", border:"none", color:"#0f2d1f", fontSize:13, fontWeight:900, cursor:"pointer", boxShadow:"0 4px 16px rgba(201,168,76,.4)" }}>
+                    <Video style={{ width:15, height:15 }}/> {t("Start Class","ابدأ الحصة")}
+                  </button>
+                )}
                 <button
-                  onClick={() => goLive(liveSess)}
-                  style={{ display:"inline-flex", alignItems:"center", gap:8, padding:"12px 28px", borderRadius:14, background:"#c9a84c", border:"none", color:"#0f2d1f", fontSize:14, fontWeight:900, cursor:"pointer", fontFamily:"'Cairo',sans-serif", boxShadow:"0 4px 16px rgba(201,168,76,.5)", animation:"pipPulse2 2s infinite" }}>
-                  <Video style={{ width:16, height:16 }}/> {t("Join Live Class","انضم للحصة المباشرة")}
+                  onClick={() => { setForm(f => ({...f, subject_id:selectedSubjectId})); setEditingSession(null); setShowCreate(true); }}
+                  style={{ display:"inline-flex", alignItems:"center", gap:8, padding:"10px 18px", borderRadius:12, background:"rgba(255,255,255,.15)", border:"1.5px solid rgba(255,255,255,.25)", color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer" }}>
+                  <Plus style={{ width:14, height:14 }}/> {t("Schedule","جدولة")}
                 </button>
-              ) : (
-                <button
-                  onClick={() => goLive(subSess.find(s => s.status === "scheduled") || { subject_id: selectedSubjectId, id: null })}
-                  style={{ display:"inline-flex", alignItems:"center", gap:8, padding:"12px 28px", borderRadius:14, background:"#c9a84c", border:"none", color:"#0f2d1f", fontSize:14, fontWeight:900, cursor:"pointer", fontFamily:"'Cairo',sans-serif", boxShadow:"0 4px 16px rgba(201,168,76,.4)" }}>
-                  <Video style={{ width:16, height:16 }}/> {t("Start Class","ابدأ الحصة")}
-                </button>
-              )}
-              {/* Schedule button */}
-              <button
-                onClick={() => { setForm(f => ({...f, subject_id:selectedSubjectId})); setEditingSession(null); setShowCreate(true); }}
-                style={{ display:"inline-flex", alignItems:"center", gap:8, padding:"12px 20px", borderRadius:14, background:"rgba(255,255,255,.15)", border:"1.5px solid rgba(255,255,255,.25)", color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"'Cairo',sans-serif" }}>
-                <Plus style={{ width:14, height:14 }}/> {t("Schedule","جدولة")}
-              </button>
+              </div>
             </div>
           </div>
 
-          {/* Tabs — scrollable, same style as student */}
-          <div style={{ display:"flex", overflowX:"auto", scrollbarWidth:"none", borderTop:"1px solid rgba(255,255,255,.1)", marginTop:4 }}>
-            {[
-              { val:"sessions",     label:t("Sessions","الحصص"),          icon:"📅" },
-              { val:"recordings",   label:t("Recordings","التسجيلات"),    icon:"🎬" },
-              { val:"materials",    label:t("Materials","المواد"),         icon:"📄" },
-              { val:"syllabus",     label:t("Syllabus","المنهج"),          icon:"📖" },
-              { val:"assignments",  label:t("Tasks","المهام"),             icon:"📋" },
-              { val:"announce",     label:t("News","الإعلانات"),           icon:"📢" },
-              { val:"files",        label:t("Files","الملفات"),            icon:"📂" },
-            ].map(tab => (
+          {/* ── Tab bar — proper click-to-switch (not scrollIntoView) ── */}
+          <div style={{ display:"flex", overflowX:"auto", scrollbarWidth:"none", borderTop:"1px solid rgba(255,255,255,.1)" }}>
+            {TABS.map(tab => (
               <button key={tab.val}
-                onClick={() => (document.getElementById(`admin-tab-${tab.val}`) as HTMLElement)?.scrollIntoView({ behavior:"smooth" })}
-                style={{ display:"flex", alignItems:"center", gap:5, padding:"10px 14px", border:"none", background:"none", cursor:"pointer", fontFamily:"'Cairo',sans-serif", fontSize:12, fontWeight:600, color:"rgba(255,255,255,.7)", whiteSpace:"nowrap", flexShrink:0, borderBottom:"2.5px solid transparent" }}>
+                onClick={() => setActiveSubjectTab(tab.val)}
+                style={{
+                  display:"flex", alignItems:"center", gap:5,
+                  padding:"10px 14px", border:"none", background:"none",
+                  cursor:"pointer", fontFamily:"'Cairo',sans-serif",
+                  fontSize:12, fontWeight: activeSubjectTab === tab.val ? 800 : 600,
+                  color: activeSubjectTab === tab.val ? "#fff" : "rgba(255,255,255,.55)",
+                  whiteSpace:"nowrap", flexShrink:0,
+                  borderBottom: activeSubjectTab === tab.val ? "2.5px solid #c9a84c" : "2.5px solid transparent",
+                  transition:"all .15s",
+                }}>
                 {tab.icon} {tab.label}
               </button>
             ))}
           </div>
         </div>
 
-        {/* ── Content ── */}
-        <div style={{ padding:"16px", maxWidth:720, margin:"0 auto" }}>
+        {/* ── Tab Content — only the active tab renders ── */}
+        <div style={{ flex:1, overflowY:"auto", WebkitOverflowScrolling:"touch" as any, padding:"16px", maxWidth:720, margin:"0 auto", width:"100%" }}>
 
-          {/* Sessions section */}
-          <div id="admin-tab-sessions" style={{ marginBottom:24 }}>
-            <p style={{ fontSize:12, fontWeight:700, color:"hsl(var(--muted-foreground))", textTransform:"uppercase", letterSpacing:.6, marginBottom:10 }}>
-              {t("Sessions","الحصص")} · {subSess.length}
-            </p>
-            {subSess.length === 0 ? (
-              <div className="lc-card" style={{ padding:36, textAlign:"center", color:"hsl(var(--muted-foreground))" }}>
-                <Video style={{ width:28, height:28, margin:"0 auto 8px", opacity:.4 }}/>
-                <p style={{ fontSize:13 }}>No sessions yet</p>
-              </div>
-            ) : (
-              subSess.map(s => (
-                <SessionCard key={s.id} s={s} onGoLive={goLive} onEdit={openEdit} onDelete={handleDelete} onAttendance={viewAttendance} onUpdateStatus={updateStatus} subjects={subjects} menu={sessionMenu} setMenu={setSessionMenu}/>
-              ))
-            )}
-          </div>
+          {activeSubjectTab === "sessions" && (
+            <div>
+              <p style={{ fontSize:11, fontWeight:700, color:"hsl(var(--muted-foreground))", textTransform:"uppercase", letterSpacing:.6, marginBottom:10 }}>
+                {t("Sessions","الحصص")} · {subSess.length}
+              </p>
+              {subSess.length === 0 ? (
+                <div className="lc-card" style={{ padding:36, textAlign:"center", color:"hsl(var(--muted-foreground))" }}>
+                  <Video style={{ width:28, height:28, margin:"0 auto 8px", opacity:.4 }}/>
+                  <p style={{ fontSize:13 }}>No sessions yet. Click "Schedule" to add one.</p>
+                </div>
+              ) : (
+                subSess.map(s => (
+                  <SessionCard key={s.id} s={s} onGoLive={goLive} onEdit={openEdit} onDelete={handleDelete} onAttendance={viewAttendance} onUpdateStatus={updateStatus} subjects={subjects} menu={sessionMenu} setMenu={setSessionMenu}/>
+                ))
+              )}
+            </div>
+          )}
 
-          <div id="admin-tab-recordings"><SubjectRecordings    subjectId={selectedSubjectId}/></div>
-          <div id="admin-tab-materials"  style={{ marginTop:24 }}><SubjectMaterials   subjectId={selectedSubjectId}/></div>
-          <div id="admin-tab-syllabus"   style={{ marginTop:24 }}><SubjectSyllabus    subjectId={selectedSubjectId}/></div>
-          <div id="admin-tab-assignments" style={{ marginTop:24 }}><SubjectAssignments subjectId={selectedSubjectId}/></div>
-          <div id="admin-tab-announce"   style={{ marginTop:24 }}><SubjectAnnouncements subjectId={selectedSubjectId}/></div>
-          <div id="admin-tab-files"      style={{ marginTop:24 }}><LiveClassFilePanel  subjectId={selectedSubjectId}/></div>
+          {activeSubjectTab === "recordings" && (
+            <SubjectRecordings subjectId={selectedSubjectId}/>
+          )}
+
+          {activeSubjectTab === "materials" && (
+            <SubjectMaterials subjectId={selectedSubjectId}/>
+          )}
+
+          {activeSubjectTab === "syllabus" && (
+            <SubjectSyllabus subjectId={selectedSubjectId}/>
+          )}
+
+          {activeSubjectTab === "assignments" && (
+            <SubjectAssignments subjectId={selectedSubjectId}/>
+          )}
+
+          {activeSubjectTab === "announce" && (
+            <SubjectAnnouncements subjectId={selectedSubjectId}/>
+          )}
+
+          {activeSubjectTab === "files" && (
+            <LiveClassFilePanel subjectId={selectedSubjectId}/>
+          )}
         </div>
 
         <CreateEditDialog open={showCreate} onClose={() => setShowCreate(false)} form={form} setForm={setForm} subjects={subjects} editing={editingSession} onSave={handleSave}/>
