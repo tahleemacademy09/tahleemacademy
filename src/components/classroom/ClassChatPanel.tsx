@@ -92,103 +92,119 @@ const ClassChatPanel = ({ sessionId }: ClassChatPanelProps) => {
     setMessages(prev => prev.map(m => m.id === id ? { ...m, is_pinned: !pinned } : m));
   };
 
+  /* ── Dark-theme colour tokens ── */
+  const T = {
+    bg:      "#13181f",
+    surface: "#1e2535",
+    border:  "rgba(255,255,255,.08)",
+    text:    "#e8eaf0",
+    muted:   "rgba(255,255,255,.45)",
+    mine:    "rgba(10,124,104,.35)",
+    theirs:  "rgba(255,255,255,.07)",
+    system:  "rgba(255,255,255,.12)",
+    teal:    "#0a7c68",
+    gold:    "#c9a84c",
+  };
+
   return (
-    <div className="flex flex-col h-full">
-      <div className="p-3 border-b">
-        <h3 className="font-semibold text-sm">{t("Chat", "المحادثة")}</h3>
-      </div>
+    <div style={{display:"flex",flexDirection:"column",height:"100%",background:T.bg,fontFamily:"system-ui,sans-serif"}}>
 
       {/* Pinned messages */}
       {messages.filter(m => m.is_pinned).map(m => (
-        <div key={`pin-${m.id}`} className="bg-secondary/10 border-b px-3 py-1.5 flex items-center gap-2">
-          <Pin className="h-3 w-3 text-secondary shrink-0" />
-          <p className="text-xs truncate">{m.message}</p>
+        <div key={`pin-${m.id}`} style={{background:"rgba(201,168,76,.12)",borderBottom:`1px solid ${T.border}`,padding:"6px 12px",display:"flex",alignItems:"center",gap:6}}>
+          <Pin style={{width:10,height:10,color:T.gold,flexShrink:0}}/>
+          <p style={{fontSize:11,color:T.gold,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",margin:0}}>{m.message}</p>
         </div>
       ))}
 
-      <ScrollArea className="flex-1 p-3">
-        <div className="space-y-2">
-          {messages.map(m => {
-            const isMe = m.sender_id === user?.id;
-            const prof = profiles[m.sender_id];
-            const name = prof?.name || "Student";
-            const isTeacher = prof?.role === "teacher" || prof?.role === "admin";
+      {/* Messages */}
+      <div style={{flex:1,overflowY:"auto",padding:"10px 12px",display:"flex",flexDirection:"column",gap:8}}>
+        {messages.map(m => {
+          const isMe = m.sender_id === user?.id;
+          const prof = profiles[m.sender_id];
+          const name = prof?.name || "Student";
+          const isTeacher = prof?.role === "teacher" || prof?.role === "admin";
 
-            if (m.type === "system") {
-              return (
-                <div key={m.id} className="text-center">
-                  <span className="text-[10px] text-muted-foreground bg-muted px-2 py-0.5 rounded">{m.message}</span>
-                </div>
-              );
-            }
-
-            if (m.type === "emoji") {
-              return (
-                <div key={m.id} className={`flex ${isMe ? "justify-end" : "justify-start"}`}>
-                  <div className="text-center">
-                    <span className="text-2xl">{m.message}</span>
-                    <p className="text-[9px] text-muted-foreground">{isMe ? t("You", "أنت") : name}</p>
-                  </div>
-                </div>
-              );
-            }
-
+          if (m.type === "system") {
             return (
-              <div key={m.id} className={`group ${isMe ? "ms-6" : "me-6"}`}>
-                <div className={`text-sm p-2 rounded-lg ${isMe ? "bg-primary/10" : "bg-muted"} ${isTeacher && !isMe ? "border-s-2 border-secondary" : ""}`}>
-                  <div className="flex items-center gap-1 mb-0.5">
-                    <p className="text-[10px] text-muted-foreground font-medium">{isMe ? t("You", "أنت") : name}</p>
-                    {isTeacher && <Badge className="text-[8px] h-3 bg-secondary/20 text-secondary px-1">{t("Teacher", "معلم")}</Badge>}
-                  </div>
-                  <p className="break-words">{m.message}</p>
-                  <div className="flex items-center justify-between mt-0.5">
-                    <p className="text-[9px] text-muted-foreground">
-                      {new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                    </p>
-                    {isPrivileged && (
-                      <div className="hidden group-hover:flex items-center gap-0.5">
-                        <Button size="icon" variant="ghost" className="h-5 w-5" onClick={() => pinMessage(m.id, m.is_pinned)}>
-                          <Pin className="h-2.5 w-2.5" />
-                        </Button>
-                        <Button size="icon" variant="ghost" className="h-5 w-5 text-destructive" onClick={() => deleteMessage(m.id)}>
-                          <Trash2 className="h-2.5 w-2.5" />
-                        </Button>
-                      </div>
-                    )}
-                  </div>
+              <div key={m.id} style={{textAlign:"center",margin:"4px 0"}}>
+                <span style={{fontSize:10,color:T.muted,background:T.system,padding:"2px 10px",borderRadius:20}}>{m.message}</span>
+              </div>
+            );
+          }
+
+          if (m.type === "emoji") {
+            return (
+              <div key={m.id} style={{display:"flex",justifyContent:isMe?"flex-end":"flex-start"}}>
+                <div style={{textAlign:"center"}}>
+                  <span style={{fontSize:26}}>{m.message}</span>
+                  <p style={{fontSize:9,color:T.muted,margin:"2px 0 0"}}>{isMe ? t("You","أنت") : name}</p>
                 </div>
               </div>
             );
-          })}
-          <div ref={scrollRef} />
-        </div>
-      </ScrollArea>
+          }
+
+          return (
+            <div key={m.id} style={{display:"flex",justifyContent:isMe?"flex-end":"flex-start"}}>
+              <div style={{
+                maxWidth:"80%",padding:"8px 12px",borderRadius:isMe?"14px 14px 4px 14px":"14px 14px 14px 4px",
+                background:isMe?T.mine:T.theirs,
+                borderLeft:isTeacher&&!isMe?`3px solid ${T.gold}`:"none",
+              }}>
+                {!isMe && (
+                  <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:3}}>
+                    <span style={{fontSize:10,color:isTeacher?T.gold:T.muted,fontWeight:700}}>{name}</span>
+                    {isTeacher&&<span style={{fontSize:9,background:"rgba(201,168,76,.18)",color:T.gold,borderRadius:8,padding:"1px 5px",fontWeight:700}}>{t("Teacher","معلم")}</span>}
+                  </div>
+                )}
+                <p style={{fontSize:13,color:T.text,margin:0,wordBreak:"break-word",lineHeight:1.45}}>{m.message}</p>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginTop:4,gap:8}}>
+                  <span style={{fontSize:9,color:T.muted}}>
+                    {new Date(m.created_at).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}
+                  </span>
+                  {isPrivileged && (
+                    <div style={{display:"flex",gap:2}}>
+                      <button onClick={()=>pinMessage(m.id,m.is_pinned)} title="Pin" style={{background:"none",border:"none",cursor:"pointer",padding:2,color:T.muted,display:"flex"}}>
+                        <Pin style={{width:10,height:10}}/>
+                      </button>
+                      <button onClick={()=>deleteMessage(m.id)} title="Delete" style={{background:"none",border:"none",cursor:"pointer",padding:2,color:"#ef4444",display:"flex"}}>
+                        <Trash2 style={{width:10,height:10}}/>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+        <div ref={scrollRef}/>
+      </div>
 
       {/* Emoji bar */}
       {showEmoji && (
-        <div className="border-t p-2 flex gap-2 justify-center">
+        <div style={{borderTop:`1px solid ${T.border}`,padding:"8px 12px",display:"flex",gap:8,justifyContent:"center",background:T.surface}}>
           {EMOJI_LIST.map(e => (
-            <button key={e} onClick={() => sendMessage(e)} className="text-xl hover:scale-125 transition-transform">{e}</button>
+            <button key={e} onClick={()=>sendMessage(e)} style={{fontSize:22,background:"none",border:"none",cursor:"pointer",transition:"transform .12s"}}
+              onMouseEnter={ev=>(ev.currentTarget.style.transform="scale(1.3)")} onMouseLeave={ev=>(ev.currentTarget.style.transform="scale(1)")}>{e}</button>
           ))}
         </div>
       )}
 
-      {/* Input */}
-      <div className="p-2 border-t flex gap-2">
-        <Button size="icon" variant="ghost" className="h-9 w-9 shrink-0" onClick={() => setShowEmoji(!showEmoji)}>
-          <Smile className="h-4 w-4" />
-        </Button>
-        <Input
+      {/* Input row */}
+      <div style={{padding:"8px 10px",borderTop:`1px solid ${T.border}`,display:"flex",gap:8,alignItems:"center",background:T.surface,flexShrink:0}}>
+        <button onClick={()=>setShowEmoji(!showEmoji)} style={{width:34,height:34,borderRadius:"50%",background:"rgba(255,255,255,.08)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",color:T.muted,flexShrink:0}}>
+          <Smile style={{width:16,height:16}}/>
+        </button>
+        <input
           value={input}
-          onChange={e => setInput(e.target.value)}
-          placeholder={t("Message the class...", "أرسل رسالة...")}
-          className="text-sm"
-          style={{ color: "#111", backgroundColor: "#fff" }}
-          onKeyDown={e => e.key === "Enter" && sendMessage()}
+          onChange={e=>setInput(e.target.value)}
+          placeholder={t("Message the class...","أرسل رسالة...")}
+          style={{flex:1,background:"rgba(255,255,255,.06)",border:`1px solid ${T.border}`,borderRadius:20,padding:"7px 14px",fontSize:13,color:T.text,outline:"none",fontFamily:"inherit"}}
+          onKeyDown={e=>e.key==="Enter"&&sendMessage()}
         />
-        <Button size="icon" onClick={() => sendMessage()} disabled={!input.trim()} className="shrink-0">
-          <Send className="h-3 w-3" />
-        </Button>
+        <button onClick={()=>sendMessage()} disabled={!input.trim()} style={{width:34,height:34,borderRadius:"50%",background:input.trim()?"#0a7c68":"rgba(255,255,255,.06)",border:"none",cursor:input.trim()?"pointer":"default",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",flexShrink:0,transition:"background .15s"}}>
+          <Send style={{width:14,height:14}}/>
+        </button>
       </div>
     </div>
   );
