@@ -135,9 +135,9 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
   };
 
   return (
-    <div className="min-h-screen bg-primary flex flex-col">
+    <div style={{ height: "100dvh", maxHeight: "100dvh", display: "flex", flexDirection: "column", overflow: "hidden", background: "hsl(var(--primary))" }}>
       {/* Header */}
-      <div className="text-center py-6 px-4">
+      <div className="text-center py-4 px-4 flex-shrink-0">
         <p className="text-secondary font-arabic text-xl mb-2" dir="rtl" style={{ fontFamily: "Amiri" }}>
           بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ
         </p>
@@ -161,7 +161,7 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
         )}
       </div>
 
-      <div className="flex-1 px-4 pb-6 max-w-5xl mx-auto w-full grid md:grid-cols-2 gap-6">
+      <div className="flex-1 px-4 pb-2 max-w-5xl mx-auto w-full grid md:grid-cols-2 gap-6 overflow-y-auto" style={{ WebkitOverflowScrolling: "touch" as any }}>
         {/* Camera Preview */}
         <div className="space-y-4">
           <Card className="bg-foreground/95 border-none overflow-hidden">
@@ -239,7 +239,7 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
         </div>
 
         {/* Right side: Settings + Participants */}
-        <div className="space-y-4">
+        <div className="space-y-4 overflow-y-auto pb-2" style={{ maxHeight: "calc(100dvh - 260px)", WebkitOverflowScrolling: "touch" as any }}>
           {isPrivileged ? (
             <>
               {/* Class Settings */}
@@ -349,8 +349,9 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
         </div>
       </div>
 
-      {/* Bottom: Start/Join Button */}
-      <div className="p-4 bg-primary border-t border-primary-foreground/10">
+      {/* Bottom: Start/Join Button — always pinned, safe-area aware */}
+      <div className="flex-shrink-0 px-4 bg-primary border-t border-primary-foreground/10"
+        style={{ paddingBottom: "calc(16px + env(safe-area-inset-bottom, 0px))", paddingTop: "12px" }}>
         <div className="max-w-md mx-auto">
           {isPrivileged ? (
             <Button
