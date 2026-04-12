@@ -14,8 +14,8 @@ import { Video, VideoOff, Mic, MicOff, Monitor, Users, Settings } from "lucide-r
 interface ClassLobbyProps {
   subject: any;
   session: any;
-  onStartClass: (settings: any) => void;
-  onJoinClass: () => void;
+  onStartClass: (settings: any, media?: { micOn: boolean; cameraOn: boolean }) => void;
+  onJoinClass:  (media?: { micOn: boolean; cameraOn: boolean }) => void;
   onBack: () => void;
   isLive: boolean;
 }
@@ -120,18 +120,19 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
 
   const handleStart = () => {
     stream?.getTracks().forEach(t => t.stop());
+    const media = { micOn, cameraOn };
     onStartClass({
       waiting_room_enabled: waitingRoom,
       chat_enabled: chatEnabled,
       hand_raise_enabled: handRaiseEnabled,
       recording_enabled: recordClass,
       class_settings: { mute_on_entry: muteOnEntry, screen_share_enabled: screenShareEnabled },
-    });
+    }, media);
   };
 
   const handleJoin = () => {
     stream?.getTracks().forEach(t => t.stop());
-    onJoinClass();
+    onJoinClass({ micOn, cameraOn });  // FIX: pass lobby choices into room
   };
 
   return (
