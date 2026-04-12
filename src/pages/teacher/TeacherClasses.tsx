@@ -1,3 +1,16 @@
+/*
+  TeacherClasses.tsx — Tahleem Academy
+  ──────────────────────────────────────
+  FIX: Removed the local ClassroomView early-return and the local PiP strip.
+  The GlobalClassroomOverlay (mounted at App root) now handles the classroom
+  for teachers exactly like it does for students — including refresh-persistence
+  via sessionStorage + autoJoin.
+
+  Teachers call joinClass() → GlobalClassroomOverlay renders the full classroom
+  Teachers call leaveClass() → GlobalClassroomOverlay unmounts it
+  Refresh while in class → sessionStorage restores → autoJoin skips lobby
+*/
+
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -7,17 +20,18 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
-import { Video, Plus, Calendar, Clock, Phone } from "lucide-react";
+import { Video, Plus, Calendar, Clock } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { format, isFuture, isPast } from "date-fns";
 import { useLiveClass } from "@/contexts/LiveClassContext";
-import ClassroomView from "@/components/classroom/ClassroomView";
 
 const TeacherClasses = () => {
-  const { joinClass, leaveClass, setMinimized: setLCMinimized, inCall, minimized, activeSubject } = useLiveClass();
+  // joinClass / leaveClass feed into GlobalClassroomOverlay at App root
+  // No local ClassroomView rendering needed here at all
+  const { joinClass } = useLiveClass();
   const { t } = useLanguage();
   const { user } = useAuth();
   const { toast } = useToast();
@@ -91,12 +105,14 @@ const TeacherClasses = () => {
     }
   };
 
+  // joinClass() pushes into LiveClassContext → GlobalClassroomOverlay takes over
   const openClassroom = (s: any) => {
     const sub = subjects.find(sub => sub.id === s.subject_id) || (s as any).subjects;
     joinClass({
       id: s.subject_id,
       title: sub?.title || "Class",
-      title_ar: sub?.title_ar || "",    });
+      title_ar: sub?.title_ar || "",
+    });
   };
 
   const upcoming = sessions.filter(s =>
@@ -114,38 +130,18 @@ const TeacherClasses = () => {
     </div>
   );
 
-  // Live class PiP overlay (persists while browsing)
-  if (inCall && !minimized && activeSubject) {
-    return (
-      <ClassroomView
-        subject={activeSubject}
-        onLeave={leaveClass}
-        onMinimize={() => setLCMinimized(true)}
-        autoJoin
-      />
-    );
-  }
+  // NOTE: No early-return for inCall here. GlobalClassroomOverlay at App root
+  // renders the full-screen ClassroomView as a fixed overlay automatically.
+  // No local PiP strip either — GlobalClassroomOverlay's pill handles that.
 
   return (
     <div className="p-4 md:p-6 space-y-6">
-      {/* Floating PiP pill when class is minimized */}
-      {inCall && minimized && (
-        <div style={{ position:"fixed",bottom:24,right:20,zIndex:99999,display:"flex",alignItems:"center",gap:8 }}>
-          <style>{`@keyframes pipP{0%,100%{opacity:1}50%{opacity:.4}}`}</style>
-          <span style={{width:10,height:10,borderRadius:"50%",background:"#ef4444",display:"block",animation:"pipP 1.4s ease-in-out infinite",boxShadow:"0 0 8px #ef4444"}}/>
-          <button onClick={()=>setLCMinimized(false)} style={{width:44,height:44,borderRadius:"50%",background:"#075E54",border:"2px solid rgba(255,255,255,.25)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 4px 16px rgba(0,0,0,.45)"}}>
-            <Video style={{width:20,height:20,color:"#fff"}}/>
-          </button>
-          <button onClick={leaveClass} style={{width:44,height:44,borderRadius:"50%",background:"#ef4444",border:"2px solid rgba(255,255,255,.25)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 4px 16px rgba(239,68,68,.5)"}}>
-            <Phone style={{width:18,height:18,color:"#fff",transform:"rotate(135deg)"}}/>
-          </button>
-        </div>
-      )}
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">{t("Live Classes", "الفصول المباشرة")}</h1>
         <Dialog open={showCreate} onOpenChange={setShowCreate}>
           <DialogTrigger asChild>
-            <Button><Plus className="h-4 w-4 me-2" />{t("Schedule Class", "جدولة حصة")}</Button>          </DialogTrigger>
+            <Button><Plus className="h-4 w-4 me-2" />{t("Schedule Class", "جدولة حصة")}</Button>
+          </DialogTrigger>
           <DialogContent className="max-w-md">
             <DialogHeader><DialogTitle>{t("Schedule New Class", "جدولة حصة جديدة")}</DialogTitle></DialogHeader>
             <div className="space-y-4">
@@ -194,12 +190,13 @@ const TeacherClasses = () => {
                     {isActive && <Badge className="bg-green-500 text-white animate-pulse">🔴 LIVE</Badge>}
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">
-                    {(s as any).subjects?.title} •{" "}                    {s.scheduled_at ? format(new Date(s.scheduled_at), "EEE, MMM d 'at' h:mm a") : new Date(s.created_at).toLocaleDateString()}
+                    {(s as any).subjects?.title} •{" "}
+                    {s.scheduled_at ? format(new Date(s.scheduled_at), "EEE, MMM d 'at' h:mm a") : new Date(s.created_at).toLocaleDateString()}
                     {(s as any).duration_minutes ? ` • ${(s as any).duration_minutes}m` : ""}
                     {s.scheduled_at && !isActive && isFuture(new Date(s.scheduled_at)) && (() => {
                       const diff = new Date(s.scheduled_at).getTime() - Date.now();
                       const mins = Math.floor(diff / 60000);
-                      const label = mins < 60 ? `${mins}m` : `${Math.floor(mins/60)}h ${mins%60}m`;
+                      const label = mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h ${mins % 60}m`;
                       return <span className="ms-1 text-amber-600 font-bold">⏱ in {label}</span>;
                     })()}
                   </p>
@@ -243,7 +240,8 @@ const TeacherClasses = () => {
                 </p>
               </div>
               <Badge variant="outline">{t("Ended", "انتهت")}</Badge>
-            </div>          ))}
+            </div>
+          ))}
           {past.length === 0 && (
             <p className="text-muted-foreground text-sm">{t("No past classes", "لا توجد حصص سابقة")}</p>
           )}
