@@ -90,28 +90,46 @@ const ReconnectMonitor = ({ onReconnecting, onReconnected }: { onReconnecting:()
   return null;
 };
 
+/* ══ WB SYNC BRIDGE — broadcasts whiteboard open/close to all participants ══
+   Lives inside <LiveKitRoom> so it has room context. Watches wbOpen prop and
+   sends a reliable data message whenever the teacher toggles the whiteboard.    */
+const WbSyncBridge = ({ wbOpen, isTeacher }: { wbOpen: boolean; isTeacher: boolean }) => {
+  const room = useRoomContext();
+  const prevRef = useRef<boolean | null>(null);
+  useEffect(() => {
+    // Only the teacher/admin broadcasts; students only receive
+    if (!isTeacher) return;
+    // Skip the very first render (null → false is not a user action)
+    if (prevRef.current === null) { prevRef.current = wbOpen; return; }
+    // Skip if value unchanged (React strict-mode double-invoke protection)
+    if (prevRef.current === wbOpen) return;
+    prevRef.current = wbOpen;
+    try {
+      const msg = JSON.stringify({ type: wbOpen ? "wb_open" : "wb_close" });
+      room.localParticipant.publishData(new TextEncoder().encode(msg), { reliable: true });
+    } catch { /* room may not be connected yet */ }
+  }, [wbOpen, isTeacher, room]);
+  return null;
+};
+
 /* ══ MEDIA AUTO-PUBLISH ══
    LiveKit connects but does NOT publish mic/camera automatically unless explicitly
    told to. This component runs inside <LiveKitRoom> on first mount and calls
    setMicrophoneEnabled + setCameraEnabled so users don't have to toggle off/on.
    A 400ms delay lets the room fully establish before publishing.                */
-const MediaAutoPublish = () => {
+const MediaAutoPublish = ({ lobbyMic = true, lobbyCam = true }: { lobbyMic?: boolean; lobbyCam?: boolean }) => {
   const room = useRoomContext();
   useEffect(() => {
     let cancelled = false;
     const publish = async () => {
-      // Wait for connection to stabilise
+      // Wait for connection to stabilise before publishing tracks
       await new Promise(r => setTimeout(r, 400));
       if (cancelled) return;
       try {
         const lp = room.localParticipant;
-        // Only publish if not already published (avoids double-toggling)
-        if (!lp.isMicrophoneEnabled) {
-          await lp.setMicrophoneEnabled(true);
-        }
-        if (!lp.isCameraEnabled) {
-          await lp.setCameraEnabled(true);
-        }
+        // Respect the lobby choices — only enable what the user had ON in lobby
+        await lp.setMicrophoneEnabled(lobbyMic);
+        await lp.setCameraEnabled(lobbyCam);
       } catch (err) {
         // Silently ignore — user may have denied permissions or device unavailable
         console.warn("MediaAutoPublish:", err);
@@ -402,11 +420,13 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
       {badge>0&&<span style={{position:"absolute",top:0,right:0,background:RED,color:"#fff",borderRadius:"50%",width:17,height:17,fontSize:9,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,border:`2px solid ${DARK}`}}>{badge}</span>}
     </div>
   );
+  // Portal container for menus that escape LiveKit's CSS transform stacking context
+  const menuPortal = typeof document !== "undefined" ? document.body : null;
   return(<>
-    {emojis&&<div style={{position:"fixed",bottom:BAR_H+12,left:"50%",transform:"translateX(-50%)",background:"#1e2535",border:"1px solid rgba(255,255,255,.1)",borderRadius:44,padding:"10px 16px",display:"flex",gap:10,zIndex:100,boxShadow:"0 8px 32px rgba(0,0,0,.6)",animation:"slide-up .2s ease"}}>
+    {emojis&&menuPortal&&createPortal(<div style={{position:"fixed",bottom:BAR_H+12,left:"50%",transform:"translateX(-50%)",background:"#1e2535",border:"1px solid rgba(255,255,255,.1)",borderRadius:44,padding:"10px 16px",display:"flex",gap:10,zIndex:9000,boxShadow:"0 8px 32px rgba(0,0,0,.6)",animation:"slide-up .2s ease"}}>
       {["👏","🤲","❤️","😂","🌟","👍","🙏","🕌"].map(e=>(<button key={e} onClick={()=>sendEmoji(e)} style={{fontSize:28,background:"none",border:"none",cursor:"pointer",padding:"2px 4px",transition:"transform .12s"}} onMouseEnter={ev=>(ev.currentTarget.style.transform="scale(1.28)")} onMouseLeave={ev=>(ev.currentTarget.style.transform="scale(1)")}>{e}</button>))}
-    </div>}
-    {menu&&<div onClick={()=>setMenu(false)} style={{position:"fixed",bottom:BAR_H+10,right:14,background:"#17202a",border:"1px solid rgba(255,255,255,.08)",borderRadius:18,boxShadow:"0 8px 36px rgba(0,0,0,.65)",minWidth:230,zIndex:100,overflow:"hidden",animation:"slide-up .18s ease"}}>
+    </div>,menuPortal)}
+    {menu&&menuPortal&&createPortal(<div onClick={()=>setMenu(false)} style={{position:"fixed",bottom:BAR_H+10,right:14,background:"#17202a",border:"1px solid rgba(255,255,255,.08)",borderRadius:18,boxShadow:"0 8px 36px rgba(0,0,0,.65)",minWidth:230,zIndex:9000,overflow:"hidden",animation:"slide-up .18s ease"}}>
       {isPrivileged&&[
         {icon:Volume2,label:groupReciteMode?"End Group Recitation":"Group Recitation",color:groupReciteMode?GREEN:"#fff",fn:onGroupRecite},
         {icon:BookOpen,label:"Share Material",color:"#fff",fn:onShareMaterial},
@@ -415,7 +435,7 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
       ].map((item,i)=>(<button key={i} onClick={item.fn} style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"13px 18px",background:"none",border:"none",cursor:"pointer",color:item.color,fontSize:14,borderBottom:"1px solid rgba(255,255,255,.06)",textAlign:"left"as const}}><item.icon style={{width:16,height:16}}/> {item.label}</button>))}
       <button onClick={()=>{setMenu(false);onToggleParticipants();}} style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"13px 18px",background:"none",border:"none",cursor:"pointer",color:"#fff",fontSize:14,borderBottom:"1px solid rgba(255,255,255,.06)",textAlign:"left"as const}}><Users style={{width:16,height:16}}/> Participants</button>
       <button onClick={isPrivileged?onEndClass:onLeaveClass} style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"13px 18px",background:"none",border:"none",cursor:"pointer",color:RED,fontSize:14,textAlign:"left"as const}}>📵 {isPrivileged?"End Class for All":"Leave Class"}</button>
-    </div>}
+    </div>,menuPortal)}
     <div style={{height:isMobile?60:BAR_H,background:GLASS,backdropFilter:"blur(20px)",WebkitBackdropFilter:"blur(20px)",borderTop:"1px solid rgba(255,255,255,.07)",display:"flex",alignItems:"center",justifyContent:"center",gap:isMobile?5:10,padding:`0 ${isMobile?6:16}px calc(${isMobile?4:8}px + env(safe-area-inset-bottom,0px)) ${isMobile?6:16}px`,flexShrink:0,boxShadow:"0 -4px 24px rgba(0,0,0,.45)",overflowX:"auto" as const,WebkitOverflowScrolling:"touch" as const}}>
       <Btn active={micOn} danger={!micOn} title={micOn?"Mute":"Unmute"} onClick={toggleMic}>{micOn?<Mic style={IS}/>:<MicOff style={IS}/>}</Btn>
       <Btn active={camOn} danger={!camOn} title={camOn?"Stop Video":"Start Video"} onClick={toggleCam}>{camOn?<Video style={IS}/>:<VideoOff style={IS}/>}</Btn>
@@ -439,6 +459,9 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   const[token,setToken]=useState<string|null>(null);const[wsUrl,setWsUrl]=useState<string|null>(null);
   const[error,setError]=useState<string|null>(null);const[loading,setLoading]=useState(false);
   const[reconnecting,setReconnecting]=useState(false);
+  // Lobby media choices — carried into room so MediaAutoPublish respects them
+  const[lobbyMic,setLobbyMic]=useState(true);
+  const[lobbyCam,setLobbyCam]=useState(true);
   const wakeLockRef=useRef<any>(null);
   useEffect(()=>{
     if(phase!=="live")return;
@@ -486,7 +509,9 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[phase,subject.title]);
-  const connect=async(action:string,settings?:any)=>{
+  const connect=async(action:string,settings?:any,mediaSettings?:{micOn:boolean;cameraOn:boolean})=>{
+    // Store lobby media choices for MediaAutoPublish
+    if(mediaSettings){setLobbyMic(mediaSettings.micOn);setLobbyCam(mediaSettings.cameraOn);}
     setLoading(true);setError(null);
     try{
       let tk=prefetch.current?.token||null,url=prefetch.current?.url||null;
@@ -511,7 +536,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   const handleGroupRecite=async()=>{const n=!groupRecite;setGroupRecite(n);toast({title:n?"Group Recitation ON":"Group Recitation OFF"});if(sessionId&&user)await supabase.from("class_chat_messages").insert({session_id:sessionId,sender_id:user.id,message:n?"🎙️ Group Recitation Mode":"🔇 Recitation ended",type:"system"});};
   const fmtT=(s:number)=>`${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
   if(phase==="ended")return<ClassEndScreen subject={subject} session={sessionInfo} duration={duration} participantCount={0} onGoToDashboard={onLeave} onGoToRevision={()=>{window.location.href=`/student/revision/${subject.id}`;}} />;
-  if(phase==="lobby"&&!loading&&!error&&!autoJoin)return<ClassLobby subject={subject} session={sessionInfo} onStartClass={(s:any)=>connect("start_session",s)} onJoinClass={()=>connect("join")} onBack={onLeave} isLive={isSessionLive}/>;
+  if(phase==="lobby"&&!loading&&!error&&!autoJoin)return<ClassLobby subject={subject} session={sessionInfo} onStartClass={(s:any,media?:any)=>connect("start_session",s,media)} onJoinClass={(media?:any)=>connect("join",undefined,media)} onBack={onLeave} isLive={isSessionLive}/>;
   if(loading)return(<div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100dvh",background:DARK}}><style>{CSS}</style><div style={{textAlign:"center"}}><div style={{width:52,height:52,border:`3px solid ${TEAL}`,borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .8s linear infinite",margin:"0 auto 16px"}}/><p style={{color:"rgba(255,255,255,.5)",fontSize:14}}>{t("Connecting…","جاري الاتصال…")}</p></div></div>);
   if(error)return(<div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100dvh",background:DARK}}><style>{CSS}</style><div style={{textAlign:"center",maxWidth:320,padding:28}}><div style={{width:64,height:64,borderRadius:"50%",background:"rgba(239,68,68,.12)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px"}}><X style={{width:28,height:28,color:RED}}/></div><h2 style={{fontSize:20,fontWeight:700,color:"#fff",marginBottom:8}}>Connection Failed</h2><p style={{color:"rgba(255,255,255,.45)",fontSize:14,marginBottom:22}}>{error}</p><div style={{display:"flex",gap:10,justifyContent:"center"}}><button onClick={()=>{setError(null);setPhase("lobby");}} style={{padding:"10px 22px",borderRadius:10,background:TEAL,border:"none",color:"#fff",fontSize:14,cursor:"pointer",fontWeight:600}}>Try Again</button><button onClick={onLeave} style={{padding:"10px 22px",borderRadius:10,background:GLASSB,border:"1px solid rgba(255,255,255,.12)",color:"#fff",fontSize:14,cursor:"pointer"}}>Go Back</button></div></div></div>);
   return(
@@ -520,7 +545,8 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
       {token&&wsUrl&&(
         <LiveKitRoom serverUrl={wsUrl} token={token} connect={phase==="live"} audio={true} video={true} options={{adaptiveStream:{pixelDensity:"screen"},dynacast:true,disconnectOnPageLeave:false,audioCaptureDefaults:{echoCancellation:true,noiseSuppression:true,autoGainControl:true,sampleRate:48000,channelCount:1},publishDefaults:{audioPreset:{maxBitrate:32000},dtx:true,red:false,stopMicTrackOnMute:false,videoEncoding:{maxBitrate:700_000,maxFramerate:20},backupCodec:true},videoCaptureDefaults:{resolution:{width:640,height:480,frameRate:20},facingMode:"user"}}} style={{flex:1,display:"flex",flexDirection:"column",minHeight:0,position:"relative"}} data-lk-theme="default">
           <RoomAudioRenderer/>
-          <MediaAutoPublish/>
+          <MediaAutoPublish lobbyMic={lobbyMic} lobbyCam={lobbyCam}/>
+          <WbSyncBridge wbOpen={wbOpen} isTeacher={isPrivileged}/>
           <ReconnectMonitor onReconnecting={()=>setReconnecting(true)} onReconnected={()=>setReconnecting(false)}/>
           <RoomDataListener onWbOpen={()=>setWbOpen(true)} onWbClose={()=>setWbOpen(false)} strokesBuffer={wbBuffer} onMatOpen={mat=>setMatOpen(mat)} onMatClose={()=>setMatOpen(null)} onWbAllowWrite={allow=>setCanStudentWrite(allow)} onRecAllowed={allow=>setCanStudentRec(allow)}/>
           {reconnecting&&<div style={{position:"absolute",inset:0,zIndex:200,background:"rgba(0,0,0,.82)",backdropFilter:"blur(8px)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:14}}><div style={{width:48,height:48,border:`3px solid ${TEAL}`,borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .8s linear infinite"}}/><p style={{color:"#fff",fontSize:15,fontWeight:700}}>Reconnecting…</p><p style={{color:"rgba(255,255,255,.4)",fontSize:13}}>Please stay on the page</p></div>}
