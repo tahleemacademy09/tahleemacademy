@@ -117,25 +117,25 @@ const WbSyncBridge = ({ wbOpen, isTeacher }: { wbOpen: boolean; isTeacher: boole
    told to. This component runs inside <LiveKitRoom> on first mount and calls
    setMicrophoneEnabled + setCameraEnabled so users don't have to toggle off/on.
    A 400ms delay lets the room fully establish before publishing.                */
-const MediaAutoPublish = ({ lobbyMic = true, lobbyCam = true }: { lobbyMic?: boolean; lobbyCam?: boolean }) => {
+/* ══ MEDIA INITIALISER ══
+   Starts mic and camera in the OFF state on join.
+   The footer buttons are the ONLY way to enable them — this prevents
+   the camera from auto-firing when a student enters the room.           */
+const MediaAutoPublish = (_props: { lobbyMic?: boolean; lobbyCam?: boolean }) => {
   const room = useRoomContext();
   useEffect(() => {
     let cancelled = false;
-    const publish = async () => {
-      // Wait for connection to stabilise before publishing tracks
-      await new Promise(r => setTimeout(r, 400));
+    const init = async () => {
+      await new Promise(r => setTimeout(r, 300));
       if (cancelled) return;
       try {
         const lp = room.localParticipant;
-        // Respect the lobby choices — only enable what the user had ON in lobby
-        await lp.setMicrophoneEnabled(lobbyMic);
-        await lp.setCameraEnabled(lobbyCam);
-      } catch (err) {
-        // Silently ignore — user may have denied permissions or device unavailable
-        console.warn("MediaAutoPublish:", err);
-      }
+        // Always start silent and dark — user controls via footer buttons
+        if (lp.isMicrophoneEnabled) await lp.setMicrophoneEnabled(false);
+        if (lp.isCameraEnabled)     await lp.setCameraEnabled(false);
+      } catch { /* non-critical */ }
     };
-    publish();
+    init();
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -543,7 +543,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     <div data-classroom-root style={{height:"100dvh",display:"flex",flexDirection:"column",background:DARK,overflow:"hidden"}}>
       <style>{CSS}</style>
       {token&&wsUrl&&(
-        <LiveKitRoom serverUrl={wsUrl} token={token} connect={phase==="live"} audio={true} video={true} options={{adaptiveStream:{pixelDensity:"screen"},dynacast:true,disconnectOnPageLeave:false,audioCaptureDefaults:{echoCancellation:true,noiseSuppression:true,autoGainControl:true,sampleRate:48000,channelCount:1},publishDefaults:{audioPreset:{maxBitrate:32000},dtx:true,red:false,stopMicTrackOnMute:false,videoEncoding:{maxBitrate:700_000,maxFramerate:20},backupCodec:true},videoCaptureDefaults:{resolution:{width:640,height:480,frameRate:20},facingMode:"user"}}} style={{flex:1,display:"flex",flexDirection:"column",minHeight:0,position:"relative"}} data-lk-theme="default">
+        <LiveKitRoom serverUrl={wsUrl} token={token} connect={phase==="live"} audio={false} video={false} options={{adaptiveStream:{pixelDensity:"screen"},dynacast:true,disconnectOnPageLeave:false,audioCaptureDefaults:{echoCancellation:true,noiseSuppression:true,autoGainControl:true,sampleRate:48000,channelCount:1},publishDefaults:{audioPreset:{maxBitrate:32000},dtx:true,red:false,stopMicTrackOnMute:false,videoEncoding:{maxBitrate:700_000,maxFramerate:20},backupCodec:true},videoCaptureDefaults:{resolution:{width:640,height:480,frameRate:20},facingMode:"user"}}} style={{flex:1,display:"flex",flexDirection:"column",minHeight:0,position:"relative"}} data-lk-theme="default">
           <RoomAudioRenderer/>
           <MediaAutoPublish lobbyMic={lobbyMic} lobbyCam={lobbyCam}/>
           <WbSyncBridge wbOpen={wbOpen} isTeacher={isPrivileged}/>
