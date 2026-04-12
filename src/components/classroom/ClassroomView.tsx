@@ -90,6 +90,40 @@ const ReconnectMonitor = ({ onReconnecting, onReconnected }: { onReconnecting:()
   return null;
 };
 
+/* ══ MEDIA AUTO-PUBLISH ══
+   LiveKit connects but does NOT publish mic/camera automatically unless explicitly
+   told to. This component runs inside <LiveKitRoom> on first mount and calls
+   setMicrophoneEnabled + setCameraEnabled so users don't have to toggle off/on.
+   A 400ms delay lets the room fully establish before publishing.                */
+const MediaAutoPublish = () => {
+  const room = useRoomContext();
+  useEffect(() => {
+    let cancelled = false;
+    const publish = async () => {
+      // Wait for connection to stabilise
+      await new Promise(r => setTimeout(r, 400));
+      if (cancelled) return;
+      try {
+        const lp = room.localParticipant;
+        // Only publish if not already published (avoids double-toggling)
+        if (!lp.isMicrophoneEnabled) {
+          await lp.setMicrophoneEnabled(true);
+        }
+        if (!lp.isCameraEnabled) {
+          await lp.setCameraEnabled(true);
+        }
+      } catch (err) {
+        // Silently ignore — user may have denied permissions or device unavailable
+        console.warn("MediaAutoPublish:", err);
+      }
+    };
+    publish();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return null;
+};
+
 /* ══ ROOM DATA LISTENER ══ */
 const RoomDataListener = ({ onWbOpen,onWbClose,strokesBuffer,onMatOpen,onMatClose,onWbAllowWrite,onRecAllowed }:any) => {
   const room = useRoomContext();
@@ -338,14 +372,19 @@ const VideoGrid=()=>{
 /* ══ BOTTOM BAR — Google Meet floating glass style ══ */
 const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeaveClass,chatUnread,onToggleWhiteboard,whiteboardOpen,onGroupRecite,groupReciteMode,onShareMaterial,isPrivileged,canStudentWriteProp,canStudentRecProp,onPermChange,onMinimize,room,isMobile}:any)=>{
   const{user}=useAuth();
-  const[micOn,setMicOn]=useState(()=>room?.localParticipant?.isMicrophoneEnabled??true);
-  const[camOn,setCamOn]=useState(()=>room?.localParticipant?.isCameraEnabled??true);
+  // Start false — MediaAutoPublish enables tracks asynchronously; sync events update these
+  const[micOn,setMicOn]=useState(false);
+  const[camOn,setCamOn]=useState(false);
   const[handUp,setHandUp]=useState(false);const[menu,setMenu]=useState(false);const[emojis,setEmojis]=useState(false);
   const[stuRec,setStuRec]=useState(false);const stuMrRef=useRef<MediaRecorder|null>(null);const stuChunks=useRef<Blob[]>([]);
   useEffect(()=>{
-    if(!room)return;const sync=()=>{setMicOn(room.localParticipant.isMicrophoneEnabled);setCamOn(room.localParticipant.isCameraEnabled);};
+    if(!room)return;
+    const sync=()=>{setMicOn(room.localParticipant.isMicrophoneEnabled);setCamOn(room.localParticipant.isCameraEnabled);};
+    sync();
     room.localParticipant.on("trackMuted",sync);room.localParticipant.on("trackUnmuted",sync);room.localParticipant.on("trackPublished",sync);room.localParticipant.on("trackUnpublished",sync);
-    return()=>{room.localParticipant.off("trackMuted",sync);room.localParticipant.off("trackUnmuted",sync);room.localParticipant.off("trackPublished",sync);room.localParticipant.off("trackUnpublished",sync);};
+    // Poll after publish delay to catch async track setup
+    const t1=setTimeout(sync,500);const t2=setTimeout(sync,1500);
+    return()=>{clearTimeout(t1);clearTimeout(t2);room.localParticipant.off("trackMuted",sync);room.localParticipant.off("trackUnmuted",sync);room.localParticipant.off("trackPublished",sync);room.localParticipant.off("trackUnpublished",sync);};
   },[room]);
   const toggleMic=async()=>{const n=!micOn;await room?.localParticipant?.setMicrophoneEnabled(n);setMicOn(n);};
   const toggleCam=async()=>{const n=!camOn;await room?.localParticipant?.setCameraEnabled(n);setCamOn(n);};
@@ -479,8 +518,9 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     <div data-classroom-root style={{height:"100dvh",display:"flex",flexDirection:"column",background:DARK,overflow:"hidden"}}>
       <style>{CSS}</style>
       {token&&wsUrl&&(
-        <LiveKitRoom serverUrl={wsUrl} token={token} connect={phase==="live"} options={{adaptiveStream:{pixelDensity:"screen"},dynacast:true,disconnectOnPageLeave:false,audioCaptureDefaults:{echoCancellation:true,noiseSuppression:true,autoGainControl:true,sampleRate:48000,channelCount:1},publishDefaults:{audioPreset:{maxBitrate:32000},dtx:true,red:false,stopMicTrackOnMute:false,videoEncoding:{maxBitrate:700_000,maxFramerate:20},backupCodec:true},videoCaptureDefaults:{resolution:{width:640,height:480,frameRate:20},facingMode:"user"}}} style={{flex:1,display:"flex",flexDirection:"column",minHeight:0,position:"relative"}} data-lk-theme="default">
+        <LiveKitRoom serverUrl={wsUrl} token={token} connect={phase==="live"} audio={true} video={true} options={{adaptiveStream:{pixelDensity:"screen"},dynacast:true,disconnectOnPageLeave:false,audioCaptureDefaults:{echoCancellation:true,noiseSuppression:true,autoGainControl:true,sampleRate:48000,channelCount:1},publishDefaults:{audioPreset:{maxBitrate:32000},dtx:true,red:false,stopMicTrackOnMute:false,videoEncoding:{maxBitrate:700_000,maxFramerate:20},backupCodec:true},videoCaptureDefaults:{resolution:{width:640,height:480,frameRate:20},facingMode:"user"}}} style={{flex:1,display:"flex",flexDirection:"column",minHeight:0,position:"relative"}} data-lk-theme="default">
           <RoomAudioRenderer/>
+          <MediaAutoPublish/>
           <ReconnectMonitor onReconnecting={()=>setReconnecting(true)} onReconnected={()=>setReconnecting(false)}/>
           <RoomDataListener onWbOpen={()=>setWbOpen(true)} onWbClose={()=>setWbOpen(false)} strokesBuffer={wbBuffer} onMatOpen={mat=>setMatOpen(mat)} onMatClose={()=>setMatOpen(null)} onWbAllowWrite={allow=>setCanStudentWrite(allow)} onRecAllowed={allow=>setCanStudentRec(allow)}/>
           {reconnecting&&<div style={{position:"absolute",inset:0,zIndex:200,background:"rgba(0,0,0,.82)",backdropFilter:"blur(8px)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:14}}><div style={{width:48,height:48,border:`3px solid ${TEAL}`,borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .8s linear infinite"}}/><p style={{color:"#fff",fontSize:15,fontWeight:700}}>Reconnecting…</p><p style={{color:"rgba(255,255,255,.4)",fontSize:13}}>Please stay on the page</p></div>}
