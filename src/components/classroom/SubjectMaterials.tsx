@@ -428,7 +428,8 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
   const [pct,        setPct]        = useState(0);
   const [err,        setErr]        = useState("");
   const [isDragOver, setIsDragOver] = useState(false);
-  const fileRef      = useRef<HTMLInputElement>(null);
+  const fileRef        = useRef<HTMLInputElement>(null);
+  const pickerOpenRef  = useRef(false);
 
   const cfg      = MAT_CFG[f.material_type];
   const Icon     = cfg.icon;
@@ -441,6 +442,31 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
   useEffect(() => {
     return () => { if (objectUrl) URL.revokeObjectURL(objectUrl); };
   }, [objectUrl]);
+
+  // Android back-navigation guard ──────────────────────────────────────────
+  // The OS file-picker Activity fires a back event when it closes (even after
+  // a file is selected). React Router catches this popstate and navigates away.
+  // Fix: push a guard history entry on modal mount, intercept every popstate.
+  //  • picker was open  → suppress (picker-close event), reset flag
+  //  • picker was closed → hardware back → close this modal
+  useEffect(() => {
+    window.history.pushState({ smModalGuard: true }, "");
+    const handlePopState = () => {
+      window.history.pushState({ smModalGuard: true }, "");
+      if (pickerOpenRef.current) {
+        pickerOpenRef.current = false;
+      } else {
+        onClose();
+      }
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => {
+      window.removeEventListener("popstate", handlePopState);
+      if (window.history.state?.smModalGuard) {
+        window.history.replaceState(null, "");
+      }
+    };
+  }, [onClose]);
 
   const pickFile = useCallback((picked: File) => {
     const detected = autoDetectType(picked);
@@ -719,7 +745,9 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
                       opacity: 0, cursor: "pointer",
                       margin: 0, padding: 0,
                     }}
+                    onClick={() => { pickerOpenRef.current = true; }}
                     onChange={e => {
+                      pickerOpenRef.current = false;
                       const fi = e.target.files?.[0];
                       if (fi) pickFile(fi);
                       if (fileRef.current) fileRef.current.value = "";
