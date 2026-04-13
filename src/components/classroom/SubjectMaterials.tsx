@@ -701,7 +701,10 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
                     </p>
                   </div>
 
-                  {/* The actual input — covers the entire zone, invisible */}
+                  {/* The actual input — covers the entire zone, invisible.
+                      onFocus pushes a dummy history entry so that when Android's
+                      document picker fires a back event on dismiss, it hits the
+                      dummy entry instead of navigating away from this page. */}
                   <input
                     ref={fileRef}
                     type="file"
@@ -712,9 +715,13 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
                       width: "100%", height: "100%",
                       opacity: 0, cursor: "pointer",
                     }}
+                    onFocus={() => {
+                      window.history.pushState({ filePickerOpen: true }, "");
+                    }}
                     onChange={e => {
                       const fi = e.target.files?.[0];
                       if (fi) pickFile(fi);
+                      if (fileRef.current) fileRef.current.value = "";
                     }}
                   />
                 </div>
