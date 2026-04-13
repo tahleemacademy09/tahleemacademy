@@ -702,21 +702,22 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
                   </div>
 
                   {/* The actual input — covers the entire zone, invisible.
-                      onFocus pushes a dummy history entry so that when Android's
-                      document picker fires a back event on dismiss, it hits the
-                      dummy entry instead of navigating away from this page. */}
+                      CRITICAL: accept="*\/*" is intentional. Specific MIME types
+                      (e.g. ".pdf,application/pdf") cause Android to open the
+                      document-picker Activity, which fires a back event on close
+                      and navigates the page away. "*\/*" opens the general picker
+                      which does not. File type is validated after selection via
+                      autoDetectType(). No onFocus/history.pushState needed. */}
                   <input
                     ref={fileRef}
                     type="file"
-                    accept={ACCEPT[f.material_type] || "*/*"}
+                    accept="*/*"
                     disabled={busy}
                     style={{
                       position: "absolute", inset: 0,
                       width: "100%", height: "100%",
                       opacity: 0, cursor: "pointer",
-                    }}
-                    onFocus={() => {
-                      window.history.pushState({ filePickerOpen: true }, "");
+                      margin: 0, padding: 0,
                     }}
                     onChange={e => {
                       const fi = e.target.files?.[0];
