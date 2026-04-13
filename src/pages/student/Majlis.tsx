@@ -8,6 +8,7 @@ import { useNavigate } from "react-router-dom";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
+import { storageSupabase } from "../../integrations/supabase/storageClient";
 import {
   Send, MessageCircle, Reply, CheckCheck, Mic, MicOff,
   Image, Paperclip, Smile, ArrowLeft, FileText, Trash2,
@@ -125,10 +126,10 @@ const resolveMedia = async (path: string): Promise<string | null> => {
   if (!path) return null;
   if (!isStoragePath(path)) return path;
   // Try public URL first (instant, no expiry)
-  const { data: pub } = supabase.storage.from(BUCKET).getPublicUrl(path);
+  const { data: pub } = storageSupabase.storage.from(BUCKET).getPublicUrl(path);
   if (pub?.publicUrl) return pub.publicUrl;
   // Fallback to signed URL (for private buckets)
-  const { data } = await supabase.storage.from(BUCKET).createSignedUrl(path, 86400);
+  const { data } = await storageSupabase.storage.from(BUCKET).createSignedUrl(path, 86400);
   return data?.signedUrl || null;
 };
 
@@ -510,8 +511,8 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
 
   // ── Effects ────────────────────────────────────────────────
   useEffect(() => {
-    supabase.storage.getBucket(BUCKET).then(({ error }) => {
-      if (error) supabase.storage.createBucket(BUCKET, { public: true }).catch(() => {});
+    storageSupabase.storage.getBucket(BUCKET).then(({ error }) => {
+      if (error) storageSupabase.storage.createBucket(BUCKET, { public: true }).catch(() => {});
     });
     supabase.from("profiles").select("user_id,full_name,full_name_ar,avatar_url,level,email,student_id")
       .then(({ data }) => {
@@ -786,7 +787,7 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
     try {
       const ext = file.name.split(".").pop() || "bin";
       const path = `${type}s/${activeChannelId}/${user.id}/${Date.now()}.${ext}`;
-      const { error: upErr } = await supabase.storage.from(BUCKET).upload(path, file, { upsert: true, contentType: file.type });
+      const { error: upErr } = await storageSupabase.storage.from(BUCKET).upload(path, file, { upsert: true, contentType: file.type });
       if (!upErr) {
         await sendMessage(type, path, type === "file" ? file.name : null);
       } else {
@@ -840,7 +841,7 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
         if (blob.size === 0) { toast({ title: "Recording was empty", variant: "destructive" }); return; }
         const ext = mimeType.includes("mp4") ? "mp4" : mimeType.includes("ogg") ? "ogg" : "webm";
         const path = `voice/${activeChannelId}/${user!.id}/${Date.now()}.${ext}`;
-        const { error } = await supabase.storage.from(BUCKET).upload(path, blob, { contentType: mimeType || "audio/webm", upsert: true });
+        const { error } = await storageSupabase.storage.from(BUCKET).upload(path, blob, { contentType: mimeType || "audio/webm", upsert: true });
         if (!error) {
           await sendMessage("audio", path);
         } else {
@@ -951,9 +952,9 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
   const handleAvatarUpload = async (file: File) => {
     if (!activeChannelId || !canModerate) return;
     const path = `avatars/${activeChannelId}/${Date.now()}.${file.name.split(".").pop()}`;
-    const { error } = await supabase.storage.from(BUCKET).upload(path, file, { upsert: true });
+    const { error } = await storageSupabase.storage.from(BUCKET).upload(path, file, { upsert: true });
     if (!error) {
-      const { data } = supabase.storage.from(BUCKET).getPublicUrl(path);
+      const { data } = storageSupabase.storage.from(BUCKET).getPublicUrl(path);
       await supabase.from("chat_channels" as any).update({ avatar: data.publicUrl }).eq("id", activeChannelId);
       setChannels(prev => prev.map(c => c.id === activeChannelId ? { ...c, avatar: data.publicUrl } as any : c));
       toast({ title: "Photo updated!" });
@@ -963,9 +964,9 @@ const Majlis = ({ adminMode = false, onBroadcast, onCreateChannel }: MajlisProps
     if (!user) return; setSavingProfile(true);
     try {
       const path = `profiles/${user.id}/${Date.now()}.${file.name.split(".").pop()}`;
-      const { error } = await supabase.storage.from(BUCKET).upload(path, file, { upsert: true });
+      const { error } = await storageSupabase.storage.from(BUCKET).upload(path, file, { upsert: true });
       let av = "";
-      if (!error) { const { data } = supabase.storage.from(BUCKET).getPublicUrl(path); av = data.publicUrl; }
+      if (!error) { const { data } = storageSupabase.storage.from(BUCKET).getPublicUrl(path); av = data.publicUrl; }
       else { av = await new Promise(res => { const r = new FileReader(); r.onloadend = () => res(r.result as string); r.readAsDataURL(file); }); }
       await supabase.from("profiles").update({ avatar_url: av }).eq("user_id", user.id);
       setProfiles(prev => ({ ...prev, [user.id]: { ...prev[user.id], avatar_url: av } }));
