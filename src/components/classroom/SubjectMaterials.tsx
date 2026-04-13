@@ -429,10 +429,6 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
   const [err,        setErr]        = useState("");
   const [isDragOver, setIsDragOver] = useState(false);
   const fileRef      = useRef<HTMLInputElement>(null);
-  // Guard ref — blocks backdrop onClose for 800ms after file picker is opened.
-  // On Android/iOS, the native file picker dismissal fires a synthetic click that
-  // lands on the backdrop and calls onClose() before the file is even processed.
-  const pickerGuard = useRef(false);
 
   const cfg      = MAT_CFG[f.material_type];
   const Icon     = cfg.icon;
@@ -580,8 +576,7 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
         display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
       }}
       onClick={e => {
-        // Never close if uploading, saving, or within 800ms of file picker opening
-        if (busy || pickerGuard.current) return;
+        if (busy) return;
         if (e.target === e.currentTarget) onClose();
       }}
     >
@@ -659,26 +654,22 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
               <label style={{ fontSize: 11, fontWeight: 700, color: "#374151", display: "block", marginBottom: 8, letterSpacing: .5 }}>
                 FILE
               </label>
+              {/* ── Hidden file input — activated via <label htmlFor> below.
+                  Never call .click() programmatically on Android: the native
+                  file-picker dismiss fires a synthetic click that lands on the
+                  React Router history stack and navigates the page back.
+                  Using a real <label> lets the browser open the picker natively
+                  with no JS involvement, which avoids the back-navigation bug. ── */}
               <input
                 ref={fileRef}
                 id="sm-file-input"
                 type="file"
                 accept={ACCEPT[f.material_type] || "*/*"}
                 disabled={busy}
-                // Use clip+opacity hiding instead of position:fixed left:-9999px.
-                // The -9999px trick places the input near screen origin on mobile,
-                // causing the file picker's dismiss event to fire a phantom click
-                // on the backdrop (which closes the modal before file is processed).
-                style={{
-                  position: "absolute", width: 0, height: 0,
-                  opacity: 0, overflow: "hidden", clip: "rect(0,0,0,0)",
-                  pointerEvents: "none",
-                }}
+                style={{ display: "none" }}
                 onChange={e => {
                   const fi = e.target.files?.[0];
                   if (fi) pickFile(fi);
-                  // Reset guard after file is picked — allow backdrop close again
-                  pickerGuard.current = false;
                 }}
               />
 
@@ -691,25 +682,9 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
                   onClear={clearFile}
                 />
               ) : (
-                /* Empty drop zone */
-                <div
-                  role="button"
-                  tabIndex={0}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (busy) return;
-                    // Block backdrop from closing modal — Android fires phantom click on picker dismiss
-                    pickerGuard.current = true;
-                    setTimeout(() => { pickerGuard.current = false; }, 800);
-                    fileRef.current?.click();
-                  }}
-                  onKeyDown={e => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      pickerGuard.current = true;
-                      setTimeout(() => { pickerGuard.current = false; }, 800);
-                      fileRef.current?.click();
-                    }
-                  }}
+                /* Empty drop zone — label activates the input natively on tap */
+                <label
+                  htmlFor={busy ? undefined : "sm-file-input"}
                   onDragOver={e => { e.preventDefault(); e.stopPropagation(); setIsDragOver(true); }}
                   onDragLeave={() => setIsDragOver(false)}
                   onDrop={e => {
@@ -744,7 +719,7 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
                      f.material_type === "Document" ? "Word, Excel, PowerPoint, ODT, CSV, RTF" :
                      "Any file type"}
                   </p>
-                </div>
+                </label>
               )}
 
               {/* URL fallback */}
