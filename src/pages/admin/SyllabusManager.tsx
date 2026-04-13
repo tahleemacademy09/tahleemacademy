@@ -1,6 +1,7 @@
 import { useState, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -164,7 +165,7 @@ const SyllabusManager = () => {
   const handleFileUpload = async (file: File): Promise<string> => {
     const ext  = file.name.split(".").pop();
     const path = `materials/${selectedSubject}/${crypto.randomUUID()}.${ext}`;
-    const { error } = await supabase.storage.from("subject-files").upload(path, file);
+    const { error } = await storageSupabase.storage.from("subject-files").upload(path, file);
     if (error) throw error;
     return path;
   };
@@ -219,7 +220,7 @@ const SyllabusManager = () => {
   const deleteMaterial = useMutation({
     mutationFn: async (mat: any) => {
       if (mat.file_url && !mat.file_url.startsWith("http")) {
-        await supabase.storage.from("subject-files").remove([mat.file_url]);
+        await storageSupabase.storage.from("subject-files").remove([mat.file_url]);
       }
       const { error } = await supabase.from("subject_materials").delete().eq("id", mat.id);
       if (error) throw error;
@@ -234,7 +235,7 @@ const SyllabusManager = () => {
 
   const openSignedUrl = async (path: string) => {
     if (path.startsWith("http")) { window.open(path, "_blank"); return; }
-    const { data } = await supabase.storage.from("subject-files").createSignedUrl(path, 300);
+    const { data } = await storageSupabase.storage.from("subject-files").createSignedUrl(path, 300);
     if (data?.signedUrl) window.open(data.signedUrl, "_blank");
   };
 
