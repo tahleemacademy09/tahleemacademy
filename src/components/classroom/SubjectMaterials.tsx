@@ -654,25 +654,6 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
               <label style={{ fontSize: 11, fontWeight: 700, color: "#374151", display: "block", marginBottom: 8, letterSpacing: .5 }}>
                 FILE
               </label>
-              {/* ── Hidden file input — activated via <label htmlFor> below.
-                  Never call .click() programmatically on Android: the native
-                  file-picker dismiss fires a synthetic click that lands on the
-                  React Router history stack and navigates the page back.
-                  Using a real <label> lets the browser open the picker natively
-                  with no JS involvement, which avoids the back-navigation bug. ── */}
-              <input
-                ref={fileRef}
-                id="sm-file-input"
-                type="file"
-                accept={ACCEPT[f.material_type] || "*/*"}
-                disabled={busy}
-                style={{ display: "none" }}
-                onChange={e => {
-                  const fi = e.target.files?.[0];
-                  if (fi) pickFile(fi);
-                }}
-              />
-
               {/* Show file preview if file selected */}
               {file ? (
                 <FilePreviewBlock
@@ -682,9 +663,15 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
                   onClear={clearFile}
                 />
               ) : (
-                /* Empty drop zone — label activates the input natively on tap */
-                <label
-                  htmlFor={busy ? undefined : "sm-file-input"}
+                /* ── Drop zone with physically overlaid input ──────────────────
+                   On Android, both .click() and <label htmlFor> cause the
+                   document picker's dismiss event to navigate back via React
+                   Router — but only for certain picker types (PDF/document).
+                   The only reliable fix is to make the <input> the literal tap
+                   target by overlaying it (opacity:0, position:absolute, inset:0)
+                   on top of the visual content. The browser receives a real tap
+                   on the input element itself — no JS, no indirection.         */}
+                <div
                   onDragOver={e => { e.preventDefault(); e.stopPropagation(); setIsDragOver(true); }}
                   onDragLeave={() => setIsDragOver(false)}
                   onDrop={e => {
@@ -692,34 +679,54 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
                     const fi = e.dataTransfer.files?.[0]; if (fi) pickFile(fi);
                   }}
                   style={{
+                    position: "relative",
                     display: "flex", flexDirection: "column",
                     alignItems: "center", justifyContent: "center",
                     border: `2px dashed ${isDragOver ? cfg.border : "#D1D5DB"}`,
                     borderRadius: 14,
                     background: isDragOver ? cfg.bg : "#FAFAFA",
-                    cursor: busy ? "not-allowed" : "pointer",
                     padding: "32px 20px", textAlign: "center",
                     transition: "all .2s",
                   }}>
-                  <div style={{
-                    width: 56, height: 56, borderRadius: 14,
-                    background: cfg.bg, border: `1.5px solid ${cfg.border}`,
-                    display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 12,
-                  }}>
-                    <Upload size={24} color={cfg.text} />
+                  {/* Visuals — pointer-events:none so the input above gets all taps */}
+                  <div style={{ pointerEvents: "none" }}>
+                    <div style={{
+                      width: 56, height: 56, borderRadius: 14,
+                      background: cfg.bg, border: `1.5px solid ${cfg.border}`,
+                      display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 12,
+                    }}>
+                      <Upload size={24} color={cfg.text} />
+                    </div>
+                    <p style={{ fontWeight: 700, fontSize: 13, color: "#374151", margin: "0 0 4px" }}>
+                      Tap to choose a file, or drop here
+                    </p>
+                    <p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>
+                      {f.material_type === "PDF"      ? "PDF files up to 500 MB" :
+                       f.material_type === "Video"    ? "MP4, WebM, MOV, AVI up to 2 GB" :
+                       f.material_type === "Audio"    ? "MP3, WAV, M4A, AAC up to 100 MB" :
+                       f.material_type === "Image"    ? "JPG, PNG, GIF, WebP, SVG, HEIC" :
+                       f.material_type === "Document" ? "Word, Excel, PowerPoint, ODT, CSV, RTF" :
+                       "Any file type"}
+                    </p>
                   </div>
-                  <p style={{ fontWeight: 700, fontSize: 13, color: "#374151", margin: "0 0 4px" }}>
-                    Drop your file here, or <span style={{ color: cfg.text }}>browse</span>
-                  </p>
-                  <p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>
-                    {f.material_type === "PDF"      ? "PDF files up to 500 MB" :
-                     f.material_type === "Video"    ? "MP4, WebM, MOV, AVI up to 2 GB" :
-                     f.material_type === "Audio"    ? "MP3, WAV, M4A, AAC up to 100 MB" :
-                     f.material_type === "Image"    ? "JPG, PNG, GIF, WebP, SVG, HEIC" :
-                     f.material_type === "Document" ? "Word, Excel, PowerPoint, ODT, CSV, RTF" :
-                     "Any file type"}
-                  </p>
-                </label>
+
+                  {/* The actual input — covers the entire zone, invisible */}
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    accept={ACCEPT[f.material_type] || "*/*"}
+                    disabled={busy}
+                    style={{
+                      position: "absolute", inset: 0,
+                      width: "100%", height: "100%",
+                      opacity: 0, cursor: "pointer",
+                    }}
+                    onChange={e => {
+                      const fi = e.target.files?.[0];
+                      if (fi) pickFile(fi);
+                    }}
+                  />
+                </div>
               )}
 
               {/* URL fallback */}
