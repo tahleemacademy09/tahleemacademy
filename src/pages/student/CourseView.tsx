@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { Badge } from "@/components/ui/badge";
@@ -43,7 +44,7 @@ const fmtSize=(b?:number)=>!b?"":b<1024?`${b}B`:b<1048576?`${(b/1024).toFixed(0)
 async function openMaterial(fileUrl:string) {
   if (!fileUrl) return;
   if (fileUrl.startsWith("http")) { window.open(fileUrl,"_blank"); return; }
-  const {data} = await supabase.storage.from("subject-files").createSignedUrl(fileUrl,3600);
+  const {data} = await storageSupabase.storage.from("subject-files").createSignedUrl(fileUrl,3600);
   if (data?.signedUrl) window.open(data.signedUrl,"_blank");
 }
 
