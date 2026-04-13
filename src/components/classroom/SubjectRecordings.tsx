@@ -1,6 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -30,7 +29,11 @@ const InlinePlayer = ({ recordingId, fileUrl, duration, onClose }: {
   const mediaRef = useRef<HTMLAudioElement & HTMLVideoElement>(null);
 
   useEffect(() => {
-    storageSupabase.storage.from("subject-files").createSignedUrl(fileUrl, 7200)
+    // FIX: recordings are now stored in "recordings" bucket
+    // Try "recordings" first; fall back to "subject-files" for legacy files
+    supabase.storage.from(
+      fileUrl.startsWith("sessions/") || fileUrl.startsWith("recordings/") ? "recordings" : "subject-files"
+    ).createSignedUrl(fileUrl, 7200)
       .then(({ data }) => {
         if (data?.signedUrl) {
           setSignedUrl(data.signedUrl);
@@ -207,7 +210,7 @@ const SubjectRecordings = ({ subjectId }: { subjectId: string }) => {
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
       const rec = recordings?.find(r=>r.id===id);
-      if (rec?.file_url) await storageSupabase.storage.from("subject-files").remove([rec.file_url]);
+      if (rec?.file_url) await supabase.storage.from("subject-files").remove([rec.file_url]);
       const { error } = await supabase.from("session_recordings").delete().eq("id",id);
       if (error) throw error;
     },
