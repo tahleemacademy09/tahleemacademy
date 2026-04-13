@@ -8,6 +8,7 @@ import { useState, useRef, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
+import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { useToast } from "@/hooks/use-toast";
 import { useRecitationSettings } from "@/hooks/useRecitationSettings";
 import { useTasjeel } from "@/hooks/useTasjeel";
@@ -170,7 +171,7 @@ const RecitationTest = () => {
     try {
       const ext = audioBlob.type.includes("mp4") ? "mp4" : audioBlob.type.includes("ogg") ? "ogg" : "webm";
       const path = `recitations/${user.id}/${Date.now()}.${ext}`;
-      const { error } = await supabase.storage.from(BUCKET).upload(path, audioBlob, { contentType: audioBlob.type, upsert: true });
+      const { error } = await storageSupabase.storage.from(BUCKET).upload(path, audioBlob, { contentType: audioBlob.type, upsert: true });
       let finalPath = path;
       if (error) {
         const b64 = await new Promise<string>(res => {
