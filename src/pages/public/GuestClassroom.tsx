@@ -9,6 +9,7 @@ import {
 import "@livekit/components-styles";
 import { Track } from "livekit-client";
 import { supabase } from "@/integrations/supabase/client";
+import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -184,7 +185,7 @@ const RecordingController = ({ sessionId, classId, userName, isHost, onSavingCha
     try {
       const timestamp = Date.now();
       const storagePath = `recordings/public-class/${classId}/${timestamp}.webm`;
-      const { error: uploadErr } = await supabase.storage.from("subject-files").upload(storagePath, blob, { contentType, upsert: false });
+      const { error: uploadErr } = await storageSupabase.storage.from("subject-files").upload(storagePath, blob, { contentType, upsert: false });
       if (uploadErr) throw uploadErr;
     } catch (err) {
       console.error("Recording save failed", err);
