@@ -8,6 +8,7 @@ import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
+import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate } from "react-router-dom";
 import { Camera, Save, Lock, LogOut, Trash2, Eye, EyeOff, Loader2, AlertTriangle } from "lucide-react";
@@ -142,9 +143,9 @@ export default function ProfileSettings() {
     const file = e.target.files?.[0]; if (!file || !user) return;
     setAvatarUploading(true);
     const path = `avatars/${user.id}.${file.name.split(".").pop()}`;
-    const { error: upErr } = await supabase.storage.from("avatars").upload(path, file, { upsert: true, contentType: file.type });
+    const { error: upErr } = await storageSupabase.storage.from("avatars").upload(path, file, { upsert: true, contentType: file.type });
     if (upErr) { toast({ title: "Upload failed", description: upErr.message, variant: "destructive" }); setAvatarUploading(false); return; }
-    const { data } = supabase.storage.from("avatars").getPublicUrl(path);
+    const { data } = storageSupabase.storage.from("avatars").getPublicUrl(path);
     setForm(f => ({ ...f, avatar_url: data.publicUrl + "?t=" + Date.now() }));
     await supabase.from("profiles").upsert({ user_id: user.id, avatar_url: data.publicUrl, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
     setAvatarUploading(false);
