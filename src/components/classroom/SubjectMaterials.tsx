@@ -822,11 +822,7 @@ function MaterialCard({
 
   const handleDownload = async () => {
     const url = await resolveUrl();
-    if (!url) return;
-    // For Drive files, convert embed URL to direct download link
-    } else {
-      window.open(url, "_blank");
-    }
+    if (url) window.open(url, "_blank");
   };
 
   return (
