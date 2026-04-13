@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { useParams, useSearchParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -251,7 +252,7 @@ const RevisionRoom = () => {
     const url: string = mat.file_url || "";
     if (!url) throw new Error("No file URL");
     if (url.startsWith("http")) return url;
-    const { data } = await supabase.storage.from("subject-files").createSignedUrl(url, 3600);
+    const { data } = await storageSupabase.storage.from("subject-files").createSignedUrl(url, 3600);
     if (!data?.signedUrl) throw new Error("Could not get file URL");
     return data.signedUrl;
   };
