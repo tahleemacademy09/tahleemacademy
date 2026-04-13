@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { supabase } from "@/integrations/supabase/client";
+import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { useToast } from "@/hooks/use-toast";
 import {
   Shield, AlertTriangle, Search, Eye, Trash2, Monitor, Download,
@@ -28,7 +29,7 @@ const Thumb = ({ media, onClick }: { media: any; onClick: () => void }) => {
   const [url, setUrl] = useState<string|null>(null);
   const [err, setErr] = useState(false);
   useEffect(() => {
-    supabase.storage.from("proctoring-media").createSignedUrl(media.file_url, 3600)
+    storageSupabase.storage.from("proctoring-media").createSignedUrl(media.file_url, 3600)
       .then(({ data }) => data?.signedUrl ? setUrl(data.signedUrl) : setErr(true))
       .catch(() => setErr(true));
   }, [media.file_url]);
@@ -109,7 +110,7 @@ const ProctoringDashboard = () => {
 
   const resolveUrl = async (fileUrl: string): Promise<string|null> => {
     if (urlCache[fileUrl]) return urlCache[fileUrl];
-    const { data } = await supabase.storage.from("proctoring-media").createSignedUrl(fileUrl, 3600);
+    const { data } = await storageSupabase.storage.from("proctoring-media").createSignedUrl(fileUrl, 3600);
     if (data?.signedUrl) {
       setUrlCache(prev => ({ ...prev, [fileUrl]: data.signedUrl! }));
       return data.signedUrl;
