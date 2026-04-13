@@ -7,6 +7,7 @@
 import { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { useToast } from "@/hooks/use-toast";
 import { useRegistrationSettings } from "@/hooks/useRegistrationSettings";
 import {
@@ -65,7 +66,7 @@ const AudioPlayer = ({ path }: { path: string }) => {
   useEffect(() => {
     if (!path) return;
     if (path.startsWith("data:") || path.startsWith("http")) { setUrl(path); return; }
-    supabase.storage.from("recitation-audio").createSignedUrl(path, 3600)
+    storageSupabase.storage.from("recitation-audio").createSignedUrl(path, 3600)
       .then(({ data }) => { if (data?.signedUrl) setUrl(data.signedUrl); });
   }, [path]);
 
