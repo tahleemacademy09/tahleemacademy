@@ -654,7 +654,6 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
               <label style={{ fontSize: 11, fontWeight: 700, color: "#374151", display: "block", marginBottom: 8, letterSpacing: .5 }}>
                 FILE
               </label>
-              {/* Show file preview if file selected */}
               {file ? (
                 <FilePreviewBlock
                   file={file}
@@ -663,14 +662,6 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
                   onClear={clearFile}
                 />
               ) : (
-                /* ── Drop zone with physically overlaid input ──────────────────
-                   On Android, both .click() and <label htmlFor> cause the
-                   document picker's dismiss event to navigate back via React
-                   Router — but only for certain picker types (PDF/document).
-                   The only reliable fix is to make the <input> the literal tap
-                   target by overlaying it (opacity:0, position:absolute, inset:0)
-                   on top of the visual content. The browser receives a real tap
-                   on the input element itself — no JS, no indirection.         */}
                 <div
                   onDragOver={e => { e.preventDefault(); e.stopPropagation(); setIsDragOver(true); }}
                   onDragLeave={() => setIsDragOver(false)}
