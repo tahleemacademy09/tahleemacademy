@@ -8,6 +8,7 @@
 */
 import { useEffect, useRef, useCallback, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { storageSupabase } from "../integrations/supabase/storageClient";
 import { logger } from "@/lib/logger";
 
 interface ProctoringConfig {
@@ -96,7 +97,7 @@ export const useProctoring = (
 
   const uploadWithRetry = useCallback(async (path: string, blob: Blob): Promise<boolean> => {
     for (let i = 0; i < 3; i++) {
-      const { error } = await supabase.storage.from("proctoring-media")
+      const { error } = await storageSupabase.storage.from("proctoring-media")
         .upload(path, blob, { contentType: "image/jpeg", upsert: true });
       if (!error) return true;
       await new Promise(r => setTimeout(r, 1500 * (i + 1)));
