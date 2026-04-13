@@ -12,7 +12,6 @@ import "@livekit/components-styles";
 import { Track, RoomEvent, ConnectionState } from "livekit-client";
 import { createPortal } from "react-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { toast } from "@/hooks/use-toast";
@@ -307,11 +306,15 @@ const RecController=({sessionId,subjectId,userEmail,onSavingChange}:any)=>{
     mr.onstop=async()=>{try{
       const recMime=mr.mimeType||"audio/webm";const recExt=recMime.includes("mp4")?"mp4":recMime.includes("ogg")?"ogg":"webm";
       const blob=new Blob(chunksRef.current,{type:recMime});
-      const path=`recordings/${sessionId||subjectId}/${Date.now()}.${recExt}`;
-      const{error:upErr}=await storageSupabase.storage.from("subject-files").upload(path,blob);
+      // FIX: recordings go to "recordings" bucket, NOT "subject-files"
+      const recPath=`sessions/${sessionId||subjectId}/${Date.now()}.${recExt}`;
+      const{error:upErr}=await supabase.storage.from("recordings").upload(recPath,blob);
       if(upErr)throw upErr;
+      // Build a signed URL so it can be accessed later
+      const{data:signedData}=await supabase.storage.from("recordings").createSignedUrl(recPath,60*60*24*365);
+      const fileUrl=signedData?.signedUrl||recPath;
       if(sessionId)await supabase.from("live_sessions").update({is_recording:false}as any).eq("id",sessionId);
-      await supabase.from("session_recordings").insert({session_id:sessionId||null,subject_id:subjectId,file_url:path,teacher_name:userEmail,duration_seconds:time}as any);
+      await supabase.from("session_recordings").insert({session_id:sessionId||null,subject_id:subjectId,file_url:recPath,teacher_name:userEmail,duration_seconds:time}as any);
       toast({title:t("Recording saved ✅","تم حفظ التسجيل ✅")});
     }catch(e:any){toast({title:"Save failed",description:e?.message,variant:"destructive"});}onSavingChange?.(false);};
     acRef.current?.close();setRecording(false);setPaused(false);
