@@ -21,6 +21,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
+import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -280,9 +281,9 @@ const ExamEditor = () => {
     setUploadingMedia(idx);
     try {
       const path = `exam-media/${Date.now()}_${file.name}`;
-      const { error } = await supabase.storage.from("exam-media").upload(path, file);
+      const { error } = await storageSupabase.storage.from("exam-media").upload(path, file);
       if (error) throw error;
-      const { data: { publicUrl } } = supabase.storage.from("exam-media").getPublicUrl(path);
+      const { data: { publicUrl } } = storageSupabase.storage.from("exam-media").getPublicUrl(path);
       updateQuestion(idx, { media_url: publicUrl });
       toast({ title: "✅ Media uploaded" });
     } catch (e: any) {
