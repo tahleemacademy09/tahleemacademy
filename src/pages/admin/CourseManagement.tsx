@@ -12,6 +12,7 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
 import { useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "@/hooks/use-toast";
 import { Switch } from "@/components/ui/switch";
@@ -72,20 +73,20 @@ const inp: React.CSSProperties = {
 async function resolveImg(url?:string|null):Promise<string|null> {
   if (!url||!url.trim()) return null;
   if (url.startsWith("http")) return url;
-  const {data} = supabase.storage.from("subject-images").getPublicUrl(url);
+  const {data} = storageSupabase.storage.from("subject-images").getPublicUrl(url);
   return data?.publicUrl||null;
 }
 async function signedUrl(path:string):Promise<string> {
   if (path.startsWith("http")) return path;
-  const {data} = await supabase.storage.from("subject-files").createSignedUrl(path,3600);
+  const {data} = await storageSupabase.storage.from("subject-files").createSignedUrl(path,3600);
   return data?.signedUrl||path;
 }
 async function uploadImg(file:File,bucket:string):Promise<string|null> {
   const ext=file.name.split(".").pop()||"jpg";
   const path=`items/${crypto.randomUUID()}.${ext}`;
-  const {error} = await supabase.storage.from(bucket).upload(path,file,{upsert:true,contentType:file.type});
+  const {error} = await storageSupabase.storage.from(bucket).upload(path,file,{upsert:true,contentType:file.type});
   if (error) return null;
-  const {data} = supabase.storage.from(bucket).getPublicUrl(path);
+  const {data} = storageSupabase.storage.from(bucket).getPublicUrl(path);
   return data?.publicUrl||path;
 }
 
@@ -658,7 +659,7 @@ export default function CourseManagement() {
 
   const delMaterial = async (mat: any) => {
     if (!confirm("Delete this material?")) return;
-    if (mat.file_url && !mat.file_url.startsWith("http")) await supabase.storage.from("subject-files").remove([mat.file_url]);
+    if (mat.file_url && !mat.file_url.startsWith("http")) await storageSupabase.storage.from("subject-files").remove([mat.file_url]);
     await supabase.from("subject_materials").delete().eq("id", mat.id);
     qc.invalidateQueries({ queryKey: ["adm-materials", selSubject?.id] }); toast({ title: "Material deleted" });
   };
