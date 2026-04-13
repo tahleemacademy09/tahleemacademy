@@ -13,6 +13,7 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { useAuth } from "@/contexts/AuthContext";
 
 /* ── palette ── */
@@ -27,7 +28,7 @@ const RED  = "#B91C1C";
 const REDL = "#FEF2F2";
 
 const BUCKET = "liveclass-files";
-const SB_URL = "https://wvqeubhupkddtkcdwqcm.supabase.co";
+const SB_URL = import.meta.env.VITE_STORAGE_SUPABASE_URL || "https://ovgsleayannsxifhiraw.supabase.co";
 
 /* ── types ── */
 interface LCFile {
@@ -156,7 +157,7 @@ export default function LiveClassFilePanel({ subjectId }: { subjectId: string })
       try {
         const slug2 = `${Date.now()}.${file.name.split(".").pop()||"bin"}`;
         const path2 = `${subjectId}/${slug2}`;
-        const { error: stErr } = await supabase.storage.from(BUCKET).upload(path2, file, { upsert: true });
+        const { error: stErr } = await storageSupabase.storage.from(BUCKET).upload(path2, file, { upsert: true });
         if (stErr) throw stErr;
         const url2 = `${SB_URL}/storage/v1/object/public/${BUCKET}/${path2}`;
         await (supabase as any).from("liveclass_files").insert({ subject_id: subjectId, file_name: file.name, file_url: url2, file_type: file.type || null, file_size: file.size, uploaded_by: user.id });
@@ -194,7 +195,7 @@ export default function LiveClassFilePanel({ subjectId }: { subjectId: string })
     await (supabase as any).from("liveclass_files").delete().eq("id", f.id);
     if (f.file_url.includes(`/${BUCKET}/`)) {
       const p = f.file_url.split(`/${BUCKET}/`)[1];
-      if (p) supabase.storage.from(BUCKET).remove([p]);
+      if (p) storageSupabase.storage.from(BUCKET).remove([p]);
     }
     setFiles(prev => prev.filter(x => x.id !== f.id));
     setDelId(null);
