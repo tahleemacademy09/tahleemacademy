@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { supabase } from "@/integrations/supabase/client";
+import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { Search, Trash2, Play, Edit, Eye, EyeOff, Download, Upload, Mic } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -70,10 +71,10 @@ const RecordingManagement = () => {
     if (!uploadForm.subject_id || !uploadForm.file) return;
     // Upload file to storage
     const path = `recordings/${uploadForm.subject_id}/${crypto.randomUUID()}-${uploadForm.file.name}`;
-    const { error: uploadErr } = await supabase.storage.from("subject-files").upload(path, uploadForm.file);
+    const { error: uploadErr } = await storageSupabase.storage.from("subject-files").upload(path, uploadForm.file);
     if (uploadErr) { toast({ title: t("Upload failed", "فشل الرفع"), variant: "destructive" }); return; }
 
-    const { data: { publicUrl } } = supabase.storage.from("subject-files").getPublicUrl(path);
+    const { data: { publicUrl } } = storageSupabase.storage.from("subject-files").getPublicUrl(path);
 
     // We need a session_id — create a placeholder session or use existing
     let sessionId = uploadForm.session_id;
