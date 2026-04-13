@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
+import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { Search, Trash2, Play, Edit, Upload, Mic, Eye, EyeOff } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -63,9 +64,9 @@ const TeacherRecordings = () => {
   const handleUpload = async () => {
     if (!uploadForm.subject_id || !uploadForm.file || !user) return;
     const path = `recordings/${uploadForm.subject_id}/${crypto.randomUUID()}-${uploadForm.file.name}`;
-    const { error: uploadErr } = await supabase.storage.from("subject-files").upload(path, uploadForm.file);
+    const { error: uploadErr } = await storageSupabase.storage.from("subject-files").upload(path, uploadForm.file);
     if (uploadErr) { toast({ title: t("Upload failed", "فشل الرفع"), variant: "destructive" }); return; }
-    const { data: { publicUrl } } = supabase.storage.from("subject-files").getPublicUrl(path);
+    const { data: { publicUrl } } = storageSupabase.storage.from("subject-files").getPublicUrl(path);
 
     const { data: sess } = await supabase.from("live_sessions").insert({
       subject_id: uploadForm.subject_id, host_id: user.id, status: "ended",
