@@ -8,6 +8,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
+import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { useToast } from "@/hooks/use-toast";
 import { logger } from "@/lib/logger";
 import { sanitizeHtml } from "@/lib/sanitize";
@@ -396,7 +397,7 @@ const ExamTaking = () => {
             const match = q.media_url.match(/\/storage\/v1\/object\/sign\/([^/]+)\/(.+?)\?/);
             if (match) {
               const [, bucket, path] = match;
-              const { data: fresh } = await supabase.storage.from(bucket).createSignedUrl(decodeURIComponent(path), 7200);
+              const { data: fresh } = await storageSupabase.storage.from(bucket).createSignedUrl(decodeURIComponent(path), 7200);
               return { ...q, media_url: fresh?.signedUrl || q.media_url };
             }
           }
@@ -889,7 +890,7 @@ const ExamTaking = () => {
                           .upload(path, blob, { upsert: true, contentType: blob.type || "audio/mp4" });
                         if (!error) {
                           // Use a 7-day signed URL so admin can always play it
-                          const { data: ud } = await supabase.storage.from("exam-media").createSignedUrl(path, 604800);
+                          const { data: ud } = await storageSupabase.storage.from("exam-media").createSignedUrl(path, 604800);
                           setAnswer(q.id, "[audio_recorded]", { audioUrl: ud?.signedUrl || url, fileType: "audio", storagePath: path });
                         } else {
                           toast({ title: "Upload failed: " + error.message, variant: "destructive" });
