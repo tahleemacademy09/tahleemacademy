@@ -9,7 +9,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
-import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { useToast } from "@/hooks/use-toast";
 import { useLanguage } from "@/contexts/LanguageContext";
 import {
@@ -102,10 +101,11 @@ const RecordingPlayer = () => {
       if (fileUrl.startsWith("http")) {
         setPlayUrl(fileUrl);
       } else {
-        const { data } = await storageSupabase.storage.from("subject-files").createSignedUrl(fileUrl, 3600);
-        if (data?.signedUrl) setPlayUrl(data.signedUrl);
+        // Try "recordings" bucket first (new), then "subject-files" (legacy fallback)
+        const { data: d1 } = await supabase.storage.from("recordings").createSignedUrl(fileUrl, 3600);
+        if (d1?.signedUrl) { setPlayUrl(d1.signedUrl); }
         else {
-          const { data: d2 } = await storageSupabase.storage.from("recordings").createSignedUrl(fileUrl, 3600);
+          const { data: d2 } = await supabase.storage.from("subject-files").createSignedUrl(fileUrl, 3600);
           setPlayUrl(d2?.signedUrl || null);
         }
       }
@@ -206,7 +206,7 @@ const RecordingPlayer = () => {
   const downloadRecording = async () => {
     if (!recording?.file_url) return;
     if (recording.file_url.startsWith("http")) { window.open(recording.file_url, "_blank"); return; }
-    const { data } = await storageSupabase.storage.from("subject-files").createSignedUrl(recording.file_url, 300);
+    const { data } = await supabase.storage.from("subject-files").createSignedUrl(recording.file_url, 300);
     if (data?.signedUrl) window.open(data.signedUrl, "_blank");
   };
 
