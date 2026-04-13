@@ -70,11 +70,33 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
 
   useTimetableNotifications();
 
-  const [selCourse,       setSelCourse]       = useState<any | null>(null);
-  const [selectedSubject, setSelectedSubject] = useState<any | null>(null);
-  const [subjectTab,      setSubjectTab]      = useState("lessons");
-  const [viewMode,        setViewMode]        = useState<"list" | "grid">("grid");
-  const [activeLesson,    setActiveLesson]    = useState<string | null>(null);
+  const [selCourse,       setSelCourseRaw]       = useState<any | null>(null);
+  const [selectedSubject, setSelectedSubjectRaw] = useState<any | null>(null);
+  const [subjectTab,      setSubjectTab]          = useState("lessons");
+  const [viewMode,        setViewMode]            = useState<"list" | "grid">("grid");
+  const [activeLesson,    setActiveLesson]        = useState<string | null>(null);
+
+  // Wrappers that also persist navigation state to sessionStorage so that
+  // Android minimize + restore (or manual page refresh) keeps the student
+  // on the same course/subject instead of bouncing back to the course list.
+  const setSelCourse = (course: any | null) => {
+    setSelCourseRaw(course);
+    if (course) {
+      sessionStorage.setItem("hub_selCourse", course.id);
+      sessionStorage.removeItem("hub_selSubject");
+    } else {
+      sessionStorage.removeItem("hub_selCourse");
+      sessionStorage.removeItem("hub_selSubject");
+    }
+  };
+  const setSelectedSubject = (subject: any | null) => {
+    setSelectedSubjectRaw(subject);
+    if (subject) {
+      sessionStorage.setItem("hub_selSubject", subject.id);
+    } else {
+      sessionStorage.removeItem("hub_selSubject");
+    }
+  };
 
   const studentLevel = (profile?.level || profile?.course_level || "beginner") as string;
 
@@ -156,6 +178,22 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
       return data || [];
     },
   });
+
+  // ── Restore navigation state after refresh / Android minimize ────────────────
+  useEffect(() => {
+    const savedCourseId  = sessionStorage.getItem("hub_selCourse");
+    const savedSubjectId = sessionStorage.getItem("hub_selSubject");
+    if (!savedCourseId && !savedSubjectId) return;
+
+    if (savedCourseId && allCourses?.length && !selCourse) {
+      const found = (allCourses as any[]).find((c: any) => c.id === savedCourseId);
+      if (found) setSelCourseRaw(found);
+    }
+    if (savedSubjectId && allSubjects?.length && !selectedSubject) {
+      const found = (allSubjects as any[]).find((s: any) => s.id === savedSubjectId);
+      if (found) setSelectedSubjectRaw(found);
+    }
+  }, [allCourses, allSubjects]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const subjectId = searchParams.get("subject");
@@ -481,6 +519,15 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
   // ═══════════════════════════════════════════════════════════════════════════
   const anyLive = (liveSessions || []).length > 0;
 
+  // Per-course LIVE check: only show LIVE badge when a subject in THAT specific
+  // course has an active live session — not when any session is running globally.
+  const isCourseLive = (courseId: string): boolean => {
+    const liveSubjectIds = new Set((liveSessions || []).map((ls: any) => ls.subject_id));
+    return (allSubjects || []).some(
+      (s: any) => s.course_id === courseId && liveSubjectIds.has(s.id)
+    );
+  };
+
   return (
     <div style={{ fontFamily:"'Cairo',sans-serif", background:"#f8fafb", minHeight:"100vh" }}>
       <style>{`
@@ -557,7 +604,7 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
                         ? <img src={course.image_url} alt="" style={{ width:"100%", height:"100%", objectFit:"cover" }} />
                         : <div style={{ height:"100%", display:"flex", alignItems:"center", justifyContent:"center" }}><BookOpen style={{ width:32, height:32, color:"rgba(255,255,255,.3)" }} /></div>
                       }
-                      {anyLive && <span style={{ position:"absolute", top:8, left:8, fontSize:9, fontWeight:800, padding:"3px 7px", borderRadius:20, background:"#ef4444", color:"#fff", animation:"pulse 1.5s infinite" }}>● LIVE</span>}
+                      {isCourseLive(course.id) && <span style={{ position:"absolute", top:8, left:8, fontSize:9, fontWeight:800, padding:"3px 7px", borderRadius:20, background:"#ef4444", color:"#fff", animation:"pulse 1.5s infinite" }}>● LIVE</span>}
                     </div>
                     <div style={{ padding:"10px 12px 14px" }}>
                       {course.level && course.level !== "all" && (
