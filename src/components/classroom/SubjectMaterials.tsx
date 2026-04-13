@@ -13,7 +13,6 @@ import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
-import { uploadToGoogleDrive, isDriveUrl, toDriveEmbed, toDriveDownload } from "@/lib/googleDrive";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { toast } from "@/hooks/use-toast";
@@ -23,7 +22,7 @@ import {
   Upload, FileText, Video, Music, Image as ImageIcon,
   Link as LinkIcon, File, Download, Trash2, Edit2, X, Check,
   Plus, Loader2, ExternalLink, FileSpreadsheet, Eye,
-  ChevronDown, ChevronUp, Search, Play, ZoomIn, HardDrive,
+  ChevronDown, ChevronUp, Search, Play, ZoomIn,
 } from "lucide-react";
 
 // ── Theme ─────────────────────────────────────────────────────────────────
@@ -100,11 +99,7 @@ function encodeLevels(sel: Set<Level>): string {
 
 async function getSignedUrl(path: string): Promise<string | null> {
   if (!path) return null;
-  // Google Drive URLs — return as-is (already publicly accessible)
-  if (isDriveUrl(path)) return toDriveEmbed(path);
-  // Already a full URL (legacy Supabase public URL or pasted link)
   if (path.startsWith("http")) return path;
-  // Legacy Supabase storage path — generate signed URL
   const { data } = await storageSupabase.storage.from(BUCKET).createSignedUrl(path, 7200);
   return data?.signedUrl || null;
 }
@@ -379,18 +374,34 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
       let fileSize = 0;
 
       if (needFile && file) {
-        // ── Upload to Google Drive ──────────────────────────────────────
-        // Files go directly browser → Google Drive. No Supabase storage.
-        // The edge function google-drive-token provides a short-lived OAuth
-        // token; the browser then does a resumable upload straight to Drive.
-        const driveResult = await uploadToGoogleDrive(file, {
-          onProgress: (pct) => setPct(pct),
-        });
+        const rawExt  = file.name.split(".").pop()?.toLowerCase() || "bin";
+        const safeExt = rawExt.replace(/[^a-z0-9]/g, "").slice(0, 10) || "bin";
+        const uploadPath = `materials/${subjectId}/${crypto.randomUUID()}.${safeExt}`;
+        setPct(30);
 
-        // Store the Drive embed URL — renders inline in the website
-        fileUrl  = driveResult.file_url;
+        const { data: upData, error: upErr } = await storageSupabase.storage
+          .from(BUCKET)
+          .upload(uploadPath, file, {
+            cacheControl: "3600",
+            upsert: false,
+            contentType: file.type || "application/octet-stream",
+          });
+
+        if (upErr) {
+          throw new Error(
+            upErr.message.includes("row-level security") || upErr.message.includes("policy")
+              ? "Storage permission denied — check bucket RLS policies for subject-files."
+              : upErr.message.includes("already exists")
+              ? "File already exists. Rename and try again."
+              : upErr.message.includes("quota") || upErr.message.includes("exceeded")
+              ? "Storage quota exceeded."
+              : `Upload failed: ${upErr.message}`
+          );
+        }
+
+        fileUrl  = upData?.path || uploadPath;
         fileSize = file.size;
-        setPct(90);
+        setPct(80);
       }
 
       setPhase("saving"); setPct(90);
@@ -598,16 +609,13 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
                     Drop your file here, or <span style={{ color: cfg.text }}>browse</span>
                   </p>
                   <p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>
-                    {f.material_type === "PDF"      ? "PDF files — saved to Google Drive" :
-                     f.material_type === "Video"    ? "MP4, WebM, MOV, AVI — saved to Google Drive" :
-                     f.material_type === "Audio"    ? "MP3, WAV, M4A, AAC — saved to Google Drive" :
-                     f.material_type === "Image"    ? "JPG, PNG, GIF, WebP, SVG — saved to Google Drive" :
-                     f.material_type === "Document" ? "Word, Excel, PowerPoint — saved to Google Drive" :
-                     "Any file type — saved to Google Drive"}
+                    {f.material_type === "PDF"      ? "PDF files up to 500 MB" :
+                     f.material_type === "Video"    ? "MP4, WebM, MOV, AVI up to 2 GB" :
+                     f.material_type === "Audio"    ? "MP3, WAV, M4A, AAC up to 100 MB" :
+                     f.material_type === "Image"    ? "JPG, PNG, GIF, WebP, SVG, HEIC" :
+                     f.material_type === "Document" ? "Word, Excel, PowerPoint, ODT, CSV, RTF" :
+                     "Any file type"}
                   </p>
-                  <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 5, color: "#0a7c68", fontSize: 10, fontWeight: 700 }}>
-                    <HardDrive size={11} /> Files save directly to your Google Drive
-                  </div>
                 </div>
               )}
 
@@ -816,8 +824,6 @@ function MaterialCard({
     const url = await resolveUrl();
     if (!url) return;
     // For Drive files, convert embed URL to direct download link
-    if (isDriveUrl(url)) {
-      window.open(toDriveDownload(url), "_blank");
     } else {
       window.open(url, "_blank");
     }
@@ -1006,14 +1012,9 @@ export default function SubjectMaterials({ subjectId, subjectTitle }: SubjectMat
   const handleDelete = async (m: any) => {
     if (!confirm(`Delete "${m.title}"?`)) return;
     try {
-      // Only try to remove from Supabase storage if it's a legacy storage path
-      // (not a Drive URL, not a full http URL)
-      if (m.file_url && !m.file_url.startsWith("http") && !isDriveUrl(m.file_url)) {
+      if (m.file_url && !m.file_url.startsWith("http")) {
         await storageSupabase.storage.from(BUCKET).remove([m.file_url]);
       }
-      // Note: Google Drive files are NOT deleted from Drive here —
-      // they remain in Drive so the admin can still access them directly.
-      // Only the database record is removed.
       const { error } = await supabase.from("subject_materials").delete().eq("id", m.id);
       if (error) throw error;
       qc.invalidateQueries({ queryKey: ["sm-materials", subjectId] });
