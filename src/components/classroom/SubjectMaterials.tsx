@@ -103,27 +103,75 @@ async function getSignedUrl(path: string): Promise<string | null> {
   if (path.startsWith("http")) return path;
 
   try {
+    console.group(`[SubjectMaterials] getSignedUrl`);
+    console.log("Bucket :", BUCKET);
+    console.log("Path   :", path);
+    console.log("Full   :", `${BUCKET}/${path}`);
+
     // 1st: signed URL — works for private buckets
     const { data, error } = await storageSupabase.storage
       .from(BUCKET)
       .createSignedUrl(path, 7200);
 
-    if (!error && data?.signedUrl) return data.signedUrl;
+    if (!error && data?.signedUrl) {
+      console.log("✅ Signed URL obtained");
+      console.groupEnd();
+      return data.signedUrl;
+    }
+
+    // ── Detailed failure diagnosis ────────────────────────────────────
+    const errMsg = (error as any)?.message ?? "";
+    const errStatus = (error as any)?.status ?? (error as any)?.statusCode ?? "?";
+    const isNotFound = errMsg.toLowerCase().includes("not found") || errMsg.toLowerCase().includes("object not found");
+    const isRls      = errMsg.toLowerCase().includes("policy") || errMsg.toLowerCase().includes("row-level") || errStatus === 403;
 
     console.warn(
-      "[SubjectMaterials] createSignedUrl failed, trying publicUrl fallback.",
-      error?.message ?? "no signed url", "| path:", path,
+      "❌ createSignedUrl failed",
+      `\n  status : ${errStatus}`,
+      `\n  message: ${errMsg || "(none)"}`,
     );
 
-    // 2nd: public URL from storage project — works for public buckets
+    if (isNotFound) {
+      console.error(
+        "💡 DIAGNOSIS: 'Object not found'\n" +
+        "   This means EITHER:\n" +
+        "   A) The file was never actually stored at this path in the bucket, OR\n" +
+        "   B) RLS SELECT policy is blocking the anon user (Supabase returns the\n" +
+        "      same error for both to prevent enumeration).\n" +
+        "\n" +
+        "   FIX: Run this SQL in your STORAGE project's SQL editor:\n" +
+        "   ─────────────────────────────────────────────────────────────\n" +
+        "   CREATE POLICY \"Allow public read on subject-files\"\n" +
+        "   ON storage.objects FOR SELECT\n" +
+        "   TO public\n" +
+        "   USING (bucket_id = 'subject-files');\n" +
+        "   ─────────────────────────────────────────────────────────────\n" +
+        "   Then verify the file exists in Dashboard → Storage → subject-files → " + path
+      );
+    } else if (isRls) {
+      console.error("💡 DIAGNOSIS: RLS policy is explicitly blocking SELECT. Add a SELECT policy (see above).");
+    } else {
+      console.error("💡 DIAGNOSIS: Unexpected error — not an RLS/not-found issue. Check network and key validity.");
+    }
+
+    // 2nd: public URL from storage project — works only if bucket is PUBLIC
     const { data: pub } = storageSupabase.storage.from(BUCKET).getPublicUrl(path);
-    if (pub?.publicUrl) return pub.publicUrl;
+    const pubUrl = pub?.publicUrl;
+    console.log("Trying public URL:", pubUrl ?? "(none)");
+    if (pubUrl) {
+      // Test if it resolves (HEAD request) — public URL always generates a string
+      // but returns 400 if bucket is private. We return it anyway and let the
+      // browser handle the 400 so we can see it in network tab.
+      console.warn(
+        "⚠️  Public URL returned but bucket appears private — if this 400s in the\n" +
+        "   network tab, fix is the SQL policy above, OR make the bucket public in\n" +
+        "   Supabase Dashboard → Storage → subject-files → Bucket Settings."
+      );
+      console.groupEnd();
+      return pubUrl;
+    }
 
-    // 3rd: try main supabase project (files uploaded via MaterialsManagement admin page)
-    const { supabase: mainClient } = await import("@/integrations/supabase/client");
-    const { data: mainPub } = mainClient.storage.from("subject-materials").getPublicUrl(path);
-    if (mainPub?.publicUrl) return mainPub.publicUrl;
-
+    console.groupEnd();
     return null;
   } catch (err) {
     console.error("[SubjectMaterials] getSignedUrl threw:", err);
@@ -473,6 +521,14 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
 
         fileUrl  = upData?.path || uploadPath;
         fileSize = file.size;
+        console.log(
+          "[SubjectMaterials] ✅ Upload succeeded",
+          "\n  bucket     :", BUCKET,
+          "\n  uploadPath :", uploadPath,
+          "\n  upData.path:", upData?.path,
+          "\n  saved as   :", fileUrl,
+          "\n  👉 Confirm in Dashboard: Storage → subject-files →", fileUrl
+        );
         setPct(80);
       }
 
