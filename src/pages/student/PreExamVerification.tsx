@@ -4,6 +4,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
+import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { useToast } from "@/hooks/use-toast";
 import {
   Camera, Mic, Monitor, Wifi, Shield, AlertTriangle, CheckCircle2,
@@ -176,7 +177,7 @@ const PreExamVerification = () => {
       if (faceSnapshot) {
         fetch(faceSnapshot).then(r=>r.blob()).then(blob => {
           const path = `${user.id}/${examId}/verification_${Date.now()}.jpg`;
-          supabase.storage.from("proctoring-media").upload(path, blob, { contentType:"image/jpeg", upsert:true }).catch(()=>{});
+          storageSupabase.storage.from("proctoring-media").upload(path, blob, { contentType:"image/jpeg", upsert:true }).catch(()=>{});
         }).catch(()=>{});
       }
       if (exam?.fullscreen_required) { try { await document.documentElement.requestFullscreen(); } catch (_) {} }
