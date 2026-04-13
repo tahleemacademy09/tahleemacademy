@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { Card, CardContent } from "@/components/ui/card";
@@ -75,7 +76,7 @@ const SubjectAssignments = ({ subjectId }: { subjectId: string }) => {
       let fileUrl = null;
       if (file) {
         const path = `assignments/${subjectId}/${crypto.randomUUID()}-${file.name}`;
-        const { error } = await supabase.storage.from("subject-files").upload(path, file);
+        const { error } = await storageSupabase.storage.from("subject-files").upload(path, file);
         if (error) throw error;
         fileUrl = path;
       }
@@ -117,7 +118,7 @@ const SubjectAssignments = ({ subjectId }: { subjectId: string }) => {
     mutationFn: async (id: string) => {
       const assignment = assignments?.find(a => a.id === id);
       if (assignment?.file_url) {
-        await supabase.storage.from("subject-files").remove([assignment.file_url]);
+        await storageSupabase.storage.from("subject-files").remove([assignment.file_url]);
       }
       const { error } = await supabase.from("subject_assignments").delete().eq("id", id);
       if (error) throw error;
@@ -136,12 +137,12 @@ const SubjectAssignments = ({ subjectId }: { subjectId: string }) => {
       let fileUrl = null;
       if (mode === "file" && submitFile) {
         const path = `submissions/${assignmentId}/${user.id}/${crypto.randomUUID()}-${submitFile.name}`;
-        const { error } = await supabase.storage.from("subject-files").upload(path, submitFile);
+        const { error } = await storageSupabase.storage.from("subject-files").upload(path, submitFile);
         if (error) throw error;
         fileUrl = path;
       } else if (mode === "voice" && voiceBlob) {
         const path = `submissions/${assignmentId}/${user.id}/${crypto.randomUUID()}-voice.webm`;
-        const { error } = await supabase.storage.from("subject-files").upload(path, voiceBlob);
+        const { error } = await storageSupabase.storage.from("subject-files").upload(path, voiceBlob);
         if (error) throw error;
         fileUrl = path;
       }
