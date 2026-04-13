@@ -99,9 +99,20 @@ function encodeLevels(sel: Set<Level>): string {
 
 async function getSignedUrl(path: string): Promise<string | null> {
   if (!path) return null;
+  // Already a full URL (public bucket or pasted link) — use directly
   if (path.startsWith("http")) return path;
-  const { data } = await storageSupabase.storage.from(BUCKET).createSignedUrl(path, 7200);
-  return data?.signedUrl || null;
+  try {
+    const { data, error } = await storageSupabase.storage
+      .from(BUCKET)
+      .createSignedUrl(path, 7200);
+    if (error) {
+      console.error("[SubjectMaterials] createSignedUrl error:", error.message, "| path:", path);
+    }
+    return data?.signedUrl || null;
+  } catch (err) {
+    console.error("[SubjectMaterials] createSignedUrl threw:", err);
+    return null;
+  }
 }
 
 const inp: React.CSSProperties = {
@@ -842,6 +853,7 @@ function MaterialCard({
   const [previewOpen, setPreviewOpen] = useState(false);
   const [loading,     setLoading]     = useState(false);
   const [expanded,    setExpanded]    = useState(false);
+  const [previewErr,  setPreviewErr]  = useState<string>("");
 
   const cfg  = MAT_CFG[(m.material_type as MatType) || "PDF"];
   const Icon = cfg.icon;
@@ -849,13 +861,30 @@ function MaterialCard({
   const isText = m.material_type === "Text";
   const isLink = m.material_type === "Link";
 
+  // Resolves file_url → a usable URL (returns cached value if already resolved).
+  // Uses try/finally so setLoading(false) is ALWAYS called even if an exception
+  // is thrown (e.g. network error, wrong storage key, RLS block).
   const resolveUrl = async (): Promise<string | null> => {
     if (signedUrl) return signedUrl;
     setLoading(true);
-    const url = isLink ? m.file_url : await getSignedUrl(m.file_url);
-    if (url) setSignedUrl(url);
-    setLoading(false);
-    return url;
+    setPreviewErr("");
+    try {
+      const url = isLink ? m.file_url : await getSignedUrl(m.file_url);
+      if (url) {
+        setSignedUrl(url);
+      } else {
+        setPreviewErr("Could not load file — check storage permissions.");
+      }
+      return url;
+    } catch (err: any) {
+      const msg = err?.message || "Unknown error";
+      console.error("[MaterialCard] resolveUrl threw:", msg);
+      setPreviewErr("Preview failed: " + msg);
+      return null;
+    } finally {
+      // Always stop the spinner — no silent lock-ups
+      setLoading(false);
+    }
   };
 
   const handlePreview = async () => {
@@ -928,14 +957,20 @@ function MaterialCard({
               <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); handlePreview(); }}
-                title="Preview"
+                title={previewErr ? previewErr : "Preview"}
+                disabled={loading}
                 style={{
                   width: 34, height: 34, borderRadius: 10,
-                  border: `1px solid ${cfg.border}`, background: cfg.bg,
-                  cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+                  border: `1px solid ${previewErr ? "#FECACA" : cfg.border}`,
+                  background: previewErr ? "#FEF2F2" : cfg.bg,
+                  cursor: loading ? "wait" : "pointer",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  opacity: loading ? 0.7 : 1,
                 }}>
                 {loading
                   ? <Loader2 size={14} style={{ animation: "spin .8s linear infinite", color: "#9CA3AF" }} />
+                  : previewErr
+                  ? <span style={{ fontSize: 14 }}>⚠</span>
                   : <Eye size={14} color={cfg.text} />}
               </button>
             )}
