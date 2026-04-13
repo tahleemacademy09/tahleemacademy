@@ -12,6 +12,7 @@ import "@livekit/components-styles";
 import { Track, RoomEvent, ConnectionState } from "livekit-client";
 import { createPortal } from "react-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { toast } from "@/hooks/use-toast";
@@ -307,7 +308,7 @@ const RecController=({sessionId,subjectId,userEmail,onSavingChange}:any)=>{
       const recMime=mr.mimeType||"audio/webm";const recExt=recMime.includes("mp4")?"mp4":recMime.includes("ogg")?"ogg":"webm";
       const blob=new Blob(chunksRef.current,{type:recMime});
       const path=`recordings/${sessionId||subjectId}/${Date.now()}.${recExt}`;
-      const{error:upErr}=await supabase.storage.from("subject-files").upload(path,blob);
+      const{error:upErr}=await storageSupabase.storage.from("subject-files").upload(path,blob);
       if(upErr)throw upErr;
       if(sessionId)await supabase.from("live_sessions").update({is_recording:false}as any).eq("id",sessionId);
       await supabase.from("session_recordings").insert({session_id:sessionId||null,subject_id:subjectId,file_url:path,teacher_name:userEmail,duration_seconds:time}as any);
