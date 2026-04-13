@@ -14,6 +14,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
+import { storageSupabase } from "../integrations/supabase/storageClient";
 import { toast } from "@/hooks/use-toast";
 import { motion } from "framer-motion";
 import { BookOpen, Plus, Edit, Trash2, EyeOff, GraduationCap, Star, Search } from "lucide-react";
@@ -139,7 +140,7 @@ const Courses = () => {
   const resolveImageUrl = (url: string | null): string | null => {
     if (!url || url.trim() === "") return null;
     if (url.startsWith("http://") || url.startsWith("https://")) return url;
-    const { data } = supabase.storage.from("subject-images").getPublicUrl(url);
+    const { data } = storageSupabase.storage.from("subject-images").getPublicUrl(url);
     return data?.publicUrl || null;
   };
 
@@ -337,7 +338,7 @@ const Courses = () => {
               <Input value={form.image_url} onChange={e => setForm({ ...form, image_url: e.target.value })} placeholder="https://... or supabase storage path" />
               {form.image_url && (
                 <div style={{ marginTop: 8, borderRadius: 8, overflow: "hidden", height: 90, background: "#f3f4f6" }}>
-                  <img src={form.image_url.startsWith("http") ? form.image_url : supabase.storage.from("subject-images").getPublicUrl(form.image_url).data.publicUrl} alt="preview" style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={(e) => { (e.target as HTMLImageElement).parentElement!.style.display = "none"; }} />
+                  <img src={form.image_url.startsWith("http") ? form.image_url : storageSupabase.storage.from("subject-images").getPublicUrl(form.image_url).data.publicUrl} alt="preview" style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={(e) => { (e.target as HTMLImageElement).parentElement!.style.display = "none"; }} />
                 </div>
               )}
             </div>
