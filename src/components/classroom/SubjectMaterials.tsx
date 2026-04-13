@@ -101,16 +101,32 @@ async function getSignedUrl(path: string): Promise<string | null> {
   if (!path) return null;
   // Already a full URL (public bucket or pasted link) — use directly
   if (path.startsWith("http")) return path;
+
   try {
+    // 1st: signed URL — works for private buckets
     const { data, error } = await storageSupabase.storage
       .from(BUCKET)
       .createSignedUrl(path, 7200);
-    if (error) {
-      console.error("[SubjectMaterials] createSignedUrl error:", error.message, "| path:", path);
-    }
-    return data?.signedUrl || null;
+
+    if (!error && data?.signedUrl) return data.signedUrl;
+
+    console.warn(
+      "[SubjectMaterials] createSignedUrl failed, trying publicUrl fallback.",
+      error?.message ?? "no signed url", "| path:", path,
+    );
+
+    // 2nd: public URL from storage project — works for public buckets
+    const { data: pub } = storageSupabase.storage.from(BUCKET).getPublicUrl(path);
+    if (pub?.publicUrl) return pub.publicUrl;
+
+    // 3rd: try main supabase project (files uploaded via MaterialsManagement admin page)
+    const { supabase: mainClient } = await import("@/integrations/supabase/client");
+    const { data: mainPub } = mainClient.storage.from("subject-materials").getPublicUrl(path);
+    if (mainPub?.publicUrl) return mainPub.publicUrl;
+
+    return null;
   } catch (err) {
-    console.error("[SubjectMaterials] createSignedUrl threw:", err);
+    console.error("[SubjectMaterials] getSignedUrl threw:", err);
     return null;
   }
 }
