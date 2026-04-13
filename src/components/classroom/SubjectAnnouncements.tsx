@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { Card, CardContent } from "@/components/ui/card";
@@ -60,7 +61,7 @@ const SubjectAnnouncements = ({ subjectId }: { subjectId: string }) => {
       let fileUrl = null;
       if (file) {
         const path = `announcements/${subjectId}/${crypto.randomUUID()}-${file.name}`;
-        const { error } = await supabase.storage.from("subject-files").upload(path, file);
+        const { error } = await storageSupabase.storage.from("subject-files").upload(path, file);
         if (error) throw error;
         fileUrl = path;
       }
