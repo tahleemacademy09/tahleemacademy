@@ -22,6 +22,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { audioManager } from "@/components/hifdh/audioManager";
 
 interface SurahMeta { number:number; name:string; englishName:string; numberOfAyahs:number; }
@@ -88,9 +89,9 @@ export default function TeacherRecitation() {
     mediaRecRef.current.onstop = async () => {
       const blob = new Blob(chunksRef.current,{type:"audio/webm"});
       const path = `teacher_${teacherId}/${selected.number}_${ayahs[ayahIdx].numberInSurah}_${Date.now()}.webm`;
-      const {data:up} = await supabase.storage.from("hifdh-recordings").upload(path,blob);
+      const {data:up} = await storageSupabase.storage.from("hifdh-recordings").upload(path,blob);
       if (up) {
-        const {data:urlData} = supabase.storage.from("hifdh-recordings").getPublicUrl(path);
+        const {data:urlData} = storageSupabase.storage.from("hifdh-recordings").getPublicUrl(path);
         const url = urlData?.publicUrl??"";
         await supabase.from("teacher_recitations" as any).upsert({ teacher_id:teacherId, teacher_name:teacherName, surah_num:selected.number, surah_name:selected.englishName, ayah_num:ayahs[ayahIdx].numberInSurah, audio_url:url }, { onConflict:"teacher_id,surah_num,ayah_num" });
         setMyRecs(p=>{ const n={...p,[ayahs[ayahIdx].numberInSurah]:url}; setRecordedCount(Object.keys(n).length); return n; });
