@@ -116,10 +116,13 @@ const inp: React.CSSProperties = {
 function PreviewOverlay({ url, type, title, onClose }: {
   url: string; type: MatType; title: string; onClose: () => void;
 }) {
-  const isImg  = type === "Image"  || /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(url);
-  const isPdf  = type === "PDF"    || url.toLowerCase().endsWith(".pdf");
-  const isVid  = type === "Video"  || /\.(mp4|webm|mov|m4v|avi)$/i.test(url);
-  const isAud  = type === "Audio"  || /\.(mp3|wav|m4a|aac|ogg|flac)$/i.test(url);
+  const isImg  = type === "Image"    || /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(url);
+  const isPdf  = type === "PDF"      || /\.pdf(\?|$)/i.test(url);
+  const isVid  = type === "Video"    || /\.(mp4|webm|mov|m4v|avi|mkv)(\?|$)/i.test(url);
+  const isAud  = type === "Audio"    || /\.(mp3|wav|m4a|aac|ogg|flac|opus)(\?|$)/i.test(url);
+  const isDoc  = type === "Document" || /\.(doc|docx|xls|xlsx|ppt|pptx|odt|ods|odp|csv|rtf)(\?|$)/i.test(url);
+  // Google Docs Viewer — works with signed HTTPS URLs from Supabase storage
+  const googleViewerUrl = `https://docs.google.com/gviewer?url=${encodeURIComponent(url)}&embedded=true`;
 
   // Prevent the same click that opens the overlay from immediately closing it.
   // React portals bubble events through the React tree — the Eye button click
@@ -164,31 +167,73 @@ function PreviewOverlay({ url, type, title, onClose }: {
         </button>
       </div>
 
-      {/* Content */}
-      <div style={{ flex: 1, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", padding: 12 }}
-        onClick={e => e.stopPropagation()}>
+      {/* Content — padding: 0 for iframe-based viewers, 12 for others */}
+      <div
+        style={{
+          flex: 1, overflow: "hidden", display: "flex",
+          alignItems: (isImg || isAud || (!isImg && !isPdf && !isVid && !isAud && !isDoc)) ? "center" : "stretch",
+          justifyContent: (isImg || isAud || (!isImg && !isPdf && !isVid && !isAud && !isDoc)) ? "center" : "stretch",
+          padding: isImg || isAud ? 12 : 0,
+        }}
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Image */}
         {isImg && (
           <img src={url} alt={title}
             style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 8 }} />
         )}
-        {isPdf && (
+
+        {/* PDF */}
+        {isPdf && !isImg && (
           <iframe src={url} title={title}
-            style={{ width: "100%", height: "100%", border: "none", borderRadius: 8, background: "#fff" }} />
+            style={{ width: "100%", height: "100%", border: "none", display: "block", background: "#fff" }} />
         )}
-        {isVid && (
-          <video src={url} controls autoPlay
-            style={{ maxWidth: "100%", maxHeight: "100%", borderRadius: 8 }} />
+
+        {/* Video */}
+        {isVid && !isImg && !isPdf && (
+          <video src={url} controls autoPlay playsInline
+            style={{ width: "100%", height: "100%", objectFit: "contain", background: "#000", display: "block" }} />
         )}
-        {isAud && (
+
+        {/* Audio */}
+        {isAud && !isImg && !isPdf && !isVid && (
           <div style={{ background: "#1a1a2e", borderRadius: 20, padding: "40px 32px", textAlign: "center", minWidth: 280 }}>
             <div style={{ width: 72, height: 72, borderRadius: "50%", background: MAT_CFG.Audio.bg, border: `2px solid ${MAT_CFG.Audio.border}`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 20px" }}>
               <Music size={32} color={MAT_CFG.Audio.text} />
             </div>
             <p style={{ color: "#fff", fontWeight: 700, marginBottom: 16, fontSize: 15 }}>{title}</p>
-            <audio src={url} controls style={{ width: "100%" }} />
+            <audio src={url} controls style={{ width: "100%", maxWidth: 400 }} />
           </div>
         )}
-        {!isImg && !isPdf && !isVid && !isAud && (
+
+        {/* Document — Google Docs Viewer (works with signed Supabase HTTPS URLs) */}
+        {isDoc && !isImg && !isPdf && !isVid && !isAud && (
+          <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column" }}>
+            <iframe
+              src={googleViewerUrl}
+              title={title}
+              style={{ flex: 1, width: "100%", border: "none", display: "block" }}
+            />
+            {/* Fallback footer */}
+            <div style={{ padding: "8px 16px", background: "rgba(0,0,0,.65)", textAlign: "center", flexShrink: 0 }}>
+              <p style={{ color: "rgba(255,255,255,.5)", fontSize: 11, margin: 0 }}>
+                Preview not loading?{" "}
+                <a href={url} target="_blank" rel="noopener noreferrer"
+                  style={{ color: "#93C5FD", textDecoration: "none", fontWeight: 600 }}>
+                  Open in new tab ↗
+                </a>
+                {" · "}
+                <a href={url} download target="_blank" rel="noopener noreferrer"
+                  style={{ color: "#86EFAC", textDecoration: "none", fontWeight: 600 }}>
+                  Download ↓
+                </a>
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Unknown / other — download only */}
+        {!isImg && !isPdf && !isVid && !isAud && !isDoc && (
           <div style={{ textAlign: "center", color: "#fff" }}>
             <File size={64} style={{ opacity: .4, marginBottom: 20 }} />
             <p style={{ fontSize: 16, fontWeight: 700, marginBottom: 16 }}>{title}</p>
