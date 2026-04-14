@@ -12,6 +12,7 @@ import "@livekit/components-styles";
 import { Track, RoomEvent, ConnectionState } from "livekit-client";
 import { createPortal } from "react-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { toast } from "@/hooks/use-toast";
@@ -320,23 +321,68 @@ const RecController=({sessionId,subjectId,userEmail,onSavingChange}:any)=>{
     }
   };
   const stopRec=async()=>{
-    clearInterval(timerRef.current);const mr=mrRef.current;if(!mr)return;onSavingChange?.(true);mr.stop();
-    mr.onstop=async()=>{try{
-      const recMime=mr.mimeType||"audio/webm";const recExt=recMime.includes("mp4")?"mp4":recMime.includes("ogg")?"ogg":"webm";
-      const blob=new Blob(chunksRef.current,{type:recMime});
-      // FIX: recordings go to "recordings" bucket, NOT "subject-files"
-      const recPath=`sessions/${sessionId||subjectId}/${Date.now()}.${recExt}`;
-      const{error:upErr}=await supabase.storage.from("recordings").upload(recPath,blob);
-      if(upErr)throw upErr;
-      // Build a signed URL so it can be accessed later
-      const{data:signedData}=await supabase.storage.from("recordings").createSignedUrl(recPath,60*60*24*365);
-      const fileUrl=signedData?.signedUrl||recPath;
-      if(sessionId)await supabase.from("live_sessions").update({is_recording:false}as any).eq("id",sessionId);
-      await supabase.from("session_recordings").insert({session_id:sessionId||null,subject_id:subjectId,file_url:recPath,teacher_name:userEmail,duration_seconds:time}as any);
-      toast({title:t("Recording saved ✅","تم حفظ التسجيل ✅")});
-    }catch(e:any){toast({title:"Save failed",description:e?.message,variant:"destructive"});}onSavingChange?.(false);};
-    acRef.current?.close();setRecording(false);setPaused(false);
-    if(sessionId)await supabase.from("live_sessions").update({is_recording:false}as any).eq("id",sessionId);
+    const mr=mrRef.current;
+    if(!mr||mr.state==="inactive")return;
+    clearInterval(timerRef.current);
+    const finalTime=time; // capture before state updates
+    onSavingChange?.(true);
+    setRecording(false);
+    setPaused(false);
+    // Mark DB as not-recording immediately (best-effort)
+    if(sessionId)supabase.from("live_sessions").update({is_recording:false}as any).eq("id",sessionId).then(()=>{}).catch(()=>{});
+
+    // ⚠️  MUST assign onstop BEFORE calling stop().
+    //     stop() fires the "stop" event synchronously in some browsers.
+    //     If onstop is assigned after stop(), the handler never runs.
+    mr.onstop=async()=>{
+      try{
+        const recMime=mr.mimeType||"audio/webm";
+        const recExt=recMime.includes("mp4")?"mp4":recMime.includes("ogg")?"ogg":"webm";
+        const blob=new Blob(chunksRef.current,{type:recMime});
+
+        if(blob.size===0){
+          toast({title:"Recording empty",description:"No audio was captured. Make sure your mic is on.",variant:"destructive"});
+          return;
+        }
+
+        const recPath=`sessions/${sessionId||subjectId}/${Date.now()}.${recExt}`;
+        console.log("[RecController] uploading",blob.size,"bytes to recordings/",recPath);
+
+        // Use storageSupabase — recordings bucket lives on the storage project
+        const{error:upErr}=await storageSupabase.storage
+          .from("recordings")
+          .upload(recPath,blob,{cacheControl:"3600",upsert:false,contentType:recMime});
+
+        if(upErr){
+          console.error("[RecController] upload error:",upErr);
+          throw new Error(upErr.message);
+        }
+
+        console.log("[RecController] upload OK, inserting session_recordings row");
+        await supabase.from("session_recordings").insert({
+          session_id:  sessionId||null,
+          subject_id:  subjectId,
+          file_url:    recPath,       // store the storage path, not a signed URL
+          teacher_name:userEmail,
+          duration_seconds:finalTime,
+        }as any);
+
+        toast({title:t("Recording saved ✅","تم حفظ التسجيل ✅")});
+      }catch(e:any){
+        console.error("[RecController] stopRec onstop error:",e);
+        toast({title:"Recording save failed",description:e?.message||"Unknown error",variant:"destructive"});
+      }finally{
+        // Close AudioContext only after all chunks are processed
+        acRef.current?.close();
+        acRef.current=null;
+        chunksRef.current=[];
+        onSavingChange?.(false);
+      }
+    };
+
+    // Now safe to call stop() — onstop handler is already registered
+    mr.stop();
+    mrRef.current=null;
   };
   const togglePause=()=>{const mr=mrRef.current;if(!mr)return;if(paused){mr.resume();timerRef.current=setInterval(()=>setTime(t=>t+1),1000);setPaused(false);}else{mr.pause();clearInterval(timerRef.current);setPaused(true);}};
   const fmt=(s:number)=>`${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
