@@ -293,13 +293,31 @@ const RecController=({sessionId,subjectId,userEmail,onSavingChange}:any)=>{
     }catch{return null;}
   },[room]);
   const startRec=async()=>{
-    const audio=collectAudio();if(!audio){toast({title:"No audio tracks"});return;}
-    chunksRef.current=[];
-    const mimeType=["audio/webm;codecs=opus","audio/webm","audio/mp4","audio/ogg"].find(t=>{try{return MediaRecorder.isTypeSupported(t);}catch{return false;}})||"";
-    const mr=new MediaRecorder(audio,mimeType?{mimeType}:undefined);
-    mr.ondataavailable=e=>{if(e.data.size>0)chunksRef.current.push(e.data);};mr.start(1000);mrRef.current=mr;setRecording(true);setPaused(false);setTime(0);
-    timerRef.current=setInterval(()=>setTime(t=>t+1),1000);
-    if(sessionId)await supabase.from("live_sessions").update({is_recording:true}as any).eq("id",sessionId);
+    try{
+      // Prefer capturing from the live room (all participants);
+      // fall back to raw getUserMedia if the room has no published audio tracks yet.
+      let audio=collectAudio();
+      if(!audio){
+        console.warn("[RecController] No room audio tracks found — falling back to getUserMedia");
+        try{
+          audio=await navigator.mediaDevices.getUserMedia({audio:true,video:false});
+        }catch(gumErr:any){
+          toast({title:"Microphone access denied",description:gumErr?.message||"Check browser permissions",variant:"destructive"});
+          return;
+        }
+      }
+      chunksRef.current=[];
+      const mimeType=["audio/webm;codecs=opus","audio/webm","audio/mp4","audio/ogg"].find(t=>{try{return MediaRecorder.isTypeSupported(t);}catch{return false;}})||"";
+      const mr=new MediaRecorder(audio,mimeType?{mimeType}:undefined);
+      mr.ondataavailable=e=>{if(e.data.size>0)chunksRef.current.push(e.data);};
+      mr.start(1000);mrRef.current=mr;setRecording(true);setPaused(false);setTime(0);
+      timerRef.current=setInterval(()=>setTime(t=>t+1),1000);
+      if(sessionId)await supabase.from("live_sessions").update({is_recording:true}as any).eq("id",sessionId);
+    }catch(err:any){
+      console.error("[RecController] startRec error:",err);
+      toast({title:"Recording failed to start",description:err?.message||"Unknown error",variant:"destructive"});
+      setRecording(false);
+    }
   };
   const stopRec=async()=>{
     clearInterval(timerRef.current);const mr=mrRef.current;if(!mr)return;onSavingChange?.(true);mr.stop();
@@ -531,7 +549,20 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     if(attendanceId){const d=Math.floor((Date.now()-joinedAt)/1000);supabase.from("attendance_logs").update({left_at:new Date().toISOString(),duration_seconds:d}).eq("id",attendanceId);}
     if(sessionId&&user)supabase.from("class_participants").update({left_at:new Date().toISOString(),duration_minutes:Math.floor((Date.now()-joinedAt)/60000)}).eq("session_id",sessionId).eq("student_id",user.id);
   },[attendanceId,joinedAt,sessionId,user]);
-  const endSession=async()=>{setShowEnd(false);if(sessionId){await supabase.from("live_sessions").update({status:"ended",ended_at:new Date().toISOString(),actual_end_time:new Date().toISOString()}).eq("id",sessionId);if(user)await supabase.from("class_chat_messages").insert({session_id:sessionId,sender_id:user.id,message:t("Class has ended","انتهت الحصة"),type:"system"});}setPhase("ended");};
+  const endSession=async()=>{
+    setShowEnd(false);
+    try{
+      if(sessionId){
+        await supabase.from("live_sessions").update({status:"ended",ended_at:new Date().toISOString(),actual_end_time:new Date().toISOString()}).eq("id",sessionId);
+        if(user)await supabase.from("class_chat_messages").insert({session_id:sessionId,sender_id:user.id,message:t("Class has ended","انتهت الحصة"),type:"system"});
+      }
+    }catch(e:any){
+      // Log but do NOT block — always end the session on the client
+      console.error("[endSession] DB error (continuing anyway):",e?.message);
+    }finally{
+      setPhase("ended");
+    }
+  };
   const leaveSession=()=>{if(attendanceId){const d=Math.floor((Date.now()-joinedAt)/1000);supabase.from("attendance_logs").update({left_at:new Date().toISOString(),duration_seconds:d}).eq("id",attendanceId);}if(sessionId&&user)supabase.from("class_participants").update({left_at:new Date().toISOString(),duration_minutes:Math.floor((Date.now()-joinedAt)/60000)}).eq("session_id",sessionId).eq("student_id",user.id);onLeave();};
   const handlePermChange=(type:"write"|"rec",allow:boolean,room?:any)=>{
     if(type==="write"){setCanStudentWrite(allow);try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"wb_allow_write",allow})),{reliable:true});}catch{}toast({title:allow?"✅ Students can now write on the board":"🔒 Write access revoked"});}
@@ -589,12 +620,24 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
       )}
       {matPicker&&<MatPickerBridge subjectId={subject.id} onShare={(mat:any,room:any)=>{setMatOpen(mat);setMatPicker(false);try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"mat_open",material:mat})),{reliable:true});}catch{}}} onClose={()=>setMatPicker(false)}/>}
       {matOpen&&<MatViewerBridge material={matOpen} isTeacher={isPrivileged} onClose={(room?:any)=>{setMatOpen(null);if(isPrivileged){try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"mat_close"})),{reliable:true});}catch{}}}}/>}
-      <Dialog open={showEnd} onOpenChange={setShowEnd}>
-        <DialogContent><DialogHeader><DialogTitle>{t("End class for everyone?","إنهاء الحصة للجميع؟")}</DialogTitle></DialogHeader>
-          <p style={{fontSize:13,color:"#666"}}>{t("This will disconnect all participants.","سيتم قطع الاتصال عن جميع المشاركين.")}</p>
-          <DialogFooter style={{display:"flex",gap:8}}><Button variant="outline" onClick={()=>setShowEnd(false)}>{t("Cancel","إلغاء")}</Button><Button variant="outline" onClick={()=>{setShowEnd(false);leaveSession();}}>{t("Leave but Keep Open","غادر لكن أبقِ الحصة")}</Button><Button variant="destructive" onClick={endSession}>{t("End for All","إنهاء للجميع")}</Button></DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {showEnd&&createPortal(
+        <div style={{position:"fixed",inset:0,zIndex:9500,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,.72)",backdropFilter:"blur(6px)"}} onClick={()=>setShowEnd(false)}>
+          <div style={{background:"#17202a",borderRadius:20,padding:"28px 28px 24px",width:"100%",maxWidth:380,margin:"0 16px",boxShadow:"0 24px 64px rgba(0,0,0,.7)",border:"1px solid rgba(255,255,255,.1)",animation:"fade-in .18s ease"}} onClick={e=>e.stopPropagation()}>
+            {/* Icon */}
+            <div style={{width:52,height:52,borderRadius:16,background:"rgba(239,68,68,.15)",border:"1.5px solid rgba(239,68,68,.35)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px"}}>
+              <Phone style={{width:22,height:22,color:"#ef4444",transform:"rotate(135deg)"}}/>
+            </div>
+            <h2 style={{textAlign:"center",fontSize:17,fontWeight:800,color:"#fff",marginBottom:8}}>{t("End class for everyone?","إنهاء الحصة للجميع؟")}</h2>
+            <p style={{textAlign:"center",fontSize:13,color:"rgba(255,255,255,.45)",marginBottom:24}}>{t("This will disconnect all participants.","سيتم قطع الاتصال عن جميع المشاركين.")}</p>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              <button onClick={endSession} style={{width:"100%",padding:"13px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#dc2626,#ef4444)",color:"#fff",fontSize:14,fontWeight:800,cursor:"pointer",boxShadow:"0 4px 16px rgba(239,68,68,.45)"}}>{t("End for All","إنهاء للجميع")}</button>
+              <button onClick={()=>{setShowEnd(false);leaveSession();}} style={{width:"100%",padding:"12px",borderRadius:12,border:"1px solid rgba(255,255,255,.15)",background:"rgba(255,255,255,.07)",color:"rgba(255,255,255,.7)",fontSize:13,fontWeight:600,cursor:"pointer"}}>{t("Leave but Keep Open","غادر لكن أبقِ الحصة")}</button>
+              <button onClick={()=>setShowEnd(false)} style={{width:"100%",padding:"12px",borderRadius:12,border:"1px solid rgba(255,255,255,.08)",background:"transparent",color:"rgba(255,255,255,.4)",fontSize:13,cursor:"pointer"}}>{t("Cancel","إلغاء")}</button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   );
 };
