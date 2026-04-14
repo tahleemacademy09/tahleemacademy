@@ -1,14 +1,12 @@
 /**
  * LiveClassFilePanel.tsx — Tahleem Academy
- * Fresh build. Zero code from any existing file.
  *
- * Root cause of "goes back on upload" on Android/mobile:
- * Any programmatic input.click() or label-for trick causes Android to push
- * a history entry. When the picker closes React Router sees popstate and
- * navigates back. The only 100% reliable fix: make the <input type="file">
- * the PHYSICAL click target by absolutely positioning it over the drop zone
- * at full opacity:0. The browser opens it as a direct user gesture — no
- * history entry is pushed, no popstate fires.
+ * Changes in this version:
+ *  - "Upload File" tab (existing) + "Add Link" tab (new)
+ *  - All files AND links open in an in-page floating overlay — NEVER a new tab
+ *  - Smart viewer: YouTube embed, Google Drive preview, PDF iframe, video/audio/image
+ *    native players, Office Docs via Google Docs Viewer, generic iframe w/ fallback
+ *  - Students stay on the ClassroomView page at all times
  */
 
 import { useState, useRef, useCallback, useEffect } from "react";
@@ -26,6 +24,8 @@ const BORD = "#DDD8CF";
 const MUT  = "#6B7B6E";
 const RED  = "#B91C1C";
 const REDL = "#FEF2F2";
+const TEAL = "#0D9488";
+const TEALL= "#F0FDFA";
 
 const BUCKET = "liveclass-files";
 const SB_URL = import.meta.env.VITE_STORAGE_SUPABASE_URL || "https://ovgsleayannsxifhiraw.supabase.co";
@@ -41,56 +41,242 @@ interface LCFile {
   created_at: string | null;
 }
 
-/* ── helpers ── */
-type Kind = "PDF"|"Image"|"Video"|"Audio"|"Doc"|"File";
+type Tab = "upload" | "link";
+type Kind = "PDF" | "Image" | "Video" | "Audio" | "Doc" | "Link" | "File";
 
-function getKind(name: string, mime?: string|null): Kind {
+/* ── helpers ── */
+function getKind(name: string, mime?: string | null): Kind {
+  if (mime === "link") return "Link";
   const ext = name.split(".").pop()?.toLowerCase() ?? "";
   const m   = (mime ?? "").toLowerCase();
-  if (m.includes("pdf")   || ext === "pdf")                                                 return "PDF";
-  if (m.includes("image") || ["jpg","jpeg","png","gif","webp","svg","avif"].includes(ext))  return "Image";
-  if (m.includes("video") || ["mp4","webm","mov","mkv","avi"].includes(ext))                return "Video";
-  if (m.includes("audio") || ["mp3","wav","m4a","aac","ogg"].includes(ext))                 return "Audio";
-  if (["doc","docx","xls","xlsx","ppt","pptx","txt","csv"].includes(ext))                   return "Doc";
+  if (m.includes("pdf")   || ext === "pdf")                                                return "PDF";
+  if (m.includes("image") || ["jpg","jpeg","png","gif","webp","svg","avif"].includes(ext)) return "Image";
+  if (m.includes("video") || ["mp4","webm","mov","mkv","avi"].includes(ext))               return "Video";
+  if (m.includes("audio") || ["mp3","wav","m4a","aac","ogg"].includes(ext))                return "Audio";
+  if (["doc","docx","xls","xlsx","ppt","pptx","txt","csv"].includes(ext))                  return "Doc";
+  if (/^https?:\/\//i.test(name)) return "Link";
   return "File";
 }
 
-const ICONS: Record<Kind, {i:string; c:string; bg:string}> = {
-  PDF:   { i:"📄", c:"#B91C1C", bg:"#FEF2F2" },
-  Image: { i:"🖼️", c:"#1D4ED8", bg:"#EFF6FF" },
-  Video: { i:"🎬", c:"#6D28D9", bg:"#F5F3FF" },
-  Audio: { i:"🎵", c:"#0E7490", bg:"#ECFEFF" },
-  Doc:   { i:"📝", c:"#B45309", bg:"#FFFBEB" },
-  File:  { i:"📁", c:"#374151", bg:"#F9FAFB" },
+const ICONS: Record<Kind, { i: string; c: string; bg: string }> = {
+  PDF:   { i: "📄", c: "#B91C1C", bg: "#FEF2F2" },
+  Image: { i: "🖼️", c: "#1D4ED8", bg: "#EFF6FF" },
+  Video: { i: "🎬", c: "#6D28D9", bg: "#F5F3FF" },
+  Audio: { i: "🎵", c: "#0E7490", bg: "#ECFEFF" },
+  Doc:   { i: "📝", c: "#B45309", bg: "#FFFBEB" },
+  Link:  { i: "🔗", c: TEAL,      bg: TEALL     },
+  File:  { i: "📁", c: "#374151", bg: "#F9FAFB" },
 };
 
-function fmtBytes(n?: number|null) {
+function fmtBytes(n?: number | null) {
   if (!n) return "";
   if (n < 1024) return `${n} B`;
-  if (n < 1_048_576) return `${(n/1024).toFixed(0)} KB`;
-  return `${(n/1_048_576).toFixed(1)} MB`;
+  if (n < 1_048_576) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / 1_048_576).toFixed(1)} MB`;
 }
 
-function fmtDate(iso?: string|null) {
+function fmtDate(iso?: string | null) {
   if (!iso) return "";
-  return new Date(iso).toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"});
+  return new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+}
+
+/* ── URL transformer: raw URL → best embeddable URL ── */
+function toEmbedUrl(url: string): {
+  embedUrl: string;
+  embedKind: "youtube" | "gdrive" | "pdf" | "video" | "audio" | "image" | "doc" | "iframe";
+} {
+  // YouTube
+  const ytMatch = url.match(
+    /(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/
+  );
+  if (ytMatch) {
+    return { embedUrl: `https://www.youtube.com/embed/${ytMatch[1]}?autoplay=1&rel=0`, embedKind: "youtube" };
+  }
+
+  // Google Drive  /file/d/ID/view  →  /file/d/ID/preview
+  const gdMatch = url.match(/drive\.google\.com\/file\/d\/([^/?#]+)/);
+  if (gdMatch) {
+    return { embedUrl: `https://drive.google.com/file/d/${gdMatch[1]}/preview`, embedKind: "gdrive" };
+  }
+  const gdMatch2 = url.match(/drive\.google\.com\/open\?id=([^&]+)/);
+  if (gdMatch2) {
+    return { embedUrl: `https://drive.google.com/file/d/${gdMatch2[1]}/preview`, embedKind: "gdrive" };
+  }
+
+  const ext = url.split("?")[0].split(".").pop()?.toLowerCase() ?? "";
+  if (ext === "pdf") return { embedUrl: url, embedKind: "pdf" };
+  if (["mp4","webm","mov","m4v","avi","mkv"].includes(ext)) return { embedUrl: url, embedKind: "video" };
+  if (["mp3","wav","m4a","aac","ogg","flac","opus"].includes(ext)) return { embedUrl: url, embedKind: "audio" };
+  if (["jpg","jpeg","png","gif","webp","svg","avif"].includes(ext)) return { embedUrl: url, embedKind: "image" };
+  if (["doc","docx","xls","xlsx","ppt","pptx","odt","ods","odp","csv","rtf"].includes(ext)) {
+    return { embedUrl: `https://docs.google.com/gviewer?url=${encodeURIComponent(url)}&embedded=true`, embedKind: "doc" };
+  }
+
+  return { embedUrl: url, embedKind: "iframe" };
+}
+
+/* ════════════════════════════════════════════════════════════
+   IN-PAGE VIEWER OVERLAY
+   position:fixed — floats above ClassroomView, no navigation.
+════════════════════════════════════════════════════════════ */
+function FileViewer({ file, onClose }: { file: LCFile; onClose: () => void }) {
+  const [iframeBlocked, setIframeBlocked] = useState(false);
+  const [loaderVisible, setLoaderVisible] = useState(true);
+  const url  = file.file_url;
+  const kind = getKind(file.file_name, file.file_type);
+
+  let embedKind: ReturnType<typeof toEmbedUrl>["embedKind"] = "iframe";
+  let embedUrl  = url;
+
+  if (kind === "Link") {
+    const r = toEmbedUrl(url);
+    embedUrl  = r.embedUrl;
+    embedKind = r.embedKind;
+  } else if (kind === "PDF")   { embedKind = "pdf"; }
+  else if (kind === "Image")   { embedKind = "image"; }
+  else if (kind === "Video")   { embedKind = "video"; }
+  else if (kind === "Audio")   { embedKind = "audio"; }
+  else if (kind === "Doc") {
+    embedUrl  = `https://docs.google.com/gviewer?url=${encodeURIComponent(url)}&embedded=true`;
+    embedKind = "doc";
+  }
+
+  useEffect(() => {
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = ""; };
+  }, []);
+
+  const renderContent = () => {
+    if (embedKind === "image") {
+      return (
+        <div style={{ background: "#000", display: "flex", alignItems: "center", justifyContent: "center", flex: 1, minHeight: 0 }}>
+          <img
+            src={embedUrl}
+            alt={file.file_name}
+            style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", display: "block" }}
+          />
+        </div>
+      );
+    }
+
+    if (embedKind === "audio") {
+      return (
+        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 32, background: "#0f1a14" }}>
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: 56, marginBottom: 16 }}>🎵</div>
+            <p style={{ color: "#fff", marginBottom: 20, fontSize: 15, fontWeight: 600 }}>{file.file_name}</p>
+            <audio src={embedUrl} controls autoPlay style={{ width: "100%", maxWidth: 400 }} />
+          </div>
+        </div>
+      );
+    }
+
+    if (embedKind === "video") {
+      return (
+        <div style={{ flex: 1, background: "#000", display: "flex", alignItems: "center", justifyContent: "center", minHeight: 0 }}>
+          <video src={embedUrl} controls autoPlay playsInline style={{ maxWidth: "100%", maxHeight: "100%", display: "block" }} />
+        </div>
+      );
+    }
+
+    /* iframe-based: youtube, gdrive, pdf, doc, iframe */
+    if (iframeBlocked) {
+      return (
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#0f1a14", padding: 32, textAlign: "center" }}>
+          <div style={{ fontSize: 48, marginBottom: 16 }}>🔒</div>
+          <p style={{ color: "#fff", fontWeight: 700, fontSize: 16, marginBottom: 8 }}>Can't display this website here</p>
+          <p style={{ color: "#9ca3af", fontSize: 13, marginBottom: 24 }}>The site's security policy prevents embedding.</p>
+          <a href={url} target="_blank" rel="noopener noreferrer"
+            style={{ background: GOLD, color: "#fff", borderRadius: 10, padding: "10px 24px", textDecoration: "none", fontWeight: 700, fontSize: 14 }}>
+            Open in new tab ↗
+          </a>
+        </div>
+      );
+    }
+
+    return (
+      <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
+        {/* Loading indicator */}
+        {loaderVisible && (
+          <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "#0f1a14", zIndex: 1, pointerEvents: "none" }}>
+            <div style={{ width: 32, height: 32, borderRadius: "50%", border: "3px solid #ffffff20", borderTopColor: GOLD, animation: "lcfp-spin .7s linear infinite" }} />
+          </div>
+        )}
+        <iframe
+          src={embedUrl}
+          title={file.file_name}
+          style={{ width: "100%", height: "100%", border: "none", display: "block" }}
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+          allowFullScreen
+          onLoad={() => setLoaderVisible(false)}
+          onError={() => setIframeBlocked(true)}
+        />
+      </div>
+    );
+  };
+
+  return (
+    <div
+      style={{ position: "fixed", inset: 0, zIndex: 99999, background: "rgba(0,0,0,.75)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 12 }}
+      onClick={onClose}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{ width: "100%", maxWidth: 920, height: "min(90vh, 680px)", background: "#111827", borderRadius: 16, overflow: "hidden", display: "flex", flexDirection: "column", boxShadow: "0 25px 60px rgba(0,0,0,.6)" }}
+      >
+        {/* Header */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "#1f2937", borderBottom: "1px solid #374151", flexShrink: 0 }}>
+          <span style={{ fontSize: 16 }}>{ICONS[kind].i}</span>
+          <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: "#f3f4f6", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {file.file_name}
+          </span>
+
+          {kind !== "Link" && (
+            <a href={url} download={file.file_name} target="_blank" rel="noopener"
+              style={{ fontSize: 12, color: "#d1d5db", background: "#374151", borderRadius: 8, padding: "5px 12px", textDecoration: "none", fontWeight: 600, flexShrink: 0 }}>
+              ⬇ Download
+            </a>
+          )}
+
+          <a href={url} target="_blank" rel="noopener noreferrer"
+            style={{ fontSize: 12, color: "#d1d5db", background: "#374151", borderRadius: 8, padding: "5px 12px", textDecoration: "none", fontWeight: 600, flexShrink: 0 }}>
+            ↗ New tab
+          </a>
+
+          <button onClick={onClose}
+            style={{ background: "#374151", border: "none", color: "#d1d5db", borderRadius: 8, padding: "5px 12px", cursor: "pointer", fontWeight: 700, fontSize: 16, flexShrink: 0 }}>
+            ✕
+          </button>
+        </div>
+
+        {/* Content */}
+        <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+          {renderContent()}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /* ══════════════════════════════════════════════════════════ */
 export default function LiveClassFilePanel({ subjectId }: { subjectId: string }) {
   const { user } = useAuth();
 
+  const [tab,        setTab]        = useState<Tab>("upload");
   const [files,      setFiles]      = useState<LCFile[]>([]);
   const [loading,    setLoading]    = useState(true);
-  const [err,        setErr]        = useState<string|null>(null);
+  const [err,        setErr]        = useState<string | null>(null);
   const [dragging,   setDragging]   = useState(false);
   const [uploading,  setUploading]  = useState(false);
   const [pct,        setPct]        = useState(0);
   const [upName,     setUpName]     = useState("");
-  const [lightbox,   setLightbox]   = useState<LCFile|null>(null);
-  const [delId,      setDelId]      = useState<string|null>(null);
+  const [viewer,     setViewer]     = useState<LCFile | null>(null);
+  const [delId,      setDelId]      = useState<string | null>(null);
 
-  /* drag counter — more reliable than enter/leave events */
+  const [linkUrl,    setLinkUrl]    = useState("");
+  const [linkLabel,  setLinkLabel]  = useState("");
+  const [addingLink, setAddingLink] = useState(false);
+
   const dragCnt = useRef(0);
 
   /* ── fetch ── */
@@ -108,29 +294,23 @@ export default function LiveClassFilePanel({ subjectId }: { subjectId: string })
 
   useEffect(() => { fetchFiles(); }, [fetchFiles]);
 
-  /* ── upload ── */
+  /* ── upload file ── */
   const upload = useCallback(async (file: File) => {
     if (!user) { setErr("Not signed in"); return; }
     setUploading(true); setPct(0); setUpName(file.name); setErr(null);
 
     try {
-      const slug = `${Date.now()}-${Math.random().toString(36).slice(2,7)}.${file.name.split(".").pop()||"bin"}`;
+      const slug = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}.${file.name.split(".").pop() || "bin"}`;
       const path = `${subjectId}/${slug}`;
 
-      /* XHR for real progress */
       await new Promise<void>((res, rej) => {
         const xhr = new XMLHttpRequest();
         xhr.open("POST", `${SB_URL}/storage/v1/object/${BUCKET}/${path}`);
-
-        /* auth header */
-        const raw = (supabase as any);
-        const token = raw?.auth?._session?.access_token
-          ?? raw?.supabaseKey
-          ?? "";
+        const raw   = (supabase as any);
+        const token = raw?.auth?._session?.access_token ?? raw?.supabaseKey ?? "";
         xhr.setRequestHeader("Authorization", `Bearer ${token}`);
         xhr.setRequestHeader("x-upsert", "true");
         xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
-
         xhr.upload.onprogress = ev => {
           if (ev.lengthComputable) setPct(Math.round(ev.loaded / ev.total * 85));
         };
@@ -140,22 +320,17 @@ export default function LiveClassFilePanel({ subjectId }: { subjectId: string })
       });
 
       setPct(90);
-
-      /* DB record */
       const fileUrl = `${SB_URL}/storage/v1/object/public/${BUCKET}/${path}`;
       const { error: dbErr } = await (supabase as any)
         .from("liveclass_files")
         .insert({ subject_id: subjectId, file_name: file.name, file_url: fileUrl, file_type: file.type || null, file_size: file.size, uploaded_by: user.id });
-
       if (dbErr) throw dbErr;
-
       setPct(100);
       await fetchFiles();
       setTimeout(() => { setUploading(false); setPct(0); setUpName(""); }, 500);
     } catch (e: any) {
-      /* supabase-js fallback */
       try {
-        const slug2 = `${Date.now()}.${file.name.split(".").pop()||"bin"}`;
+        const slug2 = `${Date.now()}.${file.name.split(".").pop() || "bin"}`;
         const path2 = `${subjectId}/${slug2}`;
         const { error: stErr } = await storageSupabase.storage.from(BUCKET).upload(path2, file, { upsert: true });
         if (stErr) throw stErr;
@@ -171,6 +346,31 @@ export default function LiveClassFilePanel({ subjectId }: { subjectId: string })
     }
   }, [subjectId, user, fetchFiles]);
 
+  /* ── save link ── */
+  const saveLink = useCallback(async () => {
+    if (!user) { setErr("Not signed in"); return; }
+    const trimUrl = linkUrl.trim();
+    if (!trimUrl) { setErr("Please enter a URL"); return; }
+    if (!/^https?:\/\//i.test(trimUrl)) { setErr("URL must start with http:// or https://"); return; }
+
+    setAddingLink(true); setErr(null);
+    const label = linkLabel.trim() || trimUrl;
+
+    try {
+      const { error: dbErr } = await (supabase as any)
+        .from("liveclass_files")
+        .insert({ subject_id: subjectId, file_name: label, file_url: trimUrl, file_type: "link", file_size: null, uploaded_by: user.id });
+      if (dbErr) throw dbErr;
+      setLinkUrl("");
+      setLinkLabel("");
+      await fetchFiles();
+    } catch (e: any) {
+      setErr(e?.message ?? "Failed to save link");
+    } finally {
+      setAddingLink(false);
+    }
+  }, [subjectId, user, linkUrl, linkLabel, fetchFiles]);
+
   /* ── drag ── */
   const onDragEnter = (e: React.DragEvent) => { e.preventDefault(); dragCnt.current++; setDragging(true); };
   const onDragLeave = (e: React.DragEvent) => { e.preventDefault(); dragCnt.current--; if (dragCnt.current <= 0) { dragCnt.current = 0; setDragging(false); } };
@@ -180,8 +380,6 @@ export default function LiveClassFilePanel({ subjectId }: { subjectId: string })
     const f = e.dataTransfer.files?.[0];
     if (f && !uploading) upload(f);
   };
-
-  /* ── file input change ── */
   const onPick = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     e.target.value = "";
@@ -193,7 +391,7 @@ export default function LiveClassFilePanel({ subjectId }: { subjectId: string })
     if (!confirm(`Delete "${f.file_name}"?`)) return;
     setDelId(f.id);
     await (supabase as any).from("liveclass_files").delete().eq("id", f.id);
-    if (f.file_url.includes(`/${BUCKET}/`)) {
+    if (f.file_type !== "link" && f.file_url.includes(`/${BUCKET}/`)) {
       const p = f.file_url.split(`/${BUCKET}/`)[1];
       if (p) storageSupabase.storage.from(BUCKET).remove([p]);
     }
@@ -201,15 +399,12 @@ export default function LiveClassFilePanel({ subjectId }: { subjectId: string })
     setDelId(null);
   };
 
-  /* ── open ── */
-  const openFile = (f: LCFile) => {
-    if (getKind(f.file_name, f.file_type) === "Image") { setLightbox(f); return; }
-    window.open(f.file_url, "_blank", "noopener,noreferrer");
-  };
+  /* ── open → always in-page ── */
+  const openFile = (f: LCFile) => setViewer(f);
 
   /* ═══════════════════ RENDER ═══════════════════ */
   return (
-    <div style={{ fontFamily:"system-ui,sans-serif" }}>
+    <>
       <style>{`
         @keyframes lcfp-spin { to { transform:rotate(360deg); } }
         .lcfp-file-row { display:flex; align-items:center; gap:12px; padding:12px 16px; border-bottom:1px solid ${BORD}; transition:background .12s; cursor:pointer; }
@@ -217,173 +412,154 @@ export default function LiveClassFilePanel({ subjectId }: { subjectId: string })
         .lcfp-file-row:hover { background:${BG}; }
         .lcfp-del-btn { opacity:0; border:none; background:none; cursor:pointer; padding:5px; border-radius:6px; color:${RED}; flex-shrink:0; font-size:16px; }
         .lcfp-file-row:hover .lcfp-del-btn { opacity:1; }
+        .lcfp-tab { flex:1; padding:8px 12px; border:none; border-radius:10px; font-size:13px; font-weight:600; cursor:pointer; transition:all .15s; }
+        .lcfp-input { width:100%; box-sizing:border-box; padding:10px 12px; border:1.5px solid ${BORD}; border-radius:10px; font-size:13px; outline:none; background:${SURF}; color:#111; font-family:inherit; }
+        .lcfp-input:focus { border-color:${G}; box-shadow:0 0 0 3px ${G}18; }
       `}</style>
 
-      {/* ════ DROP ZONE ════
-          The <input type="file"> is absolutely positioned to COVER the entire
-          zone at opacity:0 so it IS the click target — no .click() call, no
-          label, no history push, no popstate, no navigation bug.
-      */}
-      <div
-        onDragEnter={onDragEnter}
-        onDragLeave={onDragLeave}
-        onDragOver={onDragOver}
-        onDrop={onDrop}
-        style={{
-          position: "relative",
-          border: `2px dashed ${dragging ? GOLD : BORD}`,
-          borderRadius: 16,
-          background: dragging ? GOLDB : BG,
-          padding: "28px 20px",
-          textAlign: "center",
-          transition: "all .18s",
-          marginBottom: 16,
-          userSelect: "none",
-          overflow: "hidden",
-        }}
-      >
-        {/* Visual content */}
-        {uploading ? (
-          <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:10, pointerEvents:"none" }}>
-            <div style={{ fontSize:28 }}>⏫</div>
-            <p style={{ margin:0, fontSize:13, fontWeight:700, color:G }}>Uploading {upName}</p>
-            <div style={{ width:"100%", maxWidth:260, height:6, borderRadius:99, background:BORD, overflow:"hidden" }}>
-              <div style={{ height:"100%", width:`${pct}%`, background:GOLD, borderRadius:99, transition:"width .25s" }}/>
-            </div>
-            <p style={{ margin:0, fontSize:11, color:MUT }}>{pct}%</p>
-          </div>
-        ) : (
-          <div style={{ pointerEvents:"none" }}>
-            <div style={{ fontSize:36, marginBottom:8 }}>📂</div>
-            <p style={{ margin:"0 0 4px", fontSize:14, fontWeight:700, color:G }}>
-              Tap to choose a file, or drag and drop
-            </p>
-            <p style={{ margin:0, fontSize:12, color:MUT }}>
-              Images · PDFs · Videos · Documents — any format
-            </p>
+      <div style={{ fontFamily: "system-ui,sans-serif" }}>
+
+        {/* ── Tabs ── */}
+        <div style={{ display: "flex", gap: 6, background: BG, borderRadius: 12, padding: 4, marginBottom: 16 }}>
+          <button className="lcfp-tab" onClick={() => setTab("upload")}
+            style={{ background: tab === "upload" ? SURF : "transparent", color: tab === "upload" ? G : MUT, boxShadow: tab === "upload" ? "0 1px 4px rgba(0,0,0,.1)" : "none" }}>
+            📂 Upload File
+          </button>
+          <button className="lcfp-tab" onClick={() => setTab("link")}
+            style={{ background: tab === "link" ? SURF : "transparent", color: tab === "link" ? G : MUT, boxShadow: tab === "link" ? "0 1px 4px rgba(0,0,0,.1)" : "none" }}>
+            🔗 Add Link
+          </button>
+        </div>
+
+        {/* ── Upload tab ── */}
+        {tab === "upload" && (
+          <div
+            onDragEnter={onDragEnter} onDragLeave={onDragLeave} onDragOver={onDragOver} onDrop={onDrop}
+            style={{ position: "relative", border: `2px dashed ${dragging ? GOLD : BORD}`, borderRadius: 16, background: dragging ? GOLDB : BG, padding: "28px 20px", textAlign: "center", transition: "all .18s", marginBottom: 16, userSelect: "none", overflow: "hidden" }}
+          >
+            {uploading ? (
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10, pointerEvents: "none" }}>
+                <div style={{ fontSize: 28 }}>⏫</div>
+                <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: G }}>Uploading {upName}</p>
+                <div style={{ width: "100%", maxWidth: 260, height: 6, borderRadius: 99, background: BORD, overflow: "hidden" }}>
+                  <div style={{ height: "100%", width: `${pct}%`, background: GOLD, borderRadius: 99, transition: "width .25s" }} />
+                </div>
+                <p style={{ margin: 0, fontSize: 11, color: MUT }}>{pct}%</p>
+              </div>
+            ) : (
+              <div style={{ pointerEvents: "none" }}>
+                <div style={{ fontSize: 36, marginBottom: 8 }}>📂</div>
+                <p style={{ margin: "0 0 4px", fontSize: 14, fontWeight: 700, color: G }}>Tap to choose a file, or drag and drop</p>
+                <p style={{ margin: 0, fontSize: 12, color: MUT }}>Images · PDFs · Videos · Documents — any format</p>
+              </div>
+            )}
+            {!uploading && (
+              <input type="file" accept="*/*" onChange={onPick}
+                style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, cursor: "pointer", margin: 0, padding: 0 }} />
+            )}
           </div>
         )}
 
-        {/* The actual <input> — covers the entire zone, transparent.
-            Direct user gesture = no Android history push = no navigation. */}
-        {!uploading && (
-          <input
-            type="file"
-            accept="*/*"
-            onChange={onPick}
-            style={{
-              position: "absolute",
-              inset: 0,
-              width: "100%",
-              height: "100%",
-              opacity: 0,
-              cursor: "pointer",
-              margin: 0,
-              padding: 0,
-            }}
-          />
+        {/* ── Link tab ── */}
+        {tab === "link" && (
+          <div style={{ background: BG, border: `1px solid ${BORD}`, borderRadius: 16, padding: 16, marginBottom: 16 }}>
+            <p style={{ margin: "0 0 12px", fontSize: 13, color: MUT }}>
+              Paste any URL — YouTube, Google Drive, PDF link, website…
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 600, color: G, display: "block", marginBottom: 4 }}>URL *</label>
+                <input className="lcfp-input" type="url" placeholder="https://..."
+                  value={linkUrl} onChange={e => setLinkUrl(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && saveLink()} />
+              </div>
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 600, color: G, display: "block", marginBottom: 4 }}>
+                  Label <span style={{ color: MUT, fontWeight: 400 }}>(optional)</span>
+                </label>
+                <input className="lcfp-input" type="text" placeholder="e.g. Today's slides, Surah Al-Baqarah video…"
+                  value={linkLabel} onChange={e => setLinkLabel(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && saveLink()} />
+              </div>
+              <button onClick={saveLink} disabled={addingLink || !linkUrl.trim()}
+                style={{ background: linkUrl.trim() ? G : BORD, color: linkUrl.trim() ? "#fff" : MUT, border: "none", borderRadius: 10, padding: "10px 20px", fontSize: 13, fontWeight: 700, cursor: linkUrl.trim() ? "pointer" : "not-allowed", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, transition: "all .15s" }}>
+                {addingLink
+                  ? <><div style={{ width: 14, height: 14, borderRadius: "50%", border: "2px solid #ffffff40", borderTopColor: "#fff", animation: "lcfp-spin .6s linear infinite" }} /> Saving…</>
+                  : "🔗 Add Link"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Error */}
+        {err && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, background: REDL, border: `1px solid ${RED}30`, borderRadius: 10, padding: "10px 14px", marginBottom: 14, fontSize: 13, color: RED }}>
+            ⚠️ {err}
+            <button onClick={() => setErr(null)} style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer", color: RED, fontSize: 16 }}>✕</button>
+          </div>
+        )}
+
+        {/* ── Resource list ── */}
+        {loading ? (
+          <div style={{ display: "flex", justifyContent: "center", padding: 48 }}>
+            <div style={{ width: 26, height: 26, borderRadius: "50%", border: `3px solid ${G}`, borderTopColor: "transparent", animation: "lcfp-spin .7s linear infinite" }} />
+          </div>
+        ) : files.length === 0 ? (
+          <div style={{ background: SURF, border: `1px solid ${BORD}`, borderRadius: 14, padding: "36px 20px", textAlign: "center" }}>
+            <div style={{ fontSize: 34, marginBottom: 8 }}>📭</div>
+            <p style={{ margin: 0, fontSize: 14, fontWeight: 600, color: MUT }}>Nothing here yet</p>
+            <p style={{ margin: "4px 0 0", fontSize: 12, color: MUT }}>Upload a file or add a link above</p>
+          </div>
+        ) : (
+          <div style={{ background: SURF, border: `1px solid ${BORD}`, borderRadius: 14, overflow: "hidden" }}>
+            <div style={{ padding: "12px 16px", borderBottom: `1px solid ${BORD}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: G }}>
+                Class Resources <span style={{ color: MUT, fontWeight: 400 }}>({files.length})</span>
+              </span>
+              <button onClick={fetchFiles} style={{ fontSize: 12, color: MUT, background: "none", border: "none", cursor: "pointer" }}>
+                ↺ Refresh
+              </button>
+            </div>
+
+            {files.map(f => {
+              const k   = getKind(f.file_name, f.file_type);
+              const cfg = ICONS[k];
+              return (
+                <div key={f.id} className="lcfp-file-row" onClick={() => delId !== f.id && openFile(f)}>
+                  <div style={{ width: 42, height: 42, borderRadius: 10, background: cfg.bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, flexShrink: 0 }}>
+                    {cfg.i}
+                  </div>
+
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p style={{ margin: 0, fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {f.file_name}
+                    </p>
+                    <p style={{ margin: "2px 0 0", fontSize: 11, color: MUT }}>
+                      {k === "Link" ? "🔗 Link" : k}
+                      {f.file_size ? ` · ${fmtBytes(f.file_size)}` : ""}
+                      {f.created_at ? ` · ${fmtDate(f.created_at)}` : ""}
+                    </p>
+                  </div>
+
+                  <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, color: cfg.c, background: cfg.bg, padding: "3px 9px", borderRadius: 20 }}>
+                    {k === "Image" ? "Preview" : k === "Link" ? "View" : "Open"}
+                  </span>
+
+                  <button className="lcfp-del-btn" disabled={delId === f.id}
+                    onClick={e => { e.stopPropagation(); deleteFile(f); }} title="Delete">
+                    {delId === f.id
+                      ? <div style={{ width: 14, height: 14, borderRadius: "50%", border: `2px solid ${RED}`, borderTopColor: "transparent", animation: "lcfp-spin .6s linear infinite" }} />
+                      : "🗑️"}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
         )}
       </div>
 
-      {/* Error */}
-      {err && (
-        <div style={{ display:"flex", alignItems:"center", gap:8, background:REDL, border:`1px solid ${RED}30`, borderRadius:10, padding:"10px 14px", marginBottom:14, fontSize:13, color:RED }}>
-          ⚠️ {err}
-          <button onClick={() => setErr(null)} style={{ marginLeft:"auto", background:"none", border:"none", cursor:"pointer", color:RED, fontSize:16 }}>✕</button>
-        </div>
-      )}
-
-      {/* File list */}
-      {loading ? (
-        <div style={{ display:"flex", justifyContent:"center", padding:48 }}>
-          <div style={{ width:26, height:26, borderRadius:"50%", border:`3px solid ${G}`, borderTopColor:"transparent", animation:"lcfp-spin .7s linear infinite" }}/>
-        </div>
-      ) : files.length === 0 ? (
-        <div style={{ background:SURF, border:`1px solid ${BORD}`, borderRadius:14, padding:"36px 20px", textAlign:"center" }}>
-          <div style={{ fontSize:34, marginBottom:8 }}>📭</div>
-          <p style={{ margin:0, fontSize:14, fontWeight:600, color:MUT }}>No files yet</p>
-          <p style={{ margin:"4px 0 0", fontSize:12, color:MUT }}>Upload one above to get started</p>
-        </div>
-      ) : (
-        <div style={{ background:SURF, border:`1px solid ${BORD}`, borderRadius:14, overflow:"hidden" }}>
-          <div style={{ padding:"12px 16px", borderBottom:`1px solid ${BORD}`, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-            <span style={{ fontSize:13, fontWeight:700, color:G }}>
-              Class Files <span style={{ color:MUT, fontWeight:400 }}>({files.length})</span>
-            </span>
-            <button onClick={fetchFiles} style={{ fontSize:12, color:MUT, background:"none", border:"none", cursor:"pointer" }}>
-              ↺ Refresh
-            </button>
-          </div>
-
-          {files.map(f => {
-            const k   = getKind(f.file_name, f.file_type);
-            const cfg = ICONS[k];
-            return (
-              <div key={f.id} className="lcfp-file-row" onClick={() => delId !== f.id && openFile(f)}>
-                <div style={{ width:42, height:42, borderRadius:10, background:cfg.bg, display:"flex", alignItems:"center", justifyContent:"center", fontSize:20, flexShrink:0 }}>
-                  {cfg.i}
-                </div>
-
-                <div style={{ flex:1, minWidth:0 }}>
-                  <p style={{ margin:0, fontSize:13, fontWeight:600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-                    {f.file_name}
-                  </p>
-                  <p style={{ margin:"2px 0 0", fontSize:11, color:MUT }}>
-                    {k}{f.file_size ? ` · ${fmtBytes(f.file_size)}` : ""}{f.created_at ? ` · ${fmtDate(f.created_at)}` : ""}
-                  </p>
-                </div>
-
-                <span style={{ flexShrink:0, fontSize:11, fontWeight:700, color:cfg.c, background:cfg.bg, padding:"3px 9px", borderRadius:20 }}>
-                  {k === "Image" ? "Preview" : "Open"}
-                </span>
-
-                <button
-                  className="lcfp-del-btn"
-                  disabled={delId === f.id}
-                  onClick={e => { e.stopPropagation(); deleteFile(f); }}
-                  title="Delete"
-                >
-                  {delId === f.id
-                    ? <div style={{ width:14, height:14, borderRadius:"50%", border:`2px solid ${RED}`, borderTopColor:"transparent", animation:"lcfp-spin .6s linear infinite" }}/>
-                    : "🗑️"}
-                </button>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Lightbox */}
-      {lightbox && (
-        <div
-          onClick={() => setLightbox(null)}
-          style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.85)", zIndex:9999, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center" }}
-        >
-          <div onClick={e => e.stopPropagation()} style={{ width:"94%", maxWidth:700, background:"#111", borderRadius:16, overflow:"hidden" }}>
-            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 14px", background:"#1a1a1a" }}>
-              <span style={{ fontSize:13, color:"#fff", fontWeight:600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", flex:1 }}>
-                {lightbox.file_name}
-              </span>
-              <div style={{ display:"flex", gap:8, flexShrink:0 }}>
-                <a href={lightbox.file_url} download={lightbox.file_name} target="_blank" rel="noopener"
-                  style={{ fontSize:12, color:"#fff", background:"rgba(255,255,255,.15)", borderRadius:8, padding:"5px 12px", textDecoration:"none", fontWeight:600 }}>
-                  ⬇ Download
-                </a>
-                <button onClick={() => setLightbox(null)} style={{ background:"rgba(255,255,255,.15)", border:"none", color:"#fff", borderRadius:8, padding:"5px 12px", cursor:"pointer", fontWeight:700 }}>
-                  ✕
-                </button>
-              </div>
-            </div>
-            <div style={{ background:"#000", maxHeight:"78vh", display:"flex", alignItems:"center", justifyContent:"center", minHeight:160 }}>
-              <img src={lightbox.file_url} alt={lightbox.file_name}
-                style={{ maxWidth:"100%", maxHeight:"78vh", objectFit:"contain", display:"block" }}
-                onError={e => { (e.target as HTMLImageElement).alt = "Could not load image"; }}
-              />
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
+      {/* In-page viewer — position:fixed, above everything */}
+      {viewer && <FileViewer file={viewer} onClose={() => setViewer(null)} />}
+    </>
   );
 }
-
