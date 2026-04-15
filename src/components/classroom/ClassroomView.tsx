@@ -555,7 +555,7 @@ const VideoGrid=()=>{
 };
 
 /* ══ BOTTOM BAR — Google Meet floating glass style ══ */
-const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeaveClass,chatUnread,onToggleWhiteboard,whiteboardOpen,onGroupRecite,groupReciteMode,onShareMaterial,isPrivileged,canStudentWriteProp,canStudentRecProp,onPermChange,onMinimize,room,isMobile}:any)=>{
+const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeaveClass,chatUnread,onToggleWhiteboard,whiteboardOpen,onGroupRecite,groupReciteMode,onShareMaterial,isPrivileged,canStudentWriteProp,canStudentRecProp,onPermChange,onMinimize,room,isMobile,onToggleMaterials,matPanelOpen}:any)=>{
   const{user}=useAuth();
   // Start false — MediaAutoPublish enables tracks asynchronously; sync events update these
   const[micOn,setMicOn]=useState(false);
