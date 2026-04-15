@@ -13,6 +13,7 @@ import { Track, RoomEvent, ConnectionState } from "livekit-client";
 import { createPortal } from "react-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
+import { playJoinSound, playLeaveSound } from "@/lib/soundUtils";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { toast } from "@/hooks/use-toast";
@@ -542,6 +543,25 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   const[attendanceId,setAttendanceId]=useState<string|null>(null);const[joinedAt]=useState(Date.now());
   const[savingRec,setSavingRec]=useState(false);const[isSessionLive,setIsSessionLive]=useState(false);const[duration,setDuration]=useState(0);
   const[chatOpen,setChatOpen]=useState(false);const[partOpen,setPartOpen]=useState(false);const[chatUnread,setChatUnread]=useState(0);
+  // Realtime chat unread counter — increments when a new message arrives and chat panel is closed
+  useEffect(()=>{
+    if(!sessionId||phase!=="live")return;
+    const ch=supabase.channel(`chat-unread-${sessionId}`)
+      .on("postgres_changes",{event:"INSERT",schema:"public",table:"class_chat_messages",filter:`session_id=eq.${sessionId}`},
+        (payload:any)=>{
+          // Don't count own messages or system messages
+          if(payload.new?.sender_id===user?.id)return;
+          if(payload.new?.type==="system")return;
+          // Only count when chat panel is closed
+          setChatUnread(n=>{
+            const panelClosed=!chatOpen;
+            return panelClosed?n+1:0;
+          });
+        })
+      .subscribe();
+    return()=>{supabase.removeChannel(ch);};
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[sessionId,phase,user?.id]);
   const[sideTab,setSideTab]=useState<"chat"|"polls">("chat");const[showEnd,setShowEnd]=useState(false);
   const[wbOpen,setWbOpen]=useState(false);const[matOpen,setMatOpen]=useState<any>(null);const[matPicker,setMatPicker]=useState(false);
   const[groupRecite,setGroupRecite]=useState(false);const[canStudentWrite,setCanStudentWrite]=useState(false);const[canStudentRec,setCanStudentRec]=useState(false);
@@ -589,6 +609,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
       const{data:sessions}=await supabase.from("live_sessions").select("*").eq("subject_id",subject.id).in("status",["live","active","scheduled"]).order("scheduled_at",{ascending:false,nullsFirst:false}).limit(1);
       if(sessions?.length){setSessionId(sessions[0].id);setSessionInfo(sessions[0]);const{data:att}=await supabase.from("attendance_logs").insert({session_id:sessions[0].id,user_id:user!.id,device_info:navigator.userAgent}).select("id").single();if(att)setAttendanceId(att.id);await supabase.from("class_participants").upsert({session_id:sessions[0].id,student_id:user!.id,joined_at:new Date().toISOString(),is_muted:!isPrivileged,camera_on:true,left_at:null,left_minutes:null},{onConflict:"session_id,student_id"});}
       setPhase("live");
+      try { playJoinSound(); } catch {}
     }catch(e:any){setError(e?.message||"Failed to connect");}finally{setLoading(false);}
   };
   useEffect(()=>()=>{
@@ -609,12 +630,23 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
       setPhase("ended");
     }
   };
-  const leaveSession=()=>{if(attendanceId){const d=Math.floor((Date.now()-joinedAt)/1000);supabase.from("attendance_logs").update({left_at:new Date().toISOString(),duration_seconds:d}).eq("id",attendanceId);}if(sessionId&&user)supabase.from("class_participants").update({left_at:new Date().toISOString(),duration_minutes:Math.floor((Date.now()-joinedAt)/60000)}).eq("session_id",sessionId).eq("student_id",user.id);onLeave();};
+  const leaveSession=()=>{try{playLeaveSound();}catch{}if(attendanceId){const d=Math.floor((Date.now()-joinedAt)/1000);supabase.from("attendance_logs").update({left_at:new Date().toISOString(),duration_seconds:d}).eq("id",attendanceId);}if(sessionId&&user)supabase.from("class_participants").update({left_at:new Date().toISOString(),duration_minutes:Math.floor((Date.now()-joinedAt)/60000)}).eq("session_id",sessionId).eq("student_id",user.id);onLeave();};
   const handlePermChange=(type:"write"|"rec",allow:boolean,room?:any)=>{
     if(type==="write"){setCanStudentWrite(allow);try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"wb_allow_write",allow})),{reliable:true});}catch{}toast({title:allow?"✅ Students can now write on the board":"🔒 Write access revoked"});}
     else{setCanStudentRec(allow);try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"rec_allowed",allow})),{reliable:true});}catch{}toast({title:allow?"✅ Students can now record":"🔒 Record permission revoked"});}
   };
   const handleGroupRecite=async()=>{const n=!groupRecite;setGroupRecite(n);toast({title:n?"Group Recitation ON":"Group Recitation OFF"});if(sessionId&&user)await supabase.from("class_chat_messages").insert({session_id:sessionId,sender_id:user.id,message:n?"🎙️ Group Recitation Mode":"🔇 Recitation ended",type:"system"});};
+  // Inner component — must live inside <LiveKitRoom> to access context
+  const ParticipantCountBadge=()=>{
+    const all=useParticipants();
+    if(all.length===0)return null;
+    return(
+      <div style={{display:"flex",alignItems:"center",gap:4,background:"rgba(255,255,255,.07)",borderRadius:16,padding:"3px 10px",border:"1px solid rgba(255,255,255,.1)"}}>
+        <Users style={{width:10,height:10,color:"rgba(255,255,255,.45)"}}/>
+        <span style={{fontSize:11,color:"#fff",fontWeight:600}}>{all.length}</span>
+      </div>
+    );
+  };
   const fmtT=(s:number)=>`${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
   if(phase==="ended")return<ClassEndScreen subject={subject} session={sessionInfo} duration={duration} participantCount={0} onGoToDashboard={onLeave} onGoToRevision={()=>{window.location.href=`/student/revision/${subject.id}`;}} />;
   if(phase==="lobby"&&!loading&&!error&&!autoJoin)return<ClassLobby subject={subject} session={sessionInfo} onStartClass={(s:any,media?:any)=>connect("start_session",s,media)} onJoinClass={(media?:any)=>connect("join",undefined,media)} onBack={onLeave} isLive={isSessionLive}/>;
@@ -641,6 +673,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               <div style={{display:"flex",alignItems:"center",gap:5,background:"rgba(239,68,68,.12)",borderRadius:16,padding:"3px 10px",border:"1px solid rgba(239,68,68,.25)"}}>
                 <Circle style={{width:5,height:5,fill:RED,color:RED}}/><span style={{fontSize:11,color:"#fca5a5",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>{fmtT(duration)}</span>
               </div>
+              <ParticipantCountBadge />
             </div>
             {isPrivileged&&<RecController sessionId={sessionId} subjectId={subject.id} userEmail={user?.email||""} onSavingChange={setSavingRec}/>}
           </div>
