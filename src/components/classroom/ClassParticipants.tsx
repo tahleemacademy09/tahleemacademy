@@ -1,3 +1,9 @@
+/*
+  ClassParticipants.tsx — Tahleem Academy
+  Combines LiveKit useParticipants (live count) with DB class_participants
+  (metadata: hand_raised, level, etc). The count badge reflects real LiveKit
+  connections, not DB rows that may lag.
+*/
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -6,7 +12,18 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Hand, Mic, MicOff, Video, VideoOff, Crown, Wifi, WifiOff, UserMinus } from "lucide-react";
+import { Hand, Mic, MicOff, Video, VideoOff, UserMinus } from "lucide-react";
+
+// LiveKit hooks — wrapped in try/catch import so the file doesn't explode if
+// called outside a LiveKitRoom context (e.g. the desktop participants panel).
+let useParticipantsHook: (() => any[]) | null = null;
+try {
+  // Dynamic require so that a missing context won't crash the module load.
+  const lk = require("@livekit/components-react");
+  useParticipantsHook = lk.useParticipants;
+} catch {
+  useParticipantsHook = () => [];
+}
 
 interface ClassParticipantsProps {
   sessionId: string;
@@ -18,7 +35,13 @@ const ClassParticipants = ({ sessionId, onMuteStudent, onRemoveStudent }: ClassP
   const { t } = useLanguage();
   const { hasRole } = useAuth();
   const isPrivileged = hasRole("admin") || hasRole("teacher");
-  const [participants, setParticipants] = useState<any[]>([]);
+
+  // Live participant count from LiveKit room
+  const livekitParticipants: any[] = useParticipantsHook ? useParticipantsHook() : [];
+  const liveCount = livekitParticipants.length;
+
+  // DB participants for metadata (name, level, hand raised, mic/cam state)
+  const [dbParticipants, setDbParticipants] = useState<any[]>([]);
 
   useEffect(() => {
     const load = async () => {
@@ -27,35 +50,71 @@ const ClassParticipants = ({ sessionId, onMuteStudent, onRemoveStudent }: ClassP
         .from("class_participants")
         .select("*, profiles:student_id(full_name, avatar_url, level)")
         .eq("session_id", sessionId)
-        .is("left_at", null)   // actively in session
+        .is("left_at", null)
         .order("joined_at");
-      setParticipants(data || []);
+      setDbParticipants(data || []);
     };
     load();
 
-    const channel = supabase.channel(`participants-${sessionId}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "class_participants", filter: `session_id=eq.${sessionId}` },
-        () => load())
+    const channel = supabase
+      .channel(`participants-${sessionId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "class_participants", filter: `session_id=eq.${sessionId}` },
+        () => load(),
+      )
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
   }, [sessionId]);
 
-  const handRaised = participants.filter(p => p.hand_raised);
+  // Merge: prefer LiveKit identity list for count; use DB rows for display.
+  // We show DB rows but badge the count with the live LiveKit count when available.
+  const displayCount = liveCount > 0 ? liveCount : dbParticipants.length;
+  const handRaised   = dbParticipants.filter(p => p.hand_raised);
 
   return (
     <div className="flex flex-col h-full">
       <div className="p-3 border-b">
         <h3 className="font-semibold text-sm flex items-center gap-2">
           {t("Participants", "المشاركون")}
-          <Badge variant="secondary" className="text-xs">{participants.length}</Badge>
+          <Badge variant="secondary" className="text-xs">{displayCount}</Badge>
+          {liveCount > 0 && (
+            <span className="ml-1 text-[10px] text-green-600 font-semibold">● live</span>
+          )}
         </h3>
       </div>
+
       <ScrollArea className="flex-1">
         <div className="p-2 space-y-1">
-          {participants.map(p => {
+          {/* Show LiveKit identities when they exceed DB rows */}
+          {liveCount > dbParticipants.length && livekitParticipants.map((p: any) => {
+            const identity = p.identity || p.name || "—";
+            const inDb = dbParticipants.some(d =>
+              (d.profiles?.full_name || "").toLowerCase() === identity.toLowerCase() ||
+              d.student_id === identity,
+            );
+            if (inDb) return null;
+            return (
+              <div key={identity} className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-green-50">
+                <Avatar className="h-7 w-7">
+                  <AvatarFallback className="text-xs bg-green-100 text-green-700">
+                    {identity[0]?.toUpperCase() || "?"}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium truncate">{identity}</p>
+                  <p className="text-[10px] text-green-600">live</p>
+                </div>
+                <Mic className="h-3 w-3 text-green-500" />
+              </div>
+            );
+          })}
+
+          {/* DB participants */}
+          {dbParticipants.map(p => {
             const profile = (p as any).profiles;
-            const name = profile?.full_name || "Student";
+            const name    = profile?.full_name || "Student";
             const initial = name[0]?.toUpperCase() || "S";
 
             return (
@@ -78,34 +137,27 @@ const ClassParticipants = ({ sessionId, onMuteStudent, onRemoveStudent }: ClassP
                       <Hand className="h-3.5 w-3.5" />
                     </span>
                   )}
-                  {p.is_muted ? (
-                    <MicOff className="h-3 w-3 text-destructive/60" />
-                  ) : (
-                    <Mic className="h-3 w-3 text-green-500" />
-                  )}
-                  {p.camera_on ? (
-                    <Video className="h-3 w-3 text-green-500" />
-                  ) : (
-                    <VideoOff className="h-3 w-3 text-muted-foreground/40" />
-                  )}
+                  {p.is_muted
+                    ? <MicOff className="h-3 w-3 text-destructive/60" />
+                    : <Mic   className="h-3 w-3 text-green-500" />
+                  }
+                  {p.camera_on
+                    ? <Video    className="h-3 w-3 text-green-500" />
+                    : <VideoOff className="h-3 w-3 text-muted-foreground/40" />
+                  }
                 </div>
 
-                {/* Teacher actions */}
                 {isPrivileged && (
                   <div className="hidden group-hover:flex items-center gap-0.5">
                     <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-6 w-6"
+                      size="icon" variant="ghost" className="h-6 w-6"
                       onClick={() => onMuteStudent?.(p.student_id)}
                       title={t("Mute", "كتم")}
                     >
                       <MicOff className="h-3 w-3" />
                     </Button>
                     <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-6 w-6 text-destructive"
+                      size="icon" variant="ghost" className="h-6 w-6 text-destructive"
                       onClick={() => onRemoveStudent?.(p.student_id)}
                       title={t("Remove", "إزالة")}
                     >
@@ -117,7 +169,7 @@ const ClassParticipants = ({ sessionId, onMuteStudent, onRemoveStudent }: ClassP
             );
           })}
 
-          {participants.length === 0 && (
+          {displayCount === 0 && (
             <p className="text-xs text-muted-foreground text-center py-4">
               {t("No participants yet", "لا يوجد مشاركون بعد")}
             </p>
@@ -135,11 +187,12 @@ const ClassParticipants = ({ sessionId, onMuteStudent, onRemoveStudent }: ClassP
             <div key={p.id} className="flex items-center justify-between py-1">
               <span className="text-xs">{(p as any).profiles?.full_name}</span>
               <Button
-                size="sm"
-                variant="outline"
-                className="h-6 text-[10px] px-2"
+                size="sm" variant="outline" className="h-6 text-[10px] px-2"
                 onClick={async () => {
-                  await supabase.from("class_participants").update({ hand_raised: false, hand_raised_at: null }).eq("id", p.id);
+                  await supabase
+                    .from("class_participants")
+                    .update({ hand_raised: false, hand_raised_at: null })
+                    .eq("id", p.id);
                 }}
               >
                 {t("Lower", "خفض")}
