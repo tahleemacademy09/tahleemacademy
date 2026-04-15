@@ -498,7 +498,7 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
                        "Any file type"}
                     </p>
                   </div>
-                  {/* Transparent full-zone input — accept="*/*" avoids Android document-picker back-nav bug */}
+                  {/* Transparent full-zone input. accept="star/star" avoids Android document-picker back-nav bug */}
                   <input
                     ref={fileRef}
                     type="file"
