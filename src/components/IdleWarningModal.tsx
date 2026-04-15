@@ -1,13 +1,17 @@
 import { useIdleLogout } from "@/hooks/useIdleLogout";
 import { useLocation } from "react-router-dom";
+import { useLiveClass } from "@/contexts/LiveClassContext";
 
-// Don't show idle warning on exam pages or public pages
+// Never show idle warning on exam or public pages
 const EXEMPT_PATHS = ["/exam-taking", "/entrance-exam", "/login", "/register", "/"];
 
 export default function IdleWarningModal() {
-  const location = useLocation();
-  const isExempt = EXEMPT_PATHS.some(p => location.pathname.startsWith(p));
-  const { showWarn, countdown, stayLoggedIn } = useIdleLogout();
+  const location  = useLocation();
+  const isExempt  = EXEMPT_PATHS.some(p => location.pathname.startsWith(p));
+
+  // Suspend idle logout while user is in a live class
+  const { inCall }  = useLiveClass();
+  const { showWarn, countdown, stayLoggedIn } = useIdleLogout(inCall);
 
   if (isExempt || !showWarn) return null;
 
@@ -49,9 +53,11 @@ export default function IdleWarningModal() {
           </button>
         </div>
         <p style={{ fontSize: 11, color: "#D1D5DB", marginTop: 12 }}>
-          For your security, inactive sessions are logged out after {Math.floor(300/60)} minutes.
+          For your security, inactive sessions are logged out after {IDLE_MINUTES} minutes.
         </p>
       </div>
     </div>
   );
 }
+
+const IDLE_MINUTES = 30;
