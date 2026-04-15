@@ -14,7 +14,7 @@ import { supabase } from "@/integrations/supabase/client";
 import {
   Clock, BookOpen, ClipboardList, Bell, TrendingUp, Calendar, CheckCircle, XCircle,
   GraduationCap, MessageCircle, ArrowRight, Video, Star, ChevronLeft,
-  ChevronRight, AlertTriangle, Info, Mic
+  ChevronRight, AlertTriangle, Info, Mic, Lock
 } from "lucide-react";
 
 const toHijri = (date: Date) => {
@@ -53,6 +53,22 @@ const VERSES = [
   { ar: "وَاسْتَعِينُوا بِالصَّبْرِ وَالصَّلَاةِ", en: "Seek help through patience and prayer.", ref: "Quran 2:45" },
 ];
 
+/** Convert "HH:MM:SS" → "H:MM AM/PM" */
+const to12hr = (timeStr: string): string => {
+  if (!timeStr) return "";
+  const [h, m] = timeStr.split(":").map(Number);
+  const ampm = h >= 12 ? "PM" : "AM";
+  return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${ampm}`;
+};
+
+/** Minutes from now until HH:MM time string (negative = past) */
+const minsUntilTime = (timeStr: string): number => {
+  const now = new Date();
+  const [h, m] = timeStr.split(":").map(Number);
+  const t = new Date(); t.setHours(h, m, 0, 0);
+  return (t.getTime() - now.getTime()) / 60_000;
+};
+
 const gradePoint = (pct: number): number => {
   if (pct >= 85) return 4.0; if (pct >= 75) return 3.5;
   if (pct >= 65) return 3.0; if (pct >= 55) return 2.0;
@@ -88,6 +104,14 @@ const StudentDashboard = () => {
   const [showAllNotifs, setShowAllNotifs] = useState(false);
   const [greetingSpoken, setGreetingSpoken] = useState(false);
   const [impersonatedProfile, setImpersonatedProfile] = useState<any>(null);
+  const [todayClasses, setTodayClasses] = useState<any[]>([]);
+  const [nowTick, setNowTick] = useState(new Date());
+
+  // Tick every 30s so countdowns stay fresh
+  useEffect(() => {
+    const iv = setInterval(() => setNowTick(new Date()), 30_000);
+    return () => clearInterval(iv);
+  }, []);
 
   // Load impersonated student's profile
   useEffect(() => {
@@ -196,7 +220,7 @@ const StudentDashboard = () => {
       try {
         const uid = effectiveUserId;
         const [enrollRes, gradedAttemptsRes, pendingAttemptsRes, notifsRes, assignmentsRes,
-          recentRes, allAttemptsRes, subjectsRes, calendarExamsRes, subAssignmentsRes] = await Promise.all([
+          recentRes, allAttemptsRes, subjectsRes, calendarExamsRes, subAssignmentsRes, ttRes] = await Promise.all([
           supabase.from("enrollments").select("id").eq("user_id", uid),
           supabase.from("exam_attempts").select("percentage").eq("user_id", uid).eq("status", "graded"),
           supabase.from("exam_attempts").select("id").eq("user_id", uid).eq("status", "submitted"),
@@ -207,6 +231,7 @@ const StudentDashboard = () => {
           supabase.from("subjects").select("*").eq("is_active", true).limit(4),
           supabase.from("exams").select("id, title, title_ar, start_date, end_date, time_limit_minutes").eq("is_published", true),
           supabase.from("subject_assignments").select("id, title, deadline, subject_id, subjects(title, title_ar)"),
+          supabase.from("subject_timetable" as any).select("*, subjects(id, title, title_ar)").eq("day_of_week", new Date().getDay()).eq("is_active", true).order("start_time"),
         ]);
       const gradedAttempts = gradedAttemptsRes.data || [];
       const avg = gradedAttempts.length > 0 ? gradedAttempts.reduce((s, a) => s + (Number(a.percentage) || 0), 0) / gradedAttempts.length : 0;
@@ -222,6 +247,7 @@ const StudentDashboard = () => {
       setLiveSubjects(subjectsRes.data || []);
       setAllExamsForCalendar(calendarExamsRes.data || []);
       setSubjectAssignments(subAssignmentsRes.data || []);
+      setTodayClasses((ttRes.data || []) as any[]);
         setLoading(false);
       } catch (err) {
         console.error("Dashboard data fetch error:", err);
@@ -584,6 +610,72 @@ const StudentDashboard = () => {
             </div>
           </div>
         </div>
+
+        {/* ── Today's Classes ── */}
+        {todayClasses.length > 0 && (() => {
+          const handleJoinClass = async (slot: any) => {
+            if (slot.live_url) { window.open(slot.live_url, "_blank", "noopener"); return; }
+            if (!slot.subject_id) return;
+            const todayStr = new Date().toISOString().split("T")[0];
+            const { data: existing } = await supabase.from("live_sessions").select("id").eq("subject_id", slot.subject_id).in("status", ["live","scheduled","active"]).limit(1).maybeSingle();
+            if (!existing) await supabase.from("live_sessions").insert({ subject_id: slot.subject_id, scheduled_at: `${todayStr}T${slot.start_time}`, duration_minutes: slot.duration_minutes||60, status: "scheduled", chat_enabled: true, hand_raise_enabled: true, recording_enabled: true, whiteboard_enabled: false, waiting_room_enabled: false } as any);
+            navigate(`/student/live-classes?subject=${slot.subject_id}`);
+          };
+          return (
+          <div style={card}>
+            <div style={{ padding:"16px 18px", borderBottom:`1px solid ${BORDER}`, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                <Video style={{ width:16, height:16, color:MID_GREEN }} />
+                <span style={{ fontSize:15, fontWeight:800, color:TEXT_DARK, fontFamily:"'Playfair Display',serif" }}>{t("Today's Classes","حصص اليوم")}</span>
+              </div>
+              <button onClick={() => navigate("/student/timetable")} style={{ fontSize:11, fontWeight:600, color:GOLD, background:"none", border:"none", cursor:"pointer" }}>
+                {t("Full schedule","الجدول الكامل")}
+              </button>
+            </div>
+            <div style={{ padding:"12px 16px", display:"flex", flexDirection:"column", gap:8 }}>
+              {todayClasses.map((slot: any) => {
+                const mins    = minsUntilTime(slot.start_time);
+                const isNow   = mins >= -30 && mins <= 0;
+                const isSoon  = mins > 0 && mins <= 15;
+                const isPast  = mins < -30;
+                const canJoin = isNow || isSoon;
+                const title   = language === "ar" ? slot.subjects?.title_ar || slot.subjects?.title : slot.subjects?.title;
+                const minsRnd = Math.round(Math.abs(mins));
+                return (
+                  <div key={slot.id} style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 12px", borderRadius:12, background: isNow ? "#f0fff4" : isSoon ? "#fffbeb" : "#f8fafb", border:`1px solid ${isNow ? "#9ae6b4" : isSoon ? "#f6d860" : BORDER}`, opacity: isPast ? .5 : 1 }}>
+                    <div style={{ flexShrink:0, textAlign:"center", minWidth:52 }}>
+                      <div style={{ fontSize:13, fontWeight:900, color: isNow ? MID_GREEN : TEXT_DARK }}>{to12hr(slot.start_time)}</div>
+                      {isNow  && <span style={{ fontSize:9, fontWeight:800, color:"#16a34a" }}>● LIVE</span>}
+                      {isSoon && <span style={{ fontSize:9, fontWeight:700, color:"#b7791f" }}>{minsRnd}m</span>}
+                      {isPast && <span style={{ fontSize:9, color:TEXT_LIGHT }}>Ended</span>}
+                    </div>
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <p style={{ fontSize:13, fontWeight:700, color:TEXT_DARK, margin:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{title}</p>
+                      <p style={{ fontSize:11, color:TEXT_LIGHT, margin:"2px 0 0" }}>
+                        {to12hr(slot.start_time)} – {to12hr(slot.end_time)}
+                        {slot.duration_minutes ? ` · ${slot.duration_minutes}m` : ""}
+                      </p>
+                    </div>
+                    {!isPast && (
+                      canJoin ? (
+                        <button onClick={() => handleJoinClass(slot)} style={{ display:"flex", alignItems:"center", gap:5, padding:"7px 14px", borderRadius:10, border:"none", background: isNow ? MID_GREEN : GOLD, color: isNow ? "#fff" : DARK_GREEN, fontSize:11, fontWeight:800, cursor:"pointer", flexShrink:0 }}>
+                          <Video style={{ width:11, height:11 }} />
+                          {t("Join","انضمام")}
+                        </button>
+                      ) : (
+                        <div style={{ fontSize:9, color:TEXT_LIGHT, flexShrink:0, textAlign:"center" }}>
+                          <Clock style={{ width:10, height:10, display:"block", margin:"0 auto 2px" }} />
+                          {minsRnd > 60 ? `${Math.floor(minsRnd/60)}h` : `${minsRnd}m`}
+                        </div>
+                      )
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          );
+        })()}
 
         {/* ── Agenda Tabs ── */}
         <div style={card}>          <div style={{ padding:"16px 18px 0", borderBottom:`1px solid ${BORDER}`, paddingBottom:0 }}>
