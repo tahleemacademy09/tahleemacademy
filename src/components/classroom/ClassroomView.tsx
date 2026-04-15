@@ -23,7 +23,7 @@ import {
   Mic, MicOff, Video, VideoOff, Phone, Hand,
   PenTool, MessageCircle, MoreVertical, BookOpen,
   Circle, Loader2, X, Smile, Play, Pause,
-  Volume2, ChevronDown, Users,
+  Volume2, ChevronDown, Users, Eye,
 } from "lucide-react";
 import ClassLobby        from "./ClassLobby";
 import ClassChatPanel    from "./ClassChatPanel";
@@ -282,6 +282,104 @@ const MaterialPicker=({subjectId,onShare,onClose}:any)=>{
   </div>,document.body);
 };
 
+/* ══ SUBJECT MATERIALS PANEL ══
+   In-page floating panel — lists all materials for the subject.
+   Clicking a material opens an in-page viewer overlay (never a new tab).
+*/
+function toMaterialEmbedUrl(url:string):{embedUrl:string;kind:"youtube"|"gdrive"|"pdf"|"video"|"audio"|"image"|"doc"|"iframe"}{
+  const ytM=url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/);
+  if(ytM)return{embedUrl:`https://www.youtube.com/embed/${ytM[1]}?autoplay=1&rel=0`,kind:"youtube"};
+  const gdM=url.match(/drive\.google\.com\/file\/d\/([^/?#]+)/);
+  if(gdM)return{embedUrl:`https://drive.google.com/file/d/${gdM[1]}/preview`,kind:"gdrive"};
+  const gdM2=url.match(/drive\.google\.com\/open\?id=([^&]+)/);
+  if(gdM2)return{embedUrl:`https://drive.google.com/file/d/${gdM2[1]}/preview`,kind:"gdrive"};
+  const ext=url.split("?")[0].split(".").pop()?.toLowerCase()??"";
+  if(ext==="pdf")return{embedUrl:url,kind:"pdf"};
+  if(["mp4","webm","mov","m4v","avi","mkv"].includes(ext))return{embedUrl:url,kind:"video"};
+  if(["mp3","wav","m4a","aac","ogg","flac","opus"].includes(ext))return{embedUrl:url,kind:"audio"};
+  if(["jpg","jpeg","png","gif","webp","svg","avif"].includes(ext))return{embedUrl:url,kind:"image"};
+  if(["doc","docx","xls","xlsx","ppt","pptx","odt","ods","odp","csv","rtf"].includes(ext))return{embedUrl:`https://docs.google.com/gviewer?url=${encodeURIComponent(url)}&embedded=true`,kind:"doc"};
+  return{embedUrl:url,kind:"iframe"};
+}
+
+const MAT_TYPE_ICON:Record<string,string>={pdf:"📄",video:"🎬",audio:"🎵",image:"🖼️",link:"🔗",document:"📝",text:"📝"};
+
+const MatInlineViewer=({material,onClose}:any)=>{
+  const url=material.file_url||material.url||"";
+  const {embedUrl,kind}=toMaterialEmbedUrl(url);
+  const[loaded,setLoaded]=useState(false);
+  useEffect(()=>{document.body.style.overflow="hidden";return()=>{document.body.style.overflow="";};},[]);
+  const renderContent=()=>{
+    if(kind==="image")return(<div style={{flex:1,background:"#000",display:"flex",alignItems:"center",justifyContent:"center"}}><img src={embedUrl} alt={material.title} style={{maxWidth:"100%",maxHeight:"100%",objectFit:"contain"}}/></div>);
+    if(kind==="audio")return(<div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",background:"#0f1a14",flexDirection:"column",gap:16}}><div style={{fontSize:52}}>🎵</div><p style={{color:"#fff",fontWeight:600,margin:0}}>{material.title}</p><audio src={embedUrl} controls autoPlay style={{maxWidth:380,width:"100%"}}/></div>);
+    if(kind==="video")return(<div style={{flex:1,background:"#000",display:"flex",alignItems:"center",justifyContent:"center"}}><video src={embedUrl} controls autoPlay playsInline style={{maxWidth:"100%",maxHeight:"100%"}}/></div>);
+    return(<div style={{flex:1,position:"relative"}}>
+      {!loaded&&<div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"#0f1a14",zIndex:1}}><div style={{width:32,height:32,border:"3px solid rgba(255,255,255,.2)",borderTopColor:TEAL,borderRadius:"50%",animation:"cv-spin .7s linear infinite"}}/></div>}
+      <iframe src={embedUrl} title={material.title} style={{width:"100%",height:"100%",border:"none",display:"block"}} allow="autoplay;fullscreen;accelerometer;encrypted-media;picture-in-picture" allowFullScreen onLoad={()=>setLoaded(true)}/>
+    </div>);
+  };
+  return createPortal(
+    <div style={{position:"fixed",inset:0,zIndex:99999,background:"rgba(0,0,0,.78)",display:"flex",alignItems:"center",justifyContent:"center",padding:12}} onClick={onClose}>
+      <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:920,height:"min(90vh,680px)",background:"#111827",borderRadius:16,overflow:"hidden",display:"flex",flexDirection:"column",boxShadow:"0 25px 60px rgba(0,0,0,.6)"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",background:"#1f2937",borderBottom:"1px solid #374151",flexShrink:0}}>
+          <span style={{fontSize:14}}>{MAT_TYPE_ICON[material.material_type||"document"]||"📄"}</span>
+          <span style={{flex:1,fontSize:13,fontWeight:600,color:"#f3f4f6",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{material.title||"Material"}</span>
+          <a href={url} target="_blank" rel="noopener noreferrer" style={{fontSize:12,color:"#d1d5db",background:"#374151",borderRadius:8,padding:"5px 12px",textDecoration:"none",fontWeight:600,flexShrink:0}}>↗ New tab</a>
+          <button onClick={onClose} style={{background:"#374151",border:"none",color:"#d1d5db",borderRadius:8,padding:"5px 12px",cursor:"pointer",fontWeight:700,fontSize:16,flexShrink:0}}>✕</button>
+        </div>
+        <div style={{flex:1,minHeight:0,display:"flex",flexDirection:"column"}}>{renderContent()}</div>
+      </div>
+    </div>,document.body
+  );
+};
+
+const SubjectMaterialsPanel=({subjectId,onClose}:any)=>{
+  const[mats,setMats]=useState<any[]>([]);
+  const[busy,setBusy]=useState(true);
+  const[viewing,setViewing]=useState<any>(null);
+  useEffect(()=>{
+    supabase.from("subject_materials" as any).select("*").eq("subject_id",subjectId).order("created_at",{ascending:false})
+      .then(({data})=>{setMats(data||[]);setBusy(false);});
+  },[subjectId]);
+  return createPortal(
+    <div style={{position:"fixed",inset:0,zIndex:9900,background:"rgba(0,0,0,.55)"}} onClick={onClose}>
+      <div onClick={e=>e.stopPropagation()} style={{position:"fixed",top:0,right:0,bottom:0,width:"min(340px,100vw)",background:"#13181f",borderLeft:"1px solid rgba(255,255,255,.08)",display:"flex",flexDirection:"column",animation:"slide-up .2s ease",boxShadow:"-8px 0 32px rgba(0,0,0,.5)"}}>
+        {/* Header */}
+        <div style={{display:"flex",alignItems:"center",gap:10,padding:"14px 16px",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0}}>
+          <Eye style={{width:16,height:16,color:TEAL}}/>
+          <span style={{flex:1,fontSize:14,fontWeight:700,color:"#fff"}}>Subject Materials</span>
+          <button onClick={onClose} style={{background:"rgba(255,255,255,.1)",border:"none",color:"#fff",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <X style={{width:14,height:14}}/>
+          </button>
+        </div>
+        {/* List */}
+        <div style={{flex:1,overflowY:"auto",padding:10}}>
+          {busy&&<div style={{display:"flex",justifyContent:"center",padding:40}}><div style={{width:24,height:24,border:`3px solid ${TEAL}`,borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .7s linear infinite"}}/></div>}
+          {!busy&&mats.length===0&&<div style={{textAlign:"center",padding:"40px 20px",color:"rgba(255,255,255,.35)"}}>
+            <div style={{fontSize:36,marginBottom:8}}>📭</div>
+            <p style={{fontSize:13,margin:0}}>No materials for this subject</p>
+          </div>}
+          {mats.map(m=>{
+            const icon=MAT_TYPE_ICON[m.material_type||"document"]||"📄";
+            return(
+              <button key={m.id} onClick={()=>setViewing(m)} style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"12px 14px",background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.07)",borderRadius:12,cursor:"pointer",textAlign:"left",marginBottom:8,transition:"background .12s"}}
+                onMouseEnter={e=>(e.currentTarget.style.background="rgba(255,255,255,.09)")} onMouseLeave={e=>(e.currentTarget.style.background="rgba(255,255,255,.04)")}>
+                <div style={{width:40,height:40,borderRadius:10,background:"rgba(10,124,104,.2)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>{icon}</div>
+                <div style={{flex:1,minWidth:0}}>
+                  <p style={{margin:0,fontSize:13,fontWeight:600,color:"#e8eaf0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.title||m.name||"Untitled"}</p>
+                  <p style={{margin:"3px 0 0",fontSize:11,color:"rgba(255,255,255,.35)",textTransform:"capitalize"}}>{m.material_type||"file"}</p>
+                </div>
+                <span style={{fontSize:11,color:TEAL,fontWeight:700,flexShrink:0}}>👁 View</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      {viewing&&<MatInlineViewer material={viewing} onClose={()=>setViewing(null)}/>}
+    </div>,document.body
+  );
+};
+
 /* ══ RECORDING CONTROLLER ══ */
 const RecController=({sessionId,subjectId,userEmail,onSavingChange}:any)=>{
   const room=useRoomContext();const{t}=useLanguage();
@@ -480,7 +578,7 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
     if(stuRec){stuMrRef.current?.stop();stuMrRef.current!.onstop=()=>{const blobType=stuMrRef.current?.mimeType||"audio/webm";const blob=new Blob(stuChunks.current,{type:blobType});const url=URL.createObjectURL(blob);const a=document.createElement("a");const ext=blobType.includes("mp4")?"mp4":blobType.includes("ogg")?"ogg":"webm";a.href=url;a.download=`class-recording-${Date.now()}.${ext}`;a.click();URL.revokeObjectURL(url);stuChunks.current=[];};setStuRec(false);}
     else{try{const stream=await navigator.mediaDevices.getUserMedia({audio:true});const stuMime=["audio/webm","audio/mp4","audio/ogg"].find(t=>{try{return MediaRecorder.isTypeSupported(t);}catch{return false;}})||"";const mr=new MediaRecorder(stream,stuMime?{mimeType:stuMime}:undefined);stuChunks.current=[];mr.ondataavailable=e=>{if(e.data.size>0)stuChunks.current.push(e.data);};mr.start(1000);stuMrRef.current=mr;setStuRec(true);}catch{toast({title:"Microphone access denied"});}}
   };
-  const sendEmoji=(e:string)=>{setEmojis(false);if(user&&sessionId)supabase.from("class_chat_messages").insert({session_id:sessionId,sender_id:user.id,message:e,type:"emoji"});};
+  const sendEmoji=(e:string)=>{setEmojis(false);if(user&&sessionId)supabase.from("class_chat_messages").insert({session_id:sessionId,sender_id:user.id,message:e,type:"text"});};
   const IS={width:isMobile?16:20,height:isMobile?16:20};
   const Btn=({children,active=false,danger=false,onClick,badge=0,title:ttl=""}:any)=>(
     <div style={{position:"relative",display:"flex",flexDirection:"column",alignItems:"center"}}>
@@ -499,8 +597,8 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
       {isPrivileged&&[
         {icon:Volume2,label:groupReciteMode?"End Group Recitation":"Group Recitation",color:groupReciteMode?GREEN:"#fff",fn:onGroupRecite},
         {icon:BookOpen,label:"Share Material",color:"#fff",fn:onShareMaterial},
-        {icon:PenTool,label:canStudentWriteProp?"Revoke Write Access":"Allow Students to Write",color:canStudentWriteProp?GREEN:"#fff",fn:()=>onPermChange?.("write",!canStudentWriteProp)},
-        {icon:Circle,label:canStudentRecProp?"Revoke Record Permission":"Allow Students to Record",color:canStudentRecProp?GREEN:"#fff",fn:()=>onPermChange?.("rec",!canStudentRecProp)},
+        {icon:PenTool,label:canStudentWriteProp?"Revoke Write Access":"Allow Students to Write",color:canStudentWriteProp?GREEN:"#fff",fn:()=>onPermChange?.("write",!canStudentWriteProp,room)},
+        {icon:Circle,label:canStudentRecProp?"Revoke Record Permission":"Allow Students to Record",color:canStudentRecProp?GREEN:"#fff",fn:()=>onPermChange?.("rec",!canStudentRecProp,room)},
       ].map((item,i)=>(<button key={i} onClick={item.fn} style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"13px 18px",background:"none",border:"none",cursor:"pointer",color:item.color,fontSize:14,borderBottom:"1px solid rgba(255,255,255,.06)",textAlign:"left"as const}}><item.icon style={{width:16,height:16}}/> {item.label}</button>))}
       <button onClick={()=>{setMenu(false);onToggleParticipants();}} style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"13px 18px",background:"none",border:"none",cursor:"pointer",color:"#fff",fontSize:14,borderBottom:"1px solid rgba(255,255,255,.06)",textAlign:"left"as const}}><Users style={{width:16,height:16}}/> Participants</button>
       <button onClick={isPrivileged?onEndClass:onLeaveClass} style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"13px 18px",background:"none",border:"none",cursor:"pointer",color:RED,fontSize:14,textAlign:"left"as const}}>📵 {isPrivileged?"End Class for All":"Leave Class"}</button>
@@ -510,6 +608,7 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
       <Btn active={camOn} danger={!camOn} title={camOn?"Stop Video":"Start Video"} onClick={toggleCam}>{camOn?<Video style={IS}/>:<VideoOff style={IS}/>}</Btn>
       {isPrivileged?(<Btn active={whiteboardOpen} title="Whiteboard" onClick={onToggleWhiteboard}><PenTool style={{...IS,color:whiteboardOpen?"#4ade80":"#fff"}}/></Btn>):(<Btn active={handUp} title={handUp?"Lower Hand":"Raise Hand"} onClick={toggleHand}><Hand style={{...IS,color:handUp?"#fbbf24":"#fff"}}/></Btn>)}
       <Btn onClick={onToggleChat} badge={chatUnread} title="Chat"><MessageCircle style={IS}/></Btn>
+      <Btn active={matPanelOpen} onClick={onToggleMaterials} title="View Materials"><Eye style={{...IS,color:matPanelOpen?"#34d399":"#fff"}}/></Btn>
       <Btn onClick={()=>setEmojis(v=>!v)} title="React"><Smile style={IS}/></Btn>
       <Btn onClick={()=>setMenu(v=>!v)} title="More"><MoreVertical style={IS}/></Btn>
       {onMinimize&&<Btn onClick={onMinimize} title="Minimize"><ChevronDown style={IS}/></Btn>}
@@ -563,7 +662,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[sessionId,phase,user?.id]);
   const[sideTab,setSideTab]=useState<"chat"|"polls">("chat");const[showEnd,setShowEnd]=useState(false);
-  const[wbOpen,setWbOpen]=useState(false);const[matOpen,setMatOpen]=useState<any>(null);const[matPicker,setMatPicker]=useState(false);
+  const[wbOpen,setWbOpen]=useState(false);const[matOpen,setMatOpen]=useState<any>(null);const[matPicker,setMatPicker]=useState(false);const[matPanelOpen,setMatPanelOpen]=useState(false);
   const[groupRecite,setGroupRecite]=useState(false);const[canStudentWrite,setCanStudentWrite]=useState(false);const[canStudentRec,setCanStudentRec]=useState(false);
   const wbBuffer=useRef<any[]|null>(null);const prefetch=useRef<{token:string;url:string}|null>(null);
   useEffect(()=>{supabase.functions.invoke("livekit-token",{body:{subject_id:subject.id,action:isPrivileged?"start_session":"join"}}).then(({data})=>{if(data?.token&&data?.url)prefetch.current={token:data.token,url:data.url};}).catch(()=>{});},[subject.id,isPrivileged]);
@@ -691,12 +790,13 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
             )}
           </div>
           {wbOpen&&<WhiteboardBridge onClose={()=>setWbOpen(false)} isTeacher={isPrivileged} initialStrokes={wbBuffer.current} subjectId={subject.id} canStudentWrite={canStudentWrite}/>}
-          <BottomBarBridge sessionId={sessionId||""} onToggleChat={()=>{setChatOpen(v=>!v);if(!chatOpen)setChatUnread(0);}} onToggleParticipants={()=>setPartOpen(v=>!v)} onEndClass={()=>setShowEnd(true)} onLeaveClass={leaveSession} chatUnread={chatUnread} onToggleWhiteboard={()=>setWbOpen(v=>!v)} whiteboardOpen={wbOpen} onGroupRecite={handleGroupRecite} groupReciteMode={groupRecite} onShareMaterial={()=>setMatPicker(true)} isPrivileged={isPrivileged} canStudentWriteProp={canStudentWrite} canStudentRecProp={canStudentRec} onPermChange={(type:any,allow:any,room:any)=>handlePermChange(type,allow,room)} onMinimize={onMinimize}/>
+          <BottomBarBridge sessionId={sessionId||""} onToggleChat={()=>{setChatOpen(v=>!v);if(!chatOpen)setChatUnread(0);}} onToggleParticipants={()=>setPartOpen(v=>!v)} onEndClass={()=>setShowEnd(true)} onLeaveClass={leaveSession} chatUnread={chatUnread} onToggleWhiteboard={()=>setWbOpen(v=>!v)} whiteboardOpen={wbOpen} onGroupRecite={handleGroupRecite} groupReciteMode={groupRecite} onShareMaterial={()=>setMatPicker(true)} isPrivileged={isPrivileged} canStudentWriteProp={canStudentWrite} canStudentRecProp={canStudentRec} onPermChange={(type:any,allow:any,room:any)=>handlePermChange(type,allow,room)} onMinimize={onMinimize} onToggleMaterials={()=>setMatPanelOpen(v=>!v)} matPanelOpen={matPanelOpen}/>
           {isMobile&&chatOpen&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setChatOpen(false)}><div style={{position:"absolute",bottom:0,left:0,right:0,background:"#13181f",borderRadius:"22px 22px 0 0",maxHeight:"82vh",display:"flex",flexDirection:"column",animation:"slide-up .22s ease",paddingBottom:"env(safe-area-inset-bottom,0px)"}} onClick={e=>e.stopPropagation()}><div style={{display:"flex",alignItems:"center",padding:"12px 16px 0",flexShrink:0}}><div style={{flex:1,display:"flex"}}>{[["chat","💬","Chat"],["polls","📊","Polls"]].map(([k,ic,lb])=>(<button key={k} onClick={()=>setSideTab(k as any)} style={{flex:1,padding:"10px 6px",background:"none",border:"none",color:sideTab===k?"#fff":"rgba(255,255,255,.35)",fontSize:13,fontWeight:sideTab===k?700:400,borderBottom:sideTab===k?`2px solid ${TEAL}`:"2px solid transparent",cursor:"pointer"}}>{ic} {lb}</button>))}</div><button onClick={()=>setChatOpen(false)} style={{width:32,height:32,borderRadius:"50%",background:"rgba(255,255,255,.1)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><X style={{width:14,height:14}}/></button></div><div style={{flex:1,overflow:"hidden",minHeight:340}}>{sideTab==="chat"?<ClassChatPanel sessionId={sessionId||""}/>:<ClassPolls sessionId={sessionId||""}/>}</div></div></div>)}
           {isMobile&&partOpen&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setPartOpen(false)}><div style={{position:"absolute",bottom:BAR_H,left:0,right:0,background:"#13181f",borderRadius:"22px 22px 0 0",maxHeight:"65vh",overflow:"auto"}} onClick={e=>e.stopPropagation()}><div style={{width:40,height:4,borderRadius:2,background:"rgba(255,255,255,.18)",margin:"12px auto 6px"}}/><ClassParticipants sessionId={sessionId||""}/></div></div>)}
           <LiveQuizOverlay sessionId={sessionId||""} isOpen={false} onClose={()=>{}}/>
         </LiveKitRoom>
       )}
+      {matPanelOpen&&<SubjectMaterialsPanel subjectId={subject.id} onClose={()=>setMatPanelOpen(false)}/>}
       {matPicker&&<MatPickerBridge subjectId={subject.id} onShare={(mat:any,room:any)=>{setMatOpen(mat);setMatPicker(false);try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"mat_open",material:mat})),{reliable:true});}catch{}}} onClose={()=>setMatPicker(false)}/>}
       {matOpen&&<MatViewerBridge material={matOpen} isTeacher={isPrivileged} onClose={(room?:any)=>{setMatOpen(null);if(isPrivileged){try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"mat_close"})),{reliable:true});}catch{}}}}/>}
       {showEnd&&createPortal(
