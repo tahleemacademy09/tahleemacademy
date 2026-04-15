@@ -2,11 +2,10 @@
   src/pages/student/StudentTimetable.tsx — Tahleem Academy
   ──────────────────────────────────────────────────────────
   Student weekly timetable view.
-  • Filtered by student's assigned level
-  • Shows countdown to next class
-  • "Join" button → live_url OR internal classroom route
-  • Today's classes highlighted
-  • Background notification hook active on this page
+  • 12-hour time display
+  • Join button ONLY active: today's tab + class is live (±30min) or within 15min
+  • Locked state shows "Opens Xm before" hint for future classes today
+  • Other days show "Scheduled" (navigates to subject info only)
 */
 
 import { useState, useEffect } from "react";
@@ -18,7 +17,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { useTimetableNotifications } from "@/hooks/useTimetableNotifications";
 import {
   Clock, Video, Calendar, BookOpen, ChevronRight,
-  Bell, Users,
+  Bell, Users, Lock,
 } from "lucide-react";
 
 const G    = "#0f2d1f";
@@ -55,23 +54,29 @@ function formatCountdown(minutes: number): string {
   return `${Math.floor(minutes / 60)}h ${Math.round(minutes % 60)}m`;
 }
 
+/** Convert 24-hr "HH:MM:SS" to 12-hr "H:MM AM/PM" */
+function to12hr(timeStr: string): string {
+  if (!timeStr) return "";
+  const [h, m] = timeStr.split(":").map(Number);
+  const ampm = h >= 12 ? "PM" : "AM";
+  const h12  = h % 12 || 12;
+  return `${h12}:${String(m).padStart(2, "0")} ${ampm}`;
+}
+
 export default function StudentTimetable() {
   const { profile, hasRole } = useAuth();
   const { t, language }     = useLanguage();
   const navigate            = useNavigate();
   const todayIndex          = new Date().getDay();
 
-  // Activate class reminder notifications while on this page
   useTimetableNotifications();
 
-  const studentLevel =
-    (profile as any)?.level || (profile as any)?.course_level || "beginner";
+  const studentLevel = (profile as any)?.level || (profile as any)?.course_level || "beginner";
   const isPrivileged = hasRole("admin") || hasRole("teacher");
 
   const [selectedDay, setSelectedDay] = useState(todayIndex);
   const [now, setNow]                 = useState(new Date());
 
-  // Tick every 30 s to update countdowns
   useEffect(() => {
     const iv = setInterval(() => setNow(new Date()), 30_000);
     return () => clearInterval(iv);
@@ -91,7 +96,6 @@ export default function StudentTimetable() {
         .order("day_of_week")
         .order("start_time");
       if (!data) {
-        // Fallback without join
         const { data: d2 } = await supabase
           .from("subject_timetable")
           .select("*, subjects(id, title, title_ar, image_url)")
@@ -100,18 +104,12 @@ export default function StudentTimetable() {
           .order("start_time");
         return d2 || [];
       }
-      return data || [];
+      return data;
     },
-    refetchInterval: 60_000,
   });
 
-  // Show ALL active slots — admins/teachers bypass, students see all but non-matching are dimmed
-  const slots = (allSlots || []).filter((s: any) => {
-    if (isPrivileged) return true;
-    return true; // show all slots so students know what classes exist
-  });
+  const slots = (allSlots || []).filter(() => true); // show all
 
-  // Determine if a slot matches the student's level
   const slotMatchesLevel = (s: any) => {
     if (isPrivileged) return true;
     const lvs: string[] = s.levels || [];
@@ -120,7 +118,6 @@ export default function StudentTimetable() {
 
   const slotsForDay = slots.filter((s: any) => s.day_of_week === selectedDay);
 
-  // Next upcoming class today
   const upcomingToday = slots
     .filter((s: any) => s.day_of_week === todayIndex && minutesUntil(s.start_time) > -30)
     .sort((a: any, b: any) => (a.start_time > b.start_time ? 1 : -1))[0];
@@ -132,11 +129,9 @@ export default function StudentTimetable() {
     }
     if (!slot.subject_id) return;
 
-    // Auto-create or find a live/scheduled session for this timetable slot
-    const today = new Date().toISOString().split("T")[0];
+    const today       = new Date().toISOString().split("T")[0];
     const scheduledAt = `${today}T${slot.start_time}`;
 
-    // Check for existing live or scheduled session for this subject today
     const { data: existing } = await supabase
       .from("live_sessions")
       .select("id, status")
@@ -147,23 +142,25 @@ export default function StudentTimetable() {
       .maybeSingle();
 
     if (!existing) {
-      // Auto-create the session so everyone can join directly
       await supabase.from("live_sessions").insert({
-        subject_id:          slot.subject_id,
-        topic:               slot.notes || null,
-        scheduled_at:        scheduledAt,
-        duration_minutes:    slot.duration_minutes || 60,
-        status:              "scheduled",
-        recording_enabled:   true,
-        chat_enabled:        true,
-        hand_raise_enabled:  true,
-        waiting_room_enabled:false,
-        whiteboard_enabled:  false,
+        subject_id:           slot.subject_id,
+        topic:                slot.notes || null,
+        scheduled_at:         scheduledAt,
+        duration_minutes:     slot.duration_minutes || 60,
+        status:               "scheduled",
+        recording_enabled:    true,
+        chat_enabled:         true,
+        hand_raise_enabled:   true,
+        waiting_room_enabled: false,
+        whiteboard_enabled:   false,
       } as any);
     }
 
-    // Navigate to the subject view inside LearningHub — shows the Class button + tabs
     navigate(`/student/live-classes?subject=${slot.subject_id}`);
+  };
+
+  const handleViewSubject = (slot: any) => {
+    if (slot.subject_id) navigate(`/student/subjects/${slot.subject_id}`);
   };
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -221,32 +218,47 @@ export default function StudentTimetable() {
 
       <div style={{ padding: "16px", maxWidth: 720, margin: "0 auto" }}>
 
-        {/* ── Next class banner ── */}
-        {upcomingToday && selectedDay === todayIndex && (
-          <div style={{ background: `linear-gradient(135deg,${G},${GM})`, borderRadius: 18, padding: "16px 18px", marginBottom: 16, display: "flex", alignItems: "center", gap: 14, boxShadow: "0 4px 20px rgba(15,45,31,.2)", animation: "fadeUp .3s ease" }}>
-            <div style={{ width: 48, height: 48, borderRadius: 14, background: "rgba(201,168,76,.2)", border: `1.5px solid ${GOLD}44`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-              <Bell style={{ width: 22, height: 22, color: GOLD }} />
+        {/* ── Next class banner (today only) ── */}
+        {upcomingToday && selectedDay === todayIndex && (() => {
+          const minsLeft = minutesUntil(upcomingToday.start_time);
+          const isNow    = minsLeft >= -30 && minsLeft <= 0;
+          const isSoon   = minsLeft > 0 && minsLeft <= 15;
+          const canJoin  = isNow || isSoon;
+          return (
+            <div style={{ background: `linear-gradient(135deg,${G},${GM})`, borderRadius: 18, padding: "16px 18px", marginBottom: 16, display: "flex", alignItems: "center", gap: 14, boxShadow: "0 4px 20px rgba(15,45,31,.2)", animation: "fadeUp .3s ease" }}>
+              <div style={{ width: 48, height: 48, borderRadius: 14, background: "rgba(201,168,76,.2)", border: `1.5px solid ${GOLD}44`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <Bell style={{ width: 22, height: 22, color: GOLD }} />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p style={{ fontSize: 11, color: "rgba(255,255,255,.55)", margin: "0 0 2px" }}>
+                  {t("Next class", "الحصة القادمة")}
+                </p>
+                <p style={{ fontSize: 14, fontWeight: 800, color: "#fff", margin: "0 0 2px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {language === "ar"
+                    ? upcomingToday.subjects?.title_ar || upcomingToday.subjects?.title
+                    : upcomingToday.subjects?.title}
+                </p>
+                <p style={{ fontSize: 12, color: GOLD, margin: 0, fontWeight: 700 }}>
+                  {to12hr(upcomingToday.start_time)} · {formatCountdown(minsLeft)} {t("left", "متبقي")}
+                </p>
+              </div>
+              {canJoin ? (
+                <button onClick={() => handleJoin(upcomingToday)}
+                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 16px", borderRadius: 12, background: GOLD, border: "none", color: G, fontSize: 12, fontWeight: 900, cursor: "pointer", flexShrink: 0, fontFamily: "'Cairo', sans-serif" }}>
+                  <Video style={{ width: 14, height: 14 }} />
+                  {t("Join", "انضمام")}
+                </button>
+              ) : (
+                <div style={{ textAlign: "center", flexShrink: 0 }}>
+                  <Lock style={{ width: 14, height: 14, color: "rgba(255,255,255,.4)", display: "block", margin: "0 auto 2px" }} />
+                  <span style={{ fontSize: 9, color: "rgba(255,255,255,.35)", whiteSpace: "nowrap" }}>
+                    {t("Opens 15m before", "يفتح قبل 15د")}
+                  </span>
+                </div>
+              )}
             </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <p style={{ fontSize: 11, color: "rgba(255,255,255,.55)", margin: "0 0 2px" }}>
-                {t("Next class", "الحصة القادمة")}
-              </p>
-              <p style={{ fontSize: 14, fontWeight: 800, color: "#fff", margin: "0 0 2px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {language === "ar"
-                  ? upcomingToday.subjects?.title_ar || upcomingToday.subjects?.title
-                  : upcomingToday.subjects?.title}
-              </p>
-              <p style={{ fontSize: 12, color: GOLD, margin: 0, fontWeight: 700 }}>
-                {upcomingToday.start_time?.slice(0, 5)} · {formatCountdown(minutesUntil(upcomingToday.start_time))} {t("left", "متبقي")}
-              </p>
-            </div>
-            <button onClick={() => handleJoin(upcomingToday)}
-              style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 16px", borderRadius: 12, background: GOLD, border: "none", color: G, fontSize: 12, fontWeight: 900, cursor: "pointer", flexShrink: 0, fontFamily: "'Cairo', sans-serif" }}>
-              <Video style={{ width: 14, height: 14 }} />
-              {t("Join", "انضمام")}
-            </button>
-          </div>
-        )}
+          );
+        })()}
 
         {/* ── Slots for selected day ── */}
         {isLoading ? (
@@ -261,12 +273,15 @@ export default function StudentTimetable() {
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 12, animation: "fadeUp .25s ease" }}>
             {slotsForDay.map((slot: any) => {
-              const minsLeft      = minutesUntil(slot.start_time);
-              const isNow         = minsLeft >= -30 && minsLeft <= 0;
-              const isSoon        = minsLeft > 0 && minsLeft <= 15;
-              const isPast        = minsLeft < -30;
-              const myLevel       = slotMatchesLevel(slot);
-              const subjectTitle  = language === "ar"
+              const minsLeft     = minutesUntil(slot.start_time);
+              const isToday      = selectedDay === todayIndex;
+              const isNow        = isToday && minsLeft >= -30 && minsLeft <= 0;
+              const isSoon       = isToday && minsLeft > 0 && minsLeft <= 15;
+              const isPast       = isToday && minsLeft < -30;
+              const tooEarly     = isToday && !isNow && !isSoon && !isPast;
+              const canJoin      = isNow || isSoon;
+              const myLevel      = slotMatchesLevel(slot);
+              const subjectTitle = language === "ar"
                 ? slot.subjects?.title_ar || slot.subjects?.title
                 : slot.subjects?.title;
               const slotLevels: string[] = slot.levels || [];
@@ -283,15 +298,14 @@ export default function StudentTimetable() {
                   }}>
 
                   {/* Time block */}
-                  <div style={{ textAlign: "center", flexShrink: 0, minWidth: 58 }}>
-                    <div style={{ fontSize: 16, fontWeight: 900, color: isNow ? GM : G }}>
-                      {slot.start_time?.slice(0, 5)}
+                  <div style={{ textAlign: "center", flexShrink: 0, minWidth: 64 }}>
+                    <div style={{ fontSize: 14, fontWeight: 900, color: isNow ? GM : G }}>
+                      {to12hr(slot.start_time)}
                     </div>
                     <div style={{ fontSize: 10, color: "#d1d5db", margin: "1px 0" }}>—</div>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: "#9ca3af" }}>
-                      {slot.end_time?.slice(0, 5)}
+                    <div style={{ fontSize: 11, fontWeight: 600, color: "#9ca3af" }}>
+                      {to12hr(slot.end_time)}
                     </div>
-                    {/* Status badge */}
                     {isNow && (
                       <span style={{ fontSize: 9, fontWeight: 800, padding: "2px 6px", borderRadius: 9, background: "#dcfce7", color: "#16a34a", display: "block", marginTop: 5, animation: "pulse 1.5s infinite" }}>
                         LIVE
@@ -318,7 +332,7 @@ export default function StudentTimetable() {
                       </p>
                     )}
 
-                    {(slot.teacher?.full_name) && (
+                    {slot.teacher?.full_name && (
                       <div style={{ display: "flex", alignItems: "center", gap: 5, color: "#6b7280", fontSize: 12, marginTop: 5 }}>
                         <Users style={{ width: 11, height: 11 }} />
                         {slot.teacher.full_name}
@@ -346,23 +360,51 @@ export default function StudentTimetable() {
                         {slot.notes}
                       </p>
                     )}
+
+                    {/* "Opens 15min before" hint for future classes today */}
+                    {tooEarly && (
+                      <p style={{ fontSize: 10, color: "#9ca3af", margin: "6px 0 0", display: "flex", alignItems: "center", gap: 4 }}>
+                        <Lock style={{ width: 9, height: 9 }} />
+                        {t("Opens 15 min before class", "يفتح 15 دقيقة قبل الحصة")}
+                      </p>
+                    )}
                   </div>
 
-                  {/* Action — always show Join, navigates to subject view in LearningHub */}
-                  <button onClick={() => handleJoin(slot)}
-                    style={{
-                      display: "flex", alignItems: "center", gap: 5,
-                      padding: "9px 14px", borderRadius: 11, border: "none",
-                      background: isNow ? G : isSoon ? GOLD : isPast ? "#F3F4F6" : GM,
-                      color: isNow || isSoon ? (isSoon ? G : "#fff") : isPast ? "#9CA3AF" : "#fff",
-                      fontSize: 11, fontWeight: 800,
-                      cursor: isPast ? "default" : "pointer",
-                      flexShrink: 0, fontFamily: "'Cairo', sans-serif",
-                      opacity: isPast ? .5 : 1,
-                    }}>
-                    <Video style={{ width: 12, height: 12 }} />
-                    {isPast ? t("Ended", "انتهت") : t("Join", "انضمام")}
-                  </button>
+                  {/* Action button */}
+                  {isPast ? (
+                    <span style={{ fontSize: 11, color: "#9ca3af", fontWeight: 700, padding: "9px 10px", flexShrink: 0 }}>
+                      {t("Ended", "انتهت")}
+                    </span>
+                  ) : canJoin ? (
+                    <button onClick={() => handleJoin(slot)}
+                      style={{
+                        display: "flex", alignItems: "center", gap: 5,
+                        padding: "9px 14px", borderRadius: 11, border: "none",
+                        background: isNow ? G : GOLD,
+                        color: isNow ? "#fff" : G,
+                        fontSize: 11, fontWeight: 800, cursor: "pointer",
+                        flexShrink: 0, fontFamily: "'Cairo', sans-serif",
+                      }}>
+                      <Video style={{ width: 12, height: 12 }} />
+                      {t("Join", "انضمام")}
+                    </button>
+                  ) : tooEarly ? (
+                    <div style={{ flexShrink: 0, textAlign: "center", opacity: .45 }}>
+                      <Lock style={{ width: 14, height: 14, color: "#9ca3af", display: "block", margin: "0 auto" }} />
+                    </div>
+                  ) : (
+                    /* Other days — navigate to subject info */
+                    <button onClick={() => handleViewSubject(slot)}
+                      style={{
+                        display: "flex", alignItems: "center", gap: 5,
+                        padding: "9px 12px", borderRadius: 11, border: "1px solid #e5e7eb",
+                        background: "#f9fafb", color: "#6b7280",
+                        fontSize: 11, fontWeight: 700, cursor: "pointer", flexShrink: 0,
+                      }}>
+                      <BookOpen style={{ width: 11, height: 11 }} />
+                      {t("View", "عرض")}
+                    </button>
+                  )}
                 </div>
               );
             })}
@@ -376,7 +418,7 @@ export default function StudentTimetable() {
           </h3>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 6 }}>
             {DAYS.map(d => {
-              const count = slots.filter((s: any) => s.day_of_week === d.index).length;
+              const count   = slots.filter((s: any) => s.day_of_week === d.index).length;
               const isToday = d.index === todayIndex;
               return (
                 <button key={d.index} onClick={() => setSelectedDay(d.index)}
