@@ -19,7 +19,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { supabase } from "@/integrations/supabase/client";
-import { storageSupabase } from "../../integrations/supabase/storageClient";
+import { storageSupabase, getSignedUrl } from "../../integrations/supabase/storageClient";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import {
@@ -69,7 +69,7 @@ const fmtSize = (b?: number) => !b ? "" : b < 1048576 ? `${(b/1024).toFixed(0)} 
 async function resolveUrl(fileUrl: string): Promise<string> {
   if (!fileUrl) return "";
   if (fileUrl.startsWith("http")) return fileUrl;
-  const { data } = await storageSupabase.storage.from("subject-files").createSignedUrl(fileUrl, 3600);
+  const data = { signedUrl: await getSignedUrl(fileUrl, 3600) };
   return data?.signedUrl || "";
 }
 
@@ -195,7 +195,7 @@ function RecordingMiniPlayer({ recordings }: { recordings: any[] }) {
     setSelected(rec); setPlaying(false); setCurrent(0); setSignedUrl(null);
     if (!rec?.file_url) return;
     setLoadingUrl(true);
-    if (rec.file_url.startsWith("http")) setSignedUrl(rec.file_url);    else { const { data } = await storageSupabase.storage.from("subject-files").createSignedUrl(rec.file_url, 7200); setSignedUrl(data?.signedUrl || null); }
+    if (rec.file_url.startsWith("http")) setSignedUrl(rec.file_url);    else { const signedUrl = await getSignedUrl(rec.file_url, 7200); setSignedUrl(signedUrl || null); }
     setLoadingUrl(false);
   };
 
