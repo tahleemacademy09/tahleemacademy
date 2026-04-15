@@ -1035,7 +1035,7 @@ const ClassroomView = ({ subject, onLeave, onMinimize, autoJoin = false }: Class
               channelCount: 1,
             },
             publishDefaults: {
-              audioPreset: { maxBitrate: 96_000 }, // 96kbps for clear audio
+              audioPreset: AudioPresets.MUSIC, // 96kbps stereo preset for clear audio
               dtx: !groupRecite,   // disable DTX during group recitation so everyone is heard
               red: true,           // redundancy for packet loss recovery
               stopMicTrackOnMute: false, // keep track alive so re-enabling is instant
