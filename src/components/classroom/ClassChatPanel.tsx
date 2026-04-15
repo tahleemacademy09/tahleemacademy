@@ -77,7 +77,7 @@ const ClassChatPanel = ({ sessionId }: ClassChatPanelProps) => {
       session_id: sessionId,
       sender_id: user.id,
       message: msg,
-      type: text && EMOJI_LIST.includes(text) ? "emoji" : "text",
+      type: "text",
     });
     if (!text) setInput("");
     setShowEmoji(false);
@@ -133,7 +133,7 @@ const ClassChatPanel = ({ sessionId }: ClassChatPanelProps) => {
             );
           }
 
-          if (m.type === "emoji") {
+          if (m.type === "emoji" || (EMOJI_LIST.includes(m.message) && m.message.length <= 4)) {
             return (
               <div key={m.id} style={{display:"flex",justifyContent:isMe?"flex-end":"flex-start"}}>
                 <div style={{textAlign:"center"}}>
