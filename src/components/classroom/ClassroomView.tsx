@@ -47,8 +47,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 
 interface ClassroomViewProps { subject: any; onLeave: () => void; onMinimize?: () => void; autoJoin?: boolean; }
 
-const TEAL  = "#0a7c68";
-const TEAL2 = "#064E3B";
+const TEAL  = "#0a7c68";const TEAL2 = "#064E3B";
 const DARK  = "#0f1117";
 const GLASS = "rgba(15,17,23,0.88)";
 const GLASSB= "rgba(255,255,255,0.08)";
@@ -78,6 +77,8 @@ const CSS = `
   [data-classroom-root] canvas{-webkit-user-select:none;user-select:none;}
   .bottom-bar-scroll::-webkit-scrollbar{display:none;}
   .bottom-bar-scroll{-ms-overflow-style:none;scrollbar-width:none;}
+  .cv-bar{will-change:transform;transform:translateZ(0);contain:layout;scrollbar-width:none;-ms-overflow-style:none;}
+  .cv-bar::-webkit-scrollbar{display:none;}
   @supports not (height:100dvh){[data-classroom-root]{height:-webkit-fill-available!important;}}
 `;
 
@@ -95,8 +96,7 @@ function publishData(room: any, msg: object) {
 const ReconnectMonitor = ({ onReconnecting, onReconnected }: { onReconnecting:()=>void;onReconnected:()=>void }) => {
   const room = useRoomContext();
   useEffect(() => {
-    room.on(RoomEvent.Reconnecting, onReconnecting);
-    room.on(RoomEvent.Reconnected,  onReconnected);
+    room.on(RoomEvent.Reconnecting, onReconnecting);    room.on(RoomEvent.Reconnected,  onReconnected);
     const onVis = async () => {
       if (document.visibilityState !== "visible") return;
       try {
@@ -145,8 +145,7 @@ const MediaAutoPublish = (_props: { lobbyMic?: boolean; lobbyCam?: boolean }) =>
   useEffect(() => {
     let cancelled = false;
     const init = async () => {
-      await new Promise(r => setTimeout(r, 300));
-      if (cancelled) return;
+      await new Promise(r => setTimeout(r, 300));      if (cancelled) return;
       try {
         const lp = room.localParticipant;
         if (lp.isMicrophoneEnabled) await lp.setMicrophoneEnabled(false);
@@ -195,8 +194,7 @@ const RoomDataListener = ({
         if (msg.type === "mat_open")        onMatOpen?.(msg.material);
         if (msg.type === "mat_close")       onMatClose?.();
         if (msg.type === "wb_allow_write")  onWbAllowWrite?.(msg.allow);
-        if (msg.type === "rec_allowed")     onRecAllowed?.(msg.allow);
-        if (msg.type === "emoji_reaction")  onEmojiReaction?.(msg.emoji, msg.senderName);
+        if (msg.type === "rec_allowed")     onRecAllowed?.(msg.allow);        if (msg.type === "emoji_reaction")  onEmojiReaction?.(msg.emoji, msg.senderName);
         if (msg.type === "group_recite")    onGroupRecite?.(msg.active);
         if (msg.type === "mat_scroll")      onMatScroll?.(msg.scrollTop, msg.scrollLeft);
       } catch {}
@@ -245,8 +243,7 @@ const Whiteboard = ({ room, onClose, isTeacher, initialStrokes, subjectId, canSt
   const [busy, setBusy] = useState(true);
   const redraw = useCallback(() => {
     const cv = canvasRef.current; if (!cv) return;
-    const ctx = cv.getContext("2d"); if (!ctx) return;
-    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
+    const ctx = cv.getContext("2d"); if (!ctx) return;    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
     for (const s of strokesRef.current) {
       if (!s.points || s.points.length < 2) continue;
       ctx.beginPath(); ctx.strokeStyle = s.color; ctx.lineWidth = s.lineWidth;
@@ -295,8 +292,7 @@ const Whiteboard = ({ room, onClose, isTeacher, initialStrokes, subjectId, canSt
     if (s) { s.points.push(getPos(e)); redraw(); }
   };
   const onUp = () => { if (!canDraw || !drawing.current) return; drawing.current = false; broadcast({ type: "wb_strokes", strokes: strokesRef.current }); save(); };
-  const clearBoard = () => { if (!canDraw) return; strokesRef.current = []; redraw(); broadcast({ type: "wb_clear" }); save(); };
-  const COLORS = ["#1a1a1a","#EF4444","#3B82F6","#22C55E","#F59E0B","#8B5CF6","#EC4899","#ffffff"];
+  const clearBoard = () => { if (!canDraw) return; strokesRef.current = []; redraw(); broadcast({ type: "wb_clear" }); save(); };  const COLORS = ["#1a1a1a","#EF4444","#3B82F6","#22C55E","#F59E0B","#8B5CF6","#EC4899","#ffffff"];
   return createPortal(
     <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "#f8f8f8", display: "flex", flexDirection: "column" }}>
       <div style={{ background: `linear-gradient(135deg,${TEAL2},${TEAL})`, display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", flexShrink: 0, boxShadow: "0 2px 16px rgba(0,0,0,.4)", overflowX: "auto" as const }}>
@@ -345,8 +341,7 @@ const MaterialViewer = ({ material, isTeacher, onClose, onScroll }: any) => {
   }, [isTeacher, onScroll]);
 
   return createPortal(
-    <div style={{ position: "fixed", inset: 0, zIndex: 9998, background: "#000", display: "flex", flexDirection: "column" }}>
-      <div style={{ height: 52, background: `rgba(6,78,59,.97)`, display: "flex", alignItems: "center", padding: "0 14px", gap: 10 }}>
+    <div style={{ position: "fixed", inset: 0, zIndex: 9998, background: "#000", display: "flex", flexDirection: "column" }}>      <div style={{ height: 52, background: `rgba(6,78,59,.97)`, display: "flex", alignItems: "center", padding: "0 14px", gap: 10 }}>
         <BookOpen style={{ width: 18, height: 18, color: "#fff" }} />
         <span style={{ color: "#fff", fontWeight: 700, fontSize: 15, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title}</span>
         {!isTeacher && <span style={{ fontSize: 11, color: "rgba(255,255,255,.4)", display: "flex", alignItems: "center", gap: 4 }}><MonitorPlay style={{ width: 12, height: 12 }} /> Synced with teacher</span>}
@@ -396,7 +391,6 @@ const MatViewerStudent = ({ material, onClose, scrollPos }: any) => {
     scrollRef.current.scrollTop  = scrollPos.top;
     scrollRef.current.scrollLeft = scrollPos.left;
   }, [scrollPos]);
-
   return createPortal(
     <div style={{ position: "fixed", inset: 0, zIndex: 9998, background: "#000", display: "flex", flexDirection: "column" }}>
       <div style={{ height: 52, background: `rgba(6,78,59,.97)`, display: "flex", alignItems: "center", padding: "0 14px", gap: 10 }}>
@@ -445,8 +439,7 @@ const MaterialPicker = ({ subjectId, onShare, onClose }: any) => {
                 <p style={{ color: "#fff", fontWeight: 600, fontSize: 14, margin: "0 0 3px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{m.title || m.name || "Untitled"}</p>
                 <p style={{ color: "rgba(255,255,255,.35)", fontSize: 11, margin: 0, textTransform: "capitalize" as const }}>{m.material_type || "file"}</p>
               </div>
-              <span style={{ fontSize: 12, color: TEAL, fontWeight: 700 }}>Share →</span>
-            </button>
+              <span style={{ fontSize: 12, color: TEAL, fontWeight: 700 }}>Share →</span>            </button>
           ))}
         </div>
       </div>
@@ -495,8 +488,7 @@ const RecController = ({ sessionId, subjectId, userEmail, onSavingChange }: any)
     mrRef.current!.onstop = async () => {
       const bt = mrRef.current?.mimeType || "audio/webm";
       const blob = new Blob(chunksRef.current, { type: bt });
-      const ext = bt.includes("mp4") ? "mp4" : bt.includes("ogg") ? "ogg" : "webm";
-      const path = `sessions/${subjectId}/rec-${Date.now()}.${ext}`;
+      const ext = bt.includes("mp4") ? "mp4" : bt.includes("ogg") ? "ogg" : "webm";      const path = `sessions/${subjectId}/rec-${Date.now()}.${ext}`;
       onSavingChange?.(true);
       try {
         const { error } = await storageSupabase.storage.from("recordings").upload(path, blob, { upsert: true });
@@ -545,8 +537,7 @@ const ParticipantTile = ({ participant, isLocal, size = "normal" }: { participan
       } else { if (videoRef.current) videoRef.current.srcObject = null; setHasVideo(false); }
       const micPub = participant.getTrackPublication?.(Track.Source.Microphone) || participant.trackPublications?.get(Track.Source.Microphone);
       setMicEnabled(!(micPub?.isMuted ?? false));
-    };
-    update(); const onSpeak = (v: boolean) => setIsSpeaking(v);
+    };    update(); const onSpeak = (v: boolean) => setIsSpeaking(v);
     participant.on?.("trackSubscribed", update); participant.on?.("trackUnsubscribed", update); participant.on?.("trackMuted", update); participant.on?.("trackUnmuted", update); participant.on?.("isSpeakingChanged", onSpeak);
     return () => { participant.off?.("trackSubscribed", update); participant.off?.("trackUnsubscribed", update); participant.off?.("trackMuted", update); participant.off?.("trackUnmuted", update); participant.off?.("isSpeakingChanged", onSpeak); };
   }, [participant]);
@@ -595,8 +586,7 @@ const VideoGrid = () => {
   if (n === 2) return (
     <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", gap, padding: gap, boxSizing: "border-box" }}>
       {all.map(p => (
-        <div key={p.identity} style={{ flex: 1, minHeight: 0 }}>
-          <ParticipantTile participant={p} isLocal={p.identity === localParticipant?.identity} size="large" />
+        <div key={p.identity} style={{ flex: 1, minHeight: 0 }}>          <ParticipantTile participant={p} isLocal={p.identity === localParticipant?.identity} size="large" />
         </div>
       ))}
     </div>
@@ -645,8 +635,7 @@ const BottomBar = ({ sessionId, onToggleChat, onToggleParticipants, onEndClass, 
 
   const toggleMic = async () => { const n = !micOn; await room?.localParticipant?.setMicrophoneEnabled(n); setMicOn(n); };
   const toggleCam = async () => { const n = !camOn; await room?.localParticipant?.setCameraEnabled(n); setCamOn(n); };
-  const toggleHand = async () => {
-    if (!user || !sessionId) return; const n = !handUp; setHandUp(n);
+  const toggleHand = async () => {    if (!user || !sessionId) return; const n = !handUp; setHandUp(n);
     await supabase.from("class_participants").update({ hand_raised: n, hand_raised_at: n ? new Date().toISOString() : null }).eq("session_id", sessionId).eq("student_id", user.id);
   };
   const openWhiteboard = () => { onToggleWhiteboard(); };
@@ -695,8 +684,7 @@ const BottomBar = ({ sessionId, onToggleChat, onToggleParticipants, onEndClass, 
 
   const menuPortal = typeof document !== "undefined" ? document.body : null;
 
-  return (
-    <>
+  return (    <>
       {/* Emoji picker popup */}
       {emojis && menuPortal && createPortal(
         <div style={{ position: "fixed", bottom: BAR_H + 12, left: "50%", transform: "translateX(-50%)", background: "#1e2535", border: "1px solid rgba(255,255,255,.1)", borderRadius: 44, padding: "10px 16px", display: "flex", gap: 10, zIndex: 9000, boxShadow: "0 8px 32px rgba(0,0,0,.6)", animation: "slide-up .2s ease" }}>
@@ -729,9 +717,10 @@ const BottomBar = ({ sessionId, onToggleChat, onToggleParticipants, onEndClass, 
 
       {/* Main bar — horizontally scrollable on mobile */}
       <div
-        className="bottom-bar-scroll"
+        className="cv-bar"
         style={{
           height: isMobile ? 60 : BAR_H,
+          minHeight: isMobile ? 60 : BAR_H,
           background: GLASS, backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)",
           borderTop: "1px solid rgba(255,255,255,.07)",
           display: "flex", alignItems: "center",
@@ -744,8 +733,7 @@ const BottomBar = ({ sessionId, onToggleChat, onToggleParticipants, onEndClass, 
           WebkitOverflowScrolling: "touch",
           minWidth: 0,
         }}
-      >
-        {/* Always-visible core buttons */}
+      >        {/* Always-visible core buttons */}
         <Btn active={micOn} danger={!micOn} title={micOn ? "Mute" : "Unmute"} onClick={toggleMic}>{micOn ? <Mic style={IS} /> : <MicOff style={IS} />}</Btn>
         <Btn active={camOn} danger={!camOn} title={camOn ? "Stop Video" : "Start Video"} onClick={toggleCam}>{camOn ? <Video style={IS} /> : <VideoOff style={IS} />}</Btn>
 
@@ -794,8 +782,7 @@ const ClassroomView = ({ subject, onLeave, onMinimize, autoJoin = false }: Class
   const isPrivileged = hasRole("admin") || hasRole("teacher");
 
   const [phase,        setPhase]        = useState<"lobby" | "live" | "ended">("lobby");
-  const [token,        setToken]        = useState<string | null>(null);
-  const [wsUrl,        setWsUrl]        = useState<string | null>(null);
+  const [token,        setToken]        = useState<string | null>(null);  const [wsUrl,        setWsUrl]        = useState<string | null>(null);
   const [error,        setError]        = useState<string | null>(null);
   const [loading,      setLoading]      = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
@@ -844,8 +831,7 @@ const ClassroomView = ({ subject, onLeave, onMinimize, autoJoin = false }: Class
   // Prefetch token
   useEffect(() => {
     supabase.functions.invoke("livekit-token", { body: { subject_id: subject.id, action: isPrivileged ? "start_session" : "join" } })
-      .then(({ data }) => { if (data?.token && data?.url) prefetch.current = { token: data.token, url: data.url }; })
-      .catch(() => {});
+      .then(({ data }) => { if (data?.token && data?.url) prefetch.current = { token: data.token, url: data.url }; })      .catch(() => {});
   }, [subject.id, isPrivileged]);
 
   // Auto-join (page restore)
@@ -894,8 +880,7 @@ const ClassroomView = ({ subject, onLeave, onMinimize, autoJoin = false }: Class
   // Add floating emoji for everyone (local trigger or received from data channel)
   const spawnEmoji = useCallback((emoji: string) => {
     const id = ++emojiIdRef.current;
-    const x = 10 + Math.random() * 80; // random horizontal position 10-90%
-    setFloatingEmojis(prev => [...prev, { id, emoji, x }]);
+    const x = 10 + Math.random() * 80; // random horizontal position 10-90%    setFloatingEmojis(prev => [...prev, { id, emoji, x }]);
     setTimeout(() => setFloatingEmojis(prev => prev.filter(e => e.id !== id)), 3000);
   }, []);
 
@@ -944,8 +929,7 @@ const ClassroomView = ({ subject, onLeave, onMinimize, autoJoin = false }: Class
       if (sessionId) {
         await supabase.from("live_sessions").update({ status: "ended", ended_at: new Date().toISOString(), actual_end_time: new Date().toISOString() }).eq("id", sessionId);
         if (user) await supabase.from("class_chat_messages").insert({ session_id: sessionId, sender_id: user.id, message: t("Class has ended", "انتهت الحصة"), type: "system" });
-      }
-    } catch (e: any) { console.error("[endSession]", e?.message); } finally { setPhase("ended"); }
+      }    } catch (e: any) { console.error("[endSession]", e?.message); } finally { setPhase("ended"); }
   };
 
   const leaveSession = () => {
@@ -994,8 +978,7 @@ const ClassroomView = ({ subject, onLeave, onMinimize, autoJoin = false }: Class
         <Users style={{ width: 10, height: 10, color: "rgba(255,255,255,.45)" }} />
         <span style={{ fontSize: 11, color: "#fff", fontWeight: 600 }}>{all.length}</span>
       </div>
-    );
-  };
+    );  };
 
   // BottomBar with room context for emoji broadcast
   const BottomBarWithEmoji = (props: any) => {
@@ -1044,8 +1027,7 @@ const ClassroomView = ({ subject, onLeave, onMinimize, autoJoin = false }: Class
             adaptiveStream: { pixelDensity: "screen" },
             dynacast: true,
             disconnectOnPageLeave: false, // CRITICAL: keep alive when minimized
-            // ── High-quality audio ────────────────────────────────────
-            audioCaptureDefaults: {
+            // ── High-quality audio ────────────────────────────────────            audioCaptureDefaults: {
               echoCancellation: true,
               noiseSuppression: true,
               autoGainControl: true,
@@ -1094,8 +1076,7 @@ const ClassroomView = ({ subject, onLeave, onMinimize, autoJoin = false }: Class
               <div style={{ width: 48, height: 48, border: `3px solid ${TEAL}`, borderTopColor: "transparent", borderRadius: "50%", animation: "cv-spin .8s linear infinite" }} />
               <p style={{ color: "#fff", fontSize: 15, fontWeight: 700 }}>Reconnecting…</p>
               <p style={{ color: "rgba(255,255,255,.4)", fontSize: 13 }}>Your audio continues in background</p>
-            </div>
-          )}
+            </div>          )}
 
           {/* Top bar */}
           <div style={{ height: 52, background: GLASS, backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 16px", flexShrink: 0, borderBottom: "1px solid rgba(255,255,255,.05)" }}>
@@ -1144,8 +1125,7 @@ const ClassroomView = ({ subject, onLeave, onMinimize, autoJoin = false }: Class
             chatUnread={chatUnread}
             onToggleWhiteboard={() => setWbOpen(v => !v)}
             whiteboardOpen={wbOpen}
-            groupReciteMode={groupRecite}
-            onShareMaterial={() => setMatPicker(true)}
+            groupReciteMode={groupRecite}            onShareMaterial={() => setMatPicker(true)}
             isPrivileged={isPrivileged}
             canStudentWriteProp={canStudentWrite}
             canStudentRecProp={canStudentRec}
@@ -1195,7 +1175,6 @@ const ClassroomView = ({ subject, onLeave, onMinimize, autoJoin = false }: Class
           onClose={() => setMatPicker(false)}
         />
       )}
-
       {/* End class confirm */}
       {showEnd && createPortal(
         <div style={{ position: "fixed", inset: 0, zIndex: 9500, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,.72)", backdropFilter: "blur(6px)" }} onClick={() => setShowEnd(false)}>
