@@ -24,6 +24,15 @@ const DAYS = [
   { index: 6, en: "Sat", full: "Saturday",  ar: "سبت",    arFull: "السبت" },
 ];
 
+/** Convert "HH:MM:SS" → "H:MM AM/PM" */
+function to12hr(timeStr: string): string {
+  if (!timeStr) return "";
+  const [h, m] = timeStr.split(":").map(Number);
+  const ampm = h >= 12 ? "PM" : "AM";
+  const h12  = h % 12 || 12;
+  return `${h12}:${String(m).padStart(2, "0")} ${ampm}`;
+}
+
 function minutesUntil(timeStr: string): number {
   const now = new Date();
   const [h, m] = timeStr.split(":").map(Number);
@@ -52,32 +61,26 @@ export default function TeacherTimetable() {
     return () => clearInterval(iv);
   }, []);
 
-  // Get teacher's subjects — both owned (teacher_id on subject) and via timetable assignment
   useEffect(() => {
     if (!user) return;
     const fetchIds = async () => {
-      // Direct subject ownership
       const { data: owned } = await supabase.from("subjects").select("id").eq("teacher_id", user.id);
       const ownedIds = (owned || []).map((s: any) => s.id);
 
-      // Also subjects assigned via timetable teacher_id
       const { data: ttSlots } = await supabase
         .from("subject_timetable" as any).select("subject_id").eq("teacher_id", user.id);
       const ttIds = (ttSlots || []).map((s: any) => s.subject_id).filter(Boolean);
 
-      const merged = [...new Set([...ownedIds, ...ttIds])];
-      setSubjectIds(merged);
+      setSubjectIds([...new Set([...ownedIds, ...ttIds])]);
     };
     fetchIds();
   }, [user]);
 
-  // Fetch timetable slots for teacher — by subject_id OR direct teacher_id
   const { data: timetableSlots, isLoading: ttLoading } = useQuery({
     queryKey: ["teacher-timetable", subjectIds],
     enabled: !!user,
     queryFn: async () => {
       try {
-        // Slots from owned/assigned subjects
         let rows: any[] = [];
         if (subjectIds.length > 0) {
           const { data: bySubject } = await supabase
@@ -88,7 +91,6 @@ export default function TeacherTimetable() {
             .order("day_of_week").order("start_time");
           rows = bySubject || [];
         }
-        // Also fetch slots directly assigned to this teacher (may overlap, dedupe by id)
         const { data: byTeacher } = await supabase
           .from("subject_timetable" as any)
           .select("*, subjects(id, title, title_ar, image_url)")
@@ -96,38 +98,31 @@ export default function TeacherTimetable() {
           .eq("is_active", true)
           .order("day_of_week").order("start_time");
         const byTeacherRows = byTeacher || [];
-        // Merge, deduplicate by id
         const seen = new Set(rows.map((r: any) => r.id));
         for (const r of byTeacherRows) {
           if (!seen.has(r.id)) { rows.push(r); seen.add(r.id); }
         }
         return rows;
-      } catch {
-        return [];
-      }
+      } catch { return []; }
     },
   });
 
-  // Fetch upcoming live sessions
   const { data: upcomingSessions } = useQuery({
     queryKey: ["teacher-upcoming-sessions", subjectIds],
     enabled: subjectIds.length > 0,
     queryFn: async () => {
-      const now = new Date().toISOString();
+      const nowIso = new Date().toISOString();
       const { data } = await supabase.from("live_sessions")
         .select("*, subjects(title, title_ar)")
         .in("subject_id", subjectIds)
-        .gte("scheduled_at", now)
+        .gte("scheduled_at", nowIso)
         .order("scheduled_at")
         .limit(10);
       return data || [];
     },
   });
 
-  // Today's timetable slots
-  const todaySlots = (timetableSlots || []).filter((s: any) => s.day_of_week === todayIndex);
-
-  // Slots for selected day
+  const todaySlots    = (timetableSlots || []).filter((s: any) => s.day_of_week === todayIndex);
   const selectedSlots = (timetableSlots || []).filter((s: any) => s.day_of_week === selectedDay);
 
   const levelColors: Record<string, { bg: string; color: string; border: string }> = {
@@ -136,14 +131,12 @@ export default function TeacherTimetable() {
     advanced:     { bg: "#f5f0ff", color: "#6b46c1", border: "#d6bcfa" },
   };
 
-  if (isLoading || ttLoading) return (
+  if (ttLoading) return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: 400 }}>
       <div style={{ width: 32, height: 32, borderRadius: "50%", border: `4px solid ${GOLD}`, borderTopColor: "transparent", animation: "spin .8s linear infinite" }} />
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </div>
   );
-
-  const isLoading = false;
 
   return (
     <div style={{ minHeight: "100vh", background: "#F3F4F6", fontFamily: "system-ui, sans-serif" }}>
@@ -163,7 +156,7 @@ export default function TeacherTimetable() {
         {todaySlots.length > 0 && (
           <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 8 }}>
             {todaySlots.slice(0, 2).map((slot: any) => {
-              const mins = minutesUntil(slot.start_time);
+              const mins  = minutesUntil(slot.start_time);
               const isNow = mins <= 0 && mins > -slot.duration_minutes;
               return (
                 <div key={slot.id} style={{
@@ -177,7 +170,7 @@ export default function TeacherTimetable() {
                       {language === "ar" ? slot.subjects?.title_ar || slot.subjects?.title : slot.subjects?.title}
                     </span>
                     <span style={{ fontSize: 11, color: "rgba(255,255,255,.6)", marginLeft: 8 }}>
-                      {slot.start_time} — {slot.end_time}
+                      {to12hr(slot.start_time)} — {to12hr(slot.end_time)}
                     </span>
                   </div>
                   {isNow ? (
@@ -195,9 +188,9 @@ export default function TeacherTimetable() {
       {/* Day selector */}
       <div style={{ position: "relative", zIndex: 1, margin: "-40px 16px 0", display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4 }}>
         {DAYS.map(day => {
-          const isToday   = day.index === todayIndex;
+          const isToday    = day.index === todayIndex;
           const isSelected = day.index === selectedDay;
-          const hasClass  = (timetableSlots || []).some((s: any) => s.day_of_week === day.index);
+          const hasClass   = (timetableSlots || []).some((s: any) => s.day_of_week === day.index);
           return (
             <button key={day.index} onClick={() => setSelectedDay(day.index)} style={{
               flexShrink: 0, width: 52, padding: "10px 0",
@@ -248,8 +241,8 @@ export default function TeacherTimetable() {
             {selectedSlots
               .sort((a: any, b: any) => a.start_time.localeCompare(b.start_time))
               .map((slot: any) => {
-                const lc = levelColors[slot.level || "beginner"] || levelColors.beginner;
-                const mins = selectedDay === todayIndex ? minutesUntil(slot.start_time) : 9999;
+                const lc     = levelColors[slot.level || "beginner"] || levelColors.beginner;
+                const mins   = selectedDay === todayIndex ? minutesUntil(slot.start_time) : 9999;
                 const isLive = mins <= 0 && mins > -(slot.duration_minutes || 60);
                 const isSoon = mins > 0 && mins < 60;
                 return (
@@ -262,12 +255,12 @@ export default function TeacherTimetable() {
                   }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "16px 18px" }}>
                       {/* Time column */}
-                      <div style={{ textAlign: "center", flexShrink: 0, width: 54 }}>
-                        <div style={{ fontSize: 16, fontWeight: 900, color: isLive ? GOLD : G }}>
-                          {slot.start_time?.substring(0, 5)}
+                      <div style={{ textAlign: "center", flexShrink: 0, width: 68 }}>
+                        <div style={{ fontSize: 14, fontWeight: 900, color: isLive ? GOLD : G }}>
+                          {to12hr(slot.start_time)}
                         </div>
                         <div style={{ fontSize: 10, color: "#9CA3AF" }}>
-                          {slot.end_time?.substring(0, 5)}
+                          {to12hr(slot.end_time)}
                         </div>
                         {isLive && <div style={{ fontSize: 9, fontWeight: 900, color: "#DC2626", marginTop: 2 }}>LIVE</div>}
                         {isSoon && !isLive && <div style={{ fontSize: 9, color: GOLD, fontWeight: 700 }}>{formatCountdown(mins)}</div>}
