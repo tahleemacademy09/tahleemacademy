@@ -47,8 +47,7 @@ const MAT_CFG: Record<MatType, { icon: React.ElementType; bg: string; text: stri
   Document: { icon: FileSpreadsheet, bg: "#EFF6FF", text: "#1D4ED8", border: "#BFDBFE" },
 };
 
-const LVL_CFG: Record<Level, { label: string; bg: string; text: string; border: string }> = {
-  beginner:     { label: "Beginner",     bg: "#F0FDF4", text: "#166534", border: "#86EFAC" },
+const LVL_CFG: Record<Level, { label: string; bg: string; text: string; border: string }> = {  beginner:     { label: "Beginner",     bg: "#F0FDF4", text: "#166534", border: "#86EFAC" },
   intermediate: { label: "Intermediate", bg: "#EFF6FF", text: "#1E40AF", border: "#93C5FD" },
   advanced:     { label: "Advanced",     bg: "#FDF4FF", text: "#6B21A8", border: "#D8B4FE" },
 };
@@ -97,8 +96,7 @@ async function xhrUpload(
   uploadUrl: string,
   file: File,
   token: string,
-  onProgress: (pct: number) => void
-): Promise<void> {
+  onProgress: (pct: number) => void): Promise<void> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("PUT", uploadUrl, true);
@@ -147,8 +145,7 @@ function PreviewOverlay({ url, type, title, onClose }: {
           style={{ padding: "6px 14px", borderRadius: 8, background: "rgba(255,255,255,.15)", color: "#fff", fontSize: 12, textDecoration: "none", fontWeight: 600 }}>
           Download
         </a>
-        <button onClick={e => { e.stopPropagation(); onClose(); }}
-          style={{ width: 36, height: 36, borderRadius: "50%", background: "rgba(239,68,68,.25)", border: "1.5px solid rgba(239,68,68,.6)", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <button onClick={e => { e.stopPropagation(); onClose(); }}          style={{ width: 36, height: 36, borderRadius: "50%", background: "rgba(239,68,68,.25)", border: "1.5px solid rgba(239,68,68,.6)", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
           <X size={18} />
         </button>
       </div>
@@ -197,8 +194,7 @@ function PreviewOverlay({ url, type, title, onClose }: {
       </div>
     </div>,
     document.body
-  );
-}
+  );}
 
 // ══ FILE PREVIEW BLOCK (before upload) ══════════════════════════════
 function FilePreviewBlock({ file, type, objectUrl, onClear }: {
@@ -247,7 +243,6 @@ interface ModalProps {
   ed?: any; subjectId: string; nextSort: number;
   onClose: () => void; onSaved: () => void;
 }
-
 const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }: ModalProps) => {
   const { user } = useAuth();
 
@@ -297,8 +292,7 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
 
   const pickFile = useCallback((picked: File) => {
     if (objectUrl) URL.revokeObjectURL(objectUrl);
-    const blobUrl = URL.createObjectURL(picked);
-    setObjectUrl(blobUrl);
+    const blobUrl = URL.createObjectURL(picked);    setObjectUrl(blobUrl);
     setFile(picked);
     setF(prev => ({
       ...prev,
@@ -327,7 +321,7 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
     if (selectedLevels.size === 0)               { setErr("Select at least one level."); return; }
 
     // ── Verify user is signed in before touching storage ────────────
-    const { data: { session } } = await supabase.auth.getSession();
+    const {  { session } } = await supabase.auth.getSession();
     if (!session) {
       setErr("You must be signed in to upload files. Please refresh and log in again.");
       return;
@@ -347,8 +341,7 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
         setPct(20);
 
         // ── Use the MAIN supabase client directly for upload ─────────
-        // This uses the authenticated user's JWT session, which means
-        // the storage RLS policy (auth.role() = 'authenticated') is met.
+        // This uses the authenticated user's JWT session, which means        // the storage RLS policy (auth.role() = 'authenticated') is met.
         const { data: upData, error: upErr } = await supabase.storage
           .from(BUCKET)
           .upload(uploadPath, file, {
@@ -397,8 +390,7 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
       };
 
       const { error: dbErr } = ed?.id
-        ? await supabase.from("subject_materials").update(payload).eq("id", ed.id)
-        : await supabase.from("subject_materials").insert(payload);
+        ? await supabase.from("subject_materials").update(payload).eq("id", ed.id)        : await supabase.from("subject_materials").insert(payload);
 
       if (dbErr) {
         // If DB insert fails but file was already uploaded, try to clean up
@@ -447,8 +439,7 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
         <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 16 }}>
 
           {/* Error banner */}
-          {err && (
-            <div style={{ padding: "12px 14px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", color: "#DC2626", fontSize: 12, whiteSpace: "pre-line", display: "flex", gap: 8 }}>
+          {err && (            <div style={{ padding: "12px 14px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", color: "#DC2626", fontSize: 12, whiteSpace: "pre-line", display: "flex", gap: 8 }}>
               <AlertCircle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
               <span>{err}</span>
             </div>
@@ -497,8 +488,7 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
                        f.material_type === "Document" ? "Word, Excel, PowerPoint, ODT, CSV, RTF" :
                        "Any file type"}
                     </p>
-                  </div>
-                  {/* Transparent full-zone input — accept="*/*" avoids Android document-picker back-nav bug */}
+                  </div>                  {/* Transparent full-zone input — accept all file types to avoid Android document-picker back-nav bug */}
                   <input
                     ref={fileRef}
                     type="file"
@@ -547,8 +537,7 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
             </div>
           )}
 
-          {/* Titles */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          {/* Titles */}          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             <div>
               <label style={{ fontSize: 11, fontWeight: 700, color: "#374151", display: "block", marginBottom: 5 }}>TITLE (ENGLISH) *</label>
               <input value={f.title} disabled={busy} onChange={e => { setF(x => ({ ...x, title: e.target.value })); setErr(""); }} placeholder="e.g. Week 1 Worksheet" style={inp} />
@@ -597,8 +586,7 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
           {/* Progress */}
           {phase !== "idle" && (
             <div style={{
-              padding: "12px 16px", borderRadius: 12, fontSize: 13,
-              background: phase === "done" ? "#F0FDF4" : phase === "error" ? "#FEF2F2" : "#EFF6FF",
+              padding: "12px 16px", borderRadius: 12, fontSize: 13,              background: phase === "done" ? "#F0FDF4" : phase === "error" ? "#FEF2F2" : "#EFF6FF",
               border: `1px solid ${phase === "done" ? "#BBF7D0" : phase === "error" ? "#FECACA" : "#BFDBFE"}`,
               color: phase === "done" ? "#16A34A" : phase === "error" ? "#DC2626" : "#1D4ED8",
               display: "flex", alignItems: "center", gap: 10,
@@ -647,8 +635,7 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
 // ══ MATERIAL CARD ════════════════════════════════════════════════════
 function MaterialCard({ m, isPrivileged, onEdit, onDelete }: {
   m: any; isPrivileged: boolean; onEdit: () => void; onDelete: () => void;
-}) {
-  const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
+}) {  const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [loading,     setLoading]     = useState(false);
   const [expanded,    setExpanded]    = useState(false);
@@ -697,8 +684,7 @@ function MaterialCard({ m, isPrivileged, onEdit, onDelete }: {
           {/* Icon */}
           <div style={{ width: 48, height: 48, borderRadius: 12, flexShrink: 0, background: cfg.bg, border: `1.5px solid ${cfg.border}`, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
             {m.material_type === "Image" && m.file_url?.startsWith("http")
-              ? <img src={m.file_url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-              : <Icon size={20} color={cfg.text} />}
+              ? <img src={m.file_url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />              : <Icon size={20} color={cfg.text} />}
           </div>
 
           {/* Info */}
@@ -747,8 +733,7 @@ function MaterialCard({ m, isPrivileged, onEdit, onDelete }: {
               </button>
             )}
             {isPrivileged && (
-              <>
-                <button type="button" onClick={onEdit}
+              <>                <button type="button" onClick={onEdit}
                   style={{ width: 34, height: 34, borderRadius: 10, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
                   <Edit2 size={14} color={G} />
                 </button>
@@ -789,7 +774,7 @@ export default function SubjectMaterials({ subjectId, subjectTitle }: SubjectMat
   const [search,     setSearch]     = useState("");
   const [typeFilter, setTypeFilter] = useState<MatType | "all">("all");
 
-  const { data: materials = [], isLoading } = useQuery({
+  const {  materials = [], isLoading } = useQuery({
     queryKey: ["sm-materials", subjectId],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -797,8 +782,7 @@ export default function SubjectMaterials({ subjectId, subjectTitle }: SubjectMat
         .select("*")
         .eq("subject_id", subjectId)
         .order("sort_order", { ascending: true })
-        .order("created_at",  { ascending: false });
-      if (error) throw error;
+        .order("created_at",  { ascending: false });      if (error) throw error;
       return data || [];
     },
   });
@@ -847,8 +831,7 @@ export default function SubjectMaterials({ subjectId, subjectTitle }: SubjectMat
         </select>
         {isPrivileged && (
           <button type="button" onClick={() => { setEditing(null); setShowModal(true); }}
-            style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 16px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${G}, ${GM})`, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
-            <Plus size={14} /> {t("Upload", "رفع مادة")}
+            style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 16px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${G}, ${GM})`, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>            <Plus size={14} /> {t("Upload", "رفع مادة")}
           </button>
         )}
       </div>
@@ -897,8 +880,7 @@ export default function SubjectMaterials({ subjectId, subjectTitle }: SubjectMat
       {showModal && (
         <MaterialModal
           ed={editing}
-          subjectId={subjectId}
-          nextSort={(materials as any[]).length}
+          subjectId={subjectId}          nextSort={(materials as any[]).length}
           onClose={() => { setShowModal(false); setEditing(null); }}
           onSaved={() => {
             setShowModal(false);
