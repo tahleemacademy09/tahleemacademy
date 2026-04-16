@@ -36,7 +36,7 @@ async function showNotif(subject: any, onClickReturn: () => void) {
     _activeNotif = new Notification("📡 Tahleem Academy — Live Class", {
       body: `${subject?.title || "Class"} is in progress. Tap to return.`,
       tag: NOTIF_TAG,
-      requireInteraction: true,  // This makes the notification stay until user interacts
+      requireInteraction: true,
       silent: true,
       icon: "/favicon.ico",
       badge: "/favicon.ico",
