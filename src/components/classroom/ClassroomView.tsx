@@ -1,59 +1,3 @@
-// Fix 1: Update src/components/classroom/ClassroomView.tsx - BottomBar toggleMic/toggleCam
-// Around line 625-640, replace with:
-
-const toggleMic = async () => {
-  if (!room?.localParticipant) return;
-  try {
-    const current = room.localParticipant.isMicrophoneEnabled;
-    console.log("[toggleMic] current state:", current, "toggling to:", !current);
-    
-    // Set optimistic state first
-    setMicOn(!current);
-    
-    // Then actually toggle it
-    await room.localParticipant.setMicrophoneEnabled(!current);
-    
-    // Add a small delay to let LiveKit process
-    await new Promise(r => setTimeout(r, 200));
-    
-    // Sync actual room state
-    setMicOn(room.localParticipant.isMicrophoneEnabled);
-    console.log("[toggleMic] final state:", room.localParticipant.isMicrophoneEnabled);
-  } catch (e) {
-    console.error("toggleMic error:", e);
-    // Reset state on error
-    setMicOn(room.localParticipant.isMicrophoneEnabled);
-  }
-};
-
-const toggleCam = async () => {
-  if (!room?.localParticipant) return;
-  try {
-    const current = room.localParticipant.isCameraEnabled;
-    console.log("[toggleCam] current state:", current, "toggling to:", !current);
-    
-    // Set optimistic state first
-    setCamOn(!current);
-    
-    // Then actually toggle it
-    await room.localParticipant.setCameraEnabled(!current);
-    
-    // Add a small delay to let LiveKit process
-    await new Promise(r => setTimeout(r, 200));
-    
-    // Sync actual room state
-    setCamOn(room.localParticipant.isCameraEnabled);
-    console.log("[toggleCam] final state:", room.localParticipant.isCameraEnabled);
-  } catch (e) {
-    console.error("toggleCam error:", e);
-    // Reset state on error
-    setCamOn(room.localParticipant.isCameraEnabled);  }
-};
-
-
-
-
-
 /*
   ClassroomView.tsx — Tahleem Academy Live Classroom
   Google Meet-style UI · iOS-safe · Persistent call context
@@ -80,6 +24,7 @@ import {
   PenTool, MessageCircle, MoreVertical, BookOpen,
   Circle, Loader2, X, Smile, Play, Pause,
   Volume2, ChevronDown, Users, Eye,
+  LayoutGrid, AlignJustify, Columns, Rows, Maximize2,
 } from "lucide-react";
 import ClassLobby        from "./ClassLobby";
 import ClassChatPanel    from "./ClassChatPanel";
@@ -91,24 +36,29 @@ import { useIsMobile }   from "@/hooks/use-mobile";
 import { useState, useEffect, useRef, useCallback } from "react";
 
 interface ClassroomViewProps { subject: any; onLeave: () => void; onMinimize?: () => void; autoJoin?: boolean; }
+type LayoutMode = "grid"|"spotlight"|"horizontal"|"vertical"|"focus";
+interface FloatingEmoji { id:number; emoji:string; x:number; sender:string; }
+interface RaisedHand   { identity:string; name:string; raisedAt:number; }
 
 const TEAL  = "#0a7c68";
 const TEAL2 = "#064E3B";
 const DARK  = "#0f1117";
 const GLASS = "rgba(15,17,23,0.88)";
-const GLASSB= "rgba(255,255,255,0.08)";const GREEN = "#22c55e";
+const GLASSB= "rgba(255,255,255,0.08)";
+const GREEN = "#22c55e";
 const RED   = "#ef4444";
 const BAR_H = 76;
 
 const CSS = `
-  @keyframes cv-spin  { to { transform:rotate(360deg); } }
-  @keyframes wb-spin  { to { transform:rotate(360deg); } }
-  @keyframes speaking { 0%,100%{opacity:1}50%{opacity:.35} }
-  @keyframes pip-pulse{ 0%,100%{opacity:1}50%{opacity:.3} }
+  @keyframes cv-spin    { to { transform:rotate(360deg); } }
+  @keyframes wb-spin    { to { transform:rotate(360deg); } }
+  @keyframes speaking   { 0%,100%{opacity:1}50%{opacity:.35} }
+  @keyframes pip-pulse  { 0%,100%{opacity:1}50%{opacity:.3} }
   @keyframes slide-up   { from{transform:translateY(100%);opacity:0}to{transform:translateY(0);opacity:1} }
   @keyframes fade-in    { from{opacity:0;transform:scale(.96)}to{opacity:1;transform:scale(1)} }
-  @keyframes emoji-float{ 0%{transform:translateY(0) scale(1);opacity:1}70%{opacity:.9}100%{transform:translateY(-340px) scale(1.5);opacity:0} }
+  @keyframes emoji-float{ 0%{transform:translateY(0) scale(1);opacity:1}70%{opacity:.9}100%{transform:translateY(-300px) scale(1.35);opacity:0} }
   @keyframes rec-pulse  { 0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.5)}70%{box-shadow:0 0 0 8px rgba(239,68,68,0)} }
+  @keyframes hand-bounce{ 0%,100%{transform:translateY(0)}45%{transform:translateY(-7px)} }
   [data-lk-theme]{ height:100%!important;display:flex!important;flex-direction:column!important; }
   [data-classroom-root]{
     overscroll-behavior:none;-webkit-overflow-scrolling:touch;
@@ -117,10 +67,8 @@ const CSS = `
   [data-classroom-root] button{-webkit-tap-highlight-color:transparent;touch-action:manipulation;}
   [data-classroom-root] canvas{-webkit-user-select:none;user-select:none;}
   @supports not (height:100dvh){[data-classroom-root]{height:-webkit-fill-available!important;}}
-  /* ── Footer bar: prevent scrollbar-induced layout jank ── */
   .cv-bar{scrollbar-width:none;-ms-overflow-style:none;}
   .cv-bar::-webkit-scrollbar{display:none;}
-  /* Stable height — clamp prevents iOS safe-area calc from causing reflow */
   .cv-bar{will-change:transform;transform:translateZ(0);contain:layout style;}
 `;
 
@@ -145,7 +93,8 @@ const ReconnectMonitor = ({ onReconnecting, onReconnected }: { onReconnecting:()
       } catch {}
     };
     document.addEventListener("visibilitychange", onVis);
-    return () => {      room.off(RoomEvent.Reconnecting, onReconnecting);
+    return () => {
+      room.off(RoomEvent.Reconnecting, onReconnecting);
       room.off(RoomEvent.Reconnected,  onReconnected);
       document.removeEventListener("visibilitychange", onVis);
     };
@@ -194,7 +143,8 @@ const MediaAutoPublish = (_props: { lobbyMic?: boolean; lobbyCam?: boolean }) =>
       try {
         const lp = room.localParticipant;
         // Always start silent and dark — user controls via footer buttons
-        if (lp.isMicrophoneEnabled) await lp.setMicrophoneEnabled(false);        if (lp.isCameraEnabled)     await lp.setCameraEnabled(false);
+        if (lp.isMicrophoneEnabled) await lp.setMicrophoneEnabled(false);
+        if (lp.isCameraEnabled)     await lp.setCameraEnabled(false);
       } catch { /* non-critical */ }
     };
     init();
@@ -205,10 +155,10 @@ const MediaAutoPublish = (_props: { lobbyMic?: boolean; lobbyCam?: boolean }) =>
 };
 
 /* ══ ROOM DATA LISTENER ══ */
-const RoomDataListener = ({ onWbOpen,onWbClose,strokesBuffer,onMatOpen,onMatClose,onWbAllowWrite,onRecAllowed,onEmojiReact,onGroupRecite }:any) => {
+const RoomDataListener = ({ onWbOpen,onWbClose,strokesBuffer,onMatOpen,onMatClose,onWbAllowWrite,onRecAllowed,onEmojiReact,onGroupRecite,onHandRaise }:any) => {
   const room = useRoomContext();
   useEffect(() => {
-    const h = (payload:Uint8Array) => {
+    const h = (payload:Uint8Array,participant?:any) => {
       try {
         const msg = JSON.parse(new TextDecoder().decode(payload));
         if(msg.type==="wb_open")          onWbOpen();
@@ -221,6 +171,7 @@ const RoomDataListener = ({ onWbOpen,onWbClose,strokesBuffer,onMatOpen,onMatClos
         if(msg.type==="rec_allowed")      onRecAllowed?.(msg.allow);
         if(msg.type==="emoji_react")      onEmojiReact?.(msg.emoji, msg.sender);
         if(msg.type==="group_recite")     onGroupRecite?.(msg.active);
+        if(msg.type==="hand_raise")       onHandRaise?.(msg.identity||participant?.identity, msg.name, msg.raised);
       } catch {}
     };
     room.on(RoomEvent.DataReceived,h);
@@ -229,39 +180,97 @@ const RoomDataListener = ({ onWbOpen,onWbClose,strokesBuffer,onMatOpen,onMatClos
   return null;
 };
 
-/* ══ FLOATING EMOJI LAYER ══
-   Renders emojis that float upward across the video grid — visible to all users.
-   Each emoji spawns at a random X position and floats to the top.              */
-interface FloatingEmoji { id:number; emoji:string; x:number; }
+/* ══ FLOATING EMOJI LAYER — visible to all, shows sender name ══ */
 const FloatingEmojiLayer=({emojis}:{emojis:FloatingEmoji[]})=>(
   <div style={{position:"absolute",inset:0,pointerEvents:"none",zIndex:40,overflow:"hidden"}}>
     {emojis.map(fe=>(
       <div key={fe.id} style={{
-        position:"absolute",
-        bottom:80,
-        left:`${fe.x}%`,
-        fontSize:40,
-        lineHeight:1,
+        position:"absolute", bottom:90, left:`${fe.x}%`,
+        display:"flex",flexDirection:"column",alignItems:"center",gap:3,
         animation:"emoji-float 2.6s ease-out forwards",
-        userSelect:"none",        filter:"drop-shadow(0 2px 6px rgba(0,0,0,.5))",
-      }}>{fe.emoji}</div>
+        userSelect:"none",
+      }}>
+        <span style={{fontSize:38,filter:"drop-shadow(0 2px 6px rgba(0,0,0,.55))",lineHeight:1}}>{fe.emoji}</span>
+        {fe.sender&&<span style={{fontSize:10,fontWeight:700,color:"#fff",background:"rgba(0,0,0,.55)",borderRadius:8,padding:"1px 6px",whiteSpace:"nowrap",maxWidth:100,overflow:"hidden",textOverflow:"ellipsis"}}>{fe.sender}</span>}
+      </div>
     ))}
   </div>
 );
 
-/* ══ GROUP RECITE BRIDGE ══
-   Lives inside <LiveKitRoom>. When group recitation is active, auto-enables
-   every participant's mic so all can recite simultaneously. When deactivated,
-   mutes them back (unless they were already speaking).                         */
+/* ══ RAISED HANDS OVERLAY — pill badges top-left of video area ══ */
+const RaisedHandsOverlay=({hands}:{hands:RaisedHand[]})=>{
+  if(!hands.length)return null;
+  return(
+    <div style={{position:"absolute",top:10,left:10,zIndex:45,display:"flex",flexDirection:"column",gap:5,pointerEvents:"none"}}>
+      {hands.map(h=>(
+        <div key={h.identity} style={{display:"flex",alignItems:"center",gap:6,background:"rgba(251,191,36,.92)",borderRadius:20,padding:"5px 12px 5px 8px",boxShadow:"0 2px 12px rgba(0,0,0,.4)"}}>
+          <span style={{fontSize:16,animation:"hand-bounce 1.2s ease-in-out infinite"}}>✋</span>
+          <span style={{fontSize:12,fontWeight:800,color:"#1a1a1a",whiteSpace:"nowrap",maxWidth:130,overflow:"hidden",textOverflow:"ellipsis"}}>{h.name}</span>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+/* ══ GROUP RECITE PERMISSION DIALOG — shown to students when teacher activates ══ */
+const GroupRecitePermDialog=({onAccept,onDecline}:{onAccept:()=>void;onDecline:()=>void})=>createPortal(
+  <div style={{position:"fixed",inset:0,zIndex:9600,background:"rgba(0,0,0,.72)",backdropFilter:"blur(6px)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+    <div style={{background:"#17202a",borderRadius:20,padding:"28px 24px",maxWidth:340,width:"100%",boxShadow:"0 24px 60px rgba(0,0,0,.7)",border:"1px solid rgba(255,255,255,.1)",animation:"fade-in .18s ease",textAlign:"center"}}>
+      <div style={{fontSize:44,marginBottom:12}}>🎙️</div>
+      <h2 style={{fontSize:17,fontWeight:800,color:"#fff",marginBottom:8}}>Group Recitation</h2>
+      <p style={{fontSize:13,color:"rgba(255,255,255,.55)",marginBottom:22,lineHeight:1.55}}>
+        The teacher has started Group Recitation.<br/>Allow your microphone so everyone can recite together?
+      </p>
+      <div style={{display:"flex",gap:10}}>
+        <button onClick={onDecline} style={{flex:1,padding:"11px",borderRadius:12,border:"1px solid rgba(255,255,255,.15)",background:"rgba(255,255,255,.07)",color:"rgba(255,255,255,.7)",fontSize:13,fontWeight:600,cursor:"pointer"}}>Not Now</button>
+        <button onClick={onAccept} style={{flex:1,padding:"11px",borderRadius:12,border:"none",background:`linear-gradient(135deg,${TEAL2},${TEAL})`,color:"#fff",fontSize:13,fontWeight:800,cursor:"pointer"}}>Allow Mic ✓</button>
+      </div>
+    </div>
+  </div>,document.body
+);
+
+/* ══ LAYOUT SWITCHER — floating button + popover ══ */
+const LAYOUT_OPTIONS:{mode:LayoutMode;icon:any;label:string}[]=[
+  {mode:"grid",      icon:LayoutGrid,    label:"Grid"},
+  {mode:"spotlight", icon:Maximize2,     label:"Spotlight"},
+  {mode:"horizontal",icon:AlignJustify,  label:"Horizontal"},
+  {mode:"vertical",  icon:Columns,       label:"Vertical"},
+  {mode:"focus",     icon:Rows,          label:"Focus"},
+];
+const LayoutSwitcher=({layout,onChange}:{layout:LayoutMode;onChange:(m:LayoutMode)=>void})=>{
+  const[open,setOpen]=useState(false);
+  const cur=LAYOUT_OPTIONS.find(o=>o.mode===layout)||LAYOUT_OPTIONS[0];
+  return(
+    <div style={{position:"relative"}}>
+      <button onClick={()=>setOpen(v=>!v)} title="Change Layout"
+        style={{height:30,padding:"0 10px",borderRadius:20,background:open?"rgba(10,124,104,.6)":"rgba(255,255,255,.1)",border:"1px solid rgba(255,255,255,.15)",color:"#fff",fontSize:11,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:5,backdropFilter:"blur(4px)"}}>
+        <cur.icon style={{width:12,height:12}}/>{cur.label}
+      </button>
+      {open&&createPortal(
+        <div onClick={()=>setOpen(false)} style={{position:"fixed",inset:0,zIndex:9200}}>
+          <div onClick={e=>e.stopPropagation()} style={{position:"fixed",top:58,right:14,background:"#17202a",border:"1px solid rgba(255,255,255,.1)",borderRadius:16,overflow:"hidden",minWidth:170,boxShadow:"0 8px 36px rgba(0,0,0,.65)",animation:"fade-in .15s ease"}}>
+            {LAYOUT_OPTIONS.map(o=>(
+              <button key={o.mode} onClick={()=>{onChange(o.mode);setOpen(false);}}
+                style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"11px 16px",background:layout===o.mode?`rgba(10,124,104,.35)`:"none",border:"none",cursor:"pointer",color:layout===o.mode?"#4ade80":"#fff",fontSize:13,fontWeight:layout===o.mode?700:400,borderBottom:"1px solid rgba(255,255,255,.05)"}}>
+                <o.icon style={{width:14,height:14}}/>{o.label}
+                {layout===o.mode&&<span style={{marginLeft:"auto",fontSize:10}}>✓</span>}
+              </button>
+            ))}
+          </div>
+        </div>,document.body
+      )}
+    </div>
+  );
+};
+
+/* ══ GROUP RECITE BRIDGE ══ */
 const GroupReciteAutoMic=({active,isPrivileged}:{active:boolean;isPrivileged:boolean})=>{
   const room=useRoomContext();
   useEffect(()=>{
     if(!room?.localParticipant)return;
     if(active){
-      // Enable mic for everyone when group recitation starts
       room.localParticipant.setMicrophoneEnabled(true).catch(()=>{});
     }
-    // When deactivated, only auto-mute students (teacher keeps control)
     if(!active&&!isPrivileged){
       room.localParticipant.setMicrophoneEnabled(false).catch(()=>{});
     }
@@ -292,7 +301,8 @@ const Whiteboard = ({room,onClose,isTeacher,initialStrokes,subjectId,canStudentW
       for(let i=1;i<s.points.length;i++)ctx.lineTo(s.points[i].x,s.points[i].y);
       ctx.stroke();
     }
-  },[]);  useEffect(()=>{(async()=>{
+  },[]);
+  useEffect(()=>{(async()=>{
     try{const{data}=await supabase.from("subject_whiteboard"as any).select("strokes").eq("subject_id",subjectId).maybeSingle();
       if((data as any)?.strokes?.length)strokesRef.current=(data as any).strokes;
       else if(initialStrokes?.length)strokesRef.current=initialStrokes;
@@ -341,7 +351,8 @@ const WhiteboardBridge=({onClose,isTeacher,initialStrokes,subjectId,canStudentWr
 const MaterialViewer=({material,isTeacher,onClose}:any)=>{
   const url=material.file_url||material.url||"";const title=material.title||material.name||"Material";
   const isYT=url.includes("youtube.com")||url.includes("youtu.be");
-  const isPdf=url.toLowerCase().includes(".pdf")||(material.material_type||"").includes("pdf");  const isImg=/\.(jpg|jpeg|png|gif|webp|svg)$/i.test(url);const isVid=/\.(mp4|webm|ogg|mov)$/i.test(url);
+  const isPdf=url.toLowerCase().includes(".pdf")||(material.material_type||"").includes("pdf");
+  const isImg=/\.(jpg|jpeg|png|gif|webp|svg)$/i.test(url);const isVid=/\.(mp4|webm|ogg|mov)$/i.test(url);
   const ytId=(u:string)=>{const m=u.match(/(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([\w-]+)/);return m?m[1]:"";};
   return createPortal(<div style={{position:"fixed",inset:0,zIndex:9998,background:"#000",display:"flex",flexDirection:"column"}}>
     <div style={{height:52,background:`rgba(6,78,59,.97)`,display:"flex",alignItems:"center",padding:"0 14px",gap:10}}>
@@ -390,7 +401,8 @@ function toMaterialEmbedUrl(url:string):{embedUrl:string;kind:"youtube"|"gdrive"
   const ytM=url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/);
   if(ytM)return{embedUrl:`https://www.youtube.com/embed/${ytM[1]}?autoplay=1&rel=0`,kind:"youtube"};
   const gdM=url.match(/drive\.google\.com\/file\/d\/([^/?#]+)/);
-  if(gdM)return{embedUrl:`https://drive.google.com/file/d/${gdM[1]}/preview`,kind:"gdrive"};  const gdM2=url.match(/drive\.google\.com\/open\?id=([^&]+)/);
+  if(gdM)return{embedUrl:`https://drive.google.com/file/d/${gdM[1]}/preview`,kind:"gdrive"};
+  const gdM2=url.match(/drive\.google\.com\/open\?id=([^&]+)/);
   if(gdM2)return{embedUrl:`https://drive.google.com/file/d/${gdM2[1]}/preview`,kind:"gdrive"};
   const ext=url.split("?")[0].split(".").pop()?.toLowerCase()??"";
   if(ext==="pdf")return{embedUrl:url,kind:"pdf"};
@@ -439,7 +451,8 @@ const SubjectMaterialsPanel=({subjectId,onClose}:any)=>{
   useEffect(()=>{
     supabase.from("subject_materials" as any).select("*").eq("subject_id",subjectId).order("created_at",{ascending:false})
       .then(({data})=>{setMats(data||[]);setBusy(false);});
-  },[subjectId]);  return createPortal(
+  },[subjectId]);
+  return createPortal(
     <div style={{position:"fixed",inset:0,zIndex:9900,background:"rgba(0,0,0,.55)"}} onClick={onClose}>
       <div onClick={e=>e.stopPropagation()} style={{position:"fixed",top:0,right:0,bottom:0,width:"min(340px,100vw)",background:"#13181f",borderLeft:"1px solid rgba(255,255,255,.08)",display:"flex",flexDirection:"column",animation:"slide-up .2s ease",boxShadow:"-8px 0 32px rgba(0,0,0,.5)"}}>
         {/* Header */}
@@ -488,7 +501,8 @@ const RecController=({sessionId,subjectId,userEmail,onSavingChange}:any)=>{
       const dest=ac.createMediaStreamDestination();let n=0;
       [room.localParticipant,...Array.from(room.remoteParticipants.values())].forEach((p:any)=>{p.trackPublications?.forEach?.((pub:any)=>{if(pub.kind==="audio"&&pub.track?.mediaStreamTrack){ac.createMediaStreamSource(new MediaStream([pub.track.mediaStreamTrack])).connect(dest);n++;}});});
       return n>0?dest.stream:null;
-    }catch{return null;}  },[room]);
+    }catch{return null;}
+  },[room]);
   const startRec=async()=>{
     try{
       // Prefer capturing from the live room (all participants);
@@ -537,7 +551,8 @@ const RecController=({sessionId,subjectId,userEmail,onSavingChange}:any)=>{
         const blob=new Blob(chunksRef.current,{type:recMime});
 
         if(blob.size===0){
-          toast({title:"Recording empty",description:"No audio was captured. Make sure your mic is on.",variant:"destructive"});          return;
+          toast({title:"Recording empty",description:"No audio was captured. Make sure your mic is on.",variant:"destructive"});
+          return;
         }
 
         const recPath=`sessions/${sessionId||subjectId}/${Date.now()}.${recExt}`;
@@ -586,7 +601,8 @@ const RecController=({sessionId,subjectId,userEmail,onSavingChange}:any)=>{
       <button onClick={togglePause} style={{background:GLASSB,border:"none",borderRadius:8,padding:"4px 10px",color:"#fff",fontSize:12,cursor:"pointer"}}>{paused?<Play style={{width:12,height:12}}/>:<Pause style={{width:12,height:12}}/>}</button>
       <button onClick={stopRec} style={{background:"rgba(239,68,68,.25)",border:"none",borderRadius:8,padding:"4px 10px",color:RED,fontSize:12,fontWeight:700,cursor:"pointer"}}>Stop</button></>}
     {!recording&&<button onClick={startRec} style={{display:"flex",alignItems:"center",gap:6,background:"rgba(239,68,68,.14)",border:"1px solid rgba(239,68,68,.35)",borderRadius:20,padding:"5px 14px",color:"#fca5a5",fontSize:12,fontWeight:700,cursor:"pointer"}}><Circle style={{width:7,height:7,fill:RED,color:RED}}/> Record</button>}
-  </div>);};
+  </div>);
+};
 
 /* ══ GOOGLE MEET-STYLE PARTICIPANT TILE ══ */
 const ParticipantTile=({participant,isLocal,size="normal"}:{participant:any;isLocal:boolean;size?:"normal"|"large"|"small"})=>{
@@ -632,16 +648,45 @@ const ParticipantTile=({participant,isLocal,size="normal"}:{participant:any;isLo
   );
 };
 
-/* ══ VIDEO GRID ══ */
-const VideoGrid=()=>{
+/* ══ VIDEO GRID — layout-aware ══ */
+const VideoGrid=({layout="grid"}:{layout?:LayoutMode})=>{
   const{localParticipant}=useLocalParticipant();const allParticipants=useParticipants();
-  const remotes=allParticipants.filter(p=>p.identity!==localParticipant?.identity);  const all=localParticipant?[localParticipant,...remotes]:remotes;const n=all.length;
+  const remotes=allParticipants.filter(p=>p.identity!==localParticipant?.identity);
+  const all=localParticipant?[localParticipant,...remotes]:remotes;const n=all.length;
   const screensharer=all.find(p=>{const pub=p.getTrackPublication?.(Track.Source.ScreenShare)||p.trackPublications?.get(Track.Source.ScreenShare);return pub?.track&&!pub.isMuted;});
   const gap=6;
   if(screensharer)return(<div style={{width:"100%",height:"100%",display:"flex",gap,padding:gap,boxSizing:"border-box"}}>
     <div style={{flex:1,borderRadius:14,overflow:"hidden",minWidth:0}}><ParticipantTile participant={screensharer} isLocal={screensharer.identity===localParticipant?.identity} size="large"/></div>
     <div style={{width:110,display:"flex",flexDirection:"column",gap,overflowY:"auto"}}>{all.map(p=>(<div key={p.identity} style={{height:82,flexShrink:0}}><ParticipantTile participant={p} isLocal={p.identity===localParticipant?.identity} size="small"/></div>))}</div>
   </div>);
+
+  // ── Spotlight: first person large, rest in small vertical strip ──
+  if(layout==="spotlight")return(<div style={{width:"100%",height:"100%",display:"flex",gap,padding:gap,boxSizing:"border-box"}}>
+    <div style={{flex:1,borderRadius:14,overflow:"hidden",minWidth:0}}><ParticipantTile participant={all[0]} isLocal={all[0]?.identity===localParticipant?.identity} size="large"/></div>
+    {n>1&&<div style={{width:100,display:"flex",flexDirection:"column",gap,overflowY:"auto"}}>{all.slice(1).map(p=>(<div key={p.identity} style={{height:76,flexShrink:0}}><ParticipantTile participant={p} isLocal={p.identity===localParticipant?.identity} size="small"/></div>))}</div>}
+  </div>);
+
+  // ── Horizontal: all tiles in a single horizontal row ──
+  if(layout==="horizontal")return(<div style={{width:"100%",height:"100%",display:"flex",flexDirection:"row",gap,padding:gap,boxSizing:"border-box",overflowX:"auto"}}>
+    {all.map(p=>(<div key={p.identity} style={{flex:`0 0 ${Math.min(300,Math.max(140,100/n))}px`,minWidth:140,height:"100%"}}><ParticipantTile participant={p} isLocal={p.identity===localParticipant?.identity} size={n===1?"large":"normal"}/></div>))}
+  </div>);
+
+  // ── Vertical: all tiles in a single vertical column ──
+  if(layout==="vertical")return(<div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",gap,padding:gap,boxSizing:"border-box",overflowY:"auto"}}>
+    {all.map(p=>(<div key={p.identity} style={{flex:`0 0 ${Math.min(280,Math.max(100,100/n))}px`,minHeight:90,width:"100%"}}><ParticipantTile participant={p} isLocal={p.identity===localParticipant?.identity} size={n===1?"large":"normal"}/></div>))}
+  </div>);
+
+  // ── Focus: local big, all remotes small strip at bottom ──
+  if(layout==="focus"){
+    const local=all.find(p=>p.identity===localParticipant?.identity)||all[0];
+    const others=all.filter(p=>p.identity!==local?.identity);
+    return(<div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",gap,padding:gap,boxSizing:"border-box"}}>
+      <div style={{flex:1,borderRadius:14,overflow:"hidden",minHeight:0}}>{local&&<ParticipantTile participant={local} isLocal size="large"/>}</div>
+      {others.length>0&&<div style={{height:90,display:"flex",flexDirection:"row",gap,flexShrink:0,overflowX:"auto"}}>{others.map(p=>(<div key={p.identity} style={{width:120,flexShrink:0}}><ParticipantTile participant={p} isLocal={false} size="small"/></div>))}</div>}
+    </div>);
+  }
+
+  // ── Grid (default) ──
   let cols=n<=1?1:n===2?2:n<=4?2:n<=6?3:n<=9?3:4;const rows=Math.ceil(n/cols);
   return(<div style={{width:"100%",height:"100%",display:"grid",gridTemplateColumns:`repeat(${cols},1fr)`,gridTemplateRows:`repeat(${rows},1fr)`,gap,padding:gap,boxSizing:"border-box"}}>
     {all.map(p=>(<ParticipantTile key={p.identity} participant={p} isLocal={p.identity===localParticipant?.identity} size={n===1?"large":n<=4?"normal":"small"}/>))}
@@ -649,7 +694,7 @@ const VideoGrid=()=>{
 };
 
 /* ══ BOTTOM BAR — Google Meet floating glass style ══ */
-const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeaveClass,chatUnread,onToggleWhiteboard,whiteboardOpen,onGroupRecite,groupReciteMode,onShareMaterial,isPrivileged,canStudentWriteProp,canStudentRecProp,onPermChange,onMinimize,room,isMobile,onToggleMaterials,matPanelOpen,onSendEmoji}:any)=>{
+const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeaveClass,chatUnread,onToggleWhiteboard,whiteboardOpen,onGroupRecite,groupReciteMode,onShareMaterial,isPrivileged,canStudentWriteProp,canStudentRecProp,onPermChange,onMinimize,room,isMobile,onToggleMaterials,matPanelOpen,onSendEmoji,layout,onLayoutChange}:any)=>{
   const{user}=useAuth();
   // Start false — MediaAutoPublish enables tracks asynchronously; sync events update these
   const[micOn,setMicOn]=useState(false);
@@ -666,55 +711,41 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
     return()=>{clearTimeout(t1);clearTimeout(t2);room.localParticipant.off("trackMuted",sync);room.localParticipant.off("trackUnmuted",sync);room.localParticipant.off("trackPublished",sync);room.localParticipant.off("trackUnpublished",sync);};
   },[room]);
   // ── Mic / cam toggle: never use optimistic state — let track events sync ──
-const toggleMic = async () => {
-  if (!room?.localParticipant) return;
-  try {
-    const current = room.localParticipant.isMicrophoneEnabled;
-    console.log("[toggleMic] current state:", current, "toggling to:", !current);
-    
-    // Set optimistic state first
-    setMicOn(!current);
-    
-    // Then actually toggle it
-    await room.localParticipant.setMicrophoneEnabled(!current);
-    
-    // Add a small delay to let LiveKit process
-    await new Promise(r => setTimeout(r, 200));
-    
-    // Sync actual room state
-    setMicOn(room.localParticipant.isMicrophoneEnabled);
-    console.log("[toggleMic] final state:", room.localParticipant.isMicrophoneEnabled);
-  } catch (e) {    console.error("toggleMic error:", e);
-    // Reset state on error
-    setMicOn(room.localParticipant.isMicrophoneEnabled);
-  }
-};
-
-const toggleCam = async () => {
-  if (!room?.localParticipant) return;
-  try {
-    const current = room.localParticipant.isCameraEnabled;
-    console.log("[toggleCam] current state:", current, "toggling to:", !current);
-    
-    // Set optimistic state first
-    setCamOn(!current);
-    
-    // Then actually toggle it
-    await room.localParticipant.setCameraEnabled(!current);
-    
-    // Add a small delay to let LiveKit process
-    await new Promise(r => setTimeout(r, 200));
-    
-    // Sync actual room state
-    setCamOn(room.localParticipant.isCameraEnabled);
-    console.log("[toggleCam] final state:", room.localParticipant.isCameraEnabled);
-  } catch (e) {
-    console.error("toggleCam error:", e);
-    // Reset state on error
-    setCamOn(room.localParticipant.isCameraEnabled);
-  }
-};
-  const toggleHand=async()=>{if(!user||!sessionId)return;const n=!handUp;setHandUp(n);await supabase.from("class_participants").update({hand_raised:n,hand_raised_at:n?new Date().toISOString():null}).eq("session_id",sessionId).eq("student_id",user.id);};
+  const toggleMic=async()=>{
+    if(!room?.localParticipant)return;
+    try{
+      // Read live state from room (not React state) to avoid stale closure issues
+      const current=room.localParticipant.isMicrophoneEnabled;
+      await room.localParticipant.setMicrophoneEnabled(!current);
+      // State will be updated by the trackMuted / trackUnmuted listener
+    }catch(e){console.error("toggleMic:",e);}
+  };
+  const toggleCam=async()=>{
+    if(!room?.localParticipant)return;
+    try{
+      const current=room.localParticipant.isCameraEnabled;
+      await room.localParticipant.setCameraEnabled(!current);
+    }catch(e){console.error("toggleCam:",e);}
+  };
+  const toggleHand=async()=>{
+    if(!user||!sessionId)return;
+    const n=!handUp;
+    setHandUp(n);
+    // DB update
+    await supabase.from("class_participants").update({hand_raised:n,hand_raised_at:n?new Date().toISOString():null}).eq("session_id",sessionId).eq("student_id",user.id);
+    // Broadcast via DataChannel so all participants see the raised hand immediately
+    try{
+      room?.localParticipant?.publishData(
+        new TextEncoder().encode(JSON.stringify({
+          type:"hand_raise",
+          identity:room.localParticipant.identity,
+          name:room.localParticipant.name||user?.user_metadata?.full_name||"Student",
+          raised:n,
+        })),
+        {reliable:true}
+      );
+    }catch{}
+  };
   const toggleStuRecord=async()=>{
     if(stuRec){stuMrRef.current?.stop();stuMrRef.current!.onstop=()=>{const blobType=stuMrRef.current?.mimeType||"audio/webm";const blob=new Blob(stuChunks.current,{type:blobType});const url=URL.createObjectURL(blob);const a=document.createElement("a");const ext=blobType.includes("mp4")?"mp4":blobType.includes("ogg")?"ogg":"webm";a.href=url;a.download=`class-recording-${Date.now()}.${ext}`;a.click();URL.revokeObjectURL(url);stuChunks.current=[];};setStuRec(false);}
     else{try{const stream=await navigator.mediaDevices.getUserMedia({audio:true});const stuMime=["audio/webm","audio/mp4","audio/ogg"].find(t=>{try{return MediaRecorder.isTypeSupported(t);}catch{return false;}})||"";const mr=new MediaRecorder(stream,stuMime?{mimeType:stuMime}:undefined);stuChunks.current=[];mr.ondataavailable=e=>{if(e.data.size>0)stuChunks.current.push(e.data);};mr.start(1000);stuMrRef.current=mr;setStuRec(true);}catch{toast({title:"Microphone access denied"});}}
@@ -733,7 +764,8 @@ const toggleCam = async () => {
     // Save to chat log
     if(user&&sessionId)supabase.from("class_chat_messages").insert({session_id:sessionId,sender_id:user.id,message:e,type:"reaction"});
   };
-  const IS={width:isMobile?16:20,height:isMobile?16:20};  const Btn=({children,active=false,danger=false,onClick,badge=0,title:ttl=""}:any)=>(
+  const IS={width:isMobile?16:20,height:isMobile?16:20};
+  const Btn=({children,active=false,danger=false,onClick,badge=0,title:ttl=""}:any)=>(
     <div style={{position:"relative",display:"flex",flexDirection:"column",alignItems:"center"}}>
       <button title={ttl} onClick={onClick} style={{width:isMobile?42:52,height:isMobile?42:52,borderRadius:"50%",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",background:danger?"rgba(239,68,68,.85)":active?"rgba(255,255,255,.18)":"rgba(255,255,255,.09)",color:"#fff",transition:"background .15s,transform .1s",backdropFilter:"blur(4px)",boxShadow:active&&!danger?"inset 0 0 0 2px rgba(255,255,255,.2)":"none"}}
         onMouseEnter={e=>(e.currentTarget.style.transform="scale(1.08)")} onMouseLeave={e=>(e.currentTarget.style.transform="scale(1)")}>{children}</button>
@@ -782,7 +814,8 @@ const toggleCam = async () => {
       }
       {/* Student: whiteboard write button (shown when admin grants write) */}
       {!isPrivileged&&canStudentWriteProp&&(
-        <Btn active={whiteboardOpen} title="Open Board" onClick={onToggleWhiteboard}>          <PenTool style={{...IS,color:"#34d399"}}/>
+        <Btn active={whiteboardOpen} title="Open Board" onClick={onToggleWhiteboard}>
+          <PenTool style={{...IS,color:"#34d399"}}/>
         </Btn>
       )}
       {/* Chat */}
@@ -831,7 +864,8 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   const[sessionId,setSessionId]=useState<string|null>(null);const[sessionInfo,setSessionInfo]=useState<any>(null);
   const[attendanceId,setAttendanceId]=useState<string|null>(null);const[joinedAt]=useState(Date.now());
   const[savingRec,setSavingRec]=useState(false);const[isSessionLive,setIsSessionLive]=useState(false);const[duration,setDuration]=useState(0);
-  const[chatOpen,setChatOpen]=useState(false);const[partOpen,setPartOpen]=useState(false);const[chatUnread,setChatUnread]=useState(0);  // Realtime chat unread counter — increments when a new message arrives and chat panel is closed
+  const[chatOpen,setChatOpen]=useState(false);const[partOpen,setPartOpen]=useState(false);const[chatUnread,setChatUnread]=useState(0);
+  // Realtime chat unread counter — increments when a new message arrives and chat panel is closed
   useEffect(()=>{
     if(!sessionId||phase!=="live")return;
     const ch=supabase.channel(`chat-unread-${sessionId}`)
@@ -854,6 +888,9 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   const[wbOpen,setWbOpen]=useState(false);const[matOpen,setMatOpen]=useState<any>(null);const[matPicker,setMatPicker]=useState(false);const[matPanelOpen,setMatPanelOpen]=useState(false);
   const[groupRecite,setGroupRecite]=useState(false);const[canStudentWrite,setCanStudentWrite]=useState(false);const[canStudentRec,setCanStudentRec]=useState(false);
   const[floatingEmojis,setFloatingEmojis]=useState<FloatingEmoji[]>([]);
+  const[raisedHands,setRaisedHands]=useState<RaisedHand[]>([]);
+  const[layout,setLayout]=useState<LayoutMode>("grid");
+  const[groupReciteDialog,setGroupReciteDialog]=useState(false);
   const emojiIdRef=useRef(0);
   const wbBuffer=useRef<any[]|null>(null);const prefetch=useRef<{token:string;url:string}|null>(null);
   useEffect(()=>{supabase.functions.invoke("livekit-token",{body:{subject_id:subject.id,action:isPrivileged?"start_session":"join"}}).then(({data})=>{if(data?.token&&data?.url)prefetch.current={token:data.token,url:data.url};}).catch(()=>{});},[subject.id,isPrivileged]);
@@ -869,7 +906,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     return()=>clearTimeout(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[autoJoin]);
-  useEffect(()=>{const check=async()=>{const{data}=await supabase.from("live_sessions").select("*").eq("subject_id",subject.id).eq("status","live").maybeSingle();if(data){setSessionInfo(data);setSessionId(data.id);setIsSessionLive(true);}else setIsSessionLive(false);};check();const iv=setInterval(check,4004);return()=>clearInterval(iv);},[subject.id]);
+  useEffect(()=>{const check=async()=>{const{data}=await supabase.from("live_sessions").select("*").eq("subject_id",subject.id).eq("status","live").maybeSingle();if(data){setSessionInfo(data);setSessionId(data.id);setIsSessionLive(true);}else setIsSessionLive(false);};check();const iv=setInterval(check,4000);return()=>clearInterval(iv);},[subject.id]);
   useEffect(()=>{if(phase!=="live")return;const ti=setInterval(()=>setDuration(d=>d+1),1000);return()=>clearInterval(ti);},[phase]);
   // Media Session API — shows call info in Android notification shade & lock screen
   useEffect(()=>{
@@ -880,7 +917,8 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
       });
       (navigator as any).mediaSession.playbackState="playing";
       (navigator as any).mediaSession.setActionHandler("stop",()=>leaveSession());
-      (navigator as any).mediaSession.setActionHandler("pause",()=>leaveSession());    }catch{}
+      (navigator as any).mediaSession.setActionHandler("pause",()=>leaveSession());
+    }catch{}
     return()=>{
       try{(navigator as any).mediaSession.playbackState="none";}catch{}
     };
@@ -895,8 +933,8 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
       if(!tk||!url){const{data,error:e}=await supabase.functions.invoke("livekit-token",{body:{subject_id:subject.id,action}});if(e)throw e;if(data?.error)throw new Error(data.error);tk=data.token;url=data.url;}
       if(settings&&sessionId)await supabase.from("live_sessions").update({...settings,actual_start_time:new Date().toISOString(),status:"live"}).eq("id",sessionId);
       setToken(tk!);setWsUrl(url!);
-      const{sessions}=await supabase.from("live_sessions").select("*").eq("subject_id",subject.id).in("status",["live","active","scheduled"]).order("scheduled_at",{ascending:false,nullsFirst:false}).limit(1);
-      if(sessions?.length){setSessionId(sessions[0].id);setSessionInfo(sessions[0]);const{att}=await supabase.from("attendance_logs").insert({session_id:sessions[0].id,user_id:user!.id,device_info:navigator.userAgent}).select("id").single();if(att)setAttendanceId(att.id);await supabase.from("class_participants").upsert({session_id:sessions[0].id,student_id:user!.id,joined_at:new Date().toISOString(),is_muted:!isPrivileged,camera_on:true,left_at:null,left_minutes:null},{onConflict:"session_id,student_id"});}
+      const{data:sessions}=await supabase.from("live_sessions").select("*").eq("subject_id",subject.id).in("status",["live","active","scheduled"]).order("scheduled_at",{ascending:false,nullsFirst:false}).limit(1);
+      if(sessions?.length){setSessionId(sessions[0].id);setSessionInfo(sessions[0]);const{data:att}=await supabase.from("attendance_logs").insert({session_id:sessions[0].id,user_id:user!.id,device_info:navigator.userAgent}).select("id").single();if(att)setAttendanceId(att.id);await supabase.from("class_participants").upsert({session_id:sessions[0].id,student_id:user!.id,joined_at:new Date().toISOString(),is_muted:!isPrivileged,camera_on:true,left_at:null,left_minutes:null},{onConflict:"session_id,student_id"});}
       setPhase("live");
       try { playJoinSound(); } catch {}
     }catch(e:any){setError(e?.message||"Failed to connect");}finally{setLoading(false);}
@@ -924,16 +962,22 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     if(type==="write"){setCanStudentWrite(allow);try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"wb_allow_write",allow})),{reliable:true});}catch{}toast({title:allow?"✅ Students can now write on the board":"🔒 Write access revoked"});}
     else{setCanStudentRec(allow);try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"rec_allowed",allow})),{reliable:true});}catch{}toast({title:allow?"✅ Students can now record":"🔒 Record permission revoked"});}
   };
-  const addFloatingEmoji=(emoji:string)=>{
+  const addFloatingEmoji=(emoji:string,sender:string="")=>{
     const id=++emojiIdRef.current;
-    const x=5+Math.random()*70; // keep away from edges (5%–75%)
-    setFloatingEmojis(prev=>[...prev,{id,emoji,x}]);
+    const x=5+Math.random()*70;
+    setFloatingEmojis(prev=>[...prev,{id,emoji,x,sender}]);
     setTimeout(()=>setFloatingEmojis(prev=>prev.filter(fe=>fe.id!==id)),2800);
-  };  const handleGroupRecite=async(room?:any)=>{
+  };
+  const handleHandRaise=(identity:string,name:string,raised:boolean)=>{
+    setRaisedHands(prev=>{
+      if(raised)return prev.some(h=>h.identity===identity)?prev:[...prev,{identity,name,raisedAt:Date.now()}];
+      return prev.filter(h=>h.identity!==identity);
+    });
+  };
+  const handleGroupRecite=async(room?:any)=>{
     const n=!groupRecite;
     setGroupRecite(n);
     toast({title:n?"🎙️ Group Recitation ON — all mics enabled":"🔇 Group Recitation ended"});
-    // Broadcast to all participants via DataChannel so their mics auto-enable
     try{
       room?.localParticipant?.publishData(
         new TextEncoder().encode(JSON.stringify({type:"group_recite",active:n})),
@@ -941,6 +985,17 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
       );
     }catch{}
     if(sessionId&&user)await supabase.from("class_chat_messages").insert({session_id:sessionId,sender_id:user.id,message:n?"🎙️ Group Recitation Mode — all mics ON":"🔇 Recitation ended",type:"system"});
+  };
+  // Called when student receives group_recite=true from teacher
+  const handleGroupReciteFromTeacher=(active:boolean)=>{
+    setGroupRecite(active);
+    if(active&&!isPrivileged){
+      // Show permission dialog instead of silently enabling mic
+      setGroupReciteDialog(true);
+    }else if(!active&&!isPrivileged){
+      // Deactivated — mute student
+      setGroupReciteDialog(false);
+    }
   };
   // Inner component — must live inside <LiveKitRoom> to access context
   const ParticipantCountBadge=()=>{
@@ -968,24 +1023,54 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
           <WbSyncBridge wbOpen={wbOpen} isTeacher={isPrivileged}/>
           <GroupReciteAutoMic active={groupRecite} isPrivileged={isPrivileged}/>
           <ReconnectMonitor onReconnecting={()=>setReconnecting(true)} onReconnected={()=>setReconnecting(false)}/>
-          <RoomDataListener onWbOpen={()=>setWbOpen(true)} onWbClose={()=>setWbOpen(false)} strokesBuffer={wbBuffer} onMatOpen={mat=>setMatOpen(mat)} onMatClose={()=>setMatOpen(null)} onWbAllowWrite={allow=>setCanStudentWrite(allow)} onRecAllowed={allow=>setCanStudentRec(allow)} onEmojiReact={(emoji:string)=>addFloatingEmoji(emoji)} onGroupRecite={(active:boolean)=>setGroupRecite(active)}/>
+          <RoomDataListener onWbOpen={()=>setWbOpen(true)} onWbClose={()=>setWbOpen(false)} strokesBuffer={wbBuffer} onMatOpen={mat=>setMatOpen(mat)} onMatClose={()=>setMatOpen(null)} onWbAllowWrite={allow=>setCanStudentWrite(allow)} onRecAllowed={allow=>setCanStudentRec(allow)} onEmojiReact={(emoji:string,sender:string)=>addFloatingEmoji(emoji,sender)} onGroupRecite={handleGroupReciteFromTeacher} onHandRaise={handleHandRaise}/>
           {reconnecting&&<div style={{position:"absolute",inset:0,zIndex:200,background:"rgba(0,0,0,.82)",backdropFilter:"blur(8px)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:14}}><div style={{width:48,height:48,border:`3px solid ${TEAL}`,borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .8s linear infinite"}}/><p style={{color:"#fff",fontSize:15,fontWeight:700}}>Reconnecting…</p><p style={{color:"rgba(255,255,255,.4)",fontSize:13}}>Please stay on the page</p></div>}
           {/* Top bar */}
-          <div style={{height:52,background:GLASS,backdropFilter:"blur(16px)",WebkitBackdropFilter:"blur(16px)",display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 16px",flexShrink:0,borderBottom:"1px solid rgba(255,255,255,.05)"}}>
-            <div style={{display:"flex",alignItems:"center",gap:10}}>
-              <div style={{display:"flex",alignItems:"center",gap:6,background:"rgba(34,197,94,.12)",borderRadius:20,padding:"4px 12px",border:"1px solid rgba(34,197,94,.25)"}}>
+          <div style={{height:52,background:GLASS,backdropFilter:"blur(16px)",WebkitBackdropFilter:"blur(16px)",display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 10px 0 12px",flexShrink:0,borderBottom:"1px solid rgba(255,255,255,.05)",gap:6}}>
+            {/* Left: title + timer + participants */}
+            <div style={{display:"flex",alignItems:"center",gap:8,flex:1,minWidth:0}}>
+              <div style={{display:"flex",alignItems:"center",gap:6,background:"rgba(34,197,94,.12)",borderRadius:20,padding:"4px 10px",border:"1px solid rgba(34,197,94,.25)",flexShrink:0}}>
                 <span style={{width:7,height:7,borderRadius:"50%",background:GREEN,display:"inline-block",animation:"pip-pulse 1.8s ease-in-out infinite"}}/>
-                <span style={{fontSize:12,color:"#fff",fontWeight:600,maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{subject.title}</span>
+                <span style={{fontSize:12,color:"#fff",fontWeight:600,maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{subject.title}</span>
               </div>
-              <div style={{display:"flex",alignItems:"center",gap:5,background:"rgba(239,68,68,.12)",borderRadius:16,padding:"3px 10px",border:"1px solid rgba(239,68,68,.25)"}}>
-                <Circle style={{width:5,height:5,fill:RED,color:RED}}/><span style={{fontSize:11,color:"#fca5a5",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>{fmtT(duration)}</span>              </div>
+              <div style={{display:"flex",alignItems:"center",gap:5,background:"rgba(239,68,68,.12)",borderRadius:16,padding:"3px 8px",border:"1px solid rgba(239,68,68,.25)",flexShrink:0}}>
+                <Circle style={{width:5,height:5,fill:RED,color:RED}}/><span style={{fontSize:11,color:"#fca5a5",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>{fmtT(duration)}</span>
+              </div>
               <ParticipantCountBadge />
+              {/* Student permission badges — shown in header when granted */}
+              {!isPrivileged&&canStudentWrite&&(
+                <div title="You can write on the board" style={{display:"flex",alignItems:"center",gap:4,background:"rgba(52,211,153,.15)",borderRadius:14,padding:"3px 8px",border:"1px solid rgba(52,211,153,.3)",flexShrink:0,cursor:"pointer"}} onClick={()=>setWbOpen(v=>!v)}>
+                  <PenTool style={{width:11,height:11,color:"#34d399"}}/>
+                  <span style={{fontSize:10,color:"#34d399",fontWeight:700}}>{isMobile?"Board":"Write"}</span>
+                </div>
+              )}
+              {!isPrivileged&&canStudentRec&&(
+                <div title="You can record" style={{display:"flex",alignItems:"center",gap:4,background:"rgba(239,68,68,.15)",borderRadius:14,padding:"3px 8px",border:"1px solid rgba(239,68,68,.3)",flexShrink:0}}>
+                  <Circle style={{width:9,height:9,fill:RED,color:RED,animation:"rec-pulse 1.4s ease-in-out infinite"}}/>
+                  <span style={{fontSize:10,color:"#fca5a5",fontWeight:700}}>Record</span>
+                </div>
+              )}
+              {/* Raised hand count badge visible to teacher */}
+              {isPrivileged&&raisedHands.length>0&&(
+                <div style={{display:"flex",alignItems:"center",gap:4,background:"rgba(251,191,36,.18)",borderRadius:14,padding:"3px 8px",border:"1px solid rgba(251,191,36,.4)",flexShrink:0}}>
+                  <span style={{fontSize:13,animation:"hand-bounce 1.2s ease-in-out infinite"}}>✋</span>
+                  <span style={{fontSize:11,color:"#fbbf24",fontWeight:700}}>{raisedHands.length}</span>
+                </div>
+              )}
             </div>
-            {isPrivileged&&<RecController sessionId={sessionId} subjectId={subject.id} userEmail={user?.email||""} onSavingChange={setSavingRec}/>}
+            {/* Right: layout switcher + record controller */}
+            <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+              <LayoutSwitcher layout={layout} onChange={setLayout}/>
+              {isPrivileged&&<RecController sessionId={sessionId} subjectId={subject.id} userEmail={user?.email||""} onSavingChange={setSavingRec}/>}
+            </div>
           </div>
           {/* Content */}
           <div style={{flex:1,display:"flex",minHeight:0,overflow:"hidden"}}>
-            <div style={{flex:1,position:"relative",minWidth:0}}><VideoGrid/><FloatingEmojiLayer emojis={floatingEmojis}/></div>
+            <div style={{flex:1,position:"relative",minWidth:0}}>
+              <VideoGrid layout={layout}/>
+              <FloatingEmojiLayer emojis={floatingEmojis}/>
+              <RaisedHandsOverlay hands={raisedHands}/>
+            </div>
             {chatOpen&&!isMobile&&(
               <div style={{width:320,background:"#13181f",borderLeft:"1px solid rgba(255,255,255,.06)",display:"flex",flexDirection:"column",flexShrink:0,animation:"slide-up .2s ease"}}>
                 <div style={{display:"flex",borderBottom:"1px solid rgba(255,255,255,.07)",flexShrink:0}}>
@@ -997,7 +1082,14 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
             )}
           </div>
           {wbOpen&&<WhiteboardBridge onClose={()=>setWbOpen(false)} isTeacher={isPrivileged} initialStrokes={wbBuffer.current} subjectId={subject.id} canStudentWrite={canStudentWrite}/>}
-          <BottomBarBridge sessionId={sessionId||""} onToggleChat={()=>{setChatOpen(v=>!v);if(!chatOpen)setChatUnread(0);}} onToggleParticipants={()=>setPartOpen(v=>!v)} onEndClass={()=>setShowEnd(true)} onLeaveClass={leaveSession} chatUnread={chatUnread} onToggleWhiteboard={()=>setWbOpen(v=>!v)} whiteboardOpen={wbOpen} onGroupRecite={handleGroupRecite} groupReciteMode={groupRecite} onShareMaterial={()=>setMatPicker(true)} isPrivileged={isPrivileged} canStudentWriteProp={canStudentWrite} canStudentRecProp={canStudentRec} onPermChange={(type:any,allow:any,room:any)=>handlePermChange(type,allow,room)} onMinimize={onMinimize} onToggleMaterials={()=>setMatPanelOpen(v=>!v)} matPanelOpen={matPanelOpen} onSendEmoji={addFloatingEmoji}/>
+          {/* Group recitation permission dialog — shown to students */}
+          {groupReciteDialog&&!isPrivileged&&(
+            <GroupRecitePermDialog
+              onAccept={()=>{setGroupReciteDialog(false);/* GroupReciteAutoMic handles the actual mic enable via active prop */}}
+              onDecline={()=>{setGroupReciteDialog(false);setGroupRecite(false);}}
+            />
+          )}
+          <BottomBarBridge sessionId={sessionId||""} onToggleChat={()=>{setChatOpen(v=>!v);if(!chatOpen)setChatUnread(0);}} onToggleParticipants={()=>setPartOpen(v=>!v)} onEndClass={()=>setShowEnd(true)} onLeaveClass={leaveSession} chatUnread={chatUnread} onToggleWhiteboard={()=>setWbOpen(v=>!v)} whiteboardOpen={wbOpen} onGroupRecite={handleGroupRecite} groupReciteMode={groupRecite} onShareMaterial={()=>setMatPicker(true)} isPrivileged={isPrivileged} canStudentWriteProp={canStudentWrite} canStudentRecProp={canStudentRec} onPermChange={(type:any,allow:any,room:any)=>handlePermChange(type,allow,room)} onMinimize={onMinimize} onToggleMaterials={()=>setMatPanelOpen(v=>!v)} matPanelOpen={matPanelOpen} onSendEmoji={addFloatingEmoji} layout={layout} onLayoutChange={setLayout}/>
           {isMobile&&chatOpen&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setChatOpen(false)}><div style={{position:"absolute",bottom:0,left:0,right:0,background:"#13181f",borderRadius:"22px 22px 0 0",maxHeight:"82vh",display:"flex",flexDirection:"column",animation:"slide-up .22s ease",paddingBottom:"env(safe-area-inset-bottom,0px)"}} onClick={e=>e.stopPropagation()}><div style={{display:"flex",alignItems:"center",padding:"12px 16px 0",flexShrink:0}}><div style={{flex:1,display:"flex"}}>{[["chat","💬","Chat"],["polls","📊","Polls"]].map(([k,ic,lb])=>(<button key={k} onClick={()=>setSideTab(k as any)} style={{flex:1,padding:"10px 6px",background:"none",border:"none",color:sideTab===k?"#fff":"rgba(255,255,255,.35)",fontSize:13,fontWeight:sideTab===k?700:400,borderBottom:sideTab===k?`2px solid ${TEAL}`:"2px solid transparent",cursor:"pointer"}}>{ic} {lb}</button>))}</div><button onClick={()=>setChatOpen(false)} style={{width:32,height:32,borderRadius:"50%",background:"rgba(255,255,255,.1)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><X style={{width:14,height:14}}/></button></div><div style={{flex:1,overflow:"hidden",minHeight:340}}>{sideTab==="chat"?<ClassChatPanel sessionId={sessionId||""}/>:<ClassPolls sessionId={sessionId||""}/>}</div></div></div>)}
           {isMobile&&partOpen&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setPartOpen(false)}><div style={{position:"absolute",bottom:BAR_H,left:0,right:0,background:"#13181f",borderRadius:"22px 22px 0 0",maxHeight:"65vh",overflow:"auto"}} onClick={e=>e.stopPropagation()}><div style={{width:40,height:4,borderRadius:2,background:"rgba(255,255,255,.18)",margin:"12px auto 6px"}}/><ClassParticipants sessionId={sessionId||""}/></div></div>)}
           <LiveQuizOverlay sessionId={sessionId||""} isOpen={false} onClose={()=>{}}/>
@@ -1027,6 +1119,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     </div>
   );
 };
+
 const MatPickerBridge=({subjectId,onShare,onClose}:any)=>{const room=useRoomContext();return<MaterialPicker subjectId={subjectId} onShare={(mat:any)=>onShare(mat,room)} onClose={onClose}/>;};
 const MatViewerBridge=({material,isTeacher,onClose}:any)=>{const room=useRoomContext();return<MaterialViewer material={material} isTeacher={isTeacher} onClose={()=>onClose(room)}/>;};
 
