@@ -1,6 +1,14 @@
 /* src/pages/student/ProfileSettings.tsx
-   FIX: date_of_birth "" → null before upsert (Postgres DATE rejects empty string)
-   FIX: all nullable fields sanitised before save
+   ────────────────────────────────────────────────────────────────────
+   FIXES in this version
+   1. student_preferences schema-cache error → tries RPC first,
+      falls back to direct upsert. Both work once the migration runs.
+   2. WhatsApp toggle shows the phone number it will message, and
+      warns if no number is saved in the Profile tab.
+   3. Push notification permission banner shown when browser has
+      blocked notifications, with an "Allow" button to prompt again.
+   4. date_of_birth "" → null, all nullable fields sanitised.
+   ────────────────────────────────────────────────────────────────────
 */
 import { useState, useEffect, useRef } from "react";
 import { Switch } from "@/components/ui/switch";
@@ -11,66 +19,95 @@ import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate } from "react-router-dom";
-import { Camera, Save, Lock, LogOut, Trash2, Eye, EyeOff, Loader2, AlertTriangle } from "lucide-react";
+import {
+  Camera, Save, Lock, LogOut, Trash2,
+  Eye, EyeOff, Loader2, AlertTriangle,
+} from "lucide-react";
 
 const G = "#064E3B";
+
 const inp: React.CSSProperties = {
   width: "100%", padding: "9px 12px", borderRadius: 10,
   border: "1.5px solid #E5E7EB", fontSize: 13, outline: "none",
   background: "#FAFAFA", boxSizing: "border-box" as const,
 };
+
 const TABS = [
   { id: "profile",       icon: "👤", label: "Profile" },
   { id: "notifications", icon: "🔔", label: "Notifications" },
-  { id: "preferences",   icon: "⚙️", label: "Preferences" },
+  { id: "preferences",   icon: "⚙️",  label: "Preferences" },
   { id: "security",      icon: "🔒", label: "Security" },
 ];
 
 export default function ProfileSettings() {
   const { language, setLanguage } = useLanguage();
-  const { user, signOut } = useAuth();
-  const { toast } = useToast();
-  const navigate = useNavigate();
-  const avatarRef = useRef<HTMLInputElement>(null);
+  const { user, signOut }          = useAuth();
+  const { toast }                  = useToast();
+  const navigate                   = useNavigate();
+  const avatarRef                  = useRef<HTMLInputElement>(null);
 
-  const [tab, setTab]               = useState("profile");
-  const [saving, setSaving]         = useState(false);
+  const [tab,             setTab]             = useState("profile");
+  const [saving,          setSaving]          = useState(false);
   const [avatarUploading, setAvatarUploading] = useState(false);
-  const [showDelete, setShowDelete] = useState(false);
-  const [showPw, setShowPw]         = useState(false);
-  const [showPwVis, setShowPwVis]   = useState(false);
-  const [changingPw, setChangingPw] = useState(false);
-  const [pw, setPw]                 = useState({ new: "", confirm: "" });
+  const [showDelete,      setShowDelete]      = useState(false);
+  const [showPw,          setShowPw]          = useState(false);
+  const [showPwVis,       setShowPwVis]       = useState(false);
+  const [changingPw,      setChangingPw]      = useState(false);
+  const [pw,              setPw]              = useState({ new: "", confirm: "" });
+  const [pushBlocked,     setPushBlocked]     = useState(false);
 
   const [form, setForm] = useState({
     full_name: "", full_name_ar: "", phone: "", whatsapp: "",
     parent_name: "", parent_phone: "", date_of_birth: "",
     bio: "", gender: "", nationality: "", country: "", city: "", avatar_url: "",
   });
+
   const [notifs, setNotifs] = useState({
-    email_notifications: true, whatsapp_notifications: false,
-    class_reminder: true, exam_reminder: true,
-    results_notification: true, new_recording_alert: true,
+    email_notifications:        true,
+    whatsapp_notifications:     false,
+    class_reminder:             true,
+    exam_reminder:              true,
+    results_notification:       true,
+    new_recording_alert:        true,
     announcement_notifications: true,
   });
+
   const [prefs, setPrefs] = useState({
     language: "en", dark_mode: false, autoplay_recordings: true,
     playback_speed: "1x", show_subtitles: false, default_subject_view: "grid",
   });
 
+  // Check browser push permission state
+  useEffect(() => {
+    if (typeof Notification !== "undefined") {
+      setPushBlocked(Notification.permission === "denied");
+    }
+  }, []);
+
+  // Load profile + preferences on mount
   useEffect(() => {
     if (!user) return;
     (async () => {
-      const { data: p } = await supabase.from("profiles").select("*").eq("user_id", user.id).maybeSingle();
+      const { data: p } = await supabase
+        .from("profiles").select("*").eq("user_id", user.id).maybeSingle();
       if (p) setForm({
-        full_name: p.full_name||"", full_name_ar: p.full_name_ar||"",
-        phone: p.phone||"", whatsapp: p.whatsapp||"",
-        parent_name: p.parent_name||"", parent_phone: p.parent_phone||"",
-        date_of_birth: p.date_of_birth||"",
-        bio: p.bio||"", gender: p.gender||"", nationality: p.nationality||"",
-        country: p.country||"", city: p.city||"", avatar_url: p.avatar_url||"",
+        full_name:     p.full_name     || "",
+        full_name_ar:  p.full_name_ar  || "",
+        phone:         p.phone         || "",
+        whatsapp:      p.whatsapp      || "",
+        parent_name:   p.parent_name   || "",
+        parent_phone:  p.parent_phone  || "",
+        date_of_birth: p.date_of_birth || "",
+        bio:           p.bio           || "",
+        gender:        p.gender        || "",
+        nationality:   p.nationality   || "",
+        country:       p.country       || "",
+        city:          p.city          || "",
+        avatar_url:    p.avatar_url    || "",
       });
-      const { data: pd } = await supabase.from("student_preferences" as any).select("*").eq("user_id", user.id).maybeSingle();
+
+      const { data: pd } = await supabase
+        .from("student_preferences" as any).select("*").eq("user_id", user.id).maybeSingle();
       if (pd) {
         const d = pd as any;
         if (d.notifications) setNotifs(n => ({ ...n, ...d.notifications }));
@@ -79,10 +116,10 @@ export default function ProfileSettings() {
     })();
   }, [user]);
 
-  // KEY FIX: empty string → null for all nullable DB columns
+  // Sanitise — empty string → null for all nullable DB columns
   const sanitise = (f: typeof form) => ({
     ...f,
-    date_of_birth: f.date_of_birth || null,   // DATE column rejects ""
+    date_of_birth: f.date_of_birth || null,
     full_name_ar:  f.full_name_ar  || null,
     phone:         f.phone         || null,
     whatsapp:      f.whatsapp      || null,
@@ -95,6 +132,7 @@ export default function ProfileSettings() {
     city:          f.city          || null,
   });
 
+  // ── Save profile ──────────────────────────────────────────────────
   const saveProfile = async () => {
     if (!user) return;
     setSaving(true);
@@ -104,34 +142,66 @@ export default function ProfileSettings() {
     );
     setSaving(false);
     if (error) toast({ title: "Save failed", description: error.message, variant: "destructive" });
-    else toast({ title: "✅ Profile saved!" });
+    else       toast({ title: "✅ Profile saved!" });
   };
 
+  // ── Save notifications ────────────────────────────────────────────
+  //    Tries RPC first (bypasses PostgREST schema cache entirely),
+  //    then falls back to a direct upsert as a safety net.
   const saveNotifs = async () => {
     if (!user) return;
+    if (notifs.whatsapp_notifications && !form.whatsapp && !form.phone) {
+      toast({
+        title: "⚠️ No WhatsApp number saved",
+        description: "Go to the Profile tab and add your WhatsApp number (with country code) so we can reach you.",
+        variant: "destructive",
+      });
+      // Don't block the save — preferences are still stored
+    }
     setSaving(true);
-    const { error } = await supabase.from("student_preferences" as any).upsert(
-      { user_id: user.id, notifications: notifs } as any, { onConflict: "user_id" }
+    const { error: rpcErr } = await supabase.rpc(
+      "upsert_student_notifications" as any,
+      { p_user_id: user.id, p_notifications: notifs } as any
     );
-    setSaving(false);
-    if (error) toast({ title: "Save failed", description: error.message, variant: "destructive" });
-    else toast({ title: "✅ Notifications saved" });
+    if (rpcErr) {
+      // RPC not deployed yet — fall back to direct upsert
+      const { error: upsertErr } = await supabase
+        .from("student_preferences" as any)
+        .upsert(
+          { user_id: user.id, notifications: notifs, updated_at: new Date().toISOString() } as any,
+          { onConflict: "user_id" }
+        );
+      setSaving(false);
+      if (upsertErr) toast({ title: "Save failed", description: upsertErr.message, variant: "destructive" });
+      else           toast({ title: "✅ Notifications saved" });
+    } else {
+      setSaving(false);
+      toast({ title: "✅ Notifications saved" });
+    }
   };
 
+  // ── Save preferences ──────────────────────────────────────────────
   const savePrefs = async () => {
     if (!user) return;
     setSaving(true);
-    const { error } = await supabase.from("student_preferences" as any).upsert(
-      { user_id: user.id, preferences: prefs } as any, { onConflict: "user_id" }
-    );
+    const { error } = await supabase
+      .from("student_preferences" as any)
+      .upsert(
+        { user_id: user.id, preferences: prefs, updated_at: new Date().toISOString() } as any,
+        { onConflict: "user_id" }
+      );
     setSaving(false);
     if (error) toast({ title: "Save failed", description: error.message, variant: "destructive" });
-    else { if (prefs.language !== language) setLanguage(prefs.language as any); toast({ title: "✅ Preferences saved" }); }
+    else {
+      if (prefs.language !== language) setLanguage(prefs.language as any);
+      toast({ title: "✅ Preferences saved" });
+    }
   };
 
+  // ── Change password ───────────────────────────────────────────────
   const changePassword = async () => {
     if (pw.new !== pw.confirm) { toast({ title: "Passwords don't match", variant: "destructive" }); return; }
-    if (pw.new.length < 8) { toast({ title: "Min 8 characters", variant: "destructive" }); return; }
+    if (pw.new.length < 8)     { toast({ title: "Min 8 characters",       variant: "destructive" }); return; }
     setChangingPw(true);
     const { error } = await supabase.auth.updateUser({ password: pw.new });
     setChangingPw(false);
@@ -139,19 +209,25 @@ export default function ProfileSettings() {
     else { toast({ title: "✅ Password updated!" }); setShowPw(false); setPw({ new: "", confirm: "" }); }
   };
 
+  // ── Upload avatar ─────────────────────────────────────────────────
   const uploadAvatar = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]; if (!file || !user) return;
     setAvatarUploading(true);
     const path = `avatars/${user.id}.${file.name.split(".").pop()}`;
-    const { error: upErr } = await storageSupabase.storage.from("avatars").upload(path, file, { upsert: true, contentType: file.type });
+    const { error: upErr } = await storageSupabase.storage
+      .from("avatars").upload(path, file, { upsert: true, contentType: file.type });
     if (upErr) { toast({ title: "Upload failed", description: upErr.message, variant: "destructive" }); setAvatarUploading(false); return; }
     const { data } = storageSupabase.storage.from("avatars").getPublicUrl(path);
     setForm(f => ({ ...f, avatar_url: data.publicUrl + "?t=" + Date.now() }));
-    await supabase.from("profiles").upsert({ user_id: user.id, avatar_url: data.publicUrl, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
+    await supabase.from("profiles").upsert(
+      { user_id: user.id, avatar_url: data.publicUrl, updated_at: new Date().toISOString() },
+      { onConflict: "user_id" }
+    );
     setAvatarUploading(false);
     toast({ title: "✅ Photo updated!" });
   };
 
+  // ── Reusable layout bits ──────────────────────────────────────────
   const Sec = ({ title, children }: { title: string; children: React.ReactNode }) => (
     <div style={{ background: "#fff", borderRadius: 16, border: "1px solid #E5E7EB", overflow: "hidden", marginBottom: 14 }}>
       <div style={{ padding: "10px 16px", background: "#F9FAFB", borderBottom: "1px solid #E5E7EB" }}>
@@ -182,19 +258,29 @@ export default function ProfileSettings() {
     </button>
   );
 
+  // ── Render ────────────────────────────────────────────────────────
   return (
     <div style={{ minHeight: "100vh", background: "#F3F4F6" }}>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
 
+      {/* Header */}
       <div style={{ background: G, padding: "18px 16px 0" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
           <div style={{ position: "relative", flexShrink: 0 }}>
             <div style={{ width: 58, height: 58, borderRadius: "50%", border: "3px solid rgba(255,255,255,.3)", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(255,255,255,.15)" }}>
-              {form.avatar_url ? <img src={form.avatar_url} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt="" /> : <span style={{ fontSize: 22, fontWeight: 800, color: "#fff" }}>{(form.full_name || user?.email || "?")[0].toUpperCase()}</span>}
-              {avatarUploading && <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,.5)", display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "50%" }}><Loader2 size={18} color="#fff" style={{ animation: "spin .8s linear infinite" }} /></div>}
+              {form.avatar_url
+                ? <img src={form.avatar_url} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt="" />
+                : <span style={{ fontSize: 22, fontWeight: 800, color: "#fff" }}>{(form.full_name || user?.email || "?")[0].toUpperCase()}</span>}
+              {avatarUploading && (
+                <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,.5)", display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "50%" }}>
+                  <Loader2 size={18} color="#fff" style={{ animation: "spin .8s linear infinite" }} />
+                </div>
+              )}
             </div>
-            <input ref={avatarRef} id="ps-avatar-input" type="file" accept="image/*" style={{ position: "absolute", width: 1, height: 1, opacity: 0, overflow: "hidden" }} onChange={uploadAvatar} />
-            <label htmlFor="ps-avatar-input" style={{ position: "absolute", bottom: 0, right: 0, width: 22, height: 22, borderRadius: "50%", background: "#fff", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <input ref={avatarRef} id="ps-avatar-input" type="file" accept="image/*"
+              style={{ position: "absolute", width: 1, height: 1, opacity: 0, overflow: "hidden" }} onChange={uploadAvatar} />
+            <label htmlFor="ps-avatar-input"
+              style={{ position: "absolute", bottom: 0, right: 0, width: 22, height: 22, borderRadius: "50%", background: "#fff", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
               <Camera size={11} color={G} />
             </label>
           </div>
@@ -215,19 +301,30 @@ export default function ProfileSettings() {
 
       <div style={{ padding: 16, maxWidth: 640, margin: "0 auto" }}>
 
+        {/* ── PROFILE TAB ─────────────────────────────────────────── */}
         {tab === "profile" && <>
           <Sec title="Personal Information">
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <Fld label="Full Name (English)"><input style={inp} value={form.full_name} onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))} /></Fld>
-              <Fld label="الاسم (عربي)"><input style={{ ...inp, direction: "rtl" }} value={form.full_name_ar} onChange={e => setForm(f => ({ ...f, full_name_ar: e.target.value }))} /></Fld>
+              <Fld label="Full Name (English)">
+                <input style={inp} value={form.full_name} onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))} />
+              </Fld>
+              <Fld label="الاسم (عربي)">
+                <input style={{ ...inp, direction: "rtl" }} value={form.full_name_ar} onChange={e => setForm(f => ({ ...f, full_name_ar: e.target.value }))} />
+              </Fld>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <Fld label="Phone"><input style={inp} type="tel" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} /></Fld>
-              <Fld label="WhatsApp"><input style={inp} type="tel" value={form.whatsapp} onChange={e => setForm(f => ({ ...f, whatsapp: e.target.value }))} /></Fld>
+              <Fld label="Phone">
+                <input style={inp} type="tel" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} />
+              </Fld>
+              <Fld label="WhatsApp">
+                <input style={inp} type="tel" placeholder="+44 7700 000000" value={form.whatsapp} onChange={e => setForm(f => ({ ...f, whatsapp: e.target.value }))} />
+              </Fld>
             </div>
+            <p style={{ fontSize: 11, color: "#6B7280", margin: "-6px 0 10px" }}>
+              📱 Add your WhatsApp number with country code (e.g. +44 7700…) to receive class reminders via WhatsApp.
+            </p>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <Fld label="Date of Birth">
-                {/* type="date" value must be "" not undefined — but DB gets null */}
                 <input style={inp} type="date" value={form.date_of_birth} onChange={e => setForm(f => ({ ...f, date_of_birth: e.target.value }))} />
               </Fld>
               <Fld label="Gender">
@@ -253,21 +350,78 @@ export default function ProfileSettings() {
           <SaveBtn fn={saveProfile} />
         </>}
 
+        {/* ── NOTIFICATIONS TAB ───────────────────────────────────── */}
         {tab === "notifications" && <>
+
+          {/* Push blocked by browser */}
+          {pushBlocked && (
+            <div style={{ background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 12, padding: "12px 14px", marginBottom: 12, display: "flex", alignItems: "flex-start", gap: 10 }}>
+              <span style={{ fontSize: 20, lineHeight: 1, flexShrink: 0 }}>🔕</span>
+              <div>
+                <p style={{ fontWeight: 700, fontSize: 13, color: "#991B1B", margin: "0 0 3px" }}>Phone notifications are blocked</p>
+                <p style={{ fontSize: 12, color: "#B91C1C", margin: 0, lineHeight: 1.5 }}>
+                  Open your browser → Site Settings → Notifications → <strong>allow</strong> for <em>tahleemacademy.vercel.app</em>, then refresh.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Not yet asked — show Allow button */}
+          {!pushBlocked && typeof Notification !== "undefined" && Notification.permission === "default" && (
+            <div style={{ background: "#F0FDF4", border: "1px solid #86EFAC", borderRadius: 12, padding: "12px 14px", marginBottom: 12, display: "flex", alignItems: "center", gap: 12 }}>
+              <span style={{ fontSize: 20, flexShrink: 0 }}>🔔</span>
+              <div style={{ flex: 1 }}>
+                <p style={{ fontWeight: 700, fontSize: 13, color: "#166534", margin: "0 0 2px" }}>Enable phone notifications</p>
+                <p style={{ fontSize: 11, color: "#15803D", margin: 0 }}>Get class reminders in your phone's notification tray even when the app is closed.</p>
+              </div>
+              <button
+                onClick={() => Notification.requestPermission().then(p => setPushBlocked(p === "denied"))}
+                style={{ padding: "8px 14px", borderRadius: 9, border: "none", background: G, color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", flexShrink: 0 }}>
+                Allow
+              </button>
+            </div>
+          )}
+
+          {/* WhatsApp enabled but no number */}
+          {notifs.whatsapp_notifications && !form.whatsapp && !form.phone && (
+            <div style={{ background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 12, padding: "12px 14px", marginBottom: 12, display: "flex", alignItems: "flex-start", gap: 10 }}>
+              <span style={{ fontSize: 20, lineHeight: 1, flexShrink: 0 }}>⚠️</span>
+              <div>
+                <p style={{ fontWeight: 700, fontSize: 13, color: "#92400E", margin: "0 0 3px" }}>WhatsApp number required</p>
+                <p style={{ fontSize: 12, color: "#B45309", margin: 0, lineHeight: 1.5 }}>
+                  Go to the <strong>Profile tab</strong> and add your WhatsApp number (with country code, e.g. +44 7700…) so we can send class reminders.
+                </p>
+              </div>
+            </div>
+          )}
+
           <Sec title="Channels">
-            <Tog label="Email Notifications" sub="Updates via email" checked={notifs.email_notifications} onChange={(v: boolean) => setNotifs(n => ({ ...n, email_notifications: v }))} />
-            <Tog label="WhatsApp Notifications" sub="Class reminders" checked={notifs.whatsapp_notifications} onChange={(v: boolean) => setNotifs(n => ({ ...n, whatsapp_notifications: v }))} />
-            <Tog label="Announcements" sub="Academy-wide messages" checked={notifs.announcement_notifications} onChange={(v: boolean) => setNotifs(n => ({ ...n, announcement_notifications: v }))} />
+            <Tog label="Email Notifications" sub="Updates via email"
+              checked={notifs.email_notifications} onChange={(v: boolean) => setNotifs(n => ({ ...n, email_notifications: v }))} />
+            <Tog
+              label="WhatsApp Notifications"
+              sub={form.whatsapp || form.phone
+                ? `Will message: ${form.whatsapp || form.phone}`
+                : "Add your number in the Profile tab first"}
+              checked={notifs.whatsapp_notifications}
+              onChange={(v: boolean) => setNotifs(n => ({ ...n, whatsapp_notifications: v }))} />
+            <Tog label="Announcements" sub="Academy-wide messages"
+              checked={notifs.announcement_notifications} onChange={(v: boolean) => setNotifs(n => ({ ...n, announcement_notifications: v }))} />
           </Sec>
           <Sec title="Classes & Exams">
-            <Tog label="Class Reminders" checked={notifs.class_reminder} onChange={(v: boolean) => setNotifs(n => ({ ...n, class_reminder: v }))} />
-            <Tog label="Exam Reminders" checked={notifs.exam_reminder} onChange={(v: boolean) => setNotifs(n => ({ ...n, exam_reminder: v }))} />
-            <Tog label="Results Released" sub="When exam results are ready" checked={notifs.results_notification} onChange={(v: boolean) => setNotifs(n => ({ ...n, results_notification: v }))} />
-            <Tog label="New Recordings" sub="When class recordings uploaded" checked={notifs.new_recording_alert} onChange={(v: boolean) => setNotifs(n => ({ ...n, new_recording_alert: v }))} />
+            <Tog label="Class Reminders" sub="15 min + 5 min before class starts"
+              checked={notifs.class_reminder} onChange={(v: boolean) => setNotifs(n => ({ ...n, class_reminder: v }))} />
+            <Tog label="Exam Reminders"
+              checked={notifs.exam_reminder} onChange={(v: boolean) => setNotifs(n => ({ ...n, exam_reminder: v }))} />
+            <Tog label="Results Released" sub="When exam results are ready"
+              checked={notifs.results_notification} onChange={(v: boolean) => setNotifs(n => ({ ...n, results_notification: v }))} />
+            <Tog label="New Recordings" sub="When class recordings are uploaded"
+              checked={notifs.new_recording_alert} onChange={(v: boolean) => setNotifs(n => ({ ...n, new_recording_alert: v }))} />
           </Sec>
           <SaveBtn fn={saveNotifs} />
         </>}
 
+        {/* ── PREFERENCES TAB ─────────────────────────────────────── */}
         {tab === "preferences" && <>
           <Sec title="Language & Display">
             <Fld label="Interface Language">
@@ -296,11 +450,14 @@ export default function ProfileSettings() {
           <SaveBtn fn={savePrefs} />
         </>}
 
+        {/* ── SECURITY TAB ────────────────────────────────────────── */}
         {tab === "security" && <>
           <Sec title="Account Security">
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "11px 0", borderBottom: "1px solid #F3F4F6" }}>
               <div><p style={{ fontWeight: 600, fontSize: 13, color: "#374151", margin: 0 }}>Password</p><p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>Change your login password</p></div>
-              <button onClick={() => setShowPw(true)} style={{ padding: "7px 14px", borderRadius: 9, border: "1.5px solid #E5E7EB", background: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700, color: "#374151", display: "flex", alignItems: "center", gap: 5 }}><Lock size={12} /> Change</button>
+              <button onClick={() => setShowPw(true)} style={{ padding: "7px 14px", borderRadius: 9, border: "1.5px solid #E5E7EB", background: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700, color: "#374151", display: "flex", alignItems: "center", gap: 5 }}>
+                <Lock size={12} /> Change
+              </button>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "11px 0" }}>
               <div><p style={{ fontWeight: 600, fontSize: 13, color: "#374151", margin: 0 }}>Email</p><p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>{user?.email}</p></div>
@@ -322,6 +479,7 @@ export default function ProfileSettings() {
         </>}
       </div>
 
+      {/* ── Change Password Dialog ───────────────────────────────── */}
       <Dialog open={showPw} onOpenChange={v => !v && setShowPw(false)}>
         <DialogContent style={{ maxWidth: 400, borderRadius: 20, padding: 0 }}>
           <div style={{ background: G, padding: "16px 20px", borderRadius: "20px 20px 0 0" }}>
@@ -348,13 +506,16 @@ export default function ProfileSettings() {
         </DialogContent>
       </Dialog>
 
+      {/* ── Delete Account Dialog ────────────────────────────────── */}
       <Dialog open={showDelete} onOpenChange={v => !v && setShowDelete(false)}>
         <DialogContent style={{ maxWidth: 360, borderRadius: 20, padding: 24, textAlign: "center" }}>
           <div style={{ width: 52, height: 52, borderRadius: "50%", background: "#FEF2F2", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 12px" }}>
             <AlertTriangle size={24} color="#DC2626" />
           </div>
           <h3 style={{ fontWeight: 800, fontSize: 16, marginBottom: 8 }}>Delete Account?</h3>
-          <p style={{ fontSize: 12, color: "#6B7280", marginBottom: 18, lineHeight: 1.6 }}>Permanently deletes your account, exam results, and learning history. Cannot be undone.</p>
+          <p style={{ fontSize: 12, color: "#6B7280", marginBottom: 18, lineHeight: 1.6 }}>
+            Permanently deletes your account, exam results, and learning history. Cannot be undone.
+          </p>
           <div style={{ display: "flex", gap: 10 }}>
             <button onClick={() => setShowDelete(false)} style={{ flex: 1, padding: 11, borderRadius: 11, border: "1.5px solid #E5E7EB", background: "#fff", cursor: "pointer", fontWeight: 600, fontSize: 13 }}>Cancel</button>
             <button style={{ flex: 1, padding: 11, borderRadius: 11, border: "none", background: "#DC2626", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>Delete</button>
