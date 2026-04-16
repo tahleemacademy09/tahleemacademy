@@ -648,49 +648,137 @@ const ParticipantTile=({participant,isLocal,size="normal"}:{participant:any;isLo
   );
 };
 
-/* ══ VIDEO GRID — layout-aware ══ */
+/* ══ VIDEO GRID — Google Meet style ══
+   Rules (matching Google Meet behaviour on mobile/desktop):
+   • 1  participant  → fills entire area
+   • 2  participants → side by side, equal halves, full height
+   • 3  participants → 2-col grid, last tile centred across both columns
+   • 4  participants → 2 × 2 grid
+   • 5  participants → 2-col grid, last tile centred
+   • 6  participants → 2 × 3 grid
+   • Screenshare    → main tile + small vertical strip
+   • Spotlight      → first tile large + small strip
+   • Horizontal     → equal-width tiles filling full height (row)
+   • Vertical       → equal-height tiles filling full width (col)
+   • Focus          → local large + small bottom strip                     */
 const VideoGrid=({layout="grid"}:{layout?:LayoutMode})=>{
-  const{localParticipant}=useLocalParticipant();const allParticipants=useParticipants();
+  const{localParticipant}=useLocalParticipant();
+  const allParticipants=useParticipants();
   const remotes=allParticipants.filter(p=>p.identity!==localParticipant?.identity);
-  const all=localParticipant?[localParticipant,...remotes]:remotes;const n=all.length;
-  const screensharer=all.find(p=>{const pub=p.getTrackPublication?.(Track.Source.ScreenShare)||p.trackPublications?.get(Track.Source.ScreenShare);return pub?.track&&!pub.isMuted;});
-  const gap=6;
-  if(screensharer)return(<div style={{width:"100%",height:"100%",display:"flex",gap,padding:gap,boxSizing:"border-box"}}>
-    <div style={{flex:1,borderRadius:14,overflow:"hidden",minWidth:0}}><ParticipantTile participant={screensharer} isLocal={screensharer.identity===localParticipant?.identity} size="large"/></div>
-    <div style={{width:110,display:"flex",flexDirection:"column",gap,overflowY:"auto"}}>{all.map(p=>(<div key={p.identity} style={{height:82,flexShrink:0}}><ParticipantTile participant={p} isLocal={p.identity===localParticipant?.identity} size="small"/></div>))}</div>
-  </div>);
+  const all=localParticipant?[localParticipant,...remotes]:remotes;
+  const n=all.length;
+  const GAP=8;
+  const P=8; // padding
 
-  // ── Spotlight: first person large, rest in small vertical strip ──
-  if(layout==="spotlight")return(<div style={{width:"100%",height:"100%",display:"flex",gap,padding:gap,boxSizing:"border-box"}}>
-    <div style={{flex:1,borderRadius:14,overflow:"hidden",minWidth:0}}><ParticipantTile participant={all[0]} isLocal={all[0]?.identity===localParticipant?.identity} size="large"/></div>
-    {n>1&&<div style={{width:100,display:"flex",flexDirection:"column",gap,overflowY:"auto"}}>{all.slice(1).map(p=>(<div key={p.identity} style={{height:76,flexShrink:0}}><ParticipantTile participant={p} isLocal={p.identity===localParticipant?.identity} size="small"/></div>))}</div>}
-  </div>);
+  /* ── Screenshare: main large + sidebar strip ── */
+  const screensharer=all.find(p=>{
+    const pub=p.getTrackPublication?.(Track.Source.ScreenShare)||p.trackPublications?.get(Track.Source.ScreenShare);
+    return pub?.track&&!pub.isMuted;
+  });
+  if(screensharer)return(
+    <div style={{width:"100%",height:"100%",display:"flex",gap:GAP,padding:P,boxSizing:"border-box"}}>
+      <div style={{flex:1,borderRadius:14,overflow:"hidden",minWidth:0}}>
+        <ParticipantTile participant={screensharer} isLocal={screensharer.identity===localParticipant?.identity} size="large"/>
+      </div>
+      <div style={{width:110,display:"flex",flexDirection:"column",gap:GAP,overflowY:"auto"}}>
+        {all.map(p=>(<div key={p.identity} style={{height:82,flexShrink:0}}>
+          <ParticipantTile participant={p} isLocal={p.identity===localParticipant?.identity} size="small"/>
+        </div>))}
+      </div>
+    </div>
+  );
 
-  // ── Horizontal: all tiles in a single horizontal row ──
-  if(layout==="horizontal")return(<div style={{width:"100%",height:"100%",display:"flex",flexDirection:"row",gap,padding:gap,boxSizing:"border-box",overflowX:"auto"}}>
-    {all.map(p=>(<div key={p.identity} style={{flex:`0 0 ${Math.min(300,Math.max(140,100/n))}px`,minWidth:140,height:"100%"}}><ParticipantTile participant={p} isLocal={p.identity===localParticipant?.identity} size={n===1?"large":"normal"}/></div>))}
-  </div>);
+  /* ── Spotlight ── */
+  if(layout==="spotlight")return(
+    <div style={{width:"100%",height:"100%",display:"flex",gap:GAP,padding:P,boxSizing:"border-box"}}>
+      <div style={{flex:1,borderRadius:14,overflow:"hidden",minWidth:0}}>
+        <ParticipantTile participant={all[0]} isLocal={all[0]?.identity===localParticipant?.identity} size="large"/>
+      </div>
+      {n>1&&<div style={{width:100,display:"flex",flexDirection:"column",gap:GAP,overflowY:"auto"}}>
+        {all.slice(1).map(p=>(<div key={p.identity} style={{height:76,flexShrink:0}}>
+          <ParticipantTile participant={p} isLocal={p.identity===localParticipant?.identity} size="small"/>
+        </div>))}
+      </div>}
+    </div>
+  );
 
-  // ── Vertical: all tiles in a single vertical column ──
-  if(layout==="vertical")return(<div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",gap,padding:gap,boxSizing:"border-box",overflowY:"auto"}}>
-    {all.map(p=>(<div key={p.identity} style={{flex:`0 0 ${Math.min(280,Math.max(100,100/n))}px`,minHeight:90,width:"100%"}}><ParticipantTile participant={p} isLocal={p.identity===localParticipant?.identity} size={n===1?"large":"normal"}/></div>))}
-  </div>);
+  /* ── Horizontal: equal-width tiles, full height ── */
+  if(layout==="horizontal")return(
+    <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"row",gap:GAP,padding:P,boxSizing:"border-box"}}>
+      {all.map(p=>(<div key={p.identity} style={{flex:1,minWidth:0,height:"100%"}}>
+        <ParticipantTile participant={p} isLocal={p.identity===localParticipant?.identity} size={n===1?"large":"normal"}/>
+      </div>))}
+    </div>
+  );
 
-  // ── Focus: local big, all remotes small strip at bottom ──
+  /* ── Vertical: equal-height tiles, full width ── */
+  if(layout==="vertical")return(
+    <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",gap:GAP,padding:P,boxSizing:"border-box"}}>
+      {all.map(p=>(<div key={p.identity} style={{flex:1,minHeight:0,width:"100%"}}>
+        <ParticipantTile participant={p} isLocal={p.identity===localParticipant?.identity} size={n===1?"large":"normal"}/>
+      </div>))}
+    </div>
+  );
+
+  /* ── Focus: local large + remotes small strip at bottom ── */
   if(layout==="focus"){
     const local=all.find(p=>p.identity===localParticipant?.identity)||all[0];
     const others=all.filter(p=>p.identity!==local?.identity);
-    return(<div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",gap,padding:gap,boxSizing:"border-box"}}>
-      <div style={{flex:1,borderRadius:14,overflow:"hidden",minHeight:0}}>{local&&<ParticipantTile participant={local} isLocal size="large"/>}</div>
-      {others.length>0&&<div style={{height:90,display:"flex",flexDirection:"row",gap,flexShrink:0,overflowX:"auto"}}>{others.map(p=>(<div key={p.identity} style={{width:120,flexShrink:0}}><ParticipantTile participant={p} isLocal={false} size="small"/></div>))}</div>}
-    </div>);
+    return(
+      <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",gap:GAP,padding:P,boxSizing:"border-box"}}>
+        <div style={{flex:1,borderRadius:14,overflow:"hidden",minHeight:0}}>
+          {local&&<ParticipantTile participant={local} isLocal size="large"/>}
+        </div>
+        {others.length>0&&<div style={{height:90,display:"flex",flexDirection:"row",gap:GAP,flexShrink:0,overflowX:"auto"}}>
+          {others.map(p=>(<div key={p.identity} style={{width:120,flexShrink:0}}>
+            <ParticipantTile participant={p} isLocal={false} size="small"/>
+          </div>))}
+        </div>}
+      </div>
+    );
   }
 
-  // ── Grid (default) ──
-  let cols=n<=1?1:n===2?2:n<=4?2:n<=6?3:n<=9?3:4;const rows=Math.ceil(n/cols);
-  return(<div style={{width:"100%",height:"100%",display:"grid",gridTemplateColumns:`repeat(${cols},1fr)`,gridTemplateRows:`repeat(${rows},1fr)`,gap,padding:gap,boxSizing:"border-box"}}>
-    {all.map(p=>(<ParticipantTile key={p.identity} participant={p} isLocal={p.identity===localParticipant?.identity} size={n===1?"large":n<=4?"normal":"small"}/>))}
-  </div>);
+  /* ── Grid (default) — Google Meet style ──
+     • Always 2 columns (except solo which is full-screen).
+     • Tiles use CSS grid with equal fractional rows so they STRETCH to fill
+       the available height — no scrolling.
+     • When the count is odd the last tile spans both columns and is
+       centred via justify-self so it looks like Google Meet's lone tile.   */
+  if(n===1)return(
+    <div style={{width:"100%",height:"100%",padding:P,boxSizing:"border-box"}}>
+      <ParticipantTile participant={all[0]} isLocal={all[0]?.identity===localParticipant?.identity} size="large"/>
+    </div>
+  );
+
+  const COLS=2;
+  const ROWS=Math.ceil(n/COLS);
+  const isOdd=n%COLS!==0;
+  return(
+    <div style={{
+      width:"100%",height:"100%",
+      display:"grid",
+      gridTemplateColumns:`repeat(${COLS},1fr)`,
+      gridTemplateRows:`repeat(${ROWS},1fr)`,
+      gap:GAP,padding:P,boxSizing:"border-box",
+    }}>
+      {all.map((p,i)=>{
+        const isLastLone=isOdd&&i===n-1;
+        return(
+          <div key={p.identity} style={isLastLone?{gridColumn:"1 / -1",display:"flex",justifyContent:"center"}:{}}>
+            {/* When the lone tile spans full width, constrain it to ~50% so it
+                looks centred like Google Meet rather than stretched full-width */}
+            <div style={isLastLone?{width:"50%",height:"100%"}:{width:"100%",height:"100%"}}>
+              <ParticipantTile
+                participant={p}
+                isLocal={p.identity===localParticipant?.identity}
+                size={n<=2?"large":n<=4?"normal":"small"}
+              />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
 };
 
 /* ══ BOTTOM BAR — Google Meet floating glass style ══ */
