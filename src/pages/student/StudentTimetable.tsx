@@ -108,7 +108,12 @@ export default function StudentTimetable() {
     },
   });
 
-  const slots = (allSlots || []).filter(() => true); // show all
+  // ── Level-based filtering — students only see their own level's classes ──
+  const slots = (allSlots || []).filter((s: any) => {
+    if (isPrivileged) return true;              // admins & teachers see all
+    const lvs: string[] = s.levels || [];
+    return lvs.length === 0 || lvs.includes(studentLevel) || lvs.includes("all");
+  });
 
   const slotMatchesLevel = (s: any) => {
     if (isPrivileged) return true;
@@ -280,7 +285,6 @@ export default function StudentTimetable() {
               const isPast       = isToday && minsLeft < -30;
               const tooEarly     = isToday && !isNow && !isSoon && !isPast;
               const canJoin      = isNow || isSoon;
-              const myLevel      = slotMatchesLevel(slot);
               const subjectTitle = language === "ar"
                 ? slot.subjects?.title_ar || slot.subjects?.title
                 : slot.subjects?.title;
@@ -292,7 +296,7 @@ export default function StudentTimetable() {
                     background: "#fff", borderRadius: 16,
                     border: `1.5px solid ${isNow ? GM : isSoon ? GOLD + "80" : "#e5e7eb"}`,
                     padding: "16px", display: "flex", gap: 14, alignItems: "flex-start",
-                    opacity: isPast ? .5 : myLevel ? 1 : .55,
+                    opacity: isPast ? .5 : 1,
                     boxShadow: isNow ? `0 0 0 3px ${GM}22` : "0 1px 4px rgba(0,0,0,.04)",
                     animation: "fadeUp .25s ease",
                   }}>
