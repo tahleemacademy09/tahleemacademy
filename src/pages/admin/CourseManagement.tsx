@@ -9,7 +9,7 @@
 // 5. onChange handlers: proper parenthesis closure setF(m => ({ ... }))
 
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
@@ -514,31 +514,104 @@ const MaterialModal = React.memo(({ ed, subjectId, sortOrder, onClose, onSaved }
 // ══════════════════════════════════════════════════════════════════════════
 export default function CourseManagement() {
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const { subjectId: urlSubjectId } = useParams<{ subjectId?: string }>();
+  const [searchParams, setSearchParams] = useSearchParams();
   type View = "courses" | "subjects" | "content";
 
-  const [view, setView] = useState<View>("courses");
-  const [selCourse, setSelCourse] = useState<any>(null);
-  const [selSubject, setSelSubject] = useState<any>(null);
-  const [tab, setTab] = useState<ContentTab>("materials");
-  const [search, setSearch] = useState("");  const [lvlFilter, setLvlFilter] = useState<Level>("all");
+  // ── URL-backed state — survives refresh ──────────────────────────────
+  const viewParam    = (searchParams.get("view")    || "courses") as View;
+  const courseParam  =  searchParams.get("course")  || null;
+  const subjectParam =  searchParams.get("subject") || null;
+  const tabParam     = (searchParams.get("tab")     || "materials") as ContentTab;
+
+  const [view,       setViewState]      = useState<View>(viewParam);
+  const [selCourse,  setSelCourseState] = useState<any>(null);
+  const [selSubject, setSelSubjectState]= useState<any>(null);
+  const [tab,        setTabState]       = useState<ContentTab>(tabParam);
+
+  // Helpers that update both React state AND the URL atomically
+  const setView = (v: View) => {
+    setViewState(v);
+    setSearchParams(prev => { const p = new URLSearchParams(prev); p.set("view", v); return p; }, { replace: true });
+  };
+  const setTab = (t: ContentTab) => {
+    setTabState(t);
+    setSearchParams(prev => { const p = new URLSearchParams(prev); p.set("tab", t); return p; }, { replace: true });
+  };
+  const setSelCourse = (c: any) => {
+    setSelCourseState(c);
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev);
+      if (c) p.set("course", c.id); else p.delete("course");
+      return p;
+    }, { replace: true });
+  };
+  const setSelSubject = (s: any) => {
+    setSelSubjectState(s);
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev);
+      if (s) p.set("subject", s.id); else p.delete("subject");
+      return p;
+    }, { replace: true });
+  };
+
+  const [search, setSearch] = useState("");
+  const [lvlFilter, setLvlFilter] = useState<Level>("all");
   const [sortBy, setSortBy] = useState<SortKey>("sort_order");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
+  // ── Re-hydrate from URL params on first mount / refresh ──────────────
+  const hydrated = useRef(false);
   useEffect(() => {
-    if (!urlSubjectId) return;
+    if (hydrated.current) return;
+    hydrated.current = true;
+
+    // URL-param subject takes precedence (direct link from notifications etc.)
+    if (urlSubjectId) {
+      (async () => {
+        const { data: subj } = await supabase.from("subjects").select("*").eq("id", urlSubjectId).single();
+        if (!subj) return;
+        if (subj.course_id) {
+          const { data: course } = await supabase.from("courses").select("*").eq("id", subj.course_id).single();
+          if (course) setSelCourseState(course);
+        }
+        setSelSubjectState(subj);
+        setViewState("content");
+        setTabState("materials");
+        setSearchParams({ view: "content", course: subj.course_id || "", subject: subj.id, tab: "materials" }, { replace: true });
+      })();
+      return;
+    }
+
+    // Otherwise restore from search params
+    const restoreView    = (searchParams.get("view")    || "courses") as View;
+    const restoreCourse  =  searchParams.get("course")  || null;
+    const restoreSubject =  searchParams.get("subject") || null;
+    const restoreTab     = (searchParams.get("tab")     || "materials") as ContentTab;
+
+    if (restoreView === "courses" && !restoreCourse) return; // nothing to restore
+
     (async () => {
-      const { data: subj } = await supabase.from("subjects").select("*").eq("id", urlSubjectId).single();
-      if (!subj) return;
-      if (subj.course_id) {
-        const { data: course } = await supabase.from("courses").select("*").eq("id", subj.course_id).single();
-        if (course) setSelCourse(course);
+      let course = null;
+      let subject = null;
+
+      if (restoreCourse) {
+        const { data } = await supabase.from("courses").select("*").eq("id", restoreCourse).single();
+        course = data || null;
       }
-      setSelSubject(subj);
-      setView("content");
-      setTab("materials");
+      if (restoreSubject) {
+        const { data } = await supabase.from("subjects").select("*").eq("id", restoreSubject).single();
+        subject = data || null;
+      }
+
+      if (course)   setSelCourseState(course);
+      if (subject)  setSelSubjectState(subject);
+      setViewState(restoreView);
+      setTabState(restoreTab);
     })();
-  }, [urlSubjectId]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const [showCourse, setShowCourse] = useState(false);
   const [showSubject, setShowSubject] = useState(false);
