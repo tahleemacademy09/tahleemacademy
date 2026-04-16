@@ -60,6 +60,11 @@ const CSS = `
   [data-classroom-root] button{-webkit-tap-highlight-color:transparent;touch-action:manipulation;}
   [data-classroom-root] canvas{-webkit-user-select:none;user-select:none;}
   @supports not (height:100dvh){[data-classroom-root]{height:-webkit-fill-available!important;}}
+  /* ── Footer bar: prevent scrollbar-induced layout jank ── */
+  .cv-bar{scrollbar-width:none;-ms-overflow-style:none;}
+  .cv-bar::-webkit-scrollbar{display:none;}
+  /* Stable height — clamp prevents iOS safe-area calc from causing reflow */
+  .cv-bar{will-change:transform;transform:translateZ(0);contain:layout style;}
 `;
 
 /* ══ RECONNECT MONITOR ══ */
@@ -603,7 +608,7 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
       <button onClick={()=>{setMenu(false);onToggleParticipants();}} style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"13px 18px",background:"none",border:"none",cursor:"pointer",color:"#fff",fontSize:14,borderBottom:"1px solid rgba(255,255,255,.06)",textAlign:"left"as const}}><Users style={{width:16,height:16}}/> Participants</button>
       <button onClick={isPrivileged?onEndClass:onLeaveClass} style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"13px 18px",background:"none",border:"none",cursor:"pointer",color:RED,fontSize:14,textAlign:"left"as const}}>📵 {isPrivileged?"End Class for All":"Leave Class"}</button>
     </div>,menuPortal)}
-    <div style={{height:isMobile?60:BAR_H,background:GLASS,backdropFilter:"blur(20px)",WebkitBackdropFilter:"blur(20px)",borderTop:"1px solid rgba(255,255,255,.07)",display:"flex",alignItems:"center",justifyContent:"center",gap:isMobile?5:10,padding:`0 ${isMobile?6:16}px calc(${isMobile?4:8}px + env(safe-area-inset-bottom,0px)) ${isMobile?6:16}px`,flexShrink:0,boxShadow:"0 -4px 24px rgba(0,0,0,.45)",overflowX:"auto" as const,WebkitOverflowScrolling:"touch" as const}}>
+    <div className="cv-bar" style={{height:isMobile?60:BAR_H,minHeight:isMobile?60:BAR_H,background:GLASS,backdropFilter:"blur(20px)",WebkitBackdropFilter:"blur(20px)",borderTop:"1px solid rgba(255,255,255,.07)",display:"flex",alignItems:"center",justifyContent:"center",gap:isMobile?5:10,padding:`0 ${isMobile?6:16}px calc(${isMobile?4:8}px + env(safe-area-inset-bottom,0px)) ${isMobile?6:16}px`,flexShrink:0,boxShadow:"0 -4px 24px rgba(0,0,0,.45)",overflowX:"auto" as const,WebkitOverflowScrolling:"touch" as const}}>
       <Btn active={micOn} danger={!micOn} title={micOn?"Mute":"Unmute"} onClick={toggleMic}>{micOn?<Mic style={IS}/>:<MicOff style={IS}/>}</Btn>
       <Btn active={camOn} danger={!camOn} title={camOn?"Stop Video":"Start Video"} onClick={toggleCam}>{camOn?<Video style={IS}/>:<VideoOff style={IS}/>}</Btn>
       {isPrivileged?(<Btn active={whiteboardOpen} title="Whiteboard" onClick={onToggleWhiteboard}><PenTool style={{...IS,color:whiteboardOpen?"#4ade80":"#fff"}}/></Btn>):(<Btn active={handUp} title={handUp?"Lower Hand":"Raise Hand"} onClick={toggleHand}><Hand style={{...IS,color:handUp?"#fbbf24":"#fff"}}/></Btn>)}
