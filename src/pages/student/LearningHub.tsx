@@ -53,7 +53,10 @@ const subjectLevelMatch = (subject: any, studentLevel: string): boolean => {
   return lv === studentLevel;
 };
 
-const levelMatch = (_itemLevel: string | null | undefined, _studentLevel: string): boolean => true;
+const levelMatch = (itemLevel: string | null | undefined, studentLevel: string): boolean => {
+  if (!itemLevel || itemLevel === "all") return true;
+  return itemLevel === studentLevel;
+};
 
 interface Props { defaultTab?: "courses" | "live"; }
 
