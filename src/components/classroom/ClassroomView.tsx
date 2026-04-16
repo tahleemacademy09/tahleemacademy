@@ -1,3 +1,59 @@
+// Fix 1: Update src/components/classroom/ClassroomView.tsx - BottomBar toggleMic/toggleCam
+// Around line 625-640, replace with:
+
+const toggleMic = async () => {
+  if (!room?.localParticipant) return;
+  try {
+    const current = room.localParticipant.isMicrophoneEnabled;
+    console.log("[toggleMic] current state:", current, "toggling to:", !current);
+    
+    // Set optimistic state first
+    setMicOn(!current);
+    
+    // Then actually toggle it
+    await room.localParticipant.setMicrophoneEnabled(!current);
+    
+    // Add a small delay to let LiveKit process
+    await new Promise(r => setTimeout(r, 200));
+    
+    // Sync actual room state
+    setMicOn(room.localParticipant.isMicrophoneEnabled);
+    console.log("[toggleMic] final state:", room.localParticipant.isMicrophoneEnabled);
+  } catch (e) {
+    console.error("toggleMic error:", e);
+    // Reset state on error
+    setMicOn(room.localParticipant.isMicrophoneEnabled);
+  }
+};
+
+const toggleCam = async () => {
+  if (!room?.localParticipant) return;
+  try {
+    const current = room.localParticipant.isCameraEnabled;
+    console.log("[toggleCam] current state:", current, "toggling to:", !current);
+    
+    // Set optimistic state first
+    setCamOn(!current);
+    
+    // Then actually toggle it
+    await room.localParticipant.setCameraEnabled(!current);
+    
+    // Add a small delay to let LiveKit process
+    await new Promise(r => setTimeout(r, 200));
+    
+    // Sync actual room state
+    setCamOn(room.localParticipant.isCameraEnabled);
+    console.log("[toggleCam] final state:", room.localParticipant.isCameraEnabled);
+  } catch (e) {
+    console.error("toggleCam error:", e);
+    // Reset state on error
+    setCamOn(room.localParticipant.isCameraEnabled);  }
+};
+
+
+
+
+
 /*
   ClassroomView.tsx — Tahleem Academy Live Classroom
   Google Meet-style UI · iOS-safe · Persistent call context
@@ -40,8 +96,7 @@ const TEAL  = "#0a7c68";
 const TEAL2 = "#064E3B";
 const DARK  = "#0f1117";
 const GLASS = "rgba(15,17,23,0.88)";
-const GLASSB= "rgba(255,255,255,0.08)";
-const GREEN = "#22c55e";
+const GLASSB= "rgba(255,255,255,0.08)";const GREEN = "#22c55e";
 const RED   = "#ef4444";
 const BAR_H = 76;
 
@@ -90,8 +145,7 @@ const ReconnectMonitor = ({ onReconnecting, onReconnected }: { onReconnecting:()
       } catch {}
     };
     document.addEventListener("visibilitychange", onVis);
-    return () => {
-      room.off(RoomEvent.Reconnecting, onReconnecting);
+    return () => {      room.off(RoomEvent.Reconnecting, onReconnecting);
       room.off(RoomEvent.Reconnected,  onReconnected);
       document.removeEventListener("visibilitychange", onVis);
     };
@@ -140,8 +194,7 @@ const MediaAutoPublish = (_props: { lobbyMic?: boolean; lobbyCam?: boolean }) =>
       try {
         const lp = room.localParticipant;
         // Always start silent and dark — user controls via footer buttons
-        if (lp.isMicrophoneEnabled) await lp.setMicrophoneEnabled(false);
-        if (lp.isCameraEnabled)     await lp.setCameraEnabled(false);
+        if (lp.isMicrophoneEnabled) await lp.setMicrophoneEnabled(false);        if (lp.isCameraEnabled)     await lp.setCameraEnabled(false);
       } catch { /* non-critical */ }
     };
     init();
@@ -190,8 +243,7 @@ const FloatingEmojiLayer=({emojis}:{emojis:FloatingEmoji[]})=>(
         fontSize:40,
         lineHeight:1,
         animation:"emoji-float 2.6s ease-out forwards",
-        userSelect:"none",
-        filter:"drop-shadow(0 2px 6px rgba(0,0,0,.5))",
+        userSelect:"none",        filter:"drop-shadow(0 2px 6px rgba(0,0,0,.5))",
       }}>{fe.emoji}</div>
     ))}
   </div>
@@ -240,8 +292,7 @@ const Whiteboard = ({room,onClose,isTeacher,initialStrokes,subjectId,canStudentW
       for(let i=1;i<s.points.length;i++)ctx.lineTo(s.points[i].x,s.points[i].y);
       ctx.stroke();
     }
-  },[]);
-  useEffect(()=>{(async()=>{
+  },[]);  useEffect(()=>{(async()=>{
     try{const{data}=await supabase.from("subject_whiteboard"as any).select("strokes").eq("subject_id",subjectId).maybeSingle();
       if((data as any)?.strokes?.length)strokesRef.current=(data as any).strokes;
       else if(initialStrokes?.length)strokesRef.current=initialStrokes;
@@ -290,8 +341,7 @@ const WhiteboardBridge=({onClose,isTeacher,initialStrokes,subjectId,canStudentWr
 const MaterialViewer=({material,isTeacher,onClose}:any)=>{
   const url=material.file_url||material.url||"";const title=material.title||material.name||"Material";
   const isYT=url.includes("youtube.com")||url.includes("youtu.be");
-  const isPdf=url.toLowerCase().includes(".pdf")||(material.material_type||"").includes("pdf");
-  const isImg=/\.(jpg|jpeg|png|gif|webp|svg)$/i.test(url);const isVid=/\.(mp4|webm|ogg|mov)$/i.test(url);
+  const isPdf=url.toLowerCase().includes(".pdf")||(material.material_type||"").includes("pdf");  const isImg=/\.(jpg|jpeg|png|gif|webp|svg)$/i.test(url);const isVid=/\.(mp4|webm|ogg|mov)$/i.test(url);
   const ytId=(u:string)=>{const m=u.match(/(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([\w-]+)/);return m?m[1]:"";};
   return createPortal(<div style={{position:"fixed",inset:0,zIndex:9998,background:"#000",display:"flex",flexDirection:"column"}}>
     <div style={{height:52,background:`rgba(6,78,59,.97)`,display:"flex",alignItems:"center",padding:"0 14px",gap:10}}>
@@ -340,8 +390,7 @@ function toMaterialEmbedUrl(url:string):{embedUrl:string;kind:"youtube"|"gdrive"
   const ytM=url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/);
   if(ytM)return{embedUrl:`https://www.youtube.com/embed/${ytM[1]}?autoplay=1&rel=0`,kind:"youtube"};
   const gdM=url.match(/drive\.google\.com\/file\/d\/([^/?#]+)/);
-  if(gdM)return{embedUrl:`https://drive.google.com/file/d/${gdM[1]}/preview`,kind:"gdrive"};
-  const gdM2=url.match(/drive\.google\.com\/open\?id=([^&]+)/);
+  if(gdM)return{embedUrl:`https://drive.google.com/file/d/${gdM[1]}/preview`,kind:"gdrive"};  const gdM2=url.match(/drive\.google\.com\/open\?id=([^&]+)/);
   if(gdM2)return{embedUrl:`https://drive.google.com/file/d/${gdM2[1]}/preview`,kind:"gdrive"};
   const ext=url.split("?")[0].split(".").pop()?.toLowerCase()??"";
   if(ext==="pdf")return{embedUrl:url,kind:"pdf"};
@@ -390,8 +439,7 @@ const SubjectMaterialsPanel=({subjectId,onClose}:any)=>{
   useEffect(()=>{
     supabase.from("subject_materials" as any).select("*").eq("subject_id",subjectId).order("created_at",{ascending:false})
       .then(({data})=>{setMats(data||[]);setBusy(false);});
-  },[subjectId]);
-  return createPortal(
+  },[subjectId]);  return createPortal(
     <div style={{position:"fixed",inset:0,zIndex:9900,background:"rgba(0,0,0,.55)"}} onClick={onClose}>
       <div onClick={e=>e.stopPropagation()} style={{position:"fixed",top:0,right:0,bottom:0,width:"min(340px,100vw)",background:"#13181f",borderLeft:"1px solid rgba(255,255,255,.08)",display:"flex",flexDirection:"column",animation:"slide-up .2s ease",boxShadow:"-8px 0 32px rgba(0,0,0,.5)"}}>
         {/* Header */}
@@ -440,8 +488,7 @@ const RecController=({sessionId,subjectId,userEmail,onSavingChange}:any)=>{
       const dest=ac.createMediaStreamDestination();let n=0;
       [room.localParticipant,...Array.from(room.remoteParticipants.values())].forEach((p:any)=>{p.trackPublications?.forEach?.((pub:any)=>{if(pub.kind==="audio"&&pub.track?.mediaStreamTrack){ac.createMediaStreamSource(new MediaStream([pub.track.mediaStreamTrack])).connect(dest);n++;}});});
       return n>0?dest.stream:null;
-    }catch{return null;}
-  },[room]);
+    }catch{return null;}  },[room]);
   const startRec=async()=>{
     try{
       // Prefer capturing from the live room (all participants);
@@ -490,8 +537,7 @@ const RecController=({sessionId,subjectId,userEmail,onSavingChange}:any)=>{
         const blob=new Blob(chunksRef.current,{type:recMime});
 
         if(blob.size===0){
-          toast({title:"Recording empty",description:"No audio was captured. Make sure your mic is on.",variant:"destructive"});
-          return;
+          toast({title:"Recording empty",description:"No audio was captured. Make sure your mic is on.",variant:"destructive"});          return;
         }
 
         const recPath=`sessions/${sessionId||subjectId}/${Date.now()}.${recExt}`;
@@ -540,8 +586,7 @@ const RecController=({sessionId,subjectId,userEmail,onSavingChange}:any)=>{
       <button onClick={togglePause} style={{background:GLASSB,border:"none",borderRadius:8,padding:"4px 10px",color:"#fff",fontSize:12,cursor:"pointer"}}>{paused?<Play style={{width:12,height:12}}/>:<Pause style={{width:12,height:12}}/>}</button>
       <button onClick={stopRec} style={{background:"rgba(239,68,68,.25)",border:"none",borderRadius:8,padding:"4px 10px",color:RED,fontSize:12,fontWeight:700,cursor:"pointer"}}>Stop</button></>}
     {!recording&&<button onClick={startRec} style={{display:"flex",alignItems:"center",gap:6,background:"rgba(239,68,68,.14)",border:"1px solid rgba(239,68,68,.35)",borderRadius:20,padding:"5px 14px",color:"#fca5a5",fontSize:12,fontWeight:700,cursor:"pointer"}}><Circle style={{width:7,height:7,fill:RED,color:RED}}/> Record</button>}
-  </div>);
-};
+  </div>);};
 
 /* ══ GOOGLE MEET-STYLE PARTICIPANT TILE ══ */
 const ParticipantTile=({participant,isLocal,size="normal"}:{participant:any;isLocal:boolean;size?:"normal"|"large"|"small"})=>{
@@ -590,8 +635,7 @@ const ParticipantTile=({participant,isLocal,size="normal"}:{participant:any;isLo
 /* ══ VIDEO GRID ══ */
 const VideoGrid=()=>{
   const{localParticipant}=useLocalParticipant();const allParticipants=useParticipants();
-  const remotes=allParticipants.filter(p=>p.identity!==localParticipant?.identity);
-  const all=localParticipant?[localParticipant,...remotes]:remotes;const n=all.length;
+  const remotes=allParticipants.filter(p=>p.identity!==localParticipant?.identity);  const all=localParticipant?[localParticipant,...remotes]:remotes;const n=all.length;
   const screensharer=all.find(p=>{const pub=p.getTrackPublication?.(Track.Source.ScreenShare)||p.trackPublications?.get(Track.Source.ScreenShare);return pub?.track&&!pub.isMuted;});
   const gap=6;
   if(screensharer)return(<div style={{width:"100%",height:"100%",display:"flex",gap,padding:gap,boxSizing:"border-box"}}>
@@ -622,22 +666,54 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
     return()=>{clearTimeout(t1);clearTimeout(t2);room.localParticipant.off("trackMuted",sync);room.localParticipant.off("trackUnmuted",sync);room.localParticipant.off("trackPublished",sync);room.localParticipant.off("trackUnpublished",sync);};
   },[room]);
   // ── Mic / cam toggle: never use optimistic state — let track events sync ──
-  const toggleMic=async()=>{
-    if(!room?.localParticipant)return;
-    try{
-      // Read live state from room (not React state) to avoid stale closure issues
-      const current=room.localParticipant.isMicrophoneEnabled;
-      await room.localParticipant.setMicrophoneEnabled(!current);
-      // State will be updated by the trackMuted / trackUnmuted listener
-    }catch(e){console.error("toggleMic:",e);}
-  };
-  const toggleCam=async()=>{
-    if(!room?.localParticipant)return;
-    try{
-      const current=room.localParticipant.isCameraEnabled;
-      await room.localParticipant.setCameraEnabled(!current);
-    }catch(e){console.error("toggleCam:",e);}
-  };
+const toggleMic = async () => {
+  if (!room?.localParticipant) return;
+  try {
+    const current = room.localParticipant.isMicrophoneEnabled;
+    console.log("[toggleMic] current state:", current, "toggling to:", !current);
+    
+    // Set optimistic state first
+    setMicOn(!current);
+    
+    // Then actually toggle it
+    await room.localParticipant.setMicrophoneEnabled(!current);
+    
+    // Add a small delay to let LiveKit process
+    await new Promise(r => setTimeout(r, 200));
+    
+    // Sync actual room state
+    setMicOn(room.localParticipant.isMicrophoneEnabled);
+    console.log("[toggleMic] final state:", room.localParticipant.isMicrophoneEnabled);
+  } catch (e) {    console.error("toggleMic error:", e);
+    // Reset state on error
+    setMicOn(room.localParticipant.isMicrophoneEnabled);
+  }
+};
+
+const toggleCam = async () => {
+  if (!room?.localParticipant) return;
+  try {
+    const current = room.localParticipant.isCameraEnabled;
+    console.log("[toggleCam] current state:", current, "toggling to:", !current);
+    
+    // Set optimistic state first
+    setCamOn(!current);
+    
+    // Then actually toggle it
+    await room.localParticipant.setCameraEnabled(!current);
+    
+    // Add a small delay to let LiveKit process
+    await new Promise(r => setTimeout(r, 200));
+    
+    // Sync actual room state
+    setCamOn(room.localParticipant.isCameraEnabled);
+    console.log("[toggleCam] final state:", room.localParticipant.isCameraEnabled);
+  } catch (e) {
+    console.error("toggleCam error:", e);
+    // Reset state on error
+    setCamOn(room.localParticipant.isCameraEnabled);
+  }
+};
   const toggleHand=async()=>{if(!user||!sessionId)return;const n=!handUp;setHandUp(n);await supabase.from("class_participants").update({hand_raised:n,hand_raised_at:n?new Date().toISOString():null}).eq("session_id",sessionId).eq("student_id",user.id);};
   const toggleStuRecord=async()=>{
     if(stuRec){stuMrRef.current?.stop();stuMrRef.current!.onstop=()=>{const blobType=stuMrRef.current?.mimeType||"audio/webm";const blob=new Blob(stuChunks.current,{type:blobType});const url=URL.createObjectURL(blob);const a=document.createElement("a");const ext=blobType.includes("mp4")?"mp4":blobType.includes("ogg")?"ogg":"webm";a.href=url;a.download=`class-recording-${Date.now()}.${ext}`;a.click();URL.revokeObjectURL(url);stuChunks.current=[];};setStuRec(false);}
@@ -657,8 +733,7 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
     // Save to chat log
     if(user&&sessionId)supabase.from("class_chat_messages").insert({session_id:sessionId,sender_id:user.id,message:e,type:"reaction"});
   };
-  const IS={width:isMobile?16:20,height:isMobile?16:20};
-  const Btn=({children,active=false,danger=false,onClick,badge=0,title:ttl=""}:any)=>(
+  const IS={width:isMobile?16:20,height:isMobile?16:20};  const Btn=({children,active=false,danger=false,onClick,badge=0,title:ttl=""}:any)=>(
     <div style={{position:"relative",display:"flex",flexDirection:"column",alignItems:"center"}}>
       <button title={ttl} onClick={onClick} style={{width:isMobile?42:52,height:isMobile?42:52,borderRadius:"50%",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",background:danger?"rgba(239,68,68,.85)":active?"rgba(255,255,255,.18)":"rgba(255,255,255,.09)",color:"#fff",transition:"background .15s,transform .1s",backdropFilter:"blur(4px)",boxShadow:active&&!danger?"inset 0 0 0 2px rgba(255,255,255,.2)":"none"}}
         onMouseEnter={e=>(e.currentTarget.style.transform="scale(1.08)")} onMouseLeave={e=>(e.currentTarget.style.transform="scale(1)")}>{children}</button>
@@ -707,8 +782,7 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
       }
       {/* Student: whiteboard write button (shown when admin grants write) */}
       {!isPrivileged&&canStudentWriteProp&&(
-        <Btn active={whiteboardOpen} title="Open Board" onClick={onToggleWhiteboard}>
-          <PenTool style={{...IS,color:"#34d399"}}/>
+        <Btn active={whiteboardOpen} title="Open Board" onClick={onToggleWhiteboard}>          <PenTool style={{...IS,color:"#34d399"}}/>
         </Btn>
       )}
       {/* Chat */}
@@ -757,8 +831,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   const[sessionId,setSessionId]=useState<string|null>(null);const[sessionInfo,setSessionInfo]=useState<any>(null);
   const[attendanceId,setAttendanceId]=useState<string|null>(null);const[joinedAt]=useState(Date.now());
   const[savingRec,setSavingRec]=useState(false);const[isSessionLive,setIsSessionLive]=useState(false);const[duration,setDuration]=useState(0);
-  const[chatOpen,setChatOpen]=useState(false);const[partOpen,setPartOpen]=useState(false);const[chatUnread,setChatUnread]=useState(0);
-  // Realtime chat unread counter — increments when a new message arrives and chat panel is closed
+  const[chatOpen,setChatOpen]=useState(false);const[partOpen,setPartOpen]=useState(false);const[chatUnread,setChatUnread]=useState(0);  // Realtime chat unread counter — increments when a new message arrives and chat panel is closed
   useEffect(()=>{
     if(!sessionId||phase!=="live")return;
     const ch=supabase.channel(`chat-unread-${sessionId}`)
@@ -796,7 +869,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     return()=>clearTimeout(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[autoJoin]);
-  useEffect(()=>{const check=async()=>{const{data}=await supabase.from("live_sessions").select("*").eq("subject_id",subject.id).eq("status","live").maybeSingle();if(data){setSessionInfo(data);setSessionId(data.id);setIsSessionLive(true);}else setIsSessionLive(false);};check();const iv=setInterval(check,4000);return()=>clearInterval(iv);},[subject.id]);
+  useEffect(()=>{const check=async()=>{const{data}=await supabase.from("live_sessions").select("*").eq("subject_id",subject.id).eq("status","live").maybeSingle();if(data){setSessionInfo(data);setSessionId(data.id);setIsSessionLive(true);}else setIsSessionLive(false);};check();const iv=setInterval(check,4004);return()=>clearInterval(iv);},[subject.id]);
   useEffect(()=>{if(phase!=="live")return;const ti=setInterval(()=>setDuration(d=>d+1),1000);return()=>clearInterval(ti);},[phase]);
   // Media Session API — shows call info in Android notification shade & lock screen
   useEffect(()=>{
@@ -807,8 +880,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
       });
       (navigator as any).mediaSession.playbackState="playing";
       (navigator as any).mediaSession.setActionHandler("stop",()=>leaveSession());
-      (navigator as any).mediaSession.setActionHandler("pause",()=>leaveSession());
-    }catch{}
+      (navigator as any).mediaSession.setActionHandler("pause",()=>leaveSession());    }catch{}
     return()=>{
       try{(navigator as any).mediaSession.playbackState="none";}catch{}
     };
@@ -823,8 +895,8 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
       if(!tk||!url){const{data,error:e}=await supabase.functions.invoke("livekit-token",{body:{subject_id:subject.id,action}});if(e)throw e;if(data?.error)throw new Error(data.error);tk=data.token;url=data.url;}
       if(settings&&sessionId)await supabase.from("live_sessions").update({...settings,actual_start_time:new Date().toISOString(),status:"live"}).eq("id",sessionId);
       setToken(tk!);setWsUrl(url!);
-      const{data:sessions}=await supabase.from("live_sessions").select("*").eq("subject_id",subject.id).in("status",["live","active","scheduled"]).order("scheduled_at",{ascending:false,nullsFirst:false}).limit(1);
-      if(sessions?.length){setSessionId(sessions[0].id);setSessionInfo(sessions[0]);const{data:att}=await supabase.from("attendance_logs").insert({session_id:sessions[0].id,user_id:user!.id,device_info:navigator.userAgent}).select("id").single();if(att)setAttendanceId(att.id);await supabase.from("class_participants").upsert({session_id:sessions[0].id,student_id:user!.id,joined_at:new Date().toISOString(),is_muted:!isPrivileged,camera_on:true,left_at:null,left_minutes:null},{onConflict:"session_id,student_id"});}
+      const{sessions}=await supabase.from("live_sessions").select("*").eq("subject_id",subject.id).in("status",["live","active","scheduled"]).order("scheduled_at",{ascending:false,nullsFirst:false}).limit(1);
+      if(sessions?.length){setSessionId(sessions[0].id);setSessionInfo(sessions[0]);const{att}=await supabase.from("attendance_logs").insert({session_id:sessions[0].id,user_id:user!.id,device_info:navigator.userAgent}).select("id").single();if(att)setAttendanceId(att.id);await supabase.from("class_participants").upsert({session_id:sessions[0].id,student_id:user!.id,joined_at:new Date().toISOString(),is_muted:!isPrivileged,camera_on:true,left_at:null,left_minutes:null},{onConflict:"session_id,student_id"});}
       setPhase("live");
       try { playJoinSound(); } catch {}
     }catch(e:any){setError(e?.message||"Failed to connect");}finally{setLoading(false);}
@@ -857,8 +929,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     const x=5+Math.random()*70; // keep away from edges (5%–75%)
     setFloatingEmojis(prev=>[...prev,{id,emoji,x}]);
     setTimeout(()=>setFloatingEmojis(prev=>prev.filter(fe=>fe.id!==id)),2800);
-  };
-  const handleGroupRecite=async(room?:any)=>{
+  };  const handleGroupRecite=async(room?:any)=>{
     const n=!groupRecite;
     setGroupRecite(n);
     toast({title:n?"🎙️ Group Recitation ON — all mics enabled":"🔇 Group Recitation ended"});
@@ -907,8 +978,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
                 <span style={{fontSize:12,color:"#fff",fontWeight:600,maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{subject.title}</span>
               </div>
               <div style={{display:"flex",alignItems:"center",gap:5,background:"rgba(239,68,68,.12)",borderRadius:16,padding:"3px 10px",border:"1px solid rgba(239,68,68,.25)"}}>
-                <Circle style={{width:5,height:5,fill:RED,color:RED}}/><span style={{fontSize:11,color:"#fca5a5",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>{fmtT(duration)}</span>
-              </div>
+                <Circle style={{width:5,height:5,fill:RED,color:RED}}/><span style={{fontSize:11,color:"#fca5a5",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>{fmtT(duration)}</span>              </div>
               <ParticipantCountBadge />
             </div>
             {isPrivileged&&<RecController sessionId={sessionId} subjectId={subject.id} userEmail={user?.email||""} onSavingChange={setSavingRec}/>}
@@ -957,7 +1027,6 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     </div>
   );
 };
-
 const MatPickerBridge=({subjectId,onShare,onClose}:any)=>{const room=useRoomContext();return<MaterialPicker subjectId={subjectId} onShare={(mat:any)=>onShare(mat,room)} onClose={onClose}/>;};
 const MatViewerBridge=({material,isTeacher,onClose}:any)=>{const room=useRoomContext();return<MaterialViewer material={material} isTeacher={isTeacher} onClose={()=>onClose(room)}/>;};
 
