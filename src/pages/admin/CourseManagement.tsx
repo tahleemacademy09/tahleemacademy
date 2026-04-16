@@ -150,12 +150,28 @@ const CourseModal = React.memo(({ ed, onClose, onSave, busy }: { ed?: any; onClo
           <label htmlFor="cm-course-img" style={{ height: 100, borderRadius: 12, border: "2px dashed #E5E7EB", background: "#F9FAFB", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, color: "#9CA3AF", fontSize: 13 }}>
             {up ? <Loader2 size={20} style={{ animation: "spin .8s linear infinite" }} /> : f.image_url ? <img src={f.image_url} alt="" style={{ height: "100%", borderRadius: 10 }} /> : <><Image size={20} /> Upload thumbnail</>}
           </label>
-          <Fld label="Course Title (English)"><input value={f.title} onChange={e => setF(c => ({ ...c, title: e.target.value }))} style={inp} placeholder="e.g. Quran Memorisation" autoFocus /></Fld>          <Fld label="Course Title (Arabic)"><input value={f.title_ar} onChange={e => setF(c => ({ ...c, title_ar: e.target.value }))} style={{ ...inp, direction: "rtl", fontFamily: "'Amiri',serif" }} placeholder="مثال: حفظ القرآن" /></Fld>
+          <Fld label="Course Title (English)"><input value={f.title} onChange={e => setF(c => ({ ...c, title: e.target.value }))} style={inp} placeholder="e.g. Quran Memorisation" autoFocus /></Fld>
+          <Fld label="Course Title (Arabic)"><input value={f.title_ar} onChange={e => setF(c => ({ ...c, title_ar: e.target.value }))} style={{ ...inp, direction: "rtl", fontFamily: "'Amiri',serif" }} placeholder="مثال: حفظ القرآن" /></Fld>
           <Fld label="Description"><textarea value={f.description} onChange={e => setF(c => ({ ...c, description: e.target.value }))} rows={3} style={{ ...inp, resize: "vertical" }} /></Fld>
-          {/* Courses are always visible to all levels — subjects carry the level restriction */}
-          <div style={{ padding: "10px 14px", borderRadius: 10, background: "#F0FDF4", border: "1px solid #86EFAC", fontSize: 12, color: "#166534" }}>
-            ℹ️ Courses are visible to all student levels. Restrict access per-subject below.
-          </div>
+          <Fld label="Visible to Level">
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {(["all", "beginner", "intermediate", "advanced"] as Level[]).map(lv => {
+                const c = lvlCfg[lv], sel = f.level === lv;
+                return (
+                  <button key={lv} type="button" onClick={() => setF(p => ({ ...p, level: lv }))}
+                    style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 14px", borderRadius: 10, border: `2px solid ${sel ? c.border : "#E5E7EB"}`, background: sel ? c.bg : "#fff", cursor: "pointer", flex: 1, minWidth: 100 }}>
+                    <div style={{ width: 16, height: 16, borderRadius: "50%", border: `2px solid ${sel ? c.border : "#D1D5DB"}`, background: sel ? c.text : "#fff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                      {sel && <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#fff" }} />}
+                    </div>
+                    <span style={{ fontWeight: sel ? 800 : 500, fontSize: 12, color: sel ? c.text : "#374151" }}>{c.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <p style={{ fontSize: 11, color: "#6B7280", margin: "6px 0 0" }}>
+              {f.level === "all" ? "✅ All students will see this course." : `⚠️ Only ${lvlCfg[f.level].label} students will see this course.`}
+            </p>
+          </Fld>
           <Fld label="Sort Order"><input type="number" value={f.sort_order} onChange={e => setF(c => ({ ...c, sort_order: Number(e.target.value) }))} style={inp} min={0} /></Fld>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <input type="checkbox" id="cpub" checked={f.is_published} onChange={e => setF(c => ({ ...c, is_published: e.target.checked }))} />
@@ -627,7 +643,7 @@ export default function CourseManagement() {
 
   // ── Queries ───────────────────────────────────────────────────────────────
   const { data: courses = [], isLoading: cLoad } = useQuery({ queryKey: ["adm-courses"], queryFn: async () => { const { data } = await supabase.from("courses").select("*").order("sort_order"); return data || []; } });
-  const { data: subjects = [], isLoading: sLoad } = useQuery({ queryKey: ["adm-subjects", selCourse?.id], enabled: view !== "courses", queryFn: async () => { let q = supabase.from("subjects").select("*").order("title"); if (selCourse) q = q.eq("course_id", selCourse.id); const { data } = await q; return data || []; } });
+  const { data: subjects = [], isLoading: sLoad } = useQuery({ queryKey: ["adm-subjects", selCourse?.id], enabled: !!selCourse?.id, queryFn: async () => { let q = supabase.from("subjects").select("*").order("title"); if (selCourse) q = q.eq("course_id", selCourse.id); const { data } = await q; return data || []; } });
   const { data: allSubjects = [] } = useQuery({ queryKey: ["adm-all-subjects"], queryFn: async () => { const { data } = await supabase.from("subjects").select("id,title,level,course_id").order("title"); return data || []; } });
   
   // 🔧 FIX #1: lessons query uses "subject_id" instead of "course_id"
@@ -647,7 +663,7 @@ export default function CourseManagement() {
   const saveCourse = useCallback(async (p: any) => {
     setBusy(true);
     try {
-      const d = { title: p.title, title_ar: p.title_ar || null, description: p.description || null, level: "all" as const, is_published: p.is_published, image_url: p.image_url || null, sort_order: p.sort_order, updated_at: new Date().toISOString() };
+      const d = { title: p.title, title_ar: p.title_ar || null, description: p.description || null, level: (p.level || "all") as Level, is_published: p.is_published, image_url: p.image_url || null, sort_order: p.sort_order, updated_at: new Date().toISOString() };
       const { error: courseErr } = edCourse ? await supabase.from("courses").update(d).eq("id", edCourse.id) : await supabase.from("courses").insert(d);
       if (courseErr) throw courseErr;
       qc.invalidateQueries({ queryKey: ["adm-courses"] }); setShowCourse(false); setEdCourse(null);
