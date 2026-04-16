@@ -28,9 +28,9 @@ const StudentCourses = () => {
   const { user, profile } = useAuth();
   const studentLevel = profile?.level || "beginner";
 
-  // 1. Fetch Subjects
+  // 1. Fetch Subjects - only those matching student level
   const { data: subjects, isLoading: loadingSubjects } = useQuery({
-    queryKey: ["subjects-active"],
+    queryKey: ["subjects-active", studentLevel],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("subjects")
@@ -38,20 +38,28 @@ const StudentCourses = () => {
         .eq("is_active", true)
         .order("created_at");
       if (error) throw error;
-      return data;
+      // Filter by level: show subject if level is "all", null, or matches student level
+      // Also handles comma-separated multi-level e.g. "beginner,intermediate"
+      return (data || []).filter((s: any) => {
+        const lv: string = s.level || "all";
+        if (!lv || lv === "all") return true;
+        return lv.split(",").map((l: string) => l.trim()).includes(studentLevel);
+      });
     },
   });
 
-  // 2. Fetch Courses - Filtered by level on client
+  // 2. Fetch Courses - filtered by student level server-side
   const { data: courses, isLoading: loadingCourses } = useQuery({
-    queryKey: ["all-courses-published"],
+    queryKey: ["all-courses-published", studentLevel],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("courses")        .select("id, title, title_ar, description, description_ar, subject_id, level, image_url, thumbnail, is_published, sort_order")
+        .from("courses")
+        .select("id, title, title_ar, description, description_ar, subject_id, level, image_url, thumbnail, is_published, sort_order")
         .eq("is_published", true)
         .order("sort_order");
       if (error) throw error;
-      return data;
+      // Filter: show courses for this student's level OR courses set to "all"
+      return (data || []).filter((c: any) => !c.level || c.level === "all" || c.level === studentLevel);
     },
   });
 
@@ -158,7 +166,7 @@ const StudentCourses = () => {
 
       {/* Courses grouped by subject - FILTERED BY STUDENT LEVEL */}
       {(subjects || []).map((subject: any) => {
-        // ✅ Show ALL published courses for this subject — no level restriction
+        // Courses are already filtered by level — just match by subject_id
         const subjectCourses = (courses || []).filter((c: any) => c.subject_id === subject.id);
         
         if (subjectCourses.length === 0) return null;
