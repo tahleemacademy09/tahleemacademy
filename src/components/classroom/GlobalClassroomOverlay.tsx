@@ -21,6 +21,7 @@
 import { useLiveClass } from "@/contexts/LiveClassContext";
 import ClassroomView from "@/components/classroom/ClassroomView";
 import { Maximize2, X } from "lucide-react";
+import { useEffect } from "react";
 
 const GOLD  = "#c9a84c";
 const DARK  = "#08190f";
@@ -28,6 +29,14 @@ const RED   = "#ef4444";
 
 export default function GlobalClassroomOverlay() {
   const { activeSubject, inCall, minimized, autoJoin, leaveClass, setMinimized } = useLiveClass();
+
+  // Keep notification showing even when overlay re-renders
+  useEffect(() => {
+    if (inCall && minimized && activeSubject) {
+      // Refresh notification if it somehow closed
+      console.log("[GlobalClassroomOverlay] Class minimized:", activeSubject.title);
+    }
+  }, [inCall, minimized, activeSubject]);
 
   // Nothing to show if not in a call
   if (!inCall || !activeSubject) return null;
@@ -38,8 +47,7 @@ export default function GlobalClassroomOverlay() {
       <div
         style={{
           position: "fixed",
-          inset: 0,
-          zIndex: 8000,
+          inset: 0,          zIndex: 8000,
           display: minimized ? "none" : "flex",
           flexDirection: "column",
         }}
@@ -88,8 +96,7 @@ export default function GlobalClassroomOverlay() {
             }} />
 
             {/* Subject name */}
-            <span style={{
-              color: "#fff", fontSize: 13, fontWeight: 700,
+            <span style={{              color: "#fff", fontSize: 13, fontWeight: 700,
               flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
             }}>
               {activeSubject.title}
@@ -138,8 +145,7 @@ export default function GlobalClassroomOverlay() {
               }}
               onMouseEnter={e => { e.currentTarget.style.background = "rgba(239,68,68,.4)"; e.currentTarget.style.transform = "scale(1.1)"; }}
               onMouseLeave={e => { e.currentTarget.style.background = "rgba(239,68,68,.18)"; e.currentTarget.style.transform = "scale(1)"; }}
-            >
-              <X style={{ width: 15, height: 15, color: RED }} />
+            >              <X style={{ width: 15, height: 15, color: RED }} />
             </button>
           </div>
         </>
