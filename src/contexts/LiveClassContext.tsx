@@ -49,7 +49,7 @@ async function showNotif(subject: any, onClickReturn: () => void) {
   } catch {}
 }
 /* ── localStorage helpers (survives complete browser close) ── */
-function persist(data: object) {
+function persist(data: Record<string, any>) {
   try { 
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     console.log("[LiveClassContext] Persisted to localStorage:", data);
@@ -144,10 +144,8 @@ export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
   useEffect(() => {
     const onVis = () => {
       console.log("[LiveClassContext] Visibility changed:", document.visibilityState);
-      // DON'T close notification when coming back to tab — let it persist
-      // Only close if we're not minimized      if (document.visibilityState === "visible" && !state.minimized) {
-        closeNotif();
-      }
+      if (document.visibilityState === "visible" && !state.minimized) {
+        closeNotif();      }
     };
     document.addEventListener("visibilitychange", onVis);
     return () => document.removeEventListener("visibilitychange", onVis);
@@ -174,7 +172,6 @@ export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
     console.log("[LiveClassContext] Setting minimized to:", v);
     setState(prev => {
       const newState = { ...prev, minimized: v, autoJoin: false };
-      // Persist immediately
       if (newState.inCall && newState.activeSubject) {
         persist({ 
           activeSubject: newState.activeSubject, 
@@ -194,8 +191,8 @@ export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
     </LiveClassContext.Provider>
   );
 };
+
 export const useLiveClass = () => {
   const ctx = useContext(LiveClassContext);
-  if (!ctx) throw new Error("useLiveClass must be used inside LiveClassProvider");
-  return ctx;
+  if (!ctx) throw new Error("useLiveClass must be used inside LiveClassProvider");  return ctx;
 };
