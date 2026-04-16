@@ -779,10 +779,11 @@ function MaterialCard({ m, isPrivileged, onEdit, onDelete }: {
 interface SubjectMaterialsProps { subjectId: string; subjectTitle?: string; }
 
 export default function SubjectMaterials({ subjectId, subjectTitle }: SubjectMaterialsProps) {
-  const { hasRole } = useAuth();
+  const { hasRole, profile } = useAuth();
   const { t } = useLanguage();
   const qc = useQueryClient();
   const isPrivileged = hasRole("admin") || hasRole("teacher");
+  const studentLevel = ((profile as any)?.level || (profile as any)?.course_level || "beginner") as Level;
 
   const [showModal,  setShowModal]  = useState(false);
   const [editing,    setEditing]    = useState<any>(null);
@@ -821,7 +822,12 @@ export default function SubjectMaterials({ subjectId, subjectTitle }: SubjectMat
   const filtered = (materials as any[]).filter(m => {
     const matchSearch = !search || m.title?.toLowerCase().includes(search.toLowerCase()) || m.title_ar?.toLowerCase().includes(search.toLowerCase());
     const matchType   = typeFilter === "all" || m.material_type === typeFilter;
-    return matchSearch && matchType;
+    // Level access: students only see materials for their level (or "all")
+    const matchLevel  = isPrivileged || (() => {
+      const lvs = parseLevels(m.level);
+      return lvs.has(studentLevel) || [...lvs].length === 3; // size 3 means "all"
+    })();
+    return matchSearch && matchType && matchLevel;
   });
 
   if (isLoading) return (
@@ -837,6 +843,16 @@ export default function SubjectMaterials({ subjectId, subjectTitle }: SubjectMat
 
       {/* Toolbar */}
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        {/* Student level badge — shows what materials they have access to */}
+        {!isPrivileged && (() => {
+          const lc = LVL_CFG[studentLevel] || LVL_CFG.beginner;
+          return (
+            <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 20, border: `1.5px solid ${lc.border}`, background: lc.bg, fontSize: 11, fontWeight: 700, color: lc.text, flexShrink: 0 }}>
+              <span>📚</span>
+              <span>{t("Your level", "مستواك")}: {lc.label}</span>
+            </div>
+          );
+        })()}
         <div style={{ position: "relative", flex: 1, minWidth: 160 }}>
           <Search size={13} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#9CA3AF" }} />
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder={t("Search materials…", "ابحث في المواد…")} style={{ ...inp, paddingLeft: 30 }} />
@@ -878,6 +894,8 @@ export default function SubjectMaterials({ subjectId, subjectTitle }: SubjectMat
           <p style={{ fontSize: 12, color: "#9CA3AF", margin: 0 }}>
             {isPrivileged && !search && typeFilter === "all"
               ? t("Click 'Upload' to add PDF, Word, Excel, Video, Audio, Images and more", "اضغط 'رفع مادة' لإضافة مواد")
+              : !isPrivileged && !search && typeFilter === "all"
+              ? t(`No materials available for your level yet`, `لا توجد مواد لمستوى ${LVL_CFG[studentLevel]?.label || studentLevel} بعد`)
               : t("Try changing your search or filter", "جرب تغيير البحث أو المرشح")}
           </p>
         </div>
