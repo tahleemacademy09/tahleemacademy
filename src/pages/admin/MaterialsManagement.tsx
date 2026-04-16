@@ -19,11 +19,26 @@ import {
 
 // ── Constants ──────────────────────────────────────────────────────────────
 const MATERIAL_TYPES = ["PDF", "Video", "Audio", "Image", "Document"] as const;
-const LEVELS = ["beginner", "intermediate", "advanced"] as const;
+const LEVELS = ["all", "beginner", "intermediate", "advanced"] as const;
 type MaterialType = (typeof MATERIAL_TYPES)[number];
 type Level = (typeof LEVELS)[number];
 
 const BUCKET = "subject-materials";
+
+// ── Level display helper ───────────────────────────────────────────────────
+const LEVEL_LABELS: Record<string, string> = {
+  all:          "All Levels",
+  beginner:     "Beginner",
+  intermediate: "Intermediate",
+  advanced:     "Advanced",
+};
+
+const LEVEL_COLORS: Record<string, { bg: string; color: string; border: string }> = {
+  all:          { bg: "#F0FDF4", color: "#166534", border: "#86EFAC" },
+  beginner:     { bg: "#F0FDF4", color: "#166534", border: "#86EFAC" },
+  intermediate: { bg: "#FFFBEB", color: "#B7791F", border: "#F6D860" },
+  advanced:     { bg: "#F5F0FF", color: "#6B46C1", border: "#D6BCFA" },
+};
 
 // ── File type config ───────────────────────────────────────────────────────
 const TYPE_CFG: Record<MaterialType, { color: string; bg: string; border: string }> = {
@@ -519,7 +534,7 @@ export default function MaterialsManagement() {
     content: "",
     file_url: "",
     file_size: 0,
-    level: "beginner" as Level,
+    level: "all" as Level,
     sort_order: 0,
     is_downloadable: true,
     session_id: null as string | null,
@@ -672,7 +687,7 @@ export default function MaterialsManagement() {
     setFormData({
       title: "", title_ar: "", description: "",
       material_type: "PDF", content: "", file_url: "", file_size: 0,
-      level: "beginner", sort_order: 0, is_downloadable: true, session_id: null,
+      level: "all", sort_order: 0, is_downloadable: true, session_id: null,
     });
     setEditingId(null);
     setShowForm(false);
@@ -808,6 +823,18 @@ export default function MaterialsManagement() {
   };
 
   const handleEdit = (material: any) => {
+    // Normalize level: comma-separated multi-values → "all"; null/empty → "all"
+    let normalizedLevel: Level = "all";
+    const rawLevel = material.level || "";
+    if (rawLevel === "all" || rawLevel === "") {
+      normalizedLevel = "all";
+    } else if (rawLevel.includes(",")) {
+      // Multi-level comma string from SubjectMaterials checkboxes — treat as "all"
+      normalizedLevel = "all";
+    } else if (LEVELS.includes(rawLevel as Level)) {
+      normalizedLevel = rawLevel as Level;
+    }
+
     setFormData({
       title:           material.title           || "",
       title_ar:        material.title_ar        || "",
@@ -816,7 +843,7 @@ export default function MaterialsManagement() {
       content:         material.content         || "",
       file_url:        material.file_url        || "",
       file_size:       material.file_size       || 0,
-      level:           material.level           || "beginner",
+      level:           normalizedLevel,
       sort_order:      material.sort_order      ?? 0,
       is_downloadable: material.is_downloadable ?? true,
       session_id:      material.session_id      || null,
@@ -939,7 +966,7 @@ export default function MaterialsManagement() {
                       <SelectContent>
                         {LEVELS.map((lvl) => (
                           <SelectItem key={lvl} value={lvl}>
-                            {lvl.charAt(0).toUpperCase() + lvl.slice(1)}
+                            {LEVEL_LABELS[lvl] || lvl}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -1091,7 +1118,7 @@ export default function MaterialsManagement() {
                       <SelectContent>
                         {LEVELS.map((lvl) => (
                           <SelectItem key={lvl} value={lvl}>
-                            {lvl.charAt(0).toUpperCase() + lvl.slice(1)}
+                            {LEVEL_LABELS[lvl] || lvl}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -1196,8 +1223,15 @@ export default function MaterialsManagement() {
                       >
                         {m.material_type}
                       </span>
-                      <span className="px-2 py-0.5 rounded-full bg-secondary">
-                        {m.level}
+                      <span
+                        className="px-2 py-0.5 rounded-full font-semibold"
+                        style={{
+                          background: (LEVEL_COLORS[m.level] || LEVEL_COLORS.all).bg,
+                          color:      (LEVEL_COLORS[m.level] || LEVEL_COLORS.all).color,
+                          border:     `1px solid ${(LEVEL_COLORS[m.level] || LEVEL_COLORS.all).border}`,
+                        }}
+                      >
+                        {LEVEL_LABELS[m.level] || m.level}
                       </span>
                       {m.file_size > 0 && (
                         <span>• {formatFileSize(m.file_size)}</span>
