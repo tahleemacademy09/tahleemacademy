@@ -50,8 +50,10 @@ const CSS = `
   @keyframes wb-spin  { to { transform:rotate(360deg); } }
   @keyframes speaking { 0%,100%{opacity:1}50%{opacity:.35} }
   @keyframes pip-pulse{ 0%,100%{opacity:1}50%{opacity:.3} }
-  @keyframes slide-up { from{transform:translateY(100%);opacity:0}to{transform:translateY(0);opacity:1} }
-  @keyframes fade-in  { from{opacity:0;transform:scale(.96)}to{opacity:1;transform:scale(1)} }
+  @keyframes slide-up   { from{transform:translateY(100%);opacity:0}to{transform:translateY(0);opacity:1} }
+  @keyframes fade-in    { from{opacity:0;transform:scale(.96)}to{opacity:1;transform:scale(1)} }
+  @keyframes emoji-float{ 0%{transform:translateY(0) scale(1);opacity:1}70%{opacity:.9}100%{transform:translateY(-340px) scale(1.5);opacity:0} }
+  @keyframes rec-pulse  { 0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.5)}70%{box-shadow:0 0 0 8px rgba(239,68,68,0)} }
   [data-lk-theme]{ height:100%!important;display:flex!important;flex-direction:column!important; }
   [data-classroom-root]{
     overscroll-behavior:none;-webkit-overflow-scrolling:touch;
@@ -150,20 +152,22 @@ const MediaAutoPublish = (_props: { lobbyMic?: boolean; lobbyCam?: boolean }) =>
 };
 
 /* ══ ROOM DATA LISTENER ══ */
-const RoomDataListener = ({ onWbOpen,onWbClose,strokesBuffer,onMatOpen,onMatClose,onWbAllowWrite,onRecAllowed }:any) => {
+const RoomDataListener = ({ onWbOpen,onWbClose,strokesBuffer,onMatOpen,onMatClose,onWbAllowWrite,onRecAllowed,onEmojiReact,onGroupRecite }:any) => {
   const room = useRoomContext();
   useEffect(() => {
     const h = (payload:Uint8Array) => {
       try {
         const msg = JSON.parse(new TextDecoder().decode(payload));
-        if(msg.type==="wb_open")        onWbOpen();
-        if(msg.type==="wb_close")       onWbClose();
-        if(msg.type==="wb_strokes")     strokesBuffer.current=msg.strokes;
-        if(msg.type==="wb_clear")       strokesBuffer.current=[];
-        if(msg.type==="mat_open")       onMatOpen?.(msg.material);
-        if(msg.type==="mat_close")      onMatClose?.();
-        if(msg.type==="wb_allow_write") onWbAllowWrite?.(msg.allow);
-        if(msg.type==="rec_allowed")    onRecAllowed?.(msg.allow);
+        if(msg.type==="wb_open")          onWbOpen();
+        if(msg.type==="wb_close")         onWbClose();
+        if(msg.type==="wb_strokes")       strokesBuffer.current=msg.strokes;
+        if(msg.type==="wb_clear")         strokesBuffer.current=[];
+        if(msg.type==="mat_open")         onMatOpen?.(msg.material);
+        if(msg.type==="mat_close")        onMatClose?.();
+        if(msg.type==="wb_allow_write")   onWbAllowWrite?.(msg.allow);
+        if(msg.type==="rec_allowed")      onRecAllowed?.(msg.allow);
+        if(msg.type==="emoji_react")      onEmojiReact?.(msg.emoji, msg.sender);
+        if(msg.type==="group_recite")     onGroupRecite?.(msg.active);
       } catch {}
     };
     room.on(RoomEvent.DataReceived,h);
@@ -172,7 +176,48 @@ const RoomDataListener = ({ onWbOpen,onWbClose,strokesBuffer,onMatOpen,onMatClos
   return null;
 };
 
-/* ══ WHITEBOARD ══ */
+/* ══ FLOATING EMOJI LAYER ══
+   Renders emojis that float upward across the video grid — visible to all users.
+   Each emoji spawns at a random X position and floats to the top.              */
+interface FloatingEmoji { id:number; emoji:string; x:number; }
+const FloatingEmojiLayer=({emojis}:{emojis:FloatingEmoji[]})=>(
+  <div style={{position:"absolute",inset:0,pointerEvents:"none",zIndex:40,overflow:"hidden"}}>
+    {emojis.map(fe=>(
+      <div key={fe.id} style={{
+        position:"absolute",
+        bottom:80,
+        left:`${fe.x}%`,
+        fontSize:40,
+        lineHeight:1,
+        animation:"emoji-float 2.6s ease-out forwards",
+        userSelect:"none",
+        filter:"drop-shadow(0 2px 6px rgba(0,0,0,.5))",
+      }}>{fe.emoji}</div>
+    ))}
+  </div>
+);
+
+/* ══ GROUP RECITE BRIDGE ══
+   Lives inside <LiveKitRoom>. When group recitation is active, auto-enables
+   every participant's mic so all can recite simultaneously. When deactivated,
+   mutes them back (unless they were already speaking).                         */
+const GroupReciteAutoMic=({active,isPrivileged}:{active:boolean;isPrivileged:boolean})=>{
+  const room=useRoomContext();
+  useEffect(()=>{
+    if(!room?.localParticipant)return;
+    if(active){
+      // Enable mic for everyone when group recitation starts
+      room.localParticipant.setMicrophoneEnabled(true).catch(()=>{});
+    }
+    // When deactivated, only auto-mute students (teacher keeps control)
+    if(!active&&!isPrivileged){
+      room.localParticipant.setMicrophoneEnabled(false).catch(()=>{});
+    }
+  },[active,isPrivileged,room]);
+  return null;
+};
+
+
 const Whiteboard = ({room,onClose,isTeacher,initialStrokes,subjectId,canStudentWrite}:any) => {
   const canDraw=isTeacher||canStudentWrite;
   const canvasRef=useRef<HTMLCanvasElement>(null);
@@ -560,7 +605,7 @@ const VideoGrid=()=>{
 };
 
 /* ══ BOTTOM BAR — Google Meet floating glass style ══ */
-const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeaveClass,chatUnread,onToggleWhiteboard,whiteboardOpen,onGroupRecite,groupReciteMode,onShareMaterial,isPrivileged,canStudentWriteProp,canStudentRecProp,onPermChange,onMinimize,room,isMobile,onToggleMaterials,matPanelOpen}:any)=>{
+const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeaveClass,chatUnread,onToggleWhiteboard,whiteboardOpen,onGroupRecite,groupReciteMode,onShareMaterial,isPrivileged,canStudentWriteProp,canStudentRecProp,onPermChange,onMinimize,room,isMobile,onToggleMaterials,matPanelOpen,onSendEmoji}:any)=>{
   const{user}=useAuth();
   // Start false — MediaAutoPublish enables tracks asynchronously; sync events update these
   const[micOn,setMicOn]=useState(false);
@@ -576,14 +621,42 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
     const t1=setTimeout(sync,500);const t2=setTimeout(sync,1500);
     return()=>{clearTimeout(t1);clearTimeout(t2);room.localParticipant.off("trackMuted",sync);room.localParticipant.off("trackUnmuted",sync);room.localParticipant.off("trackPublished",sync);room.localParticipant.off("trackUnpublished",sync);};
   },[room]);
-  const toggleMic=async()=>{const n=!micOn;await room?.localParticipant?.setMicrophoneEnabled(n);setMicOn(n);};
-  const toggleCam=async()=>{const n=!camOn;await room?.localParticipant?.setCameraEnabled(n);setCamOn(n);};
+  // ── Mic / cam toggle: never use optimistic state — let track events sync ──
+  const toggleMic=async()=>{
+    if(!room?.localParticipant)return;
+    try{
+      // Read live state from room (not React state) to avoid stale closure issues
+      const current=room.localParticipant.isMicrophoneEnabled;
+      await room.localParticipant.setMicrophoneEnabled(!current);
+      // State will be updated by the trackMuted / trackUnmuted listener
+    }catch(e){console.error("toggleMic:",e);}
+  };
+  const toggleCam=async()=>{
+    if(!room?.localParticipant)return;
+    try{
+      const current=room.localParticipant.isCameraEnabled;
+      await room.localParticipant.setCameraEnabled(!current);
+    }catch(e){console.error("toggleCam:",e);}
+  };
   const toggleHand=async()=>{if(!user||!sessionId)return;const n=!handUp;setHandUp(n);await supabase.from("class_participants").update({hand_raised:n,hand_raised_at:n?new Date().toISOString():null}).eq("session_id",sessionId).eq("student_id",user.id);};
   const toggleStuRecord=async()=>{
     if(stuRec){stuMrRef.current?.stop();stuMrRef.current!.onstop=()=>{const blobType=stuMrRef.current?.mimeType||"audio/webm";const blob=new Blob(stuChunks.current,{type:blobType});const url=URL.createObjectURL(blob);const a=document.createElement("a");const ext=blobType.includes("mp4")?"mp4":blobType.includes("ogg")?"ogg":"webm";a.href=url;a.download=`class-recording-${Date.now()}.${ext}`;a.click();URL.revokeObjectURL(url);stuChunks.current=[];};setStuRec(false);}
     else{try{const stream=await navigator.mediaDevices.getUserMedia({audio:true});const stuMime=["audio/webm","audio/mp4","audio/ogg"].find(t=>{try{return MediaRecorder.isTypeSupported(t);}catch{return false;}})||"";const mr=new MediaRecorder(stream,stuMime?{mimeType:stuMime}:undefined);stuChunks.current=[];mr.ondataavailable=e=>{if(e.data.size>0)stuChunks.current.push(e.data);};mr.start(1000);stuMrRef.current=mr;setStuRec(true);}catch{toast({title:"Microphone access denied"});}}
   };
-  const sendEmoji=(e:string)=>{setEmojis(false);if(user&&sessionId)supabase.from("class_chat_messages").insert({session_id:sessionId,sender_id:user.id,message:e,type:"text"});};
+  const sendEmoji=(e:string)=>{
+    setEmojis(false);
+    // Broadcast via DataChannel — all participants receive and display it floating
+    try{
+      room?.localParticipant?.publishData(
+        new TextEncoder().encode(JSON.stringify({type:"emoji_react",emoji:e,sender:user?.user_metadata?.full_name||""})),
+        {reliable:false}
+      );
+    }catch{}
+    // Trigger locally too (sender sees their own emoji)
+    onSendEmoji?.(e);
+    // Save to chat log
+    if(user&&sessionId)supabase.from("class_chat_messages").insert({session_id:sessionId,sender_id:user.id,message:e,type:"reaction"});
+  };
   const IS={width:isMobile?16:20,height:isMobile?16:20};
   const Btn=({children,active=false,danger=false,onClick,badge=0,title:ttl=""}:any)=>(
     <div style={{position:"relative",display:"flex",flexDirection:"column",alignItems:"center"}}>
@@ -595,12 +668,13 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
   // Portal container for menus that escape LiveKit's CSS transform stacking context
   const menuPortal = typeof document !== "undefined" ? document.body : null;
   return(<>
-    {emojis&&menuPortal&&createPortal(<div style={{position:"fixed",bottom:BAR_H+12,left:"50%",transform:"translateX(-50%)",background:"#1e2535",border:"1px solid rgba(255,255,255,.1)",borderRadius:44,padding:"10px 16px",display:"flex",gap:10,zIndex:9000,boxShadow:"0 8px 32px rgba(0,0,0,.6)",animation:"slide-up .2s ease"}}>
-      {["👏","🤲","❤️","😂","🌟","👍","🙏","🕌"].map(e=>(<button key={e} onClick={()=>sendEmoji(e)} style={{fontSize:28,background:"none",border:"none",cursor:"pointer",padding:"2px 4px",transition:"transform .12s"}} onMouseEnter={ev=>(ev.currentTarget.style.transform="scale(1.28)")} onMouseLeave={ev=>(ev.currentTarget.style.transform="scale(1)")}>{e}</button>))}
-    </div>,menuPortal)}
+    {emojis&&menuPortal&&createPortal(
+      <div style={{position:"fixed",bottom:BAR_H+12,left:"50%",transform:"translateX(-50%)",background:"#1e2535",border:"1px solid rgba(255,255,255,.1)",borderRadius:44,padding:"10px 16px",display:"flex",gap:10,zIndex:9000,boxShadow:"0 8px 32px rgba(0,0,0,.6)",animation:"slide-up .2s ease"}}>
+        {["👏","🤲","❤️","😂","🌟","👍","🙏","🕌"].map(e=>(<button key={e} onClick={()=>sendEmoji(e)} style={{fontSize:28,background:"none",border:"none",cursor:"pointer",padding:"2px 4px",transition:"transform .12s"}} onMouseEnter={ev=>(ev.currentTarget.style.transform="scale(1.28)")} onMouseLeave={ev=>(ev.currentTarget.style.transform="scale(1)")}>{e}</button>))}
+      </div>,menuPortal)}
     {menu&&menuPortal&&createPortal(<div onClick={()=>setMenu(false)} style={{position:"fixed",bottom:BAR_H+10,right:14,background:"#17202a",border:"1px solid rgba(255,255,255,.08)",borderRadius:18,boxShadow:"0 8px 36px rgba(0,0,0,.65)",minWidth:230,zIndex:9000,overflow:"hidden",animation:"slide-up .18s ease"}}>
       {isPrivileged&&[
-        {icon:Volume2,label:groupReciteMode?"End Group Recitation":"Group Recitation",color:groupReciteMode?GREEN:"#fff",fn:onGroupRecite},
+        {icon:Volume2,label:groupReciteMode?"End Group Recitation":"Group Recitation",color:groupReciteMode?GREEN:"#fff",fn:()=>onGroupRecite(room)},
         {icon:BookOpen,label:"Share Material",color:"#fff",fn:onShareMaterial},
         {icon:PenTool,label:canStudentWriteProp?"Revoke Write Access":"Allow Students to Write",color:canStudentWriteProp?GREEN:"#fff",fn:()=>onPermChange?.("write",!canStudentWriteProp,room)},
         {icon:Circle,label:canStudentRecProp?"Revoke Record Permission":"Allow Students to Record",color:canStudentRecProp?GREEN:"#fff",fn:()=>onPermChange?.("rec",!canStudentRecProp,room)},
@@ -608,15 +682,52 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
       <button onClick={()=>{setMenu(false);onToggleParticipants();}} style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"13px 18px",background:"none",border:"none",cursor:"pointer",color:"#fff",fontSize:14,borderBottom:"1px solid rgba(255,255,255,.06)",textAlign:"left"as const}}><Users style={{width:16,height:16}}/> Participants</button>
       <button onClick={isPrivileged?onEndClass:onLeaveClass} style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"13px 18px",background:"none",border:"none",cursor:"pointer",color:RED,fontSize:14,textAlign:"left"as const}}>📵 {isPrivileged?"End Class for All":"Leave Class"}</button>
     </div>,menuPortal)}
-    <div className="cv-bar" style={{height:isMobile?60:BAR_H,minHeight:isMobile?60:BAR_H,background:GLASS,backdropFilter:"blur(20px)",WebkitBackdropFilter:"blur(20px)",borderTop:"1px solid rgba(255,255,255,.07)",display:"flex",alignItems:"center",justifyContent:"center",gap:isMobile?5:10,padding:`0 ${isMobile?6:16}px calc(${isMobile?4:8}px + env(safe-area-inset-bottom,0px)) ${isMobile?6:16}px`,flexShrink:0,boxShadow:"0 -4px 24px rgba(0,0,0,.45)",overflowX:"auto" as const,WebkitOverflowScrolling:"touch" as const}}>
+    {/* ── Footer bar — horizontally scrollable so all icons are reachable ── */}
+    <div className="cv-bar" style={{
+      height:isMobile?60:BAR_H,minHeight:isMobile?60:BAR_H,
+      background:GLASS,backdropFilter:"blur(20px)",WebkitBackdropFilter:"blur(20px)",
+      borderTop:"1px solid rgba(255,255,255,.07)",
+      display:"flex",alignItems:"center",
+      justifyContent:"flex-start",           // left-aligned so scroll reveals all icons
+      gap:isMobile?5:10,
+      padding:`0 ${isMobile?8:16}px calc(${isMobile?4:8}px + env(safe-area-inset-bottom,0px)) ${isMobile?8:16}px`,
+      flexShrink:0,
+      boxShadow:"0 -4px 24px rgba(0,0,0,.45)",
+      overflowX:"auto" as const,
+      WebkitOverflowScrolling:"touch" as const,
+    }}>
+      {/* Mic */}
       <Btn active={micOn} danger={!micOn} title={micOn?"Mute":"Unmute"} onClick={toggleMic}>{micOn?<Mic style={IS}/>:<MicOff style={IS}/>}</Btn>
+      {/* Camera */}
       <Btn active={camOn} danger={!camOn} title={camOn?"Stop Video":"Start Video"} onClick={toggleCam}>{camOn?<Video style={IS}/>:<VideoOff style={IS}/>}</Btn>
-      {isPrivileged?(<Btn active={whiteboardOpen} title="Whiteboard" onClick={onToggleWhiteboard}><PenTool style={{...IS,color:whiteboardOpen?"#4ade80":"#fff"}}/></Btn>):(<Btn active={handUp} title={handUp?"Lower Hand":"Raise Hand"} onClick={toggleHand}><Hand style={{...IS,color:handUp?"#fbbf24":"#fff"}}/></Btn>)}
+      {/* Teacher: whiteboard | Student: raise hand */}
+      {isPrivileged
+        ?<Btn active={whiteboardOpen} title="Whiteboard" onClick={onToggleWhiteboard}><PenTool style={{...IS,color:whiteboardOpen?"#4ade80":"#fff"}}/></Btn>
+        :<Btn active={handUp} title={handUp?"Lower Hand":"Raise Hand"} onClick={toggleHand}><Hand style={{...IS,color:handUp?"#fbbf24":"#fff"}}/></Btn>
+      }
+      {/* Student: whiteboard write button (shown when admin grants write) */}
+      {!isPrivileged&&canStudentWriteProp&&(
+        <Btn active={whiteboardOpen} title="Open Board" onClick={onToggleWhiteboard}>
+          <PenTool style={{...IS,color:"#34d399"}}/>
+        </Btn>
+      )}
+      {/* Chat */}
       <Btn onClick={onToggleChat} badge={chatUnread} title="Chat"><MessageCircle style={IS}/></Btn>
+      {/* Materials */}
       <Btn active={matPanelOpen} onClick={onToggleMaterials} title="View Materials"><Eye style={{...IS,color:matPanelOpen?"#34d399":"#fff"}}/></Btn>
+      {/* Emoji react */}
       <Btn onClick={()=>setEmojis(v=>!v)} title="React"><Smile style={IS}/></Btn>
+      {/* Student: record button (shown when admin grants record permission) */}
+      {!isPrivileged&&canStudentRecProp&&(
+        <Btn active={stuRec} title={stuRec?"Stop Recording":"Record"} onClick={toggleStuRecord}>
+          <Circle style={{...IS,fill:stuRec?RED:"none",color:stuRec?RED:"#fff",animation:stuRec?"rec-pulse 1.2s ease-in-out infinite":"none"}}/>
+        </Btn>
+      )}
+      {/* More menu */}
       <Btn onClick={()=>setMenu(v=>!v)} title="More"><MoreVertical style={IS}/></Btn>
+      {/* Minimize (PiP) */}
       {onMinimize&&<Btn onClick={onMinimize} title="Minimize"><ChevronDown style={IS}/></Btn>}
+      {/* End / Leave — always rightmost, never wraps */}
       <button onClick={isPrivileged?onEndClass:onLeaveClass} style={{height:isMobile?42:52,padding:isMobile?"0 12px":"0 22px",borderRadius:26,border:"none",cursor:"pointer",background:"linear-gradient(135deg,#dc2626,#ef4444)",color:"#fff",display:"flex",alignItems:"center",gap:isMobile?4:7,fontWeight:700,fontSize:isMobile?12:14,boxShadow:"0 4px 18px rgba(239,68,68,.5)",flexShrink:0}}>
         <Phone style={{width:17,height:17,transform:"rotate(135deg)"}}/> {isPrivileged?"End":"Leave"}
       </button>
@@ -669,6 +780,8 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   const[sideTab,setSideTab]=useState<"chat"|"polls">("chat");const[showEnd,setShowEnd]=useState(false);
   const[wbOpen,setWbOpen]=useState(false);const[matOpen,setMatOpen]=useState<any>(null);const[matPicker,setMatPicker]=useState(false);const[matPanelOpen,setMatPanelOpen]=useState(false);
   const[groupRecite,setGroupRecite]=useState(false);const[canStudentWrite,setCanStudentWrite]=useState(false);const[canStudentRec,setCanStudentRec]=useState(false);
+  const[floatingEmojis,setFloatingEmojis]=useState<FloatingEmoji[]>([]);
+  const emojiIdRef=useRef(0);
   const wbBuffer=useRef<any[]|null>(null);const prefetch=useRef<{token:string;url:string}|null>(null);
   useEffect(()=>{supabase.functions.invoke("livekit-token",{body:{subject_id:subject.id,action:isPrivileged?"start_session":"join"}}).then(({data})=>{if(data?.token&&data?.url)prefetch.current={token:data.token,url:data.url};}).catch(()=>{});},[subject.id,isPrivileged]);
   // Auto-connect when restored from sessionStorage (page refresh / browser minimize)
@@ -739,7 +852,25 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     if(type==="write"){setCanStudentWrite(allow);try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"wb_allow_write",allow})),{reliable:true});}catch{}toast({title:allow?"✅ Students can now write on the board":"🔒 Write access revoked"});}
     else{setCanStudentRec(allow);try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"rec_allowed",allow})),{reliable:true});}catch{}toast({title:allow?"✅ Students can now record":"🔒 Record permission revoked"});}
   };
-  const handleGroupRecite=async()=>{const n=!groupRecite;setGroupRecite(n);toast({title:n?"Group Recitation ON":"Group Recitation OFF"});if(sessionId&&user)await supabase.from("class_chat_messages").insert({session_id:sessionId,sender_id:user.id,message:n?"🎙️ Group Recitation Mode":"🔇 Recitation ended",type:"system"});};
+  const addFloatingEmoji=(emoji:string)=>{
+    const id=++emojiIdRef.current;
+    const x=5+Math.random()*70; // keep away from edges (5%–75%)
+    setFloatingEmojis(prev=>[...prev,{id,emoji,x}]);
+    setTimeout(()=>setFloatingEmojis(prev=>prev.filter(fe=>fe.id!==id)),2800);
+  };
+  const handleGroupRecite=async(room?:any)=>{
+    const n=!groupRecite;
+    setGroupRecite(n);
+    toast({title:n?"🎙️ Group Recitation ON — all mics enabled":"🔇 Group Recitation ended"});
+    // Broadcast to all participants via DataChannel so their mics auto-enable
+    try{
+      room?.localParticipant?.publishData(
+        new TextEncoder().encode(JSON.stringify({type:"group_recite",active:n})),
+        {reliable:true}
+      );
+    }catch{}
+    if(sessionId&&user)await supabase.from("class_chat_messages").insert({session_id:sessionId,sender_id:user.id,message:n?"🎙️ Group Recitation Mode — all mics ON":"🔇 Recitation ended",type:"system"});
+  };
   // Inner component — must live inside <LiveKitRoom> to access context
   const ParticipantCountBadge=()=>{
     const all=useParticipants();
@@ -764,8 +895,9 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
           <RoomAudioRenderer/>
           <MediaAutoPublish lobbyMic={lobbyMic} lobbyCam={lobbyCam}/>
           <WbSyncBridge wbOpen={wbOpen} isTeacher={isPrivileged}/>
+          <GroupReciteAutoMic active={groupRecite} isPrivileged={isPrivileged}/>
           <ReconnectMonitor onReconnecting={()=>setReconnecting(true)} onReconnected={()=>setReconnecting(false)}/>
-          <RoomDataListener onWbOpen={()=>setWbOpen(true)} onWbClose={()=>setWbOpen(false)} strokesBuffer={wbBuffer} onMatOpen={mat=>setMatOpen(mat)} onMatClose={()=>setMatOpen(null)} onWbAllowWrite={allow=>setCanStudentWrite(allow)} onRecAllowed={allow=>setCanStudentRec(allow)}/>
+          <RoomDataListener onWbOpen={()=>setWbOpen(true)} onWbClose={()=>setWbOpen(false)} strokesBuffer={wbBuffer} onMatOpen={mat=>setMatOpen(mat)} onMatClose={()=>setMatOpen(null)} onWbAllowWrite={allow=>setCanStudentWrite(allow)} onRecAllowed={allow=>setCanStudentRec(allow)} onEmojiReact={(emoji:string)=>addFloatingEmoji(emoji)} onGroupRecite={(active:boolean)=>setGroupRecite(active)}/>
           {reconnecting&&<div style={{position:"absolute",inset:0,zIndex:200,background:"rgba(0,0,0,.82)",backdropFilter:"blur(8px)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:14}}><div style={{width:48,height:48,border:`3px solid ${TEAL}`,borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .8s linear infinite"}}/><p style={{color:"#fff",fontSize:15,fontWeight:700}}>Reconnecting…</p><p style={{color:"rgba(255,255,255,.4)",fontSize:13}}>Please stay on the page</p></div>}
           {/* Top bar */}
           <div style={{height:52,background:GLASS,backdropFilter:"blur(16px)",WebkitBackdropFilter:"blur(16px)",display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 16px",flexShrink:0,borderBottom:"1px solid rgba(255,255,255,.05)"}}>
@@ -783,7 +915,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
           </div>
           {/* Content */}
           <div style={{flex:1,display:"flex",minHeight:0,overflow:"hidden"}}>
-            <div style={{flex:1,position:"relative",minWidth:0}}><VideoGrid/></div>
+            <div style={{flex:1,position:"relative",minWidth:0}}><VideoGrid/><FloatingEmojiLayer emojis={floatingEmojis}/></div>
             {chatOpen&&!isMobile&&(
               <div style={{width:320,background:"#13181f",borderLeft:"1px solid rgba(255,255,255,.06)",display:"flex",flexDirection:"column",flexShrink:0,animation:"slide-up .2s ease"}}>
                 <div style={{display:"flex",borderBottom:"1px solid rgba(255,255,255,.07)",flexShrink:0}}>
@@ -795,7 +927,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
             )}
           </div>
           {wbOpen&&<WhiteboardBridge onClose={()=>setWbOpen(false)} isTeacher={isPrivileged} initialStrokes={wbBuffer.current} subjectId={subject.id} canStudentWrite={canStudentWrite}/>}
-          <BottomBarBridge sessionId={sessionId||""} onToggleChat={()=>{setChatOpen(v=>!v);if(!chatOpen)setChatUnread(0);}} onToggleParticipants={()=>setPartOpen(v=>!v)} onEndClass={()=>setShowEnd(true)} onLeaveClass={leaveSession} chatUnread={chatUnread} onToggleWhiteboard={()=>setWbOpen(v=>!v)} whiteboardOpen={wbOpen} onGroupRecite={handleGroupRecite} groupReciteMode={groupRecite} onShareMaterial={()=>setMatPicker(true)} isPrivileged={isPrivileged} canStudentWriteProp={canStudentWrite} canStudentRecProp={canStudentRec} onPermChange={(type:any,allow:any,room:any)=>handlePermChange(type,allow,room)} onMinimize={onMinimize} onToggleMaterials={()=>setMatPanelOpen(v=>!v)} matPanelOpen={matPanelOpen}/>
+          <BottomBarBridge sessionId={sessionId||""} onToggleChat={()=>{setChatOpen(v=>!v);if(!chatOpen)setChatUnread(0);}} onToggleParticipants={()=>setPartOpen(v=>!v)} onEndClass={()=>setShowEnd(true)} onLeaveClass={leaveSession} chatUnread={chatUnread} onToggleWhiteboard={()=>setWbOpen(v=>!v)} whiteboardOpen={wbOpen} onGroupRecite={handleGroupRecite} groupReciteMode={groupRecite} onShareMaterial={()=>setMatPicker(true)} isPrivileged={isPrivileged} canStudentWriteProp={canStudentWrite} canStudentRecProp={canStudentRec} onPermChange={(type:any,allow:any,room:any)=>handlePermChange(type,allow,room)} onMinimize={onMinimize} onToggleMaterials={()=>setMatPanelOpen(v=>!v)} matPanelOpen={matPanelOpen} onSendEmoji={addFloatingEmoji}/>
           {isMobile&&chatOpen&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setChatOpen(false)}><div style={{position:"absolute",bottom:0,left:0,right:0,background:"#13181f",borderRadius:"22px 22px 0 0",maxHeight:"82vh",display:"flex",flexDirection:"column",animation:"slide-up .22s ease",paddingBottom:"env(safe-area-inset-bottom,0px)"}} onClick={e=>e.stopPropagation()}><div style={{display:"flex",alignItems:"center",padding:"12px 16px 0",flexShrink:0}}><div style={{flex:1,display:"flex"}}>{[["chat","💬","Chat"],["polls","📊","Polls"]].map(([k,ic,lb])=>(<button key={k} onClick={()=>setSideTab(k as any)} style={{flex:1,padding:"10px 6px",background:"none",border:"none",color:sideTab===k?"#fff":"rgba(255,255,255,.35)",fontSize:13,fontWeight:sideTab===k?700:400,borderBottom:sideTab===k?`2px solid ${TEAL}`:"2px solid transparent",cursor:"pointer"}}>{ic} {lb}</button>))}</div><button onClick={()=>setChatOpen(false)} style={{width:32,height:32,borderRadius:"50%",background:"rgba(255,255,255,.1)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><X style={{width:14,height:14}}/></button></div><div style={{flex:1,overflow:"hidden",minHeight:340}}>{sideTab==="chat"?<ClassChatPanel sessionId={sessionId||""}/>:<ClassPolls sessionId={sessionId||""}/>}</div></div></div>)}
           {isMobile&&partOpen&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setPartOpen(false)}><div style={{position:"absolute",bottom:BAR_H,left:0,right:0,background:"#13181f",borderRadius:"22px 22px 0 0",maxHeight:"65vh",overflow:"auto"}} onClick={e=>e.stopPropagation()}><div style={{width:40,height:4,borderRadius:2,background:"rgba(255,255,255,.18)",margin:"12px auto 6px"}}/><ClassParticipants sessionId={sessionId||""}/></div></div>)}
           <LiveQuizOverlay sessionId={sessionId||""} isOpen={false} onClose={()=>{}}/>
