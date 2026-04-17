@@ -1,8 +1,11 @@
 /*  src/hooks/usePaymentAccess.ts
-    Shared hook — import in any page to check if student has access.
+    Shared hook — import in any page/component to check student payment access.
+    Reads from profiles.payment_status + profiles.subscription_end_date
+    (same source as EnrollmentPayment.tsx — single source of truth).
+
     Usage:
       const { hasAccess, accessStatus, isLoading } = usePaymentAccess();
-      if (!hasAccess) return <PaymentLockedOverlay onPay={...} />;
+      if (!hasAccess) return <PaymentGuard feature="Al-Hifdh" />;
 */
 import { useEffect, useState, useCallback } from "react";
 import { useAuth } from "@/contexts/AuthContext";
@@ -11,58 +14,102 @@ import { supabase } from "@/integrations/supabase/client";
 export type AccessStatus = "active" | "grace" | "locked" | "loading";
 
 export interface PaymentAccessResult {
-  hasAccess: boolean;         // true = full access (active or grace)
-  hasFullAccess: boolean;     // true = paid and active only
+  hasAccess: boolean;       // true = active OR grace (can enter, with banner)
+  hasFullAccess: boolean;   // true = paid and subscription valid only
   accessStatus: AccessStatus;
-  daysInGrace: number;        // days remaining in grace period
+  daysInGrace: number;      // days remaining in grace / until lock
   isLoading: boolean;
   refetch: () => void;
 }
 
+const GRACE_DAYS = 7;
+
 export const usePaymentAccess = (): PaymentAccessResult => {
   const { user, hasRole } = useAuth();
-  const [status, setStatus] = useState<AccessStatus>("loading");
+  const [status, setStatus]     = useState<AccessStatus>("loading");
   const [graceEnd, setGraceEnd] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  const isAdmin = hasRole("admin") || hasRole("teacher");
+  // Admins and teachers always bypass payment checks
+  const isStaff = hasRole("admin") || hasRole("teacher");
 
   const fetchStatus = useCallback(async () => {
     if (!user) { setStatus("loading"); return; }
-    // Admins/teachers always have full access
-    if (isAdmin) { setStatus("active"); setIsLoading(false); return; }
+    if (isStaff) { setStatus("active"); setIsLoading(false); return; }
 
     setIsLoading(true);
     try {
       const { data } = await supabase
-        .from("enrollments" as any)
-        .select("status,grace_end_date,admin_override,admin_override_until,next_due_date")
+        .from("profiles")
+        .select("payment_status, subscription_end_date, is_payment_exempt, created_at")
         .eq("user_id", user.id)
         .maybeSingle();
 
-      if (!data) { setStatus("grace"); setIsLoading(false); return; }
+      if (!data) {
+        // Profile not yet created — grant grace while it loads
+        setStatus("grace");
+        setIsLoading(false);
+        return;
+      }
 
-      const enr = data as any;
-      // Admin override takes priority
-      if (enr.admin_override && enr.admin_override_until && new Date(enr.admin_override_until) > new Date()) {
-        setStatus("active"); setIsLoading(false); return;
+      const p = data as any;
+
+      // ── 1. Exempt students always have full access ──────────────
+      if (p.is_payment_exempt) {
+        setStatus("active");
+        setIsLoading(false);
+        return;
       }
-      // Active and not yet expired
-      if (enr.status === "active" && enr.next_due_date && new Date(enr.next_due_date) > new Date()) {
-        setStatus("active"); setIsLoading(false); return;
+
+      const now = new Date();
+
+      // ── 2. Has an active subscription end date ──────────────────
+      if (p.subscription_end_date) {
+        const end = new Date(p.subscription_end_date);
+        if (end > now) {
+          setStatus("active");
+          setIsLoading(false);
+          return;
+        }
+        // Within 7 days after expiry = grace window
+        const graceCutoff = new Date(end.getTime() + GRACE_DAYS * 86400000);
+        if (graceCutoff > now) {
+          setGraceEnd(graceCutoff.toISOString());
+          setStatus("grace");
+          setIsLoading(false);
+          return;
+        }
+        // Past grace window → locked
+        setStatus("locked");
+        setIsLoading(false);
+        return;
       }
-      // In grace period
-      if ((enr.status === "grace" || enr.status === "active") && enr.grace_end_date && new Date(enr.grace_end_date) > new Date()) {
-        setGraceEnd(enr.grace_end_date);
-        setStatus("grace"); setIsLoading(false); return;
+
+      // ── 3. No subscription date — use payment_status field ───────
+      if (p.payment_status === "paid") {
+        setStatus("active");
+        setIsLoading(false);
+        return;
       }
+
+      // New students get 7-day grace from their join date
+      const joined   = new Date(p.created_at);
+      const graceEnd = new Date(joined.getTime() + GRACE_DAYS * 86400000);
+      if (graceEnd > now) {
+        setGraceEnd(graceEnd.toISOString());
+        setStatus("grace");
+        setIsLoading(false);
+        return;
+      }
+
       setStatus("locked");
     } catch {
-      setStatus("grace"); // fail-open
+      // Fail-open: never hard-lock on a network error
+      setStatus("grace");
     } finally {
       setIsLoading(false);
     }
-  }, [user, isAdmin]);
+  }, [user, isStaff]);
 
   useEffect(() => { fetchStatus(); }, [fetchStatus]);
 
@@ -73,11 +120,9 @@ export const usePaymentAccess = (): PaymentAccessResult => {
   return {
     hasAccess:     status !== "locked",
     hasFullAccess: status === "active",
-    accessStatus:  status,
+    accessStatus:  status as AccessStatus,
     daysInGrace,
     isLoading,
     refetch: fetchStatus,
   };
 };
-
-
