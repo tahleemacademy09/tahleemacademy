@@ -178,15 +178,65 @@ const PaymentManagement = () => {
     loadData(true);
   };
 
-  // ── Send reminder ───────────────────────────────────────────
+  // ── Send reminder ─────────────────────────────────────────────────────────
+  // Writes a real notification row for the student (appears in their bell icon)
+  // and also logs the admin action in activity_logs for audit trail.
   const sendReminder = async (student: any) => {
-    // Log the reminder action - email sending would be handled by edge function
-    await supabase.from("activity_logs").insert({
-      user_id: user!.id, action:"payment_reminder_sent",
-      entity_type:"profile", entity_id:student.user_id,
-      metadata:{ student_name:student.full_name, email:student.email },
+    if (!student.user_id) {
+      toast({ title: t("Cannot send — student has no user ID","لا يمكن الإرسال — لا يوجد معرّف للطالب"), variant:"destructive" });
+      return;
+    }
+
+    // Find the student subscription to include plan/amount info in the message
+    const sub  = subscriptions.find((s:any) => s.student_id === student.user_id);
+    const plan = sub ? plans.find((p:any) => p.id === sub.plan_id) : null;
+    const amtText = plan ? ` (${fmtAmt(plan.amount, plan.currency)} — ${plan.name})` : "";
+    const dueText = sub?.end_date
+      ? ` Due: ${format(new Date(sub.end_date), "d MMM yyyy")}.`
+      : "";
+
+    const [notifResult] = await Promise.all([
+      // ✅ Real in-app notification the student sees in their bell icon
+      supabase.from("notifications" as any).insert({
+        user_id:  student.user_id,
+        title:    t("Payment Reminder 💳","تذكير بالدفع 💳"),
+        message:  t(
+          `Your subscription payment is due${amtText}.${dueText} Please visit the Payment page to renew and keep full access to all features.`,
+          `رسوم اشتراكك مستحقة${amtText}.${dueText} يرجى الانتقال إلى صفحة الدفع للتجديد والحفاظ على الوصول الكامل.`
+        ),
+        type:    "payment",
+        link:    "/student/enrollment-payment",
+        is_read: false,
+      }),
+
+      // Audit log — admin action record
+      supabase.from("activity_logs").insert({
+        user_id:     user!.id,
+        action:      "payment_reminder_sent",
+        entity_type: "profile",
+        entity_id:   student.user_id,
+        metadata: {
+          student_name: student.full_name,
+          email:        student.email,
+          amount:       plan?.amount,
+          plan_name:    plan?.name,
+        },
+      }),
+    ]);
+
+    if (notifResult.error) {
+      toast({
+        title:       t("Failed to send reminder","فشل إرسال التذكير"),
+        description: notifResult.error.message,
+        variant:     "destructive",
+      });
+      return;
+    }
+
+    toast({
+      title:       t(`✅ Reminder sent to ${student.full_name}`,`✅ تم إرسال تذكير إلى ${student.full_name}`),
+      description: t("Student will see it in their notification bell","سيرى الطالب الإشعار في جرس الإشعارات"),
     });
-    toast({ title: t(`Reminder sent to ${student.full_name}`,`تم إرسال تذكير إلى ${student.full_name}`) });
   };
 
   // ── Save plan ───────────────────────────────────────────────
