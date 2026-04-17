@@ -101,6 +101,10 @@ const RegistrationSettings  = lazy(() => import("./pages/admin/RegistrationSetti
 
 // ── Teacher pages ──────────────────────────────────────────────────────────
 const TeacherDashboard       = lazy(() => import("./pages/teacher/TeacherDashboard"));
+const TeacherStudentsHub     = lazy(() => import("./pages/teacher/TeacherStudentsHub"));
+const TeacherTeachingHub     = lazy(() => import("./pages/teacher/TeacherTeachingHub"));
+const TeacherAssessmentsHub  = lazy(() => import("./pages/teacher/TeacherAssessmentsHub"));
+// Legacy (still accessible via direct URL for backwards compat)
 const TeacherStudents        = lazy(() => import("./pages/teacher/TeacherStudents"));
 const TeacherPrivateStudents = lazy(() => import("./pages/teacher/TeacherPrivateStudents"));
 const TeacherSubjects        = lazy(() => import("./pages/teacher/TeacherSubjects"));
@@ -205,24 +209,26 @@ const App = () => (
                   {/* ── Teacher routes ── */}
                   <Route element={<ProtectedRoute requiredRole="teacher"><TeacherLayout /></ProtectedRoute>}>
                     <Route path="/teacher"                  element={<TeacherDashboard />} />
-                    <Route path="/teacher/students"         element={<TeacherStudents />} />
-                    <Route path="/teacher/private-students" element={<TeacherPrivateStudents />} />
+                    {/* Hub pages — merged nav */}
+                    <Route path="/teacher/students"         element={<TeacherStudentsHub />} />
+                    <Route path="/teacher/classes"          element={<TeacherTeachingHub />} />
+                    <Route path="/teacher/exams"            element={<TeacherAssessmentsHub />} />
+                    {/* Legacy routes — still accessible but not in sidebar */}
                     <Route path="/teacher/subjects"         element={<TeacherSubjects />} />
-                    <Route path="/teacher/classes"          element={<TeacherClasses />} />
-                    <Route path="/teacher/timetable"        element={<TeacherTimetable />} />
-                    <Route path="/teacher/announcements"    element={<TeacherAnnouncements />} />
-                    <Route path="/teacher/attendance"       element={<TeacherAttendance />} />
-                    <Route path="/teacher/exams"            element={<TeacherExamsPage type="exam" />} />
-                    <Route path="/teacher/tests"            element={<TeacherExamsPage type="test" />} />
-                    <Route path="/teacher/grading"          element={<TeacherGrading />} />
-                    <Route path="/teacher/results"          element={<TeacherResults />} />
+                    <Route path="/teacher/private-students" element={<TeacherStudentsHub />} />
+                    <Route path="/teacher/timetable"        element={<TeacherTeachingHub />} />
+                    <Route path="/teacher/announcements"    element={<TeacherStudentsHub />} />
+                    <Route path="/teacher/attendance"       element={<TeacherStudentsHub />} />
+                    <Route path="/teacher/tests"            element={<TeacherAssessmentsHub />} />
+                    <Route path="/teacher/grading"          element={<TeacherAssessmentsHub />} />
+                    <Route path="/teacher/results"          element={<TeacherAssessmentsHub />} />
+                    <Route path="/teacher/transcripts"      element={<TeacherAssessmentsHub />} />
+                    <Route path="/teacher/recordings"       element={<TeacherTeachingHub />} />
+                    <Route path="/teacher/recitation"       element={<TeacherTeachingHub />} />
+                    <Route path="/teacher/public-classes"   element={<TeacherTeachingHub />} />
+                    <Route path="/teacher/hifdh"            element={<TeacherTeachingHub />} />
+                    <Route path="/teacher/private-sessions" element={<TeacherStudentsHub />} />
                     <Route path="/teacher/settings"         element={<TeacherSettings />} />
-                    <Route path="/teacher/recordings"       element={<TeacherRecordings />} />
-                    <Route path="/teacher/recitation"       element={<TeacherRecitation />} />
-                    <Route path="/teacher/transcripts"      element={<TeacherTranscript />} />
-                    <Route path="/teacher/private-sessions" element={<TeacherPrivateSessions />} />
-                    <Route path="/teacher/public-classes"   element={<TeacherPublicClasses />} />
-                    <Route path="/teacher/hifdh"            element={<TeacherHifdhReview />} />
                     <Route path="/teacher/majlis"           element={<TeacherMajlis />} />
                   </Route>
 
