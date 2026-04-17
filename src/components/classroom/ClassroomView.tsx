@@ -369,6 +369,47 @@ const MaterialPicker=({subjectId,onShare,onClose}:any)=>{
   </div>,document.body);
 };
 
+/* ══ URL → BEST EMBEDDABLE URL ══ */
+function toMaterialEmbedUrl(url: string): {
+  embedUrl: string;
+  kind: "youtube" | "gdrive" | "pdf" | "video" | "audio" | "image" | "doc" | "iframe";
+} {
+  if (!url) return { embedUrl: "", kind: "iframe" };
+
+  // YouTube
+  const ytMatch = url.match(
+    /(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/
+  );
+  if (ytMatch)
+    return { embedUrl: `https://www.youtube.com/embed/${ytMatch[1]}?autoplay=1&rel=0`, kind: "youtube" };
+
+  // Google Drive /file/d/ID/view → /file/d/ID/preview
+  const gdMatch = url.match(/drive\.google\.com\/file\/d\/([^/?#]+)/);
+  if (gdMatch)
+    return { embedUrl: `https://drive.google.com/file/d/${gdMatch[1]}/preview`, kind: "gdrive" };
+  const gdMatch2 = url.match(/drive\.google\.com\/open\?id=([^&]+)/);
+  if (gdMatch2)
+    return { embedUrl: `https://drive.google.com/file/d/${gdMatch2[1]}/preview`, kind: "gdrive" };
+
+  const ext = url.split("?")[0].split(".").pop()?.toLowerCase() ?? "";
+
+  if (ext === "pdf")
+    return { embedUrl: url, kind: "pdf" };
+  if (["mp4","webm","mov","m4v","avi","mkv"].includes(ext))
+    return { embedUrl: url, kind: "video" };
+  if (["mp3","wav","m4a","aac","ogg","flac","opus"].includes(ext))
+    return { embedUrl: url, kind: "audio" };
+  if (["jpg","jpeg","png","gif","webp","svg","avif","bmp"].includes(ext))
+    return { embedUrl: url, kind: "image" };
+  if (["doc","docx","xls","xlsx","ppt","pptx","odt","ods","odp","csv","rtf"].includes(ext))
+    return {
+      embedUrl: `https://docs.google.com/gviewer?url=${encodeURIComponent(url)}&embedded=true`,
+      kind: "doc",
+    };
+
+  return { embedUrl: url, kind: "iframe" };
+}
+
 /* ══ RESUME POSITION HELPERS ══ */
 const RESUME_KEY=(id:string)=>`mat-resume-${id}`;
 function saveResume(id:string,data:{time?:number;page?:number}){
