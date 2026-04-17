@@ -369,6 +369,24 @@ const MaterialPicker=({subjectId,onShare,onClose}:any)=>{
   </div>,document.body);
 };
 
+/* ══ MATERIAL TYPE ICONS ══ */
+const MAT_TYPE_ICON: Record<string, string> = {
+  pdf:      "📄",
+  PDF:      "📄",
+  video:    "🎬",
+  Video:    "🎬",
+  audio:    "🎵",
+  Audio:    "🎵",
+  image:    "🖼️",
+  Image:    "🖼️",
+  link:     "🔗",
+  Link:     "🔗",
+  text:     "📝",
+  Text:     "📝",
+  document: "📝",
+  Document: "📝",
+};
+
 /* ══ URL → BEST EMBEDDABLE URL ══ */
 function toMaterialEmbedUrl(url: string): {
   embedUrl: string;
