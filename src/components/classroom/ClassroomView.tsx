@@ -24,7 +24,7 @@ import {
   PenTool, MessageCircle, MoreVertical, BookOpen,
   Circle, Loader2, X, Smile, Play, Pause,
   Volume2, ChevronDown, Users, Eye,
-  LayoutGrid, AlignJustify, Columns, Rows, Maximize2,
+  LayoutGrid, AlignJustify, Columns, Rows, Maximize2, Minimize2,
 } from "lucide-react";
 import ClassLobby        from "./ClassLobby";
 import ClassChatPanel    from "./ClassChatPanel";
@@ -346,28 +346,6 @@ const Whiteboard = ({room,onClose,isTeacher,initialStrokes,subjectId,canStudentW
 const WhiteboardBridge=({onClose,isTeacher,initialStrokes,subjectId,canStudentWrite}:any)=>{const room=useRoomContext();return<Whiteboard room={room} onClose={onClose} isTeacher={isTeacher} initialStrokes={initialStrokes} subjectId={subjectId} canStudentWrite={canStudentWrite}/>;};
 
 /* ══ MATERIAL VIEWER ══ */
-const MaterialViewer=({material,isTeacher,onClose}:any)=>{
-  const url=material.file_url||material.url||"";const title=material.title||material.name||"Material";
-  const isYT=url.includes("youtube.com")||url.includes("youtu.be");
-  const isPdf=url.toLowerCase().includes(".pdf")||(material.material_type||"").includes("pdf");
-  const isImg=/\.(jpg|jpeg|png|gif|webp|svg)$/i.test(url);const isVid=/\.(mp4|webm|ogg|mov)$/i.test(url);
-  const ytId=(u:string)=>{const m=u.match(/(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([\w-]+)/);return m?m[1]:"";};
-  return createPortal(<div style={{position:"fixed",inset:0,zIndex:9998,background:"#000",display:"flex",flexDirection:"column"}}>
-    <div style={{height:52,background:`rgba(6,78,59,.97)`,display:"flex",alignItems:"center",padding:"0 14px",gap:10}}>
-      <BookOpen style={{width:18,height:18,color:"#fff"}}/><span style={{color:"#fff",fontWeight:700,fontSize:15,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{title}</span>
-      {!isTeacher&&<span style={{fontSize:11,color:"rgba(255,255,255,.4)"}}>Shared by teacher</span>}
-      <button onClick={onClose} style={{width:34,height:34,borderRadius:8,background:"rgba(255,255,255,.12)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff"}}><X style={{width:15,height:15}}/></button>
-    </div>
-    <div style={{flex:1,overflow:"hidden"}}>
-      {isYT&&<iframe src={`https://www.youtube.com/embed/${ytId(url)}?autoplay=1`} style={{width:"100%",height:"100%",border:"none"}} allow="autoplay;fullscreen" allowFullScreen/>}
-      {isPdf&&!isYT&&<iframe src={`https://docs.google.com/viewer?url=${encodeURIComponent(url)}&embedded=true`} style={{width:"100%",height:"100%",border:"none"}}/>}
-      {isImg&&<div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center"}}><img src={url} alt={title} style={{maxWidth:"100%",maxHeight:"100%",objectFit:"contain"}}/></div>}
-      {isVid&&<video src={url} controls autoPlay playsInline style={{width:"100%",height:"100%",background:"#000"}}/>}
-      {!isYT&&!isPdf&&!isImg&&!isVid&&<div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100%",gap:16}}><BookOpen style={{width:52,height:52,color:"rgba(255,255,255,.25)"}}/><p style={{color:"#fff",fontWeight:700,fontSize:18}}>{title}</p><a href={url} target="_blank" rel="noreferrer" style={{background:TEAL,color:"#fff",padding:"12px 28px",borderRadius:12,textDecoration:"none",fontWeight:700,fontSize:14}}>Open File ↗</a></div>}
-    </div>
-  </div>,document.body);
-};
-
 /* ══ MATERIAL PICKER ══ */
 const MaterialPicker=({subjectId,onShare,onClose}:any)=>{
   const[mats,setMats]=useState<any[]>([]);const[busy,setBusy]=useState(true);
@@ -391,53 +369,175 @@ const MaterialPicker=({subjectId,onShare,onClose}:any)=>{
   </div>,document.body);
 };
 
-function toMaterialEmbedUrl(url:string):{embedUrl:string;kind:"youtube"|"gdrive"|"pdf"|"video"|"audio"|"image"|"doc"|"iframe"}{
-  const ytM=url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/);
-  if(ytM)return{embedUrl:`https://www.youtube.com/embed/${ytM[1]}?autoplay=1&rel=0`,kind:"youtube"};
-  const gdM=url.match(/drive\.google\.com\/file\/d\/([^/?#]+)/);
-  if(gdM)return{embedUrl:`https://drive.google.com/file/d/${gdM[1]}/preview`,kind:"gdrive"};
-  const gdM2=url.match(/drive\.google\.com\/open\?id=([^&]+)/);
-  if(gdM2)return{embedUrl:`https://drive.google.com/file/d/${gdM2[1]}/preview`,kind:"gdrive"};
-  const ext=url.split("?")[0].split(".").pop()?.toLowerCase()??"";
-  if(ext==="pdf")return{embedUrl:url,kind:"pdf"};
-  if(["mp4","webm","mov","m4v","avi","mkv"].includes(ext))return{embedUrl:url,kind:"video"};
-  if(["mp3","wav","m4a","aac","ogg","flac","opus"].includes(ext))return{embedUrl:url,kind:"audio"};
-  if(["jpg","jpeg","png","gif","webp","svg","avif"].includes(ext))return{embedUrl:url,kind:"image"};
-  if(["doc","docx","xls","xlsx","ppt","pptx","odt","ods","odp","csv","rtf"].includes(ext))return{embedUrl:`https://docs.google.com/gviewer?url=${encodeURIComponent(url)}&embedded=true`,kind:"doc"};
-  return{embedUrl:url,kind:"iframe"};
+/* ══ RESUME POSITION HELPERS ══ */
+const RESUME_KEY=(id:string)=>`mat-resume-${id}`;
+function saveResume(id:string,data:{time?:number;page?:number}){
+  try{localStorage.setItem(RESUME_KEY(id),JSON.stringify({...data,at:Date.now()}));}catch{}
+}
+function loadResume(id:string):{time?:number;page?:number}|null{
+  try{const raw=localStorage.getItem(RESUME_KEY(id));if(!raw)return null;return JSON.parse(raw);}
+  catch{return null;}
 }
 
-const MAT_TYPE_ICON:Record<string,string>={pdf:"📄",video:"🎬",audio:"🎵",image:"🖼️",link:"🔗",document:"📝",text:"📝"};
-
-const MatInlineViewer=({material,onClose}:any)=>{
+/* ══ IN-CLASS MATERIAL VIEWER ══
+   Renders INSIDE the content area (position:absolute) so the footer and top bar
+   always remain visible. Has an opt-in fullscreen button that expands to the full
+   viewport when needed. Saves / restores video time and PDF page automatically.   */
+const InClassMaterialViewer=({material,onClose,isTeacher=false}:any)=>{
   const url=material.file_url||material.url||"";
   const {embedUrl,kind}=toMaterialEmbedUrl(url);
+  const matId=material.id||url;
+
+  // ── resume position ──────────────────────────────────────────────────────
+  const resume=loadResume(matId);
+  const videoRef=useRef<HTMLVideoElement>(null);
+  const iframeRef=useRef<HTMLIFrameElement>(null);
+  // For direct PDF: append #page=N so the browser PDF viewer opens at saved page
+  const pdfSrc=kind==="pdf"&&resume?.page
+    ? `${embedUrl}#page=${resume.page}`
+    : embedUrl;
+
+  // Restore video time on load
+  useEffect(()=>{
+    if(kind!=="video"||!videoRef.current)return;
+    const el=videoRef.current;
+    const onLoaded=()=>{if(resume?.time&&isFinite(resume.time))el.currentTime=resume.time;};
+    el.addEventListener("loadedmetadata",onLoaded);
+    return()=>el.removeEventListener("loadedmetadata",onLoaded);
+  },[]);
+
+  // Save video time on unmount and periodically
+  useEffect(()=>{
+    if(kind!=="video")return;
+    const iv=setInterval(()=>{
+      if(videoRef.current&&isFinite(videoRef.current.currentTime)&&videoRef.current.currentTime>0)
+        saveResume(matId,{time:videoRef.current.currentTime});
+    },3000);
+    return()=>{
+      clearInterval(iv);
+      if(videoRef.current&&videoRef.current.currentTime>0)
+        saveResume(matId,{time:videoRef.current.currentTime});
+    };
+  },[matId,kind]);
+
+  // ── fullscreen toggle (expands to cover full viewport including footer) ──
+  const[fullscreen,setFullscreen]=useState(false);
   const[loaded,setLoaded]=useState(false);
-  useEffect(()=>{document.body.style.overflow="hidden";return()=>{document.body.style.overflow="";};},[]);
-  const renderContent=()=>{
-    if(kind==="image")return(<div style={{flex:1,background:"#000",display:"flex",alignItems:"center",justifyContent:"center"}}><img src={embedUrl} alt={material.title} style={{maxWidth:"100%",maxHeight:"100%",objectFit:"contain"}}/></div>);
-    if(kind==="audio")return(<div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",background:"#0f1a14",flexDirection:"column",gap:16}}><div style={{fontSize:52}}>🎵</div><p style={{color:"#fff",fontWeight:600,margin:0}}>{material.title}</p><audio src={embedUrl} controls autoPlay style={{maxWidth:380,width:"100%"}}/></div>);
-    if(kind==="video")return(<div style={{flex:1,background:"#000",display:"flex",alignItems:"center",justifyContent:"center"}}><video src={embedUrl} controls autoPlay playsInline style={{maxWidth:"100%",maxHeight:"100%"}}/></div>);
-    return(<div style={{flex:1,position:"relative"}}>
-      {!loaded&&<div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"#0f1a14",zIndex:1}}><div style={{width:32,height:32,border:"3px solid rgba(255,255,255,.2)",borderTopColor:TEAL,borderRadius:"50%",animation:"cv-spin .7s linear infinite"}}/></div>}
-      <iframe src={embedUrl} title={material.title} style={{width:"100%",height:"100%",border:"none",display:"block"}} allow="autoplay;fullscreen;accelerometer;encrypted-media;picture-in-picture" allowFullScreen onLoad={()=>setLoaded(true)}/>
-    </div>);
+
+  // ── PDF page tracking via postMessage / hash listener ────────────────────
+  const[currentPage,setCurrentPage]=useState(resume?.page||1);
+  const[totalPages,setTotalPages]=useState(0);
+  // For direct PDF: use custom page controls (we control the src hash)
+  const isPdfDirect=kind==="pdf";
+  const[pdfPage,setPdfPage]=useState(resume?.page||1);
+  const navigatePdfPage=(p:number)=>{
+    setPdfPage(p);
+    saveResume(matId,{page:p});
+    // Force iframe reload at new page
+    if(iframeRef.current){
+      iframeRef.current.src=`${embedUrl}#page=${p}`;
+    }
   };
-  return createPortal(
-    <div style={{position:"fixed",inset:0,zIndex:99999,background:"rgba(0,0,0,.78)",display:"flex",alignItems:"center",justifyContent:"center",padding:12}} onClick={onClose}>
-      <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:920,height:"min(90vh,680px)",background:"#111827",borderRadius:16,overflow:"hidden",display:"flex",flexDirection:"column",boxShadow:"0 25px 60px rgba(0,0,0,.6)"}}>
-        <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",background:"#1f2937",borderBottom:"1px solid #374151",flexShrink:0}}>
-          <span style={{fontSize:14}}>{MAT_TYPE_ICON[material.material_type||"document"]||"📄"}</span>
-          <span style={{flex:1,fontSize:13,fontWeight:600,color:"#f3f4f6",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{material.title||"Material"}</span>
-          <a href={url} target="_blank" rel="noopener noreferrer" style={{fontSize:12,color:"#d1d5db",background:"#374151",borderRadius:8,padding:"5px 12px",textDecoration:"none",fontWeight:600,flexShrink:0}}>↗ New tab</a>
-          <button onClick={onClose} style={{background:"#374151",border:"none",color:"#d1d5db",borderRadius:8,padding:"5px 12px",cursor:"pointer",fontWeight:700,fontSize:16,flexShrink:0}}>✕</button>
-        </div>
-        <div style={{flex:1,minHeight:0,display:"flex",flexDirection:"column"}}>{renderContent()}</div>
+
+  // ── positioning: absolute inside content area, or fixed for fullscreen ───
+  const overlayStyle:React.CSSProperties=fullscreen
+    ?{position:"fixed",inset:0,zIndex:9990}
+    :{position:"absolute",inset:0,zIndex:60};
+
+  const renderContent=()=>{
+    if(kind==="image")return(
+      <div style={{flex:1,background:"#000",display:"flex",alignItems:"center",justifyContent:"center",overflow:"auto"}}>
+        <img src={embedUrl} alt={material.title} style={{maxWidth:"100%",maxHeight:"100%",objectFit:"contain",display:"block"}}/>
       </div>
-    </div>,document.body
+    );
+    if(kind==="audio")return(
+      <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",background:"#0f1a14",flexDirection:"column",gap:16,padding:20}}>
+        <div style={{fontSize:56}}>🎵</div>
+        <p style={{color:"#fff",fontWeight:700,fontSize:16,margin:0,textAlign:"center"}}>{material.title}</p>
+        <audio ref={undefined} src={embedUrl} controls autoPlay style={{maxWidth:380,width:"100%"}}
+          onLoadedMetadata={e=>{if(resume?.time)(e.target as HTMLAudioElement).currentTime=resume.time;}}
+          onTimeUpdate={e=>{const el=e.target as HTMLAudioElement;if(el.currentTime>0)saveResume(matId,{time:el.currentTime});}}
+        />
+      </div>
+    );
+    if(kind==="video")return(
+      <div style={{flex:1,background:"#000",display:"flex",alignItems:"center",justifyContent:"center"}}>
+        <video ref={videoRef} src={embedUrl} controls autoPlay playsInline
+          style={{maxWidth:"100%",maxHeight:"100%",display:"block"}}/>
+      </div>
+    );
+    // PDF with page controls
+    if(isPdfDirect)return(
+      <div style={{flex:1,display:"flex",flexDirection:"column",background:"#fff",minHeight:0}}>
+        <div style={{flex:1,position:"relative",minHeight:0}}>
+          {!loaded&&<div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"#f8f8f8",zIndex:1}}>
+            <div style={{width:32,height:32,border:`3px solid rgba(0,0,0,.15)`,borderTopColor:TEAL,borderRadius:"50%",animation:"cv-spin .7s linear infinite"}}/>
+          </div>}
+          <iframe ref={iframeRef} src={pdfSrc} title={material.title}
+            style={{width:"100%",height:"100%",border:"none",display:"block"}}
+            allow="fullscreen" onLoad={()=>setLoaded(true)}/>
+        </div>
+        {/* PDF page navigation strip */}
+        <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:10,padding:"6px 12px",background:"rgba(15,17,23,.92)",borderTop:"1px solid rgba(255,255,255,.08)",flexShrink:0}}>
+          <button onClick={()=>navigatePdfPage(Math.max(1,pdfPage-1))}
+            style={{width:28,height:28,borderRadius:8,background:"rgba(255,255,255,.1)",border:"none",color:"#fff",cursor:"pointer",fontSize:16,display:"flex",alignItems:"center",justifyContent:"center"}}>‹</button>
+          <span style={{fontSize:12,color:"rgba(255,255,255,.7)",fontVariantNumeric:"tabular-nums"}}>
+            Page <strong style={{color:"#fff"}}>{pdfPage}</strong>
+          </span>
+          <button onClick={()=>navigatePdfPage(pdfPage+1)}
+            style={{width:28,height:28,borderRadius:8,background:"rgba(255,255,255,.1)",border:"none",color:"#fff",cursor:"pointer",fontSize:16,display:"flex",alignItems:"center",justifyContent:"center"}}>›</button>
+          <span style={{fontSize:11,color:"rgba(255,255,255,.35)",marginLeft:4}}>↙ resumed</span>
+        </div>
+      </div>
+    );
+    // iframes (YouTube, Google Drive, Google Docs viewer, etc.)
+    return(
+      <div style={{flex:1,position:"relative",minHeight:0}}>
+        {!loaded&&<div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"#0f1a14",zIndex:1}}>
+          <div style={{width:32,height:32,border:"3px solid rgba(255,255,255,.2)",borderTopColor:TEAL,borderRadius:"50%",animation:"cv-spin .7s linear infinite"}}/>
+        </div>}
+        <iframe src={embedUrl} title={material.title}
+          style={{width:"100%",height:"100%",border:"none",display:"block"}}
+          allow="autoplay;fullscreen;accelerometer;encrypted-media;picture-in-picture"
+          allowFullScreen onLoad={()=>setLoaded(true)}/>
+      </div>
+    );
+  };
+
+  const resumeBadge=resume?.time||resume?.page;
+
+  return(
+    <div style={{...overlayStyle,background:"#0f1117",display:"flex",flexDirection:"column",animation:"fade-in .18s ease"}}>
+      {/* Viewer header */}
+      <div style={{height:46,background:"rgba(6,78,59,.97)",display:"flex",alignItems:"center",padding:"0 10px",gap:8,flexShrink:0,borderBottom:"1px solid rgba(255,255,255,.08)"}}>
+        <span style={{fontSize:15}}>{MAT_TYPE_ICON[material.material_type||"document"]||"📄"}</span>
+        <span style={{flex:1,fontSize:13,fontWeight:700,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{material.title||"Material"}</span>
+        {resumeBadge&&(
+          <span style={{fontSize:10,color:"rgba(255,255,255,.5)",background:"rgba(255,255,255,.1)",borderRadius:8,padding:"2px 7px",flexShrink:0}}>
+            {resume?.time?`▶ ${Math.floor((resume.time||0)/60)}m${Math.floor((resume.time||0)%60)}s`:`p.${resume?.page}`} resumed
+          </span>
+        )}
+        {!isTeacher&&<span style={{fontSize:10,color:"rgba(255,255,255,.4)",flexShrink:0}}>Shared by teacher</span>}
+        <a href={url} target="_blank" rel="noopener noreferrer"
+          style={{fontSize:11,color:"#d1d5db",background:"rgba(255,255,255,.1)",borderRadius:8,padding:"4px 10px",textDecoration:"none",fontWeight:600,flexShrink:0}}>↗</a>
+        {/* Fullscreen toggle */}
+        <button onClick={()=>setFullscreen(v=>!v)} title={fullscreen?"Exit fullscreen":"Fullscreen"}
+          style={{width:30,height:30,borderRadius:8,background:"rgba(255,255,255,.1)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          {fullscreen?<Minimize2 style={{width:13,height:13}}/>:<Maximize2 style={{width:13,height:13}}/>}
+        </button>
+        <button onClick={onClose}
+          style={{width:30,height:30,borderRadius:8,background:"rgba(255,255,255,.12)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          <X style={{width:13,height:13}}/>
+        </button>
+      </div>
+      {renderContent()}
+    </div>
   );
 };
 
+/* ══ SUBJECT MATERIALS PANEL ══
+   Renders as position:absolute inside the content area — footer always visible.
+   Clicking a material opens InClassMaterialViewer on top of the panel.          */
 const SubjectMaterialsPanel=({subjectId,onClose}:any)=>{
   const[mats,setMats]=useState<any[]>([]);
   const[busy,setBusy]=useState(true);
@@ -446,9 +546,12 @@ const SubjectMaterialsPanel=({subjectId,onClose}:any)=>{
     supabase.from("subject_materials" as any).select("*").eq("subject_id",subjectId).order("created_at",{ascending:false})
       .then(({data})=>{setMats(data||[]);setBusy(false);});
   },[subjectId]);
-  return createPortal(
-    <div style={{position:"fixed",inset:0,zIndex:9900,background:"rgba(0,0,0,.55)"}} onClick={onClose}>
-      <div onClick={e=>e.stopPropagation()} style={{position:"fixed",top:0,right:0,bottom:0,width:"min(340px,100vw)",background:"#13181f",borderLeft:"1px solid rgba(255,255,255,.08)",display:"flex",flexDirection:"column",animation:"slide-up .2s ease",boxShadow:"-8px 0 32px rgba(0,0,0,.5)"}}>
+  return(
+    // Outer backdrop — covers content area but NOT top bar or footer
+    <div style={{position:"absolute",inset:0,zIndex:55,background:"rgba(0,0,0,.55)"}} onClick={onClose}>
+      {/* Panel slides in from right */}
+      <div onClick={e=>e.stopPropagation()}
+        style={{position:"absolute",top:0,right:0,bottom:0,width:"min(340px,100%)",background:"#13181f",borderLeft:"1px solid rgba(255,255,255,.08)",display:"flex",flexDirection:"column",animation:"slide-up .2s ease",boxShadow:"-8px 0 32px rgba(0,0,0,.5)"}}>
         <div style={{display:"flex",alignItems:"center",gap:10,padding:"14px 16px",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0}}>
           <Eye style={{width:16,height:16,color:TEAL}}/>
           <span style={{flex:1,fontSize:14,fontWeight:700,color:"#fff"}}>Subject Materials</span>
@@ -464,13 +567,20 @@ const SubjectMaterialsPanel=({subjectId,onClose}:any)=>{
           </div>}
           {mats.map(m=>{
             const icon=MAT_TYPE_ICON[m.material_type||"document"]||"📄";
+            const resume=loadResume(m.id||"");
             return(
-              <button key={m.id} onClick={()=>setViewing(m)} style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"12px 14px",background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.07)",borderRadius:12,cursor:"pointer",textAlign:"left",marginBottom:8,transition:"background .12s"}}
-                onMouseEnter={e=>(e.currentTarget.style.background="rgba(255,255,255,.09)")} onMouseLeave={e=>(e.currentTarget.style.background="rgba(255,255,255,.04)")}>
+              <button key={m.id} onClick={()=>setViewing(m)}
+                style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"12px 14px",background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.07)",borderRadius:12,cursor:"pointer",textAlign:"left",marginBottom:8,transition:"background .12s"}}
+                onMouseEnter={e=>(e.currentTarget.style.background="rgba(255,255,255,.09)")}
+                onMouseLeave={e=>(e.currentTarget.style.background="rgba(255,255,255,.04)")}>
                 <div style={{width:40,height:40,borderRadius:10,background:"rgba(10,124,104,.2)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>{icon}</div>
                 <div style={{flex:1,minWidth:0}}>
                   <p style={{margin:0,fontSize:13,fontWeight:600,color:"#e8eaf0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.title||m.name||"Untitled"}</p>
-                  <p style={{margin:"3px 0 0",fontSize:11,color:"rgba(255,255,255,.35)",textTransform:"capitalize"}}>{m.material_type||"file"}</p>
+                  <p style={{margin:"3px 0 0",fontSize:11,color:"rgba(255,255,255,.35)",textTransform:"capitalize"}}>
+                    {m.material_type||"file"}
+                    {resume?.time&&<span style={{marginLeft:6,color:TEAL}}>▶ {Math.floor((resume.time||0)/60)}m</span>}
+                    {resume?.page&&!resume?.time&&<span style={{marginLeft:6,color:TEAL}}>p.{resume.page}</span>}
+                  </p>
                 </div>
                 <span style={{fontSize:11,color:TEAL,fontWeight:700,flexShrink:0}}>👁 View</span>
               </button>
@@ -478,9 +588,16 @@ const SubjectMaterialsPanel=({subjectId,onClose}:any)=>{
           })}
         </div>
       </div>
-      {viewing&&<MatInlineViewer material={viewing} onClose={()=>setViewing(null)}/>}
-    </div>,document.body
+      {/* Viewer renders on top of panel, still inside content area */}
+      {viewing&&<InClassMaterialViewer material={viewing} onClose={()=>setViewing(null)}/>}
+    </div>
   );
+};
+
+/* ══ MATERIAL VIEWER (teacher-shared) ══
+   Renders as position:absolute inside content area so footer stays visible.     */
+const MaterialViewer=({material,isTeacher,onClose}:any)=>{
+  return <InClassMaterialViewer material={material} isTeacher={isTeacher} onClose={onClose}/>;
 };
 
 /* ══ RECORDING CONTROLLER ══ */
@@ -1099,12 +1216,16 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               {isPrivileged&&<RecController sessionId={sessionId} subjectId={subject.id} userEmail={user?.email||""} onSavingChange={setSavingRec}/>}
             </div>
           </div>
-          {/* Content */}
+          {/* Content — material panels render here so footer always stays visible */}
           <div style={{flex:1,display:"flex",minHeight:0,overflow:"hidden"}}>
             <div style={{flex:1,position:"relative",minWidth:0}}>
               <VideoGrid layout={layout}/>
               <FloatingEmojiLayer emojis={floatingEmojis}/>
               <RaisedHandsOverlay hands={raisedHands}/>
+              {/* Materials panel — absolute inside content, footer always visible */}
+              {matPanelOpen&&<SubjectMaterialsPanel subjectId={subject.id} onClose={()=>setMatPanelOpen(false)}/>}
+              {/* Teacher-shared material viewer — absolute inside content */}
+              {matOpen&&<MatViewerInlineBridge material={matOpen} isPrivileged={isPrivileged} onClose={()=>setMatOpen(null)}/>}
             </div>
             {chatOpen&&!isMobile&&(
               <div style={{width:320,background:"#13181f",borderLeft:"1px solid rgba(255,255,255,.06)",display:"flex",flexDirection:"column",flexShrink:0,animation:"slide-up .2s ease"}}>
@@ -1129,9 +1250,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
           <LiveQuizOverlay sessionId={sessionId||""} isOpen={false} onClose={()=>{}}/>
         </LiveKitRoom>
       )}
-      {matPanelOpen&&<SubjectMaterialsPanel subjectId={subject.id} onClose={()=>setMatPanelOpen(false)}/>}
       {matPicker&&<MatPickerBridge subjectId={subject.id} onShare={(mat:any,room:any)=>{setMatOpen(mat);setMatPicker(false);try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"mat_open",material:mat})),{reliable:true});}catch{}}} onClose={()=>setMatPicker(false)}/>}
-      {matOpen&&<MatViewerBridge material={matOpen} isTeacher={isPrivileged} onClose={(room?:any)=>{setMatOpen(null);if(isPrivileged){try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"mat_close"})),{reliable:true});}catch{}}}}/>}
       {showEnd&&createPortal(
         <div style={{position:"fixed",inset:0,zIndex:9500,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,.72)",backdropFilter:"blur(6px)"}} onClick={()=>setShowEnd(false)}>
           <div style={{background:"#17202a",borderRadius:20,padding:"28px 28px 24px",width:"100%",maxWidth:380,margin:"0 16px",boxShadow:"0 24px 64px rgba(0,0,0,.7)",border:"1px solid rgba(255,255,255,.1)",animation:"fade-in .18s ease"}} onClick={e=>e.stopPropagation()}>
@@ -1154,6 +1273,15 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
 };
 
 const MatPickerBridge=({subjectId,onShare,onClose}:any)=>{const room=useRoomContext();return<MaterialPicker subjectId={subjectId} onShare={(mat:any)=>onShare(mat,room)} onClose={onClose}/>;};
-const MatViewerBridge=({material,isTeacher,onClose}:any)=>{const room=useRoomContext();return<MaterialViewer material={material} isTeacher={isTeacher} onClose={()=>onClose(room)}/>;};
+// MatViewerBridge (legacy — kept for backwards compat, now delegates to InClassMaterialViewer)
+const MatViewerBridge=({material,isTeacher,onClose}:any)=>{const room=useRoomContext();return<InClassMaterialViewer material={material} isTeacher={isTeacher} onClose={()=>onClose(room)}/>;};
+// MatViewerInlineBridge — renders INSIDE LiveKitRoom (has room context) so mat_close can be broadcast
+const MatViewerInlineBridge=({material,isPrivileged,onClose}:any)=>{
+  const room=useRoomContext();
+  return<InClassMaterialViewer material={material} isTeacher={isPrivileged} onClose={()=>{
+    onClose();
+    if(isPrivileged){try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"mat_close"})),{reliable:true});}catch{}}
+  }}/>;
+};
 
 export default ClassroomView;
