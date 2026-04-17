@@ -3,12 +3,13 @@
   Mobile-first responsive layout with collapsible admin nav groups
 */
 import { useState } from "react";
-import { Link, Outlet, useLocation } from "react-router-dom";
+import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTasjeel } from "@/hooks/useTasjeel";
+import { usePaymentAccess } from "@/hooks/usePaymentAccess";
 import {
   BookOpen, LayoutDashboard, ClipboardList, Users, LogOut, Globe,UserPlus,
   CheckSquare, BarChart, UserCircle, Library, GraduationCap, MessageCircle,
@@ -26,6 +27,77 @@ import ImpersonationBanner from "./ImpersonationBanner";
 
 interface DashboardLayoutProps { role: "student" | "admin"; }
 
+// ── PaymentLockScreen ────────────────────────────────────────────────────
+// Shown in-place of locked pages when student's subscription has expired.
+const PaymentLockScreen = () => {
+  const navigate = useNavigate();
+  return (
+    <div style={{
+      minHeight: "100%", display: "flex", flexDirection: "column",
+      alignItems: "center", justifyContent: "center",
+      padding: "40px 20px", gap: 20, textAlign: "center",
+      background: "linear-gradient(160deg, #f9fafb 0%, #f0fff4 100%)",
+    }}>
+      {/* Lock icon */}
+      <div style={{
+        width: 72, height: 72, borderRadius: "50%",
+        background: "linear-gradient(135deg, #ffebee, #fce4ec)",
+        border: "2px solid #ef9a9a",
+        display: "flex", alignItems: "center", justifyContent: "center",
+      }}>
+        <Lock style={{ width: 32, height: 32, color: "#c62828" }} />
+      </div>
+
+      {/* Text */}
+      <div>
+        <p style={{ fontSize: 20, fontWeight: 900, color: "#111", margin: "0 0 6px" }}>
+          Feature Locked
+        </p>
+        <p style={{ fontSize: 14, color: "#666", margin: "0 0 4px", maxWidth: 280 }}>
+          Your subscription has expired.
+        </p>
+        <p style={{ fontSize: 13, color: "#999", margin: 0, maxWidth: 280 }}>
+          Renew now to restore access to courses, timetable, revision, exams, and more.
+        </p>
+      </div>
+
+      {/* Locked features list */}
+      <div style={{
+        background: "#fff", borderRadius: 14, border: "1px solid #f0f0f0",
+        padding: "14px 20px", width: "100%", maxWidth: 320,
+        display: "flex", flexDirection: "column", gap: 8,
+      }}>
+        {["Courses & Lessons","Timetable","Al-Murājaʿah (Revision)","Al-Ḥifẓ Tracker","Exams & Transcripts","Al-Majlis Chat","Live Classes"].map(f => (
+          <div key={f} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#e53935" }}>
+            <span style={{ fontSize: 15 }}>🔒</span>
+            <span>{f}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* CTA */}
+      <button
+        onClick={() => navigate("/student/enrollment-payment")}
+        style={{
+          background: "linear-gradient(135deg, #064E3B, #075E54)",
+          color: "#fff", border: "none", borderRadius: 14,
+          padding: "16px 36px", cursor: "pointer",
+          fontWeight: 800, fontSize: 16,
+          display: "flex", alignItems: "center", gap: 10,
+          boxShadow: "0 6px 24px rgba(7,94,84,.35)",
+        }}
+      >
+        <CreditCard style={{ width: 18, height: 18 }} />
+        Renew Subscription
+      </button>
+
+      <p style={{ fontSize: 11, color: "#aaa" }}>
+        Secured by Paystack · SSL Encrypted
+      </p>
+    </div>
+  );
+};
+
 const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   const { t, language, setLanguage, dir } = useLanguage();
   const { signOut, profile } = useAuth();
@@ -36,6 +108,23 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
 
   // ── Level-pending: lock most features until admin assigns a level ─────────
   const levelPending = role === "student" && currentStep !== null && currentStep !== "completed";
+
+  // ── Payment-locking: block features when student subscription is locked ──
+  const { accessStatus: paymentStatus, isLoading: paymentLoading } = usePaymentAccess();
+  const isPaymentLocked = role === "student" && !paymentLoading && paymentStatus === "locked";
+
+  // Routes that are blocked when payment is locked (student must pay to enter)
+  const PAYMENT_GATED_ROUTES = new Set([
+    "/student/courses",
+    "/student/timetable",
+    "/student/revision",
+    "/student/hifdh",
+    "/student/majlis",
+    "/live-quiz",
+    "/student/live-classes",
+    "/student/exams",
+    "/student/transcripts",
+  ]);
 
   const LOCKED_ROUTES = new Set([
     "/student/courses",
@@ -405,7 +494,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                         if (n.link) { setShowNotifPanel(false); window.location.href = n.link; }
                       }}
                       className="flex items-start gap-3 px-5 py-3.5 border-b cursor-pointer transition-colors"
-                      style={{ background: n.is_read ? "#fafafa" : n.type === "class_reminder" ? "#f0fff4" : "#fffbeb" }}>
+                      style={{ background: n.is_read ? "#fafafa" : n.type === "class_reminder" ? "#f0fff4" : n.type === "payment" ? "#fff5f5" : "#fffbeb" }}>
                       <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5"
                         style={{ background: n.is_read ? "#f0f4f0" : "#fffbeb", border:`1.5px solid ${n.is_read ? "#e0e0e0" : "#c9a84c88"}` }}>
                         <span className="text-sm">
@@ -433,6 +522,11 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                               Join →
                             </span>
                           )}
+                          {n.type === "payment" && n.link && (
+                            <span style={{ fontSize:10, padding:"2px 8px", borderRadius:9, background:"#c62828", color:"#fff", fontWeight:700 }}>
+                              Pay Now →
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -443,7 +537,12 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
         )}
 
         <main className="flex-1 overflow-auto">
-          <Outlet/>
+          {/* ── Payment lock screen for gated routes ── */}
+          {isPaymentLocked && PAYMENT_GATED_ROUTES.has(location.pathname) ? (
+            <PaymentLockScreen />
+          ) : (
+            <Outlet/>
+          )}
         </main>
       </div>
     </div>
