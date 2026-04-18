@@ -14,6 +14,7 @@
  */
 
 import { useState, useRef, useCallback, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { useAuth } from "@/contexts/AuthContext";
@@ -124,6 +125,8 @@ function toEmbedUrl(url: string): {
    When minimized: compact floating bar at the bottom of the screen.
    When expanded: full overlay as before.
    Supports back/forward navigation through opened-files history.
+   Google Drive links get a dedicated fallback UI since Drive
+   silently shows a blank iframe when sharing is restricted.
 ════════════════════════════════════════════════════════════ */
 interface FileViewerProps {
   file:       LCFile;
@@ -144,8 +147,11 @@ function FileViewer({
   canGoBack, canGoFwd, totalOpen, currentIdx,
   onClose, onMinimize, onRestore, onBack, onForward,
 }: FileViewerProps) {
-  const [iframeBlocked, setIframeBlocked] = useState(false);
-  const [loaderVisible, setLoaderVisible] = useState(true);
+  const [iframeBlocked,   setIframeBlocked]   = useState(false);
+  const [loaderVisible,   setLoaderVisible]   = useState(true);
+  // After the iframe fires onLoad but content might still be blank (Drive quirk),
+  // we show a "not loading?" helper after a short delay.
+  const [showDriveHelper, setShowDriveHelper] = useState(false);
 
   const url  = file.file_url;
   const kind = getKind(file.file_name, file.file_type);
@@ -166,11 +172,23 @@ function FileViewer({
     embedKind = "doc";
   }
 
-  // Reset loader whenever the file changes
+  const isGdrive = embedKind === "gdrive";
+
+  // Reset state whenever the file changes
   useEffect(() => {
     setIframeBlocked(false);
     setLoaderVisible(true);
+    setShowDriveHelper(false);
   }, [file.id]);
+
+  // For Google Drive: show helper hint 4 seconds after the iframe loads,
+  // because Drive silently shows a blank page when sharing is restricted —
+  // there is no error event we can catch cross-origin.
+  useEffect(() => {
+    if (!isGdrive || loaderVisible) return;
+    const t = setTimeout(() => setShowDriveHelper(true), 4000);
+    return () => clearTimeout(t);
+  }, [isGdrive, loaderVisible]);
 
   // Lock body scroll only when expanded
   useEffect(() => {
@@ -182,10 +200,14 @@ function FileViewer({
     return () => { document.body.style.overflow = ""; };
   }, [minimized]);
 
-  /* ── MINIMIZED: floating bottom bar ── */
+  /* ── MINIMIZED: floating bottom bar ──
+     Rendered via portal on document.body so it escapes any parent
+     that has transform/contain (like .cv-bar in ClassroomView)
+     which would otherwise break position:fixed.
+  ── */
   if (minimized) {
     const cfg = ICONS[kind];
-    return (
+    return createPortal(
       <div style={{
         position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 99999,
         background: "#1f2937",
@@ -195,21 +217,11 @@ function FileViewer({
         padding: "10px 14px",
         fontFamily: "system-ui,sans-serif",
       }}>
-        {/* File icon + name */}
-        <div style={{
-          width: 36, height: 36, borderRadius: 8,
-          background: cfg.bg,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          fontSize: 18, flexShrink: 0,
-        }}>
+        <div style={{ width: 36, height: 36, borderRadius: 8, background: cfg.bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0 }}>
           {cfg.i}
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <p style={{
-            margin: 0, fontSize: 13, fontWeight: 700,
-            color: "#f3f4f6",
-            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-          }}>
+          <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#f3f4f6", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {file.file_name}
           </p>
           <p style={{ margin: 0, fontSize: 11, color: "#9ca3af" }}>
@@ -218,75 +230,102 @@ function FileViewer({
           </p>
         </div>
 
-        {/* Back / forward if multiple files opened */}
         {totalOpen > 1 && (
           <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-            <button
-              onClick={onBack}
-              disabled={!canGoBack}
-              title="Previous file"
-              style={{
-                background: canGoBack ? "#374151" : "#1f2937",
-                border: "none", color: canGoBack ? "#d1d5db" : "#4b5563",
-                borderRadius: 8, width: 32, height: 32,
-                cursor: canGoBack ? "pointer" : "default",
-                fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center",
-              }}>
-              ‹
-            </button>
-            <button
-              onClick={onForward}
-              disabled={!canGoFwd}
-              title="Next file"
-              style={{
-                background: canGoFwd ? "#374151" : "#1f2937",
-                border: "none", color: canGoFwd ? "#d1d5db" : "#4b5563",
-                borderRadius: 8, width: 32, height: 32,
-                cursor: canGoFwd ? "pointer" : "default",
-                fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center",
-              }}>
-              ›
-            </button>
+            <button onClick={onBack} disabled={!canGoBack} style={{ background: canGoBack ? "#374151" : "#1f2937", border: "none", color: canGoBack ? "#d1d5db" : "#4b5563", borderRadius: 8, width: 32, height: 32, cursor: canGoBack ? "pointer" : "default", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>‹</button>
+            <button onClick={onForward} disabled={!canGoFwd} style={{ background: canGoFwd ? "#374151" : "#1f2937", border: "none", color: canGoFwd ? "#d1d5db" : "#4b5563", borderRadius: 8, width: 32, height: 32, cursor: canGoFwd ? "pointer" : "default", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>›</button>
           </div>
         )}
 
-        {/* Restore */}
-        <button
-          onClick={onRestore}
-          style={{
-            background: GOLD, border: "none", color: "#fff",
-            borderRadius: 8, padding: "6px 14px",
-            fontSize: 12, fontWeight: 700, cursor: "pointer", flexShrink: 0,
-          }}>
+        <button onClick={onRestore} style={{ background: GOLD, border: "none", color: "#fff", borderRadius: 8, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}>
           ⬆ Restore
         </button>
-
-        {/* Close */}
-        <button
-          onClick={onClose}
-          style={{
-            background: "#374151", border: "none", color: "#d1d5db",
-            borderRadius: 8, width: 32, height: 32,
-            cursor: "pointer", fontSize: 18, fontWeight: 700,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            flexShrink: 0,
-          }}>
+        <button onClick={onClose} style={{ background: "#374151", border: "none", color: "#d1d5db", borderRadius: 8, width: 32, height: 32, cursor: "pointer", fontSize: 18, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
           ✕
         </button>
-      </div>
+      </div>,
+      document.body
     );
   }
 
   /* ── EXPANDED: full overlay ── */
+
+  /* ── Google Drive dedicated view ──
+     Drive's /preview iframe silently shows blank when the file isn't shared
+     as "Anyone with the link". We can't detect this cross-origin, so we:
+     1. Always show an "Open in Drive" button prominently at the top
+     2. Show the embed attempt below
+     3. After 4 s post-load, show a sharing-settings helper
+  ── */
+  const renderGdrive = () => (
+    <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+      {/* Always-visible Drive action bar */}
+      <div style={{ background: "#1a2e24", borderBottom: "1px solid #2d4a36", padding: "10px 16px", display: "flex", alignItems: "center", gap: 10, flexShrink: 0, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 20 }}>📁</span>
+        <div style={{ flex: 1, minWidth: 120 }}>
+          <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#f3f4f6", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {file.file_name}
+          </p>
+          <p style={{ margin: 0, fontSize: 11, color: "#9ca3af" }}>Google Drive</p>
+        </div>
+        <a href={url} target="_blank" rel="noopener noreferrer"
+          style={{ background: GOLD, color: "#fff", borderRadius: 10, padding: "8px 18px", textDecoration: "none", fontWeight: 700, fontSize: 13, flexShrink: 0, display: "flex", alignItems: "center", gap: 6 }}>
+          Open in Drive ↗
+        </a>
+      </div>
+
+      {/* Drive sharing hint — appears 4 s after load if content might be blank */}
+      {showDriveHelper && (
+        <div style={{ background: "#2d1f08", borderBottom: "1px solid #78350f40", padding: "10px 16px", display: "flex", alignItems: "flex-start", gap: 10, flexShrink: 0 }}>
+          <span style={{ fontSize: 18, flexShrink: 0 }}>⚠️</span>
+          <div style={{ flex: 1 }}>
+            <p style={{ margin: "0 0 2px", fontSize: 13, fontWeight: 700, color: "#fcd34d" }}>Seeing a blank screen?</p>
+            <p style={{ margin: 0, fontSize: 12, color: "#d97706", lineHeight: 1.4 }}>
+              The file must be set to <strong>"Anyone with the link can view"</strong> in Google Drive for preview to work here. Use the <strong>Open in Drive ↗</strong> button above to access it directly.
+            </p>
+          </div>
+          <button onClick={() => setShowDriveHelper(false)} style={{ background: "none", border: "none", color: "#d97706", cursor: "pointer", fontSize: 16, flexShrink: 0, padding: 0 }}>✕</button>
+        </div>
+      )}
+
+      {/* iframe preview */}
+      <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
+        {loaderVisible && (
+          <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#0f1a14", zIndex: 1, gap: 12 }}>
+            <div style={{ width: 32, height: 32, borderRadius: "50%", border: "3px solid #ffffff20", borderTopColor: GOLD, animation: "lcfp-spin .7s linear infinite" }} />
+            <p style={{ margin: 0, fontSize: 12, color: "#9ca3af" }}>Loading Google Drive preview…</p>
+          </div>
+        )}
+        <iframe
+          key={embedUrl}
+          src={embedUrl}
+          title={file.file_name}
+          style={{ width: "100%", height: "100%", border: "none", display: "block", background: "#fff" }}
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+          allowFullScreen
+          onLoad={() => setLoaderVisible(false)}
+          onError={() => { setLoaderVisible(false); setIframeBlocked(true); }}
+        />
+        {iframeBlocked && (
+          <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#0f1a14", padding: 32, textAlign: "center" }}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}>🔒</div>
+            <p style={{ color: "#fff", fontWeight: 700, fontSize: 15, marginBottom: 6 }}>Preview blocked</p>
+            <p style={{ color: "#9ca3af", fontSize: 13, marginBottom: 20 }}>Google Drive's security policy prevents embedding here.</p>
+            <a href={url} target="_blank" rel="noopener noreferrer"
+              style={{ background: GOLD, color: "#fff", borderRadius: 10, padding: "10px 24px", textDecoration: "none", fontWeight: 700, fontSize: 14 }}>
+              Open in Drive ↗
+            </a>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
   const renderContent = () => {
     if (embedKind === "image") {
       return (
         <div style={{ background: "#000", display: "flex", alignItems: "center", justifyContent: "center", flex: 1, minHeight: 0 }}>
-          <img
-            src={embedUrl}
-            alt={file.file_name}
-            style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", display: "block" }}
-          />
+          <img src={embedUrl} alt={file.file_name} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", display: "block" }} />
         </div>
       );
     }
@@ -311,7 +350,10 @@ function FileViewer({
       );
     }
 
-    /* iframe-based: youtube, gdrive, pdf, doc, iframe */
+    // Google Drive gets its own dedicated render
+    if (embedKind === "gdrive") return renderGdrive();
+
+    /* youtube, pdf, doc, iframe */
     if (iframeBlocked) {
       return (
         <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#0f1a14", padding: 32, textAlign: "center" }}>
@@ -347,7 +389,7 @@ function FileViewer({
     );
   };
 
-  return (
+  return createPortal(
     <div
       style={{ position: "fixed", inset: 0, zIndex: 99999, background: "rgba(0,0,0,.75)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 12 }}
       onClick={onMinimize}
@@ -439,7 +481,8 @@ function FileViewer({
       <p style={{ margin: "10px 0 0", fontSize: 12, color: "rgba(255,255,255,.45)", textAlign: "center" }}>
         Tap outside or press ⬇ Min to minimize and browse files freely
       </p>
-    </div>
+    </div>,
+    document.body
   );
 }
 
