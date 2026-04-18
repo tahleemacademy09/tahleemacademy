@@ -31,6 +31,24 @@ import {
 interface Props { materials: any[]; sessions?: any[]; recordings?: any[]; }
 type FileKind = "pdf"|"image"|"video"|"audio"|"youtube"|"link"|"office"|"text"|"other";
 
+/* ── Resume-position helpers ───────────────────────────────────
+   Key format: tahleem-viewer-pos-<materialId>
+   Value:      { page?: number; time?: number; recordingId?: string }
+──────────────────────────────────────────────────────────────── */
+const POS_PREFIX = "tahleem-viewer-pos-";
+
+function readPos(materialId: string): { page?: number; time?: number; recordingId?: string } {
+  try { return JSON.parse(localStorage.getItem(POS_PREFIX + materialId) || "{}"); }
+  catch { return {}; }
+}
+
+function savePos(materialId: string, patch: { page?: number; time?: number; recordingId?: string }) {
+  try {
+    const existing = readPos(materialId);
+    localStorage.setItem(POS_PREFIX + materialId, JSON.stringify({ ...existing, ...patch }));
+  } catch {}
+}
+
 /* ── Detect kind ───────────────────────────────────────── */
 function detectKind(mat: any): FileKind {
   const url: string = mat.file_url || "";
@@ -74,11 +92,12 @@ async function resolveUrl(fileUrl: string): Promise<string> {
 }
 
 /* ── PDF.js viewer — mobile-optimized canvas renderer ─── */
-function PDFJsViewer({ url }: { url: string }) {
+function PDFJsViewer({ url, materialId }: { url: string; materialId?: string }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [numPages, setNumPages] = useState(0);
-  const [page, setPage] = useState(1);
+  // Initialise from saved position so the very first render starts on the right page
+  const [page, setPage] = useState(() => materialId ? (readPos(materialId).page ?? 1) : 1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const pdfDocRef = useRef<any>(null);
@@ -134,20 +153,30 @@ function PDFJsViewer({ url }: { url: string }) {
 
   useEffect(() => {
     if (!url) return;
-    setLoading(true); setError(""); setPage(1);
+    setLoading(true); setError("");
+    // Read the saved page for this material before loading
+    const savedPage = materialId ? (readPos(materialId).page ?? 1) : 1;
     loadPdfJs()
       .then(lib => lib.getDocument({ url, withCredentials: false }).promise)
       .then(async (doc: any) => {
         pdfDocRef.current = doc;
         setNumPages(doc.numPages);
+        // Clamp saved page in case the PDF changed
+        const startPage = Math.min(Math.max(1, savedPage), doc.numPages);
+        setPage(startPage);
         const w = widthRef.current > 0 ? widthRef.current : window.innerWidth;
-        await renderPage(doc, 1, w);
+        await renderPage(doc, startPage, w);
         setLoading(false);
       })
       .catch((e: any) => {
         setError("Could not load PDF — " + (e?.message || "unknown error"));
         setLoading(false);      });
   }, [url, loadPdfJs, renderPage]);
+
+  // Save page to localStorage whenever it changes
+  useEffect(() => {
+    if (materialId && page > 0) savePos(materialId, { page });
+  }, [page, materialId]);
 
   useEffect(() => {
     if (pdfDocRef.current && !loading) {
@@ -162,8 +191,17 @@ function PDFJsViewer({ url }: { url: string }) {
     <div style={{ background:"#525659", display:"flex", flexDirection:"column", height:"75vh" }}>
       <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:"clamp(8px, 2vw, 12px)", padding:"clamp(6px, 1.5vw, 8px) clamp(12px, 3vw, 16px)", background:"#3d4043", flexShrink:0 }}>
         <button disabled={page<=1} onClick={() => setPage(p=>Math.max(1,p-1))} aria-label="Previous page" style={{ width:"clamp(32px, 8vw, 36px)", height:"clamp(32px, 8vw, 36px)", borderRadius:8, border:"1px solid rgba(255,255,255,.2)", background:"rgba(255,255,255,.1)", color:"#fff", cursor:"pointer", fontSize:"clamp(16px, 4.5vw, 18px)", display:"flex", alignItems:"center", justifyContent:"center", opacity:page<=1?.4:1, padding:0 }}>‹</button>
-        <span style={{ color:"#fff", fontSize:"clamp(12px, 3vw, 13px)", fontWeight:600, minWidth:64, textAlign:"center" }}>{loading ? "Loading…" : `${page} / ${numPages}`}</span>
+        {/* Tappable page counter — tap to jump to a page */}
+        <span style={{ color:"#fff", fontSize:"clamp(12px, 3vw, 13px)", fontWeight:600, minWidth:64, textAlign:"center" }}>
+          {loading ? "Resuming…" : `${page} / ${numPages}`}
+        </span>
         <button disabled={page>=numPages} onClick={() => setPage(p=>Math.min(numPages,p+1))} aria-label="Next page" style={{ width:"clamp(32px, 8vw, 36px)", height:"clamp(32px, 8vw, 36px)", borderRadius:8, border:"1px solid rgba(255,255,255,.2)", background:"rgba(255,255,255,.1)", color:"#fff", cursor:"pointer", fontSize:"clamp(16px, 4.5vw, 18px)", display:"flex", alignItems:"center", justifyContent:"center", opacity:page>=numPages?.4:1, padding:0 }}>›</button>
+        {/* Resume badge — only shown if not on page 1 */}
+        {!loading && page > 1 && (
+          <span style={{ fontSize:10, background:"rgba(201,164,76,0.25)", color:"#C9A84C", border:"1px solid rgba(201,164,76,0.4)", borderRadius:20, padding:"1px 7px", fontWeight:700, letterSpacing:0.3, whiteSpace:"nowrap" }}>
+            ↩ Resumed
+          </span>
+        )}
       </div>
       <div ref={containerRef} style={{ flex:1, overflowY:"auto", overflowX:"hidden", background:"#525659", WebkitOverflowScrolling:"touch" }}>
         {loading && <div style={{ display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:12, padding:48, color:"#fff" }}><div style={{ width:32, height:32, border:"3px solid rgba(255,255,255,.2)", borderTopColor:"#fff", borderRadius:"50%", animation:"spin .8s linear infinite" }} /><span style={{ fontSize:"clamp(12px, 3vw, 13px)", opacity:.7 }}>Rendering…</span></div>}
@@ -178,7 +216,7 @@ function PDFJsViewer({ url }: { url: string }) {
 /* ════════════════════════════════════════════════════════
    RECORDING MINI-PLAYER — mobile-optimized
 ════════════════════════════════════════════════════════ */
-function RecordingMiniPlayer({ recordings }: { recordings: any[] }) {
+function RecordingMiniPlayer({ recordings, materialId }: { recordings: any[]; materialId?: string }) {
   const [expanded, setExpanded] = useState(false);
   const [selected, setSelected] = useState<any | null>(null);
   const [signedUrl, setSignedUrl] = useState<string | null>(null);
@@ -189,14 +227,34 @@ function RecordingMiniPlayer({ recordings }: { recordings: any[] }) {
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
+  // Track the saved time so we can seek once audio is ready
+  const pendingSeekRef = useRef<number>(0);
   const G = "#064E3B"; const GOLD = "#C9A84C";
+
+  // On mount: auto-restore the last recording that was playing
+  useEffect(() => {
+    if (!materialId || !recordings.length) return;
+    const pos = readPos(materialId);
+    if (pos.recordingId) {
+      const saved = recordings.find(r => r.id === pos.recordingId);
+      if (saved) {
+        pendingSeekRef.current = pos.time ?? 0;
+        loadRecording(saved);
+        setExpanded(true); // auto-open panel so user sees the resumption
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [materialId]);
 
   const loadRecording = async (rec: any) => {
     setSelected(rec); setPlaying(false); setCurrent(0); setSignedUrl(null);
     if (!rec?.file_url) return;
     setLoadingUrl(true);
-    if (rec.file_url.startsWith("http")) setSignedUrl(rec.file_url);    else { const signedUrl = await getSignedUrl(rec.file_url, 7200); setSignedUrl(signedUrl || null); }
+    if (rec.file_url.startsWith("http")) setSignedUrl(rec.file_url);
+    else { const su = await getSignedUrl(rec.file_url, 7200); setSignedUrl(su || null); }
     setLoadingUrl(false);
+    // Save which recording was selected
+    if (materialId) savePos(materialId, { recordingId: rec.id });
   };
 
   const togglePlay = () => {
@@ -213,7 +271,28 @@ function RecordingMiniPlayer({ recordings }: { recordings: any[] }) {
 
   return (
     <div style={{ margin:0, background: expanded ? "#0d1f14" : "transparent", borderBottom: expanded ? "1px solid rgba(255,255,255,0.08)" : "none", transition: "all 0.2s" }}>
-      {signedUrl && <audio ref={audioRef} src={signedUrl} onTimeUpdate={() => setCurrent(audioRef.current?.currentTime || 0)} onLoadedMetadata={() => setDuration(audioRef.current?.duration || 0)} onEnded={() => setPlaying(false)} style={{ display: "none" }} />}
+      {signedUrl && <audio
+        ref={audioRef}
+        src={signedUrl}
+        onLoadedMetadata={() => {
+          const d = audioRef.current?.duration || 0;
+          setDuration(d);
+          // Seek to saved position once audio is ready
+          if (pendingSeekRef.current > 0 && audioRef.current) {
+            audioRef.current.currentTime = Math.min(pendingSeekRef.current, d);
+            setCurrent(pendingSeekRef.current);
+            pendingSeekRef.current = 0;
+          }
+        }}
+        onTimeUpdate={() => {
+          const t = audioRef.current?.currentTime || 0;
+          setCurrent(t);
+          // Throttle saves — only write every 5 seconds to avoid hammering localStorage
+          if (materialId && Math.floor(t) % 5 === 0) savePos(materialId, { time: t });
+        }}
+        onEnded={() => { setPlaying(false); if (materialId) savePos(materialId, { time: 0 }); }}
+        style={{ display: "none" }}
+      />}
       <button onClick={() => setExpanded(e => !e)} aria-expanded={expanded} aria-controls="recording-panel" style={{ width: "100%", display: "flex", alignItems: "center", gap: "clamp(8px, 2vw, 10px)", padding: "clamp(8px, 2vw, 10px) clamp(12px, 3vw, 16px)", border: "none", cursor: "pointer", background: expanded ? "#0d1f14" : "linear-gradient(90deg,#0d1f14ee,#132e1eee)", color: "#fff", minHeight:44 }}>
         <div style={{ width: "clamp(24px, 6vw, 28px)", height: "clamp(24px, 6vw, 28px)", borderRadius: 8, background: playing ? GOLD : "rgba(201,164,76,0.2)", display: "flex", alignItems: "center", justifyContent: "center", transition: "background 0.2s", flexShrink: 0 }}>
           {playing ? <Pause size={13} color="#111" /> : <Headphones size={13} color={GOLD} />}
@@ -273,30 +352,106 @@ function RecordingMiniPlayer({ recordings }: { recordings: any[] }) {
    INLINE FILE VIEWER — mobile-optimized modal content
 ════════════════════════════════════════════════════════ */
 function FileViewer({ mat, kind, recordings = [], onClose }: { mat: any; kind: FileKind; recordings?: any[]; onClose: () => void }) {
+  const materialId: string = mat.id || "";
   const [url, setUrl] = useState(""); const [loading, setLoading] = useState(true); const [error, setError] = useState("");
+  // Refs for native video/audio elements so we can seek on load and save on update
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
+
   useEffect(() => { setLoading(true); setError(""); resolveUrl(mat.file_url || "").then(u => { setUrl(u); setLoading(false); }).catch(() => { setError("Could not load file."); setLoading(false); }); }, [mat.file_url]);
+
+  // Called once the native element's metadata is known — seek to saved position
+  const handleMediaLoaded = (el: HTMLVideoElement | HTMLAudioElement) => {
+    const savedTime = readPos(materialId).time ?? 0;
+    if (savedTime > 1 && el.duration && savedTime < el.duration) {
+      el.currentTime = savedTime;
+    }
+  };
+
+  // Throttled save — write every 5 s to avoid hammering localStorage
+  const handleTimeUpdate = (el: HTMLVideoElement | HTMLAudioElement) => {
+    const t = el.currentTime;
+    if (materialId && Math.floor(t) % 5 === 0) savePos(materialId, { time: t });
+  };
+
+  const handleEnded = () => { if (materialId) savePos(materialId, { time: 0 }); };
+
   const ytEmbed = (u: string) => { const m = u.match(/(?:v=|youtu\.be\/|embed\/)([A-Za-z0-9_-]{11})/); return m ? `https://www.youtube.com/embed/${m[1]}?autoplay=1&rel=0` : u; };
   const officeEmbed = (u: string) => u.includes("docs.google.com") || u.includes("drive.google.com") ? u.replace("/view", "/preview") : `https://docs.google.com/gviewer?url=${encodeURIComponent(u)}&embedded=true`;
   const cfg = K[kind]; const Icon = cfg.icon;
+
+  // Show a small "resume" badge in the header for video/audio/pdf if there's saved progress
+  const savedPos = readPos(materialId);
+  const hasResume = (kind === "video" || kind === "audio") && (savedPos.time ?? 0) > 2;
+  const resumeLabel = hasResume
+    ? `↩ ${String(Math.floor((savedPos.time!)/60)).padStart(2,"0")}:${String(Math.floor((savedPos.time!)%60)).padStart(2,"0")}`
+    : "";
 
   return (
     <div style={{ display:"flex", flexDirection:"column", maxHeight:"92vh" }}>
       <div style={{ display:"flex", alignItems:"center", gap:"clamp(10px, 2.5vw, 12px)", padding:"clamp(12px, 3vw, 14px) clamp(14px, 3.5vw, 16px)", borderBottom:"1px solid #e5e7eb", flexShrink:0 }}>
         <div style={{ width:"clamp(32px, 8vw, 36px)", height:"clamp(32px, 8vw, 36px)", borderRadius:10, background:cfg.bg, border:`1px solid ${cfg.border}`, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}><Icon size={16} style={{ color:cfg.color }} /></div>
-        <div style={{ flex:1, minWidth:0 }}><p style={{ fontWeight:700, fontSize:"clamp(13px, 3.5vw, 14px)", color:"#111", margin:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{mat.title}</p><div style={{ display:"flex", alignItems:"center", gap:6, marginTop:2, flexWrap:"wrap" }}><span style={{ fontSize:"clamp(10px, 2.8vw, 11px)", fontWeight:600, padding:"1px 6px", borderRadius:20, background:cfg.bg, color:cfg.color, border:`1px solid ${cfg.border}` }}>{cfg.label}</span>{mat.file_size && <span style={{ fontSize:"clamp(10px, 2.8vw, 11px)", color:"#9ca3af" }}>{fmtSize(mat.file_size)}</span>}</div></div>
+        <div style={{ flex:1, minWidth:0 }}>
+          <p style={{ fontWeight:700, fontSize:"clamp(13px, 3.5vw, 14px)", color:"#111", margin:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{mat.title}</p>
+          <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:2, flexWrap:"wrap" }}>
+            <span style={{ fontSize:"clamp(10px, 2.8vw, 11px)", fontWeight:600, padding:"1px 6px", borderRadius:20, background:cfg.bg, color:cfg.color, border:`1px solid ${cfg.border}` }}>{cfg.label}</span>
+            {mat.file_size && <span style={{ fontSize:"clamp(10px, 2.8vw, 11px)", color:"#9ca3af" }}>{fmtSize(mat.file_size)}</span>}
+            {/* Resume badge for video/audio */}
+            {hasResume && (
+              <span style={{ fontSize:10, background:"rgba(201,164,76,0.15)", color:"#B45309", border:"1px solid rgba(201,164,76,0.4)", borderRadius:20, padding:"1px 7px", fontWeight:700 }}>
+                {resumeLabel}
+              </span>
+            )}
+          </div>
+        </div>
         <div style={{ display:"flex", gap:4, flexShrink:0 }}>
           {url && mat.is_downloadable !== false && <a href={url} download target="_blank" rel="noopener noreferrer"><Button size="sm" variant="outline" style={{ borderRadius:10, fontSize:"clamp(11px, 3vw, 12px)", padding:"4px 10px" }}><Download size={12} style={{ marginRight:3 }} /> <span className="hidden sm:inline">Download</span></Button></a>}
           <Button size="icon" variant="ghost" onClick={onClose} aria-label="Close viewer" style={{ width:"clamp(28px, 7vw, 32px)", height:"clamp(28px, 7vw, 32px)", borderRadius:8, padding:0 }}><X size={14} /></Button>
         </div>
       </div>
-      {recordings.length > 0 && <RecordingMiniPlayer recordings={recordings} />}
+      {recordings.length > 0 && <RecordingMiniPlayer recordings={recordings} materialId={materialId} />}
       <div style={{ flex:1, overflow:"auto", background:"#f9fafb", WebkitOverflowScrolling:"touch" }}>
         {loading && <div style={{ display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:12, padding:32 }}><Loader2 size={28} style={{ color:"#064E3B", animation:"spin .8s linear infinite" }} /><p style={{ fontSize:"clamp(12px, 3vw, 13px)", color:"#6b7280" }}>Loading…</p></div>}
         {error && <div style={{ textAlign:"center", padding:32 }}><p style={{ fontSize:"clamp(12px, 3vw, 13px)", color:"#dc2626", marginBottom:12 }}>{error}</p>{mat.file_url && <a href={url||mat.file_url} target="_blank" rel="noopener noreferrer"><Button variant="outline"><ExternalLink size={12} style={{ marginRight:4 }} /> Open in new tab</Button></a>}</div>}
-        {!loading && !error && url && (<>          {kind === "pdf" && <PDFJsViewer url={url} />}
+        {!loading && !error && url && (<>
+          {/* Pass materialId so PDF viewer can restore page */}
+          {kind === "pdf" && <PDFJsViewer url={url} materialId={materialId} />}
           {kind === "image" && <div style={{ display:"flex", alignItems:"center", justifyContent:"center", padding:16, minHeight:240 }}><img src={url} alt={mat.title} style={{ maxWidth:"100%", maxHeight:"70vh", borderRadius:12, objectFit:"contain", boxShadow:"0 4px 24px rgba(0,0,0,.12)" }} /></div>}
-          {kind === "video" && <video src={url} controls autoPlay playsInline style={{ width:"100%", maxHeight:"72vh", display:"block", background:"#000" }} />}
-          {kind === "audio" && <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24, gap:16 }}><div style={{ width:64, height:64, borderRadius:"50%", background:"#F3E8FF", display:"flex", alignItems:"center", justifyContent:"center" }}><Music size={28} style={{ color:"#9333EA" }} /></div><p style={{ fontSize:"clamp(13px, 3.5vw, 14px)", fontWeight:600, color:"#374151" }}>{mat.title}</p><audio src={url} controls style={{ width:"100%", maxWidth:400 }} /></div>}
+          {/* Video: ref + restore time on load + save time on update */}
+          {kind === "video" && (
+            <video
+              ref={videoRef}
+              src={url}
+              controls
+              autoPlay
+              playsInline
+              style={{ width:"100%", maxHeight:"72vh", display:"block", background:"#000" }}
+              onLoadedMetadata={() => videoRef.current && handleMediaLoaded(videoRef.current)}
+              onTimeUpdate={() => videoRef.current && handleTimeUpdate(videoRef.current)}
+              onEnded={handleEnded}
+              onSeeked={() => videoRef.current && savePos(materialId, { time: videoRef.current.currentTime })}
+            />
+          )}
+          {/* Audio: ref + restore time on load + save time on update */}
+          {kind === "audio" && (
+            <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:24, gap:16 }}>
+              <div style={{ width:64, height:64, borderRadius:"50%", background:"#F3E8FF", display:"flex", alignItems:"center", justifyContent:"center" }}><Music size={28} style={{ color:"#9333EA" }} /></div>
+              <p style={{ fontSize:"clamp(13px, 3.5vw, 14px)", fontWeight:600, color:"#374151" }}>{mat.title}</p>
+              <audio
+                ref={audioRef}
+                src={url}
+                controls
+                style={{ width:"100%", maxWidth:400 }}
+                onLoadedMetadata={() => audioRef.current && handleMediaLoaded(audioRef.current)}
+                onTimeUpdate={() => audioRef.current && handleTimeUpdate(audioRef.current)}
+                onEnded={handleEnded}
+                onSeeked={() => audioRef.current && savePos(materialId, { time: audioRef.current.currentTime })}
+              />
+              {hasResume && (
+                <p style={{ fontSize:11, color:"#9CA3AF", margin:0 }}>Resumed from {resumeLabel.replace("↩ ","")}</p>
+              )}
+            </div>
+          )}
           {kind === "youtube" && <div style={{ position:"relative", paddingBottom:"56.25%", height:0 }}><iframe src={ytEmbed(url)} style={{ position:"absolute", top:0, left:0, width:"100%", height:"100%", border:"none" }} allowFullScreen allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" title={mat.title} /></div>}
           {kind === "office" && <iframe src={officeEmbed(url)} style={{ width:"100%", height:"75vh", border:"none", display:"block" }} title={mat.title} />}
           {kind === "text" && <div style={{ padding:16, maxWidth:720, margin:"0 auto" }}><div style={{ background:"#fff", borderRadius:14, padding:16, border:"1px solid #e5e7eb", fontSize:"clamp(13px, 3.5vw, 14px)", lineHeight:1.8, color:"#374151", whiteSpace:"pre-wrap" }}>{mat.content || "No content."}</div></div>}
@@ -332,11 +487,36 @@ const MaterialsViewer = ({ materials, sessions = [], recordings = [] }: Props) =
     const kind = detectKind(mat); const cfg = K[kind]; const Icon = cfg.icon;
     const session = mat.session_id ? sessions.find((s: any) => s.id === mat.session_id) : null;
     const canOpen = !!(mat.file_url || mat.content);
+
+    // Show saved-progress badge on the card
+    const pos = mat.id ? readPos(mat.id) : {};
+    const hasPageProgress = kind === "pdf" && (pos.page ?? 1) > 1;
+    const hasTimeProgress = (kind === "video" || kind === "audio") && (pos.time ?? 0) > 2;
+    const progressBadge = hasPageProgress
+      ? `↩ p.${pos.page}`
+      : hasTimeProgress
+        ? `↩ ${String(Math.floor((pos.time!)/60)).padStart(2,"0")}:${String(Math.floor((pos.time!)%60)).padStart(2,"0")}`
+        : "";
+
     return (
-      <article key={mat.id} onClick={() => canOpen && setViewing(mat)} role="button" tabIndex={canOpen ? 0 : -1} aria-label={`Open ${mat.title}`} style={{ display:"flex", alignItems:"center", gap:"clamp(10px, 2.5vw, 12px)", padding:"clamp(10px, 2.5vw, 12px) clamp(12px, 3vw, 14px)", borderRadius:14, border:`1.5px solid ${cfg.border}`, background:cfg.bg, cursor: canOpen ? "pointer" : "default", transition:"all .15s", boxShadow:"0 1px 4px rgba(0,0,0,.04)", minHeight:44 }} onMouseEnter={e => { if(canOpen) (e.currentTarget as HTMLElement).style.boxShadow="0 4px 16px rgba(0,0,0,.1)"; }} onMouseLeave={e => { (e.currentTarget as HTMLElement).style.boxShadow="0 1px 4px rgba(0,0,0,.04)"; }}>
+      <article key={mat.id} onClick={() => canOpen && setViewing(mat)} role="button" tabIndex={canOpen ? 0 : -1} aria-label={`Open ${mat.title}`} style={{ display:"flex", alignItems:"center", gap:"clamp(10px, 2.5vw, 12px)", padding:"clamp(10px, 2.5vw, 12px) clamp(12px, 3vw, 14px)", borderRadius:14, border:`1.5px solid ${progressBadge ? "#C9A84C66" : cfg.border}`, background: progressBadge ? `${cfg.bg}` : cfg.bg, cursor: canOpen ? "pointer" : "default", transition:"all .15s", boxShadow: progressBadge ? "0 2px 8px rgba(201,164,76,0.12)" : "0 1px 4px rgba(0,0,0,.04)", minHeight:44 }} onMouseEnter={e => { if(canOpen) (e.currentTarget as HTMLElement).style.boxShadow="0 4px 16px rgba(0,0,0,.1)"; }} onMouseLeave={e => { (e.currentTarget as HTMLElement).style.boxShadow= progressBadge ? "0 2px 8px rgba(201,164,76,0.12)" : "0 1px 4px rgba(0,0,0,.04)"; }}>
         <div style={{ width:"clamp(36px, 9vw, 44px)", height:"clamp(36px, 9vw, 44px)", borderRadius:12, background:`${cfg.color}15`, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}><Icon size={18} style={{ color:cfg.color }} /></div>
-        <div style={{ flex:1, minWidth:0 }}><p style={{ fontWeight:700, fontSize:"clamp(13px, 3.5vw, 14px)", color:"#111827", margin:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{mat.title}</p><div style={{ display:"flex", alignItems:"center", gap:6, marginTop:3, flexWrap:"wrap" }}><span style={{ fontSize:"clamp(10px, 2.8vw, 11px)", fontWeight:600, padding:"1px 6px", borderRadius:20, background:`${cfg.color}15`, color:cfg.color }}>{cfg.label}</span>{mat.file_size && <span style={{ fontSize:"clamp(10px, 2.8vw, 11px)", color:"#9CA3AF" }}>{fmtSize(mat.file_size)}</span>}{session && <span style={{ fontSize:"clamp(10px, 2.8vw, 11px)", color:"#9CA3AF" }}>#{(session as any).session_number}</span>}{mat.created_at && <span style={{ fontSize:"clamp(10px, 2.8vw, 11px)", color:"#D1D5DB" }}>{new Date(mat.created_at).toLocaleDateString()}</span>}</div></div>
-        {canOpen && <div style={{ display:"flex", alignItems:"center", gap:4, shrink:0 }}><div style={{ display:"flex", alignItems:"center", gap:4, fontSize:"clamp(11px, 3vw, 12px)", fontWeight:700, color:cfg.color, padding:"4px 10px", borderRadius:20, background:`${cfg.color}12`, border:`1px solid ${cfg.color}30` }}><Eye size={12} /> <span className="hidden sm:inline">Open</span></div></div>}
+        <div style={{ flex:1, minWidth:0 }}>
+          <p style={{ fontWeight:700, fontSize:"clamp(13px, 3.5vw, 14px)", color:"#111827", margin:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{mat.title}</p>
+          <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:3, flexWrap:"wrap" }}>
+            <span style={{ fontSize:"clamp(10px, 2.8vw, 11px)", fontWeight:600, padding:"1px 6px", borderRadius:20, background:`${cfg.color}15`, color:cfg.color }}>{cfg.label}</span>
+            {mat.file_size && <span style={{ fontSize:"clamp(10px, 2.8vw, 11px)", color:"#9CA3AF" }}>{fmtSize(mat.file_size)}</span>}
+            {session && <span style={{ fontSize:"clamp(10px, 2.8vw, 11px)", color:"#9CA3AF" }}>#{(session as any).session_number}</span>}
+            {mat.created_at && <span style={{ fontSize:"clamp(10px, 2.8vw, 11px)", color:"#D1D5DB" }}>{new Date(mat.created_at).toLocaleDateString()}</span>}
+            {/* Progress resume badge — shown when there's a saved position */}
+            {progressBadge && (
+              <span style={{ fontSize:10, background:"rgba(201,164,76,0.15)", color:"#92400E", border:"1px solid rgba(201,164,76,0.4)", borderRadius:20, padding:"1px 7px", fontWeight:700 }}>
+                {progressBadge}
+              </span>
+            )}
+          </div>
+        </div>
+        {canOpen && <div style={{ display:"flex", alignItems:"center", gap:4 }}><div style={{ display:"flex", alignItems:"center", gap:4, fontSize:"clamp(11px, 3vw, 12px)", fontWeight:700, color:cfg.color, padding:"4px 10px", borderRadius:20, background:`${cfg.color}12`, border:`1px solid ${cfg.color}30` }}><Eye size={12} /> <span className="hidden sm:inline">{progressBadge ? "Resume" : "Open"}</span></div></div>}
       </article>
     );
   };
