@@ -1,12 +1,16 @@
 /**
- * LiveClassFilePanel.tsx — Tahleem Academy
+ * LiveClassFilePanel.tsx \u2014 Tahleem Academy
  *
  * Changes in this version:
  *  - "Upload File" tab (existing) + "Add Link" tab (new)
- *  - All files AND links open in an in-page floating overlay — NEVER a new tab
+ *  - All files AND links open in an in-page floating overlay \u2014 NEVER a new tab
  *  - Smart viewer: YouTube embed, Google Drive preview, PDF iframe, video/audio/image
  *    native players, Office Docs via Google Docs Viewer, generic iframe w/ fallback
  *  - Students stay on the ClassroomView page at all times
+ *  - MINIMIZABLE VIEWER: shrinks to a floating bottom bar so you can browse the
+ *    file list while keeping a file "open". Click another file to navigate to it.
+ *  - NAVIGATION HISTORY: back/forward arrows cycle through all opened files in
+ *    the current session.
  */
 
 import { useState, useRef, useCallback, useEffect } from "react";
@@ -14,7 +18,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { useAuth } from "@/contexts/AuthContext";
 
-/* ── palette ── */
+/* \u2500\u2500 palette \u2500\u2500 */
 const G    = "#1B4332";
 const GOLD = "#C8922A";
 const GOLDB= "#FFF8EC";
@@ -30,7 +34,7 @@ const TEALL= "#F0FDFA";
 const BUCKET = "liveclass-files";
 const SB_URL = import.meta.env.VITE_STORAGE_SUPABASE_URL || "https://ovgsleayannsxifhiraw.supabase.co";
 
-/* ── types ── */
+/* \u2500\u2500 types \u2500\u2500 */
 interface LCFile {
   id:         string;
   subject_id: string;
@@ -41,10 +45,10 @@ interface LCFile {
   created_at: string | null;
 }
 
-type Tab = "upload" | "link";
+type Tab  = "upload" | "link";
 type Kind = "PDF" | "Image" | "Video" | "Audio" | "Doc" | "Link" | "File";
 
-/* ── helpers ── */
+/* \u2500\u2500 helpers \u2500\u2500 */
 function getKind(name: string, mime?: string | null): Kind {
   if (mime === "link") return "Link";
   const ext = name.split(".").pop()?.toLowerCase() ?? "";
@@ -59,13 +63,13 @@ function getKind(name: string, mime?: string | null): Kind {
 }
 
 const ICONS: Record<Kind, { i: string; c: string; bg: string }> = {
-  PDF:   { i: "📄", c: "#B91C1C", bg: "#FEF2F2" },
-  Image: { i: "🖼️", c: "#1D4ED8", bg: "#EFF6FF" },
-  Video: { i: "🎬", c: "#6D28D9", bg: "#F5F3FF" },
-  Audio: { i: "🎵", c: "#0E7490", bg: "#ECFEFF" },
-  Doc:   { i: "📝", c: "#B45309", bg: "#FFFBEB" },
-  Link:  { i: "🔗", c: TEAL,      bg: TEALL     },
-  File:  { i: "📁", c: "#374151", bg: "#F9FAFB" },
+  PDF:   { i: "\ud83d\udcc4", c: "#B91C1C", bg: "#FEF2F2" },
+  Image: { i: "\ud83d\uddbc\ufe0f", c: "#1D4ED8", bg: "#EFF6FF" },
+  Video: { i: "\ud83c\udfac", c: "#6D28D9", bg: "#F5F3FF" },
+  Audio: { i: "\ud83c\udfb5", c: "#0E7490", bg: "#ECFEFF" },
+  Doc:   { i: "\ud83d\udcdd", c: "#B45309", bg: "#FFFBEB" },
+  Link:  { i: "\ud83d\udd17", c: TEAL,      bg: TEALL     },
+  File:  { i: "\ud83d\udcc1", c: "#374151", bg: "#F9FAFB" },
 };
 
 function fmtBytes(n?: number | null) {
@@ -80,7 +84,7 @@ function fmtDate(iso?: string | null) {
   return new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 }
 
-/* ── URL transformer: raw URL → best embeddable URL ── */
+/* \u2500\u2500 URL transformer: raw URL \u2192 best embeddable URL \u2500\u2500 */
 function toEmbedUrl(url: string): {
   embedUrl: string;
   embedKind: "youtube" | "gdrive" | "pdf" | "video" | "audio" | "image" | "doc" | "iframe";
@@ -93,7 +97,7 @@ function toEmbedUrl(url: string): {
     return { embedUrl: `https://www.youtube.com/embed/${ytMatch[1]}?autoplay=1&rel=0`, embedKind: "youtube" };
   }
 
-  // Google Drive  /file/d/ID/view  →  /file/d/ID/preview
+  // Google Drive  /file/d/ID/view  \u2192  /file/d/ID/preview
   const gdMatch = url.match(/drive\.google\.com\/file\/d\/([^/?#]+)/);
   if (gdMatch) {
     return { embedUrl: `https://drive.google.com/file/d/${gdMatch[1]}/preview`, embedKind: "gdrive" };
@@ -105,9 +109,9 @@ function toEmbedUrl(url: string): {
 
   const ext = url.split("?")[0].split(".").pop()?.toLowerCase() ?? "";
   if (ext === "pdf") return { embedUrl: url, embedKind: "pdf" };
-  if (["mp4","webm","mov","m4v","avi","mkv"].includes(ext)) return { embedUrl: url, embedKind: "video" };
-  if (["mp3","wav","m4a","aac","ogg","flac","opus"].includes(ext)) return { embedUrl: url, embedKind: "audio" };
-  if (["jpg","jpeg","png","gif","webp","svg","avif"].includes(ext)) return { embedUrl: url, embedKind: "image" };
+  if (["mp4","webm","mov","m4v","avi","mkv"].includes(ext))          return { embedUrl: url, embedKind: "video" };
+  if (["mp3","wav","m4a","aac","ogg","flac","opus"].includes(ext))   return { embedUrl: url, embedKind: "audio" };
+  if (["jpg","jpeg","png","gif","webp","svg","avif"].includes(ext))  return { embedUrl: url, embedKind: "image" };
   if (["doc","docx","xls","xlsx","ppt","pptx","odt","ods","odp","csv","rtf"].includes(ext)) {
     return { embedUrl: `https://docs.google.com/gviewer?url=${encodeURIComponent(url)}&embedded=true`, embedKind: "doc" };
   }
@@ -115,13 +119,34 @@ function toEmbedUrl(url: string): {
   return { embedUrl: url, embedKind: "iframe" };
 }
 
-/* ════════════════════════════════════════════════════════════
-   IN-PAGE VIEWER OVERLAY
-   position:fixed — floats above ClassroomView, no navigation.
-════════════════════════════════════════════════════════════ */
-function FileViewer({ file, onClose }: { file: LCFile; onClose: () => void }) {
+/* \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+   IN-PAGE VIEWER \u2014 MINIMIZABLE
+   When minimized: compact floating bar at the bottom of the screen.
+   When expanded: full overlay as before.
+   Supports back/forward navigation through opened-files history.
+\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550 */
+interface FileViewerProps {
+  file:       LCFile;
+  minimized:  boolean;
+  canGoBack:  boolean;
+  canGoFwd:   boolean;
+  totalOpen:  number;
+  currentIdx: number;
+  onClose:    () => void;
+  onMinimize: () => void;
+  onRestore:  () => void;
+  onBack:     () => void;
+  onForward:  () => void;
+}
+
+function FileViewer({
+  file, minimized,
+  canGoBack, canGoFwd, totalOpen, currentIdx,
+  onClose, onMinimize, onRestore, onBack, onForward,
+}: FileViewerProps) {
   const [iframeBlocked, setIframeBlocked] = useState(false);
   const [loaderVisible, setLoaderVisible] = useState(true);
+
   const url  = file.file_url;
   const kind = getKind(file.file_name, file.file_type);
 
@@ -141,11 +166,118 @@ function FileViewer({ file, onClose }: { file: LCFile; onClose: () => void }) {
     embedKind = "doc";
   }
 
+  // Reset loader whenever the file changes
   useEffect(() => {
-    document.body.style.overflow = "hidden";
-    return () => { document.body.style.overflow = ""; };
-  }, []);
+    setIframeBlocked(false);
+    setLoaderVisible(true);
+  }, [file.id]);
 
+  // Lock body scroll only when expanded
+  useEffect(() => {
+    if (!minimized) {
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "";
+    }
+    return () => { document.body.style.overflow = ""; };
+  }, [minimized]);
+
+  /* \u2500\u2500 MINIMIZED: floating bottom bar \u2500\u2500 */
+  if (minimized) {
+    const cfg = ICONS[kind];
+    return (
+      <div style={{
+        position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 99999,
+        background: "#1f2937",
+        borderTop: `3px solid ${GOLD}`,
+        boxShadow: "0 -4px 24px rgba(0,0,0,.45)",
+        display: "flex", alignItems: "center", gap: 8,
+        padding: "10px 14px",
+        fontFamily: "system-ui,sans-serif",
+      }}>
+        {/* File icon + name */}
+        <div style={{
+          width: 36, height: 36, borderRadius: 8,
+          background: cfg.bg,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: 18, flexShrink: 0,
+        }}>
+          {cfg.i}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <p style={{
+            margin: 0, fontSize: 13, fontWeight: 700,
+            color: "#f3f4f6",
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+          }}>
+            {file.file_name}
+          </p>
+          <p style={{ margin: 0, fontSize: 11, color: "#9ca3af" }}>
+            Minimized \u00b7 tap to restore
+            {totalOpen > 1 ? ` \u00b7 ${currentIdx + 1}/${totalOpen} open` : ""}
+          </p>
+        </div>
+
+        {/* Back / forward if multiple files opened */}
+        {totalOpen > 1 && (
+          <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+            <button
+              onClick={onBack}
+              disabled={!canGoBack}
+              title="Previous file"
+              style={{
+                background: canGoBack ? "#374151" : "#1f2937",
+                border: "none", color: canGoBack ? "#d1d5db" : "#4b5563",
+                borderRadius: 8, width: 32, height: 32,
+                cursor: canGoBack ? "pointer" : "default",
+                fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center",
+              }}>
+              \u2039
+            </button>
+            <button
+              onClick={onForward}
+              disabled={!canGoFwd}
+              title="Next file"
+              style={{
+                background: canGoFwd ? "#374151" : "#1f2937",
+                border: "none", color: canGoFwd ? "#d1d5db" : "#4b5563",
+                borderRadius: 8, width: 32, height: 32,
+                cursor: canGoFwd ? "pointer" : "default",
+                fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center",
+              }}>
+              \u203a
+            </button>
+          </div>
+        )}
+
+        {/* Restore */}
+        <button
+          onClick={onRestore}
+          style={{
+            background: GOLD, border: "none", color: "#fff",
+            borderRadius: 8, padding: "6px 14px",
+            fontSize: 12, fontWeight: 700, cursor: "pointer", flexShrink: 0,
+          }}>
+          \u2b06 Restore
+        </button>
+
+        {/* Close */}
+        <button
+          onClick={onClose}
+          style={{
+            background: "#374151", border: "none", color: "#d1d5db",
+            borderRadius: 8, width: 32, height: 32,
+            cursor: "pointer", fontSize: 18, fontWeight: 700,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            flexShrink: 0,
+          }}>
+          \u2715
+        </button>
+      </div>
+    );
+  }
+
+  /* \u2500\u2500 EXPANDED: full overlay \u2500\u2500 */
   const renderContent = () => {
     if (embedKind === "image") {
       return (
@@ -163,7 +295,7 @@ function FileViewer({ file, onClose }: { file: LCFile; onClose: () => void }) {
       return (
         <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 32, background: "#0f1a14" }}>
           <div style={{ textAlign: "center" }}>
-            <div style={{ fontSize: 56, marginBottom: 16 }}>🎵</div>
+            <div style={{ fontSize: 56, marginBottom: 16 }}>\ud83c\udfb5</div>
             <p style={{ color: "#fff", marginBottom: 20, fontSize: 15, fontWeight: 600 }}>{file.file_name}</p>
             <audio src={embedUrl} controls autoPlay style={{ width: "100%", maxWidth: 400 }} />
           </div>
@@ -183,12 +315,12 @@ function FileViewer({ file, onClose }: { file: LCFile; onClose: () => void }) {
     if (iframeBlocked) {
       return (
         <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#0f1a14", padding: 32, textAlign: "center" }}>
-          <div style={{ fontSize: 48, marginBottom: 16 }}>🔒</div>
+          <div style={{ fontSize: 48, marginBottom: 16 }}>\ud83d\udd12</div>
           <p style={{ color: "#fff", fontWeight: 700, fontSize: 16, marginBottom: 8 }}>Can't display this website here</p>
           <p style={{ color: "#9ca3af", fontSize: 13, marginBottom: 24 }}>The site's security policy prevents embedding.</p>
           <a href={url} target="_blank" rel="noopener noreferrer"
             style={{ background: GOLD, color: "#fff", borderRadius: 10, padding: "10px 24px", textDecoration: "none", fontWeight: 700, fontSize: 14 }}>
-            Open in new tab ↗
+            Open in new tab \u2197
           </a>
         </div>
       );
@@ -196,13 +328,13 @@ function FileViewer({ file, onClose }: { file: LCFile; onClose: () => void }) {
 
     return (
       <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
-        {/* Loading indicator */}
         {loaderVisible && (
           <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "#0f1a14", zIndex: 1, pointerEvents: "none" }}>
             <div style={{ width: 32, height: 32, borderRadius: "50%", border: "3px solid #ffffff20", borderTopColor: GOLD, animation: "lcfp-spin .7s linear infinite" }} />
           </div>
         )}
         <iframe
+          key={embedUrl}
           src={embedUrl}
           title={file.file_name}
           style={{ width: "100%", height: "100%", border: "none", display: "block" }}
@@ -218,34 +350,82 @@ function FileViewer({ file, onClose }: { file: LCFile; onClose: () => void }) {
   return (
     <div
       style={{ position: "fixed", inset: 0, zIndex: 99999, background: "rgba(0,0,0,.75)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 12 }}
-      onClick={onClose}
+      onClick={onMinimize}
     >
       <div
         onClick={e => e.stopPropagation()}
         style={{ width: "100%", maxWidth: 920, height: "min(90vh, 680px)", background: "#111827", borderRadius: 16, overflow: "hidden", display: "flex", flexDirection: "column", boxShadow: "0 25px 60px rgba(0,0,0,.6)" }}
       >
         {/* Header */}
-        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "#1f2937", borderBottom: "1px solid #374151", flexShrink: 0 }}>
-          <span style={{ fontSize: 16 }}>{ICONS[kind].i}</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", background: "#1f2937", borderBottom: "1px solid #374151", flexShrink: 0 }}>
+
+          {/* Back/Forward navigation */}
+          {totalOpen > 1 && (
+            <div style={{ display: "flex", gap: 3, flexShrink: 0 }}>
+              <button
+                onClick={onBack}
+                disabled={!canGoBack}
+                title="Previous file"
+                style={{
+                  background: canGoBack ? "#374151" : "transparent",
+                  border: "none", color: canGoBack ? "#d1d5db" : "#4b5563",
+                  borderRadius: 6, width: 28, height: 28,
+                  cursor: canGoBack ? "pointer" : "default",
+                  fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center",
+                }}>
+                \u2039
+              </button>
+              <button
+                onClick={onForward}
+                disabled={!canGoFwd}
+                title="Next file"
+                style={{
+                  background: canGoFwd ? "#374151" : "transparent",
+                  border: "none", color: canGoFwd ? "#d1d5db" : "#4b5563",
+                  borderRadius: 6, width: 28, height: 28,
+                  cursor: canGoFwd ? "pointer" : "default",
+                  fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center",
+                }}>
+                \u203a
+              </button>
+              <span style={{ fontSize: 11, color: "#6b7280", alignSelf: "center", marginLeft: 2, flexShrink: 0 }}>
+                {currentIdx + 1}/{totalOpen}
+              </span>
+            </div>
+          )}
+
+          {/* File icon + name */}
+          <span style={{ fontSize: 16, flexShrink: 0 }}>{ICONS[kind].i}</span>
           <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: "#f3f4f6", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {file.file_name}
           </span>
 
+          {/* Action buttons */}
           {kind !== "Link" && (
             <a href={url} download={file.file_name} target="_blank" rel="noopener"
               style={{ fontSize: 12, color: "#d1d5db", background: "#374151", borderRadius: 8, padding: "5px 12px", textDecoration: "none", fontWeight: 600, flexShrink: 0 }}>
-              ⬇ Download
+              \u2b07 Download
             </a>
           )}
 
           <a href={url} target="_blank" rel="noopener noreferrer"
             style={{ fontSize: 12, color: "#d1d5db", background: "#374151", borderRadius: 8, padding: "5px 12px", textDecoration: "none", fontWeight: 600, flexShrink: 0 }}>
-            ↗ New tab
+            \u2197 New tab
           </a>
 
-          <button onClick={onClose}
+          {/* Minimize */}
+          <button
+            onClick={onMinimize}
+            title="Minimize \u2014 keep file open while browsing the list"
+            style={{ background: GOLD, border: "none", color: "#fff", borderRadius: 8, padding: "5px 12px", cursor: "pointer", fontWeight: 700, fontSize: 14, flexShrink: 0 }}>
+            \u2b07 Min
+          </button>
+
+          {/* Close */}
+          <button
+            onClick={onClose}
             style={{ background: "#374151", border: "none", color: "#d1d5db", borderRadius: 8, padding: "5px 12px", cursor: "pointer", fontWeight: 700, fontSize: 16, flexShrink: 0 }}>
-            ✕
+            \u2715
           </button>
         </div>
 
@@ -254,11 +434,16 @@ function FileViewer({ file, onClose }: { file: LCFile; onClose: () => void }) {
           {renderContent()}
         </div>
       </div>
+
+      {/* Hint text under the card */}
+      <p style={{ margin: "10px 0 0", fontSize: 12, color: "rgba(255,255,255,.45)", textAlign: "center" }}>
+        Tap outside or press \u2b07 Min to minimize and browse files freely
+      </p>
     </div>
   );
 }
 
-/* ══════════════════════════════════════════════════════════ */
+/* \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550 */
 export default function LiveClassFilePanel({ subjectId }: { subjectId: string }) {
   const { user } = useAuth();
 
@@ -270,16 +455,25 @@ export default function LiveClassFilePanel({ subjectId }: { subjectId: string })
   const [uploading,  setUploading]  = useState(false);
   const [pct,        setPct]        = useState(0);
   const [upName,     setUpName]     = useState("");
-  const [viewer,     setViewer]     = useState<LCFile | null>(null);
   const [delId,      setDelId]      = useState<string | null>(null);
 
   const [linkUrl,    setLinkUrl]    = useState("");
   const [linkLabel,  setLinkLabel]  = useState("");
   const [addingLink, setAddingLink] = useState(false);
 
+  /* \u2500\u2500 Viewer navigation state \u2500\u2500 */
+  // openedFiles: ordered list of files opened this session (navigation history)
+  // openIdx:     which one is currently displayed
+  // minimized:   is the viewer shrunk to the bottom bar
+  const [openedFiles, setOpenedFiles] = useState<LCFile[]>([]);
+  const [openIdx,     setOpenIdx]     = useState<number>(-1);
+  const [minimized,   setMinimized]   = useState(false);
+
+  const currentFile = openIdx >= 0 ? openedFiles[openIdx] : null;
+
   const dragCnt = useRef(0);
 
-  /* ── fetch ── */
+  /* \u2500\u2500 fetch \u2500\u2500 */
   const fetchFiles = useCallback(async () => {
     setLoading(true);
     const { data, error } = await (supabase as any)
@@ -294,7 +488,35 @@ export default function LiveClassFilePanel({ subjectId }: { subjectId: string })
 
   useEffect(() => { fetchFiles(); }, [fetchFiles]);
 
-  /* ── upload file ── */
+  /* \u2500\u2500 open file \u2014 builds a navigation history \u2500\u2500 */
+  const openFile = useCallback((f: LCFile) => {
+    setMinimized(false);
+
+    setOpenedFiles(prev => {
+      // If the file is already in the list at a position after the current one, navigate there.
+      // Otherwise truncate forward history and append, just like a browser.
+      const existingIdx = prev.findIndex(x => x.id === f.id);
+      if (existingIdx >= 0) {
+        setOpenIdx(existingIdx);
+        return prev;
+      }
+      // Truncate anything forward of current position and push new file
+      const next = [...prev.slice(0, openIdx + 1), f];
+      setOpenIdx(next.length - 1);
+      return next;
+    });
+  }, [openIdx]);
+
+  const goBack    = useCallback(() => { setOpenIdx(i => i - 1); setMinimized(false); }, []);
+  const goForward = useCallback(() => { setOpenIdx(i => i + 1); setMinimized(false); }, []);
+
+  const closeViewer = useCallback(() => {
+    setOpenedFiles([]);
+    setOpenIdx(-1);
+    setMinimized(false);
+  }, []);
+
+  /* \u2500\u2500 upload file \u2500\u2500 */
   const upload = useCallback(async (file: File) => {
     if (!user) { setErr("Not signed in"); return; }
     setUploading(true); setPct(0); setUpName(file.name); setErr(null);
@@ -346,7 +568,7 @@ export default function LiveClassFilePanel({ subjectId }: { subjectId: string })
     }
   }, [subjectId, user, fetchFiles]);
 
-  /* ── save link ── */
+  /* \u2500\u2500 save link \u2500\u2500 */
   const saveLink = useCallback(async () => {
     if (!user) { setErr("Not signed in"); return; }
     const trimUrl = linkUrl.trim();
@@ -371,195 +593,6 @@ export default function LiveClassFilePanel({ subjectId }: { subjectId: string })
     }
   }, [subjectId, user, linkUrl, linkLabel, fetchFiles]);
 
-  /* ── drag ── */
+  /* \u2500\u2500 drag \u2500\u2500 */
   const onDragEnter = (e: React.DragEvent) => { e.preventDefault(); dragCnt.current++; setDragging(true); };
-  const onDragLeave = (e: React.DragEvent) => { e.preventDefault(); dragCnt.current--; if (dragCnt.current <= 0) { dragCnt.current = 0; setDragging(false); } };
-  const onDragOver  = (e: React.DragEvent) => { e.preventDefault(); };
-  const onDrop      = (e: React.DragEvent) => {
-    e.preventDefault(); dragCnt.current = 0; setDragging(false);
-    const f = e.dataTransfer.files?.[0];
-    if (f && !uploading) upload(f);
-  };
-  const onPick = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    e.target.value = "";
-    if (f && !uploading) upload(f);
-  };
-
-  /* ── delete ── */
-  const deleteFile = async (f: LCFile) => {
-    if (!confirm(`Delete "${f.file_name}"?`)) return;
-    setDelId(f.id);
-    await (supabase as any).from("liveclass_files").delete().eq("id", f.id);
-    if (f.file_type !== "link" && f.file_url.includes(`/${BUCKET}/`)) {
-      const p = f.file_url.split(`/${BUCKET}/`)[1];
-      if (p) storageSupabase.storage.from(BUCKET).remove([p]);
-    }
-    setFiles(prev => prev.filter(x => x.id !== f.id));
-    setDelId(null);
-  };
-
-  /* ── open → always in-page ── */
-  const openFile = (f: LCFile) => setViewer(f);
-
-  /* ═══════════════════ RENDER ═══════════════════ */
-  return (
-    <>
-      <style>{`
-        @keyframes lcfp-spin { to { transform:rotate(360deg); } }
-        .lcfp-file-row { display:flex; align-items:center; gap:12px; padding:12px 16px; border-bottom:1px solid ${BORD}; transition:background .12s; cursor:pointer; }
-        .lcfp-file-row:last-child { border-bottom:none; }
-        .lcfp-file-row:hover { background:${BG}; }
-        .lcfp-del-btn { opacity:0; border:none; background:none; cursor:pointer; padding:5px; border-radius:6px; color:${RED}; flex-shrink:0; font-size:16px; }
-        .lcfp-file-row:hover .lcfp-del-btn { opacity:1; }
-        .lcfp-tab { flex:1; padding:8px 12px; border:none; border-radius:10px; font-size:13px; font-weight:600; cursor:pointer; transition:all .15s; }
-        .lcfp-input { width:100%; box-sizing:border-box; padding:10px 12px; border:1.5px solid ${BORD}; border-radius:10px; font-size:13px; outline:none; background:${SURF}; color:#111; font-family:inherit; }
-        .lcfp-input:focus { border-color:${G}; box-shadow:0 0 0 3px ${G}18; }
-      `}</style>
-
-      <div style={{ fontFamily: "system-ui,sans-serif" }}>
-
-        {/* ── Tabs ── */}
-        <div style={{ display: "flex", gap: 6, background: BG, borderRadius: 12, padding: 4, marginBottom: 16 }}>
-          <button className="lcfp-tab" onClick={() => setTab("upload")}
-            style={{ background: tab === "upload" ? SURF : "transparent", color: tab === "upload" ? G : MUT, boxShadow: tab === "upload" ? "0 1px 4px rgba(0,0,0,.1)" : "none" }}>
-            📂 Upload File
-          </button>
-          <button className="lcfp-tab" onClick={() => setTab("link")}
-            style={{ background: tab === "link" ? SURF : "transparent", color: tab === "link" ? G : MUT, boxShadow: tab === "link" ? "0 1px 4px rgba(0,0,0,.1)" : "none" }}>
-            🔗 Add Link
-          </button>
-        </div>
-
-        {/* ── Upload tab ── */}
-        {tab === "upload" && (
-          <div
-            onDragEnter={onDragEnter} onDragLeave={onDragLeave} onDragOver={onDragOver} onDrop={onDrop}
-            style={{ position: "relative", border: `2px dashed ${dragging ? GOLD : BORD}`, borderRadius: 16, background: dragging ? GOLDB : BG, padding: "28px 20px", textAlign: "center", transition: "all .18s", marginBottom: 16, userSelect: "none", overflow: "hidden" }}
-          >
-            {uploading ? (
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10, pointerEvents: "none" }}>
-                <div style={{ fontSize: 28 }}>⏫</div>
-                <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: G }}>Uploading {upName}</p>
-                <div style={{ width: "100%", maxWidth: 260, height: 6, borderRadius: 99, background: BORD, overflow: "hidden" }}>
-                  <div style={{ height: "100%", width: `${pct}%`, background: GOLD, borderRadius: 99, transition: "width .25s" }} />
-                </div>
-                <p style={{ margin: 0, fontSize: 11, color: MUT }}>{pct}%</p>
-              </div>
-            ) : (
-              <div style={{ pointerEvents: "none" }}>
-                <div style={{ fontSize: 36, marginBottom: 8 }}>📂</div>
-                <p style={{ margin: "0 0 4px", fontSize: 14, fontWeight: 700, color: G }}>Tap to choose a file, or drag and drop</p>
-                <p style={{ margin: 0, fontSize: 12, color: MUT }}>Images · PDFs · Videos · Documents — any format</p>
-              </div>
-            )}
-            {!uploading && (
-              <input type="file" accept="*/*" onChange={onPick}
-                style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, cursor: "pointer", margin: 0, padding: 0 }} />
-            )}
-          </div>
-        )}
-
-        {/* ── Link tab ── */}
-        {tab === "link" && (
-          <div style={{ background: BG, border: `1px solid ${BORD}`, borderRadius: 16, padding: 16, marginBottom: 16 }}>
-            <p style={{ margin: "0 0 12px", fontSize: 13, color: MUT }}>
-              Paste any URL — YouTube, Google Drive, PDF link, website…
-            </p>
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              <div>
-                <label style={{ fontSize: 12, fontWeight: 600, color: G, display: "block", marginBottom: 4 }}>URL *</label>
-                <input className="lcfp-input" type="url" placeholder="https://..."
-                  value={linkUrl} onChange={e => setLinkUrl(e.target.value)}
-                  onKeyDown={e => e.key === "Enter" && saveLink()} />
-              </div>
-              <div>
-                <label style={{ fontSize: 12, fontWeight: 600, color: G, display: "block", marginBottom: 4 }}>
-                  Label <span style={{ color: MUT, fontWeight: 400 }}>(optional)</span>
-                </label>
-                <input className="lcfp-input" type="text" placeholder="e.g. Today's slides, Surah Al-Baqarah video…"
-                  value={linkLabel} onChange={e => setLinkLabel(e.target.value)}
-                  onKeyDown={e => e.key === "Enter" && saveLink()} />
-              </div>
-              <button onClick={saveLink} disabled={addingLink || !linkUrl.trim()}
-                style={{ background: linkUrl.trim() ? G : BORD, color: linkUrl.trim() ? "#fff" : MUT, border: "none", borderRadius: 10, padding: "10px 20px", fontSize: 13, fontWeight: 700, cursor: linkUrl.trim() ? "pointer" : "not-allowed", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, transition: "all .15s" }}>
-                {addingLink
-                  ? <><div style={{ width: 14, height: 14, borderRadius: "50%", border: "2px solid #ffffff40", borderTopColor: "#fff", animation: "lcfp-spin .6s linear infinite" }} /> Saving…</>
-                  : "🔗 Add Link"}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Error */}
-        {err && (
-          <div style={{ display: "flex", alignItems: "center", gap: 8, background: REDL, border: `1px solid ${RED}30`, borderRadius: 10, padding: "10px 14px", marginBottom: 14, fontSize: 13, color: RED }}>
-            ⚠️ {err}
-            <button onClick={() => setErr(null)} style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer", color: RED, fontSize: 16 }}>✕</button>
-          </div>
-        )}
-
-        {/* ── Resource list ── */}
-        {loading ? (
-          <div style={{ display: "flex", justifyContent: "center", padding: 48 }}>
-            <div style={{ width: 26, height: 26, borderRadius: "50%", border: `3px solid ${G}`, borderTopColor: "transparent", animation: "lcfp-spin .7s linear infinite" }} />
-          </div>
-        ) : files.length === 0 ? (
-          <div style={{ background: SURF, border: `1px solid ${BORD}`, borderRadius: 14, padding: "36px 20px", textAlign: "center" }}>
-            <div style={{ fontSize: 34, marginBottom: 8 }}>📭</div>
-            <p style={{ margin: 0, fontSize: 14, fontWeight: 600, color: MUT }}>Nothing here yet</p>
-            <p style={{ margin: "4px 0 0", fontSize: 12, color: MUT }}>Upload a file or add a link above</p>
-          </div>
-        ) : (
-          <div style={{ background: SURF, border: `1px solid ${BORD}`, borderRadius: 14, overflow: "hidden" }}>
-            <div style={{ padding: "12px 16px", borderBottom: `1px solid ${BORD}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: G }}>
-                Class Resources <span style={{ color: MUT, fontWeight: 400 }}>({files.length})</span>
-              </span>
-              <button onClick={fetchFiles} style={{ fontSize: 12, color: MUT, background: "none", border: "none", cursor: "pointer" }}>
-                ↺ Refresh
-              </button>
-            </div>
-
-            {files.map(f => {
-              const k   = getKind(f.file_name, f.file_type);
-              const cfg = ICONS[k];
-              return (
-                <div key={f.id} className="lcfp-file-row" onClick={() => delId !== f.id && openFile(f)}>
-                  <div style={{ width: 42, height: 42, borderRadius: 10, background: cfg.bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, flexShrink: 0 }}>
-                    {cfg.i}
-                  </div>
-
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ margin: 0, fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {f.file_name}
-                    </p>
-                    <p style={{ margin: "2px 0 0", fontSize: 11, color: MUT }}>
-                      {k === "Link" ? "🔗 Link" : k}
-                      {f.file_size ? ` · ${fmtBytes(f.file_size)}` : ""}
-                      {f.created_at ? ` · ${fmtDate(f.created_at)}` : ""}
-                    </p>
-                  </div>
-
-                  <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, color: cfg.c, background: cfg.bg, padding: "3px 9px", borderRadius: 20 }}>
-                    {k === "Image" ? "Preview" : k === "Link" ? "View" : "Open"}
-                  </span>
-
-                  <button className="lcfp-del-btn" disabled={delId === f.id}
-                    onClick={e => { e.stopPropagation(); deleteFile(f); }} title="Delete">
-                    {delId === f.id
-                      ? <div style={{ width: 14, height: 14, borderRadius: "50%", border: `2px solid ${RED}`, borderTopColor: "transparent", animation: "lcfp-spin .6s linear infinite" }} />
-                      : "🗑️"}
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      {/* In-page viewer — position:fixed, above everything */}
-      {viewer && <FileViewer file={viewer} onClose={() => setViewer(null)} />}
-    </>
-  );
-}
+  const onDragLeave = (e: React.DragEvent) => { e.preventDefault(); dragCnt.current--; if (dragCnt.current <= 0) { dragCnt.current = 0; setDragging(false
