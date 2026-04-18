@@ -165,47 +165,74 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     { type:"link", to:"/student/profile", icon:UserCircle,    label:t("Al-I'dādāt","الإعدادات") },
   ];
 
-  // ── Admin nav — grouped ──────────────────────────────────────
+  // ── Admin nav — fully organized, every page linked ──────────
   type AdminNavItem =
     | { type:"link";  to:string; icon:any; label:string }
     | { type:"group"; key:string; icon:any; label:string; children:{to:string;icon:any;label:string}[] };
 
   const adminNav: AdminNavItem[] = [
-    { type:"link",  to:"/admin",                  icon:LayoutDashboard, label:t("Dashboard","لوحة التحكم") },
-    // ✅ New Registration group — replaces standalone Level Assignment + Finance > Registration
-    { type:"group", key:"newreg", icon:UserPlus, label:t("New Registration","التسجيل الجديد"), children:[
+    { type:"link", to:"/admin", icon:LayoutDashboard, label:t("Dashboard","لوحة التحكم") },
+
+    // 1 ── Student Pipeline ─────────────────────────────────────
+    { type:"group", key:"pipeline", icon:UserPlus, label:t("Student Pipeline","سير التسجيل"), children:[
       { to:"/admin/level-assignment",      icon:GraduationCap, label:t("New Registrations","الطلاب الجدد") },
-      { to:"/admin/registration-settings", icon:Settings,      label:t("Registration Settings","إعدادات التسجيل") },
+      { to:"/admin/tasjeel",               icon:ClipboardList, label:t("Pipeline Tracker","متابعة التسجيل") },
+      { to:"/admin/registration-settings", icon:Settings,      label:t("Reg. Settings","إعدادات التسجيل") },
     ]},
-    { type:"group", key:"academic", icon:BookOpen, label:t("Academic","المحتوى الأكاديمي"), children:[
+
+    // 2 ── Students ─────────────────────────────────────────────
+    { type:"group", key:"students", icon:Users, label:t("Students","الطلاب"), children:[
+      { to:"/admin/students",         icon:Users,         label:t("All Students","جميع الطلاب") },
+      { to:"/admin/attendance",       icon:CheckSquare,   label:t("Attendance","الحضور والغياب") },
+      { to:"/admin/transcripts",      icon:GraduationCap, label:t("Transcripts","السجلات الأكاديمية") },
+      { to:"/admin/private-sessions", icon:UserCheck,     label:t("Private Sessions","الجلسات الخاصة") },
+    ]},
+
+    // 3 ── Academic ─────────────────────────────────────────────
+    { type:"group", key:"academic", icon:BookOpen, label:t("Academic","الأكاديمي"), children:[
       { to:"/admin/courses",          icon:Layers,      label:t("Courses & Subjects","الدورات والمواد") },
       { to:"/admin/timetable",        icon:Clock,       label:t("Timetable","الجدول الدراسي") },
-      { to:"/admin/material-manager", icon:FolderOpen,  label:t("Material Manager","مدير المواد") },
-      { to:"/admin/calendar",         icon:Calendar,    label:t("Calendar","التقويم") },
+      { to:"/admin/material-manager", icon:FolderOpen,  label:t("Materials","المواد التعليمية") },
+      { to:"/admin/level-subject",    icon:BookMarked,  label:t("Level–Subject Map","ربط المستويات") },
+      { to:"/admin/calendar",         icon:Calendar,    label:t("Academic Calendar","التقويم الأكاديمي") },
     ]},
+
+    // 4 ── Classes ──────────────────────────────────────────────
     { type:"group", key:"classes", icon:Video, label:t("Classes","الفصول"), children:[
-      { to:"/admin/live-classes",   icon:Video, label:t("Live Classes","الفصول الحية") },
-      { to:"/admin/public-classes", icon:Globe, label:t("Public Classes","الدروس العامة") },
+      { to:"/admin/live-classes",   icon:Video,      label:t("Live Classes","الفصول الحية") },
+      { to:"/admin/public-classes", icon:Globe,      label:t("Public Classes","الدروس العامة") },
+      { to:"/admin/recordings",     icon:Headphones, label:t("Recordings","التسجيلات") },
     ]},
+
+    // 5 ── Assessments ──────────────────────────────────────────
     { type:"group", key:"assess", icon:ClipboardList, label:t("Assessments","التقييمات"), children:[
       { to:"/admin/exams",         icon:ClipboardList, label:t("Exams","الامتحانات") },
       { to:"/admin/question-bank", icon:Library,       label:t("Question Bank","بنك الأسئلة") },
-      { to:"/admin/grading",       icon:CheckSquare,   label:t("Grading","التصحيح") },      { to:"/admin/entrance-exam", icon:GraduationCap, label:t("Entrance Exam","اختبار القبول") },
+      { to:"/admin/grading",       icon:CheckSquare,   label:t("Grading","التصحيح") },
+      { to:"/admin/entrance-exam", icon:GraduationCap, label:t("Entrance Exam","اختبار القبول") },
       { to:"/admin/proctoring",    icon:BarChart,      label:t("Proctoring","المراقبة") },
     ]},
-    { type:"group", key:"recit", icon:Mic, label:t("Recitation","التلاوة"), children:[
+
+    // 6 ── Recitation & Ḥifẓ ────────────────────────────────────
+    { type:"group", key:"recit", icon:Mic, label:t("Recitation & Ḥifẓ","التلاوة والحفظ"), children:[
       { to:"/admin/recitation-review",        icon:Mic,      label:t("Recitation Review","مراجعة التلاوة") },
       { to:"/admin/recitation-test-settings", icon:Settings, label:t("Recitation Settings","إعدادات التلاوة") },
     ]},
-    { type:"group", key:"students", icon:Users, label:t("Students","الطلاب"), children:[
-      { to:"/admin/students",         icon:Users,     label:t("All Students","جميع الطلاب") },
-      { to:"/admin/private-sessions", icon:UserCheck, label:t("Private Sessions","الجلسات الخاصة") },
-    ]},
+
+    // 7 ── Finance ──────────────────────────────────────────────
     { type:"group", key:"finance", icon:CreditCard, label:t("Finance","المالية"), children:[
-      { to:"/admin/payments", icon:CreditCard, label:t("Payment Settings","إعدادات الدفع") },
+      { to:"/admin/payments",         icon:CreditCard, label:t("All Payments","جميع المدفوعات") },
+      { to:"/admin/payment-settings", icon:Settings,   label:t("Payment Settings","إعدادات الدفع") },
     ]},
-    { type:"link", to:"/admin/majlis-moderation", icon:MessageCircle, label:t("Al-Majlis","المجلس") },
-    { type:"link", to:"/live-quiz",               icon:Trophy,        label:t("Al-Musabaqah 🏆","المسابقة الحية 🏆") },
+
+    // 8 ── Communication ────────────────────────────────────────
+    { type:"group", key:"comms", icon:MessageCircle, label:t("Communication","التواصل"), children:[
+      { to:"/admin/majlis-moderation", icon:MessageCircle, label:t("Al-Majlis","المجلس") },
+      { to:"/admin/notifications",     icon:Bell,          label:t("Notifications","الإشعارات") },
+    ]},
+
+    // 9 ── Al-Musābaqah ──────────────────────────────────────────
+    { type:"link", to:"/live-quiz", icon:Trophy, label:t("Al-Musābaqah 🏆","المسابقة 🏆") },
   ];
 
   // ── Notification badge count for top bar ────────────────────
