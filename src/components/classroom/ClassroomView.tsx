@@ -175,17 +175,41 @@ const WbSyncBridge = ({ wbOpen, isTeacher }: { wbOpen: boolean; isTeacher: boole
   return null;
 };
 
-const MediaAutoPublish = (_props: { lobbyMic?: boolean; lobbyCam?: boolean }) => {
+/* ══ ADMIN MUTE LISTENER ══
+   Students only. When teacher broadcasts admin_mute_all, immediately mutes
+   the local microphone track via LiveKit — no Supabase round-trip needed.  */
+const AdminMuteListener = ({ isPrivileged }: { isPrivileged: boolean }) => {
+  const room = useRoomContext();
+  useEffect(() => {
+    if (isPrivileged) return; // teachers never get muted by this
+    const h = (payload: Uint8Array) => {
+      try {
+        const msg = JSON.parse(new TextDecoder().decode(payload));
+        if (msg.type === "admin_mute_all") {
+          room.localParticipant.setMicrophoneEnabled(false).catch(() => {});
+          toast({ title: "🔇 Muted by teacher" });
+        }
+      } catch {}
+    };
+    room.on(RoomEvent.DataReceived, h);
+    return () => { room.off(RoomEvent.DataReceived, h); };
+  }, [room, isPrivileged]);
+  return null;
+};
+
+const MediaAutoPublish = ({ lobbyMic = false, lobbyCam = false }: { lobbyMic?: boolean; lobbyCam?: boolean }) => {
   const room = useRoomContext();
   useEffect(() => {
     let cancelled = false;
     const init = async () => {
-      await new Promise(r => setTimeout(r, 300));
+      // Slightly longer delay so LiveKit finishes its own track setup first
+      await new Promise(r => setTimeout(r, 450));
       if (cancelled) return;
       try {
         const lp = room.localParticipant;
-        if (lp.isMicrophoneEnabled) await lp.setMicrophoneEnabled(false);
-        if (lp.isCameraEnabled)     await lp.setCameraEnabled(false);
+        // Apply the exact lobby choices — not a blanket disable
+        if (lp.isMicrophoneEnabled !== lobbyMic) await lp.setMicrophoneEnabled(lobbyMic);
+        if (lp.isCameraEnabled     !== lobbyCam) await lp.setCameraEnabled(lobbyCam);
       } catch {}
     };
     init();
@@ -196,7 +220,7 @@ const MediaAutoPublish = (_props: { lobbyMic?: boolean; lobbyCam?: boolean }) =>
 };
 
 /* ══ ROOM DATA LISTENER ══ */
-const RoomDataListener = ({ onWbOpen,onWbClose,strokesBuffer,onMatOpen,onMatClose,onWbAllowWrite,onRecAllowed,onEmojiReact,onGroupRecite,onHandRaise }:any) => {
+const RoomDataListener = ({ onWbOpen,onWbClose,strokesBuffer,onMatOpen,onMatClose,onWbAllowWrite,onRecAllowed,onEmojiReact,onGroupRecite,onHandRaise,onAdminMuteAll }:any) => {
   const room = useRoomContext();
   useEffect(() => {
     const h = (payload:Uint8Array,participant?:any) => {
@@ -213,6 +237,7 @@ const RoomDataListener = ({ onWbOpen,onWbClose,strokesBuffer,onMatOpen,onMatClos
         if(msg.type==="emoji_react")      onEmojiReact?.(msg.emoji, msg.sender);
         if(msg.type==="group_recite")     onGroupRecite?.(msg.active);
         if(msg.type==="hand_raise")       onHandRaise?.(msg.identity||participant?.identity, msg.name, msg.raised);
+        if(msg.type==="admin_mute_all")   onAdminMuteAll?.();
       } catch {}
     };
     room.on(RoomEvent.DataReceived,h);
@@ -949,21 +974,42 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
   const[camOn,setCamOn]=useState(false);
   const[handUp,setHandUp]=useState(false);const[menu,setMenu]=useState(false);const[emojis,setEmojis]=useState(false);
   const[stuRec,setStuRec]=useState(false);const stuMrRef=useRef<MediaRecorder|null>(null);const stuChunks=useRef<Blob[]>([]);
+  // Busy guards — prevent rapid-tap race conditions (triple-press bug)
+  const micBusy=useRef(false);
+  const camBusy=useRef(false);
   useEffect(()=>{
     if(!room)return;
-    const sync=()=>{setMicOn(room.localParticipant.isMicrophoneEnabled);setCamOn(room.localParticipant.isCameraEnabled);};
+    // Read state from LiveKit directly — no fragile setTimeout hacks
+    const sync=()=>{
+      setMicOn(room.localParticipant.isMicrophoneEnabled);
+      setCamOn(room.localParticipant.isCameraEnabled);
+    };
     sync();
-    room.localParticipant.on("trackMuted",sync);room.localParticipant.on("trackUnmuted",sync);room.localParticipant.on("trackPublished",sync);room.localParticipant.on("trackUnpublished",sync);
-    const t1=setTimeout(sync,500);const t2=setTimeout(sync,1500);
-    return()=>{clearTimeout(t1);clearTimeout(t2);room.localParticipant.off("trackMuted",sync);room.localParticipant.off("trackUnmuted",sync);room.localParticipant.off("trackPublished",sync);room.localParticipant.off("trackUnpublished",sync);};
+    // Use room-level RoomEvents so we catch all state changes reliably
+    room.on(RoomEvent.LocalTrackPublished,   sync);
+    room.on(RoomEvent.LocalTrackUnpublished, sync);
+    room.on(RoomEvent.TrackMuted,            sync);
+    room.on(RoomEvent.TrackUnmuted,          sync);
+    return()=>{
+      room.off(RoomEvent.LocalTrackPublished,   sync);
+      room.off(RoomEvent.LocalTrackUnpublished, sync);
+      room.off(RoomEvent.TrackMuted,            sync);
+      room.off(RoomEvent.TrackUnmuted,          sync);
+    };
   },[room]);
   const toggleMic=async()=>{
-    if(!room?.localParticipant)return;
-    try{const current=room.localParticipant.isMicrophoneEnabled;await room.localParticipant.setMicrophoneEnabled(!current);}catch(e){console.error("toggleMic:",e);}
+    if(!room?.localParticipant||micBusy.current)return;
+    micBusy.current=true;
+    try{await room.localParticipant.setMicrophoneEnabled(!room.localParticipant.isMicrophoneEnabled);}
+    catch(e){console.error("toggleMic:",e);}
+    finally{micBusy.current=false;}
   };
   const toggleCam=async()=>{
-    if(!room?.localParticipant)return;
-    try{const current=room.localParticipant.isCameraEnabled;await room.localParticipant.setCameraEnabled(!current);}catch(e){console.error("toggleCam:",e);}
+    if(!room?.localParticipant||camBusy.current)return;
+    camBusy.current=true;
+    try{await room.localParticipant.setCameraEnabled(!room.localParticipant.isCameraEnabled);}
+    catch(e){console.error("toggleCam:",e);}
+    finally{camBusy.current=false;}
   };
   const toggleHand=async()=>{
     if(!user||!sessionId)return;
@@ -1007,6 +1053,14 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
         {icon:BookOpen,label:"Share Material",color:"#fff",fn:onShareMaterial},
         {icon:PenTool,label:canStudentWriteProp?"Revoke Write Access":"Allow Students to Write",color:canStudentWriteProp?GREEN:"#fff",fn:()=>onPermChange?.("write",!canStudentWriteProp,room)},
         {icon:Circle,label:canStudentRecProp?"Revoke Record Permission":"Allow Students to Record",color:canStudentRecProp?GREEN:"#fff",fn:()=>onPermChange?.("rec",!canStudentRecProp,room)},
+        {icon:MicOff,label:"Mute All Students",color:"#fb923c",fn:async()=>{
+          // 1. DB — so new joiners also enter muted
+          await supabase.from("class_participants").update({is_muted:true}).eq("session_id",sessionId);
+          // 2. DataChannel — mutes existing participants immediately
+          try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"admin_mute_all"})),{reliable:true});}catch{}
+          toast({title:"🔇 All students muted"});
+          setMenu(false);
+        }},
       ].map((item,i)=>(<button key={i} onClick={item.fn} style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"13px 18px",background:"none",border:"none",cursor:"pointer",color:item.color,fontSize:14,borderBottom:"1px solid rgba(255,255,255,.06)",textAlign:"left"as const}}><item.icon style={{width:16,height:16}}/> {item.label}</button>))}
       <button onClick={()=>{setMenu(false);onToggleParticipants();}} style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"13px 18px",background:"none",border:"none",cursor:"pointer",color:"#fff",fontSize:14,borderBottom:"1px solid rgba(255,255,255,.06)",textAlign:"left"as const}}><Users style={{width:16,height:16}}/> Participants</button>
       <button onClick={isPrivileged?onEndClass:onLeaveClass} style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"13px 18px",background:"none",border:"none",cursor:"pointer",color:RED,fontSize:14,textAlign:"left"as const}}>📵 {isPrivileged?"End Class for All":"Leave Class"}</button>
@@ -1294,6 +1348,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
           <RoomAudioRenderer/>
           <MediaAutoPublish lobbyMic={lobbyMic} lobbyCam={lobbyCam}/>
           <WbSyncBridge wbOpen={wbOpen} isTeacher={isPrivileged}/>
+          <AdminMuteListener isPrivileged={isPrivileged}/>
           <GroupReciteAutoMic active={groupRecite} isPrivileged={isPrivileged}/>
           {/* onDisconnected wired to autoReconnect — handles Android tab suspension */}
           <ReconnectMonitor
@@ -1301,7 +1356,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
             onReconnected={()=>setReconnecting(false)}
             onDisconnected={autoReconnect}
           />
-          <RoomDataListener onWbOpen={()=>setWbOpen(true)} onWbClose={()=>setWbOpen(false)} strokesBuffer={wbBuffer} onMatOpen={mat=>setMatOpen(mat)} onMatClose={()=>setMatOpen(null)} onWbAllowWrite={allow=>setCanStudentWrite(allow)} onRecAllowed={allow=>setCanStudentRec(allow)} onEmojiReact={(emoji:string,sender:string)=>addFloatingEmoji(emoji,sender)} onGroupRecite={handleGroupReciteFromTeacher} onHandRaise={handleHandRaise}/>
+          <RoomDataListener onWbOpen={()=>setWbOpen(true)} onWbClose={()=>setWbOpen(false)} strokesBuffer={wbBuffer} onMatOpen={mat=>setMatOpen(mat)} onMatClose={()=>setMatOpen(null)} onWbAllowWrite={allow=>setCanStudentWrite(allow)} onRecAllowed={allow=>setCanStudentRec(allow)} onEmojiReact={(emoji:string,sender:string)=>addFloatingEmoji(emoji,sender)} onGroupRecite={handleGroupReciteFromTeacher} onHandRaise={handleHandRaise} onAdminMuteAll={()=>{}}/>
           {reconnecting&&<div style={{position:"absolute",inset:0,zIndex:200,background:"rgba(0,0,0,.82)",backdropFilter:"blur(8px)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:14}}><div style={{width:48,height:48,border:`3px solid ${TEAL}`,borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .8s linear infinite"}}/><p style={{color:"#fff",fontSize:15,fontWeight:700}}>Reconnecting…</p><p style={{color:"rgba(255,255,255,.4)",fontSize:13}}>Please stay on the page</p></div>}
           {/* Top bar */}
           <div style={{height:52,background:GLASS,backdropFilter:"blur(16px)",WebkitBackdropFilter:"blur(16px)",display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 10px 0 12px",flexShrink:0,borderBottom:"1px solid rgba(255,255,255,.05)",gap:6}}>
