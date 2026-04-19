@@ -233,13 +233,22 @@ export default function GlobalClassroomOverlay() {
   useWakeLock(inCall);
   useMediaSession(inCall, title, handleReturn, handleLeave);
 
+  // Ref so the leavepictureinpicture listener always has the latest handler
+  const handleReturnRef = useRef(handleReturn);
+  handleReturnRef.current = handleReturn;
+
   // Canvas PiP handle — built once when call starts
   const pipHandle = useRef<PipHandle | null>(null);
 
   useEffect(() => {
     if (!inCall) { pipHandle.current?.stop(); pipHandle.current = null; return; }
     const h = buildCanvasPip(title, initial);
-    if (h) { h.video.play().catch(() => {}); pipHandle.current = h; }
+    if (h) {
+      h.video.play().catch(() => {});
+      // Tapping the PiP card (expand/close) → go straight back to the class
+      h.video.addEventListener("leavepictureinpicture", () => handleReturnRef.current());
+      pipHandle.current = h;
+    }
     return () => { pipHandle.current?.stop(); pipHandle.current = null; };
   }, [inCall, title, initial]);
 
