@@ -1,24 +1,27 @@
 /*
   GlobalClassroomOverlay.tsx — Tahleem Academy
   ─────────────────────────────────────────────
-  FIXES (Apr 2026 v4):
-  - Minimized overlay is a small draggable circular bubble (~90px),
-    NOT a large card. Tap to expand. 
-  - The large ClassroomView is display:none when minimized so it never
-    bleeds into the page.
-  - Canvas video element is off-screen (-9999px) so it never shows as 
-    a black box on the page.
-  - Back button and browser minimize both trigger the overlay 
-    (handled in LiveClassContext).
-  - Pre-created canvas PiP video is ready before user taps minimize,
-    so requestPictureInPicture() fires inside the gesture window.
-  - Long-press bubble → expand controls row (mic/cam/end).
-  - Tap bubble → open full class.
+  Apr 2026 v5 — Canvas PiP always fires on browser minimize:
+
+  KEY FIX: The OS-level PiP (black window with controls) was only
+  showing when camera was on because Chrome auto-enters PiP for
+  playing <video> elements. We pre-create an animated canvas stream
+  as a hidden <video> with `autopictureinpicture` so Chrome auto-PiPs
+  it whenever the page hides — camera on or off.
+
+  We ALSO call requestPictureInPicture() directly inside
+  visibilitychange which Chrome allows as a trusted event.
+
+  The canvas design: compact rounded rectangle showing the class
+  initial, LIVE pulse, and mic-muted badge. Looks clean in the
+  OS PiP window.
+
+  In-browser (tab still open but minimized): draggable bubble.
 */
 
-import { useLiveClass }   from "@/contexts/LiveClassContext";
-import ClassroomView       from "@/components/classroom/ClassroomView";
-import { Mic, MicOff, VideoOff, X } from "lucide-react";
+import { useLiveClass }  from "@/contexts/LiveClassContext";
+import ClassroomView      from "@/components/classroom/ClassroomView";
+import { Mic, MicOff, X } from "lucide-react";
 import { useEffect, useRef, useCallback, useState } from "react";
 
 const GOLD  = "#c9a84c";
@@ -33,10 +36,9 @@ function useSilentAudio(active: boolean) {
     if (!active) { r.current?.close(); r.current = null; return; }
     try {
       const AC = window.AudioContext || (window as any).webkitAudioContext;
-      const ctx = new AC();
-      const o = ctx.createOscillator(), g = ctx.createGain();
-      g.gain.value = 0; o.connect(g); g.connect(ctx.destination); o.start();
-      r.current = ctx;
+      const c = new AC(), o = c.createOscillator(), g = c.createGain();
+      g.gain.value = 0; o.connect(g); g.connect(c.destination); o.start();
+      r.current = c;
     } catch {}
     return () => { r.current?.close(); r.current = null; };
   }, [active]);
@@ -59,50 +61,63 @@ function useWakeLock(active: boolean) {
 }
 
 /* ─── MediaSession ─── */
-function useMediaSession(active: boolean, title: string, onReturn: () => void, onLeave: () => void) {
+function useMediaSession(
+  active: boolean, title: string,
+  onReturn: () => void, onLeave: () => void,
+) {
   useEffect(() => {
     if (!active || !("mediaSession" in navigator)) return;
-    navigator.mediaSession.metadata = new MediaMetadata({ title, artist: "Tahleem Academy", album: "🟢 Live Class" });
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title, artist: "Tahleem Academy", album: "🟢 Live Class",
+    });
     navigator.mediaSession.playbackState = "playing";
-    const sa = (a: MediaSessionAction, h: () => void) => { try { navigator.mediaSession.setActionHandler(a, h); } catch {} };
+    const sa = (a: MediaSessionAction, h: () => void) => {
+      try { navigator.mediaSession.setActionHandler(a, h); } catch {}
+    };
     sa("play", onReturn); sa("pause", onReturn); sa("stop", onLeave);
     sa("previoustrack", onReturn); sa("nexttrack", onReturn);
     return () => {
       navigator.mediaSession.metadata = null;
       navigator.mediaSession.playbackState = "none";
-      (["play","pause","stop","previoustrack","nexttrack"] as MediaSessionAction[])
-        .forEach(a => { try { navigator.mediaSession.setActionHandler(a, null); } catch {} });
+      (["play","pause","stop","previoustrack","nexttrack"] as MediaSessionAction[]).forEach(a => {
+        try { navigator.mediaSession.setActionHandler(a, null); } catch {}
+      });
     };
   }, [active, title, onReturn, onLeave]);
 }
 
-/* ─── Document PiP ─── */
-async function tryDocumentPiP(title: string, initial: string,
+/* ─── Document PiP (Chrome 116+ Android) ─── */
+async function tryDocumentPiP(
+  title: string, initial: string,
   onReturn: () => void, onLeave: () => void,
-  onToggleMic: () => void, micEnabled: boolean): Promise<boolean> {
+  onToggleMic: () => void, micEnabled: boolean,
+): Promise<boolean> {
   const dPiP = (window as any).documentPictureInPicture;
   if (!dPiP) return false;
   try {
-    const pw: Window = await dPiP.requestWindow({ width: 220, height: 260 });
+    const pw: Window = await dPiP.requestWindow({ width: 200, height: 230 });
     const s = pw.document.createElement("style");
     s.textContent = `
       * { box-sizing:border-box;margin:0;padding:0;font-family:system-ui,sans-serif; }
       body { background:#0a1a10;display:flex;align-items:center;justify-content:center;height:100vh; }
       @keyframes p { 0%,100%{opacity:1} 50%{opacity:.2} }
-      .c { background:rgba(8,25,15,.98);border:1px solid rgba(201,168,76,.45);border-radius:20px;
-           padding:20px;display:flex;flex-direction:column;align-items:center;gap:12px;width:190px; }
-      .av { width:66px;height:66px;border-radius:50%;background:#c9a84c;
-            display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:800;color:#08190f; }
-      .ti { color:#fff;font-size:12px;font-weight:700;text-align:center; }
-      .lv { display:flex;align-items:center;gap:5px; }
-      .dot { width:7px;height:7px;border-radius:50%;background:#ef4444;animation:p 1.4s infinite; }
-      .lt { font-size:10px;font-weight:800;color:#ef4444;border:1px solid rgba(239,68,68,.35);border-radius:6px;padding:2px 7px; }
-      .btns { display:flex;gap:8px;margin-top:2px; }
-      .b { width:40px;height:40px;border-radius:50%;border:none;cursor:pointer;
-           display:flex;align-items:center;justify-content:center;font-size:16px; }
-      .bm { background:rgba(239,68,68,.22); }
-      .bg { background:#c9a84c; }
-      .br { background:rgba(239,68,68,.2);border:1px solid rgba(239,68,68,.4); }
+      .c { background:rgba(8,25,15,.98);border:1px solid rgba(201,168,76,.5);border-radius:24px;
+           padding:18px 16px;display:flex;flex-direction:column;align-items:center;gap:10px;width:180px; }
+      .av { width:62px;height:62px;border-radius:50%;background:#c9a84c;border:2px solid rgba(201,168,76,.3);
+            display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:800;color:#08190f; }
+      .ti { color:#fff;font-size:11px;font-weight:700;text-align:center;max-width:100%;
+            overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+      .lv { display:flex;align-items:center;gap:4px; }
+      .dot { width:6px;height:6px;border-radius:50%;background:#ef4444;animation:p 1.4s infinite;flex-shrink:0; }
+      .lt  { font-size:9px;font-weight:800;color:#ef4444;border:1px solid rgba(239,68,68,.3);
+             border-radius:5px;padding:1px 6px; }
+      .btns { display:flex;gap:8px;margin-top:4px; }
+      .b { width:40px;height:40px;border-radius:50%;border:none;cursor:pointer;font-size:15px;
+           display:flex;align-items:center;justify-content:center; }
+      .bm-on  { background:rgba(255,255,255,.12); }
+      .bm-off { background:rgba(239,68,68,.22); }
+      .bg     { background:#c9a84c; }
+      .br     { background:rgba(239,68,68,.18);border:1px solid rgba(239,68,68,.35) !important; }
     `;
     pw.document.head.appendChild(s);
     pw.document.body.innerHTML = `
@@ -111,83 +126,179 @@ async function tryDocumentPiP(title: string, initial: string,
         <span class="ti">${title}</span>
         <div class="lv"><span class="dot"></span><span class="lt">LIVE</span></div>
         <div class="btns">
-          <button class="b ${micEnabled?"":"bm"}" id="bm">${micEnabled?"🎙️":"🔇"}</button>
-          <button class="b bg" id="br">⬆</button>
-          <button class="b br" id="bl">✕</button>
+          <button class="b ${micEnabled ? "bm-on" : "bm-off"}" id="bm">${micEnabled ? "🎙️" : "🔇"}</button>
+          <button class="b bg" id="bret">⬆</button>
+          <button class="b br" id="blv">✕</button>
         </div>
       </div>`;
-    pw.document.getElementById("bm")?.addEventListener("click", onToggleMic);
-    pw.document.getElementById("br")?.addEventListener("click", () => { pw.close(); onReturn(); });
-    pw.document.getElementById("bl")?.addEventListener("click", () => { pw.close(); onLeave(); });
+    pw.document.getElementById("bm")  ?.addEventListener("click", onToggleMic);
+    pw.document.getElementById("bret")?.addEventListener("click", () => { pw.close(); onReturn(); });
+    pw.document.getElementById("blv") ?.addEventListener("click", () => { pw.close(); onLeave(); });
     pw.addEventListener("pagehide", onReturn);
     return true;
   } catch { return false; }
 }
 
-/* ─── Remote Video PiP ─── */
-async function tryVideoPiP(): Promise<boolean> {
-  if (!("requestPictureInPicture" in HTMLVideoElement.prototype)) return false;
-  const vids = Array.from(document.querySelectorAll("video")) as HTMLVideoElement[];
-  const v = vids.find(v => !v.muted && v.readyState >= 2 && v.videoWidth > 0);
-  if (!v) return false;
-  if (document.pictureInPictureElement === v) return true;
-  try { await v.requestPictureInPicture(); return true; } catch { return false; }
-}
+/* ─── Canvas PiP pre-handle ────────────────────────────────────────────
+   Creates an animated canvas that renders the class avatar + mic status.
+   Captured as a MediaStream → played in a hidden <video> element.
 
-/* ─── Canvas PiP pre-handle ─── */
-interface PipHandle { video: HTMLVideoElement; stop: () => void; }
+   CRITICAL: sets `autopictureinpicture` so Chrome automatically enters
+   PiP whenever the page goes to background — no user gesture needed.
+   Also: we re-draw the canvas when micEnabled changes so the icon
+   updates live in the PiP window.
+*/
+interface PipHandle {
+  video: HTMLVideoElement;
+  setMicMuted: (muted: boolean) => void;
+  stop: () => void;
+}
 
 function buildCanvasPip(title: string, initial: string): PipHandle | null {
   if (!("requestPictureInPicture" in HTMLVideoElement.prototype)) return null;
-  const W = 240, H = 280;
-  const cv = document.createElement("canvas"); cv.width = W; cv.height = H;
-  const ctx = cv.getContext("2d"); if (!ctx) return null;
+
+  const W = 200, H = 200;
+  const cv = document.createElement("canvas");
+  cv.width = W; cv.height = H;
+  const ctx = cv.getContext("2d");
+  if (!ctx) return null;
+
+  let micMuted = true; // start muted by default
   let raf = 0;
 
   const draw = () => {
-    ctx.fillStyle = "#0a1a10"; ctx.fillRect(0, 0, W, H);
-    // Gold avatar
+    ctx.clearRect(0, 0, W, H);
+
+    // Dark rounded background
+    ctx.fillStyle = "#0c1f12";
+    // Rounded rect (r=28)
+    const r = 28;
+    ctx.beginPath();
+    ctx.moveTo(r, 0); ctx.lineTo(W - r, 0);
+    ctx.quadraticCurveTo(W, 0, W, r);
+    ctx.lineTo(W, H - r);
+    ctx.quadraticCurveTo(W, H, W - r, H);
+    ctx.lineTo(r, H); ctx.quadraticCurveTo(0, H, 0, H - r);
+    ctx.lineTo(0, r); ctx.quadraticCurveTo(0, 0, r, 0);
+    ctx.closePath(); ctx.fill();
+
+    // Gold border
+    ctx.strokeStyle = "rgba(201,168,76,0.6)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(r, 1); ctx.lineTo(W - r, 1);
+    ctx.quadraticCurveTo(W - 1, 1, W - 1, r);
+    ctx.lineTo(W - 1, H - r);
+    ctx.quadraticCurveTo(W - 1, H - 1, W - r, H - 1);
+    ctx.lineTo(r, H - 1); ctx.quadraticCurveTo(1, H - 1, 1, H - r);
+    ctx.lineTo(1, r); ctx.quadraticCurveTo(1, 1, r, 1);
+    ctx.closePath(); ctx.stroke();
+
+    // Avatar circle (gold)
     ctx.fillStyle = GOLD;
-    ctx.beginPath(); ctx.arc(W/2, 105, 60, 0, Math.PI*2); ctx.fill();
-    // Initial
-    ctx.fillStyle = DARK; ctx.font = "bold 44px system-ui";
+    ctx.beginPath(); ctx.arc(W / 2, 80, 52, 0, Math.PI * 2); ctx.fill();
+
+    // Avatar border
+    ctx.strokeStyle = "rgba(255,255,255,0.18)";
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(W / 2, 80, 52, 0, Math.PI * 2); ctx.stroke();
+
+    // Initial letter
+    ctx.fillStyle = DARK;
+    ctx.font = "bold 40px system-ui, -apple-system, sans-serif";
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText(initial.toUpperCase().slice(0, 2), W/2, 105);
-    // Title
-    ctx.fillStyle = "#fff"; ctx.font = "bold 14px system-ui";
-    ctx.textBaseline = "top";
-    const lbl = title.length > 18 ? title.slice(0, 16)+"…" : title;
-    ctx.fillText(lbl, W/2, 182);
-    // LIVE pulse
-    const a = 0.4 + 0.6 * Math.abs(Math.sin(Date.now()/700));
+    ctx.fillText(initial.toUpperCase().slice(0, 2), W / 2, 80);
+
+    // Pulsing LIVE dot + text
+    const a = 0.45 + 0.55 * Math.abs(Math.sin(Date.now() / 700));
     ctx.fillStyle = `rgba(239,68,68,${a})`;
-    ctx.beginPath(); ctx.arc(W/2 - 20, 218, 5, 0, Math.PI*2); ctx.fill();
-    ctx.fillStyle = `rgba(239,68,68,${a})`;
-    ctx.font = "bold 11px system-ui"; ctx.textBaseline = "middle";
-    ctx.fillText("LIVE", W/2+4, 218);
+    ctx.beginPath(); ctx.arc(W / 2 - 20, 148, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = `rgba(239,68,68,${Math.min(a + 0.2, 1)})`;
+    ctx.font = "bold 11px system-ui, sans-serif";
+    ctx.textBaseline = "middle";
+    ctx.fillText("LIVE", W / 2 + 4, 148);
+
+    // Mic status badge (bottom-right of avatar)
+    const bx = W / 2 + 36, by = 108;
+    ctx.fillStyle = micMuted ? "rgba(239,68,68,0.9)" : "rgba(40,140,70,0.9)";
+    ctx.beginPath(); ctx.arc(bx, by, 13, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(bx, by, 13, 0, Math.PI * 2); ctx.stroke();
+
+    // Mic icon (drawn manually — no SVG in canvas)
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.8;
+    ctx.fillStyle = "#fff";
+    if (micMuted) {
+      // Mic with slash
+      ctx.beginPath(); ctx.arc(bx, by - 3, 4, 0, Math.PI * 2);
+      ctx.globalAlpha = 0.5; ctx.fill(); ctx.globalAlpha = 1;
+      // Slash line
+      ctx.beginPath();
+      ctx.moveTo(bx - 7, by + 7); ctx.lineTo(bx + 7, by - 7);
+      ctx.strokeStyle = "#fff"; ctx.lineWidth = 2.2; ctx.stroke();
+    } else {
+      // Mic body
+      ctx.beginPath(); ctx.arc(bx, by - 3, 3.5, 0, Math.PI * 2);
+      ctx.fillStyle = "#fff"; ctx.fill();
+      // Stand
+      ctx.beginPath();
+      ctx.moveTo(bx - 4, by - 2);
+      ctx.quadraticCurveTo(bx - 4, by + 4, bx, by + 5);
+      ctx.quadraticCurveTo(bx + 4, by + 4, bx + 4, by - 2);
+      ctx.stroke();
+      // Base line
+      ctx.beginPath(); ctx.moveTo(bx, by + 5); ctx.lineTo(bx, by + 8); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(bx - 3, by + 8); ctx.lineTo(bx + 3, by + 8); ctx.stroke();
+    }
+
     raf = requestAnimationFrame(draw);
   };
+
   draw();
 
   const vid = document.createElement("video");
-  vid.srcObject = cv.captureStream(8);
-  vid.muted = true; vid.playsInline = true;
-  // Off-screen — must NOT use display:none or browser blocks PiP
-  vid.style.cssText = "position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;pointer-events:none;opacity:0.01;";
+  vid.srcObject = cv.captureStream(10);
+  vid.muted = true;
+  vid.playsInline = true;
+
+  // ── KEY: autopictureinpicture makes Chrome auto-enter PiP on tab hide ──
+  (vid as any).autopictureinpicture = true;
+  vid.setAttribute("autopictureinpicture", "");
+
+  // Fully off-screen — CANNOT use display:none (breaks PiP)
+  vid.style.cssText = [
+    "position:fixed",
+    "top:-9999px",
+    "left:-9999px",
+    "width:2px",
+    "height:2px",
+    "pointer-events:none",
+    "opacity:0.01",
+    "z-index:-1",
+  ].join(";");
+
   document.body.appendChild(vid);
 
   const stop = () => {
     cancelAnimationFrame(raf);
     const s = vid.srcObject as MediaStream | null;
     s?.getTracks().forEach(t => t.stop());
+    if (document.pictureInPictureElement === vid) {
+      document.exitPictureInPicture().catch(() => {});
+    }
     vid.remove();
-    if (document.pictureInPictureElement === vid) document.exitPictureInPicture().catch(() => {});
   };
-  vid.addEventListener("leavepictureinpicture", stop);
-  return { video: vid, stop };
+
+  vid.addEventListener("leavepictureinpicture", () => {});
+
+  return {
+    video: vid,
+    setMicMuted: (m: boolean) => { micMuted = m; },
+    stop,
+  };
 }
 
-/* ════════════════════════════════════════════════════════════ */
+/* ══════════════════════════════════════════════════════════ */
 export default function GlobalClassroomOverlay() {
   const {
     activeSubject, inCall, minimized, autoJoin,
@@ -199,74 +310,113 @@ export default function GlobalClassroomOverlay() {
   const title   = activeSubject?.title ?? "Live Class";
   const initial = (activeSubject?.title ?? "L").charAt(0).toUpperCase();
 
-  // Optimistic local state — flip instantly on tap
+  // Optimistic local state — flips instantly on tap
   const [localMic, setLocalMic] = useState(micEnabled);
   const [localCam, setLocalCam] = useState(camEnabled);
   useEffect(() => setLocalMic(micEnabled), [micEnabled]);
   useEffect(() => setLocalCam(camEnabled), [camEnabled]);
 
-  // Long-press to reveal controls row inside bubble
-  const [showControls, setShowControls] = useState(false);
-  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Draggable bubble
+  // Draggable bubble position
   const [pos, setPos] = useState({ right: 16, bottom: 100 });
-  const dragRef = useRef({ active: false, sx: 0, sy: 0, sr: 0, sb: 0, moved: false });
+  const drag = useRef({ active: false, sx: 0, sy: 0, sr: 0, sb: 0, moved: false });
+  const [showControls, setShowControls] = useState(false);
+  const longTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const onTouchStart = (e: React.TouchEvent) => {
     const t = e.touches[0];
-    dragRef.current = { active: true, sx: t.clientX, sy: t.clientY, sr: pos.right, sb: pos.bottom, moved: false };
-    longPressTimer.current = setTimeout(() => setShowControls(v => !v), 500);
+    drag.current = { active: true, sx: t.clientX, sy: t.clientY, sr: pos.right, sb: pos.bottom, moved: false };
+    longTimer.current = setTimeout(() => setShowControls(v => !v), 480);
   };
   const onTouchMove = (e: React.TouchEvent) => {
-    if (!dragRef.current.active) return;
+    if (!drag.current.active) return;
     const t = e.touches[0];
-    const dx = t.clientX - dragRef.current.sx;
-    const dy = t.clientY - dragRef.current.sy;
+    const dx = t.clientX - drag.current.sx, dy = t.clientY - drag.current.sy;
     if (Math.abs(dx) > 6 || Math.abs(dy) > 6) {
-      dragRef.current.moved = true;
-      if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null; }
+      drag.current.moved = true;
+      if (longTimer.current) { clearTimeout(longTimer.current); longTimer.current = null; }
     }
-    if (!dragRef.current.moved) return;
+    if (!drag.current.moved) return;
     e.preventDefault();
     setPos({
-      right:  Math.max(8, Math.min(window.innerWidth  - 96, dragRef.current.sr - dx)),
-      bottom: Math.max(8, Math.min(window.innerHeight - 140, dragRef.current.sb - dy)),
+      right:  Math.max(8, Math.min(window.innerWidth  - 96, drag.current.sr - dx)),
+      bottom: Math.max(8, Math.min(window.innerHeight - 150, drag.current.sb - dy)),
     });
   };
   const onTouchEnd = () => {
-    dragRef.current.active = false;
-    if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null; }
+    drag.current.active = false;
+    if (longTimer.current) { clearTimeout(longTimer.current); longTimer.current = null; }
   };
 
-  // Canvas PiP handle — pre-built when call starts
+  // Canvas PiP handle
   const pipHandle = useRef<PipHandle | null>(null);
+
   useEffect(() => {
     if (!inCall) { pipHandle.current?.stop(); pipHandle.current = null; return; }
     const h = buildCanvasPip(title, initial);
-    if (h) { h.video.play().catch(() => {}); pipHandle.current = h; }
+    if (h) {
+      // play() must be called ASAP so Chrome sees it as an active video
+      h.video.play().catch(() => {});
+      pipHandle.current = h;
+    }
     return () => { pipHandle.current?.stop(); pipHandle.current = null; };
   }, [inCall, title, initial]);
+
+  // Keep mic-muted state in sync with canvas so badge updates
+  useEffect(() => {
+    pipHandle.current?.setMicMuted(!localMic);
+  }, [localMic]);
+
+  // ── AUTO-ENTER PiP when tab is hidden ────────────────────────────────
+  // visibilitychange is a trusted event — requestPictureInPicture() is allowed
+  useEffect(() => {
+    if (!inCall) return;
+    const onHide = async () => {
+      if (document.visibilityState !== "hidden") return;
+      const h = pipHandle.current;
+      if (!h?.video) return;
+      // Only request if not already in PiP
+      if (document.pictureInPictureElement) return;
+      try {
+        await h.video.requestPictureInPicture();
+      } catch {
+        // Silently fail — autopictureinpicture handles the rest
+      }
+    };
+    document.addEventListener("visibilitychange", onHide);
+    return () => document.removeEventListener("visibilitychange", onHide);
+  }, [inCall]);
 
   // Handlers
   const handleReturn = useCallback(() => { setMinimized(false); setShowControls(false); }, [setMinimized]);
   const handleLeave  = useCallback(() => leaveClass(), [leaveClass]);
-  const handleToggleMic = useCallback(() => { setLocalMic(v => !v); toggleMicFnRef.current?.(); }, [toggleMicFnRef]);
-  const handleToggleCam = useCallback(() => { setLocalCam(v => !v); toggleCamFnRef.current?.(); }, [toggleCamFnRef]);
+
+  const handleToggleMic = useCallback(() => {
+    setLocalMic(v => !v);
+    toggleMicFnRef.current?.();
+  }, [toggleMicFnRef]);
+
+  const handleToggleCam = useCallback(() => {
+    setLocalCam(v => !v);
+    toggleCamFnRef.current?.();
+  }, [toggleCamFnRef]);
 
   // Keep-alive hooks
   useSilentAudio(inCall);
   useWakeLock(inCall);
   useMediaSession(inCall, title, handleReturn, handleLeave);
 
-  // Minimize — fires PiP within user gesture window
-  const pipRequestRef = useRef<() => void>(() => {});
+  // PiP request helper (for in-app minimize button)
+  const pipReqRef = useRef<() => void>(() => {});
   useEffect(() => {
-    pipRequestRef.current = () => {
+    pipReqRef.current = () => {
       tryDocumentPiP(title, initial, handleReturn, handleLeave, handleToggleMic, micEnabled)
-        .then(ok => { if (ok) return; return tryVideoPiP(); })
         .then(ok => {
           if (ok) return;
+          // Remote video PiP (avoids inverted self-view)
+          const vids = Array.from(document.querySelectorAll("video")) as HTMLVideoElement[];
+          const remote = vids.find(v => !v.muted && v.readyState >= 2 && v.videoWidth > 0 && v !== pipHandle.current?.video);
+          if (remote) { remote.requestPictureInPicture().catch(() => {}); return; }
+          // Canvas PiP
           const h = pipHandle.current;
           if (h?.video) h.video.requestPictureInPicture().catch(() => {});
         });
@@ -275,10 +425,10 @@ export default function GlobalClassroomOverlay() {
 
   const handleMinimize = useCallback(() => {
     setMinimized(true);
-    pipRequestRef.current(); // must call within gesture window
+    pipReqRef.current(); // within user-gesture window
   }, [setMinimized]);
 
-  // Clean up PiP when restoring
+  // Exit PiP when returning to full class
   useEffect(() => {
     if (!minimized && document.pictureInPictureElement) {
       document.exitPictureInPicture().catch(() => {});
@@ -289,11 +439,10 @@ export default function GlobalClassroomOverlay() {
 
   return (
     <>
-      {/* ── Full classroom (always mounted, hidden when minimized) ── */}
+      {/* Full classroom — hidden but running when minimized */}
       <div style={{
         position: "fixed", inset: 0, zIndex: 8000,
-        display: minimized ? "none" : "flex",
-        flexDirection: "column",
+        display: minimized ? "none" : "flex", flexDirection: "column",
       }}>
         <ClassroomView
           subject={activeSubject}
@@ -303,21 +452,18 @@ export default function GlobalClassroomOverlay() {
         />
       </div>
 
-      {/* ── Draggable floating bubble ─────────────────────────────────
-          When minimized in-browser: a small draggable circle.
-          Tap  → return to full class
-          Long-press → toggle mic/cam/end controls row below bubble  */}
+      {/* ── Draggable in-browser bubble ── */}
       {minimized && (
         <>
           <style>{`
             @keyframes livering {
-              0%   { box-shadow: 0 0 0 0 rgba(239,68,68,.7); }
-              70%  { box-shadow: 0 0 0 10px rgba(239,68,68,0); }
-              100% { box-shadow: 0 0 0 0 rgba(239,68,68,0); }
+              0%   { box-shadow: 0 0 0 0 rgba(239,68,68,.75), 0 6px 20px rgba(0,0,0,.55); }
+              70%  { box-shadow: 0 0 0 9px rgba(239,68,68,0), 0 6px 20px rgba(0,0,0,.55); }
+              100% { box-shadow: 0 0 0 0 rgba(239,68,68,0), 0 6px 20px rgba(0,0,0,.55); }
             }
-            @keyframes bubIn { from{opacity:0;transform:scale(.7)} to{opacity:1;transform:scale(1)} }
-            .pip-bub { animation: bubIn .2s ease; }
-            .pip-bub-btn:active { transform:scale(.82) !important; }
+            @keyframes bub-in { from{opacity:0;transform:scale(.65)} to{opacity:1;transform:scale(1)} }
+            .pip-bub { animation: bub-in .22s cubic-bezier(.34,1.56,.64,1); }
+            .pip-ctrl-btn:active { opacity:.7; transform:scale(.84) !important; }
           `}</style>
 
           <div
@@ -338,24 +484,24 @@ export default function GlobalClassroomOverlay() {
               userSelect: "none",
             }}
           >
-            {/* ── Controls tray (shown on long-press) ── */}
+            {/* Controls tray — shown on long-press */}
             {showControls && (
               <div style={{
-                display: "flex", flexDirection: "column", gap: 8,
-                alignItems: "center",
-                background: "rgba(8,25,15,.96)",
+                background: "rgba(8,25,15,.97)",
                 border: "1px solid rgba(201,168,76,.4)",
-                borderRadius: 16,
+                borderRadius: 18,
                 padding: "10px 8px",
-                boxShadow: "0 6px 28px rgba(0,0,0,.7)",
+                display: "flex", flexDirection: "column",
+                alignItems: "center", gap: 8,
+                boxShadow: "0 8px 28px rgba(0,0,0,.7)",
               }}>
-                {/* Mic */}
+                {/* Mic toggle */}
                 <button
-                  className="pip-bub-btn"
+                  className="pip-ctrl-btn"
                   onClick={handleToggleMic}
                   style={{
                     width: 44, height: 44, borderRadius: "50%", border: "none", cursor: "pointer",
-                    background: localMic ? "rgba(255,255,255,.15)" : "rgba(239,68,68,.25)",
+                    background: localMic ? "rgba(255,255,255,.14)" : "rgba(239,68,68,.28)",
                     display: "flex", alignItems: "center", justifyContent: "center",
                     transition: "transform .12s",
                   }}
@@ -364,29 +510,14 @@ export default function GlobalClassroomOverlay() {
                     ? <Mic    style={{ width: 16, height: 16, color: "#fff" }} />
                     : <MicOff style={{ width: 16, height: 16, color: RED   }} />}
                 </button>
-                {/* Cam off (only shown if cam was on) */}
-                {localCam && (
-                  <button
-                    className="pip-bub-btn"
-                    onClick={handleToggleCam}
-                    style={{
-                      width: 44, height: 44, borderRadius: "50%", border: "none", cursor: "pointer",
-                      background: "rgba(255,255,255,.15)",
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      transition: "transform .12s",
-                    }}
-                  >
-                    <VideoOff style={{ width: 16, height: 16, color: "#fff" }} />
-                  </button>
-                )}
                 {/* End call */}
                 <button
-                  className="pip-bub-btn"
+                  className="pip-ctrl-btn"
                   onClick={handleLeave}
                   style={{
                     width: 44, height: 44, borderRadius: "50%", border: "none", cursor: "pointer",
-                    background: "rgba(239,68,68,.2)",
-                    border: "1px solid rgba(239,68,68,.4)" as any,
+                    background: "rgba(239,68,68,.22)",
+                    border: "1px solid rgba(239,68,68,.45)" as any,
                     display: "flex", alignItems: "center", justifyContent: "center",
                     transition: "transform .12s",
                   }}
@@ -396,32 +527,27 @@ export default function GlobalClassroomOverlay() {
               </div>
             )}
 
-            {/* ── Main bubble ── tap = return, long-press = controls ── */}
+            {/* Main bubble — tap = return */}
             <button
-              onClick={() => { if (!dragRef.current.moved) handleReturn(); }}
+              onClick={() => { if (!drag.current.moved) handleReturn(); }}
               style={{
                 width: 80, height: 80, borderRadius: "50%",
-                background: `radial-gradient(circle at 35% 35%, #2a6a3a, ${GREEN})`,
+                background: `radial-gradient(circle at 38% 35%, #2a6a3a, ${GREEN})`,
                 border: `3px solid ${GOLD}`,
-                boxShadow: "0 6px 24px rgba(0,0,0,.6), 0 0 0 0 rgba(239,68,68,.7)",
-                animation: "livering 1.8s ease-out infinite",
-                cursor: "pointer",
+                cursor: "pointer", outline: "none",
                 display: "flex", flexDirection: "column",
                 alignItems: "center", justifyContent: "center",
-                gap: 2,
-                position: "relative",
-                outline: "none",
+                gap: 2, position: "relative",
+                animation: "livering 1.8s ease-out infinite",
               }}
             >
-              {/* Initial letter */}
               <span style={{ fontSize: 26, fontWeight: 800, color: GOLD, lineHeight: 1 }}>
                 {initial}
               </span>
-              {/* LIVE label */}
               <span style={{ fontSize: 8, fontWeight: 800, color: RED, letterSpacing: ".6px" }}>
                 LIVE
               </span>
-              {/* Mic muted indicator */}
+              {/* Mic muted badge */}
               {!localMic && (
                 <div style={{
                   position: "absolute", top: -2, right: -2,
@@ -429,7 +555,7 @@ export default function GlobalClassroomOverlay() {
                   background: RED, border: "2px solid #fff",
                   display: "flex", alignItems: "center", justifyContent: "center",
                 }}>
-                  <MicOff style={{ width: 11, height: 11, color: "#fff" }} />
+                  <MicOff style={{ width: 10, height: 10, color: "#fff" }} />
                 </div>
               )}
             </button>
