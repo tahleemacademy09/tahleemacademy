@@ -172,7 +172,75 @@ const TeacherClasses = () => {
       return db_ - da;
     });
 
-    setSessions(merged);
+    // 6. FIX: Also fetch recurring timetable slots and convert to virtual upcoming sessions
+    // This surfaces timetable-based classes that have no explicit live_session yet.
+    let timetableSlots: any[] = [];
+    if (subjectIds.length > 0) {
+      const { data: tt } = await supabase
+        .from("subject_timetable" as any)
+        .select("id, subject_id, day_of_week, start_time, end_time, live_url, subjects(title, title_ar)")
+        .eq("is_active", true)
+        .in("subject_id", subjectIds);
+      timetableSlots = tt || [];
+    }
+    // Also fetch timetable where teacher_id = user.id directly
+    const { data: ttDirect } = await supabase
+      .from("subject_timetable" as any)
+      .select("id, subject_id, day_of_week, start_time, end_time, live_url, subjects(title, title_ar)")
+      .eq("is_active", true)
+      .eq("teacher_id", user.id);
+    const seenTT = new Set(timetableSlots.map((s: any) => s.id));
+    for (const s of (ttDirect || [])) {
+      if (!seenTT.has(s.id)) { seenTT.add(s.id); timetableSlots.push(s); }
+    }
+
+    // For each timetable slot compute the next occurrence date within 7 days
+    const now = new Date();
+    const existingSubjectIds = new Set(merged.filter(s => s.status !== "ended" && s.status !== "completed").map((s: any) => s.subject_id));
+    const virtualSessions: any[] = [];
+
+    for (const slot of timetableSlots) {
+      // Skip if there's already a live_session for this subject that's upcoming
+      if (existingSubjectIds.has(slot.subject_id)) continue;
+
+      const targetDay: number = slot.day_of_week ?? -1;
+      if (targetDay < 0) continue;
+
+      // Find next occurrence (today or within next 6 days)
+      for (let offset = 0; offset <= 6; offset++) {
+        const candidate = new Date(now);
+        candidate.setDate(now.getDate() + offset);
+        if (candidate.getDay() !== targetDay) continue;
+
+        // Set time from start_time (HH:MM)
+        if (slot.start_time) {
+          const [h, m] = slot.start_time.split(":").map(Number);
+          candidate.setHours(h, m, 0, 0);
+        }
+
+        // Don't show if already passed today
+        if (candidate.getTime() < now.getTime() - 30 * 60_000) continue;
+
+        virtualSessions.push({
+          id: `tt-${slot.id}-${offset}`,
+          subject_id: slot.subject_id,
+          subjects: slot.subjects,
+          scheduled_at: candidate.toISOString(),
+          status: "scheduled",
+          session_number: "—",
+          topic: null,
+          duration_minutes: null,
+          total_participants: 0,
+          _isTimetable: true,
+          _timetableId: slot.id,
+        });
+        break; // only next occurrence per slot
+      }
+    }
+
+    // Merge virtual sessions with live_sessions (virtual sessions go at the end)
+    const allSessions = [...merged, ...virtualSessions];
+    setSessions(allSessions);
     setLoading(false);
   }, [user]);
 
@@ -418,6 +486,11 @@ const TeacherClasses = () => {
                     {isActive && (
                       <Badge className="bg-green-500 text-white text-xs animate-pulse gap-1">
                         🔴 {t("LIVE", "مباشر")}
+                      </Badge>
+                    )}
+                    {(s as any)._isTimetable && !isActive && (
+                      <Badge className="bg-amber-100 text-amber-700 border-amber-300 text-xs">
+                        🔁 {t("Recurring", "متكرر")}
                       </Badge>
                     )}
                     {isImminent && !isActive && (
