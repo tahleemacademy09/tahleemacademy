@@ -1,5 +1,7 @@
 // src/pages/teacher/TeacherDashboard.tsx
 // Professional redesign matching student dashboard's green-gold aesthetic
+// FIX: Today's Schedule now queries subject_timetable (recurring) + host_id live_sessions
+//      so admin-assigned/timetabled classes always surface correctly.
 
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
@@ -57,6 +59,15 @@ function StatCard({ icon: Icon, label, value, color, to }: { icon: any; label: s
   return to ? <Link to={to} style={{ textDecoration: "none" }}>{inner}</Link> : inner;
 }
 
+// ── to12hr ─────────────────────────────────────────────────────────────────
+function to12hr(timeStr: string): string {
+  if (!timeStr) return "";
+  const [h, m] = timeStr.split(":").map(Number);
+  const ampm = h >= 12 ? "PM" : "AM";
+  const h12 = h % 12 || 12;
+  return `${h12}:${String(m).padStart(2, "0")} ${ampm}`;
+}
+
 // ── Main ───────────────────────────────────────────────────────────────────
 const TeacherDashboard = () => {
   const { t, language } = useLanguage();
@@ -80,11 +91,29 @@ const TeacherDashboard = () => {
   useEffect(() => {
     if (!user) return;
     const fetchData = async () => {
-      // Subjects
-      const { data: subjects } = await supabase.from("subjects").select("id, title, title_ar").eq("teacher_id", user.id);
-      const subjectIds = (subjects || []).map(s => s.id);
+      // ── 1. Teacher's owned subjects ──────────────────────────────────────
+      const { data: ownedSubjects } = await supabase
+        .from("subjects").select("id, title, title_ar").eq("teacher_id", user.id);
+      const ownedSubjectIds = (ownedSubjects || []).map(s => s.id);
 
-      // Students via enrollments
+      // ── 2. Timetable-assigned subjects (teacher_id on subject_timetable) ─
+      const { data: ttSlots } = await supabase
+        .from("subject_timetable" as any).select("subject_id").eq("teacher_id", user.id);
+      const ttSubjectIds = [...new Set((ttSlots || []).map((s: any) => s.subject_id).filter(Boolean))];
+
+      let extraSubs: any[] = [];
+      if (ttSubjectIds.length > 0) {
+        const missingIds = ttSubjectIds.filter((id: string) => !ownedSubjectIds.includes(id));
+        if (missingIds.length > 0) {
+          const { data: es } = await supabase
+            .from("subjects").select("id, title, title_ar").in("id", missingIds);
+          extraSubs = es || [];
+        }
+      }
+      const allSubjects = [...(ownedSubjects || []), ...extraSubs];
+      const subjectIds = allSubjects.map(s => s.id);
+
+      // ── 3. Students via enrollments ──────────────────────────────────────
       let studentCount = 0;
       let courseIds: string[] = [];
       if (subjectIds.length > 0) {
@@ -96,19 +125,23 @@ const TeacherDashboard = () => {
         }
       }
 
-      // Private students
+      // ── 4. Private students ──────────────────────────────────────────────
       const { count: pvtCount } = await supabase.from("profiles").select("id", { count: "exact", head: true })
         .eq("assigned_teacher_id", user.id).eq("student_type", "private");
 
-      // Today's sessions
+      // ── 5. Today's live_sessions (all sources) ───────────────────────────
       const todayStr = today.toISOString().split("T")[0];
       let sessionsToday: any[] = [];
+
+      // 5a. Via subject_id (owned + timetable subjects)
       if (subjectIds.length > 0) {
         const { data: s1 } = await supabase.from("live_sessions")
           .select("*, subjects(title, title_ar)").in("subject_id", subjectIds)
           .gte("scheduled_at", todayStr + "T00:00:00")
           .lte("scheduled_at", todayStr + "T23:59:59");
         sessionsToday = s1 || [];
+
+        // fallback to created_at if no scheduled_at sessions
         if (!sessionsToday.length) {
           const { data: s2 } = await supabase.from("live_sessions")
             .select("*, subjects(title, title_ar)").in("subject_id", subjectIds)
@@ -118,12 +151,73 @@ const TeacherDashboard = () => {
         }
       }
 
-      // Today's private sessions
+      // 5b. FIX: Also via host_id = teacher (admin may assign directly)
+      const { data: hostSessions } = await supabase.from("live_sessions")
+        .select("*, subjects(title, title_ar)").eq("host_id", user.id)
+        .gte("scheduled_at", todayStr + "T00:00:00")
+        .lte("scheduled_at", todayStr + "T23:59:59");
+
+      // Merge + deduplicate live_sessions
+      const seenIds = new Set(sessionsToday.map((s: any) => s.id));
+      for (const s of (hostSessions || [])) {
+        if (!seenIds.has(s.id)) { seenIds.add(s.id); sessionsToday.push(s); }
+      }
+
+      // ── 6. FIX: Today's subject_timetable recurring slots ────────────────
+      // subject_timetable has day_of_week (0=Sun…6=Sat), start_time, end_time
+      const todayIndex = today.getDay();
+      let timetableToday: any[] = [];
+
+      if (subjectIds.length > 0) {
+        // Slots matching the teacher's subjects today
+        const { data: ttToday } = await supabase
+          .from("subject_timetable" as any)
+          .select("id, subject_id, start_time, end_time, live_url, subjects(title, title_ar)")
+          .eq("day_of_week", todayIndex)
+          .eq("is_active", true)
+          .in("subject_id", subjectIds);
+        timetableToday = ttToday || [];
+      }
+
+      // Slots where the timetable itself has teacher_id = user.id (independent of subject ownership)
+      const { data: ttDirect } = await supabase
+        .from("subject_timetable" as any)
+        .select("id, subject_id, start_time, end_time, live_url, subjects(title, title_ar)")
+        .eq("day_of_week", todayIndex)
+        .eq("is_active", true)
+        .eq("teacher_id", user.id);
+
+      // Merge timetable slots, dedup by id
+      const seenTT = new Set(timetableToday.map((s: any) => s.id));
+      for (const s of (ttDirect || [])) {
+        if (!seenTT.has(s.id)) { seenTT.add(s.id); timetableToday.push(s); }
+      }
+
+      // Convert timetable slots into session-like objects (for uniform rendering)
+      // Only include if no explicit live_session already exists for this subject today
+      const existingSubjectsToday = new Set(sessionsToday.map((s: any) => s.subject_id));
+      const timetableVirtual = timetableToday
+        .filter((slot: any) => !existingSubjectsToday.has(slot.subject_id))
+        .map((slot: any) => ({
+          id: `tt-${slot.id}`,
+          subject_id: slot.subject_id,
+          subjects: slot.subjects,
+          scheduled_at: null,
+          start_time: slot.start_time,
+          end_time: slot.end_time,
+          live_url: slot.live_url,
+          status: "timetable",
+          _isTimetable: true,
+        }));
+
+      const allTodaySessions = [...sessionsToday, ...timetableVirtual];
+
+      // ── 7. Today's private sessions ──────────────────────────────────────
       const { data: pvtSessions } = await supabase.from("private_sessions")
         .select("*, profiles!private_sessions_student_id_fkey(full_name), subjects(title)")
         .eq("teacher_id", user.id).eq("session_date", todayStr);
 
-      // Pending grading
+      // ── 8. Pending grading ───────────────────────────────────────────────
       let pendingTests = 0, pendingExams = 0;
       let pendingAttemptsList: any[] = [];
       if (courseIds.length > 0) {
@@ -150,12 +244,12 @@ const TeacherDashboard = () => {
         }
       }
 
-      // Recent graded results
+      // ── 9. Recent graded results ─────────────────────────────────────────
       const { data: recent } = await supabase.from("exam_attempts")
         .select("*, profiles!exam_attempts_user_id_fkey(full_name), exams(title, type)")
         .eq("status", "graded").order("submitted_at", { ascending: false }).limit(6);
 
-      // Recordings count
+      // ── 10. Recordings count ─────────────────────────────────────────────
       let recCount = 0;
       if (subjectIds.length > 0) {
         const { count } = await supabase.from("session_recordings")
@@ -167,13 +261,13 @@ const TeacherDashboard = () => {
         students: studentCount,
         privateStudents: pvtCount || 0,
         subjects: subjectIds.length,
-        todayClasses: sessionsToday.length,
+        todayClasses: allTodaySessions.length,
         pendingTests,
         pendingExams,
         totalRecordings: recCount,
         unreadMsgs: 0,
       });
-      setTodaySessions(sessionsToday);
+      setTodaySessions(allTodaySessions);
       setTodayPrivate(pvtSessions || []);
       setPendingAttempts(pendingAttemptsList);
       setRecentResults(recent || []);
@@ -216,25 +310,19 @@ const TeacherDashboard = () => {
         padding: "28px 24px 80px",
         position: "relative", overflow: "hidden",
       }}>
-        {/* Decorative circles */}
         <div style={{ position: "absolute", top: -40, right: -40, width: 200, height: 200, borderRadius: "50%", background: "rgba(201,168,76,.08)", pointerEvents: "none" }} />
         <div style={{ position: "absolute", bottom: -60, left: -20, width: 160, height: 160, borderRadius: "50%", background: "rgba(255,255,255,.04)", pointerEvents: "none" }} />
 
         <div style={{ position: "relative", maxWidth: 900, margin: "0 auto" }}>
-          {/* Date */}
           <div style={{ fontSize: 12, color: "rgba(255,255,255,.55)", marginBottom: 10, fontWeight: 500 }}>
             {format(today, "EEEE, MMMM d, yyyy")}
           </div>
-
-          {/* Greeting */}
           <h1 style={{ fontSize: 26, fontWeight: 900, color: "#fff", margin: "0 0 4px" }}>
             {t("Welcome back", "مرحباً بعودتك")}, {profile?.full_name?.split(" ")[0] || t("Teacher", "المعلم")} 👋
           </h1>
           <p style={{ fontSize: 13, color: "rgba(255,255,255,.6)", margin: 0 }}>
             {t("May Allah bless your teaching and benefit your students", "بارك الله في علمك ونفع به طلابك")}
           </p>
-
-          {/* Verse */}
           <div style={{
             marginTop: 20, padding: "14px 18px", borderRadius: 14,
             background: "rgba(201,168,76,.12)", border: "1px solid rgba(201,168,76,.25)",
@@ -243,15 +331,9 @@ const TeacherDashboard = () => {
             <div style={{ fontFamily: "'Amiri', serif", fontSize: 17, color: GOLD, direction: "rtl", lineHeight: 1.7, marginBottom: 6 }}>
               {verse.ar}
             </div>
-            <div style={{ fontSize: 11, color: "rgba(255,255,255,.7)", fontStyle: "italic" }}>
-              {verse.en}
-            </div>
-            <div style={{ fontSize: 10, color: "rgba(201,168,76,.7)", marginTop: 4, fontWeight: 700 }}>
-              — {verse.ref}
-            </div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,.7)", fontStyle: "italic" }}>{verse.en}</div>
+            <div style={{ fontSize: 10, color: "rgba(201,168,76,.7)", marginTop: 4, fontWeight: 700 }}>— {verse.ref}</div>
           </div>
-
-          {/* Pending alert */}
           {(stats.pendingExams + stats.pendingTests) > 0 && (
             <div style={{
               marginTop: 14, padding: "10px 14px", borderRadius: 12,
@@ -270,13 +352,9 @@ const TeacherDashboard = () => {
         </div>
       </div>
 
-      {/* ── Stats grid (overlapping hero) ────────────────────────── */}
+      {/* ── Stats grid ──────────────────────────────────────────── */}
       <div style={{ maxWidth: 900, margin: "-50px auto 0", padding: "0 20px", position: "relative", zIndex: 1 }}>
-        <div style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))",
-          gap: 12,
-        }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 12 }}>
           {statCards.map((s, i) => <StatCard key={i} {...s} />)}
         </div>
       </div>
@@ -291,6 +369,11 @@ const TeacherDashboard = () => {
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <Clock size={16} color={GOLD} />
               <span style={{ fontWeight: 800, fontSize: 14, color: G }}>{t("Today's Schedule", "جدول اليوم")}</span>
+              {todaySessions.length > 0 && (
+                <span style={{ background: "#DCFCE7", color: "#16A34A", borderRadius: 20, fontSize: 10, fontWeight: 900, padding: "1px 6px" }}>
+                  {todaySessions.length}
+                </span>
+              )}
             </div>
             <Link to="/teacher/timetable" style={{ fontSize: 12, color: GOLD, fontWeight: 700, textDecoration: "none" }}>
               {t("Full schedule →", "الجدول الكامل →")}
@@ -304,29 +387,51 @@ const TeacherDashboard = () => {
               </div>
             ) : (
               <>
-                {todaySessions.map((s: any) => (
-                  <div key={s.id} style={{
-                    padding: "12px 14px", borderRadius: 12, background: "#F0FDF4",
-                    border: "1px solid #BBF7D0", display: "flex", alignItems: "center", gap: 12,
-                  }}>
-                    <div style={{ width: 36, height: 36, borderRadius: 10, background: G, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                      <Video size={16} color="#fff" />
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <p style={{ fontWeight: 700, fontSize: 13, color: G, margin: 0 }}>{s.subjects?.title || "Class"}</p>
-                      <p style={{ fontSize: 11, color: "#7a9e88", margin: "2px 0 0" }}>
-                        {s.scheduled_at ? format(new Date(s.scheduled_at), "h:mm a") : t("Live Class", "حصة مباشرة")}
-                        {s.status === "active" && <span style={{ color: "#DC2626", fontWeight: 900 }}> • LIVE</span>}
-                      </p>
-                    </div>
-                    <button onClick={() => navigate("/teacher/classes")} style={{
-                      padding: "6px 12px", borderRadius: 8, background: G, border: "none",
-                      color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer",
+                {todaySessions.map((s: any) => {
+                  const isActive = s.status === "active";
+                  const isTimetable = s._isTimetable === true;
+                  const timeLabel = s.scheduled_at
+                    ? format(new Date(s.scheduled_at), "h:mm a")
+                    : s.start_time ? to12hr(s.start_time) : t("Today", "اليوم");
+
+                  return (
+                    <div key={s.id} style={{
+                      padding: "12px 14px", borderRadius: 12,
+                      background: isActive ? "#F0FDF4" : isTimetable ? "#FFFBEB" : "#F0FDF4",
+                      border: `1px solid ${isActive ? "#86EFAC" : isTimetable ? "#FDE68A" : "#BBF7D0"}`,
+                      display: "flex", alignItems: "center", gap: 12,
                     }}>
-                      {t("Join", "انضم")}
-                    </button>
-                  </div>
-                ))}
+                      <div style={{ width: 36, height: 36, borderRadius: 10, background: isTimetable ? GOLD : G, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                        <Video size={16} color="#fff" />
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <p style={{ fontWeight: 700, fontSize: 13, color: G, margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {s.subjects?.title || "Class"}
+                          {isTimetable && (
+                            <span style={{ marginLeft: 6, fontSize: 10, background: "#FEF3C7", color: "#D97706", borderRadius: 4, padding: "1px 5px", fontWeight: 700 }}>
+                              {t("Recurring", "متكرر")}
+                            </span>
+                          )}
+                        </p>
+                        <p style={{ fontSize: 11, color: "#7a9e88", margin: "2px 0 0" }}>
+                          {timeLabel}
+                          {s.end_time && ` — ${to12hr(s.end_time)}`}
+                          {isActive && <span style={{ color: "#DC2626", fontWeight: 900 }}> • LIVE</span>}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => navigate("/teacher/classes")}
+                        style={{
+                          padding: "6px 12px", borderRadius: 8,
+                          background: isActive ? "#16A34A" : G,
+                          border: "none", color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer",
+                        }}
+                      >
+                        {isActive ? t("Join Live", "انضم") : t("Start", "ابدأ")}
+                      </button>
+                    </div>
+                  );
+                })}
                 {todayPrivate.map((s: any) => (
                   <div key={s.id} style={{
                     padding: "12px 14px", borderRadius: 12, background: "#FDF4FF",
@@ -339,10 +444,7 @@ const TeacherDashboard = () => {
                       <p style={{ fontWeight: 700, fontSize: 13, color: G, margin: 0 }}>{s.profiles?.full_name || "Student"}</p>
                       <p style={{ fontSize: 11, color: "#7a9e88", margin: "2px 0 0" }}>{s.start_time} — {s.end_time}</p>
                     </div>
-                    <span style={{
-                      padding: "4px 8px", borderRadius: 20, background: "#F3E8FF",
-                      color: "#9333EA", fontSize: 10, fontWeight: 700,
-                    }}>
+                    <span style={{ padding: "4px 8px", borderRadius: 20, background: "#F3E8FF", color: "#9333EA", fontSize: 10, fontWeight: 700 }}>
                       {t("Private", "خاص")}
                     </span>
                   </div>
@@ -359,10 +461,7 @@ const TeacherDashboard = () => {
               <CheckSquare size={16} color="#DC2626" />
               <span style={{ fontWeight: 800, fontSize: 14, color: G }}>{t("Pending Grading", "بانتظار التصحيح")}</span>
               {pendingAttempts.length > 0 && (
-                <span style={{
-                  background: "#FEF2F2", color: "#DC2626", borderRadius: 20,
-                  fontSize: 10, fontWeight: 900, padding: "1px 6px",
-                }}>
+                <span style={{ background: "#FEF2F2", color: "#DC2626", borderRadius: 20, fontSize: 10, fontWeight: 900, padding: "1px 6px" }}>
                   {stats.pendingExams + stats.pendingTests}
                 </span>
               )}
