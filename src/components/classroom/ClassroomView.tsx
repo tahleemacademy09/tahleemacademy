@@ -660,7 +660,7 @@ const MaterialViewer=({material,isTeacher,onClose}:any)=>{
 };
 
 /* ══ RECORDING CONTROLLER ══ */
-const RecController=({sessionId,subjectId,userEmail,onSavingChange}:any)=>{
+const RecController=({sessionId,subjectId,userEmail,onSavingChange,stopRecRef}:any)=>{
   const room=useRoomContext();const{t}=useLanguage();
   const[recording,setRecording]=useState(false);const[paused,setPaused]=useState(false);const[time,setTime]=useState(0);
   const timerRef=useRef<any>(null);const mrRef=useRef<MediaRecorder|null>(null);const chunksRef=useRef<Blob[]>([]);const acRef=useRef<AudioContext|null>(null);
@@ -746,6 +746,8 @@ const RecController=({sessionId,subjectId,userEmail,onSavingChange}:any)=>{
     mrRef.current=null;
   };
   const togglePause=()=>{const mr=mrRef.current;if(!mr)return;if(paused){mr.resume();timerRef.current=setInterval(()=>setTime(t=>t+1),1000);setPaused(false);}else{mr.pause();clearInterval(timerRef.current);setPaused(true);}};
+  // Expose stopRec to parent so it can auto-save on class exit / tab close
+  useEffect(()=>{if(stopRecRef)stopRecRef.current=stopRec;},[stopRec,stopRecRef]);
   const fmt=(s:number)=>`${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
   return(<div style={{display:"flex",alignItems:"center",gap:8}}>
     {recording&&<><span style={{fontSize:12,color:paused?"#fbbf24":RED,fontWeight:700}}>{paused?"⏸":"⏺"} {fmt(time)}</span>
@@ -1033,6 +1035,13 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   const[sessionId,setSessionId]=useState<string|null>(null);const[sessionInfo,setSessionInfo]=useState<any>(null);
   const[attendanceId,setAttendanceId]=useState<string|null>(null);const[joinedAt]=useState(Date.now());
   const[savingRec,setSavingRec]=useState(false);const[isSessionLive,setIsSessionLive]=useState(false);const[duration,setDuration]=useState(0);
+  const recStopRef=useRef<()=>Promise<void>>(async()=>{});
+  // Auto-save recording when teacher closes/refreshes the tab
+  useEffect(()=>{
+    const onPageHide=()=>{recStopRef.current?.();};
+    window.addEventListener("pagehide",onPageHide);
+    return()=>window.removeEventListener("pagehide",onPageHide);
+  },[]);
   const[chatOpen,setChatOpen]=useState(false);const[partOpen,setPartOpen]=useState(false);const[chatUnread,setChatUnread]=useState(0);
   useEffect(()=>{
     if(!sessionId||phase!=="live")return;
@@ -1137,6 +1146,8 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   const endSession=async()=>{
     intentionalLeaveRef.current=true; // prevent auto-reconnect on disconnect
     setShowEnd(false);
+    // Auto-save any active recording before tearing down the session
+    await recStopRef.current?.();
     try{
       if(sessionId){
         await supabase.from("live_sessions").update({status:"ended",ended_at:new Date().toISOString(),actual_end_time:new Date().toISOString()}).eq("id",sessionId);
@@ -1149,8 +1160,10 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     }
   };
 
-  const leaveSession=()=>{
+  const leaveSession=async()=>{
     intentionalLeaveRef.current=true; // prevent auto-reconnect on disconnect
+    // Auto-save any active recording before leaving
+    await recStopRef.current?.();
     try{playLeaveSound();}catch{}
     if(attendanceId){const d=Math.floor((Date.now()-joinedAt)/1000);supabase.from("attendance_logs").update({left_at:new Date().toISOString(),duration_seconds:d}).eq("id",attendanceId);}
     if(sessionId&&user)supabase.from("class_participants").update({left_at:new Date().toISOString(),duration_minutes:Math.floor((Date.now()-joinedAt)/60000)}).eq("session_id",sessionId).eq("student_id",user.id);
@@ -1272,7 +1285,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
             </div>
             <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
               <LayoutSwitcher layout={layout} onChange={setLayout}/>
-              {isPrivileged&&<RecController sessionId={sessionId} subjectId={subject.id} userEmail={user?.email||""} onSavingChange={setSavingRec}/>}
+              {isPrivileged&&<RecController sessionId={sessionId} subjectId={subject.id} userEmail={user?.email||""} onSavingChange={setSavingRec} stopRecRef={recStopRef}/>}
             </div>
           </div>
           {/* Content — material panels render here so footer always stays visible */}
