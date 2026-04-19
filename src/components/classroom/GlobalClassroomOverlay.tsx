@@ -1,29 +1,61 @@
 /*
-  GlobalClassroomOverlay.tsx — Tahleem Academy v6
+  GlobalClassroomOverlay.tsx — Tahleem Academy v7
   ─────────────────────────────────────────────────
-  - NO in-browser green bubble at all.
-  - Only the OS-level PiP window (the small black card) shows.
-  - PiP triggers on: down-arrow minimize button, back button (popstate),
-    phone home/minimize key (autopictureinpicture + visibilitychange).
-  - Canvas is 160×160 — tiny, rounded, shows initial + mic badge.
+  FIXES:
+  1. Phone locked → AudioContext resumes on unlock + ReconnectMonitor
+     handles WebRTC via visibilitychange already in ClassroomView.
+  2. Back button after returning via PiP tap → reliably shows PiP again.
+  3. Camera ON → minimize → shows REAL VIDEO PiP (not canvas card).
+     Canvas card only shows when camera is off.
 */
 
 import { useLiveClass } from "@/contexts/LiveClassContext";
 import ClassroomView     from "@/components/classroom/ClassroomView";
 import { useEffect, useRef, useCallback, useState } from "react";
 
-/* ─── Silent audio keep-alive ─── */
+/* ─── Silent audio keep-alive ─────────────────────────────────────────
+   Keeps an AudioContext alive so Chrome doesn't suspend the tab.
+   On phone lock/unlock, Chrome suspends AudioContext — we resume it
+   on visibilitychange to keep WebRTC media flowing.                   */
 function useSilentAudio(active: boolean) {
-  const r = useRef<AudioContext | null>(null);
+  const acRef = useRef<AudioContext | null>(null);
+
   useEffect(() => {
-    if (!active) { r.current?.close(); r.current = null; return; }
-    try {
-      const AC = window.AudioContext || (window as any).webkitAudioContext;
-      const c = new AC(), o = c.createOscillator(), g = c.createGain();
-      g.gain.value = 0; o.connect(g); g.connect(c.destination); o.start();
-      r.current = c;
-    } catch {}
-    return () => { r.current?.close(); r.current = null; };
+    if (!active) { acRef.current?.close(); acRef.current = null; return; }
+
+    const start = () => {
+      try {
+        const AC = window.AudioContext || (window as any).webkitAudioContext;
+        const ctx = new AC();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        gain.gain.value = 0;            // truly silent
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        acRef.current = ctx;
+      } catch {}
+    };
+
+    start();
+
+    // Resume AudioContext after phone lock/unlock or tab background/foreground
+    const onVis = () => {
+      if (document.visibilityState !== "visible") return;
+      const ctx = acRef.current;
+      if (!ctx) { start(); return; }
+      if (ctx.state === "suspended") ctx.resume().catch(() => {});
+      if (ctx.state === "closed")    start();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("focus", onVis);
+
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("focus", onVis);
+      acRef.current?.close();
+      acRef.current = null;
+    };
   }, [active]);
 }
 
@@ -37,6 +69,7 @@ function useWakeLock(active: boolean) {
   useEffect(() => {
     if (!active) { r.current?.release(); r.current = null; return; }
     req();
+    // Re-acquire wake lock after phone unlock (lock screen releases it)
     const fn = () => { if (document.visibilityState === "visible") req(); };
     document.addEventListener("visibilitychange", fn);
     return () => { document.removeEventListener("visibilitychange", fn); r.current?.release(); };
@@ -68,10 +101,9 @@ function useMediaSession(
   }, [active, title, onReturn, onLeave]);
 }
 
-/* ─── Canvas PiP ──────────────────────────────────────────────────────
-   160×160 tiny canvas. Rounded corners. Shows gold avatar + mic badge.
-   Uses autopictureinpicture so Chrome auto-enters PiP on tab hide.
-*/
+/* ─── Canvas PiP (audio-only / camera-off fallback) ──────────────────
+   Only shown when camera is OFF. 160×160 rounded card.
+   autopictureinpicture tells Chrome to auto-enter PiP on tab hide.    */
 const GOLD = "#c9a84c";
 const DARK = "#0c1f12";
 const RED  = "#ef4444";
@@ -95,11 +127,12 @@ function buildCanvasPip(title: string, initial: string): PipHandle | null {
   let micMuted = true;
   let raf = 0;
 
-  const drawRoundRect = (x: number, y: number, w: number, h: number, r: number) => {
+  const rr = (x: number, y: number, w: number, h: number, r: number) => {
     ctx.beginPath();
-    ctx.moveTo(x + r, y);
-    ctx.lineTo(x + w - r, y); ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-    ctx.lineTo(x + w, y + h - r); ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
     ctx.lineTo(x + r, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - r);
     ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y);
     ctx.closePath();
@@ -107,58 +140,40 @@ function buildCanvasPip(title: string, initial: string): PipHandle | null {
 
   const draw = () => {
     ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = "#0c1f12"; rr(0, 0, W, H, 28); ctx.fill();
+    ctx.strokeStyle = "rgba(201,168,76,0.65)"; ctx.lineWidth = 2;
+    rr(1, 1, W - 2, H - 2, 27); ctx.stroke();
 
-    // Rounded dark background
-    ctx.fillStyle = "#0c1f12";
-    drawRoundRect(0, 0, W, H, 28);
-    ctx.fill();
-
-    // Gold border
-    ctx.strokeStyle = "rgba(201,168,76,0.65)";
-    ctx.lineWidth = 2;
-    drawRoundRect(1, 1, W - 2, H - 2, 27);
-    ctx.stroke();
-
-    // Avatar circle
+    // Avatar
     ctx.fillStyle = GOLD;
     ctx.beginPath(); ctx.arc(W / 2, 62, 42, 0, Math.PI * 2); ctx.fill();
-
-    // Initial letter
     ctx.fillStyle = DARK;
-    ctx.font = "bold 32px system-ui, -apple-system, sans-serif";
+    ctx.font = "bold 32px system-ui,-apple-system,sans-serif";
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.fillText(initial.toUpperCase().slice(0, 2), W / 2, 62);
 
-    // Pulsing LIVE dot
-    const pulse = 0.4 + 0.6 * Math.abs(Math.sin(Date.now() / 700));
-    ctx.fillStyle = `rgba(239,68,68,${pulse})`;
+    // Pulsing LIVE
+    const p = 0.4 + 0.6 * Math.abs(Math.sin(Date.now() / 700));
+    ctx.fillStyle = `rgba(239,68,68,${p})`;
     ctx.beginPath(); ctx.arc(W / 2 - 16, 118, 4, 0, Math.PI * 2); ctx.fill();
-
-    // LIVE text
-    ctx.fillStyle = `rgba(239,68,68,${Math.min(pulse + 0.2, 1)})`;
-    ctx.font = "bold 9px system-ui, sans-serif";
-    ctx.textBaseline = "middle";
+    ctx.fillStyle = `rgba(239,68,68,${Math.min(p + 0.2, 1)})`;
+    ctx.font = "bold 9px system-ui,sans-serif"; ctx.textBaseline = "middle";
     ctx.fillText("LIVE", W / 2 + 4, 118);
 
-    // Mic badge (bottom-right of avatar)
+    // Mic badge
     const bx = W / 2 + 28, by = 92;
     ctx.fillStyle = micMuted ? "rgba(239,68,68,.95)" : "rgba(34,120,60,.95)";
     ctx.beginPath(); ctx.arc(bx, by, 11, 0, Math.PI * 2); ctx.fill();
     ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.arc(bx, by, 11, 0, Math.PI * 2); ctx.stroke();
-
-    // Mic icon in badge
     ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5; ctx.fillStyle = "#fff";
     if (micMuted) {
-      // Mic outline (faded)
       ctx.globalAlpha = 0.45;
       ctx.beginPath(); ctx.arc(bx, by - 2, 3.2, 0, Math.PI * 2); ctx.fill();
       ctx.globalAlpha = 1;
-      // Slash
       ctx.beginPath(); ctx.moveTo(bx - 6, by + 5); ctx.lineTo(bx + 6, by - 5);
-      ctx.lineWidth = 2; ctx.stroke();
+      ctx.lineWidth = 2.2; ctx.stroke();
     } else {
-      // Mic body
       ctx.beginPath(); ctx.arc(bx, by - 2, 3, 0, Math.PI * 2); ctx.fill();
       ctx.beginPath();
       ctx.moveTo(bx - 3.5, by - 1);
@@ -168,7 +183,6 @@ function buildCanvasPip(title: string, initial: string): PipHandle | null {
       ctx.beginPath(); ctx.moveTo(bx, by + 4); ctx.lineTo(bx, by + 7); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(bx - 2.5, by + 7); ctx.lineTo(bx + 2.5, by + 7); ctx.stroke();
     }
-
     raf = requestAnimationFrame(draw);
   };
 
@@ -176,14 +190,10 @@ function buildCanvasPip(title: string, initial: string): PipHandle | null {
 
   const vid = document.createElement("video");
   vid.srcObject = cv.captureStream(10);
-  vid.muted = true;
-  vid.playsInline = true;
-
-  // Critical: tells Chrome to auto-enter PiP when tab goes background
+  vid.muted = true; vid.playsInline = true;
+  // Auto-enter PiP when tab hides (Chrome)
   (vid as any).autopictureinpicture = true;
   vid.setAttribute("autopictureinpicture", "");
-
-  // Off-screen — CANNOT use display:none (breaks PiP)
   vid.style.cssText = "position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;pointer-events:none;opacity:0.01;z-index:-999;";
   document.body.appendChild(vid);
 
@@ -199,12 +209,7 @@ function buildCanvasPip(title: string, initial: string): PipHandle | null {
     vid.remove();
   };
 
-  return {
-    video: vid,
-    setMicMuted: (v: boolean) => { micMuted = v; },
-    pip,
-    stop,
-  };
+  return { video: vid, setMicMuted: (v) => { micMuted = v; }, pip, stop };
 }
 
 /* ════════════════════════════════════════════════════════════ */
@@ -212,12 +217,13 @@ export default function GlobalClassroomOverlay() {
   const {
     activeSubject, inCall, minimized, autoJoin,
     leaveClass, setMinimized,
-    micEnabled,
+    micEnabled, camEnabled,
     toggleMicFnRef, toggleCamFnRef,
   } = useLiveClass();
 
   const title   = activeSubject?.title ?? "Live Class";
   const initial = (activeSubject?.title ?? "L").charAt(0).toUpperCase();
+
   const [localMic, setLocalMic] = useState(micEnabled);
   useEffect(() => setLocalMic(micEnabled), [micEnabled]);
 
@@ -228,83 +234,101 @@ export default function GlobalClassroomOverlay() {
     toggleMicFnRef.current?.();
   }, [toggleMicFnRef]);
 
-  // Keep-alive
   useSilentAudio(inCall);
   useWakeLock(inCall);
   useMediaSession(inCall, title, handleReturn, handleLeave);
 
-  // Ref so the leavepictureinpicture listener always has the latest handler
+  /* Canvas PiP handle — pre-built when call starts, used ONLY when cam is off */
+  const pipHandle = useRef<PipHandle | null>(null);
   const handleReturnRef = useRef(handleReturn);
   handleReturnRef.current = handleReturn;
-
-  // Canvas PiP handle — built once when call starts
-  const pipHandle = useRef<PipHandle | null>(null);
 
   useEffect(() => {
     if (!inCall) { pipHandle.current?.stop(); pipHandle.current = null; return; }
     const h = buildCanvasPip(title, initial);
     if (h) {
       h.video.play().catch(() => {});
-      // Tapping the PiP card (expand/close) → go straight back to the class
+      // Tapping PiP card → return to class immediately
       h.video.addEventListener("leavepictureinpicture", () => handleReturnRef.current());
       pipHandle.current = h;
     }
     return () => { pipHandle.current?.stop(); pipHandle.current = null; };
   }, [inCall, title, initial]);
 
-  // Sync mic badge in canvas
+  // Keep mic badge in sync
   useEffect(() => { pipHandle.current?.setMicMuted(!localMic); }, [localMic]);
 
-  // ── PiP trigger function ──────────────────────────────────────────────
-  // Tries: 1) remote video PiP (non-inverted)  2) canvas PiP
+  /* ── triggerPiP ────────────────────────────────────────────────────────
+     Camera ON  → use a REAL video element (local or remote) so user
+                  sees actual live video in the PiP window.
+     Camera OFF → use the canvas card (initial + LIVE + mic badge).      */
+  const camEnabledRef = useRef(camEnabled);
+  camEnabledRef.current = camEnabled;
+
   const triggerPiP = useCallback(async () => {
-    if (!pipHandle.current) return;
-    // Prefer a real remote video so user sees the teacher
-    const vids = Array.from(document.querySelectorAll("video")) as HTMLVideoElement[];
-    const remote = vids.find(v =>
-      !v.muted && v.readyState >= 2 && v.videoWidth > 0 &&
-      v !== pipHandle.current?.video,
-    );
-    if (remote && !document.pictureInPictureElement) {
-      try { await remote.requestPictureInPicture(); return; } catch {}
+    const h = pipHandle.current;
+    if (!h) return;
+
+    // If already in PiP, don't request again
+    if (document.pictureInPictureElement) return;
+
+    const camOn = camEnabledRef.current;
+
+    if (camOn) {
+      // Look for ANY video with actual video content (local self-view is fine)
+      const vids = Array.from(document.querySelectorAll("video")) as HTMLVideoElement[];
+      const withVideo = vids.find(v =>
+        v.readyState >= 2 &&
+        v.videoWidth > 0 &&
+        v !== h.video,             // exclude our canvas proxy
+      );
+      if (withVideo) {
+        try { await withVideo.requestPictureInPicture(); return; } catch {}
+      }
     }
-    // Fall back to canvas PiP
-    await pipHandle.current.pip();
+
+    // Camera off (or no video element found) → canvas card
+    await h.pip();
   }, []);
 
-  // ── Minimize button (down arrow) — direct user gesture ───────────────
+  /* ── Minimize button (↓) — direct user gesture, always works ── */
   const handleMinimize = useCallback(() => {
     setMinimized(true);
-    triggerPiP();          // called within gesture window — always works
+    triggerPiP();
   }, [setMinimized, triggerPiP]);
 
-  // ── Back button (popstate) — also a user gesture on Android ──────────
+  /* ── Back button (popstate) ──────────────────────────────────────────
+     Android hardware back button fires popstate.
+     LiveClassContext also listens and sets minimized=true.
+     We trigger PiP here because popstate IS a trusted gesture.         */
+  const triggerPiPRef = useRef(triggerPiP);
+  triggerPiPRef.current = triggerPiP;
+
   useEffect(() => {
     if (!inCall) return;
     const onPop = () => {
-      // Re-push guard state (LiveClassContext already sets minimized)
-      history.pushState({ tahleem: true }, "");
-      triggerPiP();        // popstate IS trusted on Android Chrome
+      // Small delay so LiveClassContext's handler (which sets minimized=true)
+      // runs first, then we request PiP
+      setTimeout(() => triggerPiPRef.current(), 50);
     };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
-  }, [inCall, triggerPiP]);
+  }, [inCall]);
 
-  // ── Phone home button / browser minimize (visibilitychange) ──────────
-  // visibilitychange is trusted on desktop Chrome; on Android Chrome
-  // autopictureinpicture handles it. We still try both.
+  /* ── Phone home button / screen off (visibilitychange) ─────────────── */
   useEffect(() => {
     if (!inCall) return;
     const onHide = () => {
       if (document.visibilityState !== "hidden") return;
       if (document.pictureInPictureElement) return;
-      triggerPiP();
+      // This is a trusted event — PiP request allowed
+      triggerPiPRef.current();
     };
     document.addEventListener("visibilitychange", onHide);
     return () => document.removeEventListener("visibilitychange", onHide);
-  }, [inCall, triggerPiP]);
+  }, [inCall]);
 
-  // Exit PiP when returning to full-screen class
+  /* ── Exit PiP when returning to full class ── */
   useEffect(() => {
     if (!minimized && document.pictureInPictureElement) {
       document.exitPictureInPicture().catch(() => {});
@@ -314,7 +338,6 @@ export default function GlobalClassroomOverlay() {
   if (!inCall || !activeSubject) return null;
 
   return (
-    /* Full classroom — always mounted, hidden when minimized */
     <div style={{
       position: "fixed", inset: 0, zIndex: 8000,
       display: minimized ? "none" : "flex", flexDirection: "column",
