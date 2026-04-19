@@ -8,8 +8,9 @@
 
   When minimized (within the browser):
   - A floating pill overlay appears on every page
+  - Shows mic + camera toggle buttons regardless of whether video is on
   - The full ClassroomView is hidden (display:none) but still running
-  - Clicking the pill brings the full view back (NOT the lobby!)
+  - Clicking the expand icon brings the full view back (NOT the lobby!)
   - Clicking X on the pill ends the call
 
   When the browser itself is backgrounded / home screen shown:
@@ -30,7 +31,7 @@
 
 import { useLiveClass } from "@/contexts/LiveClassContext";
 import ClassroomView from "@/components/classroom/ClassroomView";
-import { Maximize2, X } from "lucide-react";
+import { Maximize2, X, Mic, MicOff, Video, VideoOff } from "lucide-react";
 import { useEffect, useRef, useCallback } from "react";
 
 const GOLD  = "#c9a84c";
@@ -52,7 +53,7 @@ function useSilentAudioKeepAlive(active: boolean) {
       const ctx = new AC();
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
-      gain.gain.value = 0; // completely silent — just keeps the audio graph alive
+      gain.gain.value = 0;
       osc.connect(gain);
       gain.connect(ctx.destination);
       osc.start();
@@ -66,7 +67,7 @@ function useSilentAudioKeepAlive(active: boolean) {
   }, [active]);
 }
 
-/* ─── screen wake lock — prevents screen sleeping mid-class ─── */
+/* ─── screen wake lock ─── */
 function useWakeLock(active: boolean) {
   const lockRef = useRef<WakeLockSentinel | null>(null);
 
@@ -84,8 +85,6 @@ function useWakeLock(active: boolean) {
       return;
     }
     request();
-
-    // Re-request after the tab becomes visible (lock auto-releases on hide)
     const onVisible = () => {
       if (document.visibilityState === "visible") request();
     };
@@ -98,7 +97,7 @@ function useWakeLock(active: boolean) {
   }, [active, request]);
 }
 
-/* ─── MediaSession — notification bar + lock screen controls ─── */
+/* ─── MediaSession ─── */
 function useMediaSession(active: boolean, title: string, onReturn: () => void, onLeave: () => void) {
   useEffect(() => {
     if (!active || !("mediaSession" in navigator)) return;
@@ -110,16 +109,15 @@ function useMediaSession(active: boolean, title: string, onReturn: () => void, o
     });
     navigator.mediaSession.playbackState = "playing";
 
-    // Map media controls to classroom actions
     const setAction = (action: MediaSessionAction, handler: () => void) => {
       try { navigator.mediaSession.setActionHandler(action, handler); } catch (_) {}
     };
 
-    setAction("play",         onReturn);
-    setAction("pause",        onReturn);  // tapping pause = return to class
-    setAction("stop",         onLeave);
-    setAction("previoustrack",onReturn);
-    setAction("nexttrack",    onReturn);
+    setAction("play",          onReturn);
+    setAction("pause",         onReturn);
+    setAction("stop",          onLeave);
+    setAction("previoustrack", onReturn);
+    setAction("nexttrack",     onReturn);
 
     return () => {
       navigator.mediaSession.metadata = null;
@@ -130,19 +128,22 @@ function useMediaSession(active: boolean, title: string, onReturn: () => void, o
   }, [active, title, onReturn, onLeave]);
 }
 
-/* ─── Picture-in-Picture logic ─── */
+/* ─── Document Picture-in-Picture ─── */
 async function tryDocumentPiP(
   title: string,
   onReturn: () => void,
-  onLeave: () => void
+  onLeave: () => void,
+  onToggleMic: () => void,
+  onToggleCam: () => void,
+  micEnabled: boolean,
+  camEnabled: boolean,
 ): Promise<boolean> {
   const dPiP = (window as any).documentPictureInPicture;
   if (!dPiP) return false;
 
   try {
-    const pipWin: Window = await dPiP.requestWindow({ width: 320, height: 80 });
+    const pipWin: Window = await dPiP.requestWindow({ width: 340, height: 80 });
 
-    // Inject styles into PiP window
     const style = pipWin.document.createElement("style");
     style.textContent = `
       * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, sans-serif; }
@@ -152,45 +153,43 @@ async function tryDocumentPiP(
         background: rgba(8,25,15,.97);
         border: 1px solid rgba(201,168,76,.5);
         border-radius: 50px;
-        padding: 10px 16px;
+        padding: 10px 14px;
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 8px;
         width: 100%;
         height: 80px;
         box-shadow: 0 4px 24px rgba(0,0,0,.8);
       }
       .dot { width:9px;height:9px;border-radius:50%;background:#ef4444;animation:pulse 1.4s ease-in-out infinite;flex-shrink:0; }
-      .name { color:#fff;font-size:13px;font-weight:700;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+      .name { color:#fff;font-size:12px;font-weight:700;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
       .live { font-size:10px;font-weight:800;color:#ef4444;border:1px solid rgba(239,68,68,.35);border-radius:7px;padding:2px 7px;flex-shrink:0; }
-      .btn { width:36px;height:36px;border-radius:50%;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:16px; }
-      .btn-return { background:#c9a84c; }
-      .btn-leave  { background:rgba(239,68,68,.2);border:1px solid rgba(239,68,68,.4); }
+      .btn { width:34px;height:34px;border-radius:50%;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:15px; }
+      .btn-mic-on  { background:rgba(255,255,255,0.12); }
+      .btn-mic-off { background:rgba(239,68,68,0.22); }
+      .btn-cam-on  { background:rgba(255,255,255,0.12); }
+      .btn-cam-off { background:rgba(239,68,68,0.22); }
+      .btn-return  { background:#c9a84c; }
+      .btn-leave   { background:rgba(239,68,68,.2);border:1px solid rgba(239,68,68,.4); }
     `;
     pipWin.document.head.appendChild(style);
 
-    // Build the pill
     pipWin.document.body.innerHTML = `
       <div class="pill">
         <span class="dot"></span>
         <span class="name">${title}</span>
         <span class="live">LIVE</span>
-        <button class="btn btn-return" title="Return to class">⬆</button>
-        <button class="btn btn-leave"  title="Leave class">✕</button>
+        <button class="btn ${micEnabled ? "btn-mic-on" : "btn-mic-off"}" id="btn-mic" title="${micEnabled ? "Mute mic" : "Unmute mic"}">${micEnabled ? "🎙️" : "🔇"}</button>
+        <button class="btn ${camEnabled ? "btn-cam-on" : "btn-cam-off"}" id="btn-cam" title="${camEnabled ? "Turn off camera" : "Turn on camera"}">${camEnabled ? "📹" : "📷"}</button>
+        <button class="btn btn-return" id="btn-return" title="Return to class">⬆</button>
+        <button class="btn btn-leave"  id="btn-leave"  title="Leave class">✕</button>
       </div>
     `;
 
-    // Wire up buttons — bridge back to the main window
-    pipWin.document.querySelector(".btn-return")?.addEventListener("click", () => {
-      pipWin.close();
-      onReturn();
-    });
-    pipWin.document.querySelector(".btn-leave")?.addEventListener("click", () => {
-      pipWin.close();
-      onLeave();
-    });
-
-    // If user closes PiP window manually, return to normal view
+    pipWin.document.getElementById("btn-mic")?.addEventListener("click", () => { onToggleMic(); });
+    pipWin.document.getElementById("btn-cam")?.addEventListener("click", () => { onToggleCam(); });
+    pipWin.document.getElementById("btn-return")?.addEventListener("click", () => { pipWin.close(); onReturn(); });
+    pipWin.document.getElementById("btn-leave")?.addEventListener("click", () => { pipWin.close(); onLeave(); });
     pipWin.addEventListener("pagehide", onReturn);
 
     return true;
@@ -200,7 +199,6 @@ async function tryDocumentPiP(
 }
 
 async function tryVideoPiP(): Promise<boolean> {
-  // Find the best available video element (prefer remote/non-muted)
   const videos = Array.from(document.querySelectorAll("video")) as HTMLVideoElement[];
   const remote = videos.find(v => !v.muted && v.readyState >= 2);
   const any    = videos.find(v => v.readyState >= 2);
@@ -219,14 +217,21 @@ async function tryVideoPiP(): Promise<boolean> {
 
 /* ════════════════════════════════════════════════════════════ */
 export default function GlobalClassroomOverlay() {
-  const { activeSubject, inCall, minimized, autoJoin, leaveClass, setMinimized } = useLiveClass();
+  const {
+    activeSubject, inCall, minimized, autoJoin,
+    leaveClass, setMinimized,
+    micEnabled, camEnabled,
+    toggleMicFnRef, toggleCamFnRef,
+  } = useLiveClass();
 
   const title = activeSubject?.title ?? "Live Class";
 
-  const handleReturn = useCallback(() => setMinimized(false), [setMinimized]);
-  const handleLeave  = useCallback(() => leaveClass(),         [leaveClass]);
+  const handleReturn    = useCallback(() => setMinimized(false),      [setMinimized]);
+  const handleLeave     = useCallback(() => leaveClass(),              [leaveClass]);
+  const handleToggleMic = useCallback(() => toggleMicFnRef.current?.(), [toggleMicFnRef]);
+  const handleToggleCam = useCallback(() => toggleCamFnRef.current?.(), [toggleCamFnRef]);
 
-  /* Keep-alive hooks — active whenever a call is running */
+  /* Keep-alive hooks */
   useSilentAudioKeepAlive(inCall);
   useWakeLock(inCall);
   useMediaSession(inCall, title, handleReturn, handleLeave);
@@ -236,18 +241,14 @@ export default function GlobalClassroomOverlay() {
     if (!inCall) return;
 
     if (minimized) {
-      // Try Document PiP first, then Video PiP
-      tryDocumentPiP(title, handleReturn, handleLeave).then(ok => {
-        if (!ok) tryVideoPiP();
-      });
+      tryDocumentPiP(title, handleReturn, handleLeave, handleToggleMic, handleToggleCam, micEnabled, camEnabled)
+        .then(ok => { if (!ok) tryVideoPiP(); });
     } else {
-      // Exit any active PiP when the user restores the full view
       if (document.pictureInPictureElement) {
         document.exitPictureInPicture().catch(() => {});
       }
-      // Document PiP windows close themselves when the user returns (pagehide fires onReturn)
     }
-  }, [minimized, inCall, title, handleReturn, handleLeave]);
+  }, [minimized, inCall, title, handleReturn, handleLeave, handleToggleMic, handleToggleCam, micEnabled, camEnabled]);
 
   /* Clean up PiP on call end */
   useEffect(() => {
@@ -257,6 +258,16 @@ export default function GlobalClassroomOverlay() {
   }, [inCall]);
 
   if (!inCall || !activeSubject) return null;
+
+  /* ── Button style helper ── */
+  const pillBtn = (active: boolean, danger = false): React.CSSProperties => ({
+    width: 36, height: 36, borderRadius: "50%", border: "none", cursor: "pointer",
+    flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
+    background: danger
+      ? active ? "rgba(239,68,68,0.18)" : "rgba(239,68,68,0.18)"
+      : active ? "rgba(255,255,255,0.14)" : "rgba(239,68,68,0.22)",
+    transition: "background .15s, transform .15s",
+  });
 
   return (
     <>
@@ -279,14 +290,14 @@ export default function GlobalClassroomOverlay() {
       </div>
 
       {/* ── In-browser minimized pill ──
-          Still shown while the browser is in the foreground.
-          When the browser goes to the home screen the PiP window
-          takes over (created above). */}
+          Shown whenever the call is minimized within the browser tab.
+          Includes mic + camera toggles so you can mute without returning. */}
       {minimized && (
         <>
           <style>{`
             @keyframes livePulse  { 0%,100%{opacity:1} 50%{opacity:.3} }
             @keyframes pipSlideUp { from{transform:translateX(-50%) translateY(20px);opacity:0} to{transform:translateX(-50%) translateY(0);opacity:1} }
+            .pip-pill-btn:active { transform: scale(0.9) !important; }
           `}</style>
           <div
             style={{
@@ -298,50 +309,100 @@ export default function GlobalClassroomOverlay() {
               background: "rgba(8,25,15,.97)",
               border: "1px solid rgba(201,168,76,.45)",
               borderRadius: 50,
-              padding: "10px 18px",
+              padding: "10px 16px",
               display: "flex",
               alignItems: "center",
-              gap: 12,
+              gap: 10,
               boxShadow: "0 8px 40px rgba(0,0,0,.75), 0 0 0 1px rgba(201,168,76,.15)",
               animation: "pipSlideUp .3s ease",
-              minWidth: 260,
-              maxWidth: "90vw",
+              minWidth: 330,
+              maxWidth: "94vw",
               fontFamily: "'Cairo', sans-serif",
             }}
           >
             {/* Live pulse dot */}
-            <span style={{ width: 8, height: 8, borderRadius: "50%", background: RED, flexShrink: 0, animation: "livePulse 1.4s ease-in-out infinite" }} />
+            <span style={{
+              width: 8, height: 8, borderRadius: "50%", background: RED,
+              flexShrink: 0, animation: "livePulse 1.4s ease-in-out infinite",
+            }} />
 
             {/* Subject name */}
-            <span style={{ color: "#fff", fontSize: 13, fontWeight: 700, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            <span style={{
+              color: "#fff", fontSize: 12, fontWeight: 700, flex: 1,
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            }}>
               {activeSubject.title}
             </span>
 
-            {/* "Live" label */}
-            <span style={{ fontSize: 10, fontWeight: 800, color: RED, background: "rgba(239,68,68,.15)", border: "1px solid rgba(239,68,68,.3)", borderRadius: 8, padding: "2px 7px", letterSpacing: ".5px", flexShrink: 0 }}>
+            {/* LIVE label */}
+            <span style={{
+              fontSize: 10, fontWeight: 800, color: RED,
+              background: "rgba(239,68,68,.15)", border: "1px solid rgba(239,68,68,.3)",
+              borderRadius: 8, padding: "2px 7px", letterSpacing: ".5px", flexShrink: 0,
+            }}>
               LIVE
             </span>
 
-            {/* PiP hint — tapping the expand icon also enters PiP */}
+            {/* ── Mic toggle ── */}
             <button
-              onClick={handleReturn}
-              title="Return to class"
-              style={{ width: 36, height: 36, borderRadius: "50%", background: GOLD, border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, boxShadow: "0 2px 12px rgba(201,168,76,.45)", transition: "transform .15s" }}
+              className="pip-pill-btn"
+              onClick={handleToggleMic}
+              title={micEnabled ? "Mute microphone" : "Unmute microphone"}
+              style={pillBtn(micEnabled)}
               onMouseEnter={e => (e.currentTarget.style.transform = "scale(1.1)")}
               onMouseLeave={e => (e.currentTarget.style.transform = "scale(1)")}
             >
-              <Maximize2 style={{ width: 15, height: 15, color: DARK }} />
+              {micEnabled
+                ? <Mic    style={{ width: 14, height: 14, color: "#fff" }} />
+                : <MicOff style={{ width: 14, height: 14, color: RED   }} />}
             </button>
 
-            {/* End call */}
+            {/* ── Camera toggle ── */}
             <button
+              className="pip-pill-btn"
+              onClick={handleToggleCam}
+              title={camEnabled ? "Turn off camera" : "Turn on camera"}
+              style={pillBtn(camEnabled)}
+              onMouseEnter={e => (e.currentTarget.style.transform = "scale(1.1)")}
+              onMouseLeave={e => (e.currentTarget.style.transform = "scale(1)")}
+            >
+              {camEnabled
+                ? <Video    style={{ width: 14, height: 14, color: "#fff" }} />
+                : <VideoOff style={{ width: 14, height: 14, color: RED   }} />}
+            </button>
+
+            {/* ── Expand (return to class) ── */}
+            <button
+              className="pip-pill-btn"
+              onClick={handleReturn}
+              title="Return to class"
+              style={{
+                width: 36, height: 36, borderRadius: "50%", background: GOLD,
+                border: "none", display: "flex", alignItems: "center",
+                justifyContent: "center", cursor: "pointer", flexShrink: 0,
+                boxShadow: "0 2px 12px rgba(201,168,76,.45)", transition: "transform .15s",
+              }}
+              onMouseEnter={e => (e.currentTarget.style.transform = "scale(1.1)")}
+              onMouseLeave={e => (e.currentTarget.style.transform = "scale(1)")}
+            >
+              <Maximize2 style={{ width: 14, height: 14, color: DARK }} />
+            </button>
+
+            {/* ── End call ── */}
+            <button
+              className="pip-pill-btn"
               onClick={handleLeave}
               title="Leave class"
-              style={{ width: 36, height: 36, borderRadius: "50%", background: "rgba(239,68,68,.18)", border: "1px solid rgba(239,68,68,.45)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, transition: "background .15s, transform .15s" }}
+              style={{
+                width: 36, height: 36, borderRadius: "50%",
+                background: "rgba(239,68,68,.18)", border: "1px solid rgba(239,68,68,.45)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                cursor: "pointer", flexShrink: 0, transition: "background .15s, transform .15s",
+              }}
               onMouseEnter={e => { e.currentTarget.style.background = "rgba(239,68,68,.4)"; e.currentTarget.style.transform = "scale(1.1)"; }}
               onMouseLeave={e => { e.currentTarget.style.background = "rgba(239,68,68,.18)"; e.currentTarget.style.transform = "scale(1)"; }}
             >
-              <X style={{ width: 15, height: 15, color: RED }} />
+              <X style={{ width: 14, height: 14, color: RED }} />
             </button>
           </div>
         </>
