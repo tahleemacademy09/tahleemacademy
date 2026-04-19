@@ -1,12 +1,7 @@
 /*
   LiveClassContext.tsx — Tahleem Academy
-  ────────────────────────────────────────
-  Global live class state that:
-  - Persists across ALL navigation (never unmounts)
-  - Survives page refresh AND browser close via localStorage
-  - Shows a persistent Android notification when minimized
-  - Exposes micEnabled / camEnabled + toggle refs so the
-    GlobalClassroomOverlay can show mute buttons in the minimized pill
+  Manages global live class state. Persists across navigation.
+  Handles back-button interception and browser-minimize → overlay.
 */
 
 import {
@@ -14,64 +9,25 @@ import {
   type ReactNode,
 } from "react";
 
-const STORAGE_KEY = "tahleem_live_class";
-const NOTIF_TAG   = "tahleem-live-class";
+const STORAGE_KEY   = "tahleem_live_class";
+const HISTORY_STATE = "tahleem-live-class";
 
-/* ── Notification helpers ── */
-let _activeNotif: Notification | null = null;
-
-function closeNotif() {
-  try { _activeNotif?.close(); } catch {}
-  _activeNotif = null;
-}
-
-async function showNotif(subject: any, onClickReturn: () => void) {
-  if (!("Notification" in window)) return;
-  if (Notification.permission === "default") {
-    await Notification.requestPermission().catch(() => {});
-  }
-  if (Notification.permission !== "granted") return;
-  closeNotif();
-  try {
-    _activeNotif = new Notification("📡 Tahleem Academy — Live Class", {
-      body: `${subject?.title || "Class"} is in progress. Tap to return.`,
-      tag: NOTIF_TAG,
-      requireInteraction: true,
-      silent: true,
-      icon: "/favicon.ico",
-      badge: "/favicon.ico",
-    });
-    _activeNotif.onclick = () => {
-      window.focus();
-      onClickReturn();
-      closeNotif();
-    };
-  } catch {}
-}
-
+/* ── localStorage helpers ── */
 function persist(data: Record<string, any>) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     sessionStorage.setItem(STORAGE_KEY, JSON.stringify(data));
   } catch {}
 }
-
 function clearPersist() {
-  try {
-    localStorage.removeItem(STORAGE_KEY);
-    sessionStorage.removeItem(STORAGE_KEY);
-  } catch {}
+  try { localStorage.removeItem(STORAGE_KEY); sessionStorage.removeItem(STORAGE_KEY); } catch {}
 }
-
 function restore(): LiveClassState | null {
   try {
-    let raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) raw = sessionStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(STORAGE_KEY) || sessionStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const p = JSON.parse(raw);
-    if (p?.inCall && p?.activeSubject) {
-      return { ...p, autoJoin: true };
-    }
+    if (p?.inCall && p?.activeSubject) return { ...p, autoJoin: true };
   } catch {}
   return null;
 }
@@ -85,38 +41,28 @@ interface LiveClassState {
   micEnabled:    boolean;
   camEnabled:    boolean;
 }
-
 interface LiveClassContextType extends LiveClassState {
   joinClass:      (subject: any) => void;
   leaveClass:     () => void;
   setMinimized:   (v: boolean) => void;
   setMicEnabled:  (v: boolean) => void;
   setCamEnabled:  (v: boolean) => void;
-  /** Registered by ClassControls — calls the LiveKit toggle directly */
   toggleMicFnRef: React.MutableRefObject<() => void>;
   toggleCamFnRef: React.MutableRefObject<() => void>;
 }
-
 const LiveClassContext = createContext<LiveClassContextType | null>(null);
 
 /* ── Provider ── */
 export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
   const [state, setState] = useState<LiveClassState>(() => {
     const saved = restore();
-    return saved ?? {
-      activeSubject: null,
-      inCall: false,
-      minimized: false,
-      autoJoin: false,
-      micEnabled: false,
-      camEnabled: false,
-    };
+    return saved ?? { activeSubject: null, inCall: false, minimized: false, autoJoin: false, micEnabled: false, camEnabled: false };
   });
 
   const toggleMicFnRef = useRef<() => void>(() => {});
   const toggleCamFnRef = useRef<() => void>(() => {});
-  const returnToClassRef = useRef<() => void>(() => {});
 
+  // Persist call state
   useEffect(() => {
     if (state.inCall && state.activeSubject) {
       persist({ activeSubject: state.activeSubject, inCall: true, minimized: state.minimized });
@@ -125,39 +71,56 @@ export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
     }
   }, [state.inCall, state.minimized, state.activeSubject]);
 
+  // Push a history entry when call starts so back button can be intercepted
   useEffect(() => {
-    if (state.inCall && state.minimized && state.activeSubject) {
-      showNotif(state.activeSubject, () => returnToClassRef.current());
-    } else {
-      closeNotif();
+    if (state.inCall && !state.minimized) {
+      // Push a "guard" state so popstate fires before leaving the page
+      history.pushState({ [HISTORY_STATE]: true }, "");
     }
-  }, [state.inCall, state.minimized, state.activeSubject]);
+  }, [state.inCall]);
 
+  // Back button → minimize instead of navigating away
   useEffect(() => {
+    if (!state.inCall) return;
+    const onPop = (e: PopStateEvent) => {
+      // If we consumed our guard state, re-push it and minimize
+      if (!e.state?.[HISTORY_STATE]) {
+        history.pushState({ [HISTORY_STATE]: true }, "");
+      }
+      setState(prev => (prev.inCall ? { ...prev, minimized: true, autoJoin: false } : prev));
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [state.inCall]);
+
+  // Phone home button / browser swipe-away → minimize
+  useEffect(() => {
+    if (!state.inCall) return;
     const onVis = () => {
-      if (document.visibilityState === "visible" && !state.minimized) closeNotif();
+      if (document.visibilityState === "hidden") {
+        setState(prev => prev.inCall ? { ...prev, minimized: true, autoJoin: false } : prev);
+      }
+    };
+    const onBlur = () => {
+      setState(prev => prev.inCall ? { ...prev, minimized: true, autoJoin: false } : prev);
     };
     document.addEventListener("visibilitychange", onVis);
-    return () => document.removeEventListener("visibilitychange", onVis);
-  }, [state.minimized]);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, [state.inCall]);
 
   const joinClass = useCallback((subject: any) => {
     clearPersist();
-    setState({
-      activeSubject: subject,
-      inCall: true,
-      minimized: false,
-      autoJoin: false,
-      micEnabled: false,
-      camEnabled: false,
-    });
+    setState({ activeSubject: subject, inCall: true, minimized: false, autoJoin: false, micEnabled: false, camEnabled: false });
     if ("Notification" in window && Notification.permission === "default") {
       Notification.requestPermission().catch(() => {});
     }
   }, []);
 
   const leaveClass = useCallback(() => {
-    closeNotif();
     clearPersist();
     setState({ activeSubject: null, inCall: false, minimized: false, autoJoin: false, micEnabled: false, camEnabled: false });
   }, []);
@@ -170,28 +133,17 @@ export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
       }
       return next;
     });
+    // When restoring from minimized, push guard state again
+    if (!v) history.pushState({ [HISTORY_STATE]: true }, "");
   }, []);
 
-  const setMicEnabled = useCallback((v: boolean) => {
-    setState(prev => ({ ...prev, micEnabled: v }));
-  }, []);
-
-  const setCamEnabled = useCallback((v: boolean) => {
-    setState(prev => ({ ...prev, camEnabled: v }));
-  }, []);
-
-  returnToClassRef.current = () => setMinimized(false);
+  const setMicEnabled = useCallback((v: boolean) => setState(prev => ({ ...prev, micEnabled: v })), []);
+  const setCamEnabled = useCallback((v: boolean) => setState(prev => ({ ...prev, camEnabled: v })), []);
 
   return (
     <LiveClassContext.Provider value={{
-      ...state,
-      joinClass,
-      leaveClass,
-      setMinimized,
-      setMicEnabled,
-      setCamEnabled,
-      toggleMicFnRef,
-      toggleCamFnRef,
+      ...state, joinClass, leaveClass, setMinimized,
+      setMicEnabled, setCamEnabled, toggleMicFnRef, toggleCamFnRef,
     }}>
       {children}
     </LiveClassContext.Provider>
