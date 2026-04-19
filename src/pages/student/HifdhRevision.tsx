@@ -11,15 +11,18 @@ import { cn } from "@/lib/utils";
 import HifdhMemorization from "@/components/hifdh/HifdhMemorization";
 import HifdhExercise from "@/components/hifdh/HifdhExercise";
 import HifdhTest from "@/components/hifdh/HifdhTest";
+import QuranRevisionHub from "@/components/hifdh/QuranRevisionHub";
+import { RefreshCcw } from "lucide-react";
 
-type Tab = "overview" | "recitation" | "memorization" | "exercise" | "test";
+type Tab = "overview" | "recitation" | "memorization" | "exercise" | "test" | "revision";
 
 const TABS: { id: Tab; ar: string; icon: React.ElementType }[] = [
-  { id: "overview",     ar: "لوحة",   icon: BarChart3  },
-  { id: "recitation",   ar: "تلاوة",  icon: Mic        },
-  { id: "memorization", ar: "حفظ",    icon: Brain      },
-  { id: "exercise",     ar: "تمرين",  icon: Target     },
-  { id: "test",         ar: "اختبار", icon: FileCheck  },
+  { id: "overview",     ar: "لوحة",   icon: BarChart3    },
+  { id: "recitation",   ar: "تلاوة",  icon: Mic          },
+  { id: "memorization", ar: "حفظ",    icon: Brain        },
+  { id: "exercise",     ar: "تمرين",  icon: Target       },
+  { id: "test",         ar: "اختبار", icon: FileCheck    },
+  { id: "revision",     ar: "مراجعة", icon: RefreshCcw   },
 ];
 
 const RECITERS = [
@@ -988,6 +991,13 @@ export default function HifdhRevision() {
         {/* ── Test ── */}
         {activeTab === "test" && (
           <div className="h-full overflow-y-auto flex flex-col"><HifdhTest /></div>
+        )}
+
+        {/* ── Quran Revision ── */}
+        {activeTab === "revision" && (
+          <div className="h-full overflow-hidden">
+            <QuranRevisionHub userId={userId} />
+          </div>
         )}
       </div>
     </div>
