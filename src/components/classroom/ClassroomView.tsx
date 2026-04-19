@@ -16,6 +16,7 @@ import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { playJoinSound, playLeaveSound } from "@/lib/soundUtils";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { useLiveClass } from "@/contexts/LiveClassContext";
 import { toast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -1108,6 +1109,55 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
 const BottomBarBridge=(props:any)=>{const room=useRoomContext();const isMobile=useIsMobile();return<BottomBar {...props} room={room} isMobile={isMobile}/>;};
 
 /* ══ MAIN ══ */
+/* ══ ROOM → CONTEXT BRIDGE ══
+   Lives INSIDE LiveKitRoom. Always mounted regardless of phase.
+   Registers reliable mic/cam toggle functions into LiveClassContext
+   so the GlobalClassroomOverlay pill can call them even when minimized.
+   This replaces the fragile ClassControls-based ref registration.      */
+const RoomToContextBridge = () => {
+  const room = useRoomContext();
+  const { setMicEnabled, setCamEnabled, toggleMicFnRef, toggleCamFnRef } = useLiveClass();
+
+  // Re-register on every render so closures are always fresh
+  useEffect(() => {
+    toggleMicFnRef.current = async () => {
+      try {
+        const next = !room.localParticipant.isMicrophoneEnabled;
+        await room.localParticipant.setMicrophoneEnabled(next);
+        setMicEnabled(next);
+      } catch {}
+    };
+    toggleCamFnRef.current = async () => {
+      try {
+        const next = !room.localParticipant.isCameraEnabled;
+        await room.localParticipant.setCameraEnabled(next);
+        setCamEnabled(next);
+      } catch {}
+    };
+  });
+
+  // Sync enabled state whenever LiveKit track events fire
+  useEffect(() => {
+    const sync = () => {
+      setMicEnabled(room.localParticipant.isMicrophoneEnabled);
+      setCamEnabled(room.localParticipant.isCameraEnabled);
+    };
+    room.on(RoomEvent.LocalTrackPublished,   sync);
+    room.on(RoomEvent.LocalTrackUnpublished, sync);
+    room.on(RoomEvent.TrackMuted,            sync);
+    room.on(RoomEvent.TrackUnmuted,          sync);
+    sync();
+    return () => {
+      room.off(RoomEvent.LocalTrackPublished,   sync);
+      room.off(RoomEvent.LocalTrackUnpublished, sync);
+      room.off(RoomEvent.TrackMuted,            sync);
+      room.off(RoomEvent.TrackUnmuted,          sync);
+    };
+  }, [room, setMicEnabled, setCamEnabled]);
+
+  return null;
+};
+
 const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewProps)=>{
   const{user,hasRole}=useAuth();const{t}=useLanguage();const isMobile=useIsMobile();const isPrivileged=hasRole("admin")||hasRole("teacher");
   const[phase,setPhase]=useState<"lobby"|"live"|"ended">("lobby");
@@ -1346,6 +1396,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
         // ensuring LiveKit starts with a fresh connection and token.
         <LiveKitRoom key={roomKey} serverUrl={wsUrl} token={token} connect={phase==="live"} audio={false} video={false} options={{adaptiveStream:{pixelDensity:"screen"},dynacast:true,disconnectOnPageLeave:false,audioCaptureDefaults:{echoCancellation:true,noiseSuppression:true,autoGainControl:true,sampleRate:48000,channelCount:1},publishDefaults:{audioPreset:{maxBitrate:32000},dtx:true,red:false,stopMicTrackOnMute:false,videoEncoding:{maxBitrate:700_000,maxFramerate:20},backupCodec:true},videoCaptureDefaults:{resolution:{width:640,height:480,frameRate:20},facingMode:"user"}}} style={{flex:1,display:"flex",flexDirection:"column",minHeight:0,position:"relative"}} data-lk-theme="default">
           <RoomAudioRenderer/>
+          <RoomToContextBridge />
           <MediaAutoPublish lobbyMic={lobbyMic} lobbyCam={lobbyCam}/>
           <WbSyncBridge wbOpen={wbOpen} isTeacher={isPrivileged}/>
           <AdminMuteListener isPrivileged={isPrivileged}/>
