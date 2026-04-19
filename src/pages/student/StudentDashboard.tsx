@@ -88,7 +88,7 @@ const BORDER      = "rgba(15,45,31,0.1)";
 const StudentDashboard = () => {
   const { t, language } = useLanguage();
   const { user, profile, refreshProfile } = useAuth();
-  const { currentStep } = useTasjeel();
+  const { currentStep, loading: tasjeelLoading } = useTasjeel();
   const { effectiveUserId, isImpersonating } = useImpersonation();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
@@ -124,10 +124,10 @@ const StudentDashboard = () => {
 
   // ── GATEKEEPING: Redirect to awaiting-level if not yet assigned ─────────
   useEffect(() => {
-    if (!loading && currentStep !== "completed" && !isImpersonating) {
+    if (!loading && !tasjeelLoading && currentStep !== "completed" && !isImpersonating) {
       navigate("/student/awaiting-level", { replace: true });
     }
-  }, [loading, currentStep, navigate, isImpersonating]);
+  }, [loading, tasjeelLoading, currentStep, navigate, isImpersonating]);
 
   // ── Voice greeting — short, simple, works everywhere ─────────
   useEffect(() => {
@@ -322,7 +322,7 @@ const StudentDashboard = () => {
   );
 
   // ── Loading / Pending State ─────────
-  if (loading || currentStep !== "completed") return (
+  if (loading || tasjeelLoading || currentStep !== "completed") return (
     <div style={{ background: CREAM, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
       <div style={{ width: 40, height: 40, borderRadius: "50%", border: "4px solid #064E3B", borderTopColor: "transparent", animation: "spin .7s linear infinite" }} />
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
