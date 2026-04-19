@@ -1,19 +1,19 @@
 // src/components/hifdh/QuranRevisionHub.tsx
 // ─────────────────────────────────────────────────────────────────────────────
 //  Comprehensive Quran Revision System — Tahleem Academy
-//  Flow: Setup → Recite → Evaluate → Remediate → Exercise → Complete
+//  Flow: Setup → Recite (page hides on record) → Evaluate → Remediate → Exercise → Complete
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
 import {
-  Mic, MicOff, Play, Pause, ChevronRight, ChevronLeft,
-  CheckCircle2, XCircle, AlertTriangle, RotateCcw, BookOpen,
-  Award, Clock, Flame, Star, Loader2, Volume2, Check, X,
-  RefreshCw, Headphones, Brain, Trophy, Eye, EyeOff,
-  SkipForward, Zap, Target, BarChart3, Moon, Sparkles,
-  BookMarked, Hash, List
+  Mic, MicOff, ChevronRight, ChevronLeft,
+  CheckCircle2, XCircle, AlertTriangle, BookOpen,
+  Loader2, Volume2, Check, X,
+  Headphones, Brain, Eye, EyeOff,
+  Target, Sparkles, BookMarked, StopCircle,
+  RefreshCw, Award, RotateCcw,
 } from "lucide-react";
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -22,15 +22,14 @@ import {
 
 const GOLD       = "#c9a84c";
 const GOLD_LIGHT = "#e8c97a";
-const DG         = "#0f2d1f";   // dark green
+const DG         = "#0f2d1f";
 const DG2        = "#1a4030";
-const PARCHMENT  = "#fdf6e3";
-const PARCH2     = "#f5eed8";
-const INK        = "#1c1208";
-const PASS_SCORE = 75;          // minimum to proceed from recitation
-const EXERCISE_PASS = 70;       // minimum to pass exercise
+const PARCHMENT  = "#fffdf6";
+const PARCH2     = "#f9f2dc";
+const INK        = "#1a1007";
+const PASS_SCORE = 70;
+const EXERCISE_PASS = 65;
 
-// Standard Madani mushaf: juz → [startPage, endPage]
 const JUZ_PAGES: [number, number][] = [
   [1,21],[22,41],[42,62],[63,81],[82,101],[102,121],[122,141],[142,161],[162,181],[182,201],
   [202,221],[222,241],[242,261],[262,281],[282,301],[302,321],[322,341],[342,361],[362,381],[382,401],
@@ -59,11 +58,10 @@ const SURAH_START: Record<number, number> = {
 
 const SURAH_END: Record<number, number> = (() => {
   const ends: Record<number, number> = {};
-  const nums = Object.keys(SURAH_START).map(Number).sort((a,b)=>a-b);
+  const nums = Object.keys(SURAH_START).map(Number).sort((a, b) => a - b);
   for (let i = 0; i < nums.length; i++) {
     const s = nums[i];
-    const next = nums[i + 1];
-    ends[s] = next ? SURAH_START[next] - 1 : 604;
+    ends[s] = nums[i + 1] ? SURAH_START[nums[i + 1]] - 1 : 604;
   }
   return ends;
 })();
@@ -98,8 +96,13 @@ const RECITERS = [
   { id: "ar.alafasy",            name: "مشاري العفاسي" },
   { id: "ar.abdurrahmaansudais", name: "السديس"         },
   { id: "ar.husary",             name: "الحصري"         },
+  { id: "ar.minshawi",           name: "المنشاوي"       },
   { id: "ar.shaatri",            name: "الشاطري"        },
   { id: "ar.abdulsamad",         name: "عبد الصمد"      },
+  { id: "ar.muhammadjibreel",    name: "م. جبريل"       },
+  { id: "ar.haniarrifai",        name: "هاني الرفاعي"   },
+  { id: "ar.maaboramadan",       name: "المعيقلي"       },
+  { id: "ar.abdullahbasfar",     name: "باسفر"          },
 ];
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -123,35 +126,34 @@ interface WordResult {
 }
 
 interface AyahError {
-  ayah: any;          // full ayah object from alquran.cloud
-  missing: string[];  // words that were missing
-  wrong: string[];    // words that were wrong
+  ayah: any;
+  missing: string[];
   mastered: boolean;
   remediationScore: number;
 }
 
+// Exercise question — voice-completion based
 interface ExerciseQ {
   ayah: any;
-  displayText: string;    // first portion to show
-  missingText: string;    // what they must complete
-  options: string[];      // 3 choices
-  correctIdx: number;
-  answered: number | null;
-  isPrevPage: boolean;    // is this from previous page (for context)
+  displayText: string;   // first portion shown to student
+  missingText: string;   // what student must recite
+  isPrevPage: boolean;
+  answered: boolean;
+  score: number | null;
+  transcript: string | null;
 }
 
 interface SessionStats {
   pageNum: number;
   score: number;
   attempts: number;
-  wordResults: WordResult[];
   errorCount: number;
   timeSeconds: number;
   exerciseScore: number;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-//  UTILITY FUNCTIONS
+//  UTILITIES
 // ═══════════════════════════════════════════════════════════════════════
 
 const toAr = (n: number) => String(n).replace(/[0-9]/g, d => "٠١٢٣٤٥٦٧٨٩"[+d]);
@@ -228,48 +230,27 @@ function groupBySurah(ayahs: any[]) {
   return groups;
 }
 
-// Generate exercise questions from ayahs
 function makeExercise(currentAyahs: any[], prevAyahs: any[]): ExerciseQ[] {
-  const questions: ExerciseQ[] = [];
-  const allAyahs = [...currentAyahs];
+  const pool = currentAyahs.filter(a => a.text.split(" ").length >= 5)
+                           .sort(() => Math.random() - 0.5).slice(0, 4);
+  const prevPool = prevAyahs.filter(a => a.text.split(" ").length >= 5)
+                            .sort(() => Math.random() - 0.5).slice(0, 1);
 
-  // Pick 4 from current + 1 from prev
-  const picks = allAyahs.filter(a => a.text.split(" ").length >= 5);
-  const shuffled = picks.sort(() => Math.random() - 0.5).slice(0, 4);
-  const prevPicks = prevAyahs.filter(a => a.text.split(" ").length >= 5)
-                             .sort(() => Math.random() - 0.5).slice(0, 1);
-
-  const toQuestion = (ayah: any, isPrev: boolean): ExerciseQ => {
+  const toQ = (ayah: any, isPrev: boolean): ExerciseQ => {
     const words = ayah.text.split(/\s+/).filter(Boolean);
-    // Show first 40-60% of the verse
-    const cutoff = Math.max(2, Math.floor(words.length * (0.4 + Math.random() * 0.2)));
-    const shown   = words.slice(0, cutoff).join(" ");
-    const missing = words.slice(cutoff).join(" ");
-
-    // Build 3 options: correct + 2 decoys from other ayahs
-    const decoys = allAyahs
-      .filter(a => a.number !== ayah.number && a.text.split(" ").length >= 4)
-      .sort(() => Math.random() - 0.5)
-      .slice(0, 2)
-      .map(a => {
-        const ws = a.text.split(/\s+/);
-        const dc = Math.max(2, Math.floor(ws.length * 0.4));
-        return ws.slice(dc).join(" ");
-      });
-
-    // Ensure 3 unique options
-    while (decoys.length < 2) decoys.push("...");
-    const correctIdx = Math.floor(Math.random() * 3);
-    const opts = [...decoys.slice(0, 2)];
-    opts.splice(correctIdx, 0, missing);
-
-    return { ayah, displayText: shown, missingText: missing, options: opts, correctIdx, answered: null, isPrevPage: isPrev };
+    const cutoff = Math.max(2, Math.floor(words.length * (0.35 + Math.random() * 0.2)));
+    return {
+      ayah,
+      displayText: words.slice(0, cutoff).join(" "),
+      missingText: words.slice(cutoff).join(" "),
+      isPrevPage: isPrev,
+      answered: false,
+      score: null,
+      transcript: null,
+    };
   };
 
-  for (const a of shuffled) questions.push(toQuestion(a, false));
-  for (const a of prevPicks) questions.push(toQuestion(a, true));
-
-  return questions;
+  return [...pool.map(a => toQ(a, false)), ...prevPool.map(a => toQ(a, true))];
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -279,109 +260,104 @@ function makeExercise(currentAyahs: any[], prevAyahs: any[]): ExerciseQ[] {
 interface Props { userId: string | null; }
 
 export default function QuranRevisionHub({ userId }: Props) {
-  // ── Stage ──
-  const [stage, setStage] = useState<Stage>("setup");
 
-  // ── Setup ──
+  const [stage, setStage]         = useState<Stage>("setup");
+
+  // Setup
   const [selectMode, setSelectMode] = useState<SelectMode>("juz");
   const [selected, setSelected]     = useState<number[]>([]);
   const [dailyPages, setDailyPages] = useState<number>(1);
 
-  // ── Plan ──
-  const [plan, setPlan]           = useState<RevisionPlan | null>(null);
+  // Plan
+  const [plan, setPlan]                   = useState<RevisionPlan | null>(null);
   const [completedPages, setCompletedPages] = useState<Set<number>>(new Set());
 
-  // ── Page data ──
-  const [pageData, setPageData]   = useState<any>(null);
+  // Page data
+  const [pageData, setPageData]         = useState<any>(null);
   const [prevPageData, setPrevPageData] = useState<any>(null);
-  const [pageLoading, setPageLoading] = useState(false);
-  const [reciter, setReciter]     = useState("ar.alafasy");
-  const [fontSize, setFontSize]   = useState(24);
-  const [showFullPage, setShowFullPage] = useState(false);
+  const [pageLoading, setPageLoading]   = useState(false);
+  const [reciter, setReciter]           = useState("ar.alafasy");
+  const [fontSize, setFontSize]         = useState(24);
 
-  // ── Audio ──
-  const audioRef     = useRef<HTMLAudioElement>(null);
-  const [playing, setPlaying]     = useState<number | null>(null); // absolute ayah num
-  const [pagePlayIdx, setPagePlayIdx] = useState(-1); // -1 = not playing page
+  // Audio — use ref to fix closure bug in pagePlayIdx
+  const audioRef           = useRef<HTMLAudioElement>(null);
+  const [playing, setPlaying]           = useState<number | null>(null);
+  const [pagePlayIdx, _setPagePlayIdx]  = useState(-1);
+  const pagePlayIdxRef                  = useRef(-1);
+  const setPagePlayIdx = useCallback((idx: number) => {
+    pagePlayIdxRef.current = idx;
+    _setPagePlayIdx(idx);
+  }, []);
 
-  // ── Recording ──
-  const [recording, setRecording] = useState(false);
-  const [recTime, setRecTime]     = useState(0);
-  const [recTarget, setRecTarget] = useState<"page" | "ayah">("page"); // what are we recording
-  const [recAyahNum, setRecAyahNum] = useState<number | null>(null);
+  // Page recording
+  const [recording, setRecording]   = useState(false);
+  const [recTime, setRecTime]       = useState(0);
+  const [pageVisible, setPageVisible] = useState(true); // hides when recording
   const mediaRecRef   = useRef<MediaRecorder | null>(null);
   const recChunksRef  = useRef<Blob[]>([]);
   const recTimerRef   = useRef<any>(null);
 
-  // ── Evaluation ──
-  const [evaluating, setEvaluating]   = useState(false);
-  const [evalResult, setEvalResult]   = useState<{
-    score: number; words: WordResult[]; transcript: string; feedback: string;
+  // Evaluation
+  const [evaluating, setEvaluating]         = useState(false);
+  const [evalResult, setEvalResult]         = useState<{
+    score: number; words: WordResult[]; transcript: string; feedback: string; transcriptFailed?: boolean;
   } | null>(null);
-  const [ayahErrors, setAyahErrors]   = useState<AyahError[]>([]);
+  const [ayahErrors, setAyahErrors]         = useState<AyahError[]>([]);
   const [recitationAttempts, setRecitationAttempts] = useState(0);
 
-  // ── Remediation ──
+  // Remediation
   const [remediationIdx, setRemediationIdx] = useState(0);
-  const [remRecording, setRemRecording]   = useState(false);
-  const [remRecTime, setRemRecTime]       = useState(0);
+  const [remRecording, setRemRecording]     = useState(false);
+  const [remRecTime, setRemRecTime]         = useState(0);
+  const [remEvaluating, setRemEvaluating]   = useState(false);
+  const [remResult, setRemResult]           = useState<{score:number;transcript:string}|null>(null);
   const remMediaRef  = useRef<MediaRecorder | null>(null);
   const remChunksRef = useRef<Blob[]>([]);
   const remTimerRef  = useRef<any>(null);
-  const [remEvaluating, setRemEvaluating] = useState(false);
 
-  // ── Exercise ──
-  const [exercises, setExercises]   = useState<ExerciseQ[]>([]);
-  const [exIdx, setExIdx]           = useState(0);
-  const [exScore, setExScore]       = useState(0);
-  const [exAnswered, setExAnswered] = useState(0);
-  const [showAnswer, setShowAnswer] = useState(false);
-  const [exReveal, setExReveal]     = useState(false);
+  // Exercise
+  const [exercises, setExercises]       = useState<ExerciseQ[]>([]);
+  const [exIdx, setExIdx]               = useState(0);
+  const [exCorrect, setExCorrect]       = useState(0);
+  const [exAnswered, setExAnswered]     = useState(0);
+  const [exRecording, setExRecording]   = useState(false);
+  const [exRecTime, setExRecTime]       = useState(0);
+  const [exEvaluating, setExEvaluating] = useState(false);
+  const [exResult, setExResult]         = useState<{score:number;transcript:string}|null>(null);
+  const exMediaRef   = useRef<MediaRecorder | null>(null);
+  const exChunksRef  = useRef<Blob[]>([]);
+  const exTimerRef   = useRef<any>(null);
 
-  // ── Session ──
+  // Session
   const [sessionStart, setSessionStart] = useState<number>(Date.now());
   const [finalStats, setFinalStats]     = useState<SessionStats | null>(null);
-
-  // ── Streaks / XP ──
-  const [earnedXP, setEarnedXP] = useState(0);
+  const [earnedXP, setEarnedXP]         = useState(0);
 
   const pageDataRef = useRef<any>(null);
   useEffect(() => { pageDataRef.current = pageData; }, [pageData]);
 
-  // ═══════════════════════════════════
-  //  Load saved plan
-  // ═══════════════════════════════════
+  // ═══ Load saved plan ═══════════════════════════════════
   useEffect(() => {
     if (!userId) return;
     const saved = localStorage.getItem(`revision_plan_${userId}`);
     if (saved) {
       try {
         const p: RevisionPlan = JSON.parse(saved);
-        setPlan(p);
-        setSelectMode(p.mode);
-        setSelected(p.selected);
-        setDailyPages(p.dailyPages);
+        setPlan(p); setSelectMode(p.mode); setSelected(p.selected); setDailyPages(p.dailyPages);
       } catch { /* ignore */ }
     }
     const done = localStorage.getItem(`revision_done_${userId}`);
-    if (done) {
-      try { setCompletedPages(new Set(JSON.parse(done))); } catch { /* ignore */ }
-    }
+    if (done) { try { setCompletedPages(new Set(JSON.parse(done))); } catch { /* ignore */ } }
   }, [userId]);
 
-  // ═══════════════════════════════════
-  //  Fetch page
-  // ═══════════════════════════════════
+  // ═══ Fetch page ════════════════════════════════════════
   const fetchPage = useCallback(async (pageNum: number) => {
-    setPageLoading(true);
-    setPageData(null);
+    setPageLoading(true); setPageData(null);
     try {
       const r = await fetch(`https://api.alquran.cloud/v1/page/${pageNum}/ar.uthmani`);
       const j = await r.json();
       if (j?.code === 200) setPageData(j.data);
-    } finally {
-      setPageLoading(false);
-    }
+    } finally { setPageLoading(false); }
   }, []);
 
   const fetchPrevPage = useCallback(async (pageNum: number) => {
@@ -393,9 +369,7 @@ export default function QuranRevisionHub({ userId }: Props) {
     } catch { /* ignore */ }
   }, []);
 
-  // ═══════════════════════════════════
-  //  Audio control
-  // ═══════════════════════════════════
+  // ═══ Audio ═════════════════════════════════════════════
   const playAyah = useCallback((absNum: number) => {
     const audio = audioRef.current;
     if (!audio) return;
@@ -411,8 +385,8 @@ export default function QuranRevisionHub({ userId }: Props) {
     if (!audio) return;
     const onEnded = () => {
       const ayahs = pageDataRef.current?.ayahs;
-      if (!ayahs || pagePlayIdx < 0) { setPlaying(null); return; }
-      const next = pagePlayIdx + 1;
+      if (!ayahs || pagePlayIdxRef.current < 0) { setPlaying(null); return; }
+      const next = pagePlayIdxRef.current + 1;
       if (next < ayahs.length) {
         setPagePlayIdx(next);
         playAyah(ayahs[next].number);
@@ -421,154 +395,26 @@ export default function QuranRevisionHub({ userId }: Props) {
         setPlaying(null);
       }
     };
+    const onPause = () => { if (pagePlayIdxRef.current < 0) setPlaying(null); };
     audio.addEventListener("ended", onEnded);
-    audio.addEventListener("pause", () => setPlaying(null));
-    return () => { audio.removeEventListener("ended", onEnded); };
-  }, [pagePlayIdx, playAyah]);
+    audio.addEventListener("pause", onPause);
+    return () => { audio.removeEventListener("ended", onEnded); audio.removeEventListener("pause", onPause); };
+  }, [playAyah, setPagePlayIdx]);
 
   const playPage = useCallback(() => {
     const ayahs = pageData?.ayahs;
     if (!ayahs?.length) return;
     setPagePlayIdx(0);
     playAyah(ayahs[0].number);
-  }, [pageData, playAyah]);
+  }, [pageData, playAyah, setPagePlayIdx]);
 
   const stopAudio = useCallback(() => {
     audioRef.current?.pause();
     setPlaying(null);
     setPagePlayIdx(-1);
-  }, []);
+  }, [setPagePlayIdx]);
 
-  // ═══════════════════════════════════
-  //  Recording — page
-  // ═══════════════════════════════════
-  const startRecording = async (target: "page" | "ayah" = "page", ayahNum?: number) => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"]
-        .find(t => MediaRecorder.isTypeSupported(t));
-      const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
-      recChunksRef.current = [];
-      mr.ondataavailable = e => { if (e.data.size > 0) recChunksRef.current.push(e.data); };
-      mr.onstop = () => {
-        stream.getTracks().forEach(t => t.stop());
-        const blob = new Blob(recChunksRef.current, { type: mime || "audio/webm" });
-        if (target === "ayah" && ayahNum != null) runAyahEvaluation(blob, ayahNum);
-        else runPageEvaluation(blob);
-      };
-      mr.start(200);
-      mediaRecRef.current = mr;
-      setRecording(true);
-      setRecTarget(target);
-      setRecAyahNum(ayahNum ?? null);
-      setRecTime(0);
-      recTimerRef.current = setInterval(() => setRecTime(t => t + 1), 1000);
-    } catch (e) {
-      alert("Microphone access denied. Please allow microphone access and try again.");
-    }
-  };
-
-  const stopRecording = () => {
-    if (recTimerRef.current) clearInterval(recTimerRef.current);
-    mediaRecRef.current?.stop();
-    setRecording(false);
-  };
-
-  // ═══════════════════════════════════
-  //  AI Evaluation — full page
-  // ═══════════════════════════════════
-  const runPageEvaluation = async (blob: Blob) => {
-    setStage("evaluating");
-    setEvaluating(true);
-    setEvalResult(null);
-    try {
-      const transcript = await transcribeAudio(blob);
-      if (!transcript) { setEvaluating(false); return; }
-
-      const ayahs = pageDataRef.current?.ayahs ?? [];
-      const refText = ayahs.map((a: any) => a.text).join(" ");
-      const wordResults = compareWords(refText, transcript);
-
-      const correct = wordResults.filter(w => w.status === "correct").length;
-      const score   = Math.round((correct / Math.max(1, wordResults.length)) * 100);
-
-      // Find which ayahs have errors
-      const errors: AyahError[] = [];
-      for (const ayah of ayahs) {
-        const ayahRef = ayah.text;
-        const ayahWords = stripDiacritics(ayahRef).split(/\s+/).filter(Boolean);
-        const refNorm = stripDiacritics(refText);
-        const gotNorm = stripDiacritics(transcript);
-        // Simple check: see if this ayah's words appear in transcript
-        const missing: string[] = [];
-        const wrong: string[]   = [];
-        for (const w of ayahWords) {
-          if (!gotNorm.includes(w.slice(0, Math.max(3, w.length - 1)))) missing.push(w);
-        }
-        if (missing.length > 0) errors.push({ ayah, missing, wrong, mastered: false, remediationScore: 0 });
-      }
-
-      // Get AI feedback
-      const feedback = await getAIFeedback(refText, transcript, score);
-
-      setEvalResult({ score, words: wordResults, transcript, feedback });
-      setAyahErrors(errors);
-      setRecitationAttempts(a => a + 1);
-
-      // Save session
-      if (userId && plan) {
-        try {
-          await (supabase as any).from("hifdh_revision_sessions").insert({
-            student_id: userId,
-            page_number: plan.allPages[plan.currentIdx],
-            score,
-            stage: "recitation",
-            word_results: wordResults,
-            transcript,
-            duration_seconds: recTime,
-            created_at: new Date().toISOString(),
-          });
-        } catch { /* ignore */ }
-      }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setEvaluating(false);
-    }
-  };
-
-  // ═══════════════════════════════════
-  //  AI Evaluation — single ayah (remediation)
-  // ═══════════════════════════════════
-  const runAyahEvaluation = async (blob: Blob, ayahNum: number) => {
-    setRemEvaluating(true);
-    try {
-      const transcript = await transcribeAudio(blob);
-      if (!transcript) { setRemEvaluating(false); return; }
-
-      const ayah = pageDataRef.current?.ayahs?.find((a: any) => a.number === ayahNum);
-      if (!ayah) { setRemEvaluating(false); return; }
-
-      const wordResults = compareWords(ayah.text, transcript);
-      const correct = wordResults.filter(w => w.status === "correct").length;
-      const score   = Math.round((correct / Math.max(1, wordResults.length)) * 100);
-
-      // Update mastered status
-      setAyahErrors(prev => prev.map(ae =>
-        ae.ayah.number === ayahNum
-          ? { ...ae, mastered: score >= 70, remediationScore: Math.max(ae.remediationScore, score) }
-          : ae
-      ));
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setRemEvaluating(false);
-    }
-  };
-
-  // ═══════════════════════════════════
-  //  Transcription via Groq
-  // ═══════════════════════════════════
+  // ═══ Transcription ════════════════════════════════════
   const transcribeAudio = async (blob: Blob): Promise<string> => {
     const groqKey = (import.meta as any).env?.VITE_GROQ_API_KEY;
     if (groqKey) {
@@ -578,12 +424,16 @@ export default function QuranRevisionHub({ userId }: Props) {
         fd.append("model", "whisper-large-v3");
         fd.append("language", "ar");
         fd.append("response_format", "text");
+        fd.append("prompt", "بسم الله الرحمن الرحيم الحمد لله رب العالمين");
         const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
           method: "POST",
           headers: { Authorization: `Bearer ${groqKey}` },
           body: fd,
         });
-        if (r.ok) return (await r.text()).trim();
+        if (r.ok) {
+          const txt = (await r.text()).trim();
+          if (txt.length > 0) return txt;
+        }
       } catch { /* fall through */ }
     }
     // Fallback: Supabase edge function
@@ -596,32 +446,17 @@ export default function QuranRevisionHub({ userId }: Props) {
       const { data } = await supabase.functions.invoke("transcribe-hifdh", {
         body: { audio: b64, mimeType: blob.type || "audio/webm" },
       });
-      return data?.text ?? "";
-    } catch {
-      return "";
-    }
+      return data?.text ?? data?.transcript ?? "";
+    } catch { return ""; }
   };
 
-  // ═══════════════════════════════════
-  //  Get AI Feedback via Claude
-  // ═══════════════════════════════════
+  // ═══ AI Feedback ══════════════════════════════════════
   const getAIFeedback = async (refText: string, gotText: string, score: number): Promise<string> => {
     const key = (import.meta as any).env?.VITE_ANTHROPIC_API_KEY;
-    if (!key) return score >= PASS_SCORE ? "Good recitation! Keep it up." : "Review the highlighted words and try again.";
+    if (!key) return score >= PASS_SCORE
+      ? "Good recitation! Your memorisation is solid. Continue to the exercise."
+      : "Keep practising — focus on the highlighted words and recite again.";
     try {
-      const prompt = `You are an expert Quran teacher evaluating a student's memorization recitation.
-
-Reference (correct text): "${refText.slice(0, 500)}"
-Student recited: "${gotText.slice(0, 500)}"
-Accuracy score: ${score}%
-
-In 2-3 short sentences, give encouraging but honest feedback in English about:
-1. What they did well
-2. Key mistakes to focus on
-3. One specific tajweed tip if relevant
-
-Keep it brief, warm, and motivating.`;
-
       const r = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
@@ -632,125 +467,118 @@ Keep it brief, warm, and motivating.`;
         },
         body: JSON.stringify({
           model: "claude-haiku-4-5-20251001",
-          max_tokens: 150,
-          messages: [{ role: "user", content: prompt }],
+          max_tokens: 120,
+          messages: [{
+            role: "user",
+            content: `Quran teacher evaluating memorisation. Score: ${score}%. Reference: "${refText.slice(0,300)}" Student: "${gotText.slice(0,300)}". Give 2 short sentences of honest, encouraging feedback in English. Mention one specific issue if score < 70%.`,
+          }],
         }),
       });
-      if (r.ok) {
-        const d = await r.json();
-        return d.content?.[0]?.text ?? "";
-      }
+      if (r.ok) return (await r.json()).content?.[0]?.text ?? "";
     } catch { /* ignore */ }
-    return score >= PASS_SCORE ? "Excellent recitation! Continue to the exercise." : "Practice the highlighted verses and try again.";
+    return score >= PASS_SCORE
+      ? "Excellent recitation! Proceed to the exercise."
+      : "Practise the highlighted verses and try again.";
   };
 
-  // ═══════════════════════════════════
-  //  Build exercise
-  // ═══════════════════════════════════
-  const buildExercise = useCallback(() => {
-    const current = pageData?.ayahs ?? [];
-    const prev    = prevPageData?.ayahs ?? [];
-    // Prioritize ayahs with errors
-    const errorNums = new Set(ayahErrors.map(e => e.ayah.number));
-    const priority  = current.filter((a: any) => errorNums.has(a.number));
-    const rest      = current.filter((a: any) => !errorNums.has(a.number));
-    const pool      = [...priority, ...rest].filter((a: any) => a.text.split(" ").length >= 5);
-    setExercises(makeExercise(pool, prev));
-    setExIdx(0);
-    setExScore(0);
-    setExAnswered(0);
-    setShowAnswer(false);
-    setExReveal(false);
-  }, [pageData, prevPageData, ayahErrors]);
-
-  // ═══════════════════════════════════
-  //  Exercise answer
-  // ═══════════════════════════════════
-  const answerExercise = (idx: number) => {
-    const q = exercises[exIdx];
-    if (!q || q.answered !== null) return;
-    setExercises(prev =>
-      prev.map((q2, i) => i === exIdx ? { ...q2, answered: idx } : q2)
-    );
-    setExAnswered(a => a + 1);
-    if (idx === q.correctIdx) setExScore(s => s + 1);
-    setShowAnswer(true);
-  };
-
-  const nextExercise = () => {
-    setShowAnswer(false);
-    setExReveal(false);
-    if (exIdx + 1 < exercises.length) setExIdx(i => i + 1);
-    else finishExercise();
-  };
-
-  const finishExercise = () => {
-    const score = Math.round((exScore / Math.max(1, exercises.length)) * 100);
-    const elapsed = Math.round((Date.now() - sessionStart) / 1000);
-    const currentPage = plan!.allPages[plan!.currentIdx];
-
-    const stats: SessionStats = {
-      pageNum: currentPage,
-      score: evalResult?.score ?? 0,
-      attempts: recitationAttempts,
-      wordResults: evalResult?.words ?? [],
-      errorCount: ayahErrors.length,
-      timeSeconds: elapsed,
-      exerciseScore: score,
-    };
-    setFinalStats(stats);
-
-    if (score >= EXERCISE_PASS) {
-      // Mark page complete
-      const newDone = new Set(completedPages);
-      newDone.add(currentPage);
-      setCompletedPages(newDone);
-      if (userId) {
-        localStorage.setItem(`revision_done_${userId}`, JSON.stringify(Array.from(newDone)));
-        (supabase as any).from("hifdh_revision_progress").upsert({
-          user_id: userId,
-          page_number: currentPage,
-          completed: true,
-          best_score: evalResult?.score ?? 0,
-          exercise_score: score,
-          completed_at: new Date().toISOString(),
-        }, { onConflict: "user_id,page_number" }).then(() => {});
-      }
-      const xp = 50 + (evalResult?.score ?? 0) + score;
-      setEarnedXP(xp);
-      setStage("complete");
-    } else {
-      // Retry exercise
-      buildExercise();
+  // ═══ Page Recording ═══════════════════════════════════
+  const startPageRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"]
+        .find(t => MediaRecorder.isTypeSupported(t));
+      const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      recChunksRef.current = [];
+      mr.ondataavailable = e => { if (e.data.size > 0) recChunksRef.current.push(e.data); };
+      mr.onstop = () => {
+        stream.getTracks().forEach(t => t.stop());
+        clearInterval(recTimerRef.current);
+        const blob = new Blob(recChunksRef.current, { type: mime || "audio/webm" });
+        if (blob.size > 500) runPageEvaluation(blob);
+      };
+      mr.start(200);
+      mediaRecRef.current = mr;
+      setRecording(true);
+      setPageVisible(false);  // HIDE page during recording
+      setRecTime(0);
+      stopAudio();
+      recTimerRef.current = setInterval(() => setRecTime(t => t + 1), 1000);
+    } catch {
+      alert("Microphone access denied. Please allow microphone access and try again.");
     }
   };
 
-  // ═══════════════════════════════════
-  //  Move to next page
-  // ═══════════════════════════════════
-  const nextPage = () => {
-    if (!plan) return;
-    const nextIdx = plan.currentIdx + 1;
-    if (nextIdx >= plan.allPages.length) {
-      // Plan complete!
-      setStage("complete");
-      return;
-    }
-    const updated: RevisionPlan = { ...plan, currentIdx: nextIdx };
-    setPlan(updated);
-    if (userId) localStorage.setItem(`revision_plan_${userId}`, JSON.stringify(updated));
-    setStage("reciting");
+  const stopPageRecording = () => {
+    clearInterval(recTimerRef.current);
+    mediaRecRef.current?.stop();
+    setRecording(false);
+  };
+
+  // ═══ Page Evaluation ══════════════════════════════════
+  const runPageEvaluation = async (blob: Blob) => {
+    setStage("evaluating");
+    setEvaluating(true);
     setEvalResult(null);
-    setAyahErrors([]);
-    setRecitationAttempts(0);
-    setSessionStart(Date.now());
-    fetchPage(updated.allPages[nextIdx]);
-    fetchPrevPage(updated.allPages[nextIdx]);
+    setPageVisible(true);
+    try {
+      const transcript = await transcribeAudio(blob);
+
+      if (!transcript || transcript.trim().length < 3) {
+        setEvalResult({
+          score: -1,
+          words: [],
+          transcript: "",
+          feedback: "Transcription could not be completed. Please ensure you are in a quiet environment, speak clearly and closely into the microphone, then try again.",
+          transcriptFailed: true,
+        });
+        setEvaluating(false);
+        return;
+      }
+
+      const ayahs    = pageDataRef.current?.ayahs ?? [];
+      const refText  = ayahs.map((a: any) => a.text).join(" ");
+      const words    = compareWords(refText, transcript);
+      const correct  = words.filter(w => w.status === "correct").length;
+      const score    = Math.round((correct / Math.max(1, words.length)) * 100);
+
+      // Detect error ayahs
+      const errors: AyahError[] = [];
+      const gotNorm = stripDiacritics(transcript);
+      for (const ayah of ayahs) {
+        const ayahWords = stripDiacritics(ayah.text).split(/\s+/).filter(Boolean);
+        const missing = ayahWords.filter(w =>
+          !gotNorm.includes(w.slice(0, Math.max(3, w.length - 1)))
+        );
+        if (missing.length >= 2) {
+          errors.push({ ayah, missing, mastered: false, remediationScore: 0 });
+        }
+      }
+
+      const feedback = await getAIFeedback(refText, transcript, score);
+      setEvalResult({ score, words, transcript, feedback });
+      setAyahErrors(errors);
+      setRecitationAttempts(a => a + 1);
+
+      if (userId && plan) {
+        try {
+          await (supabase as any).from("hifdh_revision_sessions").insert({
+            student_id: userId,
+            page_number: plan.allPages[plan.currentIdx],
+            score, stage: "recitation", word_results: words,
+            transcript, duration_seconds: recTime,
+            created_at: new Date().toISOString(),
+          });
+        } catch { /* ignore */ }
+      }
+    } catch (e) {
+      console.error(e);
+      setEvalResult({ score: 0, words: [], transcript: "", feedback: "An error occurred. Please try again.", transcriptFailed: true });
+    } finally {
+      setEvaluating(false);
+    }
   };
 
-  // ═══════════════════════════════════
-  //  Remediation recording
-  // ═══════════════════════════════════
+  // ═══ Remediation Recording ════════════════════════════
   const startRemRecording = async (ayahNum: number) => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -761,38 +589,188 @@ Keep it brief, warm, and motivating.`;
       mr.ondataavailable = e => { if (e.data.size > 0) remChunksRef.current.push(e.data); };
       mr.onstop = () => {
         stream.getTracks().forEach(t => t.stop());
+        clearInterval(remTimerRef.current);
         const blob = new Blob(remChunksRef.current, { type: mime || "audio/webm" });
-        runAyahEvaluation(blob, ayahNum);
+        runRemEvaluation(blob, ayahNum);
       };
       mr.start(200);
       remMediaRef.current = mr;
       setRemRecording(true);
       setRemRecTime(0);
+      setRemResult(null);
       remTimerRef.current = setInterval(() => setRemRecTime(t => t + 1), 1000);
     } catch { alert("Microphone access denied."); }
   };
 
   const stopRemRecording = () => {
-    if (remTimerRef.current) clearInterval(remTimerRef.current);
+    clearInterval(remTimerRef.current);
     remMediaRef.current?.stop();
     setRemRecording(false);
   };
 
+  const runRemEvaluation = async (blob: Blob, ayahNum: number) => {
+    setRemEvaluating(true);
+    setRemResult(null);
+    try {
+      const transcript = await transcribeAudio(blob);
+      const ayah = pageDataRef.current?.ayahs?.find((a: any) => a.number === ayahNum);
+      if (!ayah || !transcript) {
+        setRemResult({ score: 0, transcript: transcript || "" });
+        setRemEvaluating(false);
+        return;
+      }
+      const wordResults = compareWords(ayah.text, transcript);
+      const correct = wordResults.filter(w => w.status === "correct").length;
+      const score   = Math.round((correct / Math.max(1, wordResults.length)) * 100);
+      setRemResult({ score, transcript });
+      setAyahErrors(prev => prev.map(ae =>
+        ae.ayah.number === ayahNum
+          ? { ...ae, mastered: score >= 70, remediationScore: Math.max(ae.remediationScore, score) }
+          : ae
+      ));
+    } catch { setRemResult({ score: 0, transcript: "" }); }
+    finally { setRemEvaluating(false); }
+  };
+
+  // ═══ Exercise Recording ═══════════════════════════════
+  const startExRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"]
+        .find(t => MediaRecorder.isTypeSupported(t));
+      const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      exChunksRef.current = [];
+      mr.ondataavailable = e => { if (e.data.size > 0) exChunksRef.current.push(e.data); };
+      mr.onstop = () => {
+        stream.getTracks().forEach(t => t.stop());
+        clearInterval(exTimerRef.current);
+        const blob = new Blob(exChunksRef.current, { type: mime || "audio/webm" });
+        runExEvaluation(blob);
+      };
+      mr.start(200);
+      exMediaRef.current = mr;
+      setExRecording(true);
+      setExRecTime(0);
+      setExResult(null);
+      exTimerRef.current = setInterval(() => setExRecTime(t => t + 1), 1000);
+    } catch { alert("Microphone access denied."); }
+  };
+
+  const stopExRecording = () => {
+    clearInterval(exTimerRef.current);
+    exMediaRef.current?.stop();
+    setExRecording(false);
+  };
+
+  const runExEvaluation = async (blob: Blob) => {
+    setExEvaluating(true);
+    setExResult(null);
+    try {
+      const transcript = await transcribeAudio(blob);
+      const q = exercises[exIdx];
+      if (!q) { setExEvaluating(false); return; }
+
+      let score = 0;
+      if (transcript && transcript.trim().length > 0) {
+        const wordResults = compareWords(q.missingText, transcript);
+        const correct = wordResults.filter(w => w.status === "correct").length;
+        score = Math.round((correct / Math.max(1, wordResults.length)) * 100);
+      }
+
+      setExResult({ score, transcript: transcript || "" });
+      const isCorrect = score >= 60;
+      setExercises(prev => prev.map((eq, i) =>
+        i === exIdx ? { ...eq, answered: true, score, transcript: transcript || "" } : eq
+      ));
+      setExAnswered(a => a + 1);
+      if (isCorrect) setExCorrect(c => c + 1);
+    } catch { setExResult({ score: 0, transcript: "" }); }
+    finally { setExEvaluating(false); }
+  };
+
+  // ═══ Exercise navigation ══════════════════════════════
+  const buildExercise = useCallback(() => {
+    const current = pageData?.ayahs ?? [];
+    const prev    = prevPageData?.ayahs ?? [];
+    const errorNums = new Set(ayahErrors.map(e => e.ayah.number));
+    const priority  = current.filter((a: any) => errorNums.has(a.number));
+    const rest      = current.filter((a: any) => !errorNums.has(a.number));
+    const pool      = [...priority, ...rest];
+    setExercises(makeExercise(pool, prev));
+    setExIdx(0); setExCorrect(0); setExAnswered(0);
+    setExResult(null); setExRecording(false);
+  }, [pageData, prevPageData, ayahErrors]);
+
+  const nextExercise = () => {
+    setExResult(null);
+    setExRecording(false);
+    if (exIdx + 1 < exercises.length) {
+      setExIdx(i => i + 1);
+    } else {
+      finishExercise();
+    }
+  };
+
+  const finishExercise = () => {
+    const score    = Math.round((exCorrect / Math.max(1, exercises.length)) * 100);
+    const elapsed  = Math.round((Date.now() - sessionStart) / 1000);
+    const curPage  = plan!.allPages[plan!.currentIdx];
+    setFinalStats({
+      pageNum: curPage, score: evalResult?.score ?? 0,
+      attempts: recitationAttempts, errorCount: ayahErrors.length,
+      timeSeconds: elapsed, exerciseScore: score,
+    });
+    if (score >= EXERCISE_PASS) {
+      const newDone = new Set(completedPages);
+      newDone.add(curPage);
+      setCompletedPages(newDone);
+      if (userId) {
+        localStorage.setItem(`revision_done_${userId}`, JSON.stringify(Array.from(newDone)));
+        (supabase as any).from("hifdh_revision_progress").upsert({
+          user_id: userId, page_number: curPage, completed: true,
+          best_score: evalResult?.score ?? 0, exercise_score: score,
+          completed_at: new Date().toISOString(),
+        }, { onConflict: "user_id,page_number" }).then(() => {});
+      }
+      setEarnedXP(50 + (evalResult?.score ?? 0) + score);
+      setStage("complete");
+    } else {
+      buildExercise();
+    }
+  };
+
+  // ═══ Next page ════════════════════════════════════════
+  const nextPage = () => {
+    if (!plan) return;
+    const nextIdx = plan.currentIdx + 1;
+    if (nextIdx >= plan.allPages.length) { setStage("complete"); return; }
+    const updated: RevisionPlan = { ...plan, currentIdx: nextIdx };
+    setPlan(updated);
+    if (userId) localStorage.setItem(`revision_plan_${userId}`, JSON.stringify(updated));
+    setStage("reciting");
+    setEvalResult(null); setAyahErrors([]); setRecitationAttempts(0);
+    setSessionStart(Date.now()); setPageVisible(true);
+    fetchPage(updated.allPages[nextIdx]);
+    fetchPrevPage(updated.allPages[nextIdx]);
+  };
+
   // ════════════════════════════════════════════════════════
-  //  RENDER — CSS
+  //  CSS
   // ════════════════════════════════════════════════════════
   const globalCSS = `
     @import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Amiri:ital,wght@0,400;0,700;1,400&display=swap');
 
-    .qr-mushaf { font-family:'Amiri Quran','Scheherazade New','Amiri',serif; direction:rtl; line-height:2.8; color:${INK}; }
+    .qr-mushaf {
+      font-family:'Amiri Quran','Scheherazade New','Amiri',serif;
+      direction:rtl; line-height:3; color:${INK};
+    }
     .qr-arabic { font-family:'Amiri',serif; direction:rtl; }
-    .qr-active { background:${GOLD}30; border-radius:3px; outline:2px solid ${GOLD}80; }
+    .qr-active  { background:${GOLD}35; border-radius:4px; outline:2px solid ${GOLD}90; }
     .qr-missing { background:#fee2e2; border-radius:3px; color:#dc2626; }
     .qr-correct { background:#dcfce7; border-radius:3px; color:#16a34a; }
-    .qr-wrong   { background:#fef9c3; border-radius:3px; color:#854d0e; }
 
     .qr-nameplate {
-      margin:8px 0 4px; padding:5px 16px;
+      margin:10px 0 4px; padding:6px 16px;
       background:linear-gradient(to right,transparent,${GOLD}22,${GOLD}44,${GOLD}22,transparent);
       border-top:1.5px solid ${GOLD}99; border-bottom:1.5px solid ${GOLD}99;
       text-align:center; font-family:'Amiri',serif; direction:rtl;
@@ -800,25 +778,35 @@ Keep it brief, warm, and motivating.`;
     }
     .qr-bismillah {
       font-family:'Amiri Quran','Amiri',serif; direction:rtl; text-align:center;
-      color:${INK}; margin:4px 0 10px; line-height:2;
+      color:${INK}; margin:4px 0 12px; line-height:2;
     }
     .qr-frame {
-      background:${PARCHMENT}; border:2px solid ${GOLD}88; position:relative; border-radius:4px;
+      background:${PARCHMENT};
+      border:2px solid ${GOLD}77;
+      border-radius:6px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.35), inset 0 0 0 1px ${GOLD}22;
+      position:relative;
     }
     .qr-frame::before {
-      content:''; position:absolute; inset:7px; border:1px solid ${GOLD}44;
-      border-radius:2px; pointer-events:none; z-index:1;
+      content:''; position:absolute; inset:8px;
+      border:1px solid ${GOLD}33; border-radius:3px;
+      pointer-events:none; z-index:1;
     }
-    .qr-btn { transition:transform 0.1s, opacity 0.12s; }
+    .qr-btn { transition:transform 0.1s, opacity 0.12s; cursor:pointer; }
     .qr-btn:active { transform:scale(0.88); }
+    .qr-btn:disabled { opacity:0.35; cursor:not-allowed; }
 
-    @keyframes qr-pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.08)} }
+    @keyframes qr-pulse  { 0%,100%{transform:scale(1)} 50%{transform:scale(1.08)} }
+    @keyframes qr-bounce { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-8px)} }
+    @keyframes qr-fadein { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
+    @keyframes qr-spin   { to{transform:rotate(360deg)} }
     @keyframes qr-shimmer {
       0%{background-position:-200% 0} 100%{background-position:200% 0}
     }
-    @keyframes qr-bounce { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-6px)} }
-    @keyframes qr-fadein { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
-    @keyframes qr-spin { to{transform:rotate(360deg)} }
+    @keyframes qr-recordpulse {
+      0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,0.5)}
+      50%{box-shadow:0 0 0 16px rgba(220,38,38,0)}
+    }
     .qr-pulse  { animation:qr-pulse 1.6s ease-in-out infinite; }
     .qr-bounce { animation:qr-bounce 0.9s ease-in-out infinite; }
     .qr-fadein { animation:qr-fadein 0.35s ease-out forwards; }
@@ -827,74 +815,63 @@ Keep it brief, warm, and motivating.`;
       background:linear-gradient(90deg,${DG} 25%,${DG2} 50%,${DG} 75%);
       background-size:200% 100%; animation:qr-shimmer 1.5s infinite;
     }
+    .qr-recordpulse { animation:qr-recordpulse 1.2s ease-in-out infinite; }
     .qr-geo {
-      background-image: url("data:image/svg+xml,%3Csvg width='40' height='40' viewBox='0 0 40 40' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M20 0 L40 20 L20 40 L0 20z' fill='none' stroke='%23c9a84c' stroke-width='0.5' stroke-opacity='0.18'/%3E%3C/svg%3E");
+      background-image: url("data:image/svg+xml,%3Csvg width='40' height='40' viewBox='0 0 40 40' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M20 0 L40 20 L20 40 L0 20z' fill='none' stroke='%23c9a84c' stroke-width='0.5' stroke-opacity='0.15'/%3E%3C/svg%3E");
       background-size:40px 40px;
     }
   `;
 
-  const pageAyahs  = pageData?.ayahs ?? [];
+  const pageAyahs   = pageData?.ayahs ?? [];
   const surahGroups = groupBySurah(pageAyahs);
   const currentPage = plan?.allPages[plan.currentIdx] ?? 1;
-  const juzNum     = pageAyahs[0]?.juz ?? 1;
+  const juzNum      = pageAyahs[0]?.juz ?? 1;
   const totalPages  = plan?.allPages.length ?? 0;
+  const isPagePlaying = pagePlayIdx >= 0;
 
   // ════════════════════════════════════════════════════════
-  //  RENDER — SETUP
+  //  SETUP
   // ════════════════════════════════════════════════════════
   if (stage === "setup") {
     const dailyOptions = [
-      { val: 0.5, ar: "نصف صفحة", en: "Half page" },
-      { val: 1,   ar: "صفحة",     en: "1 page"    },
-      { val: 2,   ar: "صفحتان",   en: "2 pages"   },
-      { val: 3,   ar: "ثلاث صفحات", en: "3 pages" },
+      { val: 0.5, ar: "نصف",     en: "½ page"   },
+      { val: 1,   ar: "صفحة",    en: "1 page"   },
+      { val: 2,   ar: "صفحتان",  en: "2 pages"  },
+      { val: 3,   ar: "ثلاث",    en: "3 pages"  },
+      { val: 5,   ar: "خمس",     en: "5 pages"  },
+      { val: 7,   ar: "سبع",     en: "7 pages"  },
+      { val: 10,  ar: "عشر",     en: "10 pages" },
+      { val: 20,  ar: "عشرون",   en: "20 pages" },
     ];
 
-    const canStart = selected.length > 0;
-
-    const handleStart = () => {
-      const pages = buildPages(selectMode, selected);
-      const chunkSize = dailyPages >= 1 ? Math.ceil(dailyPages) : 1;
-      // For sub-page amounts, just do 1 page per session
-      const newPlan: RevisionPlan = {
-        mode: selectMode,
-        selected,
-        dailyPages,
-        allPages: pages,
-        currentIdx: 0,
-      };
-      setPlan(newPlan);
-      if (userId) localStorage.setItem(`revision_plan_${userId}`, JSON.stringify(newPlan));
-      setSessionStart(Date.now());
-      fetchPage(pages[0]);
-      fetchPrevPage(pages[0]);
-      setStage("reciting");
-    };
-
     return (
-      <div className="h-full overflow-y-auto qr-geo" style={{ background: `linear-gradient(160deg,${DG} 0%,#0b1a12 100%)` }}>
+      <div className="h-full overflow-y-auto qr-geo" style={{ background: `linear-gradient(160deg,${DG} 0%,#0a1810 100%)` }}>
         <style>{globalCSS}</style>
 
-        {/* Header */}
-        <div className="px-5 pt-6 pb-3">
-          <div className="flex items-center gap-2 mb-1">
-            <BookMarked size={18} style={{ color: GOLD }} />
-            <span className="font-black text-sm tracking-wider uppercase" style={{ color: GOLD }}>Quran Revision</span>
+        <div className="px-5 pt-6 pb-2">
+          <div className="flex items-center gap-2 mb-0.5">
+            <BookMarked size={17} style={{ color: GOLD }} />
+            <span className="font-black text-sm tracking-wider uppercase" style={{ color: GOLD }}>
+              Quran Revision
+            </span>
           </div>
-          <p className="text-xs" style={{ color: "#7aad90" }}>مراجعة المحفوظ — Review what you've memorised</p>
+          <p className="text-xs" style={{ color: "#6a9d7a" }}>
+            مراجعة المحفوظ — Review what you've memorised
+          </p>
         </div>
 
-        <div className="px-4 pb-8 space-y-4">
+        <div className="px-4 pb-10 space-y-3 mt-3">
 
-          {/* Existing plan resume */}
+          {/* Resume plan */}
           {plan && (
-            <div className="rounded-2xl overflow-hidden border qr-fadein" style={{ borderColor: GOLD+"44" }}>
-              <div className="px-4 py-3" style={{ background: GOLD+"22" }}>
+            <div className="rounded-2xl overflow-hidden border qr-fadein" style={{ borderColor: GOLD + "44" }}>
+              <div className="px-4 py-3" style={{ background: GOLD + "18" }}>
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold" style={{ color: GOLD }}>📋 Active Plan</span>
                   <button
                     onClick={() => {
                       setSessionStart(Date.now());
+                      setPageVisible(true);
                       fetchPage(plan.allPages[plan.currentIdx]);
                       fetchPrevPage(plan.allPages[plan.currentIdx]);
                       setStage("reciting");
@@ -908,11 +885,11 @@ Keep it brief, warm, and motivating.`;
                 <p className="text-xs mt-1" style={{ color: "#adc9b8" }}>
                   {plan.mode === "juz" ? `Juz ${plan.selected.join(", ")}` :
                    plan.mode === "hizb" ? `Hizb ${plan.selected.join(", ")}` :
-                   `${plan.selected.length} Surah(s)`} · Page {plan.allPages[plan.currentIdx]} / {plan.allPages.length} total
+                   `${plan.selected.length} Surah(s)`} · Page {plan.allPages[plan.currentIdx]} / {plan.allPages.length}
                 </p>
                 <div className="mt-2 h-1.5 rounded-full overflow-hidden" style={{ background: "#1a3025" }}>
                   <div className="h-full rounded-full" style={{
-                    width: `${Math.round((plan.currentIdx / Math.max(1, plan.allPages.length)) * 100)}%`,
+                    width: `${Math.round((plan.currentIdx / Math.max(1, plan.allPages.length - 1)) * 100)}%`,
                     background: `linear-gradient(to right,${GOLD},${GOLD_LIGHT})`,
                   }} />
                 </div>
@@ -920,65 +897,71 @@ Keep it brief, warm, and motivating.`;
             </div>
           )}
 
-          {/* Selection mode */}
-          <div className="rounded-2xl p-4" style={{ background: "#ffffff0a", border: `1px solid ${GOLD}22` }}>
+          {/* What to revise */}
+          <div className="rounded-2xl p-4" style={{ background: "#ffffff09", border: `1px solid ${GOLD}22` }}>
             <p className="text-xs font-bold mb-3" style={{ color: GOLD }}>📚 What to Revise</p>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-3 gap-2 mb-3">
               {(["juz", "hizb", "surah"] as SelectMode[]).map(m => (
-                <button
-                  key={m}
-                  onClick={() => { setSelectMode(m); setSelected([]); }}
+                <button key={m} onClick={() => { setSelectMode(m); setSelected([]); }}
                   className="py-2.5 rounded-xl text-xs font-bold qr-btn"
                   style={{
                     background: selectMode === m ? GOLD : "#1a3025",
                     color: selectMode === m ? DG : "#7aad90",
                     border: selectMode === m ? "none" : `1px solid ${GOLD}22`,
-                  }}
-                >
+                  }}>
                   {m === "juz" ? "بالجزء\nJuz" : m === "hizb" ? "بالحزب\nHizb" : "بالسورة\nSurah"}
                 </button>
               ))}
             </div>
 
-            {/* Selection grid */}
-            <div className="mt-3 max-h-48 overflow-y-auto">
+            <div className="max-h-52 overflow-y-auto rounded-xl" style={{ background: "#0d1f14" }}>
               {selectMode === "juz" && (
-                <div className="grid grid-cols-6 gap-1.5">
-                  {Array.from({length:30},(_,i)=>i+1).map(j=>(
-                    <button key={j} onClick={()=>setSelected(p=>p.includes(j)?p.filter(x=>x!==j):[...p,j])}
+                <div className="grid grid-cols-6 gap-1.5 p-2">
+                  {Array.from({ length: 30 }, (_, i) => i + 1).map(j => (
+                    <button key={j}
+                      onClick={() => setSelected(p => p.includes(j) ? p.filter(x => x !== j) : [...p, j])}
                       className="aspect-square rounded-lg text-xs font-bold qr-btn"
-                      style={{ background:selected.includes(j)?GOLD:completedPages.has(JUZ_PAGES[j-1]?.[0])?"#16a34a22":"#1a3025",
-                        color:selected.includes(j)?DG:completedPages.has(JUZ_PAGES[j-1]?.[0])?"#4ade80":"#7aad90",
-                        border:selected.includes(j)?`none`:`1px solid ${GOLD}22` }}>
+                      style={{
+                        background: selected.includes(j) ? GOLD : "#1a3025",
+                        color: selected.includes(j) ? DG : "#7aad90",
+                        border: selected.includes(j) ? "none" : `1px solid ${GOLD}22`,
+                      }}>
                       {toAr(j)}
                     </button>
                   ))}
                 </div>
               )}
               {selectMode === "hizb" && (
-                <div className="grid grid-cols-6 gap-1.5">
-                  {Array.from({length:60},(_,i)=>i+1).map(h=>(
-                    <button key={h} onClick={()=>setSelected(p=>p.includes(h)?p.filter(x=>x!==h):[...p,h])}
+                <div className="grid grid-cols-6 gap-1.5 p-2">
+                  {Array.from({ length: 60 }, (_, i) => i + 1).map(h => (
+                    <button key={h}
+                      onClick={() => setSelected(p => p.includes(h) ? p.filter(x => x !== h) : [...p, h])}
                       className="aspect-square rounded-lg text-[10px] font-bold qr-btn"
-                      style={{ background:selected.includes(h)?GOLD:"#1a3025",
-                        color:selected.includes(h)?DG:"#7aad90",
-                        border:`1px solid ${GOLD}22` }}>
+                      style={{
+                        background: selected.includes(h) ? GOLD : "#1a3025",
+                        color: selected.includes(h) ? DG : "#7aad90",
+                        border: `1px solid ${GOLD}22`,
+                      }}>
                       {toAr(h)}
                     </button>
                   ))}
                 </div>
               )}
               {selectMode === "surah" && (
-                <div className="space-y-1">
+                <div className="space-y-0.5 p-2">
                   {Object.entries(SURAHS_AR).map(([num, name]) => {
                     const n = Number(num);
                     return (
-                      <button key={n} onClick={()=>setSelected(p=>p.includes(n)?p.filter(x=>x!==n):[...p,n])}
+                      <button key={n}
+                        onClick={() => setSelected(p => p.includes(n) ? p.filter(x => x !== n) : [...p, n])}
                         className="w-full flex items-center justify-between px-3 py-1.5 rounded-xl qr-btn"
-                        style={{ background:selected.includes(n)?GOLD+"33":"transparent",
-                          border:`1px solid ${selected.includes(n)?GOLD+"88":GOLD+"15"}` }}>
-                        <span className="text-xs font-bold qr-arabic" style={{color:selected.includes(n)?GOLD_LIGHT:"#7aad90"}}>{name}</span>
-                        <span className="text-[10px]" style={{color:"#4a6d58"}}>{n}</span>
+                        style={{
+                          background: selected.includes(n) ? GOLD + "33" : "transparent",
+                          border: `1px solid ${selected.includes(n) ? GOLD + "88" : GOLD + "14"}`,
+                        }}>
+                        <span className="text-xs font-bold qr-arabic"
+                          style={{ color: selected.includes(n) ? GOLD_LIGHT : "#7aad90" }}>{name}</span>
+                        <span className="text-[10px]" style={{ color: "#4a6d58" }}>{n}</span>
                       </button>
                     );
                   })}
@@ -994,30 +977,52 @@ Keep it brief, warm, and motivating.`;
           </div>
 
           {/* Daily amount */}
-          <div className="rounded-2xl p-4" style={{ background: "#ffffff0a", border: `1px solid ${GOLD}22` }}>
+          <div className="rounded-2xl p-4" style={{ background: "#ffffff09", border: `1px solid ${GOLD}22` }}>
             <p className="text-xs font-bold mb-3" style={{ color: GOLD }}>⏱️ Daily Revision Amount</p>
-            <div className="grid grid-cols-2 gap-2">
-              {dailyOptions.map(o=>(
-                <button key={o.val} onClick={()=>setDailyPages(o.val)}
-                  className="py-3 rounded-xl qr-btn"
-                  style={{ background:dailyPages===o.val?GOLD:"#1a3025",
-                    border:dailyPages===o.val?"none":`1px solid ${GOLD}22` }}>
-                  <div className="text-sm font-black qr-arabic" style={{color:dailyPages===o.val?DG:GOLD}}>{o.ar}</div>
-                  <div className="text-[10px]" style={{color:dailyPages===o.val?DG+"99":"#4a6d58"}}>{o.en}</div>
+            <div className="grid grid-cols-4 gap-2">
+              {dailyOptions.map(o => (
+                <button key={o.val} onClick={() => setDailyPages(o.val)}
+                  className="py-2.5 rounded-xl qr-btn"
+                  style={{
+                    background: dailyPages === o.val ? GOLD : "#1a3025",
+                    border: dailyPages === o.val ? "none" : `1px solid ${GOLD}22`,
+                  }}>
+                  <div className="text-xs font-black qr-arabic" style={{ color: dailyPages === o.val ? DG : GOLD }}>{o.ar}</div>
+                  <div className="text-[9px]" style={{ color: dailyPages === o.val ? DG + "99" : "#4a6d58" }}>{o.en}</div>
                 </button>
               ))}
             </div>
           </div>
 
+          {/* Reciter */}
+          <div className="rounded-2xl p-4" style={{ background: "#ffffff09", border: `1px solid ${GOLD}22` }}>
+            <p className="text-xs font-bold mb-2" style={{ color: GOLD }}>🎙️ Reciter</p>
+            <select value={reciter} onChange={e => setReciter(e.target.value)}
+              className="w-full text-sm rounded-xl px-3 py-2.5 outline-none qr-arabic"
+              style={{ background: "#1a3025", color: GOLD, border: `1px solid ${GOLD}33` }}>
+              {RECITERS.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+            </select>
+          </div>
+
           {/* Start */}
           <button
-            onClick={handleStart}
-            disabled={!canStart}
+            onClick={() => {
+              const pages = buildPages(selectMode, selected);
+              const newPlan: RevisionPlan = { mode: selectMode, selected, dailyPages, allPages: pages, currentIdx: 0 };
+              setPlan(newPlan);
+              if (userId) localStorage.setItem(`revision_plan_${userId}`, JSON.stringify(newPlan));
+              setSessionStart(Date.now()); setPageVisible(true);
+              fetchPage(pages[0]); fetchPrevPage(pages[0]);
+              setStage("reciting");
+            }}
+            disabled={selected.length === 0}
             className="w-full py-4 rounded-2xl font-black text-sm tracking-wide qr-btn"
-            style={{ background:canStart?`linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`:"#1a3025",
-              color:canStart?DG:"#4a6d58", opacity:canStart?1:0.6 }}
-          >
-            {canStart ? "بسم الله — Start Revision ✨" : "Select content to revise"}
+            style={{
+              background: selected.length > 0 ? `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})` : "#1a3025",
+              color: selected.length > 0 ? DG : "#4a6d58",
+              opacity: selected.length > 0 ? 1 : 0.6,
+            }}>
+            {selected.length > 0 ? "بسم الله — Start Revision ✨" : "Select content to revise"}
           </button>
         </div>
       </div>
@@ -1025,20 +1030,20 @@ Keep it brief, warm, and motivating.`;
   }
 
   // ════════════════════════════════════════════════════════
-  //  RENDER — RECITING
+  //  RECITING
   // ════════════════════════════════════════════════════════
   if (stage === "reciting") {
     const progressPct = plan ? Math.round((plan.currentIdx / Math.max(1, plan.allPages.length)) * 100) : 0;
-    const isPagePlaying = pagePlayIdx >= 0;
 
     return (
       <div className="h-full flex flex-col overflow-hidden" style={{ background: "#0a0e0b" }}>
         <style>{globalCSS}</style>
-        <audio ref={audioRef} playsInline preload="none" style={{ display:"none" }} />
+        <audio ref={audioRef} playsInline preload="none" style={{ display: "none" }} />
 
-        {/* Header bar */}
-        <div className="flex-none px-3 py-2 flex items-center gap-2 border-b" style={{ borderColor: GOLD+"33", background: DG }}>
-          <button onClick={()=>setStage("setup")} className="p-1.5 rounded-lg qr-btn" style={{background:"#1a3025"}}>
+        {/* Header */}
+        <div className="flex-none px-3 py-2 flex items-center gap-2 border-b"
+          style={{ borderColor: GOLD + "33", background: DG }}>
+          <button onClick={() => setStage("setup")} className="p-1.5 rounded-lg qr-btn" style={{ background: "#1a3025" }}>
             <ChevronLeft size={14} color={GOLD} />
           </button>
           <div className="flex-1 min-w-0">
@@ -1046,293 +1051,366 @@ Keep it brief, warm, and motivating.`;
               <span className="text-xs font-black" style={{ color: GOLD }}>
                 Page {currentPage} · Juz {toAr(juzNum)}
               </span>
-              <span className="text-[10px] rounded px-1.5 py-0.5 font-bold" style={{background:GOLD+"22",color:GOLD}}>
-                {plan?.currentIdx + 1}/{totalPages}
+              <span className="text-[10px] rounded px-1.5 py-0.5 font-bold"
+                style={{ background: GOLD + "22", color: GOLD }}>
+                {(plan?.currentIdx ?? 0) + 1}/{totalPages}
               </span>
             </div>
-            <div className="h-1 mt-1 rounded-full overflow-hidden" style={{background:"#1a3025"}}>
-              <div className="h-full rounded-full" style={{width:`${progressPct}%`,background:GOLD,transition:"width 0.3s"}}/>
+            <div className="h-1 mt-1 rounded-full overflow-hidden" style={{ background: "#1a3025" }}>
+              <div className="h-full rounded-full" style={{ width: `${progressPct}%`, background: GOLD, transition: "width 0.3s" }} />
             </div>
           </div>
 
-          {/* Reciter select */}
-          <select value={reciter} onChange={e=>setReciter(e.target.value)}
-            className="text-[9px] rounded px-1 py-1 outline-none"
-            style={{background:"#1a3025",color:GOLD,border:`1px solid ${GOLD}22`}}>
-            {RECITERS.map(r=><option key={r.id} value={r.id}>{r.name}</option>)}
+          {/* Reciter */}
+          <select value={reciter} onChange={e => { stopAudio(); setReciter(e.target.value); }}
+            className="text-[9px] rounded-lg px-2 py-1 outline-none qr-arabic max-w-[90px]"
+            style={{ background: "#1a3025", color: GOLD, border: `1px solid ${GOLD}22` }}>
+            {RECITERS.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
           </select>
 
           {/* Font size */}
           <div className="flex items-center gap-1">
-            <button onClick={()=>setFontSize(f=>Math.max(18,f-2))} className="w-6 h-6 rounded flex items-center justify-center qr-btn" style={{background:"#1a3025"}}>
-              <span style={{color:GOLD,fontSize:10,fontWeight:900}}>A-</span>
+            <button onClick={() => setFontSize(f => Math.max(18, f - 2))}
+              className="w-6 h-6 rounded flex items-center justify-center qr-btn" style={{ background: "#1a3025" }}>
+              <span style={{ color: GOLD, fontSize: 9, fontWeight: 900 }}>A-</span>
             </button>
-            <button onClick={()=>setFontSize(f=>Math.min(40,f+2))} className="w-6 h-6 rounded flex items-center justify-center qr-btn" style={{background:"#1a3025"}}>
-              <span style={{color:GOLD,fontSize:12,fontWeight:900}}>A+</span>
+            <button onClick={() => setFontSize(f => Math.min(40, f + 2))}
+              className="w-6 h-6 rounded flex items-center justify-center qr-btn" style={{ background: "#1a3025" }}>
+              <span style={{ color: GOLD, fontSize: 11, fontWeight: 900 }}>A+</span>
             </button>
           </div>
         </div>
 
-        {/* Mushaf */}
-        <div className="flex-1 overflow-y-auto px-3 pt-3 pb-2">
-          {pageLoading ? (
-            <div className="flex flex-col items-center justify-center h-full gap-3">
-              <Loader2 size={28} className="qr-spin" style={{color:GOLD}}/>
-              <p className="text-xs" style={{color:"#7aad90"}}>Loading page {currentPage}…</p>
-            </div>
-          ) : (
-            <div className="qr-frame max-w-lg mx-auto shadow-2xl">
-              {/* Page top border */}
-              <div className="flex items-center justify-between px-4 py-2 border-b" style={{borderColor:GOLD+"44",background:`linear-gradient(to bottom,${GOLD}15,transparent)`}}>
-                <span className="qr-arabic text-xs font-bold" style={{color:DG}}>{pageAyahs[0]?.surah?.nameAr ?? ""}</span>
-                <span className="text-[10px] font-bold" style={{color:GOLD,fontFamily:"'Amiri',serif"}}>الجزء {toAr(juzNum)}</span>
-                <span className="text-[9px]" style={{color:"#7a6030",fontFamily:"Georgia,serif"}}>{pageAyahs[0]?.surah?.englishName ?? ""}</span>
-              </div>
-              <div className="mx-4 h-px" style={{background:`linear-gradient(to right,transparent,${GOLD}88,transparent)`}}/>
+        {/* Content area */}
+        <div className="flex-1 overflow-hidden relative">
 
-              {/* Verses */}
-              <div className="px-5 py-4">
-                {surahGroups.map((g, gi) => {
-                  const isNew = g.ayahs[0].numberInSurah === 1;
-                  const showBism = isNew && g.surah.number !== 9 && g.surah.number !== 1;
-                  return (
-                    <div key={gi}>
-                      {isNew && <div className="qr-nameplate">سورة {g.surah.nameAr}<small style={{display:"block",fontSize:"0.6em",color:"#7a6030",fontFamily:"Georgia,serif"}}>{g.surah.englishName} · {g.surah.numberOfAyahs} verses</small></div>}
-                      {showBism && <div className="qr-bismillah" style={{fontSize:fontSize*0.82}}>بِسۡمِ ٱللَّهِ ٱلرَّحۡمَٰنِ ٱلرَّحِيمِ</div>}
-                      <p className="qr-mushaf" style={{fontSize}}>
-                        {g.ayahs.map(a => (
-                          <span key={a.number} onClick={()=>{stopAudio();playAyah(a.number);}}
-                            className={cn("cursor-pointer transition-all rounded", playing===a.number && "qr-active")}>
-                            {a.text}{" "}
-                            <span style={{color:GOLD,fontFamily:"'Amiri',serif",fontSize:"0.65em"}}>۝{toAr(a.numberInSurah)}</span>{" "}
-                          </span>
-                        ))}
-                      </p>
-                    </div>
-                  );
-                })}
-              </div>
-
-              <div className="mx-4 h-px" style={{background:`linear-gradient(to right,transparent,${GOLD}88,transparent)`}}/>
-              <div className="py-2.5 text-center" style={{fontFamily:"'Amiri',serif",color:GOLD,fontSize:"0.8em"}}>
-                ─── {toAr(currentPage)} ───
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Footer controls */}
-        <div className="flex-none border-t px-3 py-2 space-y-2" style={{borderColor:GOLD+"33",background:DG}}>
-
-          {/* Instructions */}
-          {!recording && (
-            <p className="text-center text-xs" style={{color:"#7aad90"}}>
-              Listen first, then tap the mic to recite from memory
-            </p>
-          )}
+          {/* ── RECORDING SCREEN ── */}
           {recording && (
-            <p className="text-center text-xs font-bold animate-pulse" style={{color:"#ef4444"}}>
-              🔴 Recording… recite the full page from memory
-            </p>
-          )}
-
-          <div className="flex items-center justify-center gap-3">
-            {/* Play page */}
-            <button
-              onClick={isPagePlaying ? stopAudio : playPage}
-              className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold qr-btn"
-              style={{background:isPagePlaying?"#1a3025":GOLD+"33", color:GOLD, border:`1px solid ${GOLD}44`}}>
-              {isPagePlaying ? <><Square size={12} fill={GOLD}/> Stop</> : <><Headphones size={12}/> Listen</>}
-            </button>
-
-            {/* Main mic button */}
-            <button
-              onClick={recording ? stopRecording : ()=>startRecording("page")}
-              disabled={evaluating}
-              className={cn("w-16 h-16 rounded-full flex items-center justify-center shadow-lg qr-btn", recording && "qr-pulse")}
-              style={{ background: recording ? "#dc2626" : `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`,
-                boxShadow: recording ? "0 0 0 8px #dc262622" : `0 0 0 6px ${GOLD}22` }}>
-              {recording ? <MicOff size={24} color="#fff" /> : <Mic size={24} color={DG} />}
-            </button>
-
-            {/* Timer */}
-            {recording && (
-              <div className="flex flex-col items-center">
-                <span className="font-black tabular-nums" style={{color:"#ef4444",fontSize:16}}>{fmtTime(recTime)}</span>
-                <span className="text-[9px]" style={{color:"#7a5050"}}>Recording</span>
+            <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-6"
+              style={{ background: "linear-gradient(160deg,#050f08 0%,#0a0e0b 100%)" }}>
+              <div className="flex flex-col items-center gap-3">
+                <div
+                  className="w-24 h-24 rounded-full flex items-center justify-center qr-recordpulse"
+                  style={{ background: "#dc262615", border: "3px solid #dc2626" }}>
+                  <Mic size={36} color="#ef4444" />
+                </div>
+                <span className="font-black text-3xl tabular-nums" style={{ color: "#ef4444" }}>
+                  {fmtTime(recTime)}
+                </span>
+                <p className="text-xs font-bold" style={{ color: "#dc2626" }}>Recording…</p>
               </div>
-            )}
-            {!recording && (
-              <button
-                onClick={()=>{stopAudio();setShowFullPage(f=>!f);}}
-                className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold qr-btn"
-                style={{background:"#1a3025",color:"#7aad90",border:`1px solid ${GOLD}22`}}>
-                {showFullPage ? <><EyeOff size={12}/> Hide</> : <><Eye size={12}/> Preview</>}
-              </button>
-            )}
-          </div>
 
-          {recording && (
-            <div className="text-center">
-              <button onClick={stopRecording}
-                className="px-8 py-2.5 rounded-xl font-black text-xs qr-btn"
-                style={{background:`linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`,color:DG}}>
+              <div className="text-center px-8 space-y-1">
+                <p className="text-sm font-bold" style={{ color: GOLD }}>Recite the full page from memory</p>
+                <p className="text-xs" style={{ color: "#4a6d58" }}>The page is hidden — recite without looking</p>
+              </div>
+
+              <div style={{ fontFamily: "'Amiri Quran','Amiri',serif", color: GOLD + "66", fontSize: 28, direction: "rtl" }}>
+                ﷽
+              </div>
+
+              <button onClick={stopPageRecording}
+                className="px-10 py-3.5 rounded-2xl font-black text-sm qr-btn"
+                style={{ background: `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`, color: DG }}>
                 ✓ Done — Submit for Evaluation
               </button>
             </div>
           )}
+
+          {/* ── MUSHAF ── */}
+          {!recording && (
+            <div className="h-full overflow-y-auto px-3 pt-3 pb-2">
+              {pageLoading ? (
+                <div className="flex flex-col items-center justify-center h-full gap-3">
+                  <Loader2 size={28} className="qr-spin" style={{ color: GOLD }} />
+                  <p className="text-xs" style={{ color: "#7aad90" }}>Loading page {currentPage}…</p>
+                </div>
+              ) : (
+                <div className="qr-frame max-w-lg mx-auto shadow-2xl">
+                  {/* Page header */}
+                  <div className="flex items-center justify-between px-4 py-2 border-b"
+                    style={{ borderColor: GOLD + "44", background: `linear-gradient(to bottom,${GOLD}12,transparent)` }}>
+                    <span className="qr-arabic text-xs font-bold" style={{ color: DG }}>
+                      {pageAyahs[0]?.surah?.nameAr ?? ""}
+                    </span>
+                    <span className="text-[10px] font-bold" style={{ color: GOLD, fontFamily: "'Amiri',serif" }}>
+                      الجزء {toAr(juzNum)}
+                    </span>
+                    <span className="text-[9px]" style={{ color: "#8a6830", fontFamily: "Georgia,serif" }}>
+                      {pageAyahs[0]?.surah?.englishName ?? ""}
+                    </span>
+                  </div>
+                  <div className="mx-4 h-px" style={{ background: `linear-gradient(to right,transparent,${GOLD}88,transparent)` }} />
+
+                  {/* Verses */}
+                  <div className="px-5 py-5">
+                    {surahGroups.map((g, gi) => {
+                      const isNew     = g.ayahs[0].numberInSurah === 1;
+                      const showBism  = isNew && g.surah.number !== 9 && g.surah.number !== 1;
+                      return (
+                        <div key={gi}>
+                          {isNew && (
+                            <div className="qr-nameplate">
+                              سورة {g.surah.nameAr}
+                              <small style={{ display: "block", fontSize: "0.6em", color: "#7a6030", fontFamily: "Georgia,serif" }}>
+                                {g.surah.englishName} · {g.surah.numberOfAyahs} verses
+                              </small>
+                            </div>
+                          )}
+                          {showBism && (
+                            <div className="qr-bismillah" style={{ fontSize: fontSize * 0.82 }}>
+                              بِسۡمِ ٱللَّهِ ٱلرَّحۡمَٰنِ ٱلرَّحِيمِ
+                            </div>
+                          )}
+                          <p className="qr-mushaf" style={{ fontSize }}>
+                            {g.ayahs.map(a => (
+                              <span key={a.number}
+                                onClick={() => { stopAudio(); playAyah(a.number); }}
+                                className={cn("cursor-pointer transition-all rounded-sm", playing === a.number && "qr-active")}>
+                                {a.text}{" "}
+                                <span style={{ color: GOLD, fontFamily: "'Amiri',serif", fontSize: "0.65em" }}>
+                                  ۝{toAr(a.numberInSurah)}
+                                </span>{" "}
+                              </span>
+                            ))}
+                          </p>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="mx-4 h-px" style={{ background: `linear-gradient(to right,transparent,${GOLD}88,transparent)` }} />
+                  <div className="py-3 text-center" style={{ fontFamily: "'Amiri',serif", color: GOLD, fontSize: "0.8em" }}>
+                    ─── {toAr(currentPage)} ───
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
+
+        {/* Footer — only when NOT recording */}
+        {!recording && (
+          <div className="flex-none border-t px-3 py-2.5 space-y-2"
+            style={{ borderColor: GOLD + "33", background: DG }}>
+            <p className="text-center text-xs" style={{ color: "#5a8a6a" }}>
+              Listen first, then tap the mic to recite from memory
+            </p>
+            <div className="flex items-center justify-center gap-4">
+              {/* Listen */}
+              <button
+                onClick={isPagePlaying ? stopAudio : playPage}
+                className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold qr-btn"
+                style={{ background: isPagePlaying ? "#1a3025" : GOLD + "28", color: GOLD, border: `1px solid ${GOLD}44` }}>
+                {isPagePlaying
+                  ? <><StopCircle size={13} /> Stop</>
+                  : <><Headphones size={13} /> Listen</>
+                }
+              </button>
+
+              {/* Main mic button */}
+              <button
+                onClick={startPageRecording}
+                disabled={pageLoading}
+                className="w-16 h-16 rounded-full flex items-center justify-center shadow-xl qr-btn"
+                style={{
+                  background: `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`,
+                  boxShadow: `0 0 0 6px ${GOLD}22`,
+                }}>
+                <Mic size={26} color={DG} />
+              </button>
+
+              {/* Preview toggle */}
+              <button
+                onClick={() => setPageVisible(v => !v)}
+                className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold qr-btn"
+                style={{ background: "#1a3025", color: "#7aad90", border: `1px solid ${GOLD}22` }}>
+                {pageVisible ? <><EyeOff size={13} /> Hide</> : <><Eye size={13} /> Preview</>}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
 
   // ════════════════════════════════════════════════════════
-  //  RENDER — EVALUATING
+  //  EVALUATING
   // ════════════════════════════════════════════════════════
   if (stage === "evaluating") {
     const result = evalResult;
-    const sc = result ? scoreColor(result.score) : null;
+    const sc = result && result.score >= 0 ? scoreColor(result.score) : null;
 
     return (
-      <div className="h-full overflow-y-auto" style={{background:`linear-gradient(160deg,${DG} 0%,#0b1a12 100%)`}}>
+      <div className="h-full overflow-y-auto" style={{ background: `linear-gradient(160deg,${DG} 0%,#0b1a12 100%)` }}>
         <style>{globalCSS}</style>
-        <audio ref={audioRef} playsInline preload="none" style={{display:"none"}}/>
+        <audio ref={audioRef} playsInline preload="none" style={{ display: "none" }} />
 
         {evaluating ? (
-          <div className="flex flex-col items-center justify-center h-full gap-4 px-6">
+          <div className="flex flex-col items-center justify-center h-full gap-5 px-6">
             <div className="w-20 h-20 rounded-full flex items-center justify-center qr-shimmer">
-              <Brain size={32} color={GOLD}/>
+              <Brain size={32} color={GOLD} />
             </div>
-            <p className="font-black text-sm" style={{color:GOLD}}>Analysing Your Recitation…</p>
-            <p className="text-xs text-center" style={{color:"#7aad90"}}>
-              AI is comparing your recitation with the reference text word by word
+            <p className="font-black text-sm" style={{ color: GOLD }}>Analysing Your Recitation…</p>
+            <p className="text-xs text-center" style={{ color: "#7aad90" }}>
+              Comparing your recitation with the reference text word by word
             </p>
-            <div className="flex gap-1.5 mt-2">
-              {[0,1,2].map(i=>(
-                <div key={i} className="w-2 h-2 rounded-full" style={{
-                  background:GOLD, animation:`qr-bounce 0.8s ${i*0.2}s ease-in-out infinite`
-                }}/>
+            <div className="flex gap-2 mt-1">
+              {[0, 1, 2].map(i => (
+                <div key={i} className="w-2.5 h-2.5 rounded-full" style={{
+                  background: GOLD,
+                  animation: `qr-bounce 0.8s ${i * 0.22}s ease-in-out infinite`,
+                }} />
               ))}
             </div>
           </div>
+
+        ) : result?.transcriptFailed ? (
+          /* Transcription failed */
+          <div className="px-4 py-6 space-y-4 qr-fadein">
+            <div className="rounded-2xl p-5 text-center" style={{ background: "#fee2e2", border: "2px solid #dc2626" }}>
+              <div className="text-4xl mb-2">🎙️</div>
+              <p className="font-black text-sm" style={{ color: "#991b1b" }}>Transcription Failed</p>
+              <p className="text-xs mt-2 leading-relaxed" style={{ color: "#7f1d1d" }}>{result.feedback}</p>
+            </div>
+            <button onClick={() => { setStage("reciting"); setEvalResult(null); }}
+              className="w-full py-3.5 rounded-2xl font-black text-sm qr-btn"
+              style={{ background: `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`, color: DG }}>
+              🔄 Try Again
+            </button>
+          </div>
+
         ) : result ? (
           <div className="px-4 py-5 space-y-4 qr-fadein">
+
             {/* Score */}
-            <div className="rounded-2xl p-5 text-center" style={{background:sc!.bg, border:`2px solid ${sc!.border}`}}>
-              <div className="text-5xl font-black mb-1" style={{color:sc!.text}}>{result.score}%</div>
-              <div className="text-sm font-bold" style={{color:sc!.text}}>
+            <div className="rounded-2xl p-5 text-center" style={{ background: sc!.bg, border: `2px solid ${sc!.border}` }}>
+              <div className="text-5xl font-black mb-1" style={{ color: sc!.text }}>{result.score}%</div>
+              <div className="text-sm font-bold" style={{ color: sc!.text }}>
                 {result.score >= 85 ? "ممتاز — Excellent! 🌟" :
-                 result.score >= 75 ? "جيد جداً — Very Good ✓" :
-                 result.score >= 60 ? "جيد — Good, keep going 💪" :
-                 result.score >= 40 ? "مقبول — Needs practice 📖" :
+                 result.score >= 70 ? "جيد جداً — Very Good ✓" :
+                 result.score >= 50 ? "جيد — Good, keep going 💪" :
                  "يحتاج مراجعة — Needs more revision 🔄"}
               </div>
-              <div className="flex justify-center gap-4 mt-3 text-xs" style={{color:sc!.text+"bb"}}>
-                <span>✅ {result.words.filter(w=>w.status==="correct").length} correct</span>
-                <span>❌ {result.words.filter(w=>w.status==="missing").length} missing</span>
+              <div className="flex justify-center gap-4 mt-3 text-xs" style={{ color: sc!.text + "aa" }}>
+                <span>✅ {result.words.filter(w => w.status === "correct").length} correct</span>
+                <span>❌ {result.words.filter(w => w.status === "missing").length} missing</span>
               </div>
             </div>
 
             {/* AI Feedback */}
             {result.feedback && (
-              <div className="rounded-2xl p-4" style={{background:GOLD+"15",border:`1px solid ${GOLD}33`}}>
+              <div className="rounded-2xl p-4" style={{ background: GOLD + "12", border: `1px solid ${GOLD}33` }}>
                 <div className="flex items-center gap-2 mb-2">
-                  <Sparkles size={13} style={{color:GOLD}}/>
-                  <span className="text-xs font-black" style={{color:GOLD}}>Teacher Feedback</span>
+                  <Sparkles size={13} style={{ color: GOLD }} />
+                  <span className="text-xs font-black" style={{ color: GOLD }}>Teacher Feedback</span>
                 </div>
-                <p className="text-xs leading-relaxed" style={{color:"#d4c08a"}}>{result.feedback}</p>
+                <p className="text-xs leading-relaxed" style={{ color: "#d4c08a" }}>{result.feedback}</p>
               </div>
             )}
 
             {/* Word analysis */}
-            <div className="rounded-2xl p-4" style={{background:"#ffffff08",border:`1px solid ${GOLD}22`}}>
-              <p className="text-xs font-black mb-3" style={{color:GOLD}}>Word-by-Word Analysis</p>
-              <div className="flex flex-wrap gap-1.5 p-3 rounded-xl" style={{background:PARCHMENT,direction:"rtl"}}>
-                {result.words.filter(w=>w.status!=="wrong").map((w,i)=>(
-                  <span key={i} className={cn("px-1.5 py-0.5 rounded text-sm font-semibold",
-                    w.status==="correct"?"qr-correct":"qr-missing")}
-                    style={{fontFamily:"'Amiri',serif"}}>
-                    {w.word}
-                  </span>
-                ))}
-              </div>
-              <div className="flex gap-3 mt-2 text-[10px]" style={{color:"#7aad90"}}>
-                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{background:"#16a34a",display:"inline-block"}}/> Correct</span>
-                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{background:"#dc2626",display:"inline-block"}}/> Missing/skipped</span>
-              </div>
-            </div>
-
-            {/* Error verses list */}
-            {ayahErrors.length > 0 && (
-              <div className="rounded-2xl p-4" style={{background:"#fee2e215",border:"1px solid #dc262633"}}>
-                <div className="flex items-center gap-2 mb-2">
-                  <AlertTriangle size={13} color="#dc2626"/>
-                  <span className="text-xs font-black" style={{color:"#dc2626"}}>{ayahErrors.length} verse(s) with errors</span>
+            {result.words.length > 0 && (
+              <div className="rounded-2xl p-4" style={{ background: "#ffffff08", border: `1px solid ${GOLD}22` }}>
+                <p className="text-xs font-black mb-3" style={{ color: GOLD }}>Word-by-Word Analysis</p>
+                <div className="flex flex-wrap gap-1.5 p-3 rounded-xl" style={{ background: PARCHMENT, direction: "rtl" }}>
+                  {result.words.filter(w => w.status !== "wrong").map((w, i) => (
+                    <span key={i}
+                      className={cn("px-1.5 py-0.5 rounded text-sm font-semibold",
+                        w.status === "correct" ? "qr-correct" : "qr-missing")}
+                      style={{ fontFamily: "'Amiri',serif" }}>
+                      {w.word}
+                    </span>
+                  ))}
                 </div>
-                {ayahErrors.slice(0,3).map((ae,i)=>(
-                  <div key={i} className="mb-2 p-2 rounded-lg" style={{background:"#ffffff08"}}>
-                    <div className="flex items-center gap-2 mb-1">
-                      <button onClick={()=>playAyah(ae.ayah.number)} className="p-1 rounded qr-btn" style={{background:GOLD+"22"}}>
-                        <Volume2 size={10} color={GOLD}/>
+                <div className="flex gap-3 mt-2 text-[10px]" style={{ color: "#7aad90" }}>
+                  <span className="flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full inline-block" style={{ background: "#16a34a" }} /> Correct
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full inline-block" style={{ background: "#dc2626" }} /> Missing
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Error verses */}
+            {ayahErrors.length > 0 && (
+              <div className="rounded-2xl p-4" style={{ background: "#fee2e214", border: "1px solid #dc262633" }}>
+                <div className="flex items-center gap-2 mb-3">
+                  <AlertTriangle size={13} color="#dc2626" />
+                  <span className="text-xs font-black" style={{ color: "#dc2626" }}>
+                    {ayahErrors.length} verse(s) need practice
+                  </span>
+                </div>
+                {ayahErrors.slice(0, 3).map((ae, i) => (
+                  <div key={i} className="mb-2 p-3 rounded-xl" style={{ background: "#ffffff08" }}>
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <button onClick={() => playAyah(ae.ayah.number)}
+                        className="p-1.5 rounded-lg qr-btn" style={{ background: GOLD + "22" }}>
+                        <Volume2 size={11} color={GOLD} />
                       </button>
-                      <span className="text-[10px]" style={{color:"#7aad90"}}>
-                        {ae.ayah.surah?.nameAr} {toAr(ae.ayah.numberInSurah)}
+                      <span className="text-[10px]" style={{ color: "#7aad90" }}>
+                        {ae.ayah.surah?.nameAr} · آية {toAr(ae.ayah.numberInSurah)}
                       </span>
                     </div>
-                    <p className="text-xs qr-arabic leading-relaxed" style={{color:PARCHMENT,fontFamily:"'Amiri',serif",direction:"rtl",fontSize:14}}>
-                      {ae.ayah.text}
-                    </p>
-                    <p className="text-[10px] mt-1" style={{color:"#dc2626"}}>
-                      ❌ Missing: {ae.missing.slice(0,4).join("، ")}
+                    <p className="text-[10px] mt-1" style={{ color: "#dc2626" }}>
+                      Missing: {ae.missing.slice(0, 5).join("، ")}
                     </p>
                   </div>
                 ))}
-                {ayahErrors.length > 3 && <p className="text-[10px] text-center" style={{color:"#7aad90"}}>…and {ayahErrors.length-3} more</p>}
+                {ayahErrors.length > 3 && (
+                  <p className="text-[10px] text-center mt-1" style={{ color: "#7aad90" }}>
+                    …and {ayahErrors.length - 3} more
+                  </p>
+                )}
               </div>
             )}
 
             {/* Transcript */}
             {result.transcript && (
-              <div className="rounded-2xl p-4" style={{background:"#ffffff08",border:`1px solid ${GOLD}22`}}>
-                <p className="text-xs font-black mb-2" style={{color:GOLD}}>Your Recitation (transcribed)</p>
-                <p className="text-sm qr-arabic leading-relaxed" style={{color:PARCHMENT+"bb",fontFamily:"'Amiri',serif",direction:"rtl",lineHeight:2}}>
+              <div className="rounded-2xl p-4" style={{ background: "#ffffff08", border: `1px solid ${GOLD}22` }}>
+                <p className="text-xs font-black mb-2" style={{ color: GOLD }}>Your Recitation (transcribed)</p>
+                <p className="text-sm qr-arabic leading-relaxed"
+                  style={{ color: PARCHMENT + "bb", fontFamily: "'Amiri',serif", direction: "rtl", lineHeight: 2 }}>
                   {result.transcript}
                 </p>
               </div>
             )}
 
-            {/* Action buttons */}
-            <div className="space-y-2">
+            {/* Actions */}
+            <div className="space-y-2 pb-4">
               {result.score >= PASS_SCORE && ayahErrors.length === 0 ? (
-                <button onClick={()=>{ buildExercise(); setStage("exercise"); }}
+                <button onClick={() => { buildExercise(); setStage("exercise"); }}
                   className="w-full py-3.5 rounded-2xl font-black text-sm qr-btn"
-                  style={{background:`linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`,color:DG}}>
-                  ✓ Good job! Proceed to Exercise →
+                  style={{ background: `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`, color: DG }}>
+                  ✓ Proceed to Exercise →
                 </button>
               ) : ayahErrors.length > 0 ? (
                 <>
-                  <button onClick={()=>{ setRemediationIdx(0); setStage("remediation"); }}
+                  <button onClick={() => { setRemediationIdx(0); setRemResult(null); setStage("remediation"); }}
                     className="w-full py-3.5 rounded-2xl font-black text-sm qr-btn"
-                    style={{background:`linear-gradient(135deg,#dc2626,#ef4444)`,color:"#fff"}}>
+                    style={{ background: "linear-gradient(135deg,#c2410c,#ea580c)", color: "#fff" }}>
                     📖 Practise Error Verses ({ayahErrors.length})
                   </button>
                   {result.score >= PASS_SCORE && (
-                    <button onClick={()=>{ buildExercise(); setStage("exercise"); }}
+                    <button onClick={() => { buildExercise(); setStage("exercise"); }}
                       className="w-full py-3 rounded-2xl font-bold text-sm qr-btn"
-                      style={{background:"#1a3025",color:GOLD,border:`1px solid ${GOLD}44`}}>
+                      style={{ background: "#1a3025", color: GOLD, border: `1px solid ${GOLD}44` }}>
                       Skip Practice → Exercise
                     </button>
                   )}
                 </>
               ) : (
-                <button onClick={()=>{ setStage("reciting"); }}
+                <button onClick={() => setStage("reciting")}
                   className="w-full py-3.5 rounded-2xl font-black text-sm qr-btn"
-                  style={{background:"#1a3025",color:GOLD,border:`1px solid ${GOLD}44`}}>
+                  style={{ background: "#1a3025", color: GOLD, border: `1px solid ${GOLD}44` }}>
                   🔄 Try Again
                 </button>
               )}
-              <button onClick={()=>setStage("reciting")} className="w-full py-2.5 rounded-2xl text-xs font-bold qr-btn"
-                style={{background:"transparent",color:"#4a6d58",border:`1px solid ${GOLD}15`}}>
+              <button onClick={() => setStage("reciting")}
+                className="w-full py-2.5 rounded-2xl text-xs font-bold qr-btn"
+                style={{ background: "transparent", color: "#4a6d58", border: `1px solid ${GOLD}15` }}>
                 ← Back to Page
               </button>
             </div>
@@ -1343,149 +1421,215 @@ Keep it brief, warm, and motivating.`;
   }
 
   // ════════════════════════════════════════════════════════
-  //  RENDER — REMEDIATION
+  //  REMEDIATION
   // ════════════════════════════════════════════════════════
   if (stage === "remediation") {
-    const errAyah = ayahErrors[remediationIdx];
+    const errAyah       = ayahErrors[remediationIdx];
     const masteredCount = ayahErrors.filter(e => e.mastered).length;
-    const allMastered = ayahErrors.every(e => e.mastered);
+    const allMastered   = ayahErrors.every(e => e.mastered);
+
+    // Find previous ayah for context (don't show error verse — only context)
+    const allAyahs   = [...(prevPageData?.ayahs ?? []), ...(pageData?.ayahs ?? [])];
+    const errIdx     = allAyahs.findIndex(a => a.number === errAyah?.ayah?.number);
+    const contextAyah = errIdx > 0 ? allAyahs[errIdx - 1] : null;
+
+    const remSc = remResult ? scoreColor(remResult.score) : null;
 
     return (
-      <div className="h-full flex flex-col overflow-hidden" style={{background:`linear-gradient(160deg,${DG} 0%,#0b1a12 100%)`}}>
+      <div className="h-full flex flex-col overflow-hidden"
+        style={{ background: `linear-gradient(160deg,${DG} 0%,#0b1a12 100%)` }}>
         <style>{globalCSS}</style>
-        <audio ref={audioRef} playsInline preload="none" style={{display:"none"}}/>
+        <audio ref={audioRef} playsInline preload="none" style={{ display: "none" }} />
 
         {/* Header */}
-        <div className="flex-none px-4 py-3 border-b" style={{borderColor:GOLD+"33",background:DG}}>
+        <div className="flex-none px-4 py-3 border-b" style={{ borderColor: GOLD + "33", background: DG }}>
           <div className="flex items-center gap-2">
-            <AlertTriangle size={14} color="#f59e0b"/>
-            <span className="font-black text-sm" style={{color:"#f59e0b"}}>Error Practice</span>
-            <span className="ml-auto text-xs font-bold px-2 py-0.5 rounded-full" style={{background:GOLD+"22",color:GOLD}}>
+            <AlertTriangle size={14} color="#f59e0b" />
+            <span className="font-black text-sm" style={{ color: "#f59e0b" }}>Error Practice</span>
+            <span className="ml-auto text-xs font-bold px-2 py-0.5 rounded-full"
+              style={{ background: GOLD + "22", color: GOLD }}>
               {masteredCount}/{ayahErrors.length} mastered
             </span>
           </div>
-          <div className="mt-2 h-1.5 rounded-full overflow-hidden" style={{background:"#1a3025"}}>
+          <div className="mt-2 h-1.5 rounded-full overflow-hidden" style={{ background: "#1a3025" }}>
             <div className="h-full rounded-full transition-all" style={{
-              width:`${Math.round((masteredCount/Math.max(1,ayahErrors.length))*100)}%`,
-              background:`linear-gradient(to right,${GOLD},${GOLD_LIGHT})`
-            }}/>
+              width: `${Math.round((masteredCount / Math.max(1, ayahErrors.length)) * 100)}%`,
+              background: `linear-gradient(to right,${GOLD},${GOLD_LIGHT})`,
+            }} />
           </div>
         </div>
 
         {/* Ayah navigator */}
-        <div className="flex-none px-4 py-2 flex gap-2 overflow-x-auto">
+        <div className="flex-none px-4 py-2 flex gap-2 overflow-x-auto border-b"
+          style={{ borderColor: GOLD + "22" }}>
           {ayahErrors.map((ae, i) => (
-            <button key={i} onClick={()=>setRemediationIdx(i)}
-              className="flex-none w-8 h-8 rounded-full text-xs font-black qr-btn"
-              style={{background:ae.mastered?"#16a34a":remediationIdx===i?GOLD:"#1a3025",
-                color:ae.mastered?"#fff":remediationIdx===i?DG:"#7aad90",
-                border:ae.mastered?"none":remediationIdx===i?"none":`1px solid ${GOLD}22`,
-                boxShadow:remediationIdx===i?`0 0 0 3px ${GOLD}44`:"none"}}>
-              {ae.mastered ? <Check size={12}/> : toAr(i+1)}
+            <button key={i}
+              onClick={() => { setRemediationIdx(i); setRemResult(null); }}
+              className="flex-none w-8 h-8 rounded-full text-xs font-black qr-btn flex items-center justify-center"
+              style={{
+                background: ae.mastered ? "#16a34a" : remediationIdx === i ? GOLD : "#1a3025",
+                color: ae.mastered ? "#fff" : remediationIdx === i ? DG : "#7aad90",
+                boxShadow: remediationIdx === i ? `0 0 0 3px ${GOLD}44` : "none",
+              }}>
+              {ae.mastered ? <Check size={12} /> : toAr(i + 1)}
             </button>
           ))}
         </div>
 
         {errAyah && (
-          <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
 
-            {/* Verse display */}
-            <div className="rounded-2xl overflow-hidden qr-frame">
-              <div className="flex items-center justify-between px-4 py-2" style={{background:`linear-gradient(to bottom,${GOLD}15,transparent)`,borderBottom:`1px solid ${GOLD}33`}}>
-                <span className="text-xs qr-arabic" style={{color:DG,fontWeight:700}}>{errAyah.ayah.surah?.nameAr}</span>
-                <span className="text-xs" style={{color:GOLD,fontFamily:"'Amiri',serif"}}>آية {toAr(errAyah.ayah.numberInSurah)}</span>
+            {/* Context verse — what comes BEFORE the error verse */}
+            <div className="rounded-2xl overflow-hidden" style={{ border: `1px solid ${GOLD}33` }}>
+              <div className="px-4 py-2 flex items-center gap-2" style={{ background: GOLD + "15" }}>
+                <BookOpen size={12} color={GOLD} />
+                <span className="text-xs font-bold" style={{ color: GOLD }}>
+                  {contextAyah ? "The verse before — use it as your starting point:" : "Verse location:"}
+                </span>
               </div>
-              <div className="px-6 py-5">
-                <p className="qr-mushaf text-center leading-loose" style={{fontSize:fontSize}}>
-                  {errAyah.ayah.text}{" "}
-                  <span style={{color:GOLD,fontSize:"0.7em",fontFamily:"'Amiri',serif"}}>۝{toAr(errAyah.ayah.numberInSurah)}</span>
-                </p>
+              <div className="px-5 py-4" style={{ background: PARCHMENT }}>
+                {contextAyah ? (
+                  <>
+                    <p className="qr-mushaf text-center leading-loose" style={{ fontSize: fontSize - 2 }}>
+                      {contextAyah.text}{" "}
+                      <span style={{ color: GOLD, fontSize: "0.7em", fontFamily: "'Amiri',serif" }}>
+                        ۝{toAr(contextAyah.numberInSurah)}
+                      </span>
+                    </p>
+                    <button onClick={() => playAyah(contextAyah.number)}
+                      className="mt-2 mx-auto flex items-center gap-1.5 text-xs qr-btn px-3 py-1.5 rounded-lg"
+                      style={{ background: GOLD + "22", color: GOLD, display: "flex" }}>
+                      <Volume2 size={11} /> Listen to this verse
+                    </button>
+                  </>
+                ) : (
+                  <p className="text-sm text-center qr-arabic"
+                    style={{ color: DG, fontFamily: "'Amiri',serif" }}>
+                    {errAyah.ayah.surah?.nameAr} · آية {toAr(errAyah.ayah.numberInSurah)}
+                  </p>
+                )}
               </div>
-              <div className="px-6 pb-4">
-                <p className="text-xs font-bold mb-1" style={{color:"#dc2626"}}>Words to focus on:</p>
-                <div className="flex flex-wrap gap-1.5" style={{direction:"rtl"}}>
-                  {errAyah.missing.map((w,i)=>(
-                    <span key={i} className="qr-missing px-2 py-0.5 rounded-lg text-sm font-semibold" style={{fontFamily:"'Amiri',serif"}}>{w}</span>
-                  ))}
-                </div>
+            </div>
+
+            {/* What to recite — DON'T show the verse text */}
+            <div className="rounded-2xl p-4" style={{ background: "#fee2e215", border: "1px solid #f59e0b44" }}>
+              <p className="text-xs font-black mb-1" style={{ color: "#f59e0b" }}>
+                📢 Now recite the next verse ({errAyah.ayah.surah?.nameAr} — آية {toAr(errAyah.ayah.numberInSurah)}):
+              </p>
+              <p className="text-xs" style={{ color: "#92400e" }}>
+                Recite from memory — do not look at the text
+              </p>
+              <div className="mt-2 flex flex-wrap gap-1" style={{ direction: "rtl" }}>
+                {errAyah.missing.map((w, i) => (
+                  <span key={i} className="text-[10px] px-1.5 py-0.5 rounded font-bold"
+                    style={{ background: "#dc262622", color: "#dc2626", fontFamily: "'Amiri',serif" }}>
+                    {w}
+                  </span>
+                ))}
               </div>
+              <p className="text-[10px] mt-1.5" style={{ color: "#6b5020" }}>
+                ↑ These are the words you missed — focus on them
+              </p>
             </div>
 
             {/* Mastered badge */}
             {errAyah.mastered && (
-              <div className="rounded-2xl p-4 flex items-center gap-3" style={{background:"#16a34a22",border:"1px solid #16a34a55"}}>
-                <CheckCircle2 size={20} color="#4ade80"/>
+              <div className="rounded-2xl p-4 flex items-center gap-3"
+                style={{ background: "#16a34a18", border: "1px solid #16a34a44" }}>
+                <CheckCircle2 size={20} color="#4ade80" />
                 <div>
-                  <p className="text-xs font-black" style={{color:"#4ade80"}}>Verse Mastered! 🌟</p>
-                  <p className="text-[10px]" style={{color:"#7aad90"}}>Score: {errAyah.remediationScore}%</p>
+                  <p className="text-xs font-black" style={{ color: "#4ade80" }}>Verse Mastered! ما شاء الله 🌟</p>
+                  <p className="text-[10px]" style={{ color: "#7aad90" }}>Score: {errAyah.remediationScore}%</p>
                 </div>
               </div>
             )}
 
-            {/* Remediation score */}
-            {errAyah.remediationScore > 0 && !errAyah.mastered && (
-              <div className="rounded-xl p-3 flex items-center gap-3" style={{background:"#f59e0b22",border:"1px solid #f59e0b44"}}>
-                <Target size={16} color="#f59e0b"/>
-                <p className="text-xs" style={{color:"#f59e0b"}}>Last attempt: {errAyah.remediationScore}% — Need 70%+ to mark as mastered</p>
+            {/* Result from last attempt */}
+            {remResult && !remEvaluating && (
+              <div className="rounded-2xl p-4 qr-fadein"
+                style={{ background: remSc!.bg, border: `2px solid ${remSc!.border}` }}>
+                <div className="flex items-center gap-2 mb-2">
+                  {remResult.score >= 70
+                    ? <CheckCircle2 size={16} color={remSc!.text} />
+                    : <AlertTriangle size={16} color={remSc!.text} />}
+                  <span className="text-sm font-black" style={{ color: remSc!.text }}>
+                    {remResult.score}% —{" "}
+                    {remResult.score >= 70 ? "Mastered! 🌟" : remResult.score >= 50 ? "Getting there 💪" : "Try again 🔄"}
+                  </span>
+                </div>
+                {remResult.transcript && (
+                  <p className="text-xs qr-arabic leading-relaxed mt-1"
+                    style={{ fontFamily: "'Amiri',serif", direction: "rtl", color: remSc!.text + "cc", lineHeight: 2 }}>
+                    {remResult.transcript}
+                  </p>
+                )}
+                {!remResult.transcript && (
+                  <p className="text-xs" style={{ color: remSc!.text + "aa" }}>
+                    Transcription failed — please speak clearly and try again.
+                  </p>
+                )}
               </div>
             )}
 
-            {/* Controls */}
-            <div className="space-y-2">
-              <button onClick={()=>playAyah(errAyah.ayah.number)}
-                className="w-full py-3 rounded-2xl flex items-center justify-center gap-2 font-bold text-sm qr-btn"
-                style={{background:GOLD+"22",color:GOLD,border:`1px solid ${GOLD}44`}}>
-                <Headphones size={14}/> Listen to Correct Recitation
+            {/* Listen to correct recitation */}
+            <button onClick={() => playAyah(errAyah.ayah.number)}
+              className="w-full py-3 rounded-2xl flex items-center justify-center gap-2 font-bold text-sm qr-btn"
+              style={{ background: GOLD + "18", color: GOLD, border: `1px solid ${GOLD}44` }}>
+              <Headphones size={14} /> Listen to Correct Recitation
+            </button>
+
+            {/* Record button */}
+            {remEvaluating ? (
+              <div className="flex items-center justify-center gap-2 py-4">
+                <Loader2 size={18} className="qr-spin" style={{ color: GOLD }} />
+                <span className="text-xs" style={{ color: "#7aad90" }}>Evaluating…</span>
+              </div>
+            ) : (
+              <button
+                onClick={remRecording ? stopRemRecording : () => startRemRecording(errAyah.ayah.number)}
+                className={cn("w-full py-3.5 rounded-2xl flex items-center justify-center gap-2 font-black text-sm qr-btn",
+                  remRecording && "qr-recordpulse")}
+                style={{
+                  background: remRecording ? "#dc2626" : `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`,
+                  color: remRecording ? "#fff" : DG,
+                }}>
+                {remRecording
+                  ? <><MicOff size={16} /> Stop — {fmtTime(remRecTime)}</>
+                  : <><Mic size={16} /> Record This Verse</>
+                }
               </button>
-
-              {remEvaluating ? (
-                <div className="flex items-center justify-center gap-2 py-4">
-                  <Loader2 size={18} className="qr-spin" style={{color:GOLD}}/>
-                  <span className="text-xs" style={{color:"#7aad90"}}>Evaluating…</span>
-                </div>
-              ) : (
-                <button
-                  onClick={remRecording ? stopRemRecording : ()=>startRemRecording(errAyah.ayah.number)}
-                  className={cn("w-full py-3.5 rounded-2xl flex items-center justify-center gap-2 font-black text-sm qr-btn",
-                    remRecording && "qr-pulse")}
-                  style={{background:remRecording?"#dc2626":`linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`,
-                    color:remRecording?"#fff":DG}}>
-                  {remRecording ? (
-                    <><MicOff size={16}/> Stop — {fmtTime(remRecTime)}</>
-                  ) : (
-                    <><Mic size={16}/> Record This Verse</>
-                  )}
-                </button>
-              )}
-            </div>
+            )}
           </div>
         )}
 
-        {/* Footer */}
-        <div className="flex-none px-4 py-3 border-t space-y-2" style={{borderColor:GOLD+"33",background:DG}}>
+        {/* Footer nav */}
+        <div className="flex-none px-4 py-3 border-t space-y-2" style={{ borderColor: GOLD + "33", background: DG }}>
           <div className="flex gap-2">
-            <button onClick={()=>setRemediationIdx(i=>Math.max(0,i-1))} disabled={remediationIdx===0}
+            <button onClick={() => { setRemediationIdx(i => Math.max(0, i - 1)); setRemResult(null); }}
+              disabled={remediationIdx === 0}
               className="flex-1 py-2.5 rounded-xl flex items-center justify-center gap-1 text-xs font-bold qr-btn"
-              style={{background:"#1a3025",color:GOLD,opacity:remediationIdx===0?0.4:1}}>
-              <ChevronLeft size={14}/> Prev
+              style={{ background: "#1a3025", color: GOLD, opacity: remediationIdx === 0 ? 0.4 : 1 }}>
+              <ChevronLeft size={14} /> Prev
             </button>
             {remediationIdx < ayahErrors.length - 1 ? (
-              <button onClick={()=>setRemediationIdx(i=>i+1)}
+              <button onClick={() => { setRemediationIdx(i => i + 1); setRemResult(null); }}
                 className="flex-1 py-2.5 rounded-xl flex items-center justify-center gap-1 text-xs font-bold qr-btn"
-                style={{background:"#1a3025",color:GOLD}}>
-                Next <ChevronRight size={14}/>
+                style={{ background: "#1a3025", color: GOLD }}>
+                Next <ChevronRight size={14} />
               </button>
             ) : (
-              <button
-                onClick={()=>{ buildExercise(); setStage("exercise"); }}
+              <button onClick={() => { buildExercise(); setStage("exercise"); }}
                 className="flex-1 py-2.5 rounded-xl flex items-center justify-center gap-1 text-xs font-black qr-btn"
-                style={{background:allMastered?`linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`:GOLD+"44",
-                  color:allMastered?DG:GOLD}}>
+                style={{
+                  background: allMastered ? `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})` : GOLD + "44",
+                  color: allMastered ? DG : GOLD,
+                }}>
                 {allMastered ? "Exercise →" : "Skip to Exercise →"}
               </button>
             )}
           </div>
-          <button onClick={()=>setStage("evaluating")} className="w-full text-xs text-center py-1" style={{color:"#4a6d58"}}>
+          <button onClick={() => setStage("evaluating")}
+            className="w-full text-xs text-center py-1" style={{ color: "#4a6d58" }}>
             ← Back to Results
           </button>
         </div>
@@ -1494,223 +1638,258 @@ Keep it brief, warm, and motivating.`;
   }
 
   // ════════════════════════════════════════════════════════
-  //  RENDER — EXERCISE
+  //  EXERCISE — Voice-based recitation completion
   // ════════════════════════════════════════════════════════
   if (stage === "exercise") {
-    const q = exercises[exIdx];
+    const q        = exercises[exIdx];
     const progress = Math.round((exAnswered / Math.max(1, exercises.length)) * 100);
+    const exSc     = exResult ? scoreColor(exResult.score) : null;
 
     return (
-      <div className="h-full flex flex-col overflow-hidden" style={{background:`linear-gradient(160deg,#0b1020 0%,#0a0e0b 100%)`}}>
+      <div className="h-full flex flex-col overflow-hidden"
+        style={{ background: `linear-gradient(160deg,#0a0f18 0%,#0a0e0b 100%)` }}>
         <style>{globalCSS}</style>
+        <audio ref={audioRef} playsInline preload="none" style={{ display: "none" }} />
 
         {/* Header */}
-        <div className="flex-none px-4 py-3 border-b" style={{borderColor:GOLD+"33",background:"#0b1020"}}>
+        <div className="flex-none px-4 py-3 border-b" style={{ borderColor: GOLD + "33", background: "#0a0f18" }}>
           <div className="flex items-center gap-2 mb-2">
-            <Target size={14} style={{color:GOLD}}/>
-            <span className="font-black text-sm" style={{color:GOLD}}>Knowledge Exercise</span>
-            <span className="ml-auto text-xs font-bold px-2 py-0.5 rounded-full" style={{background:GOLD+"22",color:GOLD}}>
+            <Target size={14} style={{ color: GOLD }} />
+            <span className="font-black text-sm" style={{ color: GOLD }}>Recitation Exercise</span>
+            <span className="ml-auto text-xs font-bold px-2 py-0.5 rounded-full"
+              style={{ background: GOLD + "22", color: GOLD }}>
               {exAnswered}/{exercises.length}
             </span>
           </div>
-          <div className="h-1.5 rounded-full overflow-hidden" style={{background:"#1a1a2e"}}>
+          <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "#1a1a2e" }}>
             <div className="h-full rounded-full transition-all" style={{
-              width:`${progress}%`,
-              background:`linear-gradient(to right,#6366f1,${GOLD})`
-            }}/>
+              width: `${progress}%`,
+              background: `linear-gradient(to right,#6366f1,${GOLD})`,
+            }} />
           </div>
         </div>
 
         {q ? (
           <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 qr-fadein">
 
-            {/* Question type badge */}
+            {/* Question label */}
             <div className="flex items-center gap-2">
               <span className="text-xs font-black px-2.5 py-1 rounded-full"
-                style={{background:q.isPrevPage?"#6366f122":"#c9a84c22",
-                  color:q.isPrevPage?"#a78bfa":GOLD}}>
+                style={{
+                  background: q.isPrevPage ? "#6366f122" : GOLD + "22",
+                  color: q.isPrevPage ? "#a78bfa" : GOLD,
+                }}>
                 {q.isPrevPage ? "📎 Previous Page Review" : "📖 Complete the Verse"}
               </span>
-              <span className="text-xs" style={{color:"#4a6d58"}}>Q{exIdx+1}</span>
+              <span className="text-xs" style={{ color: "#4a6d58" }}>Q{exIdx + 1}</span>
             </div>
 
             {/* Verse beginning */}
-            <div className="rounded-2xl p-5" style={{background:PARCHMENT,border:`2px solid ${GOLD}44`}}>
-              <p className="qr-mushaf text-center leading-relaxed" style={{fontSize:fontSize-2}}>
-                {q.displayText}{" "}
-                <span className="inline-block px-3 py-0.5 rounded border-b-2 mx-1" style={{
-                  borderColor:GOLD, background:GOLD+"15",
-                  minWidth:60, color:GOLD, fontFamily:"'Amiri',serif"
-                }}>
-                  {exReveal ? q.missingText : "؟ ؟ ؟"}
-                </span>
-              </p>
+            <div className="rounded-2xl overflow-hidden" style={{ border: `2px solid ${GOLD}44` }}>
+              <div className="px-4 py-2 border-b" style={{ background: GOLD + "15", borderColor: GOLD + "33" }}>
+                <p className="text-[10px] font-bold" style={{ color: GOLD }}>
+                  {q.ayah.surah?.nameAr} · آية {toAr(q.ayah.numberInSurah)}
+                </p>
+              </div>
+              <div className="px-5 py-4" style={{ background: PARCHMENT }}>
+                <p className="qr-mushaf text-center leading-loose" style={{ fontSize: fontSize - 2 }}>
+                  {q.displayText}{" "}
+                  <span className="inline-block px-3 py-0.5 rounded-lg border-b-2 mx-1"
+                    style={{
+                      borderColor: GOLD,
+                      background: GOLD + "20",
+                      color: GOLD,
+                      fontFamily: "'Amiri Quran','Amiri',serif",
+                      minWidth: 60,
+                    }}>
+                    {q.answered && exResult?.transcript
+                      ? <span style={{ color: exResult.score >= 60 ? "#16a34a" : "#dc2626" }}>
+                          {exResult.transcript.split(" ").slice(0, 5).join(" ")}…
+                        </span>
+                      : "…؟؟؟…"
+                    }
+                  </span>
+                </p>
+              </div>
             </div>
 
-            {/* Hint button */}
+            {/* Instruction */}
+            {!q.answered && !exRecording && !exEvaluating && (
+              <div className="rounded-xl px-4 py-3 text-center" style={{ background: "#1a3025", border: `1px solid ${GOLD}22` }}>
+                <p className="text-sm font-bold" style={{ color: GOLD }}>Complete the verse above</p>
+                <p className="text-xs mt-1" style={{ color: "#5a8a6a" }}>
+                  Listen to the beginning, then tap the mic to recite what comes next from memory
+                </p>
+              </div>
+            )}
+
+            {/* Listen to the verse beginning */}
             {!q.answered && (
-              <button onClick={()=>setExReveal(r=>!r)}
-                className="mx-auto flex items-center gap-1.5 text-xs qr-btn px-3 py-1.5 rounded-lg"
-                style={{color:"#4a6d58",background:"#1a3025",border:`1px solid ${GOLD}15`}}>
-                {exReveal ? <EyeOff size={11}/> : <Eye size={11}/>}
-                {exReveal ? "Hide answer" : "Reveal hint"}
+              <button onClick={() => playAyah(q.ayah.number)}
+                className="w-full py-2.5 rounded-xl flex items-center justify-center gap-2 text-xs font-bold qr-btn"
+                style={{ background: GOLD + "18", color: GOLD, border: `1px solid ${GOLD}33` }}>
+                <Headphones size={13} /> Listen to Full Verse (reference)
               </button>
             )}
 
-            {/* Options */}
-            <div className="space-y-2">
-              <p className="text-xs font-bold" style={{color:"#7aad90"}}>Choose the correct continuation:</p>
-              {q.options.map((opt, i) => {
-                const answered = q.answered !== null;
-                const isCorrect = i === q.correctIdx;
-                const isChosen  = i === q.answered;
-                let bg = "#1a1a2e", border = `1px solid ${GOLD}22`, textColor = "#adc9b8";
-                if (answered && isCorrect) { bg = "#16a34a22"; border = "1px solid #16a34a66"; textColor = "#4ade80"; }
-                if (answered && isChosen && !isCorrect) { bg = "#dc262622"; border = "1px solid #dc262666"; textColor = "#f87171"; }
+            {/* Recording / evaluating */}
+            {!q.answered && (
+              exEvaluating ? (
+                <div className="flex flex-col items-center gap-2 py-4">
+                  <Loader2 size={22} className="qr-spin" style={{ color: GOLD }} />
+                  <span className="text-xs" style={{ color: "#7aad90" }}>Evaluating your recitation…</span>
+                </div>
+              ) : (
+                <button
+                  onClick={exRecording ? stopExRecording : startExRecording}
+                  className={cn(
+                    "w-full py-4 rounded-2xl flex items-center justify-center gap-2 font-black text-sm qr-btn",
+                    exRecording && "qr-recordpulse"
+                  )}
+                  style={{
+                    background: exRecording ? "#dc2626" : `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`,
+                    color: exRecording ? "#fff" : DG,
+                  }}>
+                  {exRecording
+                    ? <><MicOff size={18} /> Stop · {fmtTime(exRecTime)}</>
+                    : <><Mic size={18} /> Recite the Continuation</>
+                  }
+                </button>
+              )
+            )}
 
-                return (
-                  <button key={i} onClick={()=>answered?null:answerExercise(i)}
-                    disabled={answered}
-                    className="w-full text-right p-4 rounded-2xl qr-arabic qr-btn transition-all"
-                    style={{background:bg, border, color:textColor, direction:"rtl", fontSize:15, fontFamily:"'Amiri',serif", lineHeight:2}}>
-                    <span className="flex items-start gap-2">
-                      <span className="flex-none mt-1 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black"
-                        style={{background:answered&&isCorrect?"#16a34a":answered&&isChosen&&!isCorrect?"#dc2626":GOLD+"22",
-                          color:answered&&isCorrect?"#fff":answered&&isChosen&&!isCorrect?"#fff":GOLD}}>
-                        {answered && isCorrect ? <Check size={10}/> : answered && isChosen && !isCorrect ? <X size={10}/> : toAr(i+1)}
-                      </span>
-                      <span className="flex-1">{opt}</span>
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Post-answer feedback */}
-            {showAnswer && q.answered !== null && (
-              <div className={cn("rounded-2xl p-4 qr-fadein")}
-                style={{background: q.answered===q.correctIdx?"#16a34a22":"#dc262622",
-                  border:`1px solid ${q.answered===q.correctIdx?"#16a34a55":"#dc262255"}`}}>
-                <div className="flex items-center gap-2 mb-2">
-                  {q.answered===q.correctIdx ? <CheckCircle2 size={16} color="#4ade80"/> : <XCircle size={16} color="#f87171"/>}
-                  <span className="text-xs font-black" style={{color:q.answered===q.correctIdx?"#4ade80":"#f87171"}}>
-                    {q.answered===q.correctIdx ? "Correct! ما شاء الله 🌟" : "Incorrect — Review this verse"}
+            {/* Result */}
+            {q.answered && exResult && (
+              <div className="rounded-2xl p-4 qr-fadein"
+                style={{ background: exSc!.bg, border: `2px solid ${exSc!.border}` }}>
+                <div className="flex items-center gap-2 mb-3">
+                  {exResult.score >= 60
+                    ? <CheckCircle2 size={18} color={exSc!.text} />
+                    : <XCircle size={18} color={exSc!.text} />}
+                  <span className="font-black text-sm" style={{ color: exSc!.text }}>
+                    {exResult.score}% — {exResult.score >= 60 ? "Correct! ما شاء الله 🌟" : "Needs review"}
                   </span>
                 </div>
-                {q.answered !== q.correctIdx && (
+
+                {/* Correct answer reveal */}
+                <div className="rounded-xl p-3 mt-2" style={{ background: PARCHMENT, border: `1px solid ${GOLD}33` }}>
+                  <p className="text-[10px] font-bold mb-1.5" style={{ color: "#8a6030" }}>Correct continuation:</p>
+                  <p className="qr-mushaf text-center" style={{ fontSize: fontSize - 4 }}>
+                    <span style={{ color: "#aaa" }}>{q.displayText}</span>{" "}
+                    <span style={{ color: "#16a34a", fontWeight: "bold" }}>{q.missingText}</span>
+                  </p>
+                </div>
+
+                {exResult.transcript && (
                   <div className="mt-2">
-                    <p className="text-[10px] font-bold mb-1" style={{color:"#7aad90"}}>Correct answer:</p>
-                    <button onClick={()=>playAyah(q.ayah.number)} className="flex items-center gap-1.5 text-xs qr-btn" style={{color:GOLD}}>
-                      <Volume2 size={11}/> Listen to verse
-                    </button>
-                    <p className="qr-arabic mt-2 leading-loose" style={{fontFamily:"'Amiri',serif",direction:"rtl",color:PARCHMENT,fontSize:15}}>
-                      {q.displayText} <span style={{color:GOLD_LIGHT}}>{q.missingText}</span>
+                    <p className="text-[10px] font-bold mb-1" style={{ color: exSc!.text + "99" }}>You said:</p>
+                    <p className="text-xs qr-arabic" style={{ fontFamily: "'Amiri',serif", direction: "rtl", color: exSc!.text }}>
+                      {exResult.transcript}
                     </p>
                   </div>
+                )}
+                {!exResult.transcript && (
+                  <p className="text-xs mt-2" style={{ color: exSc!.text + "99" }}>
+                    Transcription unclear — try again next time.
+                  </p>
                 )}
               </div>
             )}
           </div>
         ) : null}
 
-        {/* Footer */}
-        {showAnswer && (
-          <div className="flex-none px-4 py-3 border-t" style={{borderColor:GOLD+"33"}}>
+        {/* Next button */}
+        {q?.answered && (
+          <div className="flex-none px-4 py-3 border-t" style={{ borderColor: GOLD + "33" }}>
             <button onClick={nextExercise}
               className="w-full py-3.5 rounded-2xl font-black text-sm qr-btn"
-              style={{background:`linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`,color:DG}}>
-              {exIdx + 1 < exercises.length ? `Next Question (${exIdx+2}/${exercises.length}) →` : "Finish Exercise ✓"}
+              style={{ background: `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`, color: DG }}>
+              {exIdx + 1 < exercises.length
+                ? `Next Question (${exIdx + 2}/${exercises.length}) →`
+                : "Finish Exercise ✓"}
             </button>
           </div>
         )}
-
-        <audio ref={audioRef} playsInline preload="none" style={{display:"none"}}/>
       </div>
     );
   }
 
   // ════════════════════════════════════════════════════════
-  //  RENDER — COMPLETE
+  //  COMPLETE
   // ════════════════════════════════════════════════════════
   if (stage === "complete") {
-    const stats = finalStats;
-    const sc = stats ? scoreColor(stats.score) : scoreColor(0);
-    const excSc = stats ? scoreColor(stats.exerciseScore) : scoreColor(0);
-    const elapsed = stats?.timeSeconds ?? 0;
+    const stats     = finalStats;
+    const sc        = stats ? scoreColor(stats.score) : scoreColor(0);
+    const excSc     = stats ? scoreColor(stats.exerciseScore) : scoreColor(0);
     const isPlanDone = plan ? plan.currentIdx >= plan.allPages.length - 1 : false;
 
     return (
-      <div className="h-full overflow-y-auto qr-geo" style={{background:`linear-gradient(160deg,${DG} 0%,#0b1a12 100%)`}}>
+      <div className="h-full overflow-y-auto qr-geo" style={{ background: `linear-gradient(160deg,${DG} 0%,#0b1a12 100%)` }}>
         <style>{globalCSS}</style>
-        <audio ref={audioRef} playsInline preload="none" style={{display:"none"}}/>
 
-        <div className="px-4 pt-8 pb-8 space-y-4 qr-fadein">
+        <div className="px-4 pt-10 pb-10 space-y-4 qr-fadein">
 
-          {/* Celebration */}
           <div className="text-center space-y-2">
-            <div className="text-5xl qr-bounce">
-              {isPlanDone ? "🏆" : "⭐"}
-            </div>
-            <h2 className="font-black text-lg" style={{color:GOLD}}>
-              {isPlanDone ? "Plan Complete! أحسنت 🎉" : `Page ${currentPage} Completed!`}
+            <div className="text-5xl qr-bounce">{isPlanDone ? "🏆" : "⭐"}</div>
+            <h2 className="font-black text-lg" style={{ color: GOLD }}>
+              {isPlanDone ? "Plan Complete! أحسنت 🎉" : `Page ${currentPage} Complete!`}
             </h2>
-            <p className="text-xs" style={{color:"#7aad90"}}>
+            <p className="text-xs" style={{ color: "#7aad90" }}>
               {isPlanDone
-                ? `You have completed the entire revision plan. بارك الله فيك!`
-                : `Page signed ✓ — ready for the next page`}
+                ? "You have completed the entire revision plan. بارك الله فيك!"
+                : "Page signed ✓ — ready for the next page"}
             </p>
           </div>
 
-          {/* XP earned */}
-          <div className="rounded-2xl p-4 text-center" style={{background:GOLD+"15",border:`1px solid ${GOLD}33`}}>
-            <div className="text-2xl font-black" style={{color:GOLD}}>+{earnedXP} XP</div>
-            <p className="text-xs" style={{color:"#d4c08a"}}>Revision Points Earned</p>
+          <div className="rounded-2xl p-4 text-center" style={{ background: GOLD + "15", border: `1px solid ${GOLD}33` }}>
+            <div className="text-2xl font-black" style={{ color: GOLD }}>+{earnedXP} XP</div>
+            <p className="text-xs" style={{ color: "#d4c08a" }}>Revision Points Earned</p>
           </div>
 
-          {/* Stats grid */}
           {stats && (
             <div className="grid grid-cols-2 gap-3">
-              <div className="rounded-2xl p-4 text-center" style={{background:sc.bg,border:`1.5px solid ${sc.border}`}}>
-                <div className="text-2xl font-black" style={{color:sc.text}}>{stats.score}%</div>
-                <p className="text-xs font-bold" style={{color:sc.text+"aa"}}>Recitation Score</p>
+              <div className="rounded-2xl p-4 text-center" style={{ background: sc.bg, border: `1.5px solid ${sc.border}` }}>
+                <div className="text-2xl font-black" style={{ color: sc.text }}>{stats.score}%</div>
+                <p className="text-xs font-bold" style={{ color: sc.text + "aa" }}>Recitation</p>
               </div>
-              <div className="rounded-2xl p-4 text-center" style={{background:excSc.bg,border:`1.5px solid ${excSc.border}`}}>
-                <div className="text-2xl font-black" style={{color:excSc.text}}>{stats.exerciseScore}%</div>
-                <p className="text-xs font-bold" style={{color:excSc.text+"aa"}}>Exercise Score</p>
+              <div className="rounded-2xl p-4 text-center" style={{ background: excSc.bg, border: `1.5px solid ${excSc.border}` }}>
+                <div className="text-2xl font-black" style={{ color: excSc.text }}>{stats.exerciseScore}%</div>
+                <p className="text-xs font-bold" style={{ color: excSc.text + "aa" }}>Exercise</p>
               </div>
-              <div className="rounded-2xl p-4 text-center" style={{background:"#ffffff08",border:`1px solid ${GOLD}22`}}>
-                <div className="text-2xl font-black" style={{color:GOLD}}>{stats.attempts}</div>
-                <p className="text-xs font-bold" style={{color:"#7aad90"}}>Attempts</p>
+              <div className="rounded-2xl p-4 text-center" style={{ background: "#ffffff08", border: `1px solid ${GOLD}22` }}>
+                <div className="text-2xl font-black" style={{ color: GOLD }}>{stats.attempts}</div>
+                <p className="text-xs font-bold" style={{ color: "#7aad90" }}>Attempts</p>
               </div>
-              <div className="rounded-2xl p-4 text-center" style={{background:"#ffffff08",border:`1px solid ${GOLD}22`}}>
-                <div className="text-2xl font-black" style={{color:GOLD}}>{fmtTime(elapsed)}</div>
-                <p className="text-xs font-bold" style={{color:"#7aad90"}}>Time Spent</p>
+              <div className="rounded-2xl p-4 text-center" style={{ background: "#ffffff08", border: `1px solid ${GOLD}22` }}>
+                <div className="text-2xl font-black" style={{ color: GOLD }}>{fmtTime(stats.timeSeconds)}</div>
+                <p className="text-xs font-bold" style={{ color: "#7aad90" }}>Time</p>
               </div>
             </div>
           )}
 
-          {/* Next action */}
           {!isPlanDone ? (
             <button onClick={nextPage}
               className="w-full py-4 rounded-2xl font-black text-sm qr-btn"
-              style={{background:`linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`,color:DG}}>
-              Next Page (includes review of this page) →
+              style={{ background: `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`, color: DG }}>
+              Next Page →
             </button>
           ) : (
-            <button onClick={()=>{
-              setPlan(null);
-              setSelected([]);
-              setCompletedPages(new Set());
-              if (userId) { localStorage.removeItem(`revision_plan_${userId}`); localStorage.removeItem(`revision_done_${userId}`); }
+            <button onClick={() => {
+              setPlan(null); setSelected([]); setCompletedPages(new Set());
+              if (userId) {
+                localStorage.removeItem(`revision_plan_${userId}`);
+                localStorage.removeItem(`revision_done_${userId}`);
+              }
               setStage("setup");
             }}
               className="w-full py-4 rounded-2xl font-black text-sm qr-btn"
-              style={{background:`linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`,color:DG}}>
+              style={{ background: `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`, color: DG }}>
               🔄 Start New Revision Plan
             </button>
           )}
 
-          <button onClick={()=>setStage("setup")} className="w-full text-xs py-2" style={{color:"#4a6d58"}}>
+          <button onClick={() => setStage("setup")}
+            className="w-full text-xs py-2" style={{ color: "#4a6d58" }}>
             ← Back to Setup
           </button>
         </div>
