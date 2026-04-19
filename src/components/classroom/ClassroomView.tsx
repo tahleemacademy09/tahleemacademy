@@ -1119,8 +1119,8 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   const[autoReconnectCount,setAutoReconnectCount]=useState(0);
   const intentionalLeaveRef=useRef(false);         // true on manual leave → skip auto-reconnect
   /* ── lobby media choices ── */
-  const[lobbyMic,setLobbyMic]=useState(true);
-  const[lobbyCam,setLobbyCam]=useState(true);
+  const[lobbyMic,setLobbyMic]=useState(false); // OFF by default — user must explicitly enable
+  const[lobbyCam,setLobbyCam]=useState(false); // OFF by default — user must explicitly enable
   const wakeLockRef=useRef<any>(null);
   useEffect(()=>{
     if(phase!=="live")return;
