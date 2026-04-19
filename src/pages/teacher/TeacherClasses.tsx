@@ -1,17 +1,21 @@
 /*
   TeacherClasses.tsx — Tahleem Academy
   ──────────────────────────────────────
-  FIX: Removed the local ClassroomView early-return and the local PiP strip.
-  The GlobalClassroomOverlay (mounted at App root) now handles the classroom
-  for teachers exactly like it does for students — including refresh-persistence
-  via sessionStorage + autoJoin.
+  FIX 1: fetchSessions now also fetches sessions where host_id = teacher's user.id
+          so admin-assigned classes are never missed.
+  FIX 2: Deduplicates merged session arrays (subject-based + host-based).
+  FIX 3: Adds per-class "Remind Me" button using the Browser Notification API
+          + inserts into the `notifications` table (15-min + 5-min + at-time).
+  FIX 4: Auto-schedules reminders on page load for all future sessions.
+  FIX 5: Improved upcoming card UI — prominent Join/Start button, LIVE badge,
+          countdown pill, and reminder state feedback.
 
   Teachers call joinClass() → GlobalClassroomOverlay renders the full classroom
   Teachers call leaveClass() → GlobalClassroomOverlay unmounts it
   Refresh while in class → sessionStorage restores → autoJoin skips lobby
 */
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -20,21 +24,81 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
-import { Video, Plus, Calendar, Clock } from "lucide-react";
+import { Video, Plus, Calendar, Clock, Bell, BellOff, BellRing } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
-import { format, isFuture, isPast } from "date-fns";
+import { format, isFuture, isPast, differenceInMinutes } from "date-fns";
 import { useLiveClass } from "@/contexts/LiveClassContext";
 
+// ── Reminder helpers ──────────────────────────────────────────────────────────
+
+const REMINDER_THRESHOLDS_MIN = [30, 15, 5, 0] as const;
+
+function reminderKey(sessionId: string, minsAhead: number): string {
+  return `teacher-reminder:${sessionId}:${minsAhead}`;
+}
+
+function alreadyScheduled(sessionId: string, minsAhead: number): boolean {
+  try { return localStorage.getItem(reminderKey(sessionId, minsAhead)) === "1"; }
+  catch { return false; }
+}
+
+function markScheduled(sessionId: string, minsAhead: number) {
+  try { localStorage.setItem(reminderKey(sessionId, minsAhead), "1"); } catch {}
+}
+
+async function requestNotificationPermission(): Promise<boolean> {
+  if (!("Notification" in window)) return false;
+  if (Notification.permission === "granted") return true;
+  if (Notification.permission === "denied") return false;
+  const result = await Notification.requestPermission();
+  return result === "granted";
+}
+
+function fireNotification(title: string, body: string, tag: string) {
+  try {
+    if (Notification.permission !== "granted") return;
+    // Try service worker notification first (works when screen is locked)
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.ready
+        .then(reg => reg.showNotification(title, { body, tag, icon: "/favicon.ico", badge: "/favicon.ico", vibrate: [200, 100, 200] }))
+        .catch(() => new Notification(title, { body, tag, icon: "/favicon.ico" }));
+    } else {
+      new Notification(title, { body, tag, icon: "/favicon.ico" });
+    }
+    if ("vibrate" in navigator) navigator.vibrate([200, 100, 200]);
+  } catch {}
+}
+
+async function insertDBNotification(
+  userId: string,
+  title: string,
+  message: string,
+  sessionId: string,
+  minsAhead: number,
+) {
+  try {
+    await supabase.from("notifications").insert({
+      user_id: userId,
+      title,
+      message,
+      type: "class_reminder",
+      link: `reminder:${sessionId}:${minsAhead}`,
+      is_read: false,
+    } as any);
+  } catch {}
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
+
 const TeacherClasses = () => {
-  // joinClass / leaveClass feed into GlobalClassroomOverlay at App root
-  // No local ClassroomView rendering needed here at all
   const { joinClass } = useLiveClass();
   const { t } = useLanguage();
   const { user } = useAuth();
   const { toast } = useToast();
+
   const [sessions, setSessions] = useState<any[]>([]);
   const [subjects, setSubjects] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -43,11 +107,20 @@ const TeacherClasses = () => {
     subject_id: "", topic: "", topic_ar: "", date: "", time: "", duration: 60, is_recorded: true,
   });
 
-  const fetchSessions = async () => {
+  // Track which sessions have reminders set (sessionId → true/false)
+  const [remindersSet, setRemindersSet] = useState<Record<string, boolean>>({});
+  const timerRefs = useRef<Record<string, ReturnType<typeof setTimeout>[]>>({});
+  const notifPermission = useRef<boolean>(false);
+
+  // ── Fetch sessions ──────────────────────────────────────────────────────────
+  const fetchSessions = useCallback(async () => {
     if (!user) return;
+
+    // 1. Subjects the teacher OWNS
     const { data: ownedSubs } = await supabase
       .from("subjects").select("id, title, title_ar").eq("teacher_id", user.id);
 
+    // 2. Subjects from timetable slots assigned to this teacher
     const { data: ttSlots } = await supabase
       .from("subject_timetable" as any).select("subject_id").eq("teacher_id", user.id);
     const ttSubjectIds = [...new Set((ttSlots || []).map((s: any) => s.subject_id).filter(Boolean))];
@@ -64,20 +137,48 @@ const TeacherClasses = () => {
     }
     const allSubs = [...(ownedSubs || []), ...extraSubs];
     setSubjects(allSubs);
+
     const subjectIds = allSubs.map((s: any) => s.id);
+
+    // 3. Sessions via subject_id
+    let subjectSessions: any[] = [];
     if (subjectIds.length > 0) {
       const { data } = await supabase
         .from("live_sessions")
         .select("*, subjects(title, title_ar)")
         .in("subject_id", subjectIds)
         .order("scheduled_at", { ascending: false, nullsFirst: false });
-      setSessions(data || []);
+      subjectSessions = data || [];
     }
+
+    // 4. FIX: Also fetch sessions where this teacher is the explicit host
+    //    (admin may assign teacher as host without subject ownership)
+    const { data: hostSessions } = await supabase
+      .from("live_sessions")
+      .select("*, subjects(title, title_ar)")
+      .eq("host_id", user.id)
+      .order("scheduled_at", { ascending: false, nullsFirst: false });
+
+    // 5. Merge + deduplicate by session id
+    const seen = new Set<string>();
+    const merged: any[] = [];
+    for (const s of [...subjectSessions, ...(hostSessions || [])]) {
+      if (!seen.has(s.id)) { seen.add(s.id); merged.push(s); }
+    }
+    // Sort descending by scheduled_at
+    merged.sort((a, b) => {
+      const da = a.scheduled_at ? new Date(a.scheduled_at).getTime() : 0;
+      const db_ = b.scheduled_at ? new Date(b.scheduled_at).getTime() : 0;
+      return db_ - da;
+    });
+
+    setSessions(merged);
     setLoading(false);
-  };
+  }, [user]);
 
-  useEffect(() => { fetchSessions(); }, [user]);
+  useEffect(() => { fetchSessions(); }, [fetchSessions]);
 
+  // ── Create session ──────────────────────────────────────────────────────────
   const handleCreate = async () => {
     if (!form.subject_id || !form.date || !form.time || !user) return;
     const scheduledAt = new Date(`${form.date}T${form.time}`).toISOString();
@@ -105,7 +206,7 @@ const TeacherClasses = () => {
     }
   };
 
-  // joinClass() pushes into LiveClassContext → GlobalClassroomOverlay takes over
+  // ── Join classroom ──────────────────────────────────────────────────────────
   const openClassroom = (s: any) => {
     const sub = subjects.find(sub => sub.id === s.subject_id) || (s as any).subjects;
     joinClass({
@@ -115,27 +216,129 @@ const TeacherClasses = () => {
     });
   };
 
-  const upcoming = sessions.filter(s =>
-    s.status === "scheduled" || s.status === "active" ||
-    (s.scheduled_at && isFuture(new Date(s.scheduled_at)))
-  );
-  const past = sessions.filter(s =>
-    s.status === "ended" || s.status === "completed" ||
-    (s.scheduled_at && isPast(new Date(s.scheduled_at)) && s.status !== "active")
-  );
+  // ── Reminder scheduling ─────────────────────────────────────────────────────
+  const scheduleRemindersForSession = useCallback(async (s: any) => {
+    if (!user || !s.scheduled_at) return;
+    const hasPermission = await requestNotificationPermission();
+    notifPermission.current = hasPermission;
 
+    const classDate = new Date(s.scheduled_at);
+    const now = Date.now();
+    const subTitle = (s as any).subjects?.title || (s as any).topic || "Class";
+    const classLabel = `${subTitle} — ${format(classDate, "EEE, MMM d 'at' h:mm a")}`;
+
+    const timers: ReturnType<typeof setTimeout>[] = [];
+
+    for (const mins of REMINDER_THRESHOLDS_MIN) {
+      if (alreadyScheduled(s.id, mins)) continue;
+      const fireAt = classDate.getTime() - mins * 60_000;
+      const delay = fireAt - now;
+      if (delay < -60_000) continue; // already past + 1 min buffer
+
+      const title =
+        mins === 0  ? t("🔴 Class Starting Now!", "🔴 الحصة تبدأ الآن!") :
+        mins === 5  ? t("⏰ Class in 5 Minutes", "⏰ الحصة بعد 5 دقائق") :
+        mins === 15 ? t("🔔 Class in 15 Minutes", "🔔 الحصة بعد 15 دقيقة") :
+                     t("📅 Class in 30 Minutes", "📅 الحصة بعد 30 دقيقة");
+
+      const body =
+        mins === 0  ? t(`It's time to start "${subTitle}". Tap to join!`, `حان وقت بدء "${subTitle}". اضغط للانضمام!`) :
+                     t(`"${classLabel}" starts in ${mins} minutes.`, `"${classLabel}" تبدأ بعد ${mins} دقيقة.`);
+
+      const tag = reminderKey(s.id, mins);
+
+      const timer = setTimeout(async () => {
+        if (hasPermission) fireNotification(title, body, tag);
+        await insertDBNotification(user.id, title, body, s.id, mins);
+        markScheduled(s.id, mins);
+      }, Math.max(0, delay));
+
+      timers.push(timer);
+      markScheduled(s.id, mins); // prevent duplicate scheduling on re-renders
+    }
+
+    if (timers.length > 0) {
+      timerRefs.current[s.id] = timers;
+      setRemindersSet(prev => ({ ...prev, [s.id]: true }));
+      return true;
+    }
+    return false;
+  }, [user, t]);
+
+  const handleSetReminder = async (s: any) => {
+    if (remindersSet[s.id]) {
+      toast({ title: t("Reminder already set ✓", "تم ضبط التذكير مسبقاً ✓") });
+      return;
+    }
+    const ok = await scheduleRemindersForSession(s);
+    if (ok === false) {
+      if (Notification.permission === "denied") {
+        toast({
+          title: t("Notifications blocked", "الإشعارات محظورة"),
+          description: t("Enable notifications in your browser settings.", "قم بتمكين الإشعارات في إعدادات المتصفح."),
+          variant: "destructive",
+        });
+      } else {
+        toast({ title: t("Reminder set! 🔔", "تم ضبط التذكير! 🔔"), description: t("You'll be notified 30, 15, 5 min before class.", "ستُعلَم قبل 30 و15 و5 دقائق من الحصة.") });
+      }
+    } else {
+      toast({ title: t("Reminder set! 🔔", "تم ضبط التذكير! 🔔"), description: t("You'll be notified 30, 15 & 5 min before class.", "ستُعلَم قبل 30 و15 و5 دقائق.") });
+    }
+  };
+
+  // Auto-schedule reminders for all future sessions on load
+  useEffect(() => {
+    if (!user || sessions.length === 0) return;
+    const futureSessions = sessions.filter(s =>
+      s.scheduled_at && isFuture(new Date(s.scheduled_at)) &&
+      (s.status === "scheduled" || s.status === "active")
+    );
+    futureSessions.forEach(s => scheduleRemindersForSession(s));
+  }, [sessions, user, scheduleRemindersForSession]);
+
+  // Cleanup timers on unmount
+  useEffect(() => {
+    const refs = timerRefs.current;
+    return () => { Object.values(refs).flat().forEach(clearTimeout); };
+  }, []);
+
+  // ── Split upcoming / past ───────────────────────────────────────────────────
+  // Priority: status field wins; fallback to date comparison
+  const upcoming = sessions.filter(s => {
+    if (s.status === "active") return true;
+    if (s.status === "ended" || s.status === "completed") return false;
+    if (s.status === "scheduled") return true; // keep regardless of date (admin may set stale)
+    return s.scheduled_at && isFuture(new Date(s.scheduled_at));
+  });
+
+  const past = sessions.filter(s => {
+    if (s.status === "ended" || s.status === "completed") return true;
+    if (s.status === "active" || s.status === "scheduled") return false;
+    return s.scheduled_at && isPast(new Date(s.scheduled_at));
+  });
+
+  // ── Countdown label ─────────────────────────────────────────────────────────
+  const getCountdown = (scheduledAt: string) => {
+    const diff = new Date(scheduledAt).getTime() - Date.now();
+    if (diff < 0) return null;
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return t("Starting now", "يبدأ الآن");
+    if (mins < 60) return t(`in ${mins}m`, `بعد ${mins} دقيقة`);
+    const h = Math.floor(mins / 60), m = mins % 60;
+    return t(`in ${h}h ${m}m`, `بعد ${h} ساعة ${m} دقيقة`);
+  };
+
+  // ── Render ──────────────────────────────────────────────────────────────────
   if (loading) return (
     <div className="flex items-center justify-center min-h-[400px]">
       <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
     </div>
   );
 
-  // NOTE: No early-return for inCall here. GlobalClassroomOverlay at App root
-  // renders the full-screen ClassroomView as a fixed overlay automatically.
-  // No local PiP strip either — GlobalClassroomOverlay's pill handles that.
-
   return (
     <div className="p-4 md:p-6 space-y-6">
+
+      {/* Header */}
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">{t("Live Classes", "الفصول المباشرة")}</h1>
         <Dialog open={showCreate} onOpenChange={setShowCreate}>
@@ -171,54 +374,132 @@ const TeacherClasses = () => {
         </Dialog>
       </div>
 
-      {/* Upcoming / Active */}
+      {/* ── Upcoming / Active ── */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <Calendar className="h-5 w-5" />{t("Upcoming Classes", "الحصص القادمة")}
+            <Calendar className="h-5 w-5" />
+            {t("Upcoming Classes", "الحصص القادمة")}
+            {upcoming.length > 0 && (
+              <Badge className="bg-primary/20 text-primary border-primary/30 ms-1">
+                {upcoming.length}
+              </Badge>
+            )}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           {upcoming.map(s => {
             const isActive = s.status === "active";
+            const subInfo = subjects.find(sub => sub.id === s.subject_id) || (s as any).subjects;
+            const subTitle = subInfo?.title || "Class";
+            const countdown = s.scheduled_at ? getCountdown(s.scheduled_at) : null;
+            const hasReminder = remindersSet[s.id];
+            const minsUntil = s.scheduled_at ? differenceInMinutes(new Date(s.scheduled_at), new Date()) : Infinity;
+            const isImminent = minsUntil <= 15 && minsUntil >= -5;
+
             return (
-              <div key={s.id} className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <Badge variant="outline">#{(s as any).session_number || "?"}</Badge>
-                    <p className="font-medium text-sm">{(s as any).topic || (s as any).subjects?.title || "Class"}</p>
-                    {isActive && <Badge className="bg-green-500 text-white animate-pulse">🔴 LIVE</Badge>}
+              <div
+                key={s.id}
+                className={`rounded-xl border p-4 space-y-3 transition-all ${
+                  isActive
+                    ? "border-green-500/50 bg-green-50/50 dark:bg-green-950/20"
+                    : isImminent
+                    ? "border-amber-400/50 bg-amber-50/50 dark:bg-amber-950/20"
+                    : "border-border bg-muted/30"
+                }`}
+              >
+                {/* Top row: session number + topic + LIVE badge */}
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Badge variant="outline" className="text-xs">#{(s as any).session_number || "?"}</Badge>
+                    <span className="font-semibold text-sm">
+                      {(s as any).topic || subTitle}
+                    </span>
+                    {isActive && (
+                      <Badge className="bg-green-500 text-white text-xs animate-pulse gap-1">
+                        🔴 {t("LIVE", "مباشر")}
+                      </Badge>
+                    )}
+                    {isImminent && !isActive && (
+                      <Badge className="bg-amber-500 text-white text-xs gap-1">
+                        ⚡ {t("Starting soon", "يبدأ قريباً")}
+                      </Badge>
+                    )}
                   </div>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {(s as any).subjects?.title} •{" "}
-                    {s.scheduled_at ? format(new Date(s.scheduled_at), "EEE, MMM d 'at' h:mm a") : new Date(s.created_at).toLocaleDateString()}
-                    {(s as any).duration_minutes ? ` • ${(s as any).duration_minutes}m` : ""}
-                    {s.scheduled_at && !isActive && isFuture(new Date(s.scheduled_at)) && (() => {
-                      const diff = new Date(s.scheduled_at).getTime() - Date.now();
-                      const mins = Math.floor(diff / 60000);
-                      const label = mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h ${mins % 60}m`;
-                      return <span className="ms-1 text-amber-600 font-bold">⏱ in {label}</span>;
-                    })()}
-                  </p>
                 </div>
-                <Button
-                  size="sm"
-                  className={isActive ? "bg-green-600 hover:bg-green-700 text-white" : ""}
-                  onClick={() => openClassroom(s)}
-                >
-                  <Video className="h-3 w-3 me-1" />
-                  {isActive ? t("Join Live", "انضم الآن") : t("Start Class", "ابدأ الحصة")}
-                </Button>
+
+                {/* Meta: subject • date • countdown */}
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                  <span>{subTitle}</span>
+                  {s.scheduled_at && (
+                    <>
+                      <span>•</span>
+                      <span>{format(new Date(s.scheduled_at), "EEE, MMM d 'at' h:mm a")}</span>
+                    </>
+                  )}
+                  {(s as any).duration_minutes && (
+                    <>
+                      <span>•</span>
+                      <span>{(s as any).duration_minutes}m</span>
+                    </>
+                  )}
+                  {countdown && !isActive && (
+                    <span className={`font-bold ${isImminent ? "text-amber-600" : "text-primary"}`}>
+                      ⏱ {countdown}
+                    </span>
+                  )}
+                </div>
+
+                {/* Action buttons */}
+                <div className="flex items-center gap-2">
+                  {/* Join / Start button */}
+                  <Button
+                    size="sm"
+                    className={`flex-1 gap-1.5 ${
+                      isActive
+                        ? "bg-green-600 hover:bg-green-700 text-white"
+                        : isImminent
+                        ? "bg-amber-600 hover:bg-amber-700 text-white"
+                        : ""
+                    }`}
+                    onClick={() => openClassroom(s)}
+                  >
+                    <Video className="h-3.5 w-3.5" />
+                    {isActive
+                      ? t("Join Live", "انضم الآن")
+                      : t("Start Class", "ابدأ الحصة")}
+                  </Button>
+
+                  {/* Reminder button */}
+                  <Button
+                    size="sm"
+                    variant={hasReminder ? "default" : "outline"}
+                    className={`gap-1.5 px-3 ${hasReminder ? "bg-primary/20 text-primary border-primary/30 hover:bg-primary/30" : ""}`}
+                    onClick={() => handleSetReminder(s)}
+                    title={hasReminder ? t("Reminder set", "تم ضبط التذكير") : t("Set reminder", "ضبط تذكير")}
+                  >
+                    {hasReminder
+                      ? <BellRing className="h-3.5 w-3.5" />
+                      : <Bell className="h-3.5 w-3.5" />
+                    }
+                    <span className="text-xs hidden sm:inline">
+                      {hasReminder ? t("Reminded", "تم التذكير") : t("Remind", "تذكير")}
+                    </span>
+                  </Button>
+                </div>
               </div>
             );
           })}
+
           {upcoming.length === 0 && (
-            <p className="text-muted-foreground text-sm">{t("No upcoming classes", "لا توجد حصص قادمة")}</p>
+            <p className="text-muted-foreground text-sm py-2">
+              {t("No upcoming classes", "لا توجد حصص قادمة")}
+            </p>
           )}
         </CardContent>
       </Card>
 
-      {/* Past */}
+      {/* ── Past Classes ── */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
