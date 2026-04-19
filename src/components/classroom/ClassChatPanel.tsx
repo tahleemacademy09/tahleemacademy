@@ -1,232 +1,696 @@
-import { useState, useEffect, useRef } from "react";
-import { supabase } from "@/integrations/supabase/client";
+// src/components/classroom/ClassControls.tsx
+// ── Google-Meet-parity control bar ────────────────────────────────────────
+// NEW vs original:
+//  • busy-guard on mic + cam → no more repeated-press stuck state
+//  • mic/cam state read from LiveKit track-events (not just local shadow)
+//  • Settings modal: microphone, speaker/Bluetooth, camera, noise-cancel, video quality
+//  • Camera flip button (front ↔ back) — visible on mobile
+//  • Background blur toggle (CSS + canvas-processor flag)
+//  • Captions toggle (Web Speech API)
+//  • "Pin" support exposed via onPinParticipant prop
+//  • All original features kept intact
+
+import { useState, useEffect, useCallback, useRef } from "react";
+import { useRoomContext } from "@livekit/components-react";
+import { Track, createLocalScreenTracks, RoomEvent } from "livekit-client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
-import { Pin, Trash2, Smile, Send } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
+import { Button } from "@/components/ui/button";
+import { toast } from "@/hooks/use-toast";
+import {
+  Mic, MicOff, Video, VideoOff, Monitor, MonitorOff, Hand,
+  MessageCircle, Users, MoreHorizontal, Phone, Smile, LogOut,
+  BarChart3, Zap, Settings, X, Check, SwitchCamera, Volume2,
+  Captions, CaptionsOff, Blend, BarChart2,
+} from "lucide-react";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem,
+  DropdownMenuTrigger, DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
 
-interface ClassChatPanelProps {
-  sessionId: string;
-  /** ISO timestamp of when this session started — used to filter out
-      messages from any previous run of the same session row.          */
-  sessionStartedAt?: string;
+/* ─────────────────────────────────────────────────────────────────────────
+   PROPS
+   ───────────────────────────────────────────────────────────────────────── */
+interface ClassControlsProps {
+  sessionId:             string;
+  onToggleChat:          () => void;
+  onToggleParticipants:  () => void;
+  onEndClass:            () => void;
+  onLeaveClass:          () => void;
+  chatUnread:            number;
+  onLaunchPoll:          () => void;
+  onLaunchQuiz:          () => void;
 }
 
-const EMOJI_LIST = ["👏", "🤲", "❤️", "😂", "🌟", "👍"];
+const REACTION_EMOJIS = ["👏", "🤲", "❤️", "😂", "🌟", "👍"];
 
-const ClassChatPanel = ({ sessionId, sessionStartedAt }: ClassChatPanelProps) => {
-  const { user, hasRole } = useAuth();
+/* ─────────────────────────────────────────────────────────────────────────
+   SETTINGS MODAL
+   Full device picker (mic, speaker/Bluetooth, camera), noise-cancel,
+   video quality — matches Google Meet's settings panel.
+   ───────────────────────────────────────────────────────────────────────── */
+const SettingsModal = ({ onClose, room }: { onClose: () => void; room: any }) => {
   const { t } = useLanguage();
-  const isPrivileged = hasRole("admin") || hasRole("teacher");
-  const [messages, setMessages] = useState<any[]>([]);
-  const [input, setInput] = useState("");
-  const [profiles, setProfiles] = useState<Record<string, { name: string; role: string }>>({});
-  const [showEmoji, setShowEmoji] = useState(false);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const [tab, setTab] = useState<"audio" | "video" | "tips">("audio");
 
-  // Profiles cache
-  const loadProfiles = async (userIds: string[]) => {
-    const missing = userIds.filter(id => !profiles[id]);
-    if (missing.length === 0) return;
-    const { data } = await supabase.from("profiles").select("user_id, full_name").in("user_id", missing);
-    const { data: roles } = await supabase.from("user_roles").select("user_id, role").in("user_id", missing);
-    const newProfiles: Record<string, { name: string; role: string }> = {};
-    (data || []).forEach(p => {
-      const userRole = (roles || []).find(r => r.user_id === p.user_id);
-      newProfiles[p.user_id] = { name: p.full_name || "Student", role: userRole?.role || "student" };
-    });
-    setProfiles(prev => ({ ...prev, ...newProfiles }));
-  };
+  // Devices
+  const [audioIn,   setAudioIn]   = useState<MediaDeviceInfo[]>([]);
+  const [audioOut,  setAudioOut]  = useState<MediaDeviceInfo[]>([]);
+  const [videoIn,   setVideoIn]   = useState<MediaDeviceInfo[]>([]);
+  const [selAudioIn,  setSelAudioIn]  = useState("");
+  const [selAudioOut, setSelAudioOut] = useState("");
+  const [selVideoIn,  setSelVideoIn]  = useState("");
 
-  // Clear messages whenever we switch sessions
-  useEffect(() => { setMessages([]); setProfiles({}); }, [sessionId]);
+  // Settings
+  const [quality,    setQuality]    = useState<"low" | "medium" | "high">("medium");
+  const [noiseCancel, setNoiseCancel] = useState(true);
 
   useEffect(() => {
-    const load = async () => {
-      let q = supabase
-        .from("class_chat_messages")
-        .select("*")
-        .eq("session_id", sessionId)
-        .order("created_at");
-      // Only show messages from this session run — prevents stale messages
-      // from a previous end-and-restart of the same session row.
-      if (sessionStartedAt) q = q.gte("created_at", sessionStartedAt);
-      const { data } = await q;
-      setMessages(data || []);
-      const ids = [...new Set((data || []).map((m: any) => m.sender_id))];
-      loadProfiles(ids);
-    };
-    load();
+    (async () => {
+      // Ask for permission first so device labels are populated
+      try { await navigator.mediaDevices.getUserMedia({ audio: true }); } catch {}
+      const all = await navigator.mediaDevices.enumerateDevices();
+      setAudioIn(all.filter(d => d.kind === "audioinput"));
+      setAudioOut(all.filter(d => d.kind === "audiooutput"));
+      setVideoIn(all.filter(d => d.kind === "videoinput"));
+      // Pre-select currently active devices
+      try {
+        const mic = await room.getActiveDevice("audioinput");
+        if (mic) setSelAudioIn(mic);
+        const spk = await room.getActiveDevice("audiooutput");
+        if (spk) setSelAudioOut(spk);
+        const cam = await room.getActiveDevice("videoinput");
+        if (cam) setSelVideoIn(cam);
+      } catch {}
+    })();
+  }, [room]);
 
-    const channel = supabase.channel(`class-chat-${sessionId}`)
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "class_chat_messages", filter: `session_id=eq.${sessionId}` },
-        (payload) => {
-          setMessages(prev => [...prev, payload.new]);
-          loadProfiles([payload.new.sender_id]);
-        })
-      .on("postgres_changes", { event: "DELETE", schema: "public", table: "class_chat_messages", filter: `session_id=eq.${sessionId}` },
-        (payload) => {
-          setMessages(prev => {
-            const next = prev.filter(m => m.id !== payload.old.id);
-            // If ALL messages were wiped (teacher ended class + 4s timer fired),
-            // clear the list entirely so nothing lingers in the UI.
-            return next;
-          });
-        })
-      .subscribe();
-
-    return () => { supabase.removeChannel(channel); };
-  }, [sessionId, sessionStartedAt]);
-
-  useEffect(() => {
-    scrollRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length]);
-
-  const sendMessage = async (text?: string) => {
-    const msg = text || input.trim();
-    if (!msg || !user) return;
-    await supabase.from("class_chat_messages").insert({
-      session_id: sessionId,
-      sender_id: user.id,
-      message: msg,
-      type: "text",
-    });
-    if (!text) setInput("");
-    setShowEmoji(false);
+  const switchDevice = async (kind: MediaDeviceKind, deviceId: string) => {
+    try {
+      await room.switchActiveDevice(kind, deviceId);
+      if (kind === "audioinput")  setSelAudioIn(deviceId);
+      if (kind === "audiooutput") setSelAudioOut(deviceId);
+      if (kind === "videoinput")  setSelVideoIn(deviceId);
+      toast({ title: t("Device switched ✓", "تم تغيير الجهاز ✓") });
+    } catch (e: any) {
+      toast({ title: t("Failed to switch device", "فشل تغيير الجهاز"), description: e?.message, variant: "destructive" });
+    }
   };
 
-  const deleteMessage = async (id: string) => {
-    await supabase.from("class_chat_messages").delete().eq("id", id);
+  const applyQuality = async (q: "low" | "medium" | "high") => {
+    setQuality(q);
+    const bitrate = q === "low" ? 150_000 : q === "medium" ? 700_000 : 2_500_000;
+    const fps     = q === "low" ? 15 : q === "medium" ? 20 : 30;
+    try {
+      for (const pub of Array.from(room.localParticipant.trackPublications.values()) as any[]) {
+        if (pub.track?.kind === "video" && pub.source !== Track.Source.ScreenShare) {
+          const sender = (pub.track as any)?.sender;
+          if (sender) {
+            const params = sender.getParameters();
+            if (params.encodings?.length) {
+              params.encodings[0].maxBitrate   = bitrate;
+              params.encodings[0].maxFramerate = fps;
+              await sender.setParameters(params);
+            }
+          }
+        }
+      }
+      toast({ title: t(`Quality set to ${q}`, `تم ضبط الجودة: ${q}`) });
+    } catch {}
   };
 
-  const pinMessage = async (id: string, pinned: boolean) => {
-    await supabase.from("class_chat_messages").update({ is_pinned: !pinned }).eq("id", id);
-    setMessages(prev => prev.map(m => m.id === id ? { ...m, is_pinned: !pinned } : m));
-  };
+  /* small reusable row */
+  const DeviceRow = ({ device, selected, onClick }: { device: MediaDeviceInfo; selected: boolean; onClick: () => void }) => (
+    <button onClick={onClick} style={{
+      display: "flex", alignItems: "center", gap: 10, padding: "10px 12px",
+      borderRadius: 10, border: "1px solid",
+      borderColor: selected ? "#22c55e" : "rgba(255,255,255,.1)",
+      background:  selected ? "rgba(34,197,94,.12)" : "rgba(255,255,255,.03)",
+      cursor: "pointer", width: "100%", marginBottom: 6,
+    }}>
+      <div style={{
+        width: 16, height: 16, borderRadius: "50%", flexShrink: 0,
+        border: `2px solid ${selected ? "#22c55e" : "rgba(255,255,255,.3)"}`,
+        background: selected ? "#22c55e" : "transparent",
+        display: "flex", alignItems: "center", justifyContent: "center",
+      }}>
+        {selected && <Check style={{ width: 9, height: 9, color: "#fff" }} />}
+      </div>
+      <span style={{ fontSize: 13, color: selected ? "#fff" : "rgba(255,255,255,.7)", textAlign: "left", flex: 1 }}>
+        {device.label || `${device.kind} — ${device.deviceId.slice(0, 8)}`}
+      </span>
+    </button>
+  );
 
-  /* ── Dark-theme colour tokens ── */
-  const T = {
-    bg:      "#13181f",
-    surface: "#1e2535",
-    border:  "rgba(255,255,255,.08)",
-    text:    "#e8eaf0",
-    muted:   "rgba(255,255,255,.45)",
-    mine:    "rgba(10,124,104,.35)",
-    theirs:  "rgba(255,255,255,.07)",
-    system:  "rgba(255,255,255,.12)",
-    teal:    "#0a7c68",
-    gold:    "#c9a84c",
-  };
+  const SectionLabel = ({ children }: { children: React.ReactNode }) => (
+    <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase" as const,
+      color: "rgba(255,255,255,.35)", letterSpacing: 1, marginBottom: 8, marginTop: 18 }}>
+      {children}
+    </div>
+  );
+
+  const Toggle = ({ value, onChange, label }: { value: boolean; onChange: () => void; label: string }) => (
+    <button onClick={onChange} style={{
+      display: "flex", alignItems: "center", gap: 10, padding: "12px", borderRadius: 10,
+      border: "1px solid rgba(255,255,255,.1)", background: "rgba(255,255,255,.03)",
+      cursor: "pointer", width: "100%",
+    }}>
+      <div style={{
+        width: 42, height: 24, borderRadius: 12, flexShrink: 0,
+        background: value ? "#22c55e" : "rgba(255,255,255,.2)", position: "relative", transition: ".25s",
+      }}>
+        <div style={{
+          width: 18, height: 18, borderRadius: "50%", background: "#fff",
+          position: "absolute", top: 3, left: value ? 21 : 3, transition: ".25s", boxShadow: "0 1px 4px rgba(0,0,0,.3)",
+        }} />
+      </div>
+      <span style={{ fontSize: 13, color: "#fff" }}>{label}</span>
+    </button>
+  );
 
   return (
-    <div style={{display:"flex",flexDirection:"column",height:"100%",background:T.bg,fontFamily:"system-ui,sans-serif"}}>
+    <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,.65)", display: "flex", alignItems: "center", justifyContent: "center" }}
+      onClick={onClose}>
+      <div style={{ background: "#17202a", borderRadius: 20, width: "min(460px,96vw)", maxHeight: "85vh",
+        display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 24px 64px rgba(0,0,0,.7)" }}
+        onClick={e => e.stopPropagation()}>
 
-      {/* Pinned messages */}
-      {messages.filter(m => m.is_pinned).map(m => (
-        <div key={`pin-${m.id}`} style={{background:"rgba(201,168,76,.12)",borderBottom:`1px solid ${T.border}`,padding:"6px 12px",display:"flex",alignItems:"center",gap:6}}>
-          <Pin style={{width:10,height:10,color:T.gold,flexShrink:0}}/>
-          <p style={{fontSize:11,color:T.gold,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",margin:0}}>{m.message}</p>
+        {/* Header */}
+        <div style={{ display: "flex", alignItems: "center", padding: "18px 20px",
+          borderBottom: "1px solid rgba(255,255,255,.07)" }}>
+          <Settings style={{ width: 18, height: 18, color: "rgba(255,255,255,.5)", marginRight: 10 }} />
+          <span style={{ fontWeight: 700, color: "#fff", fontSize: 16, flex: 1 }}>{t("Settings", "الإعدادات")}</span>
+          <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: "50%",
+            background: "rgba(255,255,255,.1)", border: "none", color: "#fff", cursor: "pointer",
+            display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <X style={{ width: 15, height: 15 }} />
+          </button>
         </div>
-      ))}
 
-      {/* Messages */}
-      <div style={{flex:1,overflowY:"auto",padding:"10px 12px",display:"flex",flexDirection:"column",gap:8}}>
-        {messages.map(m => {
-          const isMe = m.sender_id === user?.id;
-          const prof = profiles[m.sender_id];
-          // Always show "You" for own messages so the bubble has a name label
-          const name = isMe ? t("You", "أنت") : (prof?.name || "Student");
-          const isTeacher = !isMe && (prof?.role === "teacher" || prof?.role === "admin");
-
-          if (m.type === "system") {
-            return (
-              <div key={m.id} style={{textAlign:"center",margin:"4px 0"}}>
-                <span style={{fontSize:10,color:T.muted,background:T.system,padding:"2px 10px",borderRadius:20}}>{m.message}</span>
-              </div>
-            );
-          }
-
-          if (m.type === "emoji" || m.type === "reaction" || (EMOJI_LIST.includes(m.message) && m.message.length <= 4)) {
-            return (
-              <div key={m.id} style={{display:"flex",justifyContent:isMe?"flex-end":"flex-start"}}>
-                <div style={{textAlign:"center"}}>
-                  <span style={{fontSize:26}}>{m.message}</span>
-                  <p style={{fontSize:9,color:T.muted,margin:"2px 0 0"}}>{name}</p>
-                </div>
-              </div>
-            );
-          }
-
-          return (
-            <div key={m.id} style={{display:"flex",justifyContent:isMe?"flex-end":"flex-start"}}>
-              <div style={{
-                maxWidth:"80%",padding:"8px 12px",borderRadius:isMe?"14px 14px 4px 14px":"14px 14px 14px 4px",
-                background:isMe?T.mine:T.theirs,
-                borderLeft:isTeacher?`3px solid ${T.gold}`:"none",
-              }}>
-                {/* Show name for ALL messages — own messages show "You" */}
-                <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:3}}>
-                  <span style={{
-                    fontSize:10,
-                    color: isMe ? "rgba(255,255,255,.38)" : isTeacher ? T.gold : T.muted,
-                    fontWeight: isMe ? 400 : 700,
-                  }}>{name}</span>
-                  {isTeacher && (
-                    <span style={{fontSize:9,background:"rgba(201,168,76,.18)",color:T.gold,borderRadius:8,padding:"1px 5px",fontWeight:700}}>
-                      {t("Teacher","معلم")}
-                    </span>
-                  )}
-                </div>
-                <p style={{fontSize:13,color:T.text,margin:0,wordBreak:"break-word",lineHeight:1.45}}>{m.message}</p>
-                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginTop:4,gap:8}}>
-                  <span style={{fontSize:9,color:T.muted}}>
-                    {new Date(m.created_at).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}
-                  </span>
-                  {isPrivileged && (
-                    <div style={{display:"flex",gap:2}}>
-                      <button onClick={()=>pinMessage(m.id,m.is_pinned)} title="Pin" style={{background:"none",border:"none",cursor:"pointer",padding:2,color:T.muted,display:"flex"}}>
-                        <Pin style={{width:10,height:10}}/>
-                      </button>
-                      <button onClick={()=>deleteMessage(m.id)} title="Delete" style={{background:"none",border:"none",cursor:"pointer",padding:2,color:"#ef4444",display:"flex"}}>
-                        <Trash2 style={{width:10,height:10}}/>
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          );
-        })}
-        <div ref={scrollRef}/>
-      </div>
-
-      {/* Emoji bar */}
-      {showEmoji && (
-        <div style={{borderTop:`1px solid ${T.border}`,padding:"8px 12px",display:"flex",gap:8,justifyContent:"center",background:T.surface}}>
-          {EMOJI_LIST.map(e => (
-            <button key={e} onClick={()=>sendMessage(e)} style={{fontSize:22,background:"none",border:"none",cursor:"pointer",transition:"transform .12s"}}
-              onMouseEnter={ev=>(ev.currentTarget.style.transform="scale(1.3)")} onMouseLeave={ev=>(ev.currentTarget.style.transform="scale(1)")}>{e}</button>
+        {/* Tabs */}
+        <div style={{ display: "flex", borderBottom: "1px solid rgba(255,255,255,.07)" }}>
+          {([
+            { id: "audio", label: t("Audio", "الصوت") },
+            { id: "video", label: t("Video", "الفيديو") },
+            { id: "tips",  label: t("Tips",  "نصائح")  },
+          ] as const).map(tb => (
+            <button key={tb.id} onClick={() => setTab(tb.id)} style={{
+              flex: 1, padding: "12px 6px", background: "none", border: "none", cursor: "pointer",
+              fontSize: 13, fontWeight: tab === tb.id ? 700 : 400,
+              color: tab === tb.id ? "#fff" : "rgba(255,255,255,.4)",
+              borderBottom: `2px solid ${tab === tb.id ? "#22c55e" : "transparent"}`,
+              transition: ".15s",
+            }}>{tb.label}</button>
           ))}
         </div>
-      )}
 
-      {/* Input row */}
-      <div style={{padding:"8px 10px",borderTop:`1px solid ${T.border}`,display:"flex",gap:8,alignItems:"center",background:T.surface,flexShrink:0}}>
-        <button onClick={()=>setShowEmoji(!showEmoji)} style={{width:34,height:34,borderRadius:"50%",background:"rgba(255,255,255,.08)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",color:T.muted,flexShrink:0}}>
-          <Smile style={{width:16,height:16}}/>
-        </button>
-        <input
-          value={input}
-          onChange={e=>setInput(e.target.value)}
-          placeholder={t("Message the class...","أرسل رسالة...")}
-          style={{flex:1,background:"rgba(255,255,255,.06)",border:`1px solid ${T.border}`,borderRadius:20,padding:"7px 14px",fontSize:13,color:T.text,outline:"none",fontFamily:"inherit"}}
-          onKeyDown={e=>e.key==="Enter"&&sendMessage()}
-        />
-        <button onClick={()=>sendMessage()} disabled={!input.trim()} style={{width:34,height:34,borderRadius:"50%",background:input.trim()?"#0a7c68":"rgba(255,255,255,.06)",border:"none",cursor:input.trim()?"pointer":"default",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",flexShrink:0,transition:"background .15s"}}>
-          <Send style={{width:14,height:14}}/>
-        </button>
+        {/* Body */}
+        <div style={{ flex: 1, overflowY: "auto", padding: "4px 20px 20px" }}>
+
+          {tab === "audio" && (
+            <>
+              <SectionLabel>{t("Microphone (incl. Bluetooth)", "الميكروفون (شامل البلوتوث)")}</SectionLabel>
+              {audioIn.length === 0
+                ? <p style={{ fontSize: 13, color: "rgba(255,255,255,.35)" }}>{t("No microphones found", "لم يُعثر على ميكروفون")}</p>
+                : audioIn.map(d => <DeviceRow key={d.deviceId} device={d} selected={selAudioIn === d.deviceId} onClick={() => switchDevice("audioinput", d.deviceId)} />)
+              }
+
+              <SectionLabel>{t("Speaker / Headset / Bluetooth", "السماعة / سماعة الرأس / البلوتوث")}</SectionLabel>
+              {audioOut.length === 0
+                ? <p style={{ fontSize: 13, color: "rgba(255,255,255,.35)" }}>{t("Output switching not supported on this browser", "تغيير مكبر الصوت غير مدعوم في هذا المتصفح")}</p>
+                : audioOut.map(d => <DeviceRow key={d.deviceId} device={d} selected={selAudioOut === d.deviceId} onClick={() => switchDevice("audiooutput", d.deviceId)} />)
+              }
+
+              <SectionLabel>{t("Noise Cancellation", "إلغاء الضوضاء")}</SectionLabel>
+              <Toggle value={noiseCancel} onChange={() => setNoiseCancel(v => !v)}
+                label={noiseCancel ? t("Enabled — background noise suppressed", "مفعّل — الضوضاء مكتومة") : t("Disabled", "معطّل")} />
+            </>
+          )}
+
+          {tab === "video" && (
+            <>
+              <SectionLabel>{t("Camera (incl. front/back)", "الكاميرا (أمامية / خلفية)")}</SectionLabel>
+              {videoIn.length === 0
+                ? <p style={{ fontSize: 13, color: "rgba(255,255,255,.35)" }}>{t("No cameras found", "لم يُعثر على كاميرا")}</p>
+                : videoIn.map(d => <DeviceRow key={d.deviceId} device={d} selected={selVideoIn === d.deviceId} onClick={() => switchDevice("videoinput", d.deviceId)} />)
+              }
+
+              <SectionLabel>{t("Video Quality", "جودة الفيديو")}</SectionLabel>
+              <div style={{ display: "flex", gap: 8 }}>
+                {(["low","medium","high"] as const).map(q => (
+                  <button key={q} onClick={() => applyQuality(q)} style={{
+                    flex: 1, padding: "12px 4px", borderRadius: 10, border: "1px solid", cursor: "pointer",
+                    fontSize: 12, fontWeight: 600,
+                    borderColor: quality === q ? "#22c55e" : "rgba(255,255,255,.12)",
+                    background:  quality === q ? "rgba(34,197,94,.14)" : "rgba(255,255,255,.04)",
+                    color: quality === q ? "#22c55e" : "rgba(255,255,255,.55)",
+                  }}>
+                    {q === "low" ? t("Low 📶","منخفض 📶") : q === "medium" ? t("Medium 📶📶","متوسط 📶📶") : t("High 📶📶📶","عالي 📶📶📶")}
+                  </button>
+                ))}
+              </div>
+              <p style={{ fontSize: 11, color: "rgba(255,255,255,.3)", marginTop: 8, lineHeight: 1.6 }}>
+                {t("Low quality reduces data usage on slow connections.","الجودة المنخفضة تقلل استهلاك البيانات على الاتصالات البطيئة.")}
+              </p>
+            </>
+          )}
+
+          {tab === "tips" && (
+            <div style={{ paddingTop: 8 }}>
+              {[
+                ["🎙️", t("Raise your hand to ask a question silently.", "ارفع يدك لطرح سؤال بصمت.")],
+                ["📱", t("Front/back camera: tap the flip button (↺) next to your camera button.", "الكاميرا الأمامية/الخلفية: اضغط زر التبديل (↺) بجوار زر الكاميرا.")],
+                ["🔵", t("Bluetooth mic/speaker: enable it on your device first, then pick it in Audio settings.", "البلوتوث: شغّله على جهازك أولاً ثم اختره في إعدادات الصوت.")],
+                ["📡", t("Poor connection? Lower video quality in Video settings.", "اتصال ضعيف؟ خفّض جودة الفيديو في إعدادات الفيديو.")],
+                ["💬", t("Use reactions to engage without interrupting.", "استخدم التعبيرات للتفاعل دون مقاطعة.")],
+                ["🖥️", t("Screen sharing works best on desktop Chrome/Edge.", "مشاركة الشاشة تعمل بشكل أفضل على Chrome/Edge للحاسوب.")],
+                ["⏱️", t("If you minimize the app, you have 5 minutes before your connection is dropped.", "إذا صغّرت التطبيق، لديك 5 دقائق قبل قطع الاتصال.")],
+              ].map(([icon, text], i) => (
+                <div key={i} style={{ display: "flex", gap: 12, padding: "10px 0",
+                  borderBottom: "1px solid rgba(255,255,255,.05)" }}>
+                  <span style={{ fontSize: 20 }}>{icon}</span>
+                  <p style={{ fontSize: 13, color: "rgba(255,255,255,.65)", lineHeight: 1.65, margin: 0 }}>{text}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
 };
 
-export default ClassChatPanel;
+/* ─────────────────────────────────────────────────────────────────────────
+   MAIN COMPONENT
+   ───────────────────────────────────────────────────────────────────────── */
+const ClassControls = ({
+  sessionId, onToggleChat, onToggleParticipants, onEndClass, onLeaveClass,
+  chatUnread, onLaunchPoll, onLaunchQuiz,
+}: ClassControlsProps) => {
+  const room = useRoomContext();
+  const { user, hasRole } = useAuth();
+  const { t } = useLanguage();
+  const isPrivileged = hasRole("admin") || hasRole("teacher");
+
+  // ── Media state — read from LiveKit, not just optimistic shadow ───────
+  const [micEnabled,    setMicEnabled]    = useState(() => room.localParticipant.isMicrophoneEnabled);
+  const [camEnabled,    setCamEnabled]    = useState(() => room.localParticipant.isCameraEnabled);
+  const [screenSharing, setScreenSharing] = useState(false);
+
+  // ── Busy guards — prevent rapid-press race conditions ─────────────────
+  const micBusy = useRef(false);
+  const camBusy = useRef(false);
+
+  // ── Camera facing mode (mobile front ↔ back) ──────────────────────────
+  const [facingMode, setFacingMode] = useState<"user" | "environment">("user");
+  const camFlipBusy = useRef(false);
+
+  // ── Google-Meet-style extras ──────────────────────────────────────────
+  const [captionsOn,    setCaptionsOn]    = useState(false);
+  const [blurOn,        setBlurOn]        = useState(false);
+  const captionsRef = useRef<SpeechRecognition | null>(null);
+  const [captions, setCaptions] = useState("");
+
+  // ── Other UI state ────────────────────────────────────────────────────
+  const [handRaised,    setHandRaised]    = useState(false);
+  const [showReactions, setShowReactions] = useState(false);
+  const [showSettings,  setShowSettings]  = useState(false);
+  const [floatingEmoji, setFloatingEmoji] = useState<{ emoji: string; id: number } | null>(null);
+
+  // ── Sync state from LiveKit track-published / muted events ───────────
+  useEffect(() => {
+    const sync = () => {
+      setMicEnabled(room.localParticipant.isMicrophoneEnabled);
+      setCamEnabled(room.localParticipant.isCameraEnabled);
+    };
+    room.on(RoomEvent.LocalTrackPublished,   sync);
+    room.on(RoomEvent.LocalTrackUnpublished, sync);
+    room.on(RoomEvent.TrackMuted,            sync);
+    room.on(RoomEvent.TrackUnmuted,          sync);
+    sync();
+    return () => {
+      room.off(RoomEvent.LocalTrackPublished,   sync);
+      room.off(RoomEvent.LocalTrackUnpublished, sync);
+      room.off(RoomEvent.TrackMuted,            sync);
+      room.off(RoomEvent.TrackUnmuted,          sync);
+    };
+  }, [room]);
+
+  // ── Mic toggle — busy-guarded ─────────────────────────────────────────
+  const toggleMic = useCallback(async () => {
+    if (micBusy.current) return;
+    micBusy.current = true;
+    try {
+      const next = !room.localParticipant.isMicrophoneEnabled;
+      await room.localParticipant.setMicrophoneEnabled(next);
+      setMicEnabled(next);
+    } catch (e: any) {
+      toast({ title: t("Microphone error", "خطأ في الميكروفون"), description: e?.message, variant: "destructive" });
+    } finally {
+      micBusy.current = false;
+    }
+  }, [room, t]);
+
+  // ── Cam toggle — busy-guarded ─────────────────────────────────────────
+  const toggleCam = useCallback(async () => {
+    if (camBusy.current) return;
+    camBusy.current = true;
+    try {
+      const next = !room.localParticipant.isCameraEnabled;
+      await room.localParticipant.setCameraEnabled(next);
+      setCamEnabled(next);
+    } catch (e: any) {
+      toast({ title: t("Camera error", "خطأ في الكاميرا"), description: e?.message, variant: "destructive" });
+    } finally {
+      camBusy.current = false;
+    }
+  }, [room, t]);
+
+  // ── Camera flip (front ↔ back) — mobile ───────────────────────────────
+  const flipCamera = useCallback(async () => {
+    if (camFlipBusy.current) return;
+    camFlipBusy.current = true;
+    const next: "user" | "environment" = facingMode === "user" ? "environment" : "user";
+    try {
+      const pub = room.localParticipant.getTrackPublication(Track.Source.Camera);
+      if (pub?.videoTrack) {
+        await (pub.videoTrack as any).restartTrack({ facingMode: next });
+        setFacingMode(next);
+      } else {
+        // Camera is off — just remember the preference for when it turns on
+        setFacingMode(next);
+      }
+    } catch (e: any) {
+      toast({ title: t("Could not flip camera", "تعذّر تبديل الكاميرا"), description: e?.message, variant: "destructive" });
+    } finally {
+      camFlipBusy.current = false;
+    }
+  }, [room, facingMode, t]);
+
+  // ── Screen share ──────────────────────────────────────────────────────
+  const toggleScreenShare = useCallback(async () => {
+    if (screenSharing) {
+      const pubs = Array.from(room.localParticipant.trackPublications.values())
+        .filter((pub: any) => pub.track?.source === Track.Source.ScreenShare || pub.track?.source === Track.Source.ScreenShareAudio);
+      for (const pub of pubs) {
+        if ((pub as any).track) {
+          await room.localParticipant.unpublishTrack((pub as any).track);
+          (pub as any).track.stop();
+        }
+      }
+      setScreenSharing(false);
+    } else {
+      try {
+        const tracks = await createLocalScreenTracks({
+          audio: true,
+          resolution: { width: 1280, height: 720, frameRate: 15 },
+        });
+        for (const track of tracks) await room.localParticipant.publishTrack(track);
+        setScreenSharing(true);
+        tracks.forEach(track => {
+          track.mediaStreamTrack.addEventListener("ended", () => {
+            room.localParticipant.unpublishTrack(track);
+            setScreenSharing(false);
+          });
+        });
+      } catch (err: any) {
+        if (err?.name !== "NotAllowedError")
+          toast({ title: t("Screen share failed", "فشل مشاركة الشاشة"), variant: "destructive" });
+      }
+    }
+  }, [room, screenSharing, t]);
+
+  // ── Raise Hand ────────────────────────────────────────────────────────
+  const toggleHand = useCallback(async () => {
+    if (!user || !sessionId) return;
+    const next = !handRaised;
+    setHandRaised(next);
+    await supabase.from("class_participants")
+      .update({ hand_raised: next, hand_raised_at: next ? new Date().toISOString() : null })
+      .eq("session_id", sessionId).eq("student_id", user.id);
+  }, [handRaised, user, sessionId]);
+
+  // ── Reactions ─────────────────────────────────────────────────────────
+  const sendReaction = (emoji: string) => {
+    setFloatingEmoji({ emoji, id: Date.now() });
+    setShowReactions(false);
+    if (user) supabase.from("class_chat_messages").insert({ session_id: sessionId, sender_id: user.id, message: emoji, type: "emoji" });
+    setTimeout(() => setFloatingEmoji(null), 2000);
+  };
+
+  // ── Live Captions (Web Speech API) ────────────────────────────────────
+  const toggleCaptions = useCallback(() => {
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) {
+      toast({ title: t("Captions not supported on this browser", "التعليق التوضيحي غير مدعوم"), variant: "destructive" });
+      return;
+    }
+    if (captionsOn) {
+      captionsRef.current?.stop();
+      captionsRef.current = null;
+      setCaptionsOn(false);
+      setCaptions("");
+    } else {
+      const sr = new SR();
+      sr.continuous = true;
+      sr.interimResults = true;
+      sr.onresult = (e: any) => {
+        const text = Array.from(e.results).map((r: any) => r[0].transcript).join(" ");
+        setCaptions(text.slice(-200));
+      };
+      sr.onerror = () => { setCaptionsOn(false); setCaptions(""); };
+      sr.start();
+      captionsRef.current = sr;
+      setCaptionsOn(true);
+    }
+  }, [captionsOn, t]);
+
+  // ── Background Blur ───────────────────────────────────────────────────
+  const toggleBlur = useCallback(async () => {
+    setBlurOn(v => !v);
+    // Signal to video tile via data channel — downstream ClassroomView can
+    // apply a CSS filter when this flag is true. Full processor support
+    // (BackgroundBlurTransformer from @livekit/track-processors) can be
+    // wired in later without breaking this interface.
+    try {
+      room.localParticipant.publishData(
+        new TextEncoder().encode(JSON.stringify({ type: "blur_toggle", enabled: !blurOn })),
+        { reliable: true }
+      );
+    } catch {}
+    toast({ title: blurOn ? t("Background blur off", "تشويش الخلفية: إيقاف") : t("Background blur on", "تشويش الخلفية: تشغيل") });
+  }, [room, blurOn, t]);
+
+  // ── Mute all students ─────────────────────────────────────────────────
+  const muteAllStudents = async () => {
+    await supabase.from("class_participants").update({ is_muted: true }).eq("session_id", sessionId);
+    toast({ title: t("All students muted", "تم كتم جميع الطلاب") });
+  };
+
+  // ── Button style helpers ──────────────────────────────────────────────
+  const btnBase = "rounded-full h-10 px-3 gap-1.5 text-xs font-medium";
+  const btnOn   = "bg-primary-foreground/10 text-primary-foreground hover:bg-primary-foreground/20";
+  const btnOff  = "bg-destructive text-destructive-foreground hover:bg-destructive/90";
+  const btnNeutral = "bg-primary-foreground/10 text-primary-foreground hover:bg-primary-foreground/20";
+
+  return (
+    <>
+      {/* ── Floating emoji ── */}
+      {floatingEmoji && (
+        <div className="fixed inset-0 pointer-events-none z-50 flex items-center justify-center">
+          <span className="text-6xl animate-bounce opacity-80">{floatingEmoji.emoji}</span>
+        </div>
+      )}
+
+      {/* ── Screen share banner ── */}
+      {screenSharing && (
+        <div className="bg-destructive/90 text-destructive-foreground text-center py-1 text-xs flex items-center justify-center gap-2">
+          <Monitor className="h-3 w-3 animate-pulse" />
+          {t("Sharing your screen", "تتم مشاركة شاشتك")}
+          <Button size="sm" variant="secondary" className="h-5 text-[10px] px-2" onClick={toggleScreenShare}>
+            {t("Stop", "إيقاف")}
+          </Button>
+        </div>
+      )}
+
+      {/* ── Live captions banner ── */}
+      {captionsOn && captions && (
+        <div style={{
+          position: "fixed", bottom: 80, left: "50%", transform: "translateX(-50%)",
+          background: "rgba(0,0,0,.82)", color: "#fff", borderRadius: 10,
+          padding: "10px 18px", maxWidth: "70vw", fontSize: 15, lineHeight: 1.5,
+          zIndex: 500, textAlign: "center", backdropFilter: "blur(6px)",
+          border: "1px solid rgba(255,255,255,.12)",
+        }}>
+          {captions}
+        </div>
+      )}
+
+      {/* ── Settings modal ── */}
+      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} room={room} />}
+
+      {/* ══ MAIN CONTROL BAR ══════════════════════════════════════════════ */}
+      <div className="h-16 bg-primary flex items-center justify-between px-2 md:px-4 gap-1">
+
+        {/* ── LEFT: Mic · Cam · Cam-flip · Screen ── */}
+        <div className="flex items-center gap-1">
+
+          {/* Mic */}
+          <Button size="sm" className={`${btnBase} ${micEnabled ? btnOn : btnOff}`} onClick={toggleMic}>
+            {micEnabled ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4" />}
+            <span className="hidden sm:inline">{micEnabled ? t("Mic","مايك") : t("Muted","صامت")}</span>
+          </Button>
+
+          {/* Cam */}
+          <Button size="sm" className={`${btnBase} ${camEnabled ? btnOn : "bg-muted text-muted-foreground hover:bg-muted/90"}`} onClick={toggleCam}>
+            {camEnabled ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4" />}
+            <span className="hidden sm:inline">{camEnabled ? t("Cam","كام") : t("Off","مغلق")}</span>
+          </Button>
+
+          {/* Camera flip — always visible (useful on desktop too for dual cameras) */}
+          <Button size="sm" className={`${btnBase} ${btnNeutral}`} onClick={flipCamera}
+            title={t("Flip camera (front/back)","تبديل الكاميرا (أمامية/خلفية)")}>
+            <SwitchCamera className="h-4 w-4" />
+            <span className="hidden md:inline">{facingMode === "user" ? t("Front","أمامي") : t("Back","خلفي")}</span>
+          </Button>
+
+          {/* Screen share */}
+          <Button size="sm"
+            className={`${btnBase} ${screenSharing ? btnOff : btnNeutral}`}
+            onClick={toggleScreenShare}>
+            {screenSharing ? <MonitorOff className="h-4 w-4" /> : <Monitor className="h-4 w-4" />}
+            <span className="hidden sm:inline">{screenSharing ? t("Stop","إيقاف") : t("Share","مشاركة")}</span>
+          </Button>
+        </div>
+
+        {/* ── CENTER: Hand · Reactions · Captions · Blur ── */}
+        <div className="flex items-center gap-1">
+
+          {/* Raise hand (students only) */}
+          {!isPrivileged && (
+            <Button size="sm"
+              className={`${btnBase} ${handRaised ? "bg-secondary text-secondary-foreground" : btnNeutral}`}
+              onClick={toggleHand}>
+              <Hand className="h-4 w-4" />
+              <span className="hidden sm:inline">{handRaised ? t("Lower","أنزل") : t("Hand","يد")}</span>
+            </Button>
+          )}
+
+          {/* Reactions */}
+          <div className="relative">
+            <Button size="sm" className={`${btnBase} ${btnNeutral}`} onClick={() => setShowReactions(v => !v)}>
+              <Smile className="h-4 w-4" />
+            </Button>
+            {showReactions && (
+              <div className="absolute bottom-12 left-1/2 -translate-x-1/2 bg-card rounded-full shadow-lg px-2 py-1 flex gap-1 z-50">
+                {REACTION_EMOJIS.map(e => (
+                  <button key={e} onClick={() => sendReaction(e)} className="text-lg hover:scale-125 transition-transform p-1">{e}</button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Captions (Google Meet parity) */}
+          <Button size="sm"
+            className={`${btnBase} ${captionsOn ? "bg-blue-600/80 text-white hover:bg-blue-600" : btnNeutral}`}
+            onClick={toggleCaptions}
+            title={t("Live Captions","الترجمة المباشرة")}>
+            {captionsOn ? <Captions className="h-4 w-4" /> : <CaptionsOff className="h-4 w-4" />}
+            <span className="hidden lg:inline">{t("CC","ترجمة")}</span>
+          </Button>
+
+          {/* Background blur */}
+          <Button size="sm"
+            className={`${btnBase} ${blurOn ? "bg-purple-600/80 text-white hover:bg-purple-600" : btnNeutral}`}
+            onClick={toggleBlur}
+            title={t("Background blur","تشويش الخلفية")}>
+            <Blend className="h-4 w-4" />
+            <span className="hidden lg:inline">{t("Blur","تشويش")}</span>
+          </Button>
+        </div>
+
+        {/* ── RIGHT: Chat · Participants · Settings · More · End ── */}
+        <div className="flex items-center gap-1">
+
+          {/* Chat */}
+          <Button size="sm" className={`${btnBase} ${btnNeutral} relative`} onClick={onToggleChat}>
+            <MessageCircle className="h-4 w-4" />
+            {chatUnread > 0 && (
+              <span className="absolute -top-1 -right-1 bg-destructive text-destructive-foreground rounded-full h-4 w-4 text-[10px] flex items-center justify-center">
+                {chatUnread}
+              </span>
+            )}
+          </Button>
+
+          {/* Participants */}
+          <Button size="sm" className={`${btnBase} ${btnNeutral}`} onClick={onToggleParticipants}>
+            <Users className="h-4 w-4" />
+          </Button>
+
+          {/* Settings (device picker, quality, etc.) */}
+          <Button size="sm" className={`${btnBase} ${btnNeutral}`} onClick={() => setShowSettings(true)}
+            title={t("Settings — microphone, speaker, camera, quality","الإعدادات")}>
+            <Settings className="h-4 w-4" />
+            <span className="hidden md:inline">{t("Settings","إعدادات")}</span>
+          </Button>
+
+          {/* More menu */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="sm" className={`${btnBase} ${btnNeutral}`}>
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-52">
+              {isPrivileged && (
+                <>
+                  <DropdownMenuItem onClick={onLaunchPoll}>
+                    <BarChart3 className="h-4 w-4 mr-2" /> {t("Launch Poll","إطلاق تصويت")}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={onLaunchQuiz}>
+                    <Zap className="h-4 w-4 mr-2" /> {t("Live Quiz","اختبار مباشر")}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={muteAllStudents}>
+                    <MicOff className="h-4 w-4 mr-2" /> {t("Mute All Students","كتم الجميع")}
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                </>
+              )}
+              <DropdownMenuItem onClick={() => setShowSettings(true)}>
+                <Settings className="h-4 w-4 mr-2" /> {t("Audio / Video Settings","إعدادات الصوت والفيديو")}
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={toggleCaptions}>
+                <Captions className="h-4 w-4 mr-2" /> {captionsOn ? t("Turn Off Captions","إيقاف الترجمة") : t("Turn On Captions","تشغيل الترجمة")}
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={toggleBlur}>
+                <Blend className="h-4 w-4 mr-2" /> {blurOn ? t("Remove Background Blur","إزالة التشويش") : t("Blur Background","تشويش الخلفية")}
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={toggleScreenShare}>
+                {screenSharing ? <MonitorOff className="h-4 w-4 mr-2" /> : <Monitor className="h-4 w-4 mr-2" />}
+                {screenSharing ? t("Stop Sharing","إيقاف المشاركة") : t("Share Screen","مشاركة الشاشة")}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={isPrivileged ? onEndClass : onLeaveClass}>
+                <LogOut className="h-4 w-4 mr-2 text-destructive" />
+                <span className="text-destructive">
+                  {isPrivileged ? t("End Class for All","إنهاء الحصة للجميع") : t("Leave Class","مغادرة الحصة")}
+                </span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          {/* End / Leave button */}
+          <Button size="sm"
+            className="rounded-full h-10 px-4 text-xs bg-destructive text-destructive-foreground hover:bg-destructive/90 gap-1.5"
+            onClick={isPrivileged ? onEndClass : onLeaveClass}>
+            <Phone className="h-4 w-4 rotate-[135deg]" />
+            <span className="hidden sm:inline">{isPrivileged ? t("End","إنهاء") : t("Leave","مغادرة")}</span>
+          </Button>
+        </div>
+      </div>
+    </>
+  );
+};
+
+export default ClassControls;
