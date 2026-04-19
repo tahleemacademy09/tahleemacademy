@@ -77,20 +77,61 @@ const CSS = `
    On Android, minimizing kills the WebSocket → LiveKit fires Disconnected
    (not Reconnecting), so we must handle all three.
    visibilitychange also catches the tab coming back from background.       */
+/* ── 5-MINUTE MINIMIZE GRACE PERIOD ─────────────────────────────────────
+   When the user minimizes / backgrounds the tab, we wait 5 minutes before
+   triggering a disconnect. If they come back within 5 minutes the timer is
+   cancelled and the session continues seamlessly — matching Google Meet's
+   behaviour. Only if the WebSocket itself also drops (Disconnected event)
+   AND the grace period has elapsed do we call onDisconnected.             */
+const MINIMIZE_GRACE_MS = 5 * 60 * 1000; // 5 minutes
+
 const ReconnectMonitor = ({ onReconnecting, onReconnected, onDisconnected }: {
   onReconnecting: () => void;
   onReconnected:  () => void;
   onDisconnected: () => void;
 }) => {
   const room = useRoomContext();
+  const graceTimer   = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hiddenAt     = useRef<number | null>(null);
+  const wsDropped    = useRef(false); // did LiveKit also fire Disconnected?
+
   useEffect(() => {
+    const clearGrace = () => {
+      if (graceTimer.current) { clearTimeout(graceTimer.current); graceTimer.current = null; }
+      hiddenAt.current = null;
+      wsDropped.current = false;
+    };
+
+    const handleDisconnect = () => {
+      wsDropped.current = true;
+      // If still within grace window — wait; grace timer will call onDisconnected
+      if (graceTimer.current) return;
+      // No grace window active (tab is visible) → reconnect immediately
+      onDisconnected();
+    };
+
     room.on(RoomEvent.Reconnecting, onReconnecting);
     room.on(RoomEvent.Reconnected,  onReconnected);
-    // Fully disconnected (Android suspended tab / WebSocket killed)
-    room.on(RoomEvent.Disconnected, onDisconnected);
+    room.on(RoomEvent.Disconnected, handleDisconnect);
+
     const onVis = async () => {
-      if (document.visibilityState !== "visible") return;
-      // Room fully dropped while in background — trigger hard reconnect
+      if (document.visibilityState === "hidden") {
+        // Tab going to background — start grace timer
+        hiddenAt.current = Date.now();
+        graceTimer.current = setTimeout(() => {
+          graceTimer.current = null;
+          // 5 minutes elapsed in background — disconnect if WS also dropped
+          if (wsDropped.current || room.state === ConnectionState.Disconnected) {
+            onDisconnected();
+          }
+          // If somehow still connected after 5 min — leave as-is; LiveKit
+          // will reconnect on its own when the tab returns.
+        }, MINIMIZE_GRACE_MS);
+        return;
+      }
+
+      // Tab coming back to foreground
+      clearGrace();
       if (room.state === ConnectionState.Disconnected) { onDisconnected(); return; }
       try {
         if (room.state === ConnectionState.Connected) {
@@ -104,11 +145,13 @@ const ReconnectMonitor = ({ onReconnecting, onReconnected, onDisconnected }: {
         }
       } catch {}
     };
+
     document.addEventListener("visibilitychange", onVis);
     return () => {
+      clearGrace();
       room.off(RoomEvent.Reconnecting, onReconnecting);
       room.off(RoomEvent.Reconnected,  onReconnected);
-      room.off(RoomEvent.Disconnected, onDisconnected);
+      room.off(RoomEvent.Disconnected, handleDisconnect);
       document.removeEventListener("visibilitychange", onVis);
     };
   }, [room, onReconnecting, onReconnected, onDisconnected]);
@@ -1152,6 +1195,13 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
       if(sessionId){
         await supabase.from("live_sessions").update({status:"ended",ended_at:new Date().toISOString(),actual_end_time:new Date().toISOString()}).eq("id",sessionId);
         if(user)await supabase.from("class_chat_messages").insert({session_id:sessionId,sender_id:user.id,message:t("Class has ended","انتهت الحصة"),type:"system"});
+        // Clear all chat messages for this session after a short delay so
+        // the "class has ended" system message is visible, then wiped clean.
+        setTimeout(async()=>{
+          try{
+            await supabase.from("class_chat_messages").delete().eq("session_id",sessionId);
+          }catch(e){console.warn("[endSession] chat clear failed:",e);}
+        }, 4000);
       }
     }catch(e:any){
       console.error("[endSession] DB error (continuing anyway):",e?.message);
