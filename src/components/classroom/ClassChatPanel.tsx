@@ -2,20 +2,18 @@ import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
-import { Send, Pin, Trash2, Smile } from "lucide-react";
+import { Pin, Trash2, Smile, Send } from "lucide-react";
 
 interface ClassChatPanelProps {
   sessionId: string;
+  /** ISO timestamp of when this session started — used to filter out
+      messages from any previous run of the same session row.          */
+  sessionStartedAt?: string;
 }
 
 const EMOJI_LIST = ["👏", "🤲", "❤️", "😂", "🌟", "👍"];
 
-const ClassChatPanel = ({ sessionId }: ClassChatPanelProps) => {
+const ClassChatPanel = ({ sessionId, sessionStartedAt }: ClassChatPanelProps) => {
   const { user, hasRole } = useAuth();
   const { t } = useLanguage();
   const isPrivileged = hasRole("admin") || hasRole("teacher");
@@ -25,6 +23,7 @@ const ClassChatPanel = ({ sessionId }: ClassChatPanelProps) => {
   const [showEmoji, setShowEmoji] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // Profiles cache
   const loadProfiles = async (userIds: string[]) => {
     const missing = userIds.filter(id => !profiles[id]);
     if (missing.length === 0) return;
@@ -38,15 +37,22 @@ const ClassChatPanel = ({ sessionId }: ClassChatPanelProps) => {
     setProfiles(prev => ({ ...prev, ...newProfiles }));
   };
 
+  // Clear messages whenever we switch sessions
+  useEffect(() => { setMessages([]); setProfiles({}); }, [sessionId]);
+
   useEffect(() => {
     const load = async () => {
-      const { data } = await supabase
+      let q = supabase
         .from("class_chat_messages")
         .select("*")
         .eq("session_id", sessionId)
         .order("created_at");
+      // Only show messages from this session run — prevents stale messages
+      // from a previous end-and-restart of the same session row.
+      if (sessionStartedAt) q = q.gte("created_at", sessionStartedAt);
+      const { data } = await q;
       setMessages(data || []);
-      const ids = [...new Set((data || []).map(m => m.sender_id))];
+      const ids = [...new Set((data || []).map((m: any) => m.sender_id))];
       loadProfiles(ids);
     };
     load();
@@ -59,12 +65,17 @@ const ClassChatPanel = ({ sessionId }: ClassChatPanelProps) => {
         })
       .on("postgres_changes", { event: "DELETE", schema: "public", table: "class_chat_messages", filter: `session_id=eq.${sessionId}` },
         (payload) => {
-          setMessages(prev => prev.filter(m => m.id !== payload.old.id));
+          setMessages(prev => {
+            const next = prev.filter(m => m.id !== payload.old.id);
+            // If ALL messages were wiped (teacher ended class + 4s timer fired),
+            // clear the list entirely so nothing lingers in the UI.
+            return next;
+          });
         })
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
-  }, [sessionId]);
+  }, [sessionId, sessionStartedAt]);
 
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -122,8 +133,9 @@ const ClassChatPanel = ({ sessionId }: ClassChatPanelProps) => {
         {messages.map(m => {
           const isMe = m.sender_id === user?.id;
           const prof = profiles[m.sender_id];
-          const name = prof?.name || "Student";
-          const isTeacher = prof?.role === "teacher" || prof?.role === "admin";
+          // Always show "You" for own messages so the bubble has a name label
+          const name = isMe ? t("You", "أنت") : (prof?.name || "Student");
+          const isTeacher = !isMe && (prof?.role === "teacher" || prof?.role === "admin");
 
           if (m.type === "system") {
             return (
@@ -133,12 +145,12 @@ const ClassChatPanel = ({ sessionId }: ClassChatPanelProps) => {
             );
           }
 
-          if (m.type === "emoji" || (EMOJI_LIST.includes(m.message) && m.message.length <= 4)) {
+          if (m.type === "emoji" || m.type === "reaction" || (EMOJI_LIST.includes(m.message) && m.message.length <= 4)) {
             return (
               <div key={m.id} style={{display:"flex",justifyContent:isMe?"flex-end":"flex-start"}}>
                 <div style={{textAlign:"center"}}>
                   <span style={{fontSize:26}}>{m.message}</span>
-                  <p style={{fontSize:9,color:T.muted,margin:"2px 0 0"}}>{isMe ? t("You","أنت") : name}</p>
+                  <p style={{fontSize:9,color:T.muted,margin:"2px 0 0"}}>{name}</p>
                 </div>
               </div>
             );
@@ -149,14 +161,21 @@ const ClassChatPanel = ({ sessionId }: ClassChatPanelProps) => {
               <div style={{
                 maxWidth:"80%",padding:"8px 12px",borderRadius:isMe?"14px 14px 4px 14px":"14px 14px 14px 4px",
                 background:isMe?T.mine:T.theirs,
-                borderLeft:isTeacher&&!isMe?`3px solid ${T.gold}`:"none",
+                borderLeft:isTeacher?`3px solid ${T.gold}`:"none",
               }}>
-                {!isMe && (
-                  <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:3}}>
-                    <span style={{fontSize:10,color:isTeacher?T.gold:T.muted,fontWeight:700}}>{name}</span>
-                    {isTeacher&&<span style={{fontSize:9,background:"rgba(201,168,76,.18)",color:T.gold,borderRadius:8,padding:"1px 5px",fontWeight:700}}>{t("Teacher","معلم")}</span>}
-                  </div>
-                )}
+                {/* Show name for ALL messages — own messages show "You" */}
+                <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:3}}>
+                  <span style={{
+                    fontSize:10,
+                    color: isMe ? "rgba(255,255,255,.38)" : isTeacher ? T.gold : T.muted,
+                    fontWeight: isMe ? 400 : 700,
+                  }}>{name}</span>
+                  {isTeacher && (
+                    <span style={{fontSize:9,background:"rgba(201,168,76,.18)",color:T.gold,borderRadius:8,padding:"1px 5px",fontWeight:700}}>
+                      {t("Teacher","معلم")}
+                    </span>
+                  )}
+                </div>
                 <p style={{fontSize:13,color:T.text,margin:0,wordBreak:"break-word",lineHeight:1.45}}>{m.message}</p>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginTop:4,gap:8}}>
                   <span style={{fontSize:9,color:T.muted}}>
