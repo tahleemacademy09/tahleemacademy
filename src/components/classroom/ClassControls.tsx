@@ -16,12 +16,13 @@ import { Track, createLocalScreenTracks, RoomEvent } from "livekit-client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { supabase } from "@/integrations/supabase/client";
+import { useLiveClass } from "@/contexts/LiveClassContext";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/hooks/use-toast";
 import {
   Mic, MicOff, Video, VideoOff, Monitor, MonitorOff, Hand,
   MessageCircle, Users, MoreHorizontal, Phone, Smile, LogOut,
-  BarChart3, Zap, Settings, X, Check, SwitchCamera, Volume2,
+  BarChart3, Zap, Settings, X, Check, Volume2,
   Captions, CaptionsOff, Blend, BarChart2,
 } from "lucide-react";
 import {
@@ -293,6 +294,10 @@ const ClassControls = ({
   const { t } = useLanguage();
   const isPrivileged = hasRole("admin") || hasRole("teacher");
 
+  // ── Sync mic/cam state into global context so minimized pill shows correct icons ──
+  const { setMicEnabled: setCtxMicEnabled, setCamEnabled: setCtxCamEnabled,
+          toggleMicFnRef, toggleCamFnRef } = useLiveClass();
+
   // ── Media state — read from LiveKit, not just optimistic shadow ───────
   const [micEnabled,    setMicEnabled]    = useState(() => room.localParticipant.isMicrophoneEnabled);
   const [camEnabled,    setCamEnabled]    = useState(() => room.localParticipant.isCameraEnabled);
@@ -301,10 +306,6 @@ const ClassControls = ({
   // ── Busy guards — prevent rapid-press race conditions ─────────────────
   const micBusy = useRef(false);
   const camBusy = useRef(false);
-
-  // ── Camera facing mode (mobile front ↔ back) ──────────────────────────
-  const [facingMode, setFacingMode] = useState<"user" | "environment">("user");
-  const camFlipBusy = useRef(false);
 
   // ── Google-Meet-style extras ──────────────────────────────────────────
   const [captionsOn,    setCaptionsOn]    = useState(false);
@@ -321,8 +322,12 @@ const ClassControls = ({
   // ── Sync state from LiveKit track-published / muted events ───────────
   useEffect(() => {
     const sync = () => {
-      setMicEnabled(room.localParticipant.isMicrophoneEnabled);
-      setCamEnabled(room.localParticipant.isCameraEnabled);
+      const micOn = room.localParticipant.isMicrophoneEnabled;
+      const camOn = room.localParticipant.isCameraEnabled;
+      setMicEnabled(micOn);
+      setCamEnabled(camOn);
+      setCtxMicEnabled(micOn);
+      setCtxCamEnabled(camOn);
     };
     room.on(RoomEvent.LocalTrackPublished,   sync);
     room.on(RoomEvent.LocalTrackUnpublished, sync);
@@ -335,7 +340,13 @@ const ClassControls = ({
       room.off(RoomEvent.TrackMuted,            sync);
       room.off(RoomEvent.TrackUnmuted,          sync);
     };
-  }, [room]);
+  }, [room, setCtxMicEnabled, setCtxCamEnabled]);
+
+  // ── Register live toggle functions into context refs ──────────────────
+  useEffect(() => {
+    toggleMicFnRef.current = toggleMic;
+    toggleCamFnRef.current = toggleCam;
+  }, [toggleMic, toggleCam, toggleMicFnRef, toggleCamFnRef]);
 
   // ── Mic toggle — busy-guarded ─────────────────────────────────────────
   const toggleMic = useCallback(async () => {
@@ -345,12 +356,13 @@ const ClassControls = ({
       const next = !room.localParticipant.isMicrophoneEnabled;
       await room.localParticipant.setMicrophoneEnabled(next);
       setMicEnabled(next);
+      setCtxMicEnabled(next);
     } catch (e: any) {
       toast({ title: t("Microphone error", "خطأ في الميكروفون"), description: e?.message, variant: "destructive" });
     } finally {
       micBusy.current = false;
     }
-  }, [room, t]);
+  }, [room, t, setCtxMicEnabled]);
 
   // ── Cam toggle — busy-guarded ─────────────────────────────────────────
   const toggleCam = useCallback(async () => {
@@ -360,33 +372,13 @@ const ClassControls = ({
       const next = !room.localParticipant.isCameraEnabled;
       await room.localParticipant.setCameraEnabled(next);
       setCamEnabled(next);
+      setCtxCamEnabled(next);
     } catch (e: any) {
       toast({ title: t("Camera error", "خطأ في الكاميرا"), description: e?.message, variant: "destructive" });
     } finally {
       camBusy.current = false;
     }
-  }, [room, t]);
-
-  // ── Camera flip (front ↔ back) — mobile ───────────────────────────────
-  const flipCamera = useCallback(async () => {
-    if (camFlipBusy.current) return;
-    camFlipBusy.current = true;
-    const next: "user" | "environment" = facingMode === "user" ? "environment" : "user";
-    try {
-      const pub = room.localParticipant.getTrackPublication(Track.Source.Camera);
-      if (pub?.videoTrack) {
-        await (pub.videoTrack as any).restartTrack({ facingMode: next });
-        setFacingMode(next);
-      } else {
-        // Camera is off — just remember the preference for when it turns on
-        setFacingMode(next);
-      }
-    } catch (e: any) {
-      toast({ title: t("Could not flip camera", "تعذّر تبديل الكاميرا"), description: e?.message, variant: "destructive" });
-    } finally {
-      camFlipBusy.current = false;
-    }
-  }, [room, facingMode, t]);
+  }, [room, t, setCtxCamEnabled]);
 
   // ── Screen share ──────────────────────────────────────────────────────
   const toggleScreenShare = useCallback(async () => {
@@ -548,13 +540,6 @@ const ClassControls = ({
             <span className="hidden sm:inline">{camEnabled ? t("Cam","كام") : t("Off","مغلق")}</span>
           </Button>
 
-          {/* Camera flip — always visible (useful on desktop too for dual cameras) */}
-          <Button size="sm" className={`${btnBase} ${btnNeutral}`} onClick={flipCamera}
-            title={t("Flip camera (front/back)","تبديل الكاميرا (أمامية/خلفية)")}>
-            <SwitchCamera className="h-4 w-4" />
-            <span className="hidden md:inline">{facingMode === "user" ? t("Front","أمامي") : t("Back","خلفي")}</span>
-          </Button>
-
           {/* Screen share */}
           <Button size="sm"
             className={`${btnBase} ${screenSharing ? btnOff : btnNeutral}`}
@@ -628,13 +613,6 @@ const ClassControls = ({
             <Users className="h-4 w-4" />
           </Button>
 
-          {/* Settings (device picker, quality, etc.) */}
-          <Button size="sm" className={`${btnBase} ${btnNeutral}`} onClick={() => setShowSettings(true)}
-            title={t("Settings — microphone, speaker, camera, quality","الإعدادات")}>
-            <Settings className="h-4 w-4" />
-            <span className="hidden md:inline">{t("Settings","إعدادات")}</span>
-          </Button>
-
           {/* More menu */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -657,9 +635,6 @@ const ClassControls = ({
                   <DropdownMenuSeparator />
                 </>
               )}
-              <DropdownMenuItem onClick={() => setShowSettings(true)}>
-                <Settings className="h-4 w-4 mr-2" /> {t("Audio / Video Settings","إعدادات الصوت والفيديو")}
-              </DropdownMenuItem>
               <DropdownMenuItem onClick={toggleCaptions}>
                 <Captions className="h-4 w-4 mr-2" /> {captionsOn ? t("Turn Off Captions","إيقاف الترجمة") : t("Turn On Captions","تشغيل الترجمة")}
               </DropdownMenuItem>
