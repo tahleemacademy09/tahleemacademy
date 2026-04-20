@@ -14,7 +14,6 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
-import { useTimetableNotifications } from "@/hooks/useTimetableNotifications";
 import {
   Clock, Video, Calendar, BookOpen, ChevronRight,
   Bell, Users, Lock,
@@ -68,8 +67,6 @@ export default function StudentTimetable() {
   const { t, language }     = useLanguage();
   const navigate            = useNavigate();
   const todayIndex          = new Date().getDay();
-
-  useTimetableNotifications();
 
   const studentLevel = (profile as any)?.level || (profile as any)?.course_level || "beginner";
   const isPrivileged = hasRole("admin") || hasRole("teacher");
