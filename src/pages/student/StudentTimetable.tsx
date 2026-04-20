@@ -121,7 +121,7 @@ export default function StudentTimetable() {
   const slotsForDay = slots.filter((s: any) => s.day_of_week === selectedDay);
 
   const upcomingToday = slots
-    .filter((s: any) => s.day_of_week === todayIndex && minutesUntil(s.start_time) > -30)
+    .filter((s: any) => s.day_of_week === todayIndex && minutesUntil(s.end_time) > 0)
     .sort((a: any, b: any) => (a.start_time > b.start_time ? 1 : -1))[0];
 
   const handleJoin = async (slot: any) => {
@@ -222,10 +222,11 @@ export default function StudentTimetable() {
 
         {/* ── Next class banner (today only) ── */}
         {upcomingToday && selectedDay === todayIndex && (() => {
-          const minsLeft = minutesUntil(upcomingToday.start_time);
-          const isNow    = minsLeft >= -30 && minsLeft <= 0;
-          const isSoon   = minsLeft > 0 && minsLeft <= 15;
-          const canJoin  = isNow || isSoon;
+          const minsLeft  = minutesUntil(upcomingToday.start_time);
+          const minsToEnd = minutesUntil(upcomingToday.end_time);
+          const isNow     = minsLeft <= 0 && minsToEnd > 0;
+          const isSoon    = minsLeft > 0 && minsLeft <= 15;
+          const canJoin   = isNow || isSoon;
           return (
             <div style={{ background: `linear-gradient(135deg,${G},${GM})`, borderRadius: 18, padding: "16px 18px", marginBottom: 16, display: "flex", alignItems: "center", gap: 14, boxShadow: "0 4px 20px rgba(15,45,31,.2)", animation: "fadeUp .3s ease" }}>
               <div style={{ width: 48, height: 48, borderRadius: 14, background: "rgba(201,168,76,.2)", border: `1.5px solid ${GOLD}44`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
@@ -276,10 +277,11 @@ export default function StudentTimetable() {
           <div style={{ display: "flex", flexDirection: "column", gap: 12, animation: "fadeUp .25s ease" }}>
             {slotsForDay.map((slot: any) => {
               const minsLeft     = minutesUntil(slot.start_time);
+              const minsToEnd    = minutesUntil(slot.end_time);
               const isToday      = selectedDay === todayIndex;
-              const isNow        = isToday && minsLeft >= -30 && minsLeft <= 0;
+              const isNow        = isToday && minsLeft <= 0 && minsToEnd > 0;
               const isSoon       = isToday && minsLeft > 0 && minsLeft <= 15;
-              const isPast       = isToday && minsLeft < -30;
+              const isPast       = isToday && minsToEnd <= 0;
               const tooEarly     = isToday && !isNow && !isSoon && !isPast;
               const canJoin      = isNow || isSoon;
               const subjectTitle = language === "ar"
