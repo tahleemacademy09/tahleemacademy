@@ -752,12 +752,16 @@ const InClassQuranReader=({onClose}:any)=>{
 
   const toAr=(n:number)=>String(n).replace(/[0-9]/g,d=>"٠١٢٣٤٥٦٧٨٩"[+d]);
 
-  /* fetch translation for current page */
+  /* fetch translation for current page — Arabic + English together */
   const fetchTranslation=async(p:number)=>{
     setTransLoading(true);setTransAyahs([]);
     try{
-      const j=await fetch(`https://api.alquran.cloud/v1/page/${p}/en.sahih`).then(r=>r.json());
-      if(j.code===200)setTransAyahs(j.data.ayahs||[]);
+      const j=await fetch(`https://api.alquran.cloud/v1/page/${p}/editions/quran-uthmani,en.sahih`).then(r=>r.json());
+      if(j.code===200&&Array.isArray(j.data)){
+        const arAyahs=j.data[0]?.ayahs||[];
+        const enAyahs=j.data[1]?.ayahs||[];
+        setTransAyahs(arAyahs.map((a:any,i:number)=>({...enAyahs[i],arabicText:a.text})));
+      }
     }catch{}
     setTransLoading(false);
   };
@@ -780,11 +784,26 @@ const InClassQuranReader=({onClose}:any)=>{
     }
     setLoadingTafseer(p=>({...p,[key]:true}));
     try{
-      const j=await fetch(`https://api.quran.com/api/v4/tafsirs/169/by_ayah?verse_key=${surah}:${ayah}`).then(r=>r.json());
-      const clean=(j?.tafsir?.text||"").replace(/<[^>]+>/g,"").replace(/\s+/g," ").trim();
-      setExpandedTafseer(p=>({...p,[key]:clean||"Tafseer not available for this ayah."}));
+      const ctrl=new AbortController();
+      const t=setTimeout(()=>ctrl.abort(),8000);
+      const r=await fetch(`https://api.quran.com/api/v4/tafsirs/169/by_ayah?verse_key=${surah}:${ayah}`,{signal:ctrl.signal});
+      clearTimeout(t);
+      const j=await r.json();
+      const raw=j?.tafsir?.text||"";
+      if(raw){
+        setExpandedTafseer(p=>({...p,[key]:raw.replace(/<[^>]+>/g,"").replace(/&amp;/g,"&").replace(/&nbsp;/g," ").replace(/\s+/g," ").trim()}));
+      }else throw new Error("empty");
     }catch{
-      setExpandedTafseer(p=>({...p,[key]:"Unable to load tafseer. Check your connection."}));
+      /* fallback: Maududi commentary from alquran.cloud */
+      try{
+        const r2=await fetch(`https://api.alquran.cloud/v1/ayah/${surah}:${ayah}/en.maududi`);
+        const j2=await r2.json();
+        const txt=(j2?.data?.text||"").replace(/<[^>]+>/g,"").replace(/\s+/g," ").trim();
+        if(txt)setExpandedTafseer(p=>({...p,[key]:txt}));
+        else throw new Error("empty");
+      }catch{
+        setExpandedTafseer(p=>({...p,[key]:"Tafseer unavailable. Please check your internet connection."}));
+      }
     }
     setLoadingTafseer(p=>({...p,[key]:false}));
   };
@@ -979,55 +998,48 @@ const InClassQuranReader=({onClose}:any)=>{
           </>
         )}
 
-        {/* ══ MODE: TRANSLATION (mushaf image top + translation panel below) ══ */}
+        {/* ══ MODE: TRANSLATION (page nav + Arabic + English per ayah, no image) ══ */}
         {mode==="translation"&&(
           <>
             <PageNav/>
-            {/* split layout: image 50%, translation 50% */}
-            <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
-              {/* top: mushaf image — fixed ~50% */}
-              <div style={{flex:"0 0 50%",overflowY:"auto",background:"#f5f0e2",borderBottom:"2px solid #d4c9a0"}}>
-                <MushafImage/>
+            <div style={{flex:1,overflowY:"auto",background:"#fff"}}>
+              <div style={{padding:"6px 12px",background:"linear-gradient(90deg,rgba(26,61,36,.06),transparent)",borderBottom:"1px solid #f0e8d4",display:"flex",alignItems:"center",gap:6}}>
+                <span style={{fontSize:10,fontWeight:800,color:"#1a3d24",letterSpacing:.5,textTransform:"uppercase"}}>🌐 Sahih International · Page {page}</span>
               </div>
-              {/* bottom: translation panel */}
-              <div style={{flex:1,overflowY:"auto",background:"#fff"}}>
-                {/* label */}
-                <div style={{padding:"6px 12px",background:"linear-gradient(90deg,rgba(26,61,36,.06),transparent)",borderBottom:"1px solid #f0e8d4",display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
-                  <span style={{fontSize:10,fontWeight:800,color:"#1a3d24",letterSpacing:.5,textTransform:"uppercase"}}>🌐 Sahih International · Page {page}</span>
+              {transLoading&&(
+                <div style={{display:"flex",justifyContent:"center",padding:24}}>
+                  <div style={{width:22,height:22,border:"3px solid #1a3d24",borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .7s linear infinite"}}/>
                 </div>
-                {transLoading&&(
-                  <div style={{display:"flex",justifyContent:"center",padding:24}}>
-                    <div style={{width:22,height:22,border:"3px solid #1a3d24",borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .7s linear infinite"}}/>
-                  </div>
-                )}
-                {!transLoading&&transAyahs.map((a:any,i:number)=>{
-                  const sn=a.surah?.number;
-                  const vKey=`${sn}:${a.numberInSurah}`;
-                  return(
-                    <div key={i} style={{padding:"10px 14px",borderBottom:"1px solid #f5f0e4",display:"flex",gap:10,alignItems:"flex-start"}}>
-                      <span style={{minWidth:36,height:36,borderRadius:"50%",background:"#1a3d24",color:"#fff",fontSize:9,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",flexShrink:0,lineHeight:1.1,textAlign:"center"}}>
-                        <span>{sn}</span>
-                        <span style={{opacity:.7}}>:{a.numberInSurah}</span>
+              )}
+              {!transLoading&&transAyahs.map((a:any,i:number)=>{
+                const sn=a.surah?.number;
+                const vKey=`${sn}:${a.numberInSurah}`;
+                return(
+                  <div key={i} style={{padding:"12px 14px",borderBottom:"1px solid #f5f0e4"}}>
+                    {/* Arabic ayah */}
+                    <div style={{fontFamily:"'Amiri Quran','Amiri',serif",fontSize:20,color:"#1a3d24",lineHeight:2.1,textAlign:"right",direction:"rtl",wordBreak:"break-word",marginBottom:8}}>
+                      {a.arabicText}
+                      <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:22,height:22,borderRadius:"50%",background:"#b7791f",marginRight:5,fontSize:9,fontWeight:700,color:"#fff",verticalAlign:"middle",flexShrink:0}}>
+                        {toAr(a.numberInSurah)}
                       </span>
-                      <div style={{flex:1}}>
-                        <p style={{margin:0,fontSize:12,color:"#2d3748",lineHeight:1.75}}>{a.text}</p>
-                        <button onClick={()=>playVerse(sn,a.numberInSurah)}
-                          style={{marginTop:4,padding:"2px 8px",borderRadius:5,border:"1px solid #d4e8d4",background:playingVerse===vKey?"#fee2e2":"#f0fff4",color:playingVerse===vKey?"#c0392b":"#1a3d24",fontSize:9,fontWeight:700,cursor:"pointer"}}>
-                          {playingVerse===vKey?"⏹ Stop":"▶ Listen"}
-                        </button>
-                      </div>
                     </div>
-                  );
-                })}
-              </div>
+                    {/* English translation */}
+                    <p style={{margin:"0 0 6px",fontSize:12,color:"#2d3748",lineHeight:1.75}}>{a.text}</p>
+                    <button onClick={()=>playVerse(sn,a.numberInSurah)}
+                      style={{padding:"2px 8px",borderRadius:5,border:"1px solid #d4e8d4",background:playingVerse===vKey?"#fee2e2":"#f0fff4",color:playingVerse===vKey?"#c0392b":"#1a3d24",fontSize:9,fontWeight:700,cursor:"pointer"}}>
+                      {playingVerse===vKey?"⏹ Stop":"▶ Listen"}
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           </>
         )}
 
-        {/* ══ MODE: TAFSEER (mushaf image top + Ibn Katheer panel below, surah-based) ══ */}
+        {/* ══ MODE: TAFSEER (surah header + ayah list, no image) ══ */}
         {mode==="tafseer"&&(
           <>
-            {/* Tafseer uses surah picker, not page nav */}
+            {/* Surah header */}
             <div style={{display:"flex",alignItems:"center",gap:6,padding:"7px 10px",borderBottom:"1px solid #e8dfc8",background:"#fff",flexShrink:0}}>
               <div style={{flex:1,textAlign:"center"}}>
                 <span style={{fontFamily:"'Amiri',serif",fontSize:15,color:"#1a3d24",fontWeight:700}}>{SURAHS_LIST[surahNum-1]?.ar}</span>
@@ -1038,83 +1050,65 @@ const InClassQuranReader=({onClose}:any)=>{
                 Surah ▾
               </button>
             </div>
-            {/* split: mushaf page top, tafseer below */}
-            <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
-              {/* top: mushaf image for the surah's starting page */}
-              <div style={{flex:"0 0 42%",overflowY:"auto",background:"#f5f0e2",borderBottom:"2px solid #d4c9a0"}}>
-                <MushafImage/>
-                <div style={{display:"flex",justifyContent:"space-between",padding:"4px 10px",background:"rgba(0,0,0,.04)"}}>
-                  <button onClick={()=>changePage(-1)} disabled={page<=1}
-                    style={{fontSize:12,padding:"2px 8px",border:"1px solid #d4c9a0",borderRadius:4,background:"#fff",color:"#1a3d24",cursor:page<=1?"not-allowed":"pointer",fontWeight:700,opacity:page<=1?0.3:1}}>
-                    ← Prev
-                  </button>
-                  <span style={{fontSize:10,color:"#b7791f",fontWeight:700,alignSelf:"center"}}>p.{page}</span>
-                  <button onClick={()=>changePage(1)} disabled={page>=604}
-                    style={{fontSize:12,padding:"2px 8px",border:"1px solid #d4c9a0",borderRadius:4,background:"#fff",color:"#1a3d24",cursor:page>=604?"not-allowed":"pointer",fontWeight:700,opacity:page>=604?0.3:1}}>
-                    Next →
-                  </button>
-                </div>
+            {/* Tafseer list */}
+            <div style={{flex:1,overflowY:"auto",background:"#fffbf0"}}>
+              <div style={{padding:"6px 12px",background:"linear-gradient(90deg,rgba(183,121,31,.08),transparent)",borderBottom:"1px solid #f0dda0",display:"flex",alignItems:"center",gap:6}}>
+                <span style={{fontSize:10,fontWeight:800,color:"#b7791f",letterSpacing:.5,textTransform:"uppercase"}}>📚 تفسير ابن كثير — Tafseer Ibn Katheer</span>
               </div>
-              {/* bottom: tafseer Ibn Katheer */}
-              <div style={{flex:1,overflowY:"auto",background:"#fffbf0"}}>
-                <div style={{padding:"6px 12px",background:"linear-gradient(90deg,rgba(183,121,31,.08),transparent)",borderBottom:"1px solid #f0dda0",display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
-                  <span style={{fontSize:10,fontWeight:800,color:"#b7791f",letterSpacing:.5,textTransform:"uppercase"}}>📚 تفسير ابن كثير — Tafseer Ibn Katheer</span>
+              {surahLoading&&(
+                <div style={{display:"flex",justifyContent:"center",padding:24}}>
+                  <div style={{width:22,height:22,border:"3px solid #b7791f",borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .7s linear infinite"}}/>
                 </div>
-                {surahLoading&&(
-                  <div style={{display:"flex",justifyContent:"center",padding:24}}>
-                    <div style={{width:22,height:22,border:"3px solid #b7791f",borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .7s linear infinite"}}/>
-                  </div>
-                )}
-                {!surahLoading&&(
-                  <>
-                    {surahNum!==9&&(
-                      <div style={{fontFamily:"'Amiri',serif",fontSize:18,color:"#b7791f",textAlign:"center",direction:"rtl",padding:"10px 0 10px",borderBottom:"1px dashed #e8dfc8"}}>
-                        بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ
-                      </div>
-                    )}
-                    {surahAyahs.map((a:any)=>{
-                      const key=`${surahNum}:${a.numberInSurah}`;
-                      const isExpanded=expandedTafseer[key]!==undefined;
-                      const isLoadingT=loadingTafseer[key];
-                      return(
-                        <div key={a.numberInSurah} style={{borderBottom:"1px solid #f0e8d4",background:isExpanded?"#fffbf0":"#fff"}}>
-                          {/* Arabic ayah */}
-                          <div style={{padding:"10px 12px 6px"}}>
-                            <div style={{fontFamily:"'Amiri Quran','Amiri',serif",fontSize:21,color:"#1a3d24",lineHeight:2.2,textAlign:"right",direction:"rtl",wordBreak:"break-word"}}>
-                              {a.text}
-                              <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:22,height:22,borderRadius:"50%",background:"#b7791f",marginRight:5,fontSize:9,fontWeight:700,color:"#fff",verticalAlign:"middle",flexShrink:0}}>
-                                {toAr(a.numberInSurah)}
-                              </span>
+              )}
+              {!surahLoading&&(
+                <>
+                  {surahNum!==9&&(
+                    <div style={{fontFamily:"'Amiri',serif",fontSize:18,color:"#b7791f",textAlign:"center",direction:"rtl",padding:"10px 0 10px",borderBottom:"1px dashed #e8dfc8"}}>
+                      بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ
+                    </div>
+                  )}
+                  {surahAyahs.map((a:any)=>{
+                    const key=`${surahNum}:${a.numberInSurah}`;
+                    const isExpanded=expandedTafseer[key]!==undefined;
+                    const isLoadingT=loadingTafseer[key];
+                    return(
+                      <div key={a.numberInSurah} style={{borderBottom:"1px solid #f0e8d4",background:isExpanded?"#fffbf0":"#fff"}}>
+                        {/* Arabic ayah */}
+                        <div style={{padding:"10px 12px 6px"}}>
+                          <div style={{fontFamily:"'Amiri Quran','Amiri',serif",fontSize:21,color:"#1a3d24",lineHeight:2.2,textAlign:"right",direction:"rtl",wordBreak:"break-word"}}>
+                            {a.text}
+                            <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:22,height:22,borderRadius:"50%",background:"#b7791f",marginRight:5,fontSize:9,fontWeight:700,color:"#fff",verticalAlign:"middle",flexShrink:0}}>
+                              {toAr(a.numberInSurah)}
+                            </span>
+                          </div>
+                          <div style={{display:"flex",gap:5,flexWrap:"wrap",marginTop:4}}>
+                            <button onClick={()=>playVerse(surahNum,a.numberInSurah)}
+                              style={{padding:"3px 9px",borderRadius:5,border:"1px solid #d4e8d4",background:playingVerse===key?"#fee2e2":"#f0fff4",color:playingVerse===key?"#c0392b":"#1a3d24",fontSize:10,fontWeight:700,cursor:"pointer"}}>
+                              {playingVerse===key?"⏹ Stop":"▶ Listen"}
+                            </button>
+                            <button onClick={()=>toggleTafseer(surahNum,a.numberInSurah)}
+                              style={{padding:"3px 9px",borderRadius:5,border:"1px solid rgba(183,121,31,.4)",background:isExpanded?"#fff3d4":"#fff",color:"#b7791f",fontSize:10,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:3}}>
+                              {isLoadingT?<span style={{display:"inline-block",width:9,height:9,border:"2px solid #b7791f",borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .6s linear infinite"}}/>:(isExpanded?"▲ Hide":"📚")}
+                              {isLoadingT?"…":isExpanded?"":"Tafseer"}
+                            </button>
+                          </div>
+                        </div>
+                        {/* Tafseer expanded panel */}
+                        {isExpanded&&(
+                          <div style={{padding:"8px 12px 10px",background:"#fffbf0",borderTop:"1px solid #f5edd8"}}>
+                            <div style={{fontSize:9,fontWeight:800,color:"#b7791f",letterSpacing:.7,textTransform:"uppercase",marginBottom:5}}>
+                              تفسير ابن كثير — Tafseer Ibn Katheer
                             </div>
-                            <div style={{display:"flex",gap:5,flexWrap:"wrap",marginTop:4}}>
-                              <button onClick={()=>playVerse(surahNum,a.numberInSurah)}
-                                style={{padding:"3px 9px",borderRadius:5,border:"1px solid #d4e8d4",background:playingVerse===key?"#fee2e2":"#f0fff4",color:playingVerse===key?"#c0392b":"#1a3d24",fontSize:10,fontWeight:700,cursor:"pointer"}}>
-                                {playingVerse===key?"⏹ Stop":"▶ Listen"}
-                              </button>
-                              <button onClick={()=>toggleTafseer(surahNum,a.numberInSurah)}
-                                style={{padding:"3px 9px",borderRadius:5,border:"1px solid rgba(183,121,31,.4)",background:isExpanded?"#fff3d4":"#fff",color:"#b7791f",fontSize:10,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:3}}>
-                                {isLoadingT?<span style={{display:"inline-block",width:9,height:9,border:"2px solid #b7791f",borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .6s linear infinite"}}/>:(isExpanded?"▲ Hide":"📚")}
-                                {isLoadingT?"…":isExpanded?"":"Tafseer"}
-                              </button>
+                            <div style={{fontSize:12,color:"#3d3522",lineHeight:1.85,whiteSpace:"pre-wrap"}}>
+                              {expandedTafseer[key]}
                             </div>
                           </div>
-                          {/* Tafseer expanded panel */}
-                          {isExpanded&&(
-                            <div style={{padding:"8px 12px 10px",background:"#fffbf0",borderTop:"1px solid #f5edd8"}}>
-                              <div style={{fontSize:9,fontWeight:800,color:"#b7791f",letterSpacing:.7,textTransform:"uppercase",marginBottom:5}}>
-                                تفسير ابن كثير — Tafseer Ibn Katheer
-                              </div>
-                              <div style={{fontSize:12,color:"#3d3522",lineHeight:1.85,whiteSpace:"pre-wrap"}}>
-                                {expandedTafseer[key]}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </>
-                )}
-              </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </>
+              )}
             </div>
           </>
         )}
