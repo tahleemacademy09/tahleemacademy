@@ -738,35 +738,51 @@ const InClassQuranReader=({onClose}:any)=>{
   const[surahLoading,setSurahLoading]=useState(false);
   const[expandedTafseer,setExpandedTafseer]=useState<Record<string,string>>({});
   const[loadingTafseer,setLoadingTafseer]=useState<Record<string,boolean>>({});
-  /* image load state */
-  const[imgLoaded,setImgLoaded]=useState(false);
-  const[imgError,setImgError]=useState(false);
+  /* mushaf text (page-based) */
+  const[mushafAyahs,setMushafAyahs]=useState<any[]>([]);
+  const[mushafLoading,setMushafLoading]=useState(false);
   const[showPicker,setShowPicker]=useState(false);
   /* audio */
   const audioRef=useRef<HTMLAudioElement|null>(null);
   const[playingVerse,setPlayingVerse]=useState<string|null>(null);
 
-  /* ── Quran page image URLs (islamic.network CDN — Madinah Hafs mushaf) ── */
-  const pageImg=(p:number)=>`https://cdn.islamic.network/quran/images/high-resolution/${p}.png`;
-  const pageImgFallback=(p:number)=>`https://cdn.islamic.network/quran/images/${p}.png`;
-
   const toAr=(n:number)=>String(n).replace(/[0-9]/g,d=>"٠١٢٣٤٥٦٧٨٩"[+d]);
 
-  /* fetch translation for current page — Arabic + English together */
+  /* fetch mushaf Arabic text for a page — try multiple edition names */
+  const fetchMushafPage=async(p:number)=>{
+    setMushafLoading(true);setMushafAyahs([]);
+    try{
+      for(const ed of["ar.uthmani","quran-uthmani","quran-simple"]){
+        const j=await fetch(`https://api.alquran.cloud/v1/page/${p}/${ed}`).then(r=>r.json());
+        if(j.code===200&&j.data?.ayahs?.length>0){setMushafAyahs(j.data.ayahs);break;}
+      }
+    }catch{}
+    setMushafLoading(false);
+  };
+
+  /* fetch translation — English first (guaranteed), Arabic as optional enrichment */
   const fetchTranslation=async(p:number)=>{
     setTransLoading(true);setTransAyahs([]);
     try{
-      const j=await fetch(`https://api.alquran.cloud/v1/page/${p}/editions/quran-uthmani,en.sahih`).then(r=>r.json());
-      if(j.code===200&&Array.isArray(j.data)){
-        const arAyahs=j.data[0]?.ayahs||[];
-        const enAyahs=j.data[1]?.ayahs||[];
-        setTransAyahs(arAyahs.map((a:any,i:number)=>({...enAyahs[i],arabicText:a.text})));
+      const enRes=await fetch(`https://api.alquran.cloud/v1/page/${p}/en.sahih`).then(r=>r.json());
+      const enAyahs=enRes?.data?.ayahs||[];
+      if(enAyahs.length>0){
+        let arAyahs:any[]=[];
+        try{
+          const arRes=await fetch(`https://api.alquran.cloud/v1/page/${p}/ar.uthmani`).then(r=>r.json());
+          arAyahs=arRes?.data?.ayahs||[];
+          if(!arAyahs.length){
+            const ar2=await fetch(`https://api.alquran.cloud/v1/page/${p}/quran-uthmani`).then(r=>r.json());
+            arAyahs=ar2?.data?.ayahs||[];
+          }
+        }catch{}
+        setTransAyahs(enAyahs.map((e:any,i:number)=>({...e,arabicText:arAyahs[i]?.text||""})));
       }
     }catch{}
     setTransLoading(false);
   };
 
-  /* fetch Arabic text for tafseer mode */
+  /* fetch Arabic text for tafseer mode (surah-level) */
   const fetchSurahArabic=async(num:number)=>{
     setSurahLoading(true);setSurahAyahs([]);setExpandedTafseer({});
     try{
@@ -776,7 +792,7 @@ const InClassQuranReader=({onClose}:any)=>{
     setSurahLoading(false);
   };
 
-  /* fetch Ibn Katheer tafseer per-ayah (on demand) */
+  /* fetch Arabic Ibn Katheer tafseer per-ayah (on demand) */
   const toggleTafseer=async(surah:number,ayah:number)=>{
     const key=`${surah}:${ayah}`;
     if(expandedTafseer[key]!==undefined){
@@ -784,9 +800,10 @@ const InClassQuranReader=({onClose}:any)=>{
     }
     setLoadingTafseer(p=>({...p,[key]:true}));
     try{
+      /* Primary: Arabic Ibn Katheer from quran.com (tafsir id 16) */
       const ctrl=new AbortController();
       const t=setTimeout(()=>ctrl.abort(),8000);
-      const r=await fetch(`https://api.quran.com/api/v4/tafsirs/169/by_ayah?verse_key=${surah}:${ayah}`,{signal:ctrl.signal});
+      const r=await fetch(`https://api.quran.com/api/v4/tafsirs/16/by_ayah?verse_key=${surah}:${ayah}`,{signal:ctrl.signal});
       clearTimeout(t);
       const j=await r.json();
       const raw=j?.tafsir?.text||"";
@@ -794,15 +811,15 @@ const InClassQuranReader=({onClose}:any)=>{
         setExpandedTafseer(p=>({...p,[key]:raw.replace(/<[^>]+>/g,"").replace(/&amp;/g,"&").replace(/&nbsp;/g," ").replace(/\s+/g," ").trim()}));
       }else throw new Error("empty");
     }catch{
-      /* fallback: Maududi commentary from alquran.cloud */
+      /* Fallback: Arabic muyassar simplified tafseer from alquran.cloud */
       try{
-        const r2=await fetch(`https://api.alquran.cloud/v1/ayah/${surah}:${ayah}/en.maududi`);
+        const r2=await fetch(`https://api.alquran.cloud/v1/ayah/${surah}:${ayah}/ar.muyassar`);
         const j2=await r2.json();
         const txt=(j2?.data?.text||"").replace(/<[^>]+>/g,"").replace(/\s+/g," ").trim();
         if(txt)setExpandedTafseer(p=>({...p,[key]:txt}));
         else throw new Error("empty");
       }catch{
-        setExpandedTafseer(p=>({...p,[key]:"Tafseer unavailable. Please check your internet connection."}));
+        setExpandedTafseer(p=>({...p,[key]:"تعذّر تحميل التفسير. تحقق من الاتصال بالإنترنت."}));
       }
     }
     setLoadingTafseer(p=>({...p,[key]:false}));
@@ -830,10 +847,11 @@ const InClassQuranReader=({onClose}:any)=>{
 
   const changePage=(delta:number)=>{
     const np=Math.max(1,Math.min(604,page+delta));
-    setPage(np);setImgLoaded(false);setImgError(false);
+    setPage(np);
   };
 
   useEffect(()=>{
+    if(mode==="quran")fetchMushafPage(page);
     if(mode==="translation")fetchTranslation(page);
   },[page,mode]);
 
@@ -842,9 +860,8 @@ const InClassQuranReader=({onClose}:any)=>{
   },[surahNum,mode]);
 
   useEffect(()=>{
-    /* when switching to translation, load for current page */
+    if(mode==="quran")fetchMushafPage(page);
     if(mode==="translation")fetchTranslation(page);
-    /* when switching to tafseer, load surah 1 if empty */
     if(mode==="tafseer"&&surahAyahs.length===0)fetchSurahArabic(surahNum);
   },[mode]);
 
@@ -881,47 +898,6 @@ const InClassQuranReader=({onClose}:any)=>{
         style={{padding:"4px 10px",borderRadius:6,border:"1px solid #b7791f",background:"#fffbf0",color:"#b7791f",cursor:"pointer",fontSize:11,fontWeight:700,whiteSpace:"nowrap",flexShrink:0}}>
         Surah ▾
       </button>
-    </div>
-  );
-
-  /* ── mushaf page image ── */
-  const MushafImage=({shadow}:{shadow?:boolean})=>(
-    <div style={{position:"relative",background:"#f5f0e2",display:"flex",alignItems:"center",justifyContent:"center",minHeight:200}}>
-      {!imgLoaded&&!imgError&&(
-        <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"#f5f0e2"}}>
-          <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:8}}>
-            <div style={{width:30,height:30,border:"3px solid #1a3d24",borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .7s linear infinite"}}/>
-            <span style={{fontSize:11,color:"#7a9e88"}}>Loading page {page}…</span>
-          </div>
-        </div>
-      )}
-      {imgError&&(
-        <div style={{padding:"30px 20px",textAlign:"center"}}>
-          <div style={{fontSize:32,marginBottom:8}}>📄</div>
-          <p style={{fontSize:12,color:"#7a9e88",margin:0}}>Page image unavailable</p>
-          <p style={{fontSize:10,color:"#aaa",margin:"4px 0 0"}}>Switch to Translation tab to read</p>
-        </div>
-      )}
-      <img
-        src={imgError?"":pageImg(page)}
-        alt={`Quran page ${page}`}
-        onLoad={()=>setImgLoaded(true)}
-        onError={(e)=>{
-          /* try fallback URL once */
-          const t=e.currentTarget;
-          if(!t.dataset.fallback){
-            t.dataset.fallback="1";
-            t.src=pageImgFallback(page);
-          }else{
-            setImgError(true);
-          }
-        }}
-        style={{
-          width:"100%",
-          display:imgLoaded?"block":"none",
-          boxShadow:shadow?"0 4px 24px rgba(0,0,0,.15)":undefined,
-        }}
-      />
     </div>
   );
 
@@ -976,24 +952,89 @@ const InClassQuranReader=({onClose}:any)=>{
           </div>
         </div>
 
-        {/* ══ MODE: MUSHAF (full page image, page-by-page) ══ */}
+        {/* ══ MODE: MUSHAF — flowing Arabic text, parchment style ══ */}
         {mode==="quran"&&(
           <>
             <PageNav/>
-            <div style={{flex:1,overflowY:"auto",background:"#f5f0e2"}}>
-              <MushafImage shadow/>
-              {/* swipe hint */}
-              <div style={{display:"flex",justifyContent:"space-between",padding:"6px 12px",borderTop:"1px solid #e8dfc8",background:"#fff"}}>
-                <button onClick={()=>changePage(-1)} disabled={page<=1}
-                  style={{flex:1,padding:"8px",border:"none",background:"none",fontSize:22,cursor:page<=1?"not-allowed":"pointer",opacity:page<=1?0.25:1}}>
-                  ◀
-                </button>
-                <span style={{alignSelf:"center",fontSize:11,color:"#b7791f",fontWeight:700}}>Page {page}</span>
-                <button onClick={()=>changePage(1)} disabled={page>=604}
-                  style={{flex:1,padding:"8px",border:"none",background:"none",fontSize:22,cursor:page>=604?"not-allowed":"pointer",opacity:page>=604?0.25:1}}>
-                  ▶
-                </button>
-              </div>
+            <div style={{flex:1,overflowY:"auto",background:"linear-gradient(180deg,#f5f0e8 0%,#ede8da 100%)"}}>
+              {mushafLoading&&(
+                <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:40,gap:10}}>
+                  <div style={{width:28,height:28,border:"3px solid #1a3d24",borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .7s linear infinite"}}/>
+                  <span style={{fontSize:11,color:"#7a9e88",fontFamily:"'Amiri',serif"}}>جارٍ تحميل الصفحة…</span>
+                </div>
+              )}
+              {!mushafLoading&&mushafAyahs.length>0&&(
+                <div style={{padding:"10px 8px 20px",maxWidth:460,margin:"0 auto"}}>
+                  {/* Parchment page card */}
+                  <div style={{background:"#fdf6e3",border:"2px solid rgba(201,168,76,.5)",borderRadius:4,boxShadow:"0 4px 20px rgba(26,61,36,0.15)",position:"relative"}}>
+                    <div style={{position:"absolute",inset:7,border:"1px solid rgba(201,168,76,.25)",borderRadius:1,pointerEvents:"none",zIndex:1}}/>
+                    {/* Page number header */}
+                    <div style={{padding:"7px 16px",borderBottom:"1px solid rgba(201,168,76,.4)",display:"flex",justifyContent:"center",background:"linear-gradient(to bottom,rgba(201,168,76,.1),transparent)"}}>
+                      <span style={{fontSize:11,fontWeight:700,color:"#b7791f",fontFamily:"'Amiri',serif"}}>صفحة {toAr(page)}</span>
+                    </div>
+                    {/* Ayahs grouped by surah */}
+                    {(()=>{
+                      const groups:any[]=[];
+                      mushafAyahs.forEach((a:any)=>{
+                        const sn=a.surah?.number;
+                        if(!groups.length||groups[groups.length-1].surah!==sn)
+                          groups.push({surah:sn,surahData:a.surah,ayahs:[]});
+                        groups[groups.length-1].ayahs.push(a);
+                      });
+                      return groups.map((g:any,gi:number)=>(
+                        <div key={g.surah}>
+                          {/* Surah name banner */}
+                          <div style={{margin:`${gi===0?8:14}px 12px 6px`,padding:"5px 12px",background:"linear-gradient(135deg,#1a3d24,#276749)",borderRadius:4,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                            <span style={{fontFamily:"'Amiri',serif",fontSize:10,color:"rgba(255,255,255,.65)"}}>{g.surahData?.englishName}</span>
+                            <span style={{fontFamily:"'Amiri',serif",fontSize:15,color:"#c9a84c",fontWeight:700}}>{g.surahData?.name}</span>
+                          </div>
+                          {/* Basmala — all surahs that start on this page except Fatiha (verse 1 is Basmala) and Tawba */}
+                          {g.surah!==1&&g.surah!==9&&g.ayahs[0]?.numberInSurah===1&&(
+                            <div style={{fontFamily:"'Amiri Quran','Amiri',serif",fontSize:19,color:"#1c1208",textAlign:"center",direction:"rtl",padding:"6px 16px 2px",lineHeight:2}}>
+                              بِسۡمِ ٱللَّهِ ٱلرَّحۡمَٰنِ ٱلرَّحِيمِ
+                            </div>
+                          )}
+                          {/* Continuous flowing text */}
+                          <p style={{fontFamily:"'Amiri Quran','Scheherazade New','Amiri',serif",direction:"rtl",textAlign:"justify",lineHeight:2.8,color:"#1c1208",fontSize:23,margin:0,padding:"6px 18px 12px",wordBreak:"break-word"}}>
+                            {g.ayahs.map((a:any)=>(
+                              <span key={a.numberInSurah}>
+                                {a.text}
+                                {"\u00a0"}
+                                <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:22,height:22,borderRadius:"50%",background:"rgba(183,121,31,.85)",fontSize:9,fontWeight:700,color:"#fff",verticalAlign:"middle",flexShrink:0,margin:"0 1px",cursor:"pointer"}}
+                                  onClick={()=>playVerse(g.surah,a.numberInSurah)}>
+                                  {toAr(a.numberInSurah)}
+                                </span>
+                                {"\u00a0"}
+                              </span>
+                            ))}
+                          </p>
+                        </div>
+                      ));
+                    })()}
+                    {/* Page footer */}
+                    <div style={{padding:"5px 16px",borderTop:"1px solid rgba(201,168,76,.4)",display:"flex",justifyContent:"center"}}>
+                      <span style={{fontSize:10,color:"#b7791f",fontFamily:"'Amiri',serif"}}>— {toAr(page)} —</span>
+                    </div>
+                  </div>
+                  {/* Bottom nav */}
+                  <div style={{display:"flex",gap:8,marginTop:10}}>
+                    <button onClick={()=>changePage(-1)} disabled={page<=1}
+                      style={{flex:1,padding:"10px",borderRadius:8,border:"1px solid rgba(201,168,76,.5)",background:"#fdf6e3",color:"#1a3d24",fontSize:18,fontWeight:700,cursor:page<=1?"not-allowed":"pointer",opacity:page<=1?0.3:1}}>◀</button>
+                    <button onClick={()=>changePage(1)} disabled={page>=604}
+                      style={{flex:1,padding:"10px",borderRadius:8,border:"1px solid rgba(201,168,76,.5)",background:"#fdf6e3",color:"#1a3d24",fontSize:18,fontWeight:700,cursor:page>=604?"not-allowed":"pointer",opacity:page>=604?0.3:1}}>▶</button>
+                  </div>
+                </div>
+              )}
+              {!mushafLoading&&mushafAyahs.length===0&&(
+                <div style={{padding:"40px 20px",textAlign:"center",fontFamily:"'Amiri',serif"}}>
+                  <div style={{fontSize:36,marginBottom:12}}>📖</div>
+                  <p style={{fontSize:13,color:"#7a9e88",margin:"0 0 16px"}}>تعذّر تحميل الصفحة</p>
+                  <button onClick={()=>fetchMushafPage(page)}
+                    style={{padding:"8px 20px",borderRadius:8,border:"none",background:"#1a3d24",color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+                    🔄 إعادة المحاولة
+                  </button>
+                </div>
+              )}
             </div>
           </>
         )}
@@ -1097,9 +1138,9 @@ const InClassQuranReader=({onClose}:any)=>{
                         {isExpanded&&(
                           <div style={{padding:"8px 12px 10px",background:"#fffbf0",borderTop:"1px solid #f5edd8"}}>
                             <div style={{fontSize:9,fontWeight:800,color:"#b7791f",letterSpacing:.7,textTransform:"uppercase",marginBottom:5}}>
-                              تفسير ابن كثير — Tafseer Ibn Katheer
+                              تفسير ابن كثير
                             </div>
-                            <div style={{fontSize:12,color:"#3d3522",lineHeight:1.85,whiteSpace:"pre-wrap"}}>
+                            <div style={{fontFamily:"'Amiri',serif",fontSize:14,color:"#3d3522",lineHeight:2,direction:"rtl",textAlign:"right",whiteSpace:"pre-wrap"}}>
                               {expandedTafseer[key]}
                             </div>
                           </div>
