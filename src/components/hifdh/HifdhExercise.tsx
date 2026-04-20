@@ -501,7 +501,8 @@ export default function HifdhExercise({ reciter = DEFAULT_RECITER }: Props) {
           </div>
         )}
 
-        {evalScore !== null && autoResult && (\n          <div style={{ padding: "12px 14px", borderRadius: 12,
+        {evalScore !== null && autoResult && (
+          <div style={{ padding: "12px 14px", borderRadius: 12,
             background: autoResult === "correct" ? LIGHT : "#fff5f5",
             border: `1px solid ${autoResult === "correct" ? BORDER : "#fca5a5"}` }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
