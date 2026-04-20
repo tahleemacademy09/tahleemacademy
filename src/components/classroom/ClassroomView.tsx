@@ -666,20 +666,201 @@ const InClassMaterialViewer=({material,onClose,isTeacher=false}:any)=>{
 /* ══ SUBJECT MATERIALS PANEL ══
    Renders as position:absolute inside the content area — footer always visible.
    Clicking a material opens InClassMaterialViewer on top of the panel.          */
-const SubjectMaterialsPanel=({subjectId,onClose}:any)=>{
+/* ══ FULL QURAN READER (shown in eye panel for Quran/Recitation subjects) ══ */
+const SURAHS_LIST = [
+  {n:1,name:"Al-Fatihah",ar:"الفاتحة",v:7},{n:2,name:"Al-Baqarah",ar:"البقرة",v:286},{n:3,name:"Aal-Imran",ar:"آل عمران",v:200},
+  {n:4,name:"An-Nisa",ar:"النساء",v:176},{n:5,name:"Al-Maidah",ar:"المائدة",v:120},{n:6,name:"Al-Anam",ar:"الأنعام",v:165},
+  {n:7,name:"Al-Araf",ar:"الأعراف",v:206},{n:8,name:"Al-Anfal",ar:"الأنفال",v:75},{n:9,name:"At-Tawbah",ar:"التوبة",v:129},
+  {n:10,name:"Yunus",ar:"يونس",v:109},{n:11,name:"Hud",ar:"هود",v:123},{n:12,name:"Yusuf",ar:"يوسف",v:111},
+  {n:13,name:"Ar-Ra'd",ar:"الرعد",v:43},{n:14,name:"Ibrahim",ar:"إبراهيم",v:52},{n:15,name:"Al-Hijr",ar:"الحجر",v:99},
+  {n:16,name:"An-Nahl",ar:"النحل",v:128},{n:17,name:"Al-Isra",ar:"الإسراء",v:111},{n:18,name:"Al-Kahf",ar:"الكهف",v:110},
+  {n:19,name:"Maryam",ar:"مريم",v:98},{n:20,name:"Taha",ar:"طه",v:135},{n:21,name:"Al-Anbiya",ar:"الأنبياء",v:112},
+  {n:22,name:"Al-Hajj",ar:"الحج",v:78},{n:23,name:"Al-Mu'minun",ar:"المؤمنون",v:118},{n:24,name:"An-Nur",ar:"النور",v:64},
+  {n:25,name:"Al-Furqan",ar:"الفرقان",v:77},{n:26,name:"Ash-Shu'ara",ar:"الشعراء",v:227},{n:27,name:"An-Naml",ar:"النمل",v:93},
+  {n:28,name:"Al-Qasas",ar:"القصص",v:88},{n:29,name:"Al-Ankabut",ar:"العنكبوت",v:69},{n:30,name:"Ar-Rum",ar:"الروم",v:60},
+  {n:31,name:"Luqman",ar:"لقمان",v:34},{n:32,name:"As-Sajdah",ar:"السجدة",v:30},{n:33,name:"Al-Ahzab",ar:"الأحزاب",v:73},
+  {n:34,name:"Saba",ar:"سبأ",v:54},{n:35,name:"Fatir",ar:"فاطر",v:45},{n:36,name:"Ya-Sin",ar:"يس",v:83},
+  {n:37,name:"As-Saffat",ar:"الصافات",v:182},{n:38,name:"Sad",ar:"ص",v:88},{n:39,name:"Az-Zumar",ar:"الزمر",v:75},
+  {n:40,name:"Ghafir",ar:"غافر",v:85},{n:41,name:"Fussilat",ar:"فصلت",v:54},{n:42,name:"Ash-Shura",ar:"الشورى",v:53},
+  {n:43,name:"Az-Zukhruf",ar:"الزخرف",v:89},{n:44,name:"Ad-Dukhan",ar:"الدخان",v:59},{n:45,name:"Al-Jathiyah",ar:"الجاثية",v:37},
+  {n:46,name:"Al-Ahqaf",ar:"الأحقاف",v:35},{n:47,name:"Muhammad",ar:"محمد",v:38},{n:48,name:"Al-Fath",ar:"الفتح",v:29},
+  {n:49,name:"Al-Hujurat",ar:"الحجرات",v:18},{n:50,name:"Qaf",ar:"ق",v:45},{n:51,name:"Adh-Dhariyat",ar:"الذاريات",v:60},
+  {n:52,name:"At-Tur",ar:"الطور",v:49},{n:53,name:"An-Najm",ar:"النجم",v:62},{n:54,name:"Al-Qamar",ar:"القمر",v:55},
+  {n:55,name:"Ar-Rahman",ar:"الرحمن",v:78},{n:56,name:"Al-Waqi'ah",ar:"الواقعة",v:96},{n:57,name:"Al-Hadid",ar:"الحديد",v:29},
+  {n:58,name:"Al-Mujadila",ar:"المجادلة",v:22},{n:59,name:"Al-Hashr",ar:"الحشر",v:24},{n:60,name:"Al-Mumtahanah",ar:"الممتحنة",v:13},
+  {n:61,name:"As-Saf",ar:"الصف",v:14},{n:62,name:"Al-Jumu'ah",ar:"الجمعة",v:11},{n:63,name:"Al-Munafiqun",ar:"المنافقون",v:11},
+  {n:64,name:"At-Taghabun",ar:"التغابن",v:18},{n:65,name:"At-Talaq",ar:"الطلاق",v:12},{n:66,name:"At-Tahrim",ar:"التحريم",v:12},
+  {n:67,name:"Al-Mulk",ar:"الملك",v:30},{n:68,name:"Al-Qalam",ar:"القلم",v:52},{n:69,name:"Al-Haqqah",ar:"الحاقة",v:52},
+  {n:70,name:"Al-Ma'arij",ar:"المعارج",v:44},{n:71,name:"Nuh",ar:"نوح",v:28},{n:72,name:"Al-Jinn",ar:"الجن",v:28},
+  {n:73,name:"Al-Muzzammil",ar:"المزمل",v:20},{n:74,name:"Al-Muddaththir",ar:"المدثر",v:56},{n:75,name:"Al-Qiyamah",ar:"القيامة",v:40},
+  {n:76,name:"Al-Insan",ar:"الإنسان",v:31},{n:77,name:"Al-Mursalat",ar:"المرسلات",v:50},{n:78,name:"An-Naba",ar:"النبأ",v:40},
+  {n:79,name:"An-Nazi'at",ar:"النازعات",v:46},{n:80,name:"Abasa",ar:"عبس",v:42},{n:81,name:"At-Takwir",ar:"التكوير",v:29},
+  {n:82,name:"Al-Infitar",ar:"الانفطار",v:19},{n:83,name:"Al-Mutaffifin",ar:"المطففين",v:36},{n:84,name:"Al-Inshiqaq",ar:"الانشقاق",v:25},
+  {n:85,name:"Al-Buruj",ar:"البروج",v:22},{n:86,name:"At-Tariq",ar:"الطارق",v:17},{n:87,name:"Al-Ala",ar:"الأعلى",v:19},
+  {n:88,name:"Al-Ghashiyah",ar:"الغاشية",v:26},{n:89,name:"Al-Fajr",ar:"الفجر",v:30},{n:90,name:"Al-Balad",ar:"البلد",v:20},
+  {n:91,name:"Ash-Shams",ar:"الشمس",v:15},{n:92,name:"Al-Layl",ar:"الليل",v:21},{n:93,name:"Ad-Duha",ar:"الضحى",v:11},
+  {n:94,name:"Ash-Sharh",ar:"الشرح",v:8},{n:95,name:"At-Tin",ar:"التين",v:8},{n:96,name:"Al-Alaq",ar:"العلق",v:19},
+  {n:97,name:"Al-Qadr",ar:"القدر",v:5},{n:98,name:"Al-Bayyinah",ar:"البينة",v:8},{n:99,name:"Az-Zalzalah",ar:"الزلزلة",v:8},
+  {n:100,name:"Al-Adiyat",ar:"العاديات",v:11},{n:101,name:"Al-Qari'ah",ar:"القارعة",v:11},{n:102,name:"At-Takathur",ar:"التكاثر",v:8},
+  {n:103,name:"Al-Asr",ar:"العصر",v:3},{n:104,name:"Al-Humazah",ar:"الهمزة",v:9},{n:105,name:"Al-Fil",ar:"الفيل",v:5},
+  {n:106,name:"Quraysh",ar:"قريش",v:4},{n:107,name:"Al-Ma'un",ar:"الماعون",v:7},{n:108,name:"Al-Kawthar",ar:"الكوثر",v:3},
+  {n:109,name:"Al-Kafirun",ar:"الكافرون",v:6},{n:110,name:"An-Nasr",ar:"النصر",v:3},{n:111,name:"Al-Masad",ar:"المسد",v:5},
+  {n:112,name:"Al-Ikhlas",ar:"الإخلاص",v:4},{n:113,name:"Al-Falaq",ar:"الفلق",v:5},{n:114,name:"An-Nas",ar:"الناس",v:6},
+];
+
+const InClassQuranReader=({onClose}:any)=>{
+  const[surahNum,setSurahNum]=useState(1);
+  const[ayahs,setAyahs]=useState<{numberInSurah:number;text:string}[]>([]);
+  const[loading,setLoading]=useState(false);
+  const[view,setView]=useState<"list"|"read">("list"); // list = surah index, read = ayah view
+  const audioRef=useRef<HTMLAudioElement|null>(null);
+  const[playingVerse,setPlayingVerse]=useState<number|null>(null);
+
+  const fetchSurah=async(num:number)=>{
+    setLoading(true);setAyahs([]);
+    try{
+      const r=await fetch(`https://api.alquran.cloud/v1/surah/${num}/ar.uthmani`);
+      const j=await r.json();
+      if(j.code===200)setAyahs(j.data.ayahs);
+    }catch{}
+    setLoading(false);
+  };
+
+  const openSurah=(num:number)=>{setSurahNum(num);setView("read");fetchSurah(num);};
+
+  const playVerse=(surah:number,verse:number)=>{
+    audioRef.current?.pause();audioRef.current=null;setPlayingVerse(null);
+    const url=`https://cdn.islamic.network/quran/audio/128/ar.alafasy/${(surah-1)*10000+verse}.mp3`;
+    // use absolute ayah number approach
+    const absUrl=`https://everyayah.com/data/Alafasy_128kbps/${String(surah).padStart(3,"0")}${String(verse).padStart(3,"0")}.mp3`;
+    const au=new Audio(absUrl);
+    audioRef.current=au;setPlayingVerse(verse);
+    au.play().catch(()=>{
+      // fallback cdn
+      const fb=new Audio(`https://cdn.islamic.network/quran/audio/64/ar.alafasy/${(surah-1)*10000+verse}.mp3`);
+      audioRef.current=fb;fb.play().catch(()=>setPlayingVerse(null));
+      fb.onended=()=>setPlayingVerse(null);
+    });
+    au.onended=()=>setPlayingVerse(null);
+  };
+
+  useEffect(()=>{return()=>{audioRef.current?.pause();};},[]);
+
+  const surahInfo=SURAHS_LIST[surahNum-1];
+
+  return(
+    <div style={{position:"absolute",inset:0,zIndex:55,background:"rgba(0,0,0,.6)",display:"flex",flexDirection:"column"}} onClick={onClose}>
+      <div onClick={e=>e.stopPropagation()}
+        style={{position:"absolute",top:0,right:0,bottom:0,width:"min(420px,100%)",background:"#faf6ec",display:"flex",flexDirection:"column",boxShadow:"-8px 0 40px rgba(0,0,0,.5)",borderLeft:"1px solid rgba(183,121,31,.2)"}}>
+        {/* Header */}
+        <div style={{background:"linear-gradient(135deg,#1a3d24,#276749)",padding:"14px 16px",flexShrink:0,display:"flex",alignItems:"center",gap:10}}>
+          {view==="read"&&(
+            <button onClick={()=>{setView("list");audioRef.current?.pause();setPlayingVerse(null);}}
+              style={{background:"rgba(255,255,255,.15)",border:"none",color:"#fff",borderRadius:8,padding:"4px 10px",cursor:"pointer",fontSize:13,fontWeight:700}}>
+              ← Back
+            </button>
+          )}
+          <div style={{flex:1}}>
+            <div style={{fontSize:15,fontWeight:800,color:"#fff"}}>
+              {view==="list"?"📖 Full Quran":surahInfo?.name}
+            </div>
+            <div style={{fontFamily:"'Amiri',serif",fontSize:12,color:"rgba(255,255,255,.7)",direction:"rtl"}}>
+              {view==="list"?"القرآن الكريم":surahInfo?.ar+" · "+surahInfo?.v+" آيات"}
+            </div>
+          </div>
+          <button onClick={onClose}
+            style={{background:"rgba(255,255,255,.15)",border:"none",color:"#fff",borderRadius:8,width:32,height:32,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <X style={{width:16,height:16}}/>
+          </button>
+        </div>
+
+        {/* Surah list */}
+        {view==="list"&&(
+          <div style={{flex:1,overflowY:"auto",padding:"8px"}}>
+            <style>{`@import url('https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&display=swap');`}</style>
+            {SURAHS_LIST.map(s=>(
+              <button key={s.n} onClick={()=>openSurah(s.n)}
+                style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"10px 12px",background:"#fff",border:"1px solid #e8dfc8",borderRadius:10,cursor:"pointer",textAlign:"left",marginBottom:6,transition:"background .1s"}}
+                onMouseEnter={e=>(e.currentTarget.style.background="#f0fff4")}
+                onMouseLeave={e=>(e.currentTarget.style.background="#fff")}>
+                <div style={{width:34,height:34,borderRadius:8,background:"#1a3d24",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                  <span style={{fontFamily:"'Amiri',serif",fontSize:12,color:"#fff",fontWeight:700}}>{s.n}</span>
+                </div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13,fontWeight:700,color:"#1a3d24",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.name}</div>
+                  <div style={{fontSize:11,color:"#7a9e88"}}>{s.v} verses</div>
+                </div>
+                <div style={{fontFamily:"'Amiri',serif",fontSize:18,color:"#b7791f",fontWeight:700}}>{s.ar}</div>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Ayah reader */}
+        {view==="read"&&(
+          <div style={{flex:1,overflowY:"auto",padding:"12px"}}>
+            <style>{`@import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Amiri:wght@400;700&display=swap');`}</style>
+            {loading&&(
+              <div style={{display:"flex",justifyContent:"center",padding:"40px 0"}}>
+                <div style={{width:28,height:28,border:"3px solid #1a3d24",borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .7s linear infinite"}}/>
+              </div>
+            )}
+            {!loading&&ayahs.length>0&&(
+              <>
+                {/* Bismillah (except Tawbah) */}
+                {surahNum!==9&&(
+                  <div style={{fontFamily:"'Amiri Quran','Amiri',serif",fontSize:22,color:"#b7791f",textAlign:"center",direction:"rtl",padding:"12px 0 16px",borderBottom:"1px dashed #e8dfc8",marginBottom:12}}>
+                    بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ
+                  </div>
+                )}
+                {ayahs.map(a=>(
+                  <div key={a.numberInSurah}
+                    style={{marginBottom:12,padding:"10px 14px",background:"#fff",borderRadius:10,border:"1px solid #e8dfc8",boxShadow:"0 1px 4px rgba(26,61,36,.05)"}}>
+                    <div style={{fontFamily:"'Amiri Quran','Amiri',serif",fontSize:24,color:"#1a3d24",lineHeight:2.3,textAlign:"right",direction:"rtl",wordBreak:"break-word"}}>
+                      {a.text}
+                      {/* Verse number ornament */}
+                      <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:26,height:26,borderRadius:"50%",background:"#b7791f",marginRight:6,fontSize:11,fontWeight:700,color:"#fff",verticalAlign:"middle",flexShrink:0}}>
+                        {String(a.numberInSurah).replace(/[0-9]/g,d=>"٠١٢٣٤٥٦٧٨٩"[+d])}
+                      </span>
+                    </div>
+                    <button onClick={()=>playingVerse===a.numberInSurah?(audioRef.current?.pause(),setPlayingVerse(null)):playVerse(surahNum,a.numberInSurah)}
+                      style={{marginTop:6,padding:"4px 12px",borderRadius:6,border:"1px solid #d4e8d4",background:playingVerse===a.numberInSurah?"#fee2e2":"#f0fff4",color:playingVerse===a.numberInSurah?"#c0392b":"#1a3d24",fontSize:11,fontWeight:700,cursor:"pointer"}}>
+                      {playingVerse===a.numberInSurah?"⏹ Stop":"▶ Listen"}
+                    </button>
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const SubjectMaterialsPanel=({subjectId,subject,onClose}:any)=>{
   const[mats,setMats]=useState<any[]>([]);
   const[busy,setBusy]=useState(true);
   const[viewing,setViewing]=useState<any>(null);
+  const[quranOpen,setQuranOpen]=useState(false);
+
+  // Detect if this is a Quran/Recitation/Tajweed subject
+  const subjectName=(subject?.title||subject?.name||"").toLowerCase();
+  const isQuranSubject=/quran|recit|tajweed|tilawah|تلاوة|تجويد|القرآن/.test(subjectName);
+
   useEffect(()=>{
     supabase.from("subject_materials" as any).select("*").eq("subject_id",subjectId).order("created_at",{ascending:false})
       .then(({data})=>{setMats(data||[]);setBusy(false);});
   },[subjectId]);
+
+  if(quranOpen) return <InClassQuranReader onClose={()=>setQuranOpen(false)}/>;
+
   return(
     // Outer backdrop — covers content area but NOT top bar or footer
     <div style={{position:"absolute",inset:0,zIndex:55,background:"rgba(0,0,0,.55)"}} onClick={onClose}>
       {/* Panel slides in from right */}
       <div onClick={e=>e.stopPropagation()}
-        style={{position:"absolute",top:0,right:0,bottom:0,width:"min(340px,100%)",background:"#13181f",borderLeft:"1px solid rgba(255,255,255,.08)",display:"flex",flexDirection:"column",animation:"slide-up .2s ease",boxShadow:"-8px 0 32px rgba(0,0,0,.5)"}}>
+        style={{position:"absolute",top:0,right:0,bottom:0,width:"min(360px,100%)",background:"#13181f",borderLeft:"1px solid rgba(255,255,255,.08)",display:"flex",flexDirection:"column",animation:"slide-up .2s ease",boxShadow:"-8px 0 32px rgba(0,0,0,.5)"}}>
         <div style={{display:"flex",alignItems:"center",gap:10,padding:"14px 16px",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0}}>
           <Eye style={{width:16,height:16,color:TEAL}}/>
           <span style={{flex:1,fontSize:14,fontWeight:700,color:"#fff"}}>Subject Materials</span>
@@ -687,9 +868,24 @@ const SubjectMaterialsPanel=({subjectId,onClose}:any)=>{
             <X style={{width:14,height:14}}/>
           </button>
         </div>
+        {/* Quran reader button — prominent for Quran/Recitation subjects */}
+        {isQuranSubject&&(
+          <button onClick={()=>setQuranOpen(true)}
+            style={{margin:"10px 10px 0",padding:"14px 16px",borderRadius:12,border:"1px solid rgba(183,121,31,.4)",background:"linear-gradient(135deg,rgba(26,61,36,.9),rgba(39,103,73,.9))",cursor:"pointer",textAlign:"left",display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
+            <div style={{fontSize:28}}>📖</div>
+            <div>
+              <div style={{fontFamily:"'Amiri',serif",fontSize:16,fontWeight:800,color:"#fef9ee"}}>Open Full Quran</div>
+              <div style={{fontFamily:"'Amiri',serif",fontSize:13,color:"rgba(255,255,255,.6)",direction:"rtl"}}>القرآن الكريم كاملاً</div>
+            </div>
+            <div style={{marginLeft:"auto",fontSize:11,color:"#34d399",fontWeight:700}}>114 Surahs →</div>
+          </button>
+        )}
         <div style={{flex:1,overflowY:"auto",padding:10}}>
+          {isQuranSubject&&mats.length>0&&(
+            <div style={{fontSize:11,color:"rgba(255,255,255,.35)",fontWeight:700,letterSpacing:.5,padding:"8px 4px 4px"}}>UPLOADED MATERIALS</div>
+          )}
           {busy&&<div style={{display:"flex",justifyContent:"center",padding:40}}><div style={{width:24,height:24,border:`3px solid ${TEAL}`,borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .7s linear infinite"}}/></div>}
-          {!busy&&mats.length===0&&<div style={{textAlign:"center",padding:"40px 20px",color:"rgba(255,255,255,.35)"}}>
+          {!busy&&mats.length===0&&!isQuranSubject&&<div style={{textAlign:"center",padding:"40px 20px",color:"rgba(255,255,255,.35)"}}>
             <div style={{fontSize:36,marginBottom:8}}>📭</div>
             <p style={{fontSize:13,margin:0}}>No materials for this subject</p>
           </div>}
@@ -1451,7 +1647,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               <FloatingEmojiLayer emojis={floatingEmojis}/>
               <RaisedHandsOverlay hands={raisedHands}/>
               {/* Materials panel — absolute inside content, footer always visible */}
-              {matPanelOpen&&<SubjectMaterialsPanel subjectId={subject.id} onClose={()=>setMatPanelOpen(false)}/>}
+              {matPanelOpen&&<SubjectMaterialsPanel subjectId={subject.id} subject={subject} onClose={()=>setMatPanelOpen(false)}/>}
               {/* Teacher-shared material viewer — absolute inside content */}
               {matOpen&&<MatViewerInlineBridge material={matOpen} isPrivileged={isPrivileged} onClose={()=>setMatOpen(null)}/>}
             </div>
