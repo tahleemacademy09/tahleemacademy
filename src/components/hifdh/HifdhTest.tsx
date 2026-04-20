@@ -1,5 +1,5 @@
 // src/components/hifdh/HifdhTest.tsx
-// Difficulty levels: Easy=MCQ, Medium=MCQ+Audio, Hard=Audio-only
+// Full-surah test: all question types (MCQ + audio recitation), all ayahs covered, all questions mandatory
 // Voice recording for each answer, AI evaluation, previous ayah audio prompt
 import { useState, useCallback, useEffect, useRef } from "react";
 import { SURAHS, audioUrl, DEFAULT_RECITER } from "./surahData";
@@ -61,80 +61,92 @@ interface Question {
   ayahNum: number;
 }
 
-function buildQuestions(ayahs: Ayah[], surahName: string, difficulty: Difficulty): Question[] {
+function buildQuestions(ayahs: Ayah[], surahName: string): Question[] {
   if (ayahs.length < 3) return [];
   const qs: Question[] = [];
   let id = 0;
 
-  if (difficulty === "easy" || difficulty === "medium") {
-    // MCQ: next verse
-    const used = new Set<number>();
-    let att = 0;
-    while (qs.filter(q=>q.type==="next_verse").length < Math.min(4, ayahs.length-1) && att++ < 30) {
-      const idx = Math.floor(Math.random() * (ayahs.length - 1));
-      if (used.has(idx)) continue; used.add(idx);
-      const correct = ayahs[idx + 1];
-      const wrongs  = shuffle(ayahs.filter((_,j)=>j!==idx+1)).slice(0,3);
-      const opts    = shuffle([correct, ...wrongs]);
-      qs.push({ id:id++, type:"next_verse", ayahNum:ayahs[idx].numberInSurah, prevAyahNum:null,
-        prompt:ayahs[idx].text, promptLabel:`${surahName} · Verse ${ayahs[idx].numberInSurah}`,
-        promptAyahNum:ayahs[idx].numberInSurah,
-        options:opts.map(o=>o.text), correct:opts.indexOf(correct), correctText:correct.text });
-    }
-    // MCQ: missing word
-    const usedA = new Set<number>();
-    att = 0;
-    while (qs.filter(q=>q.type==="missing_word").length < Math.min(3, ayahs.length) && att++ < 30) {
-      const ayah = ayahs[Math.floor(Math.random()*ayahs.length)];
-      if (usedA.has(ayah.numberInSurah)) continue;
-      const words = ayah.text.split(" ");
-      if (words.length < 4) continue; usedA.add(ayah.numberInSurah);
-      const bi = 1 + Math.floor(Math.random()*(words.length-2));
-      const cw = words[bi];
-      const blanked = words.map((w,j)=>j===bi?"____":w).join(" ");
-      const allW = ayahs.flatMap(a=>a.text.split(" ")).filter(w=>w!==cw&&w.length>2);
-      const wrongs = shuffle([...new Set(allW)]).slice(0,3);
-      if (wrongs.length < 3) continue;
-      const opts = shuffle([cw,...wrongs]);
-      qs.push({ id:id++, type:"missing_word", ayahNum:ayah.numberInSurah, prevAyahNum:null,
-        prompt:blanked, promptLabel:`Complete Verse ${ayah.numberInSurah}`,
-        promptAyahNum:ayah.numberInSurah,
-        options:opts, correct:opts.indexOf(cw), correctText:cw });
-    }
-    // MCQ: identify verse number
-    for (const ayah of shuffle([...ayahs]).slice(0,3)) {
-      const cl = `Verse ${ayah.numberInSurah}`;
-      const wn = shuffle(ayahs.map(a=>a.numberInSurah).filter(n=>n!==ayah.numberInSurah)).slice(0,3);
-      const wl = wn.map(n=>`Verse ${n}`);
-      const opts = shuffle([cl,...wl]);
-      qs.push({ id:id++, type:"identify_verse", ayahNum:ayah.numberInSurah, prevAyahNum:null,
-        prompt:ayah.text, promptLabel:`Which verse number in ${surahName}?`,
-        promptAyahNum:ayah.numberInSurah,
-        options:opts, correct:opts.indexOf(cl), correctText:cl });
-    }
+  // ── MCQ: next verse (covers spread of ayahs) ─────────────────────────────
+  const usedNV = new Set<number>();
+  const nvTarget = Math.min(5, ayahs.length - 1);
+  // evenly spaced picks across the surah
+  const nvStep = Math.max(1, Math.floor(ayahs.length / nvTarget));
+  for (let i = 0; i < ayahs.length - 1 && qs.filter(q=>q.type==="next_verse").length < nvTarget; i += nvStep) {
+    if (usedNV.has(i)) continue; usedNV.add(i);
+    const correct = ayahs[i + 1];
+    const wrongs  = shuffle(ayahs.filter((_,j)=>j!==i+1)).slice(0,3);
+    const opts    = shuffle([correct, ...wrongs]);
+    qs.push({ id:id++, type:"next_verse", ayahNum:ayahs[i].numberInSurah, prevAyahNum:null,
+      prompt:ayahs[i].text, promptLabel:`${surahName} · Verse ${ayahs[i].numberInSurah}`,
+      promptAyahNum:ayahs[i].numberInSurah,
+      options:opts.map(o=>o.text), correct:opts.indexOf(correct), correctText:correct.text });
   }
 
-  if (difficulty === "medium" || difficulty === "hard") {
-    // Audio question: hear prev ayah, recite next
-    const used2 = new Set<number>();
-    let att = 0;
-    const target = difficulty === "hard" ? 8 : 3;
-    while (qs.filter(q=>q.type==="recite_next"||q.type==="recite_from_audio").length < Math.min(target, ayahs.length-1) && att++ < 30) {
-      const idx = Math.floor(Math.random()*(ayahs.length-1));
-      if (used2.has(idx)) continue; used2.add(idx);
-      const type: QType = difficulty === "hard" ? "recite_from_audio" : "recite_next";
-      qs.push({
-        id:id++, type, ayahNum:ayahs[idx+1].numberInSurah,
-        prevAyahNum: ayahs[idx].numberInSurah,
-        prompt: difficulty === "hard" ? "🔊 Listen to the previous verse, then recite the next one" : ayahs[idx].text,
-        promptLabel: `${surahName} · After Verse ${ayahs[idx].numberInSurah}`,
-        promptAyahNum: ayahs[idx].numberInSurah,
-        options:[], correct:-1, correctText:ayahs[idx+1].text
-      });
-    }
+  // ── MCQ: missing word ─────────────────────────────────────────────────────
+  const mwTarget = Math.min(4, ayahs.length);
+  const mwStep   = Math.max(1, Math.floor(ayahs.length / mwTarget));
+  for (let i = 0; i < ayahs.length && qs.filter(q=>q.type==="missing_word").length < mwTarget; i += mwStep) {
+    const ayah = ayahs[i];
+    const words = ayah.text.split(" ");
+    if (words.length < 4) continue;
+    const bi = 1 + Math.floor(Math.random()*(words.length-2));
+    const cw = words[bi];
+    const blanked = words.map((w,j)=>j===bi?"____":w).join(" ");
+    const allW = ayahs.flatMap(a=>a.text.split(" ")).filter(w=>w!==cw&&w.length>2);
+    const wrongs = shuffle([...new Set(allW)]).slice(0,3);
+    if (wrongs.length < 3) continue;
+    const opts = shuffle([cw,...wrongs]);
+    qs.push({ id:id++, type:"missing_word", ayahNum:ayah.numberInSurah, prevAyahNum:null,
+      prompt:blanked, promptLabel:`Complete Verse ${ayah.numberInSurah}`,
+      promptAyahNum:ayah.numberInSurah,
+      options:opts, correct:opts.indexOf(cw), correctText:cw });
   }
 
-  return shuffle(qs).slice(0, 10);
+  // ── MCQ: identify verse number ────────────────────────────────────────────
+  const ivTarget = Math.min(3, ayahs.length);
+  const ivStep   = Math.max(1, Math.floor(ayahs.length / ivTarget));
+  for (let i = 0; i < ayahs.length && qs.filter(q=>q.type==="identify_verse").length < ivTarget; i += ivStep) {
+    const ayah = ayahs[i];
+    const cl  = `Verse ${ayah.numberInSurah}`;
+    const wn  = shuffle(ayahs.map(a=>a.numberInSurah).filter(n=>n!==ayah.numberInSurah)).slice(0,3);
+    const wl  = wn.map(n=>`Verse ${n}`);
+    const opts = shuffle([cl,...wl]);
+    qs.push({ id:id++, type:"identify_verse", ayahNum:ayah.numberInSurah, prevAyahNum:null,
+      prompt:ayah.text, promptLabel:`Which verse number in ${surahName}?`,
+      promptAyahNum:ayah.numberInSurah,
+      options:opts, correct:opts.indexOf(cl), correctText:cl });
+  }
+
+  // ── Audio: recite next verse (spread across surah) ────────────────────────
+  const rnTarget = Math.min(4, ayahs.length - 1);
+  const rnStep   = Math.max(1, Math.floor(ayahs.length / rnTarget));
+  for (let i = 0; i < ayahs.length - 1 && qs.filter(q=>q.type==="recite_next").length < rnTarget; i += rnStep) {
+    qs.push({
+      id:id++, type:"recite_next", ayahNum:ayahs[i+1].numberInSurah,
+      prevAyahNum: ayahs[i].numberInSurah,
+      prompt: ayahs[i].text,
+      promptLabel: `${surahName} · After Verse ${ayahs[i].numberInSurah}`,
+      promptAyahNum: ayahs[i].numberInSurah,
+      options:[], correct:-1, correctText:ayahs[i+1].text
+    });
+  }
+
+  // ── Audio: listen & recite from audio cue ─────────────────────────────────
+  const raTarget = Math.min(3, ayahs.length - 1);
+  const raStep   = Math.max(1, Math.floor(ayahs.length / raTarget));
+  const raStart  = Math.floor(ayahs.length / 2); // start from second half for variety
+  for (let i = raStart; i < ayahs.length - 1 && qs.filter(q=>q.type==="recite_from_audio").length < raTarget; i += raStep) {
+    qs.push({
+      id:id++, type:"recite_from_audio", ayahNum:ayahs[i+1].numberInSurah,
+      prevAyahNum: ayahs[i].numberInSurah,
+      prompt: "🔊 Listen to the previous verse, then recite the next one",
+      promptLabel: `${surahName} · After Verse ${ayahs[i].numberInSurah}`,
+      promptAyahNum: ayahs[i].numberInSurah,
+      options:[], correct:-1, correctText:ayahs[i+1].text
+    });
+  }
+
+  return shuffle(qs);
 }
 
 const QTYPE_META: Record<QType, { icon: string; label: string; isAudio: boolean }> = {
@@ -162,9 +174,6 @@ function getGrade(pct:number){
 
 export default function HifdhTest({ reciter = DEFAULT_RECITER }: Props) {
   const [surahNum, setSurahNum]     = useState(114);
-  const [startV, setStartV]         = useState(1);
-  const [endV, setEndV]             = useState(6);
-  const [difficulty, setDifficulty] = useState<Difficulty>("easy");
   const [ayahs, setAyahs]           = useState<Ayah[]>([]);
   const [loading, setLoading]       = useState(false);
   const [fetchErr, setFetchErr]     = useState("");
@@ -241,14 +250,14 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER }: Props) {
       if(!data?.user) return;
       (supabase as any).from("hifdh_sessions").insert({
         student_id:data.user.id, surah_name:SURAHS[surahNum-1].name,
-        ayah_start:startV, accuracy_score:pct, duration:qs.length*45-timeLeft,
+        ayah_start:1, accuracy_score:pct, duration:qs.length*45-timeLeft,
       }).then(() => {}).catch(()=>{});
     });
-  },[surahNum,startV,timeLeft]);
+  },[surahNum,timeLeft]);
 
   const startTest=()=>{
-    const pool=ayahs.filter(a=>a.numberInSurah>=startV&&a.numberInSurah<=endV);
-    const qs=buildQuestions(pool,surah.name,difficulty);
+    const pool = ayahs; // all ayahs of the surah — no range restriction
+    const qs=buildQuestions(pool,surah.name);
     if(qs.length===0){ setBuildErr("Not enough verses — need at least 3."); return; }
     setBuildErr("");
     const ans=new Array(qs.length).fill(null) as null[];
@@ -327,8 +336,7 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER }: Props) {
     } catch { setMicState("idle"); }
   };
 
-  const selectedAyahs=ayahs.filter(a=>a.numberInSurah>=startV&&a.numberInSurah<=endV);
-  const canStart=!loading&&selectedAyahs.length>=3;
+  const canStart=!loading&&ayahs.length>=3;
 
   const card=(ex?:React.CSSProperties):React.CSSProperties=>({
     background:"#fff",border:`1px solid ${BORDER}`,borderRadius:18,
@@ -363,8 +371,8 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER }: Props) {
           </div>
           <div style={{fontSize:14,fontWeight:700,color:grade.color}}>{grade.label}</div>
           <div style={{fontSize:12,color:"#7a9e88",marginTop:6}}>{correct} / {questions.length} correct · Score saved ✓</div>
-          <div style={{marginTop:6,padding:"4px 12px",borderRadius:8,background:DIFF_META[difficulty].bg,display:"inline-block"}}>
-            <span style={{fontSize:11,color:DIFF_META[difficulty].color,fontWeight:700}}>{DIFF_META[difficulty].icon} {DIFF_META[difficulty].label}</span>
+          <div style={{marginTop:6,padding:"4px 12px",borderRadius:8,background:LIGHT,display:"inline-block"}}>
+            <span style={{fontSize:11,color:G,fontWeight:700}}>📚 Full Surah · {SURAHS[surahNum-1]?.name}</span>
           </div>
         </div>
 
@@ -421,47 +429,15 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER }: Props) {
           </div>
         </div>
 
-        {/* Difficulty */}
+        {/* Surah selector */}
         <div style={card({padding:"16px"})}>
-          <div style={{fontSize:11,fontWeight:700,color:"#7a9e88",letterSpacing:.5,marginBottom:10}}>DIFFICULTY · مستوى الصعوبة</div>
-          {(["easy","medium","hard"] as Difficulty[]).map(d=>{
-            const m=DIFF_META[d]; const active=difficulty===d;
-            return(
-              <div key={d} onClick={()=>setDifficulty(d)}
-                style={{display:"flex",gap:12,padding:"11px 12px",borderRadius:12,cursor:"pointer",
-                  marginBottom:d!=="hard"?8:0,background:active?m.bg:"#fafafa",
-                  border:`1.5px solid ${active?m.color+"55":"#f0f4f0"}`}}>
-                <span style={{fontSize:24,flexShrink:0}}>{m.icon}</span>
-                <div style={{flex:1}}>
-                  <div style={{fontSize:13,fontWeight:700,color:active?m.color:G}}>
-                    {m.label} <span style={{fontFamily:"'Amiri',serif",color:GOLD,fontSize:12}}>· {m.labelAr}</span>
-                  </div>
-                  <div style={{fontSize:11,color:"#7a9e88",marginTop:2}}>{m.desc}</div>
-                </div>
-                {active&&<div style={{width:8,height:8,borderRadius:"50%",background:m.color,alignSelf:"center",flexShrink:0}}/>}
-              </div>
-            );
-          })}
-        </div>
-
-        <div style={card({padding:"16px"})}>
-          <div style={{fontSize:11,fontWeight:700,color:"#7a9e88",letterSpacing:.5,marginBottom:10}}>SURAH & RANGE · السورة والنطاق</div>
+          <div style={{fontSize:11,fontWeight:700,color:"#7a9e88",letterSpacing:.5,marginBottom:10}}>SELECT SURAH · اختر السورة</div>
           <select value={surahNum} onChange={e=>setSurahNum(Number(e.target.value))}
             style={{width:"100%",padding:"11px 12px",borderRadius:12,border:`1px solid ${BORDER}`,fontSize:14,color:G,background:"#f8fafb",marginBottom:10}}>
             {SURAHS.map(s=><option key={s.num} value={s.num}>{s.num}. {s.name} · {s.nameAr}</option>)}
           </select>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
-            {[["From",startV,setStartV],["To",endV,setEndV]].map(([lbl,val,setter],i)=>(
-              <div key={i}>
-                <div style={{fontSize:11,color:"#7a9e88",fontWeight:600,marginBottom:4}}>{lbl as string} Verse</div>
-                <input type="number" min={1} max={surah.verses} value={val as number}
-                  onChange={e=>(setter as Function)(Number(e.target.value))}
-                  style={{width:"100%",padding:"10px 12px",borderRadius:10,border:`1px solid ${BORDER}`,fontSize:15,color:G,background:"#f8fafb",fontWeight:700}}/>
-              </div>
-            ))}
-          </div>
           <div style={{padding:"9px 12px",borderRadius:10,background:LIGHT,border:`1px solid ${BORDER}`,fontSize:12,color:G,fontWeight:600}}>
-            {selectedAyahs.length} verses · ≈{Math.min(10,selectedAyahs.length*3)} questions
+            {loading ? "Loading verses…" : `${ayahs.length} verses · All will be tested · Mixed question types`}
           </div>
         </div>
 
@@ -470,8 +446,7 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER }: Props) {
           style={{padding:"15px 0",borderRadius:14,border:"none",cursor:canStart?"pointer":"not-allowed",
             background:canStart?`linear-gradient(135deg,${G},#7c3aed)`:"#f0f4f0",
             color:canStart?"#fff":"#7a9e88",fontSize:15,fontWeight:800}}>
-          {loading?"Loading…":!canStart?"Need at least 3 verses":"✍️ Start Test · ابدأ الاختبار"}
-        </button>
+          {loading?"Loading…":!canStart?"Need at least 3 verses":"✍️ Start Test · ابدأ الاختبار"}        </button>
         {fetchErr&&<div style={{padding:"12px",borderRadius:12,background:"#fff5f5",border:"1px solid #fca5a5",fontSize:13,color:"#c0392b",textAlign:"center"}}>{fetchErr} <button onClick={fetchAyahs} style={{textDecoration:"underline",background:"none",border:"none",color:"#c0392b",cursor:"pointer"}}>Retry</button></div>}
       </div>
     );
@@ -489,7 +464,6 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER }: Props) {
   const timerPct=questions.length>0?(timeLeft/(questions.length*45))*100:0;
   const isAudioQ=q.type==="recite_next"||q.type==="recite_from_audio";
   const meta=QTYPE_META[q.type];
-  const diffM=DIFF_META[difficulty];
 
   // ── ACTIVE QUESTION ──────────────────────────────────────
   return(
@@ -501,22 +475,19 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER }: Props) {
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
           <div style={{display:"flex",alignItems:"center",gap:8}}>
             <div style={{fontSize:12,color:"#7a9e88"}}>Q <strong style={{color:G}}>{qIdx+1}</strong>/{questions.length}</div>
-            <div style={{padding:"2px 8px",borderRadius:6,background:diffM.bg,fontSize:10,fontWeight:700,color:diffM.color}}>
-              {diffM.icon} {diffM.label}
+            <div style={{padding:"2px 8px",borderRadius:6,background:LIGHT,fontSize:10,fontWeight:700,color:G}}>
+              {SURAHS[surahNum-1]?.name}
             </div>
           </div>
-          <div style={{display:"flex",gap:8,alignItems:"center"}}>
-            <div style={{position:"relative",width:40,height:40}}>
-              <svg width={40} height={40} style={{transform:"rotate(-90deg)"}}>
-                <circle cx={20} cy={20} r={16} fill="none" stroke="#f0f4f0" strokeWidth={4}/>
-                <circle cx={20} cy={20} r={16} fill="none" stroke={timeLeft<30?"#ef4444":G} strokeWidth={4}
-                  strokeDasharray={`${(timerPct/100)*2*Math.PI*16} ${2*Math.PI*16}`} strokeLinecap="round"/>
-              </svg>
-              <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
-                <span style={{fontSize:9,fontWeight:900,color:timeLeft<30?"#ef4444":G}}>{timeLeft}s</span>
-              </div>
+          <div style={{position:"relative",width:40,height:40}}>
+            <svg width={40} height={40} style={{transform:"rotate(-90deg)"}}>
+              <circle cx={20} cy={20} r={16} fill="none" stroke="#f0f4f0" strokeWidth={4}/>
+              <circle cx={20} cy={20} r={16} fill="none" stroke={timeLeft<30?"#ef4444":G} strokeWidth={4}
+                strokeDasharray={`${(timerPct/100)*2*Math.PI*16} ${2*Math.PI*16}`} strokeLinecap="round"/>
+            </svg>
+            <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
+              <span style={{fontSize:9,fontWeight:900,color:timeLeft<30?"#ef4444":G}}>{timeLeft}s</span>
             </div>
-            <button onClick={doFinish} style={{fontSize:11,padding:"5px 10px",borderRadius:8,border:`1px solid ${BORDER}`,background:"#f8fafb",color:"#7a9e88",cursor:"pointer"}}>Finish</button>
           </div>
         </div>
         <div style={{height:5,borderRadius:3,background:"#f0f4f0",overflow:"hidden"}}>
