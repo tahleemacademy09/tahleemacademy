@@ -19,6 +19,7 @@ import IdleWarningModal from "@/components/IdleWarningModal";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import { LiveClassProvider } from "@/contexts/LiveClassContext";
 import GlobalClassroomOverlay from "@/components/classroom/GlobalClassroomOverlay";
+import AppNotifications from "@/components/AppNotifications";
 
 // ── Public pages ───────────────────────────────────────────────────────────
 const Index                = lazy(() => import("./pages/Index"));
@@ -275,7 +276,9 @@ const App = () => (
                 </Routes>
               </Suspense>
             </ErrorBoundary>
+            <AppNotifications />
             <GlobalClassroomOverlay />
+            <AppNotifications />
             <IdleWarningModal />
             </LiveClassProvider>
           </BrowserRouter>
