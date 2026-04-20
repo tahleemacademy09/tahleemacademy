@@ -19,34 +19,68 @@ function getMime() {
   return "";
 }
 
-// Normalise Arabic text for comparison
+// Normalise Arabic text for comparison — lenient version that strips
+// diacritics, hamza variants, taa marbuta, alef maqsura, tatweel,
+// and common attached prefixes (ال، و، ف، ب، ل) so minor pronunciation
+// differences (e.g. wasla, tanween, short vowels) don't count as errors.
 function norm(t: string) {
   return t
-    .replace(/[\u064B-\u065F\u0610-\u061A\u0670]/g, "")
-    .replace(/[\u0622\u0623\u0625\u0627]/g, "\u0627")
-    .replace(/\u0629/g, "\u0647")
-    .replace(/\u0649/g, "\u064A")
-    .replace(/\u0640/g, "")
+    .replace(/[\u064B-\u065F\u0610-\u061A\u0670\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED]/g, "") // all diacritics
+    .replace(/[\u0622\u0623\u0624\u0625\u0626\u0627\u0671]/g, "\u0627") // all alef variants → ا
+    .replace(/\u0629/g, "\u0647")   // taa marbuta → haa
+    .replace(/\u0649/g, "\u064A")   // alef maqsura → ya
+    .replace(/\u0640/g, "")          // tatweel
     .replace(/[^\u0621-\u063A\u0641-\u064A\s]/g, "")
     .replace(/\s+/g, " ").trim();
+}
+
+// Strip common Arabic prefixes (ال، وَ، فَ، بِ، لِ) before root comparison
+function stripPrefix(w: string): string {
+  if (w.startsWith("\u0627\u0644") && w.length > 3) return w.slice(2); // ال
+  if ((w.startsWith("\u0648") || w.startsWith("\u0641") || w.startsWith("\u0628") || w.startsWith("\u0644")) && w.length > 2) return w.slice(1);
+  return w;
+}
+
+// Fuzzy word match — handles prefix stripping + root proximity
+function wordMatch(tw: string, rw: string): boolean {
+  if (!tw || !rw) return false;
+  if (tw === rw) return true;
+  const ts = stripPrefix(tw); const rs = stripPrefix(rw);
+  if (ts === rs) return true;
+  // Prefix match on roots (first 3 chars of root)
+  const minLen = Math.min(ts.length, rs.length);
+  if (minLen >= 3 && ts.slice(0, 3) === rs.slice(0, 3)) return true;
+  // Containment: short root inside longer word
+  const shorter = ts.length <= rs.length ? ts : rs;
+  const longer  = ts.length <= rs.length ? rs : ts;
+  if (shorter.length >= 4 && longer.includes(shorter.slice(0, Math.ceil(shorter.length * 0.75)))) return true;
+  return false;
 }
 
 function scoreMatch(transcript: string, reference: string[]): number {
   const refText = norm(reference.join(" "));
   const txText  = norm(transcript);
   if (!txText || !refText) return 0;
-  const refWords = refText.split(" ").filter(Boolean);
+  // Filter out very short particles (1-char) which can cause noise
+  const refWords = refText.split(" ").filter(w => w.length >= 2);
   const txWords  = txText.split(" ").filter(Boolean);
   if (!txWords.length) return 0;
   let matched = 0;
   for (const rw of refWords) {
-    if (txWords.some(tw => {
-      if (tw === rw) return true;
-      if (rw.length >= 3 && tw.length >= 3 && rw.slice(0, 3) === tw.slice(0, 3)) return true;
-      return false;
-    })) matched++;
+    if (txWords.some(tw => wordMatch(tw, rw))) matched++;
   }
   return Math.round((matched / refWords.length) * 100);
+}
+
+// Word-level diff: highlight which reference words were said vs missed
+function diffWords(transcript: string, referenceText: string): { word: string; hit: boolean }[] {
+  const txNorm  = norm(transcript);
+  const txWords = txNorm.split(" ").filter(Boolean);
+  return referenceText.split(" ").filter(Boolean).map(rw => {
+    const nrw = norm(rw);
+    const hit = nrw.length < 2 || txWords.some(tw => wordMatch(tw, nrw));
+    return { word: rw, hit };
+  });
 }
 
 type StageKey = 1 | 2 | 3 | 4 | 5 | 6;
@@ -74,12 +108,65 @@ function generateQ(stage: StageKey, pool: Ayah[], surahName: string): Question |
   if (n < 2) return null;
   try {
     switch (stage) {
-      case 1: { const idx = Math.floor(Math.random() * Math.max(1, n - 2)); return { stage, prompt: pool[idx].text, promptAyahNum: pool[idx].numberInSurah, promptLabel: `${surahName} · Verse ${pool[idx].numberInSurah}`, answerLabel: "Now recite the next 2 verses:", answer: pool.slice(idx + 1, idx + 3).map(a => a.text) }; }
-      case 2: { const idx = Math.floor(Math.random() * Math.max(1, n - 4)); return { stage, prompt: pool[idx].text, promptAyahNum: pool[idx].numberInSurah, promptLabel: `${surahName} · Verse ${pool[idx].numberInSurah}`, answerLabel: "Now recite the next 4 verses:", answer: pool.slice(idx + 1, idx + 5).map(a => a.text) }; }
-      case 3: { const idx = Math.floor(Math.random() * Math.max(1, n - 2)); const words = pool[idx].text.split(" "); const half = Math.max(1, Math.floor(words.length / 2)); return { stage, prompt: words.slice(0, half).join(" ") + " …", promptAyahNum: pool[idx].numberInSurah, promptLabel: `First half of Verse ${pool[idx].numberInSurah}`, answerLabel: "Complete this verse, then recite 2 more:", answer: [words.slice(half).join(" ") + " ← (complete verse)", ...pool.slice(idx + 1, idx + 3).map(a => a.text)] }; }
-      case 4: { const idx = Math.floor(Math.random() * Math.max(1, n - 1)); const words = pool[idx].text.split(" "); const half = Math.max(1, Math.floor(words.length / 2)); return { stage, prompt: words.slice(0, half).join(" ") + " …", promptAyahNum: pool[idx].numberInSurah, promptLabel: `First half of Verse ${pool[idx].numberInSurah}`, answerLabel: "Complete this verse and recite the next:", answer: [words.slice(half).join(" ") + " ← (complete verse)", ...(idx + 1 < n ? [pool[idx + 1].text] : [])] }; }
-      case 5: { const idx = Math.floor(Math.random() * n); const word = pool[idx].text.split(" ")[0]; return { stage, prompt: word + " …", promptAyahNum: pool[idx].numberInSurah, promptLabel: `First word of Verse ${pool[idx].numberInSurah}`, answerLabel: "Recite the complete verse:", answer: [pool[idx].text] }; }
-      case 6: { return { stage, prompt: pool[0].text, promptAyahNum: pool[0].numberInSurah, promptLabel: `Opening verse — ${surahName}`, answerLabel: "Recite all remaining verses to the end:", answer: pool.slice(1).map(a => a.text) }; }
+      case 1: {
+        // Random verse anywhere, ask for next 2
+        const idx = Math.floor(Math.random() * Math.max(1, n - 2));
+        return { stage, prompt: pool[idx].text, promptAyahNum: pool[idx].numberInSurah, promptLabel: `${surahName} · Verse ${pool[idx].numberInSurah}`, answerLabel: "Now recite the next 2 verses:", answer: pool.slice(idx + 1, idx + 3).map(a => a.text) };
+      }
+      case 2: {
+        // Random verse anywhere, ask for next 4
+        const idx = Math.floor(Math.random() * Math.max(1, n - 4));
+        return { stage, prompt: pool[idx].text, promptAyahNum: pool[idx].numberInSurah, promptLabel: `${surahName} · Verse ${pool[idx].numberInSurah}`, answerLabel: "Now recite the next 4 verses:", answer: pool.slice(idx + 1, idx + 5).map(a => a.text) };
+      }
+      case 3: {
+        // Randomly show: first half OR last 2 words of verse (to continue into next verse)
+        const idx = Math.floor(Math.random() * Math.max(1, n - 2));
+        const words = pool[idx].text.split(" ");
+        const variant = Math.random() < 0.5 ? "start" : "end";
+        if (variant === "end" && idx + 1 < n) {
+          // Show last 2 words → user must say the next verse
+          const lastTwo = words.slice(-2).join(" ") + " …";
+          return { stage, prompt: lastTwo, promptAyahNum: pool[idx].numberInSurah,
+            promptLabel: `End of Verse ${pool[idx].numberInSurah}`,
+            answerLabel: "Continue — recite the next verse:",
+            answer: pool.slice(idx + 1, idx + 3).map(a => a.text) };
+        }
+        // Default: show first half
+        const half = Math.max(1, Math.floor(words.length / 2));
+        return { stage, prompt: words.slice(0, half).join(" ") + " …", promptAyahNum: pool[idx].numberInSurah,
+          promptLabel: `First half of Verse ${pool[idx].numberInSurah}`,
+          answerLabel: "Complete this verse, then recite 2 more:",
+          answer: [words.slice(half).join(" ") + " ← (complete verse)", ...pool.slice(idx + 1, idx + 3).map(a => a.text)] };
+      }
+      case 4: {
+        const idx = Math.floor(Math.random() * Math.max(1, n - 1));
+        const words = pool[idx].text.split(" ");
+        const half = Math.max(1, Math.floor(words.length / 2));
+        return { stage, prompt: words.slice(0, half).join(" ") + " …", promptAyahNum: pool[idx].numberInSurah,
+          promptLabel: `First half of Verse ${pool[idx].numberInSurah}`,
+          answerLabel: "Complete this verse and recite the next:",
+          answer: [words.slice(half).join(" ") + " ← (complete verse)", ...(idx + 1 < n ? [pool[idx + 1].text] : [])] };
+      }
+      case 5: {
+        // Pick a random verse, then a random WORD within it (not only the first)
+        const idx = Math.floor(Math.random() * n);
+        const words = pool[idx].text.split(" ");
+        // Randomly pick from the first 60% of words so user still has something to continue
+        const wordIdx = Math.floor(Math.random() * Math.max(1, Math.ceil(words.length * 0.6)));
+        const chosenWord = words[wordIdx];
+        const isFirstWord = wordIdx === 0;
+        const promptText = isFirstWord ? chosenWord + " …" : "… " + chosenWord + " …";
+        return { stage, prompt: promptText, promptAyahNum: pool[idx].numberInSurah,
+          promptLabel: isFirstWord ? `First word of Verse ${pool[idx].numberInSurah}` : `A word from Verse ${pool[idx].numberInSurah}`,
+          answerLabel: "Recite the complete verse:",
+          answer: [pool[idx].text] };
+      }
+      case 6: {
+        return { stage, prompt: pool[0].text, promptAyahNum: pool[0].numberInSurah,
+          promptLabel: `Opening verse — ${surahName}`,
+          answerLabel: "Recite all remaining verses to the end:",
+          answer: pool.slice(1).map(a => a.text) };
+      }
     }
   } catch { return null; }
 }
@@ -204,7 +291,7 @@ export default function HifdhExercise({ reciter = DEFAULT_RECITER }: Props) {
         const cleanAnswers = question.answer.map(a => a.replace("← (complete verse)", "").trim());
         const sc = scoreMatch(tx, cleanAnswers);
         setEvalScore(sc);
-        const result = sc >= 70 ? "correct" : "wrong";
+        const result = sc >= 55 ? "correct" : "wrong";
         setAutoResult(result);
         setTimeout(() => {
           setScore(s => ({ correct: s.correct + (result === "correct" ? 1 : 0), total: s.total + 1 }));
@@ -409,30 +496,45 @@ export default function HifdhExercise({ reciter = DEFAULT_RECITER }: Props) {
 
         {micState === "evaluating" && (
           <div style={{ textAlign: "center", padding: "16px 0" }}>
-            <div style={{ fontSize: 13, color: GOLD, fontWeight: 700, marginBottom: 4 }}>🤖 Qwen AI Evaluating…</div>
-            <div style={{ fontSize: 11, color: "#7a9e88" }}>Comparing your recitation</div>
+            <div style={{ fontSize: 13, color: GOLD, fontWeight: 700, marginBottom: 4 }}>🤖 AI Evaluating…</div>
+            <div style={{ fontSize: 11, color: "#7a9e88" }}>Comparing your recitation to the expected text</div>
           </div>
         )}
 
-        {evalScore !== null && autoResult && (
-          <div style={{ padding: "12px 14px", borderRadius: 12,
+        {evalScore !== null && autoResult && (\n          <div style={{ padding: "12px 14px", borderRadius: 12,
             background: autoResult === "correct" ? LIGHT : "#fff5f5",
             border: `1px solid ${autoResult === "correct" ? BORDER : "#fca5a5"}` }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
               <span style={{ fontSize: 14, fontWeight: 900, color: autoResult === "correct" ? GM : "#c0392b" }}>
-                {autoResult === "correct" ? "✓ Correct! Masha'Allah" : "✗ Needs practice"}
+                {autoResult === "correct" ? "✓ Correct! Masha'Allah" : "✗ Needs more practice"}
               </span>
               <span style={{ fontSize: 18, fontWeight: 900, color: autoResult === "correct" ? GM : "#c0392b" }}>
                 {evalScore}%
               </span>
             </div>
-            {transcript && (
-              <div style={{ direction: "rtl", fontFamily: "'Amiri',serif", fontSize: 14, color: "#7a9e88",
-                background: "#f9fafb", borderRadius: 8, padding: "6px 10px", lineHeight: 1.8 }}>
-                {transcript}
-              </div>
-            )}
-            <div style={{ fontSize: 11, color: "#7a9e88", marginTop: 6 }}>Auto-advancing in 2s…</div>
+            {/* Word-level diff — red = missed, green = recited */}
+            {question.answer.map((ansText, ai) => {
+              const clean = ansText.replace("← (complete verse)", "").trim();
+              const diff  = diffWords(transcript || "", clean);
+              return (
+                <div key={ai} style={{ direction: "rtl", fontFamily: "'Amiri Quran','Amiri',serif",
+                  fontSize: 20, lineHeight: 2.2, textAlign: "right",
+                  background: "#f9fafb", borderRadius: 8, padding: "6px 10px",
+                  marginBottom: ai < question.answer.length - 1 ? 6 : 0 }}>
+                  {diff.map((d, wi) => (
+                    <span key={wi} style={{
+                      color: d.hit ? "#166534" : "#c0392b",
+                      background: d.hit ? "#dcfce7" : "#fee2e2",
+                      borderRadius: 4, padding: "1px 3px", margin: "0 2px",
+                      fontWeight: d.hit ? 400 : 700,
+                    }}>{d.word}</span>
+                  ))}
+                </div>
+              );
+            })}
+            <div style={{ fontSize: 11, color: "#7a9e88", marginTop: 6, direction: "ltr" }}>
+              🟢 Said &nbsp;|&nbsp; 🔴 Missed — auto-advancing in 2s…
+            </div>
           </div>
         )}
       </div>
