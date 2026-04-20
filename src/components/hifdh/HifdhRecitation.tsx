@@ -454,6 +454,34 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
     stopSR();
   }, [stopSR]);
 
+  /* ── Save session when app is minimized / tab hidden ────────── */
+  useEffect(() => {
+    if (!started) return;
+    const handler = () => {
+      if (document.visibilityState === "hidden") {
+        try {
+          const s = {
+            surahNum,
+            startVerse,
+            endVerse,
+            repsPerVerse: repsPerVerseRef.current,
+            stepIdx:  stepIdxRef.current,
+            repsDone: repsDoneRef.current,
+            started:  true,
+          };
+          localStorage.setItem(SESSION_KEY, JSON.stringify(s));
+        } catch { /**/ }
+      }
+    };
+    document.addEventListener("visibilitychange", handler);
+    // Also save on pagehide (iOS Safari / Android Chrome)
+    window.addEventListener("pagehide", handler);
+    return () => {
+      document.removeEventListener("visibilitychange", handler);
+      window.removeEventListener("pagehide", handler);
+    };
+  }, [started, surahNum, startVerse, endVerse]);
+
   /* ── Manual rep ─────────────────────────────────────────────── */
   const markRep = () => {
     const step = steps[stepIdx];
