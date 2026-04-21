@@ -46,7 +46,7 @@ function scoreAudio(tx: string, ref: string): number {
 }
 
 type Difficulty = "easy" | "medium" | "hard";
-type QType = "next_verse" | "missing_word" | "identify_verse" | "recite_next" | "recite_from_audio";
+type QType = "next_verse" | "missing_word" | "recite_next" | "recite_from_audio";
 
 interface Question {
   id: number;
@@ -102,21 +102,6 @@ function buildQuestions(ayahs: Ayah[], surahName: string): Question[] {
       options:opts, correct:opts.indexOf(cw), correctText:cw });
   }
 
-  // ── MCQ: identify verse number ────────────────────────────────────────────
-  const ivTarget = Math.min(3, ayahs.length);
-  const ivStep   = Math.max(1, Math.floor(ayahs.length / ivTarget));
-  for (let i = 0; i < ayahs.length && qs.filter(q=>q.type==="identify_verse").length < ivTarget; i += ivStep) {
-    const ayah = ayahs[i];
-    const cl  = `Verse ${ayah.numberInSurah}`;
-    const wn  = shuffle(ayahs.map(a=>a.numberInSurah).filter(n=>n!==ayah.numberInSurah)).slice(0,3);
-    const wl  = wn.map(n=>`Verse ${n}`);
-    const opts = shuffle([cl,...wl]);
-    qs.push({ id:id++, type:"identify_verse", ayahNum:ayah.numberInSurah, prevAyahNum:null,
-      prompt:ayah.text, promptLabel:`Which verse number in ${surahName}?`,
-      promptAyahNum:ayah.numberInSurah,
-      options:opts, correct:opts.indexOf(cl), correctText:cl });
-  }
-
   // ── Audio: recite next verse (spread across surah) ────────────────────────
   const rnTarget = Math.min(4, ayahs.length - 1);
   const rnStep   = Math.max(1, Math.floor(ayahs.length / rnTarget));
@@ -152,7 +137,6 @@ function buildQuestions(ayahs: Ayah[], surahName: string): Question[] {
 const QTYPE_META: Record<QType, { icon: string; label: string; isAudio: boolean }> = {
   next_verse:       { icon:"➡️", label:"What comes next?",      isAudio:false },
   missing_word:     { icon:"🔍", label:"Missing word",           isAudio:false },
-  identify_verse:   { icon:"🔢", label:"Verse number",           isAudio:false },
   recite_next:      { icon:"🎙", label:"Recite the next verse",  isAudio:true  },
   recite_from_audio:{ icon:"🔊", label:"Listen & Recite",        isAudio:true  },
 };
