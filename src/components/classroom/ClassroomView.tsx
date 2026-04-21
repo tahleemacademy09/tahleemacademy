@@ -726,9 +726,10 @@ const SURAHS_LIST = [
   {n:112,name:"Al-Ikhlas",ar:"الإخلاص",v:4},{n:113,name:"Al-Falaq",ar:"الفلق",v:5},{n:114,name:"An-Nas",ar:"الناس",v:6},
 ];
 
+const QURAN_PAGE_KEY="inclass_quran_page_v1";
 const InClassQuranReader=({onClose}:any)=>{
   const[mode,setMode]=useState<QuranMode>("quran");
-  const[page,setPage]=useState(1);
+  const[page,setPage]=useState(()=>{try{const s=localStorage.getItem(QURAN_PAGE_KEY);return s?Math.max(1,Math.min(604,parseInt(s)||1)):1;}catch{return 1;}});
   const[pageInput,setPageInput]=useState("");
   const[pageInputOpen,setPageInputOpen]=useState(false);
   const[fullscreen,setFullscreen]=useState(false);
@@ -874,6 +875,8 @@ const InClassQuranReader=({onClose}:any)=>{
     if(mode==="quran")fetchMushafPage(page);
     if(mode==="translation")fetchTranslation(page);
   },[page,mode]);
+
+  useEffect(()=>{try{localStorage.setItem(QURAN_PAGE_KEY,String(page));}catch{}},[page]);
 
   useEffect(()=>{
     if(mode==="tafseer")fetchSurahArabic(surahNum);
