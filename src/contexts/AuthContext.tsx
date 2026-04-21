@@ -1,11 +1,12 @@
 // src/contexts/AuthContext.tsx
-// CHANGE: emailRedirectTo now points to /auth/register-continue
-// so that clicking the verification email lands the user in the registration pipeline
-// (payment → onboarding → exam → recitation → welcome)
-// ADDED: Detects must_change_password flag set by admin-create-user edge function
-// and redirects to /change-password before anything else loads.
+// Fixed: removed getSession() duplicate fetch that raced with onAuthStateChange.
+// In Supabase JS v2, onAuthStateChange fires INITIAL_SESSION immediately on subscribe
+// with the persisted session — so getSession() is redundant and causes a loading flicker
+// where roles[] is briefly empty, causing ProtectedRoute to redirect incorrectly.
+// Also added: mounted guard, 8s safety timeout so loading never hangs forever,
+// and exponential-backoff retry for transient network errors on fetchUserData.
 
-import React, { createContext, useContext, useState, useEffect } from "react";
+import React, { createContext, useContext, useState, useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { User, Session } from "@supabase/supabase-js";
 
@@ -48,40 +49,86 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [profile,            setProfile]            = useState<UserProfile | null>(null);
   const [mustChangePassword, setMustChangePassword] = useState(false);
 
-  const fetchUserData = async (userId: string, setLoadingFalse = false) => {
-    try {
-      const [rolesRes, profileRes] = await Promise.all([
-        supabase.from("user_roles").select("role").eq("user_id", userId),
-        supabase.from("profiles").select("*").eq("user_id", userId).maybeSingle(),
-      ]);
-      if (rolesRes.data) setRoles(rolesRes.data.map((r) => r.role));
-      if (profileRes.data) setProfile(profileRes.data as UserProfile);
-    } catch (err) {
-      console.error("fetchUserData error:", err);
-    } finally {
-      if (setLoadingFalse) setLoading(false);
-    }
+  // Guards against stale state from unmounted component or concurrent fetches
+  const mountedRef  = useRef(true);
+  const fetchingRef = useRef<string | null>(null); // userId currently being fetched
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+
+  // ── Fetch roles + profile with simple retry on network error ──────────────
+  const fetchUserData = async (userId: string): Promise<void> => {
+    // Skip if a fetch for this user is already in flight
+    if (fetchingRef.current === userId) return;
+    fetchingRef.current = userId;
+
+    const attempt = async (tries = 0): Promise<void> => {
+      try {
+        const [rolesRes, profileRes] = await Promise.all([
+          supabase.from("user_roles").select("role").eq("user_id", userId),
+          supabase.from("profiles").select("*").eq("user_id", userId).maybeSingle(),
+        ]);
+        if (!mountedRef.current || fetchingRef.current !== userId) return;
+        if (rolesRes.data)    setRoles(rolesRes.data.map((r) => r.role));
+        if (profileRes.data)  setProfile(profileRes.data as UserProfile);
+      } catch (err) {
+        console.warn("[AuthContext] fetchUserData error (attempt", tries + 1, "):", err);
+        if (tries < 3 && mountedRef.current) {
+          // Exponential backoff: 500ms, 1s, 2s
+          await new Promise(r => setTimeout(r, 500 * Math.pow(2, tries)));
+          return attempt(tries + 1);
+        }
+      } finally {
+        if (mountedRef.current && fetchingRef.current === userId) {
+          fetchingRef.current = null;
+          setLoading(false);
+        }
+      }
+    };
+
+    await attempt();
   };
 
   const refreshProfile = async () => {
     if (!user) return;
-    const { data } = await supabase.from("profiles").select("*").eq("user_id", user.id).maybeSingle();
-    if (data) setProfile(data as UserProfile);
+    const { data } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (data && mountedRef.current) setProfile(data as UserProfile);
   };
 
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      setUser(session?.user ?? null);
+    // ── Safety timeout — loading must resolve within 8 seconds no matter what ──
+    // Prevents users getting permanently stuck on the spinner
+    const safetyTimeout = setTimeout(() => {
+      if (mountedRef.current) {
+        console.warn("[AuthContext] Safety timeout — forcing loading=false");
+        setLoading(false);
+      }
+    }, 8000);
 
-      // Check must_change_password flag set by admin when creating the account
-      const mustChange = session?.user?.user_metadata?.must_change_password === true;
+    // ── Single source of truth: onAuthStateChange ─────────────────────────────
+    // In Supabase JS v2 this fires immediately (synchronously) with INITIAL_SESSION
+    // so we do NOT need getSession() — calling both causes a double-fetch race.
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, sess) => {
+      if (!mountedRef.current) return;
+
+      setSession(sess);
+      setUser(sess?.user ?? null);
+
+      const mustChange = sess?.user?.user_metadata?.must_change_password === true;
       setMustChangePassword(mustChange);
 
-      if (session?.user) {
+      if (sess?.user) {
         setLoading(true);
-        fetchUserData(session.user.id, true);
+        fetchUserData(sess.user.id);
       } else {
+        // Signed out — clear everything immediately
+        fetchingRef.current = null;
         setRoles([]);
         setProfile(null);
         setMustChangePassword(false);
@@ -89,25 +136,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     });
 
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
+    return () => {
+      clearTimeout(safetyTimeout);
+      subscription.unsubscribe();
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-      const mustChange = session?.user?.user_metadata?.must_change_password === true;
-      setMustChangePassword(mustChange);
-
-      if (session?.user) {
-        fetchUserData(session.user.id, true);
-      } else {
-        setLoading(false);
-      }
-    });
-
-    return () => subscription.unsubscribe();
-  }, []);
-
-  const signUp = async (email: string, password: string, fullName: string) => {
-    return supabase.auth.signUp({
+  const signUp = async (email: string, password: string, fullName: string) =>
+    supabase.auth.signUp({
       email,
       password,
       options: {
@@ -115,21 +151,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         data: { full_name: fullName },
       },
     });
-  };
 
-  const signIn = async (email: string, password: string) => {
-    return supabase.auth.signInWithPassword({ email, password });
-  };
+  const signIn = async (email: string, password: string) =>
+    supabase.auth.signInWithPassword({ email, password });
 
   const signOut = async () => {
+    fetchingRef.current = null;
     await supabase.auth.signOut();
-    setUser(null); setSession(null); setRoles([]); setProfile(null); setMustChangePassword(false);
+    if (mountedRef.current) {
+      setUser(null);
+      setSession(null);
+      setRoles([]);
+      setProfile(null);
+      setMustChangePassword(false);
+    }
   };
 
   const hasRole = (role: string) => roles.includes(role);
 
   return (
-    <AuthContext.Provider value={{ user, session, loading, roles, profile, mustChangePassword, signUp, signIn, signOut, hasRole, refreshProfile }}>
+    <AuthContext.Provider
+      value={{
+        user, session, loading, roles, profile, mustChangePassword,
+        signUp, signIn, signOut, hasRole, refreshProfile,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );
