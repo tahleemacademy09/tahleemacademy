@@ -94,18 +94,19 @@ function normalizeHurufMuqattaat(text: string): string {
     .replace(/يا\s+سين/g,                     "يس")
     .replace(/طا\s+سين/g,                     "طس")
     .replace(/طا\s+ها/g,                      "طه")
-    // standalone letter names
-    .replace(/\bصاد\b/g,   "ص")
-    .replace(/\bقاف\b/g,   "ق")
-    .replace(/\bنون\b/g,   "ن")
-    .replace(/\bالف\b/g,   "ا")
-    .replace(/\bلام\b/g,   "ل")
-    .replace(/\bميم\b/g,   "م")
-    .replace(/\bرا\b/g,    "ر")
-    .replace(/\bسين\b/g,   "س")
-    .replace(/\bعين\b/g,   "ع")
-    .replace(/\bها\b/g,    "ه")
-    .replace(/\bكاف\b/g,   "ك");
+    // standalone letter names — use space-based boundaries (\b doesn't work for Arabic in JS)
+    .replace(/(^|\s)صاد(\s|$)/g,  "$1ص$2")
+    .replace(/(^|\s)قاف(\s|$)/g,  "$1ق$2")
+    .replace(/(^|\s)نون(\s|$)/g,  "$1ن$2")
+    .replace(/(^|\s)الف(\s|$)/g,  "$1ا$2")
+    .replace(/(^|\s)لام(\s|$)/g,  "$1ل$2")
+    .replace(/(^|\s)ميم(\s|$)/g,  "$1م$2")
+    .replace(/(^|\s)را(\s|$)/g,   "$1ر$2")
+    .replace(/(^|\s)سين(\s|$)/g,  "$1س$2")
+    .replace(/(^|\s)عين(\s|$)/g,  "$1ع$2")
+    .replace(/(^|\s)ها(\s|$)/g,   "$1ه$2")
+    .replace(/(^|\s)كاف(\s|$)/g,  "$1ك$2")
+    .replace(/(^|\s)حا(\s|$)/g,   "$1ح$2");
 }
 
 /* ── Arabic normalise ─────────────────────────────────────────── */
@@ -244,9 +245,10 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
   const verseRefs          = useRef<Record<number, HTMLDivElement | null>>({});
   
   /* ── VOICE ACTIVATION REFS ─────────────────────────────────── */
-  const lastVoiceTimeRef   = useRef<number>(0);
-  const silenceCheckRef    = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastVoiceTimeRef     = useRef<number>(0);
+  const silenceCheckRef      = useRef<ReturnType<typeof setInterval> | null>(null);
   const currentTranscriptRef = useRef("");
+  const finalAccRef          = useRef(""); // accumulates ALL final results within one rep
 
   const surah = SURAHS[surahNum - 1];
 
@@ -343,6 +345,7 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
     setMissingWords([]);
     setIsListening(false);
     currentTranscriptRef.current = "";
+    finalAccRef.current = "";
     lastVoiceTimeRef.current = 0;
     
     // Record count time for double-count prevention
@@ -411,6 +414,7 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
     setLiveText("");
     setIsListening(false);
     currentTranscriptRef.current = "";
+    finalAccRef.current = "";
   }, []);
 
   const startSR = useCallback(() => {
@@ -420,6 +424,7 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
     setMicError("");
     lastCountedText.current = "";
     currentTranscriptRef.current = "";
+    finalAccRef.current = "";
     lastVoiceTimeRef.current = Date.now();
     lastCountedTimeRef.current = 0;
     setIsListening(false);
@@ -442,17 +447,30 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
       const targets = step.indices.map(i => sessionAyahsRef.current[i]).filter(Boolean);
       if (!targets.length) return;
 
-      let bestTranscript = "";
-      let hasFinal = false;
+      let interimText = "";
+      let newFinalText = "";
 
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const result = event.results[i];
+        // pick the longest alternative
+        let bestAlt = "";
         for (let j = 0; j < result.length; j++) {
-          const text = result[j].transcript || "";
-          if (text.length > bestTranscript.length) bestTranscript = text;
+          if ((result[j].transcript || "").length > bestAlt.length) bestAlt = result[j].transcript;
         }
-        if (result.isFinal) hasFinal = true;
+        if (result.isFinal) {
+          newFinalText += " " + bestAlt;
+        } else {
+          interimText += " " + bestAlt;
+        }
       }
+
+      // Accumulate finals so pausing between verses doesn't lose earlier text
+      if (newFinalText.trim()) {
+        finalAccRef.current = (finalAccRef.current + " " + newFinalText).trim();
+      }
+
+      // Full transcript = everything final so far + current interim
+      const bestTranscript = (finalAccRef.current + " " + interimText).trim();
 
       if (!bestTranscript.trim()) return;
       
