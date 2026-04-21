@@ -70,25 +70,42 @@ function toAr(n: number) {
 }
 
 /* ── Huruf Muqatta'at normaliser ──────────────────────────────────
-   Web Speech API spells out letter names when it hears muqatta'at:
-   "ألف لام ميم" → "الم",  "يا سين" → "يس", etc.
-   Apply to transcript BEFORE scoring so الم matches الم.            */
+   Web Speech API spells out letter names when it hears muqatta'at.
+   ASR outputs WITHOUT hamza on alif: "الف لام ميم" (not "ألف لام ميم").
+   We normalise alif variants FIRST, then match, so both forms collapse.  */
 function normalizeHurufMuqattaat(text: string): string {
-  return text
-    .replace(/ألف\s+لام\s+ميم\s+راء/g,  "المر")
-    .replace(/ألف\s+لام\s+ميم\s+صاد/g,  "المص")
-    .replace(/كاف\s+ها\s+يا\s+عين\s+صاد/g, "كهيعص")
-    .replace(/عين\s+سين\s+قاف/g,         "عسق")
-    .replace(/طا\s+سين\s+ميم/g,          "طسم")
-    .replace(/ألف\s+لام\s+ميم/g,         "الم")
-    .replace(/ألف\s+لام\s+راء/g,         "الر")
-    .replace(/حا\s+ميم/g,               "حم")
-    .replace(/يا\s+سين/g,               "يس")
-    .replace(/طا\s+سين/g,               "طس")
-    .replace(/طا\s+ها/g,                "طه")
-    .replace(/\bصاد\b/g,  "ص")
-    .replace(/\bقاف\b/g,  "ق")
-    .replace(/\bنون\b/g,  "ن");
+  // Step 1: flatten all alif variants so patterns only need "ا"
+  const t = text
+    .replace(/[أإآٱ]/g, "ا")
+    .replace(/[\u064B-\u065F\u0670]/g, ""); // strip diacritics early for matching
+
+  // Step 2: longest combos first to avoid partial matches
+  return t
+    .replace(/الف\s+لام\s+ميم\s+را/g,         "المر")
+    .replace(/الف\s+لام\s+ميم\s+صاد/g,        "المص")
+    .replace(/كاف\s+ها\s+يا\s+عين\s+صاد/g,    "كهيعص")
+    .replace(/عين\s+سين\s+قاف/g,              "عسق")
+    .replace(/طا\s+سين\s+ميم/g,               "طسم")
+    .replace(/حا\s+ميم\s+عين\s+سين\s+قاف/g,  "حمعسق")
+    .replace(/الف\s+لام\s+ميم/g,              "الم")
+    .replace(/الف\s+لام\s+را/g,               "الر")
+    .replace(/الف\s+لام\s+ميم\b/g,            "الم")
+    .replace(/حا\s+ميم/g,                     "حم")
+    .replace(/يا\s+سين/g,                     "يس")
+    .replace(/طا\s+سين/g,                     "طس")
+    .replace(/طا\s+ها/g,                      "طه")
+    // standalone letter names
+    .replace(/\bصاد\b/g,   "ص")
+    .replace(/\bقاف\b/g,   "ق")
+    .replace(/\bنون\b/g,   "ن")
+    .replace(/\bالف\b/g,   "ا")
+    .replace(/\bلام\b/g,   "ل")
+    .replace(/\bميم\b/g,   "م")
+    .replace(/\bرا\b/g,    "ر")
+    .replace(/\bسين\b/g,   "س")
+    .replace(/\bعين\b/g,   "ع")
+    .replace(/\bها\b/g,    "ه")
+    .replace(/\bكاف\b/g,   "ك");
 }
 
 /* ── Arabic normalise ─────────────────────────────────────────── */
@@ -344,13 +361,13 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
     }
   }, [saveSession]);
 
-  /* ── Check for silence (1.5s for strict matching) ──────────── */
+  /* ── Check for silence (600ms — fast reader friendly) ──────────── */
   const startSilenceChecker = useCallback(() => {
     if (silenceCheckRef.current) {
       clearInterval(silenceCheckRef.current);
     }
     
-    const silenceThreshold = 1500;
+    const silenceThreshold = 600;
     
     silenceCheckRef.current = setInterval(() => {
       const silenceDuration = Date.now() - lastVoiceTimeRef.current;
@@ -467,13 +484,13 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
         startSilenceChecker();
       }
 
-      // ✅ PREVENT DOUBLE-COUNTING
+      // ✅ Count as soon as complete — don't wait for isFinal (too slow for fast readers)
       const timeSinceLastCount = Date.now() - lastCountedTimeRef.current;
       const normText = norm(bestTranscript);
       
-      if (hasFinal && isComplete && 
+      if (isComplete && 
           normText !== lastCountedText.current && 
-          timeSinceLastCount > 200 &&
+          timeSinceLastCount > 500 &&
           repsDoneRef.current < totalRepsRef.current) {
         lastCountedText.current = normText;
         countOneRep();
