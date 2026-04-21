@@ -240,7 +240,22 @@ async function processSlot(
       `${subjectTitle} starts at ${time12}. ` +
       (threshold === 5 ? "Tap to join!" : "Get ready!");
 
-    // Insert in-app notification (bell icon)
+    // ── PHONE / SYSTEM NOTIFICATION FIRST (always fires regardless of DB) ────
+    // We mark locally immediately so the phone notification is guaranteed
+    // even if the DB insert below fails due to RLS or network issues.
+    showPhoneNotification({
+      title,
+      message,
+      url:          link,
+      tag:          `${slot.id}:${threshold}`,
+      minutes_left: minsDisplay,
+    });
+
+    markSentLocally(slot.id, threshold);
+
+    // ── IN-APP NOTIFICATION (bell icon) — best-effort ────────────────────────
+    // Students are allowed to insert their own notifications via the
+    // "Users can insert own notifications" RLS policy (see migration).
     const { error: insErr } = await supabase.from("notifications").insert({
       user_id: userId,
       title,
@@ -251,22 +266,11 @@ async function processSlot(
     });
 
     if (insErr) {
-      console.error("[useTimetableNotifications] insert error:", insErr.message);
-      continue;
+      // Log but do NOT bail — phone notification already fired above.
+      console.warn("[useTimetableNotifications] DB insert failed (bell icon will be missing):", insErr.message);
     }
 
-    // Show phone / system notification
-    showPhoneNotification({
-      title,
-      message,
-      url:          link,
-      tag:          `${slot.id}:${threshold}`,
-      minutes_left: minsDisplay,
-    });
-
-    // Server-side push — wakes the phone even when the app is fully closed
-    // Edge Function reads the push_subscriptions row saved above and calls
-    // the Web Push API directly so the phone receives it in the tray.
+    // ── Server-side push — wakes the phone even when app is fully closed ─────
     supabase.functions
       .invoke("send-class-reminder", {
         body: {
@@ -278,8 +282,6 @@ async function processSlot(
         },
       })
       .catch(() => {}); // silently ignore if Edge Function is not deployed yet
-
-    markSentLocally(slot.id, threshold);
   }
 }
 
