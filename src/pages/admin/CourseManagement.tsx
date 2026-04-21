@@ -541,7 +541,10 @@ export default function CourseManagement() {
   const subjectParam =  searchParams.get("subject") || null;
   const tabParam     = (searchParams.get("tab")     || "materials") as ContentTab;
 
-  const [view,       setViewState]      = useState<View>(viewParam);
+  // Always start on "courses" — the hydration effect below will restore
+  // the real view once it has fetched the course/subject objects.
+  // This prevents "undefined — Subjects" flash when refreshing on a deep URL.
+  const [view,       setViewState]      = useState<View>("courses");
   const [selCourse,  setSelCourseState] = useState<any>(null);
   const [selSubject, setSelSubjectState]= useState<any>(null);
   const [tab,        setTabState]       = useState<ContentTab>(tabParam);
@@ -762,8 +765,14 @@ export default function CourseManagement() {
   };
   const fCourses = sortList(courses.filter((c: any) => (lvlFilter === "all" || c.level === lvlFilter || c.level === "all") && (!search || c.title.toLowerCase().includes(search.toLowerCase()))));
   const fSubjects = subjects.filter((s: any) => {
-    // level can be "all", "beginner", "beginner,intermediate", etc.
-    const subjectLevels = s.level === "all" || !s.level ? ["beginner","intermediate","advanced"] : s.level.split(",").map((l: string) => l.trim());
+    // Prefer the TEXT[] `levels` array (set by SubjectManagement).
+    // Fall back to the legacy `level` string for older rows.
+    const subjectLevels: string[] =
+      Array.isArray(s.levels) && s.levels.length > 0
+        ? s.levels
+        : s.level === "all" || !s.level
+          ? ["beginner", "intermediate", "advanced"]
+          : s.level.split(",").map((l: string) => l.trim());
     const levelMatch = lvlFilter === "all" || subjectLevels.includes(lvlFilter);
     return levelMatch && (!search || s.title.toLowerCase().includes(search.toLowerCase()));
   });
