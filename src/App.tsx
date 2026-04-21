@@ -18,7 +18,7 @@ import NotFound from "@/pages/NotFound";
 import IdleWarningModal from "@/components/IdleWarningModal";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import { LiveClassProvider } from "@/contexts/LiveClassContext";
-import GlobalClassroomOverlay from "@/components/classroom/GlobalClassroomOverlay";
+const GlobalClassroomOverlay = lazy(() => import("./components/classroom/GlobalClassroomOverlay"));
 import AppNotifications from "@/components/AppNotifications";
 
 // ── Public pages ───────────────────────────────────────────────────────────
@@ -276,7 +276,9 @@ const App = () => (
                 </Routes>
               </Suspense>
             </ErrorBoundary>
-            <GlobalClassroomOverlay />
+            <Suspense fallback={null}>
+              <GlobalClassroomOverlay />
+            </Suspense>
             <AppNotifications />
             <IdleWarningModal />
             </LiveClassProvider>
