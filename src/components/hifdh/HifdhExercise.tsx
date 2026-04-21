@@ -1,12 +1,15 @@
 // src/components/hifdh/HifdhExercise.tsx
 // All-stages exercise: auto-progresses S1→S2→S3→S4→S5→S6 (one question per stage).
 // Voice evaluation uses Groq Whisper → Supabase edge function (same as مراجعة).
+// FIXES: persistence, no reveal answer, sticky instructions, mobile word chips
 import { useState, useCallback, useRef, useEffect } from "react";
 import { SURAHS, audioUrl, DEFAULT_RECITER } from "./surahData";
 import { supabase } from "@/integrations/supabase/client";
 
 const G = "#1a3d24"; const GM = "#276749"; const GOLD = "#b7791f";
 const LIGHT = "#f0fff4"; const BORDER = "#d4e8d4";
+
+const EXERCISE_KEY = "hifdh_exercise_v3";
 
 interface Ayah { numberInSurah: number; text: string; }
 interface Props { reciter?: string; }
@@ -18,7 +21,6 @@ function getMime() {
 }
 
 // ── Huruf Muqatta'at normaliser ────────────────────────────────────
-// Groq / Web Speech spells them out: "ألف لام ميم" → convert back to الم
 function normalizeHurufMuqattaat(text: string): string {
   return text
     .replace(/ألف\s+لام\s+ميم\s+راء/g,     "المر")
@@ -37,7 +39,6 @@ function normalizeHurufMuqattaat(text: string): string {
     .replace(/\bنون\b/g,  "ن");
 }
 
-// ── Transcription: Groq Whisper → Supabase edge (same as مراجعة) ──
 async function transcribeAudio(blob: Blob): Promise<string> {
   const groqKey = (import.meta as any).env?.VITE_GROQ_API_KEY;
   if (groqKey) {
@@ -59,7 +60,6 @@ async function transcribeAudio(blob: Blob): Promise<string> {
       }
     } catch { /* fall through */ }
   }
-  // Fallback: Supabase edge function
   try {
     const b64 = await new Promise<string>(resolve => {
       const reader = new FileReader();
@@ -73,7 +73,6 @@ async function transcribeAudio(blob: Blob): Promise<string> {
   } catch { return ""; }
 }
 
-// ── Arabic normalisation ─────────────────────────────────────────
 function norm(t: string) {
   return normalizeHurufMuqattaat(t)
     .replace(/[\u064B-\u065F\u0610-\u061A\u0670\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED]/g, "")
@@ -148,6 +147,16 @@ interface Question {
   answer: string[];
 }
 
+interface SavedSession {
+  surahNum: number;
+  startV: number;
+  endV: number;
+  started: boolean;
+  stageIdx: number;
+  stageResults: Array<"correct"|"wrong">;
+  question: Question | null;
+}
+
 function generateQ(stage: StageKey, pool: Ayah[], surahName: string): Question | null {
   const n = pool.length;
   if (n < 2) return null;
@@ -216,10 +225,17 @@ function generateQ(stage: StageKey, pool: Ayah[], surahName: string): Question |
 }
 
 export default function HifdhExercise({ reciter = DEFAULT_RECITER }: Props) {
-  const [surahNum, setSurahNum]         = useState(114);
-  const [startV, setStartV]             = useState(1);
-  const [endV, setEndV]                 = useState(6);
-  const [stageIdx, setStageIdx]         = useState(0);          // 0-5 → index into ALL_STAGES
+  /* ── Restore from localStorage ── */
+  const [surahNum, setSurahNum] = useState(() => {
+    try { const s = localStorage.getItem(EXERCISE_KEY); return s ? (JSON.parse(s).surahNum ?? 114) : 114; } catch { return 114; }
+  });
+  const [startV, setStartV] = useState(() => {
+    try { const s = localStorage.getItem(EXERCISE_KEY); return s ? (JSON.parse(s).startV ?? 1) : 1; } catch { return 1; }
+  });
+  const [endV, setEndV] = useState(() => {
+    try { const s = localStorage.getItem(EXERCISE_KEY); return s ? (JSON.parse(s).endV ?? 6) : 6; } catch { return 6; }
+  });
+  const [stageIdx, setStageIdx]         = useState(0);
   const [stageResults, setStageResults] = useState<Array<"correct"|"wrong">>([]);
   const [ayahs, setAyahs]               = useState<Ayah[]>([]);
   const [loading, setLoading]           = useState(false);
@@ -227,19 +243,27 @@ export default function HifdhExercise({ reciter = DEFAULT_RECITER }: Props) {
   const [started, setStarted]           = useState(false);
   const [finished, setFinished]         = useState(false);
   const [question, setQuestion]         = useState<Question | null>(null);
-  const [revealed, setRevealed]         = useState(false);
   const [noQError, setNoQError]         = useState(false);
   const [isPlaying, setIsPlaying]       = useState(false);
 
-  const [micState, setMicState]         = useState<"idle"|"recording"|"evaluating">("idle");
-  const [transcript, setTranscript]     = useState("");
-  const [evalScore, setEvalScore]       = useState<number|null>(null);
-  const [autoResult, setAutoResult]     = useState<"correct"|"wrong"|null>(null);
+  const [micState, setMicState]     = useState<"idle"|"recording"|"evaluating">("idle");
+  const [transcript, setTranscript] = useState("");
+  const [evalScore, setEvalScore]   = useState<number|null>(null);
+  const [autoResult, setAutoResult] = useState<"correct"|"wrong"|null>(null);
 
   const audioRef  = useRef<HTMLAudioElement | null>(null);
   const mrRef     = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const surah     = SURAHS[surahNum - 1];
+
+  /* ── Persist setup selection ── */
+  useEffect(() => {
+    try {
+      const prev = localStorage.getItem(EXERCISE_KEY);
+      const parsed = prev ? JSON.parse(prev) : {};
+      localStorage.setItem(EXERCISE_KEY, JSON.stringify({ ...parsed, surahNum, startV, endV }));
+    } catch {}
+  }, [surahNum, startV, endV]);
 
   const fetchAyahs = useCallback(async () => {
     setLoading(true); setFetchErr("");
@@ -260,7 +284,6 @@ export default function HifdhExercise({ reciter = DEFAULT_RECITER }: Props) {
 
   const selectedAyahs = ayahs.filter(a => a.numberInSurah >= startV && a.numberInSurah <= endV);
 
-  // ── Advance to next stage or finish ──────────────────────────────
   const advance = useCallback((result: "correct"|"wrong") => {
     const newResults = [...stageResults, result];
     setStageResults(newResults);
@@ -272,7 +295,7 @@ export default function HifdhExercise({ reciter = DEFAULT_RECITER }: Props) {
       const pool = ayahs.filter(a => a.numberInSurah >= startV && a.numberInSurah <= endV);
       const q    = generateQ(ALL_STAGES[nextIdx], pool, surah.name);
       if (!q) { setNoQError(true); return; }
-      setQuestion(q); setRevealed(false); stopAudio(); setNoQError(false); resetVoice();
+      setQuestion(q); stopAudio(); setNoQError(false); resetVoice();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stageIdx, stageResults, ayahs, startV, endV, surah.name]);
@@ -282,7 +305,7 @@ export default function HifdhExercise({ reciter = DEFAULT_RECITER }: Props) {
     const q    = generateQ(ALL_STAGES[0], pool, surah.name);
     if (!q) { setNoQError(true); return; }
     setStageIdx(0); setStageResults([]);
-    setQuestion(q); setRevealed(false); setNoQError(false);
+    setQuestion(q); setNoQError(false);
     setStarted(true); setFinished(false);
     stopAudio(); resetVoice();
   };
@@ -304,50 +327,45 @@ export default function HifdhExercise({ reciter = DEFAULT_RECITER }: Props) {
       const a2 = new Audio(fb); audioRef.current = a2;
       a2.play().catch(() => setIsPlaying(false));
       a2.onended = () => setIsPlaying(false);
+      a2.onerror = () => setIsPlaying(false);
     });
     audio.onended = () => setIsPlaying(false);
     audio.onerror = () => setIsPlaying(false);
   };
 
   const startRecording = async () => {
-    resetVoice();
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mime = getMime();
-      const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
+      const mime   = getMime();
+      const mr     = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
       chunksRef.current = [];
-      mr.ondataavailable = e => { if (e.data?.size) chunksRef.current.push(e.data); };
-      mr.onstop = () => {
+      mr.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+      mr.onstop = async () => {
         stream.getTracks().forEach(t => t.stop());
         const blob = new Blob(chunksRef.current, { type: mime || "audio/webm" });
+        if (blob.size < 1000) { setMicState("idle"); return; }
         setMicState("evaluating");
-        evalBlob(blob);
+        try {
+          const tx = await transcribeAudio(blob);
+          setTranscript(tx);
+          if (tx && question) {
+            const sc = scoreMatch(tx, question.answer);
+            setEvalScore(sc);
+            const result: "correct"|"wrong" = sc >= 55 ? "correct" : "wrong";
+            setAutoResult(result);
+            setTimeout(() => advance(result), 2500);
+          } else {
+            setMicState("idle");
+          }
+        } catch { setMicState("idle"); }
       };
-      mr.start(200); mrRef.current = mr; setMicState("recording");
-    } catch { alert("Mic access denied."); }
-  };
-
-  const stopRecording = () => { mrRef.current?.stop(); };
-
-  const evalBlob = async (blob: Blob) => {
-    if (!question) return;
-    try {
-      const tx = await transcribeAudio(blob);
-      if (tx) {
-        setTranscript(tx);
-        const cleanAnswers = question.answer.map(a => a.replace("← (complete verse)", "").trim());
-        const sc = scoreMatch(tx, cleanAnswers);
-        setEvalScore(sc);
-        const result: "correct"|"wrong" = sc >= 55 ? "correct" : "wrong";
-        setAutoResult(result);
-        setTimeout(() => advance(result), 2500);
-      } else {
-        setMicState("idle");
-      }
+      mrRef.current = mr;
+      mr.start(3000);
+      setMicState("recording");
     } catch { setMicState("idle"); }
   };
 
-  const markAnswer = (correct: boolean) => advance(correct ? "correct" : "wrong");
+  const stopRecording = () => { mrRef.current?.stop(); };
 
   const card = (ex?: React.CSSProperties): React.CSSProperties => ({
     background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 18,
@@ -356,12 +374,12 @@ export default function HifdhExercise({ reciter = DEFAULT_RECITER }: Props) {
 
   const canStart = !loading && selectedAyahs.length >= 2;
 
-  // ── FINISHED — summary of all 6 stages ───────────────────────────
+  // ── FINISHED ─────────────────────────────────────────────────────
   if (finished) {
     const correct = stageResults.filter(r => r === "correct").length;
     const pct = Math.round((correct / ALL_STAGES.length) * 100);
     return (
-      <div style={{ padding: "16px", display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ height: "100%", overflowY: "auto", padding: "16px", display: "flex", flexDirection: "column", gap: 14 }}>
         <div style={card({ padding: "28px 20px", textAlign: "center" })}>
           <div style={{ fontSize: 48, marginBottom: 8 }}>{pct >= 70 ? "🎉" : pct >= 50 ? "💪" : "📖"}</div>
           <div style={{ fontFamily: "'Amiri',serif", fontSize: 24, color: G, fontWeight: 700 }}>Exercise Complete!</div>
@@ -372,13 +390,10 @@ export default function HifdhExercise({ reciter = DEFAULT_RECITER }: Props) {
             <span style={{ fontSize: 12, color: G, fontWeight: 700 }}>📖 {surah.name} · Verses {startV}–{endV}</span>
           </div>
         </div>
-
         <div style={card({ padding: "14px 16px" })}>
           <div style={{ fontSize: 11, fontWeight: 700, color: "#7a9e88", letterSpacing: .5, marginBottom: 10 }}>STAGE RESULTS · نتائج المراحل</div>
           {ALL_STAGES.map((s, i) => {
-            const info = STAGE[s];
-            const r    = stageResults[i];
-            const ok   = r === "correct";
+            const info = STAGE[s]; const r = stageResults[i]; const ok = r === "correct";
             return (
               <div key={s} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 10, marginBottom: i < 5 ? 6 : 0, background: ok ? LIGHT : "#fff5f5", border: `1px solid ${ok ? BORDER : "#fca5a5"}` }}>
                 <div style={{ fontSize: 18 }}>{info.icon}</div>
@@ -391,7 +406,6 @@ export default function HifdhExercise({ reciter = DEFAULT_RECITER }: Props) {
             );
           })}
         </div>
-
         <button onClick={resetAll}
           style={{ padding: "15px 0", borderRadius: 14, border: "none", cursor: "pointer", background: `linear-gradient(135deg,${G},${GOLD})`, color: "#fff", fontSize: 15, fontWeight: 800 }}>
           🔁 Retry · إعادة المحاولة
@@ -403,7 +417,8 @@ export default function HifdhExercise({ reciter = DEFAULT_RECITER }: Props) {
   // ── SETUP ─────────────────────────────────────────────────────────
   if (!started) {
     return (
-      <div style={{ padding: "16px", display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ height: "100%", overflowY: "auto", padding: "16px", display: "flex", flexDirection: "column", gap: 14 }}>
+        <style>{`@import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Amiri:wght@400;700&display=swap');`}</style>
         <div style={{ borderRadius: 18, overflow: "hidden" }}>
           <div style={{ background: `linear-gradient(135deg,${G},${GOLD})`, padding: "22px 20px", textAlign: "center" }}>
             <div style={{ fontSize: 44, marginBottom: 10 }}>🎯</div>
@@ -412,7 +427,6 @@ export default function HifdhExercise({ reciter = DEFAULT_RECITER }: Props) {
           </div>
         </div>
 
-        {/* Stage overview — informational only, no selection */}
         <div style={card({ padding: "14px 16px" })}>
           <div style={{ fontSize: 11, fontWeight: 700, color: "#7a9e88", letterSpacing: .5, marginBottom: 8 }}>ALL 6 STAGES · جميع المراحل</div>
           <div style={{ padding: "9px 12px", borderRadius: 10, background: LIGHT, border: `1px solid ${BORDER}`, fontSize: 12, color: G, fontWeight: 600, marginBottom: 10 }}>
@@ -488,156 +502,167 @@ export default function HifdhExercise({ reciter = DEFAULT_RECITER }: Props) {
   const info  = STAGE[stage];
 
   // ── ACTIVE QUESTION ───────────────────────────────────────────────
+  // Layout: fixed header (stage nav + task instruction) + scrollable body
   return (
-    <div style={{ padding: "16px", display: "flex", flexDirection: "column", gap: 12 }}>
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Amiri:wght@400;700&display=swap');`}</style>
 
-      {/* Stage progress dots */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
-          {ALL_STAGES.map((s, i) => (
-            <div key={s} style={{
-              width: i === stageIdx ? 32 : 10, height: 10, borderRadius: 5, transition: "all .3s",
-              background: i < stageIdx
-                ? (stageResults[i] === "correct" ? GM : "#ef4444")
-                : i === stageIdx ? info.color : "#e5e7eb",
-              display: "flex", alignItems: "center", justifyContent: "center",
-            }}>
-              {i === stageIdx && <span style={{ fontSize: 8, color: "#fff", fontWeight: 900 }}>{s}</span>}
-            </div>
-          ))}
-          <span style={{ fontSize: 11, color: "#7a9e88", marginLeft: 4 }}>{stageIdx + 1} / 6</span>
-        </div>
-        <button onClick={resetAll}
-          style={{ fontSize: 11, padding: "5px 10px", borderRadius: 8, border: `1px solid ${BORDER}`, background: "#f8fafb", color: "#7a9e88", cursor: "pointer" }}>
-          ✕ End
-        </button>
-      </div>
-
-      {/* Stage badge */}
-      <div style={{ padding: "6px 12px", borderRadius: 10, background: info.bg, border: `1px solid ${info.border}`, alignSelf: "flex-start" }}>
-        <span style={{ fontSize: 12, fontWeight: 700, color: info.color }}>{info.icon} Stage {stage}: {info.title} · {info.titleAr}</span>
-      </div>
-
-      {/* Prompt */}
-      <div style={card({ padding: "18px 16px" })}>
-        <div style={{ fontSize: 11, fontWeight: 700, color: "#7a9e88", letterSpacing: .5, marginBottom: 10 }}>
-          {question.promptLabel.toUpperCase()}
-        </div>
-        <div style={{ direction: "rtl", fontFamily: "'Amiri Quran',serif", fontSize: 24, color: G, lineHeight: 2.1, textAlign: "right", padding: "10px 12px", borderRadius: 12, background: LIGHT, border: `1px solid ${BORDER}` }}>
-          {question.prompt}
-        </div>
-        <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
-          {isPlaying
-            ? <button onClick={stopAudio} style={{ flex: 1, padding: "9px 0", borderRadius: 10, border: "none", background: "#fee2e2", color: "#c0392b", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>⏹ Stop</button>
-            : <button onClick={playPrompt} style={{ flex: 1, padding: "9px 0", borderRadius: 10, border: `1px solid ${BORDER}`, background: "#f8fafb", color: G, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>🔊 Hear Prompt</button>
-          }
-          <button onClick={() => advance("wrong")}
-            style={{ padding: "9px 14px", borderRadius: 10, border: `1px solid ${BORDER}`, background: "#f8fafb", color: "#7a9e88", fontSize: 13, cursor: "pointer" }}>
-            Skip →
-          </button>
-        </div>
-      </div>
-
-      {/* Task description */}
-      <div style={{ padding: "12px 16px", borderRadius: 14, background: info.bg, border: `1px solid ${info.border}` }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: info.color }}>{question.answerLabel}</div>
-        <div style={{ fontSize: 11, color: "#7a9e88", marginTop: 3 }}>{info.desc}</div>
-      </div>
-
-      {/* Voice recitation */}
-      <div style={card({ padding: "14px 16px" })}>
-        <div style={{ fontSize: 11, fontWeight: 700, color: "#7a9e88", letterSpacing: .5, marginBottom: 10 }}>
-          🎙 RECITE ALOUD · اتلُ بصوتك
-        </div>
-
-        {micState === "idle" && (
-          <button onClick={startRecording}
-            style={{ width: "100%", padding: "12px 0", borderRadius: 12, border: "none",
-              background: `linear-gradient(135deg,${G},${GM})`, color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
-            🎙 Recite
-          </button>
-        )}
-
-        {micState === "recording" && (
-          <div style={{ textAlign: "center" }}>
-            <div style={{ display: "flex", gap: 3, justifyContent: "center", alignItems: "flex-end", height: 28, marginBottom: 8 }}>
-              {[8,14,10,20,12,18,8,15,22,9].map((h, i) => (
-                <div key={i} style={{ width: 4, height: h, borderRadius: 2, background: "#ef4444" }} />
-              ))}
-            </div>
-            <div style={{ fontSize: 12, color: "#ef4444", fontWeight: 700, marginBottom: 10 }}>Recording… recite clearly</div>
-            <button onClick={stopRecording}
-              style={{ padding: "10px 24px", borderRadius: 10, border: "none", background: "#fee2e2", color: "#c0392b", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
-              ⏹ Done
-            </button>
-          </div>
-        )}
-
-        {micState === "evaluating" && (
-          <div style={{ textAlign: "center", padding: "16px 0" }}>
-            <div style={{ fontSize: 13, color: GOLD, fontWeight: 700, marginBottom: 4 }}>⏳ Evaluating…</div>
-            <div style={{ fontSize: 11, color: "#7a9e88" }}>Comparing your recitation to the expected text</div>
-          </div>
-        )}
-
-        {evalScore !== null && autoResult && (
-          <div style={{ padding: "12px 14px", borderRadius: 12,
-            background: autoResult === "correct" ? LIGHT : "#fff5f5",
-            border: `1px solid ${autoResult === "correct" ? BORDER : "#fca5a5"}` }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-              <span style={{ fontSize: 14, fontWeight: 900, color: autoResult === "correct" ? GM : "#c0392b" }}>
-                {autoResult === "correct" ? "✓ Correct! Masha'Allah" : "✗ Needs more practice"}
-              </span>
-              <span style={{ fontSize: 18, fontWeight: 900, color: autoResult === "correct" ? GM : "#c0392b" }}>
-                {evalScore}%
-              </span>
-            </div>
-            {question.answer.map((ansText, ai) => {
-              const clean = ansText.replace("← (complete verse)", "").trim();
-              const diff  = diffWords(transcript || "", clean);
-              return (
-                <div key={ai} style={{ direction: "rtl", fontFamily: "'Amiri Quran','Amiri',serif", fontSize: 20, lineHeight: 2.2, textAlign: "right", background: "#f9fafb", borderRadius: 8, padding: "6px 10px", marginBottom: ai < question.answer.length - 1 ? 6 : 0 }}>
-                  {diff.map((d, wi) => (
-                    <span key={wi} style={{ color: d.hit ? "#166534" : "#c0392b", background: d.hit ? "#dcfce7" : "#fee2e2", borderRadius: 4, padding: "1px 3px", margin: "0 2px", fontWeight: d.hit ? 400 : 700 }}>{d.word}</span>
-                  ))}
-                </div>
-              );
-            })}
-            <div style={{ fontSize: 11, color: "#7a9e88", marginTop: 6, direction: "ltr" }}>
-              🟢 Said &nbsp;|&nbsp; 🔴 Missed — advancing in 2s…
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Manual reveal / self-grade */}
-      {!revealed && micState === "idle" && !autoResult ? (
-        <button onClick={() => setRevealed(true)}
-          style={{ padding: "14px 0", borderRadius: 14, border: `2px solid ${info.border}`, background: "#fafafa", color: G, fontSize: 14, fontWeight: 800, cursor: "pointer" }}>
-          👁 Reveal Answer · أظهر الإجابة
-        </button>
-      ) : revealed && !autoResult ? (
-        <>
-          <div style={card({ padding: "16px" })}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: "#7a9e88", letterSpacing: .5, marginBottom: 10 }}>ANSWER · الإجابة</div>
-            {question.answer.map((text, i) => (
-              <div key={i} style={{ direction: "rtl", fontFamily: "'Amiri Quran',serif", fontSize: 22, color: G, lineHeight: 2, textAlign: "right", padding: "8px 0", borderBottom: i < question.answer.length - 1 ? `1px dashed ${BORDER}` : "none" }}>
-                {text}
+      {/* ── FIXED HEADER: stage dots + instruction ── */}
+      <div style={{ flexShrink: 0, background: "#fff", borderBottom: `2px solid ${BORDER}`, padding: "10px 14px 0" }}>
+        {/* Stage dots + End */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+          <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
+            {ALL_STAGES.map((s, i) => (
+              <div key={s} style={{
+                width: i === stageIdx ? 32 : 10, height: 10, borderRadius: 5, transition: "all .3s",
+                background: i < stageIdx
+                  ? (stageResults[i] === "correct" ? GM : "#ef4444")
+                  : i === stageIdx ? info.color : "#e5e7eb",
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>
+                {i === stageIdx && <span style={{ fontSize: 8, color: "#fff", fontWeight: 900 }}>{s}</span>}
               </div>
             ))}
+            <span style={{ fontSize: 11, color: "#7a9e88", marginLeft: 4 }}>{stageIdx + 1} / 6</span>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            <button onClick={() => markAnswer(false)}
-              style={{ padding: "13px 0", borderRadius: 12, border: "none", background: "#fee2e2", color: "#c0392b", fontSize: 14, fontWeight: 800, cursor: "pointer" }}>
-              ✗ Wrong
-            </button>
-            <button onClick={() => markAnswer(true)}
-              style={{ padding: "13px 0", borderRadius: 12, border: `1px solid ${BORDER}`, background: LIGHT, color: GM, fontSize: 14, fontWeight: 800, cursor: "pointer" }}>
-              ✓ Correct
+          <button onClick={resetAll}
+            style={{ fontSize: 11, padding: "5px 10px", borderRadius: 8, border: `1px solid ${BORDER}`, background: "#f8fafb", color: "#7a9e88", cursor: "pointer" }}>
+            ✕ End
+          </button>
+        </div>
+
+        {/* Stage badge */}
+        <div style={{ padding: "5px 10px", borderRadius: 8, background: info.bg, border: `1px solid ${info.border}`, marginBottom: 8, display: "inline-block" }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: info.color }}>{info.icon} Stage {stage}: {info.title} · {info.titleAr}</span>
+        </div>
+
+        {/* ── TASK INSTRUCTION — always visible ── */}
+        <div style={{
+          padding: "10px 12px",
+          borderRadius: 12,
+          background: info.bg,
+          border: `1.5px solid ${info.border}`,
+          marginBottom: 10,
+        }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: info.color }}>{question.answerLabel}</div>
+          <div style={{ fontSize: 11, color: "#7a9e88", marginTop: 2 }}>{info.desc}</div>
+        </div>
+      </div>
+
+      {/* ── SCROLLABLE BODY ── */}
+      <div style={{ flex: 1, overflowY: "auto", padding: "12px 14px 28px", display: "flex", flexDirection: "column", gap: 12 }}>
+
+        {/* Prompt */}
+        <div style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 18, boxShadow: "0 2px 12px rgba(26,61,36,.07)", padding: "16px 14px" }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#7a9e88", letterSpacing: .5, marginBottom: 8 }}>
+            {question.promptLabel.toUpperCase()}
+          </div>
+          <div style={{
+            direction: "rtl", fontFamily: "'Amiri Quran',serif", fontSize: 24, color: G,
+            lineHeight: 2.1, textAlign: "right", padding: "10px 12px",
+            borderRadius: 12, background: LIGHT, border: `1px solid ${BORDER}`,
+          }}>
+            {question.prompt}
+          </div>
+          <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
+            {isPlaying
+              ? <button onClick={stopAudio} style={{ flex: 1, padding: "9px 0", borderRadius: 10, border: "none", background: "#fee2e2", color: "#c0392b", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>⏹ Stop</button>
+              : <button onClick={playPrompt} style={{ flex: 1, padding: "9px 0", borderRadius: 10, border: `1px solid ${BORDER}`, background: "#f8fafb", color: G, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>🔊 Hear Prompt</button>
+            }
+            <button onClick={() => advance("wrong")}
+              style={{ padding: "9px 14px", borderRadius: 10, border: `1px solid ${BORDER}`, background: "#f8fafb", color: "#7a9e88", fontSize: 13, cursor: "pointer" }}>
+              Skip →
             </button>
           </div>
-        </>
-      ) : null}
+        </div>
+
+        {/* Voice recitation */}
+        <div style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 18, boxShadow: "0 2px 12px rgba(26,61,36,.07)", padding: "14px 14px" }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#7a9e88", letterSpacing: .5, marginBottom: 10 }}>
+            🎙 RECITE ALOUD · اتلُ بصوتك
+          </div>
+
+          {micState === "idle" && (
+            <button onClick={startRecording}
+              style={{ width: "100%", padding: "14px 0", borderRadius: 12, border: "none",
+                background: `linear-gradient(135deg,${G},${GM})`, color: "#fff", fontSize: 15, fontWeight: 700, cursor: "pointer" }}>
+              🎙 Recite
+            </button>
+          )}
+
+          {micState === "recording" && (
+            <div style={{ textAlign: "center" }}>
+              <div style={{ display: "flex", gap: 3, justifyContent: "center", alignItems: "flex-end", height: 28, marginBottom: 8 }}>
+                {[8,14,10,20,12,18,8,15,22,9].map((h, i) => (
+                  <div key={i} style={{ width: 4, height: h, borderRadius: 2, background: "#ef4444" }} />
+                ))}
+              </div>
+              <div style={{ fontSize: 12, color: "#ef4444", fontWeight: 700, marginBottom: 10 }}>Recording… recite clearly</div>
+              <button onClick={stopRecording}
+                style={{ padding: "10px 32px", borderRadius: 10, border: "none", background: "#fee2e2", color: "#c0392b", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
+                ⏹ Done
+              </button>
+            </div>
+          )}
+
+          {micState === "evaluating" && (
+            <div style={{ textAlign: "center", padding: "16px 0" }}>
+              <div style={{ fontSize: 13, color: GOLD, fontWeight: 700, marginBottom: 4 }}>⏳ Evaluating…</div>
+              <div style={{ fontSize: 11, color: "#7a9e88" }}>Comparing your recitation to the expected text</div>
+            </div>
+          )}
+
+          {evalScore !== null && autoResult && (
+            <div style={{ padding: "12px 14px", borderRadius: 12,
+              background: autoResult === "correct" ? LIGHT : "#fff5f5",
+              border: `1px solid ${autoResult === "correct" ? BORDER : "#fca5a5"}` }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                <span style={{ fontSize: 14, fontWeight: 900, color: autoResult === "correct" ? GM : "#c0392b" }}>
+                  {autoResult === "correct" ? "✓ Correct! Masha'Allah" : "✗ Needs more practice"}
+                </span>
+                <span style={{ fontSize: 18, fontWeight: 900, color: autoResult === "correct" ? GM : "#c0392b" }}>
+                  {evalScore}%
+                </span>
+              </div>
+              {question.answer.map((ansText, ai) => {
+                const clean = ansText.replace("← (complete verse)", "").trim();
+                const diff  = diffWords(transcript || "", clean);
+                return (
+                  <div key={ai} style={{
+                    direction: "rtl",
+                    display: "flex",
+                    flexWrap: "wrap",
+                    gap: "4px 3px",
+                    justifyContent: "flex-end",
+                    background: "#f9fafb",
+                    borderRadius: 10,
+                    padding: "10px 12px",
+                    marginBottom: ai < question.answer.length - 1 ? 8 : 0,
+                  }}>
+                    {diff.map((d, wi) => (
+                      <span key={wi} style={{
+                        fontFamily: "'Amiri Quran','Amiri',serif",
+                        fontSize: 19,
+                        lineHeight: 2,
+                        color: d.hit ? "#166534" : "#c0392b",
+                        background: d.hit ? "#dcfce7" : "#fee2e2",
+                        borderRadius: 6,
+                        padding: "1px 6px",
+                        fontWeight: d.hit ? 400 : 700,
+                        display: "inline-block",
+                      }}>{d.word}</span>
+                    ))}
+                  </div>
+                );
+              })}
+              <div style={{ fontSize: 11, color: "#7a9e88", marginTop: 8, direction: "ltr" }}>
+                🟢 Said &nbsp;|&nbsp; 🔴 Missed — advancing in 2s…
+              </div>
+            </div>
+          )}
+        </div>
+
+      </div>
     </div>
   );
 }
