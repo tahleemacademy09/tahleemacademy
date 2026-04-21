@@ -1044,17 +1044,29 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
           <div style={{
             margin: "10px auto 6px",
             maxWidth: 520,
-            padding: "10px 16px",
+            padding: "10px 14px",
             borderRadius: 10,
             background: "#f0fff4",
             border: `2px solid ${BORDER}`,
-            fontSize: 18,
-            direction: "rtl",            fontFamily: "'Amiri',serif",
-            color: G,
-            textAlign: "center",
+            direction: "rtl",
+            display: "flex",
+            flexWrap: "wrap" as const,
+            gap: "4px 6px",
+            justifyContent: "flex-end",
             animation: "slideIn .25s ease",
           }}>
-            {liveText}
+            {liveText.trim().split(/\s+/).filter(Boolean).map((word, wi) => (
+              <span key={wi} style={{
+                fontFamily: "'Amiri',serif",
+                fontSize: 19,
+                color: G,
+                background: "rgba(26,61,36,0.07)",
+                borderRadius: 6,
+                padding: "2px 8px",
+                lineHeight: 2,
+                display: "inline-block",
+              }}>{word}</span>
+            ))}
           </div>
         )}
 
@@ -1187,16 +1199,27 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
         <div style={{ display: "flex", gap: 8, padding: "8px 10px" }}>
           {!isOverview && (
             micActive ? (
-              <button onClick={stopSR}
-                style={{ flex: 1, padding: "11px 0", borderRadius: 10, border: "none",
-                  background: "#fee2e2", color: "#c0392b", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
-                ⏹ Stop Recording
-              </button>
+              <>
+                <button onClick={stopSR}
+                  style={{ flex: 1, padding: "11px 0", borderRadius: 10, border: "none",
+                    background: "#fee2e2", color: "#c0392b", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                  ⏹ Stop
+                </button>
+                <button
+                  onClick={() => { stopSR(); setTimeout(() => startSR(), 300); }}
+                  title="Restart recording"
+                  style={{ width: 44, height: 44, borderRadius: 10, border: `1px solid ${BORDER}`,
+                    background: "#f8fafb", color: "#7a9e88", fontSize: 18, cursor: "pointer",
+                    display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  ↺
+                </button>
+              </>
             ) : (
               <button onClick={startSR}
                 style={{ flex: 1, padding: "11px 0", borderRadius: 10, border: "none",
                   background: `linear-gradient(135deg,${G},${GM})`, color: "#fff",
-                  fontSize: 13, fontWeight: 700, cursor: "pointer" }}>                🎙 Start Recording
+                  fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                🎙 Start Recording
               </button>
             )
           )}
