@@ -69,9 +69,31 @@ function toAr(n: number) {
   return String(n).replace(/[0-9]/g, d => "٠١٢٣٤٥٦٧٨٩"[+d]);
 }
 
+/* ── Huruf Muqatta'at normaliser ──────────────────────────────────
+   Web Speech API spells out letter names when it hears muqatta'at:
+   "ألف لام ميم" → "الم",  "يا سين" → "يس", etc.
+   Apply to transcript BEFORE scoring so الم matches الم.            */
+function normalizeHurufMuqattaat(text: string): string {
+  return text
+    .replace(/ألف\s+لام\s+ميم\s+راء/g,  "المر")
+    .replace(/ألف\s+لام\s+ميم\s+صاد/g,  "المص")
+    .replace(/كاف\s+ها\s+يا\s+عين\s+صاد/g, "كهيعص")
+    .replace(/عين\s+سين\s+قاف/g,         "عسق")
+    .replace(/طا\s+سين\s+ميم/g,          "طسم")
+    .replace(/ألف\s+لام\s+ميم/g,         "الم")
+    .replace(/ألف\s+لام\s+راء/g,         "الر")
+    .replace(/حا\s+ميم/g,               "حم")
+    .replace(/يا\s+سين/g,               "يس")
+    .replace(/طا\s+سين/g,               "طس")
+    .replace(/طا\s+ها/g,                "طه")
+    .replace(/\bصاد\b/g,  "ص")
+    .replace(/\bقاف\b/g,  "ق")
+    .replace(/\bنون\b/g,  "ن");
+}
+
 /* ── Arabic normalise ─────────────────────────────────────────── */
 function norm(text: string): string {
-  return text
+  return normalizeHurufMuqattaat(text)
     .replace(/[\u064B-\u065F\u0670]/g, "")
     .replace(/[\u0640\u061B\u060C\u061F\u06D4]/g, "")
     .replace(/[إأآا]/g, "ا")
