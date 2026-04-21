@@ -18,4 +18,26 @@ export default defineConfig(({ mode }) => ({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // LiveKit WebRTC — heavy, only needed inside classroom sessions
+          "vendor-livekit": [
+            "livekit-client",
+            "@livekit/components-react",
+            "@livekit/components-styles",
+          ],
+          // Framer Motion — animation library, not needed at first paint
+          "vendor-motion": ["framer-motion"],
+          // Recharts — charting, only used in dashboards
+          "vendor-charts": ["recharts"],
+          // PDF / spreadsheet utilities — only used in specific admin pages
+          "vendor-docs": ["jspdf", "xlsx"],
+          // Supabase client — shared but large, isolate for long-term caching
+          "vendor-supabase": ["@supabase/supabase-js"],
+        },
+      },
+    },
+  },
 }));
