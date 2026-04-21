@@ -541,10 +541,9 @@ export default function CourseManagement() {
   const subjectParam =  searchParams.get("subject") || null;
   const tabParam     = (searchParams.get("tab")     || "materials") as ContentTab;
 
-  // Always start on "courses" — the hydration effect below will restore
-  // the real view once it has fetched the course/subject objects.
-  // This prevents "undefined — Subjects" flash when refreshing on a deep URL.
-  const [view,       setViewState]      = useState<View>("courses");
+  // Initialize view from the URL so deep links / refreshes land on the right view.
+  // selCourse is hydrated asynchronously below — heading guards against null.
+  const [view,       setViewState]      = useState<View>(viewParam);
   const [selCourse,  setSelCourseState] = useState<any>(null);
   const [selSubject, setSelSubjectState]= useState<any>(null);
   const [tab,        setTabState]       = useState<ContentTab>(tabParam);
@@ -625,6 +624,12 @@ export default function CourseManagement() {
       }
 
       if (course)   setSelCourseState(course);
+      else if (restoreView === "subjects") {
+        // Course not found — fall back to courses list instead of broken subjects view
+        setViewState("courses");
+        setSearchParams(prev => { const p = new URLSearchParams(prev); p.set("view","courses"); p.delete("course"); p.delete("subject"); return p; }, { replace: true });
+        return;
+      }
       if (subject)  setSelSubjectState(subject);
       setViewState(restoreView);
       setTabState(restoreTab);
@@ -807,7 +812,13 @@ export default function CourseManagement() {
             {selSubject && <><ChevronRight size={11} /><span style={{ color: "#111" }}>{selSubject.title}</span></>}
           </div>
           <h1 style={{ fontSize: 16, fontWeight: 800, color: "#111", margin: 0 }}>
-            {view === "courses" ? "Courses" : view === "subjects" ? `${selCourse?.title} — Subjects` : selSubject?.title}
+            {view === "courses"
+              ? "Courses"
+              : view === "subjects"
+                ? selCourse
+                  ? `${selCourse.title} — Subjects`
+                  : "Loading…"
+                : selSubject?.title ?? "Loading…"}
           </h1>
         </div>
         <button type="button" onClick={doAdd} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 16px", borderRadius: 10, border: "none", background: G, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
