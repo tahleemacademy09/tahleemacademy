@@ -1,6 +1,8 @@
 // src/hooks/useTasjeel.ts
-// Tasjeel (registration pipeline) hook — complete 7-step flow:
-// enrollment → payment → onboarding → exam → recitation → schedule_session → level_assignment → completed
+// Fixed: hook now waits for auth to finish loading before resolving its own
+// loading state. Previously when user was null (auth still initialising),
+// it set loading=false and currentStep=null. Since null !== "completed",
+// the StudentDashboard gate redirected completed students to /student/awaiting-level.
 
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
@@ -13,7 +15,7 @@ export const TASJEEL_ROUTES: Record<string, string> = {
   onboarding:       "/onboarding",
   exam:             "/student/entrance-exam",
   recitation:       "/student/recitation-test",
-  schedule_session: "/student/recitation-test",   // same page, stage 3
+  schedule_session: "/student/recitation-test",
   level_assignment: "/student/awaiting-level",
   completed:        "/student",
 };
@@ -46,7 +48,7 @@ export async function initializeTasjeel(userId: string, registrationEnabled = tr
     .eq("user_id", userId)
     .maybeSingle();
 
-  if (existing) return; // already initialized
+  if (existing) return;
 
   const step = registrationEnabled ? "enrollment" : "completed";
   const now  = new Date().toISOString();
@@ -62,27 +64,46 @@ export async function initializeTasjeel(userId: string, registrationEnabled = tr
 
 // ── useTasjeel hook ───────────────────────────────────────────────────────
 export function useTasjeel() {
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
+
+  // Keep loading=true until both auth AND the tasjeel fetch are done.
+  // This prevents the StudentDashboard gate from firing with currentStep=null.
   const [currentStep, setCurrentStep] = useState<string | null>(null);
   const [loading,     setLoading]     = useState(true);
 
   const fetchStep = useCallback(async () => {
-    if (!user) { setCurrentStep(null); setLoading(false); return; }
+    // Don't resolve until auth itself has finished initialising
+    if (authLoading) return;
+
+    if (!user) {
+      // Auth is done and there is no user — nothing to fetch
+      setCurrentStep(null);
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
     try {
       const { data } = await supabase
         .from("tasjeel_progress")
         .select("current_step")
         .eq("user_id", user.id)
         .maybeSingle();
+
+      // If no row exists, treat as completed (safety fallback for edge cases
+      // e.g. admin-created students without a pipeline row)
       setCurrentStep(data?.current_step ?? "completed");
     } catch {
+      // Network error — default to completed so users aren't locked out
       setCurrentStep("completed");
     } finally {
       setLoading(false);
     }
-  }, [user]);
+  }, [user, authLoading]);
 
-  useEffect(() => { fetchStep(); }, [fetchStep]);
+  useEffect(() => {
+    fetchStep();
+  }, [fetchStep]);
 
   const advanceStep = useCallback(async (nextStep: string) => {
     if (!user) return;
