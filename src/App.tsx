@@ -276,7 +276,6 @@ const App = () => (
                 </Routes>
               </Suspense>
             </ErrorBoundary>
-            <AppNotifications />
             <GlobalClassroomOverlay />
             <AppNotifications />
             <IdleWarningModal />
