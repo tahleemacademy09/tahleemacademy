@@ -338,9 +338,23 @@ export default function GlobalClassroomOverlay() {
   if (!inCall || !activeSubject) return null;
 
   return (
+    /*
+     * FIX: use visibility + pointerEvents instead of display:none.
+     *
+     * display:none completely removes the element from the render tree,
+     * which also hides its fixed-position children (e.g. MaterialsViewer's
+     * ViewerPanel, zIndex 9000) — causing a white/blank screen when you
+     * minimize while reading a material.
+     *
+     * visibility:hidden hides the classroom but allows any fixed child
+     * that explicitly sets visibility:visible (ViewerPanel does this when
+     * isActive=true) to remain visible on screen.
+     */
     <div style={{
-      position: "fixed", inset: 0, zIndex: 8000,
-      display: minimized ? "none" : "flex", flexDirection: "column",
+      position:      "fixed", inset: 0, zIndex: 8000,
+      display:       "flex", flexDirection: "column",
+      visibility:    minimized ? "hidden" : "visible",
+      pointerEvents: minimized ? "none"   : "all",
     }}>
       <ClassroomView
         subject={activeSubject}
