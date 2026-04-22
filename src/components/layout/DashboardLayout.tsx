@@ -67,7 +67,7 @@ const PaymentLockScreen = () => {
         padding: "14px 20px", width: "100%", maxWidth: 320,
         display: "flex", flexDirection: "column", gap: 8,
       }}>
-        {["Courses & Lessons","Timetable","Al-Murājaʿah (Revision)","Al-Ḥifẓ Tracker","Exams & Transcripts","Al-Majlis Chat","Live Classes"].map(f => (
+        {["Courses & Lessons","Timetable","Al-Murājaʿah (Revision)","Al-Ḥifẓ Tracker","Exams & Transcripts","Al-Majlis Chat","Live Classes","Al-Musābaqah"].map(f => (
           <div key={f} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#e53935" }}>
             <span style={{ fontSize: 15 }}>🔒</span>
             <span>{f}</span>
@@ -124,6 +124,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     "/student/live-classes",
     "/student/exams",
     "/student/transcripts",
+    "/student/musabaqah",
   ]);
 
   const LOCKED_ROUTES = new Set([
@@ -136,6 +137,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     "/student/live-classes",
     "/student/exams",
     "/student/transcripts",
+    "/student/musabaqah",
   ]);
 
   const isMajlis = location.pathname === "/student/majlis";  if (isMajlis) return <div style={{ position:"fixed", inset:0, zIndex:40 }}><Outlet /></div>;
@@ -149,9 +151,9 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     | { type:"group"; key:string; icon:any; label:string; children:{to:string;icon:any;label:string}[] };
 
   const studentNav: NavItem[] = [
-    { type:"link", to:"/student",          icon:LayoutDashboard, label:t("Dashboard","الصفحة الرئيسية") },
-    { type:"link", to:"/student/courses",  icon:BookOpenCheck,   label:t("At-Ta'allum","التعلّم") },
-    { type:"link", to:"/student/timetable", icon:Calendar,       label:t("Jadwal (Timetable)","الجدول الدراسي") },
+    { type:"link", to:"/student",           icon:LayoutDashboard, label:t("Dashboard","الصفحة الرئيسية") },
+    { type:"link", to:"/student/courses",   icon:BookOpenCheck,   label:t("At-Ta'allum","التعلّم") },
+    { type:"link", to:"/student/timetable", icon:Calendar,        label:t("Jadwal (Timetable)","الجدول الدراسي") },
     { type:"group", key:"revision", icon:RefreshCw, label:t("Al-Murāja'ah","المراجعة"), children:[
       { to:"/student/revision", icon:BookMarked, label:t("At-Tadārus","التدارس") },
       { to:"/student/hifdh",    icon:Headphones, label:t("Al-Ḥifẓ","الحفظ") },
@@ -160,9 +162,10 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
       { to:"/student/exams",       icon:ClipboardList, label:t("Ikhtibārātī","اختباراتي") },
       { to:"/student/transcripts", icon:GraduationCap, label:t("As-Sijill","السجل الأكاديمي") },
     ]},
-    { type:"link", to:"/student/majlis",  icon:MessageCircle, label:t("Al-Majlis","المجلس") },
-    { type:"link", to:"/live-quiz",       icon:Trophy,        label:t("Al-Musābaqah 🏆","المسابقة 🏆") },
-    { type:"link", to:"/student/profile", icon:UserCircle,    label:t("Al-I'dādāt","الإعدادات") },
+    { type:"link", to:"/student/majlis",     icon:MessageCircle, label:t("Al-Majlis","المجلس") },
+    // ── Musabaqah (updated route) ──────────────────────────────
+    { type:"link", to:"/student/musabaqah",  icon:Trophy,        label:t("Al-Musābaqah 🏆","المسابقة 🏆") },
+    { type:"link", to:"/student/profile",    icon:UserCircle,    label:t("Al-I'dādāt","الإعدادات") },
   ];
 
   // ── Admin nav — fully organized, every page linked ──────────
@@ -231,8 +234,8 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
       { to:"/admin/notifications",     icon:Bell,          label:t("Notifications","الإشعارات") },
     ]},
 
-    // 9 ── Al-Musābaqah ──────────────────────────────────────────
-    { type:"link", to:"/live-quiz", icon:Trophy, label:t("Al-Musābaqah 🏆","المسابقة 🏆") },
+    // 9 ── Al-Musābaqah (updated route) ─────────────────────────
+    { type:"link", to:"/admin/musabaqah", icon:Trophy, label:t("Al-Musābaqah 🏆","المسابقة 🏆") },
   ];
 
   // ── Notification badge count for top bar ────────────────────
