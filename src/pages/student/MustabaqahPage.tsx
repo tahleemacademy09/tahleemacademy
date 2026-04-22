@@ -1,26 +1,29 @@
 /*
   MustabaqahPage.tsx — Tahleem Academy
-  ══════════════════════════════════════════════════════════════════════════════
-  Virtual Qur'an Musabaqah (Recitation Competition) System
-  ──────────────────────────────────────────────────────────────────────────
-  • Admin / Teacher: create competitions, manage queue, call participants,
-    judge recitations, override scores, ring bell, download results
-  • Student: join queue, get called when it's their turn, recite with mic,
-    see AI + judge scores, view live leaderboard
+  ══════════════════════════════════════════════════════════════════════
+  Al-Musābaqah — Professional Live Qur'an Recitation Competition Arena
+  ══════════════════════════════════════════════════════════════════════
 
-  Supabase tables required:  musabaqah_competitions, musabaqah_participants,
-                             musabaqah_attempts  (see musabaqah_db.sql)
+  Architecture
+  ─────────────
+  • Judge/Admin:  Create competition → open registration → start →
+                  call participants one by one → ring bell for errors →
+                  signal stop → score → advance → view full results.
+  • Participant:  Join with room code → await call → unmute mic →
+                  recite → receive bell/stop signals → see score.
+  • Proctoring:   Moderator panel with camera-on/off status + proctoring
+                  flag per participant.
 
-  Supabase Realtime:         channel `musabaqah:{competition_id}`
-                             events: CALLED | STATUS_CHANGE | SCORE_UPDATE
+  Supabase tables:  musabaqah_competitions, musabaqah_participants,
+                    musabaqah_attempts  (see SQL block at bottom of file)
 
-  Audio:                     MediaRecorder → Supabase Storage bucket "musabaqah-audio"
-  Speech-to-text:            Web Speech API (ar-SA) — best on Android Chrome / Kiwi
-  Text compare:              Word-by-word after Arabic normalisation (strips tashkeel)
+  Realtime channel: `musabaqah:{competition_id}` (Supabase Broadcast)
+  Events:  CALLED | BELL | STOP | SCORE_SUBMITTED | STAGE_CHANGE |
+           COMPETITION_END | PROCTOR_FLAG
 
-  Colors:  Dark Green #0f2d1f | Gold #c9a84c  (Tahleem brand)
-  Fonts:   Playfair Display / Cairo / Amiri / Scheherazade New
-══════════════════════════════════════════════════════════════════════════════
+  Colors:  #0f2d1f green · #c9a84c gold  (Tahleem brand)
+  Fonts:   Cairo, Amiri (Arabic), Playfair Display (display)
+══════════════════════════════════════════════════════════════════════
 */
 
 import { useState, useEffect, useRef, useCallback } from "react";
@@ -29,80 +32,122 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import {
-  Mic, MicOff, Trophy, Users, Plus, Bell,
-  Square, Play, SkipForward, BookOpen, Star,
-  Crown, RotateCcw, Clock, Shuffle, CheckCircle,
-  XCircle, AlertCircle, Radio, Award, PhoneCall,
-  Volume2, Pause, X, Zap, Edit3, Download,
-  ChevronRight, Eye, EyeOff, RefreshCw, UserCheck,
+  Mic, MicOff, Video, VideoOff, Bell, Square, Play, SkipForward,
+  Trophy, Users, Plus, Crown, Clock, Star, BookOpen, AlertTriangle,
+  CheckCircle, XCircle, RefreshCw, Download, ChevronRight, Eye,
+  EyeOff, Shuffle, Award, Radio, Volume2, Flag, ArrowRight,
+  LogIn, Settings, StopCircle, Medal, Loader2, PhoneCall,
+  RotateCcw, Hash, LayoutGrid, List,
 } from "lucide-react";
 
-/* ── Brand colors ─────────────────────────────────────────────────────── */
+/* ══════════════════════════════════════════════════════════════════
+   BRAND
+══════════════════════════════════════════════════════════════════ */
 const G    = "#0f2d1f";
 const GM   = "#163d28";
+const GD   = "#0a1f12";
 const GOLD = "#c9a84c";
+const GOLDD= "#a8843a";
+const RED  = "#ef4444";
+const GREEN = "#22c55e";
 
-/* ══════════════════════════════════════════════════════════════════════
-   TYPES
-══════════════════════════════════════════════════════════════════════ */
-interface Competition {
-  id: string;
-  title: string;
-  description?: string;
-  competition_type: "juz30" | "full_quran" | "custom";
-  scope_config: { surah_ids?: number[]; juz_numbers?: number[] };
-  time_limit_seconds: number;
-  max_rounds: number;
-  status: "draft" | "open" | "active" | "paused" | "completed";
-  current_round: number;
-  current_participant_id?: string;
-  created_by: string;
-  created_at: string;
-}
-interface Participant {
-  id: string;
-  competition_id: string;
-  user_id?: string;
-  participant_name: string;
-  participant_level: string;
-  queue_position: number;
-  status: "waiting" | "called" | "reciting" | "completed" | "eliminated" | "absent";
-  current_round: number;
-  total_score: number;
-  rounds_completed: number;
-}
-interface Attempt {
-  id: string;
-  competition_id: string;
-  participant_id: string;
-  round_number: number;
-  surah_number: number;
-  surah_name: string;
-  surah_name_ar: string;
-  ayah_start: number;
-  ayah_end: number;
-  assigned_text: string;
-  transcribed_text?: string;
-  audio_url?: string;
-  accuracy_score?: number;
-  fluency_score?: number;
-  tajweed_score?: number;
-  total_score?: number;
-  mistakes_count?: number;
-  word_results?: WordResult[];
-  judge_score?: number;
-  judge_comment?: string;
-  status: "pending" | "assigned" | "reciting" | "submitted" | "judged";
-}
-interface WordResult {
-  word: string;
-  original: string;
-  status: "correct" | "mistake" | "missing";
-}
+/* ══════════════════════════════════════════════════════════════════
+   WEB AUDIO — Sound System
+══════════════════════════════════════════════════════════════════ */
+let _audioCtx: AudioContext | null = null;
+const getAudioCtx = () => {
+  if (!_audioCtx) _audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+  if (_audioCtx.state === "suspended") _audioCtx.resume();
+  return _audioCtx;
+};
 
-/* ══════════════════════════════════════════════════════════════════════
-   ALL 114 SURAHS METADATA
-══════════════════════════════════════════════════════════════════════ */
+/** Traditional competition bell — metallic overtone ring */
+const playBellSound = () => {
+  try {
+    const ctx = getAudioCtx();
+    const t = ctx.currentTime;
+    const fundamentals = [440, 880, 1320, 1760];
+    fundamentals.forEach((freq, i) => {
+      const osc  = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(freq * (1 + i * 0.002), t);
+      gain.gain.setValueAtTime(0.35 / (i + 1), t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 2.5);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + 2.5);
+    });
+  } catch {}
+};
+
+/** Referee whistle — sharp double-blast stop signal */
+const playStopSound = () => {
+  try {
+    const ctx = getAudioCtx();
+    const t = ctx.currentTime;
+    [0, 0.35].forEach(offset => {
+      const osc  = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "square";
+      osc.frequency.setValueAtTime(2400, t + offset);
+      osc.frequency.linearRampToValueAtTime(2800, t + offset + 0.15);
+      gain.gain.setValueAtTime(0.4, t + offset);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + offset + 0.3);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(t + offset);
+      osc.stop(t + offset + 0.35);
+    });
+  } catch {}
+};
+
+/** Ceremonial chime — participant is being called */
+const playCalledSound = () => {
+  try {
+    const ctx = getAudioCtx();
+    const t = ctx.currentTime;
+    [523, 659, 784, 1047].forEach((freq, i) => {
+      const osc  = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0, t + i * 0.12);
+      gain.gain.linearRampToValueAtTime(0.3, t + i * 0.12 + 0.05);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + i * 0.12 + 0.7);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(t + i * 0.12);
+      osc.stop(t + i * 0.12 + 0.8);
+    });
+  } catch {}
+};
+
+/** Stage completion fanfare */
+const playStageComplete = () => {
+  try {
+    const ctx = getAudioCtx();
+    const t = ctx.currentTime;
+    const seq = [523, 659, 784, 659, 784, 1047];
+    seq.forEach((freq, i) => {
+      const osc  = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "triangle";
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.25, t + i * 0.15);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + i * 0.15 + 0.3);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(t + i * 0.15);
+      osc.stop(t + i * 0.15 + 0.35);
+    });
+  } catch {}
+};
+
+/* ══════════════════════════════════════════════════════════════════
+   QURAN DATA
+══════════════════════════════════════════════════════════════════ */
 const SURAHS = [
   {n:1,en:"Al-Fatiha",ar:"الفاتحة",v:7,juz:1},
   {n:2,en:"Al-Baqarah",ar:"البقرة",v:286,juz:1},
@@ -134,82 +179,25 @@ const SURAHS = [
   {n:28,en:"Al-Qasas",ar:"القصص",v:88,juz:20},
   {n:29,en:"Al-Ankabut",ar:"العنكبوت",v:69,juz:20},
   {n:30,en:"Ar-Rum",ar:"الروم",v:60,juz:21},
-  {n:31,en:"Luqman",ar:"لقمان",v:34,juz:21},
-  {n:32,en:"As-Sajda",ar:"السجدة",v:30,juz:21},
-  {n:33,en:"Al-Ahzab",ar:"الأحزاب",v:73,juz:21},
-  {n:34,en:"Saba",ar:"سبأ",v:54,juz:22},
-  {n:35,en:"Fatir",ar:"فاطر",v:45,juz:22},
   {n:36,en:"Ya-Sin",ar:"يس",v:83,juz:22},
-  {n:37,en:"As-Saffat",ar:"الصافات",v:182,juz:23},
-  {n:38,en:"Sad",ar:"ص",v:88,juz:23},
-  {n:39,en:"Az-Zumar",ar:"الزمر",v:75,juz:23},
-  {n:40,en:"Ghafir",ar:"غافر",v:85,juz:24},
-  {n:41,en:"Fussilat",ar:"فصلت",v:54,juz:24},
-  {n:42,en:"Ash-Shura",ar:"الشورى",v:53,juz:25},
-  {n:43,en:"Az-Zukhruf",ar:"الزخرف",v:89,juz:25},
-  {n:44,en:"Ad-Dukhan",ar:"الدخان",v:59,juz:25},
-  {n:45,en:"Al-Jathiyah",ar:"الجاثية",v:37,juz:25},
-  {n:46,en:"Al-Ahqaf",ar:"الأحقاف",v:35,juz:26},
-  {n:47,en:"Muhammad",ar:"محمد",v:38,juz:26},
-  {n:48,en:"Al-Fath",ar:"الفتح",v:29,juz:26},
-  {n:49,en:"Al-Hujurat",ar:"الحجرات",v:18,juz:26},
-  {n:50,en:"Qaf",ar:"ق",v:45,juz:26},
-  {n:51,en:"Adh-Dhariyat",ar:"الذاريات",v:60,juz:26},
-  {n:52,en:"At-Tur",ar:"الطور",v:49,juz:27},
-  {n:53,en:"An-Najm",ar:"النجم",v:62,juz:27},
-  {n:54,en:"Al-Qamar",ar:"القمر",v:55,juz:27},
   {n:55,en:"Ar-Rahman",ar:"الرحمن",v:78,juz:27},
-  {n:56,en:"Al-Waqi'a",ar:"الواقعة",v:96,juz:27},
-  {n:57,en:"Al-Hadid",ar:"الحديد",v:29,juz:27},
-  {n:58,en:"Al-Mujadila",ar:"المجادلة",v:22,juz:28},
-  {n:59,en:"Al-Hashr",ar:"الحشر",v:24,juz:28},
-  {n:60,en:"Al-Mumtahanah",ar:"الممتحنة",v:13,juz:28},
-  {n:61,en:"As-Saf",ar:"الصف",v:14,juz:28},
-  {n:62,en:"Al-Jumu'ah",ar:"الجمعة",v:11,juz:28},
-  {n:63,en:"Al-Munafiqun",ar:"المنافقون",v:11,juz:28},
-  {n:64,en:"At-Taghabun",ar:"التغابن",v:18,juz:28},
-  {n:65,en:"At-Talaq",ar:"الطلاق",v:12,juz:28},
-  {n:66,en:"At-Tahrim",ar:"التحريم",v:12,juz:28},
+  {n:56,en:"Al-Waqi'ah",ar:"الواقعة",v:96,juz:27},
   {n:67,en:"Al-Mulk",ar:"الملك",v:30,juz:29},
-  {n:68,en:"Al-Qalam",ar:"القلم",v:52,juz:29},
-  {n:69,en:"Al-Haqqah",ar:"الحاقة",v:52,juz:29},
-  {n:70,en:"Al-Ma'arij",ar:"المعارج",v:44,juz:29},
-  {n:71,en:"Nuh",ar:"نوح",v:28,juz:29},
-  {n:72,en:"Al-Jinn",ar:"الجن",v:28,juz:29},
-  {n:73,en:"Al-Muzzammil",ar:"المزمل",v:20,juz:29},
-  {n:74,en:"Al-Muddaththir",ar:"المدثر",v:56,juz:29},
-  {n:75,en:"Al-Qiyamah",ar:"القيامة",v:40,juz:29},
-  {n:76,en:"Al-Insan",ar:"الإنسان",v:31,juz:29},
-  {n:77,en:"Al-Mursalat",ar:"المرسلات",v:50,juz:29},
-  {n:78,en:"An-Naba",ar:"النبأ",v:40,juz:30},
-  {n:79,en:"An-Nazi'at",ar:"النازعات",v:46,juz:30},
-  {n:80,en:"Abasa",ar:"عبس",v:42,juz:30},
-  {n:81,en:"At-Takwir",ar:"التكوير",v:29,juz:30},
-  {n:82,en:"Al-Infitar",ar:"الانفطار",v:19,juz:30},
-  {n:83,en:"Al-Mutaffifin",ar:"المطففين",v:36,juz:30},
-  {n:84,en:"Al-Inshiqaq",ar:"الانشقاق",v:25,juz:30},
-  {n:85,en:"Al-Buruj",ar:"البروج",v:22,juz:30},
-  {n:86,en:"At-Tariq",ar:"الطارق",v:17,juz:30},
-  {n:87,en:"Al-Ala",ar:"الأعلى",v:19,juz:30},
+  {n:78,en:"An-Naba'",ar:"النبأ",v:40,juz:30},
+  {n:87,en:"Al-A'la",ar:"الأعلى",v:19,juz:30},
   {n:88,en:"Al-Ghashiyah",ar:"الغاشية",v:26,juz:30},
   {n:89,en:"Al-Fajr",ar:"الفجر",v:30,juz:30},
-  {n:90,en:"Al-Balad",ar:"البلد",v:20,juz:30},
-  {n:91,en:"Ash-Shams",ar:"الشمس",v:15,juz:30},
-  {n:92,en:"Al-Layl",ar:"الليل",v:21,juz:30},
   {n:93,en:"Ad-Duha",ar:"الضحى",v:11,juz:30},
   {n:94,en:"Ash-Sharh",ar:"الشرح",v:8,juz:30},
-  {n:95,en:"At-Tin",ar:"التين",v:8,juz:30},
-  {n:96,en:"Al-Alaq",ar:"العلق",v:19,juz:30},
-  {n:97,en:"Al-Qadr",ar:"القدر",v:5,juz:30},
-  {n:98,en:"Al-Bayyinah",ar:"البينة",v:8,juz:30},
+  {n:96,en:"Al-'Alaq",ar:"العلق",v:19,juz:30},
   {n:99,en:"Az-Zalzalah",ar:"الزلزلة",v:8,juz:30},
-  {n:100,en:"Al-Adiyat",ar:"العاديات",v:11,juz:30},
+  {n:100,en:"Al-'Adiyat",ar:"العاديات",v:11,juz:30},
   {n:101,en:"Al-Qari'ah",ar:"القارعة",v:11,juz:30},
   {n:102,en:"At-Takathur",ar:"التكاثر",v:8,juz:30},
-  {n:103,en:"Al-Asr",ar:"العصر",v:3,juz:30},
+  {n:103,en:"Al-'Asr",ar:"العصر",v:3,juz:30},
   {n:104,en:"Al-Humazah",ar:"الهمزة",v:9,juz:30},
   {n:105,en:"Al-Fil",ar:"الفيل",v:5,juz:30},
-  {n:106,en:"Quraish",ar:"قريش",v:4,juz:30},
+  {n:106,en:"Quraysh",ar:"قريش",v:4,juz:30},
   {n:107,en:"Al-Ma'un",ar:"الماعون",v:7,juz:30},
   {n:108,en:"Al-Kawthar",ar:"الكوثر",v:3,juz:30},
   {n:109,en:"Al-Kafirun",ar:"الكافرون",v:6,juz:30},
@@ -220,1632 +208,1992 @@ const SURAHS = [
   {n:114,en:"An-Nas",ar:"الناس",v:6,juz:30},
 ];
 
-/* ══════════════════════════════════════════════════════════════════════
-   INLINE QURAN TEXT (Uthmanic script, most-used competition surahs)
-   For other surahs, fetched from api.alquran.cloud at question time
-══════════════════════════════════════════════════════════════════════ */
-const INLINE_QURAN: Record<number, string[]> = {
-  1:  ["بِسۡمِ ٱللَّهِ ٱلرَّحۡمَٰنِ ٱلرَّحِيمِ","ٱلۡحَمۡدُ لِلَّهِ رَبِّ ٱلۡعَٰلَمِينَ","ٱلرَّحۡمَٰنِ ٱلرَّحِيمِ","مَٰلِكِ يَوۡمِ ٱلدِّينِ","إِيَّاكَ نَعۡبُدُ وَإِيَّاكَ نَسۡتَعِينُ","ٱهۡدِنَا ٱلصِّرَٰطَ ٱلۡمُسۡتَقِيمَ","صِرَٰطَ ٱلَّذِينَ أَنۡعَمۡتَ عَلَيۡهِمۡ غَيۡرِ ٱلۡمَغۡضُوبِ عَلَيۡهِمۡ وَلَا ٱلضَّآلِّينَ"],
-  103:["وَٱلۡعَصۡرِ","إِنَّ ٱلۡإِنسَٰنَ لَفِي خُسۡرٍ","إِلَّا ٱلَّذِينَ ءَامَنُواْ وَعَمِلُواْ ٱلصَّٰلِحَٰتِ وَتَوَاصَوۡاْ بِٱلۡحَقِّ وَتَوَاصَوۡاْ بِٱلصَّبۡرِ"],
-  108:["إِنَّآ أَعۡطَيۡنَٰكَ ٱلۡكَوۡثَرَ","فَصَلِّ لِرَبِّكَ وَٱنۡحَرۡ","إِنَّ شَانِئَكَ هُوَ ٱلۡأَبۡتَرُ"],
-  109:["قُلۡ يَٰٓأَيُّهَا ٱلۡكَٰفِرُونَ","لَآ أَعۡبُدُ مَا تَعۡبُدُونَ","وَلَآ أَنتُمۡ عَٰبِدُونَ مَآ أَعۡبُدُ","وَلَآ أَنَاْ عَابِدٞ مَّا عَبَدتُّمۡ","وَلَآ أَنتُمۡ عَٰبِدُونَ مَآ أَعۡبُدُ","لَكُمۡ دِينُكُمۡ وَلِيَ دِينِ"],
-  110:["إِذَا جَآءَ نَصۡرُ ٱللَّهِ وَٱلۡفَتۡحُ","وَرَأَيۡتَ ٱلنَّاسَ يَدۡخُلُونَ فِي دِينِ ٱللَّهِ أَفۡوَاجٗا","فَسَبِّحۡ بِحَمۡدِ رَبِّكَ وَٱسۡتَغۡفِرۡهُۚ إِنَّهُۥ كَانَ تَوَّابَۢا"],
-  111:["تَبَّتۡ يَدَآ أَبِي لَهَبٖ وَتَبَّ","مَآ أَغۡنَىٰ عَنۡهُ مَالُهُۥ وَمَا كَسَبَ","سَيَصۡلَىٰ نَارٗا ذَاتَ لَهَبٖ","وَٱمۡرَأَتُهُۥ حَمَّالَةَ ٱلۡحَطَبِ","فِي جِيدِهَا حَبۡلٞ مِّن مَّسَدٍ"],
-  112:["قُلۡ هُوَ ٱللَّهُ أَحَدٌ","ٱللَّهُ ٱلصَّمَدُ","لَمۡ يَلِدۡ وَلَمۡ يُولَدۡ","وَلَمۡ يَكُن لَّهُۥ كُفُوًا أَحَدٌۢ"],
-  113:["قُلۡ أَعُوذُ بِرَبِّ ٱلۡفَلَقِ","مِن شَرِّ مَا خَلَقَ","وَمِن شَرِّ غَاسِقٍ إِذَا وَقَبَ","وَمِن شَرِّ ٱلنَّفَّٰثَٰتِ فِي ٱلۡعُقَدِ","وَمِن شَرِّ حَاسِدٍ إِذَا حَسَدَ"],
-  114:["قُلۡ أَعُوذُ بِرَبِّ ٱلنَّاسِ","مَلِكِ ٱلنَّاسِ","إِلَٰهِ ٱلنَّاسِ","مِن شَرِّ ٱلۡوَسۡوَاسِ ٱلۡخَنَّاسِ","ٱلَّذِي يُوَسۡوِسُ فِي صُدُورِ ٱلنَّاسِ","مِنَ ٱلۡجِنَّةِ وَٱلنَّاسِ"],
+const JUZ_NAMES: Record<number, string> = {
+  1:"Alif Lam Mim",2:"Sayaqul",3:"Tilkar Rusul",4:"Lan Tanaloo",
+  5:"Wal Muhsanat",6:"La Yuhibbullah",7:"Wa Idha Sami'u",
+  8:"Wa Law Annana",9:"Qalal Mala",10:"Wa'lamu",11:"Ya'tadhirun",
+  12:"Wa Ma Min Dabbah",13:"Wa Ma Ubari'u",14:"Rubama",
+  15:"Subhana Allathi",16:"Qala Alam",17:"Iqtaraba",18:"Qad Aflaha",
+  19:"Wa Qalallathina",20:"Amman Khalaqa",21:"Utlu Ma Uhiya",
+  22:"Wa Man Yaqnut",23:"Wa Mali",24:"Fa Man Azlamu",
+  25:"Ilayhi Yuraddu",26:"Ha Mim",27:"Qala Fa Ma Khatbukum",
+  28:"Qad Sami'Allah",29:"Tabarakal Lathi",30:"Amma"
 };
 
-/* ══════════════════════════════════════════════════════════════════════
-   ARABIC TEXT HELPERS
-══════════════════════════════════════════════════════════════════════ */
-function normalizeArabic(text: string): string {
-  return text
-    .replace(/[\u064B-\u065F\u0670\u0671]/g, "")   // strip tashkeel + waṣla
-    .replace(/[أإآٱ]/g, "ا")                         // normalise alef
-    .replace(/ة/g,  "ه")                              // taa marbuta → haa
-    .replace(/ى/g,  "ي")                              // alef maqsura → yaa
-    .replace(/\s+/g, " ")
-    .trim();
+const SCOPE_OPTIONS = [
+  { id: "juz30",    label: "Juz 30 (Amma)",   labelAr: "جزء عم",   desc: "Short surahs — ideal for juniors" },
+  { id: "juz29",    label: "Juz 29–30",        labelAr: "جزء تبارك وعم", desc: "Two final juz" },
+  { id: "full30",   label: "Full 30 Juz",      labelAr: "القرآن كاملاً",  desc: "Entire Quran — advanced" },
+  { id: "custom",   label: "Custom Scope",     labelAr: "نطاق مخصص",      desc: "Pick specific juz/surah" },
+];
+
+const SCORING_CRITERIA = [
+  { key: "tajweed",    label: "Tajweed",    labelAr: "التجويد",    max: 40 },
+  { key: "memorize",  label: "Hifdh",      labelAr: "الحفظ",      max: 30 },
+  { key: "fluency",   label: "Fluency",    labelAr: "الطلاقة",    max: 20 },
+  { key: "voice",     label: "Voice",      labelAr: "الصوت",      max: 10 },
+];
+
+/* ══════════════════════════════════════════════════════════════════
+   TYPES
+══════════════════════════════════════════════════════════════════ */
+type CompStatus = "draft"|"open"|"active"|"paused"|"completed";
+type PStatus    = "waiting"|"called"|"reciting"|"completed"|"absent"|"disqualified";
+
+interface Competition {
+  id: string;
+  title: string;
+  description?: string;
+  scope_type: string; // juz30 | juz29 | full30 | custom
+  scope_config: any;
+  total_stages: number;
+  current_stage: number;
+  time_limit_seconds: number;
+  status: CompStatus;
+  current_participant_id?: string | null;
+  room_code: string;
+  created_by: string;
+  created_at: string;
+  use_criteria_scoring: boolean;
 }
 
-function scoreRecitation(assigned: string, transcribed: string): {
-  wordResults: WordResult[];
-  accuracy: number;
-  fluency: number;
-  correct: number;
-  total: number;
-} {
-  const origWords = normalizeArabic(assigned).split(" ").filter(Boolean);
-  const transWords = normalizeArabic(transcribed).split(" ").filter(Boolean);
-
-  const results: WordResult[] = origWords.map((orig, i) => {
-    const actual = transWords[i] ?? "";
-    if (!actual) return { word: orig, original: orig, status: "missing" };
-    return {
-      word: actual,
-      original: orig,
-      status: orig === actual ? "correct" : "mistake",
-    };
-  });
-
-  const correct = results.filter(r => r.status === "correct").length;
-  const total   = origWords.length;
-  const accuracy = total > 0 ? Math.round((correct / total) * 100) : 0;
-  const fluency  = Math.min(100, Math.round((transWords.length / Math.max(1, total)) * 100));
-
-  return { wordResults: results, accuracy, fluency, correct, total };
+interface Participant {
+  id: string;
+  competition_id: string;
+  user_id?: string;
+  participant_name: string;
+  school?: string;
+  queue_position: number;
+  status: PStatus;
+  total_score: number;
+  stage_scores: Record<string, number>;
+  bell_counts: Record<string, number>;
+  proctor_flagged: boolean;
+  camera_on: boolean;
+  created_at: string;
 }
 
-/* Fetch surah text from alquran.cloud if not inline */
-async function fetchSurahVerses(surahNum: number, start: number, end: number): Promise<string> {
-  if (INLINE_QURAN[surahNum]) {
-    return INLINE_QURAN[surahNum].slice(start - 1, end).join(" ");
+interface Attempt {
+  id: string;
+  competition_id: string;
+  participant_id: string;
+  stage_number: number;
+  scope_label: string;
+  scope_label_ar: string;
+  bell_count: number;
+  score_breakdown?: Record<string, number>;
+  judge_score?: number;
+  judge_comment?: string;
+  duration_seconds?: number;
+  status: "pending"|"reciting"|"scored";
+  created_at: string;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   HELPERS
+══════════════════════════════════════════════════════════════════ */
+const genRoomCode = () => {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let code = "";
+  for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  return code;
+};
+
+const pickRandomScope = (scopeType: string): {label: string, labelAr: string} => {
+  if (scopeType === "juz30") {
+    const s = SURAHS.filter(s => s.juz === 30);
+    const chosen = s[Math.floor(Math.random() * s.length)];
+    const ayah   = Math.floor(Math.random() * chosen.v) + 1;
+    return { label: `${chosen.en} (Ayah ${ayah})`, labelAr: `سورة ${chosen.ar} (الآية ${ayah})` };
   }
-  try {
-    const res  = await fetch(`https://api.alquran.cloud/v1/surah/${surahNum}/ar.uthmani`);
-    const data = await res.json();
-    const verses: string[] = (data.data?.ayahs ?? []).map((a: any) => a.text);
-    return verses.slice(start - 1, end).join(" ");
-  } catch {
-    return `[سورة رقم ${surahNum} - آيات ${start} إلى ${end}]`;
+  if (scopeType === "juz29") {
+    const juz = Math.random() > 0.5 ? 29 : 30;
+    const s   = SURAHS.filter(s => s.juz === juz);
+    const chosen = s[Math.floor(Math.random() * s.length)];
+    const ayah = Math.floor(Math.random() * Math.min(chosen.v, 20)) + 1;
+    return { label: `${chosen.en} (Ayah ${ayah})`, labelAr: `سورة ${chosen.ar} (الآية ${ayah})` };
   }
-}
-
-/* Pick a random ayah range from competition scope */
-function pickRandomAyah(comp: Competition): { surahNum: number; start: number; end: number; verseCount: number } {
-  let pool = SURAHS.slice();
-  if (comp.competition_type === "juz30")        pool = SURAHS.filter(s => s.juz === 30);
-  else if (comp.competition_type === "custom")  pool = SURAHS.filter(s => comp.scope_config.surah_ids?.includes(s.n));
-
-  const surah      = pool[Math.floor(Math.random() * pool.length)];
-  const maxVerses  = Math.min(5, surah.v);
-  const count      = Math.max(3, Math.floor(Math.random() * maxVerses) + 1);
-  const start      = Math.floor(Math.random() * (surah.v - count + 1)) + 1;
-  return { surahNum: surah.n, start, end: start + count - 1, verseCount: count };
-}
-
-/* ══════════════════════════════════════════════════════════════════════
-   SHARED STYLE TOKENS
-══════════════════════════════════════════════════════════════════════ */
-const page: React.CSSProperties = {
-  minHeight: "100svh",
-  background: `linear-gradient(160deg, ${G} 0%, #081a10 60%, #030e08 100%)`,
-  position: "relative", overflow: "hidden", fontFamily: "'Cairo', sans-serif",
-};
-const glass: React.CSSProperties = {
-  background: "rgba(255,255,255,0.04)",
-  backdropFilter: "blur(16px)",
-  border: `1px solid rgba(201,168,76,0.2)`,
-  borderRadius: 18,
-};
-const goldBtn: React.CSSProperties = {
-  padding: "14px 20px", borderRadius: 13, border: "none",
-  background: `linear-gradient(135deg, ${GOLD}, #a8873a)`,
-  color: "#0f2d1f", cursor: "pointer", fontWeight: 800, fontSize: 15,
-  display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-  fontFamily: "'Cairo', sans-serif", width: "100%",
-  boxShadow: `0 4px 20px rgba(201,168,76,0.4)`,
-};
-const outBtn: React.CSSProperties = {
-  ...goldBtn,
-  background: "rgba(201,168,76,0.1)",
-  border: `1.5px solid rgba(201,168,76,0.4)`,
-  color: "#fff", boxShadow: "none",
-};
-const dangerBtn: React.CSSProperties = {
-  ...outBtn, border: "1.5px solid rgba(239,68,68,0.4)",
-  background: "rgba(239,68,68,0.08)", color: "#fca5a5",
-};
-const inp: React.CSSProperties = {
-  width: "100%", padding: "12px 14px", borderRadius: 11,
-  border: `1.5px solid rgba(201,168,76,0.25)`,
-  background: "rgba(255,255,255,0.05)", color: "#fff",
-  fontSize: 14, outline: "none", boxSizing: "border-box",
-  fontFamily: "'Cairo', sans-serif",
-};
-const label: React.CSSProperties = {
-  fontSize: 11, fontWeight: 700, color: GOLD,
-  display: "block", marginBottom: 6, letterSpacing: 1.4, textTransform: "uppercase" as const,
+  if (scopeType === "full30") {
+    const juz = Math.floor(Math.random() * 30) + 1;
+    return { label: `Juz ${juz} — ${JUZ_NAMES[juz]}`, labelAr: `الجزء ${juz} — ${JUZ_NAMES[juz]}` };
+  }
+  return { label: "Custom selection", labelAr: "اختيار مخصص" };
 };
 
-/* ── Islamic geometric background ───────────────────────────────────── */
-const IslamicBg = ({ opacity = 0.06 }: { opacity?: number }) => (
-  <svg style={{ position:"fixed",top:0,left:0,width:"100%",height:"100%",opacity,zIndex:0,pointerEvents:"none" }} xmlns="http://www.w3.org/2000/svg">
+const fmtTime = (s: number) => `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`;
+
+const statusColor: Record<PStatus, string> = {
+  waiting:      GOLD,
+  called:       "#f97316",
+  reciting:     GREEN,
+  completed:    "#60a5fa",
+  absent:       "#6b7280",
+  disqualified: RED,
+};
+
+const statusLabel: Record<PStatus, string> = {
+  waiting:      "Waiting",
+  called:       "Called",
+  reciting:     "Reciting",
+  completed:    "Completed",
+  absent:       "Absent",
+  disqualified: "Disqualified",
+};
+
+/* ══════════════════════════════════════════════════════════════════
+   Islamic SVG Background
+══════════════════════════════════════════════════════════════════ */
+const IslamicBg = ({ opacity=0.05 }: {opacity?: number}) => (
+  <svg style={{ position:"absolute",top:0,left:0,width:"100%",height:"100%",
+    opacity,zIndex:0,pointerEvents:"none" }} xmlns="http://www.w3.org/2000/svg">
     <defs>
-      <pattern id="mp" x="0" y="0" width="100" height="100" patternUnits="userSpaceOnUse">
-        <polygon points="50,5 58,35 88,35 65,54 73,84 50,65 27,84 35,54 12,35 42,35" fill="none" stroke={GOLD} strokeWidth="0.7"/>
-        <circle cx="50" cy="50" r="3" fill="none" stroke={GOLD} strokeWidth="0.5"/>
-        <line x1="0" y1="50" x2="100" y2="50" stroke={GOLD} strokeWidth="0.2" opacity="0.4"/>
-        <line x1="50" y1="0" x2="50" y2="100" stroke={GOLD} strokeWidth="0.2" opacity="0.4"/>
+      <pattern id="mp-pat" x="0" y="0" width="80" height="80" patternUnits="userSpaceOnUse">
+        <polygon points="40,4 46,28 70,28 52,44 58,68 40,52 22,68 28,44 10,28 34,28"
+          fill="none" stroke={GOLD} strokeWidth="0.6"/>
+        <circle cx="40" cy="40" r="2.5" fill="none" stroke={GOLD} strokeWidth="0.4"/>
+        <line x1="0" y1="40" x2="80" y2="40" stroke={GOLD} strokeWidth="0.15" opacity="0.5"/>
+        <line x1="40" y1="0" x2="40" y2="80" stroke={GOLD} strokeWidth="0.15" opacity="0.5"/>
       </pattern>
     </defs>
-    <rect width="100%" height="100%" fill="url(#mp)"/>
+    <rect width="100%" height="100%" fill="url(#mp-pat)"/>
   </svg>
 );
 
-/* ── Live audio waveform ─────────────────────────────────────────────── */
-const Waveform = ({ analyser }: { analyser: AnalyserNode | null }) => {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const rafRef    = useRef<number>(0);
-
-  useEffect(() => {
-    if (!analyser || !canvasRef.current) return;
-    const canvas = canvasRef.current;
-    const ctx    = canvas.getContext("2d")!;
-    const draw   = () => {
-      rafRef.current = requestAnimationFrame(draw);
-      const bufLen = analyser.frequencyBinCount;
-      const data   = new Uint8Array(bufLen);
-      analyser.getByteFrequencyData(data);
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      const barW = (canvas.width / bufLen) * 2.5;
-      let x = 0;
-      for (let i = 0; i < bufLen; i++) {
-        const barH = (data[i] / 255) * canvas.height * 0.8;
-        const ratio = data[i] / 255;
-        ctx.fillStyle = `rgba(${Math.round(201 * ratio + 255 * (1-ratio))}, ${Math.round(168 * ratio)}, ${Math.round(76 * ratio)}, 0.8)`;
-        ctx.fillRect(x, canvas.height - barH, barW, barH);
-        ctx.fillRect(x, 0, barW, barH * 0.2);
-        x += barW + 1;
-      }
-    };
-    draw();
-    return () => cancelAnimationFrame(rafRef.current);
-  }, [analyser]);
-
-  return (
-    <canvas ref={canvasRef} width={320} height={60}
-      style={{ width:"100%", height:60, borderRadius:8, background:"rgba(0,0,0,0.2)" }}/>
-  );
-};
-
-/* ── Timer ring ──────────────────────────────────────────────────────── */
-const TimerRing = ({ seconds, total }: { seconds:number; total:number }) => {
-  const r    = 36;
-  const circ = 2 * Math.PI * r;
-  const pct  = seconds / total;
-  const col  = pct > 0.5 ? GOLD : pct > 0.2 ? "#F59E0B" : "#EF4444";
-  return (
-    <div style={{ position:"relative", width:88, height:88, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
-      <svg width="88" height="88" style={{ transform:"rotate(-90deg)", position:"absolute" }}>
-        <circle cx="44" cy="44" r={r} fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="5"/>
-        <circle cx="44" cy="44" r={r} fill="none" stroke={col} strokeWidth="5"
-          strokeDasharray={`${pct * circ} ${circ}`} strokeLinecap="round"
-          style={{ transition:"stroke-dasharray 1s linear, stroke 0.4s" }}/>
-      </svg>
-      <span style={{ fontSize:22, fontWeight:900, color:col, zIndex:1 }}>{seconds}</span>
+/* ══════════════════════════════════════════════════════════════════
+   ANIMATED BELL INDICATOR
+══════════════════════════════════════════════════════════════════ */
+const BellFlash = ({ visible }: {visible: boolean}) => (
+  <div style={{
+    position:"fixed", top:"50%", left:"50%", transform:"translate(-50%,-50%)",
+    zIndex:9999, pointerEvents:"none",
+    opacity: visible ? 1 : 0,
+    transition: "opacity 0.2s",
+    display:"flex", flexDirection:"column", alignItems:"center", gap:8,
+  }}>
+    <div style={{
+      width:120, height:120, borderRadius:"50%",
+      background: `radial-gradient(circle, rgba(234,179,8,0.9) 0%, rgba(234,179,8,0.4) 60%, transparent 100%)`,
+      display:"flex", alignItems:"center", justifyContent:"center",
+      animation: visible ? "bellPulse 0.4s ease-in-out" : "none",
+    }}>
+      <Bell size={52} color="#fff" strokeWidth={2.5}/>
     </div>
-  );
-};
+    <span style={{ color:"#fff", fontFamily:"Cairo,sans-serif", fontWeight:700,
+      fontSize:18, textShadow:"0 2px 8px rgba(0,0,0,0.9)", letterSpacing:2 }}>
+      خطأ • ERROR
+    </span>
+    <style>{`@keyframes bellPulse{0%{transform:scale(0.8)}50%{transform:scale(1.15)}100%{transform:scale(1)}}`}</style>
+  </div>
+);
 
-/* ── Score badge ─────────────────────────────────────────────────────── */
-const ScoreBadge = ({ score }: { score: number }) => {
-  const color = score >= 85 ? "#22C55E" : score >= 65 ? GOLD : "#EF4444";
-  const label = score >= 85 ? "Excellent" : score >= 65 ? "Good" : "Needs Work";
-  return (
-    <div style={{ textAlign:"center" }}>
-      <div style={{ width:100, height:100, borderRadius:"50%", border:`4px solid ${color}`,
-        display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
-        background:`rgba(${score>=85?'34,197,94':score>=65?'201,168,76':'239,68,68'},0.1)`,
-        boxShadow:`0 0 30px ${color}40`, margin:"0 auto 8px" }}>
-        <span style={{ fontSize:28, fontWeight:900, color }}>{Math.round(score)}</span>
-        <span style={{ fontSize:9, color:"rgba(255,255,255,0.5)", letterSpacing:1 }}>/ 100</span>
+/* ══════════════════════════════════════════════════════════════════
+   STOP FLASH INDICATOR
+══════════════════════════════════════════════════════════════════ */
+const StopFlash = ({ visible }: {visible: boolean}) => (
+  <div style={{
+    position:"fixed", top:0, left:0, right:0, bottom:0,
+    zIndex:9998, pointerEvents:"none",
+    background: visible ? "rgba(239,68,68,0.25)" : "transparent",
+    borderRadius:0, border: visible ? `6px solid ${RED}` : "none",
+    transition: "all 0.15s",
+    display:"flex", alignItems:"center", justifyContent:"center",
+  }}>
+    {visible && (
+      <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:8 }}>
+        <StopCircle size={80} color={RED} strokeWidth={2}/>
+        <span style={{ color:"#fff", fontFamily:"Cairo,sans-serif", fontWeight:800,
+          fontSize:28, textShadow:"0 2px 12px rgba(0,0,0,0.9)", letterSpacing:4 }}>
+          قف • STOP
+        </span>
       </div>
-      <span style={{ fontSize:12, fontWeight:700, color }}>{label}</span>
+    )}
+  </div>
+);
+
+/* ══════════════════════════════════════════════════════════════════
+   PARTICIPANT AVATAR
+══════════════════════════════════════════════════════════════════ */
+const Avatar = ({ name, size=48, active=false }: { name:string, size?:number, active?:boolean }) => {
+  const initials = name.split(" ").slice(0,2).map(w => w[0]?.toUpperCase()||"").join("");
+  return (
+    <div style={{
+      width:size, height:size, borderRadius:"50%",
+      background: active
+        ? `linear-gradient(135deg, ${GOLD} 0%, ${GOLDD} 100%)`
+        : `linear-gradient(135deg, ${GM} 0%, #0a1f12 100%)`,
+      border: active ? `3px solid ${GOLD}` : `2px solid rgba(201,168,76,0.3)`,
+      display:"flex", alignItems:"center", justifyContent:"center",
+      color: active ? G : GOLD,
+      fontWeight:700, fontFamily:"Cairo,sans-serif",
+      fontSize: size * 0.35, flexShrink:0,
+      boxShadow: active ? `0 0 20px rgba(201,168,76,0.5)` : "none",
+    }}>
+      {initials || "?"}
     </div>
   );
 };
 
-/* ══════════════════════════════════════════════════════════════════════
-   MAIN COMPONENT
-══════════════════════════════════════════════════════════════════════ */
-const MustabaqahPage = () => {
-  const { user, profile, hasRole } = useAuth();
-  const navigate = useNavigate();
-  const { toast } = useToast();
-  const isJudge = hasRole("admin") || hasRole("teacher");
-
-  type MView =
-    | "hub"
-    | "create"
-    | "admin-lobby"
-    | "admin-judge"
-    | "student-queue"
-    | "student-called"
-    | "reciting"
-    | "result"
-    | "leaderboard";
-
-  /* ── State ──────────────────────────────────────────────────────── */
-  const [view,          setView]         = useState<MView>("hub");
-  const [competitions,  setCompetitions] = useState<Competition[]>([]);
-  const [competition,   setCompetition]  = useState<Competition | null>(null);
-  const [participants,  setParticipants] = useState<Participant[]>([]);
-  const [myParticipant, setMyParticipant] = useState<Participant | null>(null);
-  const [currentAttempt, setCurrentAttempt] = useState<Attempt | null>(null);
-  const [allAttempts,   setAllAttempts]  = useState<Attempt[]>([]);
-  const [loading,       setLoading]      = useState(false);
-  const [timeLeft,      setTimeLeft]     = useState(120);
-  const [countdown,     setCountdown]    = useState(3);
-  const [isRecording,   setIsRecording]  = useState(false);
-  const [isPaused,      setIsPaused]     = useState(false);
-  const [transcript,    setTranscript]   = useState("");
-  const [interimText,   setInterimText]  = useState("");
-  const [analyser,      setAnalyser]     = useState<AnalyserNode | null>(null);
-  const [audioUrl,      setAudioUrl]     = useState<string | null>(null);
-  const [showAyah,      setShowAyah]     = useState(false);
-  const [calledAyahText, setCalledAyahText] = useState("");
-  const [judgeScore,    setJudgeScore]   = useState("");
-  const [judgeComment,  setJudgeComment] = useState("");
-  const [bellRinging,   setBellRinging]  = useState(false);
-
-  // Create-form state
-  const [form, setForm] = useState({
-    title: "", description: "", type: "juz30" as Competition["competition_type"],
-    surahIds: [] as number[], time: 120, rounds: 3,
-  });
-  const [surahFilter, setSurahFilter] = useState("");
-
-  /* ── Refs ───────────────────────────────────────────────────────── */
-  const mediaRecRef   = useRef<MediaRecorder | null>(null);
-  const audioChunks   = useRef<Blob[]>([]);
-  const recognizerRef = useRef<any>(null);
-  const timerRef      = useRef<ReturnType<typeof setInterval> | null>(null);
-  const streamRef     = useRef<MediaStream | null>(null);
-  const channelRef    = useRef<any>(null);
-
-  /* ── Load competitions on mount ─────────────────────────────────── */
+/* ══════════════════════════════════════════════════════════════════
+   VIDEO TILE  (local camera preview)
+══════════════════════════════════════════════════════════════════ */
+const VideoTile = ({ stream, name, size=200, active=false }:
+  { stream: MediaStream|null, name:string, size?:number, active?:boolean }) => {
+  const vidRef = useRef<HTMLVideoElement>(null);
   useEffect(() => {
-    loadCompetitions();
-  }, []);
+    if (vidRef.current && stream) {
+      vidRef.current.srcObject = stream;
+    }
+  }, [stream]);
+  return (
+    <div style={{
+      width:size, height:size * 0.75, borderRadius:12,
+      overflow:"hidden", position:"relative",
+      background: `linear-gradient(135deg, ${GD} 0%, ${G} 100%)`,
+      border: active ? `2px solid ${GOLD}` : `1.5px solid rgba(201,168,76,0.2)`,
+      boxShadow: active ? `0 0 30px rgba(201,168,76,0.3)` : "none",
+    }}>
+      {stream ? (
+        <video ref={vidRef} autoPlay muted playsInline style={{ width:"100%", height:"100%", objectFit:"cover" }}/>
+      ) : (
+        <div style={{ width:"100%", height:"100%", display:"flex", flexDirection:"column",
+          alignItems:"center", justifyContent:"center", gap:8 }}>
+          <Avatar name={name} size={size * 0.3} active={active}/>
+          <span style={{ color:"rgba(255,255,255,0.5)", fontSize:11, fontFamily:"Cairo,sans-serif" }}>
+            No Video
+          </span>
+        </div>
+      )}
+      {active && (
+        <div style={{ position:"absolute", top:8, right:8, width:10, height:10,
+          borderRadius:"50%", background:GREEN, animation:"recitingPulse 1s ease-in-out infinite" }}/>
+      )}
+      <style>{`@keyframes recitingPulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.4;transform:scale(1.4)}}`}</style>
+    </div>
+  );
+};
+
+/* ══════════════════════════════════════════════════════════════════
+   MAIN COMPONENT
+══════════════════════════════════════════════════════════════════ */
+export default function MustabaqahPage() {
+  const navigate       = useNavigate();
+  const { user, profile, hasRole } = useAuth() as any;
+  const { toast }      = useToast();
+  const isJudge        = hasRole?.("admin") || hasRole?.("teacher");
+
+  /* ── View state ──────────────────────────────────────────────── */
+  type View = "list"|"setup"|"join"|"arena"|"results";
+  const [view,         setView]         = useState<View>("list");
+  const [loading,      setLoading]      = useState(false);
+
+  /* ── Data ────────────────────────────────────────────────────── */
+  const [competitions, setCompetitions] = useState<Competition[]>([]);
+  const [competition,  setCompetition]  = useState<Competition|null>(null);
+  const [participants, setParticipants] = useState<Participant[]>([]);
+  const [attempts,     setAttempts]     = useState<Attempt[]>([]);
+  const [myParticipant,setMyParticipant]= useState<Participant|null>(null);
+
+  /* ── Arena UI state ──────────────────────────────────────────── */
+  const [activeP,      setActiveP]      = useState<Participant|null>(null);
+  const [currentAttempt,setCurAttempt]  = useState<Attempt|null>(null);
+  const [bellCount,    setBellCount]    = useState(0);
+  const [bellFlash,    setBellFlash]    = useState(false);
+  const [stopFlash,    setStopFlash]    = useState(false);
+  const [timerActive,  setTimerActive]  = useState(false);
+  const [timerSecs,    setTimerSecs]    = useState(0);
+  const [rosterMode,   setRosterMode]   = useState<"grid"|"list">("list");
+  const [showProctor,  setShowProctor]  = useState(false);
+
+  /* ── Scoring state ───────────────────────────────────────────── */
+  const [scoreBreak, setScoreBreak]     = useState<Record<string,string>>({
+    tajweed:"", memorize:"", fluency:"", voice:"",
+  });
+  const [judgeComment, setJudgeComment] = useState("");
+  const [showScorePanel, setShowScore]  = useState(false);
+
+  /* ── Local media ─────────────────────────────────────────────── */
+  const [localStream,  setLocalStream]  = useState<MediaStream|null>(null);
+  const [micOn,        setMicOn]        = useState(false);
+  const [camOn,        setCamOn]        = useState(false);
+
+  /* ── Setup form ──────────────────────────────────────────────── */
+  const [form, setForm] = useState({
+    title:"", description:"",
+    scope_type:"juz30", total_stages:5, time_limit:300,
+    use_criteria: true,
+    customJuz: 30,
+  });
+
+  /* ── Join form ───────────────────────────────────────────────── */
+  const [joinForm, setJoinForm] = useState({ room_code:"", name:"", school:"" });
+
+  /* ── Refs ────────────────────────────────────────────────────── */
+  const channelRef  = useRef<any>(null);
+  const timerRef    = useRef<any>(null);
+  const bellSoundsRef = useRef<number>(0);
+
+  /* ══════════════════════════════════════════════════════════════
+     LOAD COMPETITIONS
+  ══════════════════════════════════════════════════════════════ */
+  useEffect(() => { loadCompetitions(); }, []);
 
   const loadCompetitions = async () => {
     const { data } = await supabase
       .from("musabaqah_competitions" as any)
       .select("*")
-      .in("status", ["open", "active", "paused"])
       .order("created_at", { ascending: false });
-    setCompetitions((data || []) as unknown as Competition[]);
+    if (data) setCompetitions(data as Competition[]);
   };
 
-  /* ── Supabase Realtime ──────────────────────────────────────────── */
+  /* ══════════════════════════════════════════════════════════════
+     REALTIME CHANNEL
+  ══════════════════════════════════════════════════════════════ */
   useEffect(() => {
     if (!competition) return;
     if (channelRef.current) supabase.removeChannel(channelRef.current);
 
     const ch = supabase
       .channel(`musabaqah:${competition.id}`)
+      .on("broadcast", { event: "BELL" }, ({ payload }: any) => {
+        playBellSound();
+        setBellFlash(true);
+        setBellCount(payload.count ?? 0);
+        setTimeout(() => setBellFlash(false), 2500);
+      })
+      .on("broadcast", { event: "STOP" }, () => {
+        playStopSound();
+        setStopFlash(true);
+        setTimerActive(false);
+        setTimeout(() => setStopFlash(false), 2500);
+      })
       .on("broadcast", { event: "CALLED" }, ({ payload }: any) => {
-        // Student was called
-        if (payload.participant_id === myParticipant?.id) {
-          setCalledAyahText(payload.assigned_text || "");
-          setCurrentAttempt(payload.attempt as Attempt);
-          setShowAyah(false);
-          setView("student-called");
-          try { navigator.vibrate?.([300, 100, 300, 100, 600]); } catch {}
-        }
         loadParticipants();
+        loadAttempts();
+        setBellCount(0);
+        setTimerSecs(0);
+        setShowScore(false);
+        if (payload.participant_id === myParticipant?.id) {
+          playCalledSound();
+          try { navigator.vibrate?.([400, 100, 400, 100, 800]); } catch {}
+          toast({ title: "🎙️ You have been called!", description: "Please unmute your microphone and begin reciting." });
+        }
       })
-      .on("broadcast", { event: "STATUS_CHANGE" }, ({ payload }: any) => {
-        setCompetition(c => c ? { ...c, ...payload } : c);
-        if (payload.status === "completed") loadParticipants();
+      .on("broadcast", { event: "SCORE_SUBMITTED" }, () => {
+        loadParticipants();
+        loadAttempts();
+        setShowScore(false);
       })
-      .on("broadcast", { event: "SCORE_UPDATE" }, () => {
+      .on("broadcast", { event: "STAGE_CHANGE" }, ({ payload }: any) => {
+        setCompetition(c => c ? { ...c, current_stage: payload.stage } : c);
+        playStageComplete();
+        setBellCount(0);
+        setActiveP(null);
+        setCurAttempt(null);
         loadParticipants();
         loadAttempts();
       })
-      .on("broadcast", { event: "BELL" }, () => {
-        setBellRinging(true);
-        setTimeout(() => setBellRinging(false), 3000);
+      .on("broadcast", { event: "COMPETITION_END" }, () => {
+        setCompetition(c => c ? { ...c, status: "completed" } : c);
+        playStageComplete();
+        setTimeout(() => setView("results"), 1200);
+      })
+      .on("broadcast", { event: "PROCTOR_FLAG" }, ({ payload }: any) => {
+        setParticipants(ps => ps.map(p =>
+          p.id === payload.participant_id ? { ...p, proctor_flagged: payload.flagged } : p
+        ));
       })
       .on("postgres_changes" as any, {
         event: "*", schema: "public",
         table: "musabaqah_participants",
         filter: `competition_id=eq.${competition.id}`,
-      }, () => loadParticipants())
+      }, () => { loadParticipants(); })
       .subscribe();
 
     channelRef.current = ch;
     return () => { supabase.removeChannel(ch); };
   }, [competition?.id, myParticipant?.id]);
 
-  /* ── Data loaders ───────────────────────────────────────────────── */
-  const loadParticipants = async () => {
+  /* ══════════════════════════════════════════════════════════════
+     TIMER
+  ══════════════════════════════════════════════════════════════ */
+  useEffect(() => {
+    if (timerActive) {
+      timerRef.current = setInterval(() => setTimerSecs(s => s + 1), 1000);
+    } else {
+      clearInterval(timerRef.current);
+    }
+    return () => clearInterval(timerRef.current);
+  }, [timerActive]);
+
+  /* ══════════════════════════════════════════════════════════════
+     DATA LOADERS
+  ══════════════════════════════════════════════════════════════ */
+  const loadParticipants = useCallback(async () => {
     if (!competition) return;
     const { data } = await supabase
       .from("musabaqah_participants" as any)
       .select("*")
       .eq("competition_id", competition.id)
-      .order("queue_position", { ascending: true });
-    const all = (data || []) as unknown as Participant[];
-    setParticipants(all);
-    if (myParticipant) {
-      const mine = all.find(p => p.id === myParticipant.id);
-      if (mine) setMyParticipant(mine);
+      .order("queue_position");
+    if (data) {
+      setParticipants(data as Participant[]);
+      if (competition.current_participant_id) {
+        setActiveP((data as Participant[]).find(p => p.id === competition.current_participant_id) || null);
+      }
+      if (user) {
+        const mine = (data as Participant[]).find(p => p.user_id === user.id);
+        if (mine) setMyParticipant(mine);
+      }
     }
-  };
+  }, [competition, user]);
 
-  const loadAttempts = async () => {
+  const loadAttempts = useCallback(async () => {
     if (!competition) return;
     const { data } = await supabase
       .from("musabaqah_attempts" as any)
       .select("*")
       .eq("competition_id", competition.id)
-      .order("created_at", { ascending: false });
-    setAllAttempts((data || []) as unknown as Attempt[]);
-  };
+      .order("created_at");
+    if (data) setAttempts(data as Attempt[]);
+  }, [competition]);
 
   useEffect(() => {
     if (competition) { loadParticipants(); loadAttempts(); }
-  }, [competition?.id]);
+  }, [competition]);
 
-  /* ── Broadcast helper ───────────────────────────────────────────── */
-  const broadcast = (event: string, payload: object) => {
+  /* ══════════════════════════════════════════════════════════════
+     BROADCAST HELPER
+  ══════════════════════════════════════════════════════════════ */
+  const broadcast = (event: string, payload: object = {}) => {
     channelRef.current?.send({ type: "broadcast", event, payload });
   };
 
-  /* ══════════════════════════════════════════════════════════════════
-     ADMIN HANDLERS
-  ══════════════════════════════════════════════════════════════════ */
-  const createCompetition = async () => {
-    if (!form.title.trim()) return;
-    setLoading(true);
-    try {
-      const { data, error } = await supabase
-        .from("musabaqah_competitions" as any)
-        .insert({
-          title:               form.title,
-          description:         form.description,
-          competition_type:    form.type,
-          scope_config:        { surah_ids: form.surahIds },
-          time_limit_seconds:  form.time,
-          max_rounds:          form.rounds,
-          status:              "open",
-          current_round:       1,
-          created_by:          user!.id,
-        } as any)
-        .select().single();
-      if (error) throw error;
-      const comp = data as unknown as Competition;
-      setCompetition(comp);
-      setParticipants([]);
-      toast({ title: "✅ Competition created — participants can now join!" });
-      setView("admin-lobby");
-    } catch (e: any) {
-      toast({ title: "Error", description: e.message, variant: "destructive" });
-    } finally { setLoading(false); }
+  /* ══════════════════════════════════════════════════════════════
+     LOCAL MEDIA
+  ══════════════════════════════════════════════════════════════ */
+  const toggleMic = async () => {
+    if (!micOn) {
+      try {
+        const s = await navigator.mediaDevices.getUserMedia({ audio: true, video: camOn });
+        setLocalStream(s);
+        setMicOn(true);
+        // Update camera_on in DB
+        if (myParticipant) {
+          await supabase.from("musabaqah_participants" as any)
+            .update({ camera_on: camOn })
+            .eq("id", myParticipant.id);
+        }
+      } catch { toast({ title:"Mic access denied", variant:"destructive" }); }
+    } else {
+      localStream?.getAudioTracks().forEach(t => { t.enabled = false; t.stop(); });
+      setMicOn(false);
+    }
   };
 
-  const callNextParticipant = async () => {
-    if (!competition) return;
-    const waiting = participants.find(p => p.status === "waiting");
-    if (!waiting) { toast({ title: "No more participants waiting" }); return; }
+  const toggleCam = async () => {
+    if (!camOn) {
+      try {
+        const s = await navigator.mediaDevices.getUserMedia({ audio: micOn, video: true });
+        setLocalStream(s);
+        setCamOn(true);
+        if (myParticipant) {
+          await supabase.from("musabaqah_participants" as any)
+            .update({ camera_on: true })
+            .eq("id", myParticipant.id);
+        }
+      } catch { toast({ title:"Camera access denied", variant:"destructive" }); }
+    } else {
+      localStream?.getVideoTracks().forEach(t => { t.enabled = false; t.stop(); });
+      setCamOn(false);
+      if (myParticipant) {
+        await supabase.from("musabaqah_participants" as any)
+          .update({ camera_on: false })
+          .eq("id", myParticipant.id);
+      }
+    }
+  };
 
-    setLoading(true);
-    try {
-      // 1. Pick random ayah
-      const { surahNum, start, end } = pickRandomAyah(competition);
-      const surahMeta = SURAHS.find(s => s.n === surahNum)!;
-      const text      = await fetchSurahVerses(surahNum, start, end);
+  /* ══════════════════════════════════════════════════════════════
+     JUDGE ACTIONS
+  ══════════════════════════════════════════════════════════════ */
+  const ringBell = async () => {
+    const newCount = bellCount + 1;
+    bellSoundsRef.current = newCount;
+    setBellCount(newCount);
+    playBellSound();
+    setBellFlash(true);
+    setTimeout(() => setBellFlash(false), 2500);
+    broadcast("BELL", { count: newCount });
+    // Update attempt bell count
+    if (currentAttempt) {
+      await supabase.from("musabaqah_attempts" as any)
+        .update({ bell_count: newCount })
+        .eq("id", currentAttempt.id);
+    }
+  };
 
-      // 2. Create attempt record
-      const { data: attemptData, error: ae } = await supabase
-        .from("musabaqah_attempts" as any)
-        .insert({
-          competition_id: competition.id,
-          participant_id: waiting.id,
-          round_number:   competition.current_round,
-          surah_number:   surahNum,
-          surah_name:     surahMeta.en,
-          surah_name_ar:  surahMeta.ar,
-          ayah_start:     start,
-          ayah_end:       end,
-          assigned_text:  text,
-          status:         "assigned",
-        } as any)
-        .select().single();
-      if (ae) throw ae;
-
-      // 3. Update participant status
+  const signalStop = async () => {
+    playStopSound();
+    setStopFlash(true);
+    setTimerActive(false);
+    setTimeout(() => setStopFlash(false), 2500);
+    broadcast("STOP");
+    setShowScore(true);
+    if (currentAttempt) {
+      await supabase.from("musabaqah_attempts" as any)
+        .update({ status: "scored", duration_seconds: timerSecs })
+        .eq("id", currentAttempt.id);
+    }
+    if (activeP) {
       await supabase.from("musabaqah_participants" as any)
-        .update({ status: "called" } as any).eq("id", waiting.id);
-
-      // 4. Update competition current participant
-      await supabase.from("musabaqah_competitions" as any)
-        .update({ current_participant_id: waiting.id } as any).eq("id", competition.id);
-
-      // 5. Broadcast call event
-      const attempt = attemptData as unknown as Attempt;
-      setCurrentAttempt(attempt);
-      broadcast("CALLED", {
-        participant_id: waiting.id,
-        participant_name: waiting.participant_name,
-        assigned_text: text,
-        attempt,
-      });
-
-      toast({ title: `📢 ${waiting.participant_name} has been called!` });
-      loadParticipants();
-    } catch (e: any) {
-      toast({ title: "Error", description: e.message, variant: "destructive" });
-    } finally { setLoading(false); }
+        .update({ status: "completed" })
+        .eq("id", activeP.id);
+    }
   };
 
-  const ringBell = () => {
-    broadcast("BELL", {});
-    setBellRinging(true);
-    setTimeout(() => setBellRinging(false), 3000);
-    // Play bell sound via Web Audio
-    try {
-      const ctx = new AudioContext();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.connect(gain); gain.connect(ctx.destination);
-      osc.frequency.setValueAtTime(880, ctx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 1);
-      gain.gain.setValueAtTime(0.3, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1.5);
-      osc.start(); osc.stop(ctx.currentTime + 1.5);
-    } catch {}
-  };
-
-  const pauseCompetition = async () => {
+  const callParticipant = async (p: Participant) => {
     if (!competition) return;
-    const newStatus = competition.status === "paused" ? "active" : "paused";
+    setBellCount(0);
+    setTimerSecs(0);
+    setShowScore(false);
+    setScoreBreak({ tajweed:"", memorize:"", fluency:"", voice:"" });
+    setJudgeComment("");
+
+    // Pick scope
+    const scope = pickRandomScope(competition.scope_type);
+
+    // Create attempt
+    const { data: att } = await supabase.from("musabaqah_attempts" as any).insert({
+      competition_id: competition.id,
+      participant_id: p.id,
+      stage_number: competition.current_stage,
+      scope_label: scope.label,
+      scope_label_ar: scope.labelAr,
+      bell_count: 0,
+      status: "reciting",
+    }).select().single();
+
+    if (att) setCurAttempt(att as Attempt);
+
+    // Update participant + competition
+    await supabase.from("musabaqah_participants" as any)
+      .update({ status: "called" }).eq("id", p.id);
     await supabase.from("musabaqah_competitions" as any)
-      .update({ status: newStatus } as any).eq("id", competition.id);
-    setCompetition(c => c ? { ...c, status: newStatus } : c);
-    broadcast("STATUS_CHANGE", { status: newStatus });
+      .update({ current_participant_id: p.id }).eq("id", competition.id);
+
+    setActiveP(p);
+    setCompetition(c => c ? { ...c, current_participant_id: p.id } : c);
+
+    playCalledSound();
+    broadcast("CALLED", {
+      participant_id: p.id,
+      participant_name: p.participant_name,
+      scope_label: scope.label,
+      scope_label_ar: scope.labelAr,
+    });
   };
 
-  const markAbsent = async (participantId: string) => {
+  const startReciting = async () => {
+    if (!activeP) return;
     await supabase.from("musabaqah_participants" as any)
-      .update({ status: "absent" } as any).eq("id", participantId);
+      .update({ status: "reciting" }).eq("id", activeP.id);
+    setActiveP(p => p ? { ...p, status: "reciting" } : p);
+    setTimerActive(true);
+  };
+
+  const submitScore = async () => {
+    if (!activeP || !currentAttempt) return;
+    let totalScore = 0;
+    const breakdown: Record<string, number> = {};
+    if (competition?.use_criteria_scoring) {
+      SCORING_CRITERIA.forEach(c => {
+        const v = Number(scoreBreak[c.key]) || 0;
+        breakdown[c.key] = Math.min(v, c.max);
+        totalScore += breakdown[c.key];
+      });
+    } else {
+      totalScore = Number(scoreBreak.tajweed) || 0;
+    }
+
+    // Bell deduction (each bell = -2 from judge's discretion)
+    const bellPenalty = bellCount * 2;
+    totalScore = Math.max(0, totalScore - bellPenalty);
+
+    // Update attempt
+    await supabase.from("musabaqah_attempts" as any)
+      .update({
+        judge_score: totalScore,
+        score_breakdown: breakdown,
+        judge_comment: judgeComment,
+        bell_count: bellCount,
+        status: "scored",
+      }).eq("id", currentAttempt.id);
+
+    // Update participant total
+    const newTotal = (activeP.total_score || 0) + totalScore;
+    const newStageScores = {
+      ...(activeP.stage_scores || {}),
+      [competition!.current_stage]: totalScore,
+    };
+    await supabase.from("musabaqah_participants" as any)
+      .update({
+        status: "completed",
+        total_score: newTotal,
+        stage_scores: newStageScores,
+      }).eq("id", activeP.id);
+
+    broadcast("SCORE_SUBMITTED", { participant_id: activeP.id, score: totalScore });
+    toast({ title: `✅ Score saved: ${totalScore} pts — ${activeP.participant_name}` });
+
+    setActiveP(null);
+    setCurAttempt(null);
+    setShowScore(false);
+    setBellCount(0);
+    setTimerSecs(0);
+    setTimerActive(false);
+    loadParticipants();
+    loadAttempts();
+  };
+
+  const advanceStage = async () => {
+    if (!competition) return;
+    const nextStage = competition.current_stage + 1;
+    if (nextStage > competition.total_stages) {
+      // End competition
+      await supabase.from("musabaqah_competitions" as any)
+        .update({ status: "completed", current_participant_id: null }).eq("id", competition.id);
+      // Reset all participants to waiting for next stage
+      broadcast("COMPETITION_END");
+      setView("results");
+      return;
+    }
+    // Reset participants to waiting
+    await supabase.from("musabaqah_participants" as any)
+      .update({ status: "waiting" })
+      .eq("competition_id", competition.id);
+    await supabase.from("musabaqah_competitions" as any)
+      .update({ current_stage: nextStage, current_participant_id: null })
+      .eq("id", competition.id);
+    setCompetition(c => c ? { ...c, current_stage: nextStage, current_participant_id: null } : c);
+    broadcast("STAGE_CHANGE", { stage: nextStage });
+    toast({ title: `🎯 Stage ${nextStage} of ${competition.total_stages} begins!` });
     loadParticipants();
   };
 
-  const submitJudgeScore = async () => {
-    if (!currentAttempt) return;
-    const finalScore = parseFloat(judgeScore) || currentAttempt.total_score || 0;
-    await supabase.from("musabaqah_attempts" as any).update({
-      judge_score:  finalScore,
-      judge_comment: judgeComment,
-      status:       "judged",
-      total_score:  finalScore,
-    } as any).eq("id", currentAttempt.id);
-
-    // Update participant total score
-    const p = participants.find(p => p.id === currentAttempt.participant_id);
-    if (p) {
-      await supabase.from("musabaqah_participants" as any).update({
-        total_score: (p.total_score || 0) + finalScore,
-        status:      "completed",
-        rounds_completed: (p.rounds_completed || 0) + 1,
-      } as any).eq("id", p.id);
-    }
-
-    broadcast("SCORE_UPDATE", { attempt_id: currentAttempt.id });
-    toast({ title: "✅ Score submitted!" });
-    setView("admin-lobby");
-    loadParticipants(); loadAttempts();
-  };
-
-  /* ══════════════════════════════════════════════════════════════════
-     STUDENT HANDLERS
-  ══════════════════════════════════════════════════════════════════ */
-  const joinCompetition = async (comp: Competition) => {
-    if (!user) return;
-    setLoading(true);
-    try {
-      // Check if already joined
-      const { data: existing } = await supabase
-        .from("musabaqah_participants" as any)
-        .select("*").eq("competition_id", comp.id).eq("user_id", user.id).single();
-      if (existing) {
-        setMyParticipant(existing as unknown as Participant);
-        setCompetition(comp);
-        setView("student-queue");
-        return;
-      }
-
-      // Get queue position
-      const { count } = await supabase
-        .from("musabaqah_participants" as any)
-        .select("*", { count: "exact", head: true })
-        .eq("competition_id", comp.id);
-
-      const { data, error } = await supabase
-        .from("musabaqah_participants" as any)
-        .insert({
-          competition_id:    comp.id,
-          user_id:           user.id,
-          participant_name:  (profile as any)?.full_name || user.email?.split("@")[0] || "Student",
-          participant_level: (profile as any)?.level || (profile as any)?.course_level || "beginner",
-          queue_position:    (count ?? 0) + 1,
-          status:            "waiting",
-          current_round:     1,
-          total_score:       0,
-        } as any)
-        .select().single();
-      if (error) throw error;
-      setMyParticipant(data as unknown as Participant);
-      setCompetition(comp);
-      toast({ title: "✅ Joined! Wait for your name to be called." });
-      setView("student-queue");
-    } catch (e: any) {
-      toast({ title: "Error", description: e.message, variant: "destructive" });
-    } finally { setLoading(false); }
-  };
-
-  /* ── Start recitation ─────────────────────────────────────────── */
-  const startRecitation = async () => {
-    if (!competition || !currentAttempt) return;
-    setTranscript(""); setInterimText(""); setAudioUrl(null);
-
-    // Countdown 3-2-1
-    setCountdown(3);
-    setView("reciting");
-    setIsRecording(false);
-
-    await new Promise<void>(res => {
-      let c = 3;
-      const iv = setInterval(() => {
-        c--; setCountdown(c);
-        if (c <= 0) { clearInterval(iv); res(); }
-      }, 1000);
-    });
-
-    // Update attempt status
-    await supabase.from("musabaqah_attempts" as any)
-      .update({ status: "reciting", started_at: new Date().toISOString() } as any)
-      .eq("id", currentAttempt.id);
+  const toggleProctoringFlag = async (p: Participant) => {
+    const flagged = !p.proctor_flagged;
     await supabase.from("musabaqah_participants" as any)
-      .update({ status: "reciting" } as any).eq("id", myParticipant!.id);
+      .update({ proctor_flagged: flagged }).eq("id", p.id);
+    broadcast("PROCTOR_FLAG", { participant_id: p.id, flagged });
+  };
 
-    // Mic setup
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-      streamRef.current = stream;
+  /* ══════════════════════════════════════════════════════════════
+     CREATE COMPETITION
+  ══════════════════════════════════════════════════════════════ */
+  const createCompetition = async () => {
+    if (!form.title.trim()) { toast({ title:"Enter a competition title", variant:"destructive" }); return; }
+    setLoading(true);
+    const room_code = genRoomCode();
+    const { data, error } = await supabase.from("musabaqah_competitions" as any).insert({
+      title: form.title.trim(),
+      description: form.description.trim(),
+      scope_type: form.scope_type,
+      scope_config: { customJuz: form.customJuz },
+      total_stages: form.total_stages,
+      current_stage: 1,
+      time_limit_seconds: form.time_limit,
+      status: "open",
+      room_code,
+      created_by: user?.id,
+      use_criteria_scoring: form.use_criteria,
+    }).select().single();
+    setLoading(false);
+    if (error) { toast({ title:"Error creating competition", description: error.message, variant:"destructive" }); return; }
+    setCompetition(data as Competition);
+    setView("arena");
+    toast({ title: `🏆 Competition created! Room code: ${room_code}` });
+  };
 
-      // AnalyserNode for waveform
-      const audioCtx  = new AudioContext();
-      const src       = audioCtx.createMediaStreamSource(stream);
-      const an        = audioCtx.createAnalyser();
-      an.fftSize      = 256;
-      src.connect(an);
-      setAnalyser(an);
+  /* ══════════════════════════════════════════════════════════════
+     JOIN COMPETITION
+  ══════════════════════════════════════════════════════════════ */
+  const joinCompetition = async () => {
+    const code = joinForm.room_code.trim().toUpperCase();
+    const name  = joinForm.name.trim();
+    if (!code || !name) { toast({ title:"Fill all fields", variant:"destructive" }); return; }
+    setLoading(true);
+    const { data: comp } = await supabase.from("musabaqah_competitions" as any)
+      .select("*").eq("room_code", code).single();
+    if (!comp) { toast({ title:"Competition not found", description:`No open competition with code ${code}`, variant:"destructive" }); setLoading(false); return; }
 
-      // MediaRecorder for audio capture
-      const recorder = new MediaRecorder(stream);
-      audioChunks.current = [];
-      recorder.ondataavailable = e => { if (e.data.size > 0) audioChunks.current.push(e.data); };
-      recorder.start(200);
-      mediaRecRef.current = recorder;
-
-      // Speech recognition
-      const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      if (SR) {
-        const recog         = new SR();
-        recog.lang          = "ar-SA";
-        recog.continuous    = true;
-        recog.interimResults = true;
-        recog.onresult      = (e: any) => {
-          let final = "", interim = "";
-          for (let i = e.resultIndex; i < e.results.length; i++) {
-            const t = e.results[i][0].transcript;
-            if (e.results[i].isFinal) final += t + " ";
-            else interim += t;
-          }
-          if (final) setTranscript(p => p + final);
-          setInterimText(interim);
-        };
-        recog.onerror = () => {};
-        recog.start();
-        recognizerRef.current = recog;
-      }
-
-      setIsRecording(true);
-    } catch {
-      toast({ title: "Mic error", description: "Could not access microphone.", variant: "destructive" });
+    // Check if already joined
+    const { data: existing } = await supabase.from("musabaqah_participants" as any)
+      .select("*").eq("competition_id", (comp as Competition).id).eq("user_id", user?.id).single();
+    if (existing) {
+      setCompetition(comp as Competition);
+      setMyParticipant(existing as Participant);
+      setLoading(false);
+      setView("arena");
       return;
     }
 
-    // Timer
-    const limit = competition.time_limit_seconds;
-    setTimeLeft(limit);
-    timerRef.current = setInterval(() => {
-      setTimeLeft(t => {
-        if (t <= 1) { clearInterval(timerRef.current!); stopRecitation(); return 0; }
-        return t - 1;
-      });
-    }, 1000);
-  };
+    // Get next queue position
+    const { count } = await supabase.from("musabaqah_participants" as any)
+      .select("id", { count: "exact" }).eq("competition_id", (comp as Competition).id);
 
-  const stopRecitation = async () => {
-    clearInterval(timerRef.current!);
-    setIsRecording(false);
+    const { data: participant } = await supabase.from("musabaqah_participants" as any).insert({
+      competition_id: (comp as Competition).id,
+      user_id: user?.id,
+      participant_name: name,
+      school: joinForm.school,
+      queue_position: (count || 0) + 1,
+      status: "waiting",
+      total_score: 0,
+      stage_scores: {},
+      bell_counts: {},
+      proctor_flagged: false,
+      camera_on: false,
+    }).select().single();
 
-    // Stop speech recognition
-    try { recognizerRef.current?.stop(); } catch {}
-
-    // Stop MediaRecorder and get blob
-    let finalTranscript = "";
-    setTranscript(t => { finalTranscript = t; return t; });
-    setInterimText(it => { finalTranscript += it; return ""; });
-
-    if (mediaRecRef.current && mediaRecRef.current.state !== "inactive") {
-      mediaRecRef.current.stop();
-      await new Promise<void>(res => { mediaRecRef.current!.onstop = () => res(); });
+    setLoading(false);
+    if (participant) {
+      setCompetition(comp as Competition);
+      setMyParticipant(participant as Participant);
+      setView("arena");
+      toast({ title: "✅ Joined! Welcome to the competition." });
     }
-
-    // Stop stream
-    streamRef.current?.getTracks().forEach(t => t.stop());
-    setAnalyser(null);
-
-    // Upload audio
-    let audioStorageUrl = "";
-    if (audioChunks.current.length > 0) {
-      const blob = new Blob(audioChunks.current, { type: "audio/webm" });
-      const path = `${competition!.id}/${currentAttempt!.id}.webm`;
-      const { error: upErr } = await supabase.storage
-        .from("musabaqah-audio")
-        .upload(path, blob, { upsert: true });
-      if (!upErr) {
-        const { data: urlData } = supabase.storage.from("musabaqah-audio").getPublicUrl(path);
-        audioStorageUrl = urlData.publicUrl;
-        setAudioUrl(audioStorageUrl);
-      }
-    }
-
-    // Score recitation
-    const fullTranscript = finalTranscript.trim();
-    const assignedText   = currentAttempt!.assigned_text;
-    const { wordResults, accuracy, fluency, correct, total } = scoreRecitation(assignedText, fullTranscript);
-    const tajweed        = Math.round((accuracy * 0.6 + fluency * 0.4));
-    const totalScore     = Math.round((accuracy * 0.5 + fluency * 0.3 + tajweed * 0.2));
-
-    // Save to DB
-    const { data: savedAttempt } = await supabase
-      .from("musabaqah_attempts" as any)
-      .update({
-        transcribed_text: fullTranscript,
-        audio_url:        audioStorageUrl,
-        accuracy_score:   accuracy,
-        fluency_score:    fluency,
-        tajweed_score:    tajweed,
-        total_score:      totalScore,
-        mistakes_count:   total - correct,
-        word_results:     wordResults,
-        status:           "submitted",
-        completed_at:     new Date().toISOString(),
-      } as any)
-      .eq("id", currentAttempt!.id)
-      .select().single();
-
-    setCurrentAttempt(savedAttempt as unknown as Attempt);
-
-    // Update participant
-    await supabase.from("musabaqah_participants" as any)
-      .update({ status: "completed" } as any).eq("id", myParticipant!.id);
-
-    setView("result");
   };
 
-  /* ══════════════════════════════════════════════════════════════════
-     SHARED STYLES / HELPERS
-  ══════════════════════════════════════════════════════════════════ */
-  const divider = (
-    <div style={{ display:"flex", alignItems:"center", gap:10, margin:"18px 0" }}>
-      <div style={{ flex:1, height:1, background:`rgba(201,168,76,0.15)` }}/>
-      <Star size={10} color={GOLD} fill={GOLD}/>
-      <div style={{ flex:1, height:1, background:`rgba(201,168,76,0.15)` }}/>
-    </div>
-  );
-
-  const statusBadge = (s: Participant["status"]) => {
-    const cfg: Record<string, [string, string]> = {
-      waiting:   ["rgba(201,168,76,0.15)",  GOLD],
-      called:    ["rgba(59,130,246,0.15)",  "#60A5FA"],
-      reciting:  ["rgba(34,197,94,0.15)",   "#4ADE80"],
-      completed: ["rgba(107,114,128,0.15)", "#9CA3AF"],
-      eliminated:["rgba(239,68,68,0.15)",   "#F87171"],
-      absent:    ["rgba(75,85,99,0.15)",    "#6B7280"],
-    };
-    const [bg, color] = cfg[s] || ["rgba(255,255,255,0.1)", "#fff"];
-    return (
-      <span style={{ fontSize:10, fontWeight:700, padding:"3px 10px", borderRadius:20, background:bg, color, letterSpacing:0.5, textTransform:"uppercase" }}>
-        {s}
-      </span>
-    );
+  const openComp = async (comp: Competition) => {
+    setCompetition(comp);
+    // Check if judge already or participant
+    if (isJudge) { setView("arena"); return; }
+    // Check if participant
+    const { data } = await supabase.from("musabaqah_participants" as any)
+      .select("*").eq("competition_id", comp.id).eq("user_id", user?.id).single();
+    if (data) { setMyParticipant(data as Participant); setView("arena"); }
+    else setView("join");
   };
 
-  const positionRank = (i: number) => ["🥇","🥈","🥉"][i] ?? `#${i+1}`;
+  /* ══════════════════════════════════════════════════════════════
+     OPEN COMPETITION (for registration)
+  ══════════════════════════════════════════════════════════════ */
+  const openForRegistration = async () => {
+    if (!competition) return;
+    await supabase.from("musabaqah_competitions" as any)
+      .update({ status: "open" }).eq("id", competition.id);
+    setCompetition(c => c ? { ...c, status: "open" } : c);
+    toast({ title: "🔓 Competition is now open for registration" });
+  };
 
-  /* ══════════════════════════════════════════════════════════════════
-     VIEW: HUB
-  ══════════════════════════════════════════════════════════════════ */
-  if (view === "hub") return (
-    <div style={{ ...page, padding:"0 0 40px", overflowY:"auto" }}>
-      <IslamicBg/>
+  const startCompetition = async () => {
+    if (!competition) return;
+    await supabase.from("musabaqah_competitions" as any)
+      .update({ status: "active" }).eq("id", competition.id);
+    setCompetition(c => c ? { ...c, status: "active" } : c);
+    toast({ title: "🎯 Competition started!" });
+  };
 
-      {/* Header */}
-      <div style={{ background:"rgba(0,0,0,0.3)", backdropFilter:"blur(12px)", borderBottom:"1px solid rgba(201,168,76,0.18)", padding:"14px 18px", position:"sticky", top:0, zIndex:10, display:"flex", alignItems:"center", gap:12 }}>
-        <button onClick={() => navigate(-1)} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.6)", cursor:"pointer", fontSize:20, lineHeight:1, padding:"0 8px 0 0" }}>←</button>
-        <div style={{ flex:1 }}>
-          <h1 style={{ fontFamily:"'Playfair Display', serif", fontSize:20, fontWeight:900, color:"#fff", margin:0 }}>Al-Musābaqah</h1>
-          <p style={{ fontSize:11, color:GOLD, margin:0, fontFamily:"'Amiri', serif", letterSpacing:1 }}>مسابقة القرآن الكريم</p>
-        </div>
-        {isJudge && (
-          <button onClick={() => setView("create")} style={{ ...goldBtn, width:"auto", padding:"9px 16px", fontSize:13 }}>
-            <Plus size={15}/> Create
-          </button>
-        )}
-        <button onClick={loadCompetitions} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.12)", borderRadius:10, padding:"9px 12px", cursor:"pointer" }}>
-          <RefreshCw size={14} color="rgba(255,255,255,0.6)"/>
-        </button>
-      </div>
-
-      <div style={{ maxWidth:480, margin:"0 auto", padding:"20px 16px", position:"relative", zIndex:1 }}>
-
-        {/* Hero */}
-        <div style={{ textAlign:"center", marginBottom:28 }}>
-          <div style={{ width:80, height:80, borderRadius:24, background:`linear-gradient(135deg,${GOLD},#a8873a)`, display:"inline-flex", alignItems:"center", justifyContent:"center", marginBottom:12, boxShadow:`0 8px 32px rgba(201,168,76,0.5)` }}>
-            <span style={{ fontSize:38 }}>🏆</span>
-          </div>
-          <p style={{ fontSize:14, color:"rgba(255,255,255,0.5)", margin:0 }}>
-            Virtual Qur'an Recitation Competition
-          </p>
-        </div>
-
-        {/* Active competitions */}
-        {competitions.length === 0 ? (
-          <div style={{ ...glass, padding:28, textAlign:"center" }}>
-            <div style={{ fontSize:40, marginBottom:10, opacity:0.4 }}>📖</div>
-            <p style={{ fontSize:14, color:"rgba(255,255,255,0.4)", margin:0 }}>No active competitions</p>
-            {isJudge && <p style={{ fontSize:12, color:"rgba(255,255,255,0.25)", marginTop:6 }}>Create one using the + button above</p>}
-          </div>
-        ) : competitions.map(c => (
-          <div key={c.id} style={{ ...glass, padding:18, marginBottom:12 }}>
-            <div style={{ display:"flex", alignItems:"flex-start", gap:12, marginBottom:12 }}>
-              <div style={{ width:42, height:42, borderRadius:12, background:"rgba(201,168,76,0.15)", border:`1px solid rgba(201,168,76,0.3)`, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
-                <Trophy size={20} color={GOLD}/>
-              </div>
-              <div style={{ flex:1 }}>
-                <h3 style={{ fontSize:16, fontWeight:800, color:"#fff", margin:"0 0 4px" }}>{c.title}</h3>
-                {c.description && <p style={{ fontSize:12, color:"rgba(255,255,255,0.45)", margin:"0 0 6px" }}>{c.description}</p>}
-                <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
-                  <span style={{ fontSize:10, padding:"2px 8px", borderRadius:20, background:"rgba(34,197,94,0.15)", color:"#4ADE80", fontWeight:700, letterSpacing:0.5 }}>
-                    {c.status.toUpperCase()}
-                  </span>
-                  <span style={{ fontSize:10, padding:"2px 8px", borderRadius:20, background:"rgba(255,255,255,0.07)", color:"rgba(255,255,255,0.5)" }}>
-                    {c.competition_type === "juz30" ? "Juz 30" : c.competition_type === "custom" ? "Custom Surahs" : "Full Quran"}
-                  </span>
-                  <span style={{ fontSize:10, padding:"2px 8px", borderRadius:20, background:"rgba(255,255,255,0.07)", color:"rgba(255,255,255,0.5)" }}>
-                    <Clock size={9} style={{ display:"inline", marginRight:3 }}/>{c.time_limit_seconds}s
-                  </span>
-                  <span style={{ fontSize:10, padding:"2px 8px", borderRadius:20, background:"rgba(255,255,255,0.07)", color:"rgba(255,255,255,0.5)" }}>
-                    Round {c.current_round}/{c.max_rounds}
-                  </span>
-                </div>
-              </div>
-            </div>
-            <div style={{ display:"flex", gap:8 }}>
-              {!isJudge && (
-                <button onClick={() => joinCompetition(c)} disabled={loading}
-                  style={{ ...goldBtn, flex:2, padding:"11px" }}>
-                  <ChevronRight size={16}/> Join Queue
-                </button>
-              )}
-              {isJudge && (
-                <button onClick={() => { setCompetition(c); setView("admin-lobby"); }}
-                  style={{ ...goldBtn, flex:2, padding:"11px" }}>
-                  <Crown size={16}/> Open Control Panel
-                </button>
-              )}
-              <button onClick={() => { setCompetition(c); loadParticipants(); setView("leaderboard"); }}
-                style={{ ...outBtn, flex:1, padding:"11px" }}>
-                <Trophy size={14}/>
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-
-  /* ══════════════════════════════════════════════════════════════════
-     VIEW: CREATE COMPETITION (Admin)
-  ══════════════════════════════════════════════════════════════════ */
-  if (view === "create") {
-    const filtered = surahFilter
-      ? SURAHS.filter(s => s.en.toLowerCase().includes(surahFilter.toLowerCase()) || s.ar.includes(surahFilter))
-      : SURAHS;
+  /* ══════════════════════════════════════════════════════════════
+     VIEW: COMPETITION LIST
+  ══════════════════════════════════════════════════════════════ */
+  if (view === "list") {
+    const openComps = competitions.filter(c => c.status === "open" || c.status === "active");
+    const myComps   = isJudge ? competitions : openComps;
     return (
-      <div style={{ ...page, overflowY:"auto" }}>
+      <div style={{
+        minHeight:"100vh", background:`linear-gradient(160deg, ${G} 0%, #0a1f12 60%, #050f09 100%)`,
+        position:"relative", overflowY:"auto", fontFamily:"Cairo,sans-serif", padding:"0 0 60px",
+      }}>
         <IslamicBg/>
-        <div style={{ background:"rgba(0,0,0,0.4)", backdropFilter:"blur(12px)", borderBottom:"1px solid rgba(201,168,76,0.18)", padding:"14px 18px", position:"sticky", top:0, zIndex:10, display:"flex", alignItems:"center", gap:12 }}>
-          <button onClick={() => setView("hub")} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.6)", cursor:"pointer", fontSize:16 }}>← Back</button>
-          <h2 style={{ fontFamily:"'Playfair Display',serif", fontWeight:900, fontSize:18, color:"#fff", margin:0, flex:1 }}>Create Competition</h2>
-        </div>
-
-        <div style={{ maxWidth:480, margin:"0 auto", padding:"20px 16px 40px", position:"relative", zIndex:1, display:"flex", flexDirection:"column", gap:18 }}>
-
-          {/* Title */}
-          <div>
-            <label style={label}>Competition Title *</label>
-            <input value={form.title} onChange={e => setForm(p => ({ ...p, title: e.target.value }))}
-              placeholder="e.g. Ramadan Musabaqah 2026" style={inp}/>
-          </div>
-
-          {/* Description */}
-          <div>
-            <label style={label}>Description (optional)</label>
-            <textarea value={form.description} onChange={e => setForm(p => ({ ...p, description: e.target.value }))}
-              placeholder="Brief description of the competition…"
-              style={{ ...inp, minHeight:64, resize:"vertical" }}/>
-          </div>
-
-          {/* Type */}
-          <div>
-            <label style={label}>Scope</label>
-            <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-              {([
-                ["juz30",      "🌙", "Juz 30 Only",   "Short surahs from the 30th Juz"],
-                ["full_quran", "📖", "Full Quran",     "Any surah from 1–114"],
-                ["custom",     "✏️", "Custom Surahs",  "Choose specific surahs below"],
-              ] as const).map(([t, icon, name, desc]) => (
-                <button key={t} onClick={() => setForm(p => ({ ...p, type: t }))}
-                  style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 14px", borderRadius:12, border:`1.5px solid ${form.type===t?GOLD:"rgba(255,255,255,0.1)"}`, background:form.type===t?"rgba(201,168,76,0.1)":"rgba(255,255,255,0.03)", cursor:"pointer", textAlign:"left" }}>
-                  <span style={{ fontSize:22 }}>{icon}</span>
-                  <div>
-                    <p style={{ fontSize:14, fontWeight:800, color:form.type===t?GOLD:"#fff", margin:0 }}>{name}</p>
-                    <p style={{ fontSize:11, color:"rgba(255,255,255,0.4)", margin:0 }}>{desc}</p>
-                  </div>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Custom surah picker */}
-          {form.type === "custom" && (
-            <div>
-              <label style={label}>Select Surahs</label>
-              <input value={surahFilter} onChange={e => setSurahFilter(e.target.value)}
-                placeholder="Search surah…" style={{ ...inp, marginBottom:8 }}/>
-              <div style={{ maxHeight:200, overflowY:"auto", display:"flex", flexDirection:"column", gap:4 }}>
-                {filtered.map(s => {
-                  const selected = form.surahIds.includes(s.n);
-                  return (
-                    <button key={s.n} onClick={() => setForm(p => ({
-                      ...p, surahIds: selected ? p.surahIds.filter(id => id !== s.n) : [...p.surahIds, s.n]
-                    }))}
-                      style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 12px", borderRadius:10, border:`1px solid ${selected?GOLD:"rgba(255,255,255,0.08)"}`, background:selected?"rgba(201,168,76,0.1)":"rgba(255,255,255,0.02)", cursor:"pointer", textAlign:"left" }}>
-                      <span style={{ fontSize:11, color:GOLD, minWidth:28, fontWeight:700 }}>{s.n}.</span>
-                      <span style={{ fontSize:13, fontWeight:700, color:"#fff", flex:1 }}>{s.en}</span>
-                      <span style={{ fontSize:13, color:"rgba(255,255,255,0.5)", fontFamily:"'Amiri',serif" }}>{s.ar}</span>
-                      {selected && <CheckCircle size={14} color={GOLD}/>}
-                    </button>
-                  );
-                })}
-              </div>
-              {form.surahIds.length > 0 && (
-                <p style={{ fontSize:11, color:GOLD, marginTop:6, fontWeight:700 }}>{form.surahIds.length} surahs selected</p>
-              )}
-            </div>
-          )}
-
-          {/* Time limit */}
-          <div>
-            <label style={label}>Time Limit Per Recitation</label>
-            <div style={{ display:"flex", gap:8 }}>
-              {[60,90,120,180].map(t => (
-                <button key={t} onClick={() => setForm(p => ({ ...p, time: t }))}
-                  style={{ flex:1, padding:"10px 6px", borderRadius:10, border:`1.5px solid ${form.time===t?GOLD:"rgba(255,255,255,0.1)"}`, background:form.time===t?"rgba(201,168,76,0.15)":"transparent", color:form.time===t?GOLD:"rgba(255,255,255,0.5)", cursor:"pointer", fontWeight:800, fontSize:13 }}>
-                  {t}s
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Rounds */}
-          <div>
-            <label style={label}>Max Rounds</label>
-            <div style={{ display:"flex", gap:8 }}>
-              {[1,2,3,5].map(r => (
-                <button key={r} onClick={() => setForm(p => ({ ...p, rounds: r }))}
-                  style={{ flex:1, padding:"10px 6px", borderRadius:10, border:`1.5px solid ${form.rounds===r?GOLD:"rgba(255,255,255,0.1)"}`, background:form.rounds===r?"rgba(201,168,76,0.15)":"transparent", color:form.rounds===r?GOLD:"rgba(255,255,255,0.5)", cursor:"pointer", fontWeight:800, fontSize:15 }}>
-                  {r}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <button onClick={createCompetition} disabled={!form.title.trim() || loading} style={{ ...goldBtn, opacity:form.title.trim()?1:0.4, fontSize:16, padding:"16px" }}>
-            <Play size={18}/> {loading ? "Creating…" : "Launch Competition"}
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  /* ══════════════════════════════════════════════════════════════════
-     VIEW: ADMIN LOBBY (Control Panel)
-  ══════════════════════════════════════════════════════════════════ */
-  if (view === "admin-lobby" && competition) {
-    const waiting    = participants.filter(p => p.status === "waiting");
-    const called     = participants.find(p => p.status === "called" || p.status === "reciting");
-    const completed  = participants.filter(p => p.status === "completed");
-    const recentAttempt = allAttempts.find(a => a.status === "submitted");
-
-    return (
-      <div style={{ ...page, overflowY:"auto" }}>
-        <IslamicBg/>
-        {/* Sticky header */}
-        <div style={{ background:"rgba(0,0,0,0.5)", backdropFilter:"blur(12px)", borderBottom:"1px solid rgba(201,168,76,0.18)", padding:"12px 16px", position:"sticky", top:0, zIndex:10 }}>
-          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-            <button onClick={() => setView("hub")} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.5)", cursor:"pointer", fontSize:16 }}>←</button>
-            <div style={{ flex:1 }}>
-              <p style={{ fontSize:16, fontWeight:800, color:"#fff", margin:0 }}>{competition.title}</p>
-              <p style={{ fontSize:11, color:GOLD, margin:0 }}>Round {competition.current_round}/{competition.max_rounds} · {competition.status.toUpperCase()}</p>
-            </div>
-            <div style={{ display:"flex", gap:6 }}>
-              <button onClick={ringBell}
-                style={{ background:bellRinging?"rgba(201,168,76,0.3)":"rgba(255,255,255,0.07)", border:`1px solid ${bellRinging?GOLD:"rgba(255,255,255,0.12)"}`, borderRadius:10, padding:"9px 11px", cursor:"pointer", transition:"all .2s" }}>
-                <Bell size={16} color={bellRinging?GOLD:"rgba(255,255,255,0.5)"}/>
-              </button>
-              <button onClick={pauseCompetition}
-                style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.12)", borderRadius:10, padding:"9px 11px", cursor:"pointer" }}>
-                {competition.status === "paused" ? <Play size={16} color={GOLD}/> : <Pause size={16} color="rgba(255,255,255,0.5)"/>}
-              </button>
-              <button onClick={() => { loadParticipants(); setView("leaderboard"); }}
-                style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.12)", borderRadius:10, padding:"9px 11px", cursor:"pointer" }}>
-                <Trophy size={16} color="rgba(255,255,255,0.5)"/>
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div style={{ maxWidth:520, margin:"0 auto", padding:"16px", position:"relative", zIndex:1, display:"flex", flexDirection:"column", gap:14 }}>
-
-          {/* Stats row */}
-          <div style={{ display:"flex", gap:8 }}>
-            {[
-              { label:"Waiting",   val:waiting.length,   color:GOLD },
-              { label:"On Stage",  val:called?1:0,       color:"#60A5FA" },
-              { label:"Done",      val:completed.length,  color:"#4ADE80" },
-            ].map(s => (
-              <div key={s.label} style={{ flex:1, ...glass, padding:"12px 8px", textAlign:"center" }}>
-                <p style={{ fontSize:22, fontWeight:900, color:s.color, margin:0 }}>{s.val}</p>
-                <p style={{ fontSize:10, color:"rgba(255,255,255,0.4)", margin:0 }}>{s.label}</p>
-              </div>
-            ))}
-          </div>
-
-          {/* Currently reciting */}
-          {called && (
-            <div style={{ ...glass, padding:16, border:`1px solid rgba(34,197,94,0.3)`, background:"rgba(34,197,94,0.05)" }}>
-              <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10 }}>
-                <Radio size={14} color="#4ADE80"/>
-                <span style={{ fontSize:12, fontWeight:700, color:"#4ADE80", letterSpacing:1 }}>ON STAGE NOW</span>
-              </div>
-              <p style={{ fontSize:18, fontWeight:900, color:"#fff", margin:"0 0 6px" }}>{called.participant_name}</p>
-              <p style={{ fontSize:12, color:"rgba(255,255,255,0.4)", margin:"0 0 12px" }}>Status: {called.status}</p>
-              {recentAttempt && recentAttempt.status === "submitted" && (
-                <button onClick={() => { setCurrentAttempt(recentAttempt); setJudgeScore(String(recentAttempt.total_score || "")); setJudgeComment(""); setView("admin-judge"); }}
-                  style={{ ...goldBtn, padding:"11px" }}>
-                  <Edit3 size={15}/> Judge Recitation
-                </button>
-              )}
-            </div>
-          )}
-
-          {/* Call next */}
-          {!called && waiting.length > 0 && (
-            <button onClick={callNextParticipant} disabled={loading || competition.status==="paused"}
-              style={{ ...goldBtn, fontSize:17, padding:"18px", opacity:competition.status==="paused"?0.4:1 }}>
-              <PhoneCall size={20}/> {loading ? "Calling…" : `Call Next — ${waiting[0]?.participant_name}`}
-            </button>
-          )}
-          {!called && waiting.length === 0 && (
-            <div style={{ ...glass, padding:16, textAlign:"center" }}>
-              <CheckCircle size={24} color="#4ADE80" style={{ marginBottom:6 }}/>
-              <p style={{ color:"rgba(255,255,255,0.6)", margin:0 }}>All participants have recited</p>
-            </div>
-          )}
-
-          {/* Queue */}
-          <div style={{ ...glass, padding:16 }}>
-            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
-              <h3 style={{ fontSize:13, fontWeight:800, color:GOLD, margin:0, letterSpacing:1, textTransform:"uppercase" }}>
-                <Users size={13} style={{ marginRight:6 }}/>Queue
-              </h3>
-              <span style={{ fontSize:12, color:"rgba(255,255,255,0.4)" }}>{participants.length} total</span>
-            </div>
-            {participants.length === 0 ? (
-              <p style={{ fontSize:13, color:"rgba(255,255,255,0.3)", textAlign:"center", padding:"12px 0" }}>No participants yet</p>
-            ) : participants.map((p, i) => (
-              <div key={p.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 0", borderBottom:i<participants.length-1?"1px solid rgba(255,255,255,0.06)":"none" }}>
-                <span style={{ fontSize:13, minWidth:24, fontWeight:700, color:GOLD }}>#{p.queue_position}</span>
-                <div style={{ flex:1 }}>
-                  <p style={{ fontSize:14, fontWeight:700, color:"#fff", margin:0 }}>{p.participant_name}</p>
-                  <p style={{ fontSize:11, color:"rgba(255,255,255,0.35)", margin:0 }}>{p.participant_level} · Score: {p.total_score}</p>
-                </div>
-                {statusBadge(p.status)}
-                {p.status === "waiting" && (
-                  <button onClick={() => markAbsent(p.id)}
-                    style={{ background:"rgba(239,68,68,0.1)", border:"1px solid rgba(239,68,68,0.3)", borderRadius:8, padding:"4px 8px", cursor:"pointer" }}>
-                    <X size={12} color="#F87171"/>
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
-
-          {/* Recent scores */}
-          {allAttempts.filter(a => a.status === "judged").length > 0 && (
-            <div style={{ ...glass, padding:16 }}>
-              <h3 style={{ fontSize:13, fontWeight:800, color:GOLD, margin:"0 0 12px", letterSpacing:1, textTransform:"uppercase" }}>Recent Scores</h3>
-              {allAttempts.filter(a => a.status === "judged").slice(0,5).map(a => {
-                const p = participants.find(pt => pt.id === a.participant_id);
-                return (
-                  <div key={a.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 0", borderBottom:"1px solid rgba(255,255,255,0.05)" }}>
-                    <div style={{ flex:1 }}>
-                      <p style={{ fontSize:13, fontWeight:700, color:"#fff", margin:0 }}>{p?.participant_name}</p>
-                      <p style={{ fontSize:11, color:"rgba(255,255,255,0.35)", margin:0, fontFamily:"'Amiri',serif" }}>{a.surah_name_ar} {a.ayah_start}:{a.ayah_end}</p>
-                    </div>
-                    <div style={{ textAlign:"right" }}>
-                      <p style={{ fontSize:18, fontWeight:900, color:GOLD, margin:0 }}>{Math.round(a.judge_score ?? a.total_score ?? 0)}</p>
-                      <p style={{ fontSize:10, color:"rgba(255,255,255,0.35)", margin:0 }}>/ 100</p>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  /* ══════════════════════════════════════════════════════════════════
-     VIEW: ADMIN JUDGE PANEL
-  ══════════════════════════════════════════════════════════════════ */
-  if (view === "admin-judge" && currentAttempt) {
-    const { wordResults = [] } = currentAttempt;
-    const participant = participants.find(p => p.id === currentAttempt.participant_id);
-
-    return (
-      <div style={{ ...page, overflowY:"auto" }}>
-        <IslamicBg/>
-        <div style={{ background:"rgba(0,0,0,0.5)", backdropFilter:"blur(12px)", borderBottom:"1px solid rgba(201,168,76,0.18)", padding:"12px 16px", position:"sticky", top:0, zIndex:10, display:"flex", alignItems:"center", gap:10 }}>
-          <button onClick={() => setView("admin-lobby")} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.5)", cursor:"pointer", fontSize:16 }}>← Back</button>
-          <h2 style={{ fontFamily:"'Playfair Display',serif", fontWeight:900, fontSize:17, color:"#fff", margin:0, flex:1 }}>Judge Panel</h2>
-        </div>
-
-        <div style={{ maxWidth:520, margin:"0 auto", padding:"16px", position:"relative", zIndex:1, display:"flex", flexDirection:"column", gap:14 }}>
-
-          {/* Participant info */}
-          <div style={{ ...glass, padding:14 }}>
-            <p style={{ fontSize:18, fontWeight:800, color:"#fff", margin:"0 0 4px" }}>{participant?.participant_name}</p>
-            <p style={{ fontSize:12, color:GOLD, margin:0 }}>
-              {currentAttempt.surah_name_ar} (Surah {currentAttempt.surah_number}) · Ayah {currentAttempt.ayah_start}–{currentAttempt.ayah_end}
-            </p>
-          </div>
-
-          {/* Audio player */}
-          {currentAttempt.audio_url && (
-            <div style={{ ...glass, padding:14 }}>
-              <p style={{ fontSize:11, color:GOLD, fontWeight:700, margin:"0 0 10px", letterSpacing:1.5, textTransform:"uppercase" }}>🎵 Recitation Audio</p>
-              <audio controls src={currentAttempt.audio_url} style={{ width:"100%", borderRadius:8 }}/>
-            </div>
-          )}
-
-          {/* Assigned text */}
-          <div style={{ ...glass, padding:14 }}>
-            <p style={{ fontSize:11, color:GOLD, fontWeight:700, margin:"0 0 10px", letterSpacing:1.5, textTransform:"uppercase" }}>📖 Assigned Text</p>
-            <p style={{ fontSize:20, color:"#fff", lineHeight:2.2, direction:"rtl", fontFamily:"'Scheherazade New','Amiri',serif", margin:0, textAlign:"right" }}>
-              {currentAttempt.assigned_text}
-            </p>
-          </div>
-
-          {/* Word comparison */}
-          {wordResults.length > 0 && (
-            <div style={{ ...glass, padding:14 }}>
-              <p style={{ fontSize:11, color:GOLD, fontWeight:700, margin:"0 0 10px", letterSpacing:1.5, textTransform:"uppercase" }}>
-                Word-by-Word Analysis
-              </p>
-              <div style={{ display:"flex", flexWrap:"wrap", gap:6, direction:"rtl", justifyContent:"flex-end" }}>
-                {wordResults.map((w, i) => (
-                  <span key={i} style={{
-                    padding:"4px 10px", borderRadius:8, fontSize:14,
-                    fontFamily:"'Scheherazade New','Amiri',serif",
-                    background: w.status==="correct"?"rgba(34,197,94,0.15)":w.status==="mistake"?"rgba(239,68,68,0.15)":"rgba(107,114,128,0.15)",
-                    color: w.status==="correct"?"#4ADE80":w.status==="mistake"?"#F87171":"#6B7280",
-                    border: `1px solid ${w.status==="correct"?"rgba(34,197,94,0.3)":w.status==="mistake"?"rgba(239,68,68,0.3)":"rgba(107,114,128,0.3)"}`,
-                  }}>{w.original}</span>
-                ))}
-              </div>
-              <div style={{ display:"flex", gap:10, marginTop:12 }}>
-                {[["🟢","Correct"],["🔴","Mistake"],["⚫","Missing"]].map(([ic,lb]) => (
-                  <span key={lb} style={{ fontSize:11, color:"rgba(255,255,255,0.4)" }}>{ic} {lb}</span>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* AI scores */}
-          <div style={{ display:"flex", gap:8 }}>
-            {[
-              { l:"Accuracy",  v:currentAttempt.accuracy_score },
-              { l:"Fluency",   v:currentAttempt.fluency_score },
-              { l:"Tajweed",   v:currentAttempt.tajweed_score },
-            ].map(s => (
-              <div key={s.l} style={{ flex:1, ...glass, padding:"12px 8px", textAlign:"center" }}>
-                <p style={{ fontSize:20, fontWeight:900, color:GOLD, margin:0 }}>{Math.round(s.v ?? 0)}</p>
-                <p style={{ fontSize:10, color:"rgba(255,255,255,0.4)", margin:0 }}>{s.l}</p>
-              </div>
-            ))}
-          </div>
-
-          {/* Judge override */}
-          <div style={{ ...glass, padding:14 }}>
-            <p style={{ fontSize:11, color:GOLD, fontWeight:700, margin:"0 0 12px", letterSpacing:1.5, textTransform:"uppercase" }}>Judge Score Override</p>
-            <div style={{ marginBottom:10 }}>
-              <label style={label}>Final Score (0–100)</label>
-              <input type="number" min="0" max="100"
-                value={judgeScore} onChange={e => setJudgeScore(e.target.value)}
-                placeholder={`AI: ${Math.round(currentAttempt.total_score ?? 0)}`}
-                style={{ ...inp, fontSize:20, fontWeight:700, color:GOLD, textAlign:"center" }}/>
-            </div>
-            <div>
-              <label style={label}>Judge Comment</label>
-              <textarea value={judgeComment} onChange={e => setJudgeComment(e.target.value)}
-                placeholder="Feedback for the student…"
-                style={{ ...inp, minHeight:64, resize:"vertical" }}/>
-            </div>
-          </div>
-
-          <button onClick={submitJudgeScore} style={{ ...goldBtn, fontSize:16, padding:"16px" }}>
-            <CheckCircle size={18}/> Submit Score & Continue
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  /* ══════════════════════════════════════════════════════════════════
-     VIEW: STUDENT QUEUE (Waiting Room)
-  ══════════════════════════════════════════════════════════════════ */
-  if (view === "student-queue" && competition) {
-    const myPos = myParticipant?.queue_position ?? 0;
-    const waiting = participants.filter(p => p.status === "waiting");
-    const currentlyOn = participants.find(p => p.status === "called" || p.status === "reciting");
-
-    return (
-      <div style={{ ...page, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"24px 18px" }}>
-        <IslamicBg/>
-        <div style={{ position:"relative", zIndex:1, width:"100%", maxWidth:420, textAlign:"center" }}>
-
-          {/* Bell animation if ringing */}
-          {bellRinging && (
-            <div style={{ position:"fixed", top:0, left:0, right:0, bottom:0, zIndex:50, display:"flex", alignItems:"center", justifyContent:"center", background:"rgba(0,0,0,0.7)", backdropFilter:"blur(8px)" }}>
-              <div style={{ animation:"bellBounce 0.3s ease infinite alternate" }}>
-                <span style={{ fontSize:80 }}>🔔</span>
-              </div>
-            </div>
-          )}
-
-          <div style={{ width:90, height:90, borderRadius:28, background:`linear-gradient(135deg,${GOLD},#a8873a)`, display:"inline-flex", alignItems:"center", justifyContent:"center", marginBottom:16, boxShadow:`0 8px 36px rgba(201,168,76,0.5)` }}>
-            <span style={{ fontSize:44 }}>🕌</span>
-          </div>
-
-          <h2 style={{ fontFamily:"'Playfair Display',serif", fontWeight:900, fontSize:26, color:"#fff", margin:"0 0 4px" }}>You're in the Queue</h2>
-          <p style={{ fontSize:15, color:GOLD, margin:"0 0 24px" }}>{competition.title}</p>
-
-          {/* Position */}
-          <div style={{ ...glass, padding:20, marginBottom:14 }}>
-            <p style={{ fontSize:11, color:"rgba(255,255,255,0.45)", margin:"0 0 6px", letterSpacing:1, textTransform:"uppercase" }}>Your Position</p>
-            <p style={{ fontSize:52, fontWeight:900, color:GOLD, margin:"0 0 4px", fontFamily:"'Playfair Display',serif" }}>#{myPos}</p>
-            <p style={{ fontSize:13, color:"rgba(255,255,255,0.5)", margin:0 }}>{waiting.length > 0 ? `${waiting.length} remaining` : "You're next!"}</p>
-          </div>
-
-          {/* Currently on stage */}
-          {currentlyOn && (
-            <div style={{ ...glass, padding:14, marginBottom:14, border:"1px solid rgba(34,197,94,0.25)", background:"rgba(34,197,94,0.04)" }}>
-              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                <div style={{ width:8, height:8, borderRadius:"50%", background:"#4ADE80", animation:"pulse 1s infinite" }}/>
-                <p style={{ fontSize:12, color:"#4ADE80", fontWeight:700, margin:0 }}>On Stage: {currentlyOn.participant_name}</p>
-              </div>
-            </div>
-          )}
-
-          {/* My name */}
-          <div style={{ ...glass, padding:14, marginBottom:20 }}>
-            <p style={{ fontSize:13, color:"rgba(255,255,255,0.5)", margin:0 }}>Registered as</p>
-            <p style={{ fontSize:18, fontWeight:800, color:"#fff", margin:0 }}>{myParticipant?.participant_name}</p>
-          </div>
-
-          <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
-            <div style={{ width:8, height:8, borderRadius:"50%", background:GOLD, animation:"pulse 1.5s infinite" }}/>
-            <p style={{ fontSize:13, color:"rgba(255,255,255,0.4)", margin:0 }}>Waiting for your name to be called…</p>
-          </div>
-
-          <button onClick={() => setView("leaderboard")} style={{ ...outBtn, marginTop:20, width:"auto", padding:"10px 20px" }}>
-            <Trophy size={14}/> View Leaderboard
-          </button>
-        </div>
-        <style>{`@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.8)}} @keyframes bellBounce{0%{transform:rotate(-15deg)}100%{transform:rotate(15deg)}}`}</style>
-      </div>
-    );
-  }
-
-  /* ══════════════════════════════════════════════════════════════════
-     VIEW: STUDENT CALLED (You're Up!)
-  ══════════════════════════════════════════════════════════════════ */
-  if (view === "student-called") {
-    return (
-      <div style={{ ...page, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"24px 18px" }}>
-        <IslamicBg opacity={0.09}/>
-        <div style={{ position:"relative", zIndex:1, width:"100%", maxWidth:440, textAlign:"center" }}>
-
-          {/* Pulsing icon */}
-          <div style={{ width:100, height:100, borderRadius:32, background:"rgba(34,197,94,0.2)", border:"2px solid #4ADE80", display:"inline-flex", alignItems:"center", justifyContent:"center", marginBottom:16, animation:"calledPulse 1.2s ease infinite", boxShadow:"0 0 50px rgba(34,197,94,0.4)" }}>
-            <PhoneCall size={48} color="#4ADE80"/>
-          </div>
-
-          <h2 style={{ fontFamily:"'Playfair Display',serif", fontWeight:900, fontSize:30, color:"#4ADE80", margin:"0 0 6px", animation:"fadeIn .4s ease" }}>
-            It's Your Turn!
-          </h2>
-          <p style={{ fontSize:18, color:GOLD, margin:"0 0 24px", fontFamily:"'Amiri',serif" }}>حان دورك — You've been called</p>
-
-          {/* Ayah reveal */}
-          <div style={{ ...glass, padding:20, marginBottom:20, border:"1px solid rgba(201,168,76,0.3)" }}>
-            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
-              <p style={{ fontSize:11, color:GOLD, fontWeight:700, margin:0, letterSpacing:1.5, textTransform:"uppercase" }}>Your Assigned Ayah</p>
-              <button onClick={() => setShowAyah(!showAyah)}
-                style={{ background:"rgba(255,255,255,0.08)", border:"none", borderRadius:8, padding:"5px 10px", cursor:"pointer", display:"flex", alignItems:"center", gap:5, color:"rgba(255,255,255,0.6)", fontSize:12 }}>
-                {showAyah ? <EyeOff size={12}/> : <Eye size={12}/>} {showAyah ? "Hide" : "Reveal"}
-              </button>
-            </div>
-
-            {showAyah ? (
-              <p style={{ fontSize:24, color:"#fff", lineHeight:2.4, direction:"rtl", fontFamily:"'Scheherazade New','Amiri Quran','Amiri',serif", margin:0, textAlign:"right" }}>
-                {calledAyahText || currentAttempt?.assigned_text}
-              </p>
-            ) : (
-              <div style={{ padding:"20px 0", display:"flex", alignItems:"center", justifyContent:"center", gap:4 }}>
-                {Array.from({ length: 12 }).map((_, i) => (
-                  <div key={i} style={{ width:24, height:8, borderRadius:4, background:"rgba(255,255,255,0.1)" }}/>
-                ))}
-              </div>
-            )}
-
-            {currentAttempt && (
-              <p style={{ fontSize:12, color:"rgba(255,255,255,0.35)", margin:"10px 0 0", fontFamily:"'Cairo',sans-serif" }}>
-                {currentAttempt.surah_name_ar} ({currentAttempt.surah_name}) · Ayah {currentAttempt.ayah_start}–{currentAttempt.ayah_end}
-              </p>
-            )}
-          </div>
-
-          <p style={{ fontSize:13, color:"rgba(255,255,255,0.5)", marginBottom:20 }}>
-            You have <strong style={{ color:GOLD }}>{competition?.time_limit_seconds}s</strong> to recite. The mic will start automatically.
-          </p>
-
-          <button onClick={startRecitation} style={{ ...goldBtn, fontSize:18, padding:"20px" }}>
-            <Mic size={22}/> Start Recitation
-          </button>
-        </div>
-        <style>{`@keyframes calledPulse{0%,100%{transform:scale(1);box-shadow:0 0 50px rgba(34,197,94,.4)}50%{transform:scale(1.06);box-shadow:0 0 70px rgba(34,197,94,.7)}} @keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}`}</style>
-      </div>
-    );
-  }
-
-  /* ══════════════════════════════════════════════════════════════════
-     VIEW: RECITING
-  ══════════════════════════════════════════════════════════════════ */
-  if (view === "reciting" && competition) {
-    const isCountingDown = !isRecording;
-    return (
-      <div style={{ ...page, display:"flex", flexDirection:"column", padding:"0 0 30px" }}>
-        <IslamicBg opacity={0.05}/>
-
-        {/* Countdown overlay */}
-        {isCountingDown && countdown > 0 && (
-          <div style={{ position:"fixed", inset:0, zIndex:50, display:"flex", alignItems:"center", justifyContent:"center", background:"rgba(0,0,0,0.85)", backdropFilter:"blur(10px)", flexDirection:"column", gap:12 }}>
-            <p style={{ fontSize:14, color:GOLD, fontWeight:700, letterSpacing:2, textTransform:"uppercase" }}>Get Ready…</p>
-            <div style={{ width:160, height:160, borderRadius:"50%", background:`conic-gradient(${GOLD} ${(countdown/3)*360}deg, rgba(255,255,255,0.06) 0deg)`, display:"flex", alignItems:"center", justifyContent:"center", boxShadow:`0 0 60px rgba(201,168,76,0.6)` }}>
-              <div style={{ width:130, height:130, borderRadius:"50%", background:"#030e08", display:"flex", alignItems:"center", justifyContent:"center" }}>
-                <span style={{ fontSize:80, fontWeight:900, color:GOLD, fontFamily:"'Playfair Display',serif", animation:"cPop .3s ease" }}>{countdown}</span>
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* Header */}
-        <div style={{ background:"rgba(0,0,0,0.5)", backdropFilter:"blur(12px)", borderBottom:`1px solid ${isRecording?"rgba(239,68,68,0.3)":"rgba(201,168,76,0.18)"}`, padding:"12px 16px", display:"flex", alignItems:"center", gap:12 }}>
-          {isRecording && <div style={{ width:10, height:10, borderRadius:"50%", background:"#EF4444", animation:"pulse 1s infinite" }}/>}
-          <p style={{ fontSize:14, fontWeight:800, color:isRecording?"#F87171":"rgba(255,255,255,0.7)", margin:0, flex:1 }}>
-            {isRecording ? "🔴 Recording…" : "Preparing…"}
+        <div style={{ position:"relative", zIndex:1, textAlign:"center", padding:"48px 24px 32px" }}>
+          <div style={{ fontSize:48, marginBottom:8 }}>🏆</div>
+          <h1 style={{ fontFamily:"'Playfair Display',serif", color:GOLD, fontSize:32, margin:0, letterSpacing:1 }}>
+            Al-Musābaqah
+          </h1>
+          <div style={{ color:"rgba(255,255,255,0.5)", fontSize:13, marginTop:4, fontFamily:"Amiri,serif",
+            direction:"rtl" }}>
+            مسابقة التلاوة الحية
+          </div>
+          <p style={{ color:"rgba(255,255,255,0.55)", maxWidth:500, margin:"12px auto 0", fontSize:14 }}>
+            Professional live Qur'an recitation competitions with real-time judging, bell signals, and certified results.
           </p>
-          {isRecording && (
-            <TimerRing seconds={timeLeft} total={competition.time_limit_seconds}/>
-          )}
         </div>
 
-        <div style={{ flex:1, overflowY:"auto", maxWidth:480, margin:"0 auto", width:"100%", padding:"16px", position:"relative", zIndex:1, display:"flex", flexDirection:"column", gap:14 }}>
-
-          {/* Assigned ayah (always visible during reciting) */}
-          {currentAttempt && (
-            <div style={{ ...glass, padding:16 }}>
-              <p style={{ fontSize:10, color:GOLD, fontWeight:700, margin:"0 0 8px", letterSpacing:1.5, textTransform:"uppercase" }}>
-                {currentAttempt.surah_name_ar} · Ayah {currentAttempt.ayah_start}–{currentAttempt.ayah_end}
-              </p>
-              <p style={{ fontSize:22, color:"#fff", lineHeight:2.4, direction:"rtl", fontFamily:"'Scheherazade New','Amiri Quran','Amiri',serif", margin:0, textAlign:"right" }}>
-                {currentAttempt.assigned_text}
-              </p>
-            </div>
-          )}
-
-          {/* Waveform */}
-          {isRecording && (
-            <div style={{ ...glass, padding:14 }}>
-              <p style={{ fontSize:10, color:"rgba(255,255,255,0.35)", margin:"0 0 8px", letterSpacing:1 }}>🎤 Live Audio</p>
-              <Waveform analyser={analyser}/>
-            </div>
-          )}
-
-          {/* Live transcription */}
-          {isRecording && (
-            <div style={{ ...glass, padding:14, minHeight:80 }}>
-              <p style={{ fontSize:10, color:GOLD, fontWeight:700, margin:"0 0 8px", letterSpacing:1.5, textTransform:"uppercase" }}>Live Transcription</p>
-              <p style={{ fontSize:18, color:"#fff", direction:"rtl", fontFamily:"'Scheherazade New','Amiri',serif", lineHeight:2, margin:0, textAlign:"right" }}>
-                {transcript || <span style={{ color:"rgba(255,255,255,0.2)" }}>بدأ التسجيل…</span>}
-                {interimText && <span style={{ color:"rgba(201,168,76,0.6)" }}> {interimText}</span>}
-              </p>
-            </div>
-          )}
-
-          {/* Stop button */}
-          {isRecording && (
-            <button onClick={stopRecitation}
-              style={{ ...dangerBtn, fontSize:16, padding:"16px", border:"2px solid rgba(239,68,68,0.5)", background:"rgba(239,68,68,0.12)", color:"#F87171" }}>
-              <Square size={18}/> Stop & Submit
+        <div style={{ position:"relative", zIndex:1, maxWidth:900, margin:"0 auto", padding:"0 24px" }}>
+          {/* Action bar */}
+          <div style={{ display:"flex", gap:12, marginBottom:24, flexWrap:"wrap" }}>
+            {isJudge && (
+              <button onClick={() => setView("setup")} style={{
+                background:`linear-gradient(135deg, ${GOLD} 0%, ${GOLDD} 100%)`,
+                color:G, border:"none", borderRadius:10, padding:"12px 24px",
+                fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", gap:8,
+                fontSize:14, fontFamily:"Cairo,sans-serif",
+              }}>
+                <Plus size={18}/> Create Competition
+              </button>
+            )}
+            <button onClick={() => setView("join")} style={{
+              background:"rgba(255,255,255,0.06)", color:"#fff",
+              border:"1.5px solid rgba(201,168,76,0.3)", borderRadius:10,
+              padding:"12px 24px", fontWeight:600, cursor:"pointer",
+              display:"flex", alignItems:"center", gap:8, fontSize:14,
+              fontFamily:"Cairo,sans-serif",
+            }}>
+              <LogIn size={18}/> Join with Code
             </button>
+            <button onClick={loadCompetitions} style={{
+              background:"transparent", color:"rgba(255,255,255,0.4)",
+              border:"1px solid rgba(255,255,255,0.1)", borderRadius:10,
+              padding:"12px 16px", cursor:"pointer",
+            }}>
+              <RefreshCw size={16}/>
+            </button>
+          </div>
+
+          {/* Competition cards */}
+          {myComps.length === 0 ? (
+            <div style={{ textAlign:"center", padding:"60px 24px", color:"rgba(255,255,255,0.35)" }}>
+              <Trophy size={48} color="rgba(201,168,76,0.3)" style={{ marginBottom:12 }}/>
+              <p style={{ margin:0 }}>No active competitions</p>
+              {isJudge && <p style={{ margin:"4px 0 0", fontSize:13 }}>Create one to get started.</p>}
+            </div>
+          ) : (
+            <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+              {myComps.map(c => (
+                <div key={c.id} onClick={() => openComp(c)} style={{
+                  background:`linear-gradient(135deg, ${GM}cc 0%, rgba(10,31,18,0.9) 100%)`,
+                  border:`1.5px solid rgba(201,168,76,${c.status==="active"?0.5:0.2})`,
+                  borderRadius:14, padding:"20px 24px", cursor:"pointer",
+                  display:"flex", alignItems:"center", gap:16,
+                  backdropFilter:"blur(10px)",
+                  boxShadow: c.status==="active" ? `0 0 20px rgba(201,168,76,0.15)` : "none",
+                  transition:"all 0.2s",
+                }}>
+                  <div style={{
+                    width:52, height:52, borderRadius:"50%",
+                    background: c.status==="active"
+                      ? `linear-gradient(135deg, ${GOLD} 0%, ${GOLDD} 100%)`
+                      : `linear-gradient(135deg, ${GM} 0%, #0a1f12 100%)`,
+                    border:`2px solid ${c.status==="active" ? GOLD : "rgba(201,168,76,0.2)"}`,
+                    display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0,
+                  }}>
+                    {c.status==="active" ? <Radio size={22} color={G}/> : <Trophy size={22} color={GOLD}/>}
+                  </div>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+                      <span style={{ color:"#fff", fontWeight:700, fontSize:16 }}>{c.title}</span>
+                      <span style={{
+                        background: c.status==="active" ? `${GREEN}22` : c.status==="open" ? `${GOLD}22` : "rgba(255,255,255,0.08)",
+                        color: c.status==="active" ? GREEN : c.status==="open" ? GOLD : "rgba(255,255,255,0.5)",
+                        border:`1px solid ${c.status==="active" ? GREEN : c.status==="open" ? GOLD : "rgba(255,255,255,0.1)"}`,
+                        borderRadius:20, padding:"2px 10px", fontSize:11, fontWeight:600,
+                      }}>
+                        {c.status==="active" ? "🔴 LIVE" : c.status==="open" ? "🟢 OPEN" : c.status.toUpperCase()}
+                      </span>
+                    </div>
+                    <div style={{ color:"rgba(255,255,255,0.45)", fontSize:13, marginTop:2 }}>
+                      {SCOPE_OPTIONS.find(s => s.id === c.scope_type)?.label || c.scope_type} ·
+                      Stage {c.current_stage}/{c.total_stages} ·
+                      Code: <span style={{ color:GOLD, fontWeight:700, letterSpacing:2 }}>{c.room_code}</span>
+                    </div>
+                  </div>
+                  <ChevronRight size={20} color="rgba(255,255,255,0.3)"/>
+                </div>
+              ))}
+            </div>
           )}
         </div>
-        <style>{`@keyframes cPop{0%{transform:scale(1.5);opacity:0}100%{transform:scale(1);opacity:1}} @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}`}</style>
       </div>
     );
   }
 
-  /* ══════════════════════════════════════════════════════════════════
-     VIEW: RESULT
-  ══════════════════════════════════════════════════════════════════ */
-  if (view === "result" && currentAttempt) {
-    const totalScore = currentAttempt.total_score ?? 0;
-    const wordResults = (currentAttempt.word_results ?? []) as WordResult[];
-
+  /* ══════════════════════════════════════════════════════════════
+     VIEW: SETUP
+  ══════════════════════════════════════════════════════════════ */
+  if (view === "setup") {
+    const inp = (label: string, key: keyof typeof form, type="text", extra?: any) => (
+      <div style={{ marginBottom:16 }}>
+        <label style={{ color:GOLD, fontSize:12, fontWeight:600, letterSpacing:1,
+          textTransform:"uppercase", display:"block", marginBottom:6 }}>{label}</label>
+        <input
+          type={type} value={String(form[key])}
+          onChange={e => setForm(f => ({ ...f, [key]: type==="number" ? Number(e.target.value) : e.target.value }))}
+          style={{
+            width:"100%", background:"rgba(255,255,255,0.05)", border:`1.5px solid rgba(201,168,76,0.3)`,
+            borderRadius:10, padding:"10px 14px", color:"#fff", fontFamily:"Cairo,sans-serif",
+            fontSize:14, outline:"none", boxSizing:"border-box",
+          }}
+          {...extra}
+        />
+      </div>
+    );
     return (
-      <div style={{ ...page, overflowY:"auto" }}>
+      <div style={{
+        minHeight:"100vh", background:`linear-gradient(160deg, ${G} 0%, #0a1f12 100%)`,
+        display:"flex", alignItems:"center", justifyContent:"center",
+        padding:24, fontFamily:"Cairo,sans-serif",
+      }}>
         <IslamicBg/>
-        <div style={{ background:"rgba(0,0,0,0.4)", backdropFilter:"blur(12px)", borderBottom:"1px solid rgba(201,168,76,0.18)", padding:"12px 16px", position:"sticky", top:0, zIndex:10, display:"flex", alignItems:"center", gap:10 }}>
-          <h2 style={{ fontFamily:"'Playfair Display',serif", fontWeight:900, fontSize:18, color:"#fff", margin:0, flex:1 }}>Your Result</h2>
-          <button onClick={() => { setView("student-queue"); }}
-            style={{ background:"rgba(255,255,255,0.07)", border:"none", borderRadius:10, padding:"8px 14px", cursor:"pointer", color:"rgba(255,255,255,0.6)", fontSize:12 }}>
-            ← Back to Queue
+        <div style={{
+          position:"relative", zIndex:1, width:"100%", maxWidth:580,
+          background:"rgba(10,31,18,0.95)", borderRadius:20,
+          border:`1.5px solid rgba(201,168,76,0.3)`,
+          padding:"36px 32px", backdropFilter:"blur(20px)",
+        }}>
+          <button onClick={() => setView("list")} style={{ background:"none", border:"none",
+            color:"rgba(255,255,255,0.4)", cursor:"pointer", marginBottom:16, fontSize:13 }}>
+            ← Back
+          </button>
+          <h2 style={{ color:GOLD, fontFamily:"'Playfair Display',serif",
+            fontSize:24, margin:"0 0 24px", display:"flex", alignItems:"center", gap:8 }}>
+            <Plus size={20}/> New Competition
+          </h2>
+
+          {inp("Competition Title", "title", "text", { placeholder:"e.g. Ramadan Tajweed Competition 2025" })}
+          {inp("Description (optional)", "description", "text", { placeholder:"Brief description..." })}
+
+          {/* Scope */}
+          <div style={{ marginBottom:16 }}>
+            <label style={{ color:GOLD, fontSize:12, fontWeight:600, letterSpacing:1,
+              textTransform:"uppercase", display:"block", marginBottom:8 }}>Quran Scope</label>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+              {SCOPE_OPTIONS.map(s => (
+                <div key={s.id} onClick={() => setForm(f => ({ ...f, scope_type: s.id }))} style={{
+                  background: form.scope_type===s.id ? `${GOLD}22` : "rgba(255,255,255,0.04)",
+                  border:`1.5px solid ${form.scope_type===s.id ? GOLD : "rgba(255,255,255,0.1)"}`,
+                  borderRadius:10, padding:"10px 12px", cursor:"pointer",
+                }}>
+                  <div style={{ color: form.scope_type===s.id ? GOLD : "#fff", fontWeight:600, fontSize:13 }}>
+                    {s.label}
+                  </div>
+                  <div style={{ color:"rgba(255,255,255,0.4)", fontSize:11, marginTop:2 }}>{s.desc}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:16 }}>
+            <div>
+              <label style={{ color:GOLD, fontSize:12, fontWeight:600, letterSpacing:1,
+                textTransform:"uppercase", display:"block", marginBottom:6 }}>Stages</label>
+              <select value={form.total_stages}
+                onChange={e => setForm(f => ({ ...f, total_stages: Number(e.target.value) }))}
+                style={{ width:"100%", background:"rgba(255,255,255,0.05)", border:`1.5px solid rgba(201,168,76,0.3)`,
+                  borderRadius:10, padding:"10px 14px", color:"#fff", fontFamily:"Cairo,sans-serif", fontSize:14, outline:"none" }}>
+                {[1,2,3,4,5,6,7,8,10].map(n => (
+                  <option key={n} value={n} style={{ background:G }}>{n} {n===1?"Stage":"Stages"}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label style={{ color:GOLD, fontSize:12, fontWeight:600, letterSpacing:1,
+                textTransform:"uppercase", display:"block", marginBottom:6 }}>Time Limit (secs)</label>
+              <input type="number" value={form.time_limit}
+                onChange={e => setForm(f => ({ ...f, time_limit: Number(e.target.value) }))}
+                min={60} max={1800} step={30}
+                style={{ width:"100%", background:"rgba(255,255,255,0.05)", border:`1.5px solid rgba(201,168,76,0.3)`,
+                  borderRadius:10, padding:"10px 14px", color:"#fff", fontFamily:"Cairo,sans-serif",
+                  fontSize:14, outline:"none", boxSizing:"border-box" }}/>
+            </div>
+          </div>
+
+          {/* Scoring Mode */}
+          <div style={{ marginBottom:24 }}>
+            <label style={{ color:GOLD, fontSize:12, fontWeight:600, letterSpacing:1,
+              textTransform:"uppercase", display:"block", marginBottom:8 }}>Scoring Mode</label>
+            <div style={{ display:"flex", gap:8 }}>
+              {[
+                { v:true,  label:"Criteria (Tajweed 40 + Hifdh 30 + Fluency 20 + Voice 10)" },
+                { v:false, label:"Simple (0–100 direct score)" },
+              ].map(o => (
+                <div key={String(o.v)} onClick={() => setForm(f => ({ ...f, use_criteria: o.v }))} style={{
+                  flex:1, background: form.use_criteria===o.v ? `${GOLD}22` : "rgba(255,255,255,0.04)",
+                  border:`1.5px solid ${form.use_criteria===o.v ? GOLD : "rgba(255,255,255,0.1)"}`,
+                  borderRadius:10, padding:"10px 12px", cursor:"pointer",
+                  color: form.use_criteria===o.v ? GOLD : "rgba(255,255,255,0.6)", fontSize:12,
+                }}>
+                  {o.label}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <button onClick={createCompetition} disabled={loading} style={{
+            width:"100%", background:`linear-gradient(135deg, ${GOLD} 0%, ${GOLDD} 100%)`,
+            color:G, border:"none", borderRadius:12, padding:"14px",
+            fontWeight:800, cursor:loading?"not-allowed":"pointer",
+            fontSize:16, fontFamily:"Cairo,sans-serif", display:"flex",
+            alignItems:"center", justifyContent:"center", gap:8,
+          }}>
+            {loading ? <Loader2 size={18} style={{ animation:"spin 1s linear infinite" }}/> : <Trophy size={18}/>}
+            {loading ? "Creating..." : "Create Competition"}
+            <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
           </button>
         </div>
+      </div>
+    );
+  }
 
-        <div style={{ maxWidth:480, margin:"0 auto", padding:"20px 16px 40px", position:"relative", zIndex:1, display:"flex", flexDirection:"column", gap:14 }}>
+  /* ══════════════════════════════════════════════════════════════
+     VIEW: JOIN
+  ══════════════════════════════════════════════════════════════ */
+  if (view === "join") {
+    return (
+      <div style={{
+        minHeight:"100vh", background:`linear-gradient(160deg, ${G} 0%, #0a1f12 100%)`,
+        display:"flex", alignItems:"center", justifyContent:"center",
+        padding:24, fontFamily:"Cairo,sans-serif",
+      }}>
+        <IslamicBg/>
+        <div style={{
+          position:"relative", zIndex:1, width:"100%", maxWidth:440,
+          background:"rgba(10,31,18,0.95)", borderRadius:20,
+          border:`1.5px solid rgba(201,168,76,0.3)`,
+          padding:"36px 32px", backdropFilter:"blur(20px)",
+        }}>
+          <button onClick={() => setView("list")} style={{ background:"none", border:"none",
+            color:"rgba(255,255,255,0.4)", cursor:"pointer", marginBottom:16, fontSize:13 }}>
+            ← Back
+          </button>
+          <h2 style={{ color:GOLD, fontFamily:"'Playfair Display',serif", fontSize:24, margin:"0 0 8px" }}>
+            Join Competition
+          </h2>
+          <p style={{ color:"rgba(255,255,255,0.45)", fontSize:13, margin:"0 0 24px" }}>
+            Enter the room code given by your judge or moderator.
+          </p>
+          {[
+            { key:"room_code", label:"Room Code", placeholder:"E.g. AB3XY7" },
+            { key:"name",      label:"Your Full Name", placeholder:"e.g. Ahmad Muhammad" },
+            { key:"school",    label:"School / Institute (optional)", placeholder:"e.g. Tahleem Academy" },
+          ].map(({ key, label, placeholder }) => (
+            <div key={key} style={{ marginBottom:16 }}>
+              <label style={{ color:GOLD, fontSize:12, fontWeight:600, letterSpacing:1,
+                textTransform:"uppercase", display:"block", marginBottom:6 }}>{label}</label>
+              <input value={(joinForm as any)[key]}
+                onChange={e => setJoinForm(f => ({ ...f, [key]: key==="room_code" ? e.target.value.toUpperCase() : e.target.value }))}
+                placeholder={placeholder}
+                style={{ width:"100%", background:"rgba(255,255,255,0.05)", border:`1.5px solid rgba(201,168,76,0.3)`,
+                  borderRadius:10, padding:"11px 14px", color:"#fff", fontFamily:"Cairo,sans-serif",
+                  fontSize:14, outline:"none", boxSizing:"border-box",
+                  ...(key==="room_code" ? { letterSpacing:6, textTransform:"uppercase", fontWeight:700, fontSize:18 } : {}) }}/>
+            </div>
+          ))}
+          <button onClick={joinCompetition} disabled={loading} style={{
+            width:"100%", background:`linear-gradient(135deg, ${GOLD} 0%, ${GOLDD} 100%)`,
+            color:G, border:"none", borderRadius:12, padding:"14px",
+            fontWeight:800, cursor:loading?"not-allowed":"pointer",
+            fontSize:16, fontFamily:"Cairo,sans-serif", display:"flex",
+            alignItems:"center", justifyContent:"center", gap:8,
+          }}>
+            {loading ? <Loader2 size={18} style={{ animation:"spin2 1s linear infinite" }}/> : <LogIn size={18}/>}
+            {loading ? "Joining..." : "Join Competition"}
+            <style>{`@keyframes spin2{to{transform:rotate(360deg)}}`}</style>
+          </button>
+        </div>
+      </div>
+    );
+  }
 
-          {/* Main score */}
-          <div style={{ textAlign:"center", padding:"10px 0" }}>
-            <ScoreBadge score={totalScore}/>
-            <p style={{ fontSize:14, color:"rgba(255,255,255,0.5)", marginTop:12 }}>
-              {currentAttempt.surah_name_ar} · Ayah {currentAttempt.ayah_start}–{currentAttempt.ayah_end}
+  /* ══════════════════════════════════════════════════════════════
+     VIEW: RESULTS
+  ══════════════════════════════════════════════════════════════ */
+  if (view === "results") {
+    const sorted = [...participants].sort((a,b) => b.total_score - a.total_score);
+    const medals = ["🥇","🥈","🥉"];
+    return (
+      <div style={{
+        minHeight:"100vh", background:`linear-gradient(160deg, ${G} 0%, #0a1f12 100%)`,
+        padding:"0 0 80px", fontFamily:"Cairo,sans-serif", overflowY:"auto",
+      }}>
+        <IslamicBg/>
+        <div style={{ position:"relative", zIndex:1, maxWidth:700, margin:"0 auto", padding:"48px 24px 0" }}>
+          <div style={{ textAlign:"center", marginBottom:40 }}>
+            <div style={{ fontSize:56, marginBottom:8 }}>🏆</div>
+            <h1 style={{ fontFamily:"'Playfair Display',serif", color:GOLD, fontSize:28, margin:"0 0 4px" }}>
+              Final Results
+            </h1>
+            <p style={{ color:"rgba(255,255,255,0.45)", margin:0, fontSize:14 }}>
+              {competition?.title} · {competition?.total_stages} Stages
             </p>
-          </div>
-
-          {/* Score breakdown */}
-          <div style={{ display:"flex", gap:8 }}>
-            {[
-              { l:"Accuracy",    v:currentAttempt.accuracy_score ?? 0,  icon:"🎯" },
-              { l:"Fluency",     v:currentAttempt.fluency_score ?? 0,   icon:"🌊" },
-              { l:"Tajweed",     v:currentAttempt.tajweed_score ?? 0,   icon:"✨" },
-            ].map(s => (
-              <div key={s.l} style={{ flex:1, ...glass, padding:"12px 8px", textAlign:"center" }}>
-                <p style={{ fontSize:16, margin:"0 0 2px" }}>{s.icon}</p>
-                <p style={{ fontSize:20, fontWeight:900, color:GOLD, margin:0 }}>{Math.round(s.v)}</p>
-                <p style={{ fontSize:10, color:"rgba(255,255,255,0.4)", margin:0 }}>{s.l}</p>
-              </div>
-            ))}
-          </div>
-
-          {/* Word results */}
-          {wordResults.length > 0 && (
-            <div style={{ ...glass, padding:16 }}>
-              <p style={{ fontSize:11, color:GOLD, fontWeight:700, margin:"0 0 12px", letterSpacing:1.5, textTransform:"uppercase" }}>Word Analysis</p>
-              <div style={{ display:"flex", flexWrap:"wrap", gap:6, direction:"rtl", justifyContent:"flex-end" }}>
-                {wordResults.map((w, i) => (
-                  <span key={i} style={{
-                    padding:"4px 10px", borderRadius:8, fontSize:14,
-                    fontFamily:"'Scheherazade New','Amiri',serif",
-                    background: w.status==="correct"?"rgba(34,197,94,0.15)":w.status==="mistake"?"rgba(239,68,68,0.15)":"rgba(107,114,128,0.15)",
-                    color: w.status==="correct"?"#4ADE80":w.status==="mistake"?"#F87171":"#6B7280",
-                    border:`1px solid ${w.status==="correct"?"rgba(34,197,94,0.3)":w.status==="mistake"?"rgba(239,68,68,0.3)":"rgba(107,114,128,0.3)"}`,
-                  }}>{w.original}</span>
-                ))}
-              </div>
-              <div style={{ display:"flex", gap:14, marginTop:12 }}>
-                {[
-                  ["🟢", `${wordResults.filter(w=>w.status==="correct").length} Correct`],
-                  ["🔴", `${wordResults.filter(w=>w.status==="mistake").length} Mistake`],
-                  ["⚫", `${wordResults.filter(w=>w.status==="missing").length} Missing`],
-                ].map(([ic, lb]) => (
-                  <span key={lb as string} style={{ fontSize:11, color:"rgba(255,255,255,0.4)" }}>{ic} {lb}</span>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Judge comment if available */}
-          {currentAttempt.judge_comment && (
-            <div style={{ ...glass, padding:14, border:"1px solid rgba(201,168,76,0.25)" }}>
-              <p style={{ fontSize:11, color:GOLD, fontWeight:700, margin:"0 0 8px", letterSpacing:1.5, textTransform:"uppercase" }}>Judge Feedback</p>
-              <p style={{ fontSize:14, color:"rgba(255,255,255,0.7)", margin:0, lineHeight:1.6 }}>"{currentAttempt.judge_comment}"</p>
-              {currentAttempt.judge_score !== null && currentAttempt.judge_score !== undefined && (
-                <p style={{ fontSize:13, color:GOLD, fontWeight:800, margin:"8px 0 0" }}>Final Judge Score: {Math.round(currentAttempt.judge_score)} / 100</p>
-              )}
-            </div>
-          )}
-
-          {currentAttempt.status !== "judged" && (
-            <div style={{ ...glass, padding:14, border:"1px solid rgba(59,130,246,0.25)", background:"rgba(59,130,246,0.04)" }}>
-              <p style={{ fontSize:13, color:"#60A5FA", margin:0 }}>⏳ Awaiting judge review — your AI score is shown above. The judge may override it.</p>
-            </div>
-          )}
-
-          {/* Audio playback */}
-          {audioUrl && (
-            <div style={{ ...glass, padding:14 }}>
-              <p style={{ fontSize:11, color:GOLD, fontWeight:700, margin:"0 0 8px", letterSpacing:1.5, textTransform:"uppercase" }}>Your Recording</p>
-              <audio controls src={audioUrl} style={{ width:"100%", borderRadius:8 }}/>
-            </div>
-          )}
-
-          <button onClick={() => { setView("leaderboard"); loadParticipants(); }}
-            style={{ ...outBtn, padding:"14px" }}>
-            <Trophy size={16}/> View Leaderboard
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  /* ══════════════════════════════════════════════════════════════════
-     VIEW: LEADERBOARD
-  ══════════════════════════════════════════════════════════════════ */
-  if (view === "leaderboard" && competition) {
-    const sorted  = [...participants].sort((a,b) => (b.total_score||0) - (a.total_score||0));
-    const top3    = [sorted[1], sorted[0], sorted[2]];
-    const heights = [100, 130, 80];
-    const medals  = ["🥈","🥇","🥉"];
-
-    return (
-      <div style={{ ...page, overflowY:"auto" }}>
-        <IslamicBg/>
-        <div style={{ background:"rgba(0,0,0,0.4)", backdropFilter:"blur(12px)", borderBottom:"1px solid rgba(201,168,76,0.18)", padding:"12px 16px", position:"sticky", top:0, zIndex:10, display:"flex", alignItems:"center", gap:10 }}>
-          <button onClick={() => setView(isJudge ? "admin-lobby" : "student-queue")}
-            style={{ background:"none", border:"none", color:"rgba(255,255,255,0.5)", cursor:"pointer", fontSize:16 }}>←</button>
-          <h2 style={{ fontFamily:"'Playfair Display',serif", fontWeight:900, fontSize:18, color:"#fff", margin:0, flex:1 }}>Leaderboard</h2>
-          <button onClick={() => { loadParticipants(); loadAttempts(); }}
-            style={{ background:"rgba(255,255,255,0.07)", border:"none", borderRadius:10, padding:"8px 10px", cursor:"pointer" }}>
-            <RefreshCw size={14} color="rgba(255,255,255,0.5)"/>
-          </button>
-        </div>
-
-        <div style={{ maxWidth:480, margin:"0 auto", padding:"16px 16px 40px", position:"relative", zIndex:1 }}>
-
-          {/* Competition info */}
-          <div style={{ textAlign:"center", marginBottom:20 }}>
-            <p style={{ fontSize:16, fontWeight:800, color:"#fff", margin:"0 0 4px" }}>{competition.title}</p>
-            <p style={{ fontSize:12, color:"rgba(255,255,255,0.4)", margin:0 }}>Round {competition.current_round}/{competition.max_rounds} · {participants.length} Participants</p>
+            <p style={{ color:"rgba(255,255,255,0.3)", margin:"8px 0 0", direction:"rtl",
+              fontFamily:"Amiri,serif", fontSize:16 }}>
+              نتائج المسابقة
+            </p>
           </div>
 
           {/* Podium */}
-          {sorted.length >= 2 && (
-            <div style={{ display:"flex", alignItems:"flex-end", justifyContent:"center", gap:6, marginBottom:24, height:150 }}>
-              {top3.map((p, i) => {
-                if (!p) return <div key={i} style={{ flex:1 }}/>;
-                return (
-                  <div key={p.id} style={{ flex:1, height:heights[i], background:i===1?"rgba(201,168,76,0.18)":"rgba(255,255,255,0.06)", borderRadius:"12px 12px 0 0", border:`1px solid ${i===1?GOLD:"rgba(255,255,255,0.1)"}`, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"flex-start", padding:"8px 4px", gap:2 }}>
-                    <span style={{ fontSize:22 }}>{medals[i]}</span>
-                    <p style={{ fontSize:11, fontWeight:800, color:"#fff", margin:0, lineHeight:1.2, wordBreak:"break-word", padding:"0 4px", textAlign:"center" }}>{p.participant_name}</p>
-                    <p style={{ fontSize:13, fontWeight:900, color:GOLD, margin:0 }}>{Math.round(p.total_score||0)}</p>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          {/* Full standings */}
-          <div style={{ ...glass, padding:16 }}>
-            <h4 style={{ fontSize:11, color:GOLD, fontWeight:700, margin:"0 0 14px", letterSpacing:1.5, textTransform:"uppercase", display:"flex", alignItems:"center", gap:8 }}>
-              <Trophy size={12}/> Full Standings
-            </h4>
-            {sorted.length === 0 ? (
-              <p style={{ fontSize:13, color:"rgba(255,255,255,0.3)", textAlign:"center", padding:"12px 0" }}>No participants yet</p>
-            ) : sorted.map((p, i) => (
-              <div key={p.id} style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 8px", borderRadius:10, marginBottom:2, background:p.id===myParticipant?.id?"rgba(201,168,76,0.08)":"transparent", border:p.id===myParticipant?.id?`1px solid rgba(201,168,76,0.2)`:"1px solid transparent" }}>
-                <span style={{ fontSize:14, minWidth:28, textAlign:"center" }}>{positionRank(i)}</span>
-                <div style={{ flex:1 }}>
-                  <p style={{ fontSize:14, fontWeight:700, color:p.id===myParticipant?.id?GOLD:"#fff", margin:0 }}>
-                    {p.participant_name}{p.id===myParticipant?.id?" (You)":""}
-                  </p>
-                  <p style={{ fontSize:11, color:"rgba(255,255,255,0.35)", margin:0 }}>
-                    {p.rounds_completed} round{p.rounds_completed!==1?"s":""} · {p.participant_level}
-                  </p>
+          <div style={{ display:"flex", justifyContent:"center", gap:16, marginBottom:40, flexWrap:"wrap" }}>
+            {sorted.slice(0,3).map((p, i) => (
+              <div key={p.id} style={{
+                background: i===0
+                  ? `linear-gradient(135deg, ${GOLD}33 0%, ${GOLDD}22 100%)`
+                  : `rgba(255,255,255,0.05)`,
+                border: `1.5px solid ${i===0 ? GOLD : i===1 ? "#aaa" : "#b87333"}`,
+                borderRadius:16, padding:"24px 20px", textAlign:"center", minWidth:160,
+                order: i===0 ? 0 : i===1 ? -1 : 1,
+              }}>
+                <div style={{ fontSize: i===0 ? 40 : 32, marginBottom:8 }}>{medals[i]}</div>
+                <Avatar name={p.participant_name} size={56} active={i===0}/>
+                <div style={{ color:"#fff", fontWeight:700, fontSize:15, margin:"10px 0 2px" }}>
+                  {p.participant_name}
                 </div>
-                {statusBadge(p.status)}
-                <p style={{ fontSize:18, fontWeight:900, color:GOLD, margin:0, minWidth:40, textAlign:"right" }}>
-                  {Math.round(p.total_score||0)}
-                </p>
+                {p.school && <div style={{ color:"rgba(255,255,255,0.4)", fontSize:12 }}>{p.school}</div>}
+                <div style={{ color: i===0 ? GOLD : "#fff", fontSize:22, fontWeight:800, marginTop:8 }}>
+                  {p.total_score}
+                </div>
+                <div style={{ color:"rgba(255,255,255,0.35)", fontSize:11 }}>TOTAL SCORE</div>
               </div>
             ))}
           </div>
 
-          {/* Per-attempt breakdown */}
-          {allAttempts.length > 0 && (
-            <div style={{ ...glass, padding:16, marginTop:14 }}>
-              <h4 style={{ fontSize:11, color:GOLD, fontWeight:700, margin:"0 0 12px", letterSpacing:1.5, textTransform:"uppercase" }}>
-                Attempt History
-              </h4>
-              {allAttempts.filter(a => a.status !== "pending").map(a => {
-                const ptc = participants.find(p => p.id === a.participant_id);
-                return (
-                  <div key={a.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 0", borderBottom:"1px solid rgba(255,255,255,0.05)" }}>
-                    <div style={{ flex:1 }}>
-                      <p style={{ fontSize:13, fontWeight:700, color:"#fff", margin:0 }}>{ptc?.participant_name}</p>
-                      <p style={{ fontSize:11, color:"rgba(255,255,255,0.35)", margin:0, fontFamily:"'Amiri',serif" }}>
-                        {a.surah_name_ar} {a.ayah_start}:{a.ayah_end} · R{a.round_number}
-                      </p>
-                    </div>
-                    <div style={{ textAlign:"right" }}>
-                      <p style={{ fontSize:16, fontWeight:900, color:GOLD, margin:0 }}>
-                        {Math.round(a.judge_score ?? a.total_score ?? 0)}
-                      </p>
-                      <p style={{ fontSize:9, color:"rgba(255,255,255,0.3)", margin:0 }}>
-                        {a.status === "judged" ? "Judged" : "AI Score"}
-                      </p>
-                    </div>
-                  </div>
-                );
-              })}
+          {/* Full table */}
+          <div style={{ background:"rgba(10,31,18,0.8)", borderRadius:14,
+            border:"1px solid rgba(201,168,76,0.2)", overflow:"hidden" }}>
+            <div style={{ padding:"14px 20px", borderBottom:"1px solid rgba(201,168,76,0.15)",
+              display:"flex", gap:8, alignItems:"center" }}>
+              <Award size={16} color={GOLD}/>
+              <span style={{ color:GOLD, fontWeight:700, fontSize:14 }}>Full Rankings</span>
             </div>
-          )}
+            {sorted.map((p, i) => (
+              <div key={p.id} style={{
+                padding:"14px 20px", borderBottom:"1px solid rgba(255,255,255,0.05)",
+                display:"flex", alignItems:"center", gap:12,
+                background: i < 3 ? `${GOLD}08` : "transparent",
+              }}>
+                <span style={{ width:28, textAlign:"center", color: i<3 ? GOLD : "rgba(255,255,255,0.3)",
+                  fontWeight:700, fontSize:14 }}>{i<3 ? medals[i] : `#${i+1}`}</span>
+                <Avatar name={p.participant_name} size={36}/>
+                <div style={{ flex:1 }}>
+                  <div style={{ color:"#fff", fontWeight:600, fontSize:14 }}>{p.participant_name}</div>
+                  {p.school && <div style={{ color:"rgba(255,255,255,0.35)", fontSize:12 }}>{p.school}</div>}
+                </div>
+                {/* Stage breakdown */}
+                <div style={{ display:"flex", gap:4 }}>
+                  {Array.from({ length: competition?.total_stages || 5 }, (_, si) => (
+                    <div key={si} style={{
+                      background:"rgba(255,255,255,0.06)", borderRadius:6,
+                      padding:"2px 8px", fontSize:11, color:"rgba(255,255,255,0.5)", textAlign:"center",
+                    }}>
+                      <div style={{ color:GOLD, fontWeight:700 }}>
+                        {(p.stage_scores || {})[si+1] ?? "—"}
+                      </div>
+                      <div style={{ fontSize:9 }}>S{si+1}</div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ textAlign:"right", minWidth:60 }}>
+                  <div style={{ color:GOLD, fontWeight:800, fontSize:18 }}>{p.total_score}</div>
+                  <div style={{ color:"rgba(255,255,255,0.3)", fontSize:11 }}>pts</div>
+                </div>
+              </div>
+            ))}
+          </div>
 
-          {/* Download results (admin) */}
-          {isJudge && sorted.length > 0 && (
-            <button onClick={() => {
-              const csv = ["Rank,Name,Level,Score,Rounds\n",
-                ...sorted.map((p,i) => `${i+1},${p.participant_name},${p.participant_level},${Math.round(p.total_score||0)},${p.rounds_completed}`)
-              ].join("\n");
-              const blob = new Blob([csv], { type:"text/csv" });
-              const a    = document.createElement("a");
-              a.href     = URL.createObjectURL(blob);
-              a.download = `${competition.title.replace(/\s+/g,"_")}_results.csv`;
-              a.click();
-            }} style={{ ...outBtn, marginTop:14, padding:"13px" }}>
-              <Download size={15}/> Download Results (CSV)
+          <div style={{ display:"flex", gap:12, marginTop:24, justifyContent:"center" }}>
+            <button onClick={() => setView("list")} style={{
+              background:"rgba(255,255,255,0.07)", color:"#fff",
+              border:"1px solid rgba(255,255,255,0.15)", borderRadius:10,
+              padding:"11px 24px", cursor:"pointer", fontFamily:"Cairo,sans-serif", fontWeight:600,
+            }}>
+              ← Back to List
             </button>
-          )}
+          </div>
         </div>
       </div>
     );
   }
 
-  return null;
-};
+  /* ══════════════════════════════════════════════════════════════
+     VIEW: ARENA (main competition view)
+  ══════════════════════════════════════════════════════════════ */
+  if (view !== "arena" || !competition) return null;
 
-export default MustabaqahPage;
+  const waiting     = participants.filter(p => p.status === "waiting");
+  const completed   = participants.filter(p => p.status === "completed");
+  const allDone     = waiting.length === 0 && participants.length > 0 && !activeP;
+  const totalCriteriaScore = competition.use_criteria_scoring
+    ? SCORING_CRITERIA.reduce((sum, c) => sum + (Number(scoreBreak[c.key])||0), 0)
+    : Number(scoreBreak.tajweed) || 0;
+  const bellPenalty = bellCount * 2;
+  const finalScore  = Math.max(0, totalCriteriaScore - bellPenalty);
+
+  return (
+    <div style={{
+      minHeight:"100vh", maxHeight:"100vh",
+      background:`linear-gradient(160deg, ${G} 0%, #080d09 100%)`,
+      display:"flex", flexDirection:"column", overflow:"hidden",
+      fontFamily:"Cairo,sans-serif", position:"relative",
+    }}>
+      <IslamicBg opacity={0.04}/>
+      <BellFlash visible={bellFlash}/>
+      <StopFlash visible={stopFlash}/>
+
+      {/* ── TOP BAR ─────────────────────────────────────────── */}
+      <div style={{
+        position:"relative", zIndex:10,
+        background:`linear-gradient(90deg, ${GD} 0%, ${GM} 100%)`,
+        borderBottom:`1px solid rgba(201,168,76,0.2)`,
+        padding:"12px 20px", display:"flex", alignItems:"center", gap:12, flexShrink:0,
+      }}>
+        <button onClick={() => setView("list")} style={{ background:"none", border:"none",
+          color:"rgba(255,255,255,0.4)", cursor:"pointer", fontSize:13, padding:0 }}>←</button>
+
+        <div style={{ flex:1, display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>
+          <span style={{ color:GOLD, fontWeight:800, fontSize:15, fontFamily:"'Playfair Display',serif" }}>
+            {competition.title}
+          </span>
+          <span style={{
+            background: competition.status==="active" ? `${GREEN}22` : `${GOLD}22`,
+            color: competition.status==="active" ? GREEN : GOLD,
+            border:`1px solid ${competition.status==="active" ? GREEN : GOLD}`,
+            borderRadius:20, padding:"2px 10px", fontSize:11, fontWeight:700,
+          }}>
+            {competition.status==="active" ? "🔴 LIVE" : competition.status.toUpperCase()}
+          </span>
+        </div>
+
+        {/* Stage pills */}
+        <div style={{ display:"flex", gap:4 }}>
+          {Array.from({ length: competition.total_stages }, (_, i) => (
+            <div key={i} style={{
+              width:28, height:28, borderRadius:"50%",
+              background: i + 1 < competition.current_stage
+                ? GOLD
+                : i + 1 === competition.current_stage
+                  ? `${GOLD}44`
+                  : "rgba(255,255,255,0.08)",
+              border: `1.5px solid ${i+1<=competition.current_stage ? GOLD : "rgba(255,255,255,0.1)"}`,
+              display:"flex", alignItems:"center", justifyContent:"center",
+              color: i+1 < competition.current_stage ? G : i+1===competition.current_stage ? GOLD : "rgba(255,255,255,0.3)",
+              fontWeight:700, fontSize:11,
+            }}>
+              {i+1 < competition.current_stage ? "✓" : i+1}
+            </div>
+          ))}
+        </div>
+
+        <div style={{ background:"rgba(201,168,76,0.15)", borderRadius:8, padding:"4px 12px",
+          color:GOLD, fontWeight:700, fontSize:13, letterSpacing:2 }}>
+          {competition.room_code}
+        </div>
+
+        {/* Proctoring toggle */}
+        <button onClick={() => setShowProctor(s => !s)} style={{
+          background: showProctor ? `${GOLD}22` : "rgba(255,255,255,0.07)",
+          border:`1px solid ${showProctor ? GOLD : "rgba(255,255,255,0.15)"}`,
+          borderRadius:8, padding:"6px 12px", cursor:"pointer",
+          color: showProctor ? GOLD : "rgba(255,255,255,0.5)",
+          fontSize:12, display:"flex", alignItems:"center", gap:6, fontFamily:"Cairo,sans-serif",
+        }}>
+          <Eye size={14}/>
+          {showProctor ? "Proctor ON" : "Proctor"}
+        </button>
+      </div>
+
+      {/* ── MAIN LAYOUT ─────────────────────────────────────── */}
+      <div style={{
+        flex:1, display:"flex", flexDirection:"column",
+        overflow:"hidden", position:"relative", zIndex:1,
+      }}>
+
+        {/* ─── ACTIVE RECITER + JUDGE PANEL ─────────────────── */}
+        <div style={{
+          display:"flex", flexShrink:0, gap:0,
+          borderBottom:`1px solid rgba(201,168,76,0.12)`,
+          maxHeight:"42vh",
+        }}>
+          {/* Active Reciter Slot */}
+          <div style={{
+            flex:1.2, padding:"20px 24px",
+            background:`linear-gradient(135deg, ${GD}ee 0%, rgba(10,31,18,0.95) 100%)`,
+            borderRight:`1px solid rgba(201,168,76,0.12)`,
+            display:"flex", flexDirection:"column", gap:12, overflow:"hidden",
+          }}>
+            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+              <Radio size={14} color={activeP ? GREEN : "rgba(255,255,255,0.3)"}
+                style={activeP ? { animation:"rpulse 1s ease-in-out infinite" } : {}}/>
+              <span style={{ color:"rgba(255,255,255,0.5)", fontSize:12, fontWeight:600,
+                textTransform:"uppercase", letterSpacing:1 }}>
+                {activeP ? "Currently Reciting" : "Awaiting Participant"}
+              </span>
+              <style>{`@keyframes rpulse{0%,100%{opacity:1}50%{opacity:0.3}}`}</style>
+            </div>
+
+            {activeP ? (
+              <div style={{ display:"flex", gap:16, alignItems:"flex-start" }}>
+                {/* Video / Avatar */}
+                <div style={{ flexShrink:0 }}>
+                  {isJudge ? (
+                    <div style={{
+                      width:120, height:90, borderRadius:10, overflow:"hidden",
+                      background:`linear-gradient(135deg, ${GM} 0%, #050f09 100%)`,
+                      border:`2px solid ${activeP.status==="reciting" ? GREEN : GOLD}`,
+                      display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
+                      gap:6, position:"relative",
+                    }}>
+                      <Avatar name={activeP.participant_name} size={50} active={activeP.status==="reciting"}/>
+                      {activeP.camera_on && (
+                        <div style={{ position:"absolute", top:4, right:4, width:8, height:8,
+                          borderRadius:"50%", background:GREEN }}/>
+                      )}
+                    </div>
+                  ) : (
+                    <VideoTile stream={myParticipant?.id === activeP.id ? localStream : null}
+                      name={activeP.participant_name} size={150} active/>
+                  )}
+                </div>
+                {/* Info */}
+                <div style={{ flex:1 }}>
+                  <div style={{ color:"#fff", fontWeight:800, fontSize:22,
+                    fontFamily:"'Playfair Display',serif", lineHeight:1.2 }}>
+                    {activeP.participant_name}
+                  </div>
+                  {activeP.school && (
+                    <div style={{ color:"rgba(255,255,255,0.45)", fontSize:13, marginTop:2 }}>
+                      {activeP.school}
+                    </div>
+                  )}
+                  <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:10 }}>
+                    <div style={{
+                      background:`${statusColor[activeP.status]}22`,
+                      border:`1px solid ${statusColor[activeP.status]}`,
+                      color:statusColor[activeP.status], borderRadius:20,
+                      padding:"3px 12px", fontSize:12, fontWeight:700,
+                    }}>
+                      {activeP.status === "called" && "⚡ "}
+                      {activeP.status === "reciting" && "🎙️ "}
+                      {statusLabel[activeP.status]}
+                    </div>
+                    {/* Timer */}
+                    {timerActive && (
+                      <div style={{ display:"flex", alignItems:"center", gap:4,
+                        color:timerSecs > competition.time_limit_seconds * 0.8 ? RED : GREEN,
+                        fontWeight:700, fontSize:16 }}>
+                        <Clock size={14}/>
+                        {fmtTime(timerSecs)}
+                      </div>
+                    )}
+                  </div>
+                  {/* Assigned passage */}
+                  {currentAttempt && (
+                    <div style={{ marginTop:10, background:"rgba(201,168,76,0.1)",
+                      border:"1px solid rgba(201,168,76,0.25)", borderRadius:8, padding:"8px 12px" }}>
+                      <div style={{ color:GOLD, fontSize:11, fontWeight:600, marginBottom:2 }}>ASSIGNED PASSAGE</div>
+                      <div style={{ color:"#fff", fontWeight:600, fontSize:13 }}>{currentAttempt.scope_label}</div>
+                      <div style={{ color:"rgba(255,255,255,0.4)", fontSize:12, direction:"rtl",
+                        fontFamily:"Amiri,serif", marginTop:2 }}>{currentAttempt.scope_label_ar}</div>
+                    </div>
+                  )}
+                  {/* Bell count */}
+                  {bellCount > 0 && (
+                    <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:8 }}>
+                      <Bell size={14} color={GOLD}/>
+                      <span style={{ color:GOLD, fontWeight:700 }}>{bellCount} error{bellCount!==1?"s":""} recorded</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div style={{ flex:1, display:"flex", flexDirection:"column",
+                alignItems:"center", justifyContent:"center", gap:8 }}>
+                <div style={{ width:80, height:80, borderRadius:"50%",
+                  background:"rgba(201,168,76,0.08)", border:"2px dashed rgba(201,168,76,0.3)",
+                  display:"flex", alignItems:"center", justifyContent:"center" }}>
+                  <Mic size={32} color="rgba(201,168,76,0.4)"/>
+                </div>
+                <div style={{ color:"rgba(255,255,255,0.3)", fontSize:13 }}>
+                  {competition.status==="open"
+                    ? "Waiting for competition to start..."
+                    : "Select a participant from the roster below"}
+                </div>
+              </div>
+            )}
+
+            {/* MY MIC/CAM CONTROLS (participant) */}
+            {!isJudge && myParticipant && myParticipant.status !== "waiting" && (
+              <div style={{ display:"flex", gap:8, marginTop:4 }}>
+                <button onClick={toggleMic} style={{
+                  background: micOn ? `${GREEN}22` : "rgba(255,255,255,0.07)",
+                  border:`1.5px solid ${micOn ? GREEN : "rgba(255,255,255,0.2)"}`,
+                  borderRadius:10, padding:"8px 16px", cursor:"pointer",
+                  color: micOn ? GREEN : "rgba(255,255,255,0.5)",
+                  display:"flex", alignItems:"center", gap:6, fontSize:13, fontFamily:"Cairo,sans-serif",
+                }}>
+                  {micOn ? <Mic size={16}/> : <MicOff size={16}/>}
+                  {micOn ? "Mic On" : "Unmute Mic"}
+                </button>
+                <button onClick={toggleCam} style={{
+                  background: camOn ? `${GREEN}22` : "rgba(255,255,255,0.07)",
+                  border:`1.5px solid ${camOn ? GREEN : "rgba(255,255,255,0.2)"}`,
+                  borderRadius:10, padding:"8px 16px", cursor:"pointer",
+                  color: camOn ? GREEN : "rgba(255,255,255,0.5)",
+                  display:"flex", alignItems:"center", gap:6, fontSize:13, fontFamily:"Cairo,sans-serif",
+                }}>
+                  {camOn ? <Video size={16}/> : <VideoOff size={16}/>}
+                  {camOn ? "Cam On" : "Camera"}
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* ─── JUDGE CONTROL PANEL ──────────────────────────── */}
+          {isJudge && (
+            <div style={{
+              width:300, flexShrink:0, padding:"16px 20px", overflow:"auto",
+              background:"rgba(5,15,8,0.95)",
+              display:"flex", flexDirection:"column", gap:12,
+            }}>
+              <div style={{ color:GOLD, fontWeight:700, fontSize:13, display:"flex",
+                alignItems:"center", gap:6 }}>
+                <Settings size={14}/> Judge Controls
+              </div>
+
+              {/* Competition management */}
+              {competition.status === "open" && (
+                <button onClick={startCompetition} style={{
+                  background:`linear-gradient(135deg, ${GREEN}cc 0%, #16a34a 100%)`,
+                  color:"#fff", border:"none", borderRadius:10, padding:"11px",
+                  cursor:"pointer", fontWeight:700, fontFamily:"Cairo,sans-serif",
+                  fontSize:14, display:"flex", alignItems:"center", justifyContent:"center", gap:6,
+                }}>
+                  <Play size={16}/> Start Competition
+                </button>
+              )}
+
+              {/* Call + Start Reciting */}
+              {competition.status === "active" && !activeP && (
+                <div style={{ background:"rgba(255,255,255,0.04)", borderRadius:8, padding:10,
+                  color:"rgba(255,255,255,0.4)", fontSize:12, textAlign:"center" }}>
+                  Select a participant below to call them
+                </div>
+              )}
+              {activeP && activeP.status === "called" && (
+                <button onClick={startReciting} style={{
+                  background:`linear-gradient(135deg, ${GREEN}cc 0%, #16a34a 100%)`,
+                  color:"#fff", border:"none", borderRadius:10, padding:"11px",
+                  cursor:"pointer", fontWeight:700, fontFamily:"Cairo,sans-serif",
+                  fontSize:14, display:"flex", alignItems:"center", justifyContent:"center", gap:6,
+                }}>
+                  <Play size={16}/> Start Reciting
+                </button>
+              )}
+
+              {/* BELL BUTTON */}
+              {activeP && activeP.status === "reciting" && (
+                <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                  <button onClick={ringBell} style={{
+                    background:`linear-gradient(135deg, ${GOLD}dd 0%, ${GOLDD} 100%)`,
+                    color:G, border:"none", borderRadius:12, padding:"16px",
+                    cursor:"pointer", fontWeight:800, fontSize:16,
+                    display:"flex", alignItems:"center", justifyContent:"center", gap:8,
+                    boxShadow:`0 4px 20px rgba(201,168,76,0.4)`,
+                    fontFamily:"Cairo,sans-serif",
+                  }}>
+                    <Bell size={22} strokeWidth={2.5}/>
+                    Ring Bell · خطأ
+                    {bellCount > 0 && (
+                      <span style={{ background:RED, color:"#fff", borderRadius:"50%",
+                        width:22, height:22, display:"flex", alignItems:"center", justifyContent:"center",
+                        fontSize:12, fontWeight:800 }}>
+                        {bellCount}
+                      </span>
+                    )}
+                  </button>
+
+                  {/* STOP BUTTON */}
+                  <button onClick={signalStop} style={{
+                    background:`linear-gradient(135deg, ${RED}cc 0%, #dc2626 100%)`,
+                    color:"#fff", border:"none", borderRadius:12, padding:"14px",
+                    cursor:"pointer", fontWeight:700, fontSize:15,
+                    display:"flex", alignItems:"center", justifyContent:"center", gap:8,
+                    fontFamily:"Cairo,sans-serif",
+                  }}>
+                    <StopCircle size={20}/>
+                    Stop · قف
+                  </button>
+                </div>
+              )}
+
+              {/* SCORE ENTRY */}
+              {showScorePanel && (
+                <div style={{ background:"rgba(201,168,76,0.08)",
+                  border:"1px solid rgba(201,168,76,0.25)", borderRadius:10, padding:12 }}>
+                  <div style={{ color:GOLD, fontWeight:700, fontSize:13, marginBottom:8 }}>
+                    📝 Enter Score
+                  </div>
+                  {competition.use_criteria_scoring ? (
+                    SCORING_CRITERIA.map(c => (
+                      <div key={c.key} style={{ marginBottom:8 }}>
+                        <div style={{ display:"flex", justifyContent:"space-between", marginBottom:3 }}>
+                          <span style={{ color:"rgba(255,255,255,0.7)", fontSize:12 }}>
+                            {c.label} / {c.labelAr}
+                          </span>
+                          <span style={{ color:GOLD, fontSize:12, fontWeight:700 }}>
+                            /{c.max}
+                          </span>
+                        </div>
+                        <input type="number" min={0} max={c.max}
+                          value={scoreBreak[c.key]}
+                          onChange={e => setScoreBreak(s => ({ ...s, [c.key]: e.target.value }))}
+                          placeholder={`0–${c.max}`}
+                          style={{ width:"100%", background:"rgba(255,255,255,0.08)", color:"#fff",
+                            border:"1px solid rgba(255,255,255,0.2)", borderRadius:7, padding:"6px 10px",
+                            fontFamily:"Cairo,sans-serif", fontSize:13, outline:"none", boxSizing:"border-box" }}/>
+                      </div>
+                    ))
+                  ) : (
+                    <div style={{ marginBottom:8 }}>
+                      <div style={{ color:"rgba(255,255,255,0.7)", fontSize:12, marginBottom:3 }}>
+                        Score / 100
+                      </div>
+                      <input type="number" min={0} max={100}
+                        value={scoreBreak.tajweed}
+                        onChange={e => setScoreBreak(s => ({ ...s, tajweed: e.target.value }))}
+                        placeholder="0–100"
+                        style={{ width:"100%", background:"rgba(255,255,255,0.08)", color:"#fff",
+                          border:"1px solid rgba(255,255,255,0.2)", borderRadius:7, padding:"6px 10px",
+                          fontFamily:"Cairo,sans-serif", fontSize:13, outline:"none", boxSizing:"border-box" }}/>
+                    </div>
+                  )}
+                  <input type="text" value={judgeComment}
+                    onChange={e => setJudgeComment(e.target.value)}
+                    placeholder="Judge's comment (optional)"
+                    style={{ width:"100%", background:"rgba(255,255,255,0.08)", color:"#fff",
+                      border:"1px solid rgba(255,255,255,0.2)", borderRadius:7, padding:"6px 10px",
+                      fontFamily:"Cairo,sans-serif", fontSize:12, outline:"none", boxSizing:"border-box", marginBottom:6 }}/>
+                  {bellCount > 0 && (
+                    <div style={{ color:GOLD, fontSize:11, marginBottom:6 }}>
+                      ⚠️ {bellCount} bell(s) × 2 = −{bellPenalty} pts penalty
+                    </div>
+                  )}
+                  <div style={{ color:GREEN, fontWeight:700, fontSize:14, marginBottom:8 }}>
+                    Final Score: {finalScore}/{competition.use_criteria_scoring ? 100 : 100}
+                  </div>
+                  <button onClick={submitScore} style={{
+                    width:"100%", background:`linear-gradient(135deg, ${GREEN}cc 0%, #16a34a 100%)`,
+                    color:"#fff", border:"none", borderRadius:8, padding:"10px",
+                    cursor:"pointer", fontWeight:700, fontFamily:"Cairo,sans-serif", fontSize:14,
+                  }}>
+                    <CheckCircle size={14} style={{ marginRight:6 }}/>
+                    Submit Score
+                  </button>
+                </div>
+              )}
+
+              {/* Advance stage */}
+              {competition.status === "active" && allDone && isJudge && (
+                <button onClick={advanceStage} style={{
+                  background: competition.current_stage >= competition.total_stages
+                    ? `linear-gradient(135deg, ${GOLD} 0%, ${GOLDD} 100%)`
+                    : `linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%)`,
+                  color:"#fff", border:"none", borderRadius:10, padding:"12px",
+                  cursor:"pointer", fontWeight:700, fontFamily:"Cairo,sans-serif",
+                  fontSize:14, display:"flex", alignItems:"center", justifyContent:"center", gap:6,
+                }}>
+                  {competition.current_stage >= competition.total_stages
+                    ? <><Trophy size={16}/> End & Show Results</>
+                    : <><ArrowRight size={16}/> Next Stage {competition.current_stage + 1}</>}
+                </button>
+              )}
+
+              {/* Stage status */}
+              <div style={{ background:"rgba(255,255,255,0.04)", borderRadius:8, padding:10 }}>
+                <div style={{ color:"rgba(255,255,255,0.5)", fontSize:11, marginBottom:4 }}>
+                  STAGE {competition.current_stage}/{competition.total_stages}
+                </div>
+                <div style={{ display:"flex", gap:8 }}>
+                  <div style={{ flex:1, textAlign:"center" }}>
+                    <div style={{ color:GOLD, fontWeight:700 }}>{waiting.length}</div>
+                    <div style={{ color:"rgba(255,255,255,0.4)", fontSize:10 }}>Waiting</div>
+                  </div>
+                  <div style={{ flex:1, textAlign:"center" }}>
+                    <div style={{ color:GREEN, fontWeight:700 }}>{completed.length}</div>
+                    <div style={{ color:"rgba(255,255,255,0.4)", fontSize:10 }}>Done</div>
+                  </div>
+                  <div style={{ flex:1, textAlign:"center" }}>
+                    <div style={{ color:"#fff", fontWeight:700 }}>{participants.length}</div>
+                    <div style={{ color:"rgba(255,255,255,0.4)", fontSize:10 }}>Total</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* View results early */}
+              <button onClick={() => setView("results")} style={{
+                background:"transparent", color:"rgba(255,255,255,0.3)",
+                border:"1px solid rgba(255,255,255,0.1)", borderRadius:8, padding:"8px",
+                cursor:"pointer", fontFamily:"Cairo,sans-serif", fontSize:12,
+                display:"flex", alignItems:"center", justifyContent:"center", gap:4,
+              }}>
+                <LayoutGrid size={13}/> View Live Standings
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* ─── PROCTORING PANEL ────────────────────────────────── */}
+        {showProctor && isJudge && (
+          <div style={{
+            flexShrink:0, borderBottom:`1px solid rgba(201,168,76,0.12)`,
+            padding:"12px 20px", background:"rgba(5,15,8,0.9)",
+          }}>
+            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10 }}>
+              <Eye size={14} color={GOLD}/>
+              <span style={{ color:GOLD, fontWeight:700, fontSize:13 }}>Proctoring Monitor</span>
+              <span style={{ color:"rgba(255,255,255,0.3)", fontSize:12 }}>
+                — Flag participants with camera issues or suspicious behavior
+              </span>
+            </div>
+            <div style={{ display:"flex", gap:8, overflowX:"auto", paddingBottom:4 }}>
+              {participants.map(p => (
+                <div key={p.id} style={{
+                  flexShrink:0, width:110, background:"rgba(255,255,255,0.04)",
+                  border:`1.5px solid ${p.proctor_flagged ? RED : p.camera_on ? GREEN : "rgba(255,255,255,0.1)"}`,
+                  borderRadius:10, padding:8, textAlign:"center",
+                }}>
+                  <Avatar name={p.participant_name} size={36}/>
+                  <div style={{ color:"rgba(255,255,255,0.8)", fontSize:11, fontWeight:600,
+                    marginTop:5, lineHeight:1.2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                    {p.participant_name}
+                  </div>
+                  <div style={{ display:"flex", alignItems:"center", justifyContent:"center",
+                    gap:3, marginTop:4 }}>
+                    {p.camera_on
+                      ? <><Video size={10} color={GREEN}/><span style={{ color:GREEN, fontSize:10 }}>CAM</span></>
+                      : <><VideoOff size={10} color="rgba(255,255,255,0.3)"/><span style={{ color:"rgba(255,255,255,0.3)", fontSize:10 }}>NO CAM</span></>}
+                  </div>
+                  <button onClick={() => toggleProctoringFlag(p)} style={{
+                    marginTop:5, background: p.proctor_flagged ? `${RED}33` : "rgba(255,255,255,0.06)",
+                    border:`1px solid ${p.proctor_flagged ? RED : "rgba(255,255,255,0.15)"}`,
+                    borderRadius:6, padding:"3px 6px", cursor:"pointer",
+                    color: p.proctor_flagged ? RED : "rgba(255,255,255,0.4)",
+                    fontSize:10, display:"flex", alignItems:"center", gap:3, width:"100%",
+                    justifyContent:"center", fontFamily:"Cairo,sans-serif",
+                  }}>
+                    <Flag size={10}/>
+                    {p.proctor_flagged ? "FLAGGED" : "Flag"}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ─── PARTICIPANT ROSTER ──────────────────────────────── */}
+        <div style={{ flex:1, overflow:"hidden", display:"flex", flexDirection:"column" }}>
+          {/* Roster header */}
+          <div style={{
+            padding:"10px 20px", borderBottom:"1px solid rgba(255,255,255,0.06)",
+            display:"flex", alignItems:"center", gap:8, flexShrink:0,
+            background:"rgba(5,15,8,0.8)",
+          }}>
+            <Users size={14} color={GOLD}/>
+            <span style={{ color:GOLD, fontWeight:700, fontSize:13 }}>
+              Participants — {participants.length} registered
+            </span>
+            <div style={{ marginLeft:"auto", display:"flex", gap:4 }}>
+              <button onClick={() => setRosterMode("list")} style={{
+                background: rosterMode==="list" ? `${GOLD}22` : "transparent",
+                border:`1px solid ${rosterMode==="list" ? GOLD : "rgba(255,255,255,0.1)"}`,
+                borderRadius:6, padding:"4px 8px", cursor:"pointer", color: rosterMode==="list" ? GOLD : "rgba(255,255,255,0.35)",
+              }}>
+                <List size={12}/>
+              </button>
+              <button onClick={() => setRosterMode("grid")} style={{
+                background: rosterMode==="grid" ? `${GOLD}22` : "transparent",
+                border:`1px solid ${rosterMode==="grid" ? GOLD : "rgba(255,255,255,0.1)"}`,
+                borderRadius:6, padding:"4px 8px", cursor:"pointer", color: rosterMode==="grid" ? GOLD : "rgba(255,255,255,0.35)",
+              }}>
+                <LayoutGrid size={12}/>
+              </button>
+            </div>
+          </div>
+
+          {/* Roster body */}
+          <div style={{ flex:1, overflowY:"auto", padding:16 }}>
+            {participants.length === 0 ? (
+              <div style={{ textAlign:"center", padding:"32px 24px", color:"rgba(255,255,255,0.3)" }}>
+                <Users size={36} style={{ opacity:0.3, marginBottom:8 }}/>
+                <p style={{ margin:0 }}>No participants yet. Share the room code: <span style={{ color:GOLD, fontWeight:700, letterSpacing:3 }}>{competition.room_code}</span></p>
+              </div>
+            ) : rosterMode === "list" ? (
+              <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+                {participants.map((p, i) => {
+                  const isActive = p.id === activeP?.id;
+                  const isMe     = p.id === myParticipant?.id;
+                  return (
+                    <div key={p.id} style={{
+                      background: isActive
+                        ? `linear-gradient(135deg, ${GOLD}18 0%, rgba(10,31,18,0.9) 100%)`
+                        : isMe ? `rgba(74,222,128,0.07)` : "rgba(255,255,255,0.03)",
+                      border:`1.5px solid ${isActive ? GOLD : isMe ? GREEN : p.proctor_flagged ? RED : "rgba(255,255,255,0.08)"}`,
+                      borderRadius:10, padding:"10px 14px",
+                      display:"flex", alignItems:"center", gap:10,
+                      boxShadow: isActive ? `0 0 12px rgba(201,168,76,0.15)` : "none",
+                    }}>
+                      {/* Position */}
+                      <span style={{ color:"rgba(255,255,255,0.25)", fontSize:12, width:20, textAlign:"center",
+                        fontWeight:600 }}>#{p.queue_position}</span>
+
+                      <Avatar name={p.participant_name} size={34} active={isActive}/>
+
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                          <span style={{ color:isActive ? GOLD : "#fff", fontWeight:isActive ? 700 : 500,
+                            fontSize:14, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                            {p.participant_name}
+                          </span>
+                          {isMe && <span style={{ color:GREEN, fontSize:10, fontWeight:700 }}>YOU</span>}
+                          {p.proctor_flagged && <Flag size={12} color={RED}/>}
+                        </div>
+                        {p.school && (
+                          <div style={{ color:"rgba(255,255,255,0.35)", fontSize:11 }}>{p.school}</div>
+                        )}
+                      </div>
+
+                      {/* Status badge */}
+                      <div style={{
+                        background:`${statusColor[p.status]}18`,
+                        border:`1px solid ${statusColor[p.status]}`,
+                        color:statusColor[p.status], borderRadius:20,
+                        padding:"2px 8px", fontSize:11, fontWeight:600, flexShrink:0,
+                      }}>
+                        {p.status === "reciting" && "🎙️ "}
+                        {statusLabel[p.status]}
+                      </div>
+
+                      {/* Score */}
+                      {p.total_score > 0 && (
+                        <div style={{ textAlign:"right", flexShrink:0 }}>
+                          <div style={{ color:GOLD, fontWeight:800, fontSize:15 }}>{p.total_score}</div>
+                          <div style={{ color:"rgba(255,255,255,0.25)", fontSize:10 }}>pts</div>
+                        </div>
+                      )}
+
+                      {/* Judge CALL button */}
+                      {isJudge && competition.status === "active" && p.status === "waiting" && !activeP && (
+                        <button onClick={() => callParticipant(p)} style={{
+                          background:`linear-gradient(135deg, ${GOLD}cc 0%, ${GOLDD} 100%)`,
+                          color:G, border:"none", borderRadius:8, padding:"6px 14px",
+                          cursor:"pointer", fontWeight:700, fontSize:12,
+                          display:"flex", alignItems:"center", gap:5, flexShrink:0,
+                          fontFamily:"Cairo,sans-serif",
+                        }}>
+                          <PhoneCall size={13}/>
+                          Call
+                        </button>
+                      )}
+
+                      {/* Absent / DQ buttons */}
+                      {isJudge && p.status === "waiting" && (
+                        <button onClick={async () => {
+                          await supabase.from("musabaqah_participants" as any)
+                            .update({ status: "absent" }).eq("id", p.id);
+                          loadParticipants();
+                        }} style={{
+                          background:"transparent", color:"rgba(255,255,255,0.25)",
+                          border:"1px solid rgba(255,255,255,0.1)", borderRadius:8,
+                          padding:"4px 8px", cursor:"pointer", fontSize:10, flexShrink:0,
+                        }}>
+                          Absent
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              /* GRID MODE */
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(140px, 1fr))", gap:10 }}>
+                {participants.map((p) => {
+                  const isActive = p.id === activeP?.id;
+                  const isMe     = p.id === myParticipant?.id;
+                  return (
+                    <div key={p.id} style={{
+                      background: isActive ? `${GOLD}18` : "rgba(255,255,255,0.04)",
+                      border:`1.5px solid ${isActive ? GOLD : p.proctor_flagged ? RED : "rgba(255,255,255,0.1)"}`,
+                      borderRadius:12, padding:12, textAlign:"center",
+                      position:"relative",
+                    }}>
+                      {p.proctor_flagged && (
+                        <div style={{ position:"absolute", top:6, right:6 }}>
+                          <Flag size={12} color={RED}/>
+                        </div>
+                      )}
+                      <Avatar name={p.participant_name} size={44} active={isActive}/>
+                      <div style={{ color: isActive ? GOLD : "#fff", fontWeight:600, fontSize:12,
+                        marginTop:6, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                        {p.participant_name}
+                        {isMe && <span style={{ color:GREEN }}> ★</span>}
+                      </div>
+                      <div style={{
+                        background:`${statusColor[p.status]}18`,
+                        border:`1px solid ${statusColor[p.status]}`,
+                        color:statusColor[p.status], borderRadius:20,
+                        padding:"2px 8px", fontSize:10, fontWeight:600, marginTop:6,
+                        display:"inline-block",
+                      }}>
+                        {statusLabel[p.status]}
+                      </div>
+                      {p.total_score > 0 && (
+                        <div style={{ color:GOLD, fontWeight:800, fontSize:16, marginTop:4 }}>
+                          {p.total_score}
+                        </div>
+                      )}
+                      {isJudge && competition.status === "active" && p.status === "waiting" && !activeP && (
+                        <button onClick={() => callParticipant(p)} style={{
+                          width:"100%", marginTop:6,
+                          background:`${GOLD}22`, color:GOLD,
+                          border:`1px solid ${GOLD}`, borderRadius:7,
+                          padding:"5px 0", cursor:"pointer", fontWeight:700, fontSize:11,
+                          fontFamily:"Cairo,sans-serif",
+                        }}>
+                          <PhoneCall size={11} style={{ marginRight:4 }}/>Call
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* MY STATUS BAR (participant only) */}
+      {!isJudge && myParticipant && (
+        <div style={{
+          position:"fixed", bottom:0, left:0, right:0, zIndex:20,
+          background:`linear-gradient(90deg, ${GD} 0%, ${GM} 100%)`,
+          borderTop:`1px solid rgba(201,168,76,0.2)`,
+          padding:"10px 20px", display:"flex", alignItems:"center", gap:12,
+        }}>
+          <Avatar name={myParticipant.participant_name} size={32}/>
+          <div style={{ flex:1 }}>
+            <span style={{ color:"#fff", fontWeight:700, fontSize:13 }}>
+              {myParticipant.participant_name}
+            </span>
+            <span style={{ color:"rgba(255,255,255,0.4)", fontSize:12, marginLeft:8 }}>
+              #{myParticipant.queue_position}
+            </span>
+          </div>
+          <div style={{
+            background:`${statusColor[myParticipant.status]}18`,
+            border:`1px solid ${statusColor[myParticipant.status]}`,
+            color:statusColor[myParticipant.status],
+            borderRadius:20, padding:"3px 12px", fontSize:12, fontWeight:700,
+          }}>
+            {myParticipant.status === "called" && "🔔 YOU HAVE BEEN CALLED!"}
+            {myParticipant.status === "reciting" && "🎙️ Reciting..."}
+            {myParticipant.status === "waiting" && `⏳ Waiting — Position #${myParticipant.queue_position}`}
+            {myParticipant.status === "completed" && `✅ Done — ${myParticipant.total_score} pts`}
+            {myParticipant.status === "absent" && "❌ Marked Absent"}
+          </div>
+          {myParticipant.total_score > 0 && (
+            <div style={{ color:GOLD, fontWeight:800, fontSize:18 }}>
+              {myParticipant.total_score} pts
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/*
+══════════════════════════════════════════════════════════════
+  SUPABASE SQL — Run in Supabase SQL Editor
+══════════════════════════════════════════════════════════════
+
+-- 1. Competitions table
+CREATE TABLE IF NOT EXISTS musabaqah_competitions (
+  id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title                TEXT NOT NULL,
+  description          TEXT,
+  scope_type           TEXT DEFAULT 'juz30',
+  scope_config         JSONB DEFAULT '{}',
+  total_stages         INT  DEFAULT 5,
+  current_stage        INT  DEFAULT 1,
+  time_limit_seconds   INT  DEFAULT 300,
+  status               TEXT DEFAULT 'draft',
+  current_participant_id UUID,
+  room_code            TEXT UNIQUE,
+  created_by           UUID REFERENCES auth.users(id),
+  use_criteria_scoring BOOLEAN DEFAULT TRUE,
+  created_at           TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 2. Participants table
+CREATE TABLE IF NOT EXISTS musabaqah_participants (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  competition_id    UUID REFERENCES musabaqah_competitions(id) ON DELETE CASCADE,
+  user_id           UUID REFERENCES auth.users(id),
+  participant_name  TEXT NOT NULL,
+  school            TEXT,
+  queue_position    INT,
+  status            TEXT DEFAULT 'waiting',
+  total_score       NUMERIC DEFAULT 0,
+  stage_scores      JSONB DEFAULT '{}',
+  bell_counts       JSONB DEFAULT '{}',
+  proctor_flagged   BOOLEAN DEFAULT FALSE,
+  camera_on         BOOLEAN DEFAULT FALSE,
+  created_at        TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 3. Attempts table
+CREATE TABLE IF NOT EXISTS musabaqah_attempts (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  competition_id   UUID REFERENCES musabaqah_competitions(id) ON DELETE CASCADE,
+  participant_id   UUID REFERENCES musabaqah_participants(id) ON DELETE CASCADE,
+  stage_number     INT,
+  scope_label      TEXT,
+  scope_label_ar   TEXT,
+  bell_count       INT DEFAULT 0,
+  score_breakdown  JSONB,
+  judge_score      NUMERIC,
+  judge_comment    TEXT,
+  duration_seconds INT,
+  status           TEXT DEFAULT 'pending',
+  created_at       TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 4. Enable Realtime for all three tables
+ALTER PUBLICATION supabase_realtime ADD TABLE musabaqah_competitions;
+ALTER PUBLICATION supabase_realtime ADD TABLE musabaqah_participants;
+ALTER PUBLICATION supabase_realtime ADD TABLE musabaqah_attempts;
+
+-- 5. RLS Policies
+ALTER TABLE musabaqah_competitions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE musabaqah_participants ENABLE ROW LEVEL SECURITY;
+ALTER TABLE musabaqah_attempts     ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Anyone authenticated can view competitions"
+  ON musabaqah_competitions FOR SELECT TO authenticated USING (TRUE);
+CREATE POLICY "Admins and teachers can manage competitions"
+  ON musabaqah_competitions FOR ALL TO authenticated
+  USING (auth.uid() IN (
+    SELECT id FROM profiles WHERE role IN ('admin','teacher')
+  ));
+
+CREATE POLICY "Anyone authenticated can view participants"
+  ON musabaqah_participants FOR SELECT TO authenticated USING (TRUE);
+CREATE POLICY "Authenticated users can join"
+  ON musabaqah_participants FOR INSERT TO authenticated WITH CHECK (TRUE);
+CREATE POLICY "Users can update own record, judges can update all"
+  ON musabaqah_participants FOR UPDATE TO authenticated
+  USING (
+    user_id = auth.uid() OR
+    auth.uid() IN (SELECT id FROM profiles WHERE role IN ('admin','teacher'))
+  );
+
+CREATE POLICY "Judges manage attempts"
+  ON musabaqah_attempts FOR ALL TO authenticated
+  USING (
+    auth.uid() IN (SELECT id FROM profiles WHERE role IN ('admin','teacher'))
+  );
+CREATE POLICY "Anyone can view attempts"
+  ON musabaqah_attempts FOR SELECT TO authenticated USING (TRUE);
+
+══════════════════════════════════════════════════════════════
+*/
