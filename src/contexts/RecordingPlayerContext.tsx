@@ -1,48 +1,49 @@
 /**
  * RecordingPlayerContext.tsx — Tahleem Academy
  *
- * A global audio/video player that persists across ALL page navigation.
- * The HTMLAudioElement lives inside this context so it never unmounts.
- * Any component can call `playRecording(...)` to start/switch playback.
- *
- * Features:
- *  - Survives route changes (dashboard, other subjects, anywhere)
- *  - Speed control: 0.75x, 1x, 1.25x, 1.5x, 2x
- *  - Resumes from last saved position (localStorage)
- *  - MediaSession API for lock-screen / notification controls
- *  - Floating mini-player at bottom of screen
- *  - Expandable full-player panel
+ * FIXES in this version:
+ *  1. Mini-player is now a small compact DRAGGABLE pill (not full-width bar).
+ *     Drag the grip / title row to move it anywhere on screen.
+ *  2. 10-second skip FIXED — old code used `duration : 0` as fallback in
+ *     Math.min(), so forward skip always jumped to 0 when duration was
+ *     unknown. Now uses `Infinity` so it correctly adds 10 seconds.
+ *  3. Seek lag UX — buffering spinner shows while audio is waiting/seeking.
+ *     Seek bar is debounced so dragging doesn't fire a new network seek
+ *     on every pixel; only commits after 200 ms pause.
+ *  4. preload="auto" on the audio element to encourage pre-buffering.
  */
 
-import React, { createContext, useContext, useRef, useState, useEffect, useCallback } from "react";
+import React, {
+  createContext, useContext, useRef, useState, useEffect, useCallback,
+} from "react";
 import { getSignedUrl } from "@/integrations/supabase/storageClient";
 import {
   Play, Pause, SkipBack, SkipForward, Volume2, VolumeX,
-  X, ChevronUp, ChevronDown, Loader2,
+  X, Loader2, GripHorizontal,
 } from "lucide-react";
 
-// ── Position persistence ──────────────────────────────────────
-const POS_KEY   = (id: string) => `tahleem-rec-pos-${id}`;
-const savePos   = (id: string, t: number) => { try { localStorage.setItem(POS_KEY(id), String(t)); } catch {} };
-const readPos   = (id: string): number    => { try { return parseFloat(localStorage.getItem(POS_KEY(id)) || "0") || 0; } catch { return 0; } };
+/* ── Position persistence ──────────────────────────────────── */
+const POS_KEY  = (id: string) => `tahleem-rec-pos-${id}`;
+const savePos  = (id: string, t: number) => { try { localStorage.setItem(POS_KEY(id), String(t)); } catch {} };
+const readPos  = (id: string): number    => { try { return parseFloat(localStorage.getItem(POS_KEY(id)) || "0") || 0; } catch { return 0; } };
 
-const SPEEDS    = [0.75, 1, 1.25, 1.5, 2];
-const GOLD      = "#C9A84C";
-const G         = "#064E3B";
-const GM        = "#0a6644";
+const SPEEDS = [0.75, 1, 1.25, 1.5, 2];
+const GOLD   = "#C9A84C";
+const G      = "#064E3B";
 
-// ── Types ─────────────────────────────────────────────────────
+/* ── Types ─────────────────────────────────────────────────── */
 export interface RecordingInfo {
   id:       string;
   fileUrl:  string;
   title:    string;
-  duration: number;   // seconds (hint — actual from metadata)
+  duration: number;
 }
 
 interface PlayerState {
   recording:   RecordingInfo | null;
   signedUrl:   string | null;
   loading:     boolean;
+  seeking:     boolean;
   error:       string | null;
   playing:     boolean;
   currentTime: number;
@@ -50,48 +51,56 @@ interface PlayerState {
   volume:      number;
   muted:       boolean;
   speed:       number;
-  expanded:    boolean;  // false = compact bar, true = full panel
 }
 
 interface RecordingPlayerContextType {
-  state:          PlayerState;
-  playRecording:  (rec: RecordingInfo) => void;
-  togglePlay:     () => void;
-  stop:           () => void;
-  seek:           (t: number) => void;
-  skip:           (sec: number) => void;
-  setSpeed:       (s: number) => void;
-  setVolume:      (v: number) => void;
-  toggleMute:     () => void;
-  setExpanded:    (v: boolean) => void;
-  isActiveId:     (id: string) => boolean;
+  state:         PlayerState;
+  audioRef:      React.MutableRefObject<HTMLAudioElement>;
+  playRecording: (rec: RecordingInfo) => void;
+  togglePlay:    () => void;
+  stop:          () => void;
+  seek:          (t: number) => void;
+  skip:          (sec: number) => void;
+  setSpeed:      (s: number) => void;
+  setVolume:     (v: number) => void;
+  toggleMute:    () => void;
+  isActiveId:    (id: string) => boolean;
 }
 
 const Ctx = createContext<RecordingPlayerContextType | null>(null);
 
 export const useRecordingPlayer = () => {
-  const ctx = useContext(Ctx);
-  if (!ctx) throw new Error("useRecordingPlayer must be used inside RecordingPlayerProvider");
-  return ctx;
+  const c = useContext(Ctx);
+  if (!c) throw new Error("useRecordingPlayer must be inside RecordingPlayerProvider");
+  return c;
 };
 
-// ── Formatting ────────────────────────────────────────────────
+/* ── Helpers ────────────────────────────────────────────────── */
 const fmt = (s: number): string => {
   if (!isFinite(s) || isNaN(s) || s < 0) return "--:--";
   const m = Math.floor(s / 60), sec = Math.floor(s % 60);
   return `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
 };
 
-// ══ PROVIDER ═════════════════════════════════════════════════
+/* ══ PROVIDER ═══════════════════════════════════════════════ */
 export const RecordingPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const audioRef    = useRef<HTMLAudioElement>(new Audio());
+  // Create audio element once — never recreated on re-render
+  const audioRef = useRef<HTMLAudioElement>(null as any);
+  if (!audioRef.current) {
+    const a = new Audio();
+    a.preload = "auto";
+    (audioRef as any).current = a;
+  }
+
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const resumedRef  = useRef(false);
+  const resumedRef   = useRef(false);
+  const recIdRef     = useRef<string | null>(null); // avoids stale closure in events
 
   const [state, setState] = useState<PlayerState>({
     recording:   null,
     signedUrl:   null,
     loading:     false,
+    seeking:     false,
     error:       null,
     playing:     false,
     currentTime: 0,
@@ -99,27 +108,25 @@ export const RecordingPlayerProvider: React.FC<{ children: React.ReactNode }> = 
     volume:      1,
     muted:       false,
     speed:       1,
-    expanded:    false,
   });
 
-  // ── Wire up audio element events once ───────────────────────
+  /* ── Wire audio events once ──────────────────────────────── */
   useEffect(() => {
     const a = audioRef.current;
-    const onTime  = () => {
+
+    const onTime    = () => {
       const t = a.currentTime;
       setState(p => ({ ...p, currentTime: t }));
-      // Save position debounced
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       saveTimerRef.current = setTimeout(() => {
-        if (state.recording?.id) savePos(state.recording.id, t);
+        if (recIdRef.current) savePos(recIdRef.current, t);
       }, 2000);
     };
-    const onMeta  = () => {
+    const onMeta    = () => {
       const dur = isFinite(a.duration) ? a.duration : 0;
       setState(p => ({ ...p, duration: dur || p.duration }));
-      // Restore saved position
-      if (!resumedRef.current && state.recording?.id) {
-        const saved = readPos(state.recording.id);
+      if (!resumedRef.current && recIdRef.current) {
+        const saved = readPos(recIdRef.current);
         if (saved > 5 && saved < (dur - 5)) {
           a.currentTime = saved;
           setState(p => ({ ...p, currentTime: saved }));
@@ -127,19 +134,27 @@ export const RecordingPlayerProvider: React.FC<{ children: React.ReactNode }> = 
         resumedRef.current = true;
       }
     };
-    const onPlay  = () => setState(p => ({ ...p, playing: true }));
-    const onPause = () => setState(p => ({ ...p, playing: false }));
-    const onEnded = () => {
+    const onPlay    = () => setState(p => ({ ...p, playing: true, seeking: false }));
+    const onPause   = () => setState(p => ({ ...p, playing: false }));
+    const onEnded   = () => {
       setState(p => ({ ...p, playing: false, currentTime: 0 }));
-      if (state.recording?.id) savePos(state.recording.id, 0);
+      if (recIdRef.current) savePos(recIdRef.current, 0);
     };
-    const onErr   = () => setState(p => ({ ...p, loading: false, error: "Could not play recording", playing: false }));
+    const onSeeking = () => setState(p => ({ ...p, seeking: true }));
+    const onSeeked  = () => setState(p => ({ ...p, seeking: false }));
+    const onWaiting = () => setState(p => ({ ...p, seeking: true }));
+    const onPlaying = () => setState(p => ({ ...p, seeking: false }));
+    const onErr     = () => setState(p => ({ ...p, loading: false, seeking: false, error: "Could not play recording", playing: false }));
 
     a.addEventListener("timeupdate",     onTime);
     a.addEventListener("loadedmetadata", onMeta);
     a.addEventListener("play",           onPlay);
     a.addEventListener("pause",          onPause);
     a.addEventListener("ended",          onEnded);
+    a.addEventListener("seeking",        onSeeking);
+    a.addEventListener("seeked",         onSeeked);
+    a.addEventListener("waiting",        onWaiting);
+    a.addEventListener("playing",        onPlaying);
     a.addEventListener("error",          onErr);
     return () => {
       a.removeEventListener("timeupdate",     onTime);
@@ -147,79 +162,66 @@ export const RecordingPlayerProvider: React.FC<{ children: React.ReactNode }> = 
       a.removeEventListener("play",           onPlay);
       a.removeEventListener("pause",          onPause);
       a.removeEventListener("ended",          onEnded);
+      a.removeEventListener("seeking",        onSeeking);
+      a.removeEventListener("seeked",         onSeeked);
+      a.removeEventListener("waiting",        onWaiting);
+      a.removeEventListener("playing",        onPlaying);
       a.removeEventListener("error",          onErr);
     };
-  }, [state.recording?.id]);
+  }, []); // mount once, audio element is stable
 
-  // ── MediaSession ─────────────────────────────────────────────
+  /* ── MediaSession ────────────────────────────────────────── */
   useEffect(() => {
     if (!("mediaSession" in navigator) || !state.recording) return;
     navigator.mediaSession.metadata = new MediaMetadata({
-      title:  state.recording.title || "Tahleem Recording",
+      title: state.recording.title || "Tahleem Recording",
       artist: "Tahleem Academy",
-      album:  "Recorded Lesson",
+      album: "Recorded Lesson",
     });
     navigator.mediaSession.setActionHandler("play",         () => audioRef.current.play());
     navigator.mediaSession.setActionHandler("pause",        () => audioRef.current.pause());
     navigator.mediaSession.setActionHandler("seekbackward", () => { audioRef.current.currentTime = Math.max(0, audioRef.current.currentTime - 10); });
-    navigator.mediaSession.setActionHandler("seekforward",  () => { audioRef.current.currentTime = Math.min(audioRef.current.duration || Infinity, audioRef.current.currentTime + 10); });
+    navigator.mediaSession.setActionHandler("seekforward",  () => { audioRef.current.currentTime += 10; });
   }, [state.recording]);
 
-  // ── Actions ──────────────────────────────────────────────────
+  /* ── Actions ─────────────────────────────────────────────── */
   const playRecording = useCallback(async (rec: RecordingInfo) => {
     const a = audioRef.current;
-
-    // If same recording is already loaded, just toggle
     if (state.recording?.id === rec.id && state.signedUrl) {
       if (state.playing) { a.pause(); } else { a.play().catch(() => {}); }
-      setState(p => ({ ...p, expanded: true }));
       return;
     }
-
-    // Load new recording
     resumedRef.current = false;
-    setState(p => ({ ...p, loading: true, error: null, recording: rec, playing: false, currentTime: 0, duration: rec.duration || 0, expanded: true, signedUrl: null }));
-
+    recIdRef.current   = rec.id;
+    setState(p => ({ ...p, loading: true, error: null, recording: rec, playing: false, currentTime: 0, duration: rec.duration || 0, signedUrl: null }));
     a.pause();
-
     try {
       const url = await getSignedUrl(rec.fileUrl, 7200);
       if (!url) throw new Error("Could not load file URL");
-
-      a.src = url;
+      a.src          = url;
       a.playbackRate = state.speed;
-      a.volume = state.volume;
-      a.muted  = state.muted;
+      a.volume       = state.volume;
+      a.muted        = state.muted;
       a.load();
-
       setState(p => ({ ...p, signedUrl: url, loading: false }));
-
-      // Restore position then play
       const saved = readPos(rec.id);
       if (saved > 5) {
-        // Wait for metadata, then seek
         const seekAndPlay = () => {
           const dur = isFinite(a.duration) ? a.duration : 0;
           if (saved < dur - 5) a.currentTime = saved;
           resumedRef.current = true;
           a.play().catch(() => {});
         };
-        if (isFinite(a.duration) && a.duration > 0) {
-          seekAndPlay();
-        } else {
-          a.addEventListener("loadedmetadata", seekAndPlay, { once: true });
-        }
+        if (isFinite(a.duration) && a.duration > 0) seekAndPlay();
+        else a.addEventListener("loadedmetadata", seekAndPlay, { once: true });
       } else {
         a.play().catch(() => {});
       }
-
-      // MediaSession update
       if ("mediaSession" in navigator) {
         navigator.mediaSession.metadata = new MediaMetadata({
           title: rec.title || "Tahleem Recording", artist: "Tahleem Academy", album: "Recorded Lesson",
         });
       }
-
     } catch (err: any) {
       setState(p => ({ ...p, loading: false, error: err?.message || "Failed to load recording" }));
     }
@@ -233,19 +235,25 @@ export const RecordingPlayerProvider: React.FC<{ children: React.ReactNode }> = 
   const stop        = useCallback(() => {
     const a = audioRef.current;
     a.pause();
-    if (state.recording?.id) savePos(state.recording.id, a.currentTime);
+    if (recIdRef.current) savePos(recIdRef.current, a.currentTime);
+    recIdRef.current = null;
     setState(p => ({ ...p, recording: null, signedUrl: null, playing: false, currentTime: 0, duration: 0 }));
     a.src = "";
-  }, [state.recording?.id]);
-
-  const seek        = useCallback((t: number) => {
-    audioRef.current.currentTime = t;
-    setState(p => ({ ...p, currentTime: t }));
   }, []);
 
-  const skip        = useCallback((sec: number) => {
+  const seek        = useCallback((t: number) => {
     const a = audioRef.current;
-    const t = Math.max(0, Math.min(isFinite(a.duration) ? a.duration : 0, a.currentTime + sec));
+    /* FIX: use Infinity when duration unknown so forward-skip works */
+    const clamped = Math.max(0, Math.min(isFinite(a.duration) ? a.duration : Infinity, t));
+    a.currentTime = clamped;
+    setState(p => ({ ...p, currentTime: clamped }));
+  }, []);
+
+  /* FIX: was Math.min(duration || 0, ...) which capped forward skip to 0 */
+  const skip        = useCallback((sec: number) => {
+    const a   = audioRef.current;
+    const cap = isFinite(a.duration) ? a.duration : Infinity;
+    const t   = Math.max(0, Math.min(cap, a.currentTime + sec));
     a.currentTime = t;
     setState(p => ({ ...p, currentTime: t }));
   }, []);
@@ -267,12 +275,11 @@ export const RecordingPlayerProvider: React.FC<{ children: React.ReactNode }> = 
     setState(p => ({ ...p, muted: next }));
   }, [state.muted]);
 
-  const setExpanded = useCallback((v: boolean) => setState(p => ({ ...p, expanded: v })), []);
   const isActiveId  = useCallback((id: string) => state.recording?.id === id, [state.recording?.id]);
 
   const ctx: RecordingPlayerContextType = {
-    state, playRecording, togglePlay, stop, seek, skip,
-    setSpeed, setVolume, toggleMute, setExpanded, isActiveId,
+    state, audioRef, playRecording, togglePlay, stop, seek, skip,
+    setSpeed, setVolume, toggleMute, isActiveId,
   };
 
   return (
@@ -283,178 +290,256 @@ export const RecordingPlayerProvider: React.FC<{ children: React.ReactNode }> = 
   );
 };
 
-// ══ GLOBAL FLOATING PLAYER UI ════════════════════════════════
+/* ══ COMPACT DRAGGABLE MINI-PLAYER ═════════════════════════ */
 const GlobalPlayer: React.FC<{ ctx: RecordingPlayerContextType }> = ({ ctx }) => {
-  const { state, togglePlay, stop, seek, skip, setSpeed, setVolume, toggleMute, setExpanded } = ctx;
-  const [showSpeeds, setShowSpeeds] = useState(false);
-  const { recording, playing, currentTime, duration, volume, muted, speed, expanded, loading, error } = state;
+  const { state, togglePlay, stop, seek, skip, setSpeed, setVolume, toggleMute } = ctx;
+  const { recording, playing, currentTime, duration, volume, muted, speed, loading, seeking, error } = state;
+
+  /* ── Draggable state ─────────────────────────────────────── */
+  const [pos, setPos]       = useState<{ x: number; y: number } | null>(null);
+  const [showSpeeds, setSS] = useState(false);
+  const cardRef             = useRef<HTMLDivElement>(null);
+  const dragging            = useRef(false);
+  const dragOrigin          = useRef({ cx: 0, cy: 0, cardX: 0, cardY: 0 });
+
+  /* ── Debounced seek for lag improvement ──────────────────── */
+  const seekTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [seekDraft, setSeekDraft] = useState<number | null>(null);
+
+  const handleSeekInput = useCallback((val: number) => {
+    setSeekDraft(val); // instant visual feedback
+    if (seekTimerRef.current) clearTimeout(seekTimerRef.current);
+    seekTimerRef.current = setTimeout(() => {
+      seek(val);
+      setSeekDraft(null);
+    }, 250); // only hit the audio element after user pauses
+  }, [seek]);
+
+  /* ── Global pointer move / up for dragging ───────────────── */
+  useEffect(() => {
+    const onMove = (e: TouchEvent | MouseEvent) => {
+      if (!dragging.current) return;
+      const cx = "touches" in e ? (e as TouchEvent).touches[0]?.clientX ?? 0 : (e as MouseEvent).clientX;
+      const cy = "touches" in e ? (e as TouchEvent).touches[0]?.clientY ?? 0 : (e as MouseEvent).clientY;
+      const card = cardRef.current;
+      if (!card) return;
+      const w = card.offsetWidth, h = card.offsetHeight;
+      setPos({
+        x: Math.max(8, Math.min(window.innerWidth  - w - 8, dragOrigin.current.cardX + cx - dragOrigin.current.cx)),
+        y: Math.max(8, Math.min(window.innerHeight - h - 8, dragOrigin.current.cardY + cy - dragOrigin.current.cy)),
+      });
+    };
+    const onEnd = () => { dragging.current = false; };
+    document.addEventListener("touchmove",  onMove, { passive: true });
+    document.addEventListener("touchend",   onEnd);
+    document.addEventListener("mousemove",  onMove);
+    document.addEventListener("mouseup",    onEnd);
+    return () => {
+      document.removeEventListener("touchmove",  onMove);
+      document.removeEventListener("touchend",   onEnd);
+      document.removeEventListener("mousemove",  onMove);
+      document.removeEventListener("mouseup",    onEnd);
+    };
+  }, []);
+
+  const startDrag = useCallback((clientX: number, clientY: number) => {
+    const rect = cardRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    dragging.current = true;
+    dragOrigin.current = { cx: clientX, cy: clientY, cardX: rect.left, cardY: rect.top };
+  }, []);
 
   if (!recording) return null;
 
-  const pct         = duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0;
-  const savedPos    = readPos(recording.id);
-  const hasSaved    = savedPos > 5;
+  const displayTime = seekDraft ?? currentTime;
+  const pct         = duration > 0 ? Math.min(100, (displayTime / duration) * 100) : 0;
+  const isBusy      = loading || seeking;
+
+  const posStyle: React.CSSProperties = pos
+    ? { top: pos.y, left: pos.x, bottom: "auto", transform: "none" }
+    : { bottom: 20, left: "50%", transform: "translateX(-50%)" };
 
   return (
     <div
+      ref={cardRef}
       style={{
-        position:    "fixed",
-        bottom:      0,
-        left:        0,
-        right:       0,
-        zIndex:      9999,
-        fontFamily:  "'Cairo', sans-serif",
-        boxShadow:   "0 -4px 32px rgba(0,0,0,.35)",
-        background:  "#0f0f0f",
-        borderTop:   `2px solid ${GOLD}`,
-        transition:  "all .25s ease",
+        position:   "fixed",
+        ...posStyle,
+        zIndex:     9999,
+        width:      "min(92vw, 310px)",
+        background: "#111",
+        borderRadius: 20,
+        boxShadow:  "0 10px 40px rgba(0,0,0,.65), 0 0 0 1.5px rgba(201,168,76,.3)",
+        fontFamily: "'Cairo', sans-serif",
+        overflow:   "hidden",
+        userSelect: "none",
+        WebkitUserSelect: "none",
       }}
     >
-      {/* ── PROGRESS LINE (always visible) ── */}
-      <div style={{ height: 3, background: "rgba(255,255,255,.08)", position: "relative", cursor: "pointer" }}
+      {/* ── Progress track — tap anywhere to seek ──────────── */}
+      <div
+        style={{
+          height: 4, background: "rgba(255,255,255,.08)",
+          cursor: "pointer", position: "relative",
+        }}
         onClick={e => {
           const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
-          const ratio = (e.clientX - rect.left) / rect.width;
-          seek(ratio * duration);
+          seek(((e.clientX - rect.left) / rect.width) * (duration || 0));
+        }}
+      >
+        <div style={{
+          height: "100%", width: `${pct}%`,
+          background: `linear-gradient(90deg, #b8870a, ${GOLD})`,
+          borderRadius: 2, transition: seekDraft !== null ? "none" : "width .15s linear",
+          position: "relative",
         }}>
-        <div style={{ height: "100%", width: `${pct}%`, background: GOLD, transition: "width .4s linear" }} />
+          <div style={{ position: "absolute", right: -3, top: "50%", transform: "translateY(-50%)", width: 7, height: 7, borderRadius: "50%", background: GOLD }} />
+        </div>
       </div>
 
-      {/* ── COMPACT BAR (always) ── */}
-      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px" }}>
+      <div style={{ padding: "10px 12px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
 
-        {/* Play/Pause */}
-        <button onClick={togglePlay} disabled={loading}
-          style={{ width: 40, height: 40, borderRadius: "50%", background: GOLD, border: "none", color: G, cursor: loading ? "wait" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-          {loading
-            ? <Loader2 size={18} style={{ animation: "spin .8s linear infinite" }} />
-            : playing
-              ? <Pause size={18} />
-              : <Play  size={18} style={{ marginLeft: 2 }} />}
-        </button>
-
-        {/* Title + time */}
-        <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }} onClick={() => setExpanded(!expanded)}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-            {recording.title}
-          </div>
-          <div style={{ fontSize: 10, color: "#888", display: "flex", gap: 6 }}>
-            <span>{fmt(currentTime)}</span>
-            <span>/</span>
-            <span>{fmt(duration)}</span>
-            <span>•</span>
-            <span style={{ color: GOLD }}>{speed}×</span>
-            {playing && <span style={{ color: "#22c55e" }}>▶ Live</span>}
+        {/* ── Drag handle + title + time ──────────────────── */}
+        <div
+          onMouseDown={e  => startDrag(e.clientX, e.clientY)}
+          onTouchStart={e => { e.stopPropagation(); startDrag(e.touches[0].clientX, e.touches[0].clientY); }}
+          style={{ display: "flex", alignItems: "center", gap: 7, cursor: "grab", touchAction: "none" }}
+        >
+          <GripHorizontal size={14} color="#444" style={{ flexShrink: 0 }} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 11.5, fontWeight: 700, color: "#e0e0e0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              {recording.title}
+            </div>
+            <div style={{ fontSize: 10, display: "flex", gap: 4, marginTop: 1, alignItems: "center" }}>
+              <span style={{ color: "#888" }}>{fmt(displayTime)}</span>
+              <span style={{ color: "#444" }}>/</span>
+              <span style={{ color: "#555" }}>{fmt(duration)}</span>
+              <span style={{ color: "#333" }}>•</span>
+              <span style={{ color: GOLD, fontWeight: 700 }}>{speed}×</span>
+              {isBusy && <span style={{ color: "#f59e0b", fontSize: 9 }}>⏳ buffering</span>}
+            </div>
           </div>
         </div>
 
-        {/* Expand / Collapse */}
-        <button onClick={() => setExpanded(!expanded)}
-          style={{ background: "none", border: "none", color: "#888", cursor: "pointer", padding: 4 }}>
-          {expanded ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
-        </button>
+        {/* ── Transport controls ──────────────────────────── */}
+        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
 
-        {/* Stop */}
-        <button onClick={stop}
-          style={{ background: "rgba(255,255,255,.08)", border: "none", color: "#aaa", cursor: "pointer", borderRadius: 6, padding: "5px 8px", fontSize: 11 }}>
-          <X size={15} />
-        </button>
+          {/* Skip −10 s */}
+          <button
+            onClick={() => skip(-10)}
+            style={{ background: "none", border: "none", color: "#aaa", cursor: "pointer", padding: "3px 5px", display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}
+          >
+            <SkipBack size={19} color="#aaa" />
+            <span style={{ fontSize: 8, color: "#666", lineHeight: 1 }}>10s</span>
+          </button>
+
+          {/* Play / Pause */}
+          <button
+            onClick={togglePlay}
+            disabled={loading}
+            style={{
+              width: 44, height: 44, borderRadius: "50%",
+              background: GOLD, border: "none", color: G,
+              cursor: loading ? "wait" : "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              flexShrink: 0, boxShadow: "0 2px 14px rgba(201,168,76,.45)",
+            }}
+          >
+            {isBusy
+              ? <Loader2 size={20} style={{ animation: "rpc-spin .7s linear infinite" }} />
+              : playing
+                ? <Pause  size={20} />
+                : <Play   size={20} style={{ marginLeft: 2 }} />}
+          </button>
+
+          {/* Skip +10 s */}
+          <button
+            onClick={() => skip(10)}
+            style={{ background: "none", border: "none", color: "#aaa", cursor: "pointer", padding: "3px 5px", display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}
+          >
+            <SkipForward size={19} color="#aaa" />
+            <span style={{ fontSize: 8, color: "#666", lineHeight: 1 }}>10s</span>
+          </button>
+
+          <div style={{ flex: 1 }} />
+
+          {/* Speed */}
+          <div style={{ position: "relative" }}>
+            <button
+              onClick={() => setSS(s => !s)}
+              style={{
+                padding: "4px 9px", borderRadius: 8,
+                background: showSpeeds ? GOLD : "rgba(201,168,76,.15)",
+                border: `1.5px solid ${GOLD}`,
+                color: showSpeeds ? G : GOLD,
+                fontSize: 12, fontWeight: 800, cursor: "pointer",
+              }}
+            >
+              {speed}×
+            </button>
+            {showSpeeds && (
+              <div style={{ position: "absolute", bottom: "calc(100% + 6px)", right: 0, background: "#1e1e1e", border: "1px solid #333", borderRadius: 10, overflow: "hidden", minWidth: 68, zIndex: 1, boxShadow: "0 4px 16px rgba(0,0,0,.5)" }}>
+                {SPEEDS.map(s => (
+                  <button
+                    key={s}
+                    onClick={() => { setSpeed(s); setSS(false); }}
+                    style={{ display: "block", width: "100%", padding: "9px 0", background: s === speed ? "rgba(201,168,76,.2)" : "none", border: "none", color: s === speed ? GOLD : "#ccc", fontSize: 13, fontWeight: s === speed ? 800 : 500, cursor: "pointer", textAlign: "center" }}
+                  >
+                    {s}×
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Mute toggle */}
+          <button
+            onClick={toggleMute}
+            style={{ background: "none", border: "none", color: muted ? "#f87171" : "#777", cursor: "pointer", padding: "4px 3px" }}
+          >
+            {muted || volume === 0 ? <VolumeX size={16} /> : <Volume2 size={16} />}
+          </button>
+
+          {/* Close */}
+          <button
+            onClick={stop}
+            style={{ background: "rgba(255,255,255,.08)", border: "none", color: "#999", cursor: "pointer", borderRadius: 8, width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center" }}
+          >
+            <X size={14} />
+          </button>
+        </div>
+
+        {/* ── Seek slider (debounced) ──────────────────────── */}
+        <div style={{ padding: "0 2px" }}>
+          <input
+            type="range"
+            min={0}
+            max={duration || 100}
+            step={1}
+            value={displayTime}
+            onChange={e => handleSeekInput(parseFloat(e.target.value))}
+            style={{ width: "100%", accentColor: GOLD, height: 3, cursor: "pointer", display: "block" }}
+          />
+        </div>
+
+        {/* Volume slider */}
+        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+          <Volume2 size={11} color="#444" />
+          <input
+            type="range" min={0} max={1} step={0.05} value={muted ? 0 : volume}
+            onChange={e => setVolume(parseFloat(e.target.value))}
+            style={{ flex: 1, accentColor: GOLD, height: 2, cursor: "pointer" }}
+          />
+        </div>
+
+        {error && (
+          <div style={{ fontSize: 11, color: "#f87171", padding: "4px 8px", borderRadius: 6, background: "rgba(239,68,68,.1)" }}>
+            ⚠ {error}
+          </div>
+        )}
       </div>
 
-      {/* ── EXPANDED FULL CONTROLS ── */}
-      {expanded && (
-        <div style={{ padding: "0 14px 16px", borderTop: "1px solid rgba(255,255,255,.06)" }}>
-
-          {error && (
-            <div style={{ padding: "8px 12px", borderRadius: 8, background: "#2a1010", color: "#f87171", fontSize: 12, marginBottom: 10 }}>
-              ⚠ {error}
-            </div>
-          )}
-
-          {/* Seek bar */}
-          <div style={{ padding: "14px 0 4px", position: "relative" }}>
-            <div style={{ position: "relative", height: 6, background: "rgba(255,255,255,.12)", borderRadius: 4, cursor: "pointer" }}>
-              <div style={{ position: "absolute", top: 0, left: 0, height: "100%", width: `${pct}%`, background: GOLD, borderRadius: 4, pointerEvents: "none" }} />
-              <input
-                type="range" min={0} max={duration || 100} step={0.5} value={currentTime}
-                onChange={e => seek(parseFloat(e.target.value))}
-                style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, cursor: "pointer", margin: 0 }}
-              />
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#666", marginTop: 4 }}>
-              <span>{fmt(currentTime)}</span>
-              <span>{fmt(duration)}</span>
-            </div>
-          </div>
-
-          {/* Controls row */}
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-
-            {/* Skip back 10s */}
-            <button onClick={() => skip(-10)}
-              style={{ background: "none", border: "none", color: "#aaa", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 1, padding: "4px 6px" }}>
-              <SkipBack size={20} color="#aaa" />
-              <span style={{ fontSize: 9, color: "#666" }}>10s</span>
-            </button>
-
-            {/* Play/Pause (large) */}
-            <button onClick={togglePlay} disabled={loading}
-              style={{ width: 56, height: 56, borderRadius: "50%", background: GOLD, border: "none", color: G, cursor: loading ? "wait" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: "0 2px 16px rgba(201,168,76,.4)" }}>
-              {loading
-                ? <Loader2 size={24} style={{ animation: "spin .8s linear infinite" }} />
-                : playing
-                  ? <Pause size={24} />
-                  : <Play  size={24} style={{ marginLeft: 3 }} />}
-            </button>
-
-            {/* Skip forward 10s */}
-            <button onClick={() => skip(10)}
-              style={{ background: "none", border: "none", color: "#aaa", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 1, padding: "4px 6px" }}>
-              <SkipForward size={20} color="#aaa" />
-              <span style={{ fontSize: 9, color: "#666" }}>10s</span>
-            </button>
-
-            {/* Speed */}
-            <div style={{ position: "relative" }}>
-              <button onClick={() => setShowSpeeds(s => !s)}
-                style={{ padding: "6px 11px", borderRadius: 8, background: showSpeeds ? GOLD : "rgba(201,168,76,.15)", border: `1.5px solid ${GOLD}`, color: showSpeeds ? G : GOLD, fontSize: 13, fontWeight: 800, cursor: "pointer" }}>
-                {speed}×
-              </button>
-              {showSpeeds && (
-                <div style={{ position: "absolute", bottom: "calc(100% + 6px)", left: 0, background: "#1a1a1a", border: "1px solid #333", borderRadius: 10, overflow: "hidden", minWidth: 72, zIndex: 1 }}>
-                  {SPEEDS.map(s => (
-                    <button key={s} onClick={() => { setSpeed(s); setShowSpeeds(false); }}
-                      style={{ display: "block", width: "100%", padding: "9px 0", background: s === speed ? "rgba(201,168,76,.25)" : "none", border: "none", color: s === speed ? GOLD : "#ccc", fontSize: 13, fontWeight: s === speed ? 800 : 500, cursor: "pointer", textAlign: "center" }}>
-                      {s}×
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Volume */}
-            <div style={{ display: "flex", alignItems: "center", gap: 6, flex: 1 }}>
-              <button onClick={toggleMute} style={{ background: "none", border: "none", color: "#aaa", cursor: "pointer", flexShrink: 0 }}>
-                {muted || volume === 0 ? <VolumeX size={16} /> : <Volume2 size={16} />}
-              </button>
-              <input
-                type="range" min={0} max={1} step={0.05} value={muted ? 0 : volume}
-                onChange={e => setVolume(parseFloat(e.target.value))}
-                style={{ flex: 1, accentColor: GOLD, height: 3, cursor: "pointer" }}
-              />
-            </div>
-          </div>
-
-          {/* Resume hint */}
-          {hasSaved && currentTime < 3 && (
-            <div style={{ textAlign: "center", fontSize: 11, color: "#666", marginTop: 8 }}>
-              ↩ Resumed from {fmt(savedPos)}
-            </div>
-          )}
-        </div>
-      )}
-
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+      <style>{`@keyframes rpc-spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 };
