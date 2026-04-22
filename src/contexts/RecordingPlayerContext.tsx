@@ -19,7 +19,7 @@ import React, {
 import { getSignedUrl } from "@/integrations/supabase/storageClient";
 import {
   Play, Pause, SkipBack, SkipForward, Volume2, VolumeX,
-  X, Loader2, GripHorizontal,
+  X, Loader2,
 } from "lucide-react";
 
 /* ── Position persistence ──────────────────────────────────── */
@@ -290,201 +290,189 @@ export const RecordingPlayerProvider: React.FC<{ children: React.ReactNode }> = 
   );
 };
 
-/* ══ COMPACT DRAGGABLE MINI-PLAYER ═════════════════════════ */
+/* ══ SINGLE-LINE DRAGGABLE MINI-PLAYER ═════════════════════
+   One row: [◀10] [▶/⏸] [10▶] [title · time · speed] [🔇] [✕]
+   Progress is a 3 px tap-to-seek line at the bottom.
+   Drag the title section to reposition anywhere on screen.
+   Speed picker pops up above, clearly visible, dark background.
+══════════════════════════════════════════════════════════════ */
 const GlobalPlayer: React.FC<{ ctx: RecordingPlayerContextType }> = ({ ctx }) => {
-  const { state, togglePlay, stop, seek, skip, setSpeed, setVolume, toggleMute } = ctx;
-  const { recording, playing, currentTime, duration, volume, muted, speed, loading, seeking, error } = state;
+  const { state, togglePlay, stop, seek, skip, setSpeed, toggleMute } = ctx;
+  const { recording, playing, currentTime, duration, muted, speed, loading, seeking, error } = state;
 
-  /* ── Draggable state ─────────────────────────────────────── */
-  const [pos, setPos]       = useState<{ x: number; y: number } | null>(null);
+  /* Drag */
+  const [pos, setPos]  = useState<{ x: number; y: number } | null>(null);
   const [showSpeeds, setSS] = useState(false);
-  const cardRef             = useRef<HTMLDivElement>(null);
-  const dragging            = useRef(false);
-  const dragOrigin          = useRef({ cx: 0, cy: 0, cardX: 0, cardY: 0 });
+  const cardRef   = useRef<HTMLDivElement>(null);
+  const dragging  = useRef(false);
+  const dragStart = useRef({ cx: 0, cy: 0, cardX: 0, cardY: 0 });
 
-  /* ── Debounced seek for lag improvement ──────────────────── */
-  const seekTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /* Debounced seek */
+  const seekTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [seekDraft, setSeekDraft] = useState<number | null>(null);
-
-  const handleSeekInput = useCallback((val: number) => {
-    setSeekDraft(val); // instant visual feedback
-    if (seekTimerRef.current) clearTimeout(seekTimerRef.current);
-    seekTimerRef.current = setTimeout(() => {
-      seek(val);
-      setSeekDraft(null);
-    }, 250); // only hit the audio element after user pauses
+  const handleSeek = useCallback((val: number) => {
+    setSeekDraft(val);
+    if (seekTimer.current) clearTimeout(seekTimer.current);
+    seekTimer.current = setTimeout(() => { seek(val); setSeekDraft(null); }, 220);
   }, [seek]);
 
-  /* ── Global pointer move / up for dragging ───────────────── */
   useEffect(() => {
     const onMove = (e: TouchEvent | MouseEvent) => {
       if (!dragging.current) return;
       const cx = "touches" in e ? (e as TouchEvent).touches[0]?.clientX ?? 0 : (e as MouseEvent).clientX;
       const cy = "touches" in e ? (e as TouchEvent).touches[0]?.clientY ?? 0 : (e as MouseEvent).clientY;
-      const card = cardRef.current;
-      if (!card) return;
+      const card = cardRef.current; if (!card) return;
       const w = card.offsetWidth, h = card.offsetHeight;
       setPos({
-        x: Math.max(8, Math.min(window.innerWidth  - w - 8, dragOrigin.current.cardX + cx - dragOrigin.current.cx)),
-        y: Math.max(8, Math.min(window.innerHeight - h - 8, dragOrigin.current.cardY + cy - dragOrigin.current.cy)),
+        x: Math.max(8, Math.min(window.innerWidth  - w - 8, dragStart.current.cardX + cx - dragStart.current.cx)),
+        y: Math.max(8, Math.min(window.innerHeight - h - 8, dragStart.current.cardY + cy - dragStart.current.cy)),
       });
     };
     const onEnd = () => { dragging.current = false; };
-    document.addEventListener("touchmove",  onMove, { passive: true });
-    document.addEventListener("touchend",   onEnd);
-    document.addEventListener("mousemove",  onMove);
-    document.addEventListener("mouseup",    onEnd);
+    document.addEventListener("touchmove", onMove, { passive: true });
+    document.addEventListener("touchend",  onEnd);
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup",   onEnd);
     return () => {
-      document.removeEventListener("touchmove",  onMove);
-      document.removeEventListener("touchend",   onEnd);
-      document.removeEventListener("mousemove",  onMove);
-      document.removeEventListener("mouseup",    onEnd);
+      document.removeEventListener("touchmove", onMove);
+      document.removeEventListener("touchend",  onEnd);
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup",   onEnd);
     };
   }, []);
 
-  const startDrag = useCallback((clientX: number, clientY: number) => {
-    const rect = cardRef.current?.getBoundingClientRect();
-    if (!rect) return;
+  const startDrag = useCallback((cx: number, cy: number) => {
+    const rect = cardRef.current?.getBoundingClientRect(); if (!rect) return;
     dragging.current = true;
-    dragOrigin.current = { cx: clientX, cy: clientY, cardX: rect.left, cardY: rect.top };
+    dragStart.current = { cx, cy, cardX: rect.left, cardY: rect.top };
   }, []);
 
   if (!recording) return null;
 
   const displayTime = seekDraft ?? currentTime;
-  const pct         = duration > 0 ? Math.min(100, (displayTime / duration) * 100) : 0;
-  const isBusy      = loading || seeking;
+  const pct    = duration > 0 ? Math.min(100, (displayTime / duration) * 100) : 0;
+  const isBusy = loading || seeking;
 
   const posStyle: React.CSSProperties = pos
     ? { top: pos.y, left: pos.x, bottom: "auto", transform: "none" }
-    : { bottom: 20, left: "50%", transform: "translateX(-50%)" };
+    : { bottom: 16, left: "50%", transform: "translateX(-50%)" };
+
+  /* Speed button label — always dark-on-gold so it's legible */
+  const speedLabel = `${speed}×`;
 
   return (
     <div
       ref={cardRef}
       style={{
-        position:   "fixed",
-        ...posStyle,
-        zIndex:     9999,
-        width:      "min(92vw, 310px)",
-        background: "#111",
-        borderRadius: 20,
-        boxShadow:  "0 10px 40px rgba(0,0,0,.65), 0 0 0 1.5px rgba(201,168,76,.3)",
+        position:  "fixed", ...posStyle,
+        zIndex:    9999,
+        width:     "min(96vw, 360px)",
+        background: "#1a1a1a",
+        borderRadius: 14,
+        boxShadow: "0 6px 28px rgba(0,0,0,.7), 0 0 0 1px rgba(201,168,76,.25)",
         fontFamily: "'Cairo', sans-serif",
-        overflow:   "hidden",
+        overflow:  "visible",       /* allow speed popup to escape */
         userSelect: "none",
         WebkitUserSelect: "none",
       }}
     >
-      {/* ── Progress track — tap anywhere to seek ──────────── */}
-      <div
-        style={{
-          height: 4, background: "rgba(255,255,255,.08)",
-          cursor: "pointer", position: "relative",
-        }}
-        onClick={e => {
-          const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
-          seek(((e.clientX - rect.left) / rect.width) * (duration || 0));
-        }}
-      >
+      {/* ── Inner clip (rounded, hides progress overflow) ─── */}
+      <div style={{ borderRadius: 14, overflow: "hidden" }}>
+
+        {/* ─ Single control row ─────────────────────────────── */}
         <div style={{
-          height: "100%", width: `${pct}%`,
-          background: `linear-gradient(90deg, #b8870a, ${GOLD})`,
-          borderRadius: 2, transition: seekDraft !== null ? "none" : "width .15s linear",
-          position: "relative",
+          display: "flex", alignItems: "center",
+          padding: "0 6px 0 4px", height: 52, gap: 2,
         }}>
-          <div style={{ position: "absolute", right: -3, top: "50%", transform: "translateY(-50%)", width: 7, height: 7, borderRadius: "50%", background: GOLD }} />
-        </div>
-      </div>
-
-      <div style={{ padding: "10px 12px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
-
-        {/* ── Drag handle + title + time ──────────────────── */}
-        <div
-          onMouseDown={e  => startDrag(e.clientX, e.clientY)}
-          onTouchStart={e => { e.stopPropagation(); startDrag(e.touches[0].clientX, e.touches[0].clientY); }}
-          style={{ display: "flex", alignItems: "center", gap: 7, cursor: "grab", touchAction: "none" }}
-        >
-          <GripHorizontal size={14} color="#444" style={{ flexShrink: 0 }} />
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 11.5, fontWeight: 700, color: "#e0e0e0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-              {recording.title}
-            </div>
-            <div style={{ fontSize: 10, display: "flex", gap: 4, marginTop: 1, alignItems: "center" }}>
-              <span style={{ color: "#888" }}>{fmt(displayTime)}</span>
-              <span style={{ color: "#444" }}>/</span>
-              <span style={{ color: "#555" }}>{fmt(duration)}</span>
-              <span style={{ color: "#333" }}>•</span>
-              <span style={{ color: GOLD, fontWeight: 700 }}>{speed}×</span>
-              {isBusy && <span style={{ color: "#f59e0b", fontSize: 9 }}>⏳ buffering</span>}
-            </div>
-          </div>
-        </div>
-
-        {/* ── Transport controls ──────────────────────────── */}
-        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
 
           {/* Skip −10 s */}
-          <button
-            onClick={() => skip(-10)}
-            style={{ background: "none", border: "none", color: "#aaa", cursor: "pointer", padding: "3px 5px", display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}
-          >
-            <SkipBack size={19} color="#aaa" />
-            <span style={{ fontSize: 8, color: "#666", lineHeight: 1 }}>10s</span>
+          <button onClick={() => skip(-10)}
+            style={{ background: "none", border: "none", color: "#aaa", cursor: "pointer",
+                     padding: "0 6px", display: "flex", flexDirection: "column",
+                     alignItems: "center", gap: 0, flexShrink: 0, lineHeight: 1 }}>
+            <SkipBack  size={18} color="#aaa" />
+            <span style={{ fontSize: 8, color: "#555" }}>10s</span>
           </button>
 
           {/* Play / Pause */}
-          <button
-            onClick={togglePlay}
-            disabled={loading}
-            style={{
-              width: 44, height: 44, borderRadius: "50%",
-              background: GOLD, border: "none", color: G,
-              cursor: loading ? "wait" : "pointer",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              flexShrink: 0, boxShadow: "0 2px 14px rgba(201,168,76,.45)",
-            }}
-          >
+          <button onClick={togglePlay} disabled={loading}
+            style={{ width: 38, height: 38, borderRadius: "50%",
+                     background: GOLD, border: "none", color: G,
+                     cursor: loading ? "wait" : "pointer", flexShrink: 0,
+                     display: "flex", alignItems: "center", justifyContent: "center",
+                     boxShadow: "0 2px 10px rgba(201,168,76,.4)" }}>
             {isBusy
-              ? <Loader2 size={20} style={{ animation: "rpc-spin .7s linear infinite" }} />
-              : playing
-                ? <Pause  size={20} />
-                : <Play   size={20} style={{ marginLeft: 2 }} />}
+              ? <Loader2 size={17} style={{ animation: "rpc-spin .7s linear infinite" }} />
+              : playing ? <Pause size={17} /> : <Play size={17} style={{ marginLeft: 2 }} />}
           </button>
 
           {/* Skip +10 s */}
-          <button
-            onClick={() => skip(10)}
-            style={{ background: "none", border: "none", color: "#aaa", cursor: "pointer", padding: "3px 5px", display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}
-          >
-            <SkipForward size={19} color="#aaa" />
-            <span style={{ fontSize: 8, color: "#666", lineHeight: 1 }}>10s</span>
+          <button onClick={() => skip(10)}
+            style={{ background: "none", border: "none", color: "#aaa", cursor: "pointer",
+                     padding: "0 6px", display: "flex", flexDirection: "column",
+                     alignItems: "center", gap: 0, flexShrink: 0, lineHeight: 1 }}>
+            <SkipForward size={18} color="#aaa" />
+            <span style={{ fontSize: 8, color: "#555" }}>10s</span>
           </button>
 
-          <div style={{ flex: 1 }} />
+          {/* Title + time — drag handle ─────────────────────── */}
+          <div
+            onMouseDown={e  => startDrag(e.clientX, e.clientY)}
+            onTouchStart={e => { e.stopPropagation(); startDrag(e.touches[0].clientX, e.touches[0].clientY); }}
+            style={{ flex: 1, minWidth: 0, cursor: "grab", touchAction: "none",
+                     padding: "0 4px", display: "flex", flexDirection: "column",
+                     justifyContent: "center", gap: 1 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#ddd",
+                          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              {recording.title}
+            </div>
+            <div style={{ fontSize: 10, color: "#666", display: "flex", gap: 3, alignItems: "center", flexWrap: "nowrap" }}>
+              <span style={{ color: "#999" }}>{fmt(displayTime)}</span>
+              <span>/</span>
+              <span>{fmt(duration)}</span>
+              {isBusy && <span style={{ color: GOLD, fontSize: 9 }}>…</span>}
+            </div>
+          </div>
 
-          {/* Speed */}
-          <div style={{ position: "relative" }}>
+          {/* Speed — clearly readable: dark text on gold pill ── */}
+          <div style={{ position: "relative", flexShrink: 0 }}>
             <button
               onClick={() => setSS(s => !s)}
               style={{
-                padding: "4px 9px", borderRadius: 8,
-                background: showSpeeds ? GOLD : "rgba(201,168,76,.15)",
-                border: `1.5px solid ${GOLD}`,
-                color: showSpeeds ? G : GOLD,
-                fontSize: 12, fontWeight: 800, cursor: "pointer",
+                padding: "5px 8px", borderRadius: 8,
+                /* always gold background so text contrast is guaranteed */
+                background: GOLD,
+                border: "none",
+                color: "#111",           /* dark text on gold = always readable */
+                fontSize: 12, fontWeight: 900,
+                cursor: "pointer", lineHeight: 1,
+                letterSpacing: "-0.3px",
+                boxShadow: showSpeeds ? `0 0 0 2px ${GOLD}` : "none",
               }}
             >
-              {speed}×
+              {speedLabel}
             </button>
+
+            {/* Speed picker — opens ABOVE, full dark background */}
             {showSpeeds && (
-              <div style={{ position: "absolute", bottom: "calc(100% + 6px)", right: 0, background: "#1e1e1e", border: "1px solid #333", borderRadius: 10, overflow: "hidden", minWidth: 68, zIndex: 1, boxShadow: "0 4px 16px rgba(0,0,0,.5)" }}>
+              <div style={{
+                position: "absolute", bottom: "calc(100% + 8px)", right: 0,
+                background: "#1a1a1a",
+                border: `1.5px solid ${GOLD}`,
+                borderRadius: 12, overflow: "hidden",
+                minWidth: 76, zIndex: 10001,
+                boxShadow: "0 8px 24px rgba(0,0,0,.8)",
+              }}>
                 {SPEEDS.map(s => (
-                  <button
-                    key={s}
-                    onClick={() => { setSpeed(s); setSS(false); }}
-                    style={{ display: "block", width: "100%", padding: "9px 0", background: s === speed ? "rgba(201,168,76,.2)" : "none", border: "none", color: s === speed ? GOLD : "#ccc", fontSize: 13, fontWeight: s === speed ? 800 : 500, cursor: "pointer", textAlign: "center" }}
-                  >
+                  <button key={s} onClick={() => { setSpeed(s); setSS(false); }}
+                    style={{
+                      display: "block", width: "100%", padding: "10px 0",
+                      background: s === speed ? GOLD : "transparent",
+                      border: "none",
+                      color: s === speed ? "#111" : "#ccc",
+                      fontSize: 13, fontWeight: s === speed ? 900 : 500,
+                      cursor: "pointer", textAlign: "center",
+                    }}>
                     {s}×
                   </button>
                 ))}
@@ -492,52 +480,47 @@ const GlobalPlayer: React.FC<{ ctx: RecordingPlayerContextType }> = ({ ctx }) =>
             )}
           </div>
 
-          {/* Mute toggle */}
-          <button
-            onClick={toggleMute}
-            style={{ background: "none", border: "none", color: muted ? "#f87171" : "#777", cursor: "pointer", padding: "4px 3px" }}
-          >
-            {muted || volume === 0 ? <VolumeX size={16} /> : <Volume2 size={16} />}
+          {/* Mute */}
+          <button onClick={toggleMute}
+            style={{ background: "none", border: "none",
+                     color: muted ? "#f87171" : "#666",
+                     cursor: "pointer", padding: "0 4px", flexShrink: 0 }}>
+            {muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
           </button>
 
           {/* Close */}
-          <button
-            onClick={stop}
-            style={{ background: "rgba(255,255,255,.08)", border: "none", color: "#999", cursor: "pointer", borderRadius: 8, width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center" }}
-          >
-            <X size={14} />
+          <button onClick={stop}
+            style={{ background: "rgba(255,255,255,.07)", border: "none",
+                     color: "#888", cursor: "pointer", borderRadius: 7,
+                     width: 26, height: 26, flexShrink: 0,
+                     display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <X size={13} />
           </button>
         </div>
 
-        {/* ── Seek slider (debounced) ──────────────────────── */}
-        <div style={{ padding: "0 2px" }}>
-          <input
-            type="range"
-            min={0}
-            max={duration || 100}
-            step={1}
-            value={displayTime}
-            onChange={e => handleSeekInput(parseFloat(e.target.value))}
-            style={{ width: "100%", accentColor: GOLD, height: 3, cursor: "pointer", display: "block" }}
-          />
+        {/* ─ Progress line — tap to seek ──────────────────────── */}
+        <div
+          style={{ height: 3, background: "rgba(255,255,255,.07)", cursor: "pointer", position: "relative" }}
+          onClick={e => {
+            const r = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+            seek(((e.clientX - r.left) / r.width) * (duration || 0));
+          }}
+        >
+          <div style={{
+            height: "100%", width: `${pct}%`,
+            background: GOLD,
+            transition: seekDraft !== null ? "none" : "width .15s linear",
+          }} />
         </div>
-
-        {/* Volume slider */}
-        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-          <Volume2 size={11} color="#444" />
-          <input
-            type="range" min={0} max={1} step={0.05} value={muted ? 0 : volume}
-            onChange={e => setVolume(parseFloat(e.target.value))}
-            style={{ flex: 1, accentColor: GOLD, height: 2, cursor: "pointer" }}
-          />
-        </div>
-
-        {error && (
-          <div style={{ fontSize: 11, color: "#f87171", padding: "4px 8px", borderRadius: 6, background: "rgba(239,68,68,.1)" }}>
-            ⚠ {error}
-          </div>
-        )}
       </div>
+
+      {error && (
+        <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0,
+                      fontSize: 11, color: "#f87171", padding: "4px 10px",
+                      background: "#1a1a1a", borderRadius: 8, border: "1px solid #3a1010" }}>
+          ⚠ {error}
+        </div>
+      )}
 
       <style>{`@keyframes rpc-spin { to { transform: rotate(360deg); } }`}</style>
     </div>
