@@ -67,8 +67,12 @@ const StudentCourses      = lazy(() => import("./pages/student/StudentCourses"))
 const TasjeelAwaitingLevel = lazy(() => import("./pages/student/TasjeelAwaitingLevel"));
 const StudentTimetable     = lazy(() => import("./pages/student/StudentTimetable"));
 const TasjeelAdmin         = lazy(() => import("./pages/admin/TasjeelAdmin"));
-// ── NEW: Musabaqah ──────────────────────────────────────────────────────────
-const MustabaqahPage       = lazy(() => import("./pages/student/MustabaqahPage"));
+
+// ── Musabaqah ──────────────────────────────────────────────────────────────
+// Hub:  inside DashboardLayout → shows Quiz vs Recitation choice cards
+// Page: standalone full-screen route → the actual Qur'an recitation competition
+const MusabaqahHub   = lazy(() => import("./pages/student/MusabaqahHub"));
+const MustabaqahPage = lazy(() => import("./pages/student/MustabaqahPage"));
 
 // ── Admin pages ────────────────────────────────────────────────────────────
 const AdminDashboard        = lazy(() => import("./pages/admin/AdminDashboard"));
@@ -107,7 +111,6 @@ const TeacherDashboard       = lazy(() => import("./pages/teacher/TeacherDashboa
 const TeacherStudentsHub     = lazy(() => import("./pages/teacher/TeacherStudentsHub"));
 const TeacherTeachingHub     = lazy(() => import("./pages/teacher/TeacherTeachingHub"));
 const TeacherAssessmentsHub  = lazy(() => import("./pages/teacher/TeacherAssessmentsHub"));
-// Legacy (still accessible via direct URL for backwards compat)
 const TeacherStudents        = lazy(() => import("./pages/teacher/TeacherStudents"));
 const TeacherPrivateStudents = lazy(() => import("./pages/teacher/TeacherPrivateStudents"));
 const TeacherSubjects        = lazy(() => import("./pages/teacher/TeacherSubjects"));
@@ -146,7 +149,7 @@ const App = () => (
                 </div>
               }>
                 <Routes>
-                  {/* Public layout — includes nav with hamburger */}
+                  {/* Public layout */}
                   <Route element={<PublicLayout />}>
                     <Route path="/"               element={<Index />} />
                     <Route path="/courses"        element={<Courses />} />
@@ -159,18 +162,16 @@ const App = () => (
                     <Route path="/change-password" element={<ForceChangePassword />} />
                   </Route>
 
-                  {/* Admin login — standalone, no public nav */}
                   <Route path="/admin-secure" element={<AdminLogin />} />
 
-                  {/* Registration pipeline */}
                   <Route path="/auth/register-continue" element={<RegisterContinue />} />
                   <Route path="/registration-complete"  element={<RegistrationComplete />} />
 
-                  {/* Misc protected */}
+                  {/* ── Standalone full-screen routes (no sidebar) ──────── */}
+                  {/* Keep existing quiz unchanged */}
                   <Route path="/live-quiz" element={<ProtectedRoute skipOnboardingCheck><LiveQuiz /></ProtectedRoute>} />
-
-                  {/* Musabaqah — accessible by all roles (admin/teacher open control panel, students join) */}
-                  <Route path="/musabaqah" element={<ProtectedRoute><MustabaqahPage /></ProtectedRoute>} />
+                  {/* New: Qur'an recitation competition — full-screen like /live-quiz */}
+                  <Route path="/musabaqah/recitation" element={<ProtectedRoute><MustabaqahPage /></ProtectedRoute>} />
 
                   {/* Public Live Classes */}
                   <Route path="/live"                       element={<LiveClasses />} />
@@ -182,7 +183,7 @@ const App = () => (
 
                   <Route path="/recordings/:recordingId" element={<ProtectedRoute><RecordingPlayer /></ProtectedRoute>} />
 
-                  {/* ── Student routes ── */}
+                  {/* ── Student routes (inside DashboardLayout) ─────────── */}
                   <Route element={<ProtectedRoute><DashboardLayout role="student" /></ProtectedRoute>}>
                     <Route path="/student"                     element={<StudentDashboard />} />
                     <Route path="/student/courses"             element={<LearningHub />} />
@@ -198,11 +199,11 @@ const App = () => (
                     <Route path="/student/timetable"           element={<StudentTimetable />} />
                     <Route path="/student/profile"             element={<ProfileSettings />} />
                     <Route path="/student/enrollment-payment"  element={<EnrollmentPayment />} />
-                    {/* ── Musabaqah (inside student dashboard layout) ── */}
-                    <Route path="/student/musabaqah"           element={<MustabaqahPage />} />
+                    {/* Hub: choose between Quiz Arena or Recitation Competition */}
+                    <Route path="/student/musabaqah"           element={<MusabaqahHub />} />
                   </Route>
 
-                  {/* Student standalone (skip onboarding guard) */}
+                  {/* Student standalone */}
                   <Route path="/student/exam-verify/:examId"         element={<ProtectedRoute skipOnboardingCheck><PreExamVerification /></ProtectedRoute>} />
                   <Route path="/student/exam/:attemptId"             element={<ProtectedRoute skipOnboardingCheck><ExamTaking /></ProtectedRoute>} />
                   <Route path="/student/results/:attemptId"          element={<ProtectedRoute skipOnboardingCheck><ExamResults /></ProtectedRoute>} />
@@ -217,32 +218,27 @@ const App = () => (
                   {/* ── Teacher routes ── */}
                   <Route element={<ProtectedRoute requiredRole="teacher"><TeacherLayout /></ProtectedRoute>}>
                     <Route path="/teacher"                  element={<TeacherDashboard />} />
-                    {/* ── Teaching ── */}
                     <Route path="/teacher/classes"          element={<TeacherClasses />} />
                     <Route path="/teacher/timetable"        element={<TeacherTimetable />} />
                     <Route path="/teacher/subjects"         element={<TeacherSubjects />} />
                     <Route path="/teacher/recordings"       element={<TeacherRecordings />} />
                     <Route path="/teacher/public-classes"   element={<TeacherPublicClasses />} />
-                    {/* ── Students ── */}
                     <Route path="/teacher/students"         element={<TeacherStudents />} />
                     <Route path="/teacher/private-students" element={<TeacherPrivateStudents />} />
                     <Route path="/teacher/private-sessions" element={<TeacherPrivateSessions />} />
                     <Route path="/teacher/attendance"       element={<TeacherAttendance />} />
                     <Route path="/teacher/announcements"    element={<TeacherAnnouncements />} />
-                    {/* ── Assessments ── */}
                     <Route path="/teacher/exams"            element={<TeacherExamsPage />} />
                     <Route path="/teacher/grading"          element={<TeacherGrading />} />
                     <Route path="/teacher/results"          element={<TeacherResults />} />
                     <Route path="/teacher/transcripts"      element={<TeacherTranscript />} />
-                    {/* ── Recitation & Hifdh ── */}
                     <Route path="/teacher/recitation"       element={<TeacherRecitation />} />
                     <Route path="/teacher/hifdh"            element={<TeacherHifdhReview />} />
-                    {/* ── Other ── */}
                     <Route path="/teacher/majlis"           element={<TeacherMajlis />} />
                     <Route path="/teacher/settings"         element={<TeacherSettings />} />
                   </Route>
 
-                  {/* ── Admin routes ── */}
+                  {/* ── Admin routes (inside DashboardLayout) ───────────── */}
                   <Route element={<ProtectedRoute requiredRole="admin"><DashboardLayout role="admin" /></ProtectedRoute>}>
                     <Route path="/admin"                             element={<AdminDashboard />} />
                     <Route path="/admin/subjects"                    element={<CourseManagement />} />
@@ -277,8 +273,8 @@ const App = () => (
                     <Route path="/admin/public-classes"              element={<PublicClassManagement />} />
                     <Route path="/admin/registration-settings"       element={<RegistrationSettings />} />
                     <Route path="/admin/tasjeel"                     element={<TasjeelAdmin />} />
-                    {/* ── Musabaqah inside admin layout ── */}
-                    <Route path="/admin/musabaqah"                   element={<MustabaqahPage />} />
+                    {/* Hub: choose between Quiz Arena or Recitation Competition */}
+                    <Route path="/admin/musabaqah"                   element={<MusabaqahHub />} />
                   </Route>
 
                   <Route path="*" element={<NotFound />} />
