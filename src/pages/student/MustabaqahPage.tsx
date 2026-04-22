@@ -488,16 +488,24 @@ const STATUS_ICON: Record<PStatus,string> = {
 export default function MustabaqahPage() {
   const { user, profile, hasRole } = useAuth() as any;
   const { toast } = useToast();
-  const isJudge = hasRole?.("admin") || hasRole?.("teacher");
+  const canJudge = hasRole?.("admin") || hasRole?.("teacher");
 
-  type View = "list"|"setup"|"join"|"arena"|"results";
+  type View = "list"|"setup"|"join"|"role_select"|"arena"|"results";
   const [view,          setView]          = useState<View>("list");
+  const [userRole,      setUserRole]      = useState<"judge"|"participant"|"observer"|null>(null);
   const [loading,       setLoading]       = useState(false);
   const [competitions,  setCompetitions]  = useState<Competition[]>([]);
   const [competition,   setCompetition]   = useState<Competition|null>(null);
   const [participants,  setParticipants]  = useState<Participant[]>([]);
   const [attempts,      setAttempts]      = useState<Attempt[]>([]);
   const [myParticipant, setMyParticipant] = useState<Participant|null>(null);
+  const [chatMessages,  setChatMessages]  = useState<{id:string;name:string;text:string;time:string;isSystem?:boolean}[]>([]);
+  const [chatInput,     setChatInput]     = useState("");
+  const [showChat,      setShowChat]      = useState(false);
+  const [onlineUsers,   setOnlineUsers]   = useState<{name:string;role:string}[]>([]);
+
+  // Derived — judge if admin/teacher AND hasn't chosen observer/participant role
+  const isJudge = canJudge && userRole !== "observer" && userRole !== "participant";
 
   const [activeP,         setActiveP]         = useState<Participant|null>(null);
   const [currentAttempt,  setCurAttempt]       = useState<Attempt|null>(null);
@@ -579,6 +587,7 @@ export default function MustabaqahPage() {
       .on("broadcast", { event:"SCORE_SUBMITTED" }, () => { loadParticipants(); loadAttempts(); setShowScore(false); })
       .on("broadcast", { event:"STAGE_CHANGE" }, ({ payload }:any) => {
         setCompetition(c => c ? { ...c, current_stage:payload.stage } : c);
+        setCalledScope(null);
         playStageComplete(); setBellCount(0); setActiveP(null); setCurAttempt(null);
         loadParticipants(); loadAttempts();
       })
@@ -589,8 +598,23 @@ export default function MustabaqahPage() {
       .on("broadcast", { event:"PROCTOR_FLAG" }, ({ payload }:any) => {
         setParticipants(ps => ps.map(p => p.id === payload.participant_id ? { ...p, proctor_flagged:payload.flagged } : p));
       })
+      .on("broadcast", { event:"CHAT" }, ({ payload }:any) => {
+        const id = Math.random().toString(36).slice(2);
+        const time = new Date().toLocaleTimeString("en",{hour:"2-digit",minute:"2-digit"});
+        setChatMessages(m => [...m.slice(-79), { id, name:payload.name, text:payload.text, time }]);
+      })
       .on("postgres_changes" as any, { event:"*", schema:"public", table:"musabaqah_participants", filter:`competition_id=eq.${competition.id}` }, () => loadParticipants())
-      .subscribe();
+      .subscribe(async () => {
+        // Track presence
+        const myName = myParticipant?.participant_name || profile?.full_name || "Guest";
+        const myR = isJudge ? "judge" : myParticipant ? "participant" : "observer";
+        await ch.track({ name: myName, role: myR, user_id: user?.id });
+      });
+    ch.on("presence", { event:"sync" }, () => {
+      const state = ch.presenceState() as Record<string,any[]>;
+      const users = Object.values(state).flat().map((u:any) => ({ name:u.name||"Guest", role:u.role||"observer" }));
+      setOnlineUsers(users);
+    });
     channelRef.current = ch;
     return () => { supabase.removeChannel(ch); };
   }, [competition?.id, myParticipant?.id]);
@@ -635,7 +659,24 @@ export default function MustabaqahPage() {
 
   const REACTION_EMOJIS = ["🤲","❤️","🌟","👏","🎙️","📖","🕌","🤍"];
 
-  const sendReaction = (emoji: string) => {
+  const sendChat = () => {
+    const text = chatInput.trim();
+    if (!text) return;
+    const name = myParticipant?.participant_name || profile?.full_name || "Guest";
+    const id = Math.random().toString(36).slice(2);
+    const time = new Date().toLocaleTimeString("en",{hour:"2-digit",minute:"2-digit"});
+    setChatMessages(m => [...m.slice(-79), { id, name, text, time }]);
+    broadcast("CHAT", { name, text });
+    setChatInput("");
+  };
+
+  const deleteComp = async (comp: Competition, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!window.confirm(`Delete "${comp.title}"? This cannot be undone.`)) return;
+    await supabase.from("musabaqah_competitions" as any).delete().eq("id", comp.id);
+    loadCompetitions();
+    toast({ title:"Competition deleted" });
+  };
     wakeAudio();
     const name = myParticipant?.participant_name || "Audience";
     const id = Math.random().toString(36).slice(2);
@@ -797,10 +838,12 @@ export default function MustabaqahPage() {
 
   const openComp = async (comp: Competition) => {
     setCompetition(comp);
-    if (isJudge) { setView("arena"); return; }
+    setChatMessages([]);
+    setUserRole(null);
+    if (canJudge) { setView("role_select"); return; }
     const { data } = await supabase.from("musabaqah_participants" as any).select("*").eq("competition_id", comp.id).eq("user_id", user?.id).single();
-    if (data) { setMyParticipant(data as Participant); setView("arena"); }
-    else setView("join");
+    if (data) { setMyParticipant(data as Participant); setUserRole("participant"); setView("arena"); }
+    else setView("role_select");
   };
 
   const startCompetition = async () => {
@@ -932,9 +975,15 @@ export default function MustabaqahPage() {
                     </div>
                     <div style={{ color:"rgba(255,255,255,0.4)", fontSize:12 }}>
                       Stage {c.current_stage}/{c.total_stages} · Code:{" "}
-                      <span style={{ color:GOLD, fontWeight:800, letterSpacing:2 }}>{c.room_code}</span>
+                      <span style={{ color:GOLD, fontWeight:800, letterSpacing:2 }}>{c.room_code || "—"}</span>
                     </div>
                   </div>
+                  {canJudge && (
+                    <button onClick={e => deleteComp(c, e)} style={{ background:"rgba(239,68,68,0.12)", border:"1px solid rgba(239,68,68,0.3)", borderRadius:10, padding:"6px 10px", cursor:"pointer", color:RED, flexShrink:0 }}
+                      title="Delete competition">
+                      🗑
+                    </button>
+                  )}
                   <ChevronRight size={18} color="rgba(255,255,255,0.25)"/>
                 </div>
               ))}
@@ -1056,6 +1105,88 @@ export default function MustabaqahPage() {
   }
 
   /* ════════════════════════════════════════════════════════════
+     VIEW: ROLE SELECT
+  ════════════════════════════════════════════════════════════ */
+  if (view === "role_select" && competition) {
+    const ROLES = canJudge
+      ? [
+          { id:"judge",       icon:"⚖️",  title:"Judge / Host",      desc:"Control the competition flow, call participants, ring bell, score recitations", color:GOLD },
+          { id:"observer",    icon:"👁️",  title:"Watch & Follow",    desc:"Follow live, chat with audience, react to recitations", color:GREEN },
+        ]
+      : [
+          { id:"participant", icon:"🎙️",  title:"Join as Participant", desc:"Recite in the competition when called by the judge", color:GOLD },
+          { id:"observer",    icon:"👁️",  title:"Watch & Follow",     desc:"Follow live, chat with audience, react to recitations", color:GREEN },
+        ];
+
+    const chooseRole = async (roleId: string) => {
+      setUserRole(roleId as any);
+      if (roleId === "judge" || roleId === "observer") {
+        setView("arena"); return;
+      }
+      // participant — check if already joined
+      const { data } = await supabase.from("musabaqah_participants" as any).select("*").eq("competition_id", competition.id).eq("user_id", user?.id).single();
+      if (data) { setMyParticipant(data as Participant); setView("arena"); }
+      else setView("join");
+    };
+
+    return (
+      <div style={{ minHeight:"100vh", position:"relative", fontFamily:"Cairo, sans-serif", display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
+        <GlobalStyles/>
+        <IslamicBackground/>
+        <div className="anim-slide-up glass-card" style={{ position:"relative", zIndex:1, width:"100%", maxWidth:440, borderRadius:24, padding:"32px 24px" }}>
+          <button onClick={() => setView("list")} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.4)", cursor:"pointer", marginBottom:20, fontSize:13, display:"flex", alignItems:"center", gap:6 }}>← Back</button>
+          <div style={{ textAlign:"center", marginBottom:28 }}>
+            <div style={{ fontSize:48, marginBottom:12, animation:"floatUp 4s ease-in-out infinite" }}>🏆</div>
+            <h2 style={{ fontFamily:"Cinzel,serif", color:"#fff", fontSize:20, margin:"0 0 6px", fontWeight:700 }}>{competition.title}</h2>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:8, marginTop:8 }}>
+              <span style={{ padding:"3px 12px", borderRadius:20, fontSize:12, fontWeight:700,
+                background:competition.status==="active"?`${GREEN}22`:`${GOLD}22`,
+                color:competition.status==="active"?GREEN:GOLD,
+                border:`1px solid ${competition.status==="active"?GREEN:GOLD}` }}>
+                {competition.status==="active"?"🔴 LIVE":"🟢 "+competition.status.toUpperCase()}
+              </span>
+              <span style={{ color:GOLD, fontWeight:800, letterSpacing:2, fontSize:14 }}>{competition.room_code}</span>
+            </div>
+            <p style={{ color:"rgba(255,255,255,0.4)", fontSize:13, margin:"16px 0 0" }}>How do you want to join?</p>
+          </div>
+
+          <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+            {ROLES.map(r => (
+              <button key={r.id} onClick={() => chooseRole(r.id)} style={{
+                background:`rgba(255,255,255,0.04)`,
+                border:`1.5px solid ${r.color}44`,
+                borderRadius:16, padding:"18px 20px", cursor:"pointer", textAlign:"left",
+                display:"flex", alignItems:"center", gap:16,
+                transition:"all 0.2s",
+              }}>
+                <div style={{ fontSize:36, flexShrink:0 }}>{r.icon}</div>
+                <div>
+                  <div style={{ color:r.color, fontWeight:800, fontSize:16, fontFamily:"Cairo,sans-serif" }}>{r.title}</div>
+                  <div style={{ color:"rgba(255,255,255,0.4)", fontSize:12, marginTop:4, lineHeight:1.5 }}>{r.desc}</div>
+                </div>
+              </button>
+            ))}
+          </div>
+
+          {/* Online users preview */}
+          {onlineUsers.length > 0 && (
+            <div style={{ marginTop:20, padding:"12px 16px", background:"rgba(255,255,255,0.04)", borderRadius:12, border:"1px solid rgba(255,255,255,0.08)" }}>
+              <div style={{ color:"rgba(255,255,255,0.4)", fontSize:11, fontWeight:700, letterSpacing:1.2, textTransform:"uppercase", marginBottom:8 }}>Currently online ({onlineUsers.length})</div>
+              <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+                {onlineUsers.slice(0,8).map((u,i) => (
+                  <span key={i} style={{ background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:20, padding:"3px 10px", fontSize:12, color:"rgba(255,255,255,0.6)" }}>
+                    {u.role==="judge"?"⚖️":u.role==="participant"?"🎙️":"👁️"} {u.name}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  /* ════════════════════════════════════════════════════════════
      VIEW: JOIN
   ════════════════════════════════════════════════════════════ */
   if (view === "join") {
@@ -1064,17 +1195,9 @@ export default function MustabaqahPage() {
         <GlobalStyles/>
         <IslamicBackground/>
         <div className="anim-slide-up glass-card" style={{ position:"relative", zIndex:1, width:"100%", maxWidth:440, borderRadius:24, padding:"32px 24px" }}>
-          <button onClick={() => setView("list")} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.4)", cursor:"pointer", marginBottom:20, fontSize:13, display:"flex", alignItems:"center", gap:6 }}>
+          <button onClick={() => setView("role_select")} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.4)", cursor:"pointer", marginBottom:20, fontSize:13, display:"flex", alignItems:"center", gap:6 }}>
             ← Back
           </button>
-
-          <div style={{ textAlign:"center", marginBottom:28 }}>
-            <div style={{ width:64, height:64, borderRadius:20, background:`linear-gradient(135deg, ${GOLD} 0%, ${GOLDD} 100%)`, display:"inline-flex", alignItems:"center", justifyContent:"center", marginBottom:14, boxShadow:`0 8px 32px rgba(201,168,76,0.4)` }}>
-              <LogIn size={28} color={G}/>
-            </div>
-            <h2 style={{ fontFamily:"Cinzel, serif", color:"#fff", fontSize:22, margin:"0 0 6px", fontWeight:600 }}>Join Competition</h2>
-            <p style={{ color:"rgba(255,255,255,0.4)", fontSize:13, margin:0 }}>Enter your room code to compete</p>
-          </div>
 
           {/* Room code — big */}
           <div style={{ marginBottom:16 }}>
@@ -1097,7 +1220,7 @@ export default function MustabaqahPage() {
           <Input label="Your Full Name" value={joinForm.name} onChange={(e:any) => setJoinForm(f => ({ ...f, name:e.target.value }))} placeholder="e.g. Ahmad Muhammad"/>
           <Input label="School / Institute (optional)" value={joinForm.school} onChange={(e:any) => setJoinForm(f => ({ ...f, school:e.target.value }))} placeholder="e.g. Tahleem Academy"/>
 
-          <button className="gold-btn" onClick={joinCompetition} disabled={loading} style={{
+          <button className="gold-btn" onClick={async () => { setUserRole("participant"); await joinCompetition(); }} disabled={loading} style={{
             width:"100%", color:G, border:"none", borderRadius:14,
             padding:"16px", fontWeight:800, cursor:loading?"not-allowed":"pointer",
             fontSize:16, fontFamily:"Cairo, sans-serif",
@@ -1105,7 +1228,7 @@ export default function MustabaqahPage() {
             opacity:loading ? 0.7 : 1, marginTop:8,
           }}>
             {loading ? <Loader2 size={18} style={{ animation:"spin 1s linear infinite" }}/> : <LogIn size={18}/>}
-            {loading ? "Joining..." : "Join Competition"}
+            {loading ? "Joining..." : "Join as Participant"}
           </button>
         </div>
       </div>
@@ -1282,12 +1405,107 @@ export default function MustabaqahPage() {
         <div style={{ background:"rgba(201,168,76,0.12)", border:"1px solid rgba(201,168,76,0.3)", borderRadius:8, padding:"4px 10px", color:GOLD, fontWeight:800, fontSize:13, letterSpacing:2, flexShrink:0 }}>
           {competition.room_code}
         </div>
+
+        {/* Chat button */}
+        <button onClick={() => setShowChat(c => !c)} style={{
+          background:showChat ? `${GOLD}22` : "rgba(255,255,255,0.07)",
+          border:`1px solid ${showChat ? GOLD : "rgba(255,255,255,0.12)"}`,
+          borderRadius:10, padding:"6px 10px", cursor:"pointer",
+          color:showChat ? GOLD : "rgba(255,255,255,0.45)", flexShrink:0,
+          position:"relative",
+        }}>
+          💬
+          {chatMessages.length > 0 && !showChat && (
+            <span style={{ position:"absolute", top:-4, right:-4, background:RED, borderRadius:"50%", width:14, height:14, display:"flex", alignItems:"center", justifyContent:"center", fontSize:9, color:"#fff", fontWeight:900 }}>
+              {chatMessages.length > 9 ? "9+" : chatMessages.length}
+            </span>
+          )}
+        </button>
       </div>
 
-      {/* ── MAIN SCROLLABLE BODY ──────────────────────────── */}
+      {/* ── CHAT PANEL ────────────────────────────────────── */}
+      {showChat && (
+        <div style={{
+          position:"fixed", bottom:0, left:0, right:0, zIndex:30,
+          height:"55vh", display:"flex", flexDirection:"column",
+          background:"rgba(5,15,8,0.97)", backdropFilter:"blur(24px)",
+          borderTop:`1.5px solid ${GOLD}33`,
+          borderRadius:"20px 20px 0 0",
+          animation:"fadeSlideUp 0.3s ease",
+        }}>
+          {/* Chat header */}
+          <div style={{ display:"flex", alignItems:"center", gap:10, padding:"12px 16px", borderBottom:"1px solid rgba(255,255,255,0.07)", flexShrink:0 }}>
+            <span style={{ color:GOLD, fontWeight:800, fontSize:14 }}>💬 Live Chat</span>
+            {onlineUsers.length > 0 && (
+              <div style={{ display:"flex", gap:4, flex:1, overflowX:"auto" }}>
+                {onlineUsers.slice(0,6).map((u,i) => (
+                  <span key={i} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:20, padding:"2px 8px", fontSize:11, color:"rgba(255,255,255,0.55)", whiteSpace:"nowrap", flexShrink:0 }}>
+                    {u.role==="judge"?"⚖️":u.role==="participant"?"🎙️":"👁️"} {u.name}
+                  </span>
+                ))}
+              </div>
+            )}
+            <button onClick={() => setShowChat(false)} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.35)", cursor:"pointer", fontSize:20, padding:0, lineHeight:1, flexShrink:0 }}>✕</button>
+          </div>
+
+          {/* Messages */}
+          <div style={{ flex:1, overflowY:"auto", padding:"10px 14px", display:"flex", flexDirection:"column", gap:8 }}>
+            {chatMessages.length === 0 ? (
+              <div style={{ textAlign:"center", color:"rgba(255,255,255,0.2)", fontSize:13, marginTop:24 }}>No messages yet — say salam! 👋</div>
+            ) : (
+              chatMessages.map(m => (
+                <div key={m.id} style={{ display:"flex", gap:8, alignItems:"flex-start" }}>
+                  <div style={{ width:28, height:28, borderRadius:"50%", background:`linear-gradient(135deg, ${GOLD}88 0%, ${GOLDD}88 100%)`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:800, color:G, flexShrink:0 }}>
+                    {m.name[0]?.toUpperCase()}
+                  </div>
+                  <div style={{ flex:1 }}>
+                    <div style={{ display:"flex", alignItems:"baseline", gap:6 }}>
+                      <span style={{ color:GOLD, fontWeight:700, fontSize:12 }}>{m.name}</span>
+                      <span style={{ color:"rgba(255,255,255,0.2)", fontSize:10 }}>{m.time}</span>
+                    </div>
+                    <div style={{ color:"rgba(255,255,255,0.8)", fontSize:13, marginTop:2, lineHeight:1.4 }}>{m.text}</div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+
+          {/* Input */}
+          <div style={{ display:"flex", gap:8, padding:"10px 14px 14px", flexShrink:0, borderTop:"1px solid rgba(255,255,255,0.07)" }}>
+            <input
+              value={chatInput}
+              onChange={e => setChatInput(e.target.value)}
+              onKeyDown={e => e.key==="Enter" && sendChat()}
+              placeholder="Type a message..."
+              style={{
+                flex:1, background:"rgba(255,255,255,0.08)", border:"1px solid rgba(255,255,255,0.12)",
+                borderRadius:12, padding:"10px 14px", color:"#fff", fontSize:14,
+                fontFamily:"Cairo,sans-serif",
+              }}
+            />
+            <button onClick={sendChat} style={{
+              background:`linear-gradient(135deg, ${GOLD} 0%, ${GOLDD} 100%)`,
+              border:"none", borderRadius:12, padding:"10px 16px", cursor:"pointer",
+              color:G, fontWeight:800, fontSize:14, fontFamily:"Cairo,sans-serif", flexShrink:0,
+            }}>Send</button>
+          </div>
+        </div>
+      )}
       <div style={{ flex:1, overflowY:"auto", position:"relative", zIndex:1, paddingBottom:myParticipant && !isJudge ? 110 : 16 }}>
 
-        {/* Active Reciter Card */}
+        {/* Online users strip */}
+        {onlineUsers.length > 0 && (
+          <div style={{ padding:"8px 16px 0" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:6, overflowX:"auto", paddingBottom:2 }}>
+              <span style={{ color:"rgba(255,255,255,0.25)", fontSize:11, flexShrink:0 }}>🟢 {onlineUsers.length} online:</span>
+              {onlineUsers.map((u,i) => (
+                <span key={i} style={{ background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:20, padding:"3px 10px", fontSize:11, color:"rgba(255,255,255,0.55)", whiteSpace:"nowrap", flexShrink:0 }}>
+                  {u.role==="judge"?"⚖️":u.role==="participant"?"🎙️":"👁️"} {u.name}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
         <div style={{ padding:"16px 16px 0" }}>
           <div style={{
             background:activeP
@@ -1389,6 +1607,39 @@ export default function MustabaqahPage() {
                   }}>
                     <Play size={18}/> Start Competition
                   </button>
+                )}
+
+                {/* CALL NEXT — shown when active and no one is reciting */}
+                {competition.status==="active" && !activeP && waiting.length > 0 && (
+                  <div>
+                    <div style={{ color:GOLD, fontSize:11, fontWeight:700, letterSpacing:1.2, textTransform:"uppercase", marginBottom:8 }}>Call a Participant</div>
+                    <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+                      {waiting.slice(0,5).map(p => (
+                        <button key={p.id} onClick={() => callParticipant(p)} style={{
+                          background:`${GOLD}14`, border:`1px solid ${GOLD}44`,
+                          borderRadius:12, padding:"12px 16px", cursor:"pointer",
+                          display:"flex", alignItems:"center", gap:10, textAlign:"left",
+                          fontFamily:"Cairo,sans-serif",
+                        }}>
+                          <Avatar name={p.participant_name} size={34}/>
+                          <div style={{ flex:1 }}>
+                            <div style={{ color:"#fff", fontWeight:700, fontSize:14 }}>{p.participant_name}</div>
+                            {p.school && <div style={{ color:"rgba(255,255,255,0.35)", fontSize:11 }}>{p.school}</div>}
+                          </div>
+                          <div style={{ display:"flex", alignItems:"center", gap:4, color:GOLD, fontSize:12, fontWeight:700 }}>
+                            <PhoneCall size={13}/> Call
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* All done — no waiting participants */}
+                {competition.status==="active" && !activeP && waiting.length === 0 && participants.length > 0 && (
+                  <div style={{ background:`${GREEN}11`, border:`1px solid ${GREEN}44`, borderRadius:12, padding:"12px 16px", textAlign:"center" }}>
+                    <div style={{ color:GREEN, fontWeight:700, fontSize:14 }}>✅ All participants done for this stage</div>
+                  </div>
                 )}
 
                 {/* Start reciting */}
@@ -1602,6 +1853,61 @@ export default function MustabaqahPage() {
           </div>
         )}
 
+        {/* OBSERVER VIEW */}
+        {!isJudge && userRole === "observer" && (
+          <div style={{ padding:"12px 16px 0" }}>
+            <div className="glass-card" style={{ borderRadius:18, padding:"16px 20px", marginBottom:12 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                <span style={{ fontSize:28 }}>👁️</span>
+                <div>
+                  <div style={{ color:GOLD, fontWeight:800, fontSize:14 }}>Following Live</div>
+                  <div style={{ color:"rgba(255,255,255,0.4)", fontSize:12, marginTop:2 }}>
+                    {participants.length} participants · Stage {competition.current_stage}/{competition.total_stages}
+                  </div>
+                </div>
+                <button onClick={() => setShowChat(c => !c)} style={{
+                  marginLeft:"auto", background:`${GOLD}18`, border:`1px solid ${GOLD}44`,
+                  borderRadius:10, padding:"8px 14px", cursor:"pointer",
+                  color:GOLD, fontWeight:700, fontSize:13, fontFamily:"Cairo,sans-serif",
+                  display:"flex", alignItems:"center", gap:5,
+                }}>💬 Chat</button>
+              </div>
+            </div>
+
+            {/* Participants roster for observer */}
+            {participants.length > 0 && (
+              <div>
+                <div style={{ color:"rgba(255,255,255,0.4)", fontSize:12, fontWeight:600, marginBottom:8, display:"flex", alignItems:"center", gap:6 }}>
+                  <Users size={12}/> Participants
+                </div>
+                <div style={{ display:"flex", flexDirection:"column", gap:6, marginBottom:100 }}>
+                  {participants.map(p => {
+                    const isActive = p.id === activeP?.id;
+                    return (
+                      <div key={p.id} style={{
+                        background:isActive?"rgba(34,197,94,0.07)":"rgba(255,255,255,0.03)",
+                        border:`1px solid ${isActive?`${GREEN}44`:"rgba(255,255,255,0.07)"}`,
+                        borderRadius:12, padding:"10px 14px", display:"flex", alignItems:"center", gap:10,
+                      }}>
+                        <span style={{ color:"rgba(255,255,255,0.2)", fontSize:11, width:18 }}>#{p.queue_position}</span>
+                        <Avatar name={p.participant_name} size={32} active={isActive && p.status==="reciting"} called={p.status==="called"}/>
+                        <div style={{ flex:1 }}>
+                          <div style={{ color:isActive?GOLD:"#fff", fontWeight:isActive?700:500, fontSize:14 }}>{p.participant_name}</div>
+                          {p.school && <div style={{ color:"rgba(255,255,255,0.3)", fontSize:11 }}>{p.school}</div>}
+                        </div>
+                        <span style={{ color:STATUS_COLOR[p.status], fontSize:12, fontWeight:700 }}>
+                          {STATUS_ICON[p.status]} {STATUS_LABEL[p.status]}
+                        </span>
+                        {p.total_score>0 && <span style={{ color:GOLD, fontWeight:800, fontSize:15 }}>{p.total_score}</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* PARTICIPANT VIEW — waiting */}
         {!isJudge && myParticipant && (
           <div style={{ padding:"12px 16px 0" }}>
@@ -1671,7 +1977,7 @@ export default function MustabaqahPage() {
               </div>
             )}
 
-            {/* Roster for participants */}
+            {/* Roster for participants + observers */}
             <div style={{ marginTop:16 }}>
               <div style={{ color:"rgba(255,255,255,0.4)", fontSize:13, fontWeight:600, marginBottom:10, display:"flex", alignItems:"center", gap:6 }}>
                 <Users size={13}/> {participants.length} Participants
@@ -1704,6 +2010,38 @@ export default function MustabaqahPage() {
           </div>
         )}
       </div>
+
+      {/* OBSERVER BOTTOM BAR */}
+      {!isJudge && userRole === "observer" && (
+        <div style={{
+          position:"fixed", bottom:0, left:0, right:0, zIndex:20,
+          background:"rgba(5,15,8,0.97)", backdropFilter:"blur(20px)",
+          borderTop:"1px solid rgba(201,168,76,0.2)",
+        }}>
+          {activeP && (
+            <div style={{ padding:"8px 16px 0", display:"flex", alignItems:"center", gap:6 }}>
+              <span style={{ color:"rgba(255,255,255,0.3)", fontSize:11, flexShrink:0 }}>React:</span>
+              <div style={{ display:"flex", gap:6, overflowX:"auto" }}>
+                {REACTION_EMOJIS.map(e => (
+                  <button key={e} onClick={() => sendReaction(e)} style={{
+                    background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.12)",
+                    borderRadius:10, padding:"6px 10px", cursor:"pointer", fontSize:20, flexShrink:0,
+                  }}>{e}</button>
+                ))}
+              </div>
+            </div>
+          )}
+          <div style={{ padding:"10px 16px 12px", display:"flex", alignItems:"center", gap:10 }}>
+            <span style={{ fontSize:22 }}>👁️</span>
+            <div style={{ flex:1, color:"rgba(255,255,255,0.5)", fontSize:13 }}>Following as Observer</div>
+            <button onClick={() => setShowChat(c => !c)} style={{
+              background:`${GOLD}18`, border:`1px solid ${GOLD}44`, borderRadius:10,
+              padding:"6px 14px", cursor:"pointer", color:GOLD, fontWeight:700,
+              fontSize:13, fontFamily:"Cairo,sans-serif",
+            }}>💬 Chat</button>
+          </div>
+        </div>
+      )}
 
       {/* MY STATUS BAR + REACTIONS — sticky bottom (participants only) */}
       {!isJudge && myParticipant && (
