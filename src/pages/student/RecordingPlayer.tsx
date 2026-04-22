@@ -1,464 +1,547 @@
-import { useState, useEffect, useCallback } from "react";
-import { useParams, useNavigate } from "react-router-dom";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { useAuth } from "@/contexts/AuthContext";
-import { supabase } from "@/integrations/supabase/client";
-import { useToast } from "@/hooks/use-toast";
-import { useLanguage } from "@/contexts/LanguageContext";
-import {
-  ArrowLeft, Clock, Eye, Download, User, Calendar, Trash2, Pencil,
-  Bookmark, StickyNote, Info, FileText, Loader2
-} from "lucide-react";
-import VideoPlayer from "@/components/recording/VideoPlayer";
+/**
+ * RecordingPlayerContext.tsx — Tahleem Academy
+ *
+ * FIXES in this version:
+ *  1. Mini-player is now a small compact DRAGGABLE pill (not full-width bar).
+ *     Drag the grip / title row to move it anywhere on screen.
+ *  2. 10-second skip FIXED — old code used `duration : 0` as fallback in
+ *     Math.min(), so forward skip always jumped to 0 when duration was
+ *     unknown. Now uses `Infinity` so it correctly adds 10 seconds.
+ *  3. Seek lag UX — buffering spinner shows while audio is waiting/seeking.
+ *     Seek bar is debounced so dragging doesn't fire a new network seek
+ *     on every pixel; only commits after 200 ms pause.
+ *  4. preload="auto" on the audio element to encourage pre-buffering.
+ */
 
-const formatTime = (s: number) => {
-  if (!s || isNaN(s)) return "0:00";
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const sec = Math.floor(s % 60);
-  if (h > 0) return `${h}:${m.toString().padStart(2, "0")}:${sec.toString().padStart(2, "0")}`;
-  return `${m}:${sec.toString().padStart(2, "0")}`;
+import React, {
+  createContext, useContext, useRef, useState, useEffect, useCallback,
+} from "react";
+import { getSignedUrl } from "@/integrations/supabase/storageClient";
+import {
+  Play, Pause, SkipBack, SkipForward, Volume2, VolumeX,
+  X, Loader2, GripHorizontal,
+} from "lucide-react";
+
+/* ── Position persistence ──────────────────────────────────── */
+const POS_KEY  = (id: string) => `tahleem-rec-pos-${id}`;
+const savePos  = (id: string, t: number) => { try { localStorage.setItem(POS_KEY(id), String(t)); } catch {} };
+const readPos  = (id: string): number    => { try { return parseFloat(localStorage.getItem(POS_KEY(id)) || "0") || 0; } catch { return 0; } };
+
+const SPEEDS = [0.75, 1, 1.25, 1.5, 2];
+const GOLD   = "#C9A84C";
+const G      = "#064E3B";
+
+/* ── Types ─────────────────────────────────────────────────── */
+export interface RecordingInfo {
+  id:       string;
+  fileUrl:  string;
+  title:    string;
+  duration: number;
+}
+
+interface PlayerState {
+  recording:   RecordingInfo | null;
+  signedUrl:   string | null;
+  loading:     boolean;
+  seeking:     boolean;
+  error:       string | null;
+  playing:     boolean;
+  currentTime: number;
+  duration:    number;
+  volume:      number;
+  muted:       boolean;
+  speed:       number;
+}
+
+interface RecordingPlayerContextType {
+  state:         PlayerState;
+  audioRef:      React.MutableRefObject<HTMLAudioElement>;
+  playRecording: (rec: RecordingInfo) => void;
+  togglePlay:    () => void;
+  stop:          () => void;
+  seek:          (t: number) => void;
+  skip:          (sec: number) => void;
+  setSpeed:      (s: number) => void;
+  setVolume:     (v: number) => void;
+  toggleMute:    () => void;
+  isActiveId:    (id: string) => boolean;
+}
+
+const Ctx = createContext<RecordingPlayerContextType | null>(null);
+
+export const useRecordingPlayer = () => {
+  const c = useContext(Ctx);
+  if (!c) throw new Error("useRecordingPlayer must be inside RecordingPlayerProvider");
+  return c;
 };
 
-const RecordingPlayer = () => {
-  const { recordingId } = useParams<{ recordingId: string }>();
-  const navigate = useNavigate();
-  const { user, hasRole } = useAuth();
-  const { toast } = useToast();
-  const { t } = useLanguage();
+/* ── Helpers ────────────────────────────────────────────────── */
+const fmt = (s: number): string => {
+  if (!isFinite(s) || isNaN(s) || s < 0) return "--:--";
+  const m = Math.floor(s / 60), sec = Math.floor(s % 60);
+  return `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+};
 
-  const [recording, setRecording] = useState<any>(null);
-  const [subject, setSubject] = useState<any>(null);
-  const [session, setSession] = useState<any>(null);
-  const [playUrl, setPlayUrl] = useState<string | null>(null);
-  const [progress, setProgress] = useState<any>(null);
-  const [bookmarks, setBookmarks] = useState<any[]>([]);
-  const [notes, setNotes] = useState<any[]>([]);
-  const [siblings, setSiblings] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+/* ══ PROVIDER ═══════════════════════════════════════════════ */
+export const RecordingPlayerProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  // Create audio element once — never recreated on re-render
+  const audioRef = useRef<HTMLAudioElement>(null as any);
+  if (!audioRef.current) {
+    const a = new Audio();
+    a.preload = "auto";
+    (audioRef as any).current = a;
+  }
 
-  // Bookmark/note input states
-  const [bookmarkDialog, setBookmarkDialog] = useState(false);
-  const [bookmarkTime, setBookmarkTime] = useState(0);
-  const [bookmarkLabel, setBookmarkLabel] = useState("");
-  const [noteDialog, setNoteDialog] = useState(false);
-  const [noteTime, setNoteTime] = useState(0);
-  const [noteText, setNoteText] = useState("");
-  const [editingNote, setEditingNote] = useState<any>(null);
-  const [editingBookmark, setEditingBookmark] = useState<any>(null);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const resumedRef   = useRef(false);
+  const recIdRef     = useRef<string | null>(null); // avoids stale closure in events
 
-  const isAdmin = hasRole("admin");
-  const isTeacher = hasRole("teacher");
+  const [state, setState] = useState<PlayerState>({
+    recording:   null,
+    signedUrl:   null,
+    loading:     false,
+    seeking:     false,
+    error:       null,
+    playing:     false,
+    currentTime: 0,
+    duration:    0,
+    volume:      1,
+    muted:       false,
+    speed:       1,
+  });
 
+  /* ── Wire audio events once ──────────────────────────────── */
   useEffect(() => {
-    if (recordingId && user) loadRecording();
-  }, [recordingId, user]);
+    const a = audioRef.current;
 
-  const loadRecording = async () => {
-    setLoading(true);
-    try {
-      // Load recording
-      const { data: rec, error: recErr } = await supabase
-        .from("session_recordings")
-        .select("*")
-        .eq("id", recordingId)
-        .single();
-      if (recErr || !rec) { setError("Recording not found"); setLoading(false); return; }
-      setRecording(rec);
-
-      // Load subject, session, progress, bookmarks, notes, siblings in parallel
-      const [subRes, sessRes, progRes, bmRes, noteRes, sibRes] = await Promise.all([
-        supabase.from("subjects" as any).select("*").eq("id", rec.subject_id).single(),
-        supabase.from("live_sessions").select("*").eq("id", rec.session_id).single(),
-        supabase.from("recording_watch_progress" as any).select("*")
-          .eq("recording_id", recordingId).eq("student_id", user!.id).maybeSingle(),
-        supabase.from("recording_bookmarks" as any).select("*")
-          .eq("recording_id", recordingId).eq("student_id", user!.id).order("timestamp_seconds"),
-        supabase.from("recording_notes" as any).select("*")
-          .eq("recording_id", recordingId).eq("student_id", user!.id).order("timestamp_seconds"),
-        supabase.from("session_recordings").select("id, created_at")
-          .eq("subject_id", rec.subject_id).order("created_at"),
-      ]);
-
-      setSubject(subRes.data);
-      setSession(sessRes.data);
-      setProgress(progRes.data);
-      setBookmarks((bmRes.data || []) as any[]);
-      setNotes((noteRes.data || []) as any[]);
-      setSiblings((sibRes.data || []) as any[]);
-
-      // Generate play URL
-      const fileUrl = rec.file_url;
-      if (!fileUrl) { setError("Recording file not available yet."); setLoading(false); return; }
-
-      if (fileUrl.startsWith("http")) {
-        setPlayUrl(fileUrl);
-      } else {
-        // Try "recordings" bucket first (new), then "subject-files" (legacy fallback)
-        const { data: d1 } = await supabase.storage.from("recordings").createSignedUrl(fileUrl, 3600);
-        if (d1?.signedUrl) { setPlayUrl(d1.signedUrl); }
-        else {
-          const { data: d2 } = await supabase.storage.from("subject-files").createSignedUrl(fileUrl, 3600);
-          setPlayUrl(d2?.signedUrl || null);
+    const onTime    = () => {
+      const t = a.currentTime;
+      setState(p => ({ ...p, currentTime: t }));
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = setTimeout(() => {
+        if (recIdRef.current) savePos(recIdRef.current, t);
+      }, 2000);
+    };
+    const onMeta    = () => {
+      const dur = isFinite(a.duration) ? a.duration : 0;
+      setState(p => ({ ...p, duration: dur || p.duration }));
+      if (!resumedRef.current && recIdRef.current) {
+        const saved = readPos(recIdRef.current);
+        if (saved > 5 && saved < (dur - 5)) {
+          a.currentTime = saved;
+          setState(p => ({ ...p, currentTime: saved }));
         }
+        resumedRef.current = true;
       }
+    };
+    const onPlay    = () => setState(p => ({ ...p, playing: true, seeking: false }));
+    const onPause   = () => setState(p => ({ ...p, playing: false }));
+    const onEnded   = () => {
+      setState(p => ({ ...p, playing: false, currentTime: 0 }));
+      if (recIdRef.current) savePos(recIdRef.current, 0);
+    };
+    const onSeeking = () => setState(p => ({ ...p, seeking: true }));
+    const onSeeked  = () => setState(p => ({ ...p, seeking: false }));
+    const onWaiting = () => setState(p => ({ ...p, seeking: true }));
+    const onPlaying = () => setState(p => ({ ...p, seeking: false }));
+    const onErr     = () => setState(p => ({ ...p, loading: false, seeking: false, error: "Could not play recording", playing: false }));
 
-      // Increment view count
-      await supabase.from("session_recordings")
-        .update({ view_count: ((rec as any).view_count || 0) + 1, last_watched_at: new Date().toISOString() } as any)
-        .eq("id", recordingId);
+    a.addEventListener("timeupdate",     onTime);
+    a.addEventListener("loadedmetadata", onMeta);
+    a.addEventListener("play",           onPlay);
+    a.addEventListener("pause",          onPause);
+    a.addEventListener("ended",          onEnded);
+    a.addEventListener("seeking",        onSeeking);
+    a.addEventListener("seeked",         onSeeked);
+    a.addEventListener("waiting",        onWaiting);
+    a.addEventListener("playing",        onPlaying);
+    a.addEventListener("error",          onErr);
+    return () => {
+      a.removeEventListener("timeupdate",     onTime);
+      a.removeEventListener("loadedmetadata", onMeta);
+      a.removeEventListener("play",           onPlay);
+      a.removeEventListener("pause",          onPause);
+      a.removeEventListener("ended",          onEnded);
+      a.removeEventListener("seeking",        onSeeking);
+      a.removeEventListener("seeked",         onSeeked);
+      a.removeEventListener("waiting",        onWaiting);
+      a.removeEventListener("playing",        onPlaying);
+      a.removeEventListener("error",          onErr);
+    };
+  }, []); // mount once, audio element is stable
 
-    } catch (err) {
-      setError("Failed to load recording");
+  /* ── MediaSession ────────────────────────────────────────── */
+  useEffect(() => {
+    if (!("mediaSession" in navigator) || !state.recording) return;
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: state.recording.title || "Tahleem Recording",
+      artist: "Tahleem Academy",
+      album: "Recorded Lesson",
+    });
+    navigator.mediaSession.setActionHandler("play",         () => audioRef.current.play());
+    navigator.mediaSession.setActionHandler("pause",        () => audioRef.current.pause());
+    navigator.mediaSession.setActionHandler("seekbackward", () => { audioRef.current.currentTime = Math.max(0, audioRef.current.currentTime - 10); });
+    navigator.mediaSession.setActionHandler("seekforward",  () => { audioRef.current.currentTime += 10; });
+  }, [state.recording]);
+
+  /* ── Actions ─────────────────────────────────────────────── */
+  const playRecording = useCallback(async (rec: RecordingInfo) => {
+    const a = audioRef.current;
+    if (state.recording?.id === rec.id && state.signedUrl) {
+      if (state.playing) { a.pause(); } else { a.play().catch(() => {}); }
+      return;
     }
-    setLoading(false);
+    resumedRef.current = false;
+    recIdRef.current   = rec.id;
+    setState(p => ({ ...p, loading: true, error: null, recording: rec, playing: false, currentTime: 0, duration: rec.duration || 0, signedUrl: null }));
+    a.pause();
+    try {
+      const url = await getSignedUrl(rec.fileUrl, 7200);
+      if (!url) throw new Error("Could not load file URL");
+      a.src          = url;
+      a.playbackRate = state.speed;
+      a.volume       = state.volume;
+      a.muted        = state.muted;
+      a.load();
+      setState(p => ({ ...p, signedUrl: url, loading: false }));
+      const saved = readPos(rec.id);
+      if (saved > 5) {
+        const seekAndPlay = () => {
+          const dur = isFinite(a.duration) ? a.duration : 0;
+          if (saved < dur - 5) a.currentTime = saved;
+          resumedRef.current = true;
+          a.play().catch(() => {});
+        };
+        if (isFinite(a.duration) && a.duration > 0) seekAndPlay();
+        else a.addEventListener("loadedmetadata", seekAndPlay, { once: true });
+      } else {
+        a.play().catch(() => {});
+      }
+      if ("mediaSession" in navigator) {
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: rec.title || "Tahleem Recording", artist: "Tahleem Academy", album: "Recorded Lesson",
+        });
+      }
+    } catch (err: any) {
+      setState(p => ({ ...p, loading: false, error: err?.message || "Failed to load recording" }));
+    }
+  }, [state.recording?.id, state.signedUrl, state.playing, state.speed, state.volume, state.muted]);
+
+  const togglePlay  = useCallback(() => {
+    const a = audioRef.current;
+    if (a.paused) a.play().catch(() => {}); else a.pause();
+  }, []);
+
+  const stop        = useCallback(() => {
+    const a = audioRef.current;
+    a.pause();
+    if (recIdRef.current) savePos(recIdRef.current, a.currentTime);
+    recIdRef.current = null;
+    setState(p => ({ ...p, recording: null, signedUrl: null, playing: false, currentTime: 0, duration: 0 }));
+    a.src = "";
+  }, []);
+
+  const seek        = useCallback((t: number) => {
+    const a = audioRef.current;
+    /* FIX: use Infinity when duration unknown so forward-skip works */
+    const clamped = Math.max(0, Math.min(isFinite(a.duration) ? a.duration : Infinity, t));
+    a.currentTime = clamped;
+    setState(p => ({ ...p, currentTime: clamped }));
+  }, []);
+
+  /* FIX: was Math.min(duration || 0, ...) which capped forward skip to 0 */
+  const skip        = useCallback((sec: number) => {
+    const a   = audioRef.current;
+    const cap = isFinite(a.duration) ? a.duration : Infinity;
+    const t   = Math.max(0, Math.min(cap, a.currentTime + sec));
+    a.currentTime = t;
+    setState(p => ({ ...p, currentTime: t }));
+  }, []);
+
+  const setSpeed    = useCallback((s: number) => {
+    audioRef.current.playbackRate = s;
+    setState(p => ({ ...p, speed: s }));
+  }, []);
+
+  const setVolume   = useCallback((v: number) => {
+    audioRef.current.volume = v;
+    audioRef.current.muted  = v === 0;
+    setState(p => ({ ...p, volume: v, muted: v === 0 }));
+  }, []);
+
+  const toggleMute  = useCallback(() => {
+    const next = !state.muted;
+    audioRef.current.muted = next;
+    setState(p => ({ ...p, muted: next }));
+  }, [state.muted]);
+
+  const isActiveId  = useCallback((id: string) => state.recording?.id === id, [state.recording?.id]);
+
+  const ctx: RecordingPlayerContextType = {
+    state, audioRef, playRecording, togglePlay, stop, seek, skip,
+    setSpeed, setVolume, toggleMute, isActiveId,
   };
-
-  const saveProgress = useCallback(async (time: number) => {
-    if (!recordingId || !user) return;
-    const dur = recording?.duration_seconds || 0;
-    const completed = dur > 0 ? time > dur * 0.9 : false;
-    await supabase.from("recording_watch_progress" as any).upsert({
-      recording_id: recordingId,
-      student_id: user.id,
-      progress_seconds: Math.floor(time),
-      completed,
-      last_watched_at: new Date().toISOString(),
-      watch_count: (progress?.watch_count || 0) + (completed && !progress?.completed ? 1 : 0),
-    } as any, { onConflict: "recording_id,student_id" });
-  }, [recordingId, user, recording, progress]);
-
-  const handleEnded = async () => {
-    if (!recordingId || !user) return;
-    await supabase.from("recording_watch_progress" as any).upsert({
-      recording_id: recordingId,
-      student_id: user.id,
-      progress_seconds: recording?.duration_seconds || 0,
-      completed: true,
-      last_watched_at: new Date().toISOString(),
-      watch_count: (progress?.watch_count || 0) + 1,
-    } as any, { onConflict: "recording_id,student_id" });
-  };
-
-  // Navigation
-  const currentIdx = siblings.findIndex(s => s.id === recordingId);
-  const prevId = currentIdx > 0 ? siblings[currentIdx - 1]?.id : null;
-  const nextId = currentIdx < siblings.length - 1 ? siblings[currentIdx + 1]?.id : null;
-
-  // Bookmark CRUD
-  const addBookmark = async () => {
-    await supabase.from("recording_bookmarks" as any).insert({
-      recording_id: recordingId, student_id: user!.id,
-      timestamp_seconds: Math.floor(bookmarkTime), label: bookmarkLabel || null,
-    } as any);
-    toast({ title: `✅ Bookmark added at ${formatTime(bookmarkTime)}` });
-    setBookmarkDialog(false);
-    setBookmarkLabel("");
-    const { data } = await supabase.from("recording_bookmarks" as any).select("*")
-      .eq("recording_id", recordingId).eq("student_id", user!.id).order("timestamp_seconds");
-    setBookmarks((data || []) as any[]);
-  };
-
-  const deleteBookmark = async (id: string) => {
-    await supabase.from("recording_bookmarks" as any).delete().eq("id", id);
-    setBookmarks(bm => bm.filter(b => b.id !== id));
-  };
-
-  const updateBookmark = async (id: string, label: string) => {
-    await supabase.from("recording_bookmarks" as any).update({ label } as any).eq("id", id);
-    setBookmarks(bm => bm.map(b => b.id === id ? { ...b, label } : b));
-    setEditingBookmark(null);
-  };
-
-  // Note CRUD
-  const addNote = async () => {
-    if (!noteText.trim()) return;
-    await supabase.from("recording_notes" as any).insert({
-      recording_id: recordingId, student_id: user!.id,
-      timestamp_seconds: Math.floor(noteTime), note_text: noteText,
-    } as any);
-    toast({ title: `✅ Note added at ${formatTime(noteTime)}` });
-    setNoteDialog(false);
-    setNoteText("");
-    const { data } = await supabase.from("recording_notes" as any).select("*")
-      .eq("recording_id", recordingId).eq("student_id", user!.id).order("timestamp_seconds");
-    setNotes((data || []) as any[]);
-  };
-
-  const deleteNote = async (id: string) => {
-    await supabase.from("recording_notes" as any).delete().eq("id", id);
-    setNotes(n => n.filter(x => x.id !== id));
-  };
-
-  const updateNote = async (id: string, text: string) => {
-    await supabase.from("recording_notes" as any).update({ note_text: text, updated_at: new Date().toISOString() } as any).eq("id", id);
-    setNotes(n => n.map(x => x.id === id ? { ...x, note_text: text } : x));
-    setEditingNote(null);
-  };
-
-  const downloadRecording = async () => {
-    if (!recording?.file_url) return;
-    if (recording.file_url.startsWith("http")) { window.open(recording.file_url, "_blank"); return; }
-    const { data } = await supabase.storage.from("subject-files").createSignedUrl(recording.file_url, 300);
-    if (data?.signedUrl) window.open(data.signedUrl, "_blank");
-  };
-
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center" style={{ background: "#0f3122" }}>
-        <Loader2 className="h-10 w-10 animate-spin" style={{ color: "#c9973a" }} />
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="min-h-screen flex items-center justify-center p-4" style={{ background: "#0f3122" }}>
-        <Card className="max-w-md w-full"><CardContent className="p-8 text-center space-y-4">
-          <p className="text-lg font-semibold">{error}</p>
-          <p className="text-sm text-muted-foreground">The recording may still be processing. Please check back later.</p>
-          <div className="flex gap-3 justify-center">
-            <Button onClick={() => navigate(-1)} variant="outline">Go Back</Button>
-            <Button onClick={loadRecording} style={{ background: "#c9973a", color: "#fff" }}>Refresh</Button>
-          </div>
-        </CardContent></Card>
-      </div>
-    );
-  }
 
   return (
-    <div className="min-h-screen" style={{ background: "#faf9f6" }}>
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&family=Amiri:wght@400;700&display=swap');`}</style>
+    <Ctx.Provider value={ctx}>
+      {children}
+      <GlobalPlayer ctx={ctx} />
+    </Ctx.Provider>
+  );
+};
 
-      {/* Top info bar */}
-      <div className="sticky top-0 z-40 px-4 py-3 flex items-center gap-3 border-b"
-        style={{ background: "rgba(15,49,34,0.97)", backdropFilter: "blur(8px)", borderColor: "rgba(201,151,58,0.3)" }}>
-        <Button size="icon" variant="ghost" onClick={() => navigate(-1)} className="text-white hover:bg-white/10 shrink-0">
-          <ArrowLeft className="h-5 w-5" />
-        </Button>
-        <div className="flex-1 min-w-0">
-          <p className="text-white text-sm font-semibold truncate" style={{ fontFamily: "'Cairo', sans-serif" }}>
-            {(subject as any)?.title || "Recording"}{session?.topic ? ` — ${session.topic}` : ""}
-          </p>
-          <div className="flex items-center gap-3 text-xs" style={{ color: "rgba(201,151,58,0.8)" }}>
-            {recording?.teacher_name && <span className="flex items-center gap-1"><User className="h-3 w-3" />{recording.teacher_name}</span>}
-            <span className="flex items-center gap-1"><Calendar className="h-3 w-3" />{new Date(recording.created_at).toLocaleDateString()}</span>
-            {recording?.duration_seconds > 0 && <span className="flex items-center gap-1"><Clock className="h-3 w-3" />{Math.ceil(recording.duration_seconds / 60)} min</span>}
-            <span className="flex items-center gap-1"><Eye className="h-3 w-3" />{recording.view_count || 0}</span>
+/* ══ COMPACT DRAGGABLE MINI-PLAYER ═════════════════════════ */
+const GlobalPlayer: React.FC<{ ctx: RecordingPlayerContextType }> = ({ ctx }) => {
+  const { state, togglePlay, stop, seek, skip, setSpeed, setVolume, toggleMute } = ctx;
+  const { recording, playing, currentTime, duration, volume, muted, speed, loading, seeking, error } = state;
+
+  /* ── Draggable state ─────────────────────────────────────── */
+  const [pos, setPos]       = useState<{ x: number; y: number } | null>(null);
+  const [showSpeeds, setSS] = useState(false);
+  const cardRef             = useRef<HTMLDivElement>(null);
+  const dragging            = useRef(false);
+  const dragOrigin          = useRef({ cx: 0, cy: 0, cardX: 0, cardY: 0 });
+
+  /* ── Debounced seek for lag improvement ──────────────────── */
+  const seekTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [seekDraft, setSeekDraft] = useState<number | null>(null);
+
+  const handleSeekInput = useCallback((val: number) => {
+    setSeekDraft(val); // instant visual feedback
+    if (seekTimerRef.current) clearTimeout(seekTimerRef.current);
+    seekTimerRef.current = setTimeout(() => {
+      seek(val);
+      setSeekDraft(null);
+    }, 250); // only hit the audio element after user pauses
+  }, [seek]);
+
+  /* ── Global pointer move / up for dragging ───────────────── */
+  useEffect(() => {
+    const onMove = (e: TouchEvent | MouseEvent) => {
+      if (!dragging.current) return;
+      const cx = "touches" in e ? (e as TouchEvent).touches[0]?.clientX ?? 0 : (e as MouseEvent).clientX;
+      const cy = "touches" in e ? (e as TouchEvent).touches[0]?.clientY ?? 0 : (e as MouseEvent).clientY;
+      const card = cardRef.current;
+      if (!card) return;
+      const w = card.offsetWidth, h = card.offsetHeight;
+      setPos({
+        x: Math.max(8, Math.min(window.innerWidth  - w - 8, dragOrigin.current.cardX + cx - dragOrigin.current.cx)),
+        y: Math.max(8, Math.min(window.innerHeight - h - 8, dragOrigin.current.cardY + cy - dragOrigin.current.cy)),
+      });
+    };
+    const onEnd = () => { dragging.current = false; };
+    document.addEventListener("touchmove",  onMove, { passive: true });
+    document.addEventListener("touchend",   onEnd);
+    document.addEventListener("mousemove",  onMove);
+    document.addEventListener("mouseup",    onEnd);
+    return () => {
+      document.removeEventListener("touchmove",  onMove);
+      document.removeEventListener("touchend",   onEnd);
+      document.removeEventListener("mousemove",  onMove);
+      document.removeEventListener("mouseup",    onEnd);
+    };
+  }, []);
+
+  const startDrag = useCallback((clientX: number, clientY: number) => {
+    const rect = cardRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    dragging.current = true;
+    dragOrigin.current = { cx: clientX, cy: clientY, cardX: rect.left, cardY: rect.top };
+  }, []);
+
+  if (!recording) return null;
+
+  const displayTime = seekDraft ?? currentTime;
+  const pct         = duration > 0 ? Math.min(100, (displayTime / duration) * 100) : 0;
+  const isBusy      = loading || seeking;
+
+  const posStyle: React.CSSProperties = pos
+    ? { top: pos.y, left: pos.x, bottom: "auto", transform: "none" }
+    : { bottom: 20, left: "50%", transform: "translateX(-50%)" };
+
+  return (
+    <div
+      ref={cardRef}
+      style={{
+        position:   "fixed",
+        ...posStyle,
+        zIndex:     9999,
+        width:      "min(92vw, 310px)",
+        background: "#111",
+        borderRadius: 20,
+        boxShadow:  "0 10px 40px rgba(0,0,0,.65), 0 0 0 1.5px rgba(201,168,76,.3)",
+        fontFamily: "'Cairo', sans-serif",
+        overflow:   "hidden",
+        userSelect: "none",
+        WebkitUserSelect: "none",
+      }}
+    >
+      {/* ── Progress track — tap anywhere to seek ──────────── */}
+      <div
+        style={{
+          height: 4, background: "rgba(255,255,255,.08)",
+          cursor: "pointer", position: "relative",
+        }}
+        onClick={e => {
+          const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+          seek(((e.clientX - rect.left) / rect.width) * (duration || 0));
+        }}
+      >
+        <div style={{
+          height: "100%", width: `${pct}%`,
+          background: `linear-gradient(90deg, #b8870a, ${GOLD})`,
+          borderRadius: 2, transition: seekDraft !== null ? "none" : "width .15s linear",
+          position: "relative",
+        }}>
+          <div style={{ position: "absolute", right: -3, top: "50%", transform: "translateY(-50%)", width: 7, height: 7, borderRadius: "50%", background: GOLD }} />
+        </div>
+      </div>
+
+      <div style={{ padding: "10px 12px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
+
+        {/* ── Drag handle + title + time ──────────────────── */}
+        <div
+          onMouseDown={e  => startDrag(e.clientX, e.clientY)}
+          onTouchStart={e => { e.stopPropagation(); startDrag(e.touches[0].clientX, e.touches[0].clientY); }}
+          style={{ display: "flex", alignItems: "center", gap: 7, cursor: "grab", touchAction: "none" }}
+        >
+          <GripHorizontal size={14} color="#444" style={{ flexShrink: 0 }} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 11.5, fontWeight: 700, color: "#e0e0e0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              {recording.title}
+            </div>
+            <div style={{ fontSize: 10, display: "flex", gap: 4, marginTop: 1, alignItems: "center" }}>
+              <span style={{ color: "#888" }}>{fmt(displayTime)}</span>
+              <span style={{ color: "#444" }}>/</span>
+              <span style={{ color: "#555" }}>{fmt(duration)}</span>
+              <span style={{ color: "#333" }}>•</span>
+              <span style={{ color: GOLD, fontWeight: 700 }}>{speed}×</span>
+              {isBusy && <span style={{ color: "#f59e0b", fontSize: 9 }}>⏳ buffering</span>}
+            </div>
           </div>
         </div>
-        {(isAdmin || isTeacher) && (
-          <Button size="sm" variant="ghost" onClick={downloadRecording} className="text-white hover:bg-white/10 shrink-0">
-            <Download className="h-4 w-4" />
-          </Button>
-        )}
-      </div>
 
-      {/* Video Player */}
-      <div className="max-w-5xl mx-auto px-2 sm:px-4 py-4">
-        {playUrl ? (
-          <VideoPlayer
-            src={playUrl}
-            duration={recording?.duration_seconds}
-            bookmarks={bookmarks}
-            initialProgress={progress?.progress_seconds || 0}
-            onTimeUpdate={saveProgress}
-            onPause={saveProgress}
-            onEnded={handleEnded}
-            onAddBookmark={(time) => { setBookmarkTime(time); setBookmarkDialog(true); }}
-            onAddNote={(time) => { setNoteTime(time); setNoteDialog(true); }}
-            onPrevRecording={prevId ? () => navigate(`/recordings/${prevId}`, { replace: true }) : undefined}
-            onNextRecording={nextId ? () => navigate(`/recordings/${nextId}`, { replace: true }) : undefined}
-            hasPrev={!!prevId}
-            hasNext={!!nextId}
-            isAdmin={isAdmin || isTeacher}
-          />
-        ) : (
-          <div className="aspect-video bg-black rounded-xl flex items-center justify-center">
-            <p className="text-white/60 text-sm">Recording not available</p>
-          </div>
-        )}
+        {/* ── Transport controls ──────────────────────────── */}
+        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
 
-        {/* Tabs */}
-        <Tabs defaultValue="bookmarks" className="mt-4">
-          <TabsList className="w-full justify-start">
-            <TabsTrigger value="bookmarks" className="gap-1.5"><Bookmark className="h-3.5 w-3.5" /> {t("Bookmarks", "العلامات")} ({bookmarks.length})</TabsTrigger>
-            <TabsTrigger value="notes" className="gap-1.5"><StickyNote className="h-3.5 w-3.5" /> {t("Notes", "الملاحظات")} ({notes.length})</TabsTrigger>
-            <TabsTrigger value="info" className="gap-1.5"><Info className="h-3.5 w-3.5" /> {t("Info", "معلومات")}</TabsTrigger>
-          </TabsList>
+          {/* Skip −10 s */}
+          <button
+            onClick={() => skip(-10)}
+            style={{ background: "none", border: "none", color: "#aaa", cursor: "pointer", padding: "3px 5px", display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}
+          >
+            <SkipBack size={19} color="#aaa" />
+            <span style={{ fontSize: 8, color: "#666", lineHeight: 1 }}>10s</span>
+          </button>
 
-          {/* Bookmarks Tab */}
-          <TabsContent value="bookmarks">
-            <Card><CardContent className="p-4 space-y-2">
-              {bookmarks.length === 0 ? (
-                <div className="py-8 text-center text-muted-foreground text-sm">
-                  <Bookmark className="h-8 w-8 mx-auto mb-2 opacity-40" />
-                  <p>{t("No bookmarks yet.", "لا توجد علامات بعد.")}</p>
-                  <p className="text-xs mt-1">{t("Tap 🔖 while watching to bookmark important moments.", "اضغط 🔖 أثناء المشاهدة لحفظ اللحظات المهمة.")}</p>
-                </div>
-              ) : bookmarks.map(b => (
-                <div key={b.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted/50 group">
-                  <Badge className="shrink-0 cursor-pointer tabular-nums" style={{ background: "#c9973a", color: "#fff" }}
-                    onClick={() => { /* would seek via ref - simplified */ }}>
-                    {formatTime(b.timestamp_seconds)}
-                  </Badge>
-                  {editingBookmark?.id === b.id ? (
-                    <Input value={editingBookmark.label || ""} autoFocus
-                      onChange={e => setEditingBookmark({ ...editingBookmark, label: e.target.value })}
-                      onBlur={() => updateBookmark(b.id, editingBookmark.label || "")}
-                      onKeyDown={e => e.key === "Enter" && updateBookmark(b.id, editingBookmark.label || "")}
-                      className="h-7 text-sm flex-1" />
-                  ) : (
-                    <span className="text-sm flex-1">{b.label || t("Bookmark", "علامة")}</span>
-                  )}
-                  <Button size="icon" variant="ghost" className="h-7 w-7 opacity-0 group-hover:opacity-100"
-                    onClick={() => setEditingBookmark({ id: b.id, label: b.label || "" })}>
-                    <Pencil className="h-3 w-3" />
-                  </Button>
-                  <Button size="icon" variant="ghost" className="h-7 w-7 opacity-0 group-hover:opacity-100 text-destructive"
-                    onClick={() => deleteBookmark(b.id)}>
-                    <Trash2 className="h-3 w-3" />
-                  </Button>
-                </div>
-              ))}
-            </CardContent></Card>
-          </TabsContent>
+          {/* Play / Pause */}
+          <button
+            onClick={togglePlay}
+            disabled={loading}
+            style={{
+              width: 44, height: 44, borderRadius: "50%",
+              background: GOLD, border: "none", color: G,
+              cursor: loading ? "wait" : "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              flexShrink: 0, boxShadow: "0 2px 14px rgba(201,168,76,.45)",
+            }}
+          >
+            {isBusy
+              ? <Loader2 size={20} style={{ animation: "rpc-spin .7s linear infinite" }} />
+              : playing
+                ? <Pause  size={20} />
+                : <Play   size={20} style={{ marginLeft: 2 }} />}
+          </button>
 
-          {/* Notes Tab */}
-          <TabsContent value="notes">
-            <Card><CardContent className="p-4 space-y-2">
-              {notes.length === 0 ? (
-                <div className="py-8 text-center text-muted-foreground text-sm">
-                  <StickyNote className="h-8 w-8 mx-auto mb-2 opacity-40" />
-                  <p>{t("No notes yet.", "لا توجد ملاحظات بعد.")}</p>
-                  <p className="text-xs mt-1">{t("Tap 📝 while watching to add notes.", "اضغط 📝 أثناء المشاهدة لإضافة ملاحظات.")}</p>
-                </div>
-              ) : notes.map(n => (
-                <div key={n.id} className="p-3 rounded-lg border group hover:bg-muted/30">
-                  <div className="flex items-center gap-2 mb-1">
-                    <Badge variant="outline" className="text-xs tabular-nums cursor-pointer" style={{ borderColor: "#c9973a", color: "#c9973a" }}>
-                      {formatTime(n.timestamp_seconds)}
-                    </Badge>
-                    <span className="text-[10px] text-muted-foreground">{new Date(n.created_at).toLocaleDateString()}</span>
-                    <div className="flex-1" />
-                    <Button size="icon" variant="ghost" className="h-6 w-6 opacity-0 group-hover:opacity-100"
-                      onClick={() => setEditingNote({ id: n.id, text: n.note_text })}>
-                      <Pencil className="h-3 w-3" />
-                    </Button>
-                    <Button size="icon" variant="ghost" className="h-6 w-6 opacity-0 group-hover:opacity-100 text-destructive"
-                      onClick={() => deleteNote(n.id)}>
-                      <Trash2 className="h-3 w-3" />
-                    </Button>
-                  </div>
-                  {editingNote?.id === n.id ? (
-                    <div className="space-y-2">
-                      <Textarea value={editingNote.text} onChange={e => setEditingNote({ ...editingNote, text: e.target.value })} rows={2} />
-                      <div className="flex gap-2">
-                        <Button size="sm" onClick={() => updateNote(n.id, editingNote.text)} style={{ background: "#c9973a", color: "#fff" }}>Save</Button>
-                        <Button size="sm" variant="outline" onClick={() => setEditingNote(null)}>Cancel</Button>
-                      </div>
-                    </div>
-                  ) : (
-                    <p className="text-sm whitespace-pre-wrap">{n.note_text}</p>
-                  )}
-                </div>
-              ))}
-            </CardContent></Card>
-          </TabsContent>
+          {/* Skip +10 s */}
+          <button
+            onClick={() => skip(10)}
+            style={{ background: "none", border: "none", color: "#aaa", cursor: "pointer", padding: "3px 5px", display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}
+          >
+            <SkipForward size={19} color="#aaa" />
+            <span style={{ fontSize: 8, color: "#666", lineHeight: 1 }}>10s</span>
+          </button>
 
-          {/* Info Tab */}
-          <TabsContent value="info">
-            <Card><CardContent className="p-4 space-y-3 text-sm">
-              <div className="grid grid-cols-2 gap-3">
-                <div><span className="text-muted-foreground">{t("Subject", "المادة")}</span>
-                  <p className="font-medium">{(subject as any)?.title || "—"}</p>
-                  {(subject as any)?.title_ar && <p className="text-xs" style={{ fontFamily: "'Amiri', serif", color: "#c9973a" }} dir="rtl">{(subject as any).title_ar}</p>}
-                </div>
-                <div><span className="text-muted-foreground">{t("Teacher", "المعلم")}</span>
-                  <p className="font-medium">{recording?.teacher_name || "—"}</p>
-                </div>
-                <div><span className="text-muted-foreground">{t("Date", "التاريخ")}</span>
-                  <p className="font-medium">{new Date(recording.created_at).toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" })}</p>
-                </div>
-                <div><span className="text-muted-foreground">{t("Duration", "المدة")}</span>
-                  <p className="font-medium">{recording.duration_seconds ? `${Math.ceil(recording.duration_seconds / 60)} minutes` : "—"}</p>
-                </div>
-                <div><span className="text-muted-foreground">{t("Views", "المشاهدات")}</span>
-                  <p className="font-medium">{recording.view_count || 0}</p>
-                </div>
-                <div><span className="text-muted-foreground">{t("Your Progress", "تقدمك")}</span>
-                  <p className="font-medium">{progress?.completed ? "✅ Completed" : progress ? `${Math.round((progress.progress_seconds / (recording.duration_seconds || 1)) * 100)}%` : "Not started"}</p>
-                </div>
+          <div style={{ flex: 1 }} />
+
+          {/* Speed */}
+          <div style={{ position: "relative" }}>
+            <button
+              onClick={() => setSS(s => !s)}
+              style={{
+                padding: "4px 9px", borderRadius: 8,
+                background: showSpeeds ? GOLD : "rgba(201,168,76,.15)",
+                border: `1.5px solid ${GOLD}`,
+                color: showSpeeds ? G : GOLD,
+                fontSize: 12, fontWeight: 800, cursor: "pointer",
+              }}
+            >
+              {speed}×
+            </button>
+            {showSpeeds && (
+              <div style={{ position: "absolute", bottom: "calc(100% + 6px)", right: 0, background: "#1e1e1e", border: "1px solid #333", borderRadius: 10, overflow: "hidden", minWidth: 68, zIndex: 1, boxShadow: "0 4px 16px rgba(0,0,0,.5)" }}>
+                {SPEEDS.map(s => (
+                  <button
+                    key={s}
+                    onClick={() => { setSpeed(s); setSS(false); }}
+                    style={{ display: "block", width: "100%", padding: "9px 0", background: s === speed ? "rgba(201,168,76,.2)" : "none", border: "none", color: s === speed ? GOLD : "#ccc", fontSize: 13, fontWeight: s === speed ? 800 : 500, cursor: "pointer", textAlign: "center" }}
+                  >
+                    {s}×
+                  </button>
+                ))}
               </div>
-              {session?.topic && (
-                <div><span className="text-muted-foreground">{t("Topic", "الموضوع")}</span>
-                  <p className="font-medium">{session.topic}</p>
-                  {session.topic_ar && <p className="text-xs" dir="rtl" style={{ fontFamily: "'Amiri', serif", color: "#c9973a" }}>{session.topic_ar}</p>}
-                </div>
-              )}
-              {session?.homework && (
-                <div><span className="text-muted-foreground">{t("Homework", "الواجب")}</span>
-                  <p className="font-medium">{session.homework}</p>
-                </div>
-              )}
-            </CardContent></Card>
-          </TabsContent>
-        </Tabs>
+            )}
+          </div>
+
+          {/* Mute toggle */}
+          <button
+            onClick={toggleMute}
+            style={{ background: "none", border: "none", color: muted ? "#f87171" : "#777", cursor: "pointer", padding: "4px 3px" }}
+          >
+            {muted || volume === 0 ? <VolumeX size={16} /> : <Volume2 size={16} />}
+          </button>
+
+          {/* Close */}
+          <button
+            onClick={stop}
+            style={{ background: "rgba(255,255,255,.08)", border: "none", color: "#999", cursor: "pointer", borderRadius: 8, width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center" }}
+          >
+            <X size={14} />
+          </button>
+        </div>
+
+        {/* ── Seek slider (debounced) ──────────────────────── */}
+        <div style={{ padding: "0 2px" }}>
+          <input
+            type="range"
+            min={0}
+            max={duration || 100}
+            step={1}
+            value={displayTime}
+            onChange={e => handleSeekInput(parseFloat(e.target.value))}
+            style={{ width: "100%", accentColor: GOLD, height: 3, cursor: "pointer", display: "block" }}
+          />
+        </div>
+
+        {/* Volume slider */}
+        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+          <Volume2 size={11} color="#444" />
+          <input
+            type="range" min={0} max={1} step={0.05} value={muted ? 0 : volume}
+            onChange={e => setVolume(parseFloat(e.target.value))}
+            style={{ flex: 1, accentColor: GOLD, height: 2, cursor: "pointer" }}
+          />
+        </div>
+
+        {error && (
+          <div style={{ fontSize: 11, color: "#f87171", padding: "4px 8px", borderRadius: 6, background: "rgba(239,68,68,.1)" }}>
+            ⚠ {error}
+          </div>
+        )}
       </div>
 
-      {/* Bookmark Dialog */}
-      <Dialog open={bookmarkDialog} onOpenChange={setBookmarkDialog}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Bookmark className="h-4 w-4" style={{ color: "#c9973a" }} />
-              {t("Add Bookmark", "إضافة علامة")} — {formatTime(bookmarkTime)}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <Input placeholder={t("Label (optional)", "وصف (اختياري)")} value={bookmarkLabel}
-              onChange={e => setBookmarkLabel(e.target.value)}
-              onKeyDown={e => e.key === "Enter" && addBookmark()} autoFocus />
-            <div className="flex gap-2">
-              <Button onClick={addBookmark} className="flex-1" style={{ background: "#c9973a", color: "#fff" }}>
-                {t("Add Bookmark", "إضافة")}
-              </Button>
-              <Button variant="outline" onClick={() => setBookmarkDialog(false)}>{t("Cancel", "إلغاء")}</Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Note Dialog */}
-      <Dialog open={noteDialog} onOpenChange={setNoteDialog}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <StickyNote className="h-4 w-4" style={{ color: "#c9973a" }} />
-              {t("Add Note", "إضافة ملاحظة")} — {formatTime(noteTime)}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <Textarea placeholder={t("Write your note...", "اكتب ملاحظتك...")} value={noteText}
-              onChange={e => setNoteText(e.target.value)} rows={4} autoFocus />
-            <div className="flex gap-2">
-              <Button onClick={addNote} className="flex-1" style={{ background: "#c9973a", color: "#fff" }} disabled={!noteText.trim()}>
-                {t("Save Note", "حفظ")}
-              </Button>
-              <Button variant="outline" onClick={() => { setNoteDialog(false); setNoteText(""); }}>{t("Cancel", "إلغاء")}</Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <style>{`@keyframes rpc-spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 };
 
-export default RecordingPlayer;
+export default RecordingPlayerProvider;
