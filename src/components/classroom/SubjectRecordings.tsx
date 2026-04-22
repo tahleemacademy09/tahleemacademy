@@ -1,333 +1,30 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { storageSupabase, getSignedUrl, removeStorageFile } from "@/integrations/supabase/storageClient";
+import { removeStorageFile } from "@/integrations/supabase/storageClient";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { Video, Play, Search, Clock, User, CheckCircle, Trash2, Edit, Save, Pause, Volume2, VolumeX, Download, Minimize2, ChevronUp } from "lucide-react";
-import { useState, useRef, useEffect, useCallback } from "react";
+import { Video, Play, Search, Clock, User, CheckCircle, Trash2, Edit, Save, Pause } from "lucide-react";
+import { useState } from "react";
 import { toast } from "@/hooks/use-toast";
+import { useRecordingPlayer } from "@/contexts/RecordingPlayerContext";
 
 const G      = "#0f2d1f";
 const GM     = "#1a4731";
 const GOLD   = "#c9a84c";
 const BORDER = "rgba(15,45,31,0.1)";
 
-// ── Position persistence ──────────────────────────────────────
-const POS_KEY = (id: string) => `tahleem-rec-pos-${id}`;
-const savePos = (id: string, t: number) => {
-  try { localStorage.setItem(POS_KEY(id), String(t)); } catch {}
-};
-const readPos = (id: string): number => {
-  try { return parseFloat(localStorage.getItem(POS_KEY(id)) || "0") || 0; } catch { return 0; }
-};
-
-const SPEEDS = [0.75, 1, 1.25, 1.5, 2];
-
-// ── Floating Mini Player (persists across tab switches) ───────
-interface MiniPlayerProps {
-  title: string;
-  playing: boolean;
-  currentTime: number;
-  totalDur: number;
-  speed: number;
-  onToggle: () => void;
-  onRestore: () => void;
-  onClose: () => void;
-}
-
-const MiniPlayer = ({ title, playing, currentTime, totalDur, speed, onToggle, onRestore, onClose }: MiniPlayerProps) => {
-  const pct = totalDur > 0 ? (currentTime / totalDur) * 100 : 0;
-  const fmt = (s: number) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
-
-  return (
-    <div style={{
-      position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 9999,
-      background: "#111", borderTop: `2px solid ${GOLD}`,
-      padding: "10px 16px", display: "flex", alignItems: "center", gap: 12,
-      boxShadow: "0 -4px 20px rgba(0,0,0,.4)", fontFamily: "'Cairo',sans-serif",
-    }}>
-      {/* Progress line */}
-      <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: "rgba(255,255,255,.1)" }}>
-        <div style={{ height: "100%", width: `${pct}%`, background: GOLD, transition: "width .5s linear" }} />
-      </div>
-
-      {/* Icon */}
-      <div style={{ width: 36, height: 36, borderRadius: 8, background: GM, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-        <Video style={{ width: 16, height: 16, color: GOLD }} />
-      </div>
-
-      {/* Info */}
-      <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }} onClick={onRestore}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{title}</div>
-        <div style={{ fontSize: 10, color: "#888" }}>{fmt(currentTime)} / {fmt(totalDur)} • {speed}x</div>
-      </div>
-
-      {/* Controls */}
-      <button onClick={onToggle} style={{ width: 36, height: 36, borderRadius: "50%", background: GOLD, border: "none", color: G, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        {playing ? <Pause style={{ width: 16, height: 16 }} /> : <Play style={{ width: 16, height: 16, marginLeft: 2 }} />}
-      </button>
-      <button onClick={onRestore} style={{ background: "none", border: "none", color: "#aaa", cursor: "pointer", padding: 4 }}>
-        <ChevronUp style={{ width: 18, height: 18 }} />
-      </button>
-      <button onClick={onClose} style={{ background: "none", border: "none", color: "#666", cursor: "pointer", fontSize: 18, padding: "0 4px", lineHeight: 1 }}>×</button>
-    </div>
-  );
-};
-
-// ── Full Inline Player ────────────────────────────────────────
-const InlinePlayer = ({ recordingId, fileUrl, duration, title, onClose, onMinimize }: {
-  recordingId: string; fileUrl: string; duration: number; title: string;
-  onClose: () => void; onMinimize: () => void;
-}) => {
-  const [signedUrl, setSignedUrl] = useState<string | null>(null);
-  const [loading, setLoading]     = useState(true);
-  const [error, setError]         = useState<string | null>(null);
-  const [playing, setPlaying]     = useState(false);
-  const [currentTime, setCurrent] = useState(0);
-  const [totalDur, setTotalDur]   = useState(duration || 0);
-  const [volume, setVolume]       = useState(1);
-  const [muted, setMuted]         = useState(false);
-  const [isVideo, setIsVideo]     = useState(false);
-  const [speed, setSpeed]         = useState(1);
-  const [showSpeeds, setShowSpeeds] = useState(false);
-  const [resumed, setResumed]     = useState(false);
-  const mediaRef = useRef<HTMLAudioElement & HTMLVideoElement>(null);
-  const saveTimer = useRef<number | null>(null);
-
-  // Load signed URL
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true); setError(null);
-    getSignedUrl(fileUrl, 7200).then(url => {
-      if (cancelled) return;
-      if (url) {
-        setSignedUrl(url);
-        setIsVideo(
-          fileUrl.includes("video") || fileUrl.endsWith(".mp4") || fileUrl.endsWith(".webm") ||
-          url.includes(".mp4") || url.includes(".webm")
-        );
-      } else {
-        setError("Could not load recording.");
-      }
-      setLoading(false);
-    }).catch(err => {
-      if (!cancelled) { setError("Failed to load: " + (err?.message || "Unknown")); setLoading(false); }
-    });
-    return () => { cancelled = true; };
-  }, [fileUrl]);
-
-  // Resume position after metadata loads
-  const handleMetadata = useCallback(() => {
-    const el = mediaRef.current;
-    if (!el) return;
-    setTotalDur(el.duration || duration);
-    if (!resumed) {
-      const saved = readPos(recordingId);
-      if (saved > 5 && saved < (el.duration - 5)) {
-        el.currentTime = saved;
-        setCurrent(saved);
-      }
-      setResumed(true);
-    }
-  }, [recordingId, duration, resumed]);
-
-  // Save position periodically
-  const handleTimeUpdate = useCallback(() => {
-    const t = mediaRef.current?.currentTime || 0;
-    setCurrent(t);
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = window.setTimeout(() => savePos(recordingId, t), 2000);
-  }, [recordingId]);
-
-  // MediaSession for lock-screen / background controls
-  useEffect(() => {
-    if (!signedUrl || !("mediaSession" in navigator)) return;
-    navigator.mediaSession.metadata = new MediaMetadata({
-      title: title || "Tahleem Recording",
-      artist: "Tahleem Academy",
-      album: "Recorded Lesson",
-    });
-    navigator.mediaSession.setActionHandler("play",  () => { mediaRef.current?.play(); setPlaying(true); });
-    navigator.mediaSession.setActionHandler("pause", () => { mediaRef.current?.pause(); setPlaying(false); });
-    navigator.mediaSession.setActionHandler("seekbackward", () => skip(-10));
-    navigator.mediaSession.setActionHandler("seekforward",  () => skip(10));
-  }, [signedUrl, title]);
-
-  // Apply speed to element
-  useEffect(() => {
-    if (mediaRef.current) mediaRef.current.playbackRate = speed;
-  }, [speed]);
-
-  const fmt = (s: number) =>
-    `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
-
-  const togglePlay = () => {
-    if (!mediaRef.current) return;
-    if (playing) { mediaRef.current.pause(); setPlaying(false); }
-    else { mediaRef.current.play().catch(() => {}); setPlaying(true); }
-  };
-
-  const seek = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const t = parseFloat(e.target.value);
-    if (mediaRef.current) { mediaRef.current.currentTime = t; setCurrent(t); savePos(recordingId, t); }
-  };
-
-  const skip = (sec: number) => {
-    if (!mediaRef.current) return;
-    const t = Math.max(0, Math.min(totalDur, (mediaRef.current.currentTime || 0) + sec));
-    mediaRef.current.currentTime = t; setCurrent(t);
-  };
-
-  const changeVolume = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const v = parseFloat(e.target.value);
-    setVolume(v); setMuted(v === 0);
-    if (mediaRef.current) mediaRef.current.volume = v;
-  };
-
-  const handleEnded = () => {
-    setPlaying(false);
-    savePos(recordingId, 0); // Reset so next play starts fresh
-  };
-
-  const pct = totalDur > 0 ? (currentTime / totalDur) * 100 : 0;
-
-  return (
-    <div style={{ background: "#0a0a0a", borderRadius: 16, overflow: "hidden", marginBottom: 16 }}>
-      {loading ? (
-        <div style={{ height: 80, display: "flex", alignItems: "center", justifyContent: "center", color: "#999", fontSize: 13 }}>
-          Loading recording…
-        </div>
-      ) : error ? (
-        <div style={{ padding: 20, textAlign: "center", color: "#EF4444", fontSize: 13 }}>
-          <div style={{ marginBottom: 8 }}>⚠️ {error}</div>
-          <button onClick={onClose} style={{ background: "rgba(255,255,255,.1)", border: "none", color: "#fff", cursor: "pointer", padding: "4px 12px", borderRadius: 8, fontSize: 12 }}>Close</button>
-        </div>
-      ) : signedUrl ? (
-        <>
-          {/* Media element — always mounted so audio continues in background */}
-          {isVideo ? (
-            <video ref={mediaRef as any} src={signedUrl} style={{ width: "100%", maxHeight: 280, background: "#000" }}
-              onTimeUpdate={handleTimeUpdate} onLoadedMetadata={handleMetadata} onEnded={handleEnded} />
-          ) : (
-            <audio ref={mediaRef as any} src={signedUrl}
-              onTimeUpdate={handleTimeUpdate} onLoadedMetadata={handleMetadata} onEnded={handleEnded} />
-          )}
-
-          {/* Controls panel */}
-          <div style={{ padding: "14px 16px", background: "#111" }}>
-            {/* Progress bar */}
-            <div style={{ marginBottom: 12 }}>
-              <div style={{ position: "relative", height: 6, background: "rgba(255,255,255,.12)", borderRadius: 4, marginBottom: 6, cursor: "pointer" }}>
-                <div style={{ position: "absolute", left: 0, top: 0, height: "100%", width: `${pct}%`, background: GOLD, borderRadius: 4, transition: "width .3s linear", pointerEvents: "none" }} />
-                <input type="range" min={0} max={totalDur || 100} step={0.5} value={currentTime}
-                  onChange={seek}
-                  style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, cursor: "pointer", margin: 0 }} />
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#666" }}>
-                <span>{fmt(currentTime)}</span>
-                <span>{fmt(totalDur)}</span>
-              </div>
-            </div>
-
-            {/* Playback row */}
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              {/* Skip back */}
-              <button onClick={() => skip(-10)}
-                style={{ background: "none", border: "none", color: "#aaa", cursor: "pointer", fontSize: 10, display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
-                <span style={{ fontSize: 15 }}>⟪</span><span>10s</span>
-              </button>
-
-              {/* Play/Pause */}
-              <button onClick={togglePlay}
-                style={{ width: 52, height: 52, borderRadius: "50%", background: GOLD, border: "none", color: G, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: "0 2px 12px rgba(201,168,76,.4)" }}>
-                {playing ? <Pause style={{ width: 22, height: 22 }} /> : <Play style={{ width: 22, height: 22, marginLeft: 2 }} />}
-              </button>
-
-              {/* Skip forward */}
-              <button onClick={() => skip(10)}
-                style={{ background: "none", border: "none", color: "#aaa", cursor: "pointer", fontSize: 10, display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
-                <span style={{ fontSize: 15 }}>⟫</span><span>10s</span>
-              </button>
-
-              {/* Speed control */}
-              <div style={{ position: "relative" }}>
-                <button onClick={() => setShowSpeeds(s => !s)}
-                  style={{ padding: "5px 10px", borderRadius: 8, background: "rgba(201,168,76,.15)", border: `1px solid ${GOLD}`, color: GOLD, fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "'Cairo',sans-serif" }}>
-                  {speed}×
-                </button>
-                {showSpeeds && (
-                  <div style={{ position: "absolute", bottom: "calc(100% + 6px)", left: "50%", transform: "translateX(-50%)", background: "#1a1a1a", border: "1px solid #333", borderRadius: 10, overflow: "hidden", minWidth: 80, zIndex: 10 }}>
-                    {SPEEDS.map(s => (
-                      <button key={s} onClick={() => { setSpeed(s); setShowSpeeds(false); if (mediaRef.current) mediaRef.current.playbackRate = s; }}
-                        style={{ display: "block", width: "100%", padding: "8px 14px", background: s === speed ? "rgba(201,168,76,.2)" : "none", border: "none", color: s === speed ? GOLD : "#ccc", fontSize: 12, fontWeight: s === speed ? 800 : 500, cursor: "pointer", textAlign: "center", fontFamily: "'Cairo',sans-serif" }}>
-                        {s}×
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Volume */}
-              <div style={{ display: "flex", alignItems: "center", gap: 6, flex: 1 }}>
-                <button onClick={() => { const next = !muted; setMuted(next); if (mediaRef.current) mediaRef.current.muted = next; }}
-                  style={{ background: "none", border: "none", color: "#aaa", cursor: "pointer", padding: 0, flexShrink: 0 }}>
-                  {muted || volume === 0 ? <VolumeX style={{ width: 16, height: 16 }} /> : <Volume2 style={{ width: 16, height: 16 }} />}
-                </button>
-                <input type="range" min={0} max={1} step={0.05} value={muted ? 0 : volume}
-                  onChange={changeVolume}
-                  style={{ flex: 1, accentColor: GOLD, height: 3, cursor: "pointer" }} />
-              </div>
-
-              {/* Minimize — audio keeps playing */}
-              <button onClick={onMinimize} title="Play in background"
-                style={{ background: "rgba(255,255,255,.08)", border: "none", color: "#aaa", cursor: "pointer", padding: "5px 8px", borderRadius: 8, display: "flex", alignItems: "center", gap: 4, fontSize: 11 }}>
-                <Minimize2 style={{ width: 14, height: 14 }} />
-              </button>
-
-              {/* Download */}
-              <a href={signedUrl} download target="_blank" rel="noreferrer"
-                style={{ color: "#555", display: "flex", alignItems: "center" }}>
-                <Download style={{ width: 15, height: 15 }} />
-              </a>
-
-              {/* Stop & Close */}
-              <button onClick={() => { mediaRef.current?.pause(); savePos(recordingId, currentTime); onClose(); }}
-                style={{ background: "rgba(255,255,255,.08)", border: "none", color: "#fff", cursor: "pointer", padding: "4px 10px", borderRadius: 8, fontSize: 11 }}>
-                Stop
-              </button>
-            </div>
-
-            {/* Resume hint */}
-            {readPos(recordingId) > 5 && currentTime < 3 && (
-              <div style={{ marginTop: 10, fontSize: 11, color: "#888", textAlign: "center" }}>
-                ▶ Resumed from where you left off
-              </div>
-            )}
-          </div>
-        </>
-      ) : null}
-    </div>
-  );
-};
-
-// ── Main Component ────────────────────────────────────────────
 const SubjectRecordings = ({ subjectId }: { subjectId: string }) => {
-  const { t } = useLanguage();
+  const { t }             = useLanguage();
   const { user, hasRole } = useAuth();
-  const qc         = useQueryClient();
+  const qc                = useQueryClient();
+  const player            = useRecordingPlayer();
+
   const [search, setSearch]       = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm]   = useState({ teacher_name: "", duration_seconds: 0 });
   const [deleteId, setDeleteId]   = useState<string | null>(null);
-  const [playingId, setPlayingId] = useState<string | null>(null);
-  const [minimized, setMinimized] = useState(false);
-  // Live state for mini player
-  const [miniTime, setMiniTime]   = useState(0);
-  const [miniPlaying, setMiniPlaying] = useState(false);
-  const [miniSpeed, setMiniSpeed] = useState(1);
-  const miniRef = useRef<{ toggle: () => void } | null>(null);
 
   const isPrivileged = hasRole("admin") || hasRole("teacher");
 
@@ -359,21 +56,30 @@ const SubjectRecordings = ({ subjectId }: { subjectId: string }) => {
 
   const updateMutation = useMutation({
     mutationFn: async ({ id, teacher_name, duration_seconds }: any) => {
-      const { error } = await supabase.from("session_recordings").update({ teacher_name, duration_seconds }).eq("id", id);
+      const { error } = await supabase.from("session_recordings")
+        .update({ teacher_name, duration_seconds }).eq("id", id);
       if (error) throw error;
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["recordings", subjectId] }); setEditingId(null); toast({ title: t("Updated", "تم التحديث") }); },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["recordings", subjectId] });
+      setEditingId(null);
+      toast({ title: t("Updated", "تم التحديث") });
+    },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
       const rec = recordings?.find(r => r.id === id);
-      if (rec?.file_url) await removeStorageFile(rec.file_url).catch(err => console.warn("[SubjectRecordings] storage remove failed:", err?.message));
+      if (rec?.file_url) await removeStorageFile(rec.file_url).catch(() => {});
       const { error } = await supabase.from("session_recordings").delete().eq("id", id);
       if (error) throw error;
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["recordings", subjectId] }); setDeleteId(null); toast({ title: t("Deleted", "تم الحذف") }); },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["recordings", subjectId] });
+      setDeleteId(null);
+      toast({ title: t("Deleted", "تم الحذف") });
+    },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
@@ -382,75 +88,67 @@ const SubjectRecordings = ({ subjectId }: { subjectId: string }) => {
     new Date(r.created_at!).toLocaleDateString().includes(search)
   );
 
-  const fmt = (s: number) => {
+  const fmtDur = (s: number) => {
     const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
     return h > 0 ? `${h}h ${m}m` : `${m} min`;
   };
 
-  const playingRec = recordings?.find(r => r.id === playingId);
-
   if (isLoading) return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12, padding: "16px" }}>
-      {[1, 2].map(i => (
-        <div key={i} style={{ height: 100, borderRadius: 14, background: "#f0f4f0", animation: "pulse 1.5s infinite" }} />
-      ))}
+      {[1, 2].map(i => <div key={i} style={{ height: 100, borderRadius: 14, background: "#f0f4f0", animation: "pulse 1.5s infinite" }} />)}
+      <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}`}</style>
     </div>
   );
 
   return (
-    <div style={{ padding: "16px", display: "flex", flexDirection: "column", gap: 14, fontFamily: "'Cairo',sans-serif", paddingBottom: minimized ? 80 : 16 }}>
+    <div style={{ padding: "16px", display: "flex", flexDirection: "column", gap: 14, fontFamily: "'Cairo',sans-serif" }}>
+
       {/* Search */}
       <div style={{ position: "relative" }}>
         <Search style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", width: 15, height: 15, color: "#7a9e88" }} />
         <input value={search} onChange={e => setSearch(e.target.value)}
-          placeholder={t("Search recordings…", "بحث في التسجيلات…")}
-          style={{ width: "100%", paddingLeft: 36, paddingRight: 14, paddingTop: 10, paddingBottom: 10, borderRadius: 12, border: `1px solid ${BORDER}`, background: "#fff", fontSize: 13, outline: "none", color: G, fontFamily: "'Cairo',sans-serif", boxSizing: "border-box" as const }} />
+          placeholder={t("Search recordings\u2026", "\u0628\u062d\u062b \u0641\u064a \u0627\u0644\u062a\u0633\u062c\u064a\u0644\u0627\u062a\u2026")}
+          style={{ width: "100%", paddingLeft: 36, paddingRight: 14, paddingTop: 10, paddingBottom: 10, borderRadius: 12, border: `1px solid ${BORDER}`, background: "#fff", fontSize: 13, outline: "none", color: G, fontFamily: "'Cairo',sans-serif", boxSizing: "border-box" }} />
       </div>
 
-      {/* Empty state */}
       {!filtered?.length && (
         <div style={{ textAlign: "center", padding: "40px 20px", background: "#fff", borderRadius: 16, border: `1px solid ${BORDER}` }}>
           <Video style={{ width: 40, height: 40, color: "#cbd5e0", margin: "0 auto 12px" }} />
-          <div style={{ fontSize: 15, fontWeight: 700, color: G, marginBottom: 4 }}>{t("No recordings yet", "لا توجد تسجيلات بعد")}</div>
-          <div style={{ fontSize: 12, color: "#7a9e88" }}>{t("Recordings will appear here after class", "ستظهر التسجيلات هنا بعد الحصة")}</div>
+          <div style={{ fontSize: 15, fontWeight: 700, color: G, marginBottom: 4 }}>{t("No recordings yet", "\u0644\u0627 \u062a\u0648\u062c\u062f \u062a\u0633\u062c\u064a\u0644\u0627\u062a \u0628\u0639\u062f")}</div>
+          <div style={{ fontSize: 12, color: "#7a9e88" }}>{t("Recordings will appear here after class", "\u0633\u062a\u0638\u0647\u0631 \u0627\u0644\u062a\u0633\u062c\u064a\u0644\u0627\u062a \u0647\u0646\u0627 \u0628\u0639\u062f \u0627\u0644\u062d\u0635\u0629")}</div>
         </div>
       )}
 
-      {/* Recording cards */}
       {filtered?.map(r => {
         const prog      = progressMap?.[r.id];
         const pct       = prog && r.duration_seconds ? Math.min(100, Math.round((prog.progress_seconds / r.duration_seconds) * 100)) : 0;
         const completed = prog?.completed;
         const started   = prog && prog.progress_seconds > 0;
-        const isPlaying = playingId === r.id && !minimized;
-        const isMinimizedPlaying = playingId === r.id && minimized;
-        const dateStr   = new Date(r.created_at!).toLocaleDateString(undefined, { weekday: "short", year: "numeric", month: "short", day: "numeric" });
-        const savedPos  = readPos(r.id);
+        const isActive  = player.isActiveId(r.id);
+        const isPlaying = isActive && player.state.playing;
+        const isLoadingRec = isActive && player.state.loading;
+        const savedPos  = parseInt(localStorage.getItem(`tahleem-rec-pos-${r.id}`) || "0") || 0;
         const hasSaved  = savedPos > 5;
+        const dateStr   = new Date(r.created_at!).toLocaleDateString(undefined, { weekday: "short", year: "numeric", month: "short", day: "numeric" });
 
         return (
-          <div key={r.id} style={{ background: "#fff", borderRadius: 16, border: `1px solid ${BORDER}`, overflow: "hidden", boxShadow: "0 2px 8px rgba(0,0,0,.06)" }}>
-            {/* Inline full player */}
-            {isPlaying && r.file_url && (
-              <InlinePlayer
-                recordingId={r.id}
-                fileUrl={r.file_url}
-                duration={r.duration_seconds || 0}
-                title={dateStr}
-                onClose={() => { setPlayingId(null); setMinimized(false); }}
-                onMinimize={() => setMinimized(true)}
-              />
-            )}
+          <div key={r.id} style={{ background: "#fff", borderRadius: 16, border: `1.5px solid ${isActive ? GOLD : BORDER}`, overflow: "hidden", boxShadow: isActive ? `0 4px 16px rgba(201,168,76,.2)` : "0 2px 8px rgba(0,0,0,.06)", transition: "border-color .2s" }}>
 
-            {/* Card body */}
-            <div style={{ display: "flex", gap: 14, padding: "14px 14px", alignItems: "flex-start" }}>
+            {/* Active indicator */}
+            {isActive && <div style={{ height: 3, background: `linear-gradient(90deg,${GOLD},#f59e0b)` }} />}
+
+            <div style={{ display: "flex", gap: 14, padding: "14px", alignItems: "flex-start" }}>
+
               {/* Thumbnail */}
-              <div style={{ width: 72, height: 56, borderRadius: 10, background: `linear-gradient(135deg,${G},${GM})`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, position: "relative", cursor: "pointer" }}
-                onClick={() => { setPlayingId(isPlaying || isMinimizedPlaying ? null : r.id); setMinimized(false); }}>
+              <div style={{ width: 72, height: 56, borderRadius: 10, background: isActive ? `linear-gradient(135deg,#b8850a,${GOLD})` : `linear-gradient(135deg,${G},${GM})`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, position: "relative", cursor: "pointer" }}
+                onClick={() => r.file_url && player.playRecording({ id: r.id, fileUrl: r.file_url, title: dateStr, duration: r.duration_seconds || 0 })}>
                 {r.thumbnail_url
                   ? <img src={r.thumbnail_url} style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 10 }} alt="" />
-                  : <Play style={{ width: 22, height: 22, color: "rgba(255,255,255,.8)", marginLeft: 2 }} />}
-                {/* Progress bar */}
+                  : isLoadingRec
+                    ? <div style={{ width: 22, height: 22, borderRadius: "50%", border: "2.5px solid rgba(255,255,255,.8)", borderTopColor: "transparent", animation: "spin .7s linear infinite" }} />
+                    : isPlaying
+                      ? <Pause style={{ width: 22, height: 22, color: "#fff" }} />
+                      : <Play  style={{ width: 22, height: 22, color: "rgba(255,255,255,.9)", marginLeft: 2 }} />}
                 {started && (
                   <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 3, background: "rgba(255,255,255,.2)", borderRadius: "0 0 10px 10px" }}>
                     <div style={{ height: "100%", width: `${pct}%`, background: completed ? "#22c55e" : GOLD, borderRadius: 3 }} />
@@ -461,46 +159,45 @@ const SubjectRecordings = ({ subjectId }: { subjectId: string }) => {
                     <CheckCircle style={{ width: 12, height: 12, color: "#fff" }} />
                   </div>
                 )}
-                {isMinimizedPlaying && (
-                  <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,.5)", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: GOLD, animation: "pulse 1s infinite" }} />
-                  </div>
-                )}
               </div>
 
               {/* Info */}
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: G, marginBottom: 5, whiteSpace: "nowrap" as const, overflow: "hidden", textOverflow: "ellipsis" }}>{dateStr}</div>
-                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" as const }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: G, marginBottom: 5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{dateStr}</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                   <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, color: "#7a9e88" }}>
                     <User style={{ width: 12, height: 12 }} />{r.teacher_name || "Teacher"}
                   </span>
                   {r.duration_seconds != null && r.duration_seconds > 0 && (
                     <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, color: "#7a9e88" }}>
-                      <Clock style={{ width: 12, height: 12 }} />{fmt(r.duration_seconds)}
+                      <Clock style={{ width: 12, height: 12 }} />{fmtDur(r.duration_seconds)}
                     </span>
                   )}
-                  {hasSaved && !completed && (
-                    <span style={{ fontSize: 10, color: GOLD, fontWeight: 700 }}>
-                      ↩ {Math.floor(savedPos / 60)}m saved
-                    </span>
-                  )}
+                  {hasSaved && !completed && <span style={{ fontSize: 10, color: GOLD, fontWeight: 700 }}>&crarr; {Math.floor(savedPos / 60)}m saved</span>}
                   {started && !completed && <span style={{ fontSize: 11, fontWeight: 700, color: GOLD }}>{pct}% watched</span>}
-                  {completed && <span style={{ fontSize: 11, fontWeight: 700, color: "#22c55e" }}>✓ Completed</span>}
-                  {isMinimizedPlaying && <span style={{ fontSize: 11, fontWeight: 700, color: GOLD }}>● Playing in background</span>}
+                  {completed && <span style={{ fontSize: 11, fontWeight: 700, color: "#22c55e" }}>&check; Completed</span>}
+                  {isActive && (
+                    <span style={{ fontSize: 11, fontWeight: 700, color: GOLD, display: "flex", alignItems: "center", gap: 3 }}>
+                      <span style={{ width: 6, height: 6, borderRadius: "50%", background: isPlaying ? "#22c55e" : GOLD, display: "inline-block" }} />
+                      {isPlaying ? "Playing" : "Paused"}
+                    </span>
+                  )}
                 </div>
               </div>
 
               {/* Actions */}
               <div style={{ display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 }}>
-                <button onClick={() => {
-                    if (isMinimizedPlaying) { setMinimized(false); return; }
-                    setPlayingId(isPlaying ? null : r.id);
-                    setMinimized(false);
+                <button
+                  onClick={() => {
+                    if (!r.file_url) return;
+                    if (isActive) player.togglePlay();
+                    else player.playRecording({ id: r.id, fileUrl: r.file_url, title: dateStr, duration: r.duration_seconds || 0 });
                   }}
-                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 10, background: (isPlaying || isMinimizedPlaying) ? "#f0f4f0" : G, border: "none", color: (isPlaying || isMinimizedPlaying) ? G : "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "'Cairo',sans-serif" }}>
-                  {isMinimizedPlaying ? <ChevronUp style={{ width: 13, height: 13 }} /> : isPlaying ? <Pause style={{ width: 13, height: 13 }} /> : <Play style={{ width: 13, height: 13 }} />}
-                  {isMinimizedPlaying ? "Expand" : isPlaying ? "Close" : completed ? t("Rewatch", "إعادة") : hasSaved ? t("Continue", "متابعة") : t("Play", "تشغيل")}
+                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 10, background: isActive ? GOLD : G, border: "none", color: isActive ? G : "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "'Cairo',sans-serif", minWidth: 90, justifyContent: "center" }}>
+                  {isLoadingRec
+                    ? <div style={{ width: 13, height: 13, borderRadius: "50%", border: "2px solid currentColor", borderTopColor: "transparent", animation: "spin .7s linear infinite" }} />
+                    : isPlaying ? <Pause style={{ width: 13, height: 13 }} /> : <Play style={{ width: 13, height: 13 }} />}
+                  {isLoadingRec ? "Loading\u2026" : isPlaying ? "Pause" : completed ? t("Rewatch", "\u0625\u0639\u0627\u062f\u0629") : hasSaved ? t("Continue", "\u0645\u062a\u0627\u0628\u0639\u0629") : t("Play", "\u062a\u0634\u063a\u064a\u0644")}
                 </button>
 
                 {isPrivileged && (
@@ -521,75 +218,46 @@ const SubjectRecordings = ({ subjectId }: { subjectId: string }) => {
         );
       })}
 
-      {/* Floating mini player — audio keeps playing in background */}
-      {minimized && playingRec && (
-        <MiniPlayer
-          title={new Date(playingRec.created_at!).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}
-          playing={miniPlaying}
-          currentTime={miniTime}
-          totalDur={playingRec.duration_seconds || 0}
-          speed={miniSpeed}
-          onToggle={() => {}} // controlled by the mounted InlinePlayer below
-          onRestore={() => setMinimized(false)}
-          onClose={() => { setPlayingId(null); setMinimized(false); }}
-        />
-      )}
-
-      {/* Hidden InlinePlayer stays mounted when minimized so audio plays on */}
-      {minimized && playingId && playingRec?.file_url && (
-        <div style={{ position: "fixed", width: 1, height: 1, opacity: 0, pointerEvents: "none", overflow: "hidden", left: -9999 }}>
-          <InlinePlayer
-            recordingId={playingId}
-            fileUrl={playingRec.file_url}
-            duration={playingRec.duration_seconds || 0}
-            title={new Date(playingRec.created_at!).toLocaleDateString()}
-            onClose={() => { setPlayingId(null); setMinimized(false); }}
-            onMinimize={() => {}}
-          />
-        </div>
-      )}
-
       {/* Edit Dialog */}
       <Dialog open={!!editingId} onOpenChange={v => !v && setEditingId(null)}>
         <DialogContent>
-          <DialogHeader><DialogTitle>{t("Edit Recording", "تعديل التسجيل")}</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{t("Edit Recording", "\u062a\u0639\u062f\u064a\u0644 \u0627\u0644\u062a\u0633\u062c\u064a\u0644")}</DialogTitle></DialogHeader>
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             <div>
-              <label style={{ fontSize: 12, fontWeight: 600, color: G, display: "block", marginBottom: 4 }}>{t("Teacher Name", "اسم المعلم")}</label>
+              <label style={{ fontSize: 12, fontWeight: 600, color: G, display: "block", marginBottom: 4 }}>{t("Teacher Name", "\u0627\u0633\u0645 \u0627\u0644\u0645\u0639\u0644\u0645")}</label>
               <input value={editForm.teacher_name} onChange={e => setEditForm({ ...editForm, teacher_name: e.target.value })}
-                style={{ width: "100%", padding: "9px 12px", borderRadius: 10, border: `1px solid ${BORDER}`, outline: "none", fontSize: 14, color: G, boxSizing: "border-box" as const }} />
+                style={{ width: "100%", padding: "9px 12px", borderRadius: 10, border: `1px solid ${BORDER}`, outline: "none", fontSize: 14, color: G, boxSizing: "border-box" }} />
             </div>
             <div>
-              <label style={{ fontSize: 12, fontWeight: 600, color: G, display: "block", marginBottom: 4 }}>{t("Duration (seconds)", "المدة (ثواني)")}</label>
+              <label style={{ fontSize: 12, fontWeight: 600, color: G, display: "block", marginBottom: 4 }}>{t("Duration (seconds)", "\u0627\u0644\u0645\u062f\u0629 (\u062b\u0648\u0627\u0646\u064a)")}</label>
               <input type="number" value={editForm.duration_seconds} onChange={e => setEditForm({ ...editForm, duration_seconds: parseInt(e.target.value) || 0 })}
-                style={{ width: "100%", padding: "9px 12px", borderRadius: 10, border: `1px solid ${BORDER}`, outline: "none", fontSize: 14, color: G, boxSizing: "border-box" as const }} />
+                style={{ width: "100%", padding: "9px 12px", borderRadius: 10, border: `1px solid ${BORDER}`, outline: "none", fontSize: 14, color: G, boxSizing: "border-box" }} />
             </div>
             <button onClick={() => editingId && updateMutation.mutate({ id: editingId, ...editForm })} disabled={updateMutation.isPending}
-              style={{ width: "100%", padding: "11px 0", borderRadius: 12, background: G, border: "none", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontFamily: "'Cairo',sans-serif" }}>
+              style={{ width: "100%", padding: "11px 0", borderRadius: 12, background: G, border: "none", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
               <Save style={{ width: 15, height: 15 }} />
-              {updateMutation.isPending ? "Saving…" : t("Save Changes", "حفظ التغييرات")}
+              {updateMutation.isPending ? "Saving\u2026" : t("Save Changes", "\u062d\u0641\u0638 \u0627\u0644\u062a\u063a\u064a\u064a\u0631\u0627\u062a")}
             </button>
           </div>
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirm */}
       <AlertDialog open={!!deleteId} onOpenChange={v => !v && setDeleteId(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t("Delete Recording?", "حذف التسجيل؟")}</AlertDialogTitle>
-            <AlertDialogDescription>{t("This cannot be undone.", "لا يمكن التراجع عن هذا.")}</AlertDialogDescription>
+            <AlertDialogTitle>{t("Delete Recording?", "\u062d\u0630\u0641 \u0627\u0644\u062a\u0633\u062c\u064a\u0644\u061f")}</AlertDialogTitle>
+            <AlertDialogDescription>{t("This cannot be undone.", "\u0644\u0627 \u064a\u0645\u043a\u043d \u0627\u0644\u062a\u0631\u0627\u062c\u0639 \u0639\u0646 \u0647\u0630\u0627.")}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>{t("Cancel", "إلغاء")}</AlertDialogCancel>
+            <AlertDialogCancel>{t("Cancel", "\u0625\u0644\u063a\u0627\u0621")}</AlertDialogCancel>
             <AlertDialogAction onClick={() => deleteId && deleteMutation.mutate(deleteId)} className="bg-destructive text-destructive-foreground">
-              {deleteMutation.isPending ? "Deleting…" : t("Delete", "حذف")}
+              {deleteMutation.isPending ? "Deleting\u2026" : t("Delete", "\u062d\u0630\u0641")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
 
-      <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}`}</style>
+      <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}} @keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </div>
   );
 };
