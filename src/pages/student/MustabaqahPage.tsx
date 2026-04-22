@@ -510,6 +510,9 @@ export default function MustabaqahPage() {
   const [showProctor,     setShowProctor]      = useState(false);
   const [showScorePanel,  setShowScore]        = useState(false);
   const [judgeTab,        setJudgeTab]         = useState<"controls"|"roster">("roster");
+  const [calledScope,     setCalledScope]      = useState<{ label: string; labelAr: string } | null>(null);
+  const [audioReady,      setAudioReady]       = useState(false);
+  const [floatReactions,  setFloatReactions]   = useState<{ id: string; emoji: string; name: string; x: number }[]>([]);
 
   const [scoreBreak,   setScoreBreak]   = useState<Record<string,string>>({ tajweed:"", memorize:"", fluency:"", voice:"" });
   const [judgeComment, setJudgeComment] = useState("");
@@ -541,20 +544,37 @@ export default function MustabaqahPage() {
     if (channelRef.current) supabase.removeChannel(channelRef.current);
     const ch = supabase.channel(`musabaqah:${competition.id}`)
       .on("broadcast", { event:"BELL" }, ({ payload }:any) => {
-        playBellSound(); setBellFlash(true); setBellCount(payload.count ?? 0);
+        setBellFlash(true); setBellCount(payload.count ?? 0);
         setTimeout(() => setBellFlash(false), 2500);
+        // Wake audio then play
+        const ctx = getAudioCtx();
+        if (ctx.state === "running") { playBellSound(); }
+        else { ctx.resume().then(() => playBellSound()); }
       })
       .on("broadcast", { event:"STOP" }, () => {
-        playStopSound(); setStopFlash(true); setTimerActive(false);
+        setStopFlash(true); setTimerActive(false);
         setTimeout(() => setStopFlash(false), 2500);
+        const ctx = getAudioCtx();
+        if (ctx.state === "running") { playStopSound(); }
+        else { ctx.resume().then(() => playStopSound()); }
       })
       .on("broadcast", { event:"CALLED" }, ({ payload }:any) => {
         loadParticipants(); loadAttempts(); setBellCount(0); setTimerSecs(0); setShowScore(false);
+        if (payload.scope_label) setCalledScope({ label: payload.scope_label, labelAr: payload.scope_label_ar || "" });
         if (payload.participant_id === myParticipant?.id) {
-          playCalledSound();
+          const ctx = getAudioCtx();
+          const play = () => playCalledSound();
+          if (ctx.state === "running") { play(); }
+          else { ctx.resume().then(() => play()); }
           try { navigator.vibrate?.([400,100,400,100,800]); } catch {}
           toast({ title:"🎙️ You have been called!", description:"Unmute your mic and begin reciting." });
         }
+      })
+      .on("broadcast", { event:"REACTION" }, ({ payload }:any) => {
+        const id = Math.random().toString(36).slice(2);
+        const x = 10 + Math.random() * 80;
+        setFloatReactions(r => [...r, { id, emoji: payload.emoji, name: payload.name, x }]);
+        setTimeout(() => setFloatReactions(r => r.filter(rx => rx.id !== id)), 3000);
       })
       .on("broadcast", { event:"SCORE_SUBMITTED" }, () => { loadParticipants(); loadAttempts(); setShowScore(false); })
       .on("broadcast", { event:"STAGE_CHANGE" }, ({ payload }:any) => {
@@ -608,6 +628,22 @@ export default function MustabaqahPage() {
 
   const broadcast = (event: string, payload: object = {}) =>
     channelRef.current?.send({ type:"broadcast", event, payload });
+
+  const wakeAudio = () => {
+    try { getAudioCtx().resume().then(() => setAudioReady(true)); } catch {}
+  };
+
+  const REACTION_EMOJIS = ["🤲","❤️","🌟","👏","🎙️","📖","🕌","🤍"];
+
+  const sendReaction = (emoji: string) => {
+    wakeAudio();
+    const name = myParticipant?.participant_name || "Audience";
+    const id = Math.random().toString(36).slice(2);
+    const x = 10 + Math.random() * 80;
+    setFloatReactions(r => [...r, { id, emoji, name, x }]);
+    setTimeout(() => setFloatReactions(r => r.filter(rx => rx.id !== id)), 3000);
+    broadcast("REACTION", { emoji, name });
+  };
 
   /* Media */
   const toggleMic = async () => {
@@ -1184,6 +1220,20 @@ export default function MustabaqahPage() {
       <BellFlash visible={bellFlash}/>
       <StopFlash visible={stopFlash}/>
 
+      {/* ── FLOATING REACTIONS OVERLAY ────────────────────── */}
+      <div style={{ position:"fixed", inset:0, zIndex:9997, pointerEvents:"none", overflow:"hidden" }}>
+        {floatReactions.map(r => (
+          <div key={r.id} style={{
+            position:"absolute", bottom:90, left:`${r.x}%`,
+            animation:"fadeSlideUp 0.4s ease both",
+            display:"flex", flexDirection:"column", alignItems:"center", gap:2,
+          }}>
+            <div style={{ fontSize:32, filter:"drop-shadow(0 2px 8px rgba(0,0,0,0.6))", animation:"floatUp 3s ease-in-out both" }}>{r.emoji}</div>
+            <div style={{ color:"rgba(255,255,255,0.6)", fontSize:10, background:"rgba(0,0,0,0.5)", borderRadius:20, padding:"2px 8px", whiteSpace:"nowrap" }}>{r.name}</div>
+          </div>
+        ))}
+      </div>
+
       {/* ── TOP BAR ───────────────────────────────────────── */}
       <div style={{
         position:"relative", zIndex:10, flexShrink:0,
@@ -1235,7 +1285,7 @@ export default function MustabaqahPage() {
       </div>
 
       {/* ── MAIN SCROLLABLE BODY ──────────────────────────── */}
-      <div style={{ flex:1, overflowY:"auto", position:"relative", zIndex:1, paddingBottom:myParticipant && !isJudge ? 80 : 16 }}>
+      <div style={{ flex:1, overflowY:"auto", position:"relative", zIndex:1, paddingBottom:myParticipant && !isJudge ? 110 : 16 }}>
 
         {/* Active Reciter Card */}
         <div style={{ padding:"16px 16px 0" }}>
@@ -1573,11 +1623,23 @@ export default function MustabaqahPage() {
                 <div style={{ color:GOLD, fontWeight:900, fontSize:18, letterSpacing:1 }}>
                   {myParticipant.status==="called" ? "YOU HAVE BEEN CALLED!" : "Now Reciting..."}
                 </div>
-                <div style={{ color:"rgba(255,255,255,0.55)", fontSize:13, marginTop:6, marginBottom:16 }}>
+                <div style={{ color:"rgba(255,255,255,0.55)", fontSize:13, marginTop:6, marginBottom:12 }}>
                   {myParticipant.status==="called" ? "Unmute your mic and prepare to recite" : "Recite clearly and confidently"}
                 </div>
+
+                {/* Assigned passage */}
+                {calledScope && (
+                  <div style={{ background:"rgba(0,0,0,0.3)", border:`1px solid ${GOLD}44`, borderRadius:12, padding:"12px 16px", marginBottom:16, textAlign:"center" }}>
+                    <div style={{ color:GOLD, fontSize:10, fontWeight:700, letterSpacing:1.5, textTransform:"uppercase", marginBottom:6 }}>📖 Your Assigned Passage</div>
+                    <div style={{ color:"#fff", fontWeight:800, fontSize:17 }}>{calledScope.label}</div>
+                    {calledScope.labelAr && (
+                      <div style={{ color:"rgba(255,255,255,0.55)", fontSize:16, direction:"rtl", fontFamily:"Amiri,serif", marginTop:4 }}>{calledScope.labelAr}</div>
+                    )}
+                  </div>
+                )}
+
                 <div style={{ display:"flex", gap:10, justifyContent:"center" }}>
-                  <button onClick={toggleMic} style={{
+                  <button onClick={() => { wakeAudio(); toggleMic(); }} style={{
                     background:micOn ? `${GREEN}22` : "rgba(255,255,255,0.08)",
                     border:`2px solid ${micOn ? GREEN : "rgba(255,255,255,0.2)"}`,
                     borderRadius:12, padding:"12px 20px", cursor:"pointer",
@@ -1587,7 +1649,7 @@ export default function MustabaqahPage() {
                     {micOn ? <Mic size={18}/> : <MicOff size={18}/>}
                     {micOn ? "Mic On" : "Unmute"}
                   </button>
-                  <button onClick={toggleCam} style={{
+                  <button onClick={() => { wakeAudio(); toggleCam(); }} style={{
                     background:camOn ? `${GREEN}22` : "rgba(255,255,255,0.08)",
                     border:`2px solid ${camOn ? GREEN : "rgba(255,255,255,0.2)"}`,
                     borderRadius:12, padding:"12px 20px", cursor:"pointer",
@@ -1643,25 +1705,56 @@ export default function MustabaqahPage() {
         )}
       </div>
 
-      {/* MY STATUS BAR — sticky bottom (participants only) */}
+      {/* MY STATUS BAR + REACTIONS — sticky bottom (participants only) */}
       {!isJudge && myParticipant && (
         <div style={{
           position:"fixed", bottom:0, left:0, right:0, zIndex:20,
-          background:"rgba(5,15,8,0.95)", backdropFilter:"blur(20px)",
+          background:"rgba(5,15,8,0.97)", backdropFilter:"blur(20px)",
           borderTop:"1px solid rgba(201,168,76,0.2)",
-          padding:"12px 16px", display:"flex", alignItems:"center", gap:12,
         }}>
-          <Avatar name={myParticipant.participant_name} size={36} active={myParticipant.status==="reciting"} called={myParticipant.status==="called"}/>
-          <div style={{ flex:1 }}>
-            <div style={{ color:"#fff", fontWeight:700, fontSize:13 }}>{myParticipant.participant_name}</div>
-            <div style={{ color:STATUS_COLOR[myParticipant.status], fontSize:12, fontWeight:600, marginTop:2 }}>
-              {myParticipant.status==="called" && "🔔 YOU HAVE BEEN CALLED!"}
-              {myParticipant.status==="reciting" && "🎙️ Now Reciting..."}
-              {myParticipant.status==="waiting" && `⏳ Waiting — #${myParticipant.queue_position}`}
-              {myParticipant.status==="completed" && "✅ Done"}
+          {/* Reaction bar — always visible for audience */}
+          {(myParticipant.status==="waiting"||myParticipant.status==="completed") && activeP && (
+            <div style={{ padding:"8px 16px 0", display:"flex", alignItems:"center", gap:6 }}>
+              <span style={{ color:"rgba(255,255,255,0.3)", fontSize:11, flexShrink:0 }}>React:</span>
+              <div style={{ display:"flex", gap:6, overflowX:"auto" }}>
+                {REACTION_EMOJIS.map(e => (
+                  <button key={e} onClick={() => sendReaction(e)} style={{
+                    background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.12)",
+                    borderRadius:10, padding:"6px 10px", cursor:"pointer", fontSize:20, flexShrink:0,
+                    transition:"transform 0.1s",
+                  }} onTouchStart={ev => (ev.currentTarget.style.transform="scale(1.3)")}
+                    onTouchEnd={ev => (ev.currentTarget.style.transform="scale(1)")}>
+                    {e}
+                  </button>
+                ))}
+              </div>
             </div>
+          )}
+
+          {/* Status row */}
+          <div style={{ padding:"10px 16px 12px", display:"flex", alignItems:"center", gap:12 }}>
+            <Avatar name={myParticipant.participant_name} size={36} active={myParticipant.status==="reciting"} called={myParticipant.status==="called"}/>
+            <div style={{ flex:1 }}>
+              <div style={{ color:"#fff", fontWeight:700, fontSize:13 }}>{myParticipant.participant_name}</div>
+              <div style={{ color:STATUS_COLOR[myParticipant.status], fontSize:12, fontWeight:600, marginTop:2 }}>
+                {myParticipant.status==="called"    && "🔔 YOU HAVE BEEN CALLED!"}
+                {myParticipant.status==="reciting"  && "🎙️ Now Reciting..."}
+                {myParticipant.status==="waiting"   && `⏳ Waiting — #${myParticipant.queue_position}`}
+                {myParticipant.status==="completed" && "✅ Done"}
+              </div>
+            </div>
+            {/* Sound enable button */}
+            {!audioReady && (
+              <button onClick={wakeAudio} style={{
+                background:`${GOLD}22`, border:`1px solid ${GOLD}55`, borderRadius:10,
+                padding:"6px 12px", cursor:"pointer", color:GOLD, fontSize:11, fontWeight:700,
+                display:"flex", alignItems:"center", gap:4, fontFamily:"Cairo,sans-serif",
+              }}>
+                <Volume2 size={13}/> Enable Sound
+              </button>
+            )}
+            {myParticipant.total_score>0 && <div style={{ color:GOLD, fontWeight:900, fontSize:22 }}>{myParticipant.total_score}<span style={{ color:"rgba(255,255,255,0.3)", fontSize:11 }}> pts</span></div>}
           </div>
-          {myParticipant.total_score>0 && <div style={{ color:GOLD, fontWeight:900, fontSize:22 }}>{myParticipant.total_score}<span style={{ color:"rgba(255,255,255,0.3)", fontSize:11 }}> pts</span></div>}
         </div>
       )}
     </div>
