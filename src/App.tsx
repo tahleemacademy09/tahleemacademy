@@ -67,6 +67,8 @@ const StudentCourses      = lazy(() => import("./pages/student/StudentCourses"))
 const TasjeelAwaitingLevel = lazy(() => import("./pages/student/TasjeelAwaitingLevel"));
 const StudentTimetable     = lazy(() => import("./pages/student/StudentTimetable"));
 const TasjeelAdmin         = lazy(() => import("./pages/admin/TasjeelAdmin"));
+// ── NEW: Musabaqah ──────────────────────────────────────────────────────────
+const MustabaqahPage       = lazy(() => import("./pages/student/MustabaqahPage"));
 
 // ── Admin pages ────────────────────────────────────────────────────────────
 const AdminDashboard        = lazy(() => import("./pages/admin/AdminDashboard"));
@@ -167,6 +169,9 @@ const App = () => (
                   {/* Misc protected */}
                   <Route path="/live-quiz" element={<ProtectedRoute skipOnboardingCheck><LiveQuiz /></ProtectedRoute>} />
 
+                  {/* Musabaqah — accessible by all roles (admin/teacher open control panel, students join) */}
+                  <Route path="/musabaqah" element={<ProtectedRoute><MustabaqahPage /></ProtectedRoute>} />
+
                   {/* Public Live Classes */}
                   <Route path="/live"                       element={<LiveClasses />} />
                   <Route path="/public/classes"             element={<LiveClasses />} />
@@ -193,6 +198,8 @@ const App = () => (
                     <Route path="/student/timetable"           element={<StudentTimetable />} />
                     <Route path="/student/profile"             element={<ProfileSettings />} />
                     <Route path="/student/enrollment-payment"  element={<EnrollmentPayment />} />
+                    {/* ── Musabaqah (inside student dashboard layout) ── */}
+                    <Route path="/student/musabaqah"           element={<MustabaqahPage />} />
                   </Route>
 
                   {/* Student standalone (skip onboarding guard) */}
@@ -270,6 +277,8 @@ const App = () => (
                     <Route path="/admin/public-classes"              element={<PublicClassManagement />} />
                     <Route path="/admin/registration-settings"       element={<RegistrationSettings />} />
                     <Route path="/admin/tasjeel"                     element={<TasjeelAdmin />} />
+                    {/* ── Musabaqah inside admin layout ── */}
+                    <Route path="/admin/musabaqah"                   element={<MustabaqahPage />} />
                   </Route>
 
                   <Route path="*" element={<NotFound />} />
