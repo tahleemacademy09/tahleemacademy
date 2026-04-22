@@ -17,7 +17,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { useLiveClass } from "@/contexts/LiveClassContext";
-import MaterialsViewer from "@/components/classroom/MaterialsViewer";
+import SubjectMaterials from "@/components/classroom/SubjectMaterials";
+import SubjectAssignments from "@/components/classroom/SubjectAssignments";
 import SubjectSyllabus from "@/components/classroom/SubjectSyllabus";
 import SubjectRecordings from "@/components/classroom/SubjectRecordings";
 import {
@@ -273,7 +274,11 @@ const SubjectView = () => {
           <TabsTrigger value="overview">{t("Overview", "نظرة عامة")}</TabsTrigger>
           <TabsTrigger value="classes">{t("Live Classes", "الفصول")}</TabsTrigger>
           <TabsTrigger value="recordings">{t("Recordings", "التسجيلات")}</TabsTrigger>
-          <TabsTrigger value="materials">{t("Materials", "المواد")}</TabsTrigger>
+          <TabsTrigger value="materials" className="relative" onClick={() => localStorage.setItem(`tahleem-tab-seen-materials-${subjectId}`, new Date().toISOString())}>
+            {t("Materials", "المواد")}
+            {materials.length > 0 && materials.some((m: any) => { const seen = localStorage.getItem(`tahleem-tab-seen-materials-${subjectId}`); return !seen || new Date(m.created_at) > new Date(seen); }) && <span style={{ position: "absolute", top: 3, right: 3, width: 7, height: 7, borderRadius: "50%", background: "#ef4444", border: "1.5px solid #fff" }} />}
+          </TabsTrigger>
+          <TabsTrigger value="tasks">{t("Tasks", "المهام")}</TabsTrigger>
           <TabsTrigger value="exams">{t("Exams & Tests", "الاختبارات")}</TabsTrigger>
           <TabsTrigger value="homework">{t("Homework", "الواجبات")}</TabsTrigger>
           <TabsTrigger value="attendance">{t("Attendance", "الحضور")}</TabsTrigger>
@@ -427,7 +432,12 @@ const SubjectView = () => {
 
         {/* ═══ TAB 4: Materials ═══ */}
         <TabsContent value="materials" className="mt-4">
-          <MaterialsViewer materials={materials} sessions={sessions} recordings={recordings} />
+          <SubjectMaterials subjectId={subjectId!} subjectTitle={subject?.name} />
+        </TabsContent>
+
+        {/* ═══ TAB: Tasks / Assignments ═══ */}
+        <TabsContent value="tasks" className="mt-4">
+          <SubjectAssignments subjectId={subjectId!} />
         </TabsContent>
 
         {/* ═══ TAB 5: Exams & Tests ═══ */}
