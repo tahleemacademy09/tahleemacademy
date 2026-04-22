@@ -18,6 +18,7 @@ import NotFound from "@/pages/NotFound";
 import IdleWarningModal from "@/components/IdleWarningModal";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import { LiveClassProvider } from "@/contexts/LiveClassContext";
+import RecordingPlayerProvider from "@/contexts/RecordingPlayerContext";
 const GlobalClassroomOverlay = lazy(() => import("./components/classroom/GlobalClassroomOverlay"));
 import AppNotifications from "@/components/AppNotifications";
 
@@ -140,6 +141,7 @@ const App = () => (
           <Toaster />
           <Sonner />
           <BrowserRouter>
+            <RecordingPlayerProvider>
             <LiveClassProvider>
             <ErrorBoundary>
               <Suspense fallback={
@@ -287,6 +289,7 @@ const App = () => (
             <AppNotifications />
             <IdleWarningModal />
             </LiveClassProvider>
+            </RecordingPlayerProvider>
           </BrowserRouter>
         </TooltipProvider>
       </AuthProvider>
