@@ -1,31 +1,26 @@
 /*
   useTimetableNotifications.ts — Tahleem Academy
   ─────────────────────────────────────────────────────────────────────
-  Mounted GLOBALLY via <AppNotifications /> in App.tsx so it runs for
-  every authenticated user on any page.
+  Mounted GLOBALLY via <AppNotifications /> so it runs for every
+  authenticated user on every page.
 
-  STUDENT path
-  • Queries level-filtered slots for today
-  • Fires phone notification + inserts own DB record
-  • Also calls Edge Function so the server can push to this device
-    even when the tab is closed / phone screen off
+  WHAT THIS FILE DOES (foreground / browser-open):
+  • Polls timetable every 60 s
+  • Shows system notification + in-app bell for 15-min and 5-min alerts
+  • Saves the Web Push subscription to Supabase so the SERVER-SIDE cron
+    can wake the device even when this tab is closed / phone locked
 
-  TEACHER path
-  • Queries slots where subjects.teacher_id = current user
-  • Fires phone notification + inserts own DB record
-  • Also calls Edge Function (same as student)
+  WHAT KEEPS WORKING WHEN THE BROWSER IS CLOSED:
+  • The pg_cron job fires every minute on Supabase's servers
+  • It calls the cron-class-reminders Edge Function
+  • That function reads push_subscriptions, checks today's timetable,
+    and sends Web Push via the VAPID API — no browser needed
 
-  ADMIN — skipped (admins manage classes, they are not in the timetable)
+  Required env var in Vercel / .env.local:
+    VITE_VAPID_PUBLIC_KEY   — your VAPID public key (base64url)
 
-  System-level phone notifications:
-  • Registered with the browser service worker (/sw.js)
-  • Stored push subscription in Supabase → Edge Function can wake the
-    phone even when the browser/app is fully closed (Web Push API)
-  • Vibration via navigator.vibrate on mobile
-  • localStorage + DB dual dedup (survives Android minimize / refresh)
-
-  Required env var (optional — push still works in foreground without it):
-    VITE_VAPID_PUBLIC_KEY  — your VAPID public key (base64url format)
+  Run PUSH_NOTIFICATIONS_SETUP.sql in Supabase to create the
+  push_subscriptions table and the pg_cron job.
 */
 
 import { useEffect, useRef } from "react";
@@ -36,7 +31,8 @@ const CHECK_INTERVAL_MS = 60_000;
 const THRESHOLDS        = [15, 5] as const;
 const SW_PATH           = "/sw.js";
 
-// ── 12-hour time formatter ───────────────────────────────────────────────────
+// ── helpers ─────────────────────────────────────────────────────────────────
+
 function to12hr(timeStr: string): string {
   if (!timeStr) return "";
   const [h, m] = timeStr.split(":").map(Number);
@@ -45,127 +41,133 @@ function to12hr(timeStr: string): string {
   return `${h12}:${String(m).padStart(2, "0")} ${ampm}`;
 }
 
-// ── localStorage dedup ───────────────────────────────────────────────────────
-function sentKey(slotId: string, threshold: number): string {
-  const today = new Date().toISOString().slice(0, 10);
-  return `tt-notif:${slotId}:${threshold}:${today}`;
-}
-function alreadySentLocally(slotId: string, threshold: number): boolean {
-  try   { return localStorage.getItem(sentKey(slotId, threshold)) === "1"; }
-  catch { return false; }
-}
-function markSentLocally(slotId: string, threshold: number) {
-  try {
-    localStorage.setItem(sentKey(slotId, threshold), "1");
-    pruneOldKeys();
-  } catch {}
-}
-function pruneOldKeys() {
-  try {
-    const today = new Date().toISOString().slice(0, 10);
-    const toDelete: string[] = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (k?.startsWith("tt-notif:") && !k.includes(`:${today}`)) toDelete.push(k);
-    }
-    toDelete.forEach(k => localStorage.removeItem(k));
-  } catch {}
-}
-
-// ── DB dedup ─────────────────────────────────────────────────────────────────
-async function alreadySentToDB(
-  userId:    string,
-  slotId:    string,
-  threshold: number
-): Promise<boolean> {
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
-  const tag = `${slotId}:${threshold}`;
-  const { data } = await supabase
-    .from("notifications")
-    .select("id")
-    .eq("user_id", userId)
-    .eq("type", "class_reminder")
-    .ilike("link", `%${tag}%`)
-    .gte("created_at", todayStart.toISOString())
-    .limit(1);
-  return (data?.length ?? 0) > 0;
-}
-
-// ── Minutes until a time string ──────────────────────────────────────────────
 function minutesUntil(timeStr: string): number {
-  const now = new Date();
+  const now  = new Date();
   const [h, m] = timeStr.split(":").map(Number);
   const slot = new Date();
   slot.setHours(h, m, 0, 0);
   return (slot.getTime() - now.getTime()) / 60_000;
 }
 
-// ── Service worker registration + push subscription ──────────────────────────
-let swRegistration: ServiceWorkerRegistration | null = null;
-
-async function registerServiceWorker(userId: string): Promise<void> {
-  if (!("serviceWorker" in navigator)) return;
-
-  try {
-    swRegistration = await navigator.serviceWorker.register(SW_PATH, { scope: "/" });
-    await navigator.serviceWorker.ready;
-
-    if (!("PushManager" in window)) return;
-
-    const permission = await Notification.requestPermission();
-    if (permission !== "granted") return;
-
-    let subscription = await swRegistration.pushManager.getSubscription();
-    if (!subscription) {
-      const vapidPublicKey = import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined;
-      if (!vapidPublicKey) return; // No VAPID key — SW still handles foreground messages
-      subscription = await swRegistration.pushManager.subscribe({
-        userVisibleOnly:      true,
-        applicationServerKey: urlBase64ToUint8Array(vapidPublicKey),
-      });
-    }
-
-    // Save to Supabase so the server-side cron can wake the phone
-    const p256dh = subscription.getKey("p256dh");
-    const auth   = subscription.getKey("auth");
-    if (p256dh && auth) {
-      await supabase
-        .from("push_subscriptions")
-        .upsert(
-          {
-            user_id:    userId,
-            endpoint:   subscription.endpoint,
-            p256dh:     btoa(String.fromCharCode(...new Uint8Array(p256dh))),
-            auth:       btoa(String.fromCharCode(...new Uint8Array(auth))),
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: "user_id" }
-        )
-        .then()
-        .catch(() => {}); // best-effort
-    }
-  } catch (err) {
-    console.warn("[useTimetableNotifications] SW registration failed:", err);
-  }
-}
-
-function urlBase64ToUint8Array(base64String: string): Uint8Array {
-  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
-  const base64  = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
-  const raw     = atob(base64);
+function urlBase64ToUint8Array(base64: string): Uint8Array {
+  const padding = "=".repeat((4 - (base64.length % 4)) % 4);
+  const b64     = (base64 + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw     = atob(b64);
   return new Uint8Array([...raw].map(c => c.charCodeAt(0)));
 }
 
-// ── Show notification via service worker ─────────────────────────────────────
-function showPhoneNotification(opts: {
+// ── localStorage dedup (per-device, per-day) ─────────────────────────────────
+
+function sentKey(slotId: string, threshold: number): string {
+  return `tt-notif:${slotId}:${threshold}:${new Date().toISOString().slice(0, 10)}`;
+}
+function alreadySentLocally(slotId: string, threshold: number): boolean {
+  try   { return localStorage.getItem(sentKey(slotId, threshold)) === "1"; }
+  catch { return false; }
+}
+function markSentLocally(slotId: string, threshold: number): void {
+  try {
+    localStorage.setItem(sentKey(slotId, threshold), "1");
+    // prune stale keys
+    const today = new Date().toISOString().slice(0, 10);
+    const dead: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k?.startsWith("tt-notif:") && !k.includes(`:${today}`)) dead.push(k);
+    }
+    dead.forEach(k => localStorage.removeItem(k));
+  } catch {}
+}
+
+// ── DB dedup (cross-device, survives reinstall) ───────────────────────────────
+
+async function alreadySentToDB(
+  userId: string, slotId: string, threshold: number
+): Promise<boolean> {
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const { data } = await supabase
+    .from("notifications")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("type", "class_reminder")
+    .ilike("link", `%${slotId}:${threshold}%`)
+    .gte("created_at", todayStart.toISOString())
+    .limit(1);
+  return (data?.length ?? 0) > 0;
+}
+
+// ── Service Worker + Push Subscription registration ───────────────────────────
+
+let _swReg: ServiceWorkerRegistration | null = null;
+
+async function ensureServiceWorker(): Promise<ServiceWorkerRegistration | null> {
+  if (!("serviceWorker" in navigator)) return null;
+  try {
+    // Register (idempotent — browser deduplicates)
+    _swReg = await navigator.serviceWorker.register(SW_PATH, { scope: "/" });
+    await navigator.serviceWorker.ready;
+    return _swReg;
+  } catch (err) {
+    console.warn("[useTimetableNotifications] SW register failed:", err);
+    return null;
+  }
+}
+
+async function savePushSubscription(userId: string, reg: ServiceWorkerRegistration): Promise<void> {
+  if (!("PushManager" in window)) return;
+
+  const permission = await Notification.requestPermission();
+  if (permission !== "granted") return;
+
+  const vapidKey = import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined;
+  if (!vapidKey) {
+    // No VAPID key — foreground-only notifications will still work via SW message
+    return;
+  }
+
+  try {
+    // Re-use existing subscription or create a new one
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly:      true,
+        applicationServerKey: urlBase64ToUint8Array(vapidKey),
+      });
+    }
+
+    const p256dh = sub.getKey("p256dh");
+    const auth   = sub.getKey("auth");
+    if (!p256dh || !auth) return;
+
+    // Upsert into Supabase — server-side cron reads this table
+    await supabase
+      .from("push_subscriptions")
+      .upsert(
+        {
+          user_id:    userId,
+          endpoint:   sub.endpoint,
+          p256dh:     btoa(String.fromCharCode(...new Uint8Array(p256dh))),
+          auth:       btoa(String.fromCharCode(...new Uint8Array(auth))),
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "user_id" }
+      );
+  } catch (err) {
+    console.warn("[useTimetableNotifications] Push subscription failed:", err);
+  }
+}
+
+// ── Show notification ─────────────────────────────────────────────────────────
+
+async function showNotification(opts: {
   title:        string;
   message:      string;
   url:          string;
   tag:          string;
   minutes_left: number;
-}) {
-  const notifOptions: NotificationOptions = {
+}): Promise<void> {
+  const baseOpts: NotificationOptions = {
     body:               opts.message,
     icon:               "/favicon.ico",
     badge:              "/favicon.ico",
@@ -180,35 +182,29 @@ function showPhoneNotification(opts: {
     ],
   } as NotificationOptions;
 
-  if (swRegistration && "showNotification" in swRegistration) {
-    swRegistration.showNotification(opts.title, notifOptions).catch(() => {});
-  } else if (navigator.serviceWorker?.controller) {
-    navigator.serviceWorker.controller.postMessage({
-      type:         "SHOW_NOTIFICATION",
-      title:        opts.title,
-      message:      opts.message,
-      url:          opts.url,
-      tag:          opts.tag,
-      minutes_left: opts.minutes_left,
-    });
-  } else if (Notification.permission === "granted") {
+  // Prefer SW.showNotification — gives action buttons + correct tray placement
+  if (_swReg) {
     try {
-      new Notification(opts.title, {
-        body: opts.message,
-        icon: "/favicon.ico",
-        tag:  opts.tag,
+      await _swReg.showNotification(opts.title, baseOpts);
+    } catch {
+      // Fallback to controller message
+      navigator.serviceWorker?.controller?.postMessage({
+        type: "SHOW_NOTIFICATION", ...opts,
       });
-    } catch {}
+    }
+  } else if (Notification.permission === "granted") {
+    try { new Notification(opts.title, { body: opts.message, icon: "/favicon.ico", tag: opts.tag }); }
+    catch {}
   }
 
   try { navigator.vibrate?.([200, 100, 200, 100, 400]); } catch {}
 }
 
-// ── Process a single slot for the current user ───────────────────────────────
+// ── Process one slot ─────────────────────────────────────────────────────────
+
 async function processSlot(
   slot:       any,
   userId:     string,
-  role:       "student" | "teacher",
   joinPrefix: string
 ): Promise<void> {
   const minsLeft     = minutesUntil(slot.start_time);
@@ -216,104 +212,70 @@ async function processSlot(
   const subjectTitle = slot.subjects?.title_ar || slot.subjects?.title || "class";
 
   for (const threshold of THRESHOLDS) {
-    // Check if we are in the right time window
-    if (minsLeft < 0 || minsLeft > threshold) continue;
+    if (minsLeft < 0 || minsLeft > threshold + 1) continue;
     if (threshold === 5  && minsLeft > 6)  continue;
     if (threshold === 15 && minsLeft > 16) continue;
 
-    // Fast local dedup (per device)
     if (alreadySentLocally(slot.id, threshold)) continue;
 
-    // DB dedup (per user account — survives logout/reinstall)
-    const sentInDB = await alreadySentToDB(userId, slot.id, threshold);
-    if (sentInDB) { markSentLocally(slot.id, threshold); continue; }
+    const sentDB = await alreadySentToDB(userId, slot.id, threshold);
+    if (sentDB) { markSentLocally(slot.id, threshold); continue; }
 
-    const minsDisplay = Math.round(minsLeft);
-    const link        = slot.live_url
-      ? `${slot.live_url}?slot=${slot.id}:${threshold}`
-      : `${joinPrefix}?slot=${slot.id}:${threshold}`;
-
+    const link    = `${slot.live_url ?? joinPrefix}?slot=${slot.id}:${threshold}`;
+    const minsDisp = Math.round(minsLeft);
     const title   = threshold === 5
       ? `📚 Class starts in 5 min — join now!`
-      : `📚 Class starting in ${minsDisplay} min`;
+      : `📚 Class starting in ${minsDisp} min`;
     const message =
       `${subjectTitle} starts at ${time12}. ` +
       (threshold === 5 ? "Tap to join!" : "Get ready!");
 
-    // ── PHONE / SYSTEM NOTIFICATION FIRST (always fires regardless of DB) ────
-    // We mark locally immediately so the phone notification is guaranteed
-    // even if the DB insert below fails due to RLS or network issues.
-    showPhoneNotification({
-      title,
-      message,
-      url:          link,
-      tag:          `${slot.id}:${threshold}`,
-      minutes_left: minsDisplay,
-    });
-
+    // Show phone notification immediately (best-effort, don't await DB)
+    await showNotification({ title, message, url: link, tag: `${slot.id}:${threshold}`, minutes_left: minsDisp });
     markSentLocally(slot.id, threshold);
 
-    // ── IN-APP NOTIFICATION (bell icon) — best-effort ────────────────────────
-    // Students are allowed to insert their own notifications via the
-    // "Users can insert own notifications" RLS policy (see migration).
-    const { error: insErr } = await supabase.from("notifications").insert({
-      user_id: userId,
-      title,
-      message,
-      type:    "class_reminder",
-      link,
-      is_read: false,
-    });
+    // In-app bell
+    supabase.from("notifications").insert({
+      user_id: userId, title, message, type: "class_reminder", link, is_read: false,
+    }).then().catch(() => {});
 
-    if (insErr) {
-      // Log but do NOT bail — phone notification already fired above.
-      console.warn("[useTimetableNotifications] DB insert failed (bell icon will be missing):", insErr.message);
-    }
-
-    // ── Server-side push — wakes the phone even when app is fully closed ─────
+    // Tell the server-side Edge Function (belt-and-suspenders for foreground)
     supabase.functions
       .invoke("send-class-reminder", {
-        body: {
-          user_id:       userId,
-          subject_title: subjectTitle,
-          start_time:    time12,
-          minutes_left:  minsDisplay,
-          join_url:      link,
-        },
+        body: { user_id: userId, subject_title: subjectTitle, start_time: time12, minutes_left: minsDisp, join_url: link },
       })
-      .catch(() => {}); // silently ignore if Edge Function is not deployed yet
+      .catch(() => {});
   }
 }
 
-// ── Main hook ─────────────────────────────────────────────────────────────────
+// ── Hook ─────────────────────────────────────────────────────────────────────
+
 export function useTimetableNotifications() {
   const { user, profile, hasRole } = useAuth();
   const timerRef  = useRef<ReturnType<typeof setInterval> | null>(null);
-  const swInitRef = useRef(false);
+  const initRef   = useRef(false);
 
   useEffect(() => {
     if (!user || !profile) return;
-
-    // Admins don't have timetable slots — skip
     if (hasRole("admin")) return;
 
-    const isTeacher = hasRole("teacher");
+    const isTeacher     = hasRole("teacher");
+    const studentLevel  = (profile as any).level ?? (profile as any).course_level ?? "beginner";
 
-    // Register service worker once per session
-    if (!swInitRef.current) {
-      swInitRef.current = true;
-      registerServiceWorker(user.id);
+    // Register SW + push subscription once per session
+    if (!initRef.current) {
+      initRef.current = true;
+      ensureServiceWorker().then(reg => {
+        if (reg) savePushSubscription(user.id, reg);
+      });
+      // Prompt for permission if not yet decided
+      if (Notification.permission === "default") {
+        Notification.requestPermission().catch(() => {});
+      }
     }
-
-    const studentLevel: string =
-      (profile as any).level ||
-      (profile as any).course_level ||
-      "beginner";
 
     const check = async () => {
       const todayIndex = new Date().getDay();
-
-      // ── Fetch today's active slots (with subjects.teacher_id) ──────────────
       const { data: slots, error } = await supabase
         .from("subject_timetable")
         .select(`
@@ -325,36 +287,24 @@ export function useTimetableNotifications() {
 
       if (error || !slots) return;
 
-      if (isTeacher) {
-        // ── TEACHER: only slots taught by this user ─────────────────────────
-        for (const slot of slots as any[]) {
+      for (const slot of slots as any[]) {
+        if (isTeacher) {
           if (slot.subjects?.teacher_id !== user.id) continue;
-          await processSlot(slot, user.id, "teacher", "/teacher/classes");
-        }
-      } else {
-        // ── STUDENT: level-filtered slots ───────────────────────────────────
-        for (const slot of slots as any[]) {
-          const slotLevels: string[] = slot.levels || [];
-          const visibleToMe =
+          await processSlot(slot, user.id, "/teacher/classes");
+        } else {
+          const slotLevels: string[] = slot.levels ?? [];
+          const visible =
             slotLevels.length === 0 ||
             slotLevels.includes(studentLevel) ||
             slotLevels.includes("all");
-          if (!visibleToMe) continue;
-          await processSlot(slot, user.id, "student", "/student/timetable");
+          if (!visible) continue;
+          await processSlot(slot, user.id, "/student/timetable");
         }
       }
     };
 
-    // Request permission on mount (no-op if already granted/denied)
-    if (Notification.permission === "default") {
-      Notification.requestPermission().catch(() => {});
-    }
-
     check();
     timerRef.current = setInterval(check, CHECK_INTERVAL_MS);
-
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [user?.id, profile]); // eslint-disable-line react-hooks/exhaustive-deps
 }
