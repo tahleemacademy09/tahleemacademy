@@ -434,20 +434,20 @@ const GlobalPlayer: React.FC<{ ctx: RecordingPlayerContextType }> = ({ ctx }) =>
             </div>
           </div>
 
-          {/* Speed — clearly readable: dark text on gold pill ── */}
+          {/* Speed — min-width so "1.25×" never clips ─────────── */}
           <div style={{ position: "relative", flexShrink: 0 }}>
             <button
               onClick={() => setSS(s => !s)}
               style={{
-                padding: "5px 8px", borderRadius: 8,
-                /* always gold background so text contrast is guaranteed */
+                minWidth: 46,
+                padding: "5px 7px", borderRadius: 8,
                 background: GOLD,
                 border: "none",
-                color: "#111",           /* dark text on gold = always readable */
+                color: "#111",
                 fontSize: 12, fontWeight: 900,
                 cursor: "pointer", lineHeight: 1,
-                letterSpacing: "-0.3px",
-                boxShadow: showSpeeds ? `0 0 0 2px ${GOLD}` : "none",
+                textAlign: "center", whiteSpace: "nowrap",
+                boxShadow: showSpeeds ? `0 0 0 2px rgba(201,168,76,.6)` : "none",
               }}
             >
               {speedLabel}
@@ -498,19 +498,34 @@ const GlobalPlayer: React.FC<{ ctx: RecordingPlayerContextType }> = ({ ctx }) =>
           </button>
         </div>
 
-        {/* ─ Progress line — tap to seek ──────────────────────── */}
-        <div
-          style={{ height: 3, background: "rgba(255,255,255,.07)", cursor: "pointer", position: "relative" }}
-          onClick={e => {
-            const r = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
-            seek(((e.clientX - r.left) / r.width) * (duration || 0));
-          }}
-        >
+        {/* ─ Seek bar — swipeable range over visual track ─────── */}
+        <div style={{ position: "relative", height: 20, flexShrink: 0 }}>
+          {/* Visual track + filled bar */}
           <div style={{
-            height: "100%", width: `${pct}%`,
-            background: GOLD,
-            transition: seekDraft !== null ? "none" : "width .15s linear",
-          }} />
+            position: "absolute", left: 0, right: 0,
+            top: "50%", transform: "translateY(-50%)",
+            height: 3, background: "rgba(255,255,255,.1)", pointerEvents: "none",
+          }}>
+            <div style={{
+              height: "100%", width: `${pct}%`,
+              background: GOLD,
+              transition: seekDraft !== null ? "none" : "width .12s linear",
+            }} />
+          </div>
+          {/* Full-height invisible range for large touch target */}
+          <input
+            type="range"
+            min={0}
+            max={duration || 100}
+            step={1}
+            value={displayTime}
+            onChange={e => handleSeek(parseFloat(e.target.value))}
+            style={{
+              position: "absolute", inset: 0,
+              width: "100%", height: "100%",
+              opacity: 0, cursor: "pointer", margin: 0,
+            }}
+          />
         </div>
       </div>
 
