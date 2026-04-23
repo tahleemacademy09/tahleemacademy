@@ -453,31 +453,6 @@ const GlobalPlayer: React.FC<{ ctx: RecordingPlayerContextType }> = ({ ctx }) =>
               {speedLabel}
             </button>
 
-            {/* Speed picker — opens ABOVE, full dark background */}
-            {showSpeeds && (
-              <div style={{
-                position: "absolute", bottom: "calc(100% + 8px)", right: 0,
-                background: "#1a1a1a",
-                border: `1.5px solid ${GOLD}`,
-                borderRadius: 12, overflow: "hidden",
-                minWidth: 76, zIndex: 10001,
-                boxShadow: "0 8px 24px rgba(0,0,0,.8)",
-              }}>
-                {SPEEDS.map(s => (
-                  <button key={s} onClick={() => { setSpeed(s); setSS(false); }}
-                    style={{
-                      display: "block", width: "100%", padding: "10px 0",
-                      background: s === speed ? GOLD : "transparent",
-                      border: "none",
-                      color: s === speed ? "#111" : "#ccc",
-                      fontSize: 13, fontWeight: s === speed ? 900 : 500,
-                      cursor: "pointer", textAlign: "center",
-                    }}>
-                    {s}×
-                  </button>
-                ))}
-              </div>
-            )}
           </div>
 
           {/* Mute */}
@@ -528,6 +503,35 @@ const GlobalPlayer: React.FC<{ ctx: RecordingPlayerContextType }> = ({ ctx }) =>
           />
         </div>
       </div>
+
+      {/* Speed picker — rendered OUTSIDE overflow:hidden so it's never clipped */}
+      {showSpeeds && (
+        <div style={{
+          position: "absolute",
+          bottom: "calc(100% + 6px)", /* floats above the card */
+          right: 54,                  /* aligns above the speed button */
+          background: "#1a1a1a",
+          border: `1.5px solid ${GOLD}`,
+          borderRadius: 12, overflow: "hidden",
+          minWidth: 80, zIndex: 10002,
+          boxShadow: "0 8px 28px rgba(0,0,0,.9)",
+        }}>
+          {SPEEDS.map(s => (
+            <button key={s} onClick={() => { setSpeed(s); setSS(false); }}
+              style={{
+                display: "block", width: "100%", padding: "11px 0",
+                background: s === speed ? GOLD : "transparent",
+                border: "none",
+                color: s === speed ? "#111" : "#ccc",
+                fontSize: 13, fontWeight: s === speed ? 900 : 500,
+                cursor: "pointer", textAlign: "center",
+                whiteSpace: "nowrap",
+              }}>
+              {s}×
+            </button>
+          ))}
+        </div>
+      )}
 
       {error && (
         <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0,
