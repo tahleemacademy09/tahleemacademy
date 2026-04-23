@@ -127,7 +127,6 @@ function PreviewOverlay({ url, type, title, onClose, materialId }: {
   const isAud = type === "Audio"    || /\.(mp3|wav|m4a|aac|ogg|flac)(\?|$)/i.test(url);
   const isDoc = type === "Document" || /\.(doc|docx|xls|xlsx|ppt|pptx|odt|csv|rtf)(\?|$)/i.test(url);
   const isLnk = type === "Link";
-  const googleViewerUrl = `https://docs.google.com/gviewer?url=${encodeURIComponent(url)}&embedded=true`;
   const storageKey = materialId ? `tahleem_pos_${materialId}` : null;
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -212,35 +211,55 @@ function PreviewOverlay({ url, type, title, onClose, materialId }: {
             />
           </div>
         )}
-        {isLnk && !isImg && !isPdf && !isVid && !isAud && (
-          <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column" }}>
-            <iframe
-              src={url}
-              title={title}
-              style={{ flex: 1, width: "100%", border: "none" }}
-              sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
-            />
-            <div style={{ padding: "8px 16px", background: "rgba(0,0,0,.65)", textAlign: "center" }}>
-              <p style={{ color: "rgba(255,255,255,.5)", fontSize: 11, margin: 0 }}>
-                Page blocked from embedding?{" "}
-                <a href={url} target="_blank" rel="noopener noreferrer" style={{ color: "#93C5FD", textDecoration: "none", fontWeight: 600 }}>Open in new tab ↗</a>
-              </p>
+        {isLnk && !isImg && !isPdf && !isVid && !isAud && (() => {
+          const isYT      = url.includes("youtube.com") || url.includes("youtu.be");
+          const isGDrive  = url.includes("drive.google.com") || url.includes("docs.google.com");
+          const ytEmbed   = (u: string) => {
+            const m = u.match(/(?:v=|youtu\.be\/|embed\/)([A-Za-z0-9_-]{11})/);
+            return m ? `https://www.youtube.com/embed/${m[1]}?autoplay=1&rel=0` : u;
+          };
+          const gdEmbed   = (u: string) => u.replace("/view", "/preview");
+          const embedSrc  = isYT ? ytEmbed(url) : isGDrive ? gdEmbed(url) : url;
+          return (
+            <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column" }}>
+              <iframe
+                src={embedSrc}
+                title={title}
+                style={{ flex: 1, width: "100%", border: "none" }}
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
+                sandbox={isYT || isGDrive ? undefined : "allow-scripts allow-same-origin allow-forms allow-popups"}
+              />
+              {!isYT && !isGDrive && (
+                <div style={{ padding: "8px 16px", background: "rgba(0,0,0,.65)", textAlign: "center" }}>
+                  <p style={{ color: "rgba(255,255,255,.5)", fontSize: 11, margin: 0 }}>
+                    Page blocked from embedding?{" "}
+                    <a href={url} target="_blank" rel="noopener noreferrer" style={{ color: "#93C5FD", textDecoration: "none", fontWeight: 600 }}>Open in new tab ↗</a>
+                  </p>
+                </div>
+              )}
             </div>
-          </div>
-        )}
-        {isDoc && !isImg && !isPdf && !isVid && !isAud && !isLnk && (
-          <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column" }}>
-            <iframe src={googleViewerUrl} title={title} style={{ flex: 1, width: "100%", border: "none" }} />
-            <div style={{ padding: "8px 16px", background: "rgba(0,0,0,.65)", textAlign: "center" }}>
-              <p style={{ color: "rgba(255,255,255,.5)", fontSize: 11, margin: 0 }}>
-                Preview not loading?{" "}
-                <a href={url} target="_blank" rel="noopener noreferrer" style={{ color: "#93C5FD", textDecoration: "none", fontWeight: 600 }}>Open in new tab ↗</a>
-                {" · "}
-                <a href={url} download target="_blank" rel="noopener noreferrer" style={{ color: "#86EFAC", textDecoration: "none", fontWeight: 600 }}>Download ↓</a>
-              </p>
+          );
+        })()}
+        {isDoc && !isImg && !isPdf && !isVid && !isAud && !isLnk && (() => {
+          const isGDrive = url.includes("drive.google.com") || url.includes("docs.google.com");
+          const docSrc   = isGDrive
+            ? url.replace("/view", "/preview")
+            : `https://docs.google.com/gviewer?url=${encodeURIComponent(url)}&embedded=true`;
+          return (
+            <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column" }}>
+              <iframe src={docSrc} title={title} style={{ flex: 1, width: "100%", border: "none" }} allowFullScreen />
+              <div style={{ padding: "8px 16px", background: "rgba(0,0,0,.65)", textAlign: "center" }}>
+                <p style={{ color: "rgba(255,255,255,.5)", fontSize: 11, margin: 0 }}>
+                  Preview not loading?{" "}
+                  <a href={url} target="_blank" rel="noopener noreferrer" style={{ color: "#93C5FD", textDecoration: "none", fontWeight: 600 }}>Open in new tab ↗</a>
+                  {" · "}
+                  <a href={url} download target="_blank" rel="noopener noreferrer" style={{ color: "#86EFAC", textDecoration: "none", fontWeight: 600 }}>Download ↓</a>
+                </p>
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
         {!isImg && !isPdf && !isVid && !isAud && !isLnk && !isDoc && (
           <div style={{ textAlign: "center", color: "#fff" }}>
             <File size={64} style={{ opacity: .4, marginBottom: 20 }} />
