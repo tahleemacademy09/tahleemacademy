@@ -118,18 +118,43 @@ async function xhrUpload(
 }
 
 // ══ PREVIEW OVERLAY ═════════════════════════════════════════════════
-function PreviewOverlay({ url, type, title, onClose }: {
-  url: string; type: MatType; title: string; onClose: () => void;
+function PreviewOverlay({ url, type, title, onClose, materialId }: {
+  url: string; type: MatType; title: string; onClose: () => void; materialId?: string;
 }) {
   const isImg = type === "Image"    || /\.(jpg|jpeg|png|gif|webp|svg)(\?|$)/i.test(url);
   const isPdf = type === "PDF"      || /\.pdf(\?|$)/i.test(url);
   const isVid = type === "Video"    || /\.(mp4|webm|mov|m4v)(\?|$)/i.test(url);
   const isAud = type === "Audio"    || /\.(mp3|wav|m4a|aac|ogg|flac)(\?|$)/i.test(url);
   const isDoc = type === "Document" || /\.(doc|docx|xls|xlsx|ppt|pptx|odt|csv|rtf)(\?|$)/i.test(url);
+  const isLnk = type === "Link";
   const googleViewerUrl = `https://docs.google.com/gviewer?url=${encodeURIComponent(url)}&embedded=true`;
+  const storageKey = materialId ? `tahleem_pos_${materialId}` : null;
 
-  const gateRef = useRef(true);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const gateRef  = useRef(true);
+
   useEffect(() => { const t = setTimeout(() => { gateRef.current = false; }, 80); return () => clearTimeout(t); }, []);
+
+  // ── Resume helpers ────────────────────────────────────────────────
+  const onVideoLoad = () => {
+    if (!storageKey || !videoRef.current) return;
+    const saved = localStorage.getItem(storageKey);
+    if (saved) videoRef.current.currentTime = parseFloat(saved);
+  };
+  const onVideoTime = () => {
+    if (!storageKey || !videoRef.current) return;
+    localStorage.setItem(storageKey, String(videoRef.current.currentTime));
+  };
+  const onAudioLoad = () => {
+    if (!storageKey || !audioRef.current) return;
+    const saved = localStorage.getItem(storageKey);
+    if (saved) audioRef.current.currentTime = parseFloat(saved);
+  };
+  const onAudioTime = () => {
+    if (!storageKey || !audioRef.current) return;
+    localStorage.setItem(storageKey, String(audioRef.current.currentTime));
+  };
 
   return createPortal(
     <div
@@ -160,7 +185,16 @@ function PreviewOverlay({ url, type, title, onClose }: {
         {isImg && <img src={url} alt={title} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 8 }} />}
         {isPdf && !isImg && <iframe src={url} title={title} style={{ width: "100%", height: "100%", border: "none" }} />}
         {isVid && !isImg && !isPdf && (
-          <video src={url} controls autoPlay playsInline style={{ width: "100%", height: "100%", objectFit: "contain", background: "#000" }} />
+          <video
+            ref={videoRef}
+            src={url}
+            controls
+            autoPlay
+            playsInline
+            onLoadedMetadata={onVideoLoad}
+            onTimeUpdate={onVideoTime}
+            style={{ width: "100%", height: "100%", objectFit: "contain", background: "#000" }}
+          />
         )}
         {isAud && !isImg && !isPdf && !isVid && (
           <div style={{ background: "#1a1a2e", borderRadius: 20, padding: "40px 32px", textAlign: "center", minWidth: 280 }}>
@@ -168,10 +202,33 @@ function PreviewOverlay({ url, type, title, onClose }: {
               <Music size={32} color={MAT_CFG.Audio.text} />
             </div>
             <p style={{ color: "#fff", fontWeight: 700, marginBottom: 16, fontSize: 15 }}>{title}</p>
-            <audio src={url} controls style={{ width: "100%", maxWidth: 400 }} />
+            <audio
+              ref={audioRef}
+              src={url}
+              controls
+              onLoadedMetadata={onAudioLoad}
+              onTimeUpdate={onAudioTime}
+              style={{ width: "100%", maxWidth: 400 }}
+            />
           </div>
         )}
-        {isDoc && !isImg && !isPdf && !isVid && !isAud && (
+        {isLnk && !isImg && !isPdf && !isVid && !isAud && (
+          <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column" }}>
+            <iframe
+              src={url}
+              title={title}
+              style={{ flex: 1, width: "100%", border: "none" }}
+              sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+            />
+            <div style={{ padding: "8px 16px", background: "rgba(0,0,0,.65)", textAlign: "center" }}>
+              <p style={{ color: "rgba(255,255,255,.5)", fontSize: 11, margin: 0 }}>
+                Page blocked from embedding?{" "}
+                <a href={url} target="_blank" rel="noopener noreferrer" style={{ color: "#93C5FD", textDecoration: "none", fontWeight: 600 }}>Open in new tab ↗</a>
+              </p>
+            </div>
+          </div>
+        )}
+        {isDoc && !isImg && !isPdf && !isVid && !isAud && !isLnk && (
           <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column" }}>
             <iframe src={googleViewerUrl} title={title} style={{ flex: 1, width: "100%", border: "none" }} />
             <div style={{ padding: "8px 16px", background: "rgba(0,0,0,.65)", textAlign: "center" }}>
@@ -184,7 +241,7 @@ function PreviewOverlay({ url, type, title, onClose }: {
             </div>
           </div>
         )}
-        {!isImg && !isPdf && !isVid && !isAud && !isDoc && (
+        {!isImg && !isPdf && !isVid && !isAud && !isLnk && !isDoc && (
           <div style={{ textAlign: "center", color: "#fff" }}>
             <File size={64} style={{ opacity: .4, marginBottom: 20 }} />
             <p style={{ fontSize: 16, fontWeight: 700, marginBottom: 16 }}>{title}</p>
@@ -654,6 +711,11 @@ function MaterialCard({ m, isPrivileged, onEdit, onDelete }: {
   const [expanded,    setExpanded]    = useState(false);
   const [previewErr,  setPreviewErr]  = useState("");
 
+  // Resume badge — read saved position from localStorage
+  const posKey = `tahleem_pos_${m.id}`;
+  const savedSecs = (() => { try { const v = localStorage.getItem(posKey); return v ? parseFloat(v) : null; } catch { return null; } })();
+  const fmtTime = (s: number) => { const m = Math.floor(s / 60); const sec = Math.floor(s % 60); return `${m}:${sec.toString().padStart(2, "0")}`; };
+
   const cfg  = MAT_CFG[(m.material_type as MatType) || "PDF"];
   const Icon = cfg.icon;
   const levels = parseLevels(m.level);
@@ -678,8 +740,8 @@ function MaterialCard({ m, isPrivileged, onEdit, onDelete }: {
   };
 
   const handlePreview = async () => {
-    if (isLink) { window.open(m.file_url, "_blank"); return; }
     if (isText) { setExpanded(e => !e); return; }
+    if (isLink) { setResolvedUrl(m.file_url); setPreviewOpen(true); return; }
     const url = await resolveUrl();
     if (url) setPreviewOpen(true);
   };
@@ -716,6 +778,11 @@ function MaterialCard({ m, isPrivileged, onEdit, onDelete }: {
                 </span>
               ))}
               {m.file_size && <span style={{ fontSize: 10, color: "#9CA3AF" }}>{fmtSize(m.file_size)}</span>}
+              {savedSecs !== null && (m.material_type === "Video" || m.material_type === "Audio") && (
+                <span style={{ display: "flex", alignItems: "center", gap: 3, padding: "2px 8px", borderRadius: 20, fontSize: 10, fontWeight: 700, background: "#FFFBEB", color: "#B45309", border: "1px solid #FDE68A" }}>
+                  ▶ Resume {fmtTime(savedSecs)}
+                </span>
+              )}
               {previewErr && <span style={{ fontSize: 10, color: "#DC2626" }}>⚠ {previewErr}</span>}
             </div>
           </div>
@@ -769,7 +836,7 @@ function MaterialCard({ m, isPrivileged, onEdit, onDelete }: {
       </div>
 
       {previewOpen && resolvedUrl && (
-        <PreviewOverlay url={resolvedUrl} type={m.material_type as MatType} title={m.title} onClose={() => setPreviewOpen(false)} />
+        <PreviewOverlay url={resolvedUrl} type={m.material_type as MatType} title={m.title} onClose={() => setPreviewOpen(false)} materialId={m.id} />
       )}
     </>
   );
