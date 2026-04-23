@@ -179,7 +179,7 @@ function PreviewOverlay({ url, type, title, onClose, materialId }: {
       </div>
 
       <div
-        style={{ flex: 1, overflow: "hidden", display: "flex", alignItems: isImg || isAud ? "center" : "stretch", justifyContent: isImg || isAud ? "center" : "stretch", padding: isImg || isAud ? 12 : 0 }}
+        style={{ flex: 1, overflow: "hidden", display: "flex", alignItems: isImg || isAud ? "center" : "stretch", justifyContent: isImg || isAud ? "center" : "stretch", padding: isImg || isAud ? "12px 12px 72px" : "0 0 60px" }}
         onClick={e => e.stopPropagation()}
       >
         {isImg && <img src={url} alt={title} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 8 }} />}
@@ -941,7 +941,7 @@ function RecordingMiniPlayer({ subjectId }: { subjectId: string }) {
 
   return createPortal(
     <div style={{
-      position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 10001,
+      position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 99999,
       background: expanded ? "#0d1f14" : "linear-gradient(90deg,#0d1f14ee,#132e1eee)",
       borderTop: "1px solid rgba(255,255,255,0.1)",
       boxShadow: "0 -4px 24px rgba(0,0,0,0.35)",
