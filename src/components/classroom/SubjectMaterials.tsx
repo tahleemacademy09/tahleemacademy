@@ -822,11 +822,8 @@ export default function SubjectMaterials({ subjectId, subjectTitle }: SubjectMat
   const filtered = (materials as any[]).filter(m => {
     const matchSearch = !search || m.title?.toLowerCase().includes(search.toLowerCase()) || m.title_ar?.toLowerCase().includes(search.toLowerCase());
     const matchType   = typeFilter === "all" || m.material_type === typeFilter;
-    // Level access: students only see materials for their level (or "all")
-    const matchLevel  = isPrivileged || (() => {
-      const lvs = parseLevels(m.level);
-      return lvs.has(studentLevel) || [...lvs].length === 3; // size 3 means "all"
-    })();
+    // All users (students, teachers, admins) see all materials regardless of level
+    const matchLevel = true;
     return matchSearch && matchType && matchLevel;
   });
 
