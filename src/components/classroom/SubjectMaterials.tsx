@@ -24,6 +24,7 @@ import {
   Link as LinkIcon, File, Download, Trash2, Edit2, X, Check,
   Plus, Loader2, ExternalLink, FileSpreadsheet, Eye,
   ChevronDown, ChevronUp, Search, AlertCircle,
+  Play, Pause, Volume2, VolumeX, Headphones, Radio,
 } from "lucide-react";
 
 // ── Constants ─────────────────────────────────────────────────────────
@@ -861,6 +862,209 @@ function MaterialCard({ m, isPrivileged, onEdit, onDelete }: {
   );
 }
 
+// ══ RECORDING MINI PLAYER (fixed bottom bar) ══════════════════════════
+const REC_POS_KEY = (id: string) => `tahleem_rec_${id}`;
+
+function RecordingMiniPlayer({ subjectId }: { subjectId: string }) {
+  const [expanded,   setExpanded]   = useState(false);
+  const [selected,   setSelected]   = useState<any>(null);
+  const [signedUrl,  setSignedUrl]  = useState<string | null>(null);
+  const [loadingUrl, setLoadingUrl] = useState(false);
+  const [playing,    setPlaying]    = useState(false);
+  const [currentTime, setCurrent]   = useState(0);
+  const [duration,   setDuration]   = useState(0);
+  const [muted,      setMuted]      = useState(false);
+  const [volume,     setVolume]     = useState(1);
+  const audioRef    = useRef<HTMLAudioElement>(null);
+  const pendingSeek = useRef(0);
+
+  const { data: recordings = [] } = useQuery({
+    queryKey: ["subject-recordings", subjectId],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("class_recordings")
+        .select("*")
+        .eq("subject_id", subjectId)
+        .order("created_at", { ascending: false });
+      return data || [];
+    },
+  });
+
+  // Restore last-played recording on mount
+  useEffect(() => {
+    if (!recordings.length) return;
+    try {
+      const saved = JSON.parse(localStorage.getItem(REC_POS_KEY(subjectId)) || "{}");
+      if (saved.recordingId) {
+        const rec = recordings.find((r: any) => r.id === saved.recordingId);
+        if (rec) { pendingSeek.current = saved.time ?? 0; loadRecording(rec); setExpanded(true); }
+      }
+    } catch {}
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recordings.length]);
+
+  const saveRecPos = (patch: any) => {
+    try {
+      const cur = JSON.parse(localStorage.getItem(REC_POS_KEY(subjectId)) || "{}");
+      localStorage.setItem(REC_POS_KEY(subjectId), JSON.stringify({ ...cur, ...patch }));
+    } catch {}
+  };
+
+  const loadRecording = async (rec: any) => {
+    setSelected(rec); setPlaying(false); setCurrent(0); setSignedUrl(null);
+    if (!rec?.file_url) return;
+    setLoadingUrl(true);
+    const url = rec.file_url.startsWith("http")
+      ? rec.file_url
+      : (await getSignedUrl(rec.file_url, 7200) || null);
+    setSignedUrl(url);
+    setLoadingUrl(false);
+    saveRecPos({ recordingId: rec.id });
+  };
+
+  const togglePlay = () => {
+    if (!audioRef.current) return;
+    if (playing) { audioRef.current.pause(); setPlaying(false); }
+    else { audioRef.current.play(); setPlaying(true); }
+  };
+
+  const seek = (v: number) => {
+    if (audioRef.current) { audioRef.current.currentTime = v; setCurrent(v); }
+  };
+
+  const fmt = (s: number) =>
+    `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+
+  if (!recordings.length) return null;
+
+  const GOLD = "#C9A84C";
+
+  return createPortal(
+    <div style={{
+      position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 10001,
+      background: expanded ? "#0d1f14" : "linear-gradient(90deg,#0d1f14ee,#132e1eee)",
+      borderTop: "1px solid rgba(255,255,255,0.1)",
+      boxShadow: "0 -4px 24px rgba(0,0,0,0.35)",
+      transition: "all .25s",
+    }}>
+      {signedUrl && (
+        <audio
+          ref={audioRef}
+          src={signedUrl}
+          onLoadedMetadata={() => {
+            const d = audioRef.current?.duration || 0;
+            setDuration(d);
+            if (pendingSeek.current > 0 && audioRef.current) {
+              audioRef.current.currentTime = Math.min(pendingSeek.current, d);
+              setCurrent(pendingSeek.current);
+              pendingSeek.current = 0;
+            }
+          }}
+          onTimeUpdate={() => {
+            const t = audioRef.current?.currentTime || 0;
+            setCurrent(t);
+            if (Math.floor(t) % 5 === 0) saveRecPos({ time: t });
+          }}
+          onEnded={() => { setPlaying(false); saveRecPos({ time: 0 }); }}
+          style={{ display: "none" }}
+        />
+      )}
+
+      {/* ── Collapsed bar ── */}
+      <button
+        onClick={() => setExpanded(e => !e)}
+        style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", border: "none", cursor: "pointer", background: "transparent", color: "#fff", minHeight: 52 }}
+      >
+        <div style={{ width: 30, height: 30, borderRadius: 8, background: playing ? GOLD : "rgba(201,164,76,0.2)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          {playing ? <Pause size={14} color="#111" /> : <Headphones size={14} color={GOLD} />}
+        </div>
+        <div style={{ flex: 1, textAlign: "left", minWidth: 0 }}>
+          <p style={{ margin: 0, fontSize: 12, fontWeight: 700, color: "#e8f5e9" }}>
+            🎙️ Class Recordings
+          </p>
+          {selected && !expanded && (
+            <p style={{ margin: 0, fontSize: 10, color: GOLD, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {playing ? `▶ ${fmt(currentTime)} / ${fmt(duration)}` : (selected.teacher_name || "Recording selected")}
+            </p>
+          )}
+        </div>
+        {/* Progress bar when playing + collapsed */}
+        {selected && signedUrl && !expanded && duration > 0 && (
+          <div style={{ width: 80, height: 3, background: "rgba(255,255,255,.15)", borderRadius: 2, overflow: "hidden", flexShrink: 0 }}>
+            <div style={{ width: `${(currentTime / duration) * 100}%`, height: "100%", background: GOLD, borderRadius: 2, transition: "width .5s linear" }} />
+          </div>
+        )}
+        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", flexShrink: 0 }}>
+          {recordings.length} rec{recordings.length !== 1 ? "s" : ""}
+        </span>
+        {expanded ? <ChevronDown size={14} color="rgba(255,255,255,0.4)" /> : <ChevronUp size={14} color="rgba(255,255,255,0.4)" />}
+      </button>
+
+      {expanded && (
+        <div style={{ padding: "0 16px 16px", maxHeight: "55vh", overflowY: "auto" }}>
+          {/* Recording list */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: selected ? 12 : 0 }}>
+            {(recordings as any[]).map((rec: any) => {
+              const isActive = selected?.id === rec.id;
+              const dateStr  = rec.created_at ? new Date(rec.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
+              const mins     = rec.duration_seconds ? Math.floor(rec.duration_seconds / 60) : null;
+              return (
+                <button key={rec.id} onClick={() => loadRecording(rec)}
+                  style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 10, border: `1.5px solid ${isActive ? GOLD + "60" : "rgba(255,255,255,0.07)"}`, background: isActive ? "rgba(201,164,76,0.12)" : "rgba(255,255,255,0.04)", cursor: "pointer", textAlign: "left", minHeight: 48 }}>
+                  <div style={{ width: 30, height: 30, borderRadius: 8, flexShrink: 0, background: isActive ? GOLD : "rgba(255,255,255,0.08)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    {isActive && playing
+                      ? <Radio size={13} color="#111" style={{ animation: "sm-pulse 1s infinite" }} />
+                      : <Play size={12} color={isActive ? "#111" : "rgba(255,255,255,0.5)"} />}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: isActive ? GOLD : "#e8f5e9", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {rec.teacher_name || "Class Recording"}
+                    </p>
+                    <p style={{ margin: 0, fontSize: 10, color: "rgba(255,255,255,0.4)" }}>
+                      {dateStr}{mins ? ` · ${mins}m` : ""}
+                    </p>
+                  </div>
+                  {isActive && loadingUrl && <Loader2 size={13} color={GOLD} style={{ animation: "sm-spin .8s linear infinite", flexShrink: 0 }} />}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Player controls */}
+          {selected && signedUrl && (
+            <div style={{ background: "rgba(255,255,255,0.04)", borderRadius: 14, padding: "14px 14px 12px", border: "1px solid rgba(255,255,255,0.08)" }}>
+              <input type="range" min={0} max={duration || 100} step={0.5} value={currentTime}
+                onChange={e => seek(parseFloat(e.target.value))}
+                style={{ width: "100%", accentColor: GOLD, height: 3, cursor: "pointer", display: "block" }} />
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 4, marginBottom: 10 }}>
+                <span>{fmt(currentTime)}</span><span>{fmt(duration)}</span>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <button onClick={() => seek(Math.max(0, currentTime - 10))}
+                  style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", cursor: "pointer", fontSize: 11, padding: "2px 4px", flexShrink: 0 }}>⟪ 10s</button>
+                <button onClick={togglePlay}
+                  style={{ width: 42, height: 42, borderRadius: "50%", background: GOLD, border: "none", color: G, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: `0 2px 12px ${GOLD}66`, padding: 0 }}>
+                  {playing ? <Pause size={16} /> : <Play size={16} style={{ marginLeft: 2 }} />}
+                </button>
+                <button onClick={() => seek(Math.min(duration, currentTime + 10))}
+                  style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", cursor: "pointer", fontSize: 11, padding: "2px 4px", flexShrink: 0 }}>10s ⟫</button>
+                <button onClick={() => { setMuted(m => !m); if (audioRef.current) audioRef.current.muted = !muted; }}
+                  style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", cursor: "pointer", padding: 0, marginLeft: 4 }}>
+                  {muted || volume === 0 ? <VolumeX size={15} /> : <Volume2 size={15} />}
+                </button>
+                <input type="range" min={0} max={1} step={0.05} value={muted ? 0 : volume}
+                  onChange={e => { const v = parseFloat(e.target.value); setVolume(v); setMuted(v === 0); if (audioRef.current) audioRef.current.volume = v; }}
+                  style={{ flex: 1, accentColor: GOLD, height: 3, cursor: "pointer" }} />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>,
+    document.body
+  );
+}
+
 // ══ MAIN COMPONENT ═══════════════════════════════════════════════════
 interface SubjectMaterialsProps { subjectId: string; subjectTitle?: string; }
 
@@ -921,8 +1125,8 @@ export default function SubjectMaterials({ subjectId, subjectTitle }: SubjectMat
   );
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+    <div style={{ display: "flex", flexDirection: "column", gap: 14, paddingBottom: 72 }}>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}} @keyframes sm-spin{to{transform:rotate(360deg)}} @keyframes sm-pulse{0%,100%{opacity:1}50%{opacity:.4}}`}</style>
 
       {/* Toolbar */}
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -1008,6 +1212,9 @@ export default function SubjectMaterials({ subjectId, subjectTitle }: SubjectMat
           }}
         />
       )}
+
+      {/* Recording player — fixed bottom bar, stays visible while viewing materials */}
+      <RecordingMiniPlayer subjectId={subjectId} />
     </div>
   );
 }
