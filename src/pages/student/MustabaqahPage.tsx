@@ -47,8 +47,7 @@ const GlobalStyles = () => (
     @keyframes goldShimmer {
       0%   { background-position: -200% center; }
       100% { background-position:  200% center; }
-    }
-    @keyframes pulseRing {
+    }    @keyframes pulseRing {
       0%   { transform: scale(1);   opacity: 1; }
       100% { transform: scale(2.2); opacity: 0; }
     }
@@ -97,7 +96,6 @@ const GlobalStyles = () => (
     }
     .gold-btn:hover  { background-position: right center; transform: translateY(-1px); box-shadow: 0 8px 32px rgba(201,168,76,0.5); }
     .gold-btn:active { transform: scale(0.97); }
-
     .glass-card {
       background: rgba(22,61,40,0.55);
       backdrop-filter: blur(20px);
@@ -147,8 +145,7 @@ const IslamicBackground = () => (
       position: "absolute", top: "50%", left: "50%",
       width: "180vmax", height: "180vmax",
       transform: "translate(-50%,-50%)",
-      opacity: 0.045,
-      animation: "rotatePattern 120s linear infinite",
+      opacity: 0.045,      animation: "rotatePattern 120s linear infinite",
     }} viewBox="0 0 800 800" xmlns="http://www.w3.org/2000/svg">
       <defs>
         <pattern id="star8" x="0" y="0" width="100" height="100" patternUnits="userSpaceOnUse">
@@ -197,8 +194,7 @@ const IslamicBackground = () => (
       width: "40vw", height: "40vw", borderRadius: "50%",
       background: "radial-gradient(circle, rgba(201,168,76,0.04) 0%, transparent 70%)",
       animation: "floatUp 8s ease-in-out infinite",
-    }}/>
-  </div>
+    }}/>  </div>
 );
 
 /* ══════════════════════════════════════════════════════════════
@@ -247,8 +243,7 @@ const StopFlash = ({ visible }: { visible: boolean }) => (
         </div>
       </div>
     )}
-  </div>
-);
+  </div>);
 
 /* ══════════════════════════════════════════════════════════════
    AVATAR
@@ -297,8 +292,7 @@ const Input = ({ label, value, onChange, placeholder, type = "text", ...rest }: 
         border: "1.5px solid rgba(201,168,76,0.25)", borderRadius: 12,
         padding: "12px 16px", color: "#fff", fontSize: 15,
         transition: "border-color 0.2s, box-shadow 0.2s",
-      }}
-      {...rest}
+      }}      {...rest}
     />
   </div>
 );
@@ -347,8 +341,7 @@ const playCalledSound = () => {
       osc.type = "sine"; osc.frequency.value = freq;
       gain.gain.setValueAtTime(0, t + i * 0.12);
       gain.gain.linearRampToValueAtTime(0.3, t + i * 0.12 + 0.05);
-      gain.gain.exponentialRampToValueAtTime(0.001, t + i * 0.12 + 0.7);
-      osc.connect(gain); gain.connect(ctx.destination);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + i * 0.12 + 0.7);      osc.connect(gain); gain.connect(ctx.destination);
       osc.start(t + i * 0.12); osc.stop(t + i * 0.12 + 0.8);
     });
   } catch {}
@@ -397,8 +390,7 @@ const JUZ_NAMES: Record<number,string> = {
 };
 
 const SCOPE_OPTIONS = [
-  { id:"juz30",  label:"Juz 30 (Amma)",  labelAr:"جزء عم",             desc:"Short surahs — juniors" },
-  { id:"juz29",  label:"Juz 29–30",       labelAr:"جزء تبارك وعم",      desc:"Two final juz" },
+  { id:"juz30",  label:"Juz 30 (Amma)",  labelAr:"جزء عم",             desc:"Short surahs — juniors" },  { id:"juz29",  label:"Juz 29–30",       labelAr:"جزء تبارك وعم",      desc:"Two final juz" },
   { id:"full30", label:"Full 30 Juz",     labelAr:"القرآن كاملاً",       desc:"Entire Quran — advanced" },
   { id:"custom", label:"Custom Scope",    labelAr:"نطاق مخصص",           desc:"Pick specific juz/surah" },
 ];
@@ -447,8 +439,7 @@ const genRoomCode = () => {
 };
 
 const pickRandomScope = (scopeType: string) => {
-  if (scopeType === "juz30") {
-    const s = SURAHS.filter(s => s.juz === 30);
+  if (scopeType === "juz30") {    const s = SURAHS.filter(s => s.juz === 30);
     const chosen = s[Math.floor(Math.random() * s.length)];
     const ayah = Math.floor(Math.random() * chosen.v) + 1;
     return { label:`${chosen.en} (Ayah ${ayah})`, labelAr:`سورة ${chosen.ar} (الآية ${ayah})` };
@@ -488,16 +479,23 @@ const STATUS_ICON: Record<PStatus,string> = {
 export default function MustabaqahPage() {
   const { user, profile, hasRole } = useAuth() as any;
   const { toast } = useToast();
-  const isJudge = hasRole?.("admin") || hasRole?.("teacher");
+  const canJudge = hasRole?.("admin") || hasRole?.("teacher");
 
-  type View = "list"|"setup"|"join"|"arena"|"results";
+  type View = "list"|"setup"|"join"|"role_select"|"arena"|"results";
   const [view,          setView]          = useState<View>("list");
+  const [userRole,      setUserRole]      = useState<"judge"|"participant"|"observer"|null>(null);
   const [loading,       setLoading]       = useState(false);
   const [competitions,  setCompetitions]  = useState<Competition[]>([]);
   const [competition,   setCompetition]   = useState<Competition|null>(null);
   const [participants,  setParticipants]  = useState<Participant[]>([]);
-  const [attempts,      setAttempts]      = useState<Attempt[]>([]);
-  const [myParticipant, setMyParticipant] = useState<Participant|null>(null);
+  const [attempts,      setAttempts]      = useState<Attempt[]>([]);  const [myParticipant, setMyParticipant] = useState<Participant|null>(null);
+  const [chatMessages,  setChatMessages]  = useState<{id:string;name:string;text:string;time:string;isSystem?:boolean}[]>([]);
+  const [chatInput,     setChatInput]     = useState("");
+  const [showChat,      setShowChat]      = useState(false);
+  const [onlineUsers,   setOnlineUsers]   = useState<{name:string;role:string}[]>([]);
+
+  // Derived — judge if admin/teacher AND hasn't chosen observer/participant role
+  const isJudge = canJudge && userRole !== "observer" && userRole !== "participant";
 
   const [activeP,         setActiveP]         = useState<Participant|null>(null);
   const [currentAttempt,  setCurAttempt]       = useState<Attempt|null>(null);
@@ -510,18 +508,25 @@ export default function MustabaqahPage() {
   const [showProctor,     setShowProctor]      = useState(false);
   const [showScorePanel,  setShowScore]        = useState(false);
   const [judgeTab,        setJudgeTab]         = useState<"controls"|"roster">("roster");
+  const [calledScope,     setCalledScope]      = useState<{ label: string; labelAr: string } | null>(null);
+  const [audioReady,      setAudioReady]       = useState(false);
+  const [floatReactions,  setFloatReactions]   = useState<{ id: string; emoji: string; name: string; x: number }[]>([]);
 
   const [scoreBreak,   setScoreBreak]   = useState<Record<string,string>>({ tajweed:"", memorize:"", fluency:"", voice:"" });
   const [judgeComment, setJudgeComment] = useState("");
   const [localStream,  setLocalStream]  = useState<MediaStream|null>(null);
   const [micOn,        setMicOn]        = useState(false);
   const [camOn,        setCamOn]        = useState(false);
+  const [deleteModal,  setDeleteModal]  = useState<Competition|null>(null);
+  const [copyFlash,    setCopyFlash]    = useState(false);
 
   const [form, setForm] = useState({
     title:"", description:"", scope_type:"juz30",
     total_stages:5, time_limit:300, use_criteria:true, customJuz:30,
   });
-  const [joinForm, setJoinForm] = useState({ room_code:"", name:"", school:"" });
+  const [joinForm, setJoinForm] = useState({
+    room_code: "", name: profile?.full_name || "", school: profile?.school || "",
+  });
 
   const channelRef = useRef<any>(null);
   const timerRef   = useRef<any>(null);
@@ -536,29 +541,45 @@ export default function MustabaqahPage() {
   };
 
   /* Realtime */
-  useEffect(() => {
-    if (!competition) return;
+  useEffect(() => {    if (!competition) return;
     if (channelRef.current) supabase.removeChannel(channelRef.current);
     const ch = supabase.channel(`musabaqah:${competition.id}`)
       .on("broadcast", { event:"BELL" }, ({ payload }:any) => {
-        playBellSound(); setBellFlash(true); setBellCount(payload.count ?? 0);
+        setBellFlash(true); setBellCount(payload.count ?? 0);
         setTimeout(() => setBellFlash(false), 2500);
+        const ctx = getAudioCtx();
+        if (ctx.state === "running") { playBellSound(); }
+        else { ctx.resume().then(() => playBellSound()); }
       })
       .on("broadcast", { event:"STOP" }, () => {
-        playStopSound(); setStopFlash(true); setTimerActive(false);
+        setStopFlash(true); setTimerActive(false);
         setTimeout(() => setStopFlash(false), 2500);
+        const ctx = getAudioCtx();
+        if (ctx.state === "running") { playStopSound(); }
+        else { ctx.resume().then(() => playStopSound()); }
       })
       .on("broadcast", { event:"CALLED" }, ({ payload }:any) => {
         loadParticipants(); loadAttempts(); setBellCount(0); setTimerSecs(0); setShowScore(false);
+        if (payload.scope_label) setCalledScope({ label: payload.scope_label, labelAr: payload.scope_label_ar || "" });
         if (payload.participant_id === myParticipant?.id) {
-          playCalledSound();
+          const ctx = getAudioCtx();
+          const play = () => playCalledSound();
+          if (ctx.state === "running") { play(); }
+          else { ctx.resume().then(() => play()); }
           try { navigator.vibrate?.([400,100,400,100,800]); } catch {}
           toast({ title:"🎙️ You have been called!", description:"Unmute your mic and begin reciting." });
         }
       })
+      .on("broadcast", { event:"REACTION" }, ({ payload }:any) => {
+        const id = Math.random().toString(36).slice(2);
+        const x = 10 + Math.random() * 80;
+        setFloatReactions(r => [...r, { id, emoji: payload.emoji, name: payload.name, x }]);
+        setTimeout(() => setFloatReactions(r => r.filter(rx => rx.id !== id)), 3000);
+      })
       .on("broadcast", { event:"SCORE_SUBMITTED" }, () => { loadParticipants(); loadAttempts(); setShowScore(false); })
       .on("broadcast", { event:"STAGE_CHANGE" }, ({ payload }:any) => {
         setCompetition(c => c ? { ...c, current_stage:payload.stage } : c);
+        setCalledScope(null);
         playStageComplete(); setBellCount(0); setActiveP(null); setCurAttempt(null);
         loadParticipants(); loadAttempts();
       })
@@ -569,8 +590,21 @@ export default function MustabaqahPage() {
       .on("broadcast", { event:"PROCTOR_FLAG" }, ({ payload }:any) => {
         setParticipants(ps => ps.map(p => p.id === payload.participant_id ? { ...p, proctor_flagged:payload.flagged } : p));
       })
+      .on("broadcast", { event:"CHAT" }, ({ payload }:any) => {        const id = Math.random().toString(36).slice(2);
+        const time = new Date().toLocaleTimeString("en",{hour:"2-digit",minute:"2-digit"});
+        setChatMessages(m => [...m.slice(-79), { id, name:payload.name, text:payload.text, time }]);
+      })
       .on("postgres_changes" as any, { event:"*", schema:"public", table:"musabaqah_participants", filter:`competition_id=eq.${competition.id}` }, () => loadParticipants())
-      .subscribe();
+      .subscribe(async () => {
+        const myName = myParticipant?.participant_name || profile?.full_name || "Guest";
+        const myR = isJudge ? "judge" : myParticipant ? "participant" : "observer";
+        await ch.track({ name: myName, role: myR, user_id: user?.id });
+      });
+    ch.on("presence", { event:"sync" }, () => {
+      const state = ch.presenceState() as Record<string,any[]>;
+      const users = Object.values(state).flat().map((u:any) => ({ name:u.name||"Guest", role:u.role||"observer" }));
+      setOnlineUsers(users);
+    });
     channelRef.current = ch;
     return () => { supabase.removeChannel(ch); };
   }, [competition?.id, myParticipant?.id]);
@@ -605,9 +639,59 @@ export default function MustabaqahPage() {
   }, [competition]);
 
   useEffect(() => { if (competition) { loadParticipants(); loadAttempts(); } }, [competition]);
-
   const broadcast = (event: string, payload: object = {}) =>
     channelRef.current?.send({ type:"broadcast", event, payload });
+
+  const wakeAudio = () => {
+    try { getAudioCtx().resume().then(() => setAudioReady(true)); } catch {}
+  };
+
+  const REACTION_EMOJIS = ["🤲","❤️","🌟","👏","🎙️","📖","🕌","🤍"];
+
+  const sendChat = () => {
+    const text = chatInput.trim();
+    if (!text) return;
+    const name = myParticipant?.participant_name || profile?.full_name || "Guest";
+    const id = Math.random().toString(36).slice(2);
+    const time = new Date().toLocaleTimeString("en",{hour:"2-digit",minute:"2-digit"});
+    setChatMessages(m => [...m.slice(-79), { id, name, text, time }]);
+    broadcast("CHAT", { name, text });
+    setChatInput("");
+  };
+
+  const deleteComp = (comp: Competition, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setDeleteModal(comp);
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteModal) return;
+    await supabase.from("musabaqah_attempts" as any).delete().eq("competition_id", deleteModal.id);
+    await supabase.from("musabaqah_participants" as any).delete().eq("competition_id", deleteModal.id);
+    await supabase.from("musabaqah_competitions" as any).delete().eq("id", deleteModal.id);
+    setDeleteModal(null);
+    loadCompetitions();
+    toast({ title:"Competition deleted" });
+  };
+
+  const copyCode = (code: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigator.clipboard?.writeText(code).catch(() => {});
+    setCopyFlash(true);
+    setTimeout(() => setCopyFlash(false), 1800);
+    toast({ title:`📋 Code copied: ${code}` });
+  };
+
+  /* ── FIX: restored missing sendReaction function ── */
+  const sendReaction = (emoji: string) => {
+    wakeAudio();
+    const name = myParticipant?.participant_name || "Audience";
+    const id = Math.random().toString(36).slice(2);
+    const x = 10 + Math.random() * 80;
+    setFloatReactions(r => [...r, { id, emoji, name, x }]);
+    setTimeout(() => setFloatReactions(r => r.filter(rx => rx.id !== id)), 3000);
+    broadcast("REACTION", { emoji, name });
+  };
 
   /* Media */
   const toggleMic = async () => {
@@ -619,8 +703,7 @@ export default function MustabaqahPage() {
       } catch { toast({ title:"Mic access denied", variant:"destructive" }); }
     } else {
       localStream?.getAudioTracks().forEach(t => { t.enabled=false; t.stop(); });
-      setMicOn(false);
-    }
+      setMicOn(false);    }
   };
   const toggleCam = async () => {
     if (!camOn) {
@@ -657,7 +740,7 @@ export default function MustabaqahPage() {
     setBellCount(0); setTimerSecs(0); setShowScore(false);
     setScoreBreak({ tajweed:"", memorize:"", fluency:"", voice:"" }); setJudgeComment("");
     const scope = pickRandomScope(competition.scope_type);
-    const { data:att } = await supabase.from("musabaqah_attempts" as any).insert({
+    const { data: att } = await supabase.from("musabaqah_attempts" as any).insert({
       competition_id:competition.id, participant_id:p.id,
       stage_number:competition.current_stage,
       scope_label:scope.label, scope_label_ar:scope.labelAr,
@@ -669,8 +752,7 @@ export default function MustabaqahPage() {
     setActiveP(p);
     setCompetition(c => c ? { ...c, current_participant_id:p.id } : c);
     playCalledSound();
-    broadcast("CALLED", { participant_id:p.id, participant_name:p.participant_name, scope_label:scope.label, scope_label_ar:scope.labelAr });
-    setJudgeTab("controls");
+    broadcast("CALLED", { participant_id:p.id, participant_name:p.participant_name, scope_label:scope.label, scope_label_ar:scope.labelAr });    setJudgeTab("controls");
   };
 
   const startReciting = async () => {
@@ -719,8 +801,7 @@ export default function MustabaqahPage() {
     if (!form.title.trim()) { toast({ title:"Enter a title", variant:"destructive" }); return; }
     setLoading(true);
     const room_code = genRoomCode();
-    const { data, error } = await supabase.from("musabaqah_competitions" as any).insert({
-      title:form.title.trim(), description:form.description.trim(),
+    const { data, error } = await supabase.from("musabaqah_competitions" as any).insert({      title:form.title.trim(), description:form.description.trim(),
       scope_type:form.scope_type, scope_config:{ customJuz:form.customJuz },
       total_stages:form.total_stages, current_stage:1,
       time_limit_seconds:form.time_limit, status:"open", room_code,
@@ -739,13 +820,13 @@ export default function MustabaqahPage() {
     setLoading(true);
     const { data:comp } = await supabase.from("musabaqah_competitions" as any).select("*").eq("room_code", code).single();
     if (!comp) { toast({ title:"Competition not found", variant:"destructive" }); setLoading(false); return; }
-    const { data:existing } = await supabase.from("musabaqah_participants" as any).select("*").eq("competition_id", (comp as Competition).id).eq("user_id", user?.id).single();
+    const { data: existing } = await supabase.from("musabaqah_participants" as any).select("*").eq("competition_id", (comp as Competition).id).eq("user_id", user?.id).single();
     if (existing) {
       setCompetition(comp as Competition); setMyParticipant(existing as Participant);
       setLoading(false); setView("arena"); return;
     }
     const { count } = await supabase.from("musabaqah_participants" as any).select("id", { count:"exact" }).eq("competition_id", (comp as Competition).id);
-    const { data:participant } = await supabase.from("musabaqah_participants" as any).insert({
+    const { data: participant } = await supabase.from("musabaqah_participants" as any).insert({
       competition_id:(comp as Competition).id, user_id:user?.id,
       participant_name:name, school:joinForm.school,
       queue_position:(count||0)+1, status:"waiting",
@@ -761,14 +842,21 @@ export default function MustabaqahPage() {
 
   const openComp = async (comp: Competition) => {
     setCompetition(comp);
-    if (isJudge) { setView("arena"); return; }
+    setChatMessages([]);
+    setUserRole(null);
+    // Pre-fill join form with comp code + profile name
+    setJoinForm(f => ({
+      room_code: comp.room_code || "",
+      name: f.name || profile?.full_name || "",
+      school: f.school || profile?.school || "",
+    }));
+    if (canJudge) { setView("role_select"); return; }
     const { data } = await supabase.from("musabaqah_participants" as any).select("*").eq("competition_id", comp.id).eq("user_id", user?.id).single();
-    if (data) { setMyParticipant(data as Participant); setView("arena"); }
-    else setView("join");
+    if (data) { setMyParticipant(data as Participant); setUserRole("participant"); setView("arena"); }
+    else setView("role_select");
   };
 
-  const startCompetition = async () => {
-    if (!competition) return;
+  const startCompetition = async () => {    if (!competition) return;
     await supabase.from("musabaqah_competitions" as any).update({ status:"active" }).eq("id", competition.id);
     setCompetition(c => c ? { ...c, status:"active" } : c);
     toast({ title:"🎯 Competition started!" });
@@ -799,6 +887,43 @@ export default function MustabaqahPage() {
         <GlobalStyles/>
         <IslamicBackground/>
 
+        {/* ── DELETE CONFIRMATION MODAL ── */}
+        {deleteModal && (
+          <div style={{
+            position:"fixed",inset:0,zIndex:9999,
+            background:"rgba(0,0,0,0.75)",backdropFilter:"blur(8px)",
+            display:"flex",alignItems:"center",justifyContent:"center",padding:20,
+          }}>
+            <div className="anim-slide-up glass-card" style={{
+              borderRadius:22,padding:"32px 28px",maxWidth:380,width:"100%",textAlign:"center",
+              border:`1.5px solid rgba(239,68,68,0.4)`,
+              boxShadow:"0 0 60px rgba(239,68,68,0.2)",
+            }}>
+              <div style={{fontSize:48,marginBottom:12}}>🗑️</div>
+              <h3 style={{color:"#fff",fontFamily:"Cinzel,serif",fontSize:18,margin:"0 0 8px",fontWeight:700}}>Delete Competition?</h3>
+              <p style={{color:"rgba(255,255,255,0.5)",fontSize:13,margin:"0 0 8px",lineHeight:1.6}}>
+                <strong style={{color:"#fff"}}>{deleteModal.title}</strong>
+              </p>
+              <p style={{color:RED,fontSize:12,margin:"0 0 24px"}}>
+                ⚠️ This will also delete all participants and attempts. This cannot be undone.
+              </p>
+              <div style={{display:"flex",gap:10}}>
+                <button onClick={() => setDeleteModal(null)} style={{
+                  flex:1,background:"rgba(255,255,255,0.07)",color:"rgba(255,255,255,0.7)",
+                  border:"1px solid rgba(255,255,255,0.15)",borderRadius:12,
+                  padding:"13px 0",cursor:"pointer",fontFamily:"Cairo,sans-serif",fontWeight:700,fontSize:14,
+                }}>Cancel</button>
+                <button onClick={confirmDelete} style={{
+                  flex:1,background:"linear-gradient(135deg,#991b1b,#dc2626)",color:"#fff",
+                  border:"none",borderRadius:12,padding:"13px 0",cursor:"pointer",
+                  fontFamily:"Cairo,sans-serif",fontWeight:800,fontSize:14,
+                  boxShadow:"0 4px 20px rgba(220,38,38,0.4)",
+                }}>Delete</button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Header */}
         <div className="anim-slide-up" style={{ position:"relative", zIndex:1, textAlign:"center", padding:"52px 24px 32px" }}>
           <div style={{ display:"inline-flex", alignItems:"center", justifyContent:"center", width:80, height:80, borderRadius:24, background:`linear-gradient(135deg, ${GOLD} 0%, ${GOLDD} 100%)`, boxShadow:`0 12px 40px rgba(201,168,76,0.5)`, marginBottom:20, animation:"floatUp 5s ease-in-out infinite" }}>
@@ -817,8 +942,7 @@ export default function MustabaqahPage() {
 
         <div style={{ position:"relative", zIndex:1, maxWidth:560, margin:"0 auto", padding:"0 16px" }}>
           {/* Action buttons */}
-          <div className="stagger-1" style={{ display:"flex", gap:10, marginBottom:24 }}>
-            {isJudge && (
+          <div className="stagger-1" style={{ display:"flex", gap:10, marginBottom:24 }}>            {isJudge && (
               <button className="gold-btn" onClick={() => setView("setup")} style={{
                 flex:1, color:G, border:"none", borderRadius:14,
                 padding:"14px 0", fontWeight:800, cursor:"pointer",
@@ -868,38 +992,87 @@ export default function MustabaqahPage() {
                 <div key={c.id} onClick={() => openComp(c)}
                   className={`glass-card participant-row stagger-${Math.min(i+2,5)}`}
                   style={{
-                    borderRadius:18, padding:"18px 20px", cursor:"pointer",
+                    borderRadius:18, padding:"16px 18px", cursor:"pointer",
                     border:`1.5px solid rgba(201,168,76,${c.status==="active"?0.55:0.18})`,
                     boxShadow:c.status==="active" ? `0 0 30px rgba(201,168,76,0.15), inset 0 0 30px rgba(201,168,76,0.05)` : "none",
-                    display:"flex", alignItems:"center", gap:14,
+                    display:"flex", alignItems:"center", gap:12,
                   }}>
+                  {/* Status icon */}
                   <div style={{
-                    width:50, height:50, borderRadius:16, flexShrink:0,
-                    background:c.status==="active" ? `linear-gradient(135deg, ${GOLD} 0%, ${GOLDD} 100%)` : "rgba(255,255,255,0.08)",
-                    border:`1.5px solid ${c.status==="active" ? GOLD : "rgba(201,168,76,0.2)"}`,
+                    width:48, height:48, borderRadius:14, flexShrink:0,
+                    background:c.status==="active" ? `linear-gradient(135deg, ${GOLD} 0%, ${GOLDD} 100%)` : c.status==="completed"?"rgba(96,165,250,0.15)":"rgba(255,255,255,0.08)",
+                    border:`1.5px solid ${c.status==="active" ? GOLD : c.status==="completed"?"rgba(96,165,250,0.35)":"rgba(201,168,76,0.2)"}`,
                     display:"flex", alignItems:"center", justifyContent:"center",
                     animation:c.status==="active" ? "calledGlow 2s ease-in-out infinite" : "none",
                   }}>
-                    {c.status==="active" ? <Radio size={22} color={G}/> : <Trophy size={22} color={GOLD}/>}
+                    {c.status==="active" ? <Radio size={22} color={G}/> : c.status==="completed"?<Award size={22} color="#60a5fa"/>:<Trophy size={22} color={GOLD}/>}
                   </div>
+
+                  {/* Info */}
                   <div style={{ flex:1, minWidth:0 }}>
-                    <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap", marginBottom:4 }}>
-                      <span style={{ color:"#fff", fontWeight:700, fontSize:15 }}>{c.title}</span>
+                    <div style={{ display:"flex", alignItems:"center", gap:7, flexWrap:"wrap", marginBottom:4 }}>
+                      <span style={{ color:"#fff", fontWeight:700, fontSize:14, lineHeight:1.2 }}>{c.title}</span>
                       <span style={{
-                        padding:"2px 10px", borderRadius:20, fontSize:11, fontWeight:700,
+                        padding:"2px 9px", borderRadius:20, fontSize:10, fontWeight:700,
                         background:c.status==="active" ? `${GREEN}22` : c.status==="open" ? `${GOLD}22` : "rgba(255,255,255,0.08)",
-                        color:c.status==="active" ? GREEN : c.status==="open" ? GOLD : "rgba(255,255,255,0.4)",
+                        color:c.status==="active" ? GREEN : c.status==="open" ? GOLD : "rgba(255,255,255,0.35)",
                         border:`1px solid ${c.status==="active" ? GREEN : c.status==="open" ? GOLD : "rgba(255,255,255,0.1)"}`,
                       }}>
-                        {c.status==="active" ? "🔴 LIVE" : c.status==="open" ? "🟢 OPEN" : c.status.toUpperCase()}
+                        {c.status==="active" ? "🔴 LIVE" : c.status==="open" ? "🟢 OPEN" : c.status==="completed"?"✅ DONE":c.status.toUpperCase()}
                       </span>
                     </div>
-                    <div style={{ color:"rgba(255,255,255,0.4)", fontSize:12 }}>
-                      Stage {c.current_stage}/{c.total_stages} · Code:{" "}
-                      <span style={{ color:GOLD, fontWeight:800, letterSpacing:2 }}>{c.room_code}</span>
+                    <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                      <span style={{ color:"rgba(255,255,255,0.35)", fontSize:11 }}>
+                        Stage {c.current_stage}/{c.total_stages}
+                      </span>
+                      <span style={{ color:"rgba(255,255,255,0.15)", fontSize:11 }}>·</span>
+                      <button
+                        onClick={e => copyCode(c.room_code, e)}
+                        style={{
+                          background:"none",border:"none",padding:"0",cursor:"pointer",
+                          display:"flex",alignItems:"center",gap:4,
+                        }}
+                        title="Copy code"
+                      >
+                        <span style={{ color:GOLD, fontWeight:800, letterSpacing:2, fontSize:12 }}>{c.room_code}</span>
+                        <span style={{ fontSize:10, color:"rgba(201,168,76,0.5)" }}>📋</span>
+                      </button>
                     </div>
                   </div>
-                  <ChevronRight size={18} color="rgba(255,255,255,0.25)"/>
+
+                  {/* Actions */}
+                  <div style={{ display:"flex", alignItems:"center", gap:6, flexShrink:0 }}>
+                    {canJudge && c.status !== "active" && (
+                      <button
+                        onClick={e => deleteComp(c, e)}
+                        style={{
+                          background:"rgba(239,68,68,0.1)", border:"1px solid rgba(239,68,68,0.25)",
+                          borderRadius:9, padding:"7px 9px", cursor:"pointer", color:RED,
+                          display:"flex",alignItems:"center",justifyContent:"center",
+                          transition:"all 0.2s",
+                        }}
+                        title="Delete competition"
+                        onMouseOver={e => { (e.currentTarget as HTMLElement).style.background="rgba(239,68,68,0.22)"; }}
+                        onMouseOut={e => { (e.currentTarget as HTMLElement).style.background="rgba(239,68,68,0.1)"; }}
+                      >
+                        🗑️
+                      </button>
+                    )}
+                    {canJudge && c.status === "active" && (
+                      <button
+                        onClick={e => deleteComp(c, e)}
+                        style={{
+                          background:"rgba(239,68,68,0.06)", border:"1px solid rgba(239,68,68,0.15)",
+                          borderRadius:9, padding:"7px 9px", cursor:"pointer", color:"rgba(239,68,68,0.5)",
+                          display:"flex",alignItems:"center",justifyContent:"center",
+                        }}
+                        title="End & delete"
+                      >
+                        🗑️
+                      </button>
+                    )}
+                    <ChevronRight size={16} color="rgba(255,255,255,0.2)"/>
+                  </div>
                 </div>
               ))}
             </div>
@@ -911,8 +1084,7 @@ export default function MustabaqahPage() {
               <p style={{ color:"rgba(255,255,255,0.45)", fontSize:12, margin:0, lineHeight:1.7 }}>
                 <strong style={{ color:GOLD }}>Admin mode:</strong> Create competitions, call participants, ring bell, and judge recitations in real-time.
               </p>
-            </div>
-          )}
+            </div>          )}
         </div>
       </div>
     );
@@ -962,7 +1134,6 @@ export default function MustabaqahPage() {
                 ))}
               </div>
             </div>
-
             {/* Stages + Time */}
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:16 }}>
               <div>
@@ -1011,9 +1182,87 @@ export default function MustabaqahPage() {
               opacity:loading ? 0.7 : 1,
             }}>
               {loading ? <Loader2 size={18} style={{ animation:"spin 1s linear infinite" }}/> : <Trophy size={18}/>}
-              {loading ? "Creating..." : "Create Competition"}
-            </button>
+              {loading ? "Creating..." : "Create Competition"}            </button>
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ════════════════════════════════════════════════════════════
+     VIEW: ROLE SELECT
+  ════════════════════════════════════════════════════════════ */
+  if (view === "role_select" && competition) {
+    const ROLES = canJudge
+      ? [
+          { id:"judge",       icon:"⚖️",  title:"Judge / Host",      desc:"Control the competition flow, call participants, ring bell, score recitations", color:GOLD },
+          { id:"observer",    icon:"👁️",  title:"Watch & Follow",    desc:"Follow live, chat with audience, react to recitations", color:GREEN },
+        ]
+      : [
+          { id:"participant", icon:"🎙️",  title:"Join as Participant", desc:"Recite in the competition when called by the judge", color:GOLD },
+          { id:"observer",    icon:"👁️",  title:"Watch & Follow",     desc:"Follow live, chat with audience, react to recitations", color:GREEN },
+        ];
+
+    const chooseRole = async (roleId: string) => {
+      setUserRole(roleId as any);
+      if (roleId === "judge" || roleId === "observer") {
+        setView("arena"); return;
+      }
+      const { data } = await supabase.from("musabaqah_participants" as any).select("*").eq("competition_id", competition.id).eq("user_id", user?.id).single();
+      if (data) { setMyParticipant(data as Participant); setView("arena"); }
+      else setView("join");
+    };
+
+    return (
+      <div style={{ minHeight:"100vh", position:"relative", fontFamily:"Cairo, sans-serif", display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
+        <GlobalStyles/>
+        <IslamicBackground/>
+        <div className="anim-slide-up glass-card" style={{ position:"relative", zIndex:1, width:"100%", maxWidth:440, borderRadius:24, padding:"32px 24px" }}>
+          <button onClick={() => setView("list")} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.4)", cursor:"pointer", marginBottom:20, fontSize:13, display:"flex", alignItems:"center", gap:6 }}>← Back</button>
+          <div style={{ textAlign:"center", marginBottom:28 }}>
+            <div style={{ fontSize:48, marginBottom:12, animation:"floatUp 4s ease-in-out infinite" }}>🏆</div>
+            <h2 style={{ fontFamily:"Cinzel,serif", color:"#fff", fontSize:20, margin:"0 0 6px", fontWeight:700 }}>{competition.title}</h2>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:8, marginTop:8 }}>
+              <span style={{ padding:"3px 12px", borderRadius:20, fontSize:12, fontWeight:700,
+                background:competition.status==="active"?`${GREEN}22`:`${GOLD}22`,
+                color:competition.status==="active"?GREEN:GOLD,
+                border:`1px solid ${competition.status==="active"?GREEN:GOLD}` }}>
+                {competition.status==="active"?"🔴 LIVE":"🟢 "+competition.status.toUpperCase()}
+              </span>
+              <span style={{ color:GOLD, fontWeight:800, letterSpacing:2, fontSize:14 }}>{competition.room_code}</span>
+            </div>
+            <p style={{ color:"rgba(255,255,255,0.4)", fontSize:13, margin:"16px 0 0" }}>How do you want to join?</p>          </div>
+
+          <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+            {ROLES.map(r => (
+              <button key={r.id} onClick={() => chooseRole(r.id)} style={{
+                background:`rgba(255,255,255,0.04)`,
+                border:`1.5px solid ${r.color}44`,
+                borderRadius:16, padding:"18px 20px", cursor:"pointer", textAlign:"left",
+                display:"flex", alignItems:"center", gap:16,
+                transition:"all 0.2s",
+              }}>
+                <div style={{ fontSize:36, flexShrink:0 }}>{r.icon}</div>
+                <div>
+                  <div style={{ color:r.color, fontWeight:800, fontSize:16, fontFamily:"Cairo,sans-serif" }}>{r.title}</div>
+                  <div style={{ color:"rgba(255,255,255,0.4)", fontSize:12, marginTop:4, lineHeight:1.5 }}>{r.desc}</div>
+                </div>
+              </button>
+            ))}
+          </div>
+
+          {onlineUsers.length > 0 && (
+            <div style={{ marginTop:20, padding:"12px 16px", background:"rgba(255,255,255,0.04)", borderRadius:12, border:"1px solid rgba(255,255,255,0.08)" }}>
+              <div style={{ color:"rgba(255,255,255,0.4)", fontSize:11, fontWeight:700, letterSpacing:1.2, textTransform:"uppercase", marginBottom:8 }}>Currently online ({onlineUsers.length})</div>
+              <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+                {onlineUsers.slice(0,8).map((u,i) => (
+                  <span key={i} style={{ background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:20, padding:"3px 10px", fontSize:12, color:"rgba(255,255,255,0.6)" }}>
+                    {u.role==="judge"?"⚖️":u.role==="participant"?"🎙️":"👁️"} {u.name}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -1028,19 +1277,9 @@ export default function MustabaqahPage() {
         <GlobalStyles/>
         <IslamicBackground/>
         <div className="anim-slide-up glass-card" style={{ position:"relative", zIndex:1, width:"100%", maxWidth:440, borderRadius:24, padding:"32px 24px" }}>
-          <button onClick={() => setView("list")} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.4)", cursor:"pointer", marginBottom:20, fontSize:13, display:"flex", alignItems:"center", gap:6 }}>
+          <button onClick={() => setView("role_select")} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.4)", cursor:"pointer", marginBottom:20, fontSize:13, display:"flex", alignItems:"center", gap:6 }}>
             ← Back
           </button>
-
-          <div style={{ textAlign:"center", marginBottom:28 }}>
-            <div style={{ width:64, height:64, borderRadius:20, background:`linear-gradient(135deg, ${GOLD} 0%, ${GOLDD} 100%)`, display:"inline-flex", alignItems:"center", justifyContent:"center", marginBottom:14, boxShadow:`0 8px 32px rgba(201,168,76,0.4)` }}>
-              <LogIn size={28} color={G}/>
-            </div>
-            <h2 style={{ fontFamily:"Cinzel, serif", color:"#fff", fontSize:22, margin:"0 0 6px", fontWeight:600 }}>Join Competition</h2>
-            <p style={{ color:"rgba(255,255,255,0.4)", fontSize:13, margin:0 }}>Enter your room code to compete</p>
-          </div>
-
-          {/* Room code — big */}
           <div style={{ marginBottom:16 }}>
             <Label>Room Code</Label>
             <input
@@ -1061,7 +1300,7 @@ export default function MustabaqahPage() {
           <Input label="Your Full Name" value={joinForm.name} onChange={(e:any) => setJoinForm(f => ({ ...f, name:e.target.value }))} placeholder="e.g. Ahmad Muhammad"/>
           <Input label="School / Institute (optional)" value={joinForm.school} onChange={(e:any) => setJoinForm(f => ({ ...f, school:e.target.value }))} placeholder="e.g. Tahleem Academy"/>
 
-          <button className="gold-btn" onClick={joinCompetition} disabled={loading} style={{
+          <button className="gold-btn" onClick={async () => { setUserRole("participant"); await joinCompetition(); }} disabled={loading} style={{
             width:"100%", color:G, border:"none", borderRadius:14,
             padding:"16px", fontWeight:800, cursor:loading?"not-allowed":"pointer",
             fontSize:16, fontFamily:"Cairo, sans-serif",
@@ -1069,7 +1308,7 @@ export default function MustabaqahPage() {
             opacity:loading ? 0.7 : 1, marginTop:8,
           }}>
             {loading ? <Loader2 size={18} style={{ animation:"spin 1s linear infinite" }}/> : <LogIn size={18}/>}
-            {loading ? "Joining..." : "Join Competition"}
+            {loading ? "Joining..." : "Join as Participant"}
           </button>
         </div>
       </div>
@@ -1090,8 +1329,7 @@ export default function MustabaqahPage() {
         <div style={{ position:"relative", zIndex:1, maxWidth:600, margin:"0 auto", padding:"40px 16px 0" }}>
           <div className="anim-slide-up" style={{ textAlign:"center", marginBottom:36 }}>
             <div style={{ fontSize:64, marginBottom:8, animation:"floatUp 4s ease-in-out infinite" }}>🏆</div>
-            <h1 style={{ fontFamily:"Cinzel, serif", color:GOLD, fontSize:28, margin:"0 0 4px", fontWeight:700 }}>Final Results</h1>
-            <p style={{ color:"rgba(255,255,255,0.4)", margin:0, fontSize:13 }}>{competition?.title} · {competition?.total_stages} Stages</p>
+            <h1 style={{ fontFamily:"Cinzel, serif", color:GOLD, fontSize:28, margin:"0 0 4px", fontWeight:700 }}>Final Results</h1>            <p style={{ color:"rgba(255,255,255,0.4)", margin:0, fontSize:13 }}>{competition?.title} · {competition?.total_stages} Stages</p>
             <p style={{ color:"rgba(255,255,255,0.25)", margin:"6px 0 0", fontFamily:"Amiri,serif", fontSize:16, direction:"rtl" }}>نتائج المسابقة</p>
           </div>
 
@@ -1140,8 +1378,7 @@ export default function MustabaqahPage() {
                 <Avatar name={p.participant_name} size={34} active={i===0}/>
                 <div style={{ flex:1 }}>
                   <div style={{ color:"#fff", fontWeight:600, fontSize:14 }}>{p.participant_name}</div>
-                  {p.school && <div style={{ color:"rgba(255,255,255,0.3)", fontSize:11 }}>{p.school}</div>}
-                </div>
+                  {p.school && <div style={{ color:"rgba(255,255,255,0.3)", fontSize:11 }}>{p.school}</div>}                </div>
                 <div style={{ display:"flex", gap:4 }}>
                   {Array.from({ length:competition?.total_stages||5 }, (_,si) => (
                     <div key={si} style={{ background:"rgba(255,255,255,0.05)", borderRadius:6, padding:"2px 7px", textAlign:"center", fontSize:11 }}>
@@ -1183,6 +1420,19 @@ export default function MustabaqahPage() {
       <IslamicBackground/>
       <BellFlash visible={bellFlash}/>
       <StopFlash visible={stopFlash}/>
+
+      {/* ── FLOATING REACTIONS OVERLAY ────────────────────── */}
+      <div style={{ position:"fixed", inset:0, zIndex:9997, pointerEvents:"none", overflow:"hidden" }}>
+        {floatReactions.map(r => (
+          <div key={r.id} style={{
+            position:"absolute", bottom:90, left:`${r.x}%`,
+            animation:"fadeSlideUp 0.4s ease both",
+            display:"flex", flexDirection:"column", alignItems:"center", gap:2,          }}>
+            <div style={{ fontSize:32, filter:"drop-shadow(0 2px 8px rgba(0,0,0,0.6))", animation:"floatUp 3s ease-in-out both" }}>{r.emoji}</div>
+            <div style={{ color:"rgba(255,255,255,0.6)", fontSize:10, background:"rgba(0,0,0,0.5)", borderRadius:20, padding:"2px 8px", whiteSpace:"nowrap" }}>{r.name}</div>
+          </div>
+        ))}
+      </div>
 
       {/* ── TOP BAR ───────────────────────────────────────── */}
       <div style={{
@@ -1227,17 +1477,117 @@ export default function MustabaqahPage() {
             </div>
           ))}
         </div>
-
-        {/* Room code pill */}
-        <div style={{ background:"rgba(201,168,76,0.12)", border:"1px solid rgba(201,168,76,0.3)", borderRadius:8, padding:"4px 10px", color:GOLD, fontWeight:800, fontSize:13, letterSpacing:2, flexShrink:0 }}>
-          {competition.room_code}
+        {/* Room code pill + copy */}
+        <div style={{ display:"flex", alignItems:"center", gap:5, flexShrink:0 }}>
+          <div style={{ background:"rgba(201,168,76,0.12)", border:"1px solid rgba(201,168,76,0.3)", borderRadius:8, padding:"4px 10px", color:GOLD, fontWeight:800, fontSize:13, letterSpacing:2 }}>
+            {competition.room_code}
+          </div>
+          <button
+            onClick={e => copyCode(competition.room_code, e)}
+            title="Copy room code"
+            style={{ background:"rgba(201,168,76,0.1)", border:"1px solid rgba(201,168,76,0.2)", borderRadius:8, padding:"5px 7px", cursor:"pointer", color:copyFlash?GREEN:GOLD, transition:"color 0.3s", fontSize:12 }}
+          >
+            {copyFlash ? "✓" : "📋"}
+          </button>
         </div>
+
+        {/* Chat button */}
+        <button onClick={() => setShowChat(c => !c)} style={{
+          background:showChat ? `${GOLD}22` : "rgba(255,255,255,0.07)",
+          border:`1px solid ${showChat ? GOLD : "rgba(255,255,255,0.12)"}`,
+          borderRadius:10, padding:"6px 10px", cursor:"pointer",
+          color:showChat ? GOLD : "rgba(255,255,255,0.45)", flexShrink:0,
+          position:"relative",
+        }}>
+          💬
+          {chatMessages.length > 0 && !showChat && (
+            <span style={{ position:"absolute", top:-4, right:-4, background:RED, borderRadius:"50%", width:14, height:14, display:"flex", alignItems:"center", justifyContent:"center", fontSize:9, color:"#fff", fontWeight:900 }}>
+              {chatMessages.length > 9 ? "9+" : chatMessages.length}
+            </span>
+          )}
+        </button>
       </div>
 
-      {/* ── MAIN SCROLLABLE BODY ──────────────────────────── */}
-      <div style={{ flex:1, overflowY:"auto", position:"relative", zIndex:1, paddingBottom:myParticipant && !isJudge ? 80 : 16 }}>
+      {/* ── CHAT PANEL ────────────────────────────────────── */}
+      {showChat && (
+        <div style={{
+          position:"fixed", bottom:0, left:0, right:0, zIndex:30,
+          height:"55vh", display:"flex", flexDirection:"column",
+          background:"rgba(5,15,8,0.97)", backdropFilter:"blur(24px)",
+          borderTop:`1.5px solid ${GOLD}33`,
+          borderRadius:"20px 20px 0 0",
+          animation:"fadeSlideUp 0.3s ease",
+        }}>
+          <div style={{ display:"flex", alignItems:"center", gap:10, padding:"12px 16px", borderBottom:"1px solid rgba(255,255,255,0.07)", flexShrink:0 }}>
+            <span style={{ color:GOLD, fontWeight:800, fontSize:14 }}>💬 Live Chat</span>
+            {onlineUsers.length > 0 && (
+              <div style={{ display:"flex", gap:4, flex:1, overflowX:"auto" }}>
+                {onlineUsers.slice(0,6).map((u,i) => (
+                  <span key={i} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:20, padding:"2px 8px", fontSize:11, color:"rgba(255,255,255,0.55)", whiteSpace:"nowrap", flexShrink:0 }}>
+                    {u.role==="judge"?"⚖️":u.role==="participant"?"🎙️":"👁️"} {u.name}
+                  </span>
+                ))}
+              </div>
+            )}
+            <button onClick={() => setShowChat(false)} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.35)", cursor:"pointer", fontSize:20, padding:0, lineHeight:1, flexShrink:0 }}>✕</button>
+          </div>
 
-        {/* Active Reciter Card */}
+          <div style={{ flex:1, overflowY:"auto", padding:"10px 14px", display:"flex", flexDirection:"column", gap:8 }}>
+            {chatMessages.length === 0 ? (
+              <div style={{ textAlign:"center", color:"rgba(255,255,255,0.2)", fontSize:13, marginTop:24 }}>No messages yet — say salam! 👋</div>            ) : (
+              chatMessages.map(m => (
+                <div key={m.id} style={{ display:"flex", gap:8, alignItems:"flex-start" }}>
+                  <div style={{ width:28, height:28, borderRadius:"50%", background:`linear-gradient(135deg, ${GOLD}88 0%, ${GOLDD}88 100%)`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:800, color:G, flexShrink:0 }}>
+                    {m.name[0]?.toUpperCase()}
+                  </div>
+                  <div style={{ flex:1 }}>
+                    <div style={{ display:"flex", alignItems:"baseline", gap:6 }}>
+                      <span style={{ color:GOLD, fontWeight:700, fontSize:12 }}>{m.name}</span>
+                      <span style={{ color:"rgba(255,255,255,0.2)", fontSize:10 }}>{m.time}</span>
+                    </div>
+                    <div style={{ color:"rgba(255,255,255,0.8)", fontSize:13, marginTop:2, lineHeight:1.4 }}>{m.text}</div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+
+          <div style={{ display:"flex", gap:8, padding:"10px 14px 14px", flexShrink:0, borderTop:"1px solid rgba(255,255,255,0.07)" }}>
+            <input
+              value={chatInput}
+              onChange={e => setChatInput(e.target.value)}
+              onKeyDown={e => e.key==="Enter" && sendChat()}
+              placeholder="Type a message..."
+              style={{
+                flex:1, background:"rgba(255,255,255,0.08)", border:"1px solid rgba(255,255,255,0.12)",
+                borderRadius:12, padding:"10px 14px", color:"#fff", fontSize:14,
+                fontFamily:"Cairo,sans-serif",
+              }}
+            />
+            <button onClick={sendChat} style={{
+              background:`linear-gradient(135deg, ${GOLD} 0%, ${GOLDD} 100%)`,
+              border:"none", borderRadius:12, padding:"10px 16px", cursor:"pointer",
+              color:G, fontWeight:800, fontSize:14, fontFamily:"Cairo,sans-serif", flexShrink:0,
+            }}>Send</button>
+          </div>
+        </div>
+      )}
+
+      <div style={{ flex:1, overflowY:"auto", position:"relative", zIndex:1, paddingBottom:myParticipant && !isJudge ? 110 : 16 }}>
+
+        {/* Online users strip */}
+        {onlineUsers.length > 0 && (
+          <div style={{ padding:"8px 16px 0" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:6, overflowX:"auto", paddingBottom:2 }}>
+              <span style={{ color:"rgba(255,255,255,0.25)", fontSize:11, flexShrink:0 }}>🟢 {onlineUsers.length} online:</span>
+              {onlineUsers.map((u,i) => (
+                <span key={i} style={{ background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:20, padding:"3px 10px", fontSize:11, color:"rgba(255,255,255,0.55)", whiteSpace:"nowrap", flexShrink:0 }}>
+                  {u.role==="judge"?"⚖️":u.role==="participant"?"🎙️":"👁️"} {u.name}
+                </span>              ))}
+            </div>
+          </div>
+        )}
+
         <div style={{ padding:"16px 16px 0" }}>
           <div style={{
             background:activeP
@@ -1274,7 +1624,6 @@ export default function MustabaqahPage() {
                   </div>
                 </div>
 
-                {/* Assigned passage */}
                 {currentAttempt && (
                   <div style={{ marginTop:12, background:"rgba(201,168,76,0.08)", border:"1px solid rgba(201,168,76,0.2)", borderRadius:12, padding:"10px 14px" }}>
                     <div style={{ color:GOLD, fontSize:10, fontWeight:700, letterSpacing:1.5, textTransform:"uppercase", marginBottom:4 }}>Assigned Passage</div>
@@ -1283,8 +1632,7 @@ export default function MustabaqahPage() {
                   </div>
                 )}
 
-                {bellCount > 0 && (
-                  <div style={{ marginTop:8, display:"flex", alignItems:"center", gap:6 }}>
+                {bellCount > 0 && (                  <div style={{ marginTop:8, display:"flex", alignItems:"center", gap:6 }}>
                     <Bell size={13} color={GOLD}/>
                     <span style={{ color:GOLD, fontWeight:700, fontSize:13 }}>{bellCount} error{bellCount!==1?"s":""} · −{bellCount*2} pts</span>
                   </div>
@@ -1311,7 +1659,6 @@ export default function MustabaqahPage() {
         {/* JUDGE CONTROLS */}
         {isJudge && (
           <div style={{ padding:"12px 16px 0" }}>
-            {/* Tab switcher */}
             <div style={{ display:"flex", gap:0, background:"rgba(255,255,255,0.05)", borderRadius:12, padding:3, marginBottom:12 }}>
               {[["controls","⚙️ Controls"],["roster","👥 Roster"]].map(([tab, label]) => (
                 <button key={tab} onClick={() => setJudgeTab(tab as any)} style={{
@@ -1328,20 +1675,48 @@ export default function MustabaqahPage() {
 
             {judgeTab === "controls" && (
               <div style={{ display:"flex", flexDirection:"column", gap:10, animation:"fadeIn 0.2s ease" }}>
-                {/* Start competition */}
                 {competition.status==="open" && (
                   <button onClick={startCompetition} style={{
                     background:`linear-gradient(135deg, ${GREEN}dd 0%, #16a34a 100%)`,
                     color:"#fff", border:"none", borderRadius:14, padding:"15px",
                     cursor:"pointer", fontWeight:800, fontFamily:"Cairo,sans-serif",
                     fontSize:16, display:"flex", alignItems:"center", justifyContent:"center", gap:8,
-                    boxShadow:`0 4px 20px rgba(34,197,94,0.3)`,
-                  }}>
+                    boxShadow:`0 4px 20px rgba(34,197,94,0.3)`,                  }}>
                     <Play size={18}/> Start Competition
                   </button>
                 )}
 
-                {/* Start reciting */}
+                {competition.status==="active" && !activeP && waiting.length > 0 && (
+                  <div>
+                    <div style={{ color:GOLD, fontSize:11, fontWeight:700, letterSpacing:1.2, textTransform:"uppercase", marginBottom:8 }}>Call a Participant</div>
+                    <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+                      {waiting.slice(0,5).map(p => (
+                        <button key={p.id} onClick={() => callParticipant(p)} style={{
+                          background:`${GOLD}14`, border:`1px solid ${GOLD}44`,
+                          borderRadius:12, padding:"12px 16px", cursor:"pointer",
+                          display:"flex", alignItems:"center", gap:10, textAlign:"left",
+                          fontFamily:"Cairo,sans-serif",
+                        }}>
+                          <Avatar name={p.participant_name} size={34}/>
+                          <div style={{ flex:1 }}>
+                            <div style={{ color:"#fff", fontWeight:700, fontSize:14 }}>{p.participant_name}</div>
+                            {p.school && <div style={{ color:"rgba(255,255,255,0.35)", fontSize:11 }}>{p.school}</div>}
+                          </div>
+                          <div style={{ display:"flex", alignItems:"center", gap:4, color:GOLD, fontSize:12, fontWeight:700 }}>
+                            <PhoneCall size={13}/> Call
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {competition.status==="active" && !activeP && waiting.length === 0 && participants.length > 0 && (
+                  <div style={{ background:`${GREEN}11`, border:`1px solid ${GREEN}44`, borderRadius:12, padding:"12px 16px", textAlign:"center" }}>
+                    <div style={{ color:GREEN, fontWeight:700, fontSize:14 }}>✅ All participants done for this stage</div>
+                  </div>
+                )}
+
                 {activeP?.status==="called" && (
                   <button onClick={startReciting} style={{
                     background:`linear-gradient(135deg, ${GREEN}dd 0%, #16a34a 100%)`,
@@ -1354,10 +1729,8 @@ export default function MustabaqahPage() {
                   </button>
                 )}
 
-                {/* BELL + STOP */}
                 {activeP?.status==="reciting" && (
-                  <div style={{ display:"grid", gridTemplateColumns:"1.2fr 1fr", gap:10 }}>
-                    <button className="bell-btn" onClick={ringBell} style={{
+                  <div style={{ display:"grid", gridTemplateColumns:"1.2fr 1fr", gap:10 }}>                    <button className="bell-btn" onClick={ringBell} style={{
                       background:`linear-gradient(135deg, ${GOLD} 0%, #e8c96a 40%, ${GOLDD} 100%)`,
                       color:G, border:"none", borderRadius:14, padding:"20px 0",
                       cursor:"pointer", fontWeight:900, fontSize:17,
@@ -1383,7 +1756,6 @@ export default function MustabaqahPage() {
                   </div>
                 )}
 
-                {/* Score panel */}
                 {showScorePanel && (
                   <div style={{ background:"rgba(201,168,76,0.07)", border:"1px solid rgba(201,168,76,0.25)", borderRadius:16, padding:"16px" }}>
                     <div style={{ color:GOLD, fontWeight:800, fontSize:14, marginBottom:12, display:"flex", alignItems:"center", gap:6 }}>
@@ -1407,8 +1779,7 @@ export default function MustabaqahPage() {
                     ) : (
                       <div style={{ marginBottom:10 }}>
                         <div style={{ color:"rgba(255,255,255,0.6)", fontSize:12, marginBottom:4 }}>Score /100</div>
-                        <input type="number" min={0} max={100} value={scoreBreak.tajweed}
-                          onChange={e => setScoreBreak(s => ({ ...s, tajweed:e.target.value }))}
+                        <input type="number" min={0} max={100} value={scoreBreak.tajweed}                          onChange={e => setScoreBreak(s => ({ ...s, tajweed:e.target.value }))}
                           style={{ width:"100%", background:"rgba(255,255,255,0.08)", border:"1px solid rgba(255,255,255,0.15)", borderRadius:8, padding:"10px", color:"#fff", fontSize:16 }}/>
                       </div>
                     )}
@@ -1429,7 +1800,6 @@ export default function MustabaqahPage() {
                   </div>
                 )}
 
-                {/* Advance stage */}
                 {competition.status==="active" && allDone && (
                   <button onClick={advanceStage} style={{
                     background:competition.current_stage>=competition.total_stages
@@ -1446,7 +1816,6 @@ export default function MustabaqahPage() {
                   </button>
                 )}
 
-                {/* Stats */}
                 <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8 }}>
                   {[["⏳",waiting.length,"Waiting"],[`🎙️`,done.length,"Done"],["👥",participants.length,"Total"]].map(([icon,n,label]) => (
                     <div key={label as string} style={{ background:"rgba(255,255,255,0.04)", borderRadius:12, padding:"10px 8px", textAlign:"center" }}>
@@ -1459,8 +1828,7 @@ export default function MustabaqahPage() {
 
                 <button onClick={() => setView("results")} style={{ background:"transparent", color:"rgba(255,255,255,0.3)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:10, padding:"10px", cursor:"pointer", fontFamily:"Cairo,sans-serif", fontSize:12, display:"flex", alignItems:"center", justifyContent:"center", gap:4 }}>
                   <Award size={13}/> View Live Standings
-                </button>
-              </div>
+                </button>              </div>
             )}
 
             {judgeTab === "roster" && (
@@ -1509,8 +1877,7 @@ export default function MustabaqahPage() {
                             {p.school && <div style={{ color:"rgba(255,255,255,0.3)", fontSize:11 }}>{p.school}</div>}
                           </div>
                           <div style={{ background:`${STATUS_COLOR[p.status]}18`, border:`1px solid ${STATUS_COLOR[p.status]}55`, color:STATUS_COLOR[p.status], borderRadius:20, padding:"2px 9px", fontSize:11, fontWeight:700, flexShrink:0 }}>
-                            {STATUS_ICON[p.status]} {STATUS_LABEL[p.status]}
-                          </div>
+                            {STATUS_ICON[p.status]} {STATUS_LABEL[p.status]}                          </div>
                           {p.total_score>0 && <div style={{ color:GOLD, fontWeight:800, fontSize:16, flexShrink:0 }}>{p.total_score}</div>}
                           {competition.status==="active" && p.status==="waiting" && !activeP && (
                             <button onClick={() => callParticipant(p)} style={{ background:`${GOLD}22`, color:GOLD, border:`1px solid ${GOLD}55`, borderRadius:8, padding:"6px 12px", cursor:"pointer", fontWeight:700, fontSize:12, flexShrink:0, fontFamily:"Cairo,sans-serif", display:"flex", alignItems:"center", gap:4 }}>
@@ -1552,11 +1919,123 @@ export default function MustabaqahPage() {
           </div>
         )}
 
-        {/* PARTICIPANT VIEW — waiting */}
+        {/* OBSERVER VIEW */}
+        {!isJudge && userRole === "observer" && (
+          <div style={{ padding:"12px 16px 0" }}>
+            {/* Live reciter spotlight */}
+            {activeP ? (
+              <div style={{
+                background:activeP.status==="reciting"?"rgba(34,197,94,0.08)":"rgba(201,168,76,0.08)",
+                border:`1.5px solid ${activeP.status==="reciting"?`${GREEN}55`:`${GOLD}55`}`,
+                borderRadius:18, padding:"16px 18px", marginBottom:12,
+                animation:activeP.status==="reciting"?"recitingGlow 2.5s ease-in-out infinite":"calledGlow 2s ease-in-out infinite",
+              }}>
+                <div style={{ color:"rgba(255,255,255,0.4)", fontSize:10, fontWeight:700, letterSpacing:1.5, textTransform:"uppercase", marginBottom:10, display:"flex", alignItems:"center", gap:6 }}>
+                  <span style={{ display:"inline-block", width:6, height:6, borderRadius:"50%", background:activeP.status==="reciting"?GREEN:GOLD, animation:"floatUp 1s ease-in-out infinite" }}/>
+                  {activeP.status==="reciting" ? "Now Reciting" : "Called to Recite"}
+                </div>
+                <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+                  <Avatar name={activeP.participant_name} size={48} active={activeP.status==="reciting"} called={activeP.status==="called"}/>
+                  <div style={{ flex:1 }}>
+                    <div style={{ color:"#fff", fontWeight:800, fontSize:16, fontFamily:"Cinzel,serif" }}>{activeP.participant_name}</div>
+                    {activeP.school && <div style={{ color:"rgba(255,255,255,0.4)", fontSize:12 }}>{activeP.school}</div>}
+                    {calledScope && (
+                      <div style={{ marginTop:6, color:GOLD, fontSize:12, fontWeight:700 }}>📖 {calledScope.label}</div>
+                    )}
+                  </div>
+                  {timerActive && (
+                    <div style={{ textAlign:"center", flexShrink:0 }}>
+                      <div style={{ color:timerSecs>competition.time_limit_seconds*0.8?RED:GREEN, fontWeight:900, fontSize:20, fontFamily:"Cinzel,serif" }}>{fmtTime(timerSecs)}</div>
+                      <div style={{ color:"rgba(255,255,255,0.3)", fontSize:10 }}>elapsed</div>
+                    </div>
+                  )}
+                </div>
+                {bellCount > 0 && (
+                  <div style={{ marginTop:10, display:"flex", alignItems:"center", gap:5, padding:"6px 12px", background:"rgba(239,68,68,0.12)", borderRadius:10, border:"1px solid rgba(239,68,68,0.25)" }}>
+                    <Bell size={12} color={RED}/>
+                    <span style={{ color:RED, fontWeight:700, fontSize:12 }}>{bellCount} mistake{bellCount!==1?"s":""} · −{bellCount*2} pts</span>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="glass-card" style={{ borderRadius:18, padding:"16px 20px", marginBottom:12 }}>
+                <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                  <span style={{ fontSize:26 }}>👁️</span>
+                  <div>
+                    <div style={{ color:GOLD, fontWeight:800, fontSize:14 }}>Following Live</div>
+                    <div style={{ color:"rgba(255,255,255,0.4)", fontSize:12, marginTop:2 }}>
+                      {participants.length} participants · Stage {competition.current_stage}/{competition.total_stages}
+                    </div>
+                  </div>
+                  <button onClick={() => setShowChat(c => !c)} style={{
+                    marginLeft:"auto", background:`${GOLD}18`, border:`1px solid ${GOLD}44`,
+                    borderRadius:10, padding:"8px 14px", cursor:"pointer",
+                    color:GOLD, fontWeight:700, fontSize:13, fontFamily:"Cairo,sans-serif",
+                    display:"flex", alignItems:"center", gap:5,
+                  }}>💬 Chat</button>
+                </div>
+              </div>
+            )}
+
+            {/* Standings quick view */}
+            {participants.filter(p=>p.total_score>0).length>0 && (
+              <div style={{ marginBottom:12 }}>
+                <div style={{ color:"rgba(255,255,255,0.35)", fontSize:11, fontWeight:700, letterSpacing:1, textTransform:"uppercase", marginBottom:7, display:"flex", alignItems:"center", gap:5 }}>
+                  <Trophy size={11} color={GOLD}/> Live Standings
+                </div>
+                <div style={{ display:"flex", gap:6, overflowX:"auto", paddingBottom:4 }}>
+                  {[...participants].filter(p=>p.total_score>0).sort((a,b)=>b.total_score-a.total_score).slice(0,5).map((p,i)=>(
+                    <div key={p.id} style={{
+                      background:"rgba(255,255,255,0.04)", border:`1px solid rgba(201,168,76,${i===0?0.5:0.15})`,
+                      borderRadius:12, padding:"10px 12px", flexShrink:0, textAlign:"center", minWidth:80,
+                    }}>
+                      <div style={{ fontSize:14 }}>{i===0?"🥇":i===1?"🥈":i===2?"🥉":`#${i+1}`}</div>
+                      <div style={{ color:"#fff", fontSize:11, fontWeight:600, marginTop:4, lineHeight:1.3 }}>{p.participant_name.split(" ")[0]}</div>
+                      <div style={{ color:GOLD, fontWeight:900, fontSize:16 }}>{p.total_score}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Full participant list */}
+            {participants.length > 0 && (
+              <div>
+                <div style={{ color:"rgba(255,255,255,0.4)", fontSize:12, fontWeight:600, marginBottom:8, display:"flex", alignItems:"center", gap:6 }}>
+                  <Users size={12}/> Participants
+                </div>
+                <div style={{ display:"flex", flexDirection:"column", gap:6, marginBottom:120 }}>
+                  {participants.map(p => {
+                    const isActive = p.id === activeP?.id;
+                    return (
+                      <div key={p.id} style={{
+                        background:isActive?"rgba(34,197,94,0.07)":"rgba(255,255,255,0.03)",
+                        border:`1px solid ${isActive?`${GREEN}44`:"rgba(255,255,255,0.07)"}`,
+                        borderRadius:12, padding:"10px 14px", display:"flex", alignItems:"center", gap:10,
+                      }}>
+                        <span style={{ color:"rgba(255,255,255,0.2)", fontSize:11, width:18 }}>#{p.queue_position}</span>
+                        <Avatar name={p.participant_name} size={32} active={isActive && p.status==="reciting"} called={p.status==="called"}/>
+                        <div style={{ flex:1 }}>
+                          <div style={{ color:isActive?GOLD:"#fff", fontWeight:isActive?700:500, fontSize:14 }}>{p.participant_name}</div>
+                          {p.school && <div style={{ color:"rgba(255,255,255,0.3)", fontSize:11 }}>{p.school}</div>}
+                        </div>
+                        <span style={{ color:STATUS_COLOR[p.status], fontSize:12, fontWeight:700 }}>
+                          {STATUS_ICON[p.status]} {STATUS_LABEL[p.status]}
+                        </span>
+                        {p.total_score>0 && <span style={{ color:GOLD, fontWeight:800, fontSize:15 }}>{p.total_score}</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* PARTICIPANT VIEW */}
         {!isJudge && myParticipant && (
           <div style={{ padding:"12px 16px 0" }}>
-            {myParticipant.status==="waiting" && (
-              <div className="glass-card" style={{ borderRadius:18, padding:"20px", textAlign:"center" }}>
+            {myParticipant.status==="waiting" && (              <div className="glass-card" style={{ borderRadius:18, padding:"20px", textAlign:"center" }}>
                 <div style={{ fontSize:40, marginBottom:8 }}>⏳</div>
                 <div style={{ color:GOLD, fontWeight:800, fontSize:16 }}>Waiting in Queue</div>
                 <div style={{ color:"rgba(255,255,255,0.4)", fontSize:13, marginTop:4 }}>
@@ -1573,11 +2052,22 @@ export default function MustabaqahPage() {
                 <div style={{ color:GOLD, fontWeight:900, fontSize:18, letterSpacing:1 }}>
                   {myParticipant.status==="called" ? "YOU HAVE BEEN CALLED!" : "Now Reciting..."}
                 </div>
-                <div style={{ color:"rgba(255,255,255,0.55)", fontSize:13, marginTop:6, marginBottom:16 }}>
+                <div style={{ color:"rgba(255,255,255,0.55)", fontSize:13, marginTop:6, marginBottom:12 }}>
                   {myParticipant.status==="called" ? "Unmute your mic and prepare to recite" : "Recite clearly and confidently"}
                 </div>
+
+                {calledScope && (
+                  <div style={{ background:"rgba(0,0,0,0.3)", border:`1px solid ${GOLD}44`, borderRadius:12, padding:"12px 16px", marginBottom:16, textAlign:"center" }}>
+                    <div style={{ color:GOLD, fontSize:10, fontWeight:700, letterSpacing:1.5, textTransform:"uppercase", marginBottom:6 }}>📖 Your Assigned Passage</div>
+                    <div style={{ color:"#fff", fontWeight:800, fontSize:17 }}>{calledScope.label}</div>
+                    {calledScope.labelAr && (
+                      <div style={{ color:"rgba(255,255,255,0.55)", fontSize:16, direction:"rtl", fontFamily:"Amiri,serif", marginTop:4 }}>{calledScope.labelAr}</div>
+                    )}
+                  </div>
+                )}
+
                 <div style={{ display:"flex", gap:10, justifyContent:"center" }}>
-                  <button onClick={toggleMic} style={{
+                  <button onClick={() => { wakeAudio(); toggleMic(); }} style={{
                     background:micOn ? `${GREEN}22` : "rgba(255,255,255,0.08)",
                     border:`2px solid ${micOn ? GREEN : "rgba(255,255,255,0.2)"}`,
                     borderRadius:12, padding:"12px 20px", cursor:"pointer",
@@ -1587,15 +2077,14 @@ export default function MustabaqahPage() {
                     {micOn ? <Mic size={18}/> : <MicOff size={18}/>}
                     {micOn ? "Mic On" : "Unmute"}
                   </button>
-                  <button onClick={toggleCam} style={{
+                  <button onClick={() => { wakeAudio(); toggleCam(); }} style={{
                     background:camOn ? `${GREEN}22` : "rgba(255,255,255,0.08)",
                     border:`2px solid ${camOn ? GREEN : "rgba(255,255,255,0.2)"}`,
                     borderRadius:12, padding:"12px 20px", cursor:"pointer",
                     color:camOn ? GREEN : "rgba(255,255,255,0.6)",
                     display:"flex", alignItems:"center", gap:6, fontSize:14, fontFamily:"Cairo,sans-serif", fontWeight:700,
                   }}>
-                    {camOn ? <Video size={18}/> : <VideoOff size={18}/>}
-                    Camera
+                    {camOn ? <Video size={18}/> : <VideoOff size={18}/>}                    Camera
                   </button>
                 </div>
               </div>
@@ -1609,7 +2098,6 @@ export default function MustabaqahPage() {
               </div>
             )}
 
-            {/* Roster for participants */}
             <div style={{ marginTop:16 }}>
               <div style={{ color:"rgba(255,255,255,0.4)", fontSize:13, fontWeight:600, marginBottom:10, display:"flex", alignItems:"center", gap:6 }}>
                 <Users size={13}/> {participants.length} Participants
@@ -1643,25 +2131,83 @@ export default function MustabaqahPage() {
         )}
       </div>
 
-      {/* MY STATUS BAR — sticky bottom (participants only) */}
+      {/* OBSERVER BOTTOM BAR */}
+      {!isJudge && userRole === "observer" && (
+        <div style={{          position:"fixed", bottom:0, left:0, right:0, zIndex:20,
+          background:"rgba(5,15,8,0.97)", backdropFilter:"blur(20px)",
+          borderTop:"1px solid rgba(201,168,76,0.2)",
+        }}>
+          {activeP && (
+            <div style={{ padding:"8px 16px 0", display:"flex", alignItems:"center", gap:6 }}>
+              <span style={{ color:"rgba(255,255,255,0.3)", fontSize:11, flexShrink:0 }}>React:</span>
+              <div style={{ display:"flex", gap:6, overflowX:"auto" }}>
+                {REACTION_EMOJIS.map(e => (
+                  <button key={e} onClick={() => sendReaction(e)} style={{
+                    background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.12)",
+                    borderRadius:10, padding:"6px 10px", cursor:"pointer", fontSize:20, flexShrink:0,
+                  }}>{e}</button>
+                ))}
+              </div>
+            </div>
+          )}
+          <div style={{ padding:"10px 16px 12px", display:"flex", alignItems:"center", gap:10 }}>
+            <span style={{ fontSize:22 }}>👁️</span>
+            <div style={{ flex:1, color:"rgba(255,255,255,0.5)", fontSize:13 }}>Following as Observer</div>
+            <button onClick={() => setShowChat(c => !c)} style={{
+              background:`${GOLD}18`, border:`1px solid ${GOLD}44`, borderRadius:10,
+              padding:"6px 14px", cursor:"pointer", color:GOLD, fontWeight:700,
+              fontSize:13, fontFamily:"Cairo,sans-serif",
+            }}>💬 Chat</button>
+          </div>
+        </div>
+      )}
+
+      {/* MY STATUS BAR + REACTIONS — sticky bottom (participants only) */}
       {!isJudge && myParticipant && (
         <div style={{
           position:"fixed", bottom:0, left:0, right:0, zIndex:20,
-          background:"rgba(5,15,8,0.95)", backdropFilter:"blur(20px)",
+          background:"rgba(5,15,8,0.97)", backdropFilter:"blur(20px)",
           borderTop:"1px solid rgba(201,168,76,0.2)",
-          padding:"12px 16px", display:"flex", alignItems:"center", gap:12,
         }}>
-          <Avatar name={myParticipant.participant_name} size={36} active={myParticipant.status==="reciting"} called={myParticipant.status==="called"}/>
-          <div style={{ flex:1 }}>
-            <div style={{ color:"#fff", fontWeight:700, fontSize:13 }}>{myParticipant.participant_name}</div>
-            <div style={{ color:STATUS_COLOR[myParticipant.status], fontSize:12, fontWeight:600, marginTop:2 }}>
-              {myParticipant.status==="called" && "🔔 YOU HAVE BEEN CALLED!"}
-              {myParticipant.status==="reciting" && "🎙️ Now Reciting..."}
-              {myParticipant.status==="waiting" && `⏳ Waiting — #${myParticipant.queue_position}`}
-              {myParticipant.status==="completed" && "✅ Done"}
+          {(myParticipant.status==="waiting"||myParticipant.status==="completed") && activeP && (
+            <div style={{ padding:"8px 16px 0", display:"flex", alignItems:"center", gap:6 }}>
+              <span style={{ color:"rgba(255,255,255,0.3)", fontSize:11, flexShrink:0 }}>React:</span>
+              <div style={{ display:"flex", gap:6, overflowX:"auto" }}>
+                {REACTION_EMOJIS.map(e => (
+                  <button key={e} onClick={() => sendReaction(e)} style={{
+                    background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.12)",
+                    borderRadius:10, padding:"6px 10px", cursor:"pointer", fontSize:20, flexShrink:0,
+                    transition:"transform 0.1s",
+                  }} onTouchStart={ev => (ev.currentTarget.style.transform="scale(1.3)")}
+                    onTouchEnd={ev => (ev.currentTarget.style.transform="scale(1)")}>
+                    {e}
+                  </button>
+                ))}              </div>
             </div>
+          )}
+
+          <div style={{ padding:"10px 16px 12px", display:"flex", alignItems:"center", gap:12 }}>
+            <Avatar name={myParticipant.participant_name} size={36} active={myParticipant.status==="reciting"} called={myParticipant.status==="called"}/>
+            <div style={{ flex:1 }}>
+              <div style={{ color:"#fff", fontWeight:700, fontSize:13 }}>{myParticipant.participant_name}</div>
+              <div style={{ color:STATUS_COLOR[myParticipant.status], fontSize:12, fontWeight:600, marginTop:2 }}>
+                {myParticipant.status==="called"    && "🔔 YOU HAVE BEEN CALLED!"}
+                {myParticipant.status==="reciting"  && "🎙️ Now Reciting..."}
+                {myParticipant.status==="waiting"   && `⏳ Waiting — #${myParticipant.queue_position}`}
+                {myParticipant.status==="completed" && "✅ Done"}
+              </div>
+            </div>
+            {!audioReady && (
+              <button onClick={wakeAudio} style={{
+                background:`${GOLD}22`, border:`1px solid ${GOLD}55`, borderRadius:10,
+                padding:"6px 12px", cursor:"pointer", color:GOLD, fontSize:11, fontWeight:700,
+                display:"flex", alignItems:"center", gap:4, fontFamily:"Cairo,sans-serif",
+              }}>
+                <Volume2 size={13}/> Enable Sound
+              </button>
+            )}
+            {myParticipant.total_score>0 && <div style={{ color:GOLD, fontWeight:900, fontSize:22 }}>{myParticipant.total_score}<span style={{ color:"rgba(255,255,255,0.3)", fontSize:11 }}> pts</span></div>}
           </div>
-          {myParticipant.total_score>0 && <div style={{ color:GOLD, fontWeight:900, fontSize:22 }}>{myParticipant.total_score}<span style={{ color:"rgba(255,255,255,0.3)", fontSize:11 }}> pts</span></div>}
         </div>
       )}
     </div>
