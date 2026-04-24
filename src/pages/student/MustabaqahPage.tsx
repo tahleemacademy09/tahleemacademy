@@ -816,27 +816,65 @@ export default function MustabaqahPage() {
   const joinCompetition = async () => {
     const code = joinForm.room_code.trim().toUpperCase();
     const name = joinForm.name.trim();
-    if (!code || !name) { toast({ title:"Fill all fields", variant:"destructive" }); return; }
+    if (!code) { toast({ title:"Enter a room code", variant:"destructive" }); return; }
+    if (!name) { toast({ title:"Enter your name", variant:"destructive" }); return; }
     setLoading(true);
-    const { data:comp } = await supabase.from("musabaqah_competitions" as any).select("*").eq("room_code", code).single();
-    if (!comp) { toast({ title:"Competition not found", variant:"destructive" }); setLoading(false); return; }
-    const { data: existing } = await supabase.from("musabaqah_participants" as any).select("*").eq("competition_id", (comp as Competition).id).eq("user_id", user?.id).single();
+
+    // 1. Find the competition
+    const { data:comp, error:compErr } = await supabase
+      .from("musabaqah_competitions" as any).select("*").eq("room_code", code).maybeSingle();
+    if (compErr || !comp) {
+      toast({ title:"Competition not found", description:`No competition with code "${code}"`, variant:"destructive" });
+      setLoading(false); return;
+    }
+
+    // 2. Check if already joined (use maybeSingle to avoid throwing on 0 rows)
+    const { data: existing } = await supabase
+      .from("musabaqah_participants" as any).select("*")
+      .eq("competition_id", (comp as Competition).id)
+      .eq("user_id", user?.id)
+      .maybeSingle();
     if (existing) {
-      setCompetition(comp as Competition); setMyParticipant(existing as Participant);
+      setCompetition(comp as Competition);
+      setMyParticipant(existing as Participant);
+      setUserRole("participant");
       setLoading(false); setView("arena"); return;
     }
-    const { count } = await supabase.from("musabaqah_participants" as any).select("id", { count:"exact" }).eq("competition_id", (comp as Competition).id);
-    const { data: participant } = await supabase.from("musabaqah_participants" as any).insert({
-      competition_id:(comp as Competition).id, user_id:user?.id,
-      participant_name:name, school:joinForm.school,
-      queue_position:(count||0)+1, status:"waiting",
-      total_score:0, stage_scores:{}, bell_counts:{},
-      proctor_flagged:false, camera_on:false,
-    }).select().single();
+
+    // 3. Get current participant count for queue position
+    const { count } = await supabase
+      .from("musabaqah_participants" as any)
+      .select("id", { count:"exact", head:true })
+      .eq("competition_id", (comp as Competition).id);
+
+    // 4. Insert new participant
+    const { data: participant, error: insertErr } = await supabase
+      .from("musabaqah_participants" as any).insert({
+        competition_id: (comp as Competition).id,
+        user_id: user?.id || null,
+        participant_name: name,
+        school: joinForm.school || null,
+        queue_position: (count ?? 0) + 1,
+        status: "waiting",
+        total_score: 0,
+        stage_scores: {},
+        bell_counts: {},
+        proctor_flagged: false,
+        camera_on: false,
+      }).select().single();
+
     setLoading(false);
+
+    if (insertErr) {
+      toast({ title:"Failed to join", description: insertErr.message, variant:"destructive" });
+      return;
+    }
     if (participant) {
-      setCompetition(comp as Competition); setMyParticipant(participant as Participant);
-      setView("arena"); toast({ title:"✅ Joined!" });
+      setCompetition(comp as Competition);
+      setMyParticipant(participant as Participant);
+      setUserRole("participant");
+      setView("arena");
+      toast({ title:"✅ Joined successfully!" });
     }
   };
 
@@ -1300,7 +1338,7 @@ export default function MustabaqahPage() {
           <Input label="Your Full Name" value={joinForm.name} onChange={(e:any) => setJoinForm(f => ({ ...f, name:e.target.value }))} placeholder="e.g. Ahmad Muhammad"/>
           <Input label="School / Institute (optional)" value={joinForm.school} onChange={(e:any) => setJoinForm(f => ({ ...f, school:e.target.value }))} placeholder="e.g. Tahleem Academy"/>
 
-          <button className="gold-btn" onClick={async () => { setUserRole("participant"); await joinCompetition(); }} disabled={loading} style={{
+          <button className="gold-btn" onClick={joinCompetition} disabled={loading} style={{
             width:"100%", color:G, border:"none", borderRadius:14,
             padding:"16px", fontWeight:800, cursor:loading?"not-allowed":"pointer",
             fontSize:16, fontFamily:"Cairo, sans-serif",
