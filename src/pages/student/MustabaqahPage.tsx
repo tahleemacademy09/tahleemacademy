@@ -245,21 +245,32 @@ const CameraControls = ({ isActive, isJudge }: { isActive:boolean; isJudge:boole
   const { localParticipant } = useLocalParticipant();
   const [camOn, setCamOn] = useState(false);
   const [micOn, setMicOn] = useState(false);
+
+  // Judge: auto-enable both on mount
   useEffect(() => {
     if (isJudge) {
       localParticipant.setCameraEnabled(true).then(()=>setCamOn(true)).catch(()=>{});
       localParticipant.setMicrophoneEnabled(true).then(()=>setMicOn(true)).catch(()=>{});
     }
   }, [isJudge]);
-  if (!isActive && !isJudge) return null;
+
+  // Participant: auto-enable mic the moment they are called / reciting
+  useEffect(() => {
+    if (isActive && !isJudge) {
+      localParticipant.setMicrophoneEnabled(true).then(()=>setMicOn(true)).catch(()=>{});
+      localParticipant.setCameraEnabled(true).then(()=>setCamOn(true)).catch(()=>{});
+    }
+  }, [isActive, isJudge]);
+
+  // Always show controls so participants can manage their own audio/video
   return (
     <div style={{display:"flex",gap:8,justifyContent:"center"}}>
       <button onClick={async()=>{ const n=!micOn; await localParticipant.setMicrophoneEnabled(n); setMicOn(n); }}
-        style={{background:micOn?`${GREEN}22`:"rgba(0,0,0,.5)",border:`1.5px solid ${micOn?GREEN:"rgba(255,255,255,.25)"}`,borderRadius:10,padding:"7px 14px",cursor:"pointer",color:micOn?GREEN:"rgba(255,255,255,.6)",display:"flex",alignItems:"center",gap:5,fontSize:12,fontFamily:"Cairo,sans-serif",fontWeight:700}}>
+        style={{background:micOn?`${GREEN}22`:"rgba(0,0,0,.6)",border:`1.5px solid ${micOn?GREEN:"rgba(255,255,255,.3)"}`,borderRadius:10,padding:"7px 14px",cursor:"pointer",color:micOn?GREEN:"rgba(255,255,255,.7)",display:"flex",alignItems:"center",gap:5,fontSize:12,fontFamily:"Cairo,sans-serif",fontWeight:700,transition:"all .2s"}}>
         {micOn?<Mic size={14}/>:<MicOff size={14}/>} {micOn?"Mic On":"Unmute"}
       </button>
       <button onClick={async()=>{ const n=!camOn; await localParticipant.setCameraEnabled(n); setCamOn(n); }}
-        style={{background:camOn?`${GREEN}22`:"rgba(0,0,0,.5)",border:`1.5px solid ${camOn?GREEN:"rgba(255,255,255,.25)"}`,borderRadius:10,padding:"7px 14px",cursor:"pointer",color:camOn?GREEN:"rgba(255,255,255,.6)",display:"flex",alignItems:"center",gap:5,fontSize:12,fontFamily:"Cairo,sans-serif",fontWeight:700}}>
+        style={{background:camOn?`${GREEN}22`:"rgba(0,0,0,.6)",border:`1.5px solid ${camOn?GREEN:"rgba(255,255,255,.3)"}`,borderRadius:10,padding:"7px 14px",cursor:"pointer",color:camOn?GREEN:"rgba(255,255,255,.7)",display:"flex",alignItems:"center",gap:5,fontSize:12,fontFamily:"Cairo,sans-serif",fontWeight:700,transition:"all .2s"}}>
         {camOn?<Video size={14}/>:<VideoOff size={14}/>} Cam
       </button>
     </div>
@@ -346,6 +357,7 @@ export default function MustabaqahPage() {
   const [stageTiles,     setStageTiles]    = useState<Tile[]>([]);
   const [pickedTile,     setPickedTile]    = useState<Tile|null>(null);
   const [showTilePicker, setShowTilePicker]= useState(false);
+  const [pickerParticipantId, setPickerParticipantId] = useState<string|null>(null);
   const [ayahText,       setAyahText]      = useState<string|null>(null);
   const [loadingAyah,    setLoadingAyah]   = useState(false);
   const [livekitToken,   setLivekitToken]  = useState("");
@@ -355,7 +367,7 @@ export default function MustabaqahPage() {
   const [showChat,       setShowChat]      = useState(false);
   const [chatMessages,   setChatMessages]  = useState<{id:string;name:string;text:string;time:string}[]>([]);
   const [chatInput,      setChatInput]     = useState("");
-  const [form, setForm] = useState({title:"",description:"",scope_type:"juz30",total_stages:5,time_limit:300,use_criteria:true});
+  const [form, setForm] = useState({title:"",description:"",scope_type:"juz30",total_stages:5,time_limit:300,use_criteria:true,tiles_per_stage:10,use_custom_q:false,custom_questions:""});
   const [joinForm, setJoinForm] = useState({room_code:"",name:profile?.full_name||"",school:profile?.school||""});
 
   const channelRef       = useRef<any>(null);
@@ -432,7 +444,7 @@ export default function MustabaqahPage() {
       .on("broadcast",{event:"CALLED"},({payload}:any)=>{
         loadParticipants();
         setBellCount(0); setTimerSecs(0); setShowScore(false);
-        setPickedTile(null); setStageTiles([]); setAyahText(null);
+        setPickedTile(null); setStageTiles([]); setAyahText(null); setPickerParticipantId(null);
         const mine=myParticipantRef.current;
         if (payload.participant_id===mine?.id) {
           getACtx().state==="running"?playCalled():getACtx().resume().then(playCalled);
@@ -441,7 +453,9 @@ export default function MustabaqahPage() {
         }
       })
       .on("broadcast",{event:"TILES_SHOWN"},({payload}:any)=>{
-        setStageTiles(payload.tiles??[]); setPickedTile(null); setAyahText(null); setShowTilePicker(true);
+        setStageTiles(payload.tiles??[]); setPickedTile(null); setAyahText(null);
+        setShowTilePicker(true);
+        setPickerParticipantId(payload.picker_participant_id??null);
       })
       .on("broadcast",{event:"QUESTION_PICKED"},({payload}:any)=>{
         const tile=payload.tile as Tile; setPickedTile(tile);
@@ -456,13 +470,13 @@ export default function MustabaqahPage() {
       .on("broadcast",{event:"SCORE_SUBMITTED"},({payload}:any)=>{
         loadParticipants(); loadAttempts();
         setShowScore(false); setShowTilePicker(false);
-        setActiveP(null); setCurAttempt(null); setPickedTile(null);
+        setActiveP(null); setCurAttempt(null); setPickedTile(null); setPickerParticipantId(null);
         const mine=myParticipantRef.current;
         if (payload.participant_id===mine?.id) toast({title:`🏆 Your score: ${payload.score} pts`});
       })
       .on("broadcast",{event:"STAGE_CHANGE"},({payload}:any)=>{
         setCompetition(c=>c?{...c,current_stage:payload.stage}:c);
-        setPickedTile(null); setStageTiles([]); setShowTilePicker(false); setAyahText(null);
+        setPickedTile(null); setStageTiles([]); setShowTilePicker(false); setAyahText(null); setPickerParticipantId(null);
         setActiveP(null); setCurAttempt(null); setTimerActive(false); setTimerSecs(0);
         playStageWin(); loadParticipants(); loadAttempts();
       })
@@ -505,23 +519,39 @@ export default function MustabaqahPage() {
     broadcast("REACTION",{emoji,name});
   };
 
-  // JUDGE: 1. Call participant
+  // Resolve tiles respecting custom questions stored in scope_config
+  const buildTiles = (comp: Competition): Tile[] => {
+    const count = comp.scope_config?.tiles_per_stage ?? 10;
+    const customs: string[] = comp.scope_config?.custom_questions ?? [];
+    if (customs.length > 0) {
+      return Array.from({length:Math.min(count, customs.length||count)}, (_,i) => ({
+        num: i+1,
+        label: customs[i] ?? genQuestion(comp.scope_type).label,
+        labelAr: "",
+        surah: 0, ayah: 0, surahName: "", surahAr: "",
+      }));
+    }
+    return genTiles(comp.scope_type, count);
+  };
+
+  // JUDGE: 1. Call participant — generate tiles, broadcast to all; PARTICIPANT will pick
   const callParticipant = async (p:Participant) => {
     if (!competition) return;
     setBellCount(0); setTimerSecs(0); setShowScore(false);
     setScoreBreak({tajweed:"",memorize:"",fluency:"",voice:""}); setJudgeComment("");
     setPickedTile(null); setAyahText(null);
-    const tiles=genTiles(competition.scope_type,10);
+    const tiles = buildTiles(competition);
     setStageTiles(tiles); setShowTilePicker(true);
     await supabase.from("musabaqah_participants" as any).update({status:"called"}).eq("id",p.id);
     await supabase.from("musabaqah_competitions" as any).update({current_participant_id:p.id}).eq("id",competition.id);
     setActiveP(p); setCompetition(c=>c?{...c,current_participant_id:p.id}:c); playCalled();
     broadcast("CALLED",{participant_id:p.id,participant_name:p.participant_name});
-    broadcast("TILES_SHOWN",{tiles,stage:competition.current_stage});
+    // Broadcast tiles — participant will pick, everyone else watches
+    broadcast("TILES_SHOWN",{tiles,stage:competition.current_stage,picker_participant_id:p.id});
     setJudgeTab("controls");
   };
 
-  // JUDGE: 2. Pick tile → reveal question to all
+  // PARTICIPANT: picks a tile — broadcasts to everyone (judge sees it too)
   const pickTile = (tile:Tile) => {
     setPickedTile(tile);
     if (tile.surah>0) fetchAyah(tile.surah,tile.ayah);
@@ -604,8 +634,12 @@ export default function MustabaqahPage() {
     if (!form.title.trim()) { toast({title:"Enter a title",variant:"destructive"}); return; }
     setLoading(true);
     const room_code=genCode();
+    const customQList = form.use_custom_q
+      ? form.custom_questions.split("\n").map(s=>s.trim()).filter(Boolean)
+      : [];
     const {data,error}=await supabase.from("musabaqah_competitions" as any).insert({
-      title:form.title.trim(),description:form.description.trim(),scope_type:form.scope_type,scope_config:{},
+      title:form.title.trim(),description:form.description.trim(),scope_type:form.scope_type,
+      scope_config:{ tiles_per_stage: form.tiles_per_stage, custom_questions: customQList },
       total_stages:form.total_stages,current_stage:1,time_limit_seconds:form.time_limit,
       status:"open",room_code,created_by:user?.id,use_criteria_scoring:form.use_criteria,
     }).select().single();
@@ -788,6 +822,42 @@ export default function MustabaqahPage() {
               <input type="number" value={form.time_limit} onChange={e=>setForm(f=>({...f,time_limit:Number(e.target.value)}))} min={60} max={1800} step={30} style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 14px",color:"#fff",fontSize:14}}/>
             </div>
           </div>
+          {/* Tiles per stage */}
+          <div style={{marginBottom:16}}>
+            <Label>Number of tiles per stage (participant picks from these)</Label>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              {[5,8,10,12,15,20].map(n=>(
+                <button key={n} onClick={()=>setForm(f=>({...f,tiles_per_stage:n}))}
+                  style={{background:form.tiles_per_stage===n?`${GOLD}22`:"rgba(255,255,255,.06)",border:`1.5px solid ${form.tiles_per_stage===n?GOLD:"rgba(255,255,255,.15)"}`,borderRadius:10,padding:"8px 16px",cursor:"pointer",color:form.tiles_per_stage===n?GOLD:"rgba(255,255,255,.6)",fontFamily:"Cairo,sans-serif",fontWeight:700,fontSize:13}}>
+                  {n}
+                </button>
+              ))}
+            </div>
+          </div>
+          {/* Custom questions toggle */}
+          <div style={{marginBottom:form.use_custom_q?0:16}}>
+            <div onClick={()=>setForm(f=>({...f,use_custom_q:!f.use_custom_q}))}
+              style={{background:form.use_custom_q?`${GOLD}18`:"rgba(255,255,255,.04)",border:`1.5px solid ${form.use_custom_q?GOLD:"rgba(255,255,255,.12)"}`,borderRadius:12,padding:"12px 16px",cursor:"pointer",display:"flex",alignItems:"center",gap:12}}>
+              <div style={{width:36,height:20,borderRadius:10,background:form.use_custom_q?GOLD:"rgba(255,255,255,.15)",position:"relative",transition:"background .2s",flexShrink:0}}>
+                <div style={{position:"absolute",top:2,left:form.use_custom_q?18:2,width:16,height:16,borderRadius:"50%",background:"#fff",transition:"left .2s"}}/>
+              </div>
+              <div>
+                <div style={{color:form.use_custom_q?GOLD:"#fff",fontWeight:700,fontSize:13}}>Custom Questions</div>
+                <div style={{color:"rgba(255,255,255,.35)",fontSize:11,marginTop:2}}>Enter your own question list instead of random Quran passages</div>
+              </div>
+            </div>
+          </div>
+          {form.use_custom_q&&(
+            <div style={{marginBottom:16,marginTop:10}}>
+              <Label>Custom Questions (one per line — participant sees these as tile labels)</Label>
+              <textarea value={form.custom_questions} onChange={e=>setForm(f=>({...f,custom_questions:e.target.value}))}
+                placeholder={"Al-Baqarah 1-5\nAl-Imran 10-20\nAl-Fatiha full\n..."}
+                rows={6} style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 16px",color:"#fff",fontSize:13,fontFamily:"Cairo,sans-serif",resize:"vertical",lineHeight:1.6}}/>
+              <div style={{color:"rgba(255,255,255,.3)",fontSize:11,marginTop:4}}>
+                {form.custom_questions.split("\n").filter(s=>s.trim()).length} question{form.custom_questions.split("\n").filter(s=>s.trim()).length!==1?"s":""} · First {form.tiles_per_stage} will be shown per stage
+              </div>
+            </div>
+          )}
           <div style={{marginBottom:24}}>
             <Label>Scoring Mode</Label>
             {[{v:true,label:"Criteria scoring",desc:"Tajweed 40 + Hifdh 30 + Fluency 20 + Voice 10"},{v:false,label:"Simple score",desc:"0–100 direct score"}].map(o=>(
@@ -1069,7 +1139,11 @@ export default function MustabaqahPage() {
                 )}
                 {showTilePicker&&activeP&&stageTiles.length>0&&(
                   <div style={{background:"rgba(10,20,15,.9)",border:"1.5px solid rgba(201,168,76,.3)",borderRadius:18,padding:"16px"}}>
-                    <NumberTilePicker tiles={stageTiles} pickedNum={pickedTile?.num??null} onPick={pickTile} canPick={isJudge} stage={competition.current_stage}/>
+                    <div style={{color:"rgba(255,255,255,.5)",fontSize:12,marginBottom:10,textAlign:"center",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+                      <span style={{fontSize:16}}>🎙️</span>
+                      <span><strong style={{color:GOLD}}>{activeP.participant_name}</strong> is picking a number…</span>
+                    </div>
+                    <NumberTilePicker tiles={stageTiles} pickedNum={pickedTile?.num??null} onPick={()=>{}} canPick={false} stage={competition.current_stage}/>
                     {pickedTile&&<QuestionDisplay tile={pickedTile} ayahText={ayahText} loadingAyah={loadingAyah} isParticipant={false}/>}
                   </div>
                 )}
@@ -1218,10 +1292,19 @@ export default function MustabaqahPage() {
                 <div style={{textAlign:"center",marginBottom:16}}>
                   <div style={{fontSize:44,animation:"floatUp 2s ease-in-out infinite"}}>🎙️</div>
                   <div style={{color:GOLD,fontWeight:900,fontSize:20,letterSpacing:1,marginTop:8}}>YOU HAVE BEEN CALLED!</div>
-                  <div style={{color:"rgba(255,255,255,.6)",fontSize:13,marginTop:4}}>The judge is selecting your question…</div>
+                  {!pickedTile
+                    ? <div style={{color:"rgba(255,255,255,.7)",fontSize:14,marginTop:6,fontWeight:700}}>👇 Pick your question number below</div>
+                    : <div style={{color:GREEN,fontSize:13,marginTop:6,fontWeight:700}}>✅ Question selected — wait for judge to start</div>
+                  }
                 </div>
                 {stageTiles.length>0&&(
-                  <NumberTilePicker tiles={stageTiles} pickedNum={pickedTile?.num??null} onPick={()=>{}} canPick={false} stage={competition.current_stage}/>
+                  <NumberTilePicker
+                    tiles={stageTiles}
+                    pickedNum={pickedTile?.num??null}
+                    onPick={!pickedTile ? pickTile : ()=>{}}
+                    canPick={!pickedTile}
+                    stage={competition.current_stage}
+                  />
                 )}
                 {pickedTile&&<QuestionDisplay tile={pickedTile} ayahText={ayahText} loadingAyah={loadingAyah} isParticipant={true}/>}
               </div>
