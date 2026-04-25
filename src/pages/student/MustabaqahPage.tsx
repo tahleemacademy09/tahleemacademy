@@ -434,7 +434,7 @@ export default function MustabaqahPage() {
   const fetchLkToken = useCallback(async (roomCode:string) => {
     setLkError("");
     try {
-      const {data,error} = await supabase.functions.invoke("musabaqah-livekit-token",{body:{room_code: roomCode}});
+      const {data,error} = await supabase.functions.invoke("livekit-token",{body:{room_name: `musabaqah-${roomCode.toUpperCase()}`}});
       if (error) throw new Error(error.message);
       if (data?.error) throw new Error(data.error);
       if (!data?.token || !data?.url) throw new Error("No token returned");
