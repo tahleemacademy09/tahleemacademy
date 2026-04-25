@@ -326,6 +326,7 @@ const AudioEnabler = ({ onEnabled }: { onEnabled: () => void }) => {
 };
 
 
+type CompStatus = "open"|"active"|"paused"|"completed";
 type PStatus    = "waiting"|"called"|"reciting"|"completed"|"absent"|"disqualified";
 
 interface Competition {
@@ -433,10 +434,7 @@ export default function MustabaqahPage() {
   const fetchLkToken = useCallback(async (roomCode:string) => {
     setLkError("");
     try {
-      // Call the already-deployed livekit-token with room_name instead of the
-      // undeployed musabaqah-livekit-token function
-      const roomName = `musabaqah-${roomCode.toUpperCase()}`;
-      const {data,error} = await supabase.functions.invoke("livekit-token",{body:{room_name: roomName}});
+      const {data,error} = await supabase.functions.invoke("musabaqah-livekit-token",{body:{room_code: roomCode}});
       if (error) throw new Error(error.message);
       if (data?.error) throw new Error(data.error);
       if (!data?.token || !data?.url) throw new Error("No token returned");
