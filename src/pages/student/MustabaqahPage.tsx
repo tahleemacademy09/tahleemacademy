@@ -10,10 +10,10 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import {
   LiveKitRoom, RoomAudioRenderer, useLocalParticipant,
-  useRemoteParticipants, VideoTrack,
+  useRemoteParticipants, VideoTrack, useRoomContext,
 } from "@livekit/components-react";
 import "@livekit/components-styles";
-import { Track } from "livekit-client";
+import { Track, RoomEvent } from "livekit-client";
 import {
   Mic, MicOff, Video, VideoOff, Bell, Play, Trophy, Users,
   Plus, Clock, BookOpen, CheckCircle, RefreshCw, ChevronRight,
@@ -277,7 +277,55 @@ const CameraControls = ({ isActive, isJudge }: { isActive:boolean; isJudge:boole
   );
 };
 
-type CompStatus = "draft"|"open"|"active"|"paused"|"completed";
+/* ── AudioEnabler: unlocks LiveKit audio on Android after user tap ─ */
+const AudioEnabler = ({ onEnabled }: { onEnabled: () => void }) => {
+  const room = useRoomContext();
+  const [blocked, setBlocked] = useState(!room.canPlaybackAudio);
+
+  useEffect(() => {
+    const sync = () => {
+      setBlocked(!room.canPlaybackAudio);
+      if (room.canPlaybackAudio) onEnabled();
+    };
+    // Sync immediately in case state already changed
+    sync();
+    room.on(RoomEvent.AudioPlaybackStatusChanged, sync);
+    return () => { room.off(RoomEvent.AudioPlaybackStatusChanged, sync); };
+  }, [room, onEnabled]);
+
+  if (!blocked) return null;
+  return (
+    <div
+      style={{
+        position: "absolute", inset: 0, zIndex: 20,
+        display: "flex", flexDirection: "column",
+        alignItems: "center", justifyContent: "center",
+        background: "rgba(0,0,0,.72)", backdropFilter: "blur(4px)",
+        borderRadius: 18, gap: 10,
+      }}
+    >
+      <Volume2 size={32} color={GOLD}/>
+      <button
+        onClick={() => { room.startAudio(); onEnabled(); }}
+        style={{
+          background: `linear-gradient(135deg,${GOLD},${GOLDD})`,
+          color: G, border: "none", borderRadius: 14,
+          padding: "12px 28px", fontWeight: 900, fontSize: 16,
+          cursor: "pointer", fontFamily: "Cairo,sans-serif",
+          display: "flex", alignItems: "center", gap: 8,
+          boxShadow: "0 6px 24px rgba(201,168,76,.5)",
+        }}
+      >
+        <Volume2 size={18}/> Tap to Enable Audio
+      </button>
+      <p style={{ color: "rgba(255,255,255,.45)", fontSize: 12, margin: 0, textAlign: "center" }}>
+        Your browser requires a tap to start audio
+      </p>
+    </div>
+  );
+};
+
+
 type PStatus    = "waiting"|"called"|"reciting"|"completed"|"absent"|"disqualified";
 
 interface Competition {
@@ -363,6 +411,7 @@ export default function MustabaqahPage() {
   const [livekitToken,   setLivekitToken]  = useState("");
   const [livekitUrl,     setLivekitUrl]    = useState("");
   const [lkConnected,    setLkConnected]   = useState(false);
+  const [lkError,        setLkError]       = useState<string>("");
   const [floatReactions, setFloatReactions]= useState<{id:string;emoji:string;name:string;x:number}[]>([]);
   const [showChat,       setShowChat]      = useState(false);
   const [chatMessages,   setChatMessages]  = useState<{id:string;name:string;text:string;time:string}[]>([]);
@@ -382,10 +431,20 @@ export default function MustabaqahPage() {
   const iAmParticipantActive = !isJudge && myParticipant && (myParticipant.status==="called"||myParticipant.status==="reciting");
 
   const fetchLkToken = useCallback(async (roomCode:string) => {
+    setLkError("");
     try {
       const {data,error} = await supabase.functions.invoke("musabaqah-livekit-token",{body:{room_code:roomCode}});
-      if (!error&&data?.token&&data?.url) { setLivekitToken(data.token); setLivekitUrl(data.url); setLkConnected(true); }
-    } catch {}
+      if (error) throw new Error(error.message);
+      if (data?.error) throw new Error(data.error);
+      if (!data?.token || !data?.url) throw new Error("No token returned — LiveKit may not be configured");
+      setLivekitToken(data.token);
+      setLivekitUrl(data.url);
+      setLkConnected(true);
+    } catch(err: any) {
+      const msg = err?.message || "LiveKit connection failed";
+      setLkError(msg);
+      console.warn("[LiveKit] fetchLkToken error:", msg);
+    }
   },[]);
 
   const fetchAyah = async (surahNum:number,ayahNum:number) => {
@@ -1070,8 +1129,9 @@ export default function MustabaqahPage() {
 
         {/* VIDEO */}
         {lkConnected&&livekitToken&&livekitUrl ? (
-          <LiveKitRoom serverUrl={livekitUrl} token={livekitToken} connect={lkConnected} audio={true} video={false} options={{dynacast:true}}>
+          <LiveKitRoom serverUrl={livekitUrl} token={livekitToken} connect={lkConnected} audio={true} video={true} options={{dynacast:true}}>
             <RoomAudioRenderer/>
+            <AudioEnabler onEnabled={() => setAudioReady(true)}/>
             <div style={{height:240,margin:"12px 16px 0",borderRadius:18,overflow:"hidden",position:"relative",background:"rgba(0,0,0,.85)",border:"1px solid rgba(201,168,76,.2)"}}>
               <LiveVideoGrid activeUserId={activeP?.user_id??null} isJudge={isJudge}/>
               <div style={{position:"absolute",bottom:8,left:0,right:0,display:"flex",justifyContent:"center",pointerEvents:"auto"}}>
@@ -1081,12 +1141,25 @@ export default function MustabaqahPage() {
           </LiveKitRoom>
         ) : (
           <div style={{margin:"12px 16px 0",height:200,background:"rgba(0,0,0,.55)",border:"1px solid rgba(201,168,76,.15)",borderRadius:18,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:10}}>
-            {activeP ? (
+            {lkError ? (
+              <>
+                <Radio size={28} color={RED} style={{opacity:.7}}/>
+                <div style={{color:RED,fontSize:12,fontWeight:700,textAlign:"center",maxWidth:240,padding:"0 12px"}}>⚠️ {lkError}</div>
+                <button
+                  onClick={()=>competition&&fetchLkToken(competition.room_code)}
+                  style={{background:`${GOLD}22`,color:GOLD,border:`1px solid ${GOLD}55`,borderRadius:10,padding:"7px 20px",cursor:"pointer",fontFamily:"Cairo,sans-serif",fontWeight:700,fontSize:13,display:"flex",alignItems:"center",gap:6}}>
+                  <RefreshCw size={13}/> Retry Connection
+                </button>
+              </>
+            ) : activeP ? (
               <>
                 <Avatar name={activeP.participant_name} size={64} active={activeP.status==="reciting"} called={activeP.status==="called"}/>
                 <div style={{color:"#fff",fontWeight:700,fontSize:16,marginTop:4}}>{activeP.participant_name}</div>
                 <span style={{background:`${STATUS_COLOR[activeP.status]}22`,color:STATUS_COLOR[activeP.status],padding:"3px 12px",borderRadius:20,fontSize:12,fontWeight:700}}>{STATUS_ICON[activeP.status]} {STATUS_LABEL[activeP.status]}</span>
                 {timerActive&&<span style={{color:GREEN,fontWeight:900,fontSize:22}}>{fmt(timerSecs)}</span>}
+                <div style={{display:"flex",alignItems:"center",gap:6,color:"rgba(255,255,255,.25)",fontSize:11}}>
+                  <Loader2 size={12} style={{animation:"spin 1s linear infinite"}}/> Connecting to live room…
+                </div>
               </>
             ) : (
               <><Radio size={30} color="rgba(201,168,76,.3)"/><div style={{color:"rgba(255,255,255,.3)",fontSize:13}}>Connecting to live room…</div></>
@@ -1459,7 +1532,7 @@ export default function MustabaqahPage() {
                 {myParticipant.status==="completed"&&"✅ Done"}
               </div>
             </div>
-            {!audioReady&&<button onClick={wakeAudio} style={{background:`${GOLD}22`,border:`1px solid ${GOLD}55`,borderRadius:10,padding:"6px 12px",cursor:"pointer",color:GOLD,fontSize:11,fontWeight:700,display:"flex",alignItems:"center",gap:4,fontFamily:"Cairo,sans-serif"}}><Volume2 size={13}/> Enable Sound</button>}
+            {(!audioReady||lkError)&&<button onClick={()=>{wakeAudio(); if(lkError&&competition)fetchLkToken(competition.room_code);}} style={{background:`${GOLD}22`,border:`1px solid ${GOLD}55`,borderRadius:10,padding:"6px 12px",cursor:"pointer",color:GOLD,fontSize:11,fontWeight:700,display:"flex",alignItems:"center",gap:4,fontFamily:"Cairo,sans-serif"}}><Volume2 size={13}/> {lkError?"Retry Audio":"Enable Sound"}</button>}
             {myParticipant.total_score>0&&<div style={{color:GOLD,fontWeight:900,fontSize:22}}>{myParticipant.total_score}<span style={{color:"rgba(255,255,255,.3)",fontSize:11}}> pts</span></div>}
           </div>
         </div>
