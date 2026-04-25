@@ -433,17 +433,20 @@ export default function MustabaqahPage() {
   const fetchLkToken = useCallback(async (roomCode:string) => {
     setLkError("");
     try {
-      const {data,error} = await supabase.functions.invoke("musabaqah-livekit-token",{body:{room_code:roomCode}});
+      // Call the already-deployed livekit-token with room_name instead of the
+      // undeployed musabaqah-livekit-token function
+      const roomName = `musabaqah-${roomCode.toUpperCase()}`;
+      const {data,error} = await supabase.functions.invoke("livekit-token",{body:{room_name: roomName}});
       if (error) throw new Error(error.message);
       if (data?.error) throw new Error(data.error);
-      if (!data?.token || !data?.url) throw new Error("No token returned — LiveKit may not be configured");
+      if (!data?.token || !data?.url) throw new Error("No token returned");
       setLivekitToken(data.token);
       setLivekitUrl(data.url);
       setLkConnected(true);
     } catch(err: any) {
       const msg = err?.message || "LiveKit connection failed";
       setLkError(msg);
-      console.warn("[LiveKit] fetchLkToken error:", msg);
+      console.warn("[Musabaqah] LiveKit token error:", msg);
     }
   },[]);
 
