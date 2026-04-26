@@ -403,35 +403,111 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER }: Props) {
 
   // ── SETUP ────────────────────────────────────────────────
   if(!started){
+    /* Refined palette */
+    const W    = "#ffffff";
+    const WARM = "#faf8f4";
+    const BRD  = "#e8ddd0";
+    const MUT  = "#9aab94";
+    const TXT  = "#374151";
+
+    const sCard = (ex?: React.CSSProperties): React.CSSProperties => ({
+      background: W, border: `1px solid ${BRD}`, borderRadius: 16,
+      boxShadow: "0 1px 8px rgba(26,61,36,.06)", ...ex,
+    });
+
     return(
-      <div style={{padding:"16px",display:"flex",flexDirection:"column",gap:14}}>
-        <div style={{borderRadius:18,overflow:"hidden"}}>
-          <div style={{background:`linear-gradient(135deg,${G},#7c3aed)`,padding:"22px 20px",textAlign:"center"}}>
-            <div style={{fontSize:44,marginBottom:10}}>✍️</div>
-            <div style={{fontFamily:"'Amiri',serif",fontSize:24,color:"#fff",fontWeight:700}}>Hifdh Test</div>
-            <div style={{fontFamily:"'Amiri',serif",fontSize:14,color:"rgba(255,255,255,.75)",marginTop:4}}>اختبار الحفظ</div>
+      <div style={{background: WARM, minHeight:"100%", display:"flex", flexDirection:"column", gap:0}}>
+        <style>{`
+          @import url('https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&display=swap');
+          .tst-btn:active{transform:scale(0.97)} .tst-sel:focus{outline:2px solid #1a3d24; outline-offset:1px;}
+        `}</style>
+
+        {/* ── Header ── */}
+        <div style={{background:W, borderBottom:`1px solid ${BRD}`, padding:"16px", position:"relative", overflow:"hidden", flexShrink:0}}>
+          <div style={{position:"absolute",top:0,left:0,right:0,height:3,background:`linear-gradient(90deg,${G},${GM},#7c3aed)`}}/>
+          {/* Decorative circles */}
+          <div style={{position:"absolute",right:-15,top:-15,width:90,height:90,borderRadius:"50%",border:`1px solid ${G}08`,pointerEvents:"none"}}/>
+          <div style={{position:"absolute",right:10,top:10,width:55,height:55,borderRadius:"50%",border:`1px solid #7c3aed10`,pointerEvents:"none"}}/>
+
+          <div style={{display:"flex",alignItems:"center",gap:12}}>
+            <div style={{width:46,height:46,borderRadius:12,background:`linear-gradient(135deg,${G},#5b21b6)`,
+              display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0,
+              boxShadow:`0 3px 10px ${G}35`}}>
+              ✍️
+            </div>
+            <div>
+              <div style={{fontFamily:"'Amiri',serif",fontSize:20,color:G,fontWeight:700,lineHeight:1.2}}>Hifdh Test</div>
+              <div style={{fontFamily:"'Amiri',serif",fontSize:12,color:GOLD,marginTop:1}}>اختبار الحفظ</div>
+            </div>
+            <div style={{marginLeft:"auto",padding:"4px 10px",borderRadius:10,
+              background:`${G}10`,border:`1px solid ${G}25`,
+              fontSize:10,fontWeight:700,color:G}}>
+              Mixed Q-Types
+            </div>
           </div>
         </div>
 
-        {/* Surah selector */}
-        <div style={card({padding:"16px"})}>
-          <div style={{fontSize:11,fontWeight:700,color:"#7a9e88",letterSpacing:.5,marginBottom:10}}>SELECT SURAH · اختر السورة</div>
-          <select value={surahNum} onChange={e=>setSurahNum(Number(e.target.value))}
-            style={{width:"100%",padding:"11px 12px",borderRadius:12,border:`1px solid ${BORDER}`,fontSize:14,color:G,background:"#f8fafb",marginBottom:10}}>
-            {SURAHS.map(s=><option key={s.num} value={s.num}>{s.num}. {s.name} · {s.nameAr}</option>)}
-          </select>
-          <div style={{padding:"9px 12px",borderRadius:10,background:LIGHT,border:`1px solid ${BORDER}`,fontSize:12,color:G,fontWeight:600}}>
-            {loading ? "Loading verses…" : `${ayahs.length} verses · All will be tested · Mixed question types`}
-          </div>
-        </div>
+        {/* ── Content ── */}
+        <div style={{padding:"16px",display:"flex",flexDirection:"column",gap:12,flex:1}}>
 
-        {buildErr&&<div style={{padding:"12px 14px",borderRadius:12,background:"#fff5f5",border:"1px solid #fca5a5",fontSize:13,color:"#c0392b",textAlign:"center"}}>{buildErr}</div>}
-        <button onClick={startTest} disabled={!canStart}
-          style={{padding:"15px 0",borderRadius:14,border:"none",cursor:canStart?"pointer":"not-allowed",
-            background:canStart?`linear-gradient(135deg,${G},#7c3aed)`:"#f0f4f0",
-            color:canStart?"#fff":"#7a9e88",fontSize:15,fontWeight:800}}>
-          {loading?"Loading…":!canStart?"Need at least 3 verses":"✍️ Start Test · ابدأ الاختبار"}        </button>
-        {fetchErr&&<div style={{padding:"12px",borderRadius:12,background:"#fff5f5",border:"1px solid #fca5a5",fontSize:13,color:"#c0392b",textAlign:"center"}}>{fetchErr} <button onClick={fetchAyahs} style={{textDecoration:"underline",background:"none",border:"none",color:"#c0392b",cursor:"pointer"}}>Retry</button></div>}
+          {/* Surah selector card */}
+          <div style={sCard({padding:"16px"})}>
+            <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:12}}>
+              <div style={{width:3,height:14,borderRadius:2,background:GOLD}}/>
+              <span style={{fontSize:10,fontWeight:800,color:GOLD,letterSpacing:1,textTransform:"uppercase" as const}}>
+                Select Surah · اختر السورة
+              </span>
+            </div>
+            <select value={surahNum} className="tst-sel" onChange={e=>setSurahNum(Number(e.target.value))}
+              style={{width:"100%",padding:"11px 12px",borderRadius:10,border:`1.5px solid ${BRD}`,
+                fontSize:13,color:G,background:WARM,marginBottom:12,fontWeight:600,
+                appearance:"none" as const,cursor:"pointer"}}>
+              {SURAHS.map(s=><option key={s.num} value={s.num}>{s.num}. {s.name} · {s.nameAr}</option>)}
+            </select>
+
+            {/* Info badge */}
+            <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",borderRadius:12,
+              background:`${G}08`,border:`1px solid ${G}18`}}>
+              <div style={{width:32,height:32,borderRadius:8,background:`${G}15`,
+                display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>
+                📖
+              </div>
+              <div style={{flex:1}}>
+                <div style={{fontSize:12,fontWeight:700,color:G}}>
+                  {loading ? "Loading verses…" : `${ayahs.length} verses · All will be tested`}
+                </div>
+                <div style={{fontSize:10,color:MUT,marginTop:1}}>Mixed question types · MCQ + Voice</div>
+              </div>
+            </div>
+          </div>
+
+          {buildErr&&(
+            <div style={{padding:"12px 14px",borderRadius:12,background:"#fff5f5",
+              border:"1px solid #fca5a5",fontSize:13,color:"#c0392b",textAlign:"center" as const}}>
+              {buildErr}
+            </div>
+          )}
+
+          {/* Start button */}
+          <button className="tst-btn" onClick={startTest} disabled={!canStart}
+            style={{padding:"16px 0",borderRadius:14,border:"none",
+              cursor:canStart?"pointer":"not-allowed",transition:"all .2s",
+              background:canStart?`linear-gradient(135deg,${G} 0%,${GM} 100%)`:"#f0f0ee",
+              color:canStart?"#fff":MUT,fontSize:16,fontWeight:800,
+              boxShadow:canStart?`0 4px 16px ${G}40`:"none",letterSpacing:.3}}>
+            {loading?"Loading…":!canStart?"Need at least 3 verses":"✍️ Start Test · ابدأ الاختبار"}
+          </button>
+
+          {fetchErr&&(
+            <div style={{padding:"12px",borderRadius:12,background:"#fff5f5",
+              border:"1px solid #fca5a5",fontSize:13,color:"#c0392b",textAlign:"center" as const}}>
+              {fetchErr}&nbsp;
+              <button onClick={fetchAyahs} style={{textDecoration:"underline",background:"none",border:"none",color:"#c0392b",cursor:"pointer"}}>
+                Retry
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     );
   }
