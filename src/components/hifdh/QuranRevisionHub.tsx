@@ -1538,48 +1538,46 @@ export default function QuranRevisionHub({ userId }: Props) {
         {errAyah && (
           <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
 
-            {/* Verse info — surah name and ayah number only, no text */}
-            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px",
-              borderRadius: 14, background: "#1a3d24", border: `1px solid ${GOLD}33` }}>
-              <div style={{ width: 36, height: 36, borderRadius: 10, background: GOLD + "22",
-                display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                <BookOpen size={16} color={GOLD} />
-              </div>
-              <div>
-                <div style={{ fontSize: 11, color: GOLD, fontWeight: 800, letterSpacing: 0.5 }}>
-                  {errAyah.ayah.surah?.nameAr || errAyah.ayah.surah?.name}
+            {/* Context verse — the verse BEFORE the error verse */}
+            {contextAyah && (
+              <div className="rounded-2xl overflow-hidden" style={{ border: `1px solid ${GOLD}33` }}>
+                <div className="px-4 py-2 flex items-center gap-2" style={{ background: GOLD + "15" }}>
+                  <BookOpen size={12} color={GOLD} />
+                  <span className="text-xs font-bold" style={{ color: GOLD }}>
+                    The verse before — use it as your starting point:
+                  </span>
                 </div>
-                <div style={{ fontSize: 13, color: "#c4dbc9", fontFamily: "'Amiri',serif", marginTop: 2 }}>
-                  آية {toAr(errAyah.ayah.numberInSurah)}
+                <div className="px-5 py-4" style={{ background: PARCHMENT }}>
+                  <p className="qr-mushaf text-center leading-loose" style={{ fontSize: fontSize - 2 }}>
+                    {contextAyah.text}{" "}
+                    <span style={{ color: GOLD, fontSize: "0.7em", fontFamily: "'Amiri',serif" }}>
+                      ۝{toAr(contextAyah.numberInSurah)}
+                    </span>
+                  </p>
+                  <button onClick={() => playAyah(contextAyah)}
+                    className="mt-2 mx-auto flex items-center gap-1.5 text-xs qr-btn px-3 py-1.5 rounded-lg"
+                    style={{ background: GOLD + "22", color: GOLD, display: "flex" }}>
+                    <Volume2 size={11} /> Listen to this verse
+                  </button>
                 </div>
               </div>
-              <div style={{ marginLeft: "auto", padding: "4px 10px", borderRadius: 8,
-                background: GOLD + "18", color: GOLD, fontSize: 10, fontWeight: 700 }}>
-                {remediationIdx + 1}/{ayahErrors.length}
-              </div>
-            </div>
+            )}
 
-            {/* What to recite — DON'T show the verse text */}
-            <div className="rounded-2xl p-4" style={{ background: "#ffffff", border: "2px solid #f59e0b", boxShadow: "0 2px 12px rgba(245,158,11,.18)" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                <div style={{ width: 32, height: 32, borderRadius: 8, background: "#f59e0b", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, flexShrink: 0 }}>
-                  📢
-                </div>
-                <div>
-                  <p className="font-black" style={{ color: "#92400e", fontSize: 13, lineHeight: 1.3 }}>
-                    Now recite the next verse:
-                  </p>
-                  <p style={{ color: "#b45309", fontSize: 11, fontFamily: "'Amiri',serif", marginTop: 2 }}>
-                    {errAyah.ayah.surah?.nameAr} — آية {toAr(errAyah.ayah.numberInSurah)}
-                  </p>
-                </div>
+            {/* Error verse — show the text so student can read and recite it */}
+            <div className="rounded-2xl overflow-hidden" style={{ border: "2px solid #f59e0b", boxShadow: "0 2px 12px rgba(245,158,11,.15)" }}>
+              <div className="px-4 py-2.5 flex items-center gap-2" style={{ background: "#f59e0b" }}>
+                <span className="text-xs font-black" style={{ color: "#78350f" }}>
+                  📢 Now recite this verse — {errAyah.ayah.surah?.nameAr} · آية {toAr(errAyah.ayah.numberInSurah)}
+                </span>
               </div>
-              <div style={{ padding: "10px 12px", borderRadius: 10, background: "#fffbeb", border: "1px solid #fcd34d" }}>
-                <p style={{ color: "#78350f", fontSize: 12, fontWeight: 700, margin: 0, lineHeight: 1.6 }}>
-                  🧠 Recite from memory — do not look at the text
+              <div className="px-5 py-4" style={{ background: PARCHMENT }}>
+                <p className="qr-mushaf text-center leading-loose" style={{ fontSize: fontSize - 2 }}>
+                  {errAyah.ayah.text}{" "}
+                  <span style={{ color: GOLD, fontSize: "0.7em", fontFamily: "'Amiri',serif" }}>
+                    ۝{toAr(errAyah.ayah.numberInSurah)}
+                  </span>
                 </p>
               </div>
-
             </div>
 
             {/* Mastered badge */}
