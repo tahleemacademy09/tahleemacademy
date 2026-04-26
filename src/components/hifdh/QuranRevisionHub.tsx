@@ -334,7 +334,7 @@ export default function QuranRevisionHub({ userId }: Props) {
   const pageDataRef = useRef<any>(null);
   useEffect(() => { pageDataRef.current = pageData; }, [pageData]);
 
-  // ═══ Load saved plan ═══════════════════════════════════
+  // ═══ Load saved plan — resume from where user left off ═
   useEffect(() => {
     if (!userId) return;
     const saved = localStorage.getItem(`revision_plan_${userId}`);
@@ -342,11 +342,20 @@ export default function QuranRevisionHub({ userId }: Props) {
       try {
         const p: RevisionPlan = JSON.parse(saved);
         setPlan(p); setSelectMode(p.mode); setSelected(p.selected); setDailyPages(p.dailyPages);
+        // Resume at current page in reciting stage instead of going back to setup
+        const currentPage = p.allPages[p.currentIdx];
+        if (currentPage) {
+          setSessionStart(Date.now());
+          setPageVisible(true);
+          fetchPage(currentPage);
+          fetchPrevPage(currentPage);
+          setStage("reciting");
+        }
       } catch { /* ignore */ }
     }
     const done = localStorage.getItem(`revision_done_${userId}`);
     if (done) { try { setCompletedPages(new Set(JSON.parse(done))); } catch { /* ignore */ } }
-  }, [userId]);
+  }, [userId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ═══ Fetch page ════════════════════════════════════════
   const fetchPage = useCallback(async (pageNum: number) => {
