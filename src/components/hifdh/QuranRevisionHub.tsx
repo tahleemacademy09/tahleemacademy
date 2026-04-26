@@ -844,168 +844,199 @@ export default function QuranRevisionHub({ userId }: Props) {
       { val: 20,  ar: "عشرون",   en: "20 pages" },
     ];
 
-    return (
-      <div className="h-full overflow-y-auto qr-geo" style={{ background: `linear-gradient(160deg,${DG} 0%,#0a1810 100%)` }}>
-        <style>{globalCSS}</style>
+    /* Refined palette */
+    const W    = "#ffffff";
+    const WARM = "#faf8f4";
+    const BRD  = "#e8ddd0";
+    const MUT  = "#9aab94";
+    const GL   = GOLD;
 
-        <div className="px-5 pt-6 pb-2">
-          <div className="flex items-center gap-2 mb-0.5">
-            <BookMarked size={17} style={{ color: GOLD }} />
-            <span className="font-black text-sm tracking-wider uppercase" style={{ color: GOLD }}>
-              Quran Revision
-            </span>
+    return (
+      <div className="h-full overflow-y-auto" style={{ background: WARM }}>
+        <style>{globalCSS + `
+          .rv-btn:active{transform:scale(0.97);transition:transform .1s}
+          .rv-card{background:#fff;border:1px solid #e8ddd0;border-radius:16px;box-shadow:0 1px 8px rgba(26,61,36,.05)}
+          .rv-sel:focus{outline:2px solid #1a3d24;outline-offset:1px}
+          .rv-arabic{font-family:'Amiri',serif;direction:rtl}
+        `}</style>
+
+        {/* Header */}
+        <div style={{ background: W, borderBottom: `1px solid ${BRD}`, padding: "16px", position: "relative", overflow: "hidden" }}>
+          <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: `linear-gradient(90deg,${DG},${DG2},${GL})` }} />
+          <div style={{ position: "absolute", right: -15, top: -15, width: 100, height: 100, borderRadius: "50%", border: `1px solid ${GL}10`, pointerEvents: "none" }} />
+          <div style={{ position: "absolute", right: 10, top: 10, width: 65, height: 65, borderRadius: "50%", border: `1px solid ${GL}08`, pointerEvents: "none" }} />
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ width: 46, height: 46, borderRadius: 12, background: `linear-gradient(135deg,${DG},${DG2})`,
+              display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+              boxShadow: `0 3px 10px ${DG}35` }}>
+              <BookMarked size={20} style={{ color: GL }} />
+            </div>
+            <div>
+              <div style={{ fontFamily: "'Amiri',serif", fontSize: 20, color: DG, fontWeight: 700, lineHeight: 1.2 }}>Quran Revision</div>
+              <div style={{ fontFamily: "'Amiri',serif", fontSize: 12, color: GL, marginTop: 1 }}>مراجعة المحفوظ — Review what you've memorised</div>
+            </div>
           </div>
-          <p className="text-xs" style={{ color: "#6a9d7a" }}>
-            مراجعة المحفوظ — Review what you've memorised
-          </p>
         </div>
 
-        <div className="px-4 pb-10 space-y-3 mt-3">
+        <div style={{ padding: "14px 14px 100px", display: "flex", flexDirection: "column", gap: 12 }}>
 
           {/* Resume plan */}
           {plan && (
-            <div className="rounded-2xl overflow-hidden border qr-fadein" style={{ borderColor: GOLD + "44" }}>
-              <div className="px-4 py-3" style={{ background: GOLD + "18" }}>
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold" style={{ color: GOLD }}>📋 Active Plan</span>
-                  <button
-                    onClick={() => {
-                      setSessionStart(Date.now());
-                      setPageVisible(true);
-                      fetchPage(plan.allPages[plan.currentIdx]);
-                      fetchPrevPage(plan.allPages[plan.currentIdx]);
-                      setStage("reciting");
-                    }}
-                    className="text-xs font-black px-3 py-1.5 rounded-lg qr-btn"
-                    style={{ background: GOLD, color: DG }}
-                  >
-                    Resume →
-                  </button>
+            <div className="rv-card qr-fadein" style={{ padding: "14px" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <div style={{ width: 3, height: 14, borderRadius: 2, background: GL }} />
+                  <span style={{ fontSize: 10, fontWeight: 800, color: GL, letterSpacing: 1, textTransform: "uppercase" as const }}>Active Plan</span>
                 </div>
-                <p className="text-xs mt-1" style={{ color: "#adc9b8" }}>
-                  {plan.mode === "juz" ? `Juz ${plan.selected.join(", ")}` :
-                   plan.mode === "hizb" ? `Hizb ${plan.selected.join(", ")}` :
-                   `${plan.selected.length} Surah(s)`} · Page {plan.allPages[plan.currentIdx]} / {plan.allPages.length}
-                </p>
-                <div className="mt-2 h-1.5 rounded-full overflow-hidden" style={{ background: "#1a3025" }}>
-                  <div className="h-full rounded-full" style={{
-                    width: `${Math.round((plan.currentIdx / Math.max(1, plan.allPages.length - 1)) * 100)}%`,
-                    background: `linear-gradient(to right,${GOLD},${GOLD_LIGHT})`,
-                  }} />
-                </div>
+                <button className="rv-btn"
+                  onClick={() => {
+                    setSessionStart(Date.now()); setPageVisible(true);
+                    fetchPage(plan.allPages[plan.currentIdx]);
+                    fetchPrevPage(plan.allPages[plan.currentIdx]);
+                    setStage("reciting");
+                  }}
+                  style={{ fontSize: 12, fontWeight: 800, padding: "7px 14px", borderRadius: 10, border: "none", cursor: "pointer",
+                    background: `linear-gradient(135deg,${DG},${DG2})`, color: W, boxShadow: `0 2px 8px ${DG}35` }}>
+                  Resume →
+                </button>
+              </div>
+              <p style={{ fontSize: 12, color: MUT, marginBottom: 8 }}>
+                {plan.mode === "juz" ? `Juz ${plan.selected.join(", ")}` :
+                 plan.mode === "hizb" ? `Hizb ${plan.selected.join(", ")}` :
+                 `${plan.selected.length} Surah(s)`} · Page {plan.allPages[plan.currentIdx]} / {plan.allPages.length}
+              </p>
+              <div style={{ height: 6, borderRadius: 3, background: BRD, overflow: "hidden" }}>
+                <div style={{ width: `${Math.round((plan.currentIdx / Math.max(1, plan.allPages.length - 1)) * 100)}%`, height: "100%",
+                  borderRadius: 3, background: `linear-gradient(to right,${DG},${GL})` }} />
               </div>
             </div>
           )}
 
-          {/* What to revise */}
-          <div className="rounded-2xl p-4" style={{ background: "#ffffff09", border: `1px solid ${GOLD}22` }}>
-            <p className="text-xs font-bold mb-3" style={{ color: GOLD }}>📚 What to Revise</p>
-            <div className="grid grid-cols-3 gap-2 mb-3">
+          {/* What to Revise */}
+          <div className="rv-card" style={{ padding: "14px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 12 }}>
+              <div style={{ width: 3, height: 14, borderRadius: 2, background: GL }} />
+              <span style={{ fontSize: 10, fontWeight: 800, color: GL, letterSpacing: 1, textTransform: "uppercase" as const }}>What to Revise</span>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginBottom: 12 }}>
               {(["juz", "hizb", "surah"] as SelectMode[]).map(m => (
-                <button key={m} onClick={() => { setSelectMode(m); setSelected([]); }}
-                  className="py-2.5 rounded-xl text-xs font-bold qr-btn"
-                  style={{
-                    background: selectMode === m ? GOLD : "#1a3025",
-                    color: selectMode === m ? DG : "#7aad90",
-                    border: selectMode === m ? "none" : `1px solid ${GOLD}22`,
-                  }}>
-                  {m === "juz" ? "بالجزء\nJuz" : m === "hizb" ? "بالحزب\nHizb" : "بالسورة\nSurah"}
+                <button key={m} className="rv-btn" onClick={() => { setSelectMode(m); setSelected([]); }}
+                  style={{ padding: "10px 4px", borderRadius: 12, border: `2px solid ${selectMode === m ? DG : BRD}`,
+                    background: selectMode === m ? DG : W, color: selectMode === m ? W : MUT,
+                    fontWeight: 800, cursor: "pointer", transition: "all .2s",
+                    boxShadow: selectMode === m ? `0 2px 8px ${DG}30` : "none" }}>
+                  <div style={{ fontSize: 12, fontFamily: "'Amiri',serif", color: selectMode === m ? GL : "inherit" }}>
+                    {m === "juz" ? "بالجزء" : m === "hizb" ? "بالحزب" : "بالسورة"}
+                  </div>
+                  <div style={{ fontSize: 9, marginTop: 1 }}>{m === "juz" ? "Juz" : m === "hizb" ? "Hizb" : "Surah"}</div>
                 </button>
               ))}
             </div>
-
-            <div className="max-h-52 overflow-y-auto rounded-xl" style={{ background: "#0d1f14" }}>
+            <div style={{ maxHeight: 200, overflowY: "auto", borderRadius: 12, border: `1px solid ${BRD}`, background: WARM, padding: 8 }}>
               {selectMode === "juz" && (
-                <div className="grid grid-cols-6 gap-1.5 p-2">
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(6,1fr)", gap: 5 }}>
                   {Array.from({ length: 30 }, (_, i) => i + 1).map(j => (
-                    <button key={j}
+                    <button key={j} className="rv-btn"
                       onClick={() => setSelected(p => p.includes(j) ? p.filter(x => x !== j) : [...p, j])}
-                      className="aspect-square rounded-lg text-xs font-bold qr-btn"
-                      style={{
-                        background: selected.includes(j) ? GOLD : "#1a3025",
-                        color: selected.includes(j) ? DG : "#7aad90",
-                        border: selected.includes(j) ? "none" : `1px solid ${GOLD}22`,
-                      }}>
+                      style={{ aspectRatio: "1", borderRadius: 10, border: `2px solid ${selected.includes(j) ? DG : BRD}`,
+                        background: selected.includes(j) ? DG : W, color: selected.includes(j) ? GL : MUT,
+                        fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "'Amiri',serif",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        boxShadow: selected.includes(j) ? `0 1px 6px ${DG}30` : "none" }}>
                       {toAr(j)}
                     </button>
                   ))}
                 </div>
               )}
               {selectMode === "hizb" && (
-                <div className="grid grid-cols-6 gap-1.5 p-2">
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(6,1fr)", gap: 5 }}>
                   {Array.from({ length: 60 }, (_, i) => i + 1).map(h => (
-                    <button key={h}
+                    <button key={h} className="rv-btn"
                       onClick={() => setSelected(p => p.includes(h) ? p.filter(x => x !== h) : [...p, h])}
-                      className="aspect-square rounded-lg text-[10px] font-bold qr-btn"
-                      style={{
-                        background: selected.includes(h) ? GOLD : "#1a3025",
-                        color: selected.includes(h) ? DG : "#7aad90",
-                        border: `1px solid ${GOLD}22`,
-                      }}>
+                      style={{ aspectRatio: "1", borderRadius: 10, border: `2px solid ${selected.includes(h) ? DG : BRD}`,
+                        background: selected.includes(h) ? DG : W, color: selected.includes(h) ? GL : MUT,
+                        fontSize: 10, fontWeight: 800, cursor: "pointer", fontFamily: "'Amiri',serif",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        boxShadow: selected.includes(h) ? `0 1px 6px ${DG}30` : "none" }}>
                       {toAr(h)}
                     </button>
                   ))}
                 </div>
               )}
               {selectMode === "surah" && (
-                <div className="space-y-0.5 p-2">
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                   {Object.entries(SURAHS_AR).map(([num, name]) => {
                     const n = Number(num);
                     return (
-                      <button key={n}
+                      <button key={n} className="rv-btn"
                         onClick={() => setSelected(p => p.includes(n) ? p.filter(x => x !== n) : [...p, n])}
-                        className="w-full flex items-center justify-between px-3 py-1.5 rounded-xl qr-btn"
-                        style={{
-                          background: selected.includes(n) ? GOLD + "33" : "transparent",
-                          border: `1px solid ${selected.includes(n) ? GOLD + "88" : GOLD + "14"}`,
-                        }}>
-                        <span className="text-xs font-bold qr-arabic"
-                          style={{ color: selected.includes(n) ? GOLD_LIGHT : "#7aad90" }}>{name}</span>
-                        <span className="text-[10px]" style={{ color: "#4a6d58" }}>{n}</span>
+                        style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+                          padding: "8px 12px", borderRadius: 10, cursor: "pointer", transition: "all .15s",
+                          border: `1.5px solid ${selected.includes(n) ? DG : BRD}`,
+                          background: selected.includes(n) ? `${DG}0d` : W }}>
+                        <span style={{ fontSize: 13, fontWeight: 700, fontFamily: "'Amiri',serif",
+                          color: selected.includes(n) ? DG : "#374141" }}>{name}</span>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <span style={{ fontSize: 10, color: MUT }}>{n}</span>
+                          {selected.includes(n) && (
+                            <div style={{ width: 16, height: 16, borderRadius: "50%", background: DG,
+                              display: "flex", alignItems: "center", justifyContent: "center" }}>
+                              <Check size={10} color={GL} />
+                            </div>
+                          )}
+                        </div>
                       </button>
                     );
                   })}
                 </div>
               )}
             </div>
-
             {selected.length > 0 && (
-              <p className="text-xs mt-2 font-bold" style={{ color: GOLD }}>
-                {selected.length} {selectMode}(s) selected · ~{buildPages(selectMode, selected).length} pages
-              </p>
+              <div style={{ marginTop: 10, padding: "8px 12px", borderRadius: 10, background: `${DG}08`, border: `1px solid ${DG}18`,
+                fontSize: 11, color: DG, fontWeight: 700, display: "flex", justifyContent: "space-between" }}>
+                <span>✓ {selected.length} {selectMode}(s) selected</span>
+                <span style={{ color: GL }}>~{buildPages(selectMode, selected).length} pages</span>
+              </div>
             )}
           </div>
 
           {/* Daily amount */}
-          <div className="rounded-2xl p-4" style={{ background: "#ffffff09", border: `1px solid ${GOLD}22` }}>
-            <p className="text-xs font-bold mb-3" style={{ color: GOLD }}>⏱️ Daily Revision Amount</p>
-            <div className="grid grid-cols-4 gap-2">
+          <div className="rv-card" style={{ padding: "14px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 12 }}>
+              <div style={{ width: 3, height: 14, borderRadius: 2, background: GL }} />
+              <span style={{ fontSize: 10, fontWeight: 800, color: GL, letterSpacing: 1, textTransform: "uppercase" as const }}>Daily Revision Amount</span>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 6 }}>
               {dailyOptions.map(o => (
-                <button key={o.val} onClick={() => setDailyPages(o.val)}
-                  className="py-2.5 rounded-xl qr-btn"
-                  style={{
-                    background: dailyPages === o.val ? GOLD : "#1a3025",
-                    border: dailyPages === o.val ? "none" : `1px solid ${GOLD}22`,
-                  }}>
-                  <div className="text-xs font-black qr-arabic" style={{ color: dailyPages === o.val ? DG : GOLD }}>{o.ar}</div>
-                  <div className="text-[9px]" style={{ color: dailyPages === o.val ? DG + "99" : "#4a6d58" }}>{o.en}</div>
+                <button key={o.val} className="rv-btn" onClick={() => setDailyPages(o.val)}
+                  style={{ padding: "10px 4px", borderRadius: 12, cursor: "pointer", transition: "all .2s",
+                    border: `2px solid ${dailyPages === o.val ? DG : BRD}`,
+                    background: dailyPages === o.val ? DG : W,
+                    boxShadow: dailyPages === o.val ? `0 2px 8px ${DG}30` : "none" }}>
+                  <div style={{ fontSize: 12, fontWeight: 800, fontFamily: "'Amiri',serif",
+                    color: dailyPages === o.val ? GL : MUT }}>{o.ar}</div>
+                  <div style={{ fontSize: 9, marginTop: 2, color: dailyPages === o.val ? `${GL}cc` : "#c0c0b0" }}>{o.en}</div>
                 </button>
               ))}
             </div>
           </div>
 
           {/* Reciter */}
-          <div className="rounded-2xl p-4" style={{ background: "#ffffff09", border: `1px solid ${GOLD}22` }}>
-            <p className="text-xs font-bold mb-2" style={{ color: GOLD }}>🎙️ Reciter</p>
-            <select value={reciter} onChange={e => setReciter(e.target.value)}
-              className="w-full text-sm rounded-xl px-3 py-2.5 outline-none qr-arabic"
-              style={{ background: "#1a3025", color: GOLD, border: `1px solid ${GOLD}33` }}>
+          <div className="rv-card" style={{ padding: "14px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
+              <div style={{ width: 3, height: 14, borderRadius: 2, background: GL }} />
+              <span style={{ fontSize: 10, fontWeight: 800, color: GL, letterSpacing: 1, textTransform: "uppercase" as const }}>Reciter</span>
+            </div>
+            <select value={reciter} className="rv-sel rv-arabic" onChange={e => setReciter(e.target.value)}
+              style={{ width: "100%", fontSize: 14, borderRadius: 10, padding: "10px 12px",
+                border: `1.5px solid ${BRD}`, background: WARM, color: DG, fontWeight: 600,
+                appearance: "none" as const, cursor: "pointer" }}>
               {RECITERS.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
             </select>
           </div>
 
           {/* Start */}
-          <button
+          <button className="rv-btn"
             onClick={() => {
               const pages = buildPages(selectMode, selected);
               const newPlan: RevisionPlan = { mode: selectMode, selected, dailyPages, allPages: pages, currentIdx: 0 };
@@ -1016,12 +1047,12 @@ export default function QuranRevisionHub({ userId }: Props) {
               setStage("reciting");
             }}
             disabled={selected.length === 0}
-            className="w-full py-4 rounded-2xl font-black text-sm tracking-wide qr-btn"
-            style={{
-              background: selected.length > 0 ? `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})` : "#1a3025",
-              color: selected.length > 0 ? DG : "#4a6d58",
-              opacity: selected.length > 0 ? 1 : 0.6,
-            }}>
+            style={{ width: "100%", padding: "16px 0", borderRadius: 14, border: "none",
+              cursor: selected.length > 0 ? "pointer" : "not-allowed",
+              background: selected.length > 0 ? `linear-gradient(135deg,${DG} 0%,${DG2} 100%)` : "#f0f0ee",
+              color: selected.length > 0 ? W : MUT, fontSize: 16, fontWeight: 800,
+              boxShadow: selected.length > 0 ? `0 4px 16px ${DG}40` : "none",
+              letterSpacing: .3, transition: "all .2s" }}>
             {selected.length > 0 ? "بسم الله — Start Revision ✨" : "Select content to revise"}
           </button>
         </div>
