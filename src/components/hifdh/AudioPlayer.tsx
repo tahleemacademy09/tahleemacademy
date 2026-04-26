@@ -9,12 +9,13 @@ interface Ayah { number: number; numberInSurah: number; text: string; }
 interface TeacherRec { teacher_name: string; audio_url: string; ayah_num: number; surah_num: number; }
 
 const RECITERS = [
-  { id:"ar.alafasy",             name:"Mishary Alafasy",        ar:"مشاري العفاسي" },
-  { id:"ar.abdurrahmaansudais",  name:"Abdul Rahman Al-Sudais", ar:"عبدالرحمن السديس" },
-  { id:"ar.husary",              name:"Mahmoud Al-Husary",      ar:"محمود الحصري" },
-  { id:"ar.minshawi",            name:"Mohamed Al-Minshawi",    ar:"محمد المنشاوي" },
-  { id:"ar.shaatree",            name:"Abu Bakr Al-Shatri",     ar:"أبو بكر الشاطري" },
-  { id:"ar.abdullahbasfar",      name:"Abdullah Basfar",        ar:"عبدالله بصفر" },
+  { id:"Alafasy_128kbps",                name:"Mishary Alafasy",        ar:"مشاري العفاسي"   },
+  { id:"Abdurrahmaan_As-Sudais_192kbps", name:"Abdul Rahman Al-Sudais", ar:"عبدالرحمن السديس" },
+  { id:"Husary_128kbps",                 name:"Mahmoud Al-Husary",      ar:"محمود الحصري"    },
+  { id:"Minshawy_Murattal_128kbps",      name:"Mohamed Al-Minshawi",    ar:"محمد المنشاوي"   },
+  { id:"Abu_Bakr_Ash-Shaatree_128kbps",  name:"Abu Bakr Al-Shatri",     ar:"أبو بكر الشاطري" },
+  { id:"AbdulSamad_128kbps",             name:"Abdul Basit Murattal",   ar:"عبد الباسط"      },
+  { id:"Saad_Al-Ghamdi_128kbps",         name:"Saad Al-Ghamdi",         ar:"سعد الغامدي"     },
 ];
 
 type PlayMode = "single"|"repeat"|"readall"|"repeatall";
@@ -95,7 +96,9 @@ export default function AudioPlayer({ userId }: Props) {
       const tr = teacherRecs.find(r=>r.ayah_num===ayahs[idx].numberInSurah);
       if (tr) return tr.audio_url;
     }
-    return `https://cdn.islamic.network/quran/audio/128/${reciter.id}/${ayahs[idx].number}.mp3`;
+    const s = String(selected!.number).padStart(3, "0");
+    const a = String(ayahs[idx].numberInSurah).padStart(3, "0");
+    return `https://everyayah.com/data/${reciter.id}/${s}${a}.mp3`;
   };
 
   const startProgress = () => {
