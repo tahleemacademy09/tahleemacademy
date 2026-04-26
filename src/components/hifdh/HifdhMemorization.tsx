@@ -707,112 +707,134 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
   if (!started) {
     const verseCount = Math.max(0, endVerse - startVerse + 1);
     const canStart   = !loading && ayahs.length > 0 && endVerse >= startVerse;
+
+    /* ── New refined palette ── */
+    const W    = "#ffffff";
+    const WARM = "#faf8f4";
+    const B    = "#e8ddd0";
+    const GL   = "#b7791f";
+    const TXT  = "#374151";
+    const MUT  = "#9aab94";
+
+    const sCard = (ex?: React.CSSProperties): React.CSSProperties => ({
+      background: W, border: `1px solid ${B}`, borderRadius: 16,
+      boxShadow: "0 1px 8px rgba(26,61,36,.06)", ...ex,
+    });
+
     return (
-      <div style={{ height: "100%", display: "flex", flexDirection: "column", background: LIGHT, overflow: "hidden" }}>
+      <div style={{ height: "100%", display: "flex", flexDirection: "column", background: WARM, overflow: "hidden" }}>
         <style>{`
           @import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Amiri:wght@400;700&display=swap');
           * { box-sizing: border-box; }
           body { margin: 0; padding: 0; overflow: hidden; }
+          .mem-select:focus { outline: 2px solid #1a3d24; outline-offset: 1px; }
+          .mem-btn:active { transform: scale(0.97); }
+          .mem-input:focus { outline: 2px solid #1a3d24; outline-offset: 1px; border-color: #1a3d24 !important; }
         `}</style>
 
-        {/* Header */}
-        <div style={{ background: `linear-gradient(135deg,${G},${GM})`, padding: "14px 16px", textAlign: "center", flexShrink: 0 }}>
-          <div style={{ fontSize: 36 }}>🧠</div>
-          <div style={{ fontFamily: "'Amiri',serif", fontSize: 22, color: "#fff", fontWeight: 700 }}>Memorization</div>
-          <div style={{ fontFamily: "'Amiri',serif", fontSize: 13, color: "rgba(255,255,255,.8)" }}>نظام الحفظ المنهجي</div>
-        </div>
+        {/* ── Header ── */}
+        <div style={{ background: W, borderBottom: `1px solid ${B}`, padding: "16px 16px 14px", flexShrink: 0, position: "relative", overflow: "hidden" }}>
+          {/* Decorative emerald bar */}
+          <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: `linear-gradient(90deg,${G},${GM},${GOLD})` }} />
+          {/* Subtle geometric watermark */}
+          <div style={{ position: "absolute", right: -10, top: -10, width: 90, height: 90, borderRadius: "50%", border: `1px solid ${G}10`, pointerEvents: "none" }} />
+          <div style={{ position: "absolute", right: 5, top: 5, width: 60, height: 60, borderRadius: "50%", border: `1px solid ${G}08`, pointerEvents: "none" }} />
 
-        {/* Scrollable Content */}
-        <div style={{ flex: 1, overflowY: "auto", padding: "10px 12px 140px", display: "flex", flexDirection: "column", gap: 8 }}>
-          
-          {/* Speech status */}
-          <div style={card({ padding: "8px 12px" })}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <div style={{ fontSize: 18 }}>{srAvailable ? "🎙" : "⚠️"}</div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: srAvailable ? G : "#c0392b" }}>
-                  {srAvailable ? "Strict Multi-Verse Matching" : "Speech Not Available"}
-                </div>
-                <div style={{ fontSize: 10, color: "#7a9e88" }}>
-                  {srAvailable ? "All words from all verses required" : "Use Chrome on Android"}
-                </div>
-              </div>
-              <div style={{ padding: "2px 8px", borderRadius: 12,
-                background: srAvailable ? LIGHT : "#fff5f5",
-                border: `1px solid ${srAvailable ? BORDER : "#fca5a5"}`,
-                fontSize: 10, fontWeight: 700, color: srAvailable ? G : "#c0392b" }}>
-                {srAvailable ? "✓" : "✗"}              </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ width: 44, height: 44, borderRadius: 12, background: `linear-gradient(135deg,${G},${GM})`,
+              display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, flexShrink: 0, boxShadow: "0 2px 8px rgba(26,61,36,.25)" }}>
+              🧠
+            </div>
+            <div>
+              <div style={{ fontFamily: "'Amiri',serif", fontSize: 20, color: G, fontWeight: 700, lineHeight: 1.2 }}>Memorization</div>
+              <div style={{ fontFamily: "'Amiri',serif", fontSize: 12, color: GOLD, marginTop: 1 }}>نظام الحفظ المنهجي</div>
+            </div>
+            <div style={{ marginLeft: "auto", padding: "3px 9px", borderRadius: 10,
+              background: srAvailable ? `${G}10` : "#fff0f0",
+              border: `1px solid ${srAvailable ? G + "30" : "#fca5a5"}`,
+              fontSize: 10, fontWeight: 700, color: srAvailable ? G : "#c0392b" }}>
+              {srAvailable ? "🎙 Voice On" : "⚠️ No Voice"}
             </div>
           </div>
+        </div>
 
-          {/* Surah & Verse */}
-          <div style={card({ padding: "10px" })}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: "#7a9e88", marginBottom: 6 }}>
-              SURAH & VERSE
+        {/* ── Scrollable Content ── */}
+        <div style={{ flex: 1, overflowY: "auto", padding: "14px 14px 100px", display: "flex", flexDirection: "column", gap: 12 }}>
+
+          {/* Surah & Verse card */}
+          <div style={sCard({ padding: "14px" })}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
+              <div style={{ width: 3, height: 14, borderRadius: 2, background: GOLD }} />
+              <span style={{ fontSize: 10, fontWeight: 800, color: GOLD, letterSpacing: 1, textTransform: "uppercase" }}>Surah & Verse</span>
             </div>
-            <select value={surahNum}
+            <select value={surahNum} className="mem-select"
               onChange={e => { setSurahNum(Number(e.target.value)); setStartVerse(1); setEndVerse(1); }}
-              style={{ width: "100%", padding: "8px 10px", borderRadius: 10, border: `1px solid ${BORDER}`,
-                fontSize: 13, color: G, background: "#f8fafb", marginBottom: 8 }}>
+              style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: `1.5px solid ${B}`,
+                fontSize: 13, color: G, background: WARM, marginBottom: 10, fontWeight: 600,
+                appearance: "none", cursor: "pointer" }}>
               {SURAHS.map(s => <option key={s.num} value={s.num}>{s.num}. {s.name} ({s.verses}v)</option>)}
             </select>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
               {([
                 ["From", startVerse, (v: number) => setStartVerse(v), 1,          surah.verses],
                 ["To",   endVerse,   (v: number) => setEndVerse(v),   startVerse, surah.verses],
               ] as const).map(([label, val, setter, min, max], i) => (
                 <div key={i}>
-                  <div style={{ fontSize: 9, color: "#7a9e88", fontWeight: 600, marginBottom: 2 }}>{label}</div>
-                  <input type="number" min={min as number} max={max as number} value={val as number}
+                  <div style={{ fontSize: 10, color: MUT, fontWeight: 700, marginBottom: 4, letterSpacing: .5 }}>{label}</div>
+                  <input type="number" min={min as number} max={max as number} value={val as number} className="mem-input"
                     onChange={e => (setter as Function)(Number(e.target.value))}
-                    style={{ width: "100%", padding: "7px 10px", borderRadius: 8, border: `1px solid ${BORDER}`,
-                      fontSize: 14, color: G, background: "#f8fafb", fontWeight: 700 }} />
+                    style={{ width: "100%", padding: "9px 12px", borderRadius: 10, border: `1.5px solid ${B}`,
+                      fontSize: 15, color: G, background: WARM, fontWeight: 800, textAlign: "center" }} />
                 </div>
               ))}
             </div>
 
-            {/* Rep selector */}
-            <div style={{ marginTop: 8 }}>
-              <div style={{ fontSize: 10, color: "#7a9e88", fontWeight: 700, marginBottom: 4 }}>
-                REPETITIONS
-              </div>
-              <div style={{ display: "flex", gap: 4 }}>
-                {REP_OPTIONS.map(opt => (
-                  <button key={opt} onClick={() => { setRepsPerVerse(opt); repsPerVerseRef.current = opt; }}
-                    style={{
-                      flex: 1, padding: "7px 0", borderRadius: 8, cursor: "pointer",
-                      border: `2px solid ${repsPerVerse === opt ? G : BORDER}`,
-                      background: repsPerVerse === opt ? G : "#f8fafb",
-                      color: repsPerVerse === opt ? "#fff" : "#7a9e88",
-                      fontSize: 13, fontWeight: 700,
-                    }}>
-                    {opt}
-                  </button>
-                ))}
-              </div>
-            </div>
             {verseCount > 0 && (
-              <div style={{ padding: "5px 10px", borderRadius: 8, background: LIGHT, border: `1px solid ${BORDER}`,
-                fontSize: 10, color: G, fontWeight: 600, textAlign: "center", marginTop: 6 }}>
-                {verseCount} verse{verseCount !== 1 ? "s" : ""} · {buildSteps(verseCount, repsPerVerse).length} steps
+              <div style={{ marginTop: 10, padding: "8px 12px", borderRadius: 10,
+                background: `${G}08`, border: `1px solid ${G}20`,
+                fontSize: 11, color: G, fontWeight: 700, textAlign: "center" }}>
+                📖 {verseCount} verse{verseCount !== 1 ? "s" : ""} · {buildSteps(verseCount, repsPerVerse).length} steps
               </div>
             )}
           </div>
 
-          {/* Reciter */}
-          <div style={card({ padding: "8px 10px" })}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: "#7a9e88", marginBottom: 4 }}>
-              🎙 RECITER
+          {/* Repetitions card */}
+          <div style={sCard({ padding: "14px" })}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
+              <div style={{ width: 3, height: 14, borderRadius: 2, background: GOLD }} />
+              <span style={{ fontSize: 10, fontWeight: 800, color: GOLD, letterSpacing: 1, textTransform: "uppercase" }}>Repetitions</span>
             </div>
-            <div style={{ display: "flex", gap: 4, overflowX: "auto", paddingBottom: 2, scrollbarWidth: "none" }}>
-              {RECITERS.map(r => (
-                <button key={r.id} onClick={() => setSelectedReciter(r.id)}
+            <div style={{ display: "flex", gap: 6 }}>
+              {REP_OPTIONS.map(opt => (
+                <button key={opt} className="mem-btn" onClick={() => { setRepsPerVerse(opt); repsPerVerseRef.current = opt; }}
                   style={{
-                    flexShrink: 0, padding: "5px 10px", borderRadius: 14,
-                    border: `2px solid ${selectedReciter === r.id ? G : BORDER}`,
-                    background: selectedReciter === r.id ? G : "#f8fafb",
-                    color: selectedReciter === r.id ? "#fff" : "#7a9e88",
-                    fontSize: 10, fontWeight: 700, cursor: "pointer",
+                    flex: 1, padding: "10px 0", borderRadius: 10, cursor: "pointer", transition: "all .2s",
+                    border: `2px solid ${repsPerVerse === opt ? G : B}`,
+                    background: repsPerVerse === opt ? G : W,
+                    color: repsPerVerse === opt ? "#fff" : MUT,
+                    fontSize: 14, fontWeight: 800, boxShadow: repsPerVerse === opt ? `0 2px 8px ${G}30` : "none",
+                  }}>
+                  {opt}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Reciter card */}
+          <div style={sCard({ padding: "14px" })}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
+              <div style={{ width: 3, height: 14, borderRadius: 2, background: GOLD }} />
+              <span style={{ fontSize: 10, fontWeight: 800, color: GOLD, letterSpacing: 1, textTransform: "uppercase" }}>Reciter</span>
+            </div>
+            <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 2, scrollbarWidth: "none" } as React.CSSProperties}>
+              {RECITERS.map(r => (
+                <button key={r.id} className="mem-btn" onClick={() => setSelectedReciter(r.id)}
+                  style={{
+                    flexShrink: 0, padding: "7px 12px", borderRadius: 20, cursor: "pointer", transition: "all .2s",
+                    border: `2px solid ${selectedReciter === r.id ? G : B}`,
+                    background: selectedReciter === r.id ? G : W,
+                    color: selectedReciter === r.id ? "#fff" : TXT,
+                    fontSize: 11, fontWeight: 700, boxShadow: selectedReciter === r.id ? `0 2px 8px ${G}30` : "none",
                   }}>
                   {r.label}
                 </button>
@@ -821,27 +843,26 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
           </div>
 
           {/* BEGIN BUTTON */}
-          <div style={{ marginTop: 8 }}>
-            <button onClick={startSession} disabled={!canStart}
-              style={{ width: "100%", padding: "16px 0", borderRadius: 12, border: "none",
-                cursor: canStart ? "pointer" : "not-allowed",
-                background: canStart ? `linear-gradient(135deg,${G},${GM})` : "#f0f4f0",
-                color: canStart ? "#fff" : "#7a9e88", fontSize: 18, fontWeight: 800 }}>
-              {loading ? "Loading…" : !canStart ? "Adjust range" : "🧠 Begin Memorization · ابدأ"}
-            </button>
-            {fetchError && (
-              <div style={{ marginTop: 8, padding: "8px 12px", borderRadius: 8, background: "#fff5f5",
-                border: "1px solid #fca5a5", fontSize: 12, color: "#c0392b", textAlign: "center" }}>
-                {fetchError} — <button onClick={() => fetchAyahs(surahNum)}
-                  style={{ textDecoration: "underline", background: "none", border: "none", color: "#c0392b", cursor: "pointer" }}>
-                  Retry
-                </button>
-              </div>
-            )}
-          </div>
+          <button className="mem-btn" onClick={startSession} disabled={!canStart}
+            style={{ width: "100%", padding: "16px 0", borderRadius: 14, border: "none",
+              cursor: canStart ? "pointer" : "not-allowed", transition: "all .2s",
+              background: canStart ? `linear-gradient(135deg,${G} 0%,${GM} 100%)` : "#f0f0ee",
+              color: canStart ? "#fff" : MUT, fontSize: 16, fontWeight: 800,
+              boxShadow: canStart ? `0 4px 16px ${G}40` : "none",
+              letterSpacing: .3 }}>
+            {loading ? "Loading…" : !canStart ? "Adjust range" : "🧠 Begin Memorization · ابدأ"}
+          </button>
+
+          {fetchError && (
+            <div style={{ padding: "10px 14px", borderRadius: 10, background: "#fff5f5",
+              border: "1px solid #fca5a5", fontSize: 12, color: "#c0392b", textAlign: "center" }}>
+              {fetchError} — <button onClick={() => fetchAyahs(surahNum)}
+                style={{ textDecoration: "underline", background: "none", border: "none", color: "#c0392b", cursor: "pointer" }}>
+                Retry
+              </button>
+            </div>
+          )}
         </div>
-        {/* Fixed bottom spacer */}
-        <div style={{ height: 20, flexShrink: 0 }} />
       </div>
     );
   }
