@@ -1563,21 +1563,42 @@ export default function QuranRevisionHub({ userId }: Props) {
               </div>
             )}
 
-            {/* Error verse — show the text so student can read and recite it */}
+            {/* Error verse — hidden by default, reveal on demand */}
             <div className="rounded-2xl overflow-hidden" style={{ border: "2px solid #f59e0b", boxShadow: "0 2px 12px rgba(245,158,11,.15)" }}>
-              <div className="px-4 py-2.5 flex items-center gap-2" style={{ background: "#f59e0b" }}>
+              <div className="px-4 py-2.5 flex items-center justify-between" style={{ background: "#f59e0b" }}>
                 <span className="text-xs font-black" style={{ color: "#78350f" }}>
-                  📢 Now recite this verse — {errAyah.ayah.surah?.nameAr} · آية {toAr(errAyah.ayah.numberInSurah)}
+                  📢 {errAyah.ayah.surah?.nameAr} · آية {toAr(errAyah.ayah.numberInSurah)}
+                </span>
+                <span className="text-[10px] font-bold" style={{ color: "#78350f99" }}>
+                  {remediationIdx + 1}/{ayahErrors.length}
                 </span>
               </div>
-              <div className="px-5 py-4" style={{ background: PARCHMENT }}>
-                <p className="qr-mushaf text-center leading-loose" style={{ fontSize: fontSize - 2 }}>
-                  {errAyah.ayah.text}{" "}
-                  <span style={{ color: GOLD, fontSize: "0.7em", fontFamily: "'Amiri',serif" }}>
-                    ۝{toAr(errAyah.ayah.numberInSurah)}
-                  </span>
-                </p>
-              </div>
+              {revealVerse ? (
+                <div className="px-5 py-4" style={{ background: PARCHMENT }}>
+                  <p className="qr-mushaf text-center leading-loose" style={{ fontSize: fontSize - 2 }}>
+                    {errAyah.ayah.text}{" "}
+                    <span style={{ color: GOLD, fontSize: "0.7em", fontFamily: "'Amiri',serif" }}>
+                      ۝{toAr(errAyah.ayah.numberInSurah)}
+                    </span>
+                  </p>
+                  <button onClick={() => setRevealVerse(false)}
+                    className="mt-3 mx-auto flex items-center gap-1.5 text-xs qr-btn px-3 py-1.5 rounded-lg"
+                    style={{ background: "#f59e0b22", color: "#92400e", display: "flex" }}>
+                    <EyeOff size={11} /> Hide verse
+                  </button>
+                </div>
+              ) : (
+                <div className="px-5 py-5 flex flex-col items-center gap-3" style={{ background: PARCHMENT }}>
+                  <p className="text-xs font-bold text-center" style={{ color: "#92400e" }}>
+                    Try to recite from memory first
+                  </p>
+                  <button onClick={() => setRevealVerse(true)}
+                    className="qr-btn flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-sm"
+                    style={{ background: "#f59e0b", color: "#78350f", boxShadow: "0 2px 8px rgba(245,158,11,.35)" }}>
+                    <Eye size={14} /> Reveal Verse
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Mastered badge */}
