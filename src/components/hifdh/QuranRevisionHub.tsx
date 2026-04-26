@@ -334,7 +334,7 @@ export default function QuranRevisionHub({ userId }: Props) {
   const pageDataRef = useRef<any>(null);
   useEffect(() => { pageDataRef.current = pageData; }, [pageData]);
 
-  // ═══ Load saved plan — resume from where user left off ═
+  // ═══ Load saved plan (data only — resume handled below after fetchPage is defined) ═
   useEffect(() => {
     if (!userId) return;
     const saved = localStorage.getItem(`revision_plan_${userId}`);
@@ -342,20 +342,11 @@ export default function QuranRevisionHub({ userId }: Props) {
       try {
         const p: RevisionPlan = JSON.parse(saved);
         setPlan(p); setSelectMode(p.mode); setSelected(p.selected); setDailyPages(p.dailyPages);
-        // Resume at current page in reciting stage instead of going back to setup
-        const currentPage = p.allPages[p.currentIdx];
-        if (currentPage) {
-          setSessionStart(Date.now());
-          setPageVisible(true);
-          fetchPage(currentPage);
-          fetchPrevPage(currentPage);
-          setStage("reciting");
-        }
       } catch { /* ignore */ }
     }
     const done = localStorage.getItem(`revision_done_${userId}`);
     if (done) { try { setCompletedPages(new Set(JSON.parse(done))); } catch { /* ignore */ } }
-  }, [userId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [userId]);
 
   // ═══ Fetch page ════════════════════════════════════════
   const fetchPage = useCallback(async (pageNum: number) => {
@@ -375,6 +366,25 @@ export default function QuranRevisionHub({ userId }: Props) {
       if (j?.code === 200) setPrevPageData(j.data);
     } catch { /* ignore */ }
   }, []);
+
+  // ═══ Resume from saved position (runs after fetchPage/fetchPrevPage are defined) ═
+  const didResumeRef = useRef(false);
+  useEffect(() => {
+    if (!userId || didResumeRef.current) return;
+    const saved = localStorage.getItem(`revision_plan_${userId}`);
+    if (!saved) return;
+    try {
+      const p: RevisionPlan = JSON.parse(saved);
+      const currentPage = p.allPages[p.currentIdx];
+      if (!currentPage) return;
+      didResumeRef.current = true;
+      setSessionStart(Date.now());
+      setPageVisible(true);
+      fetchPage(currentPage);
+      fetchPrevPage(currentPage);
+      setStage("reciting");
+    } catch { /* ignore */ }
+  }, [userId, fetchPage, fetchPrevPage]);
 
   // ═══ Audio ═════════════════════════════════════════════
   const playAyah = useCallback((ayah: {surah: {number: number}; numberInSurah: number; number: number}) => {
@@ -1528,35 +1538,24 @@ export default function QuranRevisionHub({ userId }: Props) {
         {errAyah && (
           <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
 
-            {/* Context verse — what comes BEFORE the error verse */}
-            <div className="rounded-2xl overflow-hidden" style={{ border: `1px solid ${GOLD}33` }}>
-              <div className="px-4 py-2 flex items-center gap-2" style={{ background: GOLD + "15" }}>
-                <BookOpen size={12} color={GOLD} />
-                <span className="text-xs font-bold" style={{ color: GOLD }}>
-                  {contextAyah ? "The verse before — use it as your starting point:" : "Verse location:"}
-                </span>
+            {/* Verse info — surah name and ayah number only, no text */}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px",
+              borderRadius: 14, background: "#1a3d24", border: `1px solid ${GOLD}33` }}>
+              <div style={{ width: 36, height: 36, borderRadius: 10, background: GOLD + "22",
+                display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <BookOpen size={16} color={GOLD} />
               </div>
-              <div className="px-5 py-4" style={{ background: PARCHMENT }}>
-                {contextAyah ? (
-                  <>
-                    <p className="qr-mushaf text-center leading-loose" style={{ fontSize: fontSize - 2 }}>
-                      {contextAyah.text}{" "}
-                      <span style={{ color: GOLD, fontSize: "0.7em", fontFamily: "'Amiri',serif" }}>
-                        ۝{toAr(contextAyah.numberInSurah)}
-                      </span>
-                    </p>
-                    <button onClick={() => playAyah(contextAyah)}
-                      className="mt-2 mx-auto flex items-center gap-1.5 text-xs qr-btn px-3 py-1.5 rounded-lg"
-                      style={{ background: GOLD + "22", color: GOLD, display: "flex" }}>
-                      <Volume2 size={11} /> Listen to this verse
-                    </button>
-                  </>
-                ) : (
-                  <p className="text-sm text-center qr-arabic"
-                    style={{ color: DG, fontFamily: "'Amiri',serif" }}>
-                    {errAyah.ayah.surah?.nameAr} · آية {toAr(errAyah.ayah.numberInSurah)}
-                  </p>
-                )}
+              <div>
+                <div style={{ fontSize: 11, color: GOLD, fontWeight: 800, letterSpacing: 0.5 }}>
+                  {errAyah.ayah.surah?.nameAr || errAyah.ayah.surah?.name}
+                </div>
+                <div style={{ fontSize: 13, color: "#c4dbc9", fontFamily: "'Amiri',serif", marginTop: 2 }}>
+                  آية {toAr(errAyah.ayah.numberInSurah)}
+                </div>
+              </div>
+              <div style={{ marginLeft: "auto", padding: "4px 10px", borderRadius: 8,
+                background: GOLD + "18", color: GOLD, fontSize: 10, fontWeight: 700 }}>
+                {remediationIdx + 1}/{ayahErrors.length}
               </div>
             </div>
 
