@@ -93,16 +93,14 @@ const SURAHS_AR: Record<number, string> = {
 };
 
 const RECITERS = [
-  { id: "ar.alafasy",            name: "مشاري العفاسي" },
-  { id: "ar.abdurrahmaansudais", name: "السديس"         },
-  { id: "ar.husary",             name: "الحصري"         },
-  { id: "ar.minshawi",           name: "المنشاوي"       },
-  { id: "ar.shaatri",            name: "الشاطري"        },
-  { id: "ar.abdulsamad",         name: "عبد الصمد"      },
-  { id: "ar.muhammadjibreel",    name: "م. جبريل"       },
-  { id: "ar.haniarrifai",        name: "هاني الرفاعي"   },
-  { id: "ar.maaboramadan",       name: "المعيقلي"       },
-  { id: "ar.abdullahbasfar",     name: "باسفر"          },
+  { id: "Alafasy_128kbps",               name: "مشاري العفاسي"   },
+  { id: "Abdurrahmaan_As-Sudais_192kbps",name: "السديس"           },
+  { id: "Husary_128kbps",                name: "الحصري"           },
+  { id: "Minshawy_Murattal_128kbps",     name: "المنشاوي"         },
+  { id: "Abu_Bakr_Ash-Shaatree_128kbps", name: "أبو بكر الشاطري" },
+  { id: "AbdulSamad_128kbps",            name: "عبد الباسط"       },
+  { id: "Muhammad_Jibreel_128kbps",      name: "م. جبريل"         },
+  { id: "Saad_Al-Ghamdi_128kbps",        name: "سعد الغامدي"      },
 ];
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -276,7 +274,7 @@ export default function QuranRevisionHub({ userId }: Props) {
   const [pageData, setPageData]         = useState<any>(null);
   const [prevPageData, setPrevPageData] = useState<any>(null);
   const [pageLoading, setPageLoading]   = useState(false);
-  const [reciter, setReciter]           = useState("ar.alafasy");
+  const [reciter, setReciter]           = useState("Alafasy_128kbps");
   const [fontSize, setFontSize]         = useState(24);
 
   // Audio — use ref to fix closure bug in pagePlayIdx
@@ -370,14 +368,16 @@ export default function QuranRevisionHub({ userId }: Props) {
   }, []);
 
   // ═══ Audio ═════════════════════════════════════════════
-  const playAyah = useCallback((absNum: number) => {
+  const playAyah = useCallback((ayah: {surah: {number: number}; numberInSurah: number; number: number}) => {
     const audio = audioRef.current;
     if (!audio) return;
     audio.pause();
-    audio.src = `https://cdn.islamic.network/quran/audio/128/${reciter}/${absNum}.mp3`;
+    const s = String(ayah.surah.number).padStart(3, "0");
+    const a = String(ayah.numberInSurah).padStart(3, "0");
+    audio.src = `https://everyayah.com/data/${reciter}/${s}${a}.mp3`;
     audio.load();
     audio.play().catch(() => {});
-    setPlaying(absNum);
+    setPlaying(ayah.number);
   }, [reciter]);
 
   useEffect(() => {
@@ -389,7 +389,7 @@ export default function QuranRevisionHub({ userId }: Props) {
       const next = pagePlayIdxRef.current + 1;
       if (next < ayahs.length) {
         setPagePlayIdx(next);
-        playAyah(ayahs[next].number);
+        playAyah(ayahs[next]);
       } else {
         setPagePlayIdx(-1);
         setPlaying(null);
@@ -405,7 +405,7 @@ export default function QuranRevisionHub({ userId }: Props) {
     const ayahs = pageData?.ayahs;
     if (!ayahs?.length) return;
     setPagePlayIdx(0);
-    playAyah(ayahs[0].number);
+    playAyah(ayahs[0]);
   }, [pageData, playAyah, setPagePlayIdx]);
 
   const stopAudio = useCallback(() => {
@@ -852,28 +852,39 @@ export default function QuranRevisionHub({ userId }: Props) {
     const GL   = GOLD;
 
     return (
-      <div className="h-full overflow-y-auto" style={{ background: WARM }}>
+      <div className="h-full overflow-y-auto" style={{ background: "#f5f2ec" }}>
         <style>{globalCSS + `
           .rv-btn:active{transform:scale(0.97);transition:transform .1s}
-          .rv-card{background:#fff;border:1px solid #e8ddd0;border-radius:16px;box-shadow:0 1px 8px rgba(26,61,36,.05)}
+          .rv-card{background:#fff;border:1px solid #e8ddd0;border-radius:16px;box-shadow:0 2px 10px rgba(26,61,36,.07)}
+          .rv-card-gold{background:linear-gradient(135deg,#fffdf6,#fdf6e3);border:1px solid #ddc97a55;border-radius:16px;box-shadow:0 2px 10px rgba(183,121,31,.08)}
           .rv-sel:focus{outline:2px solid #1a3d24;outline-offset:1px}
           .rv-arabic{font-family:'Amiri',serif;direction:rtl}
+          .rv-grid-btn{display:flex;align-items:center;justify-content:center;aspect-ratio:1;border-radius:10px;cursor:pointer;font-family:'Amiri',serif;font-weight:800;transition:all .15s;border:1.5px solid #e8ddd0;background:#fff;color:#9aab94}
+          .rv-grid-btn.active{background:#1a3d24;border-color:#1a3d24;color:#c9a84c;box-shadow:0 2px 6px rgba(26,61,36,.3)}
         `}</style>
 
-        {/* Header */}
-        <div style={{ background: W, borderBottom: `1px solid ${BRD}`, padding: "16px", position: "relative", overflow: "hidden" }}>
-          <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: `linear-gradient(90deg,${DG},${DG2},${GL})` }} />
-          <div style={{ position: "absolute", right: -15, top: -15, width: 100, height: 100, borderRadius: "50%", border: `1px solid ${GL}10`, pointerEvents: "none" }} />
-          <div style={{ position: "absolute", right: 10, top: 10, width: 65, height: 65, borderRadius: "50%", border: `1px solid ${GL}08`, pointerEvents: "none" }} />
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <div style={{ width: 46, height: 46, borderRadius: 12, background: `linear-gradient(135deg,${DG},${DG2})`,
-              display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-              boxShadow: `0 3px 10px ${DG}35` }}>
-              <BookMarked size={20} style={{ color: GL }} />
+        {/* ── Header with geometric pattern ── */}
+        <div style={{ background: `linear-gradient(160deg,#1a3d24 0%,#276749 100%)`, padding: "20px 16px 18px", position: "relative", overflow: "hidden" }}>
+          {/* Geometric SVG watermark */}
+          <svg style={{ position: "absolute", right: 0, top: 0, opacity: 0.07, pointerEvents: "none" }} width="160" height="120" viewBox="0 0 160 120">
+            <polygon points="80,10 150,55 150,110 80,110 10,110 10,55" fill="none" stroke="#c9a84c" strokeWidth="1"/>
+            <polygon points="80,25 135,60 135,95 80,95 25,95 25,60" fill="none" stroke="#c9a84c" strokeWidth="0.8"/>
+            <polygon points="80,40 120,65 120,90 80,90 40,90 40,65" fill="none" stroke="#c9a84c" strokeWidth="0.6"/>
+            <line x1="80" y1="10" x2="80" y2="110" stroke="#c9a84c" strokeWidth="0.5"/>
+            <line x1="10" y1="55" x2="150" y2="55" stroke="#c9a84c" strokeWidth="0.5"/>
+          </svg>
+          {/* Gold top stripe */}
+          <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: `linear-gradient(90deg,#b7791f,#e8c97a,#b7791f)` }} />
+
+          <div style={{ display: "flex", alignItems: "center", gap: 12, position: "relative" }}>
+            <div style={{ width: 48, height: 48, borderRadius: 14, background: "rgba(201,168,76,.18)",
+              border: "1.5px solid rgba(201,168,76,.4)",
+              display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <BookMarked size={22} style={{ color: GL }} />
             </div>
             <div>
-              <div style={{ fontFamily: "'Amiri',serif", fontSize: 20, color: DG, fontWeight: 700, lineHeight: 1.2 }}>Quran Revision</div>
-              <div style={{ fontFamily: "'Amiri',serif", fontSize: 12, color: GL, marginTop: 1 }}>مراجعة المحفوظ — Review what you've memorised</div>
+              <div style={{ fontFamily: "'Amiri',serif", fontSize: 22, color: "#ffffff", fontWeight: 700, lineHeight: 1.2 }}>Quran Revision</div>
+              <div style={{ fontFamily: "'Amiri',serif", fontSize: 12, color: GL, marginTop: 2 }}>مراجعة المحفوظ — Review what you've memorised</div>
             </div>
           </div>
         </div>
@@ -915,49 +926,47 @@ export default function QuranRevisionHub({ userId }: Props) {
           {/* What to Revise */}
           <div className="rv-card" style={{ padding: "14px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 12 }}>
-              <div style={{ width: 3, height: 14, borderRadius: 2, background: GL }} />
-              <span style={{ fontSize: 10, fontWeight: 800, color: GL, letterSpacing: 1, textTransform: "uppercase" as const }}>What to Revise</span>
+              <div style={{ width: 3, height: 16, borderRadius: 2, background: `linear-gradient(to bottom,${GL},#e8c97a)` }} />
+              <span style={{ fontSize: 10, fontWeight: 800, color: GL, letterSpacing: 1.2, textTransform: "uppercase" as const }}>What to Revise</span>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginBottom: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 12 }}>
               {(["juz", "hizb", "surah"] as SelectMode[]).map(m => (
                 <button key={m} className="rv-btn" onClick={() => { setSelectMode(m); setSelected([]); }}
-                  style={{ padding: "10px 4px", borderRadius: 12, border: `2px solid ${selectMode === m ? DG : BRD}`,
-                    background: selectMode === m ? DG : W, color: selectMode === m ? W : MUT,
+                  style={{ padding: "11px 4px", borderRadius: 12,
+                    border: `2px solid ${selectMode === m ? DG : BRD}`,
+                    background: selectMode === m ? DG : "#faf8f4",
+                    color: selectMode === m ? W : "#6b7a6b",
                     fontWeight: 800, cursor: "pointer", transition: "all .2s",
-                    boxShadow: selectMode === m ? `0 2px 8px ${DG}30` : "none" }}>
-                  <div style={{ fontSize: 12, fontFamily: "'Amiri',serif", color: selectMode === m ? GL : "inherit" }}>
+                    boxShadow: selectMode === m ? `0 3px 10px ${DG}35` : "none" }}>
+                  <div style={{ fontSize: 14, fontFamily: "'Amiri',serif", color: selectMode === m ? GL : DG, lineHeight: 1.4 }}>
                     {m === "juz" ? "بالجزء" : m === "hizb" ? "بالحزب" : "بالسورة"}
                   </div>
-                  <div style={{ fontSize: 9, marginTop: 1 }}>{m === "juz" ? "Juz" : m === "hizb" ? "Hizb" : "Surah"}</div>
+                  <div style={{ fontSize: 9, marginTop: 2, fontWeight: 700, letterSpacing: .5,
+                    color: selectMode === m ? "rgba(201,168,76,.8)" : "#9aab94" }}>
+                    {m === "juz" ? "Juz" : m === "hizb" ? "Hizb" : "Surah"}
+                  </div>
                 </button>
               ))}
             </div>
-            <div style={{ maxHeight: 200, overflowY: "auto", borderRadius: 12, border: `1px solid ${BRD}`, background: WARM, padding: 8 }}>
+            <div style={{ maxHeight: 208, overflowY: "auto", borderRadius: 12,
+              border: `1px solid #e8ddd0`, background: "#faf8f4", padding: "10px" }}>
               {selectMode === "juz" && (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(6,1fr)", gap: 5 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(6,1fr)", gap: 6 }}>
                   {Array.from({ length: 30 }, (_, i) => i + 1).map(j => (
-                    <button key={j} className="rv-btn"
+                    <button key={j} className={`rv-grid-btn${selected.includes(j) ? " active" : ""}`}
                       onClick={() => setSelected(p => p.includes(j) ? p.filter(x => x !== j) : [...p, j])}
-                      style={{ aspectRatio: "1", borderRadius: 10, border: `2px solid ${selected.includes(j) ? DG : BRD}`,
-                        background: selected.includes(j) ? DG : W, color: selected.includes(j) ? GL : MUT,
-                        fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "'Amiri',serif",
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                        boxShadow: selected.includes(j) ? `0 1px 6px ${DG}30` : "none" }}>
+                      style={{ fontSize: 13 }}>
                       {toAr(j)}
                     </button>
                   ))}
                 </div>
               )}
               {selectMode === "hizb" && (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(6,1fr)", gap: 5 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(6,1fr)", gap: 6 }}>
                   {Array.from({ length: 60 }, (_, i) => i + 1).map(h => (
-                    <button key={h} className="rv-btn"
+                    <button key={h} className={`rv-grid-btn${selected.includes(h) ? " active" : ""}`}
                       onClick={() => setSelected(p => p.includes(h) ? p.filter(x => x !== h) : [...p, h])}
-                      style={{ aspectRatio: "1", borderRadius: 10, border: `2px solid ${selected.includes(h) ? DG : BRD}`,
-                        background: selected.includes(h) ? DG : W, color: selected.includes(h) ? GL : MUT,
-                        fontSize: 10, fontWeight: 800, cursor: "pointer", fontFamily: "'Amiri',serif",
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                        boxShadow: selected.includes(h) ? `0 1px 6px ${DG}30` : "none" }}>
+                      style={{ fontSize: 11 }}>
                       {toAr(h)}
                     </button>
                   ))}
@@ -1004,7 +1013,7 @@ export default function QuranRevisionHub({ userId }: Props) {
           <div className="rv-card" style={{ padding: "14px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 12 }}>
               <div style={{ width: 3, height: 14, borderRadius: 2, background: GL }} />
-              <span style={{ fontSize: 10, fontWeight: 800, color: GL, letterSpacing: 1, textTransform: "uppercase" as const }}>Daily Revision Amount</span>
+              <span style={{ fontSize: 10, fontWeight: 800, color: GL, letterSpacing: 1.2, textTransform: "uppercase" as const }}>Daily Revision Amount</span>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 6 }}>
               {dailyOptions.map(o => (
@@ -1025,7 +1034,7 @@ export default function QuranRevisionHub({ userId }: Props) {
           <div className="rv-card" style={{ padding: "14px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
               <div style={{ width: 3, height: 14, borderRadius: 2, background: GL }} />
-              <span style={{ fontSize: 10, fontWeight: 800, color: GL, letterSpacing: 1, textTransform: "uppercase" as const }}>Reciter</span>
+              <span style={{ fontSize: 10, fontWeight: 800, color: GL, letterSpacing: 1.2, textTransform: "uppercase" as const }}>Reciter</span>
             </div>
             <select value={reciter} className="rv-sel rv-arabic" onChange={e => setReciter(e.target.value)}
               style={{ width: "100%", fontSize: 14, borderRadius: 10, padding: "10px 12px",
@@ -1196,7 +1205,7 @@ export default function QuranRevisionHub({ userId }: Props) {
                           <p className="qr-mushaf" style={{ fontSize }}>
                             {g.ayahs.map(a => (
                               <span key={a.number}
-                                onClick={() => { stopAudio(); playAyah(a.number); }}
+                                onClick={() => { stopAudio(); playAyah(a); }}
                                 className={cn("cursor-pointer transition-all rounded-sm", playing === a.number && "qr-active")}>
                                 {a.text}{" "}
                                 <span style={{ color: GOLD, fontFamily: "'Amiri',serif", fontSize: "0.65em" }}>
@@ -1377,7 +1386,7 @@ export default function QuranRevisionHub({ userId }: Props) {
                 {ayahErrors.slice(0, 3).map((ae, i) => (
                   <div key={i} className="mb-2 p-3 rounded-xl" style={{ background: "#ffffff08" }}>
                     <div className="flex items-center gap-2 mb-1.5">
-                      <button onClick={() => playAyah(ae.ayah.number)}
+                      <button onClick={() => playAyah(ae.ayah)}
                         className="p-1.5 rounded-lg qr-btn" style={{ background: GOLD + "22" }}>
                         <Volume2 size={11} color={GOLD} />
                       </button>
@@ -1527,7 +1536,7 @@ export default function QuranRevisionHub({ userId }: Props) {
                         ۝{toAr(contextAyah.numberInSurah)}
                       </span>
                     </p>
-                    <button onClick={() => playAyah(contextAyah.number)}
+                    <button onClick={() => playAyah(contextAyah)}
                       className="mt-2 mx-auto flex items-center gap-1.5 text-xs qr-btn px-3 py-1.5 rounded-lg"
                       style={{ background: GOLD + "22", color: GOLD, display: "flex" }}>
                       <Volume2 size={11} /> Listen to this verse
@@ -1603,7 +1612,7 @@ export default function QuranRevisionHub({ userId }: Props) {
             )}
 
             {/* Listen to correct recitation */}
-            <button onClick={() => playAyah(errAyah.ayah.number)}
+            <button onClick={() => playAyah(errAyah.ayah)}
               className="w-full py-3 rounded-2xl flex items-center justify-center gap-2 font-bold text-sm qr-btn"
               style={{ background: GOLD + "18", color: GOLD, border: `1px solid ${GOLD}44` }}>
               <Headphones size={14} /> Listen to Correct Recitation
@@ -1756,7 +1765,7 @@ export default function QuranRevisionHub({ userId }: Props) {
 
             {/* Listen to the verse beginning */}
             {!q.answered && (
-              <button onClick={() => playAyah(q.ayah.number)}
+              <button onClick={() => playAyah(q.ayah)}
                 className="w-full py-2.5 rounded-xl flex items-center justify-center gap-2 text-xs font-bold qr-btn"
                 style={{ background: GOLD + "18", color: GOLD, border: `1px solid ${GOLD}33` }}>
                 <Headphones size={13} /> Listen to Full Verse (reference)
