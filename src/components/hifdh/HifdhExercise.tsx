@@ -323,7 +323,10 @@ export default function HifdhExercise({ reciter = DEFAULT_RECITER }: Props) {
     const audio = new Audio(url);
     audioRef.current = audio;
     audio.play().catch(() => {
-      const fb = `https://cdn.islamic.network/quran/audio/128/ar.alafasy/${surahNum * 1000 + question.promptAyahNum}.mp3`;
+      // fallback to Alafasy on everyayah
+      const s2 = String(surahNum).padStart(3, "0");
+      const n2 = String(question.promptAyahNum).padStart(3, "0");
+      const fb = `https://everyayah.com/data/Alafasy_128kbps/${s2}${n2}.mp3`;
       const a2 = new Audio(fb); audioRef.current = a2;
       a2.play().catch(() => setIsPlaying(false));
       a2.onended = () => setIsPlaying(false);
