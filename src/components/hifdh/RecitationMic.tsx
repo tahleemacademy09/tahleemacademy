@@ -212,16 +212,18 @@ export default function RecitationMic({ userId }: Props) {
 
   /* ── 4. ALL useCallback ────────────────────────────────── */
 
-  // Audio playback
-  const playAudio = useCallback((num: number) => {
+  // Audio playback — everyayah.com CDN using surah + numberInSurah
+  const playAudio = useCallback((ayah: { number: number; numberInSurah: number }) => {
     if (!audioElRef.current) audioElRef.current = new Audio();
     if (playing) { audioElRef.current.pause(); setPlaying(false); return; }
-    audioElRef.current.src = `https://cdn.islamic.network/quran/audio/64/ar.alafasy/${num}.mp3`;
+    const s = String(selSurah?.number ?? 1).padStart(3, "0");
+    const a = String(ayah.numberInSurah).padStart(3, "0");
+    audioElRef.current.src = `https://everyayah.com/data/Alafasy_128kbps/${s}${a}.mp3`;
     audioElRef.current.onended = () => setPlaying(false);
     audioElRef.current.onerror = () => setPlaying(false);
     setPlaying(true);
     audioElRef.current.play().catch(() => setPlaying(false));
-  }, [playing]);
+  }, [playing, selSurah]);
 
   // Mem: called after SILENCE_MS with no new speech — count the attempt
   // In memorise mode we count ANY Arabic speech attempt (not accuracy)
@@ -670,7 +672,7 @@ export default function RecitationMic({ userId }: Props) {
               <span style={{fontSize:12,fontWeight:700,color:"#92400e"}}>
                 {isCumul ? `Verses ${selAyahs[0]?.numberInSurah}–${currentAyah.numberInSurah}` : `Verse ${currentAyah.numberInSurah}`}
               </span>
-              <button onClick={()=>playAudio(dispAyahs[0].number)} style={{display:"flex",alignItems:"center",gap:5,padding:"5px 10px",borderRadius:20,border:`1px solid ${playing?"#059669":BORDER}`,background:playing?"#ecfdf5":"#fff",cursor:"pointer",fontSize:11,color:playing?"#059669":MUTED}}>
+              <button onClick={()=>playAudio(dispAyahs[0])} style={{display:"flex",alignItems:"center",gap:5,padding:"5px 10px",borderRadius:20,border:`1px solid ${playing?"#059669":BORDER}`,background:playing?"#ecfdf5":"#fff",cursor:"pointer",fontSize:11,color:playing?"#059669":MUTED}}>
                 <Volume2 size={12}/>{playing?" Stop":" Listen"}
               </button>
             </div>
@@ -745,7 +747,7 @@ export default function RecitationMic({ userId }: Props) {
         <div style={{background:GOLDLT,border:"1px solid #fcd34d",borderRadius:14,padding:"14px 16px",marginBottom:12}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
             <span style={{fontSize:11,fontWeight:700,color:"#92400e"}}>Reference — recite all</span>
-            <button onClick={()=>playAudio(selAyahs[0]?.number)} style={{display:"flex",alignItems:"center",gap:5,padding:"4px 10px",borderRadius:20,border:`1px solid ${BORDER}`,background:"#fff",cursor:"pointer",fontSize:11,color:MUTED}}>
+            <button onClick={()=>playAudio(selAyahs[0])} style={{display:"flex",alignItems:"center",gap:5,padding:"4px 10px",borderRadius:20,border:`1px solid ${BORDER}`,background:"#fff",cursor:"pointer",fontSize:11,color:MUTED}}>
               <Volume2 size={11}/> Listen
             </button>
           </div>
