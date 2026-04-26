@@ -26,16 +26,14 @@ const TABS: { id: Tab; ar: string; icon: React.ElementType }[] = [
 ];
 
 const RECITERS = [
-  { id: "ar.alafasy",            name: "Mishary Alafasy"  },
-  { id: "ar.abdurrahmaansudais", name: "As-Sudais"        },
-  { id: "ar.husary",             name: "Al-Husary"        },
-  { id: "ar.minshawi",           name: "Al-Minshawi"      },
-  { id: "ar.shaatri",            name: "Ash-Shaatri"      },
-  { id: "ar.abdulsamad",         name: "Abdul Samad"      },
-  { id: "ar.muhammadjibreel",    name: "M. Jibreel"       },
-  { id: "ar.haniarrifai",        name: "Hani Ar-Rifai"    },
-  { id: "ar.maaboramadan",       name: "Al-Muaiqly"       },
-  { id: "ar.abdullahbasfar",     name: "Basfar"           },
+  { id: "Alafasy_128kbps",                name: "Mishary Alafasy"   },
+  { id: "Abdurrahmaan_As-Sudais_192kbps", name: "As-Sudais"         },
+  { id: "Husary_128kbps",                 name: "Al-Husary"         },
+  { id: "Minshawy_Murattal_128kbps",      name: "Al-Minshawi"       },
+  { id: "Abu_Bakr_Ash-Shaatree_128kbps",  name: "Ash-Shaatri"       },
+  { id: "AbdulSamad_128kbps",             name: "Abdul Basit"       },
+  { id: "Muhammad_Jibreel_128kbps",       name: "M. Jibreel"        },
+  { id: "Saad_Al-Ghamdi_128kbps",         name: "Saad Al-Ghamdi"    },
 ];
 
 const GOLD       = "#c9a84c";
@@ -46,9 +44,17 @@ const INK        = "#1c1208";
 const toAr = (n: number) =>
   String(n).replace(/[0-9]/g, (d) => "٠١٢٣٤٥٦٧٨٩"[+d]);
 
-/* absolute ayah number → islamic.network CDN */
-const buildAudioUrl = (absoluteNum: number, reciter: string) =>
-  `https://cdn.islamic.network/quran/audio/128/${reciter}/${absoluteNum}.mp3`;
+/* Build everyayah.com URL — looks up surah+ayah from pageData ayahs array */
+const buildAudioUrl = (absoluteNum: number, reciter: string, pageAyahs?: any[]) => {
+  const ayah = pageAyahs?.find((a: any) => a.number === absoluteNum);
+  if (ayah) {
+    const s = String(ayah.surah.number).padStart(3, "0");
+    const a = String(ayah.numberInSurah).padStart(3, "0");
+    return `https://everyayah.com/data/${reciter}/${s}${a}.mp3`;
+  }
+  // fallback: approximate from absoluteNum (rough but better than nothing)
+  return `https://everyayah.com/data/${reciter}/001001.mp3`;
+};
 
 function groupBySurah(ayahs: any[]) {
   const groups: { surah: any; ayahs: any[] }[] = [];
@@ -243,7 +249,7 @@ export default function HifdhRevision() {
   const [pageData,    setPageData]    = useState<any>(null);
   const [loading,     setLoading]     = useState(false);
   const [playingAyah, setPlayingAyah] = useState(0);
-  const [reciter,     setReciter]     = useState("ar.alafasy");
+  const [reciter,     setReciter]     = useState("Alafasy_128kbps");
   const [isPlaying,   setIsPlaying]   = useState(false);
   const [fontSize,    setFontSize]    = useState(26);
   const [flipDir,     setFlipDir]     = useState<"next" | "prev" | null>(null);
@@ -468,7 +474,7 @@ export default function HifdhRevision() {
     const audio = audioRef.current;
     if (!audio) return;
     audio.pause();
-    audio.src = buildAudioUrl(absoluteNum, reciter);
+    audio.src = buildAudioUrl(absoluteNum, reciter, pageDataRef.current?.ayahs);
     audio.load();
     audio.play().catch(() => setIsPlaying(false));
   }, [reciter]);
