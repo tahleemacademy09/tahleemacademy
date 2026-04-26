@@ -1561,24 +1561,26 @@ export default function QuranRevisionHub({ userId }: Props) {
             </div>
 
             {/* What to recite — DON'T show the verse text */}
-            <div className="rounded-2xl p-4" style={{ background: "#fee2e215", border: "1px solid #f59e0b44" }}>
-              <p className="text-xs font-black mb-1" style={{ color: "#f59e0b" }}>
-                📢 Now recite the next verse ({errAyah.ayah.surah?.nameAr} — آية {toAr(errAyah.ayah.numberInSurah)}):
-              </p>
-              <p className="text-xs" style={{ color: "#92400e" }}>
-                Recite from memory — do not look at the text
-              </p>
-              <div className="mt-2 flex flex-wrap gap-1" style={{ direction: "rtl" }}>
-                {errAyah.missing.map((w, i) => (
-                  <span key={i} className="text-[10px] px-1.5 py-0.5 rounded font-bold"
-                    style={{ background: "#dc262622", color: "#dc2626", fontFamily: "'Amiri',serif" }}>
-                    {w}
-                  </span>
-                ))}
+            <div className="rounded-2xl p-4" style={{ background: "#ffffff", border: "2px solid #f59e0b", boxShadow: "0 2px 12px rgba(245,158,11,.18)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                <div style={{ width: 32, height: 32, borderRadius: 8, background: "#f59e0b", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, flexShrink: 0 }}>
+                  📢
+                </div>
+                <div>
+                  <p className="font-black" style={{ color: "#92400e", fontSize: 13, lineHeight: 1.3 }}>
+                    Now recite the next verse:
+                  </p>
+                  <p style={{ color: "#b45309", fontSize: 11, fontFamily: "'Amiri',serif", marginTop: 2 }}>
+                    {errAyah.ayah.surah?.nameAr} — آية {toAr(errAyah.ayah.numberInSurah)}
+                  </p>
+                </div>
               </div>
-              <p className="text-[10px] mt-1.5" style={{ color: "#6b5020" }}>
-                ↑ These are the words you missed — focus on them
-              </p>
+              <div style={{ padding: "10px 12px", borderRadius: 10, background: "#fffbeb", border: "1px solid #fcd34d" }}>
+                <p style={{ color: "#78350f", fontSize: 12, fontWeight: 700, margin: 0, lineHeight: 1.6 }}>
+                  🧠 Recite from memory — do not look at the text
+                </p>
+              </div>
+
             </div>
 
             {/* Mastered badge */}
@@ -1622,9 +1624,10 @@ export default function QuranRevisionHub({ userId }: Props) {
 
             {/* Listen to correct recitation */}
             <button onClick={() => playAyah(errAyah.ayah)}
-              className="w-full py-3 rounded-2xl flex items-center justify-center gap-2 font-bold text-sm qr-btn"
-              style={{ background: GOLD + "18", color: GOLD, border: `1px solid ${GOLD}44` }}>
-              <Headphones size={14} /> Listen to Correct Recitation
+              className="w-full py-3.5 rounded-2xl flex items-center justify-center gap-2 font-bold text-sm qr-btn"
+              style={{ background: "#1a3d24", color: "#c9a84c", border: "2px solid #c9a84c55",
+                boxShadow: "0 2px 10px rgba(26,61,36,.3)" }}>
+              <Headphones size={16} /> Listen to Correct Recitation
             </button>
 
             {/* Record button */}
@@ -1641,6 +1644,8 @@ export default function QuranRevisionHub({ userId }: Props) {
                 style={{
                   background: remRecording ? "#dc2626" : `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`,
                   color: remRecording ? "#fff" : DG,
+                  boxShadow: remRecording ? "0 4px 16px rgba(220,38,38,.4)" : `0 4px 16px rgba(201,168,76,.4)`,
+                  fontSize: 15,
                 }}>
                 {remRecording
                   ? <><MicOff size={16} /> Stop — {fmtTime(remRecTime)}</>
