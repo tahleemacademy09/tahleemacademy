@@ -848,7 +848,8 @@ const InClassQuranReader=({onClose}:any)=>{
     const au=new Audio(`https://everyayah.com/data/${reciter}/${s3}${v3}.mp3`);
     audioRef.current=au;setPlayingVerse(key);
     au.play().catch(()=>{
-      const fb=new Audio(`https://cdn.islamic.network/quran/audio/64/ar.alafasy/${(surah-1)*10000+verse}.mp3`);
+      const s2=String(surah).padStart(3,"0");const v2=String(verse).padStart(3,"0");
+      const fb=new Audio(`https://everyayah.com/data/Alafasy_128kbps/${s2}${v2}.mp3`);
       audioRef.current=fb;fb.play().catch(()=>setPlayingVerse(null));
       fb.onended=()=>setPlayingVerse(null);
     });
