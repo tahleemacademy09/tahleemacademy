@@ -150,6 +150,20 @@ interface SessionStats {
   exerciseScore: number;
 }
 
+// Teacher-assigned revision plan loaded from hifdh_assignments
+interface Assignment {
+  id: string;
+  student_id: string;
+  assigned_by: string;
+  mode: SelectMode;
+  selected: number[];
+  daily_pages: number;
+  reciter: string | null;
+  notes: string | null;
+  active: boolean;
+  assignedByName?: string; // joined from profiles
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 //  UTILITIES
 // ═══════════════════════════════════════════════════════════════════════
@@ -332,6 +346,9 @@ export default function QuranRevisionHub({ userId }: Props) {
   const [finalStats, setFinalStats]     = useState<SessionStats | null>(null);
   const [earnedXP, setEarnedXP]         = useState(0);
 
+  // Teacher assignment
+  const [assignment, setAssignment] = useState<Assignment | null>(null);
+
   const pageDataRef = useRef<any>(null);
   useEffect(() => { pageDataRef.current = pageData; }, [pageData]);
 
@@ -367,6 +384,98 @@ export default function QuranRevisionHub({ userId }: Props) {
       if (j?.code === 200) setPrevPageData(j.data);
     } catch { /* ignore */ }
   }, []);
+
+  // ═══ Load teacher assignment ════════════════════════════════════════
+  const loadAssignment = useCallback(async () => {
+    if (!userId) return;
+    try {
+      const { data: asgn } = await (supabase as any)
+        .from("hifdh_assignments")
+        .select("*")
+        .eq("student_id", userId)
+        .eq("active", true)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (!asgn) return;
+
+      // Fetch teacher name (two-step to avoid RLS join issues)
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("full_name")
+        .eq("user_id", asgn.assigned_by)
+        .maybeSingle();
+
+      const enriched: Assignment = { ...asgn, assignedByName: (profile as any)?.full_name ?? "Teacher" };
+      setAssignment(enriched);
+
+      // Apply assignment settings to selectors
+      setSelectMode(asgn.mode as SelectMode);
+      setSelected(asgn.selected ?? []);
+      setDailyPages(asgn.daily_pages ?? 1);
+      if (asgn.reciter) setReciter(asgn.reciter);
+
+      // Check if student already has a saved position for this same assignment
+      const saved = localStorage.getItem(`revision_plan_${userId}`);
+      if (saved) {
+        try {
+          const p: RevisionPlan = JSON.parse(saved);
+          const sameMode = p.mode === asgn.mode;
+          const sameItems = JSON.stringify([...(p.selected ?? [])].sort()) ===
+                            JSON.stringify([...(asgn.selected ?? [])].sort());
+          if (sameMode && sameItems) return; // let the existing resume useEffect handle it
+        } catch { /* fall through */ }
+      }
+
+      // Start fresh from assignment
+      const pages = buildPages(asgn.mode as SelectMode, asgn.selected ?? []);
+      if (pages.length === 0) return;
+      const newPlan: RevisionPlan = {
+        mode: asgn.mode as SelectMode,
+        selected: asgn.selected ?? [],
+        dailyPages: asgn.daily_pages ?? 1,
+        allPages: pages,
+        currentIdx: 0,
+      };
+      setPlan(newPlan);
+      if (userId) localStorage.setItem(`revision_plan_${userId}`, JSON.stringify(newPlan));
+    } catch (err) {
+      console.error("loadAssignment:", err);
+    }
+  }, [userId]);
+
+  useEffect(() => { loadAssignment(); }, [loadAssignment]);
+
+  // ═══ Log a completed page to hifdh_page_logs ════════════════════════
+  const logPageCompletion = useCallback(async (
+    pageNum: number,
+    recitScore: number,
+    exScore: number,
+    durationSecs: number,
+    errorCnt: number,
+    attemptsN: number,
+    transcriptText: string,
+  ) => {
+    if (!userId) return;
+    try {
+      await (supabase as any).from("hifdh_page_logs").upsert({
+        student_id:      userId,
+        assignment_id:   assignment?.id ?? null,
+        date:            new Date().toISOString().split("T")[0],
+        page_number:     pageNum,
+        score:           recitScore,
+        exercise_score:  exScore,
+        attempts:        attemptsN,
+        error_count:     errorCnt,
+        duration_seconds: durationSecs,
+        transcript:      transcriptText?.slice(0, 2000) ?? null,
+        status:          "completed",
+      }, { onConflict: "student_id,page_number,date", ignoreDuplicates: false });
+    } catch (err) {
+      console.error("logPageCompletion:", err);
+    }
+  }, [userId, assignment]);
 
   // ═══ Resume from saved position (runs after fetchPage/fetchPrevPage are defined) ═
   const didResumeRef = useRef(false);
@@ -773,6 +882,17 @@ export default function QuranRevisionHub({ userId }: Props) {
           best_score: evalResult?.score ?? 0, exercise_score: score,
           completed_at: new Date().toISOString(),
         }, { onConflict: "user_id,page_number" }).then(() => {});
+
+        // ── Log to hifdh_page_logs for teacher dashboard ──
+        logPageCompletion(
+          curPage,
+          evalResult?.score ?? 0,
+          score,
+          elapsed,
+          ayahErrors.length,
+          recitationAttempts,
+          evalResult?.transcript ?? "",
+        );
       }
       setEarnedXP(50 + (evalResult?.score ?? 0) + score);
       setStage("complete");
@@ -932,6 +1052,53 @@ export default function QuranRevisionHub({ userId }: Props) {
         </div>
 
         <div style={{ padding: "14px 14px 100px", display: "flex", flexDirection: "column", gap: 12 }}>
+
+          {/* Assignment banner — shown when teacher has assigned a plan */}
+          {assignment && (
+            <div className="rv-card-gold qr-fadein" style={{ padding: "14px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                <div style={{ width: 32, height: 32, borderRadius: 10, background: `${GL}22`, border: `1px solid ${GL}55`,
+                  display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <BookMarked size={15} style={{ color: GL }} />
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 900, color: GL, letterSpacing: 1, textTransform: "uppercase" as const }}>
+                    Assigned by {assignment.assignedByName}
+                  </div>
+                  <div style={{ fontSize: 10, color: MUT, marginTop: 1 }}>
+                    {assignment.mode === "juz"  ? `Juz ${assignment.selected.join(", ")}` :
+                     assignment.mode === "hizb" ? `Hizb ${assignment.selected.join(", ")}` :
+                     `${assignment.selected.length} Surah(s)`}
+                    {" · "}{assignment.daily_pages} page{assignment.daily_pages !== 1 ? "s" : ""}/day
+                  </div>
+                </div>
+              </div>
+              {assignment.notes && (
+                <div style={{ fontSize: 11, color: "#8a6030", background: `${GL}15`, borderRadius: 8, padding: "8px 10px",
+                  fontStyle: "italic", lineHeight: 1.5, border: `1px solid ${GL}22` }}>
+                  📝 {assignment.notes}
+                </div>
+              )}
+              <button className="rv-btn"
+                onClick={() => {
+                  const pages = buildPages(assignment.mode, assignment.selected);
+                  const newPlan: RevisionPlan = {
+                    mode: assignment.mode, selected: assignment.selected,
+                    dailyPages: assignment.daily_pages, allPages: pages, currentIdx: 0,
+                  };
+                  setPlan(newPlan);
+                  if (userId) localStorage.setItem(`revision_plan_${userId}`, JSON.stringify(newPlan));
+                  setSessionStart(Date.now()); setPageVisible(true);
+                  fetchPage(pages[0]); fetchPrevPage(pages[0]);
+                  setStage("reciting");
+                }}
+                style={{ marginTop: 10, width: "100%", padding: "10px 0", borderRadius: 10, border: "none",
+                  background: `linear-gradient(135deg,${DG},${DG2})`, color: W, fontSize: 13,
+                  fontWeight: 800, cursor: "pointer", boxShadow: `0 2px 8px ${DG}35` }}>
+                بسم الله — Start Assigned Revision ✨
+              </button>
+            </div>
+          )}
 
           {/* Resume plan */}
           {plan && (
