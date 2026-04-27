@@ -368,66 +368,77 @@ export default function QuranRevisionHub({ userId }: Props) {
     } catch { /* ignore */ }
   }, []);
 
-  // ═══ Load assignment from DB — always takes priority over localStorage ══
+  // ═══ Unified assignment + resume effect ══════════════════════════════
+  // Runs AFTER fetchPage/fetchPrevPage are defined as useCallbacks.
+  // 1. Loads teacher assignment from DB
+  // 2. If assignment exists → use it (overrides localStorage)
+  // 3. If no assignment → resume from localStorage if available
+  const didStartRef = useRef(false);
   useEffect(() => {
-    if (!userId) return;
-    (supabase as any).from("hifdh_daily_assignments")
-      .select("*").eq("student_id", userId).eq("active", true).maybeSingle()
-      .then(({ data, error }: any) => {
-        if (error) { console.error("Assignment load error:", error); return; }
-        if (!data) return; // No assignment — student uses manual setup
+    if (!userId || didStartRef.current) return;
 
-        setAssignment(data);
-        setSelectMode(data.mode as any);
-        setSelected(data.selected_items);
-        setDailyPages(data.daily_pages);
-        setReciter(data.reciter_id || "Alafasy_128kbps");
-
-        // Check if there's a saved plan for the SAME assignment content
-        // If content changed (teacher reassigned), always reset
-        const saved = localStorage.getItem(`revision_plan_${userId}`);
-        let existingPlan: RevisionPlan | null = null;
-        if (saved) {
-          try { existingPlan = JSON.parse(saved); } catch { /* ignore */ }
-        }
-
-        const sameContent = existingPlan
-          && existingPlan.mode === data.mode
-          && JSON.stringify(existingPlan.selected) === JSON.stringify(data.selected_items);
-
-        if (sameContent && existingPlan) {
-          // Same assignment — keep progress (resume will pick it up)
-          setPlan(existingPlan);
-        } else {
-          // New or changed assignment — start fresh
-          const pages = buildPages(data.mode as any, data.selected_items);
-          const newPlan: RevisionPlan = {
-            mode: data.mode, selected: data.selected_items,
-            dailyPages: data.daily_pages, allPages: pages, currentIdx: 0,
-          };
-          setPlan(newPlan);
-          localStorage.setItem(`revision_plan_${userId}`, JSON.stringify(newPlan));
-        }
-      });
-  }, [userId]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // ═══ Resume from saved position (runs after fetchPage/fetchPrevPage are defined) ═
-  const didResumeRef = useRef(false);
-  useEffect(() => {
-    if (!userId || didResumeRef.current) return;
-    const saved = localStorage.getItem(`revision_plan_${userId}`);
-    if (!saved) return;
-    try {
-      const p: RevisionPlan = JSON.parse(saved);
+    const startSession = (p: RevisionPlan) => {
       const currentPage = p.allPages[p.currentIdx];
       if (!currentPage) return;
-      didResumeRef.current = true;
+      didStartRef.current = true;
+      setPlan(p);
       setSessionStart(Date.now());
       setPageVisible(true);
       fetchPage(currentPage);
       fetchPrevPage(currentPage);
       setStage("reciting");
-    } catch { /* ignore */ }
+    };
+
+    // Try to load teacher assignment first
+    (supabase as any)
+      .from("hifdh_daily_assignments")
+      .select("*")
+      .eq("student_id", userId)
+      .eq("active", true)
+      .maybeSingle()
+      .then(({ data, error }: any) => {
+        if (error) console.error("Assignment load error:", error);
+
+        if (data) {
+          // Teacher assigned content — always takes priority
+          setAssignment(data);
+          setSelectMode(data.mode as any);
+          setSelected(data.selected_items);
+          setDailyPages(data.daily_pages);
+          setReciter(data.reciter_id || "Alafasy_128kbps");
+
+          // Check for same-content saved plan (keep progress)
+          const saved = localStorage.getItem(`revision_plan_${userId}`);
+          let existingPlan: RevisionPlan | null = null;
+          if (saved) { try { existingPlan = JSON.parse(saved); } catch { /* ignore */ } }
+
+          const sameContent = existingPlan
+            && existingPlan.mode === data.mode
+            && JSON.stringify(existingPlan.selected) === JSON.stringify(data.selected_items);
+
+          const planToUse: RevisionPlan = sameContent && existingPlan
+            ? existingPlan  // resume progress
+            : (() => {      // fresh start with assignment
+                const pages = buildPages(data.mode as any, data.selected_items);
+                const np: RevisionPlan = {
+                  mode: data.mode, selected: data.selected_items,
+                  dailyPages: data.daily_pages, allPages: pages, currentIdx: 0,
+                };
+                localStorage.setItem(`revision_plan_${userId}`, JSON.stringify(np));
+                return np;
+              })();
+
+          startSession(planToUse);
+        } else {
+          // No teacher assignment — fall back to saved plan
+          const saved = localStorage.getItem(`revision_plan_${userId}`);
+          if (!saved) return; // Student will use manual setup screen
+          try {
+            const p: RevisionPlan = JSON.parse(saved);
+            startSession(p);
+          } catch { /* ignore */ }
+        }
+      });
   }, [userId, fetchPage, fetchPrevPage]);
 
   // ═══ Audio ═════════════════════════════════════════════
