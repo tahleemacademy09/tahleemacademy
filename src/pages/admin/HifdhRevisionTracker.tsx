@@ -53,6 +53,7 @@ export default function HifdhRevisionTracker() {
     mode:"juz", selected_items:[1], daily_pages:1, reciter_id:"Alafasy_128kbps"
   });
   const [savingAssign, setSavingAssign] = useState(false);
+  const [saveError,    setSaveError]    = useState<string|null>(null);
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
@@ -132,24 +133,52 @@ export default function HifdhRevisionTracker() {
   const saveAssignment = async (studentId: string) => {
     if (!userId) return;
     setSavingAssign(true);
+    setSaveError(null);
     try {
       // Deactivate old assignments
-      await (supabase as any).from("hifdh_daily_assignments")
-        .update({ active: false }).eq("student_id", studentId).eq("active", true);
-      // Create new
-      await (supabase as any).from("hifdh_daily_assignments").insert({
-        student_id:     studentId,
-        assigned_by:    userId,
-        mode:           assignForm.mode,
-        selected_items: assignForm.selected_items,
-        daily_pages:    assignForm.daily_pages,
-        reciter_id:     assignForm.reciter_id,
-        notes:          assignForm.notes,
-        active: true,
-      });
+      const { error: deactivateErr } = await (supabase as any)
+        .from("hifdh_daily_assignments")
+        .update({ active: false })
+        .eq("student_id", studentId)
+        .eq("active", true);
+
+      if (deactivateErr) {
+        console.error("Deactivate error:", deactivateErr);
+        setSaveError(`Deactivate failed: ${deactivateErr.message}`);
+        setSavingAssign(false);
+        return;
+      }
+
+      // Insert new assignment
+      const { data: inserted, error: insertErr } = await (supabase as any)
+        .from("hifdh_daily_assignments")
+        .insert({
+          student_id:     studentId,
+          assigned_by:    userId,
+          mode:           assignForm.mode,
+          selected_items: assignForm.selected_items,
+          daily_pages:    assignForm.daily_pages,
+          reciter_id:     assignForm.reciter_id || "Alafasy_128kbps",
+          notes:          assignForm.notes || null,
+          active:         true,
+        })
+        .select()
+        .single();
+
+      if (insertErr) {
+        console.error("Insert error:", insertErr);
+        setSaveError(`Save failed: ${insertErr.message}`);
+        setSavingAssign(false);
+        return;
+      }
+
+      console.log("Assignment saved:", inserted);
       setShowAssign(null);
-      load();
-    } catch(e) { console.error(e); }
+      await load();
+    } catch(e: any) {
+      console.error("Unexpected error:", e);
+      setSaveError(`Unexpected error: ${e?.message ?? String(e)}`);
+    }
     setSavingAssign(false);
   };
 
@@ -396,14 +425,22 @@ export default function HifdhRevisionTracker() {
                         style={{ width:"100%", padding:"8px 10px", borderRadius:8, border:`1.5px solid ${BRD}`,
                           fontSize:12, color:"#374151", background:WARM, resize:"none" as const,
                           boxSizing:"border-box" as const, marginBottom:10 }} />
+                      {saveError && (
+                        <div style={{ padding:"8px 12px", borderRadius:8, background:"#fff5f5",
+                          border:"1px solid #fca5a5", fontSize:11, color:"#dc2626", marginBottom:6 }}>
+                          ⚠️ {saveError}
+                        </div>
+                      )}
                       <div style={{ display:"flex", gap:8 }}>
-                        <button onClick={()=>saveAssignment(s.user_id)} disabled={savingAssign}
+                        <button onClick={()=>{ setSaveError(null); saveAssignment(s.user_id); }}
+                          disabled={savingAssign || (assignForm.selected_items||[]).length === 0}
                           style={{ flex:1, padding:"9px", borderRadius:8, border:"none",
                             background:`linear-gradient(135deg,${G},${GM})`,
-                            color:"#fff", fontWeight:800, fontSize:12, cursor:"pointer" }}>
+                            color:"#fff", fontWeight:800, fontSize:12, cursor:"pointer",
+                            opacity: (assignForm.selected_items||[]).length === 0 ? 0.5 : 1 }}>
                           {savingAssign ? "Saving…" : "Save Assignment"}
                         </button>
-                        <button onClick={()=>setShowAssign(null)}
+                        <button onClick={()=>{ setShowAssign(null); setSaveError(null); }}
                           style={{ padding:"9px 14px", borderRadius:8, border:`1px solid ${BRD}`,
                             background:W, cursor:"pointer", fontSize:12 }}>
                           Cancel
