@@ -368,27 +368,44 @@ export default function QuranRevisionHub({ userId }: Props) {
     } catch { /* ignore */ }
   }, []);
 
-  // ═══ Load assignment from DB (teacher/admin assigned task) ════════
+  // ═══ Load assignment from DB — always takes priority over localStorage ══
   useEffect(() => {
     if (!userId) return;
     (supabase as any).from("hifdh_daily_assignments")
       .select("*").eq("student_id", userId).eq("active", true).maybeSingle()
-      .then(({ data }: any) => {
-        if (!data) return;
+      .then(({ data, error }: any) => {
+        if (error) { console.error("Assignment load error:", error); return; }
+        if (!data) return; // No assignment — student uses manual setup
+
         setAssignment(data);
-        // Auto-populate plan from assignment if student has no saved plan
+        setSelectMode(data.mode as any);
+        setSelected(data.selected_items);
+        setDailyPages(data.daily_pages);
+        setReciter(data.reciter_id || "Alafasy_128kbps");
+
+        // Check if there's a saved plan for the SAME assignment content
+        // If content changed (teacher reassigned), always reset
         const saved = localStorage.getItem(`revision_plan_${userId}`);
-        if (!saved) {
+        let existingPlan: RevisionPlan | null = null;
+        if (saved) {
+          try { existingPlan = JSON.parse(saved); } catch { /* ignore */ }
+        }
+
+        const sameContent = existingPlan
+          && existingPlan.mode === data.mode
+          && JSON.stringify(existingPlan.selected) === JSON.stringify(data.selected_items);
+
+        if (sameContent && existingPlan) {
+          // Same assignment — keep progress (resume will pick it up)
+          setPlan(existingPlan);
+        } else {
+          // New or changed assignment — start fresh
           const pages = buildPages(data.mode as any, data.selected_items);
           const newPlan: RevisionPlan = {
             mode: data.mode, selected: data.selected_items,
             dailyPages: data.daily_pages, allPages: pages, currentIdx: 0,
           };
           setPlan(newPlan);
-          setSelectMode(data.mode as any);
-          setSelected(data.selected_items);
-          setDailyPages(data.daily_pages);
-          setReciter(data.reciter_id || "Alafasy_128kbps");
           localStorage.setItem(`revision_plan_${userId}`, JSON.stringify(newPlan));
         }
       });
