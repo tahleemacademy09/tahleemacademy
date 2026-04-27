@@ -435,16 +435,31 @@ export default function QuranRevisionHub({ userId }: Props) {
   }, [setPagePlayIdx]);
 
   // ═══ Transcription ════════════════════════════════════
-  const transcribeAudio = async (blob: Blob): Promise<string> => {
+  // refText: the actual Quranic verse(s) being recited — passed as Whisper prompt
+  // for dramatically better accuracy on Quranic Arabic
+  const transcribeAudio = async (blob: Blob, refText?: string): Promise<string> => {
     const groqKey = (import.meta as any).env?.VITE_GROQ_API_KEY;
+
+    // Build the Whisper prompt: start with the reference verse so the model
+    // knows exactly what vocabulary and script to expect
+    const quranPrompt = refText
+      ? `${refText.slice(0, 400)} بسم الله الرحمن الرحيم`
+      : "بسم الله الرحمن الرحيم الحمد لله رب العالمين الرحمن الرحيم مالك يوم الدين";
+
+    // Determine correct file extension so Groq recognises the format
+    const ext = blob.type.includes("mp4") ? "mp4"
+      : blob.type.includes("ogg") ? "ogg"
+      : "webm";
+
     if (groqKey) {
       try {
         const fd = new FormData();
-        fd.append("file", new File([blob], "recitation.webm", { type: blob.type || "audio/webm" }));
+        fd.append("file", new File([blob], `recitation.${ext}`, { type: blob.type || "audio/webm" }));
         fd.append("model", "whisper-large-v3");
         fd.append("language", "ar");
         fd.append("response_format", "text");
-        fd.append("prompt", "بسم الله الرحمن الرحيم الحمد لله رب العالمين");
+        fd.append("temperature", "0");          // deterministic — less hallucination
+        fd.append("prompt", quranPrompt);        // prime with the actual verse text
         const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
           method: "POST",
           headers: { Authorization: `Bearer ${groqKey}` },
@@ -454,9 +469,10 @@ export default function QuranRevisionHub({ userId }: Props) {
           const txt = (await r.text()).trim();
           if (txt.length > 0) return txt;
         }
-      } catch { /* fall through */ }
+      } catch { /* fall through to edge function */ }
     }
-    // Fallback: Supabase edge function
+
+    // Fallback: Supabase edge function — also pass refText for server-side priming
     try {
       const b64 = await new Promise<string>(resolve => {
         const reader = new FileReader();
@@ -464,7 +480,7 @@ export default function QuranRevisionHub({ userId }: Props) {
         reader.readAsDataURL(blob);
       });
       const { data } = await supabase.functions.invoke("transcribe-hifdh", {
-        body: { audio: b64, mimeType: blob.type || "audio/webm" },
+        body: { audio: b64, mimeType: blob.type || "audio/webm", prompt: quranPrompt },
       });
       return data?.text ?? data?.transcript ?? "";
     } catch { return ""; }
@@ -543,7 +559,9 @@ export default function QuranRevisionHub({ userId }: Props) {
     if (!evalResult) setEvalResult(null);
     setPageVisible(true);
     try {
-      const transcript = await transcribeAudio(blob);
+      const ayahs    = pageDataRef.current?.ayahs ?? [];
+      const refText  = ayahs.map((a: any) => a.text).join(" ");
+      const transcript = await transcribeAudio(blob, refText);
 
       if (!transcript || transcript.trim().length < 3) {
         setEvalResult({
@@ -557,8 +575,6 @@ export default function QuranRevisionHub({ userId }: Props) {
         return;
       }
 
-      const ayahs    = pageDataRef.current?.ayahs ?? [];
-      const refText  = ayahs.map((a: any) => a.text).join(" ");
       const words    = compareWords(refText, transcript);
       const correct  = words.filter(w => w.status === "correct").length;
       const score    = Math.round((correct / Math.max(1, words.length)) * 100);
@@ -634,9 +650,10 @@ export default function QuranRevisionHub({ userId }: Props) {
     setRemEvaluating(true);
     setRemResult(null);
     try {
-      const transcript = await transcribeAudio(blob);
-      const ayah = pageDataRef.current?.ayahs?.find((a: any) => a.number === ayahNum);
-      if (!ayah || !transcript) {
+      const ayah = pageDataRef.current?.ayahs?.find((a: any) => a.number === ayahNum)
+            ?? [...(prevPageData?.ayahs ?? [])].find((a: any) => a.number === ayahNum);
+      const transcript = await transcribeAudio(blob, ayah?.text);
+      if (!transcript) {
         setRemResult({ score: 0, transcript: transcript || "" });
         setRemEvaluating(false);
         return;
@@ -688,8 +705,8 @@ export default function QuranRevisionHub({ userId }: Props) {
     setExEvaluating(true);
     setExResult(null);
     try {
-      const transcript = await transcribeAudio(blob);
       const q = exercises[exIdx];
+      const transcript = await transcribeAudio(blob, q?.missingText ?? q?.promptText);
       if (!q) { setExEvaluating(false); return; }
 
       let score = 0;
