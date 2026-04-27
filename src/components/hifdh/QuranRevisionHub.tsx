@@ -1610,21 +1610,14 @@ export default function QuranRevisionHub({ userId }: Props) {
                       ۝{toAr(errAyah.ayah.numberInSurah)}
                     </span>
                   </p>
-                  <button onClick={() => setRevealVerse(false)}
-                    className="mt-3 mx-auto flex items-center gap-1.5 text-xs qr-btn px-3 py-1.5 rounded-lg"
-                    style={{ background: "#f59e0b22", color: "#92400e", display: "flex" }}>
-                    <EyeOff size={11} /> Hide verse
-                  </button>
                 </div>
               ) : (
-                <div className="px-5 py-5 flex flex-col items-center gap-3" style={{ background: PARCHMENT }}>
-                  <p className="text-xs font-bold text-center" style={{ color: "#92400e" }}>
-                    Try to recite from memory first
-                  </p>
+                <div className="px-5 py-4 flex items-center justify-center gap-2" style={{ background: PARCHMENT }}>
+                  <p className="text-xs font-semibold" style={{ color: "#92400e" }}>Hidden —</p>
                   <button onClick={() => setRevealVerse(true)}
-                    className="qr-btn flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-sm"
-                    style={{ background: "#f59e0b", color: "#78350f", boxShadow: "0 2px 8px rgba(245,158,11,.35)" }}>
-                    <Eye size={14} /> Reveal Verse
+                    className="qr-btn flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold"
+                    style={{ background: "#f59e0b", color: "#78350f" }}>
+                    <Eye size={12} /> Reveal
                   </button>
                 </div>
               )}
@@ -1669,37 +1662,54 @@ export default function QuranRevisionHub({ userId }: Props) {
               </div>
             )}
 
-            {/* Listen to correct recitation */}
-            <button onClick={() => playAyah(errAyah.ayah)}
-              className="w-full py-3.5 rounded-2xl flex items-center justify-center gap-2 font-bold text-sm qr-btn"
-              style={{ background: "#1a3d24", color: "#c9a84c", border: "2px solid #c9a84c55",
-                boxShadow: "0 2px 10px rgba(26,61,36,.3)" }}>
-              <Headphones size={16} /> Listen to Correct Recitation
-            </button>
+            {/* Compact action row: Reveal toggle · Listen · Record */}
+            <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
 
-            {/* Record button */}
-            {remEvaluating ? (
-              <div className="flex items-center justify-center gap-2 py-4">
-                <Loader2 size={18} className="qr-spin" style={{ color: GOLD }} />
-                <span className="text-xs" style={{ color: "#7aad90" }}>Evaluating…</span>
-              </div>
-            ) : (
-              <button
-                onClick={remRecording ? stopRemRecording : () => startRemRecording(errAyah.ayah.number)}
-                className={cn("w-full py-3.5 rounded-2xl flex items-center justify-center gap-2 font-black text-sm qr-btn",
-                  remRecording && "qr-recordpulse")}
-                style={{
-                  background: remRecording ? "#dc2626" : `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`,
-                  color: remRecording ? "#fff" : DG,
-                  boxShadow: remRecording ? "0 4px 16px rgba(220,38,38,.4)" : `0 4px 16px rgba(201,168,76,.4)`,
-                  fontSize: 15,
-                }}>
-                {remRecording
-                  ? <><MicOff size={16} /> Stop — {fmtTime(remRecTime)}</>
-                  : <><Mic size={16} /> Record This Verse</>
-                }
+              {/* Reveal / Hide pill */}
+              <button onClick={() => setRevealVerse(v => !v)}
+                className="qr-btn flex flex-col items-center justify-center gap-1 rounded-2xl font-bold"
+                style={{ flex: 1, padding: "12px 8px", fontSize: 10,
+                  background: revealVerse ? "#f59e0b22" : "#f59e0b",
+                  color: revealVerse ? "#92400e" : "#78350f",
+                  border: "1.5px solid #f59e0b66" }}>
+                {revealVerse ? <EyeOff size={18} /> : <Eye size={18} />}
+                {revealVerse ? "Hide" : "Reveal"}
               </button>
-            )}
+
+              {/* Listen pill */}
+              <button onClick={() => playAyah(errAyah.ayah)}
+                className="qr-btn flex flex-col items-center justify-center gap-1 rounded-2xl font-bold"
+                style={{ flex: 1, padding: "12px 8px", fontSize: 10,
+                  background: "#1a3d24", color: "#c9a84c",
+                  border: "1.5px solid #c9a84c44" }}>
+                <Headphones size={18} />
+                Listen
+              </button>
+
+              {/* Record / Stop pill */}
+              {remEvaluating ? (
+                <div className="flex flex-col items-center justify-center gap-1 rounded-2xl"
+                  style={{ flex: 1, padding: "12px 8px", background: "#1a3025",
+                    border: "1.5px solid #c9a84c22" }}>
+                  <Loader2 size={18} className="qr-spin" style={{ color: GOLD }} />
+                  <span style={{ fontSize: 9, color: "#7aad90", fontWeight: 700 }}>Checking…</span>
+                </div>
+              ) : (
+                <button
+                  onClick={remRecording ? stopRemRecording : () => startRemRecording(errAyah.ayah.number)}
+                  className={cn("qr-btn flex flex-col items-center justify-center gap-1 rounded-2xl font-bold",
+                    remRecording && "qr-recordpulse")}
+                  style={{ flex: 1, padding: "12px 8px", fontSize: 10,
+                    background: remRecording ? "#dc2626" : `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`,
+                    color: remRecording ? "#fff" : DG,
+                    border: remRecording ? "1.5px solid #dc262688" : "none",
+                    boxShadow: remRecording ? "0 0 12px rgba(220,38,38,.4)" : `0 2px 8px rgba(201,168,76,.35)` }}>
+                  {remRecording
+                    ? <><MicOff size={18} />{fmtTime(remRecTime)}</>
+                    : <><Mic size={18} />Record</>}
+                </button>
+              )}
+            </div>
           </div>
         )}
 
