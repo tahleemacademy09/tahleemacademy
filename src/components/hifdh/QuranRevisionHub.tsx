@@ -308,7 +308,8 @@ export default function QuranRevisionHub({ userId }: Props) {
   const [remRecording, setRemRecording]     = useState(false);
   const [remRecTime, setRemRecTime]         = useState(0);
   const [remEvaluating, setRemEvaluating]   = useState(false);
-  const [remResult, setRemResult]           = useState<{score:number;transcript:string}|null>(null);
+  const [remResult,     setRemResult]       = useState<{score:number;transcript:string}|null>(null);
+  const [revealVerse,   setRevealVerse]     = useState(false);
   const remMediaRef  = useRef<MediaRecorder | null>(null);
   const remChunksRef = useRef<Blob[]>([]);
   const remTimerRef  = useRef<any>(null);
@@ -535,9 +536,11 @@ export default function QuranRevisionHub({ userId }: Props) {
 
   // ═══ Page Evaluation ══════════════════════════════════
   const runPageEvaluation = async (blob: Blob) => {
-    setStage("evaluating");
+    // Stage/evaluating/pageVisible already set by Done button for instant feedback
+    // Only set them here as fallback (e.g. if called from other paths)
+    setStage(s => s === "evaluating" ? s : "evaluating");
     setEvaluating(true);
-    setEvalResult(null);
+    if (!evalResult) setEvalResult(null);
     setPageVisible(true);
     try {
       const transcript = await transcribeAudio(blob);
@@ -1168,7 +1171,13 @@ export default function QuranRevisionHub({ userId }: Props) {
                 ﷽
               </div>
 
-              <button onClick={stopPageRecording}
+              <button onClick={() => {
+                  setStage("evaluating");
+                  setEvaluating(true);
+                  setEvalResult(null);
+                  setPageVisible(true);
+                  stopPageRecording();
+                }}
                 className="px-10 py-3.5 rounded-2xl font-black text-sm qr-btn"
                 style={{ background: `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`, color: DG }}>
                 ✓ Done — Submit for Evaluation
@@ -1447,7 +1456,7 @@ export default function QuranRevisionHub({ userId }: Props) {
                 </button>
               ) : ayahErrors.length > 0 ? (
                 <>
-                  <button onClick={() => { setRemediationIdx(0); setRemResult(null); setStage("remediation"); }}
+                  <button onClick={() => { setRemediationIdx(0); setRemResult(null); setRevealVerse(false); setStage("remediation"); }}
                     className="w-full py-3.5 rounded-2xl font-black text-sm qr-btn"
                     style={{ background: "linear-gradient(135deg,#c2410c,#ea580c)", color: "#fff" }}>
                     📖 Practise Error Verses ({ayahErrors.length})
@@ -1523,7 +1532,7 @@ export default function QuranRevisionHub({ userId }: Props) {
           style={{ borderColor: GOLD + "22" }}>
           {ayahErrors.map((ae, i) => (
             <button key={i}
-              onClick={() => { setRemediationIdx(i); setRemResult(null); }}
+              onClick={() => { setRemediationIdx(i); setRemResult(null); setRevealVerse(false); }}
               className="flex-none w-8 h-8 rounded-full text-xs font-black qr-btn flex items-center justify-center"
               style={{
                 background: ae.mastered ? "#16a34a" : remediationIdx === i ? GOLD : "#1a3025",
@@ -1677,14 +1686,14 @@ export default function QuranRevisionHub({ userId }: Props) {
         {/* Footer nav */}
         <div className="flex-none px-4 py-3 border-t space-y-2" style={{ borderColor: GOLD + "33", background: DG }}>
           <div className="flex gap-2">
-            <button onClick={() => { setRemediationIdx(i => Math.max(0, i - 1)); setRemResult(null); }}
+            <button onClick={() => { setRemediationIdx(i => Math.max(0, i - 1)); setRemResult(null); setRevealVerse(false); }}
               disabled={remediationIdx === 0}
               className="flex-1 py-2.5 rounded-xl flex items-center justify-center gap-1 text-xs font-bold qr-btn"
               style={{ background: "#1a3025", color: GOLD, opacity: remediationIdx === 0 ? 0.4 : 1 }}>
               <ChevronLeft size={14} /> Prev
             </button>
             {remediationIdx < ayahErrors.length - 1 ? (
-              <button onClick={() => { setRemediationIdx(i => i + 1); setRemResult(null); }}
+              <button onClick={() => { setRemediationIdx(i => i + 1); setRemResult(null); setRevealVerse(false); }}
                 className="flex-1 py-2.5 rounded-xl flex items-center justify-center gap-1 text-xs font-bold qr-btn"
                 style={{ background: "#1a3025", color: GOLD }}>
                 Next <ChevronRight size={14} />
