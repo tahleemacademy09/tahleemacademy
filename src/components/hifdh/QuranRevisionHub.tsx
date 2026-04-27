@@ -369,17 +369,18 @@ export default function QuranRevisionHub({ userId }: Props) {
   }, []);
 
   // ═══ Unified assignment + resume effect ══════════════════════════════
-  // Runs AFTER fetchPage/fetchPrevPage are defined as useCallbacks.
-  // 1. Loads teacher assignment from DB
-  // 2. If assignment exists → use it (overrides localStorage)
-  // 3. If no assignment → resume from localStorage if available
   const didStartRef = useRef(false);
   useEffect(() => {
     if (!userId || didStartRef.current) return;
 
     const startSession = (p: RevisionPlan) => {
       const currentPage = p.allPages[p.currentIdx];
-      if (!currentPage) return;
+      console.log("[Hifdh] startSession → page:", currentPage, "plan:", p);
+      if (!currentPage) {
+        console.warn("[Hifdh] startSession: no currentPage, allPages:", p.allPages);
+        setAssignmentLoaded(true);
+        return;
+      }
       didStartRef.current = true;
       setPlan(p);
       setSessionStart(Date.now());
@@ -387,9 +388,9 @@ export default function QuranRevisionHub({ userId }: Props) {
       fetchPage(currentPage);
       fetchPrevPage(currentPage);
       setStage("reciting");
+      setAssignmentLoaded(true);
     };
 
-    // Try to load teacher assignment first
     (supabase as any)
       .from("hifdh_daily_assignments")
       .select("*")
@@ -397,49 +398,64 @@ export default function QuranRevisionHub({ userId }: Props) {
       .eq("active", true)
       .maybeSingle()
       .then(({ data, error }: any) => {
-        if (error) console.error("Assignment load error:", error);
+        console.log("[Hifdh] Assignment fetch →", { data, error });
+
+        if (error) {
+          console.error("[Hifdh] Assignment load error:", error);
+          // Fall through to localStorage
+        }
 
         if (data) {
-          // Teacher assigned content — always takes priority
-          setAssignment(data);
-          setSelectMode(data.mode as any);
-          setSelected(data.selected_items);
-          setDailyPages(data.daily_pages);
+          // Ensure selected_items is array of numbers (Postgres may return strings)
+          const selectedItems: number[] = (data.selected_items ?? []).map(Number);
+          const mode = data.mode as SelectMode;
+
+          setAssignment({ ...data, selected_items: selectedItems });
+          setSelectMode(mode);
+          setSelected(selectedItems);
+          setDailyPages(Number(data.daily_pages) || 1);
           setReciter(data.reciter_id || "Alafasy_128kbps");
 
-          // Check for same-content saved plan (keep progress)
+          // Check existing saved plan
           const saved = localStorage.getItem(`revision_plan_${userId}`);
           let existingPlan: RevisionPlan | null = null;
           if (saved) { try { existingPlan = JSON.parse(saved); } catch { /* ignore */ } }
 
           const sameContent = existingPlan
-            && existingPlan.mode === data.mode
-            && JSON.stringify(existingPlan.selected) === JSON.stringify(data.selected_items);
+            && existingPlan.mode === mode
+            && JSON.stringify([...existingPlan.selected].sort()) === JSON.stringify([...selectedItems].sort());
 
-          const planToUse: RevisionPlan = sameContent && existingPlan
-            ? existingPlan  // resume progress
-            : (() => {      // fresh start with assignment
-                const pages = buildPages(data.mode as any, data.selected_items);
-                const np: RevisionPlan = {
-                  mode: data.mode, selected: data.selected_items,
-                  dailyPages: data.daily_pages, allPages: pages, currentIdx: 0,
-                };
-                localStorage.setItem(`revision_plan_${userId}`, JSON.stringify(np));
-                return np;
-              })();
+          console.log("[Hifdh] sameContent:", sameContent, "existingPlan:", existingPlan);
+
+          let planToUse: RevisionPlan;
+          if (sameContent && existingPlan) {
+            planToUse = existingPlan;
+          } else {
+            const pages = buildPages(mode, selectedItems);
+            console.log("[Hifdh] buildPages result:", pages.slice(0, 5), "...(", pages.length, "pages)");
+            planToUse = {
+              mode, selected: selectedItems,
+              dailyPages: Number(data.daily_pages) || 1,
+              allPages: pages, currentIdx: 0,
+            };
+            localStorage.setItem(`revision_plan_${userId}`, JSON.stringify(planToUse));
+          }
 
           startSession(planToUse);
         } else {
-          // No teacher assignment — fall back to saved plan
+          // No assignment — fall back to localStorage or show setup
           const saved = localStorage.getItem(`revision_plan_${userId}`);
-          if (!saved) return; // Student will use manual setup screen
+          console.log("[Hifdh] No assignment. localStorage plan:", saved ? "exists" : "none");
+          if (!saved) { setAssignmentLoaded(true); return; }
           try {
             const p: RevisionPlan = JSON.parse(saved);
             startSession(p);
-          } catch { /* ignore */ }
+          } catch {
+            setAssignmentLoaded(true);
+          }
         }
       });
-  }, [userId, fetchPage, fetchPrevPage]);
+  }, [userId, fetchPage, fetchPrevPage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ═══ Audio ═════════════════════════════════════════════
   const playAyah = useCallback((ayah: {surah: {number: number}; numberInSurah: number; number: number}) => {
@@ -943,6 +959,30 @@ export default function QuranRevisionHub({ userId }: Props) {
   // ════════════════════════════════════════════════════════
   //  SETUP
   // ════════════════════════════════════════════════════════
+  // Show loading spinner while DB assignment check is in progress
+  if (userId && !assignmentLoaded && stage === "setup") {
+    return (
+      <div style={{ display:"flex", flexDirection:"column", alignItems:"center",
+        justifyContent:"center", height:"100%", gap:16, background:"#faf8f4" }}>
+        <div style={{ width:48, height:48, borderRadius:14, background:"#1a3d24",
+          display:"flex", alignItems:"center", justifyContent:"center" }}>
+          <span style={{ fontSize:24 }}>📖</span>
+        </div>
+        <div style={{ textAlign:"center" }}>
+          <div style={{ fontFamily:"'Amiri',serif", fontSize:16, color:"#1a3d24", fontWeight:700 }}>
+            Loading your revision…
+          </div>
+          <div style={{ fontFamily:"'Amiri',serif", fontSize:12, color:"#c9a84c", marginTop:4 }}>
+            جار تحميل المراجعة
+          </div>
+        </div>
+        <div style={{ width:32, height:32, borderRadius:"50%", border:"3px solid #e8ddd0",
+          borderTopColor:"#1a3d24", animation:"spin 0.8s linear infinite" }} />
+        <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+      </div>
+    );
+  }
+
   if (stage === "setup") {
     const dailyOptions = [
       { val: 0.5, ar: "نصف",     en: "½ page"   },
@@ -1165,6 +1205,7 @@ export default function QuranRevisionHub({ userId }: Props) {
               setSessionStart(Date.now()); setPageVisible(true);
               fetchPage(pages[0]); fetchPrevPage(pages[0]);
               setStage("reciting");
+              setAssignmentLoaded(true);
             }}
             disabled={selected.length === 0}
             style={{ width: "100%", padding: "16px 0", borderRadius: 14, border: "none",
