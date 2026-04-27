@@ -100,6 +100,7 @@ const AcademicCalendar      = lazy(() => import("./pages/admin/AcademicCalendar"
 const PaymentSettings       = lazy(() => import("./pages/admin/PaymentSettings"));
 const PublicClassManagement = lazy(() => import("./pages/admin/PublicClassManagement"));
 const HifdhAdminReview      = lazy(() => import("./pages/admin/HifdhAdminReview"));
+const HifdhRevisionTracker  = lazy(() => import("./pages/admin/HifdhRevisionTracker"));
 const RecitationTestAdmin   = lazy(() => import("./pages/admin/RecitationTestAdmin"));
 const LevelAssignment       = lazy(() => import("./pages/admin/LevelAssignment"));
 const LevelSubjectMapping   = lazy(() => import("./pages/admin/LevelSubjectMapping"));
@@ -236,6 +237,7 @@ const App = () => (
                     <Route path="/teacher/transcripts"      element={<TeacherTranscript />} />
                     <Route path="/teacher/recitation"       element={<TeacherRecitation />} />
                     <Route path="/teacher/hifdh"            element={<TeacherHifdhReview />} />
+                    <Route path="/teacher/hifdh-tracker"    element={<HifdhRevisionTracker />} />
                     <Route path="/teacher/majlis"           element={<TeacherMajlis />} />
                     <Route path="/teacher/settings"         element={<TeacherSettings />} />
                   </Route>
@@ -265,6 +267,7 @@ const App = () => (
                     <Route path="/admin/notifications"               element={<NotificationManagement />} />
                     <Route path="/admin/entrance-exam"               element={<EntranceExamAdmin />} />
                     <Route path="/admin/recitation-review"           element={<HifdhAdminReview />} />
+                    <Route path="/admin/hifdh-tracker"               element={<HifdhRevisionTracker />} />
                     <Route path="/admin/recitation-test-settings"    element={<RecitationTestAdmin />} />
                     <Route path="/admin/level-assignment"            element={<LevelAssignment />} />
                     <Route path="/admin/transcripts"                 element={<TranscriptManagement />} />
