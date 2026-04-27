@@ -262,6 +262,7 @@ export default function AdminDashboard() {
               {to:"/admin/grading",            icon:CheckSquare, label:t("Grade","تصحيح"),       primary:false},
               {to:"/admin/payments",           icon:CreditCard,  label:t("Payments","دفعات"),    primary:false},
               {to:"/admin/recitation-review",  icon:Mic,         label:t("Recitation","تلاوة"),  primary:false},
+              {to:"/admin/hifdh-tracker",       icon:BookOpen,    label:t("Hifdh Tracker","متابعة الحفظ"), primary:true},
               {to:"/admin/notifications",      icon:Bell,        label:t("Notify","إشعار"),      primary:false},
               {to:"/admin/attendance",         icon:CheckSquare, label:t("Attend","حضور"),       primary:false},
             ].map((a,i)=>(
@@ -322,6 +323,7 @@ export default function AdminDashboard() {
 
             <Section title={t("Recitation & Ḥifẓ","التلاوة والحفظ")} ck="recitation" items={[
               {to:"/admin/recitation-review",        icon:Mic,      label:t("Recitation Review","مراجعة التلاوة"),    sub:t("Listen & grade recitations","الاستماع والتقييم")},
+              {to:"/admin/hifdh-tracker",             icon:BookOpen, label:t("Hifdh Daily Tracker","متابعة مراجعة الحفظ"), sub:t("Assign & acknowledge daily revision","تعيين ومتابعة المراجعة اليومية")},
               {to:"/admin/recitation-test-settings", icon:Settings, label:t("Recitation Settings","إعدادات التلاوة"), sub:t("AI grading & pass criteria","معايير التقييم")},
             ]}/>
 
