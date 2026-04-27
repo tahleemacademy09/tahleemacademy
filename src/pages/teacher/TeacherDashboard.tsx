@@ -279,12 +279,14 @@ const TeacherDashboard = () => {
     { icon: CheckSquare,   label: t("Pending Exams",   "امتحانات"),        value: stats.pendingExams,    color: "#DC2626", to: "/teacher/grading" },
     { icon: FileText,      label: t("Pending Tests",   "تمرينات"),         value: stats.pendingTests,    color: "#D97706", to: "/teacher/grading" },
     { icon: Mic,           label: t("Recordings",      "تسجيلات"),         value: stats.totalRecordings, color: "#059669", to: "/teacher/recordings" },
+    { icon: BookOpen,      label: t("Hifdh Tracker",  "متابعة الحفظ"),    value: "",                    color: "#b7791f", to: "/teacher/hifdh-tracker" },
     { icon: GraduationCap, label: t("Transcripts",     "كشوف"),            value: stats.students,        color: "#0891B2", to: "/teacher/transcripts" },
   ];
 
   const QUICK_ACTIONS = [
     { icon: Video,         label: t("Schedule Class", "جدولة حصة"),       to: "/teacher/classes",       color: "#2563EB" },
     { icon: CheckSquare,   label: t("Grade Exams",    "تصحيح"),           to: "/teacher/grading",       color: "#DC2626" },
+    { icon: BookOpen,      label: t("Hifdh Tracker", "متابعة الحفظ"),    to: "/teacher/hifdh-tracker", color: "#b7791f" },
     { icon: Megaphone,     label: t("Announce",       "إعلان"),           to: "/teacher/announcements", color: G },
     { icon: GraduationCap, label: t("Transcripts",    "كشوف النتائج"),    to: "/teacher/transcripts",   color: GOLD },
     { icon: Calendar,      label: t("Attendance",     "الحضور"),          to: "/teacher/attendance",    color: "#059669" },
