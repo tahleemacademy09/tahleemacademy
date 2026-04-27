@@ -310,6 +310,12 @@ export default function QuranRevisionHub({ userId }: Props) {
   const [remEvaluating, setRemEvaluating]   = useState(false);
   const [remResult,     setRemResult]       = useState<{score:number;transcript:string}|null>(null);
   const [revealVerse,   setRevealVerse]     = useState(false);
+
+  // Assignment / daily log
+  const [assignment,       setAssignment]       = useState<{id:string;mode:string;selected_items:number[];daily_pages:number;reciter_id:string}|null>(null);
+  const [todayLogId,       setTodayLogId]       = useState<string|null>(null);
+  const [assignmentLoaded, setAssignmentLoaded] = useState(false);
+
   const remMediaRef  = useRef<MediaRecorder | null>(null);
   const remChunksRef = useRef<Blob[]>([]);
   const remTimerRef  = useRef<any>(null);
