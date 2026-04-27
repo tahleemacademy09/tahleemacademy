@@ -435,18 +435,17 @@ export default function QuranRevisionHub({ userId }: Props) {
   }, [setPagePlayIdx]);
 
   // ═══ Transcription ════════════════════════════════════
-  // refText: the actual Quranic verse(s) being recited — passed as Whisper prompt
-  // for dramatically better accuracy on Quranic Arabic
-  const transcribeAudio = async (blob: Blob, refText?: string): Promise<string> => {
+  // refText kept for post-processing alignment only — NOT passed to Whisper as prompt
+  // (passing the verse as Whisper prompt causes it to hallucinate the reference text)
+  const transcribeAudio = async (blob: Blob, _refText?: string): Promise<string> => {
     const groqKey = (import.meta as any).env?.VITE_GROQ_API_KEY;
 
-    // Build the Whisper prompt: start with the reference verse so the model
-    // knows exactly what vocabulary and script to expect
-    const quranPrompt = refText
-      ? `${refText.slice(0, 400)} بسم الله الرحمن الرحيم`
-      : "بسم الله الرحمن الرحيم الحمد لله رب العالمين الرحمن الرحيم مالك يوم الدين";
+    // Short style-setting prompt: establishes Arabic Quranic script and diacritics.
+    // Must NOT be the verse being recited — Whisper treats prompt as "previous speech"
+    // and will try to continue/copy it instead of transcribing the actual audio.
+    const stylePrompt = "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ";
 
-    // Determine correct file extension so Groq recognises the format
+    // Correct file extension so Groq identifies the codec properly
     const ext = blob.type.includes("mp4") ? "mp4"
       : blob.type.includes("ogg") ? "ogg"
       : "webm";
@@ -457,22 +456,26 @@ export default function QuranRevisionHub({ userId }: Props) {
         fd.append("file", new File([blob], `recitation.${ext}`, { type: blob.type || "audio/webm" }));
         fd.append("model", "whisper-large-v3");
         fd.append("language", "ar");
-        fd.append("response_format", "text");
-        fd.append("temperature", "0");          // deterministic — less hallucination
-        fd.append("prompt", quranPrompt);        // prime with the actual verse text
+        fd.append("response_format", "verbose_json"); // gives word-level confidence
+        fd.append("temperature", "0");               // deterministic, no hallucination
+        fd.append("prompt", stylePrompt);            // sets script/style only
         const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
           method: "POST",
           headers: { Authorization: `Bearer ${groqKey}` },
           body: fd,
         });
         if (r.ok) {
-          const txt = (await r.text()).trim();
-          if (txt.length > 0) return txt;
+          const json = await r.json();
+          // verbose_json gives us no_speech_prob to detect silence/noise
+          const noSpeech = json.segments?.[0]?.no_speech_prob ?? 0;
+          const txt = (json.text ?? "").trim();
+          if (noSpeech < 0.6 && txt.length > 0) return txt;
+          if (noSpeech >= 0.6) return ""; // treat as silence / no speech detected
         }
       } catch { /* fall through to edge function */ }
     }
 
-    // Fallback: Supabase edge function — also pass refText for server-side priming
+    // Fallback: Supabase edge function (Deepgram)
     try {
       const b64 = await new Promise<string>(resolve => {
         const reader = new FileReader();
@@ -480,7 +483,7 @@ export default function QuranRevisionHub({ userId }: Props) {
         reader.readAsDataURL(blob);
       });
       const { data } = await supabase.functions.invoke("transcribe-hifdh", {
-        body: { audio: b64, mimeType: blob.type || "audio/webm", prompt: quranPrompt },
+        body: { audio: b64, mimeType: blob.type || "audio/webm" },
       });
       return data?.text ?? data?.transcript ?? "";
     } catch { return ""; }
