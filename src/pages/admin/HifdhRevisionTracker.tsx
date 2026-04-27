@@ -135,44 +135,26 @@ export default function HifdhRevisionTracker() {
     setSavingAssign(true);
     setSaveError(null);
     try {
-      // Deactivate old assignments
-      const { error: deactivateErr } = await (supabase as any)
-        .from("hifdh_daily_assignments")
-        .update({ active: false })
-        .eq("student_id", studentId)
-        .eq("active", true);
+      // Call SECURITY DEFINER RPC — bypasses RLS, validates role server-side
+      const { data: newId, error: rpcErr } = await (supabase as any).rpc(
+        "save_hifdh_assignment", {
+          p_student_id:     studentId,
+          p_mode:           assignForm.mode,
+          p_selected_items: assignForm.selected_items,
+          p_daily_pages:    assignForm.daily_pages,
+          p_reciter_id:     assignForm.reciter_id || "Alafasy_128kbps",
+          p_notes:          assignForm.notes || null,
+        }
+      );
 
-      if (deactivateErr) {
-        console.error("Deactivate error:", deactivateErr);
-        setSaveError(`Deactivate failed: ${deactivateErr.message}`);
+      if (rpcErr) {
+        console.error("RPC error:", rpcErr);
+        setSaveError(`Save failed: ${rpcErr.message}`);
         setSavingAssign(false);
         return;
       }
 
-      // Insert new assignment
-      const { data: inserted, error: insertErr } = await (supabase as any)
-        .from("hifdh_daily_assignments")
-        .insert({
-          student_id:     studentId,
-          assigned_by:    userId,
-          mode:           assignForm.mode,
-          selected_items: assignForm.selected_items,
-          daily_pages:    assignForm.daily_pages,
-          reciter_id:     assignForm.reciter_id || "Alafasy_128kbps",
-          notes:          assignForm.notes || null,
-          active:         true,
-        })
-        .select()
-        .single();
-
-      if (insertErr) {
-        console.error("Insert error:", insertErr);
-        setSaveError(`Save failed: ${insertErr.message}`);
-        setSavingAssign(false);
-        return;
-      }
-
-      console.log("Assignment saved:", inserted);
+      console.log("Assignment saved, id:", newId);
       setShowAssign(null);
       await load();
     } catch(e: any) {
