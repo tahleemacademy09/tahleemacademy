@@ -39,7 +39,7 @@ serve(async (req) => {
     if (!callerRole) return new Response(JSON.stringify({ error: "Forbidden: admins only" }), { status: 403, headers: corsHeaders });
 
     // Parse body
-    const { email, full_name, full_name_ar, role, level } = await req.json();
+    const { email, full_name, full_name_ar, role, level, student_type } = await req.json();
     if (!email || !full_name || !role) {
       return new Response(JSON.stringify({ error: "email, full_name and role are required" }), { status: 400, headers: corsHeaders });
     }
@@ -80,6 +80,7 @@ serve(async (req) => {
       level:        level || null,
       course_level: level || null,
       student_id:   studentId,
+      student_type: role === "student" ? (student_type || "general") : null,
       created_at:   new Date().toISOString(),
       updated_at:   new Date().toISOString(),
     });
