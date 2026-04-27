@@ -17,6 +17,12 @@ import {
 const G      = "#064E3B";
 const ROLES  = ["student", "teacher", "admin"] as const;
 const LEVELS = ["beginner", "intermediate", "advanced"];
+const STUDENT_TYPES = ["general", "private"] as const;
+
+const studentTypeColor: Record<string, { bg: string; text: string; border: string; icon: string }> = {
+  general: { bg: "#F0FDF4", text: "#166534", border: "#86EFAC", icon: "👥" },
+  private: { bg: "#FDF4FF", text: "#7C3AED", border: "#D8B4FE", icon: "🔒" },
+};
 
 const roleColor: Record<string, { bg: string; text: string; border: string }> = {
   student: { bg: "#EFF6FF", text: "#1D4ED8", border: "#93C5FD" },
@@ -88,7 +94,7 @@ function PasscodeModal({ data, onClose }: { data: { passcode: string; student_id
 // ─── Create User Dialog ───────────────────────────────────────────────────────
 function CreateUserDialog({ session, onCreated, onClose }: { session: any; onCreated: (d: any) => void; onClose: () => void }) {
   const { toast } = useToast();
-  const [form, setForm]     = useState({ email: "", full_name: "", full_name_ar: "", role: "student" as string, level: "" });
+  const [form, setForm]     = useState({ email: "", full_name: "", full_name_ar: "", role: "student" as string, level: "", student_type: "general" as string });
   const [creating, setCreating] = useState(false);
 
   const create = async () => {
@@ -100,11 +106,12 @@ function CreateUserDialog({ session, onCreated, onClose }: { session: any; onCre
     try {
       const { data, error } = await supabase.functions.invoke("admin-create-user", {
         body: {
-          email:       form.email.trim().toLowerCase(),
-          full_name:   form.full_name.trim(),
+          email:        form.email.trim().toLowerCase(),
+          full_name:    form.full_name.trim(),
           full_name_ar: form.full_name_ar.trim() || undefined,
-          role:        form.role,
-          level:       form.level || undefined,
+          role:         form.role,
+          level:        form.level || undefined,
+          student_type: form.role === "student" ? (form.student_type || "general") : undefined,
         },
       });
       if (error) throw error;
@@ -166,6 +173,24 @@ function CreateUserDialog({ session, onCreated, onClose }: { session: any; onCre
             </select>
           </div>
 
+          {form.role === "student" && (
+            <div>
+              <label style={{ fontSize: 11, fontWeight: 700, color: "#374151", display: "block", marginBottom: 6 }}>Student Type</label>
+              <div style={{ display: "flex", gap: 10 }}>
+                {STUDENT_TYPES.map(t => {
+                  const sc = studentTypeColor[t]; const sel = form.student_type === t;
+                  return (
+                    <button key={t} onClick={() => setForm(f => ({ ...f, student_type: t }))} style={{ flex: 1, padding: "11px 10px", borderRadius: 12, border: `2px solid ${sel ? sc.border : "#E5E7EB"}`, background: sel ? sc.bg : "#fff", color: sel ? sc.text : "#6B7280", fontWeight: sel ? 800 : 500, fontSize: 13, cursor: "pointer", transition: "all .15s", display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                      <span style={{ fontSize: 20 }}>{sc.icon}</span>
+                      <span>{t.charAt(0).toUpperCase() + t.slice(1)}</span>
+                      <span style={{ fontSize: 10, fontWeight: 400, color: "#9CA3AF" }}>{t === "private" ? "Separate data, 1-on-1" : "Standard group access"}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           <button
             onClick={create}
             disabled={creating || !form.email.trim() || !form.full_name.trim()}
@@ -196,6 +221,7 @@ export default function StudentManagement() {
   const [search,      setSearch]      = useState("");
   const [roleFilter,  setRoleFilter]  = useState("all");
   const [levelFilter, setLevelFilter] = useState("all");
+  const [typeFilter,  setTypeFilter]  = useState("all");
 
   // Dialogs
   const [editUser,      setEditUser]      = useState<any | null>(null);
@@ -237,8 +263,10 @@ export default function StudentManagement() {
     const matchSearch = !q || u.full_name?.toLowerCase().includes(q) || u.email?.toLowerCase().includes(q) || u.student_id?.includes(q);
     const matchRole   = roleFilter  === "all" || u.roles.includes(roleFilter);
     const matchLevel  = levelFilter === "all" || u.level === levelFilter || u.course_level === levelFilter;
-    return matchSearch && matchRole && matchLevel;
-  }), [users, search, roleFilter, levelFilter]);
+    const studentTypeVal = u.student_type || "general";
+    const matchType   = typeFilter === "all" || studentTypeVal === typeFilter;
+    return matchSearch && matchRole && matchLevel && matchType;
+  }), [users, search, roleFilter, levelFilter, typeFilter]);
 
   // ── Save edit ────────────────────────────────────────────────────────────
   const saveEdit = async () => {
@@ -252,6 +280,7 @@ export default function StudentManagement() {
         course_level: editForm.level        || null,
         phone:        editForm.phone        || null,
         country:      editForm.country      || null,
+        student_type: editForm.student_type || null,
         updated_at:   new Date().toISOString(),
       }).eq("user_id", editUser.user_id);
 
@@ -346,6 +375,11 @@ export default function StudentManagement() {
             <option value="all">All Levels</option>
             {LEVELS.map(l => <option key={l} value={l}>{l.charAt(0).toUpperCase() + l.slice(1)}</option>)}
           </select>
+          <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)} style={{ ...inp, width: "auto", minWidth: 130 }}>
+            <option value="all">All Types</option>
+            <option value="general">👥 General</option>
+            <option value="private">🔒 Private</option>
+          </select>
         </div>
       </div>
 
@@ -386,6 +420,15 @@ export default function StudentManagement() {
                         {u.level || u.course_level}
                       </span>
                     )}
+                    {u.roles.includes("student") && (() => {
+                      const st = u.student_type || "general";
+                      const sc = studentTypeColor[st] || studentTypeColor.general;
+                      return (
+                        <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, background: sc.bg, color: sc.text, border: `1px solid ${sc.border}`, fontWeight: 700 }}>
+                          {sc.icon} {st.charAt(0).toUpperCase() + st.slice(1)}
+                        </span>
+                      );
+                    })()}
                     {u.country && <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 20, background: "#F3F4F6", color: "#6B7280" }}>{u.country}</span>}
                   </div>
                 </div>
@@ -393,7 +436,7 @@ export default function StudentManagement() {
                   <button onClick={() => navigate(`/admin/students/${u.user_id}/view`)} title="View as student" style={{ padding: "7px 9px", borderRadius: 8, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer" }}>
                     <Eye size={13} color="#6B7280" />
                   </button>
-                  <button onClick={() => { setEditUser(u); setEditForm({ full_name: u.full_name || "", full_name_ar: u.full_name_ar || "", level: u.level || u.course_level || "", phone: u.phone || "", country: u.country || "", roles: [...u.roles] }); }} style={{ padding: "7px 9px", borderRadius: 8, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer" }}>
+                  <button onClick={() => { setEditUser(u); setEditForm({ full_name: u.full_name || "", full_name_ar: u.full_name_ar || "", level: u.level || u.course_level || "", phone: u.phone || "", country: u.country || "", roles: [...u.roles], student_type: u.student_type || "general" }); }} style={{ padding: "7px 9px", borderRadius: 8, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer" }}>
                     <Edit2 size={13} color={G} />
                   </button>
                   <button onClick={() => { setNotifTarget([u.user_id]); setNotifDialog(true); }} style={{ padding: "7px 9px", borderRadius: 8, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer" }}>
@@ -465,6 +508,28 @@ export default function StudentManagement() {
                   })}
                 </div>
               </div>
+              {(editForm.roles || []).includes("student") && (
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: "#374151", display: "block", marginBottom: 6 }}>Student Type</label>
+                  <div style={{ display: "flex", gap: 10 }}>
+                    {STUDENT_TYPES.map(t => {
+                      const sc = studentTypeColor[t]; const sel = (editForm.student_type || "general") === t;
+                      return (
+                        <button key={t} onClick={() => setEditForm((f: any) => ({ ...f, student_type: t }))} style={{ flex: 1, padding: "11px 8px", borderRadius: 12, border: `2px solid ${sel ? sc.border : "#E5E7EB"}`, background: sel ? sc.bg : "#fff", color: sel ? sc.text : "#6B7280", fontWeight: sel ? 800 : 500, fontSize: 12, cursor: "pointer", transition: "all .15s", display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+                          <span style={{ fontSize: 18 }}>{sc.icon}</span>
+                          <span>{t.charAt(0).toUpperCase() + t.slice(1)}</span>
+                          <span style={{ fontSize: 10, fontWeight: 400, color: "#9CA3AF" }}>{t === "private" ? "1-on-1, separate data" : "Standard group"}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {editForm.student_type === "private" && (editForm.student_type !== (editUser?.student_type || "general")) && (
+                    <div style={{ marginTop: 8, padding: "8px 12px", borderRadius: 8, background: "#FDF4FF", border: "1px solid #D8B4FE", fontSize: 11, color: "#7C3AED", lineHeight: 1.5 }}>
+                      🔒 Changing to <strong>Private</strong> will move this student's data to the private pool. Their assigned teacher should be set separately.
+                    </div>
+                  )}
+                </div>
+              )}
               <button onClick={saveEdit} disabled={saving} style={{ padding: "12px", borderRadius: 12, border: "none", background: saving ? "#e5e7eb" : `linear-gradient(135deg,${G},#075E54)`, color: saving ? "#9ca3af" : "#fff", fontWeight: 800, cursor: saving ? "not-allowed" : "pointer" }}>
                 {saving ? "Saving…" : "Save Changes"}
               </button>
