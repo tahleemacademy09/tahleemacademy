@@ -1,19 +1,19 @@
 /*
   src/components/AppNotifications.tsx — Tahleem Academy
   ──────────────────────────────────────────────────────
-  Renders nothing — just mounts the timetable notification hook
-  globally so EVERY authenticated user (student, teacher, admin)
-  gets 15-min and 5-min class reminders on their device,
-  regardless of which page they are currently viewing.
+  Renders nothing — mounts notification hooks globally so EVERY
+  authenticated user gets reminders regardless of which page they view.
 
-  Usage in App.tsx (inside <AuthProvider> + <BrowserRouter>):
-    <AppNotifications />
-    <GlobalClassroomOverlay />
-    <IdleWarningModal />
+  Hooks mounted here:
+  • useTimetableNotifications  — 15-min & 5-min class alerts (all roles)
+  • useHifdhAssignmentNotifications — morning / afternoon / evening Hifdh
+    revision reminders (students only, fires only when daily log incomplete)
 */
 import { useTimetableNotifications } from "@/hooks/useTimetableNotifications";
+import { useHifdhAssignmentNotifications } from "@/hooks/useHifdhAssignmentNotifications";
 
 export default function AppNotifications() {
   useTimetableNotifications();
+  useHifdhAssignmentNotifications();
   return null;
 }
