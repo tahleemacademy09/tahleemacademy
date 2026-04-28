@@ -3224,6 +3224,7 @@ export type Database = {
         Row: {
           age_group: string | null
           allow_entrance_retake: boolean | null
+          allow_general_access: boolean | null
           assigned_teacher_id: string | null
           auth_provider: string | null
           avatar_url: string | null
@@ -3267,6 +3268,7 @@ export type Database = {
         Insert: {
           age_group?: string | null
           allow_entrance_retake?: boolean | null
+          allow_general_access?: boolean | null
           assigned_teacher_id?: string | null
           auth_provider?: string | null
           avatar_url?: string | null
@@ -3310,6 +3312,7 @@ export type Database = {
         Update: {
           age_group?: string | null
           allow_entrance_retake?: boolean | null
+          allow_general_access?: boolean | null
           assigned_teacher_id?: string | null
           auth_provider?: string | null
           avatar_url?: string | null
