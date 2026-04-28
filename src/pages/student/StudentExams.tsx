@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePrivateStudent } from "@/hooks/usePrivateStudent";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -27,6 +28,7 @@ const StudentExams = () => {
   const { user }        = useAuth();
   const { toast }       = useToast();
   const navigate        = useNavigate();
+  const { isPrivateStudent, allowGeneralAccess } = usePrivateStudent();
 
   const [assignedExams, setAssignedExams] = useState<any[]>([]);
   const [pastAttempts,  setPastAttempts]  = useState<any[]>([]);
@@ -359,6 +361,17 @@ const StudentExams = () => {
     <div style={{ background:CREAM, minHeight:"100vh", fontFamily:"'Cairo',sans-serif" }}>
       <style>{"@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&family=Playfair+Display:wght@700&display=swap');"}</style>
       <div style={{ maxWidth:680, margin:"0 auto", padding:"20px 16px 48px" }}>
+
+        {/* Private student notice */}
+        {isPrivateStudent && (
+          <div style={{ background: "#FDF4FF", border: "1.5px solid #D8B4FE", borderRadius: 16, padding: "14px 16px", marginBottom: 16, display: "flex", alignItems: "center", gap: 12 }}>
+            <span style={{ fontSize: 22, flexShrink: 0 }}>🔒</span>
+            <div>
+              <p style={{ fontSize: 13, fontWeight: 800, color: "#7C3AED", margin: "0 0 2px" }}>Private Student — Assigned Exams Only</p>
+              <p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>Only exams and tests your teacher has assigned directly to you are shown below.</p>
+            </div>
+          </div>
+        )}
 
         {/* Hero */}
         <div style={{
