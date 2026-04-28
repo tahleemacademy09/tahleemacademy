@@ -21,6 +21,7 @@ import {
   Calendar, ArrowLeft, Users, Clock, Maximize2, X,
 } from "lucide-react";
 import { useLiveClass } from "@/contexts/LiveClassContext";
+import { usePrivateStudent } from "@/hooks/usePrivateStudent";
 import SubjectRecordings from "@/components/classroom/SubjectRecordings";
 import SubjectMaterials from "@/components/classroom/SubjectMaterials";
 import SubjectSyllabus from "@/components/classroom/SubjectSyllabus";
@@ -41,6 +42,7 @@ const LiveClasses = () => {
 
   const isPrivileged = hasRole("admin") || hasRole("teacher");
   const inClass = inCall; // alias for backward compat
+  const { isPrivateStudent, allowGeneralAccess } = usePrivateStudent();
 
   // ── Subjects ────────────────────────────────────────
   const { data: subjects, isLoading } = useQuery({
@@ -144,6 +146,32 @@ const LiveClasses = () => {
           <TabsContent value="assignments"   className="mt-4"><SubjectAssignments   subjectId={selectedSubject.id} /></TabsContent>
           <TabsContent value="announcements" className="mt-4"><SubjectAnnouncements subjectId={selectedSubject.id} /></TabsContent>
         </Tabs>
+      </div>
+    );
+  }
+
+  // ── PRIVATE STUDENT GATE ─────────────────────────────
+  if (isPrivateStudent && !allowGeneralAccess) {
+    return (
+      <div style={{ minHeight: "100vh", background: "linear-gradient(135deg,#0f2d1f,#1a4731)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+        <div style={{ background: "#fff", borderRadius: 24, padding: "36px 28px", maxWidth: 400, width: "100%", textAlign: "center", boxShadow: "0 24px 80px rgba(0,0,0,.2)" }}>
+          <div style={{ width: 72, height: 72, borderRadius: 20, background: "#F3E8FF", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 18px" }}>
+            <span style={{ fontSize: 36 }}>🔒</span>
+          </div>
+          <h2 style={{ fontSize: 20, fontWeight: 900, color: "#0f2d1f", margin: "0 0 10px" }}>Private Student</h2>
+          <p style={{ fontSize: 14, color: "#6B7280", lineHeight: 1.7, margin: "0 0 24px" }}>
+            You are enrolled as a <strong style={{ color: "#7C3AED" }}>private student</strong>. Your live sessions are conducted personally by your assigned teacher and are not listed here.
+          </p>
+          <div style={{ background: "#F0FDF4", borderRadius: 14, padding: "14px 16px", textAlign: "left", border: "1px solid #86EFAC" }}>
+            <p style={{ fontSize: 12, fontWeight: 800, color: "#166534", margin: "0 0 6px" }}>📅 Your sessions are in your timetable</p>
+            <p style={{ fontSize: 11, color: "#6B7280", margin: 0 }}>
+              Check <strong>My Timetable</strong> to see your upcoming personal sessions and join links.
+            </p>
+          </div>
+          <p style={{ fontSize: 11, color: "#9CA3AF", margin: "16px 0 0" }}>
+            Contact your teacher or admin if you need to reschedule.
+          </p>
+        </div>
       </div>
     );
   }
