@@ -3073,6 +3073,30 @@ export type Database = {
           },
         ]
       }
+      private_student_subjects: {
+        Row: {
+          id: string
+          student_id: string
+          subject_id: string
+          assigned_by: string | null
+          assigned_at: string | null
+        }
+        Insert: {
+          id?: string
+          student_id: string
+          subject_id: string
+          assigned_by?: string | null
+          assigned_at?: string | null
+        }
+        Update: {
+          id?: string
+          student_id?: string
+          subject_id?: string
+          assigned_by?: string | null
+          assigned_at?: string | null
+        }
+        Relationships: []
+      }
       private_sessions: {
         Row: {
           created_at: string | null
