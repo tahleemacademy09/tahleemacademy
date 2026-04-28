@@ -5,7 +5,7 @@
   Each slot links a Subject → Teacher → Day/Time → Level(s).
 */
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -13,7 +13,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { toast } from "@/hooks/use-toast";
 import {
   BookOpen, Clock, Edit2, Trash2, Plus, X, Users,
-  Calendar, Video, ChevronDown, ChevronUp, Save,
+  Calendar, Video, ChevronDown, ChevronUp, Save, Lock, Loader2,
 } from "lucide-react";
 
 const G    = "#0f2d1f";
@@ -76,6 +76,10 @@ export default function TimetableManagement() {
   const [form, setForm]           = useState<SlotForm>(EMPTY);
   const [expandedDays, setExpanded] = useState<Record<number, boolean>>({ 1: true });
 
+  // ── Private student slot assignment ──────────────────────────────────────
+  const [privAssigned, setPrivAssigned] = useState<Set<string>>(new Set());
+  const [privSaving,   setPrivSaving]   = useState(false);
+
   // ── Data queries ─────────────────────────────────────────────────────────
 
   const { data: slots, isLoading } = useQuery({
@@ -98,6 +102,19 @@ export default function TimetableManagement() {
           .order("day_of_week")
           .order("start_time");
         return d2 || [];
+      }
+      // Fetch private student counts per slot
+      const ids = (data || []).map((s: any) => s.id);
+      if (ids.length > 0) {
+        const { data: privRows } = await (supabase as any)
+          .from("private_student_timetable")
+          .select("slot_id")
+          .in("slot_id", ids);
+        const countMap: Record<string, number> = {};
+        (privRows || []).forEach((r: any) => {
+          countMap[r.slot_id] = (countMap[r.slot_id] || 0) + 1;
+        });
+        return (data || []).map((s: any) => ({ ...s, _privCount: countMap[s.id] || 0 }));
       }
       return data || [];
     },
@@ -128,6 +145,18 @@ export default function TimetableManagement() {
         .from("profiles")
         .select("user_id, full_name")
         .in("user_id", ids);
+      return data || [];
+    },
+  });
+
+  // All private students for slot-level assignment
+  const { data: privateStudents } = useQuery({
+    queryKey: ["private-students-list"],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("profiles")
+        .select("user_id, full_name, student_id")
+        .eq("student_type" as any, "private");
       return data || [];
     },
   });
@@ -163,12 +192,33 @@ export default function TimetableManagement() {
         if (error) throw error;
       }
     },
-    onSuccess: () => {
+    onSuccess: async (_, values) => {
+      // After a successful save, apply pending private student assignments
+      // (only meaningful for new slots — for edits togglePrivStudent handles it live)
+      if (!editId && privAssigned.size > 0) {
+        // We need to fetch the new slot id; re-query to get the most recent matching slot
+        const { data: newSlot } = await supabase
+          .from("subject_timetable")
+          .select("id")
+          .eq("subject_id", values.subject_id)
+          .eq("day_of_week", values.day_of_week)
+          .eq("start_time", values.start_time)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (newSlot?.id) {
+          const rows = [...privAssigned].map(sid => ({
+            student_id: sid, slot_id: newSlot.id, assigned_by: user?.id,
+          }));
+          await (supabase as any).from("private_student_timetable").upsert(rows, { onConflict: "student_id,slot_id" });
+        }
+      }
       qc.invalidateQueries({ queryKey: ["timetable-admin"] });
       qc.invalidateQueries({ queryKey: ["timetable-student"] });
       setShowForm(false);
       setEditId(null);
       setForm(EMPTY);
+      setPrivAssigned(new Set());
       toast({ title: t("Timetable saved ✅", "تم حفظ الجدول ✅") });
     },
     onError: (e: any) =>
@@ -206,6 +256,14 @@ export default function TimetableManagement() {
       notes:       slot.notes || "",
       is_active:   slot.is_active !== false,
     });
+    // Load existing private student assignments for this slot
+    (supabase as any)
+      .from("private_student_timetable")
+      .select("student_id")
+      .eq("slot_id", slot.id)
+      .then(({ data }: any) => {
+        setPrivAssigned(new Set((data || []).map((r: any) => r.student_id)));
+      });
     setShowForm(true);
   };
 
@@ -217,6 +275,29 @@ export default function TimetableManagement() {
         : [...f.levels, lv],
     }));
   };
+
+  const togglePrivStudent = useCallback(async (studentId: string) => {
+    setPrivSaving(true);
+    const isAssigned = privAssigned.has(studentId);
+    if (isAssigned) {
+      if (editId) {
+        await (supabase as any)
+          .from("private_student_timetable")
+          .delete()
+          .eq("student_id", studentId)
+          .eq("slot_id", editId);
+      }
+      setPrivAssigned(prev => { const n = new Set(prev); n.delete(studentId); return n; });
+    } else {
+      if (editId) {
+        await (supabase as any)
+          .from("private_student_timetable")
+          .insert({ student_id: studentId, slot_id: editId, assigned_by: user?.id });
+      }
+      setPrivAssigned(prev => new Set([...prev, studentId]));
+    }
+    setPrivSaving(false);
+  }, [privAssigned, editId, user?.id]);
 
   const slotsByDay = DAYS.map(d => ({
     ...d,
@@ -246,7 +327,7 @@ export default function TimetableManagement() {
             </p>
           </div>
           <button
-            onClick={() => { setEditId(null); setForm(EMPTY); setShowForm(true); }}
+            onClick={() => { setEditId(null); setForm(EMPTY); setPrivAssigned(new Set()); setShowForm(true); }}
             style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 18px", borderRadius: 12, background: GOLD, border: "none", color: G, fontSize: 13, fontWeight: 900, cursor: "pointer" }}
           >
             <Plus style={{ width: 16, height: 16 }} />
@@ -405,6 +486,61 @@ export default function TimetableManagement() {
                 </span>
               </label>
 
+              {/* ── Private Student Assignment ── */}
+              <div style={{ borderTop: "1.5px solid #E5E7EB", paddingTop: 14 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                  <div>
+                    <p style={{ fontSize: 12, fontWeight: 800, color: "#374151", margin: "0 0 2px", display: "flex", alignItems: "center", gap: 6 }}>
+                      <Lock style={{ width: 13, height: 13, color: "#7C3AED" }} />
+                      {t("Assign Slot to Private Students", "تخصيص الحصة لطلاب خاصين")}
+                    </p>
+                    <p style={{ fontSize: 10, color: "#9CA3AF", margin: 0 }}>
+                      {privAssigned.size} {t("assigned", "مخصصون")}
+                      {" · "}
+                      {t("These students see this slot regardless of their level", "يرى هؤلاء الطلاب الحصة بغض النظر عن مستواهم")}
+                    </p>
+                  </div>
+                  {privSaving && <Loader2 style={{ width: 14, height: 14, color: "#7C3AED", animation: "spin 1s linear infinite" }} />}
+                </div>
+                <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+
+                {!privateStudents?.length ? (
+                  <div style={{ padding: 12, borderRadius: 10, background: "#F9FAFB", border: "1px solid #E5E7EB", fontSize: 11, color: "#9CA3AF", textAlign: "center" }}>
+                    {t("No private students configured yet", "لا يوجد طلاب خاصون بعد")}
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 200, overflowY: "auto" }}>
+                    {(privateStudents as any[]).map((st: any) => {
+                      const isAssigned = privAssigned.has(st.user_id);
+                      return (
+                        <button key={st.user_id} onClick={() => togglePrivStudent(st.user_id)}
+                          style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 10, border: `1.5px solid ${isAssigned ? "#D8B4FE" : "#E5E7EB"}`, background: isAssigned ? "#F3E8FF" : "#fff", cursor: "pointer", textAlign: "left", width: "100%", transition: "all .12s", fontFamily: "'Cairo', sans-serif" }}>
+                          <div style={{ width: 18, height: 18, borderRadius: 5, border: `2px solid ${isAssigned ? "#7C3AED" : "#D1D5DB"}`, background: isAssigned ? "#7C3AED" : "#fff", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                            {isAssigned && <span style={{ color: "#fff", fontSize: 11, lineHeight: 1 }}>✓</span>}
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <p style={{ fontSize: 12, fontWeight: isAssigned ? 800 : 500, color: isAssigned ? "#7C3AED" : "#374151", margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {st.full_name || "Unnamed"}
+                            </p>
+                            {st.student_id && <p style={{ fontSize: 10, color: "#9CA3AF", margin: "1px 0 0" }}>ID: {st.student_id}</p>}
+                          </div>
+                          {isAssigned && (
+                            <span style={{ fontSize: 9, padding: "2px 7px", borderRadius: 9, background: "#7C3AED", color: "#fff", fontWeight: 800, flexShrink: 0 }}>
+                              {t("Assigned", "مخصص")}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                {!editId && privAssigned.size > 0 && (
+                  <p style={{ fontSize: 10, color: "#7C3AED", margin: "6px 0 0", fontWeight: 700 }}>
+                    ✅ {privAssigned.size} {t("student(s) will be assigned when you save", "طلاب سيتم تخصيصهم عند الحفظ")}
+                  </p>
+                )}
+              </div>
+
               {/* Submit */}
               <button
                 disabled={!form.subject_id || !form.start_time || !form.end_time || saveMutation.isPending}
@@ -513,6 +649,11 @@ export default function TimetableManagement() {
                                   <Video style={{ width: 9, height: 9 }} /> Live Link
                                 </span>
                               )}
+                              {(slot._privCount > 0) && (
+                                <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 9, background: "#F3E8FF", color: "#7C3AED", fontWeight: 700, display: "flex", alignItems: "center", gap: 3 }}>
+                                  <Lock style={{ width: 9, height: 9 }} /> {slot._privCount} private
+                                </span>
+                              )}
                             </div>
 
                             {slot.notes && (
@@ -543,7 +684,7 @@ export default function TimetableManagement() {
 
                   {/* Quick add for this day */}
                   <button
-                    onClick={() => { setEditId(null); setForm({ ...EMPTY, day_of_week: day.index }); setShowForm(true); }}
+                    onClick={() => { setEditId(null); setForm({ ...EMPTY, day_of_week: day.index }); setPrivAssigned(new Set()); setShowForm(true); }}
                     style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 10, background: "transparent", border: `1.5px dashed ${GOLD}`, color: GOLD, fontSize: 12, fontWeight: 700, cursor: "pointer", width: "fit-content", fontFamily: "'Cairo', sans-serif" }}>
                     <Plus style={{ width: 14, height: 14 }} />
                     {t(`Add to ${day.en}`, `إضافة إلى ${day.ar}`)}
