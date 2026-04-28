@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePrivateStudent } from "@/hooks/usePrivateStudent";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -27,6 +28,28 @@ const StudentCourses = () => {
   const { t, language } = useLanguage();
   const { user, profile } = useAuth();
   const studentLevel = profile?.level || "beginner";
+  const { isPrivateStudent, allowGeneralAccess } = usePrivateStudent();
+
+  // ── PRIVATE STUDENT GATE ─────────────────────────────────────────
+  if (isPrivateStudent && !allowGeneralAccess) {
+    return (
+      <div style={{ minHeight: "100vh", background: "linear-gradient(135deg,#0f2d1f,#1a4731)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+        <div style={{ background: "#fff", borderRadius: 24, padding: "36px 28px", maxWidth: 400, width: "100%", textAlign: "center", boxShadow: "0 24px 80px rgba(0,0,0,.2)" }}>
+          <div style={{ width: 72, height: 72, borderRadius: 20, background: "#F3E8FF", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 18px" }}>
+            <span style={{ fontSize: 36 }}>🔒</span>
+          </div>
+          <h2 style={{ fontSize: 20, fontWeight: 900, color: "#0f2d1f", margin: "0 0 10px" }}>Private Enrollment</h2>
+          <p style={{ fontSize: 14, color: "#6B7280", lineHeight: 1.7, margin: "0 0 20px" }}>
+            As a <strong style={{ color: "#7C3AED" }}>private student</strong>, your course enrollment is managed personally by your teacher. General course listings are not available.
+          </p>
+          <div style={{ background: "#F0FDF4", borderRadius: 14, padding: "14px 16px", textAlign: "left", border: "1px solid #86EFAC" }}>
+            <p style={{ fontSize: 12, fontWeight: 800, color: "#166534", margin: "0 0 4px" }}>📚 Access your materials via My Timetable</p>
+            <p style={{ fontSize: 11, color: "#6B7280", margin: 0 }}>Your teacher will provide all study materials during your private sessions.</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // 1. Fetch Subjects - only those matching student level
   const { data: subjects, isLoading: loadingSubjects } = useQuery({
