@@ -1,9 +1,8 @@
 /*
   src/pages/student/StudentTimetable.tsx — Tahleem Academy
   ──────────────────────────────────────────────────────────
-  • General students: weekly timetable from subject_timetable
-  • Private students: their personal scheduled sessions from private_sessions
-  • Private students with allow_general_access: tab-switched between both
+  • General students  → weekly timetable from subject_timetable
+  • Private students  → their personal sessions from private_sessions ONLY
   • 12-hour time display
 */
 
@@ -14,7 +13,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { usePrivateStudent } from "@/hooks/usePrivateStudent";
-import { Clock, Video, Calendar, BookOpen, Bell, Users, Lock, UserCheck } from "lucide-react";
+import { Video, Calendar, BookOpen, Bell, Users, Lock, UserCheck } from "lucide-react";
 
 const G    = "#0f2d1f";
 const GM   = "#1a4731";
@@ -202,11 +201,28 @@ function GeneralTimetable({ profile, hasRole, t, language, navigate, showBanner 
   const { data: allSlots, isLoading } = useQuery({
     queryKey: ["timetable-student"],
     queryFn: async () => {
-      const { data } = await supabase
+      // Fetch slots without the constraint-named teacher join (FK name varies per DB)
+      const { data: slots, error } = await supabase
         .from("subject_timetable")
-        .select(`*, subjects(id, title, title_ar, image_url), teacher:profiles!subject_timetable_teacher_id_fkey(full_name)`)
+        .select(`*, subjects(id, title, title_ar, image_url)`)
         .eq("is_active", true).order("day_of_week").order("start_time");
-      return data || [];
+      if (error || !slots?.length) return [];
+
+      // Separately fetch teacher names to avoid FK-name guessing
+      const teacherIds = [...new Set(slots.map((s: any) => s.teacher_id).filter(Boolean))];
+      let teacherMap: Record<string, string> = {};
+      if (teacherIds.length) {
+        const { data: teachers } = await supabase
+          .from("profiles")
+          .select("user_id, full_name")
+          .in("user_id", teacherIds as string[]);
+        (teachers || []).forEach((t: any) => { teacherMap[t.user_id] = t.full_name; });
+      }
+
+      return slots.map((s: any) => ({
+        ...s,
+        teacher: s.teacher_id ? { full_name: teacherMap[s.teacher_id] || null } : null,
+      }));
     },
   });
 
@@ -350,8 +366,7 @@ export default function StudentTimetable() {
   const { profile, hasRole } = useAuth();
   const { t, language }      = useLanguage();
   const navigate             = useNavigate();
-  const { isPrivateStudent, allowGeneralAccess } = usePrivateStudent();
-  const [activeTab, setActiveTab] = useState<"private" | "general">("private");
+  const { isPrivateStudent } = usePrivateStudent();
   const isPrivileged = hasRole("admin") || hasRole("teacher");
   const studentLevel = (profile as any)?.level || (profile as any)?.course_level || "beginner";
 
@@ -375,37 +390,20 @@ export default function StudentTimetable() {
           )}
         </div>
 
-        <p style={{ fontSize: 11, color: "rgba(255,255,255,.5)", margin: "0 0 14px" }}>
+        <p style={{ fontSize: 11, color: "rgba(255,255,255,.5)", margin: 0 }}>
           {isPrivateStudent
-            ? allowGeneralAccess
-              ? "Private student · General access enabled"
-              : "Private student · Showing your personal sessions only"
+            ? "Private student · Showing your personal sessions only"
             : !isPrivileged
               ? `${t("Classes for your level:", "الحصص لمستواك:")} ${studentLevel}`
               : "All classes"}
         </p>
-
-        {/* Tab switcher for private students with general access */}
-        {isPrivateStudent && allowGeneralAccess && (
-          <div style={{ display: "flex", gap: 0, borderRadius: 12, background: "rgba(255,255,255,.1)", padding: 3 }}>
-            {(["private", "general"] as const).map(tab => (
-              <button key={tab} onClick={() => setActiveTab(tab)}
-                style={{ flex: 1, padding: "8px 12px", borderRadius: 10, border: "none", background: activeTab === tab ? "#fff" : "transparent", color: activeTab === tab ? G : "rgba(255,255,255,.7)", fontWeight: 800, fontSize: 12, cursor: "pointer", transition: "all .15s" }}>
-                {tab === "private" ? "🔒 My Sessions" : "👥 General Schedule"}
-              </button>
-            ))}
-          </div>
-        )}
       </div>
 
       <div style={{ padding: "16px", maxWidth: 720, margin: "0 auto" }}>
-        {/* Routing logic */}
-        {isPrivateStudent && !allowGeneralAccess ? (
+        {/* Private students → always their personal sessions only */}
+        {/* General students → the shared weekly timetable */}
+        {isPrivateStudent ? (
           <PrivateTimetable profile={profile} navigate={navigate} />
-        ) : isPrivateStudent && allowGeneralAccess ? (
-          activeTab === "private"
-            ? <PrivateTimetable profile={profile} navigate={navigate} />
-            : <GeneralTimetable profile={profile} hasRole={hasRole} t={t} language={language} navigate={navigate} showBanner={true} />
         ) : (
           <GeneralTimetable profile={profile} hasRole={hasRole} t={t} language={language} navigate={navigate} showBanner={false} />
         )}
