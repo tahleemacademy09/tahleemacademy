@@ -12,6 +12,7 @@ import HifdhMemorization from "@/components/hifdh/HifdhMemorization";
 import HifdhExercise from "@/components/hifdh/HifdhExercise";
 import HifdhTest from "@/components/hifdh/HifdhTest";
 import QuranRevisionHub from "@/components/hifdh/QuranRevisionHub";
+import RevisionDailyProgress from "@/components/hifdh/RevisionDailyProgress";
 import { RefreshCcw } from "lucide-react";
 
 type Tab = "overview" | "recitation" | "memorization" | "exercise" | "test" | "revision";
@@ -190,6 +191,14 @@ function HifdhDashboardInline({
             Quick Actions
           </span>
           <div className="flex-1 h-px" style={{ background:`linear-gradient(to left,${GOLD}44,transparent)` }} />
+        </div>
+
+        {/* ── Daily Revision Progress ── */}
+        <div className="mb-2">
+          <RevisionDailyProgress
+            userId={userId}
+            onGoToRevision={() => onNavigate("revision")}
+          />
         </div>
 
         {/* ── Action cards ── */}
