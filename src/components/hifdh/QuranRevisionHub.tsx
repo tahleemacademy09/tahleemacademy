@@ -696,7 +696,20 @@ export default function QuranRevisionHub({ userId }: Props) {
             p_pages:         dailyPages,
             p_score:         score,
             p_duration:      recTime,
-            p_session_data:  { page: plan.allPages[plan.currentIdx], score, words: words.slice(0, 50) },
+            p_session_data:  {
+              page:       plan.allPages[plan.currentIdx],
+              score,
+              transcript,
+              words:      words.slice(0, 80),
+              errors:     errors.map(e => ({
+                ayah:    e.ayah.numberInSurah,
+                surah:   e.ayah.surah?.number,
+                surahAr: e.ayah.surah?.nameAr,
+                missing: e.missing,
+              })),
+              attempts:   recitationAttempts + 1,
+              timestamp:  new Date().toISOString(),
+            },
             p_completed:     isLastPage,
           });
           if (logData) setTodayLogId(logData);
@@ -2160,11 +2173,40 @@ export default function QuranRevisionHub({ userId }: Props) {
           )}
 
           {!isPlanDone ? (
-            <button onClick={nextPage}
-              className="w-full py-4 rounded-2xl font-black text-sm qr-btn"
-              style={{ background: `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`, color: DG }}>
-              Next Page →
-            </button>
+            <>
+              {/* Attempts progress — 3 required */}
+              <div style={{ borderRadius: 14, padding: "12px 14px",
+                background: recitationAttempts >= 3 ? "#16a34a18" : "#ffffff08",
+                border: `1px solid ${recitationAttempts >= 3 ? "#16a34a44" : GOLD + "22"}` }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: recitationAttempts >= 3 ? "#16a34a" : GOLD }}>
+                    {recitationAttempts >= 3 ? "✅ 3 attempts complete — ready!" : `Attempt ${recitationAttempts}/3 — revise ${3 - recitationAttempts} more time${3 - recitationAttempts !== 1 ? "s" : ""}`}
+                  </span>
+                  <span style={{ fontSize: 10, color: "#7aad90" }}>{recitationAttempts}/3</span>
+                </div>
+                <div style={{ height: 6, borderRadius: 3, background: "#1a3025", overflow: "hidden" }}>
+                  <div style={{ height: "100%", borderRadius: 3, transition: "width .4s",
+                    width: `${Math.min(100, (recitationAttempts / 3) * 100)}%`,
+                    background: recitationAttempts >= 3
+                      ? "linear-gradient(to right,#16a34a,#22c55e)"
+                      : `linear-gradient(to right,${GOLD},${GOLD_LIGHT})` }} />
+                </div>
+              </div>
+              {recitationAttempts < 3 ? (
+                <button onClick={() => { setStage("reciting"); setEvalResult(null); setAyahErrors([]); setPageVisible(true); }}
+                  className="w-full py-4 rounded-2xl font-black text-sm qr-btn"
+                  style={{ background: `linear-gradient(135deg,${DG},${DG2})`,
+                    color: GOLD, border: `2px solid ${GOLD}44` }}>
+                  🔄 Revise Again ({recitationAttempts}/3)
+                </button>
+              ) : (
+                <button onClick={nextPage}
+                  className="w-full py-4 rounded-2xl font-black text-sm qr-btn"
+                  style={{ background: `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`, color: DG }}>
+                  Next Page →
+                </button>
+              )}
+            </>
           ) : (
             <button onClick={() => {
               setPlan(null); setSelected([]); setCompletedPages(new Set());
