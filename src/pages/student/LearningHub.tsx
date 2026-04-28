@@ -73,6 +73,22 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
   const { joinClass }              = useLiveClass();
   const { isPrivateStudent, allowGeneralAccess } = usePrivateStudent();
 
+  // ── Private student: load assigned subjects FIRST (used in filters below) ──
+  const [privateSubjectIds, setPrivateSubjectIds] = useState<Set<string> | null>(null);
+  useEffect(() => {
+    if (!isPrivateStudent || !user?.id) { setPrivateSubjectIds(null); return; }
+    supabase.from("private_student_subjects" as any)
+      .select("subject_id").eq("student_id", user.id)
+      .then(({ data }) => setPrivateSubjectIds(new Set((data || []).map((r: any) => r.subject_id))));
+  }, [isPrivateStudent, user?.id]);
+
+  // Filter helper: when private + not allowGeneralAccess, only show assigned subjects
+  const isSubjectVisible = (subjectId: string): boolean => {
+    if (!isPrivateStudent || allowGeneralAccess) return true;
+    if (privateSubjectIds === null) return false;
+    return privateSubjectIds.has(subjectId);
+  };
+
   useTimetableNotifications();
 
   const [selCourse,       setSelCourseRaw]       = useState<any | null>(null);
@@ -534,20 +550,6 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
   };
 
   // ── PRIVATE STUDENT: load assigned subject IDs ─────────────────────────
-  const [privateSubjectIds, setPrivateSubjectIds] = useState<Set<string> | null>(null);
-  useEffect(() => {
-    if (!isPrivateStudent || !user?.id) { setPrivateSubjectIds(null); return; }
-    supabase.from("private_student_subjects" as any).select("subject_id").eq("student_id", user.id)
-      .then(({ data }) => setPrivateSubjectIds(new Set((data || []).map((r: any) => r.subject_id))));
-  }, [isPrivateStudent, user?.id]);
-
-  // Filter helper: when private + not allowGeneralAccess, only show assigned subjects
-  const isSubjectVisible = (subjectId: string): boolean => {
-    if (!isPrivateStudent || allowGeneralAccess) return true;
-    if (privateSubjectIds === null) return false; // still loading
-    return privateSubjectIds.has(subjectId);
-  };
-
   return (
     <div style={{ fontFamily:"'Cairo',sans-serif", background:"#f8fafb", minHeight:"100vh" }}>
       <style>{`
