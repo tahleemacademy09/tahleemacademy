@@ -592,8 +592,9 @@ export default function HifdhRevisionTracker() {
                               <div style={{ fontSize:10, fontWeight:800, color:G, marginBottom:6 }}>
                                 🎙 Transcription
                               </div>
-                              <p style={{ fontSize:13, color:"#374151", lineHeight:1.7, direction:"rtl",
-                                fontFamily:"'Amiri',serif", textAlign:"right" as const }}>
+                              <p style={{ fontSize:14, color:"#1a1a1a", lineHeight:2.2, direction:"rtl",
+                                fontFamily:"'Amiri',serif", textAlign:"right" as const,
+                                wordBreak:"break-word" as const }}>
                                 {(log.session_data as any).transcript}
                               </p>
                             </div>
@@ -602,8 +603,13 @@ export default function HifdhRevisionTracker() {
                           {(log.session_data as any).errors?.length > 0 && (
                             <div style={{ padding:"10px 12px", borderRadius:12,
                               background:"#fff5f5", border:"1px solid #fca5a5" }}>
-                              <div style={{ fontSize:10, fontWeight:800, color:"#dc2626", marginBottom:8 }}>
-                                ⚠️ Error Verses ({(log.session_data as any).errors.length})
+                              <div style={{ fontSize:10, fontWeight:800, color:"#dc2626", marginBottom:8,
+                                display:"flex", alignItems:"center", gap:6 }}>
+                                <span>⚠️ Error Verses</span>
+                                <span style={{ background:"#fee2e2", padding:"1px 8px",
+                                  borderRadius:8, fontSize:11 }}>
+                                  {(log.session_data as any).errors.length}
+                                </span>
                               </div>
                               <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
                                 {(log.session_data as any).errors.map((err:any, i:number) => (
