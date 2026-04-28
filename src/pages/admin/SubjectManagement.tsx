@@ -90,7 +90,7 @@ const SubjectManagement = () => {
         description: values.description || null, description_ar: values.description_ar || null,
         teacher_id: values.teacher_id || null,
         levels: values.levels,
-        level: values.levels[0] || null,   // keep legacy field in sync
+        level: values.levels[0] || null,
         is_active: values.is_active,
         created_by: user?.id,
         updated_at: new Date().toISOString(),
@@ -99,12 +99,20 @@ const SubjectManagement = () => {
       if (editId) {
         const { error } = await supabase.from("subjects").update(payload).eq("id", editId);
         if (error) throw error;
+        return editId;
       } else {
-        const { error } = await supabase.from("subjects").insert(payload);
+        // Return new subject ID so we can apply pending private assignments
+        const { data, error } = await supabase.from("subjects").insert(payload).select("id").single();
         if (error) throw error;
+        return data.id as string;
       }
     },
-    onSuccess: () => {
+    onSuccess: async (subjectId: string) => {
+      // Apply any private student assignments that were queued before save
+      if (privAssigned.size > 0) {
+        const rows = [...privAssigned].map(sid => ({ student_id: sid, subject_id: subjectId, assigned_by: user?.id }));
+        await supabase.from("private_student_subjects" as any).upsert(rows as any, { onConflict: "student_id,subject_id" });
+      }
       qc.invalidateQueries({ queryKey: ["subjects-admin"] });
       qc.invalidateQueries({ queryKey: ["subjects-active"] });
       closeForm();
@@ -224,8 +232,7 @@ const SubjectManagement = () => {
               </label>
 
               {/* ── Private Student Assignment ── */}
-              {editId && (
-                <div style={{ borderTop:"1.5px solid #E5E7EB", paddingTop:14 }}>
+              <div style={{ borderTop:"1.5px solid #E5E7EB", paddingTop:14 }}>
                   <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8 }}>
                     <div>
                       <p style={{ fontSize:12, fontWeight:800, color:"#374151", margin:"0 0 2px", display:"flex", alignItems:"center", gap:6 }}>
@@ -265,9 +272,12 @@ const SubjectManagement = () => {
                       })}
                     </div>
                   )}
-                  {!editId && <p style={{ fontSize:10, color:"#f59e0b", margin:"6px 0 0" }}>💡 Save the subject first, then assign private students.</p>}
+                  {!editId && privAssigned.size > 0 && (
+                    <p style={{ fontSize:10, color:"#7C3AED", margin:"6px 0 0", fontWeight:700 }}>
+                      ✅ {privAssigned.size} student{privAssigned.size!==1?"s":""} will be assigned when you save.
+                    </p>
+                  )}
                 </div>
-              )}
               <button disabled={!form.title||saveMutation.isPending} onClick={()=>saveMutation.mutate(form)}
                 style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:12, borderRadius:12, background:G, border:"none", color:"#fff", fontSize:14, fontWeight:800, cursor:"pointer", fontFamily:"'Cairo',sans-serif", opacity:!form.title?.5:1 }}>
                 <Save style={{ width:15, height:15 }} />
