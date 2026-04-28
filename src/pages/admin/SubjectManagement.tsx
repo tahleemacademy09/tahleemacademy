@@ -5,13 +5,13 @@
   teacher assignment, and timetable slot count badges.
 */
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "@/hooks/use-toast";
-import { Plus, BookOpen, Users, Trash2, Edit, X, Save, Calendar } from "lucide-react";
+import { Plus, BookOpen, Users, Trash2, Edit, X, Save, Calendar, Lock, Loader2 } from "lucide-react";
 
 const G    = "#0f2d1f";
 const GM   = "#1a4731";
@@ -41,6 +41,10 @@ const SubjectManagement = () => {
   const [form,   setForm]   = useState<SubForm>(EMPTY);
   const [search, setSearch] = useState("");
 
+  // ── Private student assignment state ───────────────────────────────────
+  const [privAssigned, setPrivAssigned] = useState<Set<string>>(new Set()); // student user_ids assigned to current subject
+  const [privSaving,   setPrivSaving]   = useState(false);
+
   const { data: subjects, isLoading } = useQuery({
     queryKey: ["subjects-admin"],
     queryFn: async () => {
@@ -67,6 +71,15 @@ const SubjectManagement = () => {
       const counts: Record<string, number> = {};
       (data || []).forEach((r: any) => { counts[r.subject_id] = (counts[r.subject_id] || 0) + 1; });
       return counts;
+    },
+  });
+
+  // All private students (for subject assignment panel)
+  const { data: privateStudents } = useQuery({
+    queryKey: ["private-students-list"],
+    queryFn: async () => {
+      const { data: types } = await supabase.from("profiles").select("user_id, full_name, full_name_ar, student_id").eq("student_type" as any, "private");
+      return types || [];
     },
   });
 
@@ -109,14 +122,30 @@ const SubjectManagement = () => {
     onError: (e: any) => toast({ title:"Error", description:e.message, variant:"destructive" }),
   });
 
-  const closeForm = () => { setOpen(false); setEditId(null); setForm(EMPTY); };
+  const closeForm = () => { setOpen(false); setEditId(null); setForm(EMPTY); setPrivAssigned(new Set()); };
 
   const openEdit = (s: any) => {
     setEditId(s.id);
     const lvs: string[] = Array.isArray(s.levels) && s.levels.length > 0 ? s.levels : s.level ? [s.level] : [];
     setForm({ title:s.title||"", title_ar:s.title_ar||"", description:s.description||"", description_ar:s.description_ar||"", teacher_id:s.teacher_id||"", levels:lvs, is_active:s.is_active!==false });
+    supabase.from("private_student_subjects" as any).select("student_id").eq("subject_id", s.id)
+      .then(({ data }) => setPrivAssigned(new Set((data || []).map((r: any) => r.student_id))));
     setOpen(true);
   };
+
+  const togglePrivStudent = useCallback(async (studentId: string) => {
+    if (!editId) return;
+    setPrivSaving(true);
+    const isAssigned = privAssigned.has(studentId);
+    if (isAssigned) {
+      await supabase.from("private_student_subjects" as any).delete().eq("student_id", studentId).eq("subject_id", editId);
+      setPrivAssigned(prev => { const n = new Set(prev); n.delete(studentId); return n; });
+    } else {
+      await supabase.from("private_student_subjects" as any).insert({ student_id: studentId, subject_id: editId, assigned_by: user?.id } as any);
+      setPrivAssigned(prev => new Set([...prev, studentId]));
+    }
+    setPrivSaving(false);
+  }, [privAssigned, editId, user?.id]);
 
   const toggleLevel = (lv: string) =>
     setForm(f => ({ ...f, levels: f.levels.includes(lv) ? f.levels.filter(x=>x!==lv) : [...f.levels, lv] }));
@@ -140,7 +169,7 @@ const SubjectManagement = () => {
             </div>
             <p style={{ fontSize:12, color:"rgba(255,255,255,.5)", margin:0 }}>{filtered.length} {t("subjects","مواد")}</p>
           </div>
-          <button onClick={() => { setEditId(null); setForm(EMPTY); setOpen(true); }}
+          <button onClick={() => { setEditId(null); setForm(EMPTY); setPrivAssigned(new Set()); setOpen(true); }}
             style={{ display:"flex", alignItems:"center", gap:8, padding:"10px 18px", borderRadius:12, background:GOLD, border:"none", color:G, fontSize:13, fontWeight:900, cursor:"pointer", fontFamily:"'Cairo',sans-serif" }}>
             <Plus style={{ width:16, height:16 }} />{t("Add Subject","إضافة مادة")}
           </button>
@@ -193,6 +222,52 @@ const SubjectManagement = () => {
                 </div>
                 <span style={{ fontSize:13, fontWeight:600, color:G }}>{t("Active","نشط")}</span>
               </label>
+
+              {/* ── Private Student Assignment ── */}
+              {editId && (
+                <div style={{ borderTop:"1.5px solid #E5E7EB", paddingTop:14 }}>
+                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8 }}>
+                    <div>
+                      <p style={{ fontSize:12, fontWeight:800, color:"#374151", margin:"0 0 2px", display:"flex", alignItems:"center", gap:6 }}>
+                        <Lock style={{ width:13, height:13, color:"#7C3AED" }} />
+                        Assign to Private Students
+                      </p>
+                      <p style={{ fontSize:10, color:"#9CA3AF", margin:0 }}>
+                        {privAssigned.size} student{privAssigned.size!==1?"s":""} — private students see only their assigned subjects
+                      </p>
+                    </div>
+                    {privSaving && <Loader2 style={{ width:14, height:14, color:"#7C3AED", animation:"spin 1s linear infinite" }} />}
+                  </div>
+
+                  {!privateStudents?.length ? (
+                    <div style={{ padding:"12px", borderRadius:10, background:"#F9FAFB", border:"1px solid #E5E7EB", fontSize:11, color:"#9CA3AF", textAlign:"center" }}>
+                      No private students yet
+                    </div>
+                  ) : (
+                    <div style={{ display:"flex", flexDirection:"column", gap:6, maxHeight:200, overflowY:"auto" }}>
+                      {privateStudents.map((st: any) => {
+                        const isAssigned = privAssigned.has(st.user_id);
+                        return (
+                          <button key={st.user_id} onClick={() => togglePrivStudent(st.user_id)}
+                            style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", borderRadius:10, border:`1.5px solid ${isAssigned?"#D8B4FE":"#E5E7EB"}`, background:isAssigned?"#F3E8FF":"#fff", cursor:"pointer", textAlign:"left", width:"100%", transition:"all .12s" }}>
+                            <div style={{ width:18, height:18, borderRadius:5, border:`2px solid ${isAssigned?"#7C3AED":"#D1D5DB"}`, background:isAssigned?"#7C3AED":"#fff", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                              {isAssigned && <span style={{ color:"#fff", fontSize:11, lineHeight:1 }}>✓</span>}
+                            </div>
+                            <div style={{ flex:1, minWidth:0 }}>
+                              <p style={{ fontSize:12, fontWeight:isAssigned?800:500, color:isAssigned?"#7C3AED":"#374151", margin:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                                {st.full_name || "Unnamed"}
+                              </p>
+                              {st.student_id && <p style={{ fontSize:10, color:"#9CA3AF", margin:"1px 0 0" }}>ID: {st.student_id}</p>}
+                            </div>
+                            {isAssigned && <span style={{ fontSize:9, padding:"2px 7px", borderRadius:9, background:"#7C3AED", color:"#fff", fontWeight:800, flexShrink:0 }}>Assigned</span>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {!editId && <p style={{ fontSize:10, color:"#f59e0b", margin:"6px 0 0" }}>💡 Save the subject first, then assign private students.</p>}
+                </div>
+              )}
               <button disabled={!form.title||saveMutation.isPending} onClick={()=>saveMutation.mutate(form)}
                 style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:12, borderRadius:12, background:G, border:"none", color:"#fff", fontSize:14, fontWeight:800, cursor:"pointer", fontFamily:"'Cairo',sans-serif", opacity:!form.title?.5:1 }}>
                 <Save style={{ width:15, height:15 }} />
