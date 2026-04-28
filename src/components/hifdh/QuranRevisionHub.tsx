@@ -6,6 +6,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { storageSupabase } from "@/integrations/supabase/storageClient";
 import { cn } from "@/lib/utils";
 import {
   Mic, MicOff, ChevronRight, ChevronLeft,
@@ -658,14 +659,14 @@ export default function QuranRevisionHub({ userId }: Props) {
       const correct  = words.filter(w => w.status === "correct").length;
       const score    = Math.round((correct / Math.max(1, words.length)) * 100);
 
-      // Detect error ayahs
+      // Detect error ayahs — use compareWords per-ayah for accurate missing detection
       const errors: AyahError[] = [];
-      const gotNorm = stripDiacritics(transcript);
       for (const ayah of ayahs) {
-        const ayahWords = stripDiacritics(ayah.text).split(/\s+/).filter(Boolean);
-        const missing = ayahWords.filter(w =>
-          !gotNorm.includes(w.slice(0, Math.max(3, w.length - 1)))
-        );
+        const ayahResult = compareWords(ayah.text, transcript);
+        const missing = ayahResult
+          .filter(w => w.status === "missing")
+          .map(w => w.word);
+        // Only flag as error if more than 1 word missing (not just minor omission)
         if (missing.length >= 2) {
           errors.push({ ayah, missing, mastered: false, remediationScore: 0 });
         }
@@ -675,6 +676,20 @@ export default function QuranRevisionHub({ userId }: Props) {
       setEvalResult({ score, words, transcript, feedback });
       setAyahErrors(errors);
       setRecitationAttempts(a => a + 1);
+
+      // ── Upload audio to storage for admin playback ─────────────────
+      let uploadedPath: string | null = null;
+      if (userId) {
+        try {
+          const ext = blob.type.includes("mp4") ? "mp4"
+            : blob.type.includes("ogg") ? "ogg" : "webm";
+          const path = `hifdh-revision/${userId}/${Date.now()}.${ext}`;
+          const { error: upErr } = await storageSupabase.storage
+            .from("recitation-audio")
+            .upload(path, blob, { contentType: blob.type, upsert: true });
+          if (!upErr) { uploadedPath = path; setAudioPath(path); }
+        } catch { /* ignore — audio upload is best-effort */ }
+      }
 
       if (userId && plan) {
         try {
@@ -700,6 +715,7 @@ export default function QuranRevisionHub({ userId }: Props) {
               page:       plan.allPages[plan.currentIdx],
               score,
               transcript,
+              audio_path: uploadedPath,
               words:      words.slice(0, 80),
               errors:     errors.map(e => ({
                 ayah:    e.ayah.numberInSurah,
