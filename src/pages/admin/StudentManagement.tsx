@@ -3,7 +3,7 @@
 // FIXED: Permanent delete now calls admin-delete-user edge function (service role)
 //        which calls auth.admin.deleteUser() — cascades to ALL related data.
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -12,6 +12,7 @@ import {
   Search, User, Users, Eye, Edit2,
   Bell, Trash2, Filter, Plus, X, RefreshCw, AlertTriangle,
   Send, Loader2, Copy, CheckCheck, ShieldCheck, Clock, Activity,
+  BookOpen,
 } from "lucide-react";
 
 const G      = "#064E3B";
@@ -226,6 +227,9 @@ export default function StudentManagement() {
   // Dialogs
   const [editUser,      setEditUser]      = useState<any | null>(null);
   const [editForm,      setEditForm]      = useState<any>({});
+  const [allSubjects,   setAllSubjects]   = useState<any[]>([]);
+  const [assignedSubjectIds, setAssignedSubjectIds] = useState<Set<string>>(new Set());
+  const [subjectSaving, setSubjectSaving] = useState(false);
   const [notifDialog,   setNotifDialog]   = useState(false);
   const [notifMsg,      setNotifMsg]      = useState("");
   const [notifTitle,    setNotifTitle]    = useState("");
@@ -269,7 +273,31 @@ export default function StudentManagement() {
   }), [users, search, roleFilter, levelFilter, typeFilter]);
 
   // ── Save edit ────────────────────────────────────────────────────────────
-  const saveEdit = async () => {
+  const openEdit = useCallback(async (u: any) => {
+    setEditUser(u);
+    setEditForm({ full_name: u.full_name || "", full_name_ar: u.full_name_ar || "", level: u.level || u.course_level || "", phone: u.phone || "", country: u.country || "", roles: [...u.roles], student_type: u.student_type || "general", allow_general_access: u.allow_general_access ?? false });
+    // Load all active subjects
+    const { data: subs } = await supabase.from("subjects").select("id, title, title_ar, levels").eq("is_active", true).order("title");
+    setAllSubjects(subs || []);
+    // Load already-assigned subjects for this student
+    if (u.student_type === "private" || true) {
+      const { data: existing } = await supabase.from("private_student_subjects" as any).select("subject_id").eq("student_id", u.user_id);
+      setAssignedSubjectIds(new Set((existing || []).map((r: any) => r.subject_id)));
+    }
+  }, []);
+
+  const toggleSubjectAssignment = async (subjectId: string, studentId: string) => {
+    setSubjectSaving(true);
+    const isAssigned = assignedSubjectIds.has(subjectId);
+    if (isAssigned) {
+      await supabase.from("private_student_subjects" as any).delete().eq("student_id", studentId).eq("subject_id", subjectId);
+      setAssignedSubjectIds(prev => { const next = new Set(prev); next.delete(subjectId); return next; });
+    } else {
+      await supabase.from("private_student_subjects" as any).insert({ student_id: studentId, subject_id: subjectId, assigned_by: user?.id } as any);
+      setAssignedSubjectIds(prev => new Set([...prev, subjectId]));
+    }
+    setSubjectSaving(false);
+  };
     if (!editUser) return;
     setSaving(true);
     try {
@@ -437,7 +465,7 @@ export default function StudentManagement() {
                   <button onClick={() => navigate(`/admin/students/${u.user_id}/view`)} title="View as student" style={{ padding: "7px 9px", borderRadius: 8, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer" }}>
                     <Eye size={13} color="#6B7280" />
                   </button>
-                  <button onClick={() => { setEditUser(u); setEditForm({ full_name: u.full_name || "", full_name_ar: u.full_name_ar || "", level: u.level || u.course_level || "", phone: u.phone || "", country: u.country || "", roles: [...u.roles], student_type: u.student_type || "general", allow_general_access: u.allow_general_access ?? false }); }} style={{ padding: "7px 9px", borderRadius: 8, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer" }}>
+                  <button onClick={() => openEdit(u)} style={{ padding: "7px 9px", borderRadius: 8, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer" }}>
                     <Edit2 size={13} color={G} />
                   </button>
                   <button onClick={() => { setNotifTarget([u.user_id]); setNotifDialog(true); }} style={{ padding: "7px 9px", borderRadius: 8, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer" }}>
@@ -556,6 +584,66 @@ export default function StudentManagement() {
                         <p style={{ fontSize: 10, color: "#7C3AED", margin: "8px 0 0", fontWeight: 700 }}>
                           🔓 This student will see the general schedule in addition to their private sessions.
                         </p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* ── Subject Assignment (private students) ── */}
+                  {(editForm.student_type || "general") === "private" && (
+                    <div style={{ marginTop: 10 }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                        <div>
+                          <p style={{ fontSize: 12, fontWeight: 800, color: "#374151", margin: "0 0 1px", display: "flex", alignItems: "center", gap: 6 }}>
+                            <BookOpen style={{ width: 13, height: 13, color: "#7C3AED" }} />
+                            Assigned Subjects
+                          </p>
+                          <p style={{ fontSize: 10, color: "#9CA3AF", margin: 0 }}>
+                            {assignedSubjectIds.size} subject{assignedSubjectIds.size !== 1 ? "s" : ""} assigned — student sees only these
+                          </p>
+                        </div>
+                        {subjectSaving && <Loader2 style={{ width: 14, height: 14, color: "#7C3AED", animation: "spin 1s linear infinite" }} />}
+                      </div>
+
+                      {allSubjects.length === 0 ? (
+                        <div style={{ padding: "12px", borderRadius: 10, background: "#F9FAFB", border: "1px solid #E5E7EB", fontSize: 11, color: "#9CA3AF", textAlign: "center" }}>
+                          No active subjects found
+                        </div>
+                      ) : (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 240, overflowY: "auto", paddingRight: 2 }}>
+                          {allSubjects.map((sub: any) => {
+                            const isAssigned = assignedSubjectIds.has(sub.id);
+                            return (
+                              <button key={sub.id}
+                                onClick={() => editUser && toggleSubjectAssignment(sub.id, editUser.user_id)}
+                                style={{
+                                  display: "flex", alignItems: "center", gap: 10, padding: "10px 12px",
+                                  borderRadius: 10, border: `1.5px solid ${isAssigned ? "#D8B4FE" : "#E5E7EB"}`,
+                                  background: isAssigned ? "#F3E8FF" : "#fff",
+                                  cursor: "pointer", textAlign: "left", width: "100%", transition: "all .12s",
+                                }}>
+                                {/* Checkbox */}
+                                <div style={{ width: 18, height: 18, borderRadius: 5, border: `2px solid ${isAssigned ? "#7C3AED" : "#D1D5DB"}`, background: isAssigned ? "#7C3AED" : "#fff", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                  {isAssigned && <span style={{ color: "#fff", fontSize: 11, lineHeight: 1 }}>✓</span>}
+                                </div>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <p style={{ fontSize: 12, fontWeight: isAssigned ? 800 : 500, color: isAssigned ? "#7C3AED" : "#374151", margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                    {sub.title}
+                                  </p>
+                                  {sub.title_ar && (
+                                    <p dir="rtl" style={{ fontSize: 10, color: "#9CA3AF", margin: "1px 0 0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                      {sub.title_ar}
+                                    </p>
+                                  )}
+                                </div>
+                                {isAssigned && (
+                                  <span style={{ fontSize: 9, padding: "2px 7px", borderRadius: 9, background: "#7C3AED", color: "#fff", fontWeight: 800, flexShrink: 0 }}>
+                                    Assigned
+                                  </span>
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
                       )}
                     </div>
                   )}
