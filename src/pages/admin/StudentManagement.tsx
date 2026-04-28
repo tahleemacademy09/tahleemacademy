@@ -298,6 +298,8 @@ export default function StudentManagement() {
     }
     setSubjectSaving(false);
   };
+
+  const saveEdit = async () => {
     if (!editUser) return;
     setSaving(true);
     try {
