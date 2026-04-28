@@ -2,11 +2,13 @@
 // Also usable as teacher page — role-aware
 // Shows all students, their daily assignment, today's completion, and acknowledgment
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { storageSupabase } from "@/integrations/supabase/storageClient";
 import {
   BookOpen, Check, Clock, AlertTriangle, Search, ChevronDown,
-  ChevronUp, Loader2, Plus, X, Edit2, CheckCircle2, Eye
+  ChevronUp, Loader2, Plus, X, Edit2, CheckCircle2, Eye,
+  Play, Pause, Volume2
 } from "lucide-react";
 
 const G    = "#1a3d24";
@@ -51,6 +53,9 @@ export default function HifdhRevisionTracker() {
   const [manualGrade,   setManualGrade]   = useState<Record<string,string>>({});
   const [grading,       setGrading]       = useState<string|null>(null);
   const [expandSession, setExpandSession] = useState<string|null>(null);
+  const [audioPlaying,  setAudioPlaying]  = useState<string|null>(null);  // log id being played
+  const [audioLoading,  setAudioLoading]  = useState<string|null>(null);
+  const audioElRef = useRef<HTMLAudioElement|null>(null);
   const [showAssign,  setShowAssign]  = useState<string|null>(null);
   const [assignForm,  setAssignForm]  = useState<Partial<Assignment>>({
     mode:"juz", selected_items:[1], daily_pages:1, reciter_id:"Alafasy_128kbps"
@@ -131,6 +136,30 @@ export default function HifdhRevisionTracker() {
       ));
     } catch(e) { console.error(e); }
     setAckLoading(null);
+  };
+
+  const playAudio = async (logId: string, audioPath: string) => {
+    // Stop any current playback
+    if (audioElRef.current) {
+      audioElRef.current.pause();
+      audioElRef.current = null;
+    }
+    if (audioPlaying === logId) { setAudioPlaying(null); return; }
+
+    setAudioLoading(logId);
+    try {
+      const { data } = await storageSupabase.storage
+        .from("recitation-audio")
+        .createSignedUrl(audioPath, 3600);
+      if (!data?.signedUrl) throw new Error("No URL");
+      const el = new Audio(data.signedUrl);
+      audioElRef.current = el;
+      el.onended = () => setAudioPlaying(null);
+      el.onerror = () => { setAudioPlaying(null); setAudioLoading(null); };
+      await el.play();
+      setAudioPlaying(logId);
+    } catch(e) { console.error("Audio play error:", e); }
+    setAudioLoading(null);
   };
 
   const gradeOverride = async (logId: string, studentId: string, grade: number) => {
@@ -519,6 +548,43 @@ export default function HifdhRevisionTracker() {
                       {/* Expandable detail: transcript + errors */}
                       {expandSession===log.id && log.session_data && (
                         <div style={{ marginBottom:10, display:"flex", flexDirection:"column", gap:8 }}>
+                          {/* Audio playback */}
+                          {(log.session_data as any).audio_path && (
+                            <div style={{ padding:"10px 14px", borderRadius:12,
+                              background:`${G}0d`, border:`1px solid ${G}22`,
+                              display:"flex", alignItems:"center", gap:10 }}>
+                              <div style={{ width:38, height:38, borderRadius:10,
+                                background:G, display:"flex", alignItems:"center",
+                                justifyContent:"center", flexShrink:0 }}>
+                                <Volume2 size={18} color={GOLD} />
+                              </div>
+                              <div style={{ flex:1 }}>
+                                <div style={{ fontSize:11, fontWeight:800, color:G }}>
+                                  Student's Recitation
+                                </div>
+                                <div style={{ fontSize:9, color:"#9aab94", marginTop:1 }}>
+                                  Tap to listen before grading
+                                </div>
+                              </div>
+                              <button
+                                onClick={() => playAudio(log.id, (log.session_data as any).audio_path)}
+                                disabled={audioLoading === log.id}
+                                style={{ width:44, height:44, borderRadius:12, border:"none",
+                                  cursor:"pointer", display:"flex", alignItems:"center",
+                                  justifyContent:"center",
+                                  background: audioPlaying===log.id ? "#dc2626"
+                                    : `linear-gradient(135deg,${G},${GM})`,
+                                  boxShadow:`0 2px 8px ${G}40` }}>
+                                {audioLoading===log.id
+                                  ? <Loader2 size={18} color={GOLD}
+                                      style={{ animation:"spin 1s linear infinite" }} />
+                                  : audioPlaying===log.id
+                                    ? <Pause size={18} color={GOLD} />
+                                    : <Play  size={18} color={GOLD} />}
+                              </button>
+                            </div>
+                          )}
+
                           {/* Transcript */}
                           {(log.session_data as any).transcript && (
                             <div style={{ padding:"10px 12px", borderRadius:12,
