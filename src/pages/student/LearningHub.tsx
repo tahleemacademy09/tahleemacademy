@@ -135,9 +135,24 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
     },
   });
 
+  // ── Private student: also load assigned course IDs ──────────────────────
+  const [privateCourseIds, setPrivateCourseIds] = useState<Set<string> | null>(null);
+  useEffect(() => {
+    if (!isPrivateStudent || !user?.id) { setPrivateCourseIds(null); return; }
+    supabase.from("private_student_courses" as any)
+      .select("course_id").eq("student_id", user.id)
+      .then(({ data }) => setPrivateCourseIds(new Set((data || []).map((r: any) => r.course_id))));
+  }, [isPrivateStudent, user?.id]);
+
+  const isCourseVisible = (courseId: string): boolean => {
+    if (!isPrivateStudent || allowGeneralAccess) return true;
+    if (privateCourseIds === null) return false;
+    return privateCourseIds.has(courseId);
+  };
+
   const courses = isPrivileged
     ? (allCourses || [])
-    : (allCourses || []).filter((c: any) => levelMatch(c.level, studentLevel));
+    : (allCourses || []).filter((c: any) => levelMatch(c.level, studentLevel) && isCourseVisible(c.id));
 
   const { data: allCourseSubjects, isLoading: loadSubs } = useQuery({
     queryKey: ["course-subjects", selCourse?.id],
