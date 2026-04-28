@@ -281,6 +281,7 @@ export default function StudentManagement() {
         phone:        editForm.phone        || null,
         country:      editForm.country      || null,
         student_type: editForm.student_type || null,
+        allow_general_access: editForm.allow_general_access ?? false,
         updated_at:   new Date().toISOString(),
       }).eq("user_id", editUser.user_id);
 
@@ -436,7 +437,7 @@ export default function StudentManagement() {
                   <button onClick={() => navigate(`/admin/students/${u.user_id}/view`)} title="View as student" style={{ padding: "7px 9px", borderRadius: 8, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer" }}>
                     <Eye size={13} color="#6B7280" />
                   </button>
-                  <button onClick={() => { setEditUser(u); setEditForm({ full_name: u.full_name || "", full_name_ar: u.full_name_ar || "", level: u.level || u.course_level || "", phone: u.phone || "", country: u.country || "", roles: [...u.roles], student_type: u.student_type || "general" }); }} style={{ padding: "7px 9px", borderRadius: 8, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer" }}>
+                  <button onClick={() => { setEditUser(u); setEditForm({ full_name: u.full_name || "", full_name_ar: u.full_name_ar || "", level: u.level || u.course_level || "", phone: u.phone || "", country: u.country || "", roles: [...u.roles], student_type: u.student_type || "general", allow_general_access: u.allow_general_access ?? false }); }} style={{ padding: "7px 9px", borderRadius: 8, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer" }}>
                     <Edit2 size={13} color={G} />
                   </button>
                   <button onClick={() => { setNotifTarget([u.user_id]); setNotifDialog(true); }} style={{ padding: "7px 9px", borderRadius: 8, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer" }}>
@@ -526,6 +527,36 @@ export default function StudentManagement() {
                   {editForm.student_type === "private" && (editForm.student_type !== (editUser?.student_type || "general")) && (
                     <div style={{ marginTop: 8, padding: "8px 12px", borderRadius: 8, background: "#FDF4FF", border: "1px solid #D8B4FE", fontSize: 11, color: "#7C3AED", lineHeight: 1.5 }}>
                       🔒 Changing to <strong>Private</strong> will move this student's data to the private pool. Their assigned teacher should be set separately.
+                    </div>
+                  )}
+                  {/* allow_general_access toggle — only for private students */}
+                  {(editForm.student_type || "general") === "private" && (
+                    <div style={{ marginTop: 10, padding: "12px 14px", borderRadius: 12, background: "#FAFAFA", border: "1.5px solid #E5E7EB" }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                        <div>
+                          <p style={{ fontSize: 12, fontWeight: 800, color: "#374151", margin: "0 0 2px" }}>Allow General Class Access</p>
+                          <p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>Let this private student also see the general timetable, live classes and subjects.</p>
+                        </div>
+                        <button
+                          onClick={() => setEditForm((f: any) => ({ ...f, allow_general_access: !f.allow_general_access }))}
+                          style={{
+                            width: 48, height: 26, borderRadius: 13, border: "none", cursor: "pointer", flexShrink: 0, marginLeft: 12,
+                            background: editForm.allow_general_access ? "#7C3AED" : "#D1D5DB",
+                            position: "relative", transition: "background .2s",
+                          }}
+                        >
+                          <span style={{
+                            position: "absolute", top: 3, left: editForm.allow_general_access ? 25 : 3,
+                            width: 20, height: 20, borderRadius: "50%", background: "#fff",
+                            boxShadow: "0 1px 3px rgba(0,0,0,.2)", transition: "left .2s",
+                          }} />
+                        </button>
+                      </div>
+                      {editForm.allow_general_access && (
+                        <p style={{ fontSize: 10, color: "#7C3AED", margin: "8px 0 0", fontWeight: 700 }}>
+                          🔓 This student will see the general schedule in addition to their private sessions.
+                        </p>
+                      )}
                     </div>
                   )}
                 </div>
