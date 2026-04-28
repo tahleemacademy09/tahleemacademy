@@ -30,29 +30,18 @@ const StudentCourses = () => {
   const studentLevel = profile?.level || "beginner";
   const { isPrivateStudent, allowGeneralAccess } = usePrivateStudent();
 
-  // ── PRIVATE STUDENT GATE ─────────────────────────────────────────
-  if (isPrivateStudent && !allowGeneralAccess) {
-    return (
-      <div style={{ minHeight: "100vh", background: "linear-gradient(135deg,#0f2d1f,#1a4731)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
-        <div style={{ background: "#fff", borderRadius: 24, padding: "36px 28px", maxWidth: 400, width: "100%", textAlign: "center", boxShadow: "0 24px 80px rgba(0,0,0,.2)" }}>
-          <div style={{ width: 72, height: 72, borderRadius: 20, background: "#F3E8FF", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 18px" }}>
-            <span style={{ fontSize: 36 }}>🔒</span>
-          </div>
-          <h2 style={{ fontSize: 20, fontWeight: 900, color: "#0f2d1f", margin: "0 0 10px" }}>Private Enrollment</h2>
-          <p style={{ fontSize: 14, color: "#6B7280", lineHeight: 1.7, margin: "0 0 20px" }}>
-            As a <strong style={{ color: "#7C3AED" }}>private student</strong>, your course enrollment is managed personally by your teacher. General course listings are not available.
-          </p>
-          <div style={{ background: "#F0FDF4", borderRadius: 14, padding: "14px 16px", textAlign: "left", border: "1px solid #86EFAC" }}>
-            <p style={{ fontSize: 12, fontWeight: 800, color: "#166534", margin: "0 0 4px" }}>📚 Access your materials via My Timetable</p>
-            <p style={{ fontSize: 11, color: "#6B7280", margin: 0 }}>Your teacher will provide all study materials during your private sessions.</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  // For private students: fetch their assigned subject IDs
+  const { data: privateSubjectIds } = useQuery({
+    queryKey: ["private-subject-ids", user?.id],
+    enabled: isPrivateStudent && !!user?.id,
+    queryFn: async () => {
+      const { data } = await supabase.from("private_student_subjects" as any).select("subject_id").eq("student_id", user!.id);
+      return new Set((data || []).map((r: any) => r.subject_id));
+    },
+  });
 
   // 1. Fetch Subjects - only those matching student level
-  const { data: subjects, isLoading: loadingSubjects } = useQuery({
+  const { data: allSubjectsRaw, isLoading: loadingSubjects } = useQuery({
     queryKey: ["subjects-active", studentLevel],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -61,8 +50,6 @@ const StudentCourses = () => {
         .eq("is_active", true)
         .order("created_at");
       if (error) throw error;
-      // Filter by level: show subject if level is "all", null, or matches student level
-      // Also handles comma-separated multi-level e.g. "beginner,intermediate"
       return (data || []).filter((s: any) => {
         const lv: string = s.level || "all";
         if (!lv || lv === "all") return true;
@@ -70,6 +57,11 @@ const StudentCourses = () => {
       });
     },
   });
+
+  // Apply private filter: private students (without general access) see only assigned subjects
+  const subjects = isPrivateStudent && !allowGeneralAccess
+    ? (allSubjectsRaw || []).filter((s: any) => (privateSubjectIds ?? new Set()).has(s.id))
+    : (allSubjectsRaw || []);
 
   // 2. Fetch Courses - filtered by student level server-side
   const { data: courses, isLoading: loadingCourses } = useQuery({
