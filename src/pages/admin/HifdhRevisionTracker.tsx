@@ -46,8 +46,11 @@ export default function HifdhRevisionTracker() {
   const [search,      setSearch]      = useState("");
   const [filter,      setFilter]      = useState<"all"|"done"|"pending"|"unassigned">("all");
   const [expanded,    setExpanded]    = useState<string|null>(null);
-  const [ackLoading,  setAckLoading]  = useState<string|null>(null);
-  const [ackNote,     setAckNote]     = useState<Record<string,string>>({});
+  const [ackLoading,    setAckLoading]    = useState<string|null>(null);
+  const [ackNote,       setAckNote]       = useState<Record<string,string>>({});
+  const [manualGrade,   setManualGrade]   = useState<Record<string,string>>({});
+  const [grading,       setGrading]       = useState<string|null>(null);
+  const [expandSession, setExpandSession] = useState<string|null>(null);
   const [showAssign,  setShowAssign]  = useState<string|null>(null);
   const [assignForm,  setAssignForm]  = useState<Partial<Assignment>>({
     mode:"juz", selected_items:[1], daily_pages:1, reciter_id:"Alafasy_128kbps"
@@ -128,6 +131,24 @@ export default function HifdhRevisionTracker() {
       ));
     } catch(e) { console.error(e); }
     setAckLoading(null);
+  };
+
+  const gradeOverride = async (logId: string, studentId: string, grade: number) => {
+    setGrading(logId);
+    try {
+      const { error } = await (supabase as any)
+        .from("hifdh_daily_logs")
+        .update({ avg_score: grade })
+        .eq("id", logId);
+      if (error) throw error;
+      setStudents(prev => prev.map(s =>
+        s.user_id === studentId
+          ? { ...s, todayLog: { ...s.todayLog!, avg_score: grade } }
+          : s
+      ));
+      setManualGrade(m => ({ ...m, [logId]: "" }));
+    } catch(e: any) { alert(`Grade failed: ${e?.message}`); }
+    setGrading(null);
   };
 
   const saveAssignment = async (studentId: string) => {
@@ -434,21 +455,119 @@ export default function HifdhRevisionTracker() {
                   {/* Today's session */}
                   {log ? (
                     <div>
-                      <div style={{ fontSize:10, fontWeight:800, color:GOLD, letterSpacing:1,
-                        textTransform:"uppercase", marginBottom:6 }}>Today's Session</div>
+                      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8 }}>
+                        <div style={{ fontSize:10, fontWeight:800, color:GOLD, letterSpacing:1, textTransform:"uppercase" as const }}>
+                          Today's Session
+                        </div>
+                        <button onClick={()=>setExpandSession(expandSession===log.id?null:log.id)}
+                          style={{ fontSize:10, color:G, fontWeight:700, background:"none", border:`1px solid ${BRD}`,
+                            padding:"3px 8px", borderRadius:8, cursor:"pointer" }}>
+                          {expandSession===log.id ? "Hide detail ▲" : "View detail ▼"}
+                        </button>
+                      </div>
+
+                      {/* Stats row */}
                       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, marginBottom:10 }}>
                         {[
-                          { label:"Pages", value: log.pages_revised ?? "—" },
-                          { label:"Score",  value: log.avg_score != null ? `${log.avg_score}%` : "—" },
+                          { label:"Pages",  value: log.pages_revised ?? "—" },
+                          { label:"AI Score",value: log.avg_score != null ? `${log.avg_score}%` : "—",
+                            color: log.avg_score != null ? scoreColor(log.avg_score) : "#9aab94" },
                           { label:"Time",   value: log.duration_secs ? fmtSecs(log.duration_secs) : "—" },
                         ].map(stat => (
                           <div key={stat.label} style={{ background:W, border:`1px solid ${BRD}`,
-                            borderRadius:10, padding:"8px", textAlign:"center" }}>
-                            <div style={{ fontSize:16, fontWeight:800, color:G }}>{stat.value}</div>
+                            borderRadius:10, padding:"8px", textAlign:"center" as const }}>
+                            <div style={{ fontSize:16, fontWeight:800, color:(stat as any).color||G }}>{stat.value}</div>
                             <div style={{ fontSize:9, color:"#9aab94", fontWeight:600 }}>{stat.label}</div>
                           </div>
                         ))}
                       </div>
+
+                      {/* Manual grade override */}
+                      <div style={{ marginBottom:10, padding:"10px 12px", borderRadius:12,
+                        background:"#fff7ed", border:"1px solid #fed7aa" }}>
+                        <div style={{ fontSize:10, fontWeight:800, color:"#b45309", marginBottom:8 }}>
+                          ✏️ Teacher Grade Override
+                        </div>
+                        <div style={{ display:"flex", gap:6, flexWrap:"wrap" as const }}>
+                          {[100,90,80,70,60,50,40,30].map(g => (
+                            <button key={g} onClick={()=>gradeOverride(log.id, s.user_id, g)}
+                              disabled={grading===log.id}
+                              style={{ padding:"5px 10px", borderRadius:8, border:"none", cursor:"pointer",
+                                fontWeight:800, fontSize:11,
+                                background: log.avg_score===g ? "#b45309" : "#fed7aa",
+                                color: log.avg_score===g ? "#fff" : "#92400e" }}>
+                              {g}%
+                            </button>
+                          ))}
+                          <div style={{ display:"flex", gap:4, flex:1, minWidth:120 }}>
+                            <input type="number" min={0} max={100}
+                              value={manualGrade[log.id]||""}
+                              onChange={e=>setManualGrade(m=>({...m,[log.id]:e.target.value}))}
+                              placeholder="Custom"
+                              style={{ flex:1, padding:"5px 8px", borderRadius:8, border:`1px solid #fed7aa`,
+                                fontSize:12, background:W, color:"#92400e", width:60 }} />
+                            <button onClick={()=>gradeOverride(log.id, s.user_id, parseInt(manualGrade[log.id]||"0"))}
+                              disabled={!manualGrade[log.id]||grading===log.id}
+                              style={{ padding:"5px 10px", borderRadius:8, border:"none", cursor:"pointer",
+                                background:"#b45309", color:"#fff", fontWeight:800, fontSize:11 }}>
+                              Set
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Expandable detail: transcript + errors */}
+                      {expandSession===log.id && log.session_data && (
+                        <div style={{ marginBottom:10, display:"flex", flexDirection:"column", gap:8 }}>
+                          {/* Transcript */}
+                          {(log.session_data as any).transcript && (
+                            <div style={{ padding:"10px 12px", borderRadius:12,
+                              background:"#f8f8f8", border:`1px solid ${BRD}` }}>
+                              <div style={{ fontSize:10, fontWeight:800, color:G, marginBottom:6 }}>
+                                🎙 Transcription
+                              </div>
+                              <p style={{ fontSize:13, color:"#374151", lineHeight:1.7, direction:"rtl",
+                                fontFamily:"'Amiri',serif", textAlign:"right" as const }}>
+                                {(log.session_data as any).transcript}
+                              </p>
+                            </div>
+                          )}
+                          {/* Errors */}
+                          {(log.session_data as any).errors?.length > 0 && (
+                            <div style={{ padding:"10px 12px", borderRadius:12,
+                              background:"#fff5f5", border:"1px solid #fca5a5" }}>
+                              <div style={{ fontSize:10, fontWeight:800, color:"#dc2626", marginBottom:8 }}>
+                                ⚠️ Error Verses ({(log.session_data as any).errors.length})
+                              </div>
+                              <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+                                {(log.session_data as any).errors.map((err:any, i:number) => (
+                                  <div key={i} style={{ padding:"8px 10px", borderRadius:8,
+                                    background:W, border:"1px solid #fecaca" }}>
+                                    <div style={{ fontSize:11, fontWeight:700, color:"#b91c1c", marginBottom:4 }}>
+                                      {err.surahAr} — آية {err.ayah}
+                                    </div>
+                                    <div style={{ display:"flex", flexWrap:"wrap" as const, gap:4 }}>
+                                      {(err.missing||[]).map((w:string, j:number) => (
+                                        <span key={j} style={{ padding:"2px 8px", borderRadius:6,
+                                          background:"#fee2e2", color:"#dc2626",
+                                          fontSize:12, fontFamily:"'Amiri',serif" }}>
+                                          {w}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {/* Attempts */}
+                          {(log.session_data as any).attempts && (
+                            <div style={{ fontSize:11, color:"#9aab94", textAlign:"center" as const }}>
+                              Revised {(log.session_data as any).attempts} time{(log.session_data as any).attempts!==1?"s":""} on this page
+                            </div>
+                          )}
+                        </div>
+                      )}
 
                       {/* Acknowledge */}
                       {isAcked ? (
