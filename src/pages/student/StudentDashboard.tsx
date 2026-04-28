@@ -10,6 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePrivateStudent } from "@/hooks/usePrivateStudent";
 import { supabase } from "@/integrations/supabase/client";
 import {
   Clock, BookOpen, ClipboardList, Bell, TrendingUp, Calendar, CheckCircle, XCircle,
@@ -90,6 +91,7 @@ const StudentDashboard = () => {
   const { user, profile, refreshProfile } = useAuth();
   const { currentStep, loading: tasjeelLoading } = useTasjeel();
   const { effectiveUserId, isImpersonating } = useImpersonation();
+  const { isPrivateStudent, allowGeneralAccess } = usePrivateStudent();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -351,7 +353,27 @@ const StudentDashboard = () => {
 
       <div style={{ maxWidth: 720, margin: "0 auto", padding: "20px 16px 40px", display: "flex", flexDirection: "column", gap: 18 }}>
 
-        {/* ── Hero + Daily Verse — Merged Card ── */}
+        {/* ── Private Student Banner ── */}
+        {isPrivateStudent && (
+          <div style={{ background: allowGeneralAccess ? "#FDF4FF" : "linear-gradient(135deg,#7C3AED,#9333EA)", borderRadius: 18, padding: "16px 18px", display: "flex", alignItems: "center", gap: 14, boxShadow: allowGeneralAccess ? "0 2px 12px rgba(124,58,237,.1)" : "0 4px 20px rgba(124,58,237,.35)" }}>
+            <div style={{ width: 48, height: 48, borderRadius: 14, background: allowGeneralAccess ? "#F3E8FF" : "rgba(255,255,255,.2)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <span style={{ fontSize: 24 }}>{allowGeneralAccess ? "🔓" : "🔒"}</span>
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <p style={{ fontSize: 13, fontWeight: 900, color: allowGeneralAccess ? "#7C3AED" : "#fff", margin: "0 0 3px" }}>
+                Private Student
+              </p>
+              <p style={{ fontSize: 11, color: allowGeneralAccess ? "#9CA3AF" : "rgba(255,255,255,.75)", margin: 0, lineHeight: 1.5 }}>
+                {allowGeneralAccess
+                  ? "You have private sessions + access to the general schedule."
+                  : "Your timetable, classes and materials are exclusive to your private sessions."}
+              </p>
+            </div>
+            <span style={{ fontSize: 10, padding: "4px 10px", borderRadius: 20, background: allowGeneralAccess ? "#EDE9FE" : "rgba(255,255,255,.2)", color: allowGeneralAccess ? "#7C3AED" : "#fff", fontWeight: 800, flexShrink: 0, border: allowGeneralAccess ? "1px solid #D8B4FE" : "none" }}>
+              {allowGeneralAccess ? "General Access ON" : "Private Only"}
+            </span>
+          </div>
+        )}
         <div style={{
           background: `linear-gradient(160deg, ${DARK_GREEN} 0%, ${MID_GREEN} 50%, #1a5c35 100%)`,
           borderRadius: 22, overflow: "hidden", position: "relative",
