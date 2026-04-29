@@ -26,8 +26,9 @@ const LEVELS = [
 interface SubForm {
   title: string; title_ar: string; description: string; description_ar: string;
   teacher_id: string; levels: string[]; is_active: boolean;
+  visibility: "all" | "general" | "private";
 }
-const EMPTY: SubForm = { title:"", title_ar:"", description:"", description_ar:"", teacher_id:"", levels:[], is_active:true };
+const EMPTY: SubForm = { title:"", title_ar:"", description:"", description_ar:"", teacher_id:"", levels:[], is_active:true, visibility:"all" };
 
 const labelSt: React.CSSProperties = { display:"block", fontSize:12, fontWeight:700, color:"#374151", marginBottom:5 };
 const inputSt: React.CSSProperties = { width:"100%", padding:"10px 12px", borderRadius:10, border:"1.5px solid #e5e7eb", fontSize:13, fontFamily:"'Cairo',sans-serif", color:"#111827", background:"#fafafa", outline:"none", boxSizing:"border-box" };
@@ -92,6 +93,7 @@ const SubjectManagement = () => {
         levels: values.levels,
         level: values.levels[0] || null,
         is_active: values.is_active,
+        visibility: values.visibility,
         created_by: user?.id,
         updated_at: new Date().toISOString(),
         ...(!editId && { livekit_room_name: `subject-${crypto.randomUUID()}` }),
@@ -135,7 +137,7 @@ const SubjectManagement = () => {
   const openEdit = (s: any) => {
     setEditId(s.id);
     const lvs: string[] = Array.isArray(s.levels) && s.levels.length > 0 ? s.levels : s.level ? [s.level] : [];
-    setForm({ title:s.title||"", title_ar:s.title_ar||"", description:s.description||"", description_ar:s.description_ar||"", teacher_id:s.teacher_id||"", levels:lvs, is_active:s.is_active!==false });
+    setForm({ title:s.title||"", title_ar:s.title_ar||"", description:s.description||"", description_ar:s.description_ar||"", teacher_id:s.teacher_id||"", levels:lvs, is_active:s.is_active!==false, visibility:(s.visibility as any)||"all" });
     supabase.from("private_student_subjects" as any).select("student_id").eq("subject_id", s.id)
       .then(({ data }) => setPrivAssigned(new Set((data || []).map((r: any) => r.student_id))));
     setOpen(true);
@@ -223,6 +225,28 @@ const SubjectManagement = () => {
                 </div>
                 {form.levels.length===0 && <p style={{ fontSize:11, color:"#9ca3af", marginTop:5 }}>{t("All students will see this subject","سيرى جميع الطلاب هذه المادة")}</p>}
               </div>
+              {/* Visibility */}
+              <div>
+                <label style={labelSt}>Who can see this subject?</label>
+                <div style={{ display:"flex", gap:8, flexWrap:"wrap" as const, marginTop:6 }}>
+                  {([
+                    { value:"all",     label:"All Students",  desc:"General + Private",       color:"#22c55e", bg:"#f0fff4" },
+                    { value:"general", label:"Class Students", desc:"Not private students",    color:"#3b82f6", bg:"#eff6ff" },
+                    { value:"private", label:"Private Only",   desc:"Assigned privates only",  color:"#7C3AED", bg:"#F3E8FF" },
+                  ] as const).map(opt => {
+                    const sel = form.visibility === opt.value;
+                    return (
+                      <button key={opt.value} type="button" onClick={()=>setForm(f=>({...f,visibility:opt.value}))}
+                        style={{ flex:1, minWidth:90, padding:"9px 6px", borderRadius:11, cursor:"pointer", border:`2px solid ${sel?opt.color:"#e5e7eb"}`, background:sel?opt.bg:"#f9fafb", textAlign:"center" as const, transition:"all .15s" }}>
+                        <div style={{ fontSize:11, fontWeight:800, color:sel?opt.color:"#374151" }}>{opt.label}</div>
+                        <div style={{ fontSize:10, color:sel?opt.color+"bb":"#9ca3af", marginTop:2 }}>{opt.desc}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Active toggle */}
               <label style={{ display:"flex", alignItems:"center", gap:10, cursor:"pointer" }}>
                 <div onClick={()=>setForm(f=>({...f,is_active:!f.is_active}))}
                   style={{ width:40, height:22, borderRadius:11, background:form.is_active?GM:"#d1d5db", position:"relative", cursor:"pointer", transition:"background .2s" }}>
@@ -329,6 +353,8 @@ const SubjectManagement = () => {
                     })}
                     {teacherName && <span style={{ fontSize:10, padding:"2px 8px", borderRadius:9, background:"#eff6ff", color:"#3b82f6", fontWeight:700, display:"flex", alignItems:"center", gap:4 }}><Users style={{ width:9, height:9 }} />{teacherName}</span>}
                     {slotCount>0 && <span style={{ fontSize:10, padding:"2px 8px", borderRadius:9, background:"#fdf4ff", color:"#9333ea", fontWeight:700, display:"flex", alignItems:"center", gap:4 }}><Calendar style={{ width:9, height:9 }} />{slotCount} {t("slots","حصص")}</span>}
+                    {s.visibility === "private" && <span style={{ fontSize:10, padding:"2px 8px", borderRadius:9, background:"#F3E8FF", color:"#7C3AED", fontWeight:700, border:"1px solid #D8B4FE" }}>🔒 Private Only</span>}
+                    {s.visibility === "general" && <span style={{ fontSize:10, padding:"2px 8px", borderRadius:9, background:"#eff6ff", color:"#3b82f6", fontWeight:700, border:"1px solid #bfdbfe" }}>👥 Class Students</span>}
                   </div>
                   <div style={{ display:"flex", gap:8 }}>
                     <button onClick={()=>openEdit(s)} style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", gap:6, padding:8, borderRadius:10, background:"#f0f4f0", border:"none", cursor:"pointer", color:G, fontSize:12, fontWeight:700, fontFamily:"'Cairo',sans-serif" }}>
