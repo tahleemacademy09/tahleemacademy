@@ -128,7 +128,7 @@ const Fld = ({ label, children }: { label: string; children: React.ReactNode }) 
 // COURSE MODAL
 // ══════════════════════════════════════════════════════════════════════════
 const CourseModal = React.memo(({ ed, onClose, onSave, busy, privateStudents }: { ed?: any; onClose: () => void; onSave: (p: any, assigned: Set<string>) => Promise<void>; busy: boolean; privateStudents: any[] }) => {
-  const [f, setF] = useState({ title: ed?.title || "", title_ar: ed?.title_ar || "", description: ed?.description || "", level: (ed?.level || "all") as Level, is_published: ed?.is_published ?? true, image_url: ed?.image_url || "", sort_order: ed?.sort_order || 0 });
+  const [f, setF] = useState({ title: ed?.title || "", title_ar: ed?.title_ar || "", description: ed?.description || "", level: (ed?.level || "all") as Level, is_published: ed?.is_published ?? true, image_url: ed?.image_url || "", sort_order: ed?.sort_order || 0, visibility: ((ed?.visibility || "all") as "all" | "general" | "private") });
   const [up, setUp] = useState(false);
   const ref = useRef<HTMLInputElement>(null);
 
@@ -200,6 +200,27 @@ const CourseModal = React.memo(({ ed, onClose, onSave, busy, privateStudents }: 
             </p>
           </Fld>
           <Fld label="Sort Order"><input type="number" value={f.sort_order} onChange={e => setF(c => ({ ...c, sort_order: Number(e.target.value) }))} style={inp} min={0} /></Fld>
+
+          {/* Visibility */}
+          <Fld label="Who can see this course?">
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" as const, marginTop: 4 }}>
+              {([
+                { value: "all",     label: "All Students",  desc: "General + Private",      color: "#22c55e", bg: "#f0fff4" },
+                { value: "general", label: "Class Students", desc: "Not private students",   color: "#3b82f6", bg: "#eff6ff" },
+                { value: "private", label: "Private Only",   desc: "Assigned privates only", color: "#7C3AED", bg: "#F3E8FF" },
+              ] as const).map(opt => {
+                const sel = f.visibility === opt.value;
+                return (
+                  <button key={opt.value} type="button" onClick={() => setF(c => ({ ...c, visibility: opt.value }))}
+                    style={{ flex: 1, minWidth: 90, padding: "9px 6px", borderRadius: 11, cursor: "pointer", border: `2px solid ${sel ? opt.color : "#e5e7eb"}`, background: sel ? opt.bg : "#f9fafb", textAlign: "center" as const, transition: "all .15s" }}>
+                    <div style={{ fontSize: 11, fontWeight: 800, color: sel ? opt.color : "#374151" }}>{opt.label}</div>
+                    <div style={{ fontSize: 10, color: sel ? opt.color + "bb" : "#9ca3af", marginTop: 2 }}>{opt.desc}</div>
+                  </button>
+                );
+              })}
+            </div>
+          </Fld>
+
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <input type="checkbox" id="cpub" checked={f.is_published} onChange={e => setF(c => ({ ...c, is_published: e.target.checked }))} />
             <label htmlFor="cpub" style={{ fontSize: 13, color: "#374151" }}>Published (visible to students)</label>
@@ -748,7 +769,7 @@ export default function CourseManagement() {
   const saveCourse = useCallback(async (p: any, assigned?: Set<string>) => {
     setBusy(true);
     try {
-      const d = { title: p.title, title_ar: p.title_ar || null, description: p.description || null, level: (p.level || "all") as Level, is_published: p.is_published, image_url: p.image_url || null, sort_order: p.sort_order, updated_at: new Date().toISOString() };
+      const d = { title: p.title, title_ar: p.title_ar || null, description: p.description || null, level: (p.level || "all") as Level, is_published: p.is_published, image_url: p.image_url || null, sort_order: p.sort_order, visibility: (p.visibility || "all") as "all" | "general" | "private", updated_at: new Date().toISOString() };
       if (edCourse) {
         const { error: courseErr } = await supabase.from("courses").update(d).eq("id", edCourse.id);
         if (courseErr) throw courseErr;
@@ -969,6 +990,8 @@ export default function CourseManagement() {
                       <div style={{ position: "relative", cursor: "pointer" }} onClick={() => { setSelCourse(c); setView("subjects"); }}>
                         <Thumb url={c.image_url} title={c.title} height={120} bg={lv.bg} />
                         <div style={{ position: "absolute", top: 8, right: 8, padding: "3px 10px", borderRadius: 20, background: lv.bg, color: lv.text, fontSize: 10, fontWeight: 700, border: `1px solid ${lv.border}` }}>{lv.label}</div>                        {!c.is_published && <div style={{ position: "absolute", top: 8, left: 8, padding: "3px 10px", borderRadius: 20, background: "#FEF2F2", color: "#DC2626", fontSize: 10, fontWeight: 700, border: "1px solid #FECACA" }}>Draft</div>}
+                        {c.visibility === "private" && <div style={{ position: "absolute", bottom: 8, left: 8, padding: "2px 8px", borderRadius: 20, background: "#F3E8FF", color: "#7C3AED", fontSize: 10, fontWeight: 700, border: "1px solid #D8B4FE" }}>🔒 Private Only</div>}
+                        {c.visibility === "general" && <div style={{ position: "absolute", bottom: 8, left: 8, padding: "2px 8px", borderRadius: 20, background: "#eff6ff", color: "#3b82f6", fontSize: 10, fontWeight: 700, border: "1px solid #bfdbfe" }}>👥 Class Students</div>}
                       </div>
                       <div style={{ padding: 14 }}>
                         <p style={{ fontWeight: 800, fontSize: 14, color: "#111", margin: "0 0 2px", cursor: "pointer" }} onClick={() => { setSelCourse(c); setView("subjects"); }}>{c.title}</p>
