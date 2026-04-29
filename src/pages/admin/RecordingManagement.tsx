@@ -283,6 +283,7 @@ const RecordingManagement = () => {
                     {r.visibility === "general" && <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 9, background: "#eff6ff", color: "#3b82f6", fontWeight: 700 }}>👥 Class</span>}
                     {(!r.visibility || r.visibility === "all") && <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 9, background: "#f0fff4", color: "#22c55e", fontWeight: 700 }}>All</span>}
                   </TableCell>
+                  <TableCell>
                     <div className="flex gap-1">
                       {r.file_url && (
                         <Button
@@ -314,7 +315,7 @@ const RecordingManagement = () => {
               ))}
               {filtered.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                  <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                     {t("No recordings", "لا توجد تسجيلات")}
                   </TableCell>
                 </TableRow>
