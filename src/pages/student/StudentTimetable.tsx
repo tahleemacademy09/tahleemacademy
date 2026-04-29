@@ -2,18 +2,20 @@
   src/pages/student/StudentTimetable.tsx — Tahleem Academy
   ──────────────────────────────────────────────────────────
   • General students  → weekly timetable from subject_timetable
-  • Private students  → their personal sessions from private_sessions ONLY
+  • Private students  → TWO sections:
+      1. "My Weekly Classes"  — slots from private_student_timetable → subject_timetable
+      2. "My Private Sessions" — one-off sessions from private_sessions
   • 12-hour time display
 */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { usePrivateStudent } from "@/hooks/usePrivateStudent";
-import { Video, Calendar, BookOpen, Bell, Users, Lock, UserCheck } from "lucide-react";
+import { Video, Calendar, BookOpen, Bell, Users, Lock, UserCheck, LayoutGrid } from "lucide-react";
 
 const G    = "#0f2d1f";
 const GM   = "#1a4731";
@@ -64,7 +66,7 @@ function formatDate(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
 }
 
-// ─── Private Session Card ─────────────────────────────────────────────────────
+// ─── Private Session Card (one-off dated sessions) ────────────────────────────
 function PrivateSessionCard({ session, isToday, navigate }: { session: any; isToday: boolean; navigate: any }) {
   const minsLeft  = minutesUntilDateTime(session.session_date, session.start_time);
   const minsToEnd = minutesUntilDateTime(session.session_date, session.end_time);
@@ -126,10 +128,147 @@ function PrivateSessionCard({ session, isToday, navigate }: { session: any; isTo
   );
 }
 
+// ─── Assigned Slot Card (weekly recurring slots from private_student_timetable) ─
+function AssignedSlotCard({ slot, isSelectedToday, navigate }: { slot: any; isSelectedToday: boolean; navigate: any }) {
+  const ml = isSelectedToday ? minutesUntil(slot.start_time) : Infinity;
+  const me = isSelectedToday ? minutesUntil(slot.end_time)   : Infinity;
+  const isNow   = isSelectedToday && ml <= 0 && me > 0;
+  const isSoon  = isSelectedToday && ml > 0  && ml <= 15;
+  const isPast  = isSelectedToday && me <= 0;
+  const canJoin = isNow || isSoon;
+
+  const handleJoin = async () => {
+    if (slot.live_url) { window.open(slot.live_url, "_blank", "noopener"); return; }
+    if (!slot.subject_id) return;
+    const today = new Date().toISOString().split("T")[0];
+    const { data: existing } = await supabase
+      .from("live_sessions")
+      .select("id")
+      .eq("subject_id", slot.subject_id)
+      .in("status", ["live", "scheduled", "active"])
+      .order("scheduled_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (!existing) {
+      await supabase.from("live_sessions").insert({
+        subject_id: slot.subject_id,
+        topic: slot.notes || null,
+        scheduled_at: `${today}T${slot.start_time}`,
+        duration_minutes: slot.duration_minutes || 60,
+        status: "scheduled",
+        recording_enabled: true,
+        chat_enabled: true,
+        hand_raise_enabled: true,
+        waiting_room_enabled: false,
+        whiteboard_enabled: false,
+      } as any);
+    }
+    navigate(`/student/live-classes?subject=${slot.subject_id}`);
+  };
+
+  return (
+    <div style={{
+      background: "#fff", borderRadius: 16,
+      border: `1.5px solid ${isNow ? GM : isSoon ? GOLD + "80" : "#e5e7eb"}`,
+      padding: "16px", display: "flex", gap: 14, alignItems: "flex-start",
+      opacity: isPast ? .5 : 1,
+      boxShadow: isNow ? `0 0 0 3px ${GM}22` : "0 1px 4px rgba(0,0,0,.04)",
+    }}>
+      <div style={{ textAlign: "center", flexShrink: 0, minWidth: 64 }}>
+        <div style={{ fontSize: 14, fontWeight: 900, color: isNow ? GM : G }}>{to12hr(slot.start_time)}</div>
+        <div style={{ fontSize: 10, color: "#d1d5db", margin: "1px 0" }}>—</div>
+        <div style={{ fontSize: 11, fontWeight: 600, color: "#9ca3af" }}>{to12hr(slot.end_time)}</div>
+        {isNow  && <span style={{ fontSize: 9, fontWeight: 800, padding: "2px 6px", borderRadius: 9, background: "#dcfce7", color: "#16a34a", display: "block", marginTop: 5 }}>LIVE</span>}
+        {isSoon && <span style={{ fontSize: 9, fontWeight: 800, padding: "2px 6px", borderRadius: 9, background: "#fffbeb", color: "#b7791f", display: "block", marginTop: 5 }}>{formatCountdown(ml)}</span>}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <span style={{ fontSize: 14, fontWeight: 800, color: G, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block" }}>
+          {slot.subjects?.title || "Class"}
+        </span>
+        {slot.subjects?.title_ar && (
+          <p dir="rtl" style={{ fontSize: 12, color: GOLD, margin: "2px 0 0", fontFamily: "'Amiri', serif" }}>{slot.subjects.title_ar}</p>
+        )}
+        {slot.teacher?.full_name && (
+          <div style={{ display: "flex", alignItems: "center", gap: 5, color: "#6b7280", fontSize: 12, marginTop: 5 }}>
+            <Users style={{ width: 11, height: 11 }} /> {slot.teacher.full_name}
+          </div>
+        )}
+        {slot.notes && <p style={{ fontSize: 11, color: "#9ca3af", margin: "6px 0 0", lineHeight: 1.5 }}>{slot.notes}</p>}
+        {isSelectedToday && !isNow && !isSoon && !isPast && (
+          <p style={{ fontSize: 10, color: "#9ca3af", margin: "6px 0 0", display: "flex", alignItems: "center", gap: 4 }}>
+            <Lock style={{ width: 9, height: 9 }} /> Opens 15 min before class
+          </p>
+        )}
+      </div>
+      {isPast ? (
+        <span style={{ fontSize: 11, color: "#9ca3af", fontWeight: 700, padding: "9px 10px", flexShrink: 0 }}>Ended</span>
+      ) : canJoin ? (
+        <button onClick={handleJoin}
+          style={{ display: "flex", alignItems: "center", gap: 5, padding: "9px 14px", borderRadius: 11, border: "none", background: isNow ? G : GOLD, color: isNow ? "#fff" : G, fontSize: 11, fontWeight: 800, cursor: "pointer", flexShrink: 0 }}>
+          <Video style={{ width: 12, height: 12 }} /> Join
+        </button>
+      ) : (
+        <button onClick={() => slot.subject_id && navigate(`/student/subjects/${slot.subject_id}`)}
+          style={{ display: "flex", alignItems: "center", gap: 5, padding: "9px 12px", borderRadius: 11, border: "1px solid #e5e7eb", background: "#f9fafb", color: "#6b7280", fontSize: 11, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}>
+          <BookOpen style={{ width: 11, height: 11 }} /> View
+        </button>
+      )}
+    </div>
+  );
+}
+
 // ─── Private View ─────────────────────────────────────────────────────────────
 function PrivateTimetable({ profile, navigate }: any) {
-  const today = new Date().toISOString().split("T")[0];
-  const { data: sessions, isLoading } = useQuery({
+  const today      = new Date().toISOString().split("T")[0];
+  const todayIndex = new Date().getDay();
+  const [selectedDay, setSelectedDay] = useState(todayIndex);
+
+  // ── 1. Assigned weekly slots from private_student_timetable ──────────────
+  const { data: assignedSlots, isLoading: loadingSlots } = useQuery({
+    queryKey: ["private-assigned-slots", profile?.user_id],
+    queryFn: async () => {
+      // Fetch the junction rows for this student
+      const { data: rows, error } = await (supabase as any)
+        .from("private_student_timetable")
+        .select("slot_id")
+        .eq("student_id", profile.user_id);
+
+      if (error || !rows?.length) return [];
+
+      const slotIds = rows.map((r: any) => r.slot_id);
+
+      // Fetch the actual timetable slots
+      const { data: slots } = await supabase
+        .from("subject_timetable")
+        .select("*, subjects(id, title, title_ar)")
+        .in("id", slotIds)
+        .eq("is_active", true)
+        .order("day_of_week")
+        .order("start_time");
+
+      if (!slots?.length) return [];
+
+      // Attach teacher names
+      const teacherIds = [...new Set(slots.map((s: any) => s.teacher_id).filter(Boolean))];
+      let teacherMap: Record<string, string> = {};
+      if (teacherIds.length) {
+        const { data: teachers } = await supabase
+          .from("profiles")
+          .select("user_id, full_name")
+          .in("user_id", teacherIds as string[]);
+        (teachers || []).forEach((t: any) => { teacherMap[t.user_id] = t.full_name; });
+      }
+
+      return slots.map((s: any) => ({
+        ...s,
+        teacher: s.teacher_id ? { full_name: teacherMap[s.teacher_id] || null } : null,
+      }));
+    },
+    enabled: !!profile?.user_id,
+  });
+
+  // ── 2. One-off private sessions ──────────────────────────────────────────
+  const { data: sessions, isLoading: loadingSessions } = useQuery({
     queryKey: ["private-sessions-student", profile?.user_id],
     queryFn: async () => {
       const { data } = await supabase
@@ -147,38 +286,100 @@ function PrivateTimetable({ profile, navigate }: any) {
     enabled: !!profile?.user_id,
   });
 
+  const isLoading = loadingSlots || loadingSessions;
+
+  const slotsForDay   = (assignedSlots || []).filter((s: any) => s.day_of_week === selectedDay);
+  const todaySessions  = (sessions || []).filter((s: any) => s.session_date === today);
+  const futureSessions = (sessions || []).filter((s: any) => s.session_date > today);
+
+  const hasWeeklySlots  = (assignedSlots || []).length > 0;
+  const hasPrivateSess  = (sessions || []).length > 0;
+  const hasAnything     = hasWeeklySlots || hasPrivateSess;
+
   if (isLoading) return <div style={{ textAlign: "center", padding: 50, color: "#9ca3af" }}>Loading…</div>;
 
-  if (!sessions?.length) {
+  if (!hasAnything) {
     return (
       <div style={{ background: "#fff", borderRadius: 18, padding: "50px 20px", textAlign: "center", border: "1px solid #e5e7eb" }}>
         <Calendar style={{ width: 40, height: 40, color: "#d1d5db", margin: "0 auto 12px" }} />
-        <p style={{ color: "#374151", fontSize: 14, fontWeight: 700, margin: "0 0 6px" }}>No upcoming sessions</p>
-        <p style={{ color: "#9ca3af", fontSize: 12, margin: 0 }}>Your teacher will schedule your next private session.</p>
+        <p style={{ color: "#374151", fontSize: 14, fontWeight: 700, margin: "0 0 6px" }}>No classes scheduled yet</p>
+        <p style={{ color: "#9ca3af", fontSize: 12, margin: 0 }}>Your teacher will assign your classes soon.</p>
       </div>
     );
   }
 
-  const todaySessions  = sessions.filter((s: any) => s.session_date === today);
-  const futureSessions = sessions.filter((s: any) => s.session_date > today);
-
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-      {todaySessions.length > 0 && (
+    <div style={{ display: "flex", flexDirection: "column", gap: 28 }}>
+
+      {/* ── Weekly Assigned Classes ── */}
+      {hasWeeklySlots && (
         <div>
-          <h3 style={{ fontSize: 13, fontWeight: 800, color: G, margin: "0 0 10px", display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#22c55e", display: "inline-block" }} /> Today
+          <h3 style={{ fontSize: 13, fontWeight: 800, color: G, margin: "0 0 12px", display: "flex", alignItems: "center", gap: 6 }}>
+            <LayoutGrid style={{ width: 14, height: 14, color: GOLD }} />
+            My Weekly Classes
           </h3>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {todaySessions.map((s: any) => <PrivateSessionCard key={s.id} session={s} isToday={true} navigate={navigate} />)}
+
+          {/* Day tabs */}
+          <div style={{ display: "flex", overflowX: "auto", scrollbarWidth: "none", marginBottom: 14, background: `linear-gradient(135deg,${G},${GM})`, borderRadius: 16, padding: "12px 14px 0" }}>
+            {DAYS.map(d => {
+              const hasSlots = (assignedSlots || []).some((s: any) => s.day_of_week === d.index);
+              const isToday  = d.index === todayIndex;
+              const isSel    = d.index === selectedDay;
+              return (
+                <button key={d.index} onClick={() => setSelectedDay(d.index)}
+                  style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "8px 12px 10px", border: "none", background: "none", cursor: "pointer", borderBottom: isSel ? `3px solid ${GOLD}` : "3px solid transparent", flexShrink: 0 }}>
+                  <span style={{ fontSize: 10, color: isToday ? GOLD : "rgba(255,255,255,.55)", fontWeight: isToday ? 800 : 400, marginBottom: 3 }}>
+                    {isToday ? "Today" : d.en}
+                  </span>
+                  <span style={{ fontSize: 13, fontWeight: isSel ? 900 : 500, color: isSel ? "#fff" : "rgba(255,255,255,.55)" }}>{d.index}</span>
+                  {hasSlots && <div style={{ width: 5, height: 5, borderRadius: "50%", background: isSel ? GOLD : "rgba(255,255,255,.35)", marginTop: 4 }} />}
+                </button>
+              );
+            })}
           </div>
+
+          {slotsForDay.length === 0 ? (
+            <div style={{ background: "#fff", borderRadius: 18, padding: "30px 20px", textAlign: "center", border: "1px solid #e5e7eb" }}>
+              <p style={{ color: "#9ca3af", fontSize: 13, margin: 0 }}>No assigned classes on this day</p>
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {slotsForDay.map((slot: any) => (
+                <AssignedSlotCard key={slot.id} slot={slot} isSelectedToday={selectedDay === todayIndex} navigate={navigate} />
+              ))}
+            </div>
+          )}
         </div>
       )}
-      {futureSessions.length > 0 && (
+
+      {/* ── Private Sessions (one-off dated) ── */}
+      {hasPrivateSess && (
         <div>
-          <h3 style={{ fontSize: 13, fontWeight: 800, color: G, margin: "0 0 10px" }}>Upcoming Sessions</h3>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {futureSessions.map((s: any) => <PrivateSessionCard key={s.id} session={s} isToday={false} navigate={navigate} />)}
+          <h3 style={{ fontSize: 13, fontWeight: 800, color: G, margin: "0 0 12px", display: "flex", alignItems: "center", gap: 6 }}>
+            <Lock style={{ width: 14, height: 14, color: "#7C3AED" }} />
+            My Private Sessions
+          </h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            {todaySessions.length > 0 && (
+              <div>
+                <p style={{ fontSize: 11, fontWeight: 800, color: "#22c55e", margin: "0 0 8px", display: "flex", alignItems: "center", gap: 5 }}>
+                  <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#22c55e", display: "inline-block" }} /> Today
+                </p>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {todaySessions.map((s: any) => <PrivateSessionCard key={s.id} session={s} isToday={true} navigate={navigate} />)}
+                </div>
+              </div>
+            )}
+            {futureSessions.length > 0 && (
+              <div>
+                {todaySessions.length > 0 && (
+                  <p style={{ fontSize: 11, fontWeight: 800, color: "#6b7280", margin: "0 0 8px" }}>Upcoming</p>
+                )}
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {futureSessions.map((s: any) => <PrivateSessionCard key={s.id} session={s} isToday={false} navigate={navigate} />)}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -201,14 +402,12 @@ function GeneralTimetable({ profile, hasRole, t, language, navigate, showBanner 
   const { data: allSlots, isLoading } = useQuery({
     queryKey: ["timetable-student"],
     queryFn: async () => {
-      // Fetch slots without the constraint-named teacher join (FK name varies per DB)
       const { data: slots, error } = await supabase
         .from("subject_timetable")
         .select(`*, subjects(id, title, title_ar, image_url)`)
         .eq("is_active", true).order("day_of_week").order("start_time");
       if (error || !slots?.length) return [];
 
-      // Separately fetch teacher names to avoid FK-name guessing
       const teacherIds = [...new Set(slots.map((s: any) => s.teacher_id).filter(Boolean))];
       let teacherMap: Record<string, string> = {};
       if (teacherIds.length) {
@@ -392,7 +591,7 @@ export default function StudentTimetable() {
 
         <p style={{ fontSize: 11, color: "rgba(255,255,255,.5)", margin: 0 }}>
           {isPrivateStudent
-            ? "Private student · Showing your personal sessions only"
+            ? "Private student · Your assigned classes & sessions"
             : !isPrivileged
               ? `${t("Classes for your level:", "الحصص لمستواك:")} ${studentLevel}`
               : "All classes"}
@@ -400,8 +599,6 @@ export default function StudentTimetable() {
       </div>
 
       <div style={{ padding: "16px", maxWidth: 720, margin: "0 auto" }}>
-        {/* Private students → always their personal sessions only */}
-        {/* General students → the shared weekly timetable */}
         {isPrivateStudent ? (
           <PrivateTimetable profile={profile} navigate={navigate} />
         ) : (
