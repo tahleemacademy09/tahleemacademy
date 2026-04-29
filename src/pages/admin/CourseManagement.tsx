@@ -201,9 +201,9 @@ const CourseModal = React.memo(({ ed, onClose, onSave, busy, privateStudents }: 
           </Fld>
           <Fld label="Sort Order"><input type="number" value={f.sort_order} onChange={e => setF(c => ({ ...c, sort_order: Number(e.target.value) }))} style={inp} min={0} /></Fld>
 
-          {/* Visibility */}
+          {/* ── Visibility ── */}
           <Fld label="Who can see this course?">
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" as const, marginTop: 4 }}>
+            <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
               {([
                 { value: "all",     label: "All Students",  desc: "General + Private",      color: "#22c55e", bg: "#f0fff4" },
                 { value: "general", label: "Class Students", desc: "Not private students",   color: "#3b82f6", bg: "#eff6ff" },
@@ -212,9 +212,9 @@ const CourseModal = React.memo(({ ed, onClose, onSave, busy, privateStudents }: 
                 const sel = f.visibility === opt.value;
                 return (
                   <button key={opt.value} type="button" onClick={() => setF(c => ({ ...c, visibility: opt.value }))}
-                    style={{ flex: 1, minWidth: 90, padding: "9px 6px", borderRadius: 11, cursor: "pointer", border: `2px solid ${sel ? opt.color : "#e5e7eb"}`, background: sel ? opt.bg : "#f9fafb", textAlign: "center" as const, transition: "all .15s" }}>
+                    style={{ flex: 1, padding: "9px 4px", borderRadius: 11, cursor: "pointer", border: `2px solid ${sel ? opt.color : "#E5E7EB"}`, background: sel ? opt.bg : "#F9FAFB", textAlign: "center" as const, transition: "all .15s" }}>
                     <div style={{ fontSize: 11, fontWeight: 800, color: sel ? opt.color : "#374151" }}>{opt.label}</div>
-                    <div style={{ fontSize: 10, color: sel ? opt.color + "bb" : "#9ca3af", marginTop: 2 }}>{opt.desc}</div>
+                    <div style={{ fontSize: 10, color: sel ? opt.color + "bb" : "#9CA3AF", marginTop: 2 }}>{opt.desc}</div>
                   </button>
                 );
               })}
@@ -293,7 +293,7 @@ const SubjectModal = React.memo(({ ed, teachers, onClose, onSave, busy }: { ed?:
     if (!stored || stored === "all") return new Set(["beginner", "intermediate", "advanced"]);
     return new Set(stored.split(",").map(s => s.trim()).filter(Boolean));
   };
-  const [f, setF] = useState({ title: ed?.title || "", title_ar: ed?.title_ar || "", description: ed?.description || "", selectedLevels: parseStoredLevel(ed?.level), is_active: ed?.is_active ?? true, image_url: ed?.image_url || "", teacher_id: ed?.teacher_id || "" });
+  const [f, setF] = useState({ title: ed?.title || "", title_ar: ed?.title_ar || "", description: ed?.description || "", selectedLevels: parseStoredLevel(ed?.level), is_active: ed?.is_active ?? true, image_url: ed?.image_url || "", teacher_id: ed?.teacher_id || "", visibility: ((ed?.visibility || "all") as "all" | "general" | "private") });
   const [up, setUp] = useState(false);
   const ref = useRef<HTMLInputElement>(null);
   
@@ -357,11 +357,32 @@ const SubjectModal = React.memo(({ ed, teachers, onClose, onSave, busy }: { ed?:
               {teachers.map((t: any) => <option key={t.user_id} value={t.user_id}>{t.full_name}</option>)}
             </select>
           </Fld>
+
+          {/* ── Visibility ── */}
+          <Fld label="Who can see this subject?">
+            <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+              {([
+                { value: "all",     label: "All Students",  desc: "General + Private",      color: "#22c55e", bg: "#f0fff4" },
+                { value: "general", label: "Class Students", desc: "Not private students",   color: "#3b82f6", bg: "#eff6ff" },
+                { value: "private", label: "Private Only",   desc: "Assigned privates only", color: "#7C3AED", bg: "#F3E8FF" },
+              ] as const).map(opt => {
+                const sel = f.visibility === opt.value;
+                return (
+                  <button key={opt.value} type="button" onClick={() => setF(s => ({ ...s, visibility: opt.value }))}
+                    style={{ flex: 1, padding: "9px 4px", borderRadius: 11, cursor: "pointer", border: `2px solid ${sel ? opt.color : "#E5E7EB"}`, background: sel ? opt.bg : "#F9FAFB", textAlign: "center" as const, transition: "all .15s" }}>
+                    <div style={{ fontSize: 11, fontWeight: 800, color: sel ? opt.color : "#374151" }}>{opt.label}</div>
+                    <div style={{ fontSize: 10, color: sel ? opt.color + "bb" : "#9CA3AF", marginTop: 2 }}>{opt.desc}</div>
+                  </button>
+                );
+              })}
+            </div>
+          </Fld>
+
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <input type="checkbox" id="sact" checked={f.is_active} onChange={e => setF(s => ({ ...s, is_active: e.target.checked }))} />
             <label htmlFor="sact" style={{ fontSize: 13, color: "#374151" }}>Active (visible to students)</label>
           </div>
-          <button type="button" onClick={() => onSave({ ...f, level: buildLevelValue() })} disabled={busy || !f.title || f.selectedLevels.size === 0}
+          <button type="button" onClick={() => onSave({ ...f, level: buildLevelValue(), visibility: f.visibility })} disabled={busy || !f.title || f.selectedLevels.size === 0}
             style={{ padding: "12px", borderRadius: 12, border: "none", background: busy || !f.title || f.selectedLevels.size === 0 ? "#e5e7eb" : `linear-gradient(135deg,${G},${GM})`, color: busy || !f.title || f.selectedLevels.size === 0 ? "#9ca3af" : "#fff", fontWeight: 800, cursor: busy || !f.title || f.selectedLevels.size === 0 ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
             <Save size={14} /> {busy ? "Saving…" : ed ? "Update Subject" : "Create Subject"}
           </button>
@@ -800,7 +821,7 @@ export default function CourseManagement() {
   const saveSubject = useCallback(async (p: any) => {
     setBusy(true);
     try {
-      const d: any = { title: p.title, title_ar: p.title_ar || null, description: p.description || null, level: p.level, is_active: p.is_active, image_url: p.image_url || null, teacher_id: p.teacher_id || null, course_id: selCourse?.id || null, updated_at: new Date().toISOString() };
+      const d: any = { title: p.title, title_ar: p.title_ar || null, description: p.description || null, level: p.level, is_active: p.is_active, image_url: p.image_url || null, teacher_id: p.teacher_id || null, course_id: selCourse?.id || null, visibility: p.visibility || "all", updated_at: new Date().toISOString() };
       const { error: subjErr } = edSubject ? await supabase.from("subjects").update(d).eq("id", edSubject.id) : await supabase.from("subjects").insert(d);
       if (subjErr) throw subjErr;
       qc.invalidateQueries({ queryKey: ["adm-subjects"] }); qc.invalidateQueries({ queryKey: ["adm-all-subjects"] });
@@ -989,9 +1010,7 @@ export default function CourseManagement() {
                     <div key={c.id} className="chov" style={{ background: "#fff", borderRadius: 16, border: `1px solid ${lv.border}`, overflow: "hidden" }}>
                       <div style={{ position: "relative", cursor: "pointer" }} onClick={() => { setSelCourse(c); setView("subjects"); }}>
                         <Thumb url={c.image_url} title={c.title} height={120} bg={lv.bg} />
-                        <div style={{ position: "absolute", top: 8, right: 8, padding: "3px 10px", borderRadius: 20, background: lv.bg, color: lv.text, fontSize: 10, fontWeight: 700, border: `1px solid ${lv.border}` }}>{lv.label}</div>                        {!c.is_published && <div style={{ position: "absolute", top: 8, left: 8, padding: "3px 10px", borderRadius: 20, background: "#FEF2F2", color: "#DC2626", fontSize: 10, fontWeight: 700, border: "1px solid #FECACA" }}>Draft</div>}
-                        {c.visibility === "private" && <div style={{ position: "absolute", bottom: 8, left: 8, padding: "2px 8px", borderRadius: 20, background: "#F3E8FF", color: "#7C3AED", fontSize: 10, fontWeight: 700, border: "1px solid #D8B4FE" }}>🔒 Private Only</div>}
-                        {c.visibility === "general" && <div style={{ position: "absolute", bottom: 8, left: 8, padding: "2px 8px", borderRadius: 20, background: "#eff6ff", color: "#3b82f6", fontSize: 10, fontWeight: 700, border: "1px solid #bfdbfe" }}>👥 Class Students</div>}
+                        <div style={{ position: "absolute", top: 8, right: 8, padding: "3px 10px", borderRadius: 20, background: lv.bg, color: lv.text, fontSize: 10, fontWeight: 700, border: `1px solid ${lv.border}` }}>{lv.label}</div>                        {!c.is_published && <div style={{ position: "absolute", top: 8, left: 8, padding: "3px 10px", borderRadius: 20, background: "#FEF2F2", color: "#DC2626", fontSize: 10, fontWeight: 700, border: "1px solid #FECACA" }}>Draft</div>}{c.visibility === "private" && <div style={{ position: "absolute", bottom: 8, left: 8, padding: "2px 8px", borderRadius: 20, background: "#F3E8FF", color: "#7C3AED", fontSize: 10, fontWeight: 700, border: "1px solid #D8B4FE" }}>🔒 Private</div>}{c.visibility === "general" && <div style={{ position: "absolute", bottom: 8, left: 8, padding: "2px 8px", borderRadius: 20, background: "#eff6ff", color: "#3b82f6", fontSize: 10, fontWeight: 700, border: "1px solid #bfdbfe" }}>👥 Class Only</div>}
                       </div>
                       <div style={{ padding: 14 }}>
                         <p style={{ fontWeight: 800, fontSize: 14, color: "#111", margin: "0 0 2px", cursor: "pointer" }} onClick={() => { setSelCourse(c); setView("subjects"); }}>{c.title}</p>
