@@ -52,6 +52,7 @@ interface SlotForm {
   live_url: string;
   notes: string;
   is_active: boolean;
+  visibility: "all" | "general" | "private";
 }
 
 const EMPTY: SlotForm = {
@@ -64,6 +65,7 @@ const EMPTY: SlotForm = {
   live_url: "",
   notes: "",
   is_active: true,
+  visibility: "all",
 };
 
 export default function TimetableManagement() {
@@ -176,6 +178,7 @@ export default function TimetableManagement() {
         live_url:    values.live_url || null,
         notes:       values.notes || null,
         is_active:   values.is_active,
+        visibility:  values.visibility,
         created_by:  user?.id,
         updated_at:  new Date().toISOString(),
       };
@@ -255,6 +258,7 @@ export default function TimetableManagement() {
       live_url:    slot.live_url || "",
       notes:       slot.notes || "",
       is_active:   slot.is_active !== false,
+      visibility:  (slot.visibility as "all" | "general" | "private") || "all",
     });
     // Load existing private student assignments for this slot
     (supabase as any)
@@ -475,6 +479,48 @@ export default function TimetableManagement() {
                   onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
               </div>
 
+              {/* Visibility */}
+              <div>
+                <label style={labelStyle}>{t("Who can see this slot?", "من يرى هذه الحصة؟")}</label>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" as const, marginTop: 6 }}>
+                  {([
+                    { value: "all",     label: "All Students",     ar: "جميع الطلاب",      desc: "General + Private",       color: "#22c55e", bg: "#f0fff4", border: "#9ae6b4" },
+                    { value: "general", label: "Class Students",    ar: "طلاب الفصل",       desc: "Not private students",    color: "#3b82f6", bg: "#eff6ff", border: "#bfdbfe" },
+                    { value: "private", label: "Private Only",      ar: "خاص فقط",          desc: "Assigned privates only",  color: "#7C3AED", bg: "#F3E8FF", border: "#D8B4FE" },
+                  ] as const).map(opt => {
+                    const sel = form.visibility === opt.value;
+                    return (
+                      <button key={opt.value}
+                        onClick={() => setForm(f => ({ ...f, visibility: opt.value }))}
+                        style={{
+                          flex: 1, minWidth: 90, padding: "10px 8px", borderRadius: 12, cursor: "pointer",
+                          border: `2px solid ${sel ? opt.color : "#e5e7eb"}`,
+                          background: sel ? opt.bg : "#f9fafb",
+                          textAlign: "center" as const, transition: "all .15s",
+                        }}>
+                        <div style={{ fontSize: 12, fontWeight: 800, color: sel ? opt.color : "#374151" }}>
+                          {t(opt.label, opt.ar)}
+                        </div>
+                        <div style={{ fontSize: 10, color: sel ? opt.color + "cc" : "#9ca3af", marginTop: 2 }}>
+                          {opt.desc}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+                {form.visibility === "private" && (
+                  <p style={{ fontSize: 10, color: "#7C3AED", margin: "6px 0 0", display: "flex", alignItems: "center", gap: 4 }}>
+                    <Lock style={{ width: 10, height: 10 }} />
+                    {t("Only students assigned below will see this slot", "فقط الطلاب المخصصون أدناه سيرون هذه الحصة")}
+                  </p>
+                )}
+                {form.visibility === "general" && (
+                  <p style={{ fontSize: 10, color: "#3b82f6", margin: "6px 0 0" }}>
+                    {t("Private students will NOT see this slot", "الطلاب الخاصون لن يروا هذه الحصة")}
+                  </p>
+                )}
+              </div>
+
               {/* Active toggle */}
               <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
                 <div onClick={() => setForm(f => ({ ...f, is_active: !f.is_active }))}
@@ -652,6 +698,16 @@ export default function TimetableManagement() {
                               {(slot._privCount > 0) && (
                                 <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 9, background: "#F3E8FF", color: "#7C3AED", fontWeight: 700, display: "flex", alignItems: "center", gap: 3 }}>
                                   <Lock style={{ width: 9, height: 9 }} /> {slot._privCount} private
+                                </span>
+                              )}
+                              {slot.visibility === "private" && (
+                                <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 9, background: "#F3E8FF", color: "#7C3AED", fontWeight: 700, border: "1px solid #D8B4FE" }}>
+                                  🔒 Private Only
+                                </span>
+                              )}
+                              {slot.visibility === "general" && (
+                                <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 9, background: "#eff6ff", color: "#3b82f6", fontWeight: 700, border: "1px solid #bfdbfe" }}>
+                                  👥 Class Students
                                 </span>
                               )}
                             </div>
