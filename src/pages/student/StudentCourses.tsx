@@ -40,6 +40,15 @@ const StudentCourses = () => {
     },
   });
 
+  const { data: privateCourseIds } = useQuery({
+    queryKey: ["private-course-ids", user?.id],
+    enabled: isPrivateStudent && !!user?.id,
+    queryFn: async () => {
+      const { data } = await supabase.from("private_student_courses" as any).select("course_id").eq("student_id", user!.id);
+      return new Set((data || []).map((r: any) => r.course_id));
+    },
+  });
+
   // 1. Fetch Subjects - only those matching student level
   const { data: allSubjectsRaw, isLoading: loadingSubjects } = useQuery({
     queryKey: ["subjects-active", studentLevel],
@@ -59,9 +68,19 @@ const StudentCourses = () => {
   });
 
   // Apply private filter: private students (without general access) see only assigned subjects
-  const subjects = isPrivateStudent && !allowGeneralAccess
-    ? (allSubjectsRaw || []).filter((s: any) => (privateSubjectIds ?? new Set()).has(s.id))
-    : (allSubjectsRaw || []);
+  // Also enforce visibility column: 'general' hides from private, 'private' hides from general
+  const subjects = (() => {
+    const raw = allSubjectsRaw || [];
+    if (isPrivateStudent && !allowGeneralAccess) {
+      // Private student: assigned subjects (any visibility) + 'all' visibility subjects
+      const assigned = privateSubjectIds ?? new Set<string>();
+      return raw.filter((s: any) =>
+        assigned.has(s.id) || s.visibility === "all" || !s.visibility
+      );
+    }
+    // General student: exclude private-only subjects
+    return raw.filter((s: any) => s.visibility !== "private");
+  })();
 
   // 2. Fetch Courses - filtered by student level server-side
   const { data: courses, isLoading: loadingCourses } = useQuery({
@@ -74,7 +93,12 @@ const StudentCourses = () => {
         .order("sort_order");
       if (error) throw error;
       // Filter: show courses for this student's level OR courses set to "all"
-      return (data || []).filter((c: any) => !c.level || c.level === "all" || c.level === studentLevel);
+      const raw = (data || []).filter((c: any) => !c.level || c.level === "all" || c.level === studentLevel);
+      if (isPrivateStudent && !allowGeneralAccess) {
+        const assigned = privateCourseIds ?? new Set<string>();
+        return raw.filter((c: any) => assigned.has(c.id) || c.visibility === "all" || !c.visibility);
+      }
+      return raw.filter((c: any) => c.visibility !== "private");
     },
   });
 
