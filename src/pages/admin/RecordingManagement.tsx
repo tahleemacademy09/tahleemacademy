@@ -27,7 +27,9 @@ const RecordingManagement = () => {
   const [uploadBusy, setUploadBusy]       = useState(false);
   const [uploadForm, setUploadForm]       = useState({
     subject_id: "", session_id: "", teacher_name: "", file: null as File | null,
+    visibility: "all" as "all" | "general" | "private",
   });
+  const [editVisibility, setEditVisibility] = useState<"all"|"general"|"private">("all");
 
   // ── Play state — generate a short-lived signed URL on demand ──────
   const [playingUrl, setPlayingUrl]   = useState<string | null>(null);
@@ -93,6 +95,7 @@ const RecordingManagement = () => {
   const handleEdit = (rec: any) => {
     setEditRec(rec);
     setEditForm({ teacher_name: rec.teacher_name || "", thumbnail_url: rec.thumbnail_url || "" });
+    setEditVisibility((rec.visibility as any) || "all");
   };
 
   const saveEdit = async () => {
@@ -100,6 +103,7 @@ const RecordingManagement = () => {
     await supabase.from("session_recordings").update({
       teacher_name: editForm.teacher_name,
       thumbnail_url: editForm.thumbnail_url,
+      visibility: editVisibility,
     }).eq("id", editRec.id);
     setRecordings(prev => prev.map(r => r.id === editRec.id ? { ...r, ...editForm } : r));
     setEditRec(null);
@@ -143,14 +147,15 @@ const RecordingManagement = () => {
       await supabase.from("session_recordings").insert({
         session_id:      sessionId,
         subject_id:      uploadForm.subject_id,
-        file_url:        path,                      // ← storage path, not full URL
+        file_url:        path,
         teacher_name:    uploadForm.teacher_name || "Manual upload",
         file_size:       uploadForm.file.size,
-        duration_seconds: 0,                        // admin can edit after
+        duration_seconds: 0,
+        visibility:      uploadForm.visibility,
       });
 
       setUploadDialog(false);
-      setUploadForm({ subject_id: "", session_id: "", teacher_name: "", file: null });
+      setUploadForm({ subject_id: "", session_id: "", teacher_name: "", file: null, visibility: "all" });
       fetchData();
       toast({ title: t("Recording uploaded", "تم رفع التسجيل") });
     } finally {
@@ -261,6 +266,7 @@ const RecordingManagement = () => {
                 <TableHead>{t("Duration", "المدة")}</TableHead>
                 <TableHead>{t("Size", "الحجم")}</TableHead>
                 <TableHead>{t("Date", "التاريخ")}</TableHead>
+                <TableHead>Visibility</TableHead>
                 <TableHead>{t("Actions", "الإجراءات")}</TableHead>
               </TableRow>
             </TableHeader>
@@ -273,6 +279,10 @@ const RecordingManagement = () => {
                   <TableCell>{r.file_size ? `${(r.file_size / 1048576).toFixed(1)} MB` : "-"}</TableCell>
                   <TableCell>{new Date(r.created_at).toLocaleDateString()}</TableCell>
                   <TableCell>
+                    {r.visibility === "private" && <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 9, background: "#F3E8FF", color: "#7C3AED", fontWeight: 700 }}>🔒 Private</span>}
+                    {r.visibility === "general" && <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 9, background: "#eff6ff", color: "#3b82f6", fontWeight: 700 }}>👥 Class</span>}
+                    {(!r.visibility || r.visibility === "all") && <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 9, background: "#f0fff4", color: "#22c55e", fontWeight: 700 }}>All</span>}
+                  </TableCell>
                     <div className="flex gap-1">
                       {r.file_url && (
                         <Button
@@ -333,6 +343,24 @@ const RecordingManagement = () => {
                 onChange={e => setEditForm({ ...editForm, thumbnail_url: e.target.value })}
               />
             </div>
+            <div>
+              <Label>Who can see this recording?</Label>
+              <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+                {([
+                  { value: "all",     label: "All",           color: "#22c55e", bg: "#f0fff4" },
+                  { value: "general", label: "Class Only",    color: "#3b82f6", bg: "#eff6ff" },
+                  { value: "private", label: "Private Only",  color: "#7C3AED", bg: "#F3E8FF" },
+                ] as const).map(opt => {
+                  const sel = editVisibility === opt.value;
+                  return (
+                    <button key={opt.value} type="button" onClick={() => setEditVisibility(opt.value)}
+                      style={{ flex: 1, padding: "7px 4px", borderRadius: 9, cursor: "pointer", border: `2px solid ${sel ? opt.color : "#e5e7eb"}`, background: sel ? opt.bg : "#f9fafb", fontSize: 11, fontWeight: 800, color: sel ? opt.color : "#6b7280" }}>
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
             <Button onClick={saveEdit} className="w-full">{t("Save", "حفظ")}</Button>
           </div>
         </DialogContent>
@@ -370,6 +398,24 @@ const RecordingManagement = () => {
               <p className="text-xs text-muted-foreground mt-1">
                 {t("Accepted: audio and video files (webm, mp4, mp3, ogg, wav)", "يُقبل: ملفات الصوت والفيديو")}
               </p>
+            </div>
+            <div>
+              <Label>Who can see this recording?</Label>
+              <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+                {([
+                  { value: "all",     label: "All Students",  color: "#22c55e", bg: "#f0fff4" },
+                  { value: "general", label: "Class Students", color: "#3b82f6", bg: "#eff6ff" },
+                  { value: "private", label: "Private Only",   color: "#7C3AED", bg: "#F3E8FF" },
+                ] as const).map(opt => {
+                  const sel = uploadForm.visibility === opt.value;
+                  return (
+                    <button key={opt.value} type="button" onClick={() => setUploadForm({ ...uploadForm, visibility: opt.value })}
+                      style={{ flex: 1, padding: "7px 4px", borderRadius: 9, cursor: "pointer", border: `2px solid ${sel ? opt.color : "#e5e7eb"}`, background: sel ? opt.bg : "#f9fafb", fontSize: 11, fontWeight: 800, color: sel ? opt.color : "#6b7280" }}>
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
             <Button
               onClick={handleUpload}
