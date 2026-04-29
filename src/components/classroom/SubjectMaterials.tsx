@@ -17,6 +17,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { getSignedUrl, removeStorageFile } from "@/integrations/supabase/storageClient";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { usePrivateStudent } from "@/hooks/usePrivateStudent";
 import { toast } from "@/hooks/use-toast";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -337,6 +338,7 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
     file_url:        ed?.file_url        || "",
     is_downloadable: ed?.is_downloadable ?? true,
     sort_order:      ed?.sort_order      ?? nextSort,
+    visibility:      (ed?.visibility     || "all") as "all" | "general" | "private",
   });
 
   const [selectedLevels, setSelectedLevels] = useState<Set<Level>>(parseLevels(ed?.level));
@@ -470,6 +472,7 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
         level:           encodeLevels(selectedLevels),
         sort_order:      f.sort_order,
         is_downloadable: f.is_downloadable,
+        visibility:      f.visibility,
         ...(!ed?.id && user ? { uploaded_by: user.id } : {}),
       };
 
@@ -662,6 +665,28 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
             {selectedLevels.size === 0 && <p style={{ fontSize: 11, color: "#DC2626", marginTop: 4 }}>Select at least one level</p>}
           </div>
 
+          {/* Visibility */}
+          <div>
+            <label style={{ fontSize: 11, fontWeight: 700, color: "#374151", display: "block", marginBottom: 8, letterSpacing: .5 }}>WHO CAN SEE THIS MATERIAL?</label>
+            <div style={{ display: "flex", gap: 8 }}>
+              {([
+                { value: "all",     label: "All Students",  desc: "Everyone sees it",        color: "#22c55e", bg: "#f0fff4", border: "#9ae6b4" },
+                { value: "general", label: "Class Students", desc: "Not private students",   color: "#3b82f6", bg: "#eff6ff", border: "#bfdbfe" },
+                { value: "private", label: "Private Only",   desc: "Private students only",  color: "#7C3AED", bg: "#F3E8FF", border: "#D8B4FE" },
+              ] as const).map(opt => {
+                const sel = f.visibility === opt.value;
+                return (
+                  <button key={opt.value} type="button" disabled={busy}
+                    onClick={() => setF(x => ({ ...x, visibility: opt.value }))}
+                    style={{ flex: 1, padding: "10px 6px", borderRadius: 11, cursor: "pointer", border: `2px solid ${sel ? opt.color : "#E5E7EB"}`, background: sel ? opt.bg : "#F9FAFB", textAlign: "center" as const, transition: "all .15s" }}>
+                    <div style={{ fontSize: 11, fontWeight: 800, color: sel ? opt.color : "#374151" }}>{opt.label}</div>
+                    <div style={{ fontSize: 10, color: sel ? opt.color + "bb" : "#9CA3AF", marginTop: 2 }}>{opt.desc}</div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {/* Options */}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", borderRadius: 12, background: "#F9FAFB", border: "1px solid #E5E7EB" }}>
             <div>
@@ -798,6 +823,8 @@ function MaterialCard({ m, isPrivileged, onEdit, onDelete }: {
                 </span>
               ))}
               {m.file_size && <span style={{ fontSize: 10, color: "#9CA3AF" }}>{fmtSize(m.file_size)}</span>}
+              {(m.visibility === "private") && <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 9, background: "#F3E8FF", color: "#7C3AED", fontWeight: 700, border: "1px solid #D8B4FE" }}>🔒 Private</span>}
+              {(m.visibility === "general") && <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 9, background: "#eff6ff", color: "#3b82f6", fontWeight: 700, border: "1px solid #bfdbfe" }}>👥 Class</span>}
               {savedSecs !== null && (m.material_type === "Video" || m.material_type === "Audio") && (
                 <span style={{ display: "flex", alignItems: "center", gap: 3, padding: "2px 8px", borderRadius: 20, fontSize: 10, fontWeight: 700, background: "#FFFBEB", color: "#B45309", border: "1px solid #FDE68A" }}>
                   ▶ Resume {fmtTime(savedSecs)}
@@ -1073,6 +1100,7 @@ export default function SubjectMaterials({ subjectId, subjectTitle }: SubjectMat
   const { t } = useLanguage();
   const qc = useQueryClient();
   const isPrivileged = hasRole("admin") || hasRole("teacher");
+  const { isPrivateStudent } = usePrivateStudent();
   const studentLevel = ((profile as any)?.level || (profile as any)?.course_level || "beginner") as Level;
 
   const [showModal,  setShowModal]  = useState(false);
@@ -1112,9 +1140,15 @@ export default function SubjectMaterials({ subjectId, subjectTitle }: SubjectMat
   const filtered = (materials as any[]).filter(m => {
     const matchSearch = !search || m.title?.toLowerCase().includes(search.toLowerCase()) || m.title_ar?.toLowerCase().includes(search.toLowerCase());
     const matchType   = typeFilter === "all" || m.material_type === typeFilter;
-    // All users (students, teachers, admins) see all materials regardless of level
-    const matchLevel = true;
-    return matchSearch && matchType && matchLevel;
+    // Visibility: admins/teachers see everything
+    // Private students see 'all' + 'private'; general students see 'all' + 'general'
+    const v = m.visibility || "all";
+    const matchVisibility = isPrivileged
+      ? true
+      : isPrivateStudent
+        ? (v === "all" || v === "private")
+        : (v === "all" || v === "general");
+    return matchSearch && matchType && matchVisibility;
   });
 
   if (isLoading) return (
