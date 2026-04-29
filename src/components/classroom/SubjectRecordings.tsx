@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { removeStorageFile } from "@/integrations/supabase/storageClient";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePrivateStudent } from "@/hooks/usePrivateStudent";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Video, Play, Search, Clock, User, CheckCircle, Trash2, Edit, Save, Pause } from "lucide-react";
@@ -27,6 +28,7 @@ const SubjectRecordings = ({ subjectId }: { subjectId: string }) => {
   const [deleteId, setDeleteId]   = useState<string | null>(null);
 
   const isPrivileged = hasRole("admin") || hasRole("teacher");
+  const { isPrivateStudent } = usePrivateStudent();
 
   const { data: recordings, isLoading } = useQuery({
     queryKey: ["recordings", subjectId],
@@ -35,7 +37,13 @@ const SubjectRecordings = ({ subjectId }: { subjectId: string }) => {
         .from("session_recordings").select("*").eq("subject_id", subjectId)
         .order("created_at", { ascending: false });
       if (error) throw error;
-      return data;
+      // Filter by visibility for students (admins/teachers see everything)
+      if (isPrivileged) return data;
+      return (data || []).filter((r: any) => {
+        if (r.visibility === "private") return isPrivateStudent;
+        if (r.visibility === "general") return !isPrivateStudent;
+        return true; // 'all' or null
+      });
     },
   });
 
