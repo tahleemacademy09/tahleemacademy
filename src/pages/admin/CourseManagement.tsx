@@ -1137,39 +1137,76 @@ export default function CourseManagement() {
         )}
 
         {/* ═══ SUBJECTS ══════════════════════════════════════ */}
-        {view === "subjects" && (
-          sLoad ? <div style={{ textAlign: "center", padding: 40 }}><Loader2 size={28} style={{ animation: "spin .8s linear infinite", color: G }} /></div>
-            : <>
-              {fSubjects.length === 0 && <div style={{ textAlign: "center", padding: 40, color: "#9CA3AF" }}><BookOpen size={48} style={{ margin: "0 auto 12px", display: "block" }} /><p>No subjects in this course yet.</p></div>}
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))", gap: 14, marginBottom: 20 }}>
-                {fSubjects.map((s: any) => {
-                  const lv = safeLvl(s.level);
-                  return (
-                    <div key={s.id} className="chov" style={{ background: "#fff", borderRadius: 16, border: `1px solid ${lv.border}`, overflow: "hidden" }}>
-                      <div style={{ position: "relative" }}>
-                        <Thumb url={s.image_url} title={s.title} height={100} bg={lv.bg} />
-                        <div style={{ position: "absolute", top: 8, right: 8, padding: "2px 8px", borderRadius: 20, background: lv.bg, color: lv.text, fontSize: 9, fontWeight: 700, border: `1px solid ${lv.border}` }}>{lv.label}</div>
-                        {!s.is_active && <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,.4)", display: "flex", alignItems: "center", justifyContent: "center" }}><EyeOff size={20} color="#fff" /></div>}
-                        {s.visibility === "private" && <div style={{ position: "absolute", bottom: 8, left: 6, padding: "2px 7px", borderRadius: 20, background: "#F3E8FF", color: "#7C3AED", fontSize: 9, fontWeight: 700, border: "1px solid #D8B4FE" }}>🔒 Private</div>}
-                        {s.visibility === "general" && <div style={{ position: "absolute", bottom: 8, left: 6, padding: "2px 7px", borderRadius: 20, background: "#eff6ff", color: "#3b82f6", fontSize: 9, fontWeight: 700, border: "1px solid #bfdbfe" }}>👥 Class Only</div>}
-                      </div>
-                      <div style={{ padding: 12 }}>
-                        <p style={{ fontWeight: 800, fontSize: 13, color: "#111", margin: "0 0 2px" }}>{s.title}</p>
-                        {s.title_ar && <p style={{ fontWeight: 600, fontSize: 11, color: GOLD, margin: "0 0 6px", direction: "rtl", fontFamily: "'Amiri',serif" }}>{s.title_ar}</p>}
-                        {s.description && <p style={{ fontSize: 11, color: "#9CA3AF", margin: "0 0 10px", lineHeight: 1.4 }}>{s.description.slice(0, 60)}{s.description.length > 60 ? "…" : ""}</p>}
-                        <div style={{ display: "flex", gap: 6 }}>
-                          <button type="button" onClick={() => { setSelSubject(s); setView("content"); setTab("syllabus"); }}
-                            style={{ flex: 1, padding: "7px", borderRadius: 8, border: `1px solid ${G}`, background: G, color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
-                            <ChevronRight size={12} /> Open
-                          </button>
-                          <button type="button" onClick={() => { setEdSubject(s); setShowSubject(true); }} style={{ padding: "7px 9px", borderRadius: 8, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer" }} title="Edit"><Edit2 size={13} color={G} /></button>
-                          <button type="button" onClick={() => dupSubject(s)} style={{ padding: "7px 9px", borderRadius: 8, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer" }} title="Duplicate"><Copy size={13} color="#6B7280" /></button>
-                          <button type="button" onClick={() => delSubject(s.id)} style={{ padding: "7px 9px", borderRadius: 8, border: "1px solid #FEE2E2", background: "#FEF2F2", cursor: "pointer" }} title="Delete"><Trash2 size={13} color="#DC2626" /></button>
+        {view === "subjects" && (() => {
+          const getLevels = (s: any): string[] =>
+            Array.isArray(s.levels) && s.levels.length > 0
+              ? s.levels
+              : s.level === "all" || !s.level
+                ? ["beginner", "intermediate", "advanced"]
+                : s.level.split(",").map((l: string) => l.trim());
+          const sm = (s: any) => !search || s.title.toLowerCase().includes(search.toLowerCase());
+          const buckets = [
+            { key: "beginner",     label: "Beginner",     color: "#22c55e", items: fSubjects.filter((s: any) => getLevels(s).includes("beginner")    && s.visibility !== "private" && sm(s)) },
+            { key: "intermediate", label: "Intermediate", color: "#d97706", items: fSubjects.filter((s: any) => getLevels(s).includes("intermediate") && s.visibility !== "private" && sm(s)) },
+            { key: "advanced",     label: "Advanced",     color: "#7c3aed", items: fSubjects.filter((s: any) => getLevels(s).includes("advanced")     && s.visibility !== "private" && sm(s)) },
+            { key: "private",      label: "Private",      color: "#7C3AED", items: fSubjects.filter((s: any) => s.visibility === "private" && sm(s)) },
+          ];
+          const [activeTab, setActiveTab] = React.useState<string>("beginner");
+          const ab = buckets.find(b => b.key === activeTab) || buckets[0];
+          if (sLoad) return <div style={{ textAlign: "center", padding: 40 }}><Loader2 size={28} style={{ animation: "spin .8s linear infinite", color: G }} /></div>;
+          return (
+            <>
+              <div style={{ display: "flex", overflowX: "auto", scrollbarWidth: "none", marginBottom: 16, background: `linear-gradient(135deg,${G},#075E54)`, borderRadius: 16, padding: "10px 12px 0" }}>
+                {buckets.map(b => { const isSel = activeTab === b.key; return (
+                  <button key={b.key} type="button" onClick={() => setActiveTab(b.key)}
+                    style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "8px 16px 10px", border: "none", background: "none", cursor: "pointer", flexShrink: 0, borderBottom: isSel ? `3px solid ${b.color}` : "3px solid transparent" }}>
+                    <span style={{ fontSize: 12, fontWeight: isSel ? 800 : 500, color: isSel ? "#fff" : "rgba(255,255,255,.5)", whiteSpace: "nowrap" }}>
+                      {b.key === "private" ? "🔒 " : ""}{b.label}
+                    </span>
+                    <span style={{ fontSize: 10, marginTop: 2, padding: "1px 7px", borderRadius: 20, background: isSel ? b.color : "rgba(255,255,255,.15)", color: "#fff", fontWeight: 700 }}>
+                      {b.items.length}
+                    </span>
+                  </button>
+                );})}
+              </div>
+              {ab.items.length === 0 ? (
+                <div style={{ textAlign: "center", padding: 48, color: "#9CA3AF", background: "#fff", borderRadius: 16, border: "1px solid #E5E7EB" }}>
+                  <BookOpen size={40} style={{ margin: "0 auto 12px", display: "block", opacity: .3 }} />
+                  <p style={{ fontWeight: 600, margin: "0 0 4px", color: "#374151" }}>No {ab.label} subjects yet</p>
+                  <p style={{ fontSize: 12, margin: 0 }}>Use + Add Subject to create one</p>
+                </div>
+              ) : (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))", gap: 14, marginBottom: 20 }}>
+                  {ab.items.map((s: any) => {
+                    const lv = safeLvl(s.level);
+                    return (
+                      <div key={s.id} className="chov" style={{ background: "#fff", borderRadius: 16, border: `1px solid ${lv.border}`, overflow: "hidden" }}>
+                        <div style={{ position: "relative" }}>
+                          <Thumb url={s.image_url} title={s.title} height={100} bg={lv.bg} />
+                          <div style={{ position: "absolute", top: 8, right: 8, padding: "2px 8px", borderRadius: 20, background: lv.bg, color: lv.text, fontSize: 9, fontWeight: 700, border: `1px solid ${lv.border}` }}>{lv.label}</div>
+                          {!s.is_active && <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,.4)", display: "flex", alignItems: "center", justifyContent: "center" }}><EyeOff size={20} color="#fff" /></div>}
+                          {s.visibility === "private" && <div style={{ position: "absolute", bottom: 8, left: 6, padding: "2px 7px", borderRadius: 20, background: "#F3E8FF", color: "#7C3AED", fontSize: 9, fontWeight: 700, border: "1px solid #D8B4FE" }}>🔒 Private</div>}
+                          {s.visibility === "general" && <div style={{ position: "absolute", bottom: 8, left: 6, padding: "2px 7px", borderRadius: 20, background: "#eff6ff", color: "#3b82f6", fontSize: 9, fontWeight: 700, border: "1px solid #bfdbfe" }}>👥 Class Only</div>}
+                        </div>
+                        <div style={{ padding: 12 }}>
+                          <p style={{ fontWeight: 800, fontSize: 13, color: "#111", margin: "0 0 2px" }}>{s.title}</p>
+                          {s.title_ar && <p style={{ fontWeight: 600, fontSize: 11, color: GOLD, margin: "0 0 6px", direction: "rtl", fontFamily: "'Amiri',serif" }}>{s.title_ar}</p>}
+                          {s.description && <p style={{ fontSize: 11, color: "#9CA3AF", margin: "0 0 10px", lineHeight: 1.4 }}>{s.description.slice(0, 60)}{s.description.length > 60 ? "…" : ""}</p>}
+                          <div style={{ display: "flex", gap: 6 }}>
+                            <button type="button" onClick={() => { setSelSubject(s); setView("content"); setTab("syllabus"); }}
+                              style={{ flex: 1, padding: "7px", borderRadius: 8, border: `1px solid ${G}`, background: G, color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
+                              <ChevronRight size={12} /> Open
+                            </button>
+                            <button type="button" onClick={() => { setEdSubject(s); setShowSubject(true); }} style={{ padding: "7px 9px", borderRadius: 8, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer" }} title="Edit"><Edit2 size={13} color={G} /></button>
+                            <button type="button" onClick={() => dupSubject(s)} style={{ padding: "7px 9px", borderRadius: 8, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer" }} title="Duplicate"><Copy size={13} color="#6B7280" /></button>
+                            <button type="button" onClick={() => delSubject(s.id)} style={{ padding: "7px 9px", borderRadius: 8, border: "1px solid #FEE2E2", background: "#FEF2F2", cursor: "pointer" }} title="Delete"><Trash2 size={13} color="#DC2626" /></button>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  );                })}
-              </div>
+                    );
+                  })}
+                </div>
+              )}
               {unlinked.length > 0 && (
                 <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E5E7EB", padding: 16 }}>
                   <p style={{ fontSize: 12, fontWeight: 700, color: "#374151", margin: "0 0 10px" }}>📎 Link existing unlinked subjects:</p>
@@ -1184,7 +1221,8 @@ export default function CourseManagement() {
                 </div>
               )}
             </>
-        )}
+          );
+        })()}
 
         {/* ═══ CONTENT (Syllabus / Materials / Lessons) ══════ */}
         {view === "content" && selSubject && (
