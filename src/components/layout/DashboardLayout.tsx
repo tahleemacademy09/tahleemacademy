@@ -421,7 +421,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   };
 
   return (
-    <div className="flex overflow-hidden" style={{ height: "100dvh" }}>
+    <div className="flex h-screen overflow-hidden" style={{ height: "100dvh" }}>
       <aside className="hidden w-60 flex-col bg-sidebar md:flex flex-shrink-0 border-r border-sidebar-border">
         <SidebarContent />
       </aside>
