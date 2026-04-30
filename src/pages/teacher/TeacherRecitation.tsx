@@ -77,8 +77,11 @@ export default function TeacherRecitation() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio:{ noiseSuppression:true, echoCancellation:true, autoGainControl:true } });
       chunksRef.current=[];
-      const mr = new MediaRecorder(stream,{mimeType:"audio/webm"});
-      mr.ondataavailable=e=>chunksRef.current.push(e.data);
+      // iOS Safari only supports audio/mp4 — audio/webm throws NotSupportedError on iPhone
+      const mimeType = ["audio/mp4","audio/webm;codecs=opus","audio/webm",""]
+        .find(m => !m || MediaRecorder.isTypeSupported(m)) ?? "";
+      const mr = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      mr.ondataavailable=e=>{ if(e.data?.size>0) chunksRef.current.push(e.data); };
       mr.start(); mediaRecRef.current=mr; setIsRecording(true);
     }catch(_){}
   };
@@ -87,8 +90,10 @@ export default function TeacherRecitation() {
     if (!mediaRecRef.current||!teacherId||!selected||!ayahs[ayahIdx]) return;
     setIsRecording(false); setSaving(true);
     mediaRecRef.current.onstop = async () => {
-      const blob = new Blob(chunksRef.current,{type:"audio/webm"});
-      const path = `teacher_${teacherId}/${selected.number}_${ayahs[ayahIdx].numberInSurah}_${Date.now()}.webm`;
+      const recMime = mediaRecRef.current?.mimeType || "audio/mp4";
+      const recExt  = recMime.includes("mp4") ? "mp4" : recMime.includes("ogg") ? "ogg" : "webm";
+      const blob = new Blob(chunksRef.current, { type: recMime });
+      const path = `teacher_${teacherId}/${selected.number}_${ayahs[ayahIdx].numberInSurah}_${Date.now()}.${recExt}`;
       const {data:up} = await storageSupabase.storage.from("hifdh-recordings").upload(path,blob);
       if (up) {
         const {data:urlData} = storageSupabase.storage.from("hifdh-recordings").getPublicUrl(path);
