@@ -940,7 +940,6 @@ export default function CourseManagement() {
       course_id:   s.course_id   || null,
       is_active:   s.is_active   ?? true,
       visibility:  s.visibility  || "all",
-      sort_order:  (s.sort_order ?? 0) + 1,
     } as any).select().single();
     if (error) { toast({ title: "Duplicate failed", description: error.message, variant: "destructive" }); return; }
     qc.invalidateQueries({ queryKey: ["adm-subjects"] });
