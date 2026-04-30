@@ -66,18 +66,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const attempt = async (tries = 0): Promise<void> => {
       try {
-        const [rolesRes, profileRes] = await Promise.all([
+        // ── iOS timeout: race each attempt against 5 seconds ─────────────
+        // Without this, hanging Supabase connections on iOS keep authLoading=true
+        // for the full 8-second safety timeout, which cascades into every hook
+        // that waits on authLoading (useTasjeel, usePaymentAccess) and causes
+        // the dashboard to appear blank/stuck for 8+ seconds.
+        const withTimeout = <T,>(p: Promise<T>) =>
+          Promise.race([p, new Promise<T>((_, rej) => setTimeout(() => rej(new Error("auth_timeout")), 5000))]);
+
+        const [rolesRes, profileRes] = await withTimeout(Promise.all([
           supabase.from("user_roles").select("role").eq("user_id", userId),
           supabase.from("profiles").select("*").eq("user_id", userId).maybeSingle(),
-        ]);
+        ]));
         if (!mountedRef.current || fetchingRef.current !== userId) return;
         if (rolesRes.data)    setRoles(rolesRes.data.map((r) => r.role));
         if (profileRes.data)  setProfile(profileRes.data as UserProfile);
       } catch (err) {
         console.warn("[AuthContext] fetchUserData error (attempt", tries + 1, "):", err);
-        if (tries < 3 && mountedRef.current) {
-          // Exponential backoff: 500ms, 1s, 2s
-          await new Promise(r => setTimeout(r, 500 * Math.pow(2, tries)));
+        if (tries < 2 && mountedRef.current) {
+          // Shorter backoff on iOS: 400ms, 800ms
+          await new Promise(r => setTimeout(r, 400 * Math.pow(2, tries)));
           return attempt(tries + 1);
         }
       } finally {
