@@ -65,7 +65,8 @@ function markSent(userId: string, slot: string): void {
 // ── notification helpers ──────────────────────────────────────────────────────
 
 function showBrowserNotification(title: string, body: string): void {
-  if (Notification.permission !== "granted") return;
+  // iOS Safari doesn't support Notification API in regular browser mode
+  if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
   try {
     new Notification(title, {
       body,
