@@ -104,6 +104,8 @@ async function ensureServiceWorker(): Promise<ServiceWorkerRegistration | null> 
 
 async function savePushSubscription(userId: string, reg: ServiceWorkerRegistration): Promise<void> {
   if (!("PushManager" in window)) return;
+  // iOS Safari doesn't support the Notification API in regular browser mode
+  if (typeof Notification === 'undefined') return null;
   const permission = await Notification.requestPermission();
   if (permission !== "granted") return;
   const vapidKey = import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined;
@@ -140,7 +142,7 @@ async function showNotification(opts: { title: string; message: string; url: str
   if (_swReg) {
     try { await _swReg.showNotification(opts.title, baseOpts); }
     catch { navigator.serviceWorker?.controller?.postMessage({ type: "SHOW_NOTIFICATION", ...opts }); }
-  } else if (Notification.permission === "granted") {
+  } else if (typeof Notification !== "undefined" && Notification.permission === "granted") {
     try { new Notification(opts.title, { body: opts.message, icon: "/favicon.ico", tag: opts.tag }); } catch {}
   }
   try { navigator.vibrate?.([200, 100, 200, 100, 400]); } catch {}
@@ -209,7 +211,9 @@ export function useTimetableNotifications() {
     if (!initRef.current) {
       initRef.current = true;
       ensureServiceWorker().then(reg => { if (reg) savePushSubscription(user.id, reg); });
-      if (Notification.permission === "default") Notification.requestPermission().catch(() => {});
+      if (typeof Notification !== "undefined" && Notification.permission === "default") {
+        Notification.requestPermission().catch(() => {});
+      }
     }
 
     const check = async () => {
