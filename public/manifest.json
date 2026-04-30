@@ -1,15 +1,18 @@
 {
   "name": "Tahleem Academy",
   "short_name": "Tahleem",
-  "description": "Online Quran, Tajweed, Arabic Language & Islamic Sciences",
-  "start_url": "/",
+  "description": "Online Quran, Tajweed, Arabic Language &amp; Islamic Sciences",
+  "start_url": "/Tahleemacademy.vercel.app ",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#0f2419",
   "theme_color": "#1a3a2a",
   "lang": "en",
-  "categories": ["education", "lifestyle"],
+  "categories": [
+    "education",
+    "lifestyle"
+  ],
   "icons": [
     {
       "src": "/icons/icon-72x72.png",
@@ -75,14 +78,25 @@
       "short_name": "Dashboard",
       "description": "Go to your student dashboard",
       "url": "/student/dashboard",
-      "icons": [{ "src": "/icons/icon-96x96.png", "sizes": "96x96" }]
+      "icons": [
+        {
+          "src": "/icons/icon-96x96.png",
+          "sizes": "96x96"
+        }
+      ]
     },
     {
       "name": "My Timetable",
       "short_name": "Timetable",
       "description": "View your class schedule",
       "url": "/student/timetable",
-      "icons": [{ "src": "/icons/icon-96x96.png", "sizes": "96x96" }]
+      "icons": [
+        {
+          "src": "/icons/icon-96x96.png",
+          "sizes": "96x96"
+        }
+      ]
     }
-  ]
+  ],
+  "dir": "auto"
 }
