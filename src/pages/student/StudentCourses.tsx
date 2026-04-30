@@ -67,19 +67,22 @@ const StudentCourses = () => {
     },
   });
 
-  // Apply private filter: private students (without general access) see only assigned subjects
-  // Also enforce visibility column: 'general' hides from private, 'private' hides from general
+  // Visibility filter — applied after fetch
+  // Private student: sees subjects tagged 'all' OR 'private' (if assigned), never 'general'
+  // General student: sees subjects tagged 'all' OR 'general', never 'private'
   const subjects = (() => {
     const raw = allSubjectsRaw || [];
-    if (isPrivateStudent && !allowGeneralAccess) {
-      // Private student: assigned subjects (any visibility) + 'all' visibility subjects
+    if (isPrivateStudent) {
       const assigned = privateSubjectIds ?? new Set<string>();
-      return raw.filter((s: any) =>
-        assigned.has(s.id) || s.visibility === "all" || !s.visibility
-      );
+      return raw.filter((s: any) => {
+        const v = s.visibility || "all";
+        if (v === "general") return false;                   // never show 'general' to private
+        if (v === "private") return assigned.has(s.id);     // 'private' only if explicitly assigned
+        return true;                                         // 'all' → always visible
+      });
     }
-    // General student: exclude private-only subjects
-    return raw.filter((s: any) => s.visibility !== "private");
+    // General student: hide private-only subjects
+    return raw.filter((s: any) => (s.visibility || "all") !== "private");
   })();
 
   // 2. Fetch Courses - filtered by student level server-side
@@ -88,17 +91,21 @@ const StudentCourses = () => {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("courses")
-        .select("id, title, title_ar, description, description_ar, subject_id, level, image_url, thumbnail, is_published, sort_order")
+        .select("id, title, title_ar, description, description_ar, subject_id, level, image_url, thumbnail, is_published, sort_order, visibility")
         .eq("is_published", true)
         .order("sort_order");
       if (error) throw error;
-      // Filter: show courses for this student's level OR courses set to "all"
       const raw = (data || []).filter((c: any) => !c.level || c.level === "all" || c.level === studentLevel);
-      if (isPrivateStudent && !allowGeneralAccess) {
+      if (isPrivateStudent) {
         const assigned = privateCourseIds ?? new Set<string>();
-        return raw.filter((c: any) => assigned.has(c.id) || c.visibility === "all" || !c.visibility);
+        return raw.filter((c: any) => {
+          const v = c.visibility || "all";
+          if (v === "general") return false;
+          if (v === "private") return assigned.has(c.id);
+          return true;
+        });
       }
-      return raw.filter((c: any) => c.visibility !== "private");
+      return raw.filter((c: any) => (c.visibility || "all") !== "private");
     },
   });
 
