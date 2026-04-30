@@ -76,13 +76,26 @@ export function useTasjeel() {
     if (authLoading) return;
 
     if (!user) {
-      // Auth is done and there is no user — nothing to fetch
       setCurrentStep(null);
       setLoading(false);
       return;
     }
 
     setLoading(true);
+
+    // ── iOS timeout guard ──────────────────────────────────────────────────
+    // On iOS, WebKit can stall concurrent connections to the same host.
+    // Without a timeout, this query hangs indefinitely, keeping tasjeelLoading=true
+    // which gates the StudentDashboard spinner forever (looks like blank screen).
+    // After 6 seconds we fall back to "completed" so students always see the dashboard.
+    let didTimeout = false;
+    const timeoutId = setTimeout(() => {
+      didTimeout = true;
+      console.warn("[useTasjeel] fetch timed out — defaulting to completed");
+      setCurrentStep("completed");
+      setLoading(false);
+    }, 6000);
+
     try {
       const { data } = await supabase
         .from("tasjeel_progress")
@@ -90,14 +103,18 @@ export function useTasjeel() {
         .eq("user_id", user.id)
         .maybeSingle();
 
-      // If no row exists, treat as completed (safety fallback for edge cases
-      // e.g. admin-created students without a pipeline row)
-      setCurrentStep(data?.current_step ?? "completed");
+      if (!didTimeout) {
+        setCurrentStep(data?.current_step ?? "completed");
+      }
     } catch {
-      // Network error — default to completed so users aren't locked out
-      setCurrentStep("completed");
+      if (!didTimeout) {
+        setCurrentStep("completed");
+      }
     } finally {
-      setLoading(false);
+      clearTimeout(timeoutId);
+      if (!didTimeout) {
+        setLoading(false);
+      }
     }
   }, [user, authLoading]);
 
