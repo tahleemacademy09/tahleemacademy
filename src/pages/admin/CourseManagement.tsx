@@ -21,7 +21,7 @@ import {
   Plus, BookOpen, Trash2, Edit2, ChevronRight, ChevronLeft,
   Loader2, EyeOff, Save, Image, Search, Layers, FolderOpen,
   FileText, Video, Music, ExternalLink, Type, FileSpreadsheet,
-  Upload, Download, File, Check, Calendar, ChevronDown, ChevronUp, X, AlertCircle, Lock,
+  Upload, Download, File, Check, Calendar, ChevronDown, ChevronUp, X, AlertCircle, Lock, Copy,
 } from "lucide-react";
 
 const G    = "#064E3B";
@@ -286,7 +286,189 @@ const CourseModal = React.memo(({ ed, onClose, onSave, busy, privateStudents }: 
 // ══════════════════════════════════════════════════════════════════════════
 // SUBJECT MODAL
 // ══════════════════════════════════════════════════════════════════════════
-const SubjectModal = React.memo(({ ed, teachers, onClose, onSave, busy }: { ed?: any; teachers: any[]; onClose: () => void; onSave: (p: any) => Promise<void>; busy: boolean }) => {
+const SubjectModal = React.memo(({ ed, teachers, onClose, onSave, busy, privateStudents }: { ed?: any; teachers: any[]; onClose: () => void; onSave: (p: any, assigned: Set<string>) => Promise<void>; busy: boolean; privateStudents: any[] }) => {
+  const LEVELS_LIST = ["beginner", "intermediate", "advanced"] as const;
+  const parseStoredLevel = (stored?: string): Set<string> => {
+    if (!stored || stored === "all") return new Set(["beginner", "intermediate", "advanced"]);
+    return new Set(stored.split(",").map(s => s.trim()).filter(Boolean));
+  };
+  const [f, setF] = useState({ title: ed?.title || "", title_ar: ed?.title_ar || "", description: ed?.description || "", selectedLevels: parseStoredLevel(ed?.level), is_active: ed?.is_active ?? true, image_url: ed?.image_url || "", teacher_id: ed?.teacher_id || "", visibility: ((ed?.visibility || "all") as "all" | "general" | "private") });
+  const [up, setUp] = useState(false);
+  const ref = useRef<HTMLInputElement>(null);
+
+  // Private student assignment — mirrors CourseModal exactly
+  const [privAssigned, setPrivAssigned] = useState<Set<string>>(new Set());
+  const [privSaving,   setPrivSaving]   = useState(false);
+  useEffect(() => {
+    if (!ed?.id) { setPrivAssigned(new Set()); return; }
+    supabase.from("private_student_subjects" as any).select("student_id").eq("subject_id", ed.id)
+      .then(({ data }) => setPrivAssigned(new Set((data || []).map((r: any) => r.student_id))));
+  }, [ed?.id]);
+
+  const togglePriv = useCallback(async (studentId: string) => {
+    if (!ed?.id) {
+      setPrivAssigned(prev => { const n = new Set(prev); n.has(studentId) ? n.delete(studentId) : n.add(studentId); return n; });
+      return;
+    }
+    setPrivSaving(true);
+    if (privAssigned.has(studentId)) {
+      await supabase.from("private_student_subjects" as any).delete().eq("student_id", studentId).eq("subject_id", ed.id);
+      setPrivAssigned(prev => { const n = new Set(prev); n.delete(studentId); return n; });
+    } else {
+      await supabase.from("private_student_subjects" as any).insert({ student_id: studentId, subject_id: ed.id } as any);
+      setPrivAssigned(prev => new Set([...prev, studentId]));
+    }
+    setPrivSaving(false);
+  }, [privAssigned, ed?.id]);
+
+  const handleFile = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const fi = e.target.files?.[0]; if (!fi) return; setUp(true);
+    const url = await uploadImg(fi, "subject-images");
+    if (url) setF(s => ({ ...s, image_url: url })); setUp(false);
+  }, []);
+
+  const toggleLevel = (lv: string) => {
+    setF(s => {
+      const next = new Set(s.selectedLevels);
+      next.has(lv) ? next.delete(lv) : next.add(lv);
+      return { ...s, selectedLevels: next };
+    });
+  };
+
+  const buildLevelValue = (): string => {
+    const all = new Set(["beginner", "intermediate", "advanced"]);
+    const sel = f.selectedLevels;
+    if (sel.size === 0 || (sel.size === 3 && [...all].every(l => sel.has(l)))) return "all";
+    if (sel.size === 1) return [...sel][0];
+    return [...sel].join(",");
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 50, background: "rgba(0,0,0,.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div style={{ background: "#fff", borderRadius: 20, width: "100%", maxWidth: 500, maxHeight: "90vh", overflowY: "auto" }}>
+        <div style={{ padding: "16px 20px", borderBottom: "1px solid #E5E7EB", display: "flex", justifyContent: "space-between", alignItems: "center", position: "sticky", top: 0, background: "#fff" }}>
+          <h2 style={{ fontSize: 15, fontWeight: 800, color: "#111", margin: 0 }}>{ed ? "Edit Subject" : "New Subject"}</h2>
+          <button type="button" onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 20, color: "#9CA3AF" }}>×</button>
+        </div>
+        <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 14 }}>
+          <input ref={ref} id="cm-subj-img" type="file" accept="image/*" style={{ position:"absolute",width:1,height:1,opacity:0,overflow:"hidden",pointerEvents:"none" }} onChange={handleFile} />
+          <label htmlFor="cm-subj-img" style={{ height: 100, borderRadius: 12, border: "2px dashed #E5E7EB", background: "#F9FAFB", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, color: "#9CA3AF", fontSize: 13 }}>
+            {up ? <Loader2 size={20} style={{ animation: "spin .8s linear infinite" }} /> : f.image_url ? <img src={f.image_url} alt="" style={{ height: "100%", borderRadius: 10 }} /> : <><Image size={20} /> Upload image</>}
+          </label>
+          <Fld label="Subject Title (English)"><input value={f.title} onChange={e => setF(s => ({ ...s, title: e.target.value }))} style={inp} placeholder="e.g. Tajweed Level 1" autoFocus /></Fld>
+          <Fld label="Subject Title (Arabic)"><input value={f.title_ar} onChange={e => setF(s => ({ ...s, title_ar: e.target.value }))} style={{ ...inp, direction: "rtl", fontFamily: "'Amiri',serif" }} placeholder="مثال: التجويد المستوى الأول" /></Fld>
+          <Fld label="Description"><textarea value={f.description} onChange={e => setF(s => ({ ...s, description: e.target.value }))} rows={3} style={{ ...inp, resize: "vertical" }} /></Fld>
+          <Fld label="Visible to Levels (select all that apply)">
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {LEVELS_LIST.map(lv => {
+                const c = lvlCfg[lv], sel = f.selectedLevels.has(lv);
+                return (
+                  <button key={lv} type="button" onClick={() => toggleLevel(lv)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 10, border: `2px solid ${sel ? c.border : "#E5E7EB"}`, background: sel ? c.bg : "#fff", cursor: "pointer", textAlign: "left" as const }}>
+                    <div style={{ width: 18, height: 18, borderRadius: 5, border: `2px solid ${sel ? c.border : "#D1D5DB"}`, background: sel ? c.text : "#fff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                      {sel && <Check size={11} color="#fff" />}
+                    </div>
+                    <span style={{ fontWeight: sel ? 800 : 500, fontSize: 13, color: sel ? c.text : "#374151" }}>{c.label}</span>
+                  </button>
+                );
+              })}
+              {f.selectedLevels.size === 0 && (
+                <p style={{ fontSize: 11, color: "#DC2626", margin: "2px 0 0" }}>Select at least one level</p>
+              )}
+            </div>
+          </Fld>
+          <Fld label="Assign Teacher">
+            <select value={f.teacher_id} onChange={e => setF(s => ({ ...s, teacher_id: e.target.value }))} style={inp}>
+              <option value="">— No teacher assigned —</option>
+              {teachers.map((t: any) => <option key={t.user_id} value={t.user_id}>{t.full_name}</option>)}
+            </select>
+          </Fld>
+
+          {/* ── Who can see this subject? ── */}
+          <Fld label="Who can see this subject?">
+            <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+              {([
+                { value: "all",     label: "All Students",  desc: "General + Private",      color: "#22c55e", bg: "#f0fff4" },
+                { value: "general", label: "Class Students", desc: "Not private students",   color: "#3b82f6", bg: "#eff6ff" },
+                { value: "private", label: "Private Only",   desc: "Assigned privates only", color: "#7C3AED", bg: "#F3E8FF" },
+              ] as const).map(opt => {
+                const sel = f.visibility === opt.value;
+                return (
+                  <button key={opt.value} type="button" onClick={() => setF(s => ({ ...s, visibility: opt.value }))}
+                    style={{ flex: 1, padding: "9px 4px", borderRadius: 11, cursor: "pointer", border: `2px solid ${sel ? opt.color : "#E5E7EB"}`, background: sel ? opt.bg : "#F9FAFB", textAlign: "center" as const, transition: "all .15s" }}>
+                    <div style={{ fontSize: 11, fontWeight: 800, color: sel ? opt.color : "#374151" }}>{opt.label}</div>
+                    <div style={{ fontSize: 10, color: sel ? opt.color + "bb" : "#9CA3AF", marginTop: 2 }}>{opt.desc}</div>
+                  </button>
+                );
+              })}
+            </div>
+            {f.visibility === "private" && (
+              <p style={{ fontSize: 10, color: "#7C3AED", margin: "6px 0 0", display: "flex", alignItems: "center", gap: 4 }}>
+                <Lock size={10} /> Assign specific students below
+              </p>
+            )}
+          </Fld>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <input type="checkbox" id="sact" checked={f.is_active} onChange={e => setF(s => ({ ...s, is_active: e.target.checked }))} />
+            <label htmlFor="sact" style={{ fontSize: 13, color: "#374151" }}>Active (visible to students)</label>
+          </div>
+
+          {/* ── Assign to Private Students ── */}
+          <div style={{ borderTop: "1.5px solid #E5E7EB", paddingTop: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+              <div>
+                <p style={{ fontSize: 12, fontWeight: 800, color: "#374151", margin: "0 0 2px", display: "flex", alignItems: "center", gap: 6 }}>
+                  <Lock size={13} style={{ color: "#7C3AED" }} />
+                  Assign to Private Students
+                </p>
+                <p style={{ fontSize: 10, color: "#9CA3AF", margin: 0 }}>
+                  {privAssigned.size} student{privAssigned.size !== 1 ? "s" : ""} — private students see only their assigned subjects
+                </p>
+              </div>
+              {privSaving && <Loader2 size={14} style={{ color: "#7C3AED", animation: "spin 1s linear infinite" }} />}
+            </div>
+            {!privateStudents?.length ? (
+              <div style={{ padding: 12, borderRadius: 10, background: "#F9FAFB", border: "1px solid #E5E7EB", fontSize: 11, color: "#9CA3AF", textAlign: "center" }}>
+                No private students yet
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 200, overflowY: "auto" }}>
+                {privateStudents.map((st: any) => {
+                  const isAssigned = privAssigned.has(st.user_id);
+                  return (
+                    <button key={st.user_id} type="button" onClick={() => togglePriv(st.user_id)}
+                      style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 10, border: `1.5px solid ${isAssigned ? "#D8B4FE" : "#E5E7EB"}`, background: isAssigned ? "#F3E8FF" : "#fff", cursor: "pointer", textAlign: "left", width: "100%", transition: "all .12s" }}>
+                      <div style={{ width: 18, height: 18, borderRadius: 5, border: `2px solid ${isAssigned ? "#7C3AED" : "#D1D5DB"}`, background: isAssigned ? "#7C3AED" : "#fff", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        {isAssigned && <span style={{ color: "#fff", fontSize: 11, lineHeight: 1 }}>✓</span>}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <p style={{ fontSize: 12, fontWeight: isAssigned ? 800 : 500, color: isAssigned ? "#7C3AED" : "#374151", margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {st.full_name || "Unnamed"}
+                        </p>
+                        {st.student_id && <p style={{ fontSize: 10, color: "#9CA3AF", margin: "1px 0 0" }}>ID: {st.student_id}</p>}
+                      </div>
+                      {isAssigned && <span style={{ fontSize: 9, padding: "2px 7px", borderRadius: 9, background: "#7C3AED", color: "#fff", fontWeight: 800, flexShrink: 0 }}>Assigned</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {!ed?.id && privAssigned.size > 0 && (
+              <p style={{ fontSize: 10, color: "#7C3AED", margin: "6px 0 0", fontWeight: 700 }}>
+                ✅ {privAssigned.size} student{privAssigned.size !== 1 ? "s" : ""} will be assigned when you save.
+              </p>
+            )}
+          </div>
+
+          <button type="button" onClick={() => onSave({ ...f, level: buildLevelValue(), visibility: f.visibility }, privAssigned)} disabled={busy || !f.title || f.selectedLevels.size === 0}
+            style={{ padding: "12px", borderRadius: 12, border: "none", background: busy || !f.title || f.selectedLevels.size === 0 ? "#e5e7eb" : `linear-gradient(135deg,${G},${GM})`, color: busy || !f.title || f.selectedLevels.size === 0 ? "#9ca3af" : "#fff", fontWeight: 800, cursor: busy || !f.title || f.selectedLevels.size === 0 ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+            <Save size={14} /> {busy ? "Saving…" : ed ? "Update Subject" : "Create Subject"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+});
   const LEVELS_LIST = ["beginner", "intermediate", "advanced"] as const;
   // Parse stored level into a set — "all" means all three, comma-separated means multiple
   const parseStoredLevel = (stored?: string): Set<string> => {
@@ -818,12 +1000,23 @@ export default function CourseManagement() {
     toast({ title: "Course deleted" });
   };
 
-  const saveSubject = useCallback(async (p: any) => {
+  const saveSubject = useCallback(async (p: any, assigned?: Set<string>) => {
     setBusy(true);
     try {
       const d: any = { title: p.title, title_ar: p.title_ar || null, description: p.description || null, level: p.level, is_active: p.is_active, image_url: p.image_url || null, teacher_id: p.teacher_id || null, course_id: selCourse?.id || null, visibility: p.visibility || "all", updated_at: new Date().toISOString() };
-      const { error: subjErr } = edSubject ? await supabase.from("subjects").update(d).eq("id", edSubject.id) : await supabase.from("subjects").insert(d);
-      if (subjErr) throw subjErr;
+      if (edSubject) {
+        const { error: subjErr } = await supabase.from("subjects").update(d).eq("id", edSubject.id);
+        if (subjErr) throw subjErr;
+        // Assignments are handled live inside the modal via togglePriv — no extra work needed here
+      } else {
+        const { data: newSubj, error: subjErr } = await supabase.from("subjects").insert(d).select().single();
+        if (subjErr) throw subjErr;
+        // For new subjects, apply any pre-selected private student assignments
+        if (assigned && assigned.size > 0 && newSubj) {
+          const rows = [...assigned].map(sid => ({ student_id: sid, subject_id: (newSubj as any).id }));
+          await supabase.from("private_student_subjects" as any).insert(rows as any);
+        }
+      }
       qc.invalidateQueries({ queryKey: ["adm-subjects"] }); qc.invalidateQueries({ queryKey: ["adm-all-subjects"] });
       setShowSubject(false); setEdSubject(null); toast({ title: "✅ Subject saved" });
     } catch (e: any) { toast({ title: "Error", description: e.message, variant: "destructive" }); }
@@ -838,6 +1031,24 @@ export default function CourseManagement() {
     qc.invalidateQueries({ queryKey: ["adm-subjects"] });
     if (selSubject?.id === id) { setSelSubject(null); setView("subjects"); }
     toast({ title: "Subject deleted" });
+  };
+
+  const dupSubject = async (s: any) => {
+    const { data, error } = await supabase.from("subjects").insert({
+      title:       `${s.title} (Copy)`,
+      title_ar:    s.title_ar    || null,
+      description: s.description || null,
+      level:       s.level       || "all",
+      image_url:   s.image_url   || null,
+      teacher_id:  s.teacher_id  || null,
+      course_id:   s.course_id   || null,
+      is_active:   s.is_active   ?? true,
+      visibility:  s.visibility  || "all",
+      sort_order:  (s.sort_order ?? 0) + 1,
+    } as any).select().single();
+    if (error) { toast({ title: "Duplicate failed", description: error.message, variant: "destructive" }); return; }
+    qc.invalidateQueries({ queryKey: ["adm-subjects"] });
+    toast({ title: `"${s.title}" duplicated`, description: "Edit the copy to change its content." });
   };
 
   // 🔧 FIX #3: saveLesson payload includes "content" field + uses "subject_id"
@@ -1044,6 +1255,8 @@ export default function CourseManagement() {
                         <Thumb url={s.image_url} title={s.title} height={100} bg={lv.bg} />
                         <div style={{ position: "absolute", top: 8, right: 8, padding: "2px 8px", borderRadius: 20, background: lv.bg, color: lv.text, fontSize: 9, fontWeight: 700, border: `1px solid ${lv.border}` }}>{lv.label}</div>
                         {!s.is_active && <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,.4)", display: "flex", alignItems: "center", justifyContent: "center" }}><EyeOff size={20} color="#fff" /></div>}
+                        {s.visibility === "private" && <div style={{ position: "absolute", bottom: 8, left: 6, padding: "2px 7px", borderRadius: 20, background: "#F3E8FF", color: "#7C3AED", fontSize: 9, fontWeight: 700, border: "1px solid #D8B4FE" }}>🔒 Private</div>}
+                        {s.visibility === "general" && <div style={{ position: "absolute", bottom: 8, left: 6, padding: "2px 7px", borderRadius: 20, background: "#eff6ff", color: "#3b82f6", fontSize: 9, fontWeight: 700, border: "1px solid #bfdbfe" }}>👥 Class Only</div>}
                       </div>
                       <div style={{ padding: 12 }}>
                         <p style={{ fontWeight: 800, fontSize: 13, color: "#111", margin: "0 0 2px" }}>{s.title}</p>
@@ -1054,8 +1267,9 @@ export default function CourseManagement() {
                             style={{ flex: 1, padding: "7px", borderRadius: 8, border: `1px solid ${G}`, background: G, color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
                             <ChevronRight size={12} /> Open
                           </button>
-                          <button type="button" onClick={() => { setEdSubject(s); setShowSubject(true); }} style={{ padding: "7px 9px", borderRadius: 8, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer" }}><Edit2 size={13} color={G} /></button>
-                          <button type="button" onClick={() => delSubject(s.id)} style={{ padding: "7px 9px", borderRadius: 8, border: "1px solid #FEE2E2", background: "#FEF2F2", cursor: "pointer" }}><Trash2 size={13} color="#DC2626" /></button>
+                          <button type="button" onClick={() => { setEdSubject(s); setShowSubject(true); }} style={{ padding: "7px 9px", borderRadius: 8, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer" }} title="Edit"><Edit2 size={13} color={G} /></button>
+                          <button type="button" onClick={() => dupSubject(s)} style={{ padding: "7px 9px", borderRadius: 8, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer" }} title="Duplicate"><Copy size={13} color="#6B7280" /></button>
+                          <button type="button" onClick={() => delSubject(s.id)} style={{ padding: "7px 9px", borderRadius: 8, border: "1px solid #FEE2E2", background: "#FEF2F2", cursor: "pointer" }} title="Delete"><Trash2 size={13} color="#DC2626" /></button>
                         </div>
                       </div>
                     </div>
@@ -1206,7 +1420,7 @@ export default function CourseManagement() {
 
       {/* Modals */}
       {showCourse && <CourseModal ed={edCourse} onClose={() => { setShowCourse(false); setEdCourse(null); }} onSave={saveCourse} busy={busy} privateStudents={privateStudents} />}
-      {showSubject && <SubjectModal ed={edSubject} teachers={teachers as any[]} onClose={() => { setShowSubject(false); setEdSubject(null); }} onSave={saveSubject} busy={busy} />}      {showLesson && <LessonModal ed={edLesson} onClose={() => { setShowLesson(false); setEdLesson(null); }} onSave={saveLesson} busy={busy} />}
+      {showSubject && <SubjectModal ed={edSubject} teachers={teachers as any[]} onClose={() => { setShowSubject(false); setEdSubject(null); }} onSave={saveSubject} busy={busy} privateStudents={privateStudents} />}      {showLesson && <LessonModal ed={edLesson} onClose={() => { setShowLesson(false); setEdLesson(null); }} onSave={saveLesson} busy={busy} />}
       {showSyllabus && <SyllabusModal ed={edSyllabus} nextWeek={(syllabus as any[]).length + 1} onClose={() => { setShowSyllabus(false); setEdSyllabus(null); }} onSave={saveSyllabus} busy={busy} />}
       {showMaterial && selSubject && <MaterialModal ed={edMaterial} subjectId={selSubject.id} sortOrder={(materials as any[]).length} onClose={() => { setShowMaterial(false); setEdMaterial(null); }} onSaved={() => { setShowMaterial(false); setEdMaterial(null); qc.invalidateQueries({ queryKey: ["adm-materials", selSubject.id] }); }} />}
     </div>
