@@ -236,114 +236,81 @@ const StudentCourses = () => {
               </Link>
             </div>
 
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {subjectCourses.map((course: any) => {
                 const lessonCount = getLessonCount(course.id);
                 const completedCount = getCompletedCount(course.id);
                 const progressPct = getProgressPercent(course.id);
                 const imageUrl = getCourseImage(course);
-
+                const lvl = course.level || "beginner";
+                const lvlColors: Record<string, { bg: string; text: string; border: string }> = {
+                  beginner:     { bg: "#F0FDF4", text: "#166534", border: "#86EFAC" },
+                  intermediate: { bg: "#EFF6FF", text: "#1E40AF", border: "#93C5FD" },
+                  advanced:     { bg: "#FDF4FF", text: "#6B21A8", border: "#D8B4FE" },
+                };
+                const lc = lvlColors[lvl] ?? lvlColors.beginner;
                 return (
-                  <Card 
-                    key={course.id}                     className="overflow-hidden transition-all hover:shadow-lg bg-white border-0 shadow-md"
+                  <div key={course.id} style={{ background: "#fff", borderRadius: 16, border: `1px solid ${lc.border}`, overflow: "hidden", display: "flex", height: 116, boxShadow: "0 1px 6px rgba(0,0,0,0.05)", transition: "box-shadow .2s, transform .2s" }}
+                    onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.boxShadow = "0 6px 20px rgba(6,78,59,0.12)"; (e.currentTarget as HTMLDivElement).style.transform = "translateY(-1px)"; }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.boxShadow = "0 1px 6px rgba(0,0,0,0.05)"; (e.currentTarget as HTMLDivElement).style.transform = "translateY(0)"; }}
                   >
-                    {/* ✅ Image Section - NO TEXT OVERLAY */}
-                    <div className="h-32 relative overflow-hidden bg-gradient-to-br from-primary/10 to-secondary/10">
+                    {/* Image panel */}
+                    <div style={{ position: "relative", width: 118, flexShrink: 0, overflow: "hidden", background: lc.bg }}>
                       {imageUrl ? (
-                        <img
-                          src={imageUrl}
-                          alt={course.title}
-                          className="w-full h-full object-cover transition-opacity duration-300"
-                          loading="lazy"
-                          onError={(e) => {
-                            (e.target as HTMLImageElement).style.display = 'none';
-                            const fallback = e.currentTarget.parentElement?.querySelector('.fallback-icon');
-                            if (fallback) fallback.classList.remove('hidden');
-                          }}
+                        <img src={imageUrl} alt={course.title} loading="lazy"
+                          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "center" }}
+                          onError={e => { (e.target as HTMLImageElement).style.display = "none"; }}
                         />
                       ) : (
-                        <div className="fallback-icon flex items-center justify-center w-full h-full">
-                          <BookOpen className="h-12 w-12 text-primary/30" />
+                        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                          <BookOpen style={{ width: 26, height: 26, color: lc.text, opacity: 0.3 }} />
                         </div>
                       )}
-                      {/* Hidden fallback icon container (shown via JS on error) */}
-                      <div className="fallback-icon hidden absolute inset-0 flex items-center justify-center bg-gradient-to-br from-primary/10 to-secondary/10">
-                        <BookOpen className="h-12 w-12 text-primary/30" />
-                      </div>
+                      <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to right, transparent 55%, rgba(255,255,255,0.9))", pointerEvents: "none" }} />
                     </div>
 
-                    {/* ✅ Content Section - WHITE BACKGROUND, ARABIC FIRST, CENTERED */}
-                    <CardContent className="p-4 space-y-3 text-center">
-                      {/* Level Badge */}
-                      <div className="flex justify-center">
-                        <Badge className={levelColor(course.level || 'beginner')} variant="secondary">
-                          {levelLabel(course.level || 'beginner')}
-                        </Badge>
+                    {/* Content panel */}
+                    <div style={{ flex: 1, minWidth: 0, padding: "10px 12px", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+                      <div>
+                        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 6, marginBottom: 2 }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            {course.title_ar && (
+                              <p style={{ fontWeight: 700, fontSize: 13, color: "#111", margin: "0 0 1px", direction: "rtl", fontFamily: ARABIC_FONT, lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{course.title_ar}</p>
+                            )}
+                            <p style={{ fontWeight: course.title_ar ? 500 : 700, fontSize: course.title_ar ? 11 : 13, color: course.title_ar ? "#6B7280" : "#111", margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{course.title}</p>
+                          </div>
+                          <span style={{ flexShrink: 0, padding: "2px 7px", borderRadius: 20, fontSize: 9, fontWeight: 700, background: lc.bg, color: lc.text, border: `1px solid ${lc.border}`, whiteSpace: "nowrap" }}>{levelLabel(lvl)}</span>
+                        </div>
+                        {(course.description_ar || course.description) && (
+                          <p style={{ fontSize: 11, color: "#9CA3AF", margin: "3px 0 0", lineHeight: 1.4, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as any, overflow: "hidden" }}>
+                            {language === "ar" ? (course.description_ar || course.description) : (course.description || course.description_ar)}
+                          </p>
+                        )}
                       </div>
 
-                      {/* ✅ Arabic Title First - Tajawal Font */}
-                      {course.title_ar && (
-                        <h3 
-                          className="text-lg font-bold text-gray-800 leading-tight"
-                          style={{ fontFamily: ARABIC_FONT }}
-                          dir="rtl"
-                        >
-                          {course.title_ar}
-                        </h3>
-                      )}
-                      
-                      {/* ✅ English Title Below */}
-                      {course.title && (
-                        <h4 className="text-sm font-semibold text-gray-600">                          {course.title}
-                        </h4>
-                      )}
-
-                      {/* ✅ Arabic Description First */}
-                      {course.description_ar && (
-                        <p 
-                          className="text-xs text-gray-600 leading-relaxed line-clamp-2"
-                          style={{ fontFamily: ARABIC_FONT }}
-                          dir="rtl"
-                        >
-                          {course.description_ar}
-                        </p>
-                      )}
-
-                      {/* ✅ English Description Below */}
-                      {course.description && (
-                        <p className="text-xs text-gray-500 line-clamp-2">
-                          {course.description}
-                        </p>
-                      )}
-
-                      {/* Lesson Count */}
-                      <span className="text-xs text-muted-foreground block">
-                        {lessonCount} {language === "ar" ? "درس" : "lessons"}
-                      </span>
-
-                      {/* Progress & Action Button */}
-                      <>
+                      {/* Progress + button row */}
+                      <div style={{ marginTop: 6 }}>
                         {lessonCount > 0 && (
-                          <div className="space-y-1">
-                            <div className="flex justify-center text-xs text-muted-foreground gap-2">
-                              <span>{completedCount}/{lessonCount}</span>
-                              <span>•</span>
-                              <span>{progressPct}%</span>
+                          <div style={{ marginBottom: 6 }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#9CA3AF", marginBottom: 3 }}>
+                              <span>{completedCount}/{lessonCount} {language === "ar" ? "درس" : "lessons"}</span>
+                              <span style={{ fontWeight: 700, color: "#064E3B" }}>{progressPct}%</span>
                             </div>
-                            <Progress value={progressPct} className="h-1.5" />
+                            <div style={{ height: 4, borderRadius: 4, background: "#E5E7EB", overflow: "hidden" }}>
+                              <div style={{ height: "100%", width: `${progressPct}%`, background: "linear-gradient(90deg, #064E3B, #059669)", borderRadius: 4, transition: "width .4s ease" }} />
+                            </div>
                           </div>
                         )}
-                        <Link to={`/student/courses/${course.id}`}>
-                          <Button size="sm" className="w-full mt-2 bg-emerald-800 hover:bg-emerald-900 text-white">
-                            <Play className="h-3 w-3 me-1" />
-                            {completedCount > 0 
-                              ? (language === "ar" ? "متابعة" : "Continue") 
-                              : (language === "ar" ? "ابدأ" : "Start")}
-                          </Button>
+                        <Link to={`/student/courses/${course.id}`} style={{ textDecoration: "none" }}>
+                          <button style={{ width: "100%", padding: "6px 0", borderRadius: 8, border: "none", background: "linear-gradient(135deg, #064E3B, #075E54)", color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
+                            <Play style={{ width: 10, height: 10 }} />
+                            {completedCount > 0 ? (language === "ar" ? "متابعة" : "Continue") : (language === "ar" ? "ابدأ" : "Start")}
+                          </button>
                         </Link>
-                      </>
-                    </CardContent>
-                  </Card>                );
+                      </div>
+                    </div>
+                  </div>
+                );
               })}
             </div>
           </div>
