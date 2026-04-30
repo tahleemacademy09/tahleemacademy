@@ -222,70 +222,77 @@ const Courses = () => {
           </div>
         )}
 
-        {/* COURSE GRID */}
+        {/* COURSE LIST — horizontal cards */}
         {!isLoading && (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 24 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             {filtered.map((course: any, i: number) => {
               const imgUrl = resolveImageUrl(course.image_url);
               const lvl = LEVEL_CONFIG[course.level] ?? LEVEL_CONFIG.beginner;
               return (
-                <motion.div key={course.id} className="course-card-wrap" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.06 }}>
-
-                  {/* Image */}
-                  <div className="c-img" style={{ position: "relative", height: 200, overflow: "hidden", background: "#f3f4f6", flexShrink: 0 }}>
+                <motion.div key={course.id} initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}
+                  style={{ background: "#fff", borderRadius: 18, border: "1px solid #e5e7eb", overflow: "hidden", display: "flex", height: 130, boxShadow: "0 2px 10px rgba(0,0,0,0.06)", transition: "box-shadow .2s, transform .2s" }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.boxShadow = "0 8px 28px rgba(6,78,59,0.13)"; (e.currentTarget as HTMLDivElement).style.transform = "translateY(-2px)"; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.boxShadow = "0 2px 10px rgba(0,0,0,0.06)"; (e.currentTarget as HTMLDivElement).style.transform = "translateY(0)"; }}
+                >
+                  {/* Image panel */}
+                  <div className="c-img" style={{ position: "relative", width: 150, flexShrink: 0, overflow: "hidden" }}>
                     <CourseImage url={imgUrl} title={course.title || ""} index={i} />
+                    <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to right, transparent 55%, rgba(255,255,255,0.92))", pointerEvents: "none" }} />
                     {!course.is_published && isAdmin && (
-                      <div style={{ position: "absolute", top: 10, right: 10, background: "#F59E0B", color: "#fff", fontSize: 10, fontWeight: 700, padding: "3px 10px", borderRadius: 20, display: "flex", alignItems: "center", gap: 4 }}>
-                        <EyeOff style={{ width: 10, height: 10 }} /> DRAFT
-                      </div>
-                    )}
-                    {course.level && (
-                      <div style={{ position: "absolute", top: 10, left: 10, background: lvl.bg, color: lvl.color, fontSize: 11, fontWeight: 700, padding: "4px 12px", borderRadius: 20, display: "flex", alignItems: "center", gap: 4 }}>
-                        {lvl.icon} {lvl.label}
+                      <div style={{ position: "absolute", top: 8, left: 7, background: "#F59E0B", color: "#fff", fontSize: 9, fontWeight: 700, padding: "2px 8px", borderRadius: 20 }}>
+                        <EyeOff style={{ width: 9, height: 9, display: "inline", marginRight: 3 }} />DRAFT
                       </div>
                     )}
                     {course.category && (
-                      <div style={{ position: "absolute", bottom: 10, left: 10, background: "rgba(0,0,0,0.55)", backdropFilter: "blur(4px)", color: "#fff", fontSize: 10, padding: "3px 10px", borderRadius: 20, fontWeight: 600, letterSpacing: 0.5 }}>
+                      <div style={{ position: "absolute", bottom: 8, left: 7, background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)", color: "#fff", fontSize: 9, padding: "2px 8px", borderRadius: 20, fontWeight: 600 }}>
                         {course.category}
                       </div>
                     )}
                   </div>
 
-                  {/* Content */}
-                  <div style={{ padding: "18px 20px 20px", flex: 1, display: "flex", flexDirection: "column" }}>
-                    {course.title_ar && (
-                      <div style={{ fontFamily: "serif", fontSize: 14, color: "#D4A843", direction: "rtl", marginBottom: 4, lineHeight: 1.5 }}>
-                        {course.title_ar}
+                  {/* Content panel */}
+                  <div style={{ flex: 1, minWidth: 0, padding: "14px 16px", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+                    <div>
+                      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8, marginBottom: 3 }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          {course.title_ar && (
+                            <p style={{ fontFamily: "'Cairo',sans-serif", fontSize: 14, color: "#D4A843", direction: "rtl", margin: "0 0 2px", lineHeight: 1.4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{course.title_ar}</p>
+                          )}
+                          <h3 style={{ fontSize: 15, fontWeight: 700, color: "#064E3B", margin: 0, lineHeight: 1.3, fontFamily: "'Cormorant Garamond',serif", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {language === "ar" ? (course.title_ar || course.title) : course.title}
+                          </h3>
+                        </div>
+                        {course.level && (
+                          <span style={{ flexShrink: 0, background: lvl.bg, color: lvl.color, fontSize: 10, fontWeight: 700, padding: "3px 10px", borderRadius: 20, whiteSpace: "nowrap" }}>
+                            {lvl.icon} {lvl.label}
+                          </span>
+                        )}
                       </div>
-                    )}
-                    <h3 style={{ fontSize: 17, fontWeight: 700, color: "#064E3B", marginBottom: 6, lineHeight: 1.3, fontFamily: "'Cormorant Garamond',serif" }}>
-                      {language === "ar" ? (course.title_ar || course.title) : course.title}
-                    </h3>
-                    {course.instructor_name && (
-                      <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, color: "#6b7280", marginBottom: 8 }}>
-                        <GraduationCap style={{ width: 12, height: 12 }} />
-                        {course.instructor_name}
-                      </div>
-                    )}
-                    <p style={{ fontSize: 13, color: "#6b7280", lineHeight: 1.65, flex: 1, display: "-webkit-box" as any, WebkitLineClamp: 3, WebkitBoxOrient: "vertical" as any, overflow: "hidden" }}>
-                      {language === "ar" ? (course.description_ar || course.description || "") : (course.description || "")}
-                    </p>
-                    <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid #f3f4f6", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                      {course.instructor_name && (
+                        <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#9ca3af", marginBottom: 4 }}>
+                          <GraduationCap style={{ width: 11, height: 11 }} />{course.instructor_name}
+                        </div>
+                      )}
+                      <p style={{ fontSize: 12, color: "#6b7280", lineHeight: 1.55, margin: 0, display: "-webkit-box" as any, WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as any, overflow: "hidden" }}>
+                        {language === "ar" ? (course.description_ar || course.description || "") : (course.description || "")}
+                      </p>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 8 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                        <Star style={{ width: 12, height: 12, color: "#D4A843", fill: "#D4A843" }} />
-                        <span style={{ fontSize: 11, color: "#9ca3af" }}>All Levels Welcome</span>
+                        <Star style={{ width: 11, height: 11, color: "#D4A843", fill: "#D4A843" }} />
+                        <span style={{ fontSize: 10, color: "#9ca3af" }}>All Levels Welcome</span>
                       </div>
                       {isAdmin ? (
-                        <div style={{ display: "flex", gap: 6 }}>
-                          <button onClick={() => openEdit(course)} style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid #e5e7eb", background: "#fff", fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 4, color: "#374151" }}>
-                            <Edit style={{ width: 11, height: 11 }} />{t("Edit", "تعديل")}
+                        <div style={{ display: "flex", gap: 5 }}>
+                          <button onClick={() => openEdit(course)} style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid #e5e7eb", background: "#F0FDF4", fontSize: 11, cursor: "pointer", display: "flex", alignItems: "center", gap: 3, color: "#064E3B", fontWeight: 600 }}>
+                            <Edit style={{ width: 10, height: 10 }} />{t("Edit", "تعديل")}
                           </button>
-                          <button onClick={() => setDeleteId(course.id)} style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid #fee2e2", background: "#fff5f5", fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 4, color: "#ef4444" }}>
-                            <Trash2 style={{ width: 11, height: 11 }} />{t("Delete", "حذف")}
+                          <button onClick={() => setDeleteId(course.id)} style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid #fee2e2", background: "#fff5f5", fontSize: 11, cursor: "pointer", display: "flex", alignItems: "center", gap: 3, color: "#ef4444", fontWeight: 600 }}>
+                            <Trash2 style={{ width: 10, height: 10 }} />{t("Delete", "حذف")}
                           </button>
                         </div>
                       ) : (
-                        <a href="/register" style={{ padding: "7px 18px", borderRadius: 8, background: "#064E3B", color: "#fff", fontSize: 12, fontWeight: 700, textDecoration: "none", display: "inline-block" }}>
+                        <a href="/register" style={{ padding: "7px 18px", borderRadius: 8, background: "linear-gradient(135deg,#064E3B,#075E54)", color: "#fff", fontSize: 12, fontWeight: 700, textDecoration: "none" }}>
                           {t("Enroll", "التسجيل")} →
                         </a>
                       )}
