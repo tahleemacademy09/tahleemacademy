@@ -223,9 +223,16 @@ const StudentDashboard = () => {
       if (!isImpersonating) await refreshProfile().catch(() => {});
       try {
         const uid = effectiveUserId;
+
+        // ── iOS-safe timeout: 13 simultaneous queries can hang on slow
+        // cellular. Race the whole batch against a 12-second deadline so
+        // the spinner never freezes forever on iPhone.
+        const withTimeout = <T,>(p: Promise<T>, ms = 12000): Promise<T> =>
+          Promise.race([p, new Promise<T>((_, rej) => setTimeout(() => rej(new Error("timeout")), ms))]);
+
         const [enrollRes, gradedAttemptsRes, pendingAttemptsRes, notifsRes, assignmentsRes,
           recentRes, allAttemptsRes, subjectsRes, calendarExamsRes, subAssignmentsRes, ttRes,
-          hifdhAssignRes, hifdhLogRes] = await Promise.all([
+          hifdhAssignRes, hifdhLogRes] = await withTimeout(Promise.all([
           supabase.from("enrollments").select("id").eq("user_id", uid),
           supabase.from("exam_attempts").select("percentage").eq("user_id", uid).eq("status", "graded"),
           supabase.from("exam_attempts").select("id").eq("user_id", uid).eq("status", "submitted"),
@@ -239,7 +246,7 @@ const StudentDashboard = () => {
           supabase.from("subject_timetable" as any).select("*, subjects(id, title, title_ar)").eq("day_of_week", new Date().getDay()).eq("is_active", true).order("start_time"),
           (supabase as any).from("hifdh_daily_assignments").select("*").eq("student_id", uid).eq("active", true).maybeSingle(),
           (supabase as any).from("hifdh_daily_logs").select("*").eq("student_id", uid).eq("log_date", new Date().toISOString().split("T")[0]).maybeSingle(),
-        ]);
+        ]));
       const gradedAttempts = gradedAttemptsRes.data || [];
       const avg = gradedAttempts.length > 0 ? gradedAttempts.reduce((s, a) => s + (Number(a.percentage) || 0), 0) / gradedAttempts.length : 0;
       const totalGP = gradedAttempts.reduce((sum, a) => sum + gradePoint(Number(a.percentage) || 0), 0);
