@@ -937,6 +937,22 @@ export default function CourseManagement() {
     }, { replace: true });
   };
 
+  // Atomically sets course + view=subjects in ONE setSearchParams call.
+  // This prevents the race condition where calling setSelCourse() and setView()
+  // separately both read the same stale `prev`, causing the `course` param to
+  // be silently dropped — which makes a page refresh fall back to courses list.
+  const openSubjectsView = (c: any) => {
+    setSelCourseState(c);
+    setViewState("subjects");
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev);
+      p.set("view", "subjects");
+      if (c) p.set("course", c.id); else p.delete("course");
+      p.delete("subject");
+      return p;
+    }, { replace: true });
+  };
+
   const [search, setSearch] = useState("");
   const [lvlFilter, setLvlFilter] = useState<Level>("all");
   const [sortBy, setSortBy] = useState<SortKey>("sort_order");
@@ -1277,25 +1293,36 @@ export default function CourseManagement() {
         {view === "courses" && (
           cLoad ? <div style={{ textAlign: "center", padding: 40 }}><Loader2 size={28} style={{ animation: "spin .8s linear infinite", color: G }} /></div>
             : fCourses.length === 0 ? <div style={{ textAlign: "center", padding: 40, color: "#9CA3AF" }}><FolderOpen size={48} style={{ margin: "0 auto 12px", display: "block" }} /><p>No courses yet. Create your first course above.</p></div>
-              : <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(280px,1fr))", gap: 14 }}>
+              : <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {fCourses.map((c: any) => {
                   const lv = lvlCfg[(c.level as Level) || "all"];
                   return (
-                    <div key={c.id} className="chov" style={{ background: "#fff", borderRadius: 16, border: `1px solid ${lv.border}`, overflow: "hidden" }}>
-                      <div style={{ position: "relative", cursor: "pointer" }} onClick={() => { setSelCourse(c); setView("subjects"); }}>
-                        <Thumb url={c.image_url} title={c.title} height={120} bg={lv.bg} />
-                        <div style={{ position: "absolute", top: 8, right: 8, padding: "3px 10px", borderRadius: 20, background: lv.bg, color: lv.text, fontSize: 10, fontWeight: 700, border: `1px solid ${lv.border}` }}>{lv.label}</div>                        {!c.is_published && <div style={{ position: "absolute", top: 8, left: 8, padding: "3px 10px", borderRadius: 20, background: "#FEF2F2", color: "#DC2626", fontSize: 10, fontWeight: 700, border: "1px solid #FECACA" }}>Draft</div>}{c.visibility === "private" && <div style={{ position: "absolute", bottom: 8, left: 8, padding: "2px 8px", borderRadius: 20, background: "#F3E8FF", color: "#7C3AED", fontSize: 10, fontWeight: 700, border: "1px solid #D8B4FE" }}>🔒 Private</div>}{c.visibility === "general" && <div style={{ position: "absolute", bottom: 8, left: 8, padding: "2px 8px", borderRadius: 20, background: "#eff6ff", color: "#3b82f6", fontSize: 10, fontWeight: 700, border: "1px solid #bfdbfe" }}>👥 Class Only</div>}
+                    <div key={c.id} className="chov" style={{ background: "#fff", borderRadius: 16, border: `1px solid ${lv.border}`, overflow: "hidden", display: "flex", height: 120, boxShadow: "0 1px 6px rgba(0,0,0,0.06)", transition: "box-shadow .2s, border-color .2s" }}
+                      onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.boxShadow = "0 4px 18px rgba(6,78,59,0.13)"; (e.currentTarget as HTMLDivElement).style.borderColor = `${G}55`; }}
+                      onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.boxShadow = "0 1px 6px rgba(0,0,0,0.06)"; (e.currentTarget as HTMLDivElement).style.borderColor = lv.border; }}
+                    >
+                      <div style={{ position: "relative", width: 130, flexShrink: 0, overflow: "hidden", background: lv.bg, cursor: "pointer" }} onClick={() => openSubjectsView(c)}>
+                        <SubjThumb url={c.image_url} title={c.title} bg={lv.bg} />
+                        <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to right, transparent 55%, rgba(255,255,255,0.85))", pointerEvents: "none" }} />
+                        {!c.is_published && <div style={{ position: "absolute", top: 6, left: 5, padding: "2px 7px", borderRadius: 20, background: "#FEF2F2", color: "#DC2626", fontSize: 8, fontWeight: 700, border: "1px solid #FECACA" }}>Draft</div>}
+                        {c.visibility === "private" && <div style={{ position: "absolute", bottom: 6, left: 5, padding: "2px 6px", borderRadius: 20, background: "#F3E8FF", color: "#7C3AED", fontSize: 8, fontWeight: 700, border: "1px solid #D8B4FE" }}>🔒 Private</div>}
+                        {c.visibility === "general" && <div style={{ position: "absolute", bottom: 6, left: 5, padding: "2px 6px", borderRadius: 20, background: "#eff6ff", color: "#3b82f6", fontSize: 8, fontWeight: 700, border: "1px solid #bfdbfe" }}>👥 Class</div>}
                       </div>
-                      <div style={{ padding: 14 }}>
-                        <p style={{ fontWeight: 800, fontSize: 14, color: "#111", margin: "0 0 2px", cursor: "pointer" }} onClick={() => { setSelCourse(c); setView("subjects"); }}>{c.title}</p>
-                        {c.title_ar && <p style={{ fontWeight: 600, fontSize: 12, color: GOLD, margin: "0 0 4px", direction: "rtl", fontFamily: "'Amiri',serif" }}>{c.title_ar}</p>}
-                        {c.description && <p style={{ fontSize: 12, color: "#9CA3AF", margin: "0 0 10px", lineHeight: 1.5 }}>{c.description.slice(0, 80)}{c.description.length > 80 ? "…" : ""}</p>}
-                        <div style={{ display: "flex", gap: 6 }}>
-                          <button type="button" onClick={() => { setSelCourse(c); setView("subjects"); }} style={{ flex: 1, padding: "7px", borderRadius: 8, border: `1px solid ${G}`, background: G, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
+                      <div style={{ flex: 1, minWidth: 0, padding: "11px 13px", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+                        <div>
+                          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 6, marginBottom: 2 }}>
+                            <p style={{ fontWeight: 800, fontSize: 14, color: "#111", margin: 0, lineHeight: 1.25, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: "pointer" }} onClick={() => openSubjectsView(c)}>{c.title}</p>
+                            <span style={{ flexShrink: 0, padding: "2px 8px", borderRadius: 20, fontSize: 9, fontWeight: 700, background: lv.bg, color: lv.text, border: `1px solid ${lv.border}`, whiteSpace: "nowrap" }}>{lv.label}</span>
+                          </div>
+                          {c.title_ar && <p style={{ fontWeight: 600, fontSize: 11, color: GOLD, margin: "0 0 3px", direction: "rtl", fontFamily: "'Amiri',serif", lineHeight: 1.3 }}>{c.title_ar}</p>}
+                          {c.description && <p style={{ fontSize: 11, color: "#6B7280", margin: 0, lineHeight: 1.45, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as any, overflow: "hidden" }}>{c.description}</p>}
+                        </div>
+                        <div style={{ display: "flex", gap: 5, marginTop: 8 }}>
+                          <button type="button" onClick={() => openSubjectsView(c)} style={{ flex: 1, padding: "6px 8px", borderRadius: 8, border: "none", background: `linear-gradient(135deg,${G},#075E54)`, color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
                             <Layers size={12} /> Manage
                           </button>
-                          <button type="button" onClick={() => { setEdCourse(c); setShowCourse(true); }} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer" }}><Edit2 size={13} color={G} /></button>
-                          <button type="button" onClick={() => delCourse(c.id)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #FEE2E2", background: "#FEF2F2", cursor: "pointer" }}><Trash2 size={13} color="#DC2626" /></button>
+                          <button type="button" onClick={() => { setEdCourse(c); setShowCourse(true); }} style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${G}22`, background: "#F0FDF4", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }} title="Edit"><Edit2 size={13} color={G} /></button>
+                          <button type="button" onClick={() => delCourse(c.id)} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #FEE2E2", background: "#FEF2F2", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }} title="Delete"><Trash2 size={13} color="#DC2626" /></button>
                         </div>
                       </div>
                     </div>
