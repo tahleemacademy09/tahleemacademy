@@ -1,8 +1,8 @@
 {
   "name": "Tahleem Academy",
   "short_name": "Tahleem",
-  "description": "Online Quran, Tajweed, Arabic Language &amp;amp; Islamic Sciences",
-  "start_url": "/Tahleemacademy.vercel.app ",
+  "description": "Online Quran, Tajweed, Arabic Language & Islamic Sciences",
+  "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
