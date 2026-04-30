@@ -145,6 +145,8 @@ const App = () => (
             <RecordingPlayerProvider>
             <LiveClassProvider>
             <ErrorBoundary>
+              <AppNotifications />
+              <IdleWarningModal />
               <Suspense fallback={
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
                   <div style={{ width: 32, height: 32, borderRadius: "50%", border: "3px solid #064E3B", borderTopColor: "transparent", animation: "spin .7s linear infinite" }} />
@@ -289,8 +291,6 @@ const App = () => (
             <Suspense fallback={null}>
               <GlobalClassroomOverlay />
             </Suspense>
-            <AppNotifications />
-            <IdleWarningModal />
             </LiveClassProvider>
             </RecordingPlayerProvider>
           </BrowserRouter>
