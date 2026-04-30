@@ -157,7 +157,7 @@ const Index = () => {
       .ta-footer-copy { font-size:11px; color:rgba(255,255,255,.22); letter-spacing:.3px; }
 
       /* ENROLL GUIDE */
-      .ta-guide { background:rgba(0,0,0,.62); backdrop-filter:blur(18px); border:1px solid rgba(201,151,58,.22); border-radius:10px; padding:22px 24px; max-width:420px; width:100%; margin-top:6px; animation:fadeUp .3s ease both; text-align:left; }
+      .ta-guide { background:rgba(0,0,0,.62); -webkit-backdrop-filter:blur(18px); backdrop-filter:blur(18px); border:1px solid rgba(201,151,58,.22); border-radius:10px; padding:22px 24px; max-width:420px; width:100%; margin-top:6px; animation:fadeUp .3s ease both; text-align:left; }
       .ta-guide-title { font-size:10px; font-weight:800; color:#c9973a; letter-spacing:2px; text-transform:uppercase; margin-bottom:16px; }
       .ta-guide-step { display:flex; gap:12px; align-items:flex-start; margin-bottom:12px; }
       .ta-guide-num { width:26px; height:26px; border-radius:50%; background:#c9973a; color:#fff; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:800; flex-shrink:0; }
