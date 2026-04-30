@@ -38,12 +38,25 @@ export const usePaymentAccess = (): PaymentAccessResult => {
     if (isStaff) { setStatus("active"); setIsLoading(false); return; }
 
     setIsLoading(true);
+
+    // ── iOS timeout guard ─────────────────────────────────────────────────
+    // Fail-open after 6 seconds: grant grace access rather than hanging forever.
+    let didTimeout = false;
+    const timeoutId = setTimeout(() => {
+      didTimeout = true;
+      console.warn("[usePaymentAccess] fetch timed out — defaulting to grace");
+      setStatus("grace");
+      setIsLoading(false);
+    }, 6000);
+
     try {
       const { data } = await supabase
         .from("profiles")
         .select("payment_status, subscription_end_date, is_payment_exempt, created_at")
         .eq("user_id", user.id)
         .maybeSingle();
+
+      if (didTimeout) return; // timeout already resolved
 
       if (!data) {
         // Profile not yet created — grant grace while it loads
@@ -104,10 +117,10 @@ export const usePaymentAccess = (): PaymentAccessResult => {
 
       setStatus("locked");
     } catch {
-      // Fail-open: never hard-lock on a network error
-      setStatus("grace");
+      if (!didTimeout) { setStatus("grace"); }
     } finally {
-      setIsLoading(false);
+      clearTimeout(timeoutId);
+      if (!didTimeout) { setIsLoading(false); }
     }
   }, [user, isStaff]);
 
