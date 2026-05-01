@@ -134,6 +134,7 @@ const InfoRow = ({ label, value }: { label: string; value: string }) => (
 
 // ─────────────────────────────────────────────────────────────────────────────
 const LevelAssignment = () => {
+  const { data: academicLevels = [] } = useAcademicLevels();
   const { toast }    = useToast();
   const navigate     = useNavigate();
   // Dynamic levels from the academic_levels table — replaces the
@@ -142,7 +143,7 @@ const LevelAssignment = () => {
   const { data: dbLevels } = useAcademicLevels();
   const LEVELS_DYNAMIC: string[] = (dbLevels?.length
     ? dbLevels.map((l) => l.slug)
-    : ["beginner", "intermediate", "advanced"]);
+    : academicLevels.map(l => l.slug));
   const [students, setStudents]     = useState<StudentEval[]>([]);
   const [loading, setLoading]       = useState(true);
   const [filter, setFilter]         = useState<"pending" | "approved" | "all">("all");
