@@ -25,15 +25,19 @@ export interface PaymentAccessResult {
 const GRACE_DAYS = 7;
 
 export const usePaymentAccess = (): PaymentAccessResult => {
-  const { user, hasRole } = useAuth();
+  const { user, hasRole, loading: authLoading } = useAuth();
   const [status, setStatus]     = useState<AccessStatus>("loading");
   const [graceEnd, setGraceEnd] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Admins and teachers always bypass payment checks
-  const isStaff = hasRole("admin") || hasRole("teacher");
+  // Admins and teachers always bypass payment checks.
+  // IMPORTANT: evaluate isStaff only after auth has finished loading so that
+  // roles[] is populated. Before that, hasRole() always returns false.
+  const isStaff = !authLoading && (hasRole("admin") || hasRole("teacher"));
 
   const fetchStatus = useCallback(async () => {
+    // Wait for auth to finish so roles are available before checking isStaff
+    if (authLoading) return;
     if (!user) { setStatus("loading"); return; }
     if (isStaff) { setStatus("active"); setIsLoading(false); return; }
 
@@ -122,7 +126,7 @@ export const usePaymentAccess = (): PaymentAccessResult => {
       clearTimeout(timeoutId);
       if (!didTimeout) { setIsLoading(false); }
     }
-  }, [user, isStaff]);
+  }, [user, isStaff, authLoading]);
 
   useEffect(() => { fetchStatus(); }, [fetchStatus]);
 
