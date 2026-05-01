@@ -26,7 +26,7 @@ const MATERIAL_TYPES = ["PDF", "Video", "Audio", "Link", "Text", "Image", "Docum
 type MatType = typeof MATERIAL_TYPES[number];
 
 // ── Helpers ─────────────────────────────────────────────
- text: string; border: string; dot: string }> = {
+const LEVEL_COLORS_STATIC: Record<string, { bg: string; text: string; border: string; dot: string }> = {
   beginner:     { bg: "#F0FDF4", text: "#166534", border: "#86EFAC", dot: "#22C55E" },
   intermediate: { bg: "#EFF6FF", text: "#1E40AF", border: "#93C5FD", dot: "#3B82F6" },
   advanced:     { bg: "#FDF4FF", text: "#6B21A8", border: "#D8B4FE", dot: "#A855F7" },
