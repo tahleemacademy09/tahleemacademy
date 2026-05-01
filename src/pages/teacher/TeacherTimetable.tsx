@@ -52,7 +52,8 @@ export default function TeacherTimetable() {
   const { user }        = useAuth();
   const { t, language } = useLanguage();
   const { data: academicLevels = [] } = useAcademicLevels();
-  
+  const levelColors = Object.fromEntries(academicLevels.map(l => {
+    const cfg = getLevelConfig(l.slug, academicLevels);
     return [l.slug, { bg: cfg.bg, text: cfg.color, border: cfg.border }];
   }));
   const navigate        = useNavigate();
