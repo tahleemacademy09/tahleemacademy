@@ -2,7 +2,13 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
+  // Only allow requests from the production domain (and local dev)
+  "Access-Control-Allow-Origin":
+    ["https://tahleemacademy.vercel.app", "http://localhost:5173"].includes(
+      new URL(req.url).searchParams.get("_origin") ?? ""
+    )
+      ? (new URL(req.url).searchParams.get("_origin") as string)
+      : "https://tahleemacademy.vercel.app",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
