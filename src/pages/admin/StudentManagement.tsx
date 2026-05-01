@@ -95,7 +95,7 @@ function PasscodeModal({ data, onClose }: { data: { passcode: string; student_id
 // ─── Create User Dialog ───────────────────────────────────────────────────────
 function CreateUserDialog({ session, onCreated, onClose }: { session: any; onCreated: (d: any) => void; onClose: () => void }) {
   const { data: academicLevels = [] } = useAcademicLevels();
-  const LEVELS = academicLevels.map(l => l.slug);: { session: any; onCreated: (d: any) => void; onClose: () => void }) {
+  const LEVELS = academicLevels.map(l => l.slug);
   const { toast } = useToast();
   const [form, setForm]     = useState({ email: "", full_name: "", full_name_ar: "", role: "student" as string, level: "", student_type: "general" as string });
   const [creating, setCreating] = useState(false);
