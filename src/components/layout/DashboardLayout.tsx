@@ -179,6 +179,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     // 1 ── Student Pipeline ─────────────────────────────────────
     { type:"group", key:"pipeline", icon:UserPlus, label:t("Student Pipeline","سير التسجيل"), children:[
       { to:"/admin/level-assignment",      icon:GraduationCap, label:t("New Registrations","الطلاب الجدد") },
+      { to:"/admin/levels",                icon:Layers,        label:t("Manage Levels","إدارة المستويات") },
       { to:"/admin/tasjeel",               icon:ClipboardList, label:t("Pipeline Tracker","متابعة التسجيل") },
       { to:"/admin/registration-settings", icon:Settings,      label:t("Reg. Settings","إعدادات التسجيل") },
     ]},
