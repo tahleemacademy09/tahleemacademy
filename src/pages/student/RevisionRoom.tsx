@@ -5,6 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAcademicLevels, getLevelConfig, getLevelDisplay } from "@/hooks/useAcademicLevels";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -640,7 +641,7 @@ Make questions educational and progressively challenging.`
             <ChevronDown size={14} color="rgba(255,255,255,0.6)" />
           </div>
           <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
-            {["beginner", "intermediate", "advanced"].map(lvl => {
+            {academicLevels.map(lvl_obj => { const lvl = lvl_obj.slug;
               const subs = subjectsByLevel[lvl] || [];
               const isExpanded = expandedLevels[lvl];
               const cfg = {
