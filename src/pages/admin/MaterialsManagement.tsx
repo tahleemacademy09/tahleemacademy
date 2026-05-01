@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAcademicLevels, getLevelConfig, getLevelDisplay } from "@/hooks/useAcademicLevels";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -19,19 +20,12 @@ import {
 
 // ── Constants ──────────────────────────────────────────────────────────────
 const MATERIAL_TYPES = ["PDF", "Video", "Audio", "Image", "Document"] as const;
-const LEVELS = ["all", "beginner", "intermediate", "advanced"] as const;
 type MaterialType = (typeof MATERIAL_TYPES)[number];
-type Level = (typeof LEVELS)[number];
 
 const BUCKET = "subject-materials";
 
 // ── Level display helper ───────────────────────────────────────────────────
-const LEVEL_LABELS: Record<string, string> = {
-  all:          "All Levels",
-  beginner:     "Beginner",
-  intermediate: "Intermediate",
-  advanced:     "Advanced",
-};
+
 
 const LEVEL_COLORS: Record<string, { bg: string; color: string; border: string }> = {
   all:          { bg: "#F0FDF4", color: "#166534", border: "#86EFAC" },
@@ -513,6 +507,12 @@ function BatchFileRow({
 
 // ── Main Component ─────────────────────────────────────────────────────────
 export default function MaterialsManagement() {
+  const { data: academicLevels = [] } = useAcademicLevels();
+  const LEVELS = ["all", ...academicLevels.map(l => l.slug)];
+  const LEVEL_LABELS = Object.fromEntries([
+    ["all", "All Levels"],
+    ...academicLevels.map(l => [l.slug, l.name_en]),
+  ]);
   const { subjectId } = useParams<{ subjectId: string }>();
   const { user } = useAuth();
   const navigate = useNavigate();
