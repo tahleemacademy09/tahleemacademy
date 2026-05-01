@@ -87,12 +87,14 @@ export function useTasjeel() {
     // On iOS, WebKit can stall concurrent connections to the same host.
     // Without a timeout, this query hangs indefinitely, keeping tasjeelLoading=true
     // which gates the StudentDashboard spinner forever (looks like blank screen).
-    // After 6 seconds we fall back to "completed" so students always see the dashboard.
+    // SECURITY: we use a dedicated "timeout" state rather than "completed" so that
+    // TasjeelGuard can show a retry prompt rather than silently granting dashboard
+    // access to students who haven't finished the registration pipeline.
     let didTimeout = false;
     const timeoutId = setTimeout(() => {
       didTimeout = true;
-      console.warn("[useTasjeel] fetch timed out — defaulting to completed");
-      setCurrentStep("completed");
+      console.warn("[useTasjeel] fetch timed out — showing retry screen");
+      setCurrentStep("timeout");
       setLoading(false);
     }, 6000);
 
@@ -108,7 +110,7 @@ export function useTasjeel() {
       }
     } catch {
       if (!didTimeout) {
-        setCurrentStep("completed");
+        setCurrentStep("timeout");
       }
     } finally {
       clearTimeout(timeoutId);
