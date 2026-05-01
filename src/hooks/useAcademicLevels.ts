@@ -126,3 +126,26 @@ export function getLevelDisplay(
   };
   return legacy[slug] ?? { name_ar: slug, name_en: slug };
 }
+// ─── Color / emoji palette — cycles for any number of levels ───────────────
+const LEVEL_PALETTE = [
+  { color: "#0E7490", bg: "#ECFEFF", border: "#67E8F9", emoji: "📚", dot: "🔵" },
+  { color: "#16A34A", bg: "#F0FDF4", border: "#86EFAC", emoji: "🌱", dot: "🟢" },
+  { color: "#2563EB", bg: "#EFF6FF", border: "#93C5FD", emoji: "📖", dot: "🔵" },
+  { color: "#7C3AED", bg: "#F5F3FF", border: "#C4B5FD", emoji: "⭐", dot: "🟣" },
+  { color: "#B45309", bg: "#FFFBEB", border: "#FCD34D", emoji: "🎓", dot: "🟡" },
+  { color: "#DC2626", bg: "#FEF2F2", border: "#FCA5A5", emoji: "🏆", dot: "🔴" },
+];
+
+/** Returns color/bg/border/emoji for a given slug, using sort_order index. */
+export function getLevelConfig(
+  slug: string | null | undefined,
+  levels: AcademicLevel[] | undefined,
+): { color: string; bg: string; border: string; emoji: string; dot: string } {
+  const idx = levels?.findIndex((l) => l.slug === slug) ?? -1;
+  if (idx >= 0) return LEVEL_PALETTE[idx % LEVEL_PALETTE.length];
+  const fallback: Record<string, number> = {
+    tamhidi: 0, beginner: 1, intermediate: 2, advanced: 3,
+  };
+  const fi = slug ? (fallback[slug] ?? 0) : 0;
+  return LEVEL_PALETTE[fi % LEVEL_PALETTE.length];
+}
