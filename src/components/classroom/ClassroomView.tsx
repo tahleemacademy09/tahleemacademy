@@ -26,6 +26,7 @@ import {
   Circle, Loader2, X, Smile, Play, Pause,
   Volume2, ChevronDown, Users, Eye,
   LayoutGrid, AlignJustify, Columns, Rows, Maximize2, Minimize2,
+  SwitchCamera, Settings, Check, Wifi,
 } from "lucide-react";
 import ClassLobby        from "./ClassLobby";
 import ClassChatPanel    from "./ClassChatPanel";
@@ -221,9 +222,11 @@ const MediaAutoPublish = ({ lobbyMic = false, lobbyCam = false }: { lobbyMic?: b
 };
 
 /* ══ ROOM DATA LISTENER ══ */
-const RoomDataListener = ({ onWbOpen,onWbClose,strokesBuffer,onMatOpen,onMatClose,onWbAllowWrite,onRecAllowed,onEmojiReact,onGroupRecite,onHandRaise,onAdminMuteAll }:any) => {
+const RoomDataListener = ({ onWbOpen,onWbClose,strokesBuffer,onMatOpen,onMatClose,onWbAllowWrite,onRecAllowed,onEmojiReact,onGroupRecite,onHandRaise,onAdminMuteAll,onClassEnded }:any) => {
   const room = useRoomContext();
   useEffect(() => {
+    // Expose room to window so endSession's disconnect() call can reach it
+    (window as any).__lkRoom__ = room;
     const h = (payload:Uint8Array,participant?:any) => {
       try {
         const msg = JSON.parse(new TextDecoder().decode(payload));
@@ -239,10 +242,11 @@ const RoomDataListener = ({ onWbOpen,onWbClose,strokesBuffer,onMatOpen,onMatClos
         if(msg.type==="group_recite")     onGroupRecite?.(msg.active);
         if(msg.type==="hand_raise")       onHandRaise?.(msg.identity||participant?.identity, msg.name, msg.raised);
         if(msg.type==="admin_mute_all")   onAdminMuteAll?.();
+        if(msg.type==="class_ended")      onClassEnded?.();
       } catch {}
     };
     room.on(RoomEvent.DataReceived,h);
-    return ()=>{ room.off(RoomEvent.DataReceived,h); };
+    return ()=>{ room.off(RoomEvent.DataReceived,h); delete (window as any).__lkRoom__; };
   },[room]);
   return null;
 };
@@ -1430,6 +1434,183 @@ const RecController=({sessionId,subjectId,userEmail,onSavingChange,stopRecRef}:a
   </div>);
 };
 
+/* ══ ROOM SETTINGS MODAL ══
+   Device picker: mic, speaker, camera (front/back), video quality.
+   Adapted from ClassControls SettingsModal — unified UX across both views. */
+const RoomSettingsModal = ({ onClose, room }: { onClose: () => void; room: any }) => {
+  const [tab, setTab] = useState<"audio" | "video">("audio");
+  const [audioIn,    setAudioIn]    = useState<MediaDeviceInfo[]>([]);
+  const [audioOut,   setAudioOut]   = useState<MediaDeviceInfo[]>([]);
+  const [videoIn,    setVideoIn]    = useState<MediaDeviceInfo[]>([]);
+  const [selAudioIn,  setSelAudioIn]  = useState("");
+  const [selAudioOut, setSelAudioOut] = useState("");
+  const [selVideoIn,  setSelVideoIn]  = useState("");
+  const [quality,    setQuality]    = useState<"low"|"medium"|"high">("medium");
+
+  useEffect(() => {
+    (async () => {
+      try { await navigator.mediaDevices.getUserMedia({ audio: true }); } catch {}
+      const all = await navigator.mediaDevices.enumerateDevices();
+      setAudioIn(all.filter(d => d.kind === "audioinput"));
+      setAudioOut(all.filter(d => d.kind === "audiooutput"));
+      setVideoIn(all.filter(d => d.kind === "videoinput"));
+      try {
+        const mic = await room.getActiveDevice("audioinput"); if (mic) setSelAudioIn(mic);
+        const spk = await room.getActiveDevice("audiooutput"); if (spk) setSelAudioOut(spk);
+        const cam = await room.getActiveDevice("videoinput"); if (cam) setSelVideoIn(cam);
+      } catch {}
+    })();
+  }, [room]);
+
+  const switchDevice = async (kind: MediaDeviceKind, deviceId: string) => {
+    try {
+      await room.switchActiveDevice(kind, deviceId);
+      if (kind === "audioinput")  setSelAudioIn(deviceId);
+      if (kind === "audiooutput") setSelAudioOut(deviceId);
+      if (kind === "videoinput")  setSelVideoIn(deviceId);
+      toast({ title: "Device switched ✓" });
+    } catch (e: any) {
+      toast({ title: "Failed to switch device", description: e?.message, variant: "destructive" });
+    }
+  };
+
+  const applyQuality = async (q: "low"|"medium"|"high") => {
+    setQuality(q);
+    const bitrate = q === "low" ? 150_000 : q === "medium" ? 700_000 : 2_500_000;
+    const fps     = q === "low" ? 15 : q === "medium" ? 20 : 30;
+    try {
+      for (const pub of Array.from(room.localParticipant.trackPublications.values()) as any[]) {
+        if (pub.track?.kind === "video" && pub.source !== Track.Source.ScreenShare) {
+          const sender = (pub.track as any)?.sender;
+          if (sender) {
+            const params = sender.getParameters();
+            if (params.encodings?.length) {
+              params.encodings[0].maxBitrate   = bitrate;
+              params.encodings[0].maxFramerate = fps;
+              await sender.setParameters(params);
+            }
+          }
+        }
+      }
+      toast({ title: `Quality set to ${q}` });
+    } catch {}
+  };
+
+  const DeviceRow = ({ device, selected, onClick }: { device: MediaDeviceInfo; selected: boolean; onClick: () => void }) => (
+    <button onClick={onClick} style={{
+      display: "flex", alignItems: "center", gap: 10, padding: "10px 12px",
+      borderRadius: 10, border: "1px solid",
+      borderColor: selected ? "#22c55e" : "rgba(255,255,255,.1)",
+      background:  selected ? "rgba(34,197,94,.12)" : "rgba(255,255,255,.03)",
+      cursor: "pointer", width: "100%", marginBottom: 6,
+    }}>
+      <div style={{
+        width: 16, height: 16, borderRadius: "50%", flexShrink: 0,
+        border: `2px solid ${selected ? "#22c55e" : "rgba(255,255,255,.3)"}`,
+        background: selected ? "#22c55e" : "transparent",
+        display: "flex", alignItems: "center", justifyContent: "center",
+      }}>
+        {selected && <Check style={{ width: 9, height: 9, color: "#fff" }} />}
+      </div>
+      <span style={{ fontSize: 13, color: selected ? "#fff" : "rgba(255,255,255,.7)", textAlign: "left", flex: 1 }}>
+        {device.label || `${device.kind} — ${device.deviceId.slice(0, 8)}`}
+      </span>
+    </button>
+  );
+
+  const SectionLabel = ({ children }: { children: React.ReactNode }) => (
+    <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase" as const,
+      color: "rgba(255,255,255,.35)", letterSpacing: 1, marginBottom: 8, marginTop: 18 }}>
+      {children}
+    </div>
+  );
+
+  return createPortal(
+    <div style={{ position:"fixed",inset:0,zIndex:9999,background:"rgba(0,0,0,.65)",display:"flex",alignItems:"center",justifyContent:"center" }}
+      onClick={onClose}>
+      <div style={{ background:"#17202a",borderRadius:20,width:"min(460px,96vw)",maxHeight:"85vh",
+        display:"flex",flexDirection:"column",overflow:"hidden",boxShadow:"0 24px 64px rgba(0,0,0,.7)" }}
+        onClick={e=>e.stopPropagation()}>
+        {/* Header */}
+        <div style={{ display:"flex",alignItems:"center",padding:"18px 20px",borderBottom:"1px solid rgba(255,255,255,.07)" }}>
+          <Settings style={{ width:18,height:18,color:"rgba(255,255,255,.5)",marginRight:10 }} />
+          <span style={{ fontWeight:700,color:"#fff",fontSize:16,flex:1 }}>Settings</span>
+          <button onClick={onClose} style={{ width:32,height:32,borderRadius:"50%",background:"rgba(255,255,255,.1)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center" }}>
+            <X style={{ width:15,height:15 }} />
+          </button>
+        </div>
+        {/* Tabs */}
+        <div style={{ display:"flex",borderBottom:"1px solid rgba(255,255,255,.07)" }}>
+          {(["audio","video"] as const).map(tb=>(
+            <button key={tb} onClick={()=>setTab(tb)} style={{
+              flex:1,padding:"12px 6px",background:"none",border:"none",cursor:"pointer",
+              fontSize:13,fontWeight:tab===tb?700:400,
+              color:tab===tb?"#fff":"rgba(255,255,255,.4)",
+              borderBottom:`2px solid ${tab===tb?TEAL:"transparent"}`,transition:".15s",
+            }}>{tb==="audio"?"🎙️ Audio":"📹 Video"}</button>
+          ))}
+        </div>
+        {/* Body */}
+        <div style={{ flex:1,overflowY:"auto",padding:"4px 20px 20px" }}>
+          {tab==="audio"&&(
+            <>
+              <SectionLabel>Microphone (incl. Bluetooth)</SectionLabel>
+              {audioIn.length===0
+                ? <p style={{ fontSize:13,color:"rgba(255,255,255,.35)" }}>No microphones found</p>
+                : audioIn.map(d=><DeviceRow key={d.deviceId} device={d} selected={selAudioIn===d.deviceId} onClick={()=>switchDevice("audioinput",d.deviceId)}/>)
+              }
+              <SectionLabel>Speaker / Headset / Bluetooth</SectionLabel>
+              {audioOut.length===0
+                ? <p style={{ fontSize:13,color:"rgba(255,255,255,.35)" }}>Output switching not supported on this browser</p>
+                : audioOut.map(d=><DeviceRow key={d.deviceId} device={d} selected={selAudioOut===d.deviceId} onClick={()=>switchDevice("audiooutput",d.deviceId)}/>)
+              }
+            </>
+          )}
+          {tab==="video"&&(
+            <>
+              <SectionLabel>Camera (incl. Front / Back)</SectionLabel>
+              {videoIn.length===0
+                ? <p style={{ fontSize:13,color:"rgba(255,255,255,.35)" }}>No cameras found</p>
+                : videoIn.map(d=><DeviceRow key={d.deviceId} device={d} selected={selVideoIn===d.deviceId} onClick={()=>switchDevice("videoinput",d.deviceId)}/>)
+              }
+              <SectionLabel>Video Quality</SectionLabel>
+              <div style={{ display:"flex",gap:8 }}>
+                {(["low","medium","high"] as const).map(q=>(
+                  <button key={q} onClick={()=>applyQuality(q)} style={{
+                    flex:1,padding:"12px 4px",borderRadius:10,border:"1px solid",cursor:"pointer",
+                    fontSize:12,fontWeight:600,
+                    borderColor:quality===q?"#22c55e":"rgba(255,255,255,.12)",
+                    background: quality===q?"rgba(34,197,94,.14)":"rgba(255,255,255,.04)",
+                    color:quality===q?"#22c55e":"rgba(255,255,255,.55)",
+                  }}>
+                    {q==="low"?"Low 📶":q==="medium"?"Medium 📶📶":"High 📶📶📶"}
+                  </button>
+                ))}
+              </div>
+              <p style={{ fontSize:11,color:"rgba(255,255,255,.3)",marginTop:8,lineHeight:1.6 }}>
+                Low quality reduces data usage on slow connections.
+              </p>
+              <SectionLabel>Tips</SectionLabel>
+              {[
+                ["📱","Tap the flip button (↺) next to the camera button to switch front/back."],
+                ["🔵","Bluetooth mic/speaker: enable on your device first, then select above."],
+                ["📡","Poor connection? Lower video quality above."],
+                ["🖥️","Screen sharing works best on desktop Chrome/Edge."],
+              ].map(([icon,text],i)=>(
+                <div key={i} style={{ display:"flex",gap:12,padding:"10px 0",borderBottom:"1px solid rgba(255,255,255,.05)" }}>
+                  <span style={{ fontSize:20 }}>{icon}</span>
+                  <p style={{ fontSize:13,color:"rgba(255,255,255,.65)",lineHeight:1.65,margin:0 }}>{text}</p>
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+};
+
 /* ══ PARTICIPANT TILE ══ */
 const ParticipantTile=({participant,isLocal,size="normal"}:{participant:any;isLocal:boolean;size?:"normal"|"large"|"small"})=>{
   const videoRef=useRef<HTMLVideoElement>(null);
@@ -1579,9 +1760,12 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
   const[camOn,setCamOn]=useState(false);
   const[handUp,setHandUp]=useState(false);const[menu,setMenu]=useState(false);const[emojis,setEmojis]=useState(false);
   const[stuRec,setStuRec]=useState(false);const stuMrRef=useRef<MediaRecorder|null>(null);const stuChunks=useRef<Blob[]>([]);
+  const[showSettings,setShowSettings]=useState(false);
+  const[camFacing,setCamFacing]=useState<"user"|"environment">("user");
   // Busy guards — prevent rapid-tap race conditions (triple-press bug)
   const micBusy=useRef(false);
   const camBusy=useRef(false);
+  const flipBusy=useRef(false);
   useEffect(()=>{
     if(!room)return;
     // Read state from LiveKit directly — no fragile setTimeout hacks
@@ -1615,6 +1799,30 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
     try{await room.localParticipant.setCameraEnabled(!room.localParticipant.isCameraEnabled);}
     catch(e){console.error("toggleCam:",e);}
     finally{camBusy.current=false;}
+  };
+  const flipCamera=async()=>{
+    if(!room?.localParticipant||flipBusy.current||!camOn)return;
+    flipBusy.current=true;
+    try{
+      const devices=await navigator.mediaDevices.enumerateDevices();
+      const videoDevs=devices.filter(d=>d.kind==="videoinput");
+      if(videoDevs.length>1){
+        const current=await room.getActiveDevice("videoinput").catch(()=>null);
+        const idx=videoDevs.findIndex(d=>d.deviceId===current);
+        const next=videoDevs[(idx+1)%videoDevs.length];
+        await room.switchActiveDevice("videoinput",next.deviceId);
+        setCamFacing(f=>f==="user"?"environment":"user");
+      }else{
+        // Single logical camera — try facingMode constraint
+        const next=camFacing==="user"?"environment":"user";
+        await room.localParticipant.setCameraEnabled(false);
+        await room.localParticipant.setCameraEnabled(true,{facingMode:next} as any);
+        setCamFacing(next);
+      }
+      toast({title:camFacing==="user"?"🔄 Back camera":"🔄 Front camera"});
+    }catch(e:any){
+      toast({title:"Could not flip camera",description:e?.message,variant:"destructive"});
+    }finally{flipBusy.current=false;}
   };
   const toggleHand=async()=>{
     if(!user||!sessionId)return;
@@ -1650,8 +1858,9 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
   return(<>
     {emojis&&menuPortal&&createPortal(
       <div style={{position:"fixed",bottom:BAR_H+12,left:"50%",transform:"translateX(-50%)",background:"#1e2535",border:"1px solid rgba(255,255,255,.1)",borderRadius:44,padding:"10px 16px",display:"flex",gap:10,zIndex:9000,boxShadow:"0 8px 32px rgba(0,0,0,.6)",animation:"slide-up .2s ease"}}>
-        {["👏","🤲","❤️","😂","🌟","👍","🙏","🕌"].map(e=>(<button key={e} onClick={()=>sendEmoji(e)} style={{fontSize:28,background:"none",border:"none",cursor:"pointer",padding:"2px 4px",transition:"transform .12s"}} onMouseEnter={ev=>(ev.currentTarget.style.transform="scale(1.28)")} onMouseLeave={ev=>(ev.currentTarget.style.transform="scale(1)")}>{e}</button>))}
+        {["\uD83D\uDC4F","\uD83E\uDD32","\u2764\uFE0F","\uD83D\uDE02","\uD83C\uDF1F","\uD83D\uDC4D","\uD83D\uDE4F","\uD83D\uDD4C"].map(e=>(<button key={e} onClick={()=>sendEmoji(e)} style={{fontSize:28,background:"none",border:"none",cursor:"pointer",padding:"2px 4px",transition:"transform .12s"}} onMouseEnter={ev=>(ev.currentTarget.style.transform="scale(1.28)")} onMouseLeave={ev=>(ev.currentTarget.style.transform="scale(1)")}>{e}</button>))}
       </div>,menuPortal)}
+    {showSettings&&menuPortal&&createPortal(<RoomSettingsModal onClose={()=>setShowSettings(false)} room={room}/>,menuPortal)}
     {menu&&menuPortal&&createPortal(<div onClick={()=>setMenu(false)} style={{position:"fixed",bottom:BAR_H+10,right:14,background:"#17202a",border:"1px solid rgba(255,255,255,.08)",borderRadius:18,boxShadow:"0 8px 36px rgba(0,0,0,.65)",minWidth:230,zIndex:9000,overflow:"hidden",animation:"slide-up .18s ease"}}>
       {isPrivileged&&[
         {icon:Volume2,label:groupReciteMode?"End Group Recitation":"Group Recitation",color:groupReciteMode?GREEN:"#fff",fn:()=>onGroupRecite(room)},
@@ -1659,16 +1868,19 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
         {icon:PenTool,label:canStudentWriteProp?"Revoke Write Access":"Allow Students to Write",color:canStudentWriteProp?GREEN:"#fff",fn:()=>onPermChange?.("write",!canStudentWriteProp,room)},
         {icon:Circle,label:canStudentRecProp?"Revoke Record Permission":"Allow Students to Record",color:canStudentRecProp?GREEN:"#fff",fn:()=>onPermChange?.("rec",!canStudentRecProp,room)},
         {icon:MicOff,label:"Mute All Students",color:"#fb923c",fn:async()=>{
-          // 1. DB — so new joiners also enter muted
           await supabase.from("class_participants").update({is_muted:true}).eq("session_id",sessionId);
-          // 2. DataChannel — mutes existing participants immediately
           try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"admin_mute_all"})),{reliable:true});}catch{}
-          toast({title:"🔇 All students muted"});
+          toast({title:"\uD83D\uDD07 All students muted"});
           setMenu(false);
         }},
       ].map((item,i)=>(<button key={i} onClick={item.fn} style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"13px 18px",background:"none",border:"none",cursor:"pointer",color:item.color,fontSize:14,borderBottom:"1px solid rgba(255,255,255,.06)",textAlign:"left"as const}}><item.icon style={{width:16,height:16}}/> {item.label}</button>))}
+      {!isPrivileged&&canStudentRecProp&&(
+        <button onClick={()=>{setMenu(false);toggleStuRecord();}} style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"13px 18px",background:"none",border:"none",cursor:"pointer",color:stuRec?"#ef4444":"#fff",fontSize:14,borderBottom:"1px solid rgba(255,255,255,.06)",textAlign:"left"as const}}>
+          <Circle style={{width:14,height:14,fill:stuRec?"#ef4444":"none",color:stuRec?"#ef4444":"#fff"}}/> {stuRec?"Stop Recording":"Record Audio"}
+        </button>
+      )}
       <button onClick={()=>{setMenu(false);onToggleParticipants();}} style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"13px 18px",background:"none",border:"none",cursor:"pointer",color:"#fff",fontSize:14,borderBottom:"1px solid rgba(255,255,255,.06)",textAlign:"left"as const}}><Users style={{width:16,height:16}}/> Participants</button>
-      <button onClick={isPrivileged?onEndClass:onLeaveClass} style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"13px 18px",background:"none",border:"none",cursor:"pointer",color:RED,fontSize:14,textAlign:"left"as const}}>📵 {isPrivileged?"End Class for All":"Leave Class"}</button>
+      <button onClick={isPrivileged?onEndClass:onLeaveClass} style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"13px 18px",background:"none",border:"none",cursor:"pointer",color:RED,fontSize:14,textAlign:"left"as const}}>\uD83D\uDCF5 {isPrivileged?"End Class for All":"Leave Class"}</button>
     </div>,menuPortal)}
     <div className="cv-bar" style={{
       height:isMobile?60:BAR_H,minHeight:isMobile?60:BAR_H,
@@ -1676,15 +1888,22 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
       borderTop:"1px solid rgba(255,255,255,.07)",
       display:"flex",alignItems:"center",
       justifyContent:"flex-start",
-      gap:isMobile?5:10,
+      gap:isMobile?4:8,
       padding:`0 ${isMobile?8:16}px calc(${isMobile?4:8}px + env(safe-area-inset-bottom,0px)) ${isMobile?8:16}px`,
       flexShrink:0,
       boxShadow:"0 -4px 24px rgba(0,0,0,.45)",
       overflowX:"auto" as const,
       WebkitOverflowScrolling:"touch" as const,
     }}>
+      {/* Mic */}
       <Btn active={micOn} danger={!micOn} title={micOn?"Mute":"Unmute"} onClick={toggleMic}>{micOn?<Mic style={IS}/>:<MicOff style={IS}/>}</Btn>
+      {/* Cam */}
       <Btn active={camOn} danger={!camOn} title={camOn?"Stop Video":"Start Video"} onClick={toggleCam}>{camOn?<Video style={IS}/>:<VideoOff style={IS}/>}</Btn>
+      {/* Camera Flip — visible when camera is ON */}
+      {camOn&&<Btn title="Flip Camera (Front/Back)" onClick={flipCamera}><SwitchCamera style={{...IS,color:"rgba(255,255,255,.85)"}}/></Btn>}
+      {/* Divider */}
+      <div style={{width:1,height:28,background:"rgba(255,255,255,.12)",flexShrink:0,margin:"0 2px"}}/>
+      {/* Hand (students) / Whiteboard (teachers) */}
       {isPrivileged
         ?<Btn active={whiteboardOpen} title="Whiteboard" onClick={onToggleWhiteboard}><PenTool style={{...IS,color:whiteboardOpen?"#4ade80":"#fff"}}/></Btn>
         :<Btn active={handUp} title={handUp?"Lower Hand":"Raise Hand"} onClick={toggleHand}><Hand style={{...IS,color:handUp?"#fbbf24":"#fff"}}/></Btn>
@@ -1694,22 +1913,25 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
           <PenTool style={{...IS,color:"#34d399"}}/>
         </Btn>
       )}
+      {/* Chat */}
       <Btn onClick={onToggleChat} badge={chatUnread} title="Chat"><MessageCircle style={IS}/></Btn>
+      {/* Materials */}
       <Btn active={matPanelOpen} onClick={onToggleMaterials} title="View Materials"><Eye style={{...IS,color:matPanelOpen?"#34d399":"#fff"}}/></Btn>
+      {/* Emoji */}
       <Btn onClick={()=>setEmojis(v=>!v)} title="React"><Smile style={IS}/></Btn>
-      {!isPrivileged&&canStudentRecProp&&(
-        <Btn active={stuRec} title={stuRec?"Stop Recording":"Record"} onClick={toggleStuRecord}>
-          <Circle style={{...IS,fill:stuRec?RED:"none",color:stuRec?RED:"#fff",animation:stuRec?"rec-pulse 1.2s ease-in-out infinite":"none"}}/>
-        </Btn>
-      )}
+      {/* Settings — device picker (mic, speaker, camera front/back, quality) */}
+      <Btn onClick={()=>setShowSettings(true)} title="Audio & Video Settings"><Settings style={IS}/></Btn>
+      {/* More */}
       <Btn onClick={()=>setMenu(v=>!v)} title="More"><MoreVertical style={IS}/></Btn>
+      {/* Minimize */}
       {onMinimize&&<Btn onClick={onMinimize} title="Minimize"><ChevronDown style={IS}/></Btn>}
-      <button onClick={isPrivileged?onEndClass:onLeaveClass} style={{height:isMobile?42:52,padding:isMobile?"0 12px":"0 22px",borderRadius:26,border:"none",cursor:"pointer",background:"linear-gradient(135deg,#dc2626,#ef4444)",color:"#fff",display:"flex",alignItems:"center",gap:isMobile?4:7,fontWeight:700,fontSize:isMobile?12:14,boxShadow:"0 4px 18px rgba(239,68,68,.5)",flexShrink:0}}>
+      {/* End / Leave — pushed to the right */}
+      <button onClick={isPrivileged?onEndClass:onLeaveClass} style={{height:isMobile?42:52,padding:isMobile?"0 14px":"0 22px",borderRadius:26,border:"none",cursor:"pointer",background:"linear-gradient(135deg,#dc2626,#ef4444)",color:"#fff",display:"flex",alignItems:"center",gap:isMobile?4:7,fontWeight:700,fontSize:isMobile?12:14,boxShadow:"0 4px 18px rgba(239,68,68,.5)",flexShrink:0,marginLeft:"auto"}}>
         <Phone style={{width:17,height:17,transform:"rotate(135deg)"}}/> {isPrivileged?"End":"Leave"}
       </button>
     </div>
   </>);
-};
+}};
 const BottomBarBridge=(props:any)=>{const room=useRoomContext();const isMobile=useIsMobile();return<BottomBar {...props} room={room} isMobile={isMobile}/>;};
 
 /* ══ MAIN ══ */
@@ -1828,6 +2050,24 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[autoJoin]);
   useEffect(()=>{const check=async()=>{const{data}=await supabase.from("live_sessions").select("*").eq("subject_id",subject.id).eq("status","live").maybeSingle();if(data){setSessionInfo(data);setSessionId(data.id);setIsSessionLive(true);}else setIsSessionLive(false);};check();const iv=setInterval(check,4000);return()=>clearInterval(iv);},[subject.id]);
+
+  /* ── Student auto-kick: watch DB for session.status → "ended" ────────────
+     Two-pronged approach: LiveKit data channel (fast) + Supabase realtime (backup).
+     Both converge on setPhase("ended") which shows ClassEndScreen.              */
+  useEffect(()=>{
+    if(!sessionId||isPrivileged||phase!=="live")return;
+    const ch=supabase.channel(`session-end-${sessionId}`)
+      .on("postgres_changes",{event:"UPDATE",schema:"public",table:"live_sessions",filter:`id=eq.${sessionId}`},
+        (payload:any)=>{
+          if(payload.new?.status==="ended"&&!intentionalLeaveRef.current){
+            // Teacher ended the class
+            setPhase("ended");
+          }
+        })
+      .subscribe();
+    return()=>{supabase.removeChannel(ch);};
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[sessionId,isPrivileged,phase]);
   useEffect(()=>{if(phase!=="live")return;const ti=setInterval(()=>setDuration(d=>d+1),1000);return()=>clearInterval(ti);},[phase]);
   useEffect(()=>{
     if(phase!=="live"||!("mediaSession"in navigator))return;
@@ -1901,14 +2141,27 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     await recStopRef.current?.();
     try{
       if(sessionId){
+        // 1. Update DB so students' Supabase subscription detects the end
         await supabase.from("live_sessions").update({status:"ended",ended_at:new Date().toISOString(),actual_end_time:new Date().toISOString()}).eq("id",sessionId);
         if(user)await supabase.from("class_chat_messages").insert({session_id:sessionId,sender_id:user.id,message:t("Class has ended","انتهت الحصة"),type:"system"});
-        // Clear all chat messages for this session after a short delay so
-        // the "class has ended" system message is visible, then wiped clean.
+        // 2. Broadcast class_ended via LiveKit data channel so students disconnect immediately
+        // (faster than waiting for DB subscription)
+        try{
+          const room=(window as any).__lkRoom__;
+          if(room?.localParticipant){
+            room.localParticipant.publishData(
+              new TextEncoder().encode(JSON.stringify({type:"class_ended"})),
+              {reliable:true}
+            );
+            // Give data message a moment to propagate before disconnecting
+            await new Promise(r=>setTimeout(r,400));
+            room.disconnect();
+          }
+        }catch(err){console.warn("[endSession] LiveKit broadcast failed:",err);}
+        // Clear chat after short delay
         setTimeout(async()=>{
-          try{
-            await supabase.from("class_chat_messages").delete().eq("session_id",sessionId);
-          }catch(e){console.warn("[endSession] chat clear failed:",e);}
+          try{ await supabase.from("class_chat_messages").delete().eq("session_id",sessionId); }
+          catch(e){console.warn("[endSession] chat clear failed:",e);}
         }, 4000);
       }
     }catch(e:any){
@@ -2011,7 +2264,8 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
             onReconnected={()=>setReconnecting(false)}
             onDisconnected={autoReconnect}
           />
-          <RoomDataListener onWbOpen={()=>setWbOpen(true)} onWbClose={()=>setWbOpen(false)} strokesBuffer={wbBuffer} onMatOpen={mat=>setMatOpen(mat)} onMatClose={()=>setMatOpen(null)} onWbAllowWrite={allow=>setCanStudentWrite(allow)} onRecAllowed={allow=>setCanStudentRec(allow)} onEmojiReact={(emoji:string,sender:string)=>addFloatingEmoji(emoji,sender)} onGroupRecite={handleGroupReciteFromTeacher} onHandRaise={handleHandRaise} onAdminMuteAll={()=>{}}/>
+          <RoomDataListener onWbOpen={()=>setWbOpen(true)} onWbClose={()=>setWbOpen(false)} strokesBuffer={wbBuffer} onMatOpen={mat=>setMatOpen(mat)} onMatClose={()=>setMatOpen(null)} onWbAllowWrite={allow=>setCanStudentWrite(allow)} onRecAllowed={allow=>setCanStudentRec(allow)} onEmojiReact={(emoji:string,sender:string)=>addFloatingEmoji(emoji,sender)} onGroupRecite={handleGroupReciteFromTeacher} onHandRaise={handleHandRaise} onAdminMuteAll={()=>{}}
+            onClassEnded={!isPrivileged?()=>setPhase("ended"):undefined}/>
           {reconnecting&&<div style={{position:"absolute",inset:0,zIndex:200,background:"rgba(0,0,0,.82)",backdropFilter:"blur(8px)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:14}}><div style={{width:48,height:48,border:`3px solid ${TEAL}`,borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .8s linear infinite"}}/><p style={{color:"#fff",fontSize:15,fontWeight:700}}>Reconnecting…</p><p style={{color:"rgba(255,255,255,.4)",fontSize:13}}>Please stay on the page</p></div>}
           {/* Top bar */}
           <div style={{height:52,background:GLASS,backdropFilter:"blur(16px)",WebkitBackdropFilter:"blur(16px)",display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 10px 0 12px",flexShrink:0,borderBottom:"1px solid rgba(255,255,255,.05)",gap:6}}>
