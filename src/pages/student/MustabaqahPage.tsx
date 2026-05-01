@@ -1183,7 +1183,7 @@ export default function MustabaqahPage() {
               <><Radio size={30} color="rgba(201,168,76,.3)"/><div style={{color:"rgba(255,255,255,.3)",fontSize:13}}>Connecting to live room…</div></>
             )}
           </div>
-        ) : null}
+        )}
 
         {/* Active participant strip */}
         {activeP&&(
