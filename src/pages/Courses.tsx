@@ -21,7 +21,7 @@ import { motion } from "framer-motion";
 import { BookOpen, Plus, Edit, Trash2, EyeOff, GraduationCap, Star, Search } from "lucide-react";
 
 
- bg: string; label: string; icon: string }> = {
+const LEVEL_CONFIG: Record<string, { color: string; bg: string; label: string; icon: string }> = {
   beginner:     { color: "#16A34A", bg: "#DCFCE7", label: "Beginner",     icon: "🌱" },
   intermediate: { color: "#D97706", bg: "#FEF3C7", label: "Intermediate", icon: "📗" },
   advanced:     { color: "#7C3AED", bg: "#EDE9FE", label: "Advanced",     icon: "🏆" },
