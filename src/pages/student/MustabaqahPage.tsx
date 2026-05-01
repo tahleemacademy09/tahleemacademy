@@ -436,7 +436,7 @@ export default function MustabaqahPage() {
     setLkError("");
     setVideoDisabled(false);
     try {
-      const {data,error} = await supabase.functions.invoke("livekit-token",{body:{room_name: `musabaqah-${roomCode.toUpperCase()}`}});
+      const {data,error} = await supabase.functions.invoke("musabaqah-livekit-token",{body:{room_code: roomCode}});
       // SDK-level error (network / deploy issue)
       if (error) throw new Error(error.message);
       // Server explicitly says video is not available (no LiveKit creds configured)
