@@ -136,6 +136,13 @@ const InfoRow = ({ label, value }: { label: string; value: string }) => (
 const LevelAssignment = () => {
   const { toast }    = useToast();
   const navigate     = useNavigate();
+  // Dynamic levels from the academic_levels table — replaces the
+  // previous hardcoded LEVELS constant. New levels (e.g. tamhidi) added
+  // by an admin in /admin/levels appear here automatically.
+  const { data: dbLevels } = useAcademicLevels();
+  const LEVELS_DYNAMIC: string[] = (dbLevels?.length
+    ? dbLevels.map((l) => l.slug)
+    : ["beginner", "intermediate", "advanced"]);
   const [students, setStudents]     = useState<StudentEval[]>([]);
   const [loading, setLoading]       = useState(true);
   const [filter, setFilter]         = useState<"pending" | "approved" | "all">("all");
@@ -1032,7 +1039,7 @@ const LevelAssignment = () => {
                               {final !== null && <span style={{ fontSize: 13, fontWeight: 700, color: scoreColor(final) }}>Suggested: {LEVEL_CFG[suggested].label}</span>}
                             </div>
                             <div style={{ display: "flex", gap: 10, marginBottom: 18 }}>
-                              {LEVELS.map(l => {
+                              {LEVELS_DYNAMIC.map(l => {
                                 const cfg = LEVEL_CFG[l];
                                 const sel = lvl === l;
                                 const isSuggested = l === suggested;
@@ -1040,7 +1047,7 @@ const LevelAssignment = () => {
                                   <button key={l} onClick={() => setSelectedLevels(p => ({ ...p, [student.user_id]: l }))}
                                     style={{ flex: 1, padding: "14px 8px", borderRadius: 12, border: `2px solid ${sel ? cfg.color : "#e5e7eb"}`, background: sel ? cfg.bg : "#fff", color: sel ? cfg.color : "#666", fontSize: 13, fontWeight: sel ? 800 : 500, cursor: "pointer", position: "relative" }}>
                                     {isSuggested && <div style={{ position: "absolute", top: -10, left: "50%", transform: "translateX(-50%)", fontSize: 9, background: cfg.color, color: "#fff", padding: "2px 8px", borderRadius: 10, whiteSpace: "nowrap" }}>Suggested</div>}
-                                    <div style={{ fontSize: 18, marginBottom: 4 }}>{l === "beginner" ? "🌱" : l === "intermediate" ? "📖" : "⭐"}</div>
+                                    <div style={{ fontSize: 18, marginBottom: 4 }}>{l === "tamhidi" ? "📚" : l === "beginner" ? "🌱" : l === "intermediate" ? "📖" : l === "advanced" ? "⭐" : "🎓"}</div>
                                     {cfg.label}
                                     <div style={{ fontSize: 11, color: cfg.color, fontFamily: "'Amiri',serif", marginTop: 2 }}>{cfg.labelAr}</div>
                                   </button>
