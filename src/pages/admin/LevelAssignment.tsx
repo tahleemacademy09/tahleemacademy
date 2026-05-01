@@ -12,6 +12,7 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { useToast } from "@/hooks/use-toast";
+import { useAcademicLevels } from "@/hooks/useAcademicLevels";
 import {
   CheckCircle2, Clock, GraduationCap, Mic,
   FileText, User, Mail, Star, ChevronDown, Loader2,
@@ -60,14 +61,29 @@ interface StudentEval {
   registered_at:     string | null;
 }
 
-const LEVELS = ["beginner", "intermediate", "advanced"] as const;
-type Level = typeof LEVELS[number];
+// Legacy 3-level config kept for color/icon mapping.
+// Additional DB levels (e.g. tamhidi) are merged in at runtime via useAcademicLevels.
+type Level = string;
 
-const LEVEL_CFG: Record<Level, { label: string; labelAr: string; color: string; bg: string; border: string }> = {
+interface LevelCfg { label: string; labelAr: string; color: string; bg: string; border: string }
+
+const LEVEL_CFG_BASE: Record<string, LevelCfg> = {
+  tamhidi:      { label: "Foundation",   labelAr: "تمهيدي", color: "#0E7490", bg: "#ECFEFF", border: "#67E8F9" },
   beginner:     { label: "Beginner",     labelAr: "مبتدئ", color: "#16A34A", bg: "#F0FDF4", border: "#86EFAC" },
   intermediate: { label: "Intermediate", labelAr: "متوسط", color: "#2563EB", bg: "#EFF6FF", border: "#93C5FD" },
   advanced:     { label: "Advanced",     labelAr: "متقدم", color: "#7C3AED", bg: "#F5F3FF", border: "#C4B5FD" },
 };
+
+// Safe accessor — never returns undefined, so legacy `LEVEL_CFG[lvl].label`
+// access patterns continue to work even for unknown slugs.
+const getCfg = (slug: string | null | undefined): LevelCfg =>
+  (slug && LEVEL_CFG_BASE[slug]) ||
+  { label: slug ?? "—", labelAr: slug ?? "—", color: "#475569", bg: "#F1F5F9", border: "#CBD5E1" };
+
+// Backwards-compat proxy so existing `LEVEL_CFG[x]` reads keep working.
+const LEVEL_CFG = new Proxy(LEVEL_CFG_BASE, {
+  get: (target, key: string) => target[key] ?? getCfg(key),
+}) as Record<string, LevelCfg>;
 
 const STEP_LABELS: Record<string, { label: string; color: string; bg: string }> = {
   enrollment:       { label: "Just Registered",    color: "#6B7280", bg: "#F9FAFB" },
@@ -120,6 +136,13 @@ const InfoRow = ({ label, value }: { label: string; value: string }) => (
 const LevelAssignment = () => {
   const { toast }    = useToast();
   const navigate     = useNavigate();
+  // Dynamic levels from the academic_levels table — replaces the
+  // previous hardcoded LEVELS constant. New levels (e.g. tamhidi) added
+  // by an admin in /admin/levels appear here automatically.
+  const { data: dbLevels } = useAcademicLevels();
+  const LEVELS_DYNAMIC: string[] = (dbLevels?.length
+    ? dbLevels.map((l) => l.slug)
+    : ["beginner", "intermediate", "advanced"]);
   const [students, setStudents]     = useState<StudentEval[]>([]);
   const [loading, setLoading]       = useState(true);
   const [filter, setFilter]         = useState<"pending" | "approved" | "all">("all");
@@ -1016,7 +1039,7 @@ const LevelAssignment = () => {
                               {final !== null && <span style={{ fontSize: 13, fontWeight: 700, color: scoreColor(final) }}>Suggested: {LEVEL_CFG[suggested].label}</span>}
                             </div>
                             <div style={{ display: "flex", gap: 10, marginBottom: 18 }}>
-                              {LEVELS.map(l => {
+                              {LEVELS_DYNAMIC.map(l => {
                                 const cfg = LEVEL_CFG[l];
                                 const sel = lvl === l;
                                 const isSuggested = l === suggested;
@@ -1024,7 +1047,7 @@ const LevelAssignment = () => {
                                   <button key={l} onClick={() => setSelectedLevels(p => ({ ...p, [student.user_id]: l }))}
                                     style={{ flex: 1, padding: "14px 8px", borderRadius: 12, border: `2px solid ${sel ? cfg.color : "#e5e7eb"}`, background: sel ? cfg.bg : "#fff", color: sel ? cfg.color : "#666", fontSize: 13, fontWeight: sel ? 800 : 500, cursor: "pointer", position: "relative" }}>
                                     {isSuggested && <div style={{ position: "absolute", top: -10, left: "50%", transform: "translateX(-50%)", fontSize: 9, background: cfg.color, color: "#fff", padding: "2px 8px", borderRadius: 10, whiteSpace: "nowrap" }}>Suggested</div>}
-                                    <div style={{ fontSize: 18, marginBottom: 4 }}>{l === "beginner" ? "🌱" : l === "intermediate" ? "📖" : "⭐"}</div>
+                                    <div style={{ fontSize: 18, marginBottom: 4 }}>{l === "tamhidi" ? "📚" : l === "beginner" ? "🌱" : l === "intermediate" ? "📖" : l === "advanced" ? "⭐" : "🎓"}</div>
                                     {cfg.label}
                                     <div style={{ fontSize: 11, color: cfg.color, fontFamily: "'Amiri',serif", marginTop: 2 }}>{cfg.labelAr}</div>
                                   </button>

@@ -1,0 +1,128 @@
+/*
+  src/hooks/useAcademicLevels.ts — Tahleem Academy
+  ─────────────────────────────────────────────────
+  Single source of truth for academic levels across the entire platform.
+
+  • Fetches from the new `academic_levels` table (admin-managed, dynamic).
+  • Cached via TanStack Query so all consumers share one network call.
+  • Subscribes to Supabase Realtime so admin edits propagate instantly.
+  • Provides helpers for slug → display name and ordering.
+
+  Backwards compatibility:
+  • The legacy `profiles.level` text column still stores the slug
+    (`tamhidi` | `beginner` | `intermediate` | `advanced`). Any code that
+    compares `profile.level === 'beginner'` continues to work unchanged.
+  • The new `tamhidi` slug is purely additive.
+*/
+import { useEffect } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
+
+export interface AcademicLevel {
+  id: string;
+  slug: string;
+  name_ar: string;
+  name_en: string;
+  description_ar: string | null;
+  description_en: string | null;
+  sort_order: number;
+  is_active: boolean;
+}
+
+const QUERY_KEY = ["academic_levels"] as const;
+
+/** Fetch all active levels, ordered by curriculum progression. */
+async function fetchLevels(): Promise<AcademicLevel[]> {
+  const { data, error } = await supabase
+    .from("academic_levels" as any)
+    .select("id, slug, name_ar, name_en, description_ar, description_en, sort_order, is_active")
+    .eq("is_active", true)
+    .order("sort_order", { ascending: true });
+
+  if (error) throw error;
+  return (data ?? []) as unknown as AcademicLevel[];
+}
+
+/** Fetch ALL levels including inactive ones — admin-only view. */
+async function fetchAllLevels(): Promise<AcademicLevel[]> {
+  const { data, error } = await supabase
+    .from("academic_levels" as any)
+    .select("id, slug, name_ar, name_en, description_ar, description_en, sort_order, is_active")
+    .order("sort_order", { ascending: true });
+
+  if (error) throw error;
+  return (data ?? []) as unknown as AcademicLevel[];
+}
+
+/**
+ * Public hook used everywhere a level dropdown / badge is rendered.
+ * Returns active levels only. Includes realtime invalidation so a
+ * change in the admin panel propagates to every open tab in <1s.
+ */
+export function useAcademicLevels() {
+  const qc = useQueryClient();
+
+  const query = useQuery({
+    queryKey: QUERY_KEY,
+    queryFn: fetchLevels,
+    staleTime: 5 * 60 * 1000, // 5 min — levels change rarely
+    gcTime: 30 * 60 * 1000,
+  });
+
+  useEffect(() => {
+    const ch = supabase
+      .channel("academic_levels_realtime")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "academic_levels" },
+        () => qc.invalidateQueries({ queryKey: QUERY_KEY }),
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [qc]);
+
+  return query;
+}
+
+/** Admin-only variant — includes inactive levels for management UI. */
+export function useAllAcademicLevels() {
+  const qc = useQueryClient();
+
+  const query = useQuery({
+    queryKey: ["academic_levels", "all"],
+    queryFn: fetchAllLevels,
+    staleTime: 60 * 1000,
+  });
+
+  useEffect(() => {
+    const ch = supabase
+      .channel("academic_levels_admin_realtime")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "academic_levels" },
+        () => qc.invalidateQueries({ queryKey: ["academic_levels"] }),
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [qc]);
+
+  return query;
+}
+
+/** Helper: map a slug to its display labels. Falls back gracefully. */
+export function getLevelDisplay(
+  slug: string | null | undefined,
+  levels: AcademicLevel[] | undefined,
+): { name_ar: string; name_en: string } {
+  if (!slug) return { name_ar: "—", name_en: "—" };
+  const found = levels?.find((l) => l.slug === slug);
+  if (found) return { name_ar: found.name_ar, name_en: found.name_en };
+  // Legacy fallback for any slug that pre-dates the table
+  const legacy: Record<string, { name_ar: string; name_en: string }> = {
+    beginner:     { name_ar: "المستوى المبتدئ",  name_en: "Beginner" },
+    intermediate: { name_ar: "المستوى المتوسط",  name_en: "Intermediate" },
+    advanced:     { name_ar: "المستوى المتقدم",  name_en: "Advanced" },
+    tamhidi:      { name_ar: "المرحلة التمهيدية", name_en: "Foundation" },
+  };
+  return legacy[slug] ?? { name_ar: slug, name_en: slug };
+}

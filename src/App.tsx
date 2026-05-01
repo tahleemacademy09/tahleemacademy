@@ -104,6 +104,7 @@ const HifdhRevisionTracker  = lazy(() => import("./pages/admin/HifdhRevisionTrac
 const RecitationTestAdmin   = lazy(() => import("./pages/admin/RecitationTestAdmin"));
 const LevelAssignment       = lazy(() => import("./pages/admin/LevelAssignment"));
 const LevelSubjectMapping   = lazy(() => import("./pages/admin/LevelSubjectMapping"));
+const LevelManagement       = lazy(() => import("./pages/admin/LevelManagement"));
 const PrivateSessions       = lazy(() => import("./pages/admin/PrivateSessions"));
 const MajlisAdmin           = lazy(() => import("./pages/admin/MajlisModeration"));
 const RegistrationSettings  = lazy(() => import("./pages/admin/RegistrationSettings"));
@@ -272,6 +273,7 @@ const App = () => (
                     <Route path="/admin/hifdh-tracker"               element={<HifdhRevisionTracker />} />
                     <Route path="/admin/recitation-test-settings"    element={<RecitationTestAdmin />} />
                     <Route path="/admin/level-assignment"            element={<LevelAssignment />} />
+                    <Route path="/admin/levels"                      element={<LevelManagement />} />
                     <Route path="/admin/transcripts"                 element={<TranscriptManagement />} />
                     <Route path="/admin/attendance"                  element={<AttendanceManagement />} />
                     <Route path="/admin/payments"                    element={<PaymentManagement />} />
