@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAcademicLevels, getLevelConfig, getLevelDisplay } from "@/hooks/useAcademicLevels";
 import { supabase } from "@/integrations/supabase/client";
 import {
   Download, GraduationCap, MessageSquare, Search,
@@ -72,6 +73,7 @@ const TeacherTranscript = () => {
   const { t } = useLanguage();
   const { user } = useAuth();
   const { toast } = useToast();
+  const { data: academicLevels = [] } = useAcademicLevels();
 
   const [students, setStudents]             = useState<any[]>([]);
   const [search, setSearch]                 = useState("");
@@ -194,9 +196,8 @@ const TeacherTranscript = () => {
     const termLabel  = term === "first" ? "الفترة الأولى — First Term"
                      : term === "second" ? "الفترة الثانية — Second Term"
                      : "الفترة الثالثة — Third Term";
-    const levelText  = studentProfile?.level === "beginner" ? "المبتدئة / Beginner"
-                     : studentProfile?.level === "intermediate" ? "المتوسطة / Intermediate"
-                     : studentProfile?.level || "---";
+    const _ld = getLevelDisplay(studentProfile?.level, academicLevels);
+    const levelText = studentProfile?.level ? `${_ld.name_ar} / ${_ld.name_en}` : "---";
     const hijriYear  = new Date().getFullYear() - 579;
     const cgpaComment = cgpa >= 3.5 ? "طالب(ة) متميز(ة) / Outstanding"
                       : cgpa >= 2.0 ? "طالب(ة) مجتهد(ة) / Hardworking"
