@@ -7,7 +7,10 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
+  // Paystack's server-side webhook calls come with no browser Origin header,
+  // so this header is only evaluated by browsers (for admin UIs calling the endpoint).
+  // We restrict it to our production domain for safety.
+  "Access-Control-Allow-Origin": "https://tahleemacademy.vercel.app",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
@@ -54,15 +57,19 @@ Deno.serve(async (req) => {
     const signature = req.headers.get("x-paystack-signature") || "";
     const secret = Deno.env.get("PAYSTACK_SECRET_KEY") || "";
 
-    // Verify webhook signature
-    if (signature) {
-      const valid = await verifySignature(body, signature, secret);
-      if (!valid) {
-        return new Response(JSON.stringify({ error: "Invalid signature" }), {
-          status: 401,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
+    // Verify webhook signature — REQUIRED, never optional
+    if (!signature) {
+      return new Response(JSON.stringify({ error: "Missing x-paystack-signature header" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const valid = await verifySignature(body, signature, secret);
+    if (!valid) {
+      return new Response(JSON.stringify({ error: "Invalid signature" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
     const event     = JSON.parse(body);
@@ -101,6 +108,19 @@ Deno.serve(async (req) => {
           .update({
             status:   "active",
             paid_at:  new Date().toISOString(),
+          })
+          .eq("user_id", payment.user_id);
+
+        // ── 1b. Update profiles.payment_status + subscription_end_date ────
+        // Authoritative server-side update so usePaymentAccess always reflects
+        // payment even if the browser tab was closed before the client callback.
+        const subEnd = new Date();
+        subEnd.setFullYear(subEnd.getFullYear() + 1); // 1-year subscription
+        await supabase
+          .from("profiles")
+          .update({
+            payment_status:        "paid",
+            subscription_end_date: subEnd.toISOString().split("T")[0],
           })
           .eq("user_id", payment.user_id);
 
