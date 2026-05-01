@@ -68,6 +68,65 @@ export type Database = {
         }
         Relationships: []
       }
+      academic_events: {
+        Row: {
+          color: string | null
+          created_at: string
+          created_by: string | null
+          date: string
+          description: string | null
+          event_type: string
+          id: string
+          notify_to: string
+          subject_id: string | null
+          time_end: string | null
+          time_start: string | null
+          title: string
+          title_ar: string | null
+          updated_at: string
+        }
+        Insert: {
+          color?: string | null
+          created_at?: string
+          created_by?: string | null
+          date: string
+          description?: string | null
+          event_type?: string
+          id?: string
+          notify_to?: string
+          subject_id?: string | null
+          time_end?: string | null
+          time_start?: string | null
+          title: string
+          title_ar?: string | null
+          updated_at?: string
+        }
+        Update: {
+          color?: string | null
+          created_at?: string
+          created_by?: string | null
+          date?: string
+          description?: string | null
+          event_type?: string
+          id?: string
+          notify_to?: string
+          subject_id?: string | null
+          time_end?: string | null
+          time_start?: string | null
+          title?: string
+          title_ar?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "academic_events_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       academy_settings: {
         Row: {
           description: string | null
@@ -681,6 +740,33 @@ export type Database = {
           },
         ]
       }
+      contact_messages: {
+        Row: {
+          created_at: string | null
+          email: string | null
+          id: string
+          message: string | null
+          name: string | null
+          subject: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          email?: string | null
+          id?: string
+          message?: string | null
+          name?: string | null
+          subject?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          email?: string | null
+          id?: string
+          message?: string | null
+          name?: string | null
+          subject?: string | null
+        }
+        Relationships: []
+      }
       courses: {
         Row: {
           category: string | null
@@ -699,6 +785,7 @@ export type Database = {
           title: string
           title_ar: string | null
           updated_at: string
+          visibility: string
         }
         Insert: {
           category?: string | null
@@ -717,6 +804,7 @@ export type Database = {
           title: string
           title_ar?: string | null
           updated_at?: string
+          visibility?: string
         }
         Update: {
           category?: string | null
@@ -735,6 +823,7 @@ export type Database = {
           title?: string
           title_ar?: string | null
           updated_at?: string
+          visibility?: string
         }
         Relationships: [
           {
@@ -1222,11 +1311,13 @@ export type Database = {
           guidelines_ar: string | null
           id: string
           idle_timeout_seconds: number | null
+          is_active: boolean | null
           is_entrance: boolean | null
           is_published: boolean | null
           level: string | null
           max_attempts: number | null
           max_review_views: number | null
+          max_score: number | null
           max_warnings: number | null
           mic_required: boolean | null
           options_alignment: string | null
@@ -1280,11 +1371,13 @@ export type Database = {
           guidelines_ar?: string | null
           id?: string
           idle_timeout_seconds?: number | null
+          is_active?: boolean | null
           is_entrance?: boolean | null
           is_published?: boolean | null
           level?: string | null
           max_attempts?: number | null
           max_review_views?: number | null
+          max_score?: number | null
           max_warnings?: number | null
           mic_required?: boolean | null
           options_alignment?: string | null
@@ -1338,11 +1431,13 @@ export type Database = {
           guidelines_ar?: string | null
           id?: string
           idle_timeout_seconds?: number | null
+          is_active?: boolean | null
           is_entrance?: boolean | null
           is_published?: boolean | null
           level?: string | null
           max_attempts?: number | null
           max_review_views?: number | null
+          max_score?: number | null
           max_warnings?: number | null
           mic_required?: boolean | null
           options_alignment?: string | null
@@ -1425,13 +1520,6 @@ export type Database = {
             referencedRelation: "profiles"
             referencedColumns: ["user_id"]
           },
-          {
-            foreignKeyName: "hifdh_ai_chat_session_id_fkey"
-            columns: ["session_id"]
-            isOneToOne: false
-            referencedRelation: "hifdh_revision_sessions"
-            referencedColumns: ["id"]
-          },
         ]
       }
       hifdh_ai_corrections: {
@@ -1479,13 +1567,6 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "hifdh_ai_corrections_session_id_fkey"
-            columns: ["session_id"]
-            isOneToOne: false
-            referencedRelation: "hifdh_revision_sessions"
-            referencedColumns: ["id"]
-          },
-          {
             foreignKeyName: "hifdh_ai_corrections_student_id_fkey"
             columns: ["student_id"]
             isOneToOne: false
@@ -1493,6 +1574,48 @@ export type Database = {
             referencedColumns: ["user_id"]
           },
         ]
+      }
+      hifdh_assignments: {
+        Row: {
+          active: boolean | null
+          assigned_by: string
+          created_at: string | null
+          daily_pages: number | null
+          id: string
+          mode: string
+          notes: string | null
+          reciter: string | null
+          selected: number[]
+          student_id: string
+          updated_at: string | null
+        }
+        Insert: {
+          active?: boolean | null
+          assigned_by: string
+          created_at?: string | null
+          daily_pages?: number | null
+          id?: string
+          mode: string
+          notes?: string | null
+          reciter?: string | null
+          selected: number[]
+          student_id: string
+          updated_at?: string | null
+        }
+        Update: {
+          active?: boolean | null
+          assigned_by?: string
+          created_at?: string | null
+          daily_pages?: number | null
+          id?: string
+          mode?: string
+          notes?: string | null
+          reciter?: string | null
+          selected?: number[]
+          student_id?: string
+          updated_at?: string | null
+        }
+        Relationships: []
       }
       hifdh_custom_voices: {
         Row: {
@@ -1527,6 +1650,136 @@ export type Database = {
         }
         Relationships: []
       }
+      hifdh_daily_assignments: {
+        Row: {
+          active: boolean
+          assigned_by: string
+          created_at: string
+          daily_pages: number
+          id: string
+          mode: string
+          notes: string | null
+          reciter_id: string
+          selected_items: number[]
+          starts_on: string
+          student_id: string
+          updated_at: string
+        }
+        Insert: {
+          active?: boolean
+          assigned_by: string
+          created_at?: string
+          daily_pages?: number
+          id?: string
+          mode: string
+          notes?: string | null
+          reciter_id?: string
+          selected_items?: number[]
+          starts_on?: string
+          student_id: string
+          updated_at?: string
+        }
+        Update: {
+          active?: boolean
+          assigned_by?: string
+          created_at?: string
+          daily_pages?: number
+          id?: string
+          mode?: string
+          notes?: string | null
+          reciter_id?: string
+          selected_items?: number[]
+          starts_on?: string
+          student_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "hifdh_daily_assignments_assigned_by_fkey"
+            columns: ["assigned_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "hifdh_daily_assignments_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["user_id"]
+          },
+        ]
+      }
+      hifdh_daily_logs: {
+        Row: {
+          ack_note: string | null
+          acknowledged_at: string | null
+          acknowledged_by: string | null
+          assignment_id: string | null
+          avg_score: number | null
+          completed: boolean
+          created_at: string
+          duration_secs: number | null
+          id: string
+          log_date: string
+          pages_revised: number
+          session_data: Json | null
+          student_id: string
+        }
+        Insert: {
+          ack_note?: string | null
+          acknowledged_at?: string | null
+          acknowledged_by?: string | null
+          assignment_id?: string | null
+          avg_score?: number | null
+          completed?: boolean
+          created_at?: string
+          duration_secs?: number | null
+          id?: string
+          log_date?: string
+          pages_revised?: number
+          session_data?: Json | null
+          student_id: string
+        }
+        Update: {
+          ack_note?: string | null
+          acknowledged_at?: string | null
+          acknowledged_by?: string | null
+          assignment_id?: string | null
+          avg_score?: number | null
+          completed?: boolean
+          created_at?: string
+          duration_secs?: number | null
+          id?: string
+          log_date?: string
+          pages_revised?: number
+          session_data?: Json | null
+          student_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "hifdh_daily_logs_acknowledged_by_fkey"
+            columns: ["acknowledged_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "hifdh_daily_logs_assignment_id_fkey"
+            columns: ["assignment_id"]
+            isOneToOne: false
+            referencedRelation: "hifdh_daily_assignments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "hifdh_daily_logs_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["user_id"]
+          },
+        ]
+      }
       hifdh_daily_tasks: {
         Row: {
           completed: boolean | null
@@ -1560,6 +1813,74 @@ export type Database = {
         }
         Relationships: []
       }
+      hifdh_page_logs: {
+        Row: {
+          acknowledged_at: string | null
+          assignment_id: string | null
+          attempts: number | null
+          created_at: string | null
+          date: string
+          duration_seconds: number | null
+          error_count: number | null
+          exercise_score: number | null
+          id: string
+          page_number: number
+          score: number | null
+          status: string | null
+          student_id: string
+          teacher_acknowledged: boolean | null
+          teacher_feedback: string | null
+          teacher_id: string | null
+          transcript: string | null
+        }
+        Insert: {
+          acknowledged_at?: string | null
+          assignment_id?: string | null
+          attempts?: number | null
+          created_at?: string | null
+          date?: string
+          duration_seconds?: number | null
+          error_count?: number | null
+          exercise_score?: number | null
+          id?: string
+          page_number: number
+          score?: number | null
+          status?: string | null
+          student_id: string
+          teacher_acknowledged?: boolean | null
+          teacher_feedback?: string | null
+          teacher_id?: string | null
+          transcript?: string | null
+        }
+        Update: {
+          acknowledged_at?: string | null
+          assignment_id?: string | null
+          attempts?: number | null
+          created_at?: string | null
+          date?: string
+          duration_seconds?: number | null
+          error_count?: number | null
+          exercise_score?: number | null
+          id?: string
+          page_number?: number
+          score?: number | null
+          status?: string | null
+          student_id?: string
+          teacher_acknowledged?: boolean | null
+          teacher_feedback?: string | null
+          teacher_id?: string | null
+          transcript?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "hifdh_page_logs_assignment_id_fkey"
+            columns: ["assignment_id"]
+            isOneToOne: false
+            referencedRelation: "hifdh_assignments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       hifdh_plans: {
         Row: {
           assigned_by: string | null
@@ -1578,6 +1899,7 @@ export type Database = {
           surah_rotation: Json | null
           teacher_locked: boolean | null
           updated_at: string | null
+          user_id: string | null
         }
         Insert: {
           assigned_by?: string | null
@@ -1596,6 +1918,7 @@ export type Database = {
           surah_rotation?: Json | null
           teacher_locked?: boolean | null
           updated_at?: string | null
+          user_id?: string | null
         }
         Update: {
           assigned_by?: string | null
@@ -1614,6 +1937,7 @@ export type Database = {
           surah_rotation?: Json | null
           teacher_locked?: boolean | null
           updated_at?: string | null
+          user_id?: string | null
         }
         Relationships: []
       }
@@ -1713,114 +2037,127 @@ export type Database = {
         }
         Relationships: []
       }
-      hifdh_revision_sessions: {
+      hifdh_revision_plans: {
         Row: {
-          actual_end_time: string | null
-          actual_start_time: string | null
-          ai_assistance_level: string | null
-          ai_language: string | null
-          ai_moderation_enabled: boolean | null
-          ayah_from: number | null
-          ayah_to: number | null
+          all_pages: Json
           created_at: string | null
+          current_idx: number
+          daily_pages: number
           id: string
-          level: string | null
-          live_session_id: string | null
-          max_students: number | null
-          notes: string | null
-          page_from: number | null
-          page_to: number | null
-          revision_type: string | null
-          scheduled_at: string | null
-          session_summary: string | null
-          session_type: string | null
-          status: string | null
-          subject_id: string | null
-          surah_from: string | null
-          surah_to: string | null
-          teacher_id: string | null
-          title: string
-          title_ar: string | null
+          is_active: boolean
+          selected_items: Json
+          selection_mode: string
+          updated_at: string | null
+          user_id: string
         }
         Insert: {
-          actual_end_time?: string | null
-          actual_start_time?: string | null
-          ai_assistance_level?: string | null
-          ai_language?: string | null
-          ai_moderation_enabled?: boolean | null
-          ayah_from?: number | null
-          ayah_to?: number | null
+          all_pages?: Json
           created_at?: string | null
+          current_idx?: number
+          daily_pages?: number
           id?: string
-          level?: string | null
-          live_session_id?: string | null
-          max_students?: number | null
-          notes?: string | null
-          page_from?: number | null
-          page_to?: number | null
-          revision_type?: string | null
-          scheduled_at?: string | null
-          session_summary?: string | null
-          session_type?: string | null
-          status?: string | null
-          subject_id?: string | null
-          surah_from?: string | null
-          surah_to?: string | null
-          teacher_id?: string | null
-          title: string
-          title_ar?: string | null
+          is_active?: boolean
+          selected_items?: Json
+          selection_mode: string
+          updated_at?: string | null
+          user_id: string
         }
         Update: {
-          actual_end_time?: string | null
-          actual_start_time?: string | null
-          ai_assistance_level?: string | null
-          ai_language?: string | null
-          ai_moderation_enabled?: boolean | null
-          ayah_from?: number | null
-          ayah_to?: number | null
+          all_pages?: Json
           created_at?: string | null
+          current_idx?: number
+          daily_pages?: number
           id?: string
-          level?: string | null
-          live_session_id?: string | null
-          max_students?: number | null
-          notes?: string | null
-          page_from?: number | null
-          page_to?: number | null
-          revision_type?: string | null
-          scheduled_at?: string | null
-          session_summary?: string | null
-          session_type?: string | null
-          status?: string | null
-          subject_id?: string | null
-          surah_from?: string | null
-          surah_to?: string | null
-          teacher_id?: string | null
-          title?: string
-          title_ar?: string | null
+          is_active?: boolean
+          selected_items?: Json
+          selection_mode?: string
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      hifdh_revision_progress: {
+        Row: {
+          attempts: number
+          best_score: number
+          completed: boolean
+          completed_at: string | null
+          created_at: string | null
+          exercise_score: number
+          id: string
+          page_number: number
+          plan_id: string | null
+          user_id: string
+        }
+        Insert: {
+          attempts?: number
+          best_score?: number
+          completed?: boolean
+          completed_at?: string | null
+          created_at?: string | null
+          exercise_score?: number
+          id?: string
+          page_number: number
+          plan_id?: string | null
+          user_id: string
+        }
+        Update: {
+          attempts?: number
+          best_score?: number
+          completed?: boolean
+          completed_at?: string | null
+          created_at?: string | null
+          exercise_score?: number
+          id?: string
+          page_number?: number
+          plan_id?: string | null
+          user_id?: string
         }
         Relationships: [
           {
-            foreignKeyName: "hifdh_revision_sessions_live_session_id_fkey"
-            columns: ["live_session_id"]
+            foreignKeyName: "hifdh_revision_progress_plan_id_fkey"
+            columns: ["plan_id"]
             isOneToOne: false
-            referencedRelation: "live_sessions"
+            referencedRelation: "hifdh_revision_plans"
             referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "hifdh_revision_sessions_subject_id_fkey"
-            columns: ["subject_id"]
-            isOneToOne: false
-            referencedRelation: "subjects"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "hifdh_revision_sessions_teacher_id_fkey"
-            columns: ["teacher_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["user_id"]
           },
         ]
+      }
+      hifdh_revision_sessions: {
+        Row: {
+          created_at: string | null
+          duration_seconds: number | null
+          id: string
+          page_number: number
+          score: number
+          stage: string
+          transcript: string | null
+          user_id: string
+          word_results: Json
+        }
+        Insert: {
+          created_at?: string | null
+          duration_seconds?: number | null
+          id?: string
+          page_number: number
+          score?: number
+          stage?: string
+          transcript?: string | null
+          user_id: string
+          word_results?: Json
+        }
+        Update: {
+          created_at?: string | null
+          duration_seconds?: number | null
+          id?: string
+          page_number?: number
+          score?: number
+          stage?: string
+          transcript?: string | null
+          user_id?: string
+          word_results?: Json
+        }
+        Relationships: []
       }
       hifdh_session_participants: {
         Row: {
@@ -1873,13 +2210,6 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "hifdh_session_participants_session_id_fkey"
-            columns: ["session_id"]
-            isOneToOne: false
-            referencedRelation: "hifdh_revision_sessions"
-            referencedColumns: ["id"]
-          },
-          {
             foreignKeyName: "hifdh_session_participants_student_id_fkey"
             columns: ["student_id"]
             isOneToOne: false
@@ -1920,13 +2250,6 @@ export type Database = {
           student_id?: string | null
         }
         Relationships: [
-          {
-            foreignKeyName: "hifdh_session_queue_session_id_fkey"
-            columns: ["session_id"]
-            isOneToOne: false
-            referencedRelation: "hifdh_revision_sessions"
-            referencedColumns: ["id"]
-          },
           {
             foreignKeyName: "hifdh_session_queue_student_id_fkey"
             columns: ["student_id"]
@@ -2062,31 +2385,40 @@ export type Database = {
       }
       lessons: {
         Row: {
-          course_id: string
+          content: string | null
+          course_id: string | null
           created_at: string | null
           duration_minutes: number | null
           id: string
+          is_free: boolean | null
           sort_order: number | null
+          subject_id: string | null
           title: string
           title_ar: string | null
           video_url: string | null
         }
         Insert: {
-          course_id: string
+          content?: string | null
+          course_id?: string | null
           created_at?: string | null
           duration_minutes?: number | null
           id?: string
+          is_free?: boolean | null
           sort_order?: number | null
+          subject_id?: string | null
           title: string
           title_ar?: string | null
           video_url?: string | null
         }
         Update: {
-          course_id?: string
+          content?: string | null
+          course_id?: string | null
           created_at?: string | null
           duration_minutes?: number | null
           id?: string
+          is_free?: boolean | null
           sort_order?: number | null
+          subject_id?: string | null
           title?: string
           title_ar?: string | null
           video_url?: string | null
@@ -2097,6 +2429,13 @@ export type Database = {
             columns: ["course_id"]
             isOneToOne: false
             referencedRelation: "courses"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lessons_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
             referencedColumns: ["id"]
           },
         ]
@@ -2403,6 +2742,47 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "live_sessions_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      liveclass_files: {
+        Row: {
+          created_at: string | null
+          file_name: string
+          file_size: number | null
+          file_type: string | null
+          file_url: string
+          id: string
+          subject_id: string
+          uploaded_by: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          file_name: string
+          file_size?: number | null
+          file_type?: string | null
+          file_url: string
+          id?: string
+          subject_id: string
+          uploaded_by?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          file_name?: string
+          file_size?: number | null
+          file_type?: string | null
+          file_url?: string
+          id?: string
+          subject_id?: string
+          uploaded_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "liveclass_files_subject_id_fkey"
             columns: ["subject_id"]
             isOneToOne: false
             referencedRelation: "subjects"
@@ -2740,6 +3120,458 @@ export type Database = {
           },
         ]
       }
+      moderation_queue: {
+        Row: {
+          ai_reason: string | null
+          ai_severity: string | null
+          ai_verdict: string | null
+          author_id: string | null
+          content: string
+          content_id: string | null
+          content_type: string
+          created_at: string
+          flagged_by: string | null
+          id: string
+          reason: string | null
+          reviewed_at: string | null
+          reviewed_by: string | null
+          status: string
+        }
+        Insert: {
+          ai_reason?: string | null
+          ai_severity?: string | null
+          ai_verdict?: string | null
+          author_id?: string | null
+          content: string
+          content_id?: string | null
+          content_type?: string
+          created_at?: string
+          flagged_by?: string | null
+          id?: string
+          reason?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: string
+        }
+        Update: {
+          ai_reason?: string | null
+          ai_severity?: string | null
+          ai_verdict?: string | null
+          author_id?: string | null
+          content?: string
+          content_id?: string | null
+          content_type?: string
+          created_at?: string
+          flagged_by?: string | null
+          id?: string
+          reason?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: string
+        }
+        Relationships: []
+      }
+      musabaqah_attempts: {
+        Row: {
+          bell_count: number
+          competition_id: string
+          created_at: string
+          duration_seconds: number | null
+          id: string
+          judge_comment: string | null
+          judge_score: number | null
+          participant_id: string
+          scope_label: string
+          scope_label_ar: string
+          score_breakdown: Json | null
+          stage_number: number
+          status: string
+        }
+        Insert: {
+          bell_count?: number
+          competition_id: string
+          created_at?: string
+          duration_seconds?: number | null
+          id?: string
+          judge_comment?: string | null
+          judge_score?: number | null
+          participant_id: string
+          scope_label?: string
+          scope_label_ar?: string
+          score_breakdown?: Json | null
+          stage_number?: number
+          status?: string
+        }
+        Update: {
+          bell_count?: number
+          competition_id?: string
+          created_at?: string
+          duration_seconds?: number | null
+          id?: string
+          judge_comment?: string | null
+          judge_score?: number | null
+          participant_id?: string
+          scope_label?: string
+          scope_label_ar?: string
+          score_breakdown?: Json | null
+          stage_number?: number
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "musabaqah_attempts_competition_id_fkey"
+            columns: ["competition_id"]
+            isOneToOne: false
+            referencedRelation: "musabaqah_competitions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "musabaqah_attempts_participant_id_fkey"
+            columns: ["participant_id"]
+            isOneToOne: false
+            referencedRelation: "musabaqah_participants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      musabaqah_competitions: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          current_participant_id: string | null
+          current_stage: number
+          description: string | null
+          id: string
+          room_code: string
+          scope_config: Json | null
+          scope_type: string
+          status: string
+          time_limit_seconds: number
+          title: string
+          total_stages: number
+          updated_at: string
+          use_criteria_scoring: boolean
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          current_participant_id?: string | null
+          current_stage?: number
+          description?: string | null
+          id?: string
+          room_code: string
+          scope_config?: Json | null
+          scope_type?: string
+          status?: string
+          time_limit_seconds?: number
+          title: string
+          total_stages?: number
+          updated_at?: string
+          use_criteria_scoring?: boolean
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          current_participant_id?: string | null
+          current_stage?: number
+          description?: string | null
+          id?: string
+          room_code?: string
+          scope_config?: Json | null
+          scope_type?: string
+          status?: string
+          time_limit_seconds?: number
+          title?: string
+          total_stages?: number
+          updated_at?: string
+          use_criteria_scoring?: boolean
+        }
+        Relationships: []
+      }
+      musabaqah_events: {
+        Row: {
+          created_at: string
+          event_type: string
+          id: number
+          payload: Json | null
+          room_id: string
+          sent_by: string | null
+        }
+        Insert: {
+          created_at?: string
+          event_type: string
+          id?: number
+          payload?: Json | null
+          room_id: string
+          sent_by?: string | null
+        }
+        Update: {
+          created_at?: string
+          event_type?: string
+          id?: number
+          payload?: Json | null
+          room_id?: string
+          sent_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "musabaqah_events_room_id_fkey"
+            columns: ["room_id"]
+            isOneToOne: false
+            referencedRelation: "musabaqah_rooms"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      musabaqah_participants: {
+        Row: {
+          bell_counts: Json
+          camera_on: boolean
+          competition_id: string
+          created_at: string
+          id: string
+          participant_name: string
+          proctor_flagged: boolean
+          queue_position: number
+          school: string | null
+          stage_scores: Json
+          status: string
+          total_score: number
+          user_id: string | null
+        }
+        Insert: {
+          bell_counts?: Json
+          camera_on?: boolean
+          competition_id: string
+          created_at?: string
+          id?: string
+          participant_name: string
+          proctor_flagged?: boolean
+          queue_position?: number
+          school?: string | null
+          stage_scores?: Json
+          status?: string
+          total_score?: number
+          user_id?: string | null
+        }
+        Update: {
+          bell_counts?: Json
+          camera_on?: boolean
+          competition_id?: string
+          created_at?: string
+          id?: string
+          participant_name?: string
+          proctor_flagged?: boolean
+          queue_position?: number
+          school?: string | null
+          stage_scores?: Json
+          status?: string
+          total_score?: number
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "musabaqah_participants_competition_id_fkey"
+            columns: ["competition_id"]
+            isOneToOne: false
+            referencedRelation: "musabaqah_competitions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      musabaqah_reactions: {
+        Row: {
+          created_at: string
+          emoji: string
+          id: number
+          room_id: string
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          emoji: string
+          id?: number
+          room_id: string
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          emoji?: string
+          id?: number
+          room_id?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "musabaqah_reactions_room_id_fkey"
+            columns: ["room_id"]
+            isOneToOne: false
+            referencedRelation: "musabaqah_rooms"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      musabaqah_rooms: {
+        Row: {
+          code: string
+          created_at: string
+          created_by: string | null
+          current_contestant_idx: number | null
+          current_phase: string | null
+          current_stage_idx: number | null
+          description: string | null
+          id: string
+          scope: string | null
+          status: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          created_by?: string | null
+          current_contestant_idx?: number | null
+          current_phase?: string | null
+          current_stage_idx?: number | null
+          description?: string | null
+          id?: string
+          scope?: string | null
+          status?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          created_by?: string | null
+          current_contestant_idx?: number | null
+          current_phase?: string | null
+          current_stage_idx?: number | null
+          description?: string | null
+          id?: string
+          scope?: string | null
+          status?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      musabaqah_scores: {
+        Row: {
+          bell_count: number | null
+          contestant_name: string
+          contestant_user_id: string | null
+          created_at: string
+          id: string
+          judged_by: string | null
+          notes: string | null
+          question_ayah: string | null
+          question_id: number | null
+          question_surah: string | null
+          room_id: string
+          score_adab: number | null
+          score_hifdh: number | null
+          score_tajweed: number | null
+          score_tarteel: number | null
+          score_total: number
+          stage_idx: number
+          stage_name: string | null
+        }
+        Insert: {
+          bell_count?: number | null
+          contestant_name: string
+          contestant_user_id?: string | null
+          created_at?: string
+          id?: string
+          judged_by?: string | null
+          notes?: string | null
+          question_ayah?: string | null
+          question_id?: number | null
+          question_surah?: string | null
+          room_id: string
+          score_adab?: number | null
+          score_hifdh?: number | null
+          score_tajweed?: number | null
+          score_tarteel?: number | null
+          score_total?: number
+          stage_idx: number
+          stage_name?: string | null
+        }
+        Update: {
+          bell_count?: number | null
+          contestant_name?: string
+          contestant_user_id?: string | null
+          created_at?: string
+          id?: string
+          judged_by?: string | null
+          notes?: string | null
+          question_ayah?: string | null
+          question_id?: number | null
+          question_surah?: string | null
+          room_id?: string
+          score_adab?: number | null
+          score_hifdh?: number | null
+          score_tajweed?: number | null
+          score_tarteel?: number | null
+          score_total?: number
+          stage_idx?: number
+          stage_name?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "musabaqah_scores_room_id_fkey"
+            columns: ["room_id"]
+            isOneToOne: false
+            referencedRelation: "musabaqah_rooms"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      notification_send_log: {
+        Row: {
+          ai_generated: boolean | null
+          created_at: string
+          event_type: string | null
+          id: string
+          message_ar: string | null
+          message_en: string | null
+          recipient_count: number | null
+          sent_by: string | null
+          target: string | null
+          title_ar: string | null
+          title_en: string | null
+          type: string | null
+        }
+        Insert: {
+          ai_generated?: boolean | null
+          created_at?: string
+          event_type?: string | null
+          id?: string
+          message_ar?: string | null
+          message_en?: string | null
+          recipient_count?: number | null
+          sent_by?: string | null
+          target?: string | null
+          title_ar?: string | null
+          title_en?: string | null
+          type?: string | null
+        }
+        Update: {
+          ai_generated?: boolean | null
+          created_at?: string
+          event_type?: string | null
+          id?: string
+          message_ar?: string | null
+          message_en?: string | null
+          recipient_count?: number | null
+          sent_by?: string | null
+          target?: string | null
+          title_ar?: string | null
+          title_en?: string | null
+          type?: string | null
+        }
+        Relationships: []
+      }
       notifications: {
         Row: {
           created_at: string
@@ -2802,6 +3634,8 @@ export type Database = {
           preferred_time: string | null
           previous_teacher: string | null
           quran_level: string | null
+          review_comment: string | null
+          review_rating: number | null
           tajweed_knowledge: string | null
           user_id: string | null
           years_studying: string | null
@@ -2828,6 +3662,8 @@ export type Database = {
           preferred_time?: string | null
           previous_teacher?: string | null
           quran_level?: string | null
+          review_comment?: string | null
+          review_rating?: number | null
           tajweed_knowledge?: string | null
           user_id?: string | null
           years_studying?: string | null
@@ -2854,6 +3690,8 @@ export type Database = {
           preferred_time?: string | null
           previous_teacher?: string | null
           quran_level?: string | null
+          review_comment?: string | null
+          review_rating?: number | null
           tajweed_knowledge?: string | null
           user_id?: string | null
           years_studying?: string | null
@@ -3073,30 +3911,6 @@ export type Database = {
           },
         ]
       }
-      private_student_subjects: {
-        Row: {
-          id: string
-          student_id: string
-          subject_id: string
-          assigned_by: string | null
-          assigned_at: string | null
-        }
-        Insert: {
-          id?: string
-          student_id: string
-          subject_id: string
-          assigned_by?: string | null
-          assigned_at?: string | null
-        }
-        Update: {
-          id?: string
-          student_id?: string
-          subject_id?: string
-          assigned_by?: string | null
-          assigned_at?: string | null
-        }
-        Relationships: []
-      }
       private_sessions: {
         Row: {
           created_at: string | null
@@ -3140,6 +3954,140 @@ export type Database = {
             columns: ["subject_id"]
             isOneToOne: false
             referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      private_student_courses: {
+        Row: {
+          assigned_at: string | null
+          assigned_by: string | null
+          course_id: string
+          id: string
+          student_id: string
+        }
+        Insert: {
+          assigned_at?: string | null
+          assigned_by?: string | null
+          course_id: string
+          id?: string
+          student_id: string
+        }
+        Update: {
+          assigned_at?: string | null
+          assigned_by?: string | null
+          course_id?: string
+          id?: string
+          student_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "private_student_courses_course_id_fkey"
+            columns: ["course_id"]
+            isOneToOne: false
+            referencedRelation: "courses"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      private_student_subjects: {
+        Row: {
+          assigned_at: string | null
+          assigned_by: string | null
+          id: string
+          student_id: string
+          subject_id: string
+        }
+        Insert: {
+          assigned_at?: string | null
+          assigned_by?: string | null
+          id?: string
+          student_id: string
+          subject_id: string
+        }
+        Update: {
+          assigned_at?: string | null
+          assigned_by?: string | null
+          id?: string
+          student_id?: string
+          subject_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "private_student_subjects_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      private_student_timetable: {
+        Row: {
+          assigned_by: string | null
+          created_at: string
+          id: string
+          slot_id: string
+          student_id: string
+        }
+        Insert: {
+          assigned_by?: string | null
+          created_at?: string
+          id?: string
+          slot_id: string
+          student_id: string
+        }
+        Update: {
+          assigned_by?: string | null
+          created_at?: string
+          id?: string
+          slot_id?: string
+          student_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "private_student_timetable_slot_id_fkey"
+            columns: ["slot_id"]
+            isOneToOne: false
+            referencedRelation: "subject_timetable"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      proctoring_logs: {
+        Row: {
+          attempt_id: string
+          details: string | null
+          detected_at: string
+          id: string
+          points_deducted: number | null
+          severity: string | null
+          violation_type: string
+        }
+        Insert: {
+          attempt_id: string
+          details?: string | null
+          detected_at?: string
+          id?: string
+          points_deducted?: number | null
+          severity?: string | null
+          violation_type: string
+        }
+        Update: {
+          attempt_id?: string
+          details?: string | null
+          detected_at?: string
+          id?: string
+          points_deducted?: number | null
+          severity?: string | null
+          violation_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "proctoring_logs_attempt_id_fkey"
+            columns: ["attempt_id"]
+            isOneToOne: false
+            referencedRelation: "exam_attempts"
             referencedColumns: ["id"]
           },
         ]
@@ -3255,6 +4203,7 @@ export type Database = {
           bio: string | null
           city: string | null
           country: string | null
+          course_level: string | null
           created_at: string
           date_of_birth: string | null
           email: string | null
@@ -3281,6 +4230,7 @@ export type Database = {
           preferred_language: string | null
           private_notes: string | null
           private_session_rate: string | null
+          role: string | null
           status: string | null
           student_id: string | null
           student_type: string | null
@@ -3299,6 +4249,7 @@ export type Database = {
           bio?: string | null
           city?: string | null
           country?: string | null
+          course_level?: string | null
           created_at?: string
           date_of_birth?: string | null
           email?: string | null
@@ -3325,6 +4276,7 @@ export type Database = {
           preferred_language?: string | null
           private_notes?: string | null
           private_session_rate?: string | null
+          role?: string | null
           status?: string | null
           student_id?: string | null
           student_type?: string | null
@@ -3343,6 +4295,7 @@ export type Database = {
           bio?: string | null
           city?: string | null
           country?: string | null
+          course_level?: string | null
           created_at?: string
           date_of_birth?: string | null
           email?: string | null
@@ -3369,6 +4322,7 @@ export type Database = {
           preferred_language?: string | null
           private_notes?: string | null
           private_session_rate?: string | null
+          role?: string | null
           status?: string | null
           student_id?: string | null
           student_type?: string | null
@@ -3559,6 +4513,44 @@ export type Database = {
           },
         ]
       }
+      push_subscriptions: {
+        Row: {
+          auth: string
+          created_at: string
+          endpoint: string
+          id: string
+          p256dh: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          auth: string
+          created_at?: string
+          endpoint: string
+          id?: string
+          p256dh: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          auth?: string
+          created_at?: string
+          endpoint?: string
+          id?: string
+          p256dh?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "push_subscriptions_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: true
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       recitation_tests: {
         Row: {
           admin_approved: boolean | null
@@ -3566,6 +4558,7 @@ export type Database = {
           admin_notes: string | null
           ai_score: number | null
           ai_transcript: string | null
+          assigned_page: number | null
           audio_path: string | null
           created_at: string | null
           final_level: string | null
@@ -3591,6 +4584,7 @@ export type Database = {
           admin_notes?: string | null
           ai_score?: number | null
           ai_transcript?: string | null
+          assigned_page?: number | null
           audio_path?: string | null
           created_at?: string | null
           final_level?: string | null
@@ -3616,6 +4610,7 @@ export type Database = {
           admin_notes?: string | null
           ai_score?: number | null
           ai_transcript?: string | null
+          assigned_page?: number | null
           audio_path?: string | null
           created_at?: string | null
           final_level?: string | null
@@ -3792,9 +4787,11 @@ export type Database = {
           front_text: string
           front_text_ar: string | null
           id: string
+          is_ai_generated: boolean | null
           level: string | null
           order_index: number | null
           room_id: string | null
+          source_material_id: string | null
           subject_id: string | null
           topic: string | null
         }
@@ -3806,9 +4803,11 @@ export type Database = {
           front_text: string
           front_text_ar?: string | null
           id?: string
+          is_ai_generated?: boolean | null
           level?: string | null
           order_index?: number | null
           room_id?: string | null
+          source_material_id?: string | null
           subject_id?: string | null
           topic?: string | null
         }
@@ -3820,9 +4819,11 @@ export type Database = {
           front_text?: string
           front_text_ar?: string | null
           id?: string
+          is_ai_generated?: boolean | null
           level?: string | null
           order_index?: number | null
           room_id?: string | null
+          source_material_id?: string | null
           subject_id?: string | null
           topic?: string | null
         }
@@ -4258,6 +5259,7 @@ export type Database = {
           subject_id: string
           teacher_name: string | null
           thumbnail_url: string | null
+          visibility: string
         }
         Insert: {
           created_at?: string | null
@@ -4269,6 +5271,7 @@ export type Database = {
           subject_id: string
           teacher_name?: string | null
           thumbnail_url?: string | null
+          visibility?: string
         }
         Update: {
           created_at?: string | null
@@ -4280,6 +5283,7 @@ export type Database = {
           subject_id?: string
           teacher_name?: string | null
           thumbnail_url?: string | null
+          visibility?: string
         }
         Relationships: [
           {
@@ -4514,9 +5518,10 @@ export type Database = {
         Row: {
           content: string | null
           created_at: string | null
+          description: string | null
           file_size: number | null
           file_type: string | null
-          file_url: string
+          file_url: string | null
           id: string
           is_downloadable: boolean | null
           level: string | null
@@ -4525,15 +5530,18 @@ export type Database = {
           sort_order: number | null
           subject_id: string
           title: string
+          title_ar: string | null
           topic: string | null
           uploaded_by: string
+          visibility: string
         }
         Insert: {
           content?: string | null
           created_at?: string | null
+          description?: string | null
           file_size?: number | null
           file_type?: string | null
-          file_url: string
+          file_url?: string | null
           id?: string
           is_downloadable?: boolean | null
           level?: string | null
@@ -4542,15 +5550,18 @@ export type Database = {
           sort_order?: number | null
           subject_id: string
           title: string
+          title_ar?: string | null
           topic?: string | null
           uploaded_by: string
+          visibility?: string
         }
         Update: {
           content?: string | null
           created_at?: string | null
+          description?: string | null
           file_size?: number | null
           file_type?: string | null
-          file_url?: string
+          file_url?: string | null
           id?: string
           is_downloadable?: boolean | null
           level?: string | null
@@ -4559,8 +5570,10 @@ export type Database = {
           sort_order?: number | null
           subject_id?: string
           title?: string
+          title_ar?: string | null
           topic?: string | null
           uploaded_by?: string
+          visibility?: string
         }
         Relationships: [
           {
@@ -4623,6 +5636,68 @@ export type Database = {
           },
         ]
       }
+      subject_timetable: {
+        Row: {
+          created_at: string | null
+          created_by: string | null
+          day_of_week: number
+          end_time: string
+          id: string
+          is_active: boolean | null
+          levels: string[] | null
+          live_url: string | null
+          notes: string | null
+          start_time: string
+          subject_id: string
+          teacher_id: string | null
+          teacher_ids: string[] | null
+          updated_at: string | null
+          visibility: string
+        }
+        Insert: {
+          created_at?: string | null
+          created_by?: string | null
+          day_of_week: number
+          end_time: string
+          id?: string
+          is_active?: boolean | null
+          levels?: string[] | null
+          live_url?: string | null
+          notes?: string | null
+          start_time: string
+          subject_id: string
+          teacher_id?: string | null
+          teacher_ids?: string[] | null
+          updated_at?: string | null
+          visibility?: string
+        }
+        Update: {
+          created_at?: string | null
+          created_by?: string | null
+          day_of_week?: number
+          end_time?: string
+          id?: string
+          is_active?: boolean | null
+          levels?: string[] | null
+          live_url?: string | null
+          notes?: string | null
+          start_time?: string
+          subject_id?: string
+          teacher_id?: string | null
+          teacher_ids?: string[] | null
+          updated_at?: string | null
+          visibility?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subject_timetable_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       subject_whiteboard: {
         Row: {
           strokes: Json | null
@@ -4663,6 +5738,7 @@ export type Database = {
           image_url: string | null
           is_active: boolean | null
           level: string | null
+          levels: string[] | null
           livekit_room_name: string | null
           next_session_at: string | null
           session_day: string | null
@@ -4674,6 +5750,7 @@ export type Database = {
           title_ar: string | null
           total_sessions: number | null
           updated_at: string | null
+          visibility: string
         }
         Insert: {
           course_id?: string | null
@@ -4688,6 +5765,7 @@ export type Database = {
           image_url?: string | null
           is_active?: boolean | null
           level?: string | null
+          levels?: string[] | null
           livekit_room_name?: string | null
           next_session_at?: string | null
           session_day?: string | null
@@ -4699,6 +5777,7 @@ export type Database = {
           title_ar?: string | null
           total_sessions?: number | null
           updated_at?: string | null
+          visibility?: string
         }
         Update: {
           course_id?: string | null
@@ -4713,6 +5792,7 @@ export type Database = {
           image_url?: string | null
           is_active?: boolean | null
           level?: string | null
+          levels?: string[] | null
           livekit_room_name?: string | null
           next_session_at?: string | null
           session_day?: string | null
@@ -4724,6 +5804,7 @@ export type Database = {
           title_ar?: string | null
           total_sessions?: number | null
           updated_at?: string | null
+          visibility?: string
         }
         Relationships: [
           {
@@ -4991,6 +6072,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      acknowledge_hifdh_log: {
+        Args: { p_log_id: string; p_note?: string }
+        Returns: undefined
+      }
       admin_delete_user_account: {
         Args: { target_user_id: string }
         Returns: undefined
@@ -5041,6 +6126,13 @@ export type Database = {
           sort_order: number
         }[]
       }
+      get_users_last_login: {
+        Args: never
+        Returns: {
+          last_sign_in_at: string
+          user_id: string
+        }[]
+      }
       grade_exam_attempt: { Args: { _attempt_id: string }; Returns: Json }
       has_role: {
         Args: {
@@ -5051,6 +6143,33 @@ export type Database = {
       }
       mark_notifications_read: {
         Args: { p_user_id: string }
+        Returns: undefined
+      }
+      save_hifdh_assignment: {
+        Args: {
+          p_daily_pages: number
+          p_mode: string
+          p_notes?: string
+          p_reciter_id?: string
+          p_selected_items: number[]
+          p_student_id: string
+        }
+        Returns: string
+      }
+      upsert_hifdh_daily_log: {
+        Args: {
+          p_assignment_id: string
+          p_completed: boolean
+          p_duration: number
+          p_pages: number
+          p_score: number
+          p_session_data: Json
+          p_student_id: string
+        }
+        Returns: string
+      }
+      upsert_student_notifications: {
+        Args: { p_notifications: Json; p_user_id: string }
         Returns: undefined
       }
     }
