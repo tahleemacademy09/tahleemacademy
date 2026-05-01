@@ -4,7 +4,9 @@ import { useAuth } from "@/contexts/AuthContext";
 interface ProtectedRouteProps {
   children: React.ReactNode;
   requiredRole?: string;
-  skipOnboardingCheck?: boolean;
+  // Note: TasjeelGuard lives inside DashboardLayout, so any route rendered
+  // outside DashboardLayout (e.g. exam-taking, awaiting-level) is already
+  // outside the guard boundary. No extra prop is needed here.
 }
 
 const ROLE_FALLBACKS: Record<string, string> = {
