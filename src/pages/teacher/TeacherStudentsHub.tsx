@@ -4,6 +4,7 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAcademicLevels, getLevelConfig, getLevelDisplay } from "@/hooks/useAcademicLevels";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -52,6 +53,7 @@ const TABS: { id: HubTab; icon: any; en: string; ar: string }[] = [
 //  ALL STUDENTS TAB
 // ═══════════════════════════════════════════════════════════════
 function AllStudents({ user, t, language }: any) {
+  const { data: academicLevels = [] } = useAcademicLevels();
   const [students,  setStudents]  = useState<any[]>([]);
   const [subjects,  setSubjects]  = useState<any[]>([]);
   const [search,    setSearch]    = useState("");
@@ -123,9 +125,7 @@ function AllStudents({ user, t, language }: any) {
         </div>
         <select style={{ ...inp, width: "auto", flex: "0 0 auto" }} value={lvlFilter} onChange={e => setLvlFilter(e.target.value)}>
           <option value="all">{t("All Levels", "كل المستويات")}</option>
-          <option value="beginner">{t("Beginner", "مبتدئ")}</option>
-          <option value="intermediate">{t("Intermediate", "متوسط")}</option>
-          <option value="advanced">{t("Advanced", "متقدم")}</option>
+          {academicLevels.map(l => <option key={l.slug} value={l.slug}>{t(l.name_en, l.name_ar)}</option>)}
         </select>
         <select style={{ ...inp, width: "auto", flex: "0 0 auto" }} value={subFilter} onChange={e => setSubFilter(e.target.value)}>
           <option value="all">{t("All Subjects", "كل المواد")}</option>
@@ -157,8 +157,11 @@ function AllStudents({ user, t, language }: any) {
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {filtered.map(s => {
           const isOpen = expanded === s.user_id;
-          const lvlColors: Record<string, string> = { beginner: "#16A34A", intermediate: "#2563EB", advanced: "#7C3AED" };
-          const lvl = s.level || "beginner";
+          const lvlColors: Record<string, string> = Object.fromEntries(academicLevels.map(l => {
+            const cfg = getLevelConfig(l.slug, academicLevels);
+            return [l.slug, cfg.color];
+          }));
+          const lvl = s.level || (academicLevels[0]?.slug ?? "beginner");
           return (
             <div key={s.user_id} style={card}>
               <div style={{ display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }} onClick={() => expandStudent(s.user_id)}>
