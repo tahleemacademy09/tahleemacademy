@@ -9,6 +9,7 @@ import { useState, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAcademicLevels, getLevelConfig, getLevelDisplay } from "@/hooks/useAcademicLevels";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { toast } from "@/hooks/use-toast";
 import {
@@ -30,17 +31,7 @@ const DAYS = [
   { index: 6, en: "Saturday",  ar: "السبت" },
 ];
 
-const LEVELS = [
-  { value: "beginner",     label: "Beginner",     ar: "مبتدئ" },
-  { value: "intermediate", label: "Intermediate", ar: "متوسط" },
-  { value: "advanced",     label: "Advanced",     ar: "متقدم" },
-];
 
-const levelColors: Record<string, string> = {
-  beginner:     "#22c55e",
-  intermediate: "#f59e0b",
-  advanced:     "#8b5cf6",
-};
 
 interface SlotForm {
   subject_id: string;
@@ -72,6 +63,12 @@ export default function TimetableManagement() {
   const { user } = useAuth();
   const { t, language } = useLanguage();
   const qc = useQueryClient();
+  const { data: academicLevels = [] } = useAcademicLevels();
+  const LEVELS = academicLevels.map(l => ({ value: l.slug, label: l.name_en, ar: l.name_ar }));
+  const levelColors = Object.fromEntries(academicLevels.map(l => {
+    const cfg = getLevelConfig(l.slug, academicLevels);
+    return [l.slug, cfg.color];
+  }));
 
   const [showForm, setShowForm]   = useState(false);
   const [editId, setEditId]       = useState<string | null>(null);
