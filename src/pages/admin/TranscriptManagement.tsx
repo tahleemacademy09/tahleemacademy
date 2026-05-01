@@ -15,6 +15,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAcademicLevels, getLevelConfig, getLevelDisplay } from "@/hooks/useAcademicLevels";
 import { supabase } from "@/integrations/supabase/client";
 import {
   Download, GraduationCap, Search, Edit, Eye,
@@ -62,6 +63,7 @@ const TranscriptManagement = () => {
   const { t } = useLanguage();
   const { user } = useAuth();
   const { toast } = useToast();
+  const { data: academicLevels = [] } = useAcademicLevels();
 
   const [students, setStudents]             = useState<any[]>([]);
   const [search, setSearch]                 = useState("");
@@ -210,9 +212,8 @@ const TranscriptManagement = () => {
       img.src = tahleemStamp;
     });
 
-    const levelText  = selectedStudent.level === "beginner" ? "المبتدئة / Beginner"
-                     : selectedStudent.level === "intermediate" ? "المتوسطة / Intermediate"
-                     : selectedStudent.level || "---";
+    const _lvlD = getLevelDisplay(selectedStudent.level, academicLevels);
+    const levelText = selectedStudent.level ? `${_lvlD.name_ar} / ${_lvlD.name_en}` : "---";
     const hijriYear  = new Date().getFullYear() - 579;
     const termLabel  = term === "first" ? "الفترة الأولى — First Term"
                      : term === "second" ? "الفترة الثانية — Second Term"
@@ -515,9 +516,9 @@ table.summary .lbl{font-weight:700;background:#f8fafb;width:18%}
               <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">{t("All Levels", "كل المستويات")}</SelectItem>
-                <SelectItem value="beginner">{t("Beginner", "مبتدئ")}</SelectItem>
-                <SelectItem value="intermediate">{t("Intermediate", "متوسط")}</SelectItem>
-                <SelectItem value="advanced">{t("Advanced", "متقدم")}</SelectItem>
+                {academicLevels.map(l => (
+                  <SelectItem key={l.slug} value={l.slug}>{t(l.name_en, l.name_ar)}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
             <Select value={statusFilter} onValueChange={setStatusFilter}>
