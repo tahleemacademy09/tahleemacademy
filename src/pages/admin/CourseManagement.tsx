@@ -34,7 +34,7 @@ type ContentTab = "syllabus"|"materials"|"lessons";
 
 const MATERIAL_TYPES: MatType[] = ["PDF","Video","Audio","Link","Text","Image","Document"];
 
-bg:string;text:string;border:string}> = {
+const LEVEL_BADGE: Record<string, { label: string; bg: string; text: string; border: string }> = {
   all:          {label:"All Levels",   bg:"#F3F4F6",text:"#374151",border:"#D1D5DB"},
   beginner:     {label:"Beginner",     bg:"#F0FDF4",text:"#166534",border:"#86EFAC"},
   intermediate: {label:"Intermediate", bg:"#EFF6FF",text:"#1E40AF",border:"#93C5FD"},
