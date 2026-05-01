@@ -5,6 +5,7 @@
 
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAcademicLevels, getLevelConfig, getLevelDisplay } from "@/hooks/useAcademicLevels";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate } from "react-router-dom";
@@ -17,7 +18,6 @@ import {
 
 const G      = "#064E3B";
 const ROLES  = ["student", "teacher", "admin"] as const;
-const LEVELS = ["beginner", "intermediate", "advanced"];
 const STUDENT_TYPES = ["general", "private"] as const;
 
 const studentTypeColor: Record<string, { bg: string; text: string; border: string; icon: string }> = {
@@ -94,6 +94,8 @@ function PasscodeModal({ data, onClose }: { data: { passcode: string; student_id
 
 // ─── Create User Dialog ───────────────────────────────────────────────────────
 function CreateUserDialog({ session, onCreated, onClose }: { session: any; onCreated: (d: any) => void; onClose: () => void }) {
+  const { data: academicLevels = [] } = useAcademicLevels();
+  const LEVELS = academicLevels.map(l => l.slug);: { session: any; onCreated: (d: any) => void; onClose: () => void }) {
   const { toast } = useToast();
   const [form, setForm]     = useState({ email: "", full_name: "", full_name_ar: "", role: "student" as string, level: "", student_type: "general" as string });
   const [creating, setCreating] = useState(false);
@@ -170,7 +172,7 @@ function CreateUserDialog({ session, onCreated, onClose }: { session: any; onCre
             <label style={{ fontSize: 11, fontWeight: 700, color: "#374151", display: "block", marginBottom: 5 }}>Level</label>
             <select value={form.level} onChange={e => setForm(f => ({ ...f, level: e.target.value }))} style={inp}>
               <option value="">— Not assigned —</option>
-              {LEVELS.map(l => <option key={l} value={l}>{l.charAt(0).toUpperCase() + l.slice(1)}</option>)}
+              {LEVELS.map(l => { const al = academicLevels.find(a => a.slug === l); return <option key={l} value={l}>{al?.name_en || l}</option>; })}
             </select>
           </div>
 
@@ -214,6 +216,7 @@ function CreateUserDialog({ session, onCreated, onClose }: { session: any; onCre
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function StudentManagement() {
   const { user: currentUser, session } = useAuth();
+  const { data: academicLevels = [] } = useAcademicLevels();
   const { toast }  = useToast();
   const navigate   = useNavigate();
 
@@ -404,7 +407,7 @@ export default function StudentManagement() {
           </select>
           <select value={levelFilter} onChange={e => setLevelFilter(e.target.value)} style={{ ...inp, width: "auto", minWidth: 130 }}>
             <option value="all">All Levels</option>
-            {LEVELS.map(l => <option key={l} value={l}>{l.charAt(0).toUpperCase() + l.slice(1)}</option>)}
+            {academicLevels.map(l => <option key={l.slug} value={l.slug}>{l.name_en}</option>)}
           </select>
           <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)} style={{ ...inp, width: "auto", minWidth: 130 }}>
             <option value="all">All Types</option>
