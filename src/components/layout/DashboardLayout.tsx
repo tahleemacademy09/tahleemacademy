@@ -2,7 +2,7 @@
   DashboardLayout.tsx — Tahleem Academy
   Mobile-first responsive layout with collapsible admin nav groups
 */
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
@@ -19,7 +19,6 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
-import { useState as useLayoutState, useEffect as useLayoutEffect } from "react";
 import PaymentBanner from "./PaymentBanner";
 import HolidayBanner from "./HolidayBanner";
 import AdminPaymentIndicator from "./AdminPaymentIndicator";
@@ -241,11 +240,11 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
 
   // ── Notification badge count for top bar ────────────────────
   const { user } = useAuth();
-  const [unreadNotifs, setUnreadNotifs] = useLayoutState(0);
-  const [showNotifPanel, setShowNotifPanel] = useLayoutState(false);
-  const [notifList, setNotifList] = useLayoutState<any[]>([]);
+  const [unreadNotifs, setUnreadNotifs] = useState(0);
+  const [showNotifPanel, setShowNotifPanel] = useState(false);
+  const [notifList, setNotifList] = useState<any[]>([]);
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     if (!user) return;
     const load = async () => {
       const { data } = await supabase
