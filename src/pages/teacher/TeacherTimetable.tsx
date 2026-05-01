@@ -6,6 +6,7 @@ import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAcademicLevels, getLevelConfig, getLevelDisplay } from "@/hooks/useAcademicLevels";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { format } from "date-fns";
 import { Clock, Video, Calendar, BookOpen, Plus, ChevronRight, Users, Mic } from "lucide-react";
@@ -50,6 +51,10 @@ function formatCountdown(minutes: number): string {
 export default function TeacherTimetable() {
   const { user }        = useAuth();
   const { t, language } = useLanguage();
+  const { data: academicLevels = [] } = useAcademicLevels();
+  
+    return [l.slug, { bg: cfg.bg, text: cfg.color, border: cfg.border }];
+  }));
   const navigate        = useNavigate();
   const todayIndex      = new Date().getDay();
   const [selectedDay, setSelectedDay] = useState(todayIndex);
@@ -125,7 +130,7 @@ export default function TeacherTimetable() {
   const todaySlots    = (timetableSlots || []).filter((s: any) => s.day_of_week === todayIndex);
   const selectedSlots = (timetableSlots || []).filter((s: any) => s.day_of_week === selectedDay);
 
-  const levelColors: Record<string, { bg: string; color: string; border: string }> = {
+   color: string; border: string }> = {
     beginner:     { bg: "#f0fff4", color: "#276749", border: "#9ae6b4" },
     intermediate: { bg: "#fffbeb", color: "#b7791f", border: "#f6d860" },
     advanced:     { bg: "#f5f0ff", color: "#6b46c1", border: "#d6bcfa" },
@@ -241,7 +246,7 @@ export default function TeacherTimetable() {
             {selectedSlots
               .sort((a: any, b: any) => a.start_time.localeCompare(b.start_time))
               .map((slot: any) => {
-                const lc     = levelColors[slot.level || "beginner"] || levelColors.beginner;
+                const lc = levelColors[slot.level as string] || { bg: "#F3F4F6", text: "#374151", border: "#D1D5DB" };
                 const mins   = selectedDay === todayIndex ? minutesUntil(slot.start_time) : 9999;
                 const isLive = mins <= 0 && mins > -(slot.duration_minutes || 60);
                 const isSoon = mins > 0 && mins < 60;
