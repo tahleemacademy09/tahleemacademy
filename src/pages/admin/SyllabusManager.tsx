@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAcademicLevels, getLevelConfig, getLevelDisplay } from "@/hooks/useAcademicLevels";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -20,14 +21,12 @@ import {
   Calendar, Layers, FolderOpen, Check, AlertCircle, Loader2
 } from "lucide-react";
 
-const LEVELS = ["beginner", "intermediate", "advanced"] as const;
 const MATERIAL_TYPES = ["PDF", "Video", "Audio", "Link", "Text", "Image", "Document"] as const;
 
-type Level = typeof LEVELS[number];
 type MatType = typeof MATERIAL_TYPES[number];
 
 // ── Helpers ─────────────────────────────────────────────
-const levelColors: Record<Level, { bg: string; text: string; border: string; dot: string }> = {
+ text: string; border: string; dot: string }> = {
   beginner:     { bg: "#F0FDF4", text: "#166534", border: "#86EFAC", dot: "#22C55E" },
   intermediate: { bg: "#EFF6FF", text: "#1E40AF", border: "#93C5FD", dot: "#3B82F6" },
   advanced:     { bg: "#FDF4FF", text: "#6B21A8", border: "#D8B4FE", dot: "#A855F7" },
@@ -64,9 +63,16 @@ const SyllabusManager = () => {
   const { t } = useLanguage();
   const { user } = useAuth();
   const qc = useQueryClient();
+  const { data: academicLevels = [] } = useAcademicLevels();
+  const LEVELS = academicLevels.map(l => l.slug);
+  const levelColors = Object.fromEntries(academicLevels.map(l => {
+    const cfg = getLevelConfig(l.slug, academicLevels);
+    return [l.slug, { bg: cfg.bg, text: cfg.color, border: cfg.border, dot: cfg.color }];
+  }));
+  const defaultLevel = LEVELS[0] || "";
 
   const [selectedSubject, setSelectedSubject] = useState<string | null>(null);
-  const [levelFilter, setLevelFilter]         = useState<Level>("beginner");
+  const [levelFilter, setLevelFilter]         = useState<string>(defaultLevel);
   const [activeTab, setActiveTab]             = useState<"syllabus"|"materials">("syllabus");
 
   // Syllabus state
