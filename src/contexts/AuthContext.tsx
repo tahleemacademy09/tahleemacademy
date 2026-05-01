@@ -111,10 +111,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     // ── Safety timeout — loading must resolve within 8 seconds no matter what ──
-    // Prevents users getting permanently stuck on the spinner
+    // Prevents users getting permanently stuck on the spinner.
+    // timedOutRef prevents stale fetchUserData callbacks (which may still be in
+    // flight) from calling setRoles/setProfile after the timeout has fired.
+    const timedOutRef = { current: false };
+
     const safetyTimeout = setTimeout(() => {
       if (mountedRef.current) {
         console.warn("[AuthContext] Safety timeout — forcing loading=false");
+        timedOutRef.current = true;
         setLoading(false);
       }
     }, 8000);
@@ -124,6 +129,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // so we do NOT need getSession() — calling both causes a double-fetch race.
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, sess) => {
       if (!mountedRef.current) return;
+      // If the 8s safety timeout already fired, ignore auth state changes that
+      // would otherwise cause stale state to overwrite the resolved auth context.
+      if (timedOutRef.current) return;
 
       setSession(sess);
       setUser(sess?.user ?? null);
