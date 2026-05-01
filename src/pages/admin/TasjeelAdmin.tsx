@@ -7,6 +7,7 @@
 import { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { useAcademicLevels, getLevelConfig, getLevelDisplay } from "@/hooks/useAcademicLevels";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { useToast } from "@/hooks/use-toast";
 import { useRegistrationSettings } from "@/hooks/useRegistrationSettings";
@@ -54,8 +55,6 @@ const sessionActive = (date?: string, time?: string) => {
 
 const scoreColor = (s: number) => s >= 75 ? "#16A34A" : s >= 50 ? "#D97706" : "#DC2626";
 const scoreLabel = (s: number) => s >= 75 ? "Excellent" : s >= 50 ? "Good" : "Needs Work";
-const levelFromPct = (pct: number) =>
-  pct >= 70 ? "advanced" : pct >= 40 ? "intermediate" : "beginner";
 
 // ── Mini audio player ────────────────────────────────────────────────────────
 const AudioPlayer = ({ path }: { path: string }) => {
@@ -420,9 +419,10 @@ const StudentCard = ({ s, onRefresh }: { s: any; onRefresh: () => void }) => {
                 <select value={selLevel} onChange={e => setSelLevel(e.target.value)}
                   style={{ flex: 1, padding: "9px 12px", borderRadius: 10, border: "1.5px solid #E5E7EB", fontSize: 13, outline: "none" }}>
                   <option value="">Select level to assign…</option>
-                  <option value="beginner">🟢 Beginner / مبتدئ</option>
-                  <option value="intermediate">🟡 Intermediate / متوسط</option>
-                  <option value="advanced">🔴 Advanced / متقدم</option>
+                  {academicLevels.map(l => {
+                    const cfg = getLevelConfig(l.slug, academicLevels);
+                    return <option key={l.slug} value={l.slug}>{cfg.dot} {l.name_en} / {l.name_ar}</option>;
+                  })}
                 </select>
                 <button onClick={assignLevel} disabled={!selLevel || assigning}
                   style={{ padding: "9px 18px", borderRadius: 10, border: "none", background: selLevel ? G : "#9CA3AF", color: "#fff", cursor: selLevel ? "pointer" : "not-allowed", fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
@@ -445,6 +445,13 @@ export default function TasjeelAdmin() {
   const { toast }   = useToast();
   const navigate    = useNavigate();
   const { config, loading: configLoading, saveAll } = useRegistrationSettings();
+  const { data: academicLevels = [] } = useAcademicLevels();
+  const levelFromPct = (pct: number): string => {
+    if (!academicLevels.length) return pct >= 70 ? "advanced" : pct >= 40 ? "intermediate" : "beginner";
+    if (pct >= 70) return academicLevels[academicLevels.length - 1]?.slug || "advanced";
+    if (pct >= 40) return academicLevels[Math.floor(academicLevels.length / 2)]?.slug || "intermediate";
+    return academicLevels[0]?.slug || "beginner";
+  };
   const [tab, setTab]           = useState<Tab>("registrations");
   const [draft, setDraft]       = useState<any>(null);
   const [saving, setSaving]     = useState(false);
