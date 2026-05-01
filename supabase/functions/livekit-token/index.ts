@@ -1,7 +1,13 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+  // Only allow requests from the production domain (and local dev)
+  'Access-Control-Allow-Origin':
+    ['https://tahleemacademy.vercel.app', 'http://localhost:5173'].includes(
+      new URL(req.url).searchParams.get('_origin') ?? ''
+    )
+      ? new URL(req.url).searchParams.get('_origin')!
+      : 'https://tahleemacademy.vercel.app',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
@@ -13,10 +19,7 @@ Deno.serve(async (req) => {
   try {
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
-      return new Response(JSON.stringify({ error: 'Not authenticated' }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+      return new Response(JSON.stringify({ error: 'Not authenticated' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
@@ -27,10 +30,7 @@ Deno.serve(async (req) => {
 
     const { data: { user }, error: authError } = await supabase.auth.getUser();
     if (authError || !user) {
-      return new Response(JSON.stringify({ error: 'Invalid token' }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+      return new Response(JSON.stringify({ error: 'Invalid token' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     const body = await req.json();
@@ -40,14 +40,8 @@ Deno.serve(async (req) => {
     const LIVEKIT_API_SECRET = Deno.env.get('LIVEKIT_API_SECRET');
     const LIVEKIT_URL        = Deno.env.get('LIVEKIT_URL');
 
-    // ── LiveKit not configured: return 200 with video_disabled flag ──
-    // This prevents the Supabase SDK from throwing a non-2xx error,
-    // allowing the caller to handle the absence of video gracefully.
     if (!LIVEKIT_API_KEY || !LIVEKIT_API_SECRET || !LIVEKIT_URL) {
-      return new Response(
-        JSON.stringify({ video_disabled: true, reason: 'LiveKit is not configured on this server.' }),
-        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return new Response(JSON.stringify({ error: 'LiveKit not configured' }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     // Get user role
@@ -75,16 +69,10 @@ Deno.serve(async (req) => {
         .from('subjects').select('*').eq('id', subject_id).single();
 
       if (subjectError || !subject) {
-        return new Response(JSON.stringify({ error: 'Subject not found' }), {
-          status: 404,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
+        return new Response(JSON.stringify({ error: 'Subject not found' }), { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
       if (!subject.is_active && !isPrivileged) {
-        return new Response(JSON.stringify({ error: 'Subject is not active' }), {
-          status: 403,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
+        return new Response(JSON.stringify({ error: 'Subject is not active' }), { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
 
       finalRoomName = subject.livekit_room_name || `subject-${subject.id}`;
@@ -116,10 +104,7 @@ Deno.serve(async (req) => {
       });
 
     } else {
-      return new Response(JSON.stringify({ error: 'subject_id or room_name required' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+      return new Response(JSON.stringify({ error: 'subject_id or room_name required' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     // ── Build JWT ─────────────────────────────────────────────────────────
@@ -180,9 +165,6 @@ Deno.serve(async (req) => {
 
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Unknown error';
-    return new Response(JSON.stringify({ error: message }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    return new Response(JSON.stringify({ error: message }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   }
 });
