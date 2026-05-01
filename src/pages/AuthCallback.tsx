@@ -29,9 +29,11 @@ const STEP_ROUTES: Record<string, string> = {
   payment:          "/register",
   onboarding:       "/onboarding",
   exam:             "/student/entrance-exam",
-  review:           "/student/entrance-results",
+  recitation:       "/student/recitation-test",    // was missing
+  schedule_session: "/student/recitation-test",    // was missing
   level_assignment: "/student/awaiting-level",
   completed:        "/student",
+  // Note: "review" was previously listed here but is not a real tasjeel step
 };
 
 const AuthCallback = () => {
