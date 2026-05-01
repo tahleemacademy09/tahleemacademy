@@ -13,6 +13,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAcademicLevels, getLevelConfig, getLevelDisplay } from "@/hooks/useAcademicLevels";
 import {
   Plus, Edit, Trash2, Copy, Clock, Search, Send,
   Eye, EyeOff, BarChart2, Loader2, CheckCircle2,
@@ -20,13 +21,14 @@ import {
 } from "lucide-react";
 
 const G = "#064E3B";
-const LEVELS = ["beginner", "intermediate", "advanced"];
+
 
 export default function ExamManager() {
   const { t, language } = useLanguage();
   const { toast }       = useToast();
   const { user }        = useAuth();
   const navigate        = useNavigate();
+  const { data: academicLevels = [] } = useAcademicLevels();
 
   const [exams, setExams]               = useState<any[]>([]);
   const [loading, setLoading]           = useState(true);
@@ -280,7 +282,7 @@ export default function ExamManager() {
           {[
             { val: termFilter, set: setTermFilter, opts: [["all", "All Terms"], ["first", "First"], ["second", "Second"], ["final", "Final"]] },
             { val: typeFilter, set: setTypeFilter, opts: [["all", "All Types"], ["exam", "Exam"], ["test", "Test"], ["quiz", "Quiz"]] },
-            { val: levelFilter, set: setLevelFilter, opts: [["all", "All Levels"], ["beginner", "Beginner"], ["intermediate", "Intermediate"], ["advanced", "Advanced"]] },
+            { val: levelFilter, set: setLevelFilter, opts: [["all", "All Levels"], ...academicLevels.map(l => [l.slug, l.name_en])] },
           ].map((f, i) => (
             <select key={i} value={f.val} onChange={e => f.set(e.target.value)}
               style={{ ...inp, minWidth: 120 }}>
