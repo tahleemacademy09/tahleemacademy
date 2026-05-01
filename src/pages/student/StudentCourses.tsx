@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAcademicLevels, getLevelConfig, getLevelDisplay } from "@/hooks/useAcademicLevels";
 import { usePrivateStudent } from "@/hooks/usePrivateStudent";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
