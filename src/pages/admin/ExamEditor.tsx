@@ -20,6 +20,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAcademicLevels, getLevelConfig, getLevelDisplay } from "@/hooks/useAcademicLevels";
 import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { cn } from "@/lib/utils";
@@ -218,6 +219,7 @@ const ExamEditor = () => {
   const isEdit      = !!examId;
   const { t, language } = useLanguage();
   const { user }    = useAuth();
+  const { data: academicLevels = [] } = useAcademicLevels();
   const { toast }   = useToast();
   const navigate    = useNavigate();
   const isMobile    = useIsMobile();
@@ -726,9 +728,9 @@ const ExamEditor = () => {
                       <SelectTrigger className="h-11 rounded-lg"><SelectValue placeholder={t("Select level","اختر المستوى")} /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="none">{t("All Levels","جميع المستويات")}</SelectItem>
-                        <SelectItem value="beginner">{t("Beginner","مبتدئ")}</SelectItem>
-                        <SelectItem value="intermediate">{t("Intermediate","متوسط")}</SelectItem>
-                        <SelectItem value="advanced">{t("Advanced","متقدم")}</SelectItem>
+                        {academicLevels.map(l => (
+                          <SelectItem key={l.slug} value={l.slug}>{t(l.name_en, l.name_ar)}</SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
