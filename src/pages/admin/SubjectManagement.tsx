@@ -10,6 +10,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAcademicLevels, getLevelConfig, getLevelDisplay } from "@/hooks/useAcademicLevels";
 import { toast } from "@/hooks/use-toast";
 import { Plus, BookOpen, Users, Trash2, Edit, X, Save, Calendar, Lock, Loader2 } from "lucide-react";
 
@@ -17,11 +18,6 @@ const G    = "#0f2d1f";
 const GM   = "#1a4731";
 const GOLD = "#c9a84c";
 
-const LEVELS = [
-  { value: "beginner",     label: "Beginner",     ar: "مبتدئ",  color: "#22c55e" },
-  { value: "intermediate", label: "Intermediate", ar: "متوسط",  color: "#f59e0b" },
-  { value: "advanced",     label: "Advanced",     ar: "متقدم",  color: "#8b5cf6" },
-];
 
 interface SubForm {
   title: string; title_ar: string; description: string; description_ar: string;
@@ -37,6 +33,11 @@ const SubjectManagement = () => {
   const { t, language } = useLanguage();
   const { user }        = useAuth();
   const qc              = useQueryClient();
+  const { data: academicLevels = [] } = useAcademicLevels();
+  const LEVELS = academicLevels.map(l => {
+    const cfg = getLevelConfig(l.slug, academicLevels);
+    return { value: l.slug, label: l.name_en, ar: l.name_ar, color: cfg.color };
+  });
   const [open,   setOpen]   = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [form,   setForm]   = useState<SubForm>(EMPTY);
