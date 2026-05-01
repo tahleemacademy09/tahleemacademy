@@ -8,11 +8,9 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Loader2, Save, CheckCircle2, AlertCircle, BookOpen } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { useAcademicLevels, getLevelConfig, getLevelDisplay } from "@/hooks/useAcademicLevels";
 
-const LEVELS = ["beginner", "intermediate", "advanced"] as const;
-type Level = typeof LEVELS[number];
-
-const LEVEL_CONFIG: Record<Level, { label: string; labelAr: string; color: string; bg: string }> = {
+ labelAr: string; color: string; bg: string }> = {
   beginner:     { label: "Beginner",     labelAr: "مبتدئ",     color: "#16A34A", bg: "#F0FDF4" },
   intermediate: { label: "Intermediate", labelAr: "متوسط",     color: "#2563EB", bg: "#EFF6FF" },
   advanced:     { label: "Advanced",     labelAr: "متقدم",     color: "#7C3AED", bg: "#F5F3FF" },
@@ -21,10 +19,16 @@ const LEVEL_CONFIG: Record<Level, { label: string; labelAr: string; color: strin
 const LevelSubjectMapping = () => {
   const { t, language } = useLanguage();
   const { toast } = useToast();
+  const { data: academicLevels = [] } = useAcademicLevels();
+  const LEVELS = academicLevels.map(l => l.slug);
+  const LEVEL_CONFIG = Object.fromEntries(academicLevels.map(l => {
+    const cfg = getLevelConfig(l.slug, academicLevels);
+    return [l.slug, { label: l.name_en, labelAr: l.name_ar, color: cfg.color, bg: cfg.bg }];
+  }));
   
   const [subjects, setSubjects] = useState<any[]>([]);
-  const [mappings, setMappings] = useState<Record<string, Level[]>>({});
-  const [initialMappings, setInitialMappings] = useState<Record<string, Level[]>>({});
+  const [mappings, setMappings] = useState<Record<string, string[]>>({});
+  const [initialMappings, setInitialMappings] = useState<Record<string, string[]>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -40,7 +44,7 @@ const LevelSubjectMapping = () => {
 
         if (subRes.data) setSubjects(subRes.data);
         
-        const map: Record<string, Level[]> = {};
+        const map: Record<string, string[]> = {};
         mapRes.data?.forEach((m: any) => {
           if (!map[m.subject_id]) map[m.subject_id] = [];
           map[m.subject_id].push(m.level);
