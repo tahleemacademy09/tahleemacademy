@@ -130,7 +130,7 @@ export default function TeacherTimetable() {
   const todaySlots    = (timetableSlots || []).filter((s: any) => s.day_of_week === todayIndex);
   const selectedSlots = (timetableSlots || []).filter((s: any) => s.day_of_week === selectedDay);
 
-   color: string; border: string }> = {
+  const levelColors: Record<string, { bg: string; color: string; border: string }> = {
     beginner:     { bg: "#f0fff4", color: "#276749", border: "#9ae6b4" },
     intermediate: { bg: "#fffbeb", color: "#b7791f", border: "#f6d860" },
     advanced:     { bg: "#f5f0ff", color: "#6b46c1", border: "#d6bcfa" },
