@@ -64,7 +64,6 @@ const RevisionRoom        = lazy(() => import("./pages/student/RevisionRoom"));
 const PaymentScreen       = lazy(() => import("./pages/student/PaymentScreen"));
 const RecordingPlayer     = lazy(() => import("./pages/student/RecordingPlayer"));
 const EnrollmentPayment   = lazy(() => import("./pages/student/EnrollmentPayment"));
-const StudentCourses      = lazy(() => import("./pages/student/StudentCourses"));
 const TasjeelAwaitingLevel = lazy(() => import("./pages/student/TasjeelAwaitingLevel"));
 const StudentTimetable     = lazy(() => import("./pages/student/StudentTimetable"));
 const TasjeelAdmin         = lazy(() => import("./pages/admin/TasjeelAdmin"));
@@ -91,8 +90,7 @@ const EntranceExamAdmin     = lazy(() => import("./pages/admin/EntranceExamAdmin
 const ViewAsStudent         = lazy(() => import("./pages/admin/ViewAsStudent"));
 const RecordingManagement   = lazy(() => import("./pages/admin/RecordingManagement"));
 const LiveClassManagement   = lazy(() => import("./pages/admin/LiveClassManagement"));
-const MajlisModeration      = lazy(() => import("./pages/admin/MajlisModeration"));
-const NotificationManagement = lazy(() => import("./pages/admin/NotificationManagement"));
+const MajlisModeration      = lazy(() => import("./pages/admin/MajlisModeration"));const NotificationManagement = lazy(() => import("./pages/admin/NotificationManagement"));
 const TranscriptManagement  = lazy(() => import("./pages/admin/TranscriptManagement"));
 const AttendanceManagement  = lazy(() => import("./pages/admin/AttendanceManagement"));
 const PaymentManagement     = lazy(() => import("./pages/admin/PaymentManagement"));
@@ -106,9 +104,10 @@ const LevelAssignment       = lazy(() => import("./pages/admin/LevelAssignment")
 const LevelSubjectMapping   = lazy(() => import("./pages/admin/LevelSubjectMapping"));
 const LevelManagement       = lazy(() => import("./pages/admin/LevelManagement"));
 const PrivateSessions       = lazy(() => import("./pages/admin/PrivateSessions"));
-const MajlisAdmin           = lazy(() => import("./pages/admin/MajlisModeration"));
 const RegistrationSettings  = lazy(() => import("./pages/admin/RegistrationSettings"));
 
+// ── Auth callback ──────────────────────────────────────────────────────────
+const AuthCallback = lazy(() => import("./pages/AuthCallback"));
 // ── Teacher pages ──────────────────────────────────────────────────────────
 const TeacherDashboard       = lazy(() => import("./pages/teacher/TeacherDashboard"));
 const TeacherStudentsHub     = lazy(() => import("./pages/teacher/TeacherStudentsHub"));
@@ -133,7 +132,15 @@ const TeacherPublicClasses   = lazy(() => import("./pages/teacher/TeacherPublicC
 const TeacherHifdhReview     = lazy(() => import("./pages/teacher/TeacherHifdhReview"));
 const TeacherMajlis          = lazy(() => import("./pages/teacher/TeacherMajlis"));
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 60_000,          // 60s before background refetch
+      retry: 1,                   // only 1 retry on network error
+      refetchOnWindowFocus: false, // avoid re-fetching on every tab focus
+    },
+  },
+});
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
@@ -171,11 +178,12 @@ const App = () => (
                   <Route path="/admin-secure" element={<AdminLogin />} />
 
                   <Route path="/auth/register-continue" element={<RegisterContinue />} />
+                  <Route path="/auth/callback"          element={<AuthCallback />} />
                   <Route path="/registration-complete"  element={<RegistrationComplete />} />
 
                   {/* ── Standalone full-screen routes (no sidebar) ──────── */}
                   {/* Keep existing quiz unchanged */}
-                  <Route path="/live-quiz" element={<ProtectedRoute skipOnboardingCheck><LiveQuiz /></ProtectedRoute>} />
+                  <Route path="/live-quiz" element={<ProtectedRoute><LiveQuiz /></ProtectedRoute>} />
                   {/* New: Qur'an recitation competition — full-screen like /live-quiz */}
                   <Route path="/musabaqah/recitation" element={<ProtectedRoute><MustabaqahPage /></ProtectedRoute>} />
 
@@ -210,20 +218,23 @@ const App = () => (
                   </Route>
 
                   {/* Student standalone */}
-                  <Route path="/student/exam-verify/:examId"         element={<ProtectedRoute skipOnboardingCheck><PreExamVerification /></ProtectedRoute>} />
-                  <Route path="/student/exam/:attemptId"             element={<ProtectedRoute skipOnboardingCheck><ExamTaking /></ProtectedRoute>} />
-                  <Route path="/student/results/:attemptId"          element={<ProtectedRoute skipOnboardingCheck><ExamResults /></ProtectedRoute>} />
-                  <Route path="/onboarding"                          element={<ProtectedRoute skipOnboardingCheck><Onboarding /></ProtectedRoute>} />
-                  <Route path="/student/recitation-test"             element={<ProtectedRoute skipOnboardingCheck><RecitationTest /></ProtectedRoute>} />
-                  <Route path="/student/entrance-exam/:attemptId"    element={<ProtectedRoute skipOnboardingCheck><EntranceExamTaking /></ProtectedRoute>} />
-                  <Route path="/student/entrance-exam"              element={<ProtectedRoute skipOnboardingCheck><EntranceExamResume /></ProtectedRoute>} />
-                  <Route path="/student/entrance-results/:attemptId" element={<ProtectedRoute skipOnboardingCheck><EntranceResults /></ProtectedRoute>} />
-                  <Route path="/student/payment"                     element={<ProtectedRoute skipOnboardingCheck><PaymentScreen /></ProtectedRoute>} />
-                  <Route path="/student/awaiting-level"              element={<ProtectedRoute skipOnboardingCheck><TasjeelAwaitingLevel /></ProtectedRoute>} />
+                  <Route path="/student/exam-verify/:examId"         element={<ProtectedRoute><PreExamVerification /></ProtectedRoute>} />
+                  <Route path="/student/exam/:attemptId"             element={<ProtectedRoute><ExamTaking /></ProtectedRoute>} />
+                  <Route path="/student/results/:attemptId"          element={<ProtectedRoute><ExamResults /></ProtectedRoute>} />
+                  <Route path="/onboarding"                          element={<ProtectedRoute><Onboarding /></ProtectedRoute>} />
+                  <Route path="/student/recitation-test"             element={<ProtectedRoute><RecitationTest /></ProtectedRoute>} />
+                  <Route path="/student/entrance-exam/:attemptId"    element={<ProtectedRoute><EntranceExamTaking /></ProtectedRoute>} />
+                  <Route path="/student/entrance-exam"              element={<ProtectedRoute><EntranceExamResume /></ProtectedRoute>} />
+                  <Route path="/student/entrance-results/:attemptId" element={<ProtectedRoute><EntranceResults /></ProtectedRoute>} />
+                  <Route path="/student/payment"                     element={<ProtectedRoute><PaymentScreen /></ProtectedRoute>} />
+                  <Route path="/student/awaiting-level"              element={<ProtectedRoute><TasjeelAwaitingLevel /></ProtectedRoute>} />
 
                   {/* ── Teacher routes ── */}
                   <Route element={<ProtectedRoute requiredRole="teacher"><TeacherLayout /></ProtectedRoute>}>
                     <Route path="/teacher"                  element={<TeacherDashboard />} />
+                    <Route path="/teacher/teaching-hub"    element={<TeacherTeachingHub />} />
+                    <Route path="/teacher/students-hub"    element={<TeacherStudentsHub />} />
+                    <Route path="/teacher/assessments-hub" element={<TeacherAssessmentsHub />} />
                     <Route path="/teacher/classes"          element={<TeacherClasses />} />
                     <Route path="/teacher/timetable"        element={<TeacherTimetable />} />
                     <Route path="/teacher/subjects"         element={<TeacherSubjects />} />
@@ -251,7 +262,8 @@ const App = () => (
                     <Route path="/admin/subjects"                    element={<CourseManagement />} />
                     <Route path="/admin/subjects/:subjectId"         element={<CourseManagement />} />
                     <Route path="/admin/courses"                     element={<CourseManagement />} />
-                    <Route path="/admin/syllabus"                    element={<CourseManagement />} />
+                    <Route path="/admin/syllabus"                    element={<SyllabusManager />} />
+                    <Route path="/admin/level-subject-mapping"       element={<LevelSubjectMapping />} />
                     <Route path="/admin/timetable"                   element={<TimetableManagement />} />
                     <Route path="/admin/live-classes"                element={<LiveClassManagement />} />
                     <Route path="/admin/exams"                       element={<ExamManager />} />
