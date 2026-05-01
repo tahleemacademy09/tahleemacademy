@@ -11,6 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useNavigate } from "react-router-dom";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAcademicLevels, getLevelConfig, getLevelDisplay } from "@/hooks/useAcademicLevels";
 import {
   FileText, Users, Settings, Plus, Trash2, Download, Eye,
   BookOpen, RotateCcw, UserCog, Search, ChevronRight,
@@ -20,14 +21,8 @@ import {
 
 const G = "#064E3B";
 const ENTRANCE_EXAM_ID = "36ef6492-2515-44ea-b086-67c9cee02475";
-const LEVELS = ["beginner","intermediate","advanced"] as const;
 
-const levelFromScore = (pct: number) => pct >= 70 ? "advanced" : pct >= 40 ? "intermediate" : "beginner";
-const levelCfg = {
-  beginner:     { bg:"#DCFCE7", text:"#166534", border:"#86EFAC", label:"Beginner / مبتدئ",     dot:"🟢" },
-  intermediate: { bg:"#FEF9C3", text:"#854D0E", border:"#FDE68A", label:"Intermediate / متوسط", dot:"🟡" },
-  advanced:     { bg:"#FEE2E2", text:"#991B1B", border:"#FECACA", label:"Advanced / متقدم",     dot:"🔴" },
-};
+
 
 type QuestionType = "mcq" | "true_false" | "essay" | "short_answer" | "fill_blank";
 type Difficulty = "easy" | "medium" | "hard";
@@ -47,6 +42,18 @@ interface Question {
 
 const EntranceExamAdmin = () => {
   const { toast } = useToast();
+  const { data: academicLevels = [] } = useAcademicLevels();
+  const LEVELS = academicLevels.map(l => l.slug);
+  const levelFromScore = (pct: number): string => {
+    if (!academicLevels.length) return pct >= 70 ? "advanced" : pct >= 40 ? "intermediate" : "beginner";
+    if (pct >= 70) return academicLevels[academicLevels.length - 1]?.slug || "advanced";
+    if (pct >= 40) return academicLevels[Math.floor(academicLevels.length / 2)]?.slug || "intermediate";
+    return academicLevels[0]?.slug || "beginner";
+  };
+  const levelCfg = Object.fromEntries(academicLevels.map(l => {
+    const cfg = getLevelConfig(l.slug, academicLevels);
+    return [l.slug, { bg: cfg.bg, text: cfg.color, border: cfg.border, label: `${l.name_en} / ${l.name_ar}`, dot: cfg.dot }];
+  }));
   const { language } = useLanguage();  const { user } = useAuth();
   const navigate = useNavigate();
 
@@ -73,13 +80,13 @@ const EntranceExamAdmin = () => {
   });
 
   // Subject mapping
-  const [selectedLevel, setSelectedLevel]   = useState<typeof LEVELS[number]>("beginner");
+  const [selectedLevel, setSelectedLevel]   = useState<string>("");
   const [selectedSubject, setSelectedSubject] = useState("");
 
   // Level change dialog
   const [levelDialog, setLevelDialog]       = useState(false);
   const [targetResult, setTargetResult]     = useState<any>(null);
-  const [newLevel, setNewLevel]             = useState<string>("beginner");
+  const [newLevel, setNewLevel]             = useState<string>("");
   const [saving, setSaving]                 = useState(false);
 
   // Bulk level assignment
