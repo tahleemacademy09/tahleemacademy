@@ -3,6 +3,7 @@ import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAcademicLevels, getLevelConfig, getLevelDisplay } from "@/hooks/useAcademicLevels";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -64,6 +65,7 @@ const PaymentManagement = () => {
   const { user } = useAuth();
   const { toast } = useToast();
   const { t } = useLanguage();
+  const { data: academicLevels = [] } = useAcademicLevels();
 
   const [payments, setPayments]         = useState<any[]>([]);
   const [plans, setPlans]               = useState<any[]>([]);
@@ -817,9 +819,9 @@ const PaymentManagement = () => {
                 <label style={lbl}>{t("Level","المستوى")}</label>
                 <select value={planForm.level} onChange={e=>setPlanForm((f:any)=>({...f,level:e.target.value}))} style={{ ...inp, appearance:"none" }}>
                   <option value="all">All Levels</option>
-                  <option value="beginner">Beginner</option>
-                  <option value="intermediate">Intermediate</option>
-                  <option value="advanced">Advanced</option>
+                  {academicLevels.map(l => (
+                    <option key={l.slug} value={l.slug}>{l.name_en}</option>
+                  ))}
                 </select>
               </div>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
