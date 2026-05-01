@@ -1931,7 +1931,7 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
       </button>
     </div>
   </>);
-}};
+};
 const BottomBarBridge=(props:any)=>{const room=useRoomContext();const isMobile=useIsMobile();return<BottomBar {...props} room={room} isMobile={isMobile}/>;};
 
 /* ══ MAIN ══ */
