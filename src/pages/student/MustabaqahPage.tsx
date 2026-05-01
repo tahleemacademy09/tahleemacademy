@@ -413,6 +413,7 @@ export default function MustabaqahPage() {
   const [livekitUrl,     setLivekitUrl]    = useState("");
   const [lkConnected,    setLkConnected]   = useState(false);
   const [lkError,        setLkError]       = useState<string>("");
+  const [videoDisabled,  setVideoDisabled] = useState(false); // true when server has no LiveKit creds
   const [floatReactions, setFloatReactions]= useState<{id:string;emoji:string;name:string;x:number}[]>([]);
   const [showChat,       setShowChat]      = useState(false);
   const [chatMessages,   setChatMessages]  = useState<{id:string;name:string;text:string;time:string}[]>([]);
@@ -433,9 +434,17 @@ export default function MustabaqahPage() {
 
   const fetchLkToken = useCallback(async (roomCode:string) => {
     setLkError("");
+    setVideoDisabled(false);
     try {
       const {data,error} = await supabase.functions.invoke("livekit-token",{body:{room_name: `musabaqah-${roomCode.toUpperCase()}`}});
+      // SDK-level error (network / deploy issue)
       if (error) throw new Error(error.message);
+      // Server explicitly says video is not available (no LiveKit creds configured)
+      if (data?.video_disabled) {
+        setVideoDisabled(true);
+        console.info("[Musabaqah] Live video is disabled on this server — competition continues without video.");
+        return;
+      }
       if (data?.error) throw new Error(data.error);
       if (!data?.token || !data?.url) throw new Error("No token returned");
       setLivekitToken(data.token);
@@ -1129,7 +1138,13 @@ export default function MustabaqahPage() {
       <div style={{flex:1,overflowY:"auto",position:"relative",zIndex:1,paddingBottom:myParticipant&&!isJudge?120:16}}>
 
         {/* VIDEO */}
-        {lkConnected&&livekitToken&&livekitUrl ? (
+        {videoDisabled ? (
+          /* Server has no LiveKit creds — show a minimal quiet placeholder */
+          <div style={{margin:"12px 16px 0",height:72,background:"rgba(0,0,0,.25)",border:"1px solid rgba(201,168,76,.1)",borderRadius:14,display:"flex",alignItems:"center",justifyContent:"center",gap:10}}>
+            <Video size={16} color="rgba(201,168,76,.3)"/>
+            <span style={{color:"rgba(255,255,255,.25)",fontSize:12}}>Live video not available — competition continues</span>
+          </div>
+        ) : lkConnected&&livekitToken&&livekitUrl ? (
           <LiveKitRoom serverUrl={livekitUrl} token={livekitToken} connect={lkConnected} audio={true} video={true} options={{dynacast:true}}>
             <RoomAudioRenderer/>
             <AudioEnabler onEnabled={() => setAudioReady(true)}/>
@@ -1144,8 +1159,10 @@ export default function MustabaqahPage() {
           <div style={{margin:"12px 16px 0",height:200,background:"rgba(0,0,0,.55)",border:"1px solid rgba(201,168,76,.15)",borderRadius:18,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:10}}>
             {lkError ? (
               <>
-                <Radio size={28} color={RED} style={{opacity:.7}}/>
-                <div style={{color:RED,fontSize:12,fontWeight:700,textAlign:"center",maxWidth:240,padding:"0 12px"}}>⚠️ {lkError}</div>
+                <Radio size={28} color={GOLD} style={{opacity:.6}}/>
+                <div style={{color:"rgba(255,255,255,.55)",fontSize:12,fontWeight:600,textAlign:"center",maxWidth:260,padding:"0 16px",lineHeight:1.6}}>
+                  Live video unavailable — the competition continues without video.
+                </div>
                 <button
                   onClick={()=>competition&&fetchLkToken(competition.room_code)}
                   style={{background:`${GOLD}22`,color:GOLD,border:`1px solid ${GOLD}55`,borderRadius:10,padding:"7px 20px",cursor:"pointer",fontFamily:"Cairo,sans-serif",fontWeight:700,fontSize:13,display:"flex",alignItems:"center",gap:6}}>
@@ -1166,7 +1183,7 @@ export default function MustabaqahPage() {
               <><Radio size={30} color="rgba(201,168,76,.3)"/><div style={{color:"rgba(255,255,255,.3)",fontSize:13}}>Connecting to live room…</div></>
             )}
           </div>
-        )}
+        ) : null}
 
         {/* Active participant strip */}
         {activeP&&(
@@ -1533,7 +1550,7 @@ export default function MustabaqahPage() {
                 {myParticipant.status==="completed"&&"✅ Done"}
               </div>
             </div>
-            {(!audioReady||lkError)&&<button onClick={()=>{wakeAudio(); if(lkError&&competition)fetchLkToken(competition.room_code);}} style={{background:`${GOLD}22`,border:`1px solid ${GOLD}55`,borderRadius:10,padding:"6px 12px",cursor:"pointer",color:GOLD,fontSize:11,fontWeight:700,display:"flex",alignItems:"center",gap:4,fontFamily:"Cairo,sans-serif"}}><Volume2 size={13}/> {lkError?"Retry Audio":"Enable Sound"}</button>}
+            {(!audioReady||lkError)&&!videoDisabled&&<button onClick={()=>{wakeAudio(); if(lkError&&competition)fetchLkToken(competition.room_code);}} style={{background:`${GOLD}22`,border:`1px solid ${GOLD}55`,borderRadius:10,padding:"6px 12px",cursor:"pointer",color:GOLD,fontSize:11,fontWeight:700,display:"flex",alignItems:"center",gap:4,fontFamily:"Cairo,sans-serif"}}><Volume2 size={13}/> {lkError?"Retry Audio":"Enable Sound"}</button>}
             {myParticipant.total_score>0&&<div style={{color:GOLD,fontWeight:900,fontSize:22}}>{myParticipant.total_score}<span style={{color:"rgba(255,255,255,.3)",fontSize:11}}> pts</span></div>}
           </div>
         </div>
