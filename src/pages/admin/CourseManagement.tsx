@@ -14,6 +14,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAcademicLevels, getLevelConfig } from "@/hooks/useAcademicLevels";
 import { toast } from "@/hooks/use-toast";
 import { Switch } from "@/components/ui/switch";
 import SubjectMaterials from "@/components/classroom/SubjectMaterials";
@@ -27,14 +28,13 @@ import {
 const G    = "#064E3B";
 const GM   = "#075E54";
 const GOLD = "#C9A84C";
-type Level  = "all"|"beginner"|"intermediate"|"advanced";
 type MatType = "PDF"|"Video"|"Audio"|"Link"|"Text"|"Image"|"Document";
 type SortKey = "sort_order"|"title_asc"|"title_desc"|"level";
 type ContentTab = "syllabus"|"materials"|"lessons";
 
 const MATERIAL_TYPES: MatType[] = ["PDF","Video","Audio","Link","Text","Image","Document"];
 
-const lvlCfg: Record<Level,{label:string;bg:string;text:string;border:string}> = {
+bg:string;text:string;border:string}> = {
   all:          {label:"All Levels",   bg:"#F3F4F6",text:"#374151",border:"#D1D5DB"},
   beginner:     {label:"Beginner",     bg:"#F0FDF4",text:"#166534",border:"#86EFAC"},
   intermediate: {label:"Intermediate", bg:"#EFF6FF",text:"#1E40AF",border:"#93C5FD"},
@@ -42,8 +42,7 @@ const lvlCfg: Record<Level,{label:string;bg:string;text:string;border:string}> =
 };
 
 // Safe lookup — comma-separated or unknown levels fall back to "all"
-const safeLvl = (level?: string | null) =>
-  lvlCfg[(level as Level)] ?? lvlCfg["all"];
+
 
 const weekPalette = [
   {bg:"#EFF6FF",border:"#BFDBFE",badge:"#1D4ED8"},
@@ -204,7 +203,7 @@ const CourseModal = React.memo(({ ed, onClose, onSave, busy, privateStudents }: 
           <Fld label="Description"><textarea value={f.description} onChange={e => setF(c => ({ ...c, description: e.target.value }))} rows={3} style={{ ...inp, resize: "vertical" }} /></Fld>
           <Fld label="Visible to Level">
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {(["all", "beginner", "intermediate", "advanced"] as Level[]).map(lv => {
+              {(["all", ...academicLevels.map(l => l.slug)] as string[]).map(lv => {
                 const c = lvlCfg[lv], sel = f.level === lv;
                 return (
                   <button key={lv} type="button" onClick={() => setF(p => ({ ...p, level: lv }))}
@@ -308,10 +307,18 @@ const CourseModal = React.memo(({ ed, onClose, onSave, busy, privateStudents }: 
 // ══════════════════════════════════════════════════════════════════════════
 // SUBJECT MODAL
 // ══════════════════════════════════════════════════════════════════════════
-const SubjectModal = React.memo(({ ed, teachers, onClose, onSave, busy, privateStudents }: { ed?: any; teachers: any[]; onClose: () => void; onSave: (p: any, assigned: Set<string>) => Promise<void>; busy: boolean; privateStudents: any[] }) => {
-  const LEVELS_LIST = ["beginner", "intermediate", "advanced"] as const;
+const SubjectModal = React.memo(({ ed, teachers, onClose, onSave, busy, privateStudents, academicLevels }: { ed?: any; teachers: any[]; onClose: () => void; onSave: (p: any, assigned: Set<string>) => Promise<void>; busy: boolean; privateStudents: any[]; academicLevels: any[] }) => {
+  const LEVELS_LIST = academicLevels.map(l => l.slug);
+  const ALL_LEVELS_SET = new Set(LEVELS_LIST);
+  const lvlCfg: Record<string,{label:string;bg:string;text:string;border:string}> = {
+    all: {label:"All Levels", bg:"#F3F4F6", text:"#374151", border:"#D1D5DB"},
+    ...Object.fromEntries(academicLevels.map(l => {
+      const cfg = getLevelConfig(l.slug, academicLevels);
+      return [l.slug, {label: l.name_en, bg: cfg.bg, text: cfg.color, border: cfg.border}];
+    })),
+  };
   const parseStoredLevel = (stored?: string): Set<string> => {
-    if (!stored || stored === "all") return new Set(["beginner", "intermediate", "advanced"]);
+    if (!stored || stored === "all") return new Set(LEVELS_LIST);
     return new Set(stored.split(",").map(s => s.trim()).filter(Boolean));
   };
   const [f, setF] = useState({ title: ed?.title || "", title_ar: ed?.title_ar || "", description: ed?.description || "", selectedLevels: parseStoredLevel(ed?.level), is_active: ed?.is_active ?? true, image_url: ed?.image_url || "", teacher_id: ed?.teacher_id || "", visibility: ((ed?.visibility || "all") as "all" | "general" | "private") });
@@ -358,9 +365,8 @@ const SubjectModal = React.memo(({ ed, teachers, onClose, onSave, busy, privateS
   };
 
   const buildLevelValue = (): string => {
-    const all = new Set(["beginner", "intermediate", "advanced"]);
     const sel = f.selectedLevels;
-    if (sel.size === 0 || (sel.size === 3 && [...all].every(l => sel.has(l)))) return "all";
+    if (sel.size === 0 || (sel.size === ALL_LEVELS_SET.size && [...ALL_LEVELS_SET].every(l => sel.has(l)))) return "all";
     if (sel.size === 1) return [...sel][0];
     return [...sel].join(",");
   };
@@ -498,28 +504,33 @@ const SubjectModal = React.memo(({ ed, teachers, onClose, onSave, busy, privateS
 // ══════════════════════════════════════════════════════════════════════════
 // SUBJECTS TAB VIEW — proper component so useState is valid
 // ══════════════════════════════════════════════════════════════════════════
-const SubjectsTabView = React.memo(({ fSubjects, search, sLoad, unlinked, selCourse, setSelSubject, setView, setTab, setEdSubject, setShowSubject, dupSubject, delSubject, qc }: {
+const SubjectsTabView = React.memo(({ fSubjects, search, sLoad, unlinked, selCourse, setSelSubject, setView, setTab, setEdSubject, setShowSubject, dupSubject, delSubject, qc, academicLevels }: {
   fSubjects: any[]; search: string; sLoad: boolean; unlinked: any[]; selCourse: any;
   setSelSubject: (s: any) => void; setView: (v: any) => void; setTab: (t: any) => void;
   setEdSubject: (s: any) => void; setShowSubject: (b: boolean) => void;
   dupSubject: (s: any) => void; delSubject: (id: string) => void; qc: any;
+  academicLevels: any[];
 }) => {
-  const [activeTab, setActiveTab] = useState<string>("beginner");
+  const [activeTab, setActiveTab] = useState<string>(academicLevels[0]?.slug || "beginner");
 
   const getLevels = (s: any): string[] =>
     Array.isArray(s.levels) && s.levels.length > 0
       ? s.levels
       : s.level === "all" || !s.level
-        ? ["beginner", "intermediate", "advanced"]
+        ? academicLevels.map(l => l.slug)
         : s.level.split(",").map((l: string) => l.trim());
 
   const sm = (s: any) => !search || s.title.toLowerCase().includes(search.toLowerCase());
 
   const buckets = [
-    { key: "beginner",     label: "Beginner",     color: "#22c55e", items: fSubjects.filter(s => getLevels(s).includes("beginner")    && s.visibility !== "private" && sm(s)) },
-    { key: "intermediate", label: "Intermediate", color: "#d97706", items: fSubjects.filter(s => getLevels(s).includes("intermediate") && s.visibility !== "private" && sm(s)) },
-    { key: "advanced",     label: "Advanced",     color: "#7c3aed", items: fSubjects.filter(s => getLevels(s).includes("advanced")     && s.visibility !== "private" && sm(s)) },
-    { key: "private",      label: "Private",      color: "#7C3AED", items: fSubjects.filter(s => s.visibility === "private" && sm(s)) },
+    ...academicLevels.map(l => {
+      const cfg = getLevelConfig(l.slug, academicLevels);
+      return { key: l.slug, label: l.name_en, color: cfg.color, items: fSubjects.filter((s: any) => {
+        const lvls = Array.isArray(s.levels) && s.levels.length > 0 ? s.levels : s.level === "all" || !s.level ? academicLevels.map(al => al.slug) : s.level.split(",").map((x: string) => x.trim());
+        return lvls.includes(l.slug) && s.visibility !== "private" && (!search || s.title.toLowerCase().includes(search.toLowerCase()));
+      })};
+    }),
+    { key: "private", label: "Private", color: "#7C3AED", items: fSubjects.filter((s: any) => s.visibility === "private" && (!search || s.title.toLowerCase().includes(search.toLowerCase()))) },
   ];
 
   const ab = buckets.find(b => b.key === activeTab) || buckets[0];
@@ -893,6 +904,15 @@ const MaterialModal = React.memo(({ ed, subjectId, sortOrder, onClose, onSaved }
 // ══════════════════════════════════════════════════════════════════════════
 export default function CourseManagement() {
   const qc = useQueryClient();
+  const { data: academicLevels = [] } = useAcademicLevels();
+  const lvlCfg: Record<string,{label:string;bg:string;text:string;border:string}> = {
+    all: {label:"All Levels", bg:"#F3F4F6", text:"#374151", border:"#D1D5DB"},
+    ...Object.fromEntries(academicLevels.map(l => {
+      const cfg = getLevelConfig(l.slug, academicLevels);
+      return [l.slug, {label: l.name_en, bg: cfg.bg, text: cfg.color, border: cfg.border}];
+    })),
+  };
+  const safeLvl = (level?: string | null) => lvlCfg[level as string] ?? lvlCfg["all"];
   const navigate = useNavigate();
   const { subjectId: urlSubjectId } = useParams<{ subjectId?: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1185,7 +1205,7 @@ export default function CourseManagement() {
   const sortList = (list: any[]) => {
     const s = [...list];
     if (sortBy === "title_asc") return s.sort((a, b) => a.title.localeCompare(b.title));
-    if (sortBy === "title_desc") return s.sort((a, b) => b.title.localeCompare(a.title));    if (sortBy === "level") { const o: any = { beginner: 0, intermediate: 1, advanced: 2, all: 3 }; return s.sort((a, b) => (o[a.level] || 0) - (o[b.level] || 0)); }
+    if (sortBy === "title_desc") return s.sort((a, b) => b.title.localeCompare(a.title));    if (sortBy === "level") { const o: any = Object.fromEntries(academicLevels.map((l,i) => [l.slug,i])); o["all"] = academicLevels.length; return s.sort((a, b) => (o[a.level]??99)-(o[b.level]??99)); }
     return s.sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
   };
   const fCourses = sortList(courses.filter((c: any) => (lvlFilter === "all" || c.level === lvlFilter || c.level === "all") && (!search || c.title.toLowerCase().includes(search.toLowerCase()))));
@@ -1196,7 +1216,7 @@ export default function CourseManagement() {
       Array.isArray(s.levels) && s.levels.length > 0
         ? s.levels
         : s.level === "all" || !s.level
-          ? ["beginner", "intermediate", "advanced"]
+          ? academicLevels.map(l => l.slug)
           : s.level.split(",").map((l: string) => l.trim());
     const levelMatch = lvlFilter === "all" || subjectLevels.includes(lvlFilter);
     return levelMatch && (!search || s.title.toLowerCase().includes(search.toLowerCase()));
@@ -1272,7 +1292,7 @@ export default function CourseManagement() {
             <Search size={13} style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", color: "#9CA3AF" }} />
             <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search…" style={{ ...inp, paddingLeft: 28 }} />
           </div>
-          {(["all", "beginner", "intermediate", "advanced"] as Level[]).map(lv => {
+          {(["all", ...academicLevels.map(l => l.slug)] as string[]).map(lv => {
             const c = lvlCfg[lv];
             return <button key={lv} onClick={() => setLvlFilter(lv)} style={{ flexShrink: 0, padding: "6px 12px", borderRadius: 20, border: `1.5px solid ${lvlFilter === lv ? c.border : "#E5E7EB"}`, background: lvlFilter === lv ? c.bg : "#fff", color: lvlFilter === lv ? c.text : "#6B7280", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>{c.label}</button>;
           })}
@@ -1347,6 +1367,7 @@ export default function CourseManagement() {
             dupSubject={dupSubject}
             delSubject={delSubject}
             qc={qc}
+            academicLevels={academicLevels}
           />
         )}
 
@@ -1479,7 +1500,7 @@ export default function CourseManagement() {
 
       {/* Modals */}
       {showCourse && <CourseModal ed={edCourse} onClose={() => { setShowCourse(false); setEdCourse(null); }} onSave={saveCourse} busy={busy} privateStudents={privateStudents} />}
-      {showSubject && <SubjectModal ed={edSubject} teachers={teachers as any[]} onClose={() => { setShowSubject(false); setEdSubject(null); }} onSave={saveSubject} busy={busy} privateStudents={privateStudents} />}      {showLesson && <LessonModal ed={edLesson} onClose={() => { setShowLesson(false); setEdLesson(null); }} onSave={saveLesson} busy={busy} />}
+      {showSubject && <SubjectModal ed={edSubject} teachers={teachers as any[]} onClose={() => { setShowSubject(false); setEdSubject(null); }} onSave={saveSubject} busy={busy} privateStudents={privateStudents} academicLevels={academicLevels} />}      {showLesson && <LessonModal ed={edLesson} onClose={() => { setShowLesson(false); setEdLesson(null); }} onSave={saveLesson} busy={busy} />}
       {showSyllabus && <SyllabusModal ed={edSyllabus} nextWeek={(syllabus as any[]).length + 1} onClose={() => { setShowSyllabus(false); setEdSyllabus(null); }} onSave={saveSyllabus} busy={busy} />}
       {showMaterial && selSubject && <MaterialModal ed={edMaterial} subjectId={selSubject.id} sortOrder={(materials as any[]).length} onClose={() => { setShowMaterial(false); setEdMaterial(null); }} onSaved={() => { setShowMaterial(false); setEdMaterial(null); qc.invalidateQueries({ queryKey: ["adm-materials", selSubject.id] }); }} />}
     </div>
