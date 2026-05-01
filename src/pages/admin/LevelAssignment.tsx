@@ -12,6 +12,7 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { useToast } from "@/hooks/use-toast";
+import { useAcademicLevels } from "@/hooks/useAcademicLevels";
 import {
   CheckCircle2, Clock, GraduationCap, Mic,
   FileText, User, Mail, Star, ChevronDown, Loader2,
@@ -60,14 +61,29 @@ interface StudentEval {
   registered_at:     string | null;
 }
 
-const LEVELS = ["beginner", "intermediate", "advanced"] as const;
-type Level = typeof LEVELS[number];
+// Legacy 3-level config kept for color/icon mapping.
+// Additional DB levels (e.g. tamhidi) are merged in at runtime via useAcademicLevels.
+type Level = string;
 
-const LEVEL_CFG: Record<Level, { label: string; labelAr: string; color: string; bg: string; border: string }> = {
+interface LevelCfg { label: string; labelAr: string; color: string; bg: string; border: string }
+
+const LEVEL_CFG_BASE: Record<string, LevelCfg> = {
+  tamhidi:      { label: "Foundation",   labelAr: "تمهيدي", color: "#0E7490", bg: "#ECFEFF", border: "#67E8F9" },
   beginner:     { label: "Beginner",     labelAr: "مبتدئ", color: "#16A34A", bg: "#F0FDF4", border: "#86EFAC" },
   intermediate: { label: "Intermediate", labelAr: "متوسط", color: "#2563EB", bg: "#EFF6FF", border: "#93C5FD" },
   advanced:     { label: "Advanced",     labelAr: "متقدم", color: "#7C3AED", bg: "#F5F3FF", border: "#C4B5FD" },
 };
+
+// Safe accessor — never returns undefined, so legacy `LEVEL_CFG[lvl].label`
+// access patterns continue to work even for unknown slugs.
+const getCfg = (slug: string | null | undefined): LevelCfg =>
+  (slug && LEVEL_CFG_BASE[slug]) ||
+  { label: slug ?? "—", labelAr: slug ?? "—", color: "#475569", bg: "#F1F5F9", border: "#CBD5E1" };
+
+// Backwards-compat proxy so existing `LEVEL_CFG[x]` reads keep working.
+const LEVEL_CFG = new Proxy(LEVEL_CFG_BASE, {
+  get: (target, key: string) => target[key] ?? getCfg(key),
+}) as Record<string, LevelCfg>;
 
 const STEP_LABELS: Record<string, { label: string; color: string; bg: string }> = {
   enrollment:       { label: "Just Registered",    color: "#6B7280", bg: "#F9FAFB" },
