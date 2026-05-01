@@ -13,15 +13,15 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAcademicLevels, getLevelConfig, getLevelDisplay } from "@/hooks/useAcademicLevels";
 import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "../integrations/supabase/storageClient";
 import { toast } from "@/hooks/use-toast";
 import { motion } from "framer-motion";
 import { BookOpen, Plus, Edit, Trash2, EyeOff, GraduationCap, Star, Search } from "lucide-react";
 
-const LEVELS = ["beginner", "intermediate", "advanced"];
 
-const LEVEL_CONFIG: Record<string, { color: string; bg: string; label: string; icon: string }> = {
+ bg: string; label: string; icon: string }> = {
   beginner:     { color: "#16A34A", bg: "#DCFCE7", label: "Beginner",     icon: "🌱" },
   intermediate: { color: "#D97706", bg: "#FEF3C7", label: "Intermediate", icon: "📗" },
   advanced:     { color: "#7C3AED", bg: "#EDE9FE", label: "Advanced",     icon: "🏆" },
@@ -74,6 +74,12 @@ const Courses = () => {
   const { user, hasRole } = useAuth();
   const qc = useQueryClient();
   const isAdmin = hasRole?.("admin") || hasRole?.("teacher");
+  const { data: academicLevels = [] } = useAcademicLevels();
+  const LEVELS = academicLevels.map(l => l.slug);
+  const LEVEL_CONFIG = Object.fromEntries(academicLevels.map(l => {
+    const cfg = getLevelConfig(l.slug, academicLevels);
+    return [l.slug, { color: cfg.color, bg: cfg.bg, label: l.name_en, icon: cfg.emoji }];
+  }));
 
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
@@ -176,7 +182,7 @@ const Courses = () => {
             {t("Structured Islamic learning for every level — from beginner to advanced", "تعليم إسلامي منظم لكل مستوى")}
           </p>
           <div style={{ display: "flex", justifyContent: "center", gap: 32, marginTop: 28, flexWrap: "wrap" }}>
-            {[["4", "Programs"], ["3", "Levels"], ["Live", "Classes"]].map(([n, l]) => (
+            {[["4", "Programs"], [String(academicLevels.length || "—"), "Levels"], ["Live", "Classes"]].map(([n, l]) => (
               <div key={l} style={{ textAlign: "center" }}>
                 <div style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 26, fontWeight: 700, color: "#D4A843", lineHeight: 1 }}>{n}</div>
                 <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", marginTop: 2, letterSpacing: 0.5 }}>{l}</div>
@@ -193,7 +199,7 @@ const Courses = () => {
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             {[
               { key: "all", label: t("All", "الكل"), icon: "📚" },
-              ...LEVELS.map(l => ({ key: l, label: LEVEL_CONFIG[l].label, icon: LEVEL_CONFIG[l].icon }))
+              ...academicLevels.map(l => { const cfg = getLevelConfig(l.slug, academicLevels); return { key: l.slug, label: l.name_en, icon: cfg.emoji }; })
             ].map(({ key, label, icon }) => (
               <button key={key} className={`filter-pill ${filter === key ? "active" : ""}`} onClick={() => setFilter(key)}>
                 <span>{icon}</span> {label}
@@ -227,7 +233,7 @@ const Courses = () => {
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             {filtered.map((course: any, i: number) => {
               const imgUrl = resolveImageUrl(course.image_url);
-              const lvl = LEVEL_CONFIG[course.level] ?? LEVEL_CONFIG.beginner;
+              const lvl = LEVEL_CONFIG[course.level] ?? { color: "#374151", bg: "#F3F4F6", label: course.level || "", icon: "📚" };
               return (
                 <motion.div key={course.id} initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}
                   style={{ background: "#fff", borderRadius: 18, border: "1px solid #e5e7eb", overflow: "hidden", display: "flex", height: 130, boxShadow: "0 2px 10px rgba(0,0,0,0.06)", transition: "box-shadow .2s, transform .2s" }}
@@ -335,7 +341,7 @@ const Courses = () => {
                 <Label>Level</Label>
                 <Select value={form.level} onValueChange={v => setForm({ ...form, level: v })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>{LEVELS.map(l => <SelectItem key={l} value={l}>{l}</SelectItem>)}</SelectContent>
+                  <SelectContent>{academicLevels.map(l => <SelectItem key={l.slug} value={l.slug}>{l.name_en}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
               <div><Label>Category</Label><Input value={form.category} onChange={e => setForm({ ...form, category: e.target.value })} /></div>
