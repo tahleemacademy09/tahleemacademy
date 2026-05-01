@@ -47,15 +47,17 @@ function formatCountdown(minutes: number): string {
   if (minutes < 60) return `${Math.round(minutes)}m`;
   return `${Math.floor(minutes / 60)}h ${Math.round(minutes % 60)}m`;
 }
-
 export default function TeacherTimetable() {
   const { user }        = useAuth();
   const { t, language } = useLanguage();
   const { data: academicLevels = [] } = useAcademicLevels();
+  
+  // ✅ Fixed: use "color" instead of "text" to match usage below
   const levelColors = Object.fromEntries(academicLevels.map(l => {
     const cfg = getLevelConfig(l.slug, academicLevels);
-    return [l.slug, { bg: cfg.bg, text: cfg.color, border: cfg.border }];
+    return [l.slug, { bg: cfg.bg, color: cfg.color, border: cfg.border }];
   }));
+  
   const navigate        = useNavigate();
   const todayIndex      = new Date().getDay();
   const [selectedDay, setSelectedDay] = useState(todayIndex);
@@ -94,8 +96,7 @@ export default function TeacherTimetable() {
             .select("*, subjects(id, title, title_ar, image_url)")
             .in("subject_id", subjectIds)
             .eq("is_active", true)
-            .order("day_of_week").order("start_time");
-          rows = bySubject || [];
+            .order("day_of_week").order("start_time");          rows = bySubject || [];
         }
         const { data: byTeacher } = await supabase
           .from("subject_timetable" as any)
@@ -131,11 +132,7 @@ export default function TeacherTimetable() {
   const todaySlots    = (timetableSlots || []).filter((s: any) => s.day_of_week === todayIndex);
   const selectedSlots = (timetableSlots || []).filter((s: any) => s.day_of_week === selectedDay);
 
-  const levelColors: Record<string, { bg: string; color: string; border: string }> = {
-    beginner:     { bg: "#f0fff4", color: "#276749", border: "#9ae6b4" },
-    intermediate: { bg: "#fffbeb", color: "#b7791f", border: "#f6d860" },
-    advanced:     { bg: "#f5f0ff", color: "#6b46c1", border: "#d6bcfa" },
-  };
+  // ❌ REMOVED: Duplicate levelColors declaration was here (lines 134-138)
 
   if (ttLoading) return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: 400 }}>
@@ -148,8 +145,7 @@ export default function TeacherTimetable() {
     <div style={{ minHeight: "100vh", background: "#F3F4F6", fontFamily: "system-ui, sans-serif" }}>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
 
-      {/* Header */}
-      <div style={{ background: `linear-gradient(135deg, ${G} 0%, ${GM} 100%)`, padding: "24px 20px 70px", position: "relative" }}>
+      {/* Header */}      <div style={{ background: `linear-gradient(135deg, ${G} 0%, ${GM} 100%)`, padding: "24px 20px 70px", position: "relative" }}>
         <div style={{ position: "absolute", top: -30, right: -30, width: 150, height: 150, borderRadius: "50%", background: "rgba(201,168,76,.08)" }} />
         <h1 style={{ fontSize: 22, fontWeight: 900, color: "#fff", margin: "0 0 4px" }}>
           {t("My Timetable", "جدولي الدراسي")}
@@ -198,8 +194,7 @@ export default function TeacherTimetable() {
           const isSelected = day.index === selectedDay;
           const hasClass   = (timetableSlots || []).some((s: any) => s.day_of_week === day.index);
           return (
-            <button key={day.index} onClick={() => setSelectedDay(day.index)} style={{
-              flexShrink: 0, width: 52, padding: "10px 0",
+            <button key={day.index} onClick={() => setSelectedDay(day.index)} style={{              flexShrink: 0, width: 52, padding: "10px 0",
               borderRadius: 14, border: "none", cursor: "pointer",
               background: isSelected ? GOLD : "#fff",
               boxShadow: isSelected ? `0 4px 16px rgba(201,168,76,.35)` : "0 2px 8px rgba(0,0,0,.08)",
@@ -247,9 +242,8 @@ export default function TeacherTimetable() {
             {selectedSlots
               .sort((a: any, b: any) => a.start_time.localeCompare(b.start_time))
               .map((slot: any) => {
-                const lc = levelColors[slot.level as string] || { bg: "#F3F4F6", text: "#374151", border: "#D1D5DB" };
-                const mins   = selectedDay === todayIndex ? minutesUntil(slot.start_time) : 9999;
-                const isLive = mins <= 0 && mins > -(slot.duration_minutes || 60);
+                const lc = levelColors[slot.level as string] || { bg: "#F3F4F6", color: "#374151", border: "#D1D5DB" };
+                const mins   = selectedDay === todayIndex ? minutesUntil(slot.start_time) : 9999;                const isLive = mins <= 0 && mins > -(slot.duration_minutes || 60);
                 const isSoon = mins > 0 && mins < 60;
                 return (
                   <div key={slot.id} style={{
@@ -299,7 +293,6 @@ export default function TeacherTimetable() {
                           )}
                         </div>
                       </div>
-
                       {/* Action */}
                       <button onClick={() => navigate("/teacher/classes")} style={{
                         padding: "8px 14px", borderRadius: 10, border: "none",
@@ -348,8 +341,7 @@ export default function TeacherTimetable() {
                     color: "#fff", border: "none", cursor: "pointer", fontSize: 11, fontWeight: 700,
                   }}>
                     {t("Open", "فتح")}
-                  </button>
-                </div>
+                  </button>                </div>
               ))}
             </div>
           </div>
