@@ -5,6 +5,7 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAcademicLevels, getLevelConfig, getLevelDisplay } from "@/hooks/useAcademicLevels";
 import { useToast } from "@/hooks/use-toast";
 import {
   Bell, Sparkles, ShieldCheck, History, Send, RefreshCw,
@@ -30,13 +31,10 @@ const TABS = [
 ] as const;
 type Tab = typeof TABS[number]["id"];
 
-const TARGETS = [
-  { value: "all",          label: "Everyone",       icon: "🌍" },
-  { value: "students",     label: "All Students",   icon: "🎓" },
-  { value: "teachers",     label: "All Teachers",   icon: "👨‍🏫" },
-  { value: "beginner",     label: "Beginners",      icon: "🟢" },
-  { value: "intermediate", label: "Intermediate",   icon: "🟡" },
-  { value: "advanced",     label: "Advanced",       icon: "🔴" },
+const BASE_TARGETS = [
+  { value: "all",      label: "Everyone",     icon: "🌍" },
+  { value: "students", label: "All Students", icon: "🎓" },
+  { value: "teachers", label: "All Teachers", icon: "👨‍🏫" },
 ];
 
 const AUTO_EVENTS = [
@@ -601,6 +599,14 @@ function NotificationHistory() {
 export default function NotificationManagement() {
   const { session } = useAuth();
   const [tab, setTab] = useState<Tab>("compose");
+  const { data: academicLevels = [] } = useAcademicLevels();
+  const TARGETS = [
+    ...BASE_TARGETS,
+    ...academicLevels.map(l => {
+      const cfg = getLevelConfig(l.slug, academicLevels);
+      return { value: l.slug, label: l.name_en, icon: cfg.dot };
+    }),
+  ];
 
   return (
     <div style={{ minHeight: "100vh", background: "#F3F4F6" }}>
