@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAcademicLevels, getLevelConfig, getLevelDisplay } from "@/hooks/useAcademicLevels";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import Majlis from "@/pages/student/Majlis";
@@ -21,6 +22,7 @@ const MajlisModeration = () => {
   const { t } = useLanguage();
   const { user } = useAuth();
   const { toast } = useToast();
+  const { data: academicLevels = [] } = useAcademicLevels();
   const [showBroadcast, setShowBroadcast] = useState(false);
   const [showCreateChannel, setShowCreateChannel] = useState(false);
   const [broadcastMsg, setBroadcastMsg] = useState({ title: "", message: "" });
@@ -112,9 +114,9 @@ const MajlisModeration = () => {
                 <Select value={channelForm.level} onValueChange={v => setChannelForm({ ...channelForm, level: v })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="beginner">Beginner</SelectItem>
-                    <SelectItem value="intermediate">Intermediate</SelectItem>
-                    <SelectItem value="advanced">Advanced</SelectItem>
+                    {academicLevels.map(l => (
+                      <SelectItem key={l.slug} value={l.slug}>{l.name_en}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
