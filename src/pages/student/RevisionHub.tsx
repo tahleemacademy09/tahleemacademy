@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAcademicLevels, getLevelConfig, getLevelDisplay } from "@/hooks/useAcademicLevels";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -223,7 +224,7 @@ const RevisionHub = () => {
                           </h3>
                           {subj.title_ar && language !== "ar" && <p className="text-xs text-gray-500 font-arabic" dir="rtl">{subj.title_ar}</p>}
                         </div>
-                        {subj.level && <Badge variant="secondary" className="text-xs" style={{ background: subj.level === "beginner" ? "#DCFCE7" : subj.level === "intermediate" ? "#FEF3C7" : "#FEE2E2", color: subj.level === "beginner" ? "#166534" : subj.level === "intermediate" ? "#92400E" : "#991B1B" }}>{subj.level}</Badge>}
+                        {subj.level && <Badge variant="secondary" className="text-xs" style={{ ...((() => { const cfg = getLevelConfig(subj.level, academicLevels); return { background: cfg.bg, color: cfg.color }; })()) }}>{subj.level}</Badge>}
                       </div>
                       {teacher && <p className="text-xs text-gray-500">{language === "ar" ? teacher.full_name_ar || teacher.full_name : teacher.full_name}</p>}
 
