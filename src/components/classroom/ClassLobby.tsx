@@ -2,14 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { supabase } from "@/integrations/supabase/client";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent } from "@/components/ui/card";
-import { Switch } from "@/components/ui/switch";
-import { Label } from "@/components/ui/label";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Video, VideoOff, Mic, MicOff, Monitor, Users, Settings } from "lucide-react";
+import { Video, VideoOff, Mic, MicOff, Settings, ChevronDown, ChevronUp, Users } from "lucide-react";
 
 interface ClassLobbyProps {
   subject: any;
@@ -20,76 +13,68 @@ interface ClassLobbyProps {
   isLive: boolean;
 }
 
+const TEAL  = "#0a7c68";
+const DARK  = "#0a1a12";
+const GOLD  = "#c9a84c";
+
 const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLive }: ClassLobbyProps) => {
   const { user, hasRole } = useAuth();
   const { t } = useLanguage();
   const isPrivileged = hasRole("admin") || hasRole("teacher");
 
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const [cameraOn, setCameraOn] = useState(false); // starts off — user enables via footer
-  const [micOn, setMicOn] = useState(false);    // starts off — user enables via footer
-  const [stream, setStream] = useState<MediaStream | null>(null);
-  const [micLevel, setMicLevel] = useState(0);
-  const [devices, setDevices] = useState<{ cameras: MediaDeviceInfo[]; mics: MediaDeviceInfo[]; speakers: MediaDeviceInfo[] }>({ cameras: [], mics: [], speakers: [] });
-
-  // Settings
-  const [waitingRoom, setWaitingRoom] = useState(true);
-  const [muteOnEntry, setMuteOnEntry] = useState(true);
-  const [chatEnabled, setChatEnabled] = useState(true);
-  const [handRaiseEnabled, setHandRaiseEnabled] = useState(true);
-  const [recordClass, setRecordClass] = useState(true);
-  const [screenShareEnabled, setScreenShareEnabled] = useState(true);
-
-  // Waiting participants
+  const videoRef  = useRef<HTMLVideoElement>(null);
+  const [cameraOn, setCameraOn]   = useState(false);
+  const [micOn,    setMicOn]      = useState(false);
+  const [stream,   setStream]     = useState<MediaStream | null>(null);
+  const [micLevel, setMicLevel]   = useState(0);
+  const [devices,  setDevices]    = useState<{ cameras: MediaDeviceInfo[]; mics: MediaDeviceInfo[] }>({ cameras: [], mics: [] });
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [waitingStudents, setWaitingStudents] = useState<any[]>([]);
 
+  const [waitingRoom,      setWaitingRoom]      = useState(false);
+  const [muteOnEntry,      setMuteOnEntry]      = useState(true);
+  const [chatEnabled,      setChatEnabled]      = useState(true);
+  const [handRaiseEnabled, setHandRaiseEnabled] = useState(true);
+
   useEffect(() => {
-    const initMedia = async () => {
+    const init = async () => {
       try {
         const s = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
-          audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 48000 },
+          audio: { echoCancellation: true, noiseSuppression: true },
         });
         setStream(s);
+        s.getVideoTracks().forEach(t => { t.enabled = false; });
+        s.getAudioTracks().forEach(t => { t.enabled = false; });
         if (videoRef.current) videoRef.current.srcObject = s;
-
         const devs = await navigator.mediaDevices.enumerateDevices();
         setDevices({
           cameras: devs.filter(d => d.kind === "videoinput"),
-          mics: devs.filter(d => d.kind === "audioinput"),
-          speakers: devs.filter(d => d.kind === "audiooutput"),
+          mics:    devs.filter(d => d.kind === "audioinput"),
         });
-
-        // Mic level — iOS Safari suspends AudioContext, must resume after gesture
-        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-        await ctx.resume();
-        const analyser = ctx.createAnalyser();
-        analyser.fftSize = 256;
-        const source = ctx.createMediaStreamSource(s);
-        source.connect(analyser);
-        const data = new Uint8Array(analyser.frequencyBinCount);
-        const check = () => {
-          analyser.getByteFrequencyData(data);
-          const avg = data.reduce((a, b) => a + b, 0) / data.length;
-          setMicLevel(avg / 128);
-          requestAnimationFrame(check);
-        };
-        check();
-      } catch (err: any) {
-        // Permission denied or not available (e.g. iOS camera in background)
-        console.warn("Media access:", err?.message || err);
-      }
+        try {
+          const ctx = new ((window as any).AudioContext || (window as any).webkitAudioContext)();
+          await ctx.resume();
+          const analyser = ctx.createAnalyser();
+          analyser.fftSize = 256;
+          ctx.createMediaStreamSource(s).connect(analyser);
+          const data = new Uint8Array(analyser.frequencyBinCount);
+          const tick = () => {
+            analyser.getByteFrequencyData(data);
+            setMicLevel(data.reduce((a, b) => a + b, 0) / data.length / 128);
+            requestAnimationFrame(tick);
+          };
+          tick();
+        } catch {}
+      } catch {}
     };
-    initMedia();
-
-    return () => {
-      stream?.getTracks().forEach(t => t.stop());
-    };
+    init();
   }, []);
 
   useEffect(() => {
     if (!stream) return;
     stream.getVideoTracks().forEach(t => { t.enabled = cameraOn; });
+    if (videoRef.current) videoRef.current.srcObject = stream;
   }, [cameraOn, stream]);
 
   useEffect(() => {
@@ -97,295 +82,214 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
     stream.getAudioTracks().forEach(t => { t.enabled = micOn; });
   }, [micOn, stream]);
 
-  // Load waiting participants
   useEffect(() => {
     if (!session?.id) return;
-    const loadParticipants = async () => {
-      const { data } = await supabase
-        .from("class_participants")
-        .select("*, profiles:student_id(full_name, avatar_url)")
-        .eq("session_id", session.id)
-        .is("left_at", null);
+    const load = async () => {
+      const { data } = await supabase.from("class_participants")
+        .select("*, profiles:student_id(full_name)")
+        .eq("session_id", session.id).is("left_at", null);
       setWaitingStudents(data || []);
     };
-    loadParticipants();
-
-    const channel = supabase.channel(`lobby-${session.id}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "class_participants", filter: `session_id=eq.${session.id}` },
-        () => loadParticipants())
+    load();
+    const ch = supabase.channel(`lobby-${session.id}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "class_participants", filter: `session_id=eq.${session.id}` }, () => load())
       .subscribe();
-
-    return () => { supabase.removeChannel(channel); };
+    return () => { supabase.removeChannel(ch); };
   }, [session?.id]);
 
   const handleStart = () => {
     stream?.getTracks().forEach(t => t.stop());
-    const media = { micOn, cameraOn };
     onStartClass({
-      waiting_room_enabled: waitingRoom,
-      chat_enabled: chatEnabled,
-      hand_raise_enabled: handRaiseEnabled,
-      recording_enabled: recordClass,
-      class_settings: { mute_on_entry: muteOnEntry, screen_share_enabled: screenShareEnabled },
-    }, media);
+      waiting_room_enabled: waitingRoom, chat_enabled: chatEnabled,
+      hand_raise_enabled: handRaiseEnabled, class_settings: { mute_on_entry: muteOnEntry },
+    }, { micOn, cameraOn });
   };
 
   const handleJoin = () => {
     stream?.getTracks().forEach(t => t.stop());
-    onJoinClass({ micOn, cameraOn });  // FIX: pass lobby choices into room
+    onJoinClass({ micOn, cameraOn });
   };
 
+  const Toggle = ({ checked, onChange }: { checked: boolean; onChange: () => void }) => (
+    <button onClick={onChange} style={{
+      width: 44, height: 26, borderRadius: 13, border: "none", cursor: "pointer",
+      background: checked ? TEAL : "rgba(255,255,255,.15)", position: "relative", transition: ".25s",
+      flexShrink: 0,
+    }}>
+      <div style={{
+        width: 20, height: 20, borderRadius: "50%", background: "#fff",
+        position: "absolute", top: 3, left: checked ? 21 : 3, transition: ".25s",
+        boxShadow: "0 1px 4px rgba(0,0,0,.35)",
+      }} />
+    </button>
+  );
+
   return (
-    <div style={{ height: "100dvh", maxHeight: "100dvh", display: "flex", flexDirection: "column", overflow: "hidden", background: "hsl(var(--primary))" }}>
-      {/* Header */}
-      <div className="text-center py-4 px-4 flex-shrink-0">
-        <p className="text-secondary font-arabic text-xl mb-2" dir="rtl" style={{ fontFamily: "Amiri" }}>
+    <div style={{
+      height: "100dvh", display: "flex", flexDirection: "column", overflow: "hidden",
+      background: "linear-gradient(160deg, #060f09 0%, #0f2a1a 50%, #0a1e12 100%)",
+      fontFamily: "'Cairo', sans-serif",
+    }}>
+      {/* ── Header ── */}
+      <div style={{ textAlign: "center", padding: "18px 20px 6px", flexShrink: 0 }}>
+        <div style={{ fontFamily: "'Amiri', serif", fontSize: 17, color: GOLD, marginBottom: 5 }}>
           بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ
-        </p>
-        <h1 className="text-primary-foreground text-2xl font-bold">{subject.title}</h1>
+        </div>
+        <h1 style={{ fontSize: 21, fontWeight: 800, color: "#fff", margin: "0 0 3px" }}>{subject.title}</h1>
         {subject.title_ar && (
-          <p className="text-primary-foreground/70 font-arabic mt-1" dir="rtl">{subject.title_ar}</p>
-        )}
-        {session && (
-          <div className="flex items-center justify-center gap-3 mt-3 flex-wrap">
-            {(session as any).topic && (
-              <Badge className="bg-secondary/20 text-secondary border-secondary/30">
-                #{(session as any).session_number} — {(session as any).topic}
-              </Badge>
-            )}
-            {(session as any).scheduled_at && (
-              <Badge variant="outline" className="text-primary-foreground/60 border-primary-foreground/20">
-                {new Date((session as any).scheduled_at).toLocaleString()}
-              </Badge>
-            )}
-          </div>
+          <p style={{ fontSize: 13, color: "rgba(255,255,255,.45)", fontFamily: "'Amiri', serif", direction: "rtl", margin: 0 }}>{subject.title_ar}</p>
         )}
       </div>
 
-      <div className="flex-1 px-4 pb-2 max-w-5xl mx-auto w-full grid md:grid-cols-2 gap-6 overflow-y-auto" style={{ WebkitOverflowScrolling: "touch" as any }}>
+      {/* ── Body ── */}
+      <div style={{ flex: 1, overflowY: "auto", padding: "12px 16px 8px", WebkitOverflowScrolling: "touch" as any }}>
+
         {/* Camera Preview */}
-        <div className="space-y-4">
-          <Card className="bg-foreground/95 border-none overflow-hidden">
-            <CardContent className="p-0">
-              <div className="relative aspect-video bg-black">
-                <video
-                  ref={videoRef}
-                  autoPlay
-                  playsInline
-                  muted
-                  className={`w-full h-full object-cover ${!cameraOn ? "hidden" : ""}`}
-                />
-                {!cameraOn && (
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="h-20 w-20 rounded-full bg-muted flex items-center justify-center">
-                      <VideoOff className="h-8 w-8 text-muted-foreground" />
-                    </div>
+        <div style={{
+          borderRadius: 18, overflow: "hidden",
+          border: "1.5px solid rgba(201,168,76,.2)",
+          background: "#000",
+          marginBottom: 14,
+          boxShadow: "0 12px 48px rgba(0,0,0,.6)",
+        }}>
+          <div style={{ position: "relative", paddingTop: "56.25%" }}>
+            <video ref={videoRef} autoPlay playsInline muted style={{
+              position: "absolute", inset: 0, width: "100%", height: "100%",
+              objectFit: "cover", display: cameraOn ? "block" : "none",
+              transform: "scaleX(-1)",
+            }} />
+            {!cameraOn && (
+              <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, background: "#0a1a12" }}>
+                <div style={{ width: 56, height: 56, borderRadius: "50%", background: "rgba(255,255,255,.07)", display: "flex", alignItems: "center", justifyContent: "center", border: "1.5px solid rgba(255,255,255,.1)" }}>
+                  <VideoOff style={{ width: 24, height: 24, color: "rgba(255,255,255,.4)" }} />
+                </div>
+                <span style={{ fontSize: 12, color: "rgba(255,255,255,.3)" }}>Camera is off</span>
+              </div>
+            )}
+            {micOn && (
+              <div style={{ position: "absolute", bottom: 10, left: 12, display: "flex", alignItems: "flex-end", gap: 2, height: 14 }}>
+                {[.2,.4,.6,.8,1].map((threshold, i) => (
+                  <div key={i} style={{
+                    width: 3, borderRadius: 2, height: `${(i + 1) * 3 + 2}px`,
+                    background: micLevel >= threshold ? "#22c55e" : "rgba(255,255,255,.2)",
+                    transition: "background .08s",
+                  }} />
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Mic / Cam toggles */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 14, padding: "12px 16px", background: "rgba(0,0,0,.4)" }}>
+            <button onClick={() => setMicOn(v => !v)} style={{
+              width: 50, height: 50, borderRadius: "50%", border: "none", cursor: "pointer",
+              background: micOn ? "rgba(34,197,94,.15)" : "#ea4335",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              boxShadow: micOn ? "0 0 0 2px rgba(34,197,94,.35)" : "0 3px 14px rgba(234,67,53,.4)",
+              transition: "all .2s",
+            }}>
+              {micOn ? <Mic style={{ width: 20, height: 20, color: "#22c55e" }} /> : <MicOff style={{ width: 20, height: 20, color: "#fff" }} />}
+            </button>
+            <button onClick={() => setCameraOn(v => !v)} style={{
+              width: 50, height: 50, borderRadius: "50%", border: "none", cursor: "pointer",
+              background: cameraOn ? "rgba(34,197,94,.15)" : "#ea4335",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              boxShadow: cameraOn ? "0 0 0 2px rgba(34,197,94,.35)" : "0 3px 14px rgba(234,67,53,.4)",
+              transition: "all .2s",
+            }}>
+              {cameraOn ? <Video style={{ width: 20, height: 20, color: "#22c55e" }} /> : <VideoOff style={{ width: 20, height: 20, color: "#fff" }} />}
+            </button>
+            <span style={{ fontSize: 11, color: "rgba(255,255,255,.3)", lineHeight: 1.4 }}>
+              📷 {devices.cameras.length}<br />🎤 {devices.mics.length}
+            </span>
+          </div>
+        </div>
+
+        {/* Students: "already inside" pill */}
+        {!isPrivileged && waitingStudents.length > 0 && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, background: "rgba(201,168,76,.09)", borderRadius: 12, padding: "10px 14px", border: "1px solid rgba(201,168,76,.18)", marginBottom: 12 }}>
+            <Users style={{ width: 14, height: 14, color: GOLD, flexShrink: 0 }} />
+            <span style={{ fontSize: 13, color: "rgba(255,255,255,.65)" }}>{waitingStudents.length} participant{waitingStudents.length !== 1 ? "s" : ""} already inside</span>
+          </div>
+        )}
+
+        {/* Student: live status */}
+        {!isPrivileged && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, background: isLive ? "rgba(34,197,94,.1)" : "rgba(255,255,255,.04)", borderRadius: 12, padding: "10px 14px", border: `1px solid ${isLive ? "rgba(34,197,94,.25)" : "rgba(255,255,255,.07)"}`, marginBottom: 12 }}>
+            <div style={{ width: 8, height: 8, borderRadius: "50%", background: isLive ? "#22c55e" : "rgba(255,255,255,.25)", flexShrink: 0, animation: isLive ? "pip-pulse 1.8s ease-in-out infinite" : "none" }} />
+            <span style={{ fontSize: 13, color: isLive ? "#86efac" : "rgba(255,255,255,.5)" }}>
+              {isLive ? "Class is live — join now!" : "Class hasn't started yet — you can join early"}
+            </span>
+          </div>
+        )}
+
+        {/* Teacher: Settings accordion */}
+        {isPrivileged && (
+          <div style={{ borderRadius: 16, background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.07)", overflow: "hidden", marginBottom: 10 }}>
+            <button onClick={() => setSettingsOpen(v => !v)} style={{
+              width: "100%", display: "flex", alignItems: "center", gap: 10,
+              padding: "13px 16px", background: "none", border: "none", cursor: "pointer",
+            }}>
+              <Settings style={{ width: 15, height: 15, color: GOLD, flexShrink: 0 }} />
+              <span style={{ flex: 1, fontSize: 14, fontWeight: 700, color: "#fff", textAlign: "left" as const }}>Class Settings</span>
+              {settingsOpen ? <ChevronUp style={{ width: 15, height: 15, color: "rgba(255,255,255,.4)" }} /> : <ChevronDown style={{ width: 15, height: 15, color: "rgba(255,255,255,.4)" }} />}
+            </button>
+            {settingsOpen && (
+              <div style={{ padding: "0 16px 14px", borderTop: "1px solid rgba(255,255,255,.06)" }}>
+                {[
+                  { label: "Waiting Room",  checked: waitingRoom,      onChange: () => setWaitingRoom(v => !v) },
+                  { label: "Mute on entry", checked: muteOnEntry,      onChange: () => setMuteOnEntry(v => !v) },
+                  { label: "Enable chat",   checked: chatEnabled,      onChange: () => setChatEnabled(v => !v) },
+                  { label: "Hand raising",  checked: handRaiseEnabled, onChange: () => setHandRaiseEnabled(v => !v) },
+                ].map((item, i) => (
+                  <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 0", borderBottom: i < 3 ? "1px solid rgba(255,255,255,.05)" : "none" }}>
+                    <span style={{ fontSize: 13, color: "rgba(255,255,255,.7)" }}>{item.label}</span>
+                    <Toggle checked={item.checked} onChange={item.onChange} />
                   </div>
-                )}
-                {/* Mic level indicator */}
-                {micOn && (
-                  <div className="absolute bottom-3 left-3 flex items-end gap-0.5 h-4">
-                    {[0.2, 0.4, 0.6, 0.8, 1.0].map((threshold, i) => (
-                      <div
-                        key={i}
-                        className={`w-1 rounded-full transition-all duration-75 ${
-                          micLevel >= threshold ? "bg-green-500" : "bg-muted-foreground/30"
-                        }`}
-                        style={{ height: `${(i + 1) * 4}px` }}
-                      />
+                ))}
+                {waitingStudents.length > 0 && (
+                  <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid rgba(255,255,255,.06)" }}>
+                    <p style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,.35)", letterSpacing: .6, textTransform: "uppercase" as const, marginBottom: 8 }}>In waiting room</p>
+                    {waitingStudents.map(s => (
+                      <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                        <div style={{ width: 26, height: 26, borderRadius: "50%", background: TEAL, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, color: "#fff" }}>
+                          {((s as any).profiles?.full_name || "S")[0].toUpperCase()}
+                        </div>
+                        <span style={{ fontSize: 13, color: "rgba(255,255,255,.65)" }}>{(s as any).profiles?.full_name || "Student"}</span>
+                      </div>
                     ))}
                   </div>
                 )}
               </div>
-            </CardContent>
-          </Card>
-
-          {/* Controls */}
-          <div className="flex items-center justify-center gap-3">
-            <Button
-              size="lg"
-              variant={micOn ? "secondary" : "destructive"}
-              className="rounded-full h-14 w-14"
-              onClick={() => setMicOn(!micOn)}
-            >
-              {micOn ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
-            </Button>
-            <Button
-              size="lg"
-              variant={cameraOn ? "secondary" : "destructive"}
-              className="rounded-full h-14 w-14"
-              onClick={() => setCameraOn(!cameraOn)}
-            >
-              {cameraOn ? <Video className="h-5 w-5" /> : <VideoOff className="h-5 w-5" />}
-            </Button>
-          </div>
-
-          <div className="text-center">
-            {cameraOn && micOn ? (
-              <p className="text-green-400 text-sm flex items-center justify-center gap-2">
-                <span className="h-2 w-2 rounded-full bg-green-400" />
-                {isPrivileged ? t("Ready to teach!", "جاهز للتدريس!") : t("Ready to join!", "جاهز للانضمام!")}
-              </p>
-            ) : (
-              <p className="text-primary-foreground/50 text-sm">
-                {t("Turn on camera and mic for best experience", "شغّل الكاميرا والميكروفون لأفضل تجربة")}
-              </p>
             )}
           </div>
-
-          {/* Devices info */}
-          <div className="text-primary-foreground/40 text-xs space-y-1">
-            <p>📷 {devices.cameras.length} {t("camera(s)", "كاميرا")} | 🎤 {devices.mics.length} {t("mic(s)", "ميكروفون")}</p>
-          </div>
-        </div>
-
-        {/* Right side: Settings + Participants */}
-        <div className="space-y-4 overflow-y-auto pb-2" style={{ maxHeight: "calc(100dvh - 260px)", WebkitOverflowScrolling: "touch" as any }}>
-          {isPrivileged ? (
-            <>
-              {/* Class Settings */}
-              <Card className="bg-primary-foreground/5 border-primary-foreground/10">
-                <CardContent className="p-4 space-y-3">
-                  <h3 className="font-semibold text-primary-foreground flex items-center gap-2">
-                    <Settings className="h-4 w-4" />
-                    {t("Class Settings", "إعدادات الفصل")}
-                  </h3>
-                  <div className="space-y-3">
-                    {[
-                      { label: t("Enable Waiting Room", "تفعيل غرفة الانتظار"), checked: waitingRoom, onChange: setWaitingRoom },
-                      { label: t("Mute students on entry", "كتم الطلاب عند الدخول"), checked: muteOnEntry, onChange: setMuteOnEntry },
-                      { label: t("Enable in-class chat", "تفعيل المحادثة"), checked: chatEnabled, onChange: setChatEnabled },
-                      { label: t("Enable hand raising", "تفعيل رفع اليد"), checked: handRaiseEnabled, onChange: setHandRaiseEnabled },
-                      { label: t("Record this class", "تسجيل الحصة"), checked: recordClass, onChange: setRecordClass },
-                      { label: t("Enable screen sharing", "تفعيل مشاركة الشاشة"), checked: screenShareEnabled, onChange: setScreenShareEnabled },
-                    ].map((item, i) => (
-                      <div key={i} className="flex items-center justify-between">
-                        <Label className="text-primary-foreground/80 text-sm">{item.label}</Label>
-                        <Switch checked={item.checked} onCheckedChange={item.onChange} />
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* Waiting students */}
-              <Card className="bg-primary-foreground/5 border-primary-foreground/10">
-                <CardContent className="p-4">
-                  <h3 className="font-semibold text-primary-foreground flex items-center gap-2 mb-3">
-                    <Users className="h-4 w-4" />
-                    {t("Waiting Room", "غرفة الانتظار")} ({waitingStudents.length})
-                  </h3>
-                  {waitingStudents.length === 0 ? (
-                    <p className="text-primary-foreground/40 text-sm">{t("No students waiting yet", "لا يوجد طلاب في الانتظار")}</p>
-                  ) : (
-                    <ScrollArea className="max-h-40">
-                      <div className="space-y-2">
-                        {waitingStudents.map(s => (
-                          <div key={s.id} className="flex items-center gap-2">
-                            <Avatar className="h-7 w-7">
-                              <AvatarFallback className="text-xs bg-secondary/20 text-secondary">
-                                {((s as any).profiles?.full_name || "S")[0]}
-                              </AvatarFallback>
-                            </Avatar>
-                            <span className="text-primary-foreground/80 text-sm">{(s as any).profiles?.full_name || "Student"}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </ScrollArea>
-                  )}
-                </CardContent>
-              </Card>
-            </>
-          ) : (
-            /* Student waiting view */
-            <Card className="bg-primary-foreground/5 border-primary-foreground/10">
-              <CardContent className="p-6 text-center space-y-4">
-                {isLive ? (
-                  <>
-                    <div className="h-16 w-16 rounded-full bg-green-500/20 flex items-center justify-center mx-auto">
-                      <Video className="h-8 w-8 text-green-400" />
-                    </div>
-                    <div>
-                      <p className="text-primary-foreground font-semibold">
-                        {t("Class is live! Join now", "الحصة مباشرة! انضم الآن")}
-                      </p>
-                      <p className="text-primary-foreground/50 text-sm font-arabic" dir="rtl">
-                        الحصة بدأت — انضم الآن
-                      </p>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div className="flex items-center justify-center gap-1">
-                      {[0, 1, 2].map(i => (
-                        <div
-                          key={i}
-                          className="h-2 w-2 rounded-full bg-secondary animate-pulse"
-                          style={{ animationDelay: `${i * 0.3}s` }}
-                        />
-                      ))}
-                    </div>
-                    <div>
-                      <p className="text-primary-foreground font-semibold">
-                        {t("Class not started yet — you can join early!", "الحصة لم تبدأ بعد — يمكنك الدخول مبكراً!")}
-                      </p>
-                      <p className="text-primary-foreground/50 text-sm font-arabic mt-1" dir="rtl">
-                        انضم مبكراً وانتظر داخل الفصل
-                      </p>
-                    </div>
-                    {waitingStudents.length > 0 && (
-                      <div className="text-primary-foreground/40 text-sm">
-                        {waitingStudents.length} {t("already inside", "داخل الفصل بالفعل")}
-                      </div>
-                    )}
-                  </>
-                )}
-              </CardContent>
-            </Card>
-          )}
-
-          <Button variant="ghost" onClick={onBack} className="text-primary-foreground/60 w-full">
-            ← {t("Back to subjects", "العودة للمواد")}
-          </Button>
-        </div>
+        )}
       </div>
 
-      {/* Bottom: Start/Join Button — always pinned, safe-area aware */}
-      <div className="flex-shrink-0 px-4 bg-primary border-t border-primary-foreground/10"
-        style={{ paddingBottom: "calc(16px + env(safe-area-inset-bottom, 0px))", paddingTop: "12px" }}>
-        <div className="max-w-md mx-auto">
-          {isPrivileged ? (
-            <Button
-              size="lg"
-              className="w-full h-14 bg-secondary text-secondary-foreground hover:bg-secondary/90 text-lg font-bold gap-3"
-              onClick={handleStart}
-            >
-              <Video className="h-5 w-5" />
-              <span>
-                {t("START LIVE CLASS NOW", "ابدأ الدرس المباشر")}
-              </span>
-            </Button>
-          ) : isLive ? (
-            <Button
-              size="lg"
-              className="w-full h-14 bg-secondary text-secondary-foreground hover:bg-secondary/90 text-lg font-bold gap-3"
-              onClick={handleJoin}
-            >
-              <Video className="h-5 w-5" />
-              {t("JOIN CLASS", "انضم للفصل")}
-            </Button>
-          ) : (
-            // Students can join before teacher — they enter the room and wait inside
-            <Button
-              size="lg"
-              className="w-full h-14 bg-secondary text-secondary-foreground hover:bg-secondary/90 text-lg font-bold gap-3"
-              onClick={handleJoin}
-            >
-              <Video className="h-5 w-5" />
-              {t("JOIN CLASS NOW", "انضم الآن")}
-            </Button>
-          )}
-        </div>
+      {/* ── CTA ── */}
+      <div style={{
+        flexShrink: 0, padding: "12px 16px",
+        paddingBottom: "calc(12px + env(safe-area-inset-bottom, 0px))",
+        borderTop: "1px solid rgba(255,255,255,.06)",
+        background: "rgba(0,0,0,.25)",
+        display: "flex", flexDirection: "column", gap: 8,
+      }}>
+        <button
+          onClick={isPrivileged ? handleStart : handleJoin}
+          style={{
+            width: "100%", height: 52, borderRadius: 14, border: "none", cursor: "pointer",
+            background: `linear-gradient(135deg, ${GOLD}, #e8c05a)`,
+            color: DARK, fontSize: 15, fontWeight: 800, letterSpacing: .3,
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+            boxShadow: "0 6px 24px rgba(201,168,76,.4)",
+          }}
+        >
+          <Video style={{ width: 20, height: 20 }} />
+          {isPrivileged ? t("START LIVE CLASS", "\u0627\u0628\u062F\u0623 \u0627\u0644\u062F\u0631\u0633 \u0627\u0644\u0645\u0628\u0627\u0634\u0631") : isLive ? t("JOIN CLASS", "\u0627\u0646\u0636\u0645 \u0644\u0644\u0641\u0635\u0644") : t("JOIN EARLY", "\u0627\u0646\u0636\u0645 \u0645\u0628\u0643\u0631\u0627")}
+        </button>
+        <button onClick={onBack} style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(255,255,255,.3)", fontSize: 13, padding: "2px 0" }}>
+          \u2190 {t("Back", "\u0631\u062C\u0648\u0639")}
+        </button>
       </div>
     </div>
   );
