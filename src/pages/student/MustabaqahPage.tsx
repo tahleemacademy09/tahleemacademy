@@ -206,9 +206,13 @@ const LiveVideoGrid = ({ activeUserId, isJudge }: { activeUserId:string|null; is
   const activeRemote = remoteParticipants.find(p=>getMeta(p).user_id===activeUserId);
   const dominantP  = iAmActive ? null : activeRemote ?? null;
   const pipP       = iAmJudge  ? null : judgeRemote ?? null;
-  const dominantCam = dominantP?.getTrackPublication(Track.Source.Camera)?.videoTrack;
-  const localCam    = localParticipant?.getTrackPublication(Track.Source.Camera)?.videoTrack;
-  const pipCam      = iAmJudge ? localCam : pipP?.getTrackPublication(Track.Source.Camera)?.videoTrack;
+  const dominantPub = dominantP?.getTrackPublication(Track.Source.Camera);
+  const localPub    = localParticipant?.getTrackPublication(Track.Source.Camera);
+  const pipRemotePub = pipP?.getTrackPublication(Track.Source.Camera);
+  const dominantCam = dominantPub?.videoTrack;
+  const localCam    = localPub?.videoTrack;
+  const pipCam      = iAmJudge ? localCam : pipRemotePub?.videoTrack;
+  const pipPub      = iAmJudge ? localPub : pipRemotePub;
   const showDominant = !!(dominantCam || (iAmActive && localCam));
   const showPip      = !!pipCam;
   if (!showDominant && !showPip) return (
@@ -222,8 +226,8 @@ const LiveVideoGrid = ({ activeUserId, isJudge }: { activeUserId:string|null; is
       {showDominant&&(
         <div style={{width:"100%",height:"100%",position:"relative"}}>
           {dominantCam
-            ? <VideoTrack trackRef={{participant:dominantP!,source:Track.Source.Camera}} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
-            : <VideoTrack trackRef={{participant:localParticipant!,source:Track.Source.Camera}} style={{width:"100%",height:"100%",objectFit:"cover"}}/>}
+            ? <VideoTrack trackRef={{participant:dominantP!,source:Track.Source.Camera,publication:dominantPub!}} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+            : <VideoTrack trackRef={{participant:localParticipant!,source:Track.Source.Camera,publication:localPub!}} style={{width:"100%",height:"100%",objectFit:"cover"}}/>}
           <div style={{position:"absolute",bottom:8,left:8,background:"rgba(0,0,0,.72)",borderRadius:8,padding:"3px 10px",color:"#fff",fontSize:11,fontWeight:700,fontFamily:"Cairo,sans-serif"}}>
             🎙️ {dominantP ? getMeta(dominantP).name||"Participant" : "You"} <span style={{color:GREEN}}>• Live</span>
           </div>
@@ -232,8 +236,8 @@ const LiveVideoGrid = ({ activeUserId, isJudge }: { activeUserId:string|null; is
       {showPip&&(
         <div style={{position:"absolute",bottom:10,right:10,width:88,height:118,borderRadius:12,overflow:"hidden",border:"2px solid rgba(201,168,76,.55)",boxShadow:"0 4px 18px rgba(0,0,0,.65)"}}>
           {iAmJudge
-            ? <VideoTrack trackRef={{participant:localParticipant!,source:Track.Source.Camera}} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
-            : pipCam ? <VideoTrack trackRef={{participant:pipP!,source:Track.Source.Camera}} style={{width:"100%",height:"100%",objectFit:"cover"}}/> : null}
+            ? <VideoTrack trackRef={{participant:localParticipant!,source:Track.Source.Camera,publication:localPub!}} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+            : pipCam && pipPub ? <VideoTrack trackRef={{participant:pipP!,source:Track.Source.Camera,publication:pipPub}} style={{width:"100%",height:"100%",objectFit:"cover"}}/> : null}
           <div style={{position:"absolute",bottom:3,left:4,background:"rgba(0,0,0,.7)",borderRadius:5,padding:"1px 6px",color:GOLD,fontSize:9,fontWeight:700}}>⚖️ Judge</div>
         </div>
       )}
