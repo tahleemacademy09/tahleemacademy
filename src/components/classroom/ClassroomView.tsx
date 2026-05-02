@@ -1616,22 +1616,61 @@ const ParticipantTile=({participant,isLocal,size="normal"}:{participant:any;isLo
   const videoRef=useRef<HTMLVideoElement>(null);
   const[hasVideo,setHasVideo]=useState(false);const[isSpeaking,setIsSpeaking]=useState(false);const[micEnabled,setMicEnabled]=useState(true);
   const room=useRoomContext();
+  const attachVideo=useCallback(()=>{
+    // Try multiple publication lookup strategies for reliability
+    let pub=participant.getTrackPublication?.(Track.Source.Camera);
+    if(!pub){
+      participant.trackPublications?.forEach?.((p:any)=>{if(p.source===Track.Source.Camera||p.kind==="video")pub=pub||p;});
+    }
+    const track=pub?.videoTrack||pub?.track;
+    const mst=track?.mediaStreamTrack;
+    if(mst&&mst.readyState==="live"&&!pub?.isMuted&&videoRef.current){
+      if(!(videoRef.current.srcObject instanceof MediaStream)||
+         !(videoRef.current.srcObject as MediaStream).getTracks().includes(mst)){
+        videoRef.current.srcObject=new MediaStream([mst]);
+      }
+      if(isLocal)videoRef.current.muted=true;
+      videoRef.current.play().catch(()=>{});
+      setHasVideo(true);
+    }else{
+      if(videoRef.current&&videoRef.current.srcObject){videoRef.current.srcObject=null;}
+      setHasVideo(false);
+    }
+    let micPub=participant.getTrackPublication?.(Track.Source.Microphone);
+    if(!micPub)participant.trackPublications?.forEach?.((p:any)=>{if(p.source===Track.Source.Microphone)micPub=micPub||p;});
+    setMicEnabled(!(micPub?.isMuted??false));
+  },[participant,isLocal]);
   useEffect(()=>{
-    const update=()=>{
-      const camPub=participant.getTrackPublication?.(Track.Source.Camera)||participant.trackPublications?.get(Track.Source.Camera);
-      const track=camPub?.videoTrack||camPub?.track;
-      if(track?.mediaStreamTrack?.readyState==="live"&&videoRef.current){
-        const ms=new MediaStream([track.mediaStreamTrack]);videoRef.current.srcObject=ms;
-        if(isLocal)videoRef.current.muted=true;
-        const pp=videoRef.current.play();if(pp!==undefined)pp.catch(()=>{});setHasVideo(true);
-      }else{if(videoRef.current)videoRef.current.srcObject=null;setHasVideo(false);}
-      const micPub=participant.getTrackPublication?.(Track.Source.Microphone)||participant.trackPublications?.get(Track.Source.Microphone);
-      setMicEnabled(!(micPub?.isMuted??false));
+    attachVideo();
+    const onSpeak=(v:boolean)=>setIsSpeaking(v);
+    // Participant-level events
+    participant.on?.("trackSubscribed",attachVideo);participant.on?.("trackUnsubscribed",attachVideo);
+    participant.on?.("trackMuted",attachVideo);participant.on?.("trackUnmuted",attachVideo);
+    participant.on?.("trackPublished",attachVideo);participant.on?.("trackUnpublished",attachVideo);
+    participant.on?.("isSpeakingChanged",onSpeak);
+    // Room-level events (needed for local participant camera enable/disable)
+    if(isLocal){
+      room.on(RoomEvent.LocalTrackPublished,attachVideo);
+      room.on(RoomEvent.LocalTrackUnpublished,attachVideo);
+      room.on(RoomEvent.TrackMuted,attachVideo);
+      room.on(RoomEvent.TrackUnmuted,attachVideo);
+    }
+    // Polling fallback — catches edge cases where events fire before DOM is ready
+    const poll=setInterval(attachVideo,1500);
+    return()=>{
+      clearInterval(poll);
+      participant.off?.("trackSubscribed",attachVideo);participant.off?.("trackUnsubscribed",attachVideo);
+      participant.off?.("trackMuted",attachVideo);participant.off?.("trackUnmuted",attachVideo);
+      participant.off?.("trackPublished",attachVideo);participant.off?.("trackUnpublished",attachVideo);
+      participant.off?.("isSpeakingChanged",onSpeak);
+      if(isLocal){
+        room.off(RoomEvent.LocalTrackPublished,attachVideo);
+        room.off(RoomEvent.LocalTrackUnpublished,attachVideo);
+        room.off(RoomEvent.TrackMuted,attachVideo);
+        room.off(RoomEvent.TrackUnmuted,attachVideo);
+      }
     };
-    update();const onSpeak=(v:boolean)=>setIsSpeaking(v);
-    participant.on?.("trackSubscribed",update);participant.on?.("trackUnsubscribed",update);participant.on?.("trackMuted",update);participant.on?.("trackUnmuted",update);participant.on?.("isSpeakingChanged",onSpeak);
-    return()=>{participant.off?.("trackSubscribed",update);participant.off?.("trackUnsubscribed",update);participant.off?.("trackMuted",update);participant.off?.("trackUnmuted",update);participant.off?.("isSpeakingChanged",onSpeak);};
-  },[participant]);
+  },[participant,attachVideo,room,isLocal]);
   const toggleMyMic=async()=>{if(!isLocal)return;const next=!micEnabled;await room.localParticipant.setMicrophoneEnabled(next);setMicEnabled(next);};
   const name=participant.name||participant.identity||"User";
   const initials=name.split(" ").map((w:string)=>w[0]||"").join("").slice(0,2).toUpperCase()||"?";
@@ -1758,34 +1797,56 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
   const{user}=useAuth();
   const[micOn,setMicOn]=useState(false);
   const[camOn,setCamOn]=useState(false);
-  const[handUp,setHandUp]=useState(false);const[menu,setMenu]=useState(false);const[emojis,setEmojis]=useState(false);
-  const[stuRec,setStuRec]=useState(false);const stuMrRef=useRef<MediaRecorder|null>(null);const stuChunks=useRef<Blob[]>([]);
-  const[showSettings,setShowSettings]=useState(false);
+  const[handUp,setHandUp]=useState(false);
+  const[moreOpen,setMoreOpen]=useState(false);
+  const[emojisOpen,setEmojisOpen]=useState(false);
+  const[audioPickerOpen,setAudioPickerOpen]=useState(false);
+  const[videoPickerOpen,setVideoPickerOpen]=useState(false);
+  const[stuRec,setStuRec]=useState(false);
+  const stuMrRef=useRef<MediaRecorder|null>(null);
+  const stuChunks=useRef<Blob[]>([]);
   const[camFacing,setCamFacing]=useState<"user"|"environment">("user");
-  // Busy guards — prevent rapid-tap race conditions (triple-press bug)
+  // Device lists for pickers
+  const[audioDevices,setAudioDevices]=useState<MediaDeviceInfo[]>([]);
+  const[videoDevices,setVideoDevices]=useState<MediaDeviceInfo[]>([]);
+  const[selAudio,setSelAudio]=useState("");
+  const[selVideo,setSelVideo]=useState("");
   const micBusy=useRef(false);
   const camBusy=useRef(false);
-  const flipBusy=useRef(false);
+
+  // Sync mic/cam state from room
   useEffect(()=>{
     if(!room)return;
-    // Read state from LiveKit directly — no fragile setTimeout hacks
-    const sync=()=>{
-      setMicOn(room.localParticipant.isMicrophoneEnabled);
-      setCamOn(room.localParticipant.isCameraEnabled);
-    };
+    const sync=()=>{setMicOn(room.localParticipant.isMicrophoneEnabled);setCamOn(room.localParticipant.isCameraEnabled);};
     sync();
-    // Use room-level RoomEvents so we catch all state changes reliably
-    room.on(RoomEvent.LocalTrackPublished,   sync);
-    room.on(RoomEvent.LocalTrackUnpublished, sync);
-    room.on(RoomEvent.TrackMuted,            sync);
-    room.on(RoomEvent.TrackUnmuted,          sync);
-    return()=>{
-      room.off(RoomEvent.LocalTrackPublished,   sync);
-      room.off(RoomEvent.LocalTrackUnpublished, sync);
-      room.off(RoomEvent.TrackMuted,            sync);
-      room.off(RoomEvent.TrackUnmuted,          sync);
-    };
+    room.on(RoomEvent.LocalTrackPublished,sync);room.on(RoomEvent.LocalTrackUnpublished,sync);
+    room.on(RoomEvent.TrackMuted,sync);room.on(RoomEvent.TrackUnmuted,sync);
+    return()=>{room.off(RoomEvent.LocalTrackPublished,sync);room.off(RoomEvent.LocalTrackUnpublished,sync);room.off(RoomEvent.TrackMuted,sync);room.off(RoomEvent.TrackUnmuted,sync);};
   },[room]);
+
+  // Load devices when picker opens
+  const loadAudioDevices=async()=>{
+    try{await navigator.mediaDevices.getUserMedia({audio:true}).catch(()=>{});}catch{}
+    const all=await navigator.mediaDevices.enumerateDevices();
+    setAudioDevices(all.filter(d=>d.kind==="audioinput"||d.kind==="audiooutput"));
+    try{const cur=await room.getActiveDevice("audioinput");if(cur)setSelAudio(cur);}catch{}
+  };
+  const loadVideoDevices=async()=>{
+    try{await navigator.mediaDevices.getUserMedia({video:true}).catch(()=>{});}catch{}
+    const all=await navigator.mediaDevices.enumerateDevices();
+    setVideoDevices(all.filter(d=>d.kind==="videoinput"));
+    try{const cur=await room.getActiveDevice("videoinput");if(cur)setSelVideo(cur);}catch{}
+  };
+
+  const switchAudioDevice=async(deviceId:string,kind:MediaDeviceKind)=>{
+    try{await room.switchActiveDevice(kind,deviceId);if(kind==="audioinput")setSelAudio(deviceId);toast({title:"Microphone switched ✓"});}
+    catch(e:any){toast({title:"Could not switch",description:e?.message,variant:"destructive"});}
+  };
+  const switchVideoDevice=async(deviceId:string)=>{
+    try{await room.switchActiveDevice("videoinput",deviceId);setSelVideo(deviceId);toast({title:"Camera switched ✓"});}
+    catch(e:any){toast({title:"Could not switch",description:e?.message,variant:"destructive"});}
+  };
+
   const toggleMic=async()=>{
     if(!room?.localParticipant||micBusy.current)return;
     micBusy.current=true;
@@ -1801,138 +1862,255 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
     finally{camBusy.current=false;}
   };
   const flipCamera=async()=>{
-    if(!room?.localParticipant||flipBusy.current||!camOn)return;
-    flipBusy.current=true;
+    if(!room?.localParticipant||!camOn)return;
     try{
-      const devices=await navigator.mediaDevices.enumerateDevices();
-      const videoDevs=devices.filter(d=>d.kind==="videoinput");
-      if(videoDevs.length>1){
-        const current=await room.getActiveDevice("videoinput").catch(()=>null);
-        const idx=videoDevs.findIndex(d=>d.deviceId===current);
-        const next=videoDevs[(idx+1)%videoDevs.length];
-        await room.switchActiveDevice("videoinput",next.deviceId);
-        setCamFacing(f=>f==="user"?"environment":"user");
-      }else{
-        // Single logical camera — try facingMode constraint
-        const next=camFacing==="user"?"environment":"user";
-        await room.localParticipant.setCameraEnabled(false);
-        await room.localParticipant.setCameraEnabled(true,{facingMode:next} as any);
-        setCamFacing(next);
-      }
-      toast({title:camFacing==="user"?"🔄 Back camera":"🔄 Front camera"});
-    }catch(e:any){
-      toast({title:"Could not flip camera",description:e?.message,variant:"destructive"});
-    }finally{flipBusy.current=false;}
+      const next=camFacing==="user"?"environment":"user";
+      await room.localParticipant.setCameraEnabled(false);
+      await room.localParticipant.setCameraEnabled(true,{facingMode:next}as any);
+      setCamFacing(next);
+      toast({title:next==="environment"?"\uD83D\uDD04 Back camera":"\uD83D\uDD04 Front camera"});
+    }catch(e:any){toast({title:"Could not flip camera",variant:"destructive"});}
   };
   const toggleHand=async()=>{
     if(!user||!sessionId)return;
-    const n=!handUp;
-    setHandUp(n);
+    const n=!handUp;setHandUp(n);
     await supabase.from("class_participants").update({hand_raised:n,hand_raised_at:n?new Date().toISOString():null}).eq("session_id",sessionId).eq("student_id",user.id);
-    try{
-      room?.localParticipant?.publishData(
-        new TextEncoder().encode(JSON.stringify({type:"hand_raise",identity:room.localParticipant.identity,name:room.localParticipant.name||user?.user_metadata?.full_name||"Student",raised:n})),
-        {reliable:true}
-      );
-    }catch{}
+    try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"hand_raise",identity:room.localParticipant.identity,name:room.localParticipant.name||user?.user_metadata?.full_name||"Student",raised:n})),{reliable:true});}catch{}
   };
   const toggleStuRecord=async()=>{
     if(stuRec){stuMrRef.current?.stop();stuMrRef.current!.onstop=()=>{const blobType=stuMrRef.current?.mimeType||"audio/webm";const blob=new Blob(stuChunks.current,{type:blobType});const url=URL.createObjectURL(blob);const a=document.createElement("a");const ext=blobType.includes("mp4")?"mp4":blobType.includes("ogg")?"ogg":"webm";a.href=url;a.download=`class-recording-${Date.now()}.${ext}`;a.click();URL.revokeObjectURL(url);stuChunks.current=[];};setStuRec(false);}
     else{try{const stream=await navigator.mediaDevices.getUserMedia({audio:true});const stuMime=["audio/webm","audio/mp4","audio/ogg"].find(t=>{try{return MediaRecorder.isTypeSupported(t);}catch{return false;}})||"";const mr=new MediaRecorder(stream,stuMime?{mimeType:stuMime}:undefined);stuChunks.current=[];mr.ondataavailable=e=>{if(e.data.size>0)stuChunks.current.push(e.data);};mr.start(1000);stuMrRef.current=mr;setStuRec(true);}catch{toast({title:"Microphone access denied"});}}
   };
   const sendEmoji=(e:string)=>{
-    setEmojis(false);
+    setEmojisOpen(false);
     try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"emoji_react",emoji:e,sender:user?.user_metadata?.full_name||""})),{reliable:false});}catch{}
     onSendEmoji?.(e);
     if(user&&sessionId)supabase.from("class_chat_messages").insert({session_id:sessionId,sender_id:user.id,message:e,type:"reaction"});
   };
-  const IS={width:isMobile?16:20,height:isMobile?16:20};
-  const Btn=({children,active=false,danger=false,onClick,badge=0,title:ttl=""}:any)=>(
-    <div style={{position:"relative",display:"flex",flexDirection:"column",alignItems:"center"}}>
-      <button title={ttl} onClick={onClick} style={{width:isMobile?42:52,height:isMobile?42:52,borderRadius:"50%",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",background:danger?"rgba(239,68,68,.85)":active?"rgba(255,255,255,.18)":"rgba(255,255,255,.09)",color:"#fff",transition:"background .15s,transform .1s",backdropFilter:"blur(4px)",boxShadow:active&&!danger?"inset 0 0 0 2px rgba(255,255,255,.2)":"none"}}
-        onMouseEnter={e=>(e.currentTarget.style.transform="scale(1.08)")} onMouseLeave={e=>(e.currentTarget.style.transform="scale(1)")}>{children}</button>
-      {badge>0&&<span style={{position:"absolute",top:0,right:0,background:RED,color:"#fff",borderRadius:"50%",width:17,height:17,fontSize:9,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,border:`2px solid ${DARK}`}}>{badge}</span>}
+
+  const menuPortal = typeof document !== "undefined" ? document.body : null;
+  const SZ=isMobile?18:20;
+  const IS={width:SZ,height:SZ};
+
+  // Device picker popover component (inline)
+  const AudioPicker=()=>(
+    <div style={{position:"fixed",bottom:isMobile?66:82,left:isMobile?4:16,background:"#1a2232",border:"1px solid rgba(255,255,255,.12)",borderRadius:16,minWidth:260,zIndex:9100,boxShadow:"0 12px 40px rgba(0,0,0,.7)",overflow:"hidden",animation:"slide-up .15s ease"}}>
+      <div style={{padding:"12px 16px",borderBottom:"1px solid rgba(255,255,255,.08)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <span style={{fontSize:13,fontWeight:700,color:"#fff"}}>Microphone</span>
+        <button onClick={()=>setAudioPickerOpen(false)} style={{background:"none",border:"none",color:"rgba(255,255,255,.4)",cursor:"pointer",fontSize:16}}>✕</button>
+      </div>
+      <div style={{padding:"6px 0",maxHeight:220,overflowY:"auto"}}>
+        {audioDevices.filter(d=>d.kind==="audioinput").map(d=>(
+          <button key={d.deviceId} onClick={()=>{switchAudioDevice(d.deviceId,"audioinput");setAudioPickerOpen(false);}} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"10px 16px",background:"none",border:"none",cursor:"pointer",textAlign:"left"as const}}>
+            <div style={{width:14,height:14,borderRadius:"50%",border:`2px solid ${selAudio===d.deviceId?"#22c55e":"rgba(255,255,255,.25)"}`,background:selAudio===d.deviceId?"#22c55e":"transparent",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
+              {selAudio===d.deviceId&&<div style={{width:5,height:5,borderRadius:"50%",background:"#fff"}}/>}
+            </div>
+            <span style={{fontSize:13,color:selAudio===d.deviceId?"#fff":"rgba(255,255,255,.65)",flex:1}}>{d.label||"Microphone "+d.deviceId.slice(0,6)}</span>
+          </button>
+        ))}
+      </div>
     </div>
   );
-  const menuPortal = typeof document !== "undefined" ? document.body : null;
+
+  const VideoPicker=()=>(
+    <div style={{position:"fixed",bottom:isMobile?66:82,left:isMobile?56:76,background:"#1a2232",border:"1px solid rgba(255,255,255,.12)",borderRadius:16,minWidth:260,zIndex:9100,boxShadow:"0 12px 40px rgba(0,0,0,.7)",overflow:"hidden",animation:"slide-up .15s ease"}}>
+      <div style={{padding:"12px 16px",borderBottom:"1px solid rgba(255,255,255,.08)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <span style={{fontSize:13,fontWeight:700,color:"#fff"}}>Camera</span>
+        <button onClick={()=>setVideoPickerOpen(false)} style={{background:"none",border:"none",color:"rgba(255,255,255,.4)",cursor:"pointer",fontSize:16}}>✕</button>
+      </div>
+      <div style={{padding:"6px 0",maxHeight:220,overflowY:"auto"}}>
+        {videoDevices.map(d=>(
+          <button key={d.deviceId} onClick={()=>{switchVideoDevice(d.deviceId);setVideoPickerOpen(false);}} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"10px 16px",background:"none",border:"none",cursor:"pointer",textAlign:"left"as const}}>
+            <div style={{width:14,height:14,borderRadius:"50%",border:`2px solid ${selVideo===d.deviceId?"#22c55e":"rgba(255,255,255,.25)"}`,background:selVideo===d.deviceId?"#22c55e":"transparent",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
+              {selVideo===d.deviceId&&<div style={{width:5,height:5,borderRadius:"50%",background:"#fff"}}/>}
+            </div>
+            <span style={{fontSize:13,color:selVideo===d.deviceId?"#fff":"rgba(255,255,255,.65)",flex:1}}>{d.label||"Camera "+d.deviceId.slice(0,6)}</span>
+          </button>
+        ))}
+        {videoDevices.length>1&&(
+          <button onClick={()=>{flipCamera();setVideoPickerOpen(false);}} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"10px 16px",background:"rgba(255,255,255,.04)",border:"none",cursor:"pointer",textAlign:"left"as const,borderTop:"1px solid rgba(255,255,255,.06)"}}>
+            <SwitchCamera style={{width:14,height:14,color:"rgba(255,255,255,.55)",flexShrink:0}}/>
+            <span style={{fontSize:13,color:"rgba(255,255,255,.65)"}}>Flip Camera (Front/Back)</span>
+          </button>
+        )}
+      </div>
+    </div>
+  );
+
+  // Google Meet style main button
+  const MeetBtn=({children,active=false,danger=false,onClick,badge=0,title:ttl="",style:extraStyle={} as any}:any)=>(
+    <div style={{position:"relative",flexShrink:0}}>
+      <button title={ttl} onClick={onClick} style={{
+        width:isMobile?48:52,height:isMobile?48:52,borderRadius:"50%",border:"none",cursor:"pointer",
+        display:"flex",alignItems:"center",justifyContent:"center",
+        background:danger?"#ea4335":active?"rgba(255,255,255,.2)":"rgba(255,255,255,.1)",
+        color:"#fff",transition:"background .15s,transform .1s",
+        backdropFilter:"blur(4px)",
+        ...extraStyle
+      }}
+        onMouseEnter={e=>(e.currentTarget.style.background=danger?"#c5352a":active?"rgba(255,255,255,.28)":"rgba(255,255,255,.18)")}
+        onMouseLeave={e=>(e.currentTarget.style.background=danger?"#ea4335":active?"rgba(255,255,255,.2)":"rgba(255,255,255,.1)")}
+      >{children}</button>
+      {badge>0&&<span style={{position:"absolute",top:0,right:0,background:"#ea4335",color:"#fff",borderRadius:"50%",width:17,height:17,fontSize:9,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,border:"2px solid #0f1117"}}>{badge}</span>}
+    </div>
+  );
+
+  // Mic+Camera with small chevron (Google Meet style)
+  const MediaBtn=({isAudio}:{isAudio:boolean})=>{
+    const active=isAudio?micOn:camOn;
+    const toggle=isAudio?toggleMic:toggleCam;
+    const pickerOpen=isAudio?audioPickerOpen:videoPickerOpen;
+    const openPicker=async()=>{
+      if(isAudio){await loadAudioDevices();setAudioPickerOpen(true);setVideoPickerOpen(false);}
+      else{await loadVideoDevices();setVideoPickerOpen(true);setAudioPickerOpen(false);}
+      setMoreOpen(false);setEmojisOpen(false);
+    };
+    return(
+      <div style={{display:"flex",alignItems:"center",flexShrink:0}}>
+        {/* Main toggle button */}
+        <button onClick={toggle} title={isAudio?(active?"Mute":"Unmute"):(active?"Stop Video":"Start Video")} style={{
+          width:isMobile?48:52,height:isMobile?48:52,borderRadius:"50% 0 0 50%",border:"none",cursor:"pointer",
+          display:"flex",alignItems:"center",justifyContent:"center",
+          background:active?"rgba(255,255,255,.12)":"#ea4335",
+          color:"#fff",transition:"background .15s",
+          paddingRight:2,
+        }}
+          onMouseEnter={e=>(e.currentTarget.style.background=active?"rgba(255,255,255,.22)":"#c5352a")}
+          onMouseLeave={e=>(e.currentTarget.style.background=active?"rgba(255,255,255,.12)":"#ea4335")}
+        >
+          {isAudio?(active?<Mic style={IS}/>:<MicOff style={IS}/>):(active?<Video style={IS}/>:<VideoOff style={IS}/>)}
+        </button>
+        {/* Chevron — opens device picker */}
+        <button onClick={openPicker} title={isAudio?"Microphone options":"Camera options"} style={{
+          width:18,height:isMobile?48:52,borderRadius:"0 50% 50% 0",border:"none",cursor:"pointer",
+          display:"flex",alignItems:"center",justifyContent:"center",
+          background:pickerOpen?"rgba(255,255,255,.25)":active?"rgba(255,255,255,.07)":"rgba(234,67,53,.75)",
+          color:"rgba(255,255,255,.75)",transition:"background .15s",
+          paddingLeft:0,
+        }}
+          onMouseEnter={e=>(e.currentTarget.style.color="#fff")}
+          onMouseLeave={e=>(e.currentTarget.style.color="rgba(255,255,255,.75)")}
+        >
+          <svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor"><path d="M4 0L8 6H0L4 0Z" style={{transform:"rotate(180deg)",transformOrigin:"4px 4px"}}/></svg>
+        </button>
+      </div>
+    );
+  };
+
   return(<>
-    {emojis&&menuPortal&&createPortal(
-      <div style={{position:"fixed",bottom:BAR_H+12,left:"50%",transform:"translateX(-50%)",background:"#1e2535",border:"1px solid rgba(255,255,255,.1)",borderRadius:44,padding:"10px 16px",display:"flex",gap:10,zIndex:9000,boxShadow:"0 8px 32px rgba(0,0,0,.6)",animation:"slide-up .2s ease"}}>
+    {/* Click-away to close overlays */}
+    {(audioPickerOpen||videoPickerOpen||moreOpen||emojisOpen)&&createPortal(
+      <div onClick={()=>{setAudioPickerOpen(false);setVideoPickerOpen(false);setMoreOpen(false);setEmojisOpen(false);}} style={{position:"fixed",inset:0,zIndex:9050}}/>,
+      menuPortal!
+    )}
+
+    {/* Audio device picker */}
+    {audioPickerOpen&&menuPortal&&createPortal(<AudioPicker/>,menuPortal)}
+
+    {/* Video device picker */}
+    {videoPickerOpen&&menuPortal&&createPortal(<VideoPicker/>,menuPortal)}
+
+    {/* Emoji tray */}
+    {emojisOpen&&menuPortal&&createPortal(
+      <div style={{position:"fixed",bottom:isMobile?66:82,left:"50%",transform:"translateX(-50%)",background:"#1e2535",border:"1px solid rgba(255,255,255,.1)",borderRadius:44,padding:"10px 16px",display:"flex",gap:10,zIndex:9100,boxShadow:"0 8px 32px rgba(0,0,0,.6)",animation:"slide-up .15s ease"}}>
         {["\uD83D\uDC4F","\uD83E\uDD32","\u2764\uFE0F","\uD83D\uDE02","\uD83C\uDF1F","\uD83D\uDC4D","\uD83D\uDE4F","\uD83D\uDD4C"].map(e=>(<button key={e} onClick={()=>sendEmoji(e)} style={{fontSize:28,background:"none",border:"none",cursor:"pointer",padding:"2px 4px",transition:"transform .12s"}} onMouseEnter={ev=>(ev.currentTarget.style.transform="scale(1.28)")} onMouseLeave={ev=>(ev.currentTarget.style.transform="scale(1)")}>{e}</button>))}
       </div>,menuPortal)}
-    {showSettings&&menuPortal&&createPortal(<RoomSettingsModal onClose={()=>setShowSettings(false)} room={room}/>,menuPortal)}
-    {menu&&menuPortal&&createPortal(<div onClick={()=>setMenu(false)} style={{position:"fixed",bottom:BAR_H+10,right:14,background:"#17202a",border:"1px solid rgba(255,255,255,.08)",borderRadius:18,boxShadow:"0 8px 36px rgba(0,0,0,.65)",minWidth:230,zIndex:9000,overflow:"hidden",animation:"slide-up .18s ease"}}>
-      {isPrivileged&&[
-        {icon:Volume2,label:groupReciteMode?"End Group Recitation":"Group Recitation",color:groupReciteMode?GREEN:"#fff",fn:()=>onGroupRecite(room)},
-        {icon:BookOpen,label:"Share Material",color:"#fff",fn:onShareMaterial},
-        {icon:PenTool,label:canStudentWriteProp?"Revoke Write Access":"Allow Students to Write",color:canStudentWriteProp?GREEN:"#fff",fn:()=>onPermChange?.("write",!canStudentWriteProp,room)},
-        {icon:Circle,label:canStudentRecProp?"Revoke Record Permission":"Allow Students to Record",color:canStudentRecProp?GREEN:"#fff",fn:()=>onPermChange?.("rec",!canStudentRecProp,room)},
-        {icon:MicOff,label:"Mute All Students",color:"#fb923c",fn:async()=>{
-          await supabase.from("class_participants").update({is_muted:true}).eq("session_id",sessionId);
-          try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"admin_mute_all"})),{reliable:true});}catch{}
-          toast({title:"\uD83D\uDD07 All students muted"});
-          setMenu(false);
-        }},
-      ].map((item,i)=>(<button key={i} onClick={item.fn} style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"13px 18px",background:"none",border:"none",cursor:"pointer",color:item.color,fontSize:14,borderBottom:"1px solid rgba(255,255,255,.06)",textAlign:"left"as const}}><item.icon style={{width:16,height:16}}/> {item.label}</button>))}
-      {!isPrivileged&&canStudentRecProp&&(
-        <button onClick={()=>{setMenu(false);toggleStuRecord();}} style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"13px 18px",background:"none",border:"none",cursor:"pointer",color:stuRec?"#ef4444":"#fff",fontSize:14,borderBottom:"1px solid rgba(255,255,255,.06)",textAlign:"left"as const}}>
-          <Circle style={{width:14,height:14,fill:stuRec?"#ef4444":"none",color:stuRec?"#ef4444":"#fff"}}/> {stuRec?"Stop Recording":"Record Audio"}
-        </button>
-      )}
-      <button onClick={()=>{setMenu(false);onToggleParticipants();}} style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"13px 18px",background:"none",border:"none",cursor:"pointer",color:"#fff",fontSize:14,borderBottom:"1px solid rgba(255,255,255,.06)",textAlign:"left"as const}}><Users style={{width:16,height:16}}/> Participants</button>
-      <button onClick={isPrivileged?onEndClass:onLeaveClass} style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"13px 18px",background:"none",border:"none",cursor:"pointer",color:RED,fontSize:14,textAlign:"left"as const}}>\uD83D\uDCF5 {isPrivileged?"End Class for All":"Leave Class"}</button>
-    </div>,menuPortal)}
+
+    {/* More menu */}
+    {moreOpen&&menuPortal&&createPortal(
+      <div style={{position:"fixed",bottom:isMobile?66:82,right:isMobile?60:76,background:"#17202a",border:"1px solid rgba(255,255,255,.08)",borderRadius:18,boxShadow:"0 8px 36px rgba(0,0,0,.65)",minWidth:240,zIndex:9100,overflow:"hidden",animation:"slide-up .15s ease"}}>
+        {/* Layout switcher */}
+        <div style={{padding:"10px 16px",borderBottom:"1px solid rgba(255,255,255,.06)"}}>
+          <div style={{fontSize:10,fontWeight:700,color:"rgba(255,255,255,.35)",letterSpacing:1,textTransform:"uppercase"as const,marginBottom:8}}>View</div>
+          <div style={{display:"flex",gap:4,flexWrap:"wrap"as const}}>
+            {([["horizontal","\uD83D\uDFE6","Side by side"],["grid","\u22C2","Grid"],["spotlight","\u26F6","Spotlight"],["focus","\u25A1","Focus"]] as const).map(([m,ic,lb])=>(
+              <button key={m} onClick={()=>{onLayoutChange(m);}} style={{padding:"5px 10px",borderRadius:8,border:"1px solid",fontSize:11,fontWeight:600,cursor:"pointer",borderColor:layout===m?"#22c55e":"rgba(255,255,255,.12)",background:layout===m?"rgba(34,197,94,.14)":"rgba(255,255,255,.04)",color:layout===m?"#22c55e":"rgba(255,255,255,.55)"}}>
+                {lb}
+              </button>
+            ))}
+          </div>
+        </div>
+        {/* Actions */}
+        {[
+          {icon:Smile,label:"Reactions",fn:()=>{setEmojisOpen(true);setMoreOpen(false);}},
+          {icon:Eye,label:"Materials",fn:()=>{onToggleMaterials();setMoreOpen(false);}},
+          {icon:MessageCircle,label:"Participants",fn:()=>{onToggleParticipants();setMoreOpen(false);}},
+        ].map((item,i)=>(<button key={i} onClick={item.fn} style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"12px 16px",background:"none",border:"none",cursor:"pointer",color:"#fff",fontSize:13,borderBottom:"1px solid rgba(255,255,255,.05)",textAlign:"left"as const}}><item.icon style={{width:15,height:15,opacity:.7}}/> {item.label}</button>))}
+        {isPrivileged&&[
+          {icon:Volume2,label:groupReciteMode?"End Group Recitation":"Group Recitation",color:groupReciteMode?GREEN:"#fff",fn:()=>{onGroupRecite(room);setMoreOpen(false);}},
+          {icon:BookOpen,label:"Share Material",color:"#fff",fn:()=>{onShareMaterial();setMoreOpen(false);}},
+          {icon:PenTool,label:canStudentWriteProp?"Revoke Board Access":"Allow Students to Write",color:canStudentWriteProp?GREEN:"#fff",fn:()=>{onPermChange?.("write",!canStudentWriteProp,room);setMoreOpen(false);}},
+          {icon:MicOff,label:"Mute All Students",color:"#fb923c",fn:async()=>{
+            await supabase.from("class_participants").update({is_muted:true}).eq("session_id",sessionId);
+            try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"admin_mute_all"})),{reliable:true});}catch{}
+            toast({title:"\uD83D\uDD07 All students muted"});setMoreOpen(false);
+          }},
+        ].map((item,i)=>(<button key={"p"+i} onClick={item.fn} style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"12px 16px",background:"none",border:"none",cursor:"pointer",color:item.color,fontSize:13,borderBottom:"1px solid rgba(255,255,255,.05)",textAlign:"left"as const}}><item.icon style={{width:15,height:15}}/> {item.label}</button>))}
+        {!isPrivileged&&canStudentRecProp&&(
+          <button onClick={()=>{toggleStuRecord();setMoreOpen(false);}} style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"12px 16px",background:"none",border:"none",cursor:"pointer",color:stuRec?"#ef4444":"#fff",fontSize:13,borderBottom:"1px solid rgba(255,255,255,.05)",textAlign:"left"as const}}>
+            <Circle style={{width:12,height:12,fill:stuRec?"#ef4444":"none",color:stuRec?"#ef4444":"#fff"}}/> {stuRec?"Stop Recording":"Record Audio"}
+          </button>
+        )}
+        {onMinimize&&<button onClick={()=>{onMinimize();setMoreOpen(false);}} style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"12px 16px",background:"none",border:"none",cursor:"pointer",color:"#fff",fontSize:13,borderBottom:"1px solid rgba(255,255,255,.05)",textAlign:"left"as const}}><ChevronDown style={{width:15,height:15}}/> Minimize</button>}
+      </div>,menuPortal)}
+
+    {/* ══ GOOGLE MEET STYLE BOTTOM BAR ══ */}
     <div className="cv-bar" style={{
-      height:isMobile?60:BAR_H,minHeight:isMobile?60:BAR_H,
-      background:GLASS,backdropFilter:"blur(20px)",WebkitBackdropFilter:"blur(20px)",
-      borderTop:"1px solid rgba(255,255,255,.07)",
+      height:isMobile?68:76,minHeight:isMobile?68:76,
+      background:"rgba(15,17,23,0.96)",backdropFilter:"blur(24px)",WebkitBackdropFilter:"blur(24px)",
+      borderTop:"1px solid rgba(255,255,255,.06)",
       display:"flex",alignItems:"center",
-      justifyContent:"flex-start",
-      gap:isMobile?4:8,
-      padding:`0 ${isMobile?8:16}px calc(${isMobile?4:8}px + env(safe-area-inset-bottom,0px)) ${isMobile?8:16}px`,
+      justifyContent:"space-between",
+      padding:`0 ${isMobile?12:20}px calc(${isMobile?4:8}px + env(safe-area-inset-bottom,0px)) ${isMobile?12:20}px`,
       flexShrink:0,
-      boxShadow:"0 -4px 24px rgba(0,0,0,.45)",
-      overflowX:"auto" as const,
-      WebkitOverflowScrolling:"touch" as const,
+      boxShadow:"0 -2px 20px rgba(0,0,0,.5)",
+      gap:isMobile?8:12,
     }}>
-      {/* Mic */}
-      <Btn active={micOn} danger={!micOn} title={micOn?"Mute":"Unmute"} onClick={toggleMic}>{micOn?<Mic style={IS}/>:<MicOff style={IS}/>}</Btn>
-      {/* Cam */}
-      <Btn active={camOn} danger={!camOn} title={camOn?"Stop Video":"Start Video"} onClick={toggleCam}>{camOn?<Video style={IS}/>:<VideoOff style={IS}/>}</Btn>
-      {/* Camera Flip — visible when camera is ON */}
-      {camOn&&<Btn title="Flip Camera (Front/Back)" onClick={flipCamera}><SwitchCamera style={{...IS,color:"rgba(255,255,255,.85)"}}/></Btn>}
-      {/* Divider */}
-      <div style={{width:1,height:28,background:"rgba(255,255,255,.12)",flexShrink:0,margin:"0 2px"}}/>
-      {/* Hand (students) / Whiteboard (teachers) */}
-      {isPrivileged
-        ?<Btn active={whiteboardOpen} title="Whiteboard" onClick={onToggleWhiteboard}><PenTool style={{...IS,color:whiteboardOpen?"#4ade80":"#fff"}}/></Btn>
-        :<Btn active={handUp} title={handUp?"Lower Hand":"Raise Hand"} onClick={toggleHand}><Hand style={{...IS,color:handUp?"#fbbf24":"#fff"}}/></Btn>
-      }
-      {!isPrivileged&&canStudentWriteProp&&(
-        <Btn active={whiteboardOpen} title="Open Board" onClick={onToggleWhiteboard}>
-          <PenTool style={{...IS,color:"#34d399"}}/>
-        </Btn>
-      )}
-      {/* Chat */}
-      <Btn onClick={onToggleChat} badge={chatUnread} title="Chat"><MessageCircle style={IS}/></Btn>
-      {/* Materials */}
-      <Btn active={matPanelOpen} onClick={onToggleMaterials} title="View Materials"><Eye style={{...IS,color:matPanelOpen?"#34d399":"#fff"}}/></Btn>
-      {/* Emoji */}
-      <Btn onClick={()=>setEmojis(v=>!v)} title="React"><Smile style={IS}/></Btn>
-      {/* Settings — device picker (mic, speaker, camera front/back, quality) */}
-      <Btn onClick={()=>setShowSettings(true)} title="Audio & Video Settings"><Settings style={IS}/></Btn>
-      {/* More */}
-      <Btn onClick={()=>setMenu(v=>!v)} title="More"><MoreVertical style={IS}/></Btn>
-      {/* Minimize */}
-      {onMinimize&&<Btn onClick={onMinimize} title="Minimize"><ChevronDown style={IS}/></Btn>}
-      {/* End / Leave — pushed to the right */}
-      <button onClick={isPrivileged?onEndClass:onLeaveClass} style={{height:isMobile?42:52,padding:isMobile?"0 14px":"0 22px",borderRadius:26,border:"none",cursor:"pointer",background:"linear-gradient(135deg,#dc2626,#ef4444)",color:"#fff",display:"flex",alignItems:"center",gap:isMobile?4:7,fontWeight:700,fontSize:isMobile?12:14,boxShadow:"0 4px 18px rgba(239,68,68,.5)",flexShrink:0,marginLeft:"auto"}}>
+      {/* ── LEFT: Mic + Camera (with device chevrons) ── */}
+      <div style={{display:"flex",alignItems:"center",gap:isMobile?6:8}}>
+        <MediaBtn isAudio={true}/>
+        <MediaBtn isAudio={false}/>
+      </div>
+
+      {/* ── CENTER: Context actions ── */}
+      <div style={{display:"flex",alignItems:"center",gap:isMobile?6:8,flex:1,justifyContent:"center"}}>
+        {/* Hand raise (students) / Whiteboard (teachers) */}
+        {isPrivileged
+          ?<MeetBtn active={whiteboardOpen} title="Whiteboard" onClick={onToggleWhiteboard}><PenTool style={{...IS,color:whiteboardOpen?"#4ade80":"#fff"}}/></MeetBtn>
+          :<MeetBtn active={handUp} title={handUp?"Lower Hand":"Raise Hand"} onClick={toggleHand}><Hand style={{...IS,color:handUp?"#fbbf24":"#fff"}}/></MeetBtn>
+        }
+        {!isPrivileged&&canStudentWriteProp&&(
+          <MeetBtn active={whiteboardOpen} title="Open Board" onClick={onToggleWhiteboard}><PenTool style={{...IS,color:"#34d399"}}/></MeetBtn>
+        )}
+        {/* Chat — always visible, with unread badge */}
+        <MeetBtn onClick={onToggleChat} badge={chatUnread} title="Chat"><MessageCircle style={IS}/></MeetBtn>
+        {/* More (...) */}
+        <MeetBtn active={moreOpen} title="More options" onClick={()=>{setMoreOpen(v=>!v);setAudioPickerOpen(false);setVideoPickerOpen(false);setEmojisOpen(false);}}>
+          <MoreVertical style={IS}/>
+        </MeetBtn>
+      </div>
+
+      {/* ── RIGHT: End / Leave ── */}
+      <button onClick={isPrivileged?onEndClass:onLeaveClass} style={{
+        height:isMobile?46:50,padding:isMobile?"0 16px":"0 24px",
+        borderRadius:26,border:"none",cursor:"pointer",
+        background:"#ea4335",
+        color:"#fff",display:"flex",alignItems:"center",gap:isMobile?5:8,
+        fontWeight:700,fontSize:isMobile?13:14,
+        boxShadow:"0 4px 18px rgba(234,67,53,.45)",
+        flexShrink:0,
+        transition:"background .15s",
+      }}
+        onMouseEnter={e=>(e.currentTarget.style.background="#c5352a")}
+        onMouseLeave={e=>(e.currentTarget.style.background="#ea4335")}
+      >
         <Phone style={{width:17,height:17,transform:"rotate(135deg)"}}/> {isPrivileged?"End":"Leave"}
       </button>
     </div>
   </>);
 };
 const BottomBarBridge=(props:any)=>{const room=useRoomContext();const isMobile=useIsMobile();return<BottomBar {...props} room={room} isMobile={isMobile}/>;};
+
 
 /* ══ MAIN ══ */
 /* ══ ROOM → CONTEXT BRIDGE ══
@@ -2034,7 +2212,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   const[groupRecite,setGroupRecite]=useState(false);const[canStudentWrite,setCanStudentWrite]=useState(false);const[canStudentRec,setCanStudentRec]=useState(false);
   const[floatingEmojis,setFloatingEmojis]=useState<FloatingEmoji[]>([]);
   const[raisedHands,setRaisedHands]=useState<RaisedHand[]>([]);
-  const[layout,setLayout]=useState<LayoutMode>("grid");
+  const[layout,setLayout]=useState<LayoutMode>("horizontal");
   const[groupReciteDialog,setGroupReciteDialog]=useState(false);
   const emojiIdRef=useRef(0);
   const wbBuffer=useRef<any[]|null>(null);const prefetch=useRef<{token:string;url:string}|null>(null);
