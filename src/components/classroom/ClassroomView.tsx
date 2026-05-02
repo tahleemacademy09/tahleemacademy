@@ -1,6 +1,3 @@
-Here is the full, syntax-corrected `ClassroomView.tsx` file. I have fixed the corrupted keywords (e.g., `useEffec t` → `useEffect`, `catc h` → `catch`), operators (`& &` → `&&`, `= >` → `=>`), and tag formatting (`</div >` → `</div>`) to ensure it compiles correctly.
-
-```tsx
 /*
 ClassroomView.tsx — Tahleem Academy Live Classroom
 Google Meet-style UI · iOS-safe · Persistent call context
@@ -50,8 +47,7 @@ const DARK = "#0f1117";
 const GLASS = "rgba(15,17,23,0.88)";
 const GLASSB = "rgba(255,255,255,0.08)";
 const GREEN = "#22c55e";
-const RED = "#ef4444";
-const BAR_H = 76;
+const RED = "#ef4444";const BAR_H = 76;
 
 const CSS = `@keyframes cv-spin { to { transform:rotate(360deg); } } @keyframes wb-spin { to { transform:rotate(360deg); } } @keyframes speaking { 0%,100%{opacity:1}50%{opacity:.35} } @keyframes pip-pulse { 0%,100%{opacity:1}50%{opacity:.3} } @keyframes slide-up { from{transform:translateY(100%);opacity:0}to{transform:translateY(0);opacity:1} } @keyframes fade-in { from{opacity:0;transform:scale(.96)}to{opacity:1;transform:scale(1)} } @keyframes emoji-float{ 0%{transform:translateY(0) scale(1);opacity:1}70%{opacity:.9}100%{transform:translateY(-300px) scale(1.35);opacity:0} } @keyframes rec-pulse { 0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.5)}70%{box-shadow:0 0 0 8px rgba(239,68,68,0)} } @keyframes hand-bounce{ 0%,100%{transform:translateY(0)}45%{transform:translateY(-7px)} } [data-lk-theme]{ height:100%!important;display:flex!important;flex-direction:column!important; } [data-classroom-root]{ overscroll-behavior:none;-webkit-overflow-scrolling:touch; touch-action:pan-y;padding-bottom:env(safe-area-inset-bottom,0px); } [data-classroom-root] button{-webkit-tap-highlight-color:transparent;touch-action:manipulation;} [data-classroom-root] canvas{-webkit-user-select:none;user-select:none;} @supports not (height:100dvh){[data-classroom-root]{height:-webkit-fill-available!important;}} .cv-bar{scrollbar-width:none;-ms-overflow-style:none;} .cv-bar::-webkit-scrollbar{display:none;} .cv-bar{will-change:transform;transform:translateZ(0);contain:layout style;}`;
 
@@ -101,7 +97,6 @@ const ReconnectMonitor = ({ onReconnecting, onReconnected, onDisconnected }: {
         }, MINIMIZE_GRACE_MS);
         return;
       }
-
       clearGrace();
       if (room.state === ConnectionState.Disconnected) { onDisconnected(); return; }
       try {
@@ -150,8 +145,7 @@ const WbSyncBridge = ({ wbOpen, isTeacher }: { wbOpen: boolean; isTeacher: boole
 const AdminMuteListener = ({ isPrivileged }: { isPrivileged: boolean }) => {
   const room = useRoomContext();
   useEffect(() => {
-    if (isPrivileged) return;
-    const h = (payload: Uint8Array) => {
+    if (isPrivileged) return;    const h = (payload: Uint8Array) => {
       try {
         const msg = JSON.parse(new TextDecoder().decode(payload));
         if (msg.type === "admin_mute_all") {
@@ -200,8 +194,7 @@ const RoomDataListener = ({ onWbOpen, onWbClose, strokesBuffer, onMatOpen, onMat
         if (msg.type === "mat_open") onMatOpen?.(msg.material);
         if (msg.type === "mat_close") onMatClose?.();
         if (msg.type === "wb_allow_write") onWbAllowWrite?.(msg.allow);
-        if (msg.type === "rec_allowed") onRecAllowed?.(msg.allow);
-        if (msg.type === "emoji_react") onEmojiReact?.(msg.emoji, msg.sender);
+        if (msg.type === "rec_allowed") onRecAllowed?.(msg.allow);        if (msg.type === "emoji_react") onEmojiReact?.(msg.emoji, msg.sender);
         if (msg.type === "group_recite") onGroupRecite?.(msg.active);
         if (msg.type === "hand_raise") onHandRaise?.(msg.identity || participant?.identity, msg.name, msg.raised);
         if (msg.type === "admin_mute_all") onAdminMuteAll?.();
@@ -250,8 +243,7 @@ const RaisedHandsOverlay = ({ hands }: { hands: RaisedHand[] }) => {
 const GroupRecitePermDialog = ({ onAccept, onDecline }: { onAccept: () => void; onDecline: () => void }) => createPortal(
   <div style={{ position: "fixed", inset: 0, zIndex: 9600, background: "rgba(0,0,0,.72)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
     <div style={{ background: "#17202a", borderRadius: 20, padding: "28px 24px", maxWidth: 340, width: "100%", boxShadow: "0 24px 60px rgba(0,0,0,.7)", border: "1px solid rgba(255,255,255,.1)", animation: "fade-in .18s ease", textAlign: "center" }}>
-      <div style={{ fontSize: 44, marginBottom: 12 }}>🎙️</div>
-      <h2 style={{ fontSize: 17, fontWeight: 800, color: "#fff", marginBottom: 8 }}>Group Recitation</h2>
+      <div style={{ fontSize: 44, marginBottom: 12 }}>🎙️</div>      <h2 style={{ fontSize: 17, fontWeight: 800, color: "#fff", marginBottom: 8 }}>Group Recitation</h2>
       <p style={{ fontSize: 13, color: "rgba(255,255,255,.55)", marginBottom: 22, lineHeight: 1.55 }}>
         The teacher has started Group Recitation. <br />Allow your microphone so everyone can recite together?
       </p>
@@ -300,8 +292,7 @@ const LayoutSwitcher = ({ layout, onChange }: { layout: LayoutMode; onChange: (m
 
 /* ══ GROUP RECITE BRIDGE ══ */
 const GroupReciteAutoMic = ({ active, isPrivileged }: { active: boolean; isPrivileged: boolean }) => {
-  const room = useRoomContext();
-  useEffect(() => {
+  const room = useRoomContext();  useEffect(() => {
     if (!room?.localParticipant) return;
     if (active) {
       room.localParticipant.setMicrophoneEnabled(true).catch(() => {});
@@ -350,7 +341,6 @@ const Whiteboard = ({ room, onClose, isTeacher, initialStrokes, subjectId, canSt
     if (!canDraw) return; clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => { try { await supabase.from("subject_whiteboard" as any).upsert({ subject_id: subjectId, strokes: strokesRef.current, updated_at: new Date().toISOString() }, { onConflict: "subject_id" }); } catch {} }, 1200);
   }, [isTeacher, subjectId]);
-
   useEffect(() => {
     if (!room) return;
     const h = (payload: Uint8Array) => { try { const msg = JSON.parse(new TextDecoder().decode(payload)); if (msg.type === "wb_strokes") { strokesRef.current = msg.strokes; redraw(); } if (msg.type === "wb_clear") { strokesRef.current = []; redraw(); } } catch {} };
@@ -400,8 +390,7 @@ const MaterialPicker = ({ subjectId, onShare, onClose }: any) => {
       </div>
       <div style={{ flex: 1, overflowY: "auto", padding: "6px 0" }}>
         {busy && <div style={{ display: "flex", justifyContent: "center", padding: 28 }}><Loader2 style={{ width: 24, height: 24, color: TEAL, animation: "wb-spin .8s linear infinite" }} /></div>}
-        {!busy && !mats.length && <p style={{ textAlign: "center", padding: "28px", color: "rgba(255,255,255,.35)", fontSize: 14 }}>No materials for this subject</p>}
-        {mats.map(m => (<button key={m.id} onClick={() => onShare(m)} style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "13px 18px", background: "none", border: "none", cursor: "pointer", textAlign: "left", borderBottom: "1px solid rgba(255,255,255,.06)" }}>
+        {!busy && !mats.length && <p style={{ textAlign: "center", padding: "28px", color: "rgba(255,255,255,.35)", fontSize: 14 }}>No materials for this subject</p>}        {mats.map(m => (<button key={m.id} onClick={() => onShare(m)} style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "13px 18px", background: "none", border: "none", cursor: "pointer", textAlign: "left", borderBottom: "1px solid rgba(255,255,255,.06)" }}>
           <div style={{ width: 40, height: 40, borderRadius: 10, background: "rgba(10,124,104,.3)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><BookOpen style={{ width: 17, height: 17, color: "#4ade80" }} /></div>
           <div style={{ flex: 1, minWidth: 0 }}><p style={{ color: "#fff", fontWeight: 600, fontSize: 14, margin: "0 0 3px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.title || m.name || "Untitled"}</p><p style={{ color: "rgba(255,255,255,.35)", fontSize: 11, margin: 0, textTransform: "capitalize" }}>{m.material_type || "file"}</p></div>
           <span style={{ fontSize: 12, color: TEAL, fontWeight: 700 }}>Share →</span>
@@ -450,8 +439,7 @@ function loadResume(id: string): { time?: number; page?: number } | null {
   catch { return null; }
 }
 
-/* ═ IN-CLASS MATERIAL VIEWER ══ */
-const InClassMaterialViewer = ({ material, onClose, isTeacher = false }: any) => {
+/* ═ IN-CLASS MATERIAL VIEWER ══ */const InClassMaterialViewer = ({ material, onClose, isTeacher = false }: any) => {
   const url = material.file_url || material.url || "";
   const { embedUrl, kind } = toMaterialEmbedUrl(url);
   const matId = material.id || url;
@@ -501,7 +489,6 @@ const InClassMaterialViewer = ({ material, onClose, isTeacher = false }: any) =>
     if (kind === "pdf") return (<div style={{ flex: 1, display: "flex", flexDirection: "column", background: "#fff", minHeight: 0 }}><div style={{ flex: 1, position: "relative", minHeight: 0 }}>{!loaded && <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "#f8f8f8", zIndex: 1 }}><div style={{ width: 32, height: 32, border: `3px solid rgba(0,0,0,.15)`, borderTopColor: TEAL, borderRadius: "50%", animation: "cv-spin .7s linear infinite" }} /></div>}<iframe ref={iframeRef} src={pdfSrc} title={material.title} style={{ width: "100%", height: "100%", border: "none", display: "block" }} allow="fullscreen" onLoad={() => setLoaded(true)} /></div><div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "6px 12px", background: "rgba(15,17,23,.92)", borderTop: "1px solid rgba(255,255,255,.08)", flexShrink: 0 }}><button onClick={() => navigatePdfPage(Math.max(1, pdfPage - 1))} style={{ width: 28, height: 28, borderRadius: 8, background: "rgba(255,255,255,.1)", border: "none", color: "#fff", cursor: "pointer", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>‹</button><span style={{ fontSize: 12, color: "rgba(255,255,255,.7)", fontVariantNumeric: "tabular-nums" }}>Page <strong style={{ color: "#fff" }}>{pdfPage}</strong></span><button onClick={() => navigatePdfPage(pdfPage + 1)} style={{ width: 28, height: 28, borderRadius: 8, background: "rgba(255,255,255,.1)", border: "none", color: "#fff", cursor: "pointer", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>›</button><span style={{ fontSize: 11, color: "rgba(255,255,255,.35)", marginLeft: 4 }}>↙ resumed</span></div></div>);
     return (<div style={{ flex: 1, position: "relative", minHeight: 0 }}>{!loaded && <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "#0f1a14", zIndex: 1 }}><div style={{ width: 32, height: 32, border: "3px solid rgba(255,255,255,.2)", borderTopColor: TEAL, borderRadius: "50%", animation: "cv-spin .7s linear infinite" }} /></div>}<iframe src={embedUrl} title={material.title} style={{ width: "100%", height: "100%", border: "none", display: "block" }} allow="autoplay;fullscreen;accelerometer;encrypted-media;picture-in-picture" allowFullScreen onLoad={() => setLoaded(true)} /></div>);
   };
-
   const resumeBadge = resume?.time || resume?.page;
   return (
     <div style={{ ...overlayStyle, background: "#0f1117", display: "flex", flexDirection: "column", animation: "fade-in .18s ease" }}>
@@ -550,8 +537,7 @@ const SubjectMaterialsPanel = ({ subjectId, subject, onClose }: any) => {
           {mats.length > 0 && (<div style={{ fontSize: 11, color: "rgba(255,255,255,.35)", fontWeight: 700, letterSpacing: .5, padding: "8px 4px 4px" }}>UPLOADED MATERIALS</div>)}
           {busy && <div style={{ display: "flex", justifyContent: "center", padding: 40 }}><div style={{ width: 24, height: 24, border: `3px solid ${TEAL}`, borderTopColor: "transparent", borderRadius: "50%", animation: "cv-spin .7s linear infinite" }} /></div>}
           {!busy && mats.length === 0 && <div style={{ textAlign: "center", padding: "30px 20px", color: "rgba(255,255,255,.35)" }}><div style={{ fontSize: 36, marginBottom: 8 }}>📭</div><p style={{ fontSize: 13, margin: 0 }}>No uploaded materials for this subject</p></div>}
-          {mats.map(m => {
-            const icon = MAT_TYPE_ICON[m.material_type || "document"] || "📄";
+          {mats.map(m => {            const icon = MAT_TYPE_ICON[m.material_type || "document"] || "📄";
             const resume = loadResume(m.id || "");
             return (
               <button key={m.id} onClick={() => setViewing(m)} style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.07)", borderRadius: 12, cursor: "pointer", textAlign: "left", marginBottom: 8, transition: "background .12s" }} onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,.09)")} onMouseLeave={e => (e.currentTarget.style.background = "rgba(255,255,255,.04)")}>
@@ -600,8 +586,7 @@ const RecController = ({ sessionId, subjectId, userEmail, onSavingChange, stopRe
       mr.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data); };
       mr.start(1000); mrRef.current = mr; setRecording(true); setPaused(false); setTime(0);
       timerRef.current = setInterval(() => setTime(t => t + 1), 1000);
-      if (sessionId) await supabase.from("live_sessions").update({ is_recording: true } as any).eq("id", sessionId);
-    } catch (err: any) {
+      if (sessionId) await supabase.from("live_sessions").update({ is_recording: true } as any).eq("id", sessionId);    } catch (err: any) {
       console.error("[RecController] startRec error: ", err);
       toast({ title: "Recording failed to start", description: err?.message || "Unknown error", variant: "destructive" });
       setRecording(false);
@@ -650,7 +635,6 @@ const RecController = ({ sessionId, subjectId, userEmail, onSavingChange, stopRe
     {!recording && <button onClick={startRec} style={{ display: "flex", alignItems: "center", gap: 6, background: "rgba(239,68,68,.14)", border: "1px solid rgba(239,68,68,.35)", borderRadius: 20, padding: "5px 14px", color: "#fca5a5", fontSize: 12, fontWeight: 700, cursor: "pointer" }}><Circle style={{ width: 7, height: 7, fill: RED, color: RED }} /> Record</button>}
   </div>);
 };
-
 /* ══ ROOM SETTINGS MODAL ══ */
 const RoomSettingsModal = ({ onClose, room }: { onClose: () => void; room: any }) => {
   const [tab, setTab] = useState<"audio" | "video">("audio");
@@ -700,8 +684,7 @@ const RoomSettingsModal = ({ onClose, room }: { onClose: () => void; room: any }
           if (sender) {
             const params = sender.getParameters();
             if (params.encodings?.length) {
-              params.encodings[0].maxBitrate = bitrate;
-              params.encodings[0].maxFramerate = fps;
+              params.encodings[0].maxBitrate = bitrate;              params.encodings[0].maxFramerate = fps;
               await sender.setParameters(params);
             }
           }
@@ -750,8 +733,7 @@ const RoomSettingsModal = ({ onClose, room }: { onClose: () => void; room: any }
             <SectionLabel>Video Quality</SectionLabel>
             <div style={{ display: "flex", gap: 8 }}>
               {(["low", "medium", "high"] as const).map(q => (
-                <button key={q} onClick={() => applyQuality(q)} style={{ flex: 1, padding: "12px 4px", borderRadius: 10, border: "1px solid", cursor: "pointer", fontSize: 12, fontWeight: 600, borderColor: quality === q ? "#22c55e" : "rgba(255,255,255,.12)", background: quality === q ? "rgba(34,197,94,.14)" : "rgba(255,255,255,.04)", color: quality === q ? "#22c55e" : "rgba(255,255,255,.55)" }}>{q === "low" ? "Low 📶" : q === "medium" ? "Medium 📶📶" : "High 📶📶"}</button>
-              ))}
+                <button key={q} onClick={() => applyQuality(q)} style={{ flex: 1, padding: "12px 4px", borderRadius: 10, border: "1px solid", cursor: "pointer", fontSize: 12, fontWeight: 600, borderColor: quality === q ? "#22c55e" : "rgba(255,255,255,.12)", background: quality === q ? "rgba(34,197,94,.14)" : "rgba(255,255,255,.04)", color: quality === q ? "#22c55e" : "rgba(255,255,255,.55)" }}>{q === "low" ? "Low 📶" : q === "medium" ? "Medium 📶📶" : "High 📶📶"}</button>              ))}
             </div>
             <p style={{ fontSize: 11, color: "rgba(255,255,255,.3)", marginTop: 8, lineHeight: 1.6 }}>Low quality reduces data usage on slow connections.</p>
             <SectionLabel>Tips</SectionLabel>
@@ -800,8 +782,7 @@ const ParticipantTile = ({ participant, isLocal, size = "normal" }: { participan
   }, [participant, isLocal]);
 
   useEffect(() => {
-    attachVideo();
-    const onSpeak = (v: boolean) => setIsSpeaking(v);
+    attachVideo();    const onSpeak = (v: boolean) => setIsSpeaking(v);
     participant.on?.("trackSubscribed", attachVideo); participant.on?.("trackUnsubscribed", attachVideo);
     participant.on?.("trackMuted", attachVideo); participant.on?.("trackUnmuted", attachVideo);
     participant.on?.("trackPublished", attachVideo); participant.on?.("trackUnpublished", attachVideo);
@@ -850,8 +831,7 @@ const ParticipantTile = ({ participant, isLocal, size = "normal" }: { participan
   );
 };
 
-/* ══ VIDEO GRID — Google Meet style ══ */
-const VideoGrid = ({ layout = "grid" }: { layout?: LayoutMode }) => {
+/* ══ VIDEO GRID — Google Meet style ══ */const VideoGrid = ({ layout = "grid" }: { layout?: LayoutMode }) => {
   const { localParticipant } = useLocalParticipant();
   const allParticipants = useParticipants();
   const remotes = allParticipants.filter(p => p.identity !== localParticipant?.identity);
@@ -900,7 +880,6 @@ const VideoGrid = ({ layout = "grid" }: { layout?: LayoutMode }) => {
       </div>
     );
   }
-
   if (n === 1) return (
     <div style={{ width: "100%", height: "100%", padding: P, boxSizing: "border-box" }}>
       <ParticipantTile participant={all[0]} isLocal={all[0]?.identity === localParticipant?.identity} size="large" />
@@ -950,8 +929,7 @@ const BottomBar = ({ sessionId, onToggleChat, onToggleParticipants, onEndClass, 
 
   useEffect(() => {
     if (!room) return;
-    const sync = () => { setMicOn(room.localParticipant.isMicrophoneEnabled); setCamOn(room.localParticipant.isCameraEnabled); };
-    sync();
+    const sync = () => { setMicOn(room.localParticipant.isMicrophoneEnabled); setCamOn(room.localParticipant.isCameraEnabled); };    sync();
     room.on(RoomEvent.LocalTrackPublished, sync); room.on(RoomEvent.LocalTrackUnpublished, sync);
     room.on(RoomEvent.TrackMuted, sync); room.on(RoomEvent.TrackUnmuted, sync);
     return () => { room.off(RoomEvent.LocalTrackPublished, sync); room.off(RoomEvent.LocalTrackUnpublished, sync); room.off(RoomEvent.TrackMuted, sync); room.off(RoomEvent.TrackUnmuted, sync); };
@@ -1000,8 +978,7 @@ const BottomBar = ({ sessionId, onToggleChat, onToggleParticipants, onEndClass, 
       await room.localParticipant.setCameraEnabled(false);
       await room.localParticipant.setCameraEnabled(true, { facingMode: next } as any);
       setCamFacing(next);
-      toast({ title: next === "environment" ? "🔄 Back camera" : "🔄 Front camera" });
-    } catch (e: any) { toast({ title: "Could not flip camera", variant: "destructive" }); }
+      toast({ title: next === "environment" ? "🔄 Back camera" : "🔄 Front camera" });    } catch (e: any) { toast({ title: "Could not flip camera", variant: "destructive" }); }
   };
   const toggleHand = async () => {
     if (!user || !sessionId) return;
@@ -1050,8 +1027,7 @@ const BottomBar = ({ sessionId, onToggleChat, onToggleParticipants, onEndClass, 
         <button onClick={() => setVideoPickerOpen(false)} style={{ background: "none", border: "none", color: "rgba(255,255,255,.4)", cursor: "pointer", fontSize: 16 }}>✕</button>
       </div>
       <div style={{ padding: "6px 0", maxHeight: 220, overflowY: "auto" }}>
-        {videoDevices.map(d => (
-          <button key={d.deviceId} onClick={() => { switchVideoDevice(d.deviceId); setVideoPickerOpen(false); }} style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", background: "none", border: "none", cursor: "pointer", textAlign: "left" }}>
+        {videoDevices.map(d => (          <button key={d.deviceId} onClick={() => { switchVideoDevice(d.deviceId); setVideoPickerOpen(false); }} style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", background: "none", border: "none", cursor: "pointer", textAlign: "left" }}>
             <div style={{ width: 14, height: 14, borderRadius: "50%", border: `2px solid ${selVideo === d.deviceId ? "#22c55e" : "rgba(255,255,255,.25)"}`, background: selVideo === d.deviceId ? "#22c55e" : "transparent", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
               {selVideo === d.deviceId && <div style={{ width: 5, height: 5, borderRadius: "50%", background: "#fff" }} />}
             </div>
@@ -1100,8 +1076,7 @@ const BottomBar = ({ sessionId, onToggleChat, onToggleParticipants, onEndClass, 
           width: isMobile ? 48 : 52, height: isMobile ? 48 : 52, borderRadius: "50% 0 0 50%", border: "none", cursor: "pointer",
           display: "flex", alignItems: "center", justifyContent: "center",
           background: active ? "rgba(255,255,255,.12)" : "#ea4335",
-          color: "#fff", transition: "background .15s",
-          paddingRight: 2,
+          color: "#fff", transition: "background .15s",          paddingRight: 2,
         }}
           onMouseEnter={e => (e.currentTarget.style.background = active ? "rgba(255,255,255,.22)" : "#c5352a")}
           onMouseLeave={e => (e.currentTarget.style.background = active ? "rgba(255,255,255,.12)" : "#ea4335")}>
@@ -1150,8 +1125,7 @@ const BottomBar = ({ sessionId, onToggleChat, onToggleParticipants, onEndClass, 
         ].map((item, i) => (<button key={i} onClick={item.fn} style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", background: "none", border: "none", cursor: "pointer", color: "#fff", fontSize: 13, borderBottom: "1px solid rgba(255,255,255,.05)", textAlign: "left" }}><item.icon style={{ width: 15, height: 15, opacity: .7 }} />{item.label}</button>))}
         {isPrivileged && [
           { icon: Volume2, label: groupReciteMode ? "End Group Recitation" : "Group Recitation", color: groupReciteMode ? GREEN : "#fff", fn: () => { onGroupRecite(room); setMoreOpen(false); } },
-          { icon: BookOpen, label: "Share Material", color: "#fff", fn: () => { onShareMaterial(); setMoreOpen(false); } },
-          { icon: PenTool, label: canStudentWriteProp ? "Revoke Board Access" : "Allow Students to Write", color: canStudentWriteProp ? GREEN : "#fff", fn: () => { onPermChange?.("write", !canStudentWriteProp, room); setMoreOpen(false); } },
+          { icon: BookOpen, label: "Share Material", color: "#fff", fn: () => { onShareMaterial(); setMoreOpen(false); } },          { icon: PenTool, label: canStudentWriteProp ? "Revoke Board Access" : "Allow Students to Write", color: canStudentWriteProp ? GREEN : "#fff", fn: () => { onPermChange?.("write", !canStudentWriteProp, room); setMoreOpen(false); } },
           { icon: MicOff, label: "Mute All Students", color: "#fb923c", fn: async () => {
             await supabase.from("class_participants").update({ is_muted: true }).eq("session_id", sessionId);
             try { room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({ type: "admin_mute_all" })), { reliable: true }); } catch { }
@@ -1200,8 +1174,7 @@ const BottomBar = ({ sessionId, onToggleChat, onToggleParticipants, onEndClass, 
         color: "#fff", display: "flex", alignItems: "center", gap: isMobile ? 5 : 8,
         fontWeight: 700, fontSize: isMobile ? 13 : 14,
         boxShadow: "0 4px 18px rgba(234,67,53,.45)",
-        flexShrink: 0,
-        transition: "background .15s",
+        flexShrink: 0,        transition: "background .15s",
       }}
         onMouseEnter={e => (e.currentTarget.style.background = "#c5352a")}
         onMouseLeave={e => (e.currentTarget.style.background = "#ea4335")}
@@ -1250,8 +1223,7 @@ const RoomToContextBridge = () => {
       room.off(RoomEvent.TrackMuted, sync);
       room.off(RoomEvent.TrackUnmuted, sync);
     };
-  }, [room, setMicEnabled, setCamEnabled]);
-  return null;
+  }, [room, setMicEnabled, setCamEnabled]);  return null;
 };
 
 const ClassroomView = ({ subject, onLeave, onMinimize, autoJoin = false }: ClassroomViewProps) => {
@@ -1300,8 +1272,7 @@ const ClassroomView = ({ subject, onLeave, onMinimize, autoJoin = false }: Class
     return () => { supabase.removeChannel(ch); };
   }, [sessionId, phase, user?.id]);
 
-  const [sideTab, setSideTab] = useState<"chat" | "polls">("chat"); const [showEnd, setShowEnd] = useState(false);
-  const [wbOpen, setWbOpen] = useState(false); const [matOpen, setMatOpen] = useState<any>(null); const [matPicker, setMatPicker] = useState(false); const [matPanelOpen, setMatPanelOpen] = useState(false);
+  const [sideTab, setSideTab] = useState<"chat" | "polls">("chat"); const [showEnd, setShowEnd] = useState(false);  const [wbOpen, setWbOpen] = useState(false); const [matOpen, setMatOpen] = useState<any>(null); const [matPicker, setMatPicker] = useState(false); const [matPanelOpen, setMatPanelOpen] = useState(false);
   const [groupRecite, setGroupRecite] = useState(false); const [canStudentWrite, setCanStudentWrite] = useState(false); const [canStudentRec, setCanStudentRec] = useState(false);
   const [floatingEmojis, setFloatingEmojis] = useState<FloatingEmoji[]>([]);
   const [raisedHands, setRaisedHands] = useState<RaisedHand[]>([]);
@@ -1350,8 +1321,7 @@ const ClassroomView = ({ subject, onLeave, onMinimize, autoJoin = false }: Class
 
   const connect = async (action: string, settings?: any, mediaSettings?: { micOn: boolean; cameraOn: boolean }) => {
     if (mediaSettings) { setLobbyMic(mediaSettings.micOn); setLobbyCam(mediaSettings.cameraOn); }
-    if (!user) { setError("Session expired. Please refresh the page."); return; }
-    setLoading(true); setError(null);
+    if (!user) { setError("Session expired. Please refresh the page."); return; }    setLoading(true); setError(null);
     try {
       let tk = prefetch.current?.token || null, url = prefetch.current?.url || null;
       if (!tk || !url) { const { data, error: e } = await supabase.functions.invoke("livekit-token", { body: { subject_id: subject.id, action } }); if (e) throw e; if (data?.error) throw new Error(data.error); tk = data.token; url = data.url; }
@@ -1400,8 +1370,7 @@ const ClassroomView = ({ subject, onLeave, onMinimize, autoJoin = false }: Class
     setShowEnd(false);
     await recStopRef.current?.();
     try {
-      if (sessionId) {
-        await supabase.from("live_sessions").update({ status: "ended", ended_at: new Date().toISOString(), actual_end_time: new Date().toISOString() }).eq("id", sessionId);
+      if (sessionId) {        await supabase.from("live_sessions").update({ status: "ended", ended_at: new Date().toISOString(), actual_end_time: new Date().toISOString() }).eq("id", sessionId);
         if (user) await supabase.from("class_chat_messages").insert({ session_id: sessionId, sender_id: user.id, message: t("Class has ended", "انتهت الحصة"), type: "system" });
         try {
           const room = (window as any).lkRoom;
@@ -1451,7 +1420,6 @@ const ClassroomView = ({ subject, onLeave, onMinimize, autoJoin = false }: Class
     try { room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({ type: "group_recite", active: n })), { reliable: true }); } catch { }
     if (sessionId && user) await supabase.from("class_chat_messages").insert({ session_id: sessionId, sender_id: user.id, message: n ? "️ Group Recitation Mode — all mics ON" : "🔇 Recitation ended", type: "system" });
   };
-
   const handleGroupReciteFromTeacher = (active: boolean) => {
     setGroupRecite(active);
     if (active && !isPrivileged) { setGroupReciteDialog(true); }
@@ -1500,8 +1468,7 @@ const ClassroomView = ({ subject, onLeave, onMinimize, autoJoin = false }: Class
           <WbSyncBridge wbOpen={wbOpen} isTeacher={isPrivileged} />
           <AdminMuteListener isPrivileged={isPrivileged} />
           <GroupReciteAutoMic active={groupRecite} isPrivileged={isPrivileged} />
-          <ReconnectMonitor
-            onReconnecting={() => setReconnecting(true)}
+          <ReconnectMonitor            onReconnecting={() => setReconnecting(true)}
             onReconnected={() => setReconnecting(false)}
             onDisconnected={autoReconnect}
           />
@@ -1550,8 +1517,7 @@ const ClassroomView = ({ subject, onLeave, onMinimize, autoJoin = false }: Class
               {matPanelOpen && <SubjectMaterialsPanel subjectId={subject.id} subject={subject} onClose={() => setMatPanelOpen(false)} />}
               {matOpen && <MatViewerInlineBridge material={matOpen} isPrivileged={isPrivileged} onClose={() => setMatOpen(null)} />}
             </div>
-            {chatOpen && !isMobile && (
-              <div style={{ width: 320, background: "#13181f", borderLeft: "1px solid rgba(255,255,255,.06)", display: "flex", flexDirection: "column", flexShrink: 0, animation: "slide-up .2s ease" }}>
+            {chatOpen && !isMobile && (              <div style={{ width: 320, background: "#13181f", borderLeft: "1px solid rgba(255,255,255,.06)", display: "flex", flexDirection: "column", flexShrink: 0, animation: "slide-up .2s ease" }}>
                 <div style={{ display: "flex", borderBottom: "1px solid rgba(255,255,255,.07)", flexShrink: 0 }}>
                   {[["chat", "💬", "Chat"], ["polls", "📊", "Polls"]].map(([k, ic, lb]) => (<button key={k} onClick={() => { setSideTab(k as any); if (k === "chat") setChatUnread(0); }} style={{ flex: 1, padding: "12px 4px", background: "none", border: "none", color: sideTab === k ? "#fff" : "rgba(255,255,255,.35)", fontSize: 13, fontWeight: sideTab === k ? 700 : 400, borderBottom: sideTab === k ? `2px solid ${TEAL}` : "2px solid transparent", cursor: "pointer" }}>{ic} {lb}</button>))}
                   <button onClick={() => setChatOpen(false)} style={{ background: "none", border: "none", color: "rgba(255,255,255,.3)", cursor: "pointer", padding: "0 12px" }}><X style={{ width: 16, height: 16 }} /></button>
@@ -1600,10 +1566,8 @@ const MatViewerBridge = ({ material, isTeacher, onClose }: any) => { const room 
 const MatViewerInlineBridge = ({ material, isPrivileged, onClose }: any) => {
   const room = useRoomContext();
   return <InClassMaterialViewer material={material} isTeacher={isPrivileged} onClose={() => {
-    onClose();
-    if (isPrivileged) { try { room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({ type: "mat_close" })), { reliable: true }); } catch { } }
+    onClose();    if (isPrivileged) { try { room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({ type: "mat_close" })), { reliable: true }); } catch { } }
   }} />;
 };
 
 export default ClassroomView;
-```
