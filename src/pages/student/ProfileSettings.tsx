@@ -55,6 +55,9 @@ export default function ProfileSettings() {
   const [changingPw,      setChangingPw]      = useState(false);
   const [pw,              setPw]              = useState({ new: "", confirm: "" });
   const [pushBlocked,     setPushBlocked]     = useState(false);
+  const [tgChatId,        setTgChatId]        = useState<string | null>(null);
+  const [tgCode,          setTgCode]          = useState<string | null>(null);
+  const [tgPolling,       setTgPolling]       = useState(false);
 
   const [form, setForm] = useState({
     full_name: "", full_name_ar: "", phone: "", whatsapp: "",
@@ -113,6 +116,17 @@ export default function ProfileSettings() {
         if (d.notifications) setNotifs(n => ({ ...n, ...d.notifications }));
         if (d.preferences)   setPrefs(p  => ({ ...p,  ...d.preferences  }));
       }
+
+      // Telegram link state
+      const { data: tg } = await supabase
+        .from("profiles")
+        .select("telegram_chat_id, telegram_link_code")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if (tg) {
+        setTgChatId((tg as any).telegram_chat_id ?? null);
+        setTgCode((tg as any).telegram_link_code ?? null);
+      }
     })();
   }, [user]);
 
@@ -133,6 +147,52 @@ export default function ProfileSettings() {
   });
 
   // ── Save profile ──────────────────────────────────────────────────
+  // ── Telegram link ────────────────────────────────────────────────
+  const generateTgCode = async () => {
+    if (!user) return;
+    const code = `${user.id.slice(0, 6)}-${Math.random().toString(36).slice(2, 8)}`;
+    const { error } = await supabase
+      .from("profiles")
+      .update({ telegram_link_code: code })
+      .eq("user_id", user.id);
+    if (error) {
+      toast({ title: "Could not generate code", description: error.message, variant: "destructive" });
+      return;
+    }
+    setTgCode(code);
+    setTgPolling(true);
+  };
+
+  const unlinkTelegram = async () => {
+    if (!user) return;
+    const { error } = await supabase
+      .from("profiles")
+      .update({ telegram_chat_id: null, telegram_link_code: null })
+      .eq("user_id", user.id);
+    if (error) { toast({ title: "Unlink failed", description: error.message, variant: "destructive" }); return; }
+    setTgChatId(null); setTgCode(null); setTgPolling(false);
+    toast({ title: "✅ Telegram unlinked" });
+  };
+
+  // Poll for link confirmation while a code is active
+  useEffect(() => {
+    if (!tgPolling || !user || tgChatId) return;
+    const t = setInterval(async () => {
+      const { data } = await supabase
+        .from("profiles")
+        .select("telegram_chat_id, telegram_link_code")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if ((data as any)?.telegram_chat_id) {
+        setTgChatId((data as any).telegram_chat_id);
+        setTgCode(null);
+        setTgPolling(false);
+        toast({ title: "✅ Telegram linked! You'll get notifications there." });
+      }
+    }, 4000);
+    return () => clearInterval(t);
+  }, [tgPolling, user, tgChatId]);
+
   const saveProfile = async () => {
     if (!user) return;
     setSaving(true);
@@ -394,6 +454,35 @@ export default function ProfileSettings() {
               </div>
             </div>
           )}
+
+          {/* Telegram link card */}
+          <div style={{ background: tgChatId ? "#ECFDF5" : "#EFF6FF", border: `1px solid ${tgChatId ? "#86EFAC" : "#BFDBFE"}`, borderRadius: 12, padding: 14, marginBottom: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+              <span style={{ fontSize: 22 }}>✈️</span>
+              <div style={{ flex: 1 }}>
+                <p style={{ fontWeight: 700, fontSize: 14, color: G, margin: 0 }}>Telegram Notifications</p>
+                <p style={{ fontSize: 11, color: "#475569", margin: "2px 0 0" }}>
+                  {tgChatId ? "Linked — you'll receive class & academy alerts on Telegram." : "Get all alerts on Telegram even when this site is closed."}
+                </p>
+              </div>
+              {tgChatId && (
+                <button onClick={unlinkTelegram} style={{ padding: "6px 12px", border: "1px solid #DC2626", color: "#DC2626", background: "#fff", borderRadius: 8, fontWeight: 600, fontSize: 12, cursor: "pointer" }}>Unlink</button>
+              )}
+            </div>
+            {!tgChatId && !tgCode && (
+              <button onClick={generateTgCode} style={{ padding: "9px 16px", border: "none", background: G, color: "#fff", borderRadius: 9, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+                Link Telegram
+              </button>
+            )}
+            {!tgChatId && tgCode && (
+              <div style={{ fontSize: 12, color: "#1E3A8A", lineHeight: 1.6 }}>
+                <p style={{ margin: "0 0 6px" }}>1. Open <a href={`https://t.me/Tahleembot?start=${tgCode}`} target="_blank" rel="noreferrer" style={{ color: G, fontWeight: 700, textDecoration: "underline" }}>@Tahleembot</a> on Telegram.</p>
+                <p style={{ margin: "0 0 6px" }}>2. Tap <strong>Start</strong> (or send <code>/start {tgCode}</code>).</p>
+                <p style={{ margin: 0, color: "#64748B" }}>Waiting for confirmation… <Loader2 size={12} style={{ display: "inline", animation: "spin 1s linear infinite" }} /></p>
+              </div>
+            )}
+          </div>
+
 
           <Sec title="Channels">
             <Tog label="Email Notifications" sub="Updates via email"
