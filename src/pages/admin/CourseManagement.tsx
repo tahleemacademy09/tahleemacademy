@@ -504,12 +504,12 @@ const SubjectModal = React.memo(({ ed, teachers, onClose, onSave, busy, privateS
 // ══════════════════════════════════════════════════════════════════════════
 // SUBJECTS TAB VIEW — proper component so useState is valid
 // ══════════════════════════════════════════════════════════════════════════
-const SubjectsTabView = React.memo(({ fSubjects, search, sLoad, unlinked, selCourse, setSelSubject, setView, setTab, setEdSubject, setShowSubject, dupSubject, delSubject, qc, academicLevels }: {
+const SubjectsTabView = React.memo(({ fSubjects, search, sLoad, unlinked, selCourse, setSelSubject, setView, setTab, setEdSubject, setShowSubject, dupSubject, delSubject, qc, academicLevels, safeLvl }: {
   fSubjects: any[]; search: string; sLoad: boolean; unlinked: any[]; selCourse: any;
   setSelSubject: (s: any) => void; setView: (v: any) => void; setTab: (t: any) => void;
   setEdSubject: (s: any) => void; setShowSubject: (b: boolean) => void;
   dupSubject: (s: any) => void; delSubject: (id: string) => void; qc: any;
-  academicLevels: any[];
+  academicLevels: any[]; safeLvl: (level?: string | null) => {label:string;bg:string;text:string;border:string};
 }) => {
   const [activeTab, setActiveTab] = useState<string>(academicLevels[0]?.slug || "beginner");
 
@@ -1368,6 +1368,7 @@ export default function CourseManagement() {
             delSubject={delSubject}
             qc={qc}
             academicLevels={academicLevels}
+            safeLvl={safeLvl}
           />
         )}
 
