@@ -34,19 +34,21 @@ const Login = () => {
   const [resetSent, setResetSent]   = useState(false);
   const [focusedField, setFocusedField] = useState<string | null>(null);
 
-  // Navigate once auth context has finished loading roles.
-  // IMPORTANT: we read roles from AuthContext (not a separate fetch) so there
-  // is no race between this effect and the context's own fetchUserData call.
-  // authLoading stays true until roles are fetched, so we never navigate with
-  // an empty roles array.
+  // ── Single navigation effect ─────────────────────────────────────────────
+  // Waits for authLoading=false (roles are fetched) before navigating.
+  // We do NOT navigate inside handleSubmit to avoid a race where the dashboard
+  // receives authLoading=true and empty roles, causing ProtectedRoute to bounce
+  // the user back to login. Removing the duplicate navigate from handleSubmit
+  // and relying solely on this effect fixes the "must refresh to login" bug.
   useEffect(() => {
     if (!user || authLoading) return;
     const isAdmin   = roles.includes("admin");
     const isTeacher = roles.includes("teacher");
-    if (isAdmin)   navigate("/admin",              { replace: true });
-    else if (isTeacher) navigate("/teacher", { replace: true }); // ✅ FIXED
-    else           navigate("/student",            { replace: true });
+    if (isAdmin)        navigate("/admin",   { replace: true });
+    else if (isTeacher) navigate("/teacher", { replace: true });
+    else                navigate("/student", { replace: true });
   }, [user, roles, authLoading, navigate]);
+
   const validateEmail = (val: string) => {
     if (!val) { setEmailValid(null); return; }
     setEmailValid(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val));
@@ -63,7 +65,7 @@ const Login = () => {
     );
 
     try {
-      const { error, data } = await Promise.race([signInPromise, timeoutPromise]) as any;
+      const { error } = await Promise.race([signInPromise, timeoutPromise]) as any;
 
       if (error) {
         toast({
@@ -73,12 +75,12 @@ const Login = () => {
             : error.message || t("Please try again.", "حاول مرة أخرى."),
           variant: "destructive",
         });
-      } else {
-        const { data: roles } = await supabase.from("user_roles").select("role").eq("user_id", data.user?.id);
-        const isAdmin   = roles?.some((r: any) => r.role === "admin");
-        const isTeacher = roles?.some((r: any) => r.role === "teacher");
-        navigate(isAdmin ? "/admin" : isTeacher ? "/teacher" : "/student"); // ✅ FIXED
       }
+      // ✅ Do NOT navigate here — let the useEffect above handle it once
+      // AuthContext has finished fetching roles (authLoading becomes false).
+      // Navigating here with authLoading=true causes ProtectedRoute to see
+      // empty roles and redirect back to /login, which is why it seemed to
+      // only work after a refresh.
     } catch (err: any) {
       toast({
         title: t("Login Failed", "فشل تسجيل الدخول"),
