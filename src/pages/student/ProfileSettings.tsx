@@ -116,6 +116,17 @@ export default function ProfileSettings() {
         if (d.notifications) setNotifs(n => ({ ...n, ...d.notifications }));
         if (d.preferences)   setPrefs(p  => ({ ...p,  ...d.preferences  }));
       }
+
+      // Telegram link state
+      const { data: tg } = await supabase
+        .from("profiles")
+        .select("telegram_chat_id, telegram_link_code")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if (tg) {
+        setTgChatId((tg as any).telegram_chat_id ?? null);
+        setTgCode((tg as any).telegram_link_code ?? null);
+      }
     })();
   }, [user]);
 
