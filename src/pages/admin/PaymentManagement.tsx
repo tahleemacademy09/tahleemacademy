@@ -206,7 +206,7 @@ const PaymentManagement = () => {
           `Your subscription payment is due${amtText}.${dueText} Please visit the Payment page to renew and keep full access to all features.`,
           `رسوم اشتراكك مستحقة${amtText}.${dueText} يرجى الانتقال إلى صفحة الدفع للتجديد والحفاظ على الوصول الكامل.`
         ),
-        type:    "payment",
+        type:    "info",
         link:    "/student/enrollment-payment",
         is_read: false,
       }),
