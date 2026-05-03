@@ -1,10 +1,21 @@
 /*
-  MustabaqahPage.tsx — Tahleem Academy
-  Live Qur'an Recitation Competition with LiveKit video,
-  number-tile stage picker, and full judge/participant sync.
+  MustabaqahPage.tsx — Tahleem Academy  (v3)
+  ════════════════════════════════════════════════════════
+  Fixes & improvements:
+  ✅ Back button in arena top bar
+  ✅ Bell & Stop are instant — broadcast FIRST, DB async (no blocking await)
+  ✅ Countdown timer per student — judge sets duration; expires → Extra / Stop modal
+  ✅ Observer view: top-half video (VIEWING badge, no controls), bottom list
+  ✅ Camera/mic controls ONLY for judge + active participant (not observers or waiting)
+  ✅ Participants list clean — no duplication
+  ✅ Question displayed prominently for all roles
+  ✅ Tiles regenerated per stage/call (already via TILES_SHOWN)
+  ✅ LiveKit: better reconnect + adaptive stream settings
+  ✅ Fixed text overflow / overlap in video panel
 */
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -13,12 +24,13 @@ import {
   useRemoteParticipants, VideoTrack, useRoomContext,
 } from "@livekit/components-react";
 import "@livekit/components-styles";
-import { Track, RoomEvent } from "livekit-client";
+import { Track, RoomEvent, ConnectionState } from "livekit-client";
 import {
   Mic, MicOff, Video, VideoOff, Bell, Play, Trophy, Users,
   Plus, Clock, BookOpen, CheckCircle, RefreshCw, ChevronRight,
   Award, Radio, ArrowRight, LogIn, StopCircle, Loader2,
-  PhoneCall, List, LayoutGrid, Volume2, Crown,
+  PhoneCall, List, LayoutGrid, Volume2, Crown, ArrowLeft,
+  TimerReset, AlertTriangle,
 } from "lucide-react";
 
 const G    = "#0f2d1f";
@@ -45,6 +57,7 @@ const GlobalStyles = () => (
     @keyframes staggerIn{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
     @keyframes tileReveal{0%{transform:scale(.8) rotateY(90deg);opacity:0}100%{transform:scale(1) rotateY(0);opacity:1}}
     @keyframes questionSlide{from{opacity:0;transform:translateY(24px) scale(.96)}to{opacity:1;transform:translateY(0) scale(1)}}
+    @keyframes timerPulse{0%,100%{opacity:1}50%{opacity:.5}}
     .anim-slide-up{animation:fadeSlideUp .45s cubic-bezier(.22,1,.36,1) both}
     .gold-btn{background:linear-gradient(135deg,#c9a84c 0%,#e8c96a 40%,#c9a84c 60%,#a8843a 100%);background-size:200% auto;transition:background-position .4s,transform .15s,box-shadow .15s}
     .gold-btn:hover{background-position:right center;transform:translateY(-1px);box-shadow:0 8px 32px rgba(201,168,76,.5)}
@@ -55,11 +68,12 @@ const GlobalStyles = () => (
     .stagger-1{animation:staggerIn .4s .05s both}.stagger-2{animation:staggerIn .4s .10s both}
     .stagger-3{animation:staggerIn .4s .15s both}.stagger-4{animation:staggerIn .4s .20s both}
     .stagger-5{animation:staggerIn .4s .25s both}
-    input,select{font-family:'Cairo',sans-serif!important}
-    input:focus,select:focus{outline:none;border-color:rgba(201,168,76,.7)!important;box-shadow:0 0 0 3px rgba(201,168,76,.15)}
+    input,select,textarea{font-family:'Cairo',sans-serif!important}
+    input:focus,select:focus,textarea:focus{outline:none;border-color:rgba(201,168,76,.7)!important;box-shadow:0 0 0 3px rgba(201,168,76,.15)}
     ::-webkit-scrollbar{width:4px;height:4px}
     ::-webkit-scrollbar-track{background:transparent}
     ::-webkit-scrollbar-thumb{background:rgba(201,168,76,.3);border-radius:2px}
+    .timer-warning{animation:timerPulse .8s ease-in-out infinite}
   `}</style>
 );
 
@@ -78,7 +92,7 @@ const IslamicBackground = () => (
 );
 
 const BellFlash = ({ visible, count }: { visible:boolean; count:number }) => (
-  <div style={{position:"fixed",inset:0,zIndex:9999,pointerEvents:"none",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",opacity:visible?1:0,transition:"opacity .25s",background:visible?"rgba(0,0,0,.6)":"transparent"}}>
+  <div style={{position:"fixed",inset:0,zIndex:9999,pointerEvents:"none",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",opacity:visible?1:0,transition:"opacity .15s",background:visible?"rgba(0,0,0,.6)":"transparent"}}>
     {visible && <>
       <div style={{position:"relative",width:130,height:130,display:"flex",alignItems:"center",justifyContent:"center"}}>
         <div style={{position:"absolute",inset:0,borderRadius:"50%",background:"rgba(201,168,76,.3)",animation:"pulseRing .8s ease-out"}}/>
@@ -94,7 +108,7 @@ const BellFlash = ({ visible, count }: { visible:boolean; count:number }) => (
 );
 
 const StopFlash = ({ visible }: { visible:boolean }) => (
-  <div style={{position:"fixed",inset:0,zIndex:9998,pointerEvents:"none",display:"flex",alignItems:"center",justifyContent:"center",background:visible?"rgba(239,68,68,.22)":"transparent",border:visible?`4px solid ${RED}`:"4px solid transparent",transition:"all .2s"}}>
+  <div style={{position:"fixed",inset:0,zIndex:9998,pointerEvents:"none",display:"flex",alignItems:"center",justifyContent:"center",background:visible?"rgba(239,68,68,.22)":"transparent",border:visible?`4px solid ${RED}`:"4px solid transparent",transition:"all .15s"}}>
     {visible && <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:12,animation:"fadeSlideUp .2s ease"}}>
       <StopCircle size={90} color={RED} strokeWidth={1.5}/>
       <div style={{fontFamily:"Cairo,sans-serif",fontWeight:900,fontSize:32,color:"#fff",letterSpacing:6}}>قف • STOP</div>
@@ -102,17 +116,42 @@ const StopFlash = ({ visible }: { visible:boolean }) => (
   </div>
 );
 
+/* ── Timer expired modal ── */
+const TimerExpiredModal = ({ name, onExtraTime, onStop }: { name:string; onExtraTime:()=>void; onStop:()=>void }) => (
+  <div style={{position:"fixed",inset:0,zIndex:9990,background:"rgba(0,0,0,.8)",backdropFilter:"blur(8px)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+    <div className="anim-slide-up glass-card" style={{borderRadius:22,padding:"28px 24px",maxWidth:360,width:"100%",textAlign:"center",border:`1.5px solid ${RED}66`}}>
+      <div style={{fontSize:48,marginBottom:8}}>⏱️</div>
+      <h3 style={{color:"#fff",fontFamily:"Cinzel,sans-serif",fontSize:18,margin:"0 0 6px",fontWeight:700}}>Time's Up!</h3>
+      <p style={{color:"rgba(255,255,255,.55)",fontSize:13,margin:"0 0 20px",lineHeight:1.6}}>
+        <strong style={{color:GOLD}}>{name}</strong>'s time has expired.
+      </p>
+      <div style={{display:"flex",gap:10}}>
+        <button onClick={onExtraTime} style={{flex:1,background:`${GOLD}22`,color:GOLD,border:`1.5px solid ${GOLD}66`,borderRadius:12,padding:"13px 0",cursor:"pointer",fontFamily:"Cairo,sans-serif",fontWeight:800,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+          <TimerReset size={16}/> +30s Extra
+        </button>
+        <button onClick={onStop} style={{flex:1,background:"linear-gradient(135deg,#991b1b,#dc2626)",color:"#fff",border:"none",borderRadius:12,padding:"13px 0",cursor:"pointer",fontFamily:"Cairo,sans-serif",fontWeight:800,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+          <StopCircle size={16}/> Stop
+        </button>
+      </div>
+    </div>
+  </div>
+);
+
 const Avatar = ({ name, size=44, active=false, called=false }: { name:string; size?:number; active?:boolean; called?:boolean }) => {
   const initials = name.split(" ").slice(0,2).map(w=>w[0]?.toUpperCase()||"").join("");
   return (
-    <div style={{width:size,height:size,borderRadius:"50%",flexShrink:0,background:active?`linear-gradient(135deg,${GOLD},${GOLDD})`:called?`linear-gradient(135deg,#f97316,#ea580c)`:`linear-gradient(135deg,${GM},#0a1f12)`,border:active?`2.5px solid ${GOLD}`:called?"2.5px solid #f97316":`1.5px solid rgba(201,168,76,.25)`,display:"flex",alignItems:"center",justifyContent:"center",color:active?G:GOLD,fontWeight:800,fontFamily:"Cairo,sans-serif",fontSize:size*.38,animation:active?"recitingGlow 2s ease-in-out infinite":called?"calledGlow 1.5s ease-in-out infinite":"none"}}>
+    <div style={{width:size,height:size,borderRadius:"50%",flexShrink:0,background:active?`linear-gradient(135deg,${GOLD},${GOLDD})`:called?`linear-gradient(135deg,#f97316,#ea580c)`:`linear-gradient(135deg,${GM},#0a1f12)`,border:active?`2.5px solid ${GOLD}`:called?"2.5px solid #f97316":`1.5px solid rgba(201,168,76,.25)`,display:"flex",alignItems:"center",justifyContent:"center",color:active?G:GOLD,fontWeight:800,fontFamily:"Cairo,sans-serif",fontSize:size*.38,animation:active?"recitingGlow 2s ease-in-out infinite":called?"calledGlow 1.5s ease-in-out infinite":"none",flexShrink:0}}>
       {initials||"?"}
     </div>
   );
 };
 
 let _actx: AudioContext|null = null;
-const getACtx = () => { if(!_actx)_actx=new (window.AudioContext||(window as any).webkitAudioContext)(); if(_actx.state==="suspended")_actx.resume(); return _actx; };
+const getACtx = () => {
+  if(!_actx) _actx=new (window.AudioContext||(window as any).webkitAudioContext)();
+  if(_actx.state==="suspended") _actx.resume();
+  return _actx;
+};
 const playBell = () => { try { const c=getACtx(),t=c.currentTime; [440,880,1320,1760].forEach((f,i)=>{ const o=c.createOscillator(),g=c.createGain(); o.type="sine"; o.frequency.setValueAtTime(f,t); g.gain.setValueAtTime(.35/(i+1),t); g.gain.exponentialRampToValueAtTime(.001,t+2.5); o.connect(g); g.connect(c.destination); o.start(t); o.stop(t+2.5); }); } catch{} };
 const playStop = () => { try { const c=getACtx(),t=c.currentTime; [0,.35].forEach(off=>{ const o=c.createOscillator(),g=c.createGain(); o.type="square"; o.frequency.setValueAtTime(2400,t+off); g.gain.setValueAtTime(.4,t+off); g.gain.exponentialRampToValueAtTime(.001,t+off+.3); o.connect(g); g.connect(c.destination); o.start(t+off); o.stop(t+off+.35); }); } catch{} };
 const playCalled = () => { try { const c=getACtx(),t=c.currentTime; [523,659,784,1047].forEach((f,i)=>{ const o=c.createOscillator(),g=c.createGain(); o.type="sine"; o.frequency.value=f; g.gain.setValueAtTime(0,t+i*.12); g.gain.linearRampToValueAtTime(.3,t+i*.12+.05); g.gain.exponentialRampToValueAtTime(.001,t+i*.12+.7); o.connect(g); g.connect(c.destination); o.start(t+i*.12); o.stop(t+i*.12+.8); }); } catch{} };
@@ -147,12 +186,14 @@ const genQuestion = (scopeType: string) => {
 const genTiles = (scopeType: string, count=10): Tile[] =>
   Array.from({length:count}, (_,i) => ({ num:i+1, ...genQuestion(scopeType) }));
 
+const fmt = (s:number) => `${Math.floor(s/60)}:${String(Math.max(0,s)%60).padStart(2,"0")}`;
+
 const NumberTilePicker = ({ tiles, pickedNum, onPick, canPick, stage }: { tiles:Tile[]; pickedNum:number|null; onPick:(t:Tile)=>void; canPick:boolean; stage:number }) => (
   <div style={{animation:"fadeIn .3s ease"}}>
     <div style={{textAlign:"center",marginBottom:14}}>
       <div style={{color:GOLD,fontWeight:900,fontSize:13,letterSpacing:2,textTransform:"uppercase"}}>Stage {stage} — Pick a Number</div>
       <div style={{color:"rgba(255,255,255,.35)",fontSize:11,marginTop:2,fontFamily:"Amiri,serif",direction:"rtl"}}>المرحلة {stage} — اختر رقماً</div>
-      {canPick&&!pickedNum&&<div style={{color:"rgba(255,255,255,.3)",fontSize:11,marginTop:4}}>Tap a tile to reveal the question</div>}
+      {canPick&&!pickedNum&&<div style={{color:"rgba(255,255,255,.3)",fontSize:11,marginTop:4}}>Tap a tile to reveal your question</div>}
     </div>
     <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:8}}>
       {tiles.map(tile=>{
@@ -169,17 +210,17 @@ const NumberTilePicker = ({ tiles, pickedNum, onPick, canPick, stage }: { tiles:
   </div>
 );
 
-const QuestionDisplay = ({ tile, ayahText, loadingAyah, isParticipant }: { tile:Tile; ayahText:string|null; loadingAyah:boolean; isParticipant:boolean }) => (
+const QuestionDisplay = ({ tile, ayahText, loadingAyah, isParticipant, isObserver }: { tile:Tile; ayahText:string|null; loadingAyah:boolean; isParticipant:boolean; isObserver?:boolean }) => (
   <div className="question-slide" style={{background:"rgba(201,168,76,.08)",border:"1.5px solid rgba(201,168,76,.35)",borderRadius:18,padding:"18px 16px",marginTop:12}}>
     <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
-      <div style={{width:30,height:30,borderRadius:9,background:`linear-gradient(135deg,${GOLD},${GOLDD})`,display:"flex",alignItems:"center",justifyContent:"center"}}><BookOpen size={14} color={G}/></div>
-      <div>
+      <div style={{width:30,height:30,borderRadius:9,background:`linear-gradient(135deg,${GOLD},${GOLDD})`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><BookOpen size={14} color={G}/></div>
+      <div style={{minWidth:0}}>
         <div style={{color:GOLD,fontSize:11,fontWeight:700,letterSpacing:1.5,textTransform:"uppercase"}}>Question #{tile.num}</div>
         <div style={{color:"rgba(255,255,255,.35)",fontSize:10}}>Assigned Passage</div>
       </div>
     </div>
-    <div style={{color:"#fff",fontWeight:800,fontSize:15,marginBottom:4}}>{tile.label}</div>
-    <div style={{color:GOLD,fontSize:14,fontFamily:"Amiri,serif",direction:"rtl",marginBottom:10}}>{tile.labelAr}</div>
+    <div style={{color:"#fff",fontWeight:800,fontSize:15,marginBottom:4,lineHeight:1.3}}>{tile.label}</div>
+    <div style={{color:GOLD,fontSize:14,fontFamily:"Amiri,serif",direction:"rtl",marginBottom:10,lineHeight:1.6}}>{tile.labelAr}</div>
     {tile.surah>0&&(
       <div style={{background:"rgba(0,0,0,.35)",borderRadius:12,padding:"14px 12px",direction:"rtl",minHeight:54,display:"flex",alignItems:"center",justifyContent:"center"}}>
         {loadingAyah ? <Loader2 size={18} color={GOLD} style={{animation:"spin 1s linear infinite"}}/>
@@ -192,65 +233,102 @@ const QuestionDisplay = ({ tile, ayahText, loadingAyah, isParticipant }: { tile:
         <Mic size={13} color={GREEN}/><div style={{color:GREEN,fontSize:12,fontWeight:700}}>Prepare to recite — judge will signal Start</div>
       </div>
     )}
+    {isObserver&&(
+      <div style={{marginTop:10,background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.1)",borderRadius:10,padding:"7px 12px",display:"flex",alignItems:"center",gap:8}}>
+        <span style={{fontSize:14}}>👁️</span><div style={{color:"rgba(255,255,255,.5)",fontSize:11}}>Following live — listen carefully</div>
+      </div>
+    )}
   </div>
 );
 
-const LiveVideoGrid = ({ activeUserId, isJudge }: { activeUserId:string|null; isJudge:boolean }) => {
+/* ── Video grid — adapts to role ────────────────────────────────── */
+const LiveVideoGrid = ({
+  activeUserId, isJudge, isObserver, allowControls,
+}: {
+  activeUserId:string|null; isJudge:boolean; isObserver:boolean; allowControls:boolean;
+}) => {
   const { localParticipant } = useLocalParticipant();
   const remoteParticipants   = useRemoteParticipants();
+
   const getMeta = (p:any) => { try { return JSON.parse(p?.metadata||"{}"); } catch { return {}; } };
   const localMeta  = getMeta(localParticipant);
   const iAmJudge   = localMeta.role==="judge";
   const iAmActive  = activeUserId && localMeta.user_id===activeUserId;
+
   const judgeRemote  = remoteParticipants.find(p=>getMeta(p).role==="judge");
   const activeRemote = remoteParticipants.find(p=>getMeta(p).user_id===activeUserId);
-  const dominantP  = iAmActive ? null : activeRemote ?? null;
-  const pipP       = iAmJudge  ? null : judgeRemote ?? null;
+
+  // Dominant: active participant's camera
+  const dominantP   = iAmActive ? null : activeRemote ?? null;
   const dominantPub = dominantP?.getTrackPublication(Track.Source.Camera);
   const localPub    = localParticipant?.getTrackPublication(Track.Source.Camera);
-  const pipRemotePub = pipP?.getTrackPublication(Track.Source.Camera);
-  const dominantCam = dominantPub?.videoTrack;
-  const localCam    = localPub?.videoTrack;
-  const pipCam      = iAmJudge ? localCam : pipRemotePub?.videoTrack;
-  const pipPub      = iAmJudge ? localPub : pipRemotePub;
-  const showDominant = !!(dominantCam || (iAmActive && localCam));
-  const showPip      = !!pipCam;
-  if (!showDominant && !showPip) return (
+
+  // PiP: judge's camera (or local for judge)
+  const judgeRemotePub = judgeRemote?.getTrackPublication(Track.Source.Camera);
+  const pipP    = iAmJudge ? null : judgeRemote ?? null;
+  const pipPub  = iAmJudge ? localPub : judgeRemotePub;
+
+  const hasDominant = !!(dominantPub?.videoTrack || (iAmActive && localPub?.videoTrack));
+  const hasPip      = !!(pipPub?.videoTrack);
+
+  if (!hasDominant && !hasPip) return (
     <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:10}}>
-      <Video size={32} color="rgba(201,168,76,.25)"/>
-      <div style={{color:"rgba(255,255,255,.3)",fontSize:13}}>Video appears when a participant is called</div>
+      <Video size={28} color="rgba(201,168,76,.25)"/>
+      <div style={{color:"rgba(255,255,255,.3)",fontSize:12,textAlign:"center",padding:"0 20px"}}>
+        {isObserver ? "Video appears when a participant is called" : "Connecting to live video…"}
+      </div>
     </div>
   );
+
   return (
     <div style={{position:"relative",width:"100%",height:"100%"}}>
-      {showDominant&&(
+      {/* Main video */}
+      {hasDominant && (
         <div style={{width:"100%",height:"100%",position:"relative"}}>
-          {dominantCam
-            ? <VideoTrack trackRef={{participant:dominantP!,source:Track.Source.Camera,publication:dominantPub!}} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
-            : <VideoTrack trackRef={{participant:localParticipant!,source:Track.Source.Camera,publication:localPub!}} style={{width:"100%",height:"100%",objectFit:"cover"}}/>}
-          <div style={{position:"absolute",bottom:8,left:8,background:"rgba(0,0,0,.72)",borderRadius:8,padding:"3px 10px",color:"#fff",fontSize:11,fontWeight:700,fontFamily:"Cairo,sans-serif"}}>
-            🎙️ {dominantP ? getMeta(dominantP).name||"Participant" : "You"} <span style={{color:GREEN}}>• Live</span>
+          {dominantPub?.videoTrack
+            ? <VideoTrack trackRef={{participant:dominantP!,source:Track.Source.Camera,publication:dominantPub}} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+            : iAmActive && localPub?.videoTrack
+              ? <VideoTrack trackRef={{participant:localParticipant!,source:Track.Source.Camera,publication:localPub!}} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+              : null
+          }
+          {/* Name label — bottom left, no overlap */}
+          <div style={{position:"absolute",bottom:8,left:8,background:"rgba(0,0,0,.75)",borderRadius:8,padding:"3px 8px",maxWidth:"60%"}}>
+            <span style={{color:"#fff",fontSize:11,fontWeight:700,fontFamily:"Cairo,sans-serif",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",display:"block"}}>
+              🎙️ {dominantP ? getMeta(dominantP).name||"Participant" : "You"} <span style={{color:GREEN}}>• Live</span>
+            </span>
           </div>
+          {/* VIEWING badge for observers */}
+          {isObserver && (
+            <div style={{position:"absolute",top:8,right:8,background:"rgba(0,0,0,.7)",border:"1px solid rgba(255,255,255,.2)",borderRadius:8,padding:"3px 10px"}}>
+              <span style={{color:"rgba(255,255,255,.7)",fontSize:10,fontWeight:700,letterSpacing:1}}>👁️ VIEWING</span>
+            </div>
+          )}
         </div>
       )}
-      {showPip&&(
-        <div style={{position:"absolute",bottom:10,right:10,width:88,height:118,borderRadius:12,overflow:"hidden",border:"2px solid rgba(201,168,76,.55)",boxShadow:"0 4px 18px rgba(0,0,0,.65)"}}>
-          {iAmJudge
+      {/* Judge PiP — bottom right, no overflow */}
+      {hasPip && (
+        <div style={{position:"absolute",bottom:10,right:10,width:80,height:108,borderRadius:10,overflow:"hidden",border:"2px solid rgba(201,168,76,.55)",boxShadow:"0 4px 18px rgba(0,0,0,.65)",flexShrink:0}}>
+          {iAmJudge && localPub?.videoTrack
             ? <VideoTrack trackRef={{participant:localParticipant!,source:Track.Source.Camera,publication:localPub!}} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
-            : pipCam && pipPub ? <VideoTrack trackRef={{participant:pipP!,source:Track.Source.Camera,publication:pipPub}} style={{width:"100%",height:"100%",objectFit:"cover"}}/> : null}
-          <div style={{position:"absolute",bottom:3,left:4,background:"rgba(0,0,0,.7)",borderRadius:5,padding:"1px 6px",color:GOLD,fontSize:9,fontWeight:700}}>⚖️ Judge</div>
+            : pipP && pipPub?.videoTrack
+              ? <VideoTrack trackRef={{participant:pipP,source:Track.Source.Camera,publication:pipPub}} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+              : null
+          }
+          <div style={{position:"absolute",bottom:0,left:0,right:0,background:"rgba(0,0,0,.75)",padding:"2px 4px",textAlign:"center"}}>
+            <span style={{color:GOLD,fontSize:8,fontWeight:700}}>⚖️ Judge</span>
+          </div>
         </div>
       )}
     </div>
   );
 };
 
+/* ── Camera controls — ONLY for judge + active participant ──────── */
 const CameraControls = ({ isActive, isJudge }: { isActive:boolean; isJudge:boolean }) => {
   const { localParticipant } = useLocalParticipant();
   const [camOn, setCamOn] = useState(false);
   const [micOn, setMicOn] = useState(false);
 
-  // Judge: auto-enable both on mount
   useEffect(() => {
     if (isJudge) {
       localParticipant.setCameraEnabled(true).then(()=>setCamOn(true)).catch(()=>{});
@@ -258,7 +336,6 @@ const CameraControls = ({ isActive, isJudge }: { isActive:boolean; isJudge:boole
     }
   }, [isJudge]);
 
-  // Participant: auto-enable mic the moment they are called / reciting
   useEffect(() => {
     if (isActive && !isJudge) {
       localParticipant.setMicrophoneEnabled(true).then(()=>setMicOn(true)).catch(()=>{});
@@ -266,7 +343,6 @@ const CameraControls = ({ isActive, isJudge }: { isActive:boolean; isJudge:boole
     }
   }, [isActive, isJudge]);
 
-  // Always show controls so participants can manage their own audio/video
   return (
     <div style={{display:"flex",gap:8,justifyContent:"center"}}>
       <button onClick={async()=>{ const n=!micOn; await localParticipant.setMicrophoneEnabled(n); setMicOn(n); }}
@@ -281,54 +357,27 @@ const CameraControls = ({ isActive, isJudge }: { isActive:boolean; isJudge:boole
   );
 };
 
-/* ── AudioEnabler: unlocks LiveKit audio on Android after user tap ─ */
 const AudioEnabler = ({ onEnabled }: { onEnabled: () => void }) => {
   const room = useRoomContext();
   const [blocked, setBlocked] = useState(!room.canPlaybackAudio);
-
   useEffect(() => {
-    const sync = () => {
-      setBlocked(!room.canPlaybackAudio);
-      if (room.canPlaybackAudio) onEnabled();
-    };
-    // Sync immediately in case state already changed
+    const sync = () => { setBlocked(!room.canPlaybackAudio); if (room.canPlaybackAudio) onEnabled(); };
     sync();
     room.on(RoomEvent.AudioPlaybackStatusChanged, sync);
     return () => { room.off(RoomEvent.AudioPlaybackStatusChanged, sync); };
   }, [room, onEnabled]);
-
   if (!blocked) return null;
   return (
-    <div
-      style={{
-        position: "absolute", inset: 0, zIndex: 20,
-        display: "flex", flexDirection: "column",
-        alignItems: "center", justifyContent: "center",
-        background: "rgba(0,0,0,.72)", backdropFilter: "blur(4px)",
-        borderRadius: 18, gap: 10,
-      }}
-    >
+    <div style={{position:"absolute",inset:0,zIndex:20,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,.72)",backdropFilter:"blur(4px)",borderRadius:18,gap:10}}>
       <Volume2 size={32} color={GOLD}/>
-      <button
-        onClick={() => { room.startAudio(); onEnabled(); }}
-        style={{
-          background: `linear-gradient(135deg,${GOLD},${GOLDD})`,
-          color: G, border: "none", borderRadius: 14,
-          padding: "12px 28px", fontWeight: 900, fontSize: 16,
-          cursor: "pointer", fontFamily: "Cairo,sans-serif",
-          display: "flex", alignItems: "center", gap: 8,
-          boxShadow: "0 6px 24px rgba(201,168,76,.5)",
-        }}
-      >
+      <button onClick={() => { room.startAudio(); onEnabled(); }}
+        style={{background:`linear-gradient(135deg,${GOLD},${GOLDD})`,color:G,border:"none",borderRadius:14,padding:"12px 28px",fontWeight:900,fontSize:16,cursor:"pointer",fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",gap:8,boxShadow:"0 6px 24px rgba(201,168,76,.5)"}}>
         <Volume2 size={18}/> Tap to Enable Audio
       </button>
-      <p style={{ color: "rgba(255,255,255,.45)", fontSize: 12, margin: 0, textAlign: "center" }}>
-        Your browser requires a tap to start audio
-      </p>
+      <p style={{color:"rgba(255,255,255,.45)",fontSize:12,margin:0,textAlign:"center"}}>Your browser requires a tap to start audio</p>
     </div>
   );
 };
-
 
 type CompStatus = "open"|"active"|"paused"|"completed";
 type PStatus    = "waiting"|"called"|"reciting"|"completed"|"absent"|"disqualified";
@@ -366,7 +415,6 @@ const STATUS_LABEL: Record<PStatus,string> = {waiting:"Waiting",called:"Called!"
 const REACTION_EMOJIS = ["🤲","❤️","🌟","👏","🎙️","📖","🕌","🤍"];
 
 const genCode = () => { const c="ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; return Array.from({length:6},()=>c[Math.floor(Math.random()*c.length)]).join(""); };
-const fmt = (s:number) => `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`;
 const Label = ({children}:{children:React.ReactNode}) => (
   <div style={{color:GOLD,fontSize:11,fontWeight:700,letterSpacing:1.5,textTransform:"uppercase",marginBottom:8,fontFamily:"Cairo,sans-serif"}}>{children}</div>
 );
@@ -378,10 +426,23 @@ const Inp = ({label,value,onChange,placeholder,type="text",...rest}:any) => (
   </div>
 );
 
+// LiveKit room options for better connection performance
+const LK_OPTIONS = {
+  dynacast: true,
+  adaptiveStream: true,
+  publishDefaults: {
+    videoSimulcastLayers: [{ width: 640, height: 480, encoding: { maxBitrate: 900_000, maxFramerate: 24 } }],
+    dtx: true,
+    red: true,
+  },
+};
+
 export default function MustabaqahPage() {
   const { user, profile, hasRole } = useAuth() as any;
   const { toast } = useToast();
+  const navigate = useNavigate();
   const canJudge = hasRole?.("admin")||hasRole?.("teacher");
+
   type View = "list"|"setup"|"join"|"role_select"|"arena"|"results";
   const [view,         setView]         = useState<View>("list");
   const [userRole,     setUserRole]     = useState<"judge"|"participant"|"observer"|null>(null);
@@ -397,8 +458,12 @@ export default function MustabaqahPage() {
   const [bellCount,      setBellCount]     = useState(0);
   const [bellFlash,      setBellFlash]     = useState(false);
   const [stopFlash,      setStopFlash]     = useState(false);
+  // Countdown timer
   const [timerActive,    setTimerActive]   = useState(false);
-  const [timerSecs,      setTimerSecs]     = useState(0);
+  const [timerSecs,      setTimerSecs]     = useState(0);      // counts DOWN
+  const [judgeTimerDuration, setJudgeTimerDuration] = useState(300); // judge-set duration per student
+  const [timerExpired,   setTimerExpired]  = useState(false);
+  const [elapsedSecs,    setElapsedSecs]   = useState(0);      // for display/DB
   const [judgeTab,       setJudgeTab]      = useState<"controls"|"roster">("roster");
   const [rosterMode,     setRosterMode]    = useState<"list"|"grid">("list");
   const [showScorePanel, setShowScore]     = useState(false);
@@ -417,7 +482,7 @@ export default function MustabaqahPage() {
   const [livekitUrl,     setLivekitUrl]    = useState("");
   const [lkConnected,    setLkConnected]   = useState(false);
   const [lkError,        setLkError]       = useState<string>("");
-  const [videoDisabled,  setVideoDisabled] = useState(false); // true when server has no LiveKit creds
+  const [videoDisabled,  setVideoDisabled] = useState(false);
   const [floatReactions, setFloatReactions]= useState<{id:string;emoji:string;name:string;x:number}[]>([]);
   const [showChat,       setShowChat]      = useState(false);
   const [chatMessages,   setChatMessages]  = useState<{id:string;name:string;text:string;time:string}[]>([]);
@@ -429,35 +494,49 @@ export default function MustabaqahPage() {
   const timerRef         = useRef<any>(null);
   const myParticipantRef = useRef<Participant|null>(null);
   const competitionRef   = useRef<Competition|null>(null);
+  const elapsedRef       = useRef(0);  // for accurate elapsed tracking independent of timer direction
 
   useEffect(()=>{ myParticipantRef.current=myParticipant; },[myParticipant]);
   useEffect(()=>{ competitionRef.current=competition; },[competition]);
 
   const isJudge = canJudge && userRole!=="observer" && userRole!=="participant";
+  const isObserver = userRole==="observer";
   const iAmParticipantActive = !isJudge && myParticipant && (myParticipant.status==="called"||myParticipant.status==="reciting");
 
+  // Countdown timer + elapsed tracker
+  useEffect(()=>{
+    if (timerActive) {
+      timerRef.current = setInterval(()=>{
+        setTimerSecs(s => {
+          const next = s - 1;
+          if (next <= 0) {
+            clearInterval(timerRef.current);
+            setTimerActive(false);
+            if (isJudge) setTimerExpired(true);
+            return 0;
+          }
+          return next;
+        });
+        setElapsedSecs(e => { elapsedRef.current = e+1; return e+1; });
+      }, 1000);
+    } else {
+      clearInterval(timerRef.current);
+    }
+    return ()=>clearInterval(timerRef.current);
+  },[timerActive]);
+
   const fetchLkToken = useCallback(async (roomCode:string) => {
-    setLkError("");
-    setVideoDisabled(false);
+    setLkError(""); setVideoDisabled(false);
     try {
       const {data,error} = await supabase.functions.invoke("musabaqah-livekit-token",{body:{room_code: roomCode}});
-      // SDK-level error (network / deploy issue)
       if (error) throw new Error(error.message);
-      // Server explicitly says video is not available (no LiveKit creds configured)
-      if (data?.video_disabled) {
-        setVideoDisabled(true);
-        console.info("[Musabaqah] Live video is disabled on this server — competition continues without video.");
-        return;
-      }
+      if (data?.video_disabled) { setVideoDisabled(true); return; }
       if (data?.error) throw new Error(data.error);
       if (!data?.token || !data?.url) throw new Error("No token returned");
-      setLivekitToken(data.token);
-      setLivekitUrl(data.url);
-      setLkConnected(true);
+      setLivekitToken(data.token); setLivekitUrl(data.url); setLkConnected(true);
     } catch(err: any) {
       const msg = err?.message || "LiveKit connection failed";
-      setLkError(msg);
-      console.warn("[Musabaqah] LiveKit token error:", msg);
+      setLkError(msg); console.warn("[Musabaqah] LiveKit error:", msg);
     }
   },[]);
 
@@ -476,12 +555,6 @@ export default function MustabaqahPage() {
     const {data} = await supabase.from("musabaqah_competitions" as any).select("*").order("created_at",{ascending:false});
     if (data) setCompetitions(data as Competition[]);
   };
-
-  useEffect(()=>{
-    if (timerActive) timerRef.current=setInterval(()=>setTimerSecs(s=>s+1),1000);
-    else clearInterval(timerRef.current);
-    return ()=>clearInterval(timerRef.current);
-  },[timerActive]);
 
   const loadParticipants = useCallback(async () => {
     const comp=competitionRef.current; if (!comp) return;
@@ -503,20 +576,28 @@ export default function MustabaqahPage() {
   useEffect(()=>{
     if (!competition) return;
     if (channelRef.current) supabase.removeChannel(channelRef.current);
-    const ch = supabase.channel(`musabaqah:${competition.id}`)
+    const ch = supabase.channel(`musabaqah:${competition.id}`,{config:{broadcast:{ack:false}}})
       .on("broadcast",{event:"BELL"},({payload}:any)=>{
         setBellFlash(true); setBellCount(payload.count??0);
         setTimeout(()=>setBellFlash(false),2500);
         getACtx().state==="running"?playBell():getACtx().resume().then(playBell);
       })
       .on("broadcast",{event:"STOP"},()=>{
-        setStopFlash(true); setTimerActive(false);
+        setStopFlash(true); setTimerActive(false); setTimerExpired(false);
         setTimeout(()=>setStopFlash(false),2500);
         getACtx().state==="running"?playStop():getACtx().resume().then(playStop);
       })
+      .on("broadcast",{event:"TIMER_START"},({payload}:any)=>{
+        setTimerSecs(payload.duration??300); setElapsedSecs(0); elapsedRef.current=0;
+        setTimerActive(true); setTimerExpired(false);
+      })
+      .on("broadcast",{event:"TIMER_EXTRA"},({payload}:any)=>{
+        setTimerSecs(s=>s+(payload.extra??30)); setTimerActive(true); setTimerExpired(false);
+      })
       .on("broadcast",{event:"CALLED"},({payload}:any)=>{
         loadParticipants();
-        setBellCount(0); setTimerSecs(0); setShowScore(false);
+        setBellCount(0); setTimerSecs(0); setElapsedSecs(0); elapsedRef.current=0;
+        setTimerExpired(false); setShowScore(false);
         setPickedTile(null); setStageTiles([]); setAyahText(null); setPickerParticipantId(null);
         const mine=myParticipantRef.current;
         if (payload.participant_id===mine?.id) {
@@ -527,22 +608,21 @@ export default function MustabaqahPage() {
       })
       .on("broadcast",{event:"TILES_SHOWN"},({payload}:any)=>{
         setStageTiles(payload.tiles??[]); setPickedTile(null); setAyahText(null);
-        setShowTilePicker(true);
-        setPickerParticipantId(payload.picker_participant_id??null);
+        setShowTilePicker(true); setPickerParticipantId(payload.picker_participant_id??null);
       })
       .on("broadcast",{event:"QUESTION_PICKED"},({payload}:any)=>{
         const tile=payload.tile as Tile; setPickedTile(tile);
         if (tile?.surah>0) fetchAyah(tile.surah,tile.ayah);
         getACtx().state==="running"?playTilePick():getACtx().resume().then(playTilePick);
       })
-      .on("broadcast",{event:"START_RECITING"},()=>{
-        loadParticipants(); setTimerActive(true);
+      .on("broadcast",{event:"START_RECITING"},({payload}:any)=>{
+        loadParticipants();
         const mine=myParticipantRef.current;
         if (mine&&(mine.status==="called"||mine.status==="reciting")) toast({title:"▶️ Start reciting now!"});
       })
       .on("broadcast",{event:"SCORE_SUBMITTED"},({payload}:any)=>{
         loadParticipants(); loadAttempts();
-        setShowScore(false); setShowTilePicker(false);
+        setShowScore(false); setShowTilePicker(false); setTimerExpired(false);
         setActiveP(null); setCurAttempt(null); setPickedTile(null); setPickerParticipantId(null);
         const mine=myParticipantRef.current;
         if (payload.participant_id===mine?.id) toast({title:`🏆 Your score: ${payload.score} pts`});
@@ -550,7 +630,8 @@ export default function MustabaqahPage() {
       .on("broadcast",{event:"STAGE_CHANGE"},({payload}:any)=>{
         setCompetition(c=>c?{...c,current_stage:payload.stage}:c);
         setPickedTile(null); setStageTiles([]); setShowTilePicker(false); setAyahText(null); setPickerParticipantId(null);
-        setActiveP(null); setCurAttempt(null); setTimerActive(false); setTimerSecs(0);
+        setActiveP(null); setCurAttempt(null); setTimerActive(false); setTimerSecs(0); setElapsedSecs(0);
+        setTimerExpired(false); elapsedRef.current=0;
         playStageWin(); loadParticipants(); loadAttempts();
       })
       .on("broadcast",{event:"COMPETITION_END"},()=>{
@@ -592,77 +673,111 @@ export default function MustabaqahPage() {
     broadcast("REACTION",{emoji,name});
   };
 
-  // Resolve tiles respecting custom questions stored in scope_config
   const buildTiles = (comp: Competition): Tile[] => {
     const count = comp.scope_config?.tiles_per_stage ?? 10;
     const customs: string[] = comp.scope_config?.custom_questions ?? [];
     if (customs.length > 0) {
       return Array.from({length:Math.min(count, customs.length||count)}, (_,i) => ({
-        num: i+1,
-        label: customs[i] ?? genQuestion(comp.scope_type).label,
-        labelAr: "",
+        num: i+1, label: customs[i] ?? genQuestion(comp.scope_type).label, labelAr: "",
         surah: 0, ayah: 0, surahName: "", surahAr: "",
       }));
     }
     return genTiles(comp.scope_type, count);
   };
 
-  // JUDGE: 1. Call participant — generate tiles, broadcast to all; PARTICIPANT will pick
+  // ── JUDGE ACTIONS ────────────────────────────────────────────────
+
   const callParticipant = async (p:Participant) => {
     if (!competition) return;
-    setBellCount(0); setTimerSecs(0); setShowScore(false);
+    setBellCount(0); setTimerSecs(judgeTimerDuration); setElapsedSecs(0); elapsedRef.current=0;
+    setTimerExpired(false); setShowScore(false);
     setScoreBreak({tajweed:"",memorize:"",fluency:"",voice:""}); setJudgeComment("");
     setPickedTile(null); setAyahText(null);
     const tiles = buildTiles(competition);
     setStageTiles(tiles); setShowTilePicker(true);
-    await supabase.from("musabaqah_participants" as any).update({status:"called"}).eq("id",p.id);
-    await supabase.from("musabaqah_competitions" as any).update({current_participant_id:p.id}).eq("id",competition.id);
-    setActiveP(p); setCompetition(c=>c?{...c,current_participant_id:p.id}:c); playCalled();
+    // Broadcast immediately (no await)
     broadcast("CALLED",{participant_id:p.id,participant_name:p.participant_name});
-    // Broadcast tiles — participant will pick, everyone else watches
     broadcast("TILES_SHOWN",{tiles,stage:competition.current_stage,picker_participant_id:p.id});
+    playCalled();
+    setActiveP(p); setCompetition(c=>c?{...c,current_participant_id:p.id}:c);
     setJudgeTab("controls");
+    // DB async — no blocking
+    supabase.from("musabaqah_participants" as any).update({status:"called"}).eq("id",p.id);
+    supabase.from("musabaqah_competitions" as any).update({current_participant_id:p.id}).eq("id",competition.id);
   };
 
-  // PARTICIPANT: picks a tile — broadcasts to everyone (judge sees it too)
   const pickTile = (tile:Tile) => {
     setPickedTile(tile);
     if (tile.surah>0) fetchAyah(tile.surah,tile.ayah);
     playTilePick(); broadcast("QUESTION_PICKED",{tile});
   };
 
-  // JUDGE: 3. Start reciting
   const startReciting = async () => {
     if (!activeP||!competition||!pickedTile) return;
+    const duration = judgeTimerDuration;
+    // Broadcast + audio instantly
+    broadcast("START_RECITING",{participant_id:activeP.id});
+    broadcast("TIMER_START",{duration});
+    setTimerSecs(duration); setElapsedSecs(0); elapsedRef.current=0;
+    setTimerActive(true); setTimerExpired(false);
+    // DB async
+    supabase.from("musabaqah_participants" as any).update({status:"reciting"}).eq("id",activeP.id);
     const {data:att}=await supabase.from("musabaqah_attempts" as any).insert({
-      competition_id:competition.id,participant_id:activeP.id,
+      competition_id:competition.id, participant_id:activeP.id,
       stage_number:competition.current_stage,
-      scope_label:pickedTile.label,scope_label_ar:pickedTile.labelAr,
-      bell_count:0,status:"reciting",
+      scope_label:pickedTile.label, scope_label_ar:pickedTile.labelAr,
+      bell_count:0, status:"reciting",
     }).select().single();
     if (att) setCurAttempt(att as Attempt);
-    await supabase.from("musabaqah_participants" as any).update({status:"reciting"}).eq("id",activeP.id);
     setActiveP(p=>p?{...p,status:"reciting"}:p);
-    setTimerActive(true); broadcast("START_RECITING",{participant_id:activeP.id});
   };
 
-  // JUDGE: 4. Bell
-  const ringBell = async () => {
-    const n=bellCount+1; setBellCount(n); playBell(); setBellFlash(true);
-    setTimeout(()=>setBellFlash(false),2500); broadcast("BELL",{count:n});
-    if (currentAttempt) await supabase.from("musabaqah_attempts" as any).update({bell_count:n}).eq("id",currentAttempt.id);
+  // ✅ Bell — INSTANT: sound + broadcast first, DB async
+  const ringBell = () => {
+    const n=bellCount+1;
+    setBellCount(n);           // state
+    playBell();                // sound — instant
+    setBellFlash(true);        // visual
+    setTimeout(()=>setBellFlash(false),2500);
+    broadcast("BELL",{count:n}); // network broadcast — fast (no await)
+    // DB update async, does NOT block the above
+    if (currentAttempt) {
+      supabase.from("musabaqah_attempts" as any).update({bell_count:n}).eq("id",currentAttempt.id);
+    }
   };
 
-  // JUDGE: 5. Stop
-  const signalStop = async () => {
-    playStop(); setStopFlash(true); setTimerActive(false);
+  // ✅ Stop — INSTANT: sound + broadcast first, DB async
+  const signalStop = () => {
+    playStop();                // sound — instant
+    setStopFlash(true);
+    setTimerActive(false);
+    setTimerExpired(false);
     setTimeout(()=>setStopFlash(false),2500);
-    broadcast("STOP"); setShowScore(true);
-    if (currentAttempt) await supabase.from("musabaqah_attempts" as any).update({status:"scored",duration_seconds:timerSecs}).eq("id",currentAttempt.id);
-    if (activeP) await supabase.from("musabaqah_participants" as any).update({status:"completed"}).eq("id",activeP.id);
+    broadcast("STOP");         // broadcast — fast (no await)
+    setShowScore(true);
+    // DB async
+    const elapsed = elapsedRef.current;
+    if (currentAttempt) {
+      supabase.from("musabaqah_attempts" as any).update({status:"scored",duration_seconds:elapsed}).eq("id",currentAttempt.id);
+    }
+    if (activeP) {
+      supabase.from("musabaqah_participants" as any).update({status:"completed"}).eq("id",activeP.id);
+    }
   };
 
-  // JUDGE: 6. Submit score
+  const handleExtraTime = () => {
+    const extra = 30;
+    setTimerSecs(s=>s+extra);
+    setTimerActive(true);
+    setTimerExpired(false);
+    broadcast("TIMER_EXTRA",{extra});
+  };
+
+  const handleTimerStop = () => {
+    setTimerExpired(false);
+    signalStop();
+  };
+
   const submitScore = async () => {
     if (!activeP||!currentAttempt) return;
     let total=0; const breakdown:Record<string,number>={};
@@ -676,12 +791,12 @@ export default function MustabaqahPage() {
     broadcast("SCORE_SUBMITTED",{participant_id:activeP.id,score:total});
     toast({title:`✅ Score: ${total} pts`});
     setActiveP(null); setCurAttempt(null); setShowScore(false);
-    setBellCount(0); setTimerSecs(0); setTimerActive(false);
+    setBellCount(0); setTimerSecs(0); setElapsedSecs(0); elapsedRef.current=0;
+    setTimerActive(false); setTimerExpired(false);
     setShowTilePicker(false); setPickedTile(null); setAyahText(null);
     setJudgeTab("roster"); loadParticipants(); loadAttempts();
   };
 
-  // JUDGE: 7. Advance stage
   const advanceStage = async () => {
     if (!competition) return;
     const next=competition.current_stage+1;
@@ -707,9 +822,7 @@ export default function MustabaqahPage() {
     if (!form.title.trim()) { toast({title:"Enter a title",variant:"destructive"}); return; }
     setLoading(true);
     const room_code=genCode();
-    const customQList = form.use_custom_q
-      ? form.custom_questions.split("\n").map(s=>s.trim()).filter(Boolean)
-      : [];
+    const customQList = form.use_custom_q ? form.custom_questions.split("\n").map(s=>s.trim()).filter(Boolean) : [];
     const {data,error}=await supabase.from("musabaqah_competitions" as any).insert({
       title:form.title.trim(),description:form.description.trim(),scope_type:form.scope_type,
       scope_config:{ tiles_per_stage: form.tiles_per_stage, custom_questions: customQList },
@@ -719,7 +832,8 @@ export default function MustabaqahPage() {
     setLoading(false);
     if (error) { toast({title:"Error",description:error.message,variant:"destructive"}); return; }
     const comp=data as Competition;
-    setCompetition(comp); setView("arena"); await fetchLkToken(room_code);
+    setCompetition(comp); setJudgeTimerDuration(comp.time_limit_seconds);
+    setView("arena"); await fetchLkToken(room_code);
     toast({title:`🏆 Created! Code: ${room_code}`});
   };
 
@@ -744,6 +858,7 @@ export default function MustabaqahPage() {
 
   const openComp = async (comp:Competition) => {
     setCompetition(comp); setChatMessages([]); setUserRole(null);
+    setJudgeTimerDuration(comp.time_limit_seconds);
     setJoinForm(f=>({...f,room_code:comp.room_code,name:f.name||profile?.full_name||"",school:f.school||profile?.school||""}));
     if (canJudge) { setView("role_select"); return; }
     const {data}=await supabase.from("musabaqah_participants" as any).select("*").eq("competition_id",comp.id).eq("user_id",user?.id).single();
@@ -788,8 +903,19 @@ export default function MustabaqahPage() {
   const allDone = waiting.length===0 && participants.length>0 && !activeP;
   const totalCrit = competition?.use_criteria_scoring ? SCORING_CRITERIA.reduce((s,c)=>s+(Number(scoreBreak[c.key])||0),0) : Number(scoreBreak.tajweed)||0;
   const finalScore = Math.max(0,totalCrit-bellCount*2);
+  const timerWarning = timerSecs > 0 && timerSecs <= 30;
+  const timerDanger  = timerSecs > 0 && timerSecs <= 10;
 
-  /* ── LIST view ── */
+  // ── Back navigation ──────────────────────────────────────────────
+  const goBack = () => {
+    if (view==="arena") { setView("list"); return; }
+    if (view==="list") { navigate(-1); return; }
+    setView("list");
+  };
+
+  /* ════════════════════════════════════════════════════════════════
+     LIST VIEW
+  ════════════════════════════════════════════════════════════════ */
   if (view==="list") {
     const shown=isJudge?competitions:competitions.filter(c=>c.status==="open"||c.status==="active");
     return (
@@ -799,7 +925,7 @@ export default function MustabaqahPage() {
           <div style={{position:"fixed",inset:0,zIndex:9999,background:"rgba(0,0,0,.75)",backdropFilter:"blur(8px)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
             <div className="anim-slide-up glass-card" style={{borderRadius:22,padding:"32px 28px",maxWidth:380,width:"100%",textAlign:"center",border:"1.5px solid rgba(239,68,68,.4)"}}>
               <div style={{fontSize:48,marginBottom:12}}>🗑️</div>
-              <h3 style={{color:"#fff",fontFamily:"Cinzel,serif",fontSize:18,margin:"0 0 8px",fontWeight:700}}>Delete Competition?</h3>
+              <h3 style={{color:"#fff",fontFamily:"Cinzel,sans-serif",fontSize:18,margin:"0 0 8px",fontWeight:700}}>Delete Competition?</h3>
               <p style={{color:RED,fontSize:12,margin:"0 0 24px"}}>⚠️ Deletes all participants & attempts.</p>
               <div style={{display:"flex",gap:10}}>
                 <button onClick={()=>setDeleteModal(null)} style={{flex:1,background:"rgba(255,255,255,.07)",color:"rgba(255,255,255,.7)",border:"1px solid rgba(255,255,255,.15)",borderRadius:12,padding:"13px 0",cursor:"pointer",fontFamily:"Cairo,sans-serif",fontWeight:700,fontSize:14}}>Cancel</button>
@@ -808,7 +934,15 @@ export default function MustabaqahPage() {
             </div>
           </div>
         )}
-        <div className="anim-slide-up" style={{position:"relative",zIndex:1,textAlign:"center",padding:"52px 24px 32px"}}>
+
+        {/* Back button */}
+        <div style={{position:"relative",zIndex:1,padding:"16px 20px 0"}}>
+          <button onClick={goBack} style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.12)",borderRadius:10,padding:"8px 14px",cursor:"pointer",color:"rgba(255,255,255,.6)",display:"flex",alignItems:"center",gap:6,fontSize:13,fontFamily:"Cairo,sans-serif"}}>
+            <ArrowLeft size={14}/> Back
+          </button>
+        </div>
+
+        <div className="anim-slide-up" style={{position:"relative",zIndex:1,textAlign:"center",padding:"24px 24px 28px"}}>
           <div style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:80,height:80,borderRadius:24,background:`linear-gradient(135deg,${GOLD},${GOLDD})`,boxShadow:"0 12px 40px rgba(201,168,76,.5)",marginBottom:20,animation:"floatUp 5s ease-in-out infinite"}}>
             <Trophy size={40} color={G} strokeWidth={2.5}/>
           </div>
@@ -816,6 +950,7 @@ export default function MustabaqahPage() {
           <p style={{fontFamily:"Amiri,serif",color:GOLD,fontSize:18,margin:"0 0 8px",direction:"rtl"}}>مسابقة التلاوة الحية</p>
           <p style={{color:"rgba(255,255,255,.4)",fontSize:13,margin:0}}>Live Qur'an Recitation Competition</p>
         </div>
+
         <div style={{position:"relative",zIndex:1,maxWidth:560,margin:"0 auto",padding:"0 16px"}}>
           <div className="stagger-1" style={{display:"flex",gap:10,marginBottom:24}}>
             {isJudge&&<button className="gold-btn" onClick={()=>setView("setup")} style={{flex:1,color:G,border:"none",borderRadius:14,padding:"14px 0",fontWeight:800,cursor:"pointer",fontSize:15,fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}><Plus size={18}/> New Competition</button>}
@@ -835,7 +970,7 @@ export default function MustabaqahPage() {
                 {c.status==="active"?<Radio size={22} color={G}/>:c.status==="completed"?<Award size={22} color="#60a5fa"/>:<Trophy size={22} color={GOLD}/>}
               </div>
               <div style={{flex:1,minWidth:0}}>
-                <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:4}}>
+                <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:4,flexWrap:"wrap"}}>
                   <span style={{color:"#fff",fontWeight:700,fontSize:14}}>{c.title}</span>
                   <span style={{padding:"2px 9px",borderRadius:20,fontSize:10,fontWeight:700,background:c.status==="active"?`${GREEN}22`:c.status==="open"?`${GOLD}22`:"rgba(255,255,255,.08)",color:c.status==="active"?GREEN:c.status==="open"?GOLD:"rgba(255,255,255,.35)",border:`1px solid ${c.status==="active"?GREEN:c.status==="open"?GOLD:"rgba(255,255,255,.1)"}`}}>
                     {c.status==="active"?"🔴 LIVE":c.status==="open"?"🟢 OPEN":c.status==="completed"?"✅ DONE":c.status.toUpperCase()}
@@ -856,23 +991,23 @@ export default function MustabaqahPage() {
           ))}
           {isJudge&&<div className="stagger-5" style={{marginTop:8,background:"rgba(201,168,76,.06)",border:"1px solid rgba(201,168,76,.15)",borderRadius:14,padding:"12px 16px",display:"flex",gap:10,alignItems:"flex-start"}}>
             <Crown size={15} color={GOLD} style={{flexShrink:0,marginTop:2}}/>
-            <p style={{color:"rgba(255,255,255,.45)",fontSize:12,margin:0,lineHeight:1.7}}><strong style={{color:GOLD}}>Judge mode:</strong> Create competitions, call participants, reveal questions via numbered tiles, ring bell, and score recitations in real time.</p>
+            <p style={{color:"rgba(255,255,255,.45)",fontSize:12,margin:0,lineHeight:1.7}}><strong style={{color:GOLD}}>Judge mode:</strong> Create competitions, call participants, reveal questions, ring bell, score recitations in real time.</p>
           </div>}
         </div>
       </div>
     );
   }
 
-  /* ── SETUP view ── */
+  /* ── SETUP ── */
   if (view==="setup") return (
     <div style={{minHeight:"100vh",position:"relative",fontFamily:"Cairo,sans-serif",overflowY:"auto",paddingBottom:40}}>
       <GlobalStyles/><IslamicBackground/>
       <div className="anim-slide-up" style={{position:"relative",zIndex:1,maxWidth:560,margin:"0 auto",padding:"24px 16px"}}>
-        <button onClick={()=>setView("list")} style={{background:"none",border:"none",color:"rgba(255,255,255,.4)",cursor:"pointer",marginBottom:20,fontSize:13,display:"flex",alignItems:"center",gap:6}}>← Back</button>
+        <button onClick={()=>setView("list")} style={{background:"none",border:"none",color:"rgba(255,255,255,.4)",cursor:"pointer",marginBottom:20,fontSize:13,display:"flex",alignItems:"center",gap:6}}><ArrowLeft size={14}/> Back</button>
         <div className="glass-card" style={{borderRadius:24,padding:"28px 24px"}}>
           <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:24}}>
             <div style={{width:44,height:44,borderRadius:14,background:`linear-gradient(135deg,${GOLD},${GOLDD})`,display:"flex",alignItems:"center",justifyContent:"center"}}><Plus size={22} color={G}/></div>
-            <div><h2 style={{color:"#fff",fontFamily:"Cinzel,serif",fontSize:20,margin:0,fontWeight:600}}>New Competition</h2><p style={{color:"rgba(255,255,255,.35)",fontSize:12,margin:0}}>Set up your musabaqah</p></div>
+            <div><h2 style={{color:"#fff",fontFamily:"Cinzel,sans-serif",fontSize:20,margin:0,fontWeight:600}}>New Competition</h2><p style={{color:"rgba(255,255,255,.35)",fontSize:12,margin:0}}>Set up your musabaqah</p></div>
           </div>
           <Inp label="Competition Title" value={form.title} onChange={(e:any)=>setForm(f=>({...f,title:e.target.value}))} placeholder="e.g. Ramadan Tajweed Championship"/>
           <Inp label="Description (optional)" value={form.description} onChange={(e:any)=>setForm(f=>({...f,description:e.target.value}))} placeholder="Brief description..."/>
@@ -891,13 +1026,12 @@ export default function MustabaqahPage() {
                 {[1,2,3,4,5,6,7,8,10].map(n=><option key={n} value={n} style={{background:G}}>{n} Stage{n>1?"s":""}</option>)}
               </select>
             </div>
-            <div><Label>Time Limit (sec)</Label>
-              <input type="number" value={form.time_limit} onChange={e=>setForm(f=>({...f,time_limit:Number(e.target.value)}))} min={60} max={1800} step={30} style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 14px",color:"#fff",fontSize:14}}/>
+            <div><Label>Timer per Student (sec)</Label>
+              <input type="number" value={form.time_limit} onChange={e=>setForm(f=>({...f,time_limit:Number(e.target.value)}))} min={30} max={1800} step={30} style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 14px",color:"#fff",fontSize:14}}/>
             </div>
           </div>
-          {/* Tiles per stage */}
           <div style={{marginBottom:16}}>
-            <Label>Number of tiles per stage (participant picks from these)</Label>
+            <Label>Tiles per stage</Label>
             <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
               {[5,8,10,12,15,20].map(n=>(
                 <button key={n} onClick={()=>setForm(f=>({...f,tiles_per_stage:n}))}
@@ -907,7 +1041,6 @@ export default function MustabaqahPage() {
               ))}
             </div>
           </div>
-          {/* Custom questions toggle */}
           <div style={{marginBottom:form.use_custom_q?0:16}}>
             <div onClick={()=>setForm(f=>({...f,use_custom_q:!f.use_custom_q}))}
               style={{background:form.use_custom_q?`${GOLD}18`:"rgba(255,255,255,.04)",border:`1.5px solid ${form.use_custom_q?GOLD:"rgba(255,255,255,.12)"}`,borderRadius:12,padding:"12px 16px",cursor:"pointer",display:"flex",alignItems:"center",gap:12}}>
@@ -922,13 +1055,11 @@ export default function MustabaqahPage() {
           </div>
           {form.use_custom_q&&(
             <div style={{marginBottom:16,marginTop:10}}>
-              <Label>Custom Questions (one per line — participant sees these as tile labels)</Label>
+              <Label>Custom Questions (one per line)</Label>
               <textarea value={form.custom_questions} onChange={e=>setForm(f=>({...f,custom_questions:e.target.value}))}
                 placeholder={"Al-Baqarah 1-5\nAl-Imran 10-20\nAl-Fatiha full\n..."}
                 rows={6} style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 16px",color:"#fff",fontSize:13,fontFamily:"Cairo,sans-serif",resize:"vertical",lineHeight:1.6}}/>
-              <div style={{color:"rgba(255,255,255,.3)",fontSize:11,marginTop:4}}>
-                {form.custom_questions.split("\n").filter(s=>s.trim()).length} question{form.custom_questions.split("\n").filter(s=>s.trim()).length!==1?"s":""} · First {form.tiles_per_stage} will be shown per stage
-              </div>
+              <div style={{color:"rgba(255,255,255,.3)",fontSize:11,marginTop:4}}>{form.custom_questions.split("\n").filter(s=>s.trim()).length} questions</div>
             </div>
           )}
           <div style={{marginBottom:24}}>
@@ -948,12 +1079,12 @@ export default function MustabaqahPage() {
     </div>
   );
 
-  /* ── JOIN view ── */
+  /* ── JOIN ── */
   if (view==="join") return (
     <div style={{minHeight:"100vh",position:"relative",fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
       <GlobalStyles/><IslamicBackground/>
       <div className="anim-slide-up glass-card" style={{position:"relative",zIndex:1,width:"100%",maxWidth:440,borderRadius:24,padding:"32px 24px"}}>
-        <button onClick={()=>setView("list")} style={{background:"none",border:"none",color:"rgba(255,255,255,.4)",cursor:"pointer",marginBottom:20,fontSize:13,display:"flex",alignItems:"center",gap:6}}>← Back</button>
+        <button onClick={()=>setView("list")} style={{background:"none",border:"none",color:"rgba(255,255,255,.4)",cursor:"pointer",marginBottom:20,fontSize:13,display:"flex",alignItems:"center",gap:6}}><ArrowLeft size={14}/> Back</button>
         <div style={{marginBottom:16}}>
           <Label>Room Code</Label>
           <input value={joinForm.room_code} onChange={e=>setJoinForm(f=>({...f,room_code:e.target.value.toUpperCase()}))} placeholder="AB3XY7" maxLength={6}
@@ -971,18 +1102,18 @@ export default function MustabaqahPage() {
   /* ── ROLE SELECT ── */
   if (view==="role_select"&&competition) {
     const ROLES=canJudge
-      ?[{id:"judge",icon:"⚖️",title:"Judge / Host",desc:"Control competition flow, call participants, reveal questions, ring bell, score recitations",color:GOLD},
-        {id:"observer",icon:"👁️",title:"Watch & Follow",desc:"Follow live, chat, react to recitations",color:GREEN}]
+      ?[{id:"judge",icon:"⚖️",title:"Judge / Host",desc:"Control flow, call participants, reveal questions, ring bell, score recitations",color:GOLD},
+        {id:"observer",icon:"👁️",title:"Watch & Follow",desc:"View live video, see participants, react to recitations",color:GREEN}]
       :[{id:"participant",icon:"🎙️",title:"Join as Participant",desc:"Recite when called by the judge",color:GOLD},
-        {id:"observer",icon:"👁️",title:"Watch & Follow",desc:"Follow live, chat, react to recitations",color:GREEN}];
+        {id:"observer",icon:"👁️",title:"Watch & Follow",desc:"Follow live, chat, react — view-only mode",color:GREEN}];
     return (
       <div style={{minHeight:"100vh",position:"relative",fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
         <GlobalStyles/><IslamicBackground/>
         <div className="anim-slide-up glass-card" style={{position:"relative",zIndex:1,width:"100%",maxWidth:440,borderRadius:24,padding:"32px 24px"}}>
-          <button onClick={()=>setView("list")} style={{background:"none",border:"none",color:"rgba(255,255,255,.4)",cursor:"pointer",marginBottom:20,fontSize:13,display:"flex",alignItems:"center",gap:6}}>← Back</button>
+          <button onClick={()=>setView("list")} style={{background:"none",border:"none",color:"rgba(255,255,255,.4)",cursor:"pointer",marginBottom:20,fontSize:13,display:"flex",alignItems:"center",gap:6}}><ArrowLeft size={14}/> Back</button>
           <div style={{textAlign:"center",marginBottom:28}}>
             <div style={{fontSize:48,marginBottom:12,animation:"floatUp 4s ease-in-out infinite"}}>🏆</div>
-            <h2 style={{fontFamily:"Cinzel,serif",color:"#fff",fontSize:20,margin:"0 0 6px",fontWeight:700}}>{competition.title}</h2>
+            <h2 style={{fontFamily:"Cinzel,sans-serif",color:"#fff",fontSize:20,margin:"0 0 6px",fontWeight:700}}>{competition.title}</h2>
             <span style={{color:GOLD,fontWeight:800,letterSpacing:2,fontSize:14}}>{competition.room_code}</span>
             <p style={{color:"rgba(255,255,255,.4)",fontSize:13,margin:"16px 0 0"}}>How do you want to join?</p>
           </div>
@@ -1033,7 +1164,7 @@ export default function MustabaqahPage() {
               <div key={p.id} style={{padding:"12px 20px",borderBottom:"1px solid rgba(255,255,255,.05)",display:"flex",alignItems:"center",gap:12,background:i<3?"rgba(201,168,76,.04)":"transparent"}}>
                 <span style={{width:28,textAlign:"center",color:i<3?GOLD:"rgba(255,255,255,.25)",fontWeight:800}}>{i<3?medals[i]:`#${i+1}`}</span>
                 <Avatar name={p.participant_name} size={34} active={i===0}/>
-                <div style={{flex:1}}><div style={{color:"#fff",fontWeight:600,fontSize:14}}>{p.participant_name}</div>{p.school&&<div style={{color:"rgba(255,255,255,.3)",fontSize:11}}>{p.school}</div>}</div>
+                <div style={{flex:1,minWidth:0}}><div style={{color:"#fff",fontWeight:600,fontSize:14,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.participant_name}</div>{p.school&&<div style={{color:"rgba(255,255,255,.3)",fontSize:11}}>{p.school}</div>}</div>
                 <div style={{display:"flex",gap:4}}>
                   {Array.from({length:competition?.total_stages||5},(_,si)=>(
                     <div key={si} style={{background:"rgba(255,255,255,.05)",borderRadius:6,padding:"2px 7px",textAlign:"center",fontSize:11}}>
@@ -1042,26 +1173,87 @@ export default function MustabaqahPage() {
                     </div>
                   ))}
                 </div>
-                <div style={{color:GOLD,fontWeight:900,fontSize:18,minWidth:48,textAlign:"right"}}>{p.total_score}</div>
+                <div style={{color:GOLD,fontWeight:900,fontSize:18,minWidth:40,textAlign:"right"}}>{p.total_score}</div>
               </div>
             ))}
           </div>
           <div style={{display:"flex",justifyContent:"center"}}>
-            <button onClick={()=>setView("list")} style={{background:"rgba(255,255,255,.07)",color:"#fff",border:"1px solid rgba(255,255,255,.15)",borderRadius:12,padding:"12px 32px",cursor:"pointer",fontFamily:"Cairo,sans-serif",fontWeight:600,fontSize:14}}>← Back to List</button>
+            <button onClick={()=>setView("list")} style={{background:"rgba(255,255,255,.07)",color:"#fff",border:"1px solid rgba(255,255,255,.15)",borderRadius:12,padding:"12px 32px",cursor:"pointer",fontFamily:"Cairo,sans-serif",fontWeight:600,fontSize:14}}><ArrowLeft size={14} style={{marginRight:6,verticalAlign:"middle"}}/> Back to List</button>
           </div>
         </div>
       </div>
     );
   }
 
-  /* ── ARENA ── */
+  /* ════════════════════════════════════════════════════════════════
+     ARENA VIEW
+  ════════════════════════════════════════════════════════════════ */
   if (view!=="arena"||!competition) return null;
+
+  const videoBlock = (showControls: boolean) => {
+    if (videoDisabled) return (
+      <div style={{margin:"10px 16px 0",height:64,background:"rgba(0,0,0,.25)",border:"1px solid rgba(201,168,76,.1)",borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+        <Video size={14} color="rgba(201,168,76,.3)"/>
+        <span style={{color:"rgba(255,255,255,.25)",fontSize:12}}>Live video not available</span>
+      </div>
+    );
+
+    const videoHeight = isObserver ? "45vh" : 220;
+
+    if (lkConnected && livekitToken && livekitUrl) return (
+      <LiveKitRoom serverUrl={livekitUrl} token={livekitToken} connect={lkConnected} audio={true} video={showControls} options={LK_OPTIONS}>
+        <RoomAudioRenderer/>
+        <AudioEnabler onEnabled={() => setAudioReady(true)}/>
+        <div style={{height:videoHeight,margin:"10px 16px 0",borderRadius:18,overflow:"hidden",position:"relative",background:"rgba(0,0,0,.85)",border:"1px solid rgba(201,168,76,.2)",flexShrink:0}}>
+          <LiveVideoGrid activeUserId={activeP?.user_id??null} isJudge={isJudge} isObserver={isObserver} allowControls={showControls}/>
+          {/* Controls ONLY for judge + active participant */}
+          {showControls && (
+            <div style={{position:"absolute",bottom:8,left:0,right:0,display:"flex",justifyContent:"center",pointerEvents:"auto"}}>
+              <CameraControls isActive={!!iAmParticipantActive} isJudge={isJudge}/>
+            </div>
+          )}
+        </div>
+      </LiveKitRoom>
+    );
+
+    return (
+      <div style={{margin:"10px 16px 0",height:videoHeight,background:"rgba(0,0,0,.55)",border:"1px solid rgba(201,168,76,.15)",borderRadius:18,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:10,flexShrink:0}}>
+        {lkError ? (
+          <>
+            <Radio size={24} color={GOLD} style={{opacity:.6}}/>
+            <div style={{color:"rgba(255,255,255,.45)",fontSize:12,textAlign:"center",maxWidth:240,lineHeight:1.6}}>Live video unavailable — competition continues</div>
+            <button onClick={()=>competition&&fetchLkToken(competition.room_code)} style={{background:`${GOLD}22`,color:GOLD,border:`1px solid ${GOLD}55`,borderRadius:10,padding:"7px 20px",cursor:"pointer",fontFamily:"Cairo,sans-serif",fontWeight:700,fontSize:13,display:"flex",alignItems:"center",gap:6}}>
+              <RefreshCw size={13}/> Retry
+            </button>
+          </>
+        ) : activeP ? (
+          <>
+            <Avatar name={activeP.participant_name} size={56} active={activeP.status==="reciting"} called={activeP.status==="called"}/>
+            <div style={{color:"#fff",fontWeight:700,fontSize:15}}>{activeP.participant_name}</div>
+            {timerActive&&<span style={{color:timerDanger?RED:timerWarning?GOLD:GREEN,fontWeight:900,fontSize:22,className:timerDanger?"timer-warning":""}}>{fmt(timerSecs)}</span>}
+            <div style={{color:"rgba(255,255,255,.25)",fontSize:11,display:"flex",alignItems:"center",gap:5}}><Loader2 size={11} style={{animation:"spin 1s linear infinite"}}/> Connecting…</div>
+          </>
+        ) : (
+          <><Radio size={28} color="rgba(201,168,76,.3)"/><div style={{color:"rgba(255,255,255,.3)",fontSize:12}}>Connecting to live room…</div></>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div style={{minHeight:"100vh",maxHeight:"100vh",display:"flex",flexDirection:"column",fontFamily:"Cairo,sans-serif",overflow:"hidden",position:"relative"}}>
       <GlobalStyles/><IslamicBackground/>
       <BellFlash visible={bellFlash} count={bellCount}/>
       <StopFlash visible={stopFlash}/>
+
+      {/* Timer expired modal — judge only */}
+      {timerExpired && isJudge && activeP && (
+        <TimerExpiredModal
+          name={activeP.participant_name}
+          onExtraTime={handleExtraTime}
+          onStop={handleTimerStop}
+        />
+      )}
 
       {/* Floating reactions */}
       <div style={{position:"fixed",inset:0,zIndex:9997,pointerEvents:"none",overflow:"hidden"}}>
@@ -1073,31 +1265,38 @@ export default function MustabaqahPage() {
         ))}
       </div>
 
-      {/* TOP BAR */}
-      <div style={{position:"relative",zIndex:10,flexShrink:0,background:"rgba(5,15,8,.88)",backdropFilter:"blur(20px)",borderBottom:"1px solid rgba(201,168,76,.15)",padding:"10px 16px",display:"flex",alignItems:"center",gap:10}}>
-        <button onClick={()=>setView("list")} style={{background:"none",border:"none",color:"rgba(255,255,255,.35)",cursor:"pointer",fontSize:20,padding:"0 4px"}}>←</button>
+      {/* ── TOP BAR ──────────────────────────────────────────────── */}
+      <div style={{position:"relative",zIndex:10,flexShrink:0,background:"rgba(5,15,8,.92)",backdropFilter:"blur(20px)",borderBottom:"1px solid rgba(201,168,76,.15)",padding:"9px 12px",display:"flex",alignItems:"center",gap:8}}>
+        {/* Back button */}
+        <button onClick={()=>setView("list")} style={{background:"rgba(255,255,255,.08)",border:"1px solid rgba(255,255,255,.12)",borderRadius:9,padding:"6px 10px",cursor:"pointer",color:"rgba(255,255,255,.7)",display:"flex",alignItems:"center",gap:4,flexShrink:0}}>
+          <ArrowLeft size={15}/><span style={{fontSize:12,fontWeight:600}}>Back</span>
+        </button>
+
         <div style={{flex:1,minWidth:0}}>
-          <div style={{color:"#fff",fontWeight:800,fontSize:15,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",fontFamily:"Cinzel,serif"}}>{competition.title}</div>
-          <div style={{display:"flex",alignItems:"center",gap:8,marginTop:2}}>
-            <span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:20,background:competition.status==="active"?`${GREEN}22`:`${GOLD}22`,color:competition.status==="active"?GREEN:GOLD,border:`1px solid ${competition.status==="active"?GREEN:GOLD}`}}>
+          <div style={{color:"#fff",fontWeight:800,fontSize:14,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",fontFamily:"Cinzel,serif"}}>{competition.title}</div>
+          <div style={{display:"flex",alignItems:"center",gap:6,marginTop:1,flexWrap:"wrap"}}>
+            <span style={{fontSize:10,fontWeight:700,padding:"1px 7px",borderRadius:20,background:competition.status==="active"?`${GREEN}22`:`${GOLD}22`,color:competition.status==="active"?GREEN:GOLD,border:`1px solid ${competition.status==="active"?GREEN:GOLD}`}}>
               {competition.status==="active"?"🔴 LIVE":competition.status.toUpperCase()}
             </span>
             <span style={{color:"rgba(255,255,255,.3)",fontSize:11}}>Stage {competition.current_stage}/{competition.total_stages}</span>
           </div>
         </div>
-        <div style={{display:"flex",gap:4}}>
+
+        {/* Stage dots */}
+        <div style={{display:"flex",gap:3,flexShrink:0}}>
           {Array.from({length:competition.total_stages},(_,i)=>(
-            <div key={i} style={{width:22,height:22,borderRadius:"50%",background:i+1<competition.current_stage?GOLD:i+1===competition.current_stage?`${GOLD}33`:"rgba(255,255,255,.08)",border:`1.5px solid ${i+1<=competition.current_stage?GOLD:"rgba(255,255,255,.1)"}`,display:"flex",alignItems:"center",justifyContent:"center",color:i+1<competition.current_stage?G:i+1===competition.current_stage?GOLD:"rgba(255,255,255,.3)",fontSize:10,fontWeight:800}}>
+            <div key={i} style={{width:20,height:20,borderRadius:"50%",background:i+1<competition.current_stage?GOLD:i+1===competition.current_stage?`${GOLD}33`:"rgba(255,255,255,.08)",border:`1.5px solid ${i+1<=competition.current_stage?GOLD:"rgba(255,255,255,.1)"}`,display:"flex",alignItems:"center",justifyContent:"center",color:i+1<competition.current_stage?G:i+1===competition.current_stage?GOLD:"rgba(255,255,255,.3)",fontSize:9,fontWeight:800}}>
               {i+1<competition.current_stage?"✓":i+1}
             </div>
           ))}
         </div>
-        <div style={{display:"flex",alignItems:"center",gap:5,flexShrink:0}}>
-          <div style={{background:"rgba(201,168,76,.12)",border:"1px solid rgba(201,168,76,.3)",borderRadius:8,padding:"4px 10px",color:GOLD,fontWeight:800,fontSize:13,letterSpacing:2}}>{competition.room_code}</div>
-          <button onClick={e=>copyCode(competition.room_code,e)} style={{background:"rgba(201,168,76,.1)",border:"1px solid rgba(201,168,76,.2)",borderRadius:8,padding:"5px 7px",cursor:"pointer",color:copyFlash?GREEN:GOLD,fontSize:12}}>{copyFlash?"✓":"📋"}</button>
+
+        <div style={{display:"flex",alignItems:"center",gap:4,flexShrink:0}}>
+          <div style={{background:"rgba(201,168,76,.12)",border:"1px solid rgba(201,168,76,.3)",borderRadius:8,padding:"3px 8px",color:GOLD,fontWeight:800,fontSize:12,letterSpacing:2}}>{competition.room_code}</div>
+          <button onClick={e=>copyCode(competition.room_code,e)} style={{background:"rgba(201,168,76,.1)",border:"1px solid rgba(201,168,76,.2)",borderRadius:7,padding:"4px 6px",cursor:"pointer",color:copyFlash?GREEN:GOLD,fontSize:11}}>{copyFlash?"✓":"📋"}</button>
         </div>
-        <button onClick={()=>setShowChat(c=>!c)} style={{background:showChat?`${GOLD}22`:"rgba(255,255,255,.07)",border:`1px solid ${showChat?GOLD:"rgba(255,255,255,.12)"}`,borderRadius:10,padding:"6px 10px",cursor:"pointer",color:showChat?GOLD:"rgba(255,255,255,.45)",flexShrink:0,position:"relative"}}>
-          💬{chatMessages.length>0&&!showChat&&<span style={{position:"absolute",top:-4,right:-4,background:RED,borderRadius:"50%",width:14,height:14,display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,color:"#fff",fontWeight:900}}>{chatMessages.length>9?"9+":chatMessages.length}</span>}
+        <button onClick={()=>setShowChat(c=>!c)} style={{background:showChat?`${GOLD}22`:"rgba(255,255,255,.07)",border:`1px solid ${showChat?GOLD:"rgba(255,255,255,.12)"}`,borderRadius:9,padding:"5px 8px",cursor:"pointer",color:showChat?GOLD:"rgba(255,255,255,.45)",flexShrink:0,position:"relative"}}>
+          💬{chatMessages.length>0&&!showChat&&<span style={{position:"absolute",top:-4,right:-4,background:RED,borderRadius:"50%",width:13,height:13,display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,color:"#fff",fontWeight:900}}>{chatMessages.length>9?"9+":chatMessages.length}</span>}
         </button>
       </div>
 
@@ -1121,12 +1320,12 @@ export default function MustabaqahPage() {
               : chatMessages.map(m=>(
                 <div key={m.id} style={{display:"flex",gap:8,alignItems:"flex-start"}}>
                   <div style={{width:28,height:28,borderRadius:"50%",background:`linear-gradient(135deg,${GOLD}88,${GOLDD}88)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,color:G,flexShrink:0}}>{m.name[0]?.toUpperCase()}</div>
-                  <div style={{flex:1}}>
+                  <div style={{flex:1,minWidth:0}}>
                     <div style={{display:"flex",alignItems:"baseline",gap:6}}>
                       <span style={{color:GOLD,fontWeight:700,fontSize:12}}>{m.name}</span>
                       <span style={{color:"rgba(255,255,255,.2)",fontSize:10}}>{m.time}</span>
                     </div>
-                    <div style={{color:"rgba(255,255,255,.8)",fontSize:13,marginTop:2,lineHeight:1.4}}>{m.text}</div>
+                    <div style={{color:"rgba(255,255,255,.8)",fontSize:13,marginTop:2,lineHeight:1.4,wordBreak:"break-word"}}>{m.text}</div>
                   </div>
                 </div>
               ))}
@@ -1138,326 +1337,55 @@ export default function MustabaqahPage() {
         </div>
       )}
 
-      {/* MAIN SCROLL */}
-      <div style={{flex:1,overflowY:"auto",position:"relative",zIndex:1,paddingBottom:myParticipant&&!isJudge?120:16}}>
+      {/* ══ MAIN CONTENT ══════════════════════════════════════════ */}
+      <div style={{flex:1,overflowY:"auto",position:"relative",zIndex:1,paddingBottom:!isJudge?120:16}}>
 
-        {/* VIDEO */}
-        {videoDisabled ? (
-          /* Server has no LiveKit creds — show a minimal quiet placeholder */
-          <div style={{margin:"12px 16px 0",height:72,background:"rgba(0,0,0,.25)",border:"1px solid rgba(201,168,76,.1)",borderRadius:14,display:"flex",alignItems:"center",justifyContent:"center",gap:10}}>
-            <Video size={16} color="rgba(201,168,76,.3)"/>
-            <span style={{color:"rgba(255,255,255,.25)",fontSize:12}}>Live video not available — competition continues</span>
-          </div>
-        ) : lkConnected&&livekitToken&&livekitUrl ? (
-          <LiveKitRoom serverUrl={livekitUrl} token={livekitToken} connect={lkConnected} audio={true} video={true} options={{dynacast:true}}>
-            <RoomAudioRenderer/>
-            <AudioEnabler onEnabled={() => setAudioReady(true)}/>
-            <div style={{height:240,margin:"12px 16px 0",borderRadius:18,overflow:"hidden",position:"relative",background:"rgba(0,0,0,.85)",border:"1px solid rgba(201,168,76,.2)"}}>
-              <LiveVideoGrid activeUserId={activeP?.user_id??null} isJudge={isJudge}/>
-              <div style={{position:"absolute",bottom:8,left:0,right:0,display:"flex",justifyContent:"center",pointerEvents:"auto"}}>
-                <CameraControls isActive={!!iAmParticipantActive} isJudge={isJudge}/>
-              </div>
-            </div>
-          </LiveKitRoom>
-        ) : (
-          <div style={{margin:"12px 16px 0",height:200,background:"rgba(0,0,0,.55)",border:"1px solid rgba(201,168,76,.15)",borderRadius:18,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:10}}>
-            {lkError ? (
-              <>
-                <Radio size={28} color={GOLD} style={{opacity:.6}}/>
-                <div style={{color:"rgba(255,255,255,.55)",fontSize:12,fontWeight:600,textAlign:"center",maxWidth:260,padding:"0 16px",lineHeight:1.6}}>
-                  Live video unavailable — the competition continues without video.
+        {/* ── OBSERVER VIEW: top-half video + participant list ─────── */}
+        {isObserver && (
+          <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
+            {/* Video — half screen, VIEWING label, no controls */}
+            {videoBlock(false)}
+
+            {/* Active participant strip */}
+            {activeP && (
+              <div style={{margin:"8px 16px 0",background:"rgba(34,197,94,.08)",border:`1px solid ${GREEN}44`,borderRadius:14,padding:"10px 14px",display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
+                <Avatar name={activeP.participant_name} size={34} active={activeP.status==="reciting"} called={activeP.status==="called"}/>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{color:"#fff",fontWeight:700,fontSize:13,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{activeP.participant_name}</div>
+                  <div style={{display:"flex",alignItems:"center",gap:6,marginTop:2}}>
+                    <span style={{color:STATUS_COLOR[activeP.status],fontSize:11,fontWeight:700}}>{STATUS_ICON[activeP.status]} {STATUS_LABEL[activeP.status]}</span>
+                    {timerActive&&<span style={{color:timerDanger?RED:timerWarning?GOLD:GREEN,fontWeight:800,fontSize:13}}><Clock size={10} style={{marginRight:3,verticalAlign:"middle"}}/>{fmt(timerSecs)}</span>}
+                    {bellCount>0&&<span style={{color:GOLD,fontSize:11}}>🔔×{bellCount}</span>}
+                  </div>
                 </div>
-                <button
-                  onClick={()=>competition&&fetchLkToken(competition.room_code)}
-                  style={{background:`${GOLD}22`,color:GOLD,border:`1px solid ${GOLD}55`,borderRadius:10,padding:"7px 20px",cursor:"pointer",fontFamily:"Cairo,sans-serif",fontWeight:700,fontSize:13,display:"flex",alignItems:"center",gap:6}}>
-                  <RefreshCw size={13}/> Retry Connection
-                </button>
-              </>
-            ) : activeP ? (
-              <>
-                <Avatar name={activeP.participant_name} size={64} active={activeP.status==="reciting"} called={activeP.status==="called"}/>
-                <div style={{color:"#fff",fontWeight:700,fontSize:16,marginTop:4}}>{activeP.participant_name}</div>
-                <span style={{background:`${STATUS_COLOR[activeP.status]}22`,color:STATUS_COLOR[activeP.status],padding:"3px 12px",borderRadius:20,fontSize:12,fontWeight:700}}>{STATUS_ICON[activeP.status]} {STATUS_LABEL[activeP.status]}</span>
-                {timerActive&&<span style={{color:GREEN,fontWeight:900,fontSize:22}}>{fmt(timerSecs)}</span>}
-                <div style={{display:"flex",alignItems:"center",gap:6,color:"rgba(255,255,255,.25)",fontSize:11}}>
-                  <Loader2 size={12} style={{animation:"spin 1s linear infinite"}}/> Connecting to live room…
-                </div>
-              </>
-            ) : (
-              <><Radio size={30} color="rgba(201,168,76,.3)"/><div style={{color:"rgba(255,255,255,.3)",fontSize:13}}>Connecting to live room…</div></>
-            )}
-          </div>
-        )}
-
-        {/* Active participant strip */}
-        {activeP&&(
-          <div style={{margin:"8px 16px 0",background:activeP.status==="reciting"?"rgba(34,197,94,.08)":"rgba(201,168,76,.08)",border:`1px solid ${activeP.status==="reciting"?`${GREEN}44`:`${GOLD}44`}`,borderRadius:14,padding:"10px 14px",display:"flex",alignItems:"center",gap:10}}>
-            <Avatar name={activeP.participant_name} size={36} active={activeP.status==="reciting"} called={activeP.status==="called"}/>
-            <div style={{flex:1}}>
-              <div style={{color:"#fff",fontWeight:700,fontSize:14,fontFamily:"Cinzel,serif"}}>{activeP.participant_name}</div>
-              <div style={{display:"flex",alignItems:"center",gap:8,marginTop:2}}>
-                <span style={{background:`${STATUS_COLOR[activeP.status]}18`,border:`1px solid ${STATUS_COLOR[activeP.status]}`,color:STATUS_COLOR[activeP.status],borderRadius:20,padding:"2px 9px",fontSize:11,fontWeight:700}}>{STATUS_ICON[activeP.status]} {STATUS_LABEL[activeP.status]}</span>
-                {timerActive&&<span style={{color:timerSecs>competition.time_limit_seconds*.8?RED:GREEN,fontWeight:800,fontSize:15,display:"flex",alignItems:"center",gap:4}}><Clock size={12}/>{fmt(timerSecs)}</span>}
-                {bellCount>0&&<span style={{color:GOLD,fontWeight:700,fontSize:12}}>🔔×{bellCount} −{bellCount*2}pts</span>}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ══ JUDGE ══ */}
-        {isJudge&&(
-          <div style={{padding:"12px 16px 0"}}>
-            <div style={{display:"flex",gap:0,background:"rgba(255,255,255,.05)",borderRadius:12,padding:3,marginBottom:12}}>
-              {[["controls","⚙️ Controls"],["roster","👥 Roster"]].map(([tab,label])=>(
-                <button key={tab} onClick={()=>setJudgeTab(tab as any)} style={{flex:1,background:judgeTab===tab?"rgba(201,168,76,.2)":"transparent",border:judgeTab===tab?"1px solid rgba(201,168,76,.4)":"1px solid transparent",borderRadius:10,padding:"8px 0",color:judgeTab===tab?GOLD:"rgba(255,255,255,.4)",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"Cairo,sans-serif",transition:"all .2s"}}>{label}</button>
-              ))}
-            </div>
-
-            {judgeTab==="controls"&&(
-              <div style={{display:"flex",flexDirection:"column",gap:10,animation:"fadeIn .2s ease"}}>
-                {competition.status==="open"&&(
-                  <button onClick={startCompetition} style={{background:`linear-gradient(135deg,${GREEN}dd,#16a34a)`,color:"#fff",border:"none",borderRadius:14,padding:"15px",cursor:"pointer",fontWeight:800,fontFamily:"Cairo,sans-serif",fontSize:16,display:"flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:"0 4px 20px rgba(34,197,94,.3)"}}>
-                    <Play size={18}/> Start Competition
-                  </button>
-                )}
-                {competition.status==="active"&&!activeP&&waiting.length>0&&(
-                  <div>
-                    <div style={{color:GOLD,fontSize:11,fontWeight:700,letterSpacing:1.2,textTransform:"uppercase",marginBottom:8}}>📣 Call a Participant</div>
-                    {waiting.slice(0,6).map(p=>(
-                      <button key={p.id} onClick={()=>callParticipant(p)} style={{width:"100%",background:`${GOLD}14`,border:`1px solid ${GOLD}44`,borderRadius:12,padding:"12px 16px",cursor:"pointer",display:"flex",alignItems:"center",gap:10,textAlign:"left",fontFamily:"Cairo,sans-serif",marginBottom:6}}>
-                        <Avatar name={p.participant_name} size={34}/>
-                        <div style={{flex:1}}><div style={{color:"#fff",fontWeight:700,fontSize:14}}>{p.participant_name}</div>{p.school&&<div style={{color:"rgba(255,255,255,.35)",fontSize:11}}>{p.school}</div>}</div>
-                        <div style={{display:"flex",alignItems:"center",gap:4,color:GOLD,fontSize:12,fontWeight:700}}><PhoneCall size={13}/> Call</div>
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {showTilePicker&&activeP&&stageTiles.length>0&&(
-                  <div style={{background:"rgba(10,20,15,.9)",border:"1.5px solid rgba(201,168,76,.3)",borderRadius:18,padding:"16px"}}>
-                    <div style={{color:"rgba(255,255,255,.5)",fontSize:12,marginBottom:10,textAlign:"center",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-                      <span style={{fontSize:16}}>🎙️</span>
-                      <span><strong style={{color:GOLD}}>{activeP.participant_name}</strong> is picking a number…</span>
-                    </div>
-                    <NumberTilePicker tiles={stageTiles} pickedNum={pickedTile?.num??null} onPick={()=>{}} canPick={false} stage={competition.current_stage}/>
-                    {pickedTile&&<QuestionDisplay tile={pickedTile} ayahText={ayahText} loadingAyah={loadingAyah} isParticipant={false}/>}
-                  </div>
-                )}
-                {activeP?.status==="called"&&pickedTile&&(
-                  <button onClick={startReciting} style={{background:`linear-gradient(135deg,${GREEN}dd,#16a34a)`,color:"#fff",border:"none",borderRadius:14,padding:"16px",cursor:"pointer",fontWeight:800,fontFamily:"Cairo,sans-serif",fontSize:15,display:"flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:"0 4px 20px rgba(34,197,94,.3)"}}>
-                    <Play size={18}/> ▶ Start Reciting
-                  </button>
-                )}
-                {activeP?.status==="reciting"&&(
-                  <div style={{display:"grid",gridTemplateColumns:"1.2fr 1fr",gap:10}}>
-                    <button onClick={ringBell} style={{background:`linear-gradient(135deg,${GOLD},#e8c96a 40%,${GOLDD})`,color:G,border:"none",borderRadius:14,padding:"20px 0",cursor:"pointer",fontWeight:900,fontSize:17,display:"flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:"0 6px 28px rgba(201,168,76,.5)",position:"relative",overflow:"hidden"}}>
-                      {bellCount>0&&<span style={{position:"absolute",top:8,right:8,background:RED,color:"#fff",borderRadius:"50%",width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:900}}>{bellCount}</span>}
-                      <Bell size={24} strokeWidth={2.5}/> Ring Bell
-                    </button>
-                    <button onClick={signalStop} style={{background:`linear-gradient(135deg,${RED},#dc2626)`,color:"#fff",border:"none",borderRadius:14,padding:"20px 0",cursor:"pointer",fontWeight:800,fontSize:16,display:"flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:"0 6px 20px rgba(239,68,68,.35)"}}>
-                      <StopCircle size={20}/> Stop
-                    </button>
-                  </div>
-                )}
-                {showScorePanel&&(
-                  <div style={{background:"rgba(201,168,76,.07)",border:"1px solid rgba(201,168,76,.25)",borderRadius:16,padding:"16px"}}>
-                    <div style={{color:GOLD,fontWeight:800,fontSize:14,marginBottom:12}}>📝 Score — {activeP?.participant_name}</div>
-                    {competition.use_criteria_scoring ? (
-                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
-                        {SCORING_CRITERIA.map(c=>(
-                          <div key={c.key}>
-                            <div style={{color:"rgba(255,255,255,.6)",fontSize:11,marginBottom:4,display:"flex",justifyContent:"space-between"}}><span>{c.label}/{c.labelAr}</span><span style={{color:GOLD}}>/{c.max}</span></div>
-                            <input type="number" min={0} max={c.max} value={scoreBreak[c.key]} onChange={e=>setScoreBreak(s=>({...s,[c.key]:e.target.value}))} placeholder={`0–${c.max}`} style={{width:"100%",background:"rgba(255,255,255,.08)",border:"1px solid rgba(255,255,255,.15)",borderRadius:8,padding:"8px 10px",color:"#fff",fontSize:14}}/>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div style={{marginBottom:10}}>
-                        <div style={{color:"rgba(255,255,255,.6)",fontSize:12,marginBottom:4}}>Score /100</div>
-                        <input type="number" min={0} max={100} value={scoreBreak.tajweed} onChange={e=>setScoreBreak(s=>({...s,tajweed:e.target.value}))} style={{width:"100%",background:"rgba(255,255,255,.08)",border:"1px solid rgba(255,255,255,.15)",borderRadius:8,padding:"10px",color:"#fff",fontSize:16}}/>
-                      </div>
-                    )}
-                    <input value={judgeComment} onChange={e=>setJudgeComment(e.target.value)} placeholder="Judge's comment (optional)" style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.12)",borderRadius:8,padding:"8px 12px",color:"#fff",fontSize:13,marginBottom:10}}/>
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-                      {bellCount>0&&<span style={{color:GOLD,fontSize:12}}>⚠️ −{bellCount*2} bell penalty</span>}
-                      <span style={{color:GREEN,fontWeight:800,fontSize:16,marginLeft:"auto"}}>Final: {finalScore}/100</span>
-                    </div>
-                    <button onClick={submitScore} style={{width:"100%",background:`linear-gradient(135deg,${GREEN}dd,#16a34a)`,color:"#fff",border:"none",borderRadius:10,padding:"12px",cursor:"pointer",fontWeight:800,fontFamily:"Cairo,sans-serif",fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-                      <CheckCircle size={16}/> Submit Score
-                    </button>
-                  </div>
-                )}
-                {competition.status==="active"&&allDone&&(
-                  <button onClick={advanceStage} style={{background:competition.current_stage>=competition.total_stages?`linear-gradient(135deg,${GOLD},${GOLDD})`:"linear-gradient(135deg,#7c3aed,#6d28d9)",color:"#fff",border:"none",borderRadius:14,padding:"14px",cursor:"pointer",fontWeight:800,fontFamily:"Cairo,sans-serif",fontSize:15,display:"flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:"0 4px 20px rgba(124,58,237,.3)"}}>
-                    {competition.current_stage>=competition.total_stages?<><Trophy size={18}/> End & Show Results</>:<><ArrowRight size={18}/> Next Stage {competition.current_stage+1}</>}
-                  </button>
-                )}
-                <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
-                  {[["⏳",waiting.length,"Waiting"],["✅",done.length,"Done"],["👥",participants.length,"Total"]].map(([icon,n,label])=>(
-                    <div key={label as string} style={{background:"rgba(255,255,255,.04)",borderRadius:12,padding:"10px 8px",textAlign:"center"}}>
-                      <div style={{fontSize:16}}>{icon}</div><div style={{color:GOLD,fontWeight:800,fontSize:18}}>{n}</div><div style={{color:"rgba(255,255,255,.35)",fontSize:11}}>{label}</div>
-                    </div>
-                  ))}
-                </div>
-                <button onClick={()=>setView("results")} style={{background:"transparent",color:"rgba(255,255,255,.3)",border:"1px solid rgba(255,255,255,.1)",borderRadius:10,padding:"10px",cursor:"pointer",fontFamily:"Cairo,sans-serif",fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
-                  <Award size={13}/> View Live Standings
-                </button>
               </div>
             )}
 
-            {judgeTab==="roster"&&(
-              <div style={{animation:"fadeIn .2s ease"}}>
-                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
-                  <span style={{color:"rgba(255,255,255,.5)",fontSize:13}}><Users size={13} style={{marginRight:4,verticalAlign:"middle"}}/>{participants.length} registered</span>
-                  <div style={{display:"flex",gap:4}}>
-                    {[["list",<List size={12}/>],["grid",<LayoutGrid size={12}/>]].map(([mode,icon])=>(
-                      <button key={mode as string} onClick={()=>setRosterMode(mode as any)} style={{background:rosterMode===mode?`${GOLD}22`:"rgba(255,255,255,.05)",border:`1px solid ${rosterMode===mode?GOLD:"rgba(255,255,255,.1)"}`,borderRadius:8,padding:"5px 9px",cursor:"pointer",color:rosterMode===mode?GOLD:"rgba(255,255,255,.3)"}}>{icon}</button>
-                    ))}
-                  </div>
-                </div>
-                {participants.length===0 ? (
-                  <div style={{textAlign:"center",padding:"32px 0",color:"rgba(255,255,255,.3)"}}>
-                    <p style={{margin:0,fontSize:13}}>Share code: <strong style={{color:GOLD,letterSpacing:3}}>{competition.room_code}</strong></p>
-                  </div>
-                ) : rosterMode==="list" ? (
-                  <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                    {participants.map(p=>{
-                      const isActive=p.id===activeP?.id;
-                      return (
-                        <div key={p.id} style={{background:isActive?"rgba(201,168,76,.1)":"rgba(255,255,255,.03)",border:`1.5px solid ${isActive?GOLD:"rgba(255,255,255,.08)"}`,borderRadius:14,padding:"12px 14px",display:"flex",alignItems:"center",gap:10}}>
-                          <span style={{color:"rgba(255,255,255,.2)",fontSize:11,width:18}}>#{p.queue_position}</span>
-                          <Avatar name={p.participant_name} size={36} active={isActive&&p.status==="reciting"} called={p.status==="called"}/>
-                          <div style={{flex:1,minWidth:0}}>
-                            <div style={{color:isActive?GOLD:"#fff",fontWeight:700,fontSize:14}}>{p.participant_name}</div>
-                            {p.school&&<div style={{color:"rgba(255,255,255,.3)",fontSize:11}}>{p.school}</div>}
-                          </div>
-                          <div style={{background:`${STATUS_COLOR[p.status]}18`,border:`1px solid ${STATUS_COLOR[p.status]}55`,color:STATUS_COLOR[p.status],borderRadius:20,padding:"2px 9px",fontSize:11,fontWeight:700}}>{STATUS_ICON[p.status]} {STATUS_LABEL[p.status]}</div>
-                          {p.total_score>0&&<div style={{color:GOLD,fontWeight:800,fontSize:15}}>{p.total_score}</div>}
-                          {competition.status==="active"&&p.status==="waiting"&&!activeP&&(
-                            <button onClick={()=>callParticipant(p)} style={{background:`${GOLD}22`,color:GOLD,border:`1px solid ${GOLD}55`,borderRadius:8,padding:"6px 12px",cursor:"pointer",fontWeight:700,fontSize:12,fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",gap:4}}><PhoneCall size={12}/> Call</button>
-                          )}
-                          {p.status==="waiting"&&(
-                            <button onClick={async()=>{ await supabase.from("musabaqah_participants" as any).update({status:"absent"}).eq("id",p.id); loadParticipants(); }} style={{background:"transparent",color:"rgba(255,255,255,.2)",border:"1px solid rgba(255,255,255,.08)",borderRadius:8,padding:"4px 8px",cursor:"pointer",fontSize:10}}>Absent</button>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(130px,1fr))",gap:8}}>
-                    {participants.map(p=>{
-                      const isActive=p.id===activeP?.id;
-                      return (
-                        <div key={p.id} style={{background:isActive?`${GOLD}12`:"rgba(255,255,255,.04)",border:`1.5px solid ${isActive?GOLD:"rgba(255,255,255,.09)"}`,borderRadius:14,padding:"12px 10px",textAlign:"center"}}>
-                          <Avatar name={p.participant_name} size={44} active={isActive&&p.status==="reciting"} called={p.status==="called"}/>
-                          <div style={{color:isActive?GOLD:"#fff",fontWeight:700,fontSize:12,marginTop:7,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.participant_name}</div>
-                          <div style={{color:STATUS_COLOR[p.status],fontSize:10,fontWeight:700,marginTop:4}}>{STATUS_ICON[p.status]} {STATUS_LABEL[p.status]}</div>
-                          {p.total_score>0&&<div style={{color:GOLD,fontWeight:900,fontSize:16,marginTop:4}}>{p.total_score}</div>}
-                          {competition.status==="active"&&p.status==="waiting"&&!activeP&&(
-                            <button onClick={()=>callParticipant(p)} style={{width:"100%",marginTop:8,background:`${GOLD}20`,color:GOLD,border:`1px solid ${GOLD}55`,borderRadius:8,padding:"5px 0",cursor:"pointer",fontWeight:700,fontSize:11,fontFamily:"Cairo,sans-serif"}}><PhoneCall size={11} style={{marginRight:4,verticalAlign:"middle"}}/>Call</button>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
+            {/* Question display for observer */}
+            {pickedTile && (
+              <div style={{padding:"0 16px",marginTop:8,flexShrink:0}}>
+                <QuestionDisplay tile={pickedTile} ayahText={ayahText} loadingAyah={loadingAyah} isParticipant={false} isObserver={true}/>
               </div>
             )}
-          </div>
-        )}
 
-        {/* ══ PARTICIPANT VIEW ══ */}
-        {!isJudge&&myParticipant&&(
-          <div style={{padding:"12px 16px 0"}}>
-            {myParticipant.status==="waiting"&&(
-              <div className="glass-card" style={{borderRadius:18,padding:"24px",textAlign:"center"}}>
-                <div style={{fontSize:40,marginBottom:8,animation:"floatUp 4s ease-in-out infinite"}}>⏳</div>
-                <div style={{color:GOLD,fontWeight:800,fontSize:18}}>Waiting in Queue</div>
-                <div style={{color:"rgba(255,255,255,.4)",fontSize:13,marginTop:4}}>Position #{myParticipant.queue_position} of {participants.length}</div>
-                <div style={{color:"rgba(255,255,255,.25)",fontSize:12,marginTop:10,lineHeight:1.7}}>Your judge will call you when it's your turn.<br/>Listen to the competition!</div>
-                {activeP&&activeP.id!==myParticipant.id&&(
-                  <div style={{marginTop:14,background:"rgba(34,197,94,.08)",border:"1px solid rgba(34,197,94,.2)",borderRadius:12,padding:"10px 14px"}}>
-                    <div style={{color:GREEN,fontWeight:700,fontSize:12,marginBottom:2}}>🎙️ Now Reciting</div>
-                    <div style={{color:"#fff",fontWeight:700,fontSize:14}}>{activeP.participant_name}</div>
-                  </div>
-                )}
+            {/* Participants list */}
+            <div style={{padding:"10px 16px 0",flex:1,overflowY:"auto"}}>
+              <div style={{color:"rgba(255,255,255,.4)",fontSize:11,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:8,display:"flex",alignItems:"center",gap:5}}>
+                <Users size={11} color={GOLD}/> {participants.length} Participants
               </div>
-            )}
-            {myParticipant.status==="called"&&(
-              <div style={{animation:"calledGlow 2s ease-in-out infinite",background:"rgba(201,168,76,.1)",border:`2px solid ${GOLD}`,borderRadius:20,padding:"20px 18px"}}>
-                <div style={{textAlign:"center",marginBottom:16}}>
-                  <div style={{fontSize:44,animation:"floatUp 2s ease-in-out infinite"}}>🎙️</div>
-                  <div style={{color:GOLD,fontWeight:900,fontSize:20,letterSpacing:1,marginTop:8}}>YOU HAVE BEEN CALLED!</div>
-                  {!pickedTile
-                    ? <div style={{color:"rgba(255,255,255,.7)",fontSize:14,marginTop:6,fontWeight:700}}>👇 Pick your question number below</div>
-                    : <div style={{color:GREEN,fontSize:13,marginTop:6,fontWeight:700}}>✅ Question selected — wait for judge to start</div>
-                  }
-                </div>
-                {stageTiles.length>0&&(
-                  <NumberTilePicker
-                    tiles={stageTiles}
-                    pickedNum={pickedTile?.num??null}
-                    onPick={!pickedTile ? pickTile : ()=>{}}
-                    canPick={!pickedTile}
-                    stage={competition.current_stage}
-                  />
-                )}
-                {pickedTile&&<QuestionDisplay tile={pickedTile} ayahText={ayahText} loadingAyah={loadingAyah} isParticipant={true}/>}
-              </div>
-            )}
-            {myParticipant.status==="reciting"&&(
-              <div style={{animation:"recitingGlow 2s ease-in-out infinite",background:"rgba(34,197,94,.08)",border:`2px solid ${GREEN}`,borderRadius:20,padding:"20px 18px"}}>
-                <div style={{textAlign:"center",marginBottom:12}}>
-                  <div style={{fontSize:40,animation:"floatUp 1.5s ease-in-out infinite"}}>🎙️</div>
-                  <div style={{color:GREEN,fontWeight:900,fontSize:18,letterSpacing:1,marginTop:8}}>NOW RECITING</div>
-                  {timerActive&&<div style={{color:timerSecs>competition.time_limit_seconds*.8?RED:GREEN,fontWeight:900,fontSize:32,marginTop:6,fontFamily:"Cinzel,serif"}}>{fmt(timerSecs)}</div>}
-                  {bellCount>0&&<div style={{color:RED,fontWeight:700,fontSize:13,marginTop:4}}>🔔 {bellCount} error{bellCount!==1?"s":""} · −{bellCount*2} pts</div>}
-                </div>
-                {pickedTile&&(
-                  <div style={{background:"rgba(0,0,0,.3)",border:"1px solid rgba(255,255,255,.1)",borderRadius:14,padding:"14px"}}>
-                    <div style={{color:GOLD,fontSize:11,fontWeight:700,letterSpacing:1.5,textTransform:"uppercase",marginBottom:8}}>📖 Your Passage</div>
-                    <div style={{color:"#fff",fontWeight:700,fontSize:15}}>{pickedTile.label}</div>
-                    {ayahText&&(
-                      <div style={{fontFamily:"'Amiri Quran',serif",fontSize:20,color:"rgba(255,255,255,.9)",direction:"rtl",textAlign:"center",lineHeight:2.2,marginTop:10,padding:"10px 8px",background:"rgba(201,168,76,.06)",borderRadius:10}}>
-                        {ayahText}<span style={{color:"rgba(201,168,76,.6)",fontSize:15}}> ﴿{pickedTile.ayah}﴾</span>
-                      </div>
-                    )}
-                  </div>
-                )}
-                <div style={{color:"rgba(255,255,255,.45)",fontSize:12,textAlign:"center",marginTop:12}}>Recite clearly and confidently. Judge will signal when to stop.</div>
-              </div>
-            )}
-            {myParticipant.status==="completed"&&(
-              <div className="glass-card" style={{borderRadius:18,padding:"24px",textAlign:"center"}}>
-                <div style={{fontSize:48,marginBottom:8}}>✅</div>
-                <div style={{color:GREEN,fontWeight:800,fontSize:18}}>Recitation Complete!</div>
-                <div style={{color:GOLD,fontWeight:900,fontSize:48,marginTop:8}}>{myParticipant.total_score}</div>
-                <div style={{color:"rgba(255,255,255,.4)",fontSize:13}}>Total Points</div>
-                <div style={{marginTop:12,display:"flex",gap:4,justifyContent:"center"}}>
-                  {Array.from({length:competition.total_stages},(_,si)=>(
-                    <div key={si} style={{background:"rgba(255,255,255,.06)",borderRadius:8,padding:"4px 10px",textAlign:"center"}}>
-                      <div style={{color:GOLD,fontWeight:700,fontSize:14}}>{(myParticipant.stage_scores||{})[si+1]??"-"}</div>
-                      <div style={{color:"rgba(255,255,255,.3)",fontSize:10}}>S{si+1}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            <div style={{marginTop:16}}>
-              <div style={{color:"rgba(255,255,255,.4)",fontSize:12,fontWeight:600,marginBottom:8,display:"flex",alignItems:"center",gap:6}}><Users size={12}/> {participants.length} Participants</div>
-              <div style={{display:"flex",flexDirection:"column",gap:6,paddingBottom:12}}>
+              <div style={{display:"flex",flexDirection:"column",gap:5,paddingBottom:100}}>
                 {participants.map(p=>{
-                  const isMe=p.id===myParticipant?.id;
+                  const isActive=p.id===activeP?.id;
                   return (
-                    <div key={p.id} style={{background:isMe?"rgba(201,168,76,.08)":p.id===activeP?.id?"rgba(34,197,94,.07)":"rgba(255,255,255,.03)",border:`1px solid ${isMe?`${GOLD}44`:p.id===activeP?.id?`${GREEN}44`:"rgba(255,255,255,.07)"}`,borderRadius:12,padding:"10px 14px",display:"flex",alignItems:"center",gap:10}}>
-                      <span style={{color:"rgba(255,255,255,.2)",fontSize:11,width:18}}>#{p.queue_position}</span>
-                      <Avatar name={p.participant_name} size={32} active={p.id===activeP?.id&&p.status==="reciting"} called={p.status==="called"}/>
-                      <div style={{flex:1}}>
-                        <div style={{color:isMe?GOLD:"#fff",fontWeight:isMe?700:500,fontSize:14}}>
-                          {p.participant_name}{isMe&&<span style={{color:GREEN,fontSize:11,marginLeft:6}}>YOU</span>}
-                        </div>
+                    <div key={p.id} style={{background:isActive?"rgba(34,197,94,.07)":"rgba(255,255,255,.03)",border:`1px solid ${isActive?`${GREEN}44`:"rgba(255,255,255,.07)"}`,borderRadius:12,padding:"9px 12px",display:"flex",alignItems:"center",gap:8}}>
+                      <span style={{color:"rgba(255,255,255,.2)",fontSize:10,width:16,flexShrink:0}}>#{p.queue_position}</span>
+                      <Avatar name={p.participant_name} size={30} active={isActive&&p.status==="reciting"} called={p.status==="called"}/>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{color:isActive?GOLD:"#fff",fontWeight:isActive?700:500,fontSize:13,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.participant_name}</div>
+                        {p.school&&<div style={{color:"rgba(255,255,255,.25)",fontSize:10,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.school}</div>}
                       </div>
-                      <span style={{color:STATUS_COLOR[p.status],fontSize:12,fontWeight:700}}>{STATUS_ICON[p.status]} {STATUS_LABEL[p.status]}</span>
-                      {p.total_score>0&&<span style={{color:GOLD,fontWeight:800,fontSize:15}}>{p.total_score}</span>}
+                      <span style={{color:STATUS_COLOR[p.status],fontSize:11,fontWeight:700,flexShrink:0}}>{STATUS_ICON[p.status]} {STATUS_LABEL[p.status]}</span>
+                      {p.total_score>0&&<span style={{color:GOLD,fontWeight:800,fontSize:13,flexShrink:0,minWidth:24,textAlign:"right"}}>{p.total_score}</span>}
                     </div>
                   );
                 })}
@@ -1466,87 +1394,340 @@ export default function MustabaqahPage() {
           </div>
         )}
 
-        {/* ══ OBSERVER VIEW ══ */}
-        {!isJudge&&userRole==="observer"&&(
-          <div style={{padding:"12px 16px 0"}}>
-            {activeP ? (
-              <div style={{background:activeP.status==="reciting"?"rgba(34,197,94,.08)":"rgba(201,168,76,.08)",border:`1.5px solid ${activeP.status==="reciting"?`${GREEN}55`:`${GOLD}55`}`,borderRadius:18,padding:"16px 18px",marginBottom:12}}>
-                <div style={{color:"rgba(255,255,255,.4)",fontSize:10,fontWeight:700,letterSpacing:1.5,textTransform:"uppercase",marginBottom:10}}>{activeP.status==="reciting"?"🎙️ Now Reciting":"⚡ Called to Recite"}</div>
-                <div style={{display:"flex",alignItems:"center",gap:12}}>
-                  <Avatar name={activeP.participant_name} size={48} active={activeP.status==="reciting"} called={activeP.status==="called"}/>
-                  <div style={{flex:1}}>
-                    <div style={{color:"#fff",fontWeight:800,fontSize:16,fontFamily:"Cinzel,serif"}}>{activeP.participant_name}</div>
-                    {pickedTile&&<div style={{color:GOLD,fontSize:12,fontWeight:700,marginTop:4}}>📖 {pickedTile.label}</div>}
-                  </div>
-                  {timerActive&&<div style={{textAlign:"center"}}>
-                    <div style={{color:timerSecs>competition.time_limit_seconds*.8?RED:GREEN,fontWeight:900,fontSize:20,fontFamily:"Cinzel,serif"}}>{fmt(timerSecs)}</div>
-                    <div style={{color:"rgba(255,255,255,.3)",fontSize:10}}>elapsed</div>
-                  </div>}
-                </div>
-              </div>
-            ) : (
-              <div className="glass-card" style={{borderRadius:18,padding:"16px 20px",marginBottom:12}}>
-                <div style={{display:"flex",alignItems:"center",gap:10}}>
-                  <span style={{fontSize:26}}>👁️</span>
-                  <div>
-                    <div style={{color:GOLD,fontWeight:800,fontSize:14}}>Following Live</div>
-                    <div style={{color:"rgba(255,255,255,.4)",fontSize:12,marginTop:2}}>{participants.length} participants · Stage {competition.current_stage}/{competition.total_stages}</div>
+        {/* ── JUDGE VIEW ────────────────────────────────────────── */}
+        {isJudge && (
+          <>
+            {/* Video with controls for judge */}
+            {videoBlock(true)}
+
+            {/* Active participant strip */}
+            {activeP&&(
+              <div style={{margin:"8px 16px 0",background:activeP.status==="reciting"?"rgba(34,197,94,.08)":"rgba(201,168,76,.08)",border:`1px solid ${activeP.status==="reciting"?`${GREEN}44`:`${GOLD}44`}`,borderRadius:14,padding:"10px 14px",display:"flex",alignItems:"center",gap:10}}>
+                <Avatar name={activeP.participant_name} size={36} active={activeP.status==="reciting"} called={activeP.status==="called"}/>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{color:"#fff",fontWeight:700,fontSize:14,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"Cinzel,serif"}}>{activeP.participant_name}</div>
+                  <div style={{display:"flex",alignItems:"center",gap:8,marginTop:2,flexWrap:"wrap"}}>
+                    <span style={{background:`${STATUS_COLOR[activeP.status]}18`,border:`1px solid ${STATUS_COLOR[activeP.status]}`,color:STATUS_COLOR[activeP.status],borderRadius:20,padding:"1px 8px",fontSize:10,fontWeight:700}}>{STATUS_ICON[activeP.status]} {STATUS_LABEL[activeP.status]}</span>
+                    {timerActive&&<span style={{color:timerDanger?RED:timerWarning?GOLD:GREEN,fontWeight:800,fontSize:14,display:"flex",alignItems:"center",gap:3,className:timerDanger?"timer-warning":""}}>
+                      <Clock size={11}/>{fmt(timerSecs)}
+                    </span>}
+                    {bellCount>0&&<span style={{color:GOLD,fontWeight:700,fontSize:11}}>🔔×{bellCount} −{bellCount*2}pts</span>}
                   </div>
                 </div>
               </div>
             )}
-            {participants.filter(p=>p.total_score>0).length>0&&(
-              <div style={{marginBottom:12}}>
-                <div style={{color:"rgba(255,255,255,.35)",fontSize:11,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:7,display:"flex",alignItems:"center",gap:5}}><Trophy size={11} color={GOLD}/> Live Standings</div>
-                <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:4}}>
-                  {[...participants].filter(p=>p.total_score>0).sort((a,b)=>b.total_score-a.total_score).slice(0,5).map((p,i)=>(
-                    <div key={p.id} style={{background:"rgba(255,255,255,.04)",border:`1px solid rgba(201,168,76,${i===0?.5:.15})`,borderRadius:12,padding:"10px 12px",flexShrink:0,textAlign:"center",minWidth:80}}>
-                      <div style={{fontSize:14}}>{i===0?"🥇":i===1?"🥈":i===2?"🥉":`#${i+1}`}</div>
-                      <div style={{color:"#fff",fontSize:11,fontWeight:600,marginTop:4}}>{p.participant_name.split(" ")[0]}</div>
-                      <div style={{color:GOLD,fontWeight:900,fontSize:16}}>{p.total_score}</div>
+
+            {/* Judge controls */}
+            <div style={{padding:"12px 16px 0"}}>
+              <div style={{display:"flex",gap:0,background:"rgba(255,255,255,.05)",borderRadius:12,padding:3,marginBottom:12}}>
+                {[["controls","⚙️ Controls"],["roster","👥 Roster"]].map(([tab,label])=>(
+                  <button key={tab} onClick={()=>setJudgeTab(tab as any)} style={{flex:1,background:judgeTab===tab?"rgba(201,168,76,.2)":"transparent",border:judgeTab===tab?"1px solid rgba(201,168,76,.4)":"1px solid transparent",borderRadius:10,padding:"8px 0",color:judgeTab===tab?GOLD:"rgba(255,255,255,.4)",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"Cairo,sans-serif",transition:"all .2s"}}>{label}</button>
+                ))}
+              </div>
+
+              {judgeTab==="controls"&&(
+                <div style={{display:"flex",flexDirection:"column",gap:10,animation:"fadeIn .2s ease"}}>
+                  {competition.status==="open"&&(
+                    <button onClick={startCompetition} style={{background:`linear-gradient(135deg,${GREEN}dd,#16a34a)`,color:"#fff",border:"none",borderRadius:14,padding:"15px",cursor:"pointer",fontWeight:800,fontFamily:"Cairo,sans-serif",fontSize:16,display:"flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:"0 4px 20px rgba(34,197,94,.3)"}}>
+                      <Play size={18}/> Start Competition
+                    </button>
+                  )}
+
+                  {/* Timer per student setter */}
+                  {competition.status==="active"&&!activeP&&(
+                    <div style={{background:"rgba(201,168,76,.06)",border:"1px solid rgba(201,168,76,.2)",borderRadius:12,padding:"10px 14px"}}>
+                      <div style={{color:GOLD,fontSize:11,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:6,display:"flex",alignItems:"center",gap:5}}>
+                        <Clock size={12}/> Timer per student (seconds)
+                      </div>
+                      <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                        {[60,90,120,180,300,600].map(sec=>(
+                          <button key={sec} onClick={()=>setJudgeTimerDuration(sec)}
+                            style={{background:judgeTimerDuration===sec?`${GOLD}22`:"rgba(255,255,255,.06)",border:`1.5px solid ${judgeTimerDuration===sec?GOLD:"rgba(255,255,255,.15)"}`,borderRadius:9,padding:"5px 12px",cursor:"pointer",color:judgeTimerDuration===sec?GOLD:"rgba(255,255,255,.55)",fontFamily:"Cairo,sans-serif",fontWeight:700,fontSize:12}}>
+                            {fmt(sec)}
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                  ))}
+                  )}
+
+                  {competition.status==="active"&&!activeP&&waiting.length>0&&(
+                    <div>
+                      <div style={{color:GOLD,fontSize:11,fontWeight:700,letterSpacing:1.2,textTransform:"uppercase",marginBottom:8}}>📣 Call a Participant</div>
+                      {waiting.slice(0,6).map(p=>(
+                        <button key={p.id} onClick={()=>callParticipant(p)} style={{width:"100%",background:`${GOLD}14`,border:`1px solid ${GOLD}44`,borderRadius:12,padding:"12px 14px",cursor:"pointer",display:"flex",alignItems:"center",gap:10,textAlign:"left",fontFamily:"Cairo,sans-serif",marginBottom:6}}>
+                          <Avatar name={p.participant_name} size={34}/>
+                          <div style={{flex:1,minWidth:0}}><div style={{color:"#fff",fontWeight:700,fontSize:14,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.participant_name}</div>{p.school&&<div style={{color:"rgba(255,255,255,.35)",fontSize:11,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.school}</div>}</div>
+                          <div style={{display:"flex",alignItems:"center",gap:4,color:GOLD,fontSize:12,fontWeight:700,flexShrink:0}}><PhoneCall size={13}/> Call</div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {showTilePicker&&activeP&&stageTiles.length>0&&(
+                    <div style={{background:"rgba(10,20,15,.9)",border:"1.5px solid rgba(201,168,76,.3)",borderRadius:18,padding:"14px"}}>
+                      <div style={{color:"rgba(255,255,255,.5)",fontSize:12,marginBottom:10,textAlign:"center",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+                        <span style={{fontSize:16}}>🎙️</span>
+                        <span><strong style={{color:GOLD}}>{activeP.participant_name}</strong> is picking…</span>
+                      </div>
+                      <NumberTilePicker tiles={stageTiles} pickedNum={pickedTile?.num??null} onPick={()=>{}} canPick={false} stage={competition.current_stage}/>
+                      {pickedTile&&<QuestionDisplay tile={pickedTile} ayahText={ayahText} loadingAyah={loadingAyah} isParticipant={false}/>}
+                    </div>
+                  )}
+
+                  {activeP?.status==="called"&&pickedTile&&(
+                    <button onClick={startReciting} style={{background:`linear-gradient(135deg,${GREEN}dd,#16a34a)`,color:"#fff",border:"none",borderRadius:14,padding:"16px",cursor:"pointer",fontWeight:800,fontFamily:"Cairo,sans-serif",fontSize:15,display:"flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:"0 4px 20px rgba(34,197,94,.3)"}}>
+                      <Play size={18}/> ▶ Start Reciting
+                    </button>
+                  )}
+
+                  {/* ✅ BELL & STOP — instant feedback, no async blocking */}
+                  {activeP?.status==="reciting"&&(
+                    <div style={{display:"grid",gridTemplateColumns:"1.2fr 1fr",gap:10}}>
+                      <button onClick={ringBell} style={{background:`linear-gradient(135deg,${GOLD},#e8c96a 40%,${GOLDD})`,color:G,border:"none",borderRadius:14,padding:"20px 0",cursor:"pointer",fontWeight:900,fontSize:17,display:"flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:"0 6px 28px rgba(201,168,76,.5)",position:"relative",overflow:"hidden",userSelect:"none"}}>
+                        {bellCount>0&&<span style={{position:"absolute",top:8,right:8,background:RED,color:"#fff",borderRadius:"50%",width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:900}}>{bellCount}</span>}
+                        <Bell size={24} strokeWidth={2.5}/> Ring Bell
+                      </button>
+                      <button onClick={signalStop} style={{background:`linear-gradient(135deg,${RED},#dc2626)`,color:"#fff",border:"none",borderRadius:14,padding:"20px 0",cursor:"pointer",fontWeight:800,fontSize:16,display:"flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:"0 6px 20px rgba(239,68,68,.35)",userSelect:"none"}}>
+                        <StopCircle size={20}/> Stop
+                      </button>
+                    </div>
+                  )}
+
+                  {showScorePanel&&(
+                    <div style={{background:"rgba(201,168,76,.07)",border:"1px solid rgba(201,168,76,.25)",borderRadius:16,padding:"16px"}}>
+                      <div style={{color:GOLD,fontWeight:800,fontSize:14,marginBottom:12}}>📝 Score — {activeP?.participant_name}</div>
+                      {competition.use_criteria_scoring ? (
+                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+                          {SCORING_CRITERIA.map(c=>(
+                            <div key={c.key}>
+                              <div style={{color:"rgba(255,255,255,.6)",fontSize:11,marginBottom:4,display:"flex",justifyContent:"space-between"}}><span>{c.label}/{c.labelAr}</span><span style={{color:GOLD}}>/{c.max}</span></div>
+                              <input type="number" min={0} max={c.max} value={scoreBreak[c.key]} onChange={e=>setScoreBreak(s=>({...s,[c.key]:e.target.value}))} placeholder={`0–${c.max}`} style={{width:"100%",background:"rgba(255,255,255,.08)",border:"1px solid rgba(255,255,255,.15)",borderRadius:8,padding:"8px 10px",color:"#fff",fontSize:14}}/>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div style={{marginBottom:10}}>
+                          <div style={{color:"rgba(255,255,255,.6)",fontSize:12,marginBottom:4}}>Score /100</div>
+                          <input type="number" min={0} max={100} value={scoreBreak.tajweed} onChange={e=>setScoreBreak(s=>({...s,tajweed:e.target.value}))} style={{width:"100%",background:"rgba(255,255,255,.08)",border:"1px solid rgba(255,255,255,.15)",borderRadius:8,padding:"10px",color:"#fff",fontSize:16}}/>
+                        </div>
+                      )}
+                      <input value={judgeComment} onChange={e=>setJudgeComment(e.target.value)} placeholder="Judge's comment (optional)" style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.12)",borderRadius:8,padding:"8px 12px",color:"#fff",fontSize:13,marginBottom:10}}/>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                        {bellCount>0&&<span style={{color:GOLD,fontSize:12}}>⚠️ −{bellCount*2} bell penalty</span>}
+                        <span style={{color:GREEN,fontWeight:800,fontSize:16,marginLeft:"auto"}}>Final: {finalScore}/100</span>
+                      </div>
+                      <button onClick={submitScore} style={{width:"100%",background:`linear-gradient(135deg,${GREEN}dd,#16a34a)`,color:"#fff",border:"none",borderRadius:10,padding:"12px",cursor:"pointer",fontWeight:800,fontFamily:"Cairo,sans-serif",fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+                        <CheckCircle size={16}/> Submit Score
+                      </button>
+                    </div>
+                  )}
+
+                  {competition.status==="active"&&allDone&&(
+                    <button onClick={advanceStage} style={{background:competition.current_stage>=competition.total_stages?`linear-gradient(135deg,${GOLD},${GOLDD})`:"linear-gradient(135deg,#7c3aed,#6d28d9)",color:"#fff",border:"none",borderRadius:14,padding:"14px",cursor:"pointer",fontWeight:800,fontFamily:"Cairo,sans-serif",fontSize:15,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                      {competition.current_stage>=competition.total_stages?<><Trophy size={18}/> End & Show Results</>:<><ArrowRight size={18}/> Next Stage {competition.current_stage+1}</>}
+                    </button>
+                  )}
+
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
+                    {[["⏳",waiting.length,"Waiting"],["✅",done.length,"Done"],["👥",participants.length,"Total"]].map(([icon,n,label])=>(
+                      <div key={label as string} style={{background:"rgba(255,255,255,.04)",borderRadius:12,padding:"10px 8px",textAlign:"center"}}>
+                        <div style={{fontSize:16}}>{icon}</div><div style={{color:GOLD,fontWeight:800,fontSize:18}}>{n}</div><div style={{color:"rgba(255,255,255,.35)",fontSize:11}}>{label}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <button onClick={()=>setView("results")} style={{background:"transparent",color:"rgba(255,255,255,.3)",border:"1px solid rgba(255,255,255,.1)",borderRadius:10,padding:"10px",cursor:"pointer",fontFamily:"Cairo,sans-serif",fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
+                    <Award size={13}/> View Live Standings
+                  </button>
+                </div>
+              )}
+
+              {judgeTab==="roster"&&(
+                <div style={{animation:"fadeIn .2s ease"}}>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+                    <span style={{color:"rgba(255,255,255,.5)",fontSize:13}}><Users size={13} style={{marginRight:4,verticalAlign:"middle"}}/>{participants.length} registered</span>
+                    <div style={{display:"flex",gap:4}}>
+                      {[["list",<List size={12}/>],["grid",<LayoutGrid size={12}/>]].map(([mode,icon])=>(
+                        <button key={mode as string} onClick={()=>setRosterMode(mode as any)} style={{background:rosterMode===mode?`${GOLD}22`:"rgba(255,255,255,.05)",border:`1px solid ${rosterMode===mode?GOLD:"rgba(255,255,255,.1)"}`,borderRadius:8,padding:"5px 9px",cursor:"pointer",color:rosterMode===mode?GOLD:"rgba(255,255,255,.3)"}}>{icon}</button>
+                      ))}
+                    </div>
+                  </div>
+                  {participants.length===0 ? (
+                    <div style={{textAlign:"center",padding:"32px 0",color:"rgba(255,255,255,.3)"}}>
+                      <p style={{margin:0,fontSize:13}}>Share code: <strong style={{color:GOLD,letterSpacing:3}}>{competition.room_code}</strong></p>
+                    </div>
+                  ) : rosterMode==="list" ? (
+                    <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                      {participants.map(p=>{
+                        const isActive=p.id===activeP?.id;
+                        return (
+                          <div key={p.id} style={{background:isActive?"rgba(201,168,76,.1)":"rgba(255,255,255,.03)",border:`1.5px solid ${isActive?GOLD:"rgba(255,255,255,.08)"}`,borderRadius:14,padding:"11px 13px",display:"flex",alignItems:"center",gap:8}}>
+                            <span style={{color:"rgba(255,255,255,.2)",fontSize:11,width:18,flexShrink:0}}>#{p.queue_position}</span>
+                            <Avatar name={p.participant_name} size={34} active={isActive&&p.status==="reciting"} called={p.status==="called"}/>
+                            <div style={{flex:1,minWidth:0}}>
+                              <div style={{color:isActive?GOLD:"#fff",fontWeight:700,fontSize:13,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.participant_name}</div>
+                              {p.school&&<div style={{color:"rgba(255,255,255,.3)",fontSize:11,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.school}</div>}
+                            </div>
+                            <div style={{background:`${STATUS_COLOR[p.status]}18`,border:`1px solid ${STATUS_COLOR[p.status]}55`,color:STATUS_COLOR[p.status],borderRadius:20,padding:"2px 8px",fontSize:10,fontWeight:700,flexShrink:0}}>{STATUS_ICON[p.status]} {STATUS_LABEL[p.status]}</div>
+                            {p.total_score>0&&<div style={{color:GOLD,fontWeight:800,fontSize:14,flexShrink:0}}>{p.total_score}</div>}
+                            {competition.status==="active"&&p.status==="waiting"&&!activeP&&(
+                              <button onClick={()=>callParticipant(p)} style={{background:`${GOLD}22`,color:GOLD,border:`1px solid ${GOLD}55`,borderRadius:8,padding:"5px 10px",cursor:"pointer",fontWeight:700,fontSize:11,fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",gap:3,flexShrink:0}}><PhoneCall size={11}/> Call</button>
+                            )}
+                            {p.status==="waiting"&&(
+                              <button onClick={async()=>{ await supabase.from("musabaqah_participants" as any).update({status:"absent"}).eq("id",p.id); loadParticipants(); }} style={{background:"transparent",color:"rgba(255,255,255,.2)",border:"1px solid rgba(255,255,255,.08)",borderRadius:8,padding:"3px 7px",cursor:"pointer",fontSize:10,flexShrink:0}}>Absent</button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(120px,1fr))",gap:8}}>
+                      {participants.map(p=>{
+                        const isActive=p.id===activeP?.id;
+                        return (
+                          <div key={p.id} style={{background:isActive?`${GOLD}12`:"rgba(255,255,255,.04)",border:`1.5px solid ${isActive?GOLD:"rgba(255,255,255,.09)"}`,borderRadius:14,padding:"12px 10px",textAlign:"center"}}>
+                            <Avatar name={p.participant_name} size={44} active={isActive&&p.status==="reciting"} called={p.status==="called"}/>
+                            <div style={{color:isActive?GOLD:"#fff",fontWeight:700,fontSize:11,marginTop:7,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.participant_name}</div>
+                            <div style={{color:STATUS_COLOR[p.status],fontSize:10,fontWeight:700,marginTop:3}}>{STATUS_ICON[p.status]} {STATUS_LABEL[p.status]}</div>
+                            {p.total_score>0&&<div style={{color:GOLD,fontWeight:900,fontSize:15,marginTop:3}}>{p.total_score}</div>}
+                            {competition.status==="active"&&p.status==="waiting"&&!activeP&&(
+                              <button onClick={()=>callParticipant(p)} style={{width:"100%",marginTop:7,background:`${GOLD}20`,color:GOLD,border:`1px solid ${GOLD}55`,borderRadius:8,padding:"5px 0",cursor:"pointer",fontWeight:700,fontSize:10,fontFamily:"Cairo,sans-serif"}}><PhoneCall size={10} style={{marginRight:3,verticalAlign:"middle"}}/>Call</button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        {/* ── PARTICIPANT VIEW ─────────────────────────────────── */}
+        {!isJudge && !isObserver && myParticipant && (
+          <div>
+            {/* Video — show for active participant only (with controls), others see judge only */}
+            {videoBlock(!!iAmParticipantActive)}
+
+            <div style={{padding:"12px 16px 0"}}>
+              {myParticipant.status==="waiting"&&(
+                <div className="glass-card" style={{borderRadius:18,padding:"22px",textAlign:"center"}}>
+                  <div style={{fontSize:36,marginBottom:8,animation:"floatUp 4s ease-in-out infinite"}}>⏳</div>
+                  <div style={{color:GOLD,fontWeight:800,fontSize:17}}>Waiting in Queue</div>
+                  <div style={{color:"rgba(255,255,255,.4)",fontSize:13,marginTop:4}}>Position #{myParticipant.queue_position} of {participants.length}</div>
+                  <div style={{color:"rgba(255,255,255,.25)",fontSize:12,marginTop:10,lineHeight:1.7}}>Your judge will call you when it's your turn.</div>
+                  {activeP&&activeP.id!==myParticipant.id&&(
+                    <div style={{marginTop:12,background:"rgba(34,197,94,.08)",border:"1px solid rgba(34,197,94,.2)",borderRadius:12,padding:"10px 14px"}}>
+                      <div style={{color:GREEN,fontWeight:700,fontSize:12,marginBottom:2}}>🎙️ Now Reciting</div>
+                      <div style={{color:"#fff",fontWeight:700,fontSize:14}}>{activeP.participant_name}</div>
+                      {pickedTile&&<div style={{color:GOLD,fontSize:12,marginTop:4}}>📖 {pickedTile.label}</div>}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {myParticipant.status==="called"&&(
+                <div style={{animation:"calledGlow 2s ease-in-out infinite",background:"rgba(201,168,76,.1)",border:`2px solid ${GOLD}`,borderRadius:20,padding:"18px 16px"}}>
+                  <div style={{textAlign:"center",marginBottom:16}}>
+                    <div style={{fontSize:40,animation:"floatUp 2s ease-in-out infinite"}}>🎙️</div>
+                    <div style={{color:GOLD,fontWeight:900,fontSize:18,letterSpacing:1,marginTop:8}}>YOU HAVE BEEN CALLED!</div>
+                    {!pickedTile
+                      ? <div style={{color:"rgba(255,255,255,.7)",fontSize:13,marginTop:6,fontWeight:700}}>👇 Pick your question number below</div>
+                      : <div style={{color:GREEN,fontSize:13,marginTop:6,fontWeight:700}}>✅ Question selected — wait for judge to start</div>
+                    }
+                  </div>
+                  {stageTiles.length>0&&(
+                    <NumberTilePicker tiles={stageTiles} pickedNum={pickedTile?.num??null} onPick={!pickedTile ? pickTile : ()=>{}} canPick={!pickedTile} stage={competition.current_stage}/>
+                  )}
+                  {pickedTile&&<QuestionDisplay tile={pickedTile} ayahText={ayahText} loadingAyah={loadingAyah} isParticipant={true}/>}
+                </div>
+              )}
+
+              {myParticipant.status==="reciting"&&(
+                <div style={{animation:"recitingGlow 2s ease-in-out infinite",background:"rgba(34,197,94,.08)",border:`2px solid ${GREEN}`,borderRadius:20,padding:"18px 16px"}}>
+                  <div style={{textAlign:"center",marginBottom:12}}>
+                    <div style={{fontSize:36,animation:"floatUp 1.5s ease-in-out infinite"}}>🎙️</div>
+                    <div style={{color:GREEN,fontWeight:900,fontSize:18,letterSpacing:1,marginTop:8}}>NOW RECITING</div>
+                    {timerActive&&<div style={{color:timerDanger?RED:timerWarning?GOLD:GREEN,fontWeight:900,fontSize:30,marginTop:6,fontFamily:"Cinzel,serif"}}>{fmt(timerSecs)}</div>}
+                    {bellCount>0&&<div style={{color:RED,fontWeight:700,fontSize:13,marginTop:4}}>🔔 {bellCount} error{bellCount!==1?"s":""} · −{bellCount*2} pts</div>}
+                  </div>
+                  {pickedTile&&(
+                    <div style={{background:"rgba(0,0,0,.3)",border:"1px solid rgba(255,255,255,.1)",borderRadius:14,padding:"14px"}}>
+                      <div style={{color:GOLD,fontSize:11,fontWeight:700,letterSpacing:1.5,textTransform:"uppercase",marginBottom:6}}>📖 Your Passage</div>
+                      <div style={{color:"#fff",fontWeight:700,fontSize:15,marginBottom:6}}>{pickedTile.label}</div>
+                      {ayahText&&(
+                        <div style={{fontFamily:"'Amiri Quran',serif",fontSize:20,color:"rgba(255,255,255,.9)",direction:"rtl",textAlign:"center",lineHeight:2.2,padding:"10px 8px",background:"rgba(201,168,76,.06)",borderRadius:10}}>
+                          {ayahText}<span style={{color:"rgba(201,168,76,.6)",fontSize:15}}> ﴿{pickedTile.ayah}﴾</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  <div style={{color:"rgba(255,255,255,.45)",fontSize:12,textAlign:"center",marginTop:12}}>Recite clearly and confidently. Judge will signal when to stop.</div>
+                </div>
+              )}
+
+              {myParticipant.status==="completed"&&(
+                <div className="glass-card" style={{borderRadius:18,padding:"22px",textAlign:"center"}}>
+                  <div style={{fontSize:44,marginBottom:8}}>✅</div>
+                  <div style={{color:GREEN,fontWeight:800,fontSize:18}}>Recitation Complete!</div>
+                  <div style={{color:GOLD,fontWeight:900,fontSize:44,marginTop:8}}>{myParticipant.total_score}</div>
+                  <div style={{color:"rgba(255,255,255,.4)",fontSize:13}}>Total Points</div>
+                  <div style={{marginTop:10,display:"flex",gap:4,justifyContent:"center",flexWrap:"wrap"}}>
+                    {Array.from({length:competition.total_stages},(_,si)=>(
+                      <div key={si} style={{background:"rgba(255,255,255,.06)",borderRadius:8,padding:"4px 10px",textAlign:"center"}}>
+                        <div style={{color:GOLD,fontWeight:700,fontSize:13}}>{(myParticipant.stage_scores||{})[si+1]??"-"}</div>
+                        <div style={{color:"rgba(255,255,255,.3)",fontSize:10}}>S{si+1}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Clean, deduped participants list */}
+              <div style={{marginTop:14}}>
+                <div style={{color:"rgba(255,255,255,.4)",fontSize:11,fontWeight:700,marginBottom:7,display:"flex",alignItems:"center",gap:5}}><Users size={11}/> {participants.length} Participants</div>
+                <div style={{display:"flex",flexDirection:"column",gap:5,paddingBottom:100}}>
+                  {participants.map(p=>{
+                    const isMe=p.id===myParticipant?.id;
+                    return (
+                      <div key={p.id} style={{background:isMe?"rgba(201,168,76,.08)":p.id===activeP?.id?"rgba(34,197,94,.07)":"rgba(255,255,255,.03)",border:`1px solid ${isMe?`${GOLD}44`:p.id===activeP?.id?`${GREEN}44`:"rgba(255,255,255,.07)"}`,borderRadius:12,padding:"9px 12px",display:"flex",alignItems:"center",gap:8}}>
+                        <span style={{color:"rgba(255,255,255,.2)",fontSize:10,width:16,flexShrink:0}}>#{p.queue_position}</span>
+                        <Avatar name={p.participant_name} size={30} active={p.id===activeP?.id&&p.status==="reciting"} called={p.status==="called"}/>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{color:isMe?GOLD:"#fff",fontWeight:isMe?700:500,fontSize:13,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                            {p.participant_name}{isMe&&<span style={{color:GREEN,fontSize:10,marginLeft:5}}>YOU</span>}
+                          </div>
+                        </div>
+                        <span style={{color:STATUS_COLOR[p.status],fontSize:11,fontWeight:700,flexShrink:0}}>{STATUS_ICON[p.status]} {STATUS_LABEL[p.status]}</span>
+                        {p.total_score>0&&<span style={{color:GOLD,fontWeight:800,fontSize:13,flexShrink:0}}>{p.total_score}</span>}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
-            )}
-            <div style={{display:"flex",flexDirection:"column",gap:6,paddingBottom:120}}>
-              {participants.map(p=>{
-                const isActive=p.id===activeP?.id;
-                return (
-                  <div key={p.id} style={{background:isActive?"rgba(34,197,94,.07)":"rgba(255,255,255,.03)",border:`1px solid ${isActive?`${GREEN}44`:"rgba(255,255,255,.07)"}`,borderRadius:12,padding:"10px 14px",display:"flex",alignItems:"center",gap:10}}>
-                    <span style={{color:"rgba(255,255,255,.2)",fontSize:11,width:18}}>#{p.queue_position}</span>
-                    <Avatar name={p.participant_name} size={32} active={isActive&&p.status==="reciting"} called={p.status==="called"}/>
-                    <div style={{flex:1}}>
-                      <div style={{color:isActive?GOLD:"#fff",fontWeight:isActive?700:500,fontSize:14}}>{p.participant_name}</div>
-                      {p.school&&<div style={{color:"rgba(255,255,255,.3)",fontSize:11}}>{p.school}</div>}
-                    </div>
-                    <span style={{color:STATUS_COLOR[p.status],fontSize:12,fontWeight:700}}>{STATUS_ICON[p.status]} {STATUS_LABEL[p.status]}</span>
-                    {p.total_score>0&&<span style={{color:GOLD,fontWeight:800,fontSize:15}}>{p.total_score}</span>}
-                  </div>
-                );
-              })}
             </div>
           </div>
         )}
       </div>
 
-      {/* BOTTOM BAR — Participant */}
-      {!isJudge&&myParticipant&&(
+      {/* ── BOTTOM BAR — Participant ─────────────────────────────── */}
+      {!isJudge&&!isObserver&&myParticipant&&(
         <div style={{position:"fixed",bottom:0,left:0,right:0,zIndex:20,background:"rgba(5,15,8,.97)",backdropFilter:"blur(20px)",borderTop:"1px solid rgba(201,168,76,.2)"}}>
           {(myParticipant.status==="waiting"||myParticipant.status==="completed")&&activeP&&(
-            <div style={{padding:"8px 16px 0",display:"flex",alignItems:"center",gap:6}}>
+            <div style={{padding:"7px 16px 0",display:"flex",alignItems:"center",gap:5}}>
               <span style={{color:"rgba(255,255,255,.3)",fontSize:11,flexShrink:0}}>React:</span>
-              <div style={{display:"flex",gap:5,overflowX:"auto"}}>
+              <div style={{display:"flex",gap:4,overflowX:"auto"}}>
                 {REACTION_EMOJIS.map(e=>(
-                  <button key={e} onClick={()=>sendReaction(e)} style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.12)",borderRadius:10,padding:"5px 9px",cursor:"pointer",fontSize:18,flexShrink:0}}>{e}</button>
+                  <button key={e} onClick={()=>sendReaction(e)} style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.12)",borderRadius:9,padding:"4px 8px",cursor:"pointer",fontSize:17,flexShrink:0}}>{e}</button>
                 ))}
               </div>
             </div>
           )}
-          <div style={{padding:"10px 16px 12px",display:"flex",alignItems:"center",gap:12}}>
-            <Avatar name={myParticipant.participant_name} size={36} active={myParticipant.status==="reciting"} called={myParticipant.status==="called"}/>
-            <div style={{flex:1}}>
-              <div style={{color:"#fff",fontWeight:700,fontSize:13}}>{myParticipant.participant_name}</div>
+          <div style={{padding:"9px 16px 12px",display:"flex",alignItems:"center",gap:10}}>
+            <Avatar name={myParticipant.participant_name} size={34} active={myParticipant.status==="reciting"} called={myParticipant.status==="called"}/>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{color:"#fff",fontWeight:700,fontSize:13,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{myParticipant.participant_name}</div>
               <div style={{color:STATUS_COLOR[myParticipant.status],fontSize:12,fontWeight:600,marginTop:1}}>
                 {myParticipant.status==="called"&&"🔔 YOU HAVE BEEN CALLED!"}
                 {myParticipant.status==="reciting"&&"🎙️ Now Reciting..."}
@@ -1554,29 +1735,29 @@ export default function MustabaqahPage() {
                 {myParticipant.status==="completed"&&"✅ Done"}
               </div>
             </div>
-            {(!audioReady||lkError)&&!videoDisabled&&<button onClick={()=>{wakeAudio(); if(lkError&&competition)fetchLkToken(competition.room_code);}} style={{background:`${GOLD}22`,border:`1px solid ${GOLD}55`,borderRadius:10,padding:"6px 12px",cursor:"pointer",color:GOLD,fontSize:11,fontWeight:700,display:"flex",alignItems:"center",gap:4,fontFamily:"Cairo,sans-serif"}}><Volume2 size={13}/> {lkError?"Retry Audio":"Enable Sound"}</button>}
-            {myParticipant.total_score>0&&<div style={{color:GOLD,fontWeight:900,fontSize:22}}>{myParticipant.total_score}<span style={{color:"rgba(255,255,255,.3)",fontSize:11}}> pts</span></div>}
+            {(!audioReady||lkError)&&!videoDisabled&&<button onClick={()=>{wakeAudio(); if(lkError&&competition)fetchLkToken(competition.room_code);}} style={{background:`${GOLD}22`,border:`1px solid ${GOLD}55`,borderRadius:10,padding:"6px 10px",cursor:"pointer",color:GOLD,fontSize:11,fontWeight:700,display:"flex",alignItems:"center",gap:3,fontFamily:"Cairo,sans-serif"}}><Volume2 size={12}/> {lkError?"Retry":"Sound"}</button>}
+            {myParticipant.total_score>0&&<div style={{color:GOLD,fontWeight:900,fontSize:20,flexShrink:0}}>{myParticipant.total_score}<span style={{color:"rgba(255,255,255,.3)",fontSize:10}}> pts</span></div>}
           </div>
         </div>
       )}
 
-      {/* BOTTOM BAR — Observer */}
-      {!isJudge&&userRole==="observer"&&(
+      {/* ── BOTTOM BAR — Observer ────────────────────────────────── */}
+      {isObserver&&(
         <div style={{position:"fixed",bottom:0,left:0,right:0,zIndex:20,background:"rgba(5,15,8,.97)",backdropFilter:"blur(20px)",borderTop:"1px solid rgba(201,168,76,.2)"}}>
           {activeP&&(
-            <div style={{padding:"8px 16px 0",display:"flex",alignItems:"center",gap:6}}>
+            <div style={{padding:"7px 16px 0",display:"flex",alignItems:"center",gap:5}}>
               <span style={{color:"rgba(255,255,255,.3)",fontSize:11,flexShrink:0}}>React:</span>
-              <div style={{display:"flex",gap:5,overflowX:"auto"}}>
+              <div style={{display:"flex",gap:4,overflowX:"auto"}}>
                 {REACTION_EMOJIS.map(e=>(
-                  <button key={e} onClick={()=>sendReaction(e)} style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.12)",borderRadius:10,padding:"5px 9px",cursor:"pointer",fontSize:18,flexShrink:0}}>{e}</button>
+                  <button key={e} onClick={()=>sendReaction(e)} style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.12)",borderRadius:9,padding:"4px 8px",cursor:"pointer",fontSize:17,flexShrink:0}}>{e}</button>
                 ))}
               </div>
             </div>
           )}
-          <div style={{padding:"10px 16px 12px",display:"flex",alignItems:"center",gap:10}}>
-            <span style={{fontSize:22}}>👁️</span>
+          <div style={{padding:"9px 16px 12px",display:"flex",alignItems:"center",gap:10}}>
+            <span style={{fontSize:20}}>👁️</span>
             <div style={{flex:1,color:"rgba(255,255,255,.5)",fontSize:13}}>Following as Observer</div>
-            <button onClick={()=>setShowChat(c=>!c)} style={{background:`${GOLD}18`,border:`1px solid ${GOLD}44`,borderRadius:10,padding:"6px 14px",cursor:"pointer",color:GOLD,fontWeight:700,fontSize:13,fontFamily:"Cairo,sans-serif"}}>💬 Chat</button>
+            <button onClick={()=>setShowChat(c=>!c)} style={{background:`${GOLD}18`,border:`1px solid ${GOLD}44`,borderRadius:10,padding:"6px 12px",cursor:"pointer",color:GOLD,fontWeight:700,fontSize:13,fontFamily:"Cairo,sans-serif"}}>💬 Chat</button>
           </div>
         </div>
       )}
