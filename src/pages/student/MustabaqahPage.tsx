@@ -282,13 +282,13 @@ const LiveVideoGrid = ({
 
   return (
     <div style={{position:"relative",width:"100%",height:"100%"}}>
-      {/* Main video */}
+      {/* Main video — no mirror on remote tracks, and explicitly remove any transform on local */}
       {hasDominant && (
         <div style={{width:"100%",height:"100%",position:"relative"}}>
           {dominantPub?.videoTrack
-            ? <VideoTrack trackRef={{participant:dominantP!,source:Track.Source.Camera,publication:dominantPub}} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+            ? <VideoTrack trackRef={{participant:dominantP!,source:Track.Source.Camera,publication:dominantPub}} style={{width:"100%",height:"100%",objectFit:"cover",transform:"none"}}/>
             : iAmActive && localPub?.videoTrack
-              ? <VideoTrack trackRef={{participant:localParticipant!,source:Track.Source.Camera,publication:localPub!}} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+              ? <VideoTrack trackRef={{participant:localParticipant!,source:Track.Source.Camera,publication:localPub!}} style={{width:"100%",height:"100%",objectFit:"cover",transform:"none"}}/>
               : null
           }
           {/* Name label — bottom left, no overlap */}
@@ -309,9 +309,9 @@ const LiveVideoGrid = ({
       {hasPip && (
         <div style={{position:"absolute",bottom:10,right:10,width:80,height:108,borderRadius:10,overflow:"hidden",border:"2px solid rgba(201,168,76,.55)",boxShadow:"0 4px 18px rgba(0,0,0,.65)",flexShrink:0}}>
           {iAmJudge && localPub?.videoTrack
-            ? <VideoTrack trackRef={{participant:localParticipant!,source:Track.Source.Camera,publication:localPub!}} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+            ? <VideoTrack trackRef={{participant:localParticipant!,source:Track.Source.Camera,publication:localPub!}} style={{width:"100%",height:"100%",objectFit:"cover",transform:"none"}}/>
             : pipP && pipPub?.videoTrack
-              ? <VideoTrack trackRef={{participant:pipP,source:Track.Source.Camera,publication:pipPub}} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+              ? <VideoTrack trackRef={{participant:pipP,source:Track.Source.Camera,publication:pipPub}} style={{width:"100%",height:"100%",objectFit:"cover",transform:"none"}}/>
               : null
           }
           <div style={{position:"absolute",bottom:0,left:0,right:0,background:"rgba(0,0,0,.75)",padding:"2px 4px",textAlign:"center"}}>
@@ -380,7 +380,7 @@ const AudioEnabler = ({ onEnabled }: { onEnabled: () => void }) => {
 };
 
 type CompStatus = "open"|"active"|"paused"|"completed";
-type PStatus    = "waiting"|"called"|"reciting"|"completed"|"absent"|"disqualified";
+type PStatus    = "waiting"|"pending"|"called"|"reciting"|"completed"|"absent"|"disqualified";
 
 interface Competition {
   id:string; title:string; description?:string; scope_type:string; scope_config:any;
@@ -409,9 +409,9 @@ const SCOPE_OPTIONS = [
   {id:"juz29",label:"Juz 29–30",desc:"Two final juz"},
   {id:"full30",label:"Full 30 Juz",desc:"Entire Quran — advanced"},
 ];
-const STATUS_COLOR: Record<PStatus,string> = {waiting:GOLD,called:"#f97316",reciting:GREEN,completed:"#60a5fa",absent:"#6b7280",disqualified:RED};
-const STATUS_ICON:  Record<PStatus,string> = {waiting:"⏳",called:"⚡",reciting:"🎙️",completed:"✅",absent:"❌",disqualified:"🚫"};
-const STATUS_LABEL: Record<PStatus,string> = {waiting:"Waiting",called:"Called!",reciting:"Reciting",completed:"Done",absent:"Absent",disqualified:"DQ"};
+const STATUS_COLOR: Record<PStatus,string> = {pending:"#a78bfa",waiting:GOLD,called:"#f97316",reciting:GREEN,completed:"#60a5fa",absent:"#6b7280",disqualified:RED};
+const STATUS_ICON:  Record<PStatus,string> = {pending:"🕐",waiting:"⏳",called:"⚡",reciting:"🎙️",completed:"✅",absent:"❌",disqualified:"🚫"};
+const STATUS_LABEL: Record<PStatus,string> = {pending:"Pending",waiting:"Waiting",called:"Called!",reciting:"Reciting",completed:"Done",absent:"Absent",disqualified:"DQ"};
 const REACTION_EMOJIS = ["🤲","❤️","🌟","👏","🎙️","📖","🕌","🤍"];
 
 const genCode = () => { const c="ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; return Array.from({length:6},()=>c[Math.floor(Math.random()*c.length)]).join(""); };
@@ -498,6 +498,48 @@ export default function MustabaqahPage() {
 
   useEffect(()=>{ myParticipantRef.current=myParticipant; },[myParticipant]);
   useEffect(()=>{ competitionRef.current=competition; },[competition]);
+
+  // ── Session persistence: save arena session to localStorage ──────
+  useEffect(()=>{
+    if (view==="arena" && competition) {
+      localStorage.setItem("musabaqah_session", JSON.stringify({
+        competitionId: competition.id,
+        roomCode: competition.room_code,
+        userRole,
+        participantId: myParticipant?.id ?? null,
+      }));
+    }
+    if (view==="list") localStorage.removeItem("musabaqah_session");
+  },[view, competition?.id, userRole, myParticipant?.id]);
+
+  // ── On mount, try to restore saved session ───────────────────────
+  const [savedSession, setSavedSession] = useState<{competitionId:string;roomCode:string;userRole:string;participantId:string|null}|null>(null);
+  useEffect(()=>{
+    const raw = localStorage.getItem("musabaqah_session");
+    if (!raw) return;
+    try { setSavedSession(JSON.parse(raw)); } catch {}
+  },[]);
+
+  const rejoinSession = async () => {
+    if (!savedSession) return;
+    const {data:comp} = await supabase.from("musabaqah_competitions" as any).select("*").eq("id",savedSession.competitionId).single();
+    if (!comp||((comp as Competition).status==="completed")) {
+      localStorage.removeItem("musabaqah_session");
+      setSavedSession(null);
+      toast({title:"Session has ended",description:"The competition you were in has finished."});
+      return;
+    }
+    setCompetition(comp as Competition);
+    setUserRole(savedSession.userRole as any);
+    if (savedSession.participantId) {
+      const {data:p} = await supabase.from("musabaqah_participants" as any).select("*").eq("id",savedSession.participantId).single();
+      if (p) setMyParticipant(p as Participant);
+    }
+    setSavedSession(null);
+    setView("arena");
+    await fetchLkToken((comp as Competition).room_code);
+  };
+
 
   const isJudge = canJudge && userRole!=="observer" && userRole!=="participant";
   const isObserver = userRole==="observer";
@@ -778,23 +820,57 @@ export default function MustabaqahPage() {
     signalStop();
   };
 
+  const [submittingScore, setSubmittingScore] = useState(false);
+
   const submitScore = async () => {
-    if (!activeP||!currentAttempt) return;
-    let total=0; const breakdown:Record<string,number>={};
-    if (competition?.use_criteria_scoring) {
-      SCORING_CRITERIA.forEach(c=>{ const v=Math.min(Number(scoreBreak[c.key])||0,c.max); breakdown[c.key]=v; total+=v; });
-    } else { total=Number(scoreBreak.tajweed)||0; }
-    total=Math.max(0,total-bellCount*2);
-    await supabase.from("musabaqah_attempts" as any).update({judge_score:total,score_breakdown:breakdown,judge_comment:judgeComment,bell_count:bellCount,status:"scored"}).eq("id",currentAttempt.id);
-    const newTotal=(activeP.total_score||0)+total;
-    await supabase.from("musabaqah_participants" as any).update({status:"completed",total_score:newTotal,stage_scores:{...(activeP.stage_scores||{}),[competition!.current_stage]:total}}).eq("id",activeP.id);
-    broadcast("SCORE_SUBMITTED",{participant_id:activeP.id,score:total});
-    toast({title:`✅ Score: ${total} pts`});
-    setActiveP(null); setCurAttempt(null); setShowScore(false);
-    setBellCount(0); setTimerSecs(0); setElapsedSecs(0); elapsedRef.current=0;
-    setTimerActive(false); setTimerExpired(false);
-    setShowTilePicker(false); setPickedTile(null); setAyahText(null);
-    setJudgeTab("roster"); loadParticipants(); loadAttempts();
+    if (!activeP || !competition) return;
+    if (submittingScore) return;
+    setSubmittingScore(true);
+    try {
+      let attempt = currentAttempt;
+      // If no attempt record exists (e.g. after page reload), create one now
+      if (!attempt) {
+        const { data: att } = await supabase.from("musabaqah_attempts" as any).insert({
+          competition_id: competition.id,
+          participant_id: activeP.id,
+          stage_number: competition.current_stage,
+          scope_label: pickedTile?.label || "Manual entry",
+          scope_label_ar: pickedTile?.labelAr || "",
+          bell_count: bellCount,
+          status: "reciting",
+        } as any).select().single();
+        if (att) { attempt = att as Attempt; setCurAttempt(att as Attempt); }
+      }
+      if (!attempt) {
+        toast({ title: "Error", description: "Could not create score record", variant: "destructive" });
+        return;
+      }
+      let total = 0; const breakdown: Record<string, number> = {};
+      if (competition?.use_criteria_scoring) {
+        SCORING_CRITERIA.forEach(c => { const v = Math.min(Number(scoreBreak[c.key]) || 0, c.max); breakdown[c.key] = v; total += v; });
+      } else { total = Number(scoreBreak.tajweed) || 0; }
+      total = Math.max(0, total - bellCount * 2);
+      await supabase.from("musabaqah_attempts" as any).update({
+        judge_score: total, score_breakdown: breakdown,
+        judge_comment: judgeComment, bell_count: bellCount, status: "scored",
+      } as any).eq("id", attempt.id);
+      const newTotal = (activeP.total_score || 0) + total;
+      await supabase.from("musabaqah_participants" as any).update({
+        status: "completed", total_score: newTotal,
+        stage_scores: { ...(activeP.stage_scores || {}), [competition!.current_stage]: total },
+      } as any).eq("id", activeP.id);
+      broadcast("SCORE_SUBMITTED", { participant_id: activeP.id, score: total });
+      toast({ title: `✅ Score saved: ${total} pts` });
+      setActiveP(null); setCurAttempt(null); setShowScore(false);
+      setBellCount(0); setTimerSecs(0); setElapsedSecs(0); elapsedRef.current = 0;
+      setTimerActive(false); setTimerExpired(false);
+      setShowTilePicker(false); setPickedTile(null); setAyahText(null);
+      setJudgeTab("roster"); loadParticipants(); loadAttempts();
+    } catch (err: any) {
+      toast({ title: "Save failed", description: err.message, variant: "destructive" });
+    } finally {
+      setSubmittingScore(false);
+    }
   };
 
   const advanceStage = async () => {
@@ -811,7 +887,17 @@ export default function MustabaqahPage() {
     toast({title:`🎯 Stage ${next} begins!`}); loadParticipants();
   };
 
-  const startCompetition = async () => {
+  const terminateSession = async () => {
+    if (!competition) return;
+    const ok = window.confirm("End this session for all participants? This cannot be undone.");
+    if (!ok) return;
+    await supabase.from("musabaqah_competitions" as any).update({ status: "completed", current_participant_id: null } as any).eq("id", competition.id);
+    broadcast("COMPETITION_END");
+    localStorage.removeItem("musabaqah_session");
+    setView("results");
+  };
+
+
     if (!competition) return;
     await supabase.from("musabaqah_competitions" as any).update({status:"active"}).eq("id",competition.id);
     setCompetition(c=>c?{...c,status:"active"}:c);
@@ -848,7 +934,7 @@ export default function MustabaqahPage() {
     const {count}=await supabase.from("musabaqah_participants" as any).select("id",{count:"exact",head:true}).eq("competition_id",(comp as Competition).id);
     const {data:participant,error:insertErr}=await supabase.from("musabaqah_participants" as any).insert({
       competition_id:(comp as Competition).id,user_id:user?.id||null,participant_name:name,school:joinForm.school||null,
-      queue_position:(count??0)+1,status:"waiting",total_score:0,stage_scores:{},bell_counts:{},proctor_flagged:false,camera_on:false,
+      queue_position:(count??0)+1,status:"pending",total_score:0,stage_scores:{},bell_counts:{},proctor_flagged:false,camera_on:false,
     }).select().single();
     setLoading(false);
     if (insertErr) { toast({title:"Failed",description:insertErr.message,variant:"destructive"}); return; }
@@ -952,7 +1038,22 @@ export default function MustabaqahPage() {
         </div>
 
         <div style={{position:"relative",zIndex:1,maxWidth:560,margin:"0 auto",padding:"0 16px"}}>
-          <div className="stagger-1" style={{display:"flex",gap:10,marginBottom:24}}>
+        {/* Rejoin saved session banner */}
+        {savedSession && (
+          <div className="stagger-1" style={{background:"rgba(201,168,76,.12)",border:`1.5px solid ${GOLD}`,borderRadius:16,padding:"14px 18px",marginBottom:16,display:"flex",alignItems:"center",gap:12}}>
+            <span style={{fontSize:28,flexShrink:0}}>🔄</span>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{color:GOLD,fontWeight:800,fontSize:14}}>Rejoin Session</div>
+              <div style={{color:"rgba(255,255,255,.5)",fontSize:12,marginTop:2}}>You were in competition <strong style={{color:"#fff"}}>{savedSession.roomCode}</strong></div>
+            </div>
+            <div style={{display:"flex",gap:8,flexShrink:0}}>
+              <button onClick={rejoinSession} style={{background:`linear-gradient(135deg,${GOLD},${GOLDD})`,color:G,border:"none",borderRadius:10,padding:"8px 16px",cursor:"pointer",fontWeight:800,fontSize:13,fontFamily:"Cairo,sans-serif"}}>Rejoin</button>
+              <button onClick={()=>{localStorage.removeItem("musabaqah_session");setSavedSession(null);}} style={{background:"rgba(255,255,255,.07)",color:"rgba(255,255,255,.45)",border:"1px solid rgba(255,255,255,.12)",borderRadius:10,padding:"8px 12px",cursor:"pointer",fontSize:13}}>✕</button>
+            </div>
+          </div>
+        )}
+
+
             {isJudge&&<button className="gold-btn" onClick={()=>setView("setup")} style={{flex:1,color:G,border:"none",borderRadius:14,padding:"14px 0",fontWeight:800,cursor:"pointer",fontSize:15,fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}><Plus size={18}/> New Competition</button>}
             <button onClick={()=>setView("join")} style={{flex:1,background:"rgba(255,255,255,.07)",color:"#fff",border:"1.5px solid rgba(201,168,76,.3)",borderRadius:14,padding:"14px 0",fontWeight:700,cursor:"pointer",fontSize:15,fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}><LogIn size={18}/> Join with Code</button>
             <button onClick={loadCompetitions} style={{background:"rgba(255,255,255,.06)",color:"rgba(255,255,255,.4)",border:"1.5px solid rgba(255,255,255,.1)",borderRadius:14,padding:"14px 16px",cursor:"pointer"}}><RefreshCw size={16}/></button>
@@ -1516,8 +1617,8 @@ export default function MustabaqahPage() {
                         {bellCount>0&&<span style={{color:GOLD,fontSize:12}}>⚠️ −{bellCount*2} bell penalty</span>}
                         <span style={{color:GREEN,fontWeight:800,fontSize:16,marginLeft:"auto"}}>Final: {finalScore}/100</span>
                       </div>
-                      <button onClick={submitScore} style={{width:"100%",background:`linear-gradient(135deg,${GREEN}dd,#16a34a)`,color:"#fff",border:"none",borderRadius:10,padding:"12px",cursor:"pointer",fontWeight:800,fontFamily:"Cairo,sans-serif",fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-                        <CheckCircle size={16}/> Submit Score
+                      <button onClick={submitScore} disabled={submittingScore} style={{width:"100%",background:submittingScore?`rgba(34,197,94,.4)`:`linear-gradient(135deg,${GREEN}dd,#16a34a)`,color:"#fff",border:"none",borderRadius:10,padding:"12px",cursor:submittingScore?"not-allowed":"pointer",fontWeight:800,fontFamily:"Cairo,sans-serif",fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+                        {submittingScore?<><span style={{animation:"spin .8s linear infinite",display:"inline-block"}}>⏳</span> Saving…</> : <><CheckCircle size={16}/> Submit Score</>}
                       </button>
                     </div>
                   )}
@@ -1539,19 +1640,56 @@ export default function MustabaqahPage() {
                   <button onClick={()=>setView("results")} style={{background:"transparent",color:"rgba(255,255,255,.3)",border:"1px solid rgba(255,255,255,.1)",borderRadius:10,padding:"10px",cursor:"pointer",fontFamily:"Cairo,sans-serif",fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
                     <Award size={13}/> View Live Standings
                   </button>
+
+                  {/* End Session */}
+                  <button onClick={terminateSession} style={{background:"rgba(239,68,68,.1)",color:RED,border:`1px solid ${RED}44`,borderRadius:10,padding:"10px",cursor:"pointer",fontFamily:"Cairo,sans-serif",fontSize:12,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:4,marginTop:4}}>
+                    <StopCircle size={13}/> End Session for All
+                  </button>
                 </div>
               )}
 
               {judgeTab==="roster"&&(
                 <div style={{animation:"fadeIn .2s ease"}}>
                   <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
-                    <span style={{color:"rgba(255,255,255,.5)",fontSize:13}}><Users size={13} style={{marginRight:4,verticalAlign:"middle"}}/>{participants.length} registered</span>
+                    <span style={{color:"rgba(255,255,255,.5)",fontSize:13}}><Users size={13} style={{marginRight:4,verticalAlign:"middle"}}/>{participants.filter(p=>p.status!=="pending").length} registered</span>
                     <div style={{display:"flex",gap:4}}>
                       {[["list",<List size={12}/>],["grid",<LayoutGrid size={12}/>]].map(([mode,icon])=>(
                         <button key={mode as string} onClick={()=>setRosterMode(mode as any)} style={{background:rosterMode===mode?`${GOLD}22`:"rgba(255,255,255,.05)",border:`1px solid ${rosterMode===mode?GOLD:"rgba(255,255,255,.1)"}`,borderRadius:8,padding:"5px 9px",cursor:"pointer",color:rosterMode===mode?GOLD:"rgba(255,255,255,.3)"}}>{icon}</button>
                       ))}
                     </div>
                   </div>
+
+                  {/* ── PENDING APPROVAL REQUESTS ── */}
+                  {participants.filter(p=>p.status==="pending").length>0&&(
+                    <div style={{marginBottom:12,background:"rgba(167,139,250,.08)",border:"1.5px solid rgba(167,139,250,.4)",borderRadius:14,padding:"12px 14px"}}>
+                      <div style={{color:"#a78bfa",fontWeight:800,fontSize:12,letterSpacing:1,textTransform:"uppercase",marginBottom:10,display:"flex",alignItems:"center",gap:5}}>
+                        🕐 Pending Approval ({participants.filter(p=>p.status==="pending").length})
+                      </div>
+                      {participants.filter(p=>p.status==="pending").map(p=>(
+                        <div key={p.id} style={{display:"flex",alignItems:"center",gap:8,padding:"9px 0",borderBottom:"1px solid rgba(255,255,255,.06)"}}>
+                          <Avatar name={p.participant_name} size={32}/>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{color:"#fff",fontWeight:700,fontSize:13,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.participant_name}</div>
+                            {p.school&&<div style={{color:"rgba(255,255,255,.35)",fontSize:11}}>{p.school}</div>}
+                          </div>
+                          <button onClick={async()=>{
+                            await supabase.from("musabaqah_participants" as any).update({status:"waiting"} as any).eq("id",p.id);
+                            loadParticipants();
+                            toast({title:`✅ ${p.participant_name} approved`});
+                          }} style={{background:"rgba(34,197,94,.2)",color:GREEN,border:`1px solid ${GREEN}55`,borderRadius:9,padding:"5px 10px",cursor:"pointer",fontWeight:700,fontSize:12,fontFamily:"Cairo,sans-serif",flexShrink:0}}>
+                            Approve
+                          </button>
+                          <button onClick={async()=>{
+                            await supabase.from("musabaqah_participants" as any).delete().eq("id",p.id);
+                            loadParticipants();
+                            toast({title:`❌ ${p.participant_name} denied`});
+                          }} style={{background:"rgba(239,68,68,.15)",color:RED,border:`1px solid ${RED}44`,borderRadius:9,padding:"5px 10px",cursor:"pointer",fontWeight:700,fontSize:12,fontFamily:"Cairo,sans-serif",flexShrink:0}}>
+                            Deny
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   {participants.length===0 ? (
                     <div style={{textAlign:"center",padding:"32px 0",color:"rgba(255,255,255,.3)"}}>
                       <p style={{margin:0,fontSize:13}}>Share code: <strong style={{color:GOLD,letterSpacing:3}}>{competition.room_code}</strong></p>
@@ -1729,6 +1867,7 @@ export default function MustabaqahPage() {
             <div style={{flex:1,minWidth:0}}>
               <div style={{color:"#fff",fontWeight:700,fontSize:13,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{myParticipant.participant_name}</div>
               <div style={{color:STATUS_COLOR[myParticipant.status],fontSize:12,fontWeight:600,marginTop:1}}>
+                {myParticipant.status==="pending"&&`🕐 Awaiting admin approval…`}
                 {myParticipant.status==="called"&&"🔔 YOU HAVE BEEN CALLED!"}
                 {myParticipant.status==="reciting"&&"🎙️ Now Reciting..."}
                 {myParticipant.status==="waiting"&&`⏳ Queue #${myParticipant.queue_position}`}
