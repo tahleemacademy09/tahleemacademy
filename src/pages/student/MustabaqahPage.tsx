@@ -1078,7 +1078,7 @@ export default function MustabaqahPage() {
                   </span>
                 </div>
                 <div style={{display:"flex",alignItems:"center",gap:8}}>
-                  <span style={{color:"rgba(255,255,255,.35)",fontSize:11}}>Stage {c.current_stage}/{c.total_stages}</span>
+                  <span style={{color:"rgba(255,255,255,.35)",fontSize:11}}>Stage {c.current_stage}{'/'}{c.total_stages}</span>
                   <span style={{color:"rgba(255,255,255,.15)"}}>·</span>
                   <button onClick={e=>copyCode(c.room_code,e)} style={{background:"none",border:"none",padding:0,cursor:"pointer",display:"flex",alignItems:"center",gap:4}}>
                     <span style={{color:GOLD,fontWeight:800,letterSpacing:2,fontSize:12}}>{c.room_code}</span>
@@ -1379,7 +1379,7 @@ export default function MustabaqahPage() {
             <span style={{fontSize:10,fontWeight:700,padding:"1px 7px",borderRadius:20,background:competition.status==="active"?`${GREEN}22`:`${GOLD}22`,color:competition.status==="active"?GREEN:GOLD,border:`1px solid ${competition.status==="active"?GREEN:GOLD}`}}>
               {competition.status==="active"?"🔴 LIVE":competition.status.toUpperCase()}
             </span>
-            <span style={{color:"rgba(255,255,255,.3)",fontSize:11}}>Stage {competition.current_stage}/{competition.total_stages}</span>
+            <span style={{color:"rgba(255,255,255,.3)",fontSize:11}}>Stage {competition.current_stage}{'/'}{competition.total_stages}</span>
           </div>
         </div>
 
@@ -1601,7 +1601,7 @@ export default function MustabaqahPage() {
                         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
                           {SCORING_CRITERIA.map(c=>(
                             <div key={c.key}>
-                              <div style={{color:"rgba(255,255,255,.6)",fontSize:11,marginBottom:4,display:"flex",justifyContent:"space-between"}}><span>{c.label}/{c.labelAr}</span><span style={{color:GOLD}}>/{c.max}</span></div>
+                              <div style={{color:"rgba(255,255,255,.6)",fontSize:11,marginBottom:4,display:"flex",justifyContent:"space-between"}}><span>{c.label}{'/'}{c.labelAr}</span><span style={{color:GOLD}}>{'/'}{c.max}</span></div>
                               <input type="number" min={0} max={c.max} value={scoreBreak[c.key]} onChange={e=>setScoreBreak(s=>({...s,[c.key]:e.target.value}))} placeholder={`0–${c.max}`} style={{width:"100%",background:"rgba(255,255,255,.08)",border:"1px solid rgba(255,255,255,.15)",borderRadius:8,padding:"8px 10px",color:"#fff",fontSize:14}}/>
                             </div>
                           ))}
