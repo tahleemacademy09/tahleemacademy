@@ -4274,6 +4274,8 @@ export type Database = {
           student_id: string | null
           student_type: string | null
           subscription_end_date: string | null
+          telegram_chat_id: string | null
+          telegram_link_code: string | null
           updated_at: string
           user_id: string
           whatsapp: string | null
@@ -4320,6 +4322,8 @@ export type Database = {
           student_id?: string | null
           student_type?: string | null
           subscription_end_date?: string | null
+          telegram_chat_id?: string | null
+          telegram_link_code?: string | null
           updated_at?: string
           user_id: string
           whatsapp?: string | null
@@ -4366,6 +4370,8 @@ export type Database = {
           student_id?: string | null
           student_type?: string | null
           subscription_end_date?: string | null
+          telegram_chat_id?: string | null
+          telegram_link_code?: string | null
           updated_at?: string
           user_id?: string
           whatsapp?: string | null
