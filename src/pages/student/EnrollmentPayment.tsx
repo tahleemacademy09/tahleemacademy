@@ -182,7 +182,7 @@ const EnrollmentPayment = () => {
     const ref   = `TAH-${user.id.slice(0,8)}-${Date.now()}`;
     const activeTerm  = selectedTerms[selectedPlan.id] ?? 1;
     const baseAmount  = selectedPlan.amount;
-    const termAmounts: Record<number,number> = { 1: baseAmount, 2: baseAmount*2, 3: Math.round(baseAmount*3*0.9) };
+    const termAmounts: Record<number,number> = { 1: baseAmount*3, 2: baseAmount*6, 3: Math.round(baseAmount*9*0.9) };
     const amount      = termAmounts[activeTerm] || baseAmount;
     const termMonths  = activeTerm * 3;
 
@@ -497,9 +497,9 @@ const EnrollmentPayment = () => {
                     const baseAmount = plan.amount;
                     const currency   = plan.currency || "NGN";
                     const terms = [
-                      { n:1, label:"1 Term",  months:3,  amount: baseAmount,     save: 0 },
-                      { n:2, label:"2 Terms", months:6,  amount: baseAmount * 2, save: 0 },
-                      { n:3, label:"3 Terms", months:9,  amount: Math.round(baseAmount * 3 * 0.9), save: Math.round(baseAmount * 3 * 0.1) },
+                      { n:1, label:"1 Term",  months:3,  amount: baseAmount * 3,                    save: 0 },
+                      { n:2, label:"2 Terms", months:6,  amount: baseAmount * 6,                    save: 0 },
+                      { n:3, label:"3 Terms", months:9,  amount: Math.round(baseAmount * 9 * 0.9), save: Math.round(baseAmount * 9 * 0.1) },
                     ];
                     const activeTerm = selectedTerms[plan.id] ?? 1;
                     const chosen = terms.find(t => t.n === activeTerm) || terms[0];
@@ -559,7 +559,7 @@ const EnrollmentPayment = () => {
                   {selectedPlan && (() => {
                     const st = selectedTerms[selectedPlan.id] ?? 1;
                     const ba = selectedPlan.amount;
-                    const ta: Record<number,number> = { 1:ba, 2:ba*2, 3:Math.round(ba*3*0.9) };
+                    const ta: Record<number,number> = { 1:ba*3, 2:ba*6, 3:Math.round(ba*9*0.9) };
                     const totalAmt = ta[st] || ba;
                     return (
                       <div style={{ background:"#F8FAF8", borderRadius:13, padding:"15px 16px", border:"1px solid #E0EDE0" }}>
@@ -588,7 +588,7 @@ const EnrollmentPayment = () => {
                   >
                     {paying
                       ? <><Loader2 style={{ width:20, height:20, animation:"spin .8s linear infinite" }}/> Processing…</>
-                      : <><CreditCard size={20}/> Pay {selectedPlan ? fmt((() => { const st=selectedTerms[selectedPlan.id]??1; const ba=selectedPlan.amount; return {1:ba,2:ba*2,3:Math.round(ba*3*0.9)}[st]||ba; })(), selectedPlan.currency) : "—"}</>
+                      : <><CreditCard size={20}/> Pay {selectedPlan ? fmt((() => { const st=selectedTerms[selectedPlan.id]??1; const ba=selectedPlan.amount; return {1:ba*3,2:ba*6,3:Math.round(ba*9*0.9)}[st]||ba*3; })(), selectedPlan.currency) : "—"}</>
                     }
                   </button>
 
