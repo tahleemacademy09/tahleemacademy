@@ -897,7 +897,7 @@ export default function MustabaqahPage() {
     setView("results");
   };
 
-
+  const startCompetition = async () => {
     if (!competition) return;
     await supabase.from("musabaqah_competitions" as any).update({status:"active"}).eq("id",competition.id);
     setCompetition(c=>c?{...c,status:"active"}:c);
