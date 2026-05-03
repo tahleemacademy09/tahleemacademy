@@ -455,6 +455,35 @@ export default function ProfileSettings() {
             </div>
           )}
 
+          {/* Telegram link card */}
+          <div style={{ background: tgChatId ? "#ECFDF5" : "#EFF6FF", border: `1px solid ${tgChatId ? "#86EFAC" : "#BFDBFE"}`, borderRadius: 12, padding: 14, marginBottom: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+              <span style={{ fontSize: 22 }}>✈️</span>
+              <div style={{ flex: 1 }}>
+                <p style={{ fontWeight: 700, fontSize: 14, color: G, margin: 0 }}>Telegram Notifications</p>
+                <p style={{ fontSize: 11, color: "#475569", margin: "2px 0 0" }}>
+                  {tgChatId ? "Linked — you'll receive class & academy alerts on Telegram." : "Get all alerts on Telegram even when this site is closed."}
+                </p>
+              </div>
+              {tgChatId && (
+                <button onClick={unlinkTelegram} style={{ padding: "6px 12px", border: "1px solid #DC2626", color: "#DC2626", background: "#fff", borderRadius: 8, fontWeight: 600, fontSize: 12, cursor: "pointer" }}>Unlink</button>
+              )}
+            </div>
+            {!tgChatId && !tgCode && (
+              <button onClick={generateTgCode} style={{ padding: "9px 16px", border: "none", background: G, color: "#fff", borderRadius: 9, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+                Link Telegram
+              </button>
+            )}
+            {!tgChatId && tgCode && (
+              <div style={{ fontSize: 12, color: "#1E3A8A", lineHeight: 1.6 }}>
+                <p style={{ margin: "0 0 6px" }}>1. Open <a href={`https://t.me/Tahleembot?start=${tgCode}`} target="_blank" rel="noreferrer" style={{ color: G, fontWeight: 700, textDecoration: "underline" }}>@Tahleembot</a> on Telegram.</p>
+                <p style={{ margin: "0 0 6px" }}>2. Tap <strong>Start</strong> (or send <code>/start {tgCode}</code>).</p>
+                <p style={{ margin: 0, color: "#64748B" }}>Waiting for confirmation… <Loader2 size={12} style={{ display: "inline", animation: "spin 1s linear infinite" }} /></p>
+              </div>
+            )}
+          </div>
+
+
           <Sec title="Channels">
             <Tog label="Email Notifications" sub="Updates via email"
               checked={notifs.email_notifications} onChange={(v: boolean) => setNotifs(n => ({ ...n, email_notifications: v }))} />
