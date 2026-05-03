@@ -113,8 +113,23 @@ export default function ProfileSettings() {
         .from("student_preferences" as any).select("*").eq("user_id", user.id).maybeSingle();
       if (pd) {
         const d = pd as any;
-        if (d.notifications) setNotifs(n => ({ ...n, ...d.notifications }));
-        if (d.preferences)   setPrefs(p  => ({ ...p,  ...d.preferences  }));
+        setNotifs(n => ({
+          email_notifications:        d.email_notifications        ?? n.email_notifications,
+          whatsapp_notifications:     d.whatsapp_notifications     ?? n.whatsapp_notifications,
+          class_reminder:             d.class_reminder             ?? n.class_reminder,
+          exam_reminder:              d.exam_reminder              ?? n.exam_reminder,
+          results_notification:       d.results_notification       ?? n.results_notification,
+          new_recording_alert:        d.new_recording_alert        ?? n.new_recording_alert,
+          announcement_notifications: d.announcement_notifications ?? n.announcement_notifications,
+        }));
+        setPrefs(p => ({
+          language:             d.language             ?? p.language,
+          dark_mode:            d.dark_mode            ?? p.dark_mode,
+          autoplay_recordings:  d.autoplay_recordings  ?? p.autoplay_recordings,
+          playback_speed:       d.playback_speed        ?? p.playback_speed,
+          show_subtitles:       d.show_subtitles        ?? p.show_subtitles,
+          default_subject_view: d.default_subject_view ?? p.default_subject_view,
+        }));
       }
 
       // Telegram link state
@@ -206,8 +221,6 @@ export default function ProfileSettings() {
   };
 
   // ── Save notifications ────────────────────────────────────────────
-  //    Tries RPC first (bypasses PostgREST schema cache entirely),
-  //    then falls back to a direct upsert as a safety net.
   const saveNotifs = async () => {
     if (!user) return;
     if (notifs.whatsapp_notifications && !form.whatsapp && !form.phone) {
@@ -216,28 +229,17 @@ export default function ProfileSettings() {
         description: "Go to the Profile tab and add your WhatsApp number (with country code) so we can reach you.",
         variant: "destructive",
       });
-      // Don't block the save — preferences are still stored
     }
     setSaving(true);
-    const { error: rpcErr } = await supabase.rpc(
-      "upsert_student_notifications" as any,
-      { p_user_id: user.id, p_notifications: notifs } as any
-    );
-    if (rpcErr) {
-      // RPC not deployed yet — fall back to direct upsert
-      const { error: upsertErr } = await supabase
-        .from("student_preferences" as any)
-        .upsert(
-          { user_id: user.id, notifications: notifs, updated_at: new Date().toISOString() } as any,
-          { onConflict: "user_id" }
-        );
-      setSaving(false);
-      if (upsertErr) toast({ title: "Save failed", description: upsertErr.message, variant: "destructive" });
-      else           toast({ title: "✅ Notifications saved" });
-    } else {
-      setSaving(false);
-      toast({ title: "✅ Notifications saved" });
-    }
+    const { error } = await supabase
+      .from("student_preferences" as any)
+      .upsert(
+        { user_id: user.id, ...notifs, updated_at: new Date().toISOString() } as any,
+        { onConflict: "user_id" }
+      );
+    setSaving(false);
+    if (error) toast({ title: "Save failed", description: error.message, variant: "destructive" });
+    else       toast({ title: "✅ Notifications saved" });
   };
 
   // ── Save preferences ──────────────────────────────────────────────
@@ -247,7 +249,7 @@ export default function ProfileSettings() {
     const { error } = await supabase
       .from("student_preferences" as any)
       .upsert(
-        { user_id: user.id, preferences: prefs, updated_at: new Date().toISOString() } as any,
+        { user_id: user.id, ...prefs, updated_at: new Date().toISOString() } as any,
         { onConflict: "user_id" }
       );
     setSaving(false);
