@@ -55,6 +55,9 @@ export default function ProfileSettings() {
   const [changingPw,      setChangingPw]      = useState(false);
   const [pw,              setPw]              = useState({ new: "", confirm: "" });
   const [pushBlocked,     setPushBlocked]     = useState(false);
+  const [tgChatId,        setTgChatId]        = useState<string | null>(null);
+  const [tgCode,          setTgCode]          = useState<string | null>(null);
+  const [tgPolling,       setTgPolling]       = useState(false);
 
   const [form, setForm] = useState({
     full_name: "", full_name_ar: "", phone: "", whatsapp: "",
