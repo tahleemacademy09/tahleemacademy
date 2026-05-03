@@ -110,6 +110,7 @@ const StudentDashboard = () => {
   const [nowTick, setNowTick] = useState(new Date());
   const [hifdhAssignment, setHifdhAssignment] = useState<any>(null);
   const [hifdhTodayLog, setHifdhTodayLog]     = useState<any>(null);
+  const [privateSubjectIds, setPrivateSubjectIds] = useState<Set<string>>(new Set());
 
   // Tick every 30s so countdowns stay fresh
   useEffect(() => {
@@ -232,7 +233,7 @@ const StudentDashboard = () => {
 
         const [enrollRes, gradedAttemptsRes, pendingAttemptsRes, notifsRes, assignmentsRes,
           recentRes, allAttemptsRes, subjectsRes, calendarExamsRes, subAssignmentsRes, ttRes,
-          hifdhAssignRes, hifdhLogRes] = await withTimeout(Promise.all([
+          hifdhAssignRes, hifdhLogRes, privateSubjectsRes] = await withTimeout(Promise.all([
           supabase.from("enrollments").select("id").eq("user_id", uid),
           supabase.from("exam_attempts").select("percentage").eq("user_id", uid).eq("status", "graded"),
           supabase.from("exam_attempts").select("id").eq("user_id", uid).eq("status", "submitted"),
@@ -246,6 +247,7 @@ const StudentDashboard = () => {
           supabase.from("subject_timetable" as any).select("*, subjects(id, title, title_ar)").eq("day_of_week", new Date().getDay()).eq("is_active", true).order("start_time"),
           (supabase as any).from("hifdh_daily_assignments").select("*").eq("student_id", uid).eq("active", true).maybeSingle(),
           (supabase as any).from("hifdh_daily_logs").select("*").eq("student_id", uid).eq("log_date", new Date().toISOString().split("T")[0]).maybeSingle(),
+          (supabase as any).from("private_student_subjects").select("subject_id").eq("student_id", uid),
         ]));
       const gradedAttempts = gradedAttemptsRes.data || [];
       const avg = gradedAttempts.length > 0 ? gradedAttempts.reduce((s, a) => s + (Number(a.percentage) || 0), 0) / gradedAttempts.length : 0;
@@ -264,6 +266,7 @@ const StudentDashboard = () => {
       setTodayClasses((ttRes.data || []) as any[]);
       setHifdhAssignment((hifdhAssignRes as any)?.data ?? null);
       setHifdhTodayLog((hifdhLogRes as any)?.data ?? null);
+      setPrivateSubjectIds(new Set((privateSubjectsRes?.data || []).map((r: any) => r.subject_id)));
         setLoading(false);
       } catch (err) {
         console.error("Dashboard data fetch error:", err);
@@ -620,14 +623,14 @@ const StudentDashboard = () => {
             {t("Quick Actions", "الإجراءات السريعة")}
           </div>
           <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:10 }}>
-            {[
-              { to:"/student/exams",        icon:ClipboardList, label:t("My Exams","امتحاناتي"),        ar:"امتحاناتي",    color:"#276749", bg:"#f0fff4" },
-              { to:"/student/transcripts",  icon:GraduationCap, label:t("Transcripts","السجلات"),        ar:"السجلات",      color:"#b7791f", bg:"#fffbeb" },
-              { to:"/student/live-classes", icon:Video,         label:t("Live Classes","الفصول الحية"), ar:"الفصول الحية", color:"#2b6cb0", bg:"#ebf8ff" },
-              { to:"/student/majlis",       icon:MessageCircle, label:t("Al-Majlis","المجلس"),           ar:"المجلس",       color:"#6b46c1", bg:"#faf5ff" },
-              { to:"/student/hifdh",        icon:Mic,           label:t("AI-Hifdh","الحِفظ الذكي"),     ar:"الحِفظ الذكي", color:DARK_GREEN, bg:"#f0fdf4" },
-              { to:"/student/courses",      icon:BookOpen,      label:t("Courses","الدروس"),             ar:"الدروس",       color:"#c0392b", bg:"#fff5f5" },
-            ].map((link,i) => (
+            {([
+              { to:"/student/exams",        icon:ClipboardList, label:t("My Exams","امتحاناتي"),        ar:"امتحاناتي",    color:"#276749", bg:"#f0fff4", show: true },
+              { to:"/student/transcripts",  icon:GraduationCap, label:t("Transcripts","السجلات"),        ar:"السجلات",      color:"#b7791f", bg:"#fffbeb", show: true },
+              { to:"/student/live-classes", icon:Video,         label:t("Live Classes","الفصول الحية"), ar:"الفصول الحية", color:"#2b6cb0", bg:"#ebf8ff", show: !isPrivateStudent || allowGeneralAccess },
+              { to:"/student/majlis",       icon:MessageCircle, label:t("Al-Majlis","المجلس"),           ar:"المجلس",       color:"#6b46c1", bg:"#faf5ff", show: true },
+              { to:"/student/hifdh",        icon:Mic,           label:t("AI-Hifdh","الحِفظ الذكي"),     ar:"الحِفظ الذكي", color:DARK_GREEN, bg:"#f0fdf4", show: true },
+              { to:"/student/courses",      icon:BookOpen,      label:t("Courses","الدروس"),             ar:"الدروس",       color:"#c0392b", bg:"#fff5f5", show: true },
+            ] as const).filter(link => link.show).map((link,i) => (
               <Link to={link.to} key={i} style={{ textDecoration:"none" }}>
                 <div style={{ ...card, display:"flex", alignItems:"center", gap:12, padding:"14px 14px", transition:"transform .15s, box-shadow .15s" }}
                   onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform="translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow="0 6px 20px rgba(0,0,0,.1)"; }}
@@ -759,7 +762,7 @@ const StudentDashboard = () => {
         </div>
 
         {/* ── Today's Classes ── */}
-        {todayClasses.length > 0 && (() => {
+        {todayClasses.length > 0 && (!isPrivateStudent || allowGeneralAccess) && (() => {
           const handleJoinClass = async (slot: any) => {
             if (slot.live_url) { window.open(slot.live_url, "_blank", "noopener"); return; }
             if (!slot.subject_id) return;
@@ -837,9 +840,13 @@ const StudentDashboard = () => {
               </TabsList>
               <div style={{ padding:"14px 4px" }}>
                 <TabsContent value="classes" className="mt-0">
-                  {liveSubjects.length===0 ? (
-                    <p style={{ textAlign:"center", padding:"20px 0", fontSize:13, color:TEXT_LIGHT }}>{t("No active classes","لا توجد فصول نشطة")}</p>
-                  ) : liveSubjects.map((s:any)=>(
+                  {(() => {
+                    const displaySubjects = isPrivateStudent && !allowGeneralAccess
+                      ? liveSubjects.filter((s: any) => privateSubjectIds.has(s.id))
+                      : liveSubjects;
+                    return displaySubjects.length===0 ? (
+                      <p style={{ textAlign:"center", padding:"20px 0", fontSize:13, color:TEXT_LIGHT }}>{t("No active classes","لا توجد فصول نشطة")}</p>
+                    ) : displaySubjects.map((s:any)=>(
                     <Link to={`/student/subjects/${s.id}`} key={s.id} style={{ textDecoration:"none" }}>
                       <div style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 12px", borderRadius:10, marginBottom:6, background:"#f8fafb", border:`1px solid ${BORDER}` }}>
                         <div style={{ width:36, height:36, borderRadius:10, background:"#f0fff4", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
@@ -852,7 +859,8 @@ const StudentDashboard = () => {
                         <ArrowRight style={{ width:14, height:14, color:TEXT_LIGHT }} />
                       </div>
                     </Link>
-                  ))}
+                  ));
+                  })()}
                 </TabsContent>
                 <TabsContent value="exams" className="mt-0">
                   {upcomingExams.length===0 ? (
