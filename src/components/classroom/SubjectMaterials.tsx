@@ -16,7 +16,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { getSignedUrl, removeStorageFile } from "@/integrations/supabase/storageClient";
 import { useAuth } from "@/contexts/AuthContext";
-import { useAcademicLevels } from "@/hooks/useAcademicLevels";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { usePrivateStudent } from "@/hooks/usePrivateStudent";
 import { toast } from "@/hooks/use-toast";
@@ -37,6 +36,7 @@ const BUCKET = "subject-files";
 
 type MatType = "PDF" | "Video" | "Audio" | "Image" | "Link" | "Text" | "Document";
 type Level   = "beginner" | "intermediate" | "advanced";
+const ALL_LEVELS: Level[] = ["beginner", "intermediate", "advanced"];
 
 const MAT_TYPES: MatType[] = ["PDF", "Video", "Audio", "Image", "Link", "Text", "Document"];
 
@@ -1097,8 +1097,6 @@ function RecordingMiniPlayer({ subjectId }: { subjectId: string }) {
 interface SubjectMaterialsProps { subjectId: string; subjectTitle?: string; }
 
 export default function SubjectMaterials({ subjectId, subjectTitle }: SubjectMaterialsProps) {
-  const { data: academicLevels = [] } = useAcademicLevels();
-  const ALL_LEVELS = academicLevels.map(l => l.slug);
   const { hasRole, profile } = useAuth();
   const { t } = useLanguage();
   const qc = useQueryClient();
