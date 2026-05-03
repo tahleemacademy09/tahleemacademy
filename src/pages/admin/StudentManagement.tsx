@@ -217,6 +217,7 @@ function CreateUserDialog({ session, onCreated, onClose }: { session: any; onCre
 export default function StudentManagement() {
   const { user: currentUser, session } = useAuth();
   const { data: academicLevels = [] } = useAcademicLevels();
+  const LEVELS = academicLevels.map(l => l.slug);
   const { toast }  = useToast();
   const navigate   = useNavigate();
 
