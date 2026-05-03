@@ -243,9 +243,9 @@ const QuestionDisplay = ({ tile, ayahText, loadingAyah, isParticipant, isObserve
 
 /* ── Video grid — adapts to role ────────────────────────────────── */
 const LiveVideoGrid = ({
-  activeUserId, isJudge, isObserver, allowControls,
+  activeUserId, isJudge, isObserver, allowControls, activePStatus,
 }: {
-  activeUserId:string|null; isJudge:boolean; isObserver:boolean; allowControls:boolean;
+  activeUserId:string|null; isJudge:boolean; isObserver:boolean; allowControls:boolean; activePStatus?:string|null;
 }) => {
   const { localParticipant } = useLocalParticipant();
   const remoteParticipants   = useRemoteParticipants();
@@ -257,19 +257,32 @@ const LiveVideoGrid = ({
 
   const judgeRemote  = remoteParticipants.find(p=>getMeta(p).role==="judge");
   const activeRemote = remoteParticipants.find(p=>getMeta(p).user_id===activeUserId);
+  const localPub     = localParticipant?.getTrackPublication(Track.Source.Camera);
+  const judgeRemotePub  = judgeRemote?.getTrackPublication(Track.Source.Camera);
+  const activeRemotePub = activeRemote?.getTrackPublication(Track.Source.Camera);
 
-  // Dominant: active participant's camera
-  const dominantP   = iAmActive ? null : activeRemote ?? null;
+  // Judge is dominant when participant is NOT yet reciting (idle, called-but-picking)
+  // Participant is dominant when actively reciting
+  const participantIsReciting = activePStatus === "reciting";
+  const judgeIsDominant = !participantIsReciting;
+
+  // Compute dominant and pip
+  const dominantP   = judgeIsDominant
+    ? (iAmJudge ? null : judgeRemote ?? null)
+    : (iAmActive ? null : activeRemote ?? null);
   const dominantPub = dominantP?.getTrackPublication(Track.Source.Camera);
-  const localPub    = localParticipant?.getTrackPublication(Track.Source.Camera);
+  const dominantIsLocal = judgeIsDominant ? !!iAmJudge : !!iAmActive;
 
-  // PiP: judge's camera (or local for judge)
-  const judgeRemotePub = judgeRemote?.getTrackPublication(Track.Source.Camera);
-  const pipP    = iAmJudge ? null : judgeRemote ?? null;
-  const pipPub  = iAmJudge ? localPub : judgeRemotePub;
+  const pipP = judgeIsDominant
+    ? (iAmActive ? null : activeRemote ?? null)
+    : (iAmJudge  ? null : judgeRemote ?? null);
+  const pipPub = judgeIsDominant
+    ? (iAmActive ? localPub : activeRemotePub)
+    : (iAmJudge  ? localPub : judgeRemotePub);
+  const pipIsLocal = judgeIsDominant ? !!iAmActive : !!iAmJudge;
 
-  const hasDominant = !!(dominantPub?.videoTrack || (iAmActive && localPub?.videoTrack));
-  const hasPip      = !!(pipPub?.videoTrack);
+  const hasDominant = !!(dominantPub?.videoTrack || (dominantIsLocal && localPub?.videoTrack));
+  const hasPip      = !!(pipPub?.videoTrack || (pipIsLocal && localPub?.videoTrack));
 
   if (!hasDominant && !hasPip) return (
     <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:10}}>
@@ -280,24 +293,27 @@ const LiveVideoGrid = ({
     </div>
   );
 
+  const dominantLabel = judgeIsDominant
+    ? `⚖️ ${dominantP ? getMeta(dominantP).name||"Judge" : "Judge"}`
+    : `🎙️ ${dominantP ? getMeta(dominantP).name||"Participant" : "You"}`;
+  const pipLabel = judgeIsDominant ? "🎙️ Participant" : "⚖️ Judge";
+
   return (
     <div style={{position:"relative",width:"100%",height:"100%"}}>
-      {/* Main video — no mirror on remote tracks, and explicitly remove any transform on local */}
+      {/* Main video (dominant) */}
       {hasDominant && (
         <div style={{width:"100%",height:"100%",position:"relative"}}>
           {dominantPub?.videoTrack
             ? <VideoTrack trackRef={{participant:dominantP!,source:Track.Source.Camera,publication:dominantPub}} style={{width:"100%",height:"100%",objectFit:"cover",transform:"none"}}/>
-            : iAmActive && localPub?.videoTrack
+            : dominantIsLocal && localPub?.videoTrack
               ? <VideoTrack trackRef={{participant:localParticipant!,source:Track.Source.Camera,publication:localPub!}} style={{width:"100%",height:"100%",objectFit:"cover",transform:"none"}}/>
               : null
           }
-          {/* Name label — bottom left, no overlap */}
           <div style={{position:"absolute",bottom:8,left:8,background:"rgba(0,0,0,.75)",borderRadius:8,padding:"3px 8px",maxWidth:"60%"}}>
             <span style={{color:"#fff",fontSize:11,fontWeight:700,fontFamily:"Cairo,sans-serif",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",display:"block"}}>
-              🎙️ {dominantP ? getMeta(dominantP).name||"Participant" : "You"} <span style={{color:GREEN}}>• Live</span>
+              {dominantLabel} <span style={{color:GREEN}}>• Live</span>
             </span>
           </div>
-          {/* VIEWING badge for observers */}
           {isObserver && (
             <div style={{position:"absolute",top:8,right:8,background:"rgba(0,0,0,.7)",border:"1px solid rgba(255,255,255,.2)",borderRadius:8,padding:"3px 10px"}}>
               <span style={{color:"rgba(255,255,255,.7)",fontSize:10,fontWeight:700,letterSpacing:1}}>👁️ VIEWING</span>
@@ -305,17 +321,17 @@ const LiveVideoGrid = ({
           )}
         </div>
       )}
-      {/* Judge PiP — bottom right, no overflow */}
+      {/* PiP — bottom right, smaller */}
       {hasPip && (
-        <div style={{position:"absolute",bottom:10,right:10,width:80,height:108,borderRadius:10,overflow:"hidden",border:"2px solid rgba(201,168,76,.55)",boxShadow:"0 4px 18px rgba(0,0,0,.65)",flexShrink:0}}>
-          {iAmJudge && localPub?.videoTrack
-            ? <VideoTrack trackRef={{participant:localParticipant!,source:Track.Source.Camera,publication:localPub!}} style={{width:"100%",height:"100%",objectFit:"cover",transform:"none"}}/>
-            : pipP && pipPub?.videoTrack
-              ? <VideoTrack trackRef={{participant:pipP,source:Track.Source.Camera,publication:pipPub}} style={{width:"100%",height:"100%",objectFit:"cover",transform:"none"}}/>
+        <div style={{position:"absolute",bottom:10,right:10,width:68,height:90,borderRadius:9,overflow:"hidden",border:"2px solid rgba(201,168,76,.55)",boxShadow:"0 4px 18px rgba(0,0,0,.65)",flexShrink:0}}>
+          {pipP && pipPub?.videoTrack
+            ? <VideoTrack trackRef={{participant:pipP,source:Track.Source.Camera,publication:pipPub}} style={{width:"100%",height:"100%",objectFit:"cover",transform:"none"}}/>
+            : pipIsLocal && localPub?.videoTrack
+              ? <VideoTrack trackRef={{participant:localParticipant!,source:Track.Source.Camera,publication:localPub!}} style={{width:"100%",height:"100%",objectFit:"cover",transform:"none"}}/>
               : null
           }
           <div style={{position:"absolute",bottom:0,left:0,right:0,background:"rgba(0,0,0,.75)",padding:"2px 4px",textAlign:"center"}}>
-            <span style={{color:GOLD,fontSize:8,fontWeight:700}}>⚖️ Judge</span>
+            <span style={{color:GOLD,fontSize:7,fontWeight:700}}>{pipLabel}</span>
           </div>
         </div>
       )}
@@ -344,14 +360,16 @@ const CameraControls = ({ isActive, isJudge }: { isActive:boolean; isJudge:boole
   }, [isActive, isJudge]);
 
   return (
-    <div style={{display:"flex",gap:8,justifyContent:"center"}}>
+    <div style={{display:"flex",gap:6,justifyContent:"center"}}>
       <button onClick={async()=>{ const n=!micOn; await localParticipant.setMicrophoneEnabled(n); setMicOn(n); }}
-        style={{background:micOn?`${GREEN}22`:"rgba(0,0,0,.6)",border:`1.5px solid ${micOn?GREEN:"rgba(255,255,255,.3)"}`,borderRadius:10,padding:"7px 14px",cursor:"pointer",color:micOn?GREEN:"rgba(255,255,255,.7)",display:"flex",alignItems:"center",gap:5,fontSize:12,fontFamily:"Cairo,sans-serif",fontWeight:700,transition:"all .2s"}}>
-        {micOn?<Mic size={14}/>:<MicOff size={14}/>} {micOn?"Mic On":"Unmute"}
+        style={{background:micOn?`${GREEN}22`:"rgba(0,0,0,.6)",border:`1.5px solid ${micOn?GREEN:"rgba(255,255,255,.3)"}`,borderRadius:8,padding:"4px 8px",cursor:"pointer",color:micOn?GREEN:"rgba(255,255,255,.7)",display:"flex",flexDirection:"column",alignItems:"center",gap:1,fontFamily:"Cairo,sans-serif",fontWeight:700,minWidth:40,transition:"all .2s"}}>
+        {micOn?<Mic size={12}/>:<MicOff size={12}/>}
+        <span style={{fontSize:8,lineHeight:1.2}}>{micOn?"On":"Mute"}</span>
       </button>
       <button onClick={async()=>{ const n=!camOn; await localParticipant.setCameraEnabled(n); setCamOn(n); }}
-        style={{background:camOn?`${GREEN}22`:"rgba(0,0,0,.6)",border:`1.5px solid ${camOn?GREEN:"rgba(255,255,255,.3)"}`,borderRadius:10,padding:"7px 14px",cursor:"pointer",color:camOn?GREEN:"rgba(255,255,255,.7)",display:"flex",alignItems:"center",gap:5,fontSize:12,fontFamily:"Cairo,sans-serif",fontWeight:700,transition:"all .2s"}}>
-        {camOn?<Video size={14}/>:<VideoOff size={14}/>} Cam
+        style={{background:camOn?`${GREEN}22`:"rgba(0,0,0,.6)",border:`1.5px solid ${camOn?GREEN:"rgba(255,255,255,.3)"}`,borderRadius:8,padding:"4px 8px",cursor:"pointer",color:camOn?GREEN:"rgba(255,255,255,.7)",display:"flex",flexDirection:"column",alignItems:"center",gap:1,fontFamily:"Cairo,sans-serif",fontWeight:700,minWidth:40,transition:"all .2s"}}>
+        {camOn?<Video size={12}/>:<VideoOff size={12}/>}
+        <span style={{fontSize:8,lineHeight:1.2}}>Cam</span>
       </button>
     </div>
   );
@@ -604,7 +622,17 @@ export default function MustabaqahPage() {
     if (!data) return;
     setParticipants(data as Participant[]);
     if (comp.current_participant_id) setActiveP((data as Participant[]).find(p=>p.id===comp.current_participant_id)||null);
-    if (user) { const mine=(data as Participant[]).find(p=>p.user_id===user.id); if (mine) setMyParticipant(mine); }
+    if (user) {
+      const mine=(data as Participant[]).find(p=>p.user_id===user.id);
+      if (mine) setMyParticipant(prev => {
+        // Guard: don't let a stale DB read downgrade a locally-set active status
+        // (judge fires DB update async AFTER broadcasting CALLED, so DB may lag)
+        if (prev && (prev.status==="called"||prev.status==="reciting") && mine.status==="waiting") {
+          return {...mine, status: prev.status};
+        }
+        return mine;
+      });
+    }
   },[user]);
 
   const loadAttempts = useCallback(async () => {
@@ -1325,18 +1353,20 @@ export default function MustabaqahPage() {
       </div>
     );
 
-    const videoHeight = isObserver ? "45vh" : 220;
+    const videoHeight = isObserver ? "45vh" : 180;
 
     if (lkConnected && livekitToken && livekitUrl) return (
       <LiveKitRoom serverUrl={livekitUrl} token={livekitToken} connect={lkConnected} audio={true} video={showControls} options={LK_OPTIONS}>
         <RoomAudioRenderer/>
         <AudioEnabler onEnabled={() => setAudioReady(true)}/>
         <div style={{height:videoHeight,margin:"10px 16px 0",borderRadius:18,overflow:"hidden",position:"relative",background:"rgba(0,0,0,.85)",border:"1px solid rgba(201,168,76,.2)",flexShrink:0}}>
-          <LiveVideoGrid activeUserId={activeP?.user_id??null} isJudge={isJudge} isObserver={isObserver} allowControls={showControls}/>
-          {/* Controls ONLY for judge + active participant */}
+          <LiveVideoGrid activeUserId={activeP?.user_id??null} isJudge={isJudge} isObserver={isObserver} allowControls={showControls} activePStatus={activeP?.status??null}/>
+          {/* Compact controls overlay — bottom center, small */}
           {showControls && (
-            <div style={{position:"absolute",bottom:8,left:0,right:0,display:"flex",justifyContent:"center",pointerEvents:"auto"}}>
-              <CameraControls isActive={!!iAmParticipantActive} isJudge={isJudge}/>
+            <div style={{position:"absolute",bottom:6,left:0,right:0,display:"flex",justifyContent:"center",pointerEvents:"auto"}}>
+              <div style={{background:"rgba(0,0,0,.55)",backdropFilter:"blur(6px)",borderRadius:10,padding:"3px 6px",display:"flex",gap:4}}>
+                <CameraControls isActive={!!iAmParticipantActive} isJudge={isJudge}/>
+              </div>
             </div>
           )}
         </div>
