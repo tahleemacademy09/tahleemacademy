@@ -147,6 +147,52 @@ export default function ProfileSettings() {
   });
 
   // ── Save profile ──────────────────────────────────────────────────
+  // ── Telegram link ────────────────────────────────────────────────
+  const generateTgCode = async () => {
+    if (!user) return;
+    const code = `${user.id.slice(0, 6)}-${Math.random().toString(36).slice(2, 8)}`;
+    const { error } = await supabase
+      .from("profiles")
+      .update({ telegram_link_code: code })
+      .eq("user_id", user.id);
+    if (error) {
+      toast({ title: "Could not generate code", description: error.message, variant: "destructive" });
+      return;
+    }
+    setTgCode(code);
+    setTgPolling(true);
+  };
+
+  const unlinkTelegram = async () => {
+    if (!user) return;
+    const { error } = await supabase
+      .from("profiles")
+      .update({ telegram_chat_id: null, telegram_link_code: null })
+      .eq("user_id", user.id);
+    if (error) { toast({ title: "Unlink failed", description: error.message, variant: "destructive" }); return; }
+    setTgChatId(null); setTgCode(null); setTgPolling(false);
+    toast({ title: "✅ Telegram unlinked" });
+  };
+
+  // Poll for link confirmation while a code is active
+  useEffect(() => {
+    if (!tgPolling || !user || tgChatId) return;
+    const t = setInterval(async () => {
+      const { data } = await supabase
+        .from("profiles")
+        .select("telegram_chat_id, telegram_link_code")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if ((data as any)?.telegram_chat_id) {
+        setTgChatId((data as any).telegram_chat_id);
+        setTgCode(null);
+        setTgPolling(false);
+        toast({ title: "✅ Telegram linked! You'll get notifications there." });
+      }
+    }, 4000);
+    return () => clearInterval(t);
+  }, [tgPolling, user, tgChatId]);
+
   const saveProfile = async () => {
     if (!user) return;
     setSaving(true);
