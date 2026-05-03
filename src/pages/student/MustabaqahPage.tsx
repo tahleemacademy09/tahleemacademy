@@ -934,7 +934,7 @@ export default function MustabaqahPage() {
     const {count}=await supabase.from("musabaqah_participants" as any).select("id",{count:"exact",head:true}).eq("competition_id",(comp as Competition).id);
     const {data:participant,error:insertErr}=await supabase.from("musabaqah_participants" as any).insert({
       competition_id:(comp as Competition).id,user_id:user?.id||null,participant_name:name,school:joinForm.school||null,
-      queue_position:(count??0)+1,status:"pending",total_score:0,stage_scores:{},bell_counts:{},proctor_flagged:false,camera_on:false,
+      queue_position:(count??0)+1,status:"waiting",total_score:0,stage_scores:{},bell_counts:{},proctor_flagged:false,camera_on:false,
     }).select().single();
     setLoading(false);
     if (insertErr) { toast({title:"Failed",description:insertErr.message,variant:"destructive"}); return; }
