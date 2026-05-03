@@ -643,6 +643,9 @@ export default function MustabaqahPage() {
         setPickedTile(null); setStageTiles([]); setAyahText(null); setPickerParticipantId(null);
         const mine=myParticipantRef.current;
         if (payload.participant_id===mine?.id) {
+          // Update local status immediately — don't wait for DB round-trip
+          setMyParticipant(p=>p?{...p,status:"called"}:p);
+          if (mine) myParticipantRef.current={...mine,status:"called"};
           getACtx().state==="running"?playCalled():getACtx().resume().then(playCalled);
           try{navigator.vibrate?.([400,100,400,100,800]);}catch{}
           toast({title:"🎙️ You have been called!",description:"Get ready to recite."});
@@ -660,14 +663,22 @@ export default function MustabaqahPage() {
       .on("broadcast",{event:"START_RECITING"},({payload}:any)=>{
         loadParticipants();
         const mine=myParticipantRef.current;
-        if (mine&&(mine.status==="called"||mine.status==="reciting")) toast({title:"▶️ Start reciting now!"});
+        if (mine && payload.participant_id===mine.id) {
+          // Update local status immediately so timer/controls appear
+          setMyParticipant(p=>p?{...p,status:"reciting"}:p);
+          if (mine) myParticipantRef.current={...mine,status:"reciting"};
+          toast({title:"▶️ Start reciting now!"});
+        }
       })
       .on("broadcast",{event:"SCORE_SUBMITTED"},({payload}:any)=>{
         loadParticipants(); loadAttempts();
         setShowScore(false); setShowTilePicker(false); setTimerExpired(false);
         setActiveP(null); setCurAttempt(null); setPickedTile(null); setPickerParticipantId(null);
         const mine=myParticipantRef.current;
-        if (payload.participant_id===mine?.id) toast({title:`🏆 Your score: ${payload.score} pts`});
+        if (payload.participant_id===mine?.id) {
+          setMyParticipant(p=>p?{...p,status:"completed",total_score:(p.total_score||0)+payload.score}:p);
+          toast({title:`🏆 Your score: ${payload.score} pts`});
+        }
       })
       .on("broadcast",{event:"STAGE_CHANGE"},({payload}:any)=>{
         setCompetition(c=>c?{...c,current_stage:payload.stage}:c);
@@ -689,6 +700,15 @@ export default function MustabaqahPage() {
         const id=Math.random().toString(36).slice(2); const x=10+Math.random()*80;
         setFloatReactions(r=>[...r,{id,emoji:payload.emoji,name:payload.name,x}]);
         setTimeout(()=>setFloatReactions(r=>r.filter(rx=>rx.id!==id)),3000);
+      })
+      .on("broadcast",{event:"PARTICIPANT_APPROVED"},({payload}:any)=>{
+        const mine=myParticipantRef.current;
+        if (mine&&payload.participant_id===mine.id) {
+          setMyParticipant(p=>p?{...p,status:"waiting"}:p);
+          if (mine) myParticipantRef.current={...mine,status:"waiting"};
+          toast({title:"✅ You've been approved!",description:"You are now in the queue."});
+          try{navigator.vibrate?.([200,100,200]);}catch{}
+        }
       })
       .on("postgres_changes" as any,{event:"*",schema:"public",table:"musabaqah_participants",filter:`competition_id=eq.${competition.id}`},()=>{ loadParticipants(); })
       .subscribe(async()=>{
@@ -719,8 +739,13 @@ export default function MustabaqahPage() {
     const count = comp.scope_config?.tiles_per_stage ?? 10;
     const customs: string[] = comp.scope_config?.custom_questions ?? [];
     if (customs.length > 0) {
-      return Array.from({length:Math.min(count, customs.length||count)}, (_,i) => ({
-        num: i+1, label: customs[i] ?? genQuestion(comp.scope_type).label, labelAr: "",
+      // Each stage gets its own slice of custom questions sequentially
+      const stageOffset = (comp.current_stage - 1) * count;
+      const slice = customs.slice(stageOffset, stageOffset + count);
+      // If we've exhausted custom questions, wrap around
+      const effective = slice.length > 0 ? slice : customs.slice(0, count);
+      return Array.from({length: Math.min(count, effective.length)}, (_,i) => ({
+        num: i+1, label: effective[i] ?? genQuestion(comp.scope_type).label, labelAr: "",
         surah: 0, ayah: 0, surahName: "", surahAr: "",
       }));
     }
@@ -934,7 +959,7 @@ export default function MustabaqahPage() {
     const {count}=await supabase.from("musabaqah_participants" as any).select("id",{count:"exact",head:true}).eq("competition_id",(comp as Competition).id);
     const {data:participant,error:insertErr}=await supabase.from("musabaqah_participants" as any).insert({
       competition_id:(comp as Competition).id,user_id:user?.id||null,participant_name:name,school:joinForm.school||null,
-      queue_position:(count??0)+1,status:"waiting",total_score:0,stage_scores:{},bell_counts:{},proctor_flagged:false,camera_on:false,
+      queue_position:(count??0)+1,status:"pending",total_score:0,stage_scores:{},bell_counts:{},proctor_flagged:false,camera_on:false,
     }).select().single();
     setLoading(false);
     if (insertErr) { toast({title:"Failed",description:insertErr.message,variant:"destructive"}); return; }
@@ -985,6 +1010,7 @@ export default function MustabaqahPage() {
   };
 
   const waiting = participants.filter(p=>p.status==="waiting");
+  const pending = participants.filter(p=>p.status==="pending");
   const done    = participants.filter(p=>p.status==="completed");
   const allDone = waiting.length===0 && participants.length>0 && !activeP;
   const totalCrit = competition?.use_criteria_scoring ? SCORING_CRITERIA.reduce((s,c)=>s+(Number(scoreBreak[c.key])||0),0) : Number(scoreBreak.tajweed)||0;
@@ -1674,6 +1700,7 @@ export default function MustabaqahPage() {
                           </div>
                           <button onClick={async()=>{
                             await supabase.from("musabaqah_participants" as any).update({status:"waiting"} as any).eq("id",p.id);
+                            broadcast("PARTICIPANT_APPROVED",{participant_id:p.id});
                             loadParticipants();
                             toast({title:`✅ ${p.participant_name} approved`});
                           }} style={{background:"rgba(34,197,94,.2)",color:GREEN,border:`1px solid ${GREEN}55`,borderRadius:9,padding:"5px 10px",cursor:"pointer",fontWeight:700,fontSize:12,fontFamily:"Cairo,sans-serif",flexShrink:0}}>
@@ -1749,11 +1776,26 @@ export default function MustabaqahPage() {
             {videoBlock(!!iAmParticipantActive)}
 
             <div style={{padding:"12px 16px 0"}}>
+              {myParticipant.status==="pending"&&(
+                <div className="glass-card" style={{borderRadius:18,padding:"28px 22px",textAlign:"center"}}>
+                  <div style={{fontSize:40,marginBottom:10,animation:"floatUp 4s ease-in-out infinite"}}>🕐</div>
+                  <div style={{color:"#a78bfa",fontWeight:900,fontSize:18,letterSpacing:.5}}>Awaiting Approval</div>
+                  <div style={{color:"rgba(255,255,255,.45)",fontSize:13,marginTop:8,lineHeight:1.7}}>
+                    The judge will admit you shortly.<br/>
+                    <strong style={{color:"#fff"}}>{myParticipant.participant_name}</strong>
+                    {myParticipant.school&&<span style={{color:"rgba(255,255,255,.35)"}}> · {myParticipant.school}</span>}
+                  </div>
+                  <div style={{marginTop:16,background:"rgba(167,139,250,.08)",border:"1px solid rgba(167,139,250,.2)",borderRadius:12,padding:"10px 14px",fontSize:12,color:"rgba(255,255,255,.3)"}}>
+                    🔒 Your entry is pending admin review
+                  </div>
+                </div>
+              )}
+
               {myParticipant.status==="waiting"&&(
                 <div className="glass-card" style={{borderRadius:18,padding:"22px",textAlign:"center"}}>
                   <div style={{fontSize:36,marginBottom:8,animation:"floatUp 4s ease-in-out infinite"}}>⏳</div>
                   <div style={{color:GOLD,fontWeight:800,fontSize:17}}>Waiting in Queue</div>
-                  <div style={{color:"rgba(255,255,255,.4)",fontSize:13,marginTop:4}}>Position #{myParticipant.queue_position} of {participants.length}</div>
+                  <div style={{color:"rgba(255,255,255,.4)",fontSize:13,marginTop:4}}>Position #{myParticipant.queue_position} of {participants.filter(p=>p.status!=="pending").length}</div>
                   <div style={{color:"rgba(255,255,255,.25)",fontSize:12,marginTop:10,lineHeight:1.7}}>Your judge will call you when it's your turn.</div>
                   {activeP&&activeP.id!==myParticipant.id&&(
                     <div style={{marginTop:12,background:"rgba(34,197,94,.08)",border:"1px solid rgba(34,197,94,.2)",borderRadius:12,padding:"10px 14px"}}>
