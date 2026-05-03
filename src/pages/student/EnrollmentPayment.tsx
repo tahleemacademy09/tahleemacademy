@@ -106,6 +106,7 @@ const EnrollmentPayment = () => {
   const [paying, setPaying]               = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [selectedTerms, setSelectedTerms]   = useState<Record<string,number>>({});
+  const [billingMode, setBillingMode]       = useState<"monthly"|"term">("monthly");
 
   const isAdmin   = hasRole("admin");
   const accStatus = getAccessStatus(profile);
@@ -180,11 +181,18 @@ const EnrollmentPayment = () => {
 
     const email = (profile as any).email || user.email || "";
     const ref   = `TAH-${user.id.slice(0,8)}-${Date.now()}`;
-    const activeTerm  = selectedTerms[selectedPlan.id] ?? 1;
-    const baseAmount  = selectedPlan.amount;
-    const termAmounts: Record<number,number> = { 1: baseAmount*3, 2: baseAmount*6, 3: Math.round(baseAmount*9*0.9) };
-    const amount      = termAmounts[activeTerm] || baseAmount;
-    const termMonths  = activeTerm * 3;
+    const baseAmount  = selectedPlan.amount; // monthly rate
+    let amount: number;
+    let termMonths: number;
+    if (billingMode === "monthly") {
+      amount     = baseAmount;
+      termMonths = 1;
+    } else {
+      const activeTerm = selectedTerms[selectedPlan.id] ?? 1;
+      const termAmounts: Record<number,number> = { 1: baseAmount*3, 2: baseAmount*6, 3: Math.round(baseAmount*9*0.9) };
+      amount     = termAmounts[activeTerm] || baseAmount*3;
+      termMonths = activeTerm * 3;
+    }
 
     // Demo mode
     if (!PAYSTACK_KEY) {
@@ -492,9 +500,23 @@ const EnrollmentPayment = () => {
                     {levelDisplay} Level — Choose Your Plan
                   </p>
 
-                  {/* Show one card per plan with term selector: 1, 2, or 3 terms */}
+                  {/* Billing mode toggle */}
+                  <div style={{ display:"flex", background:"#f0f0f0", borderRadius:10, padding:3, gap:3 }}>
+                    {(["monthly","term"] as const).map(mode => (
+                      <button key={mode} type="button"
+                        onClick={() => setBillingMode(mode)}
+                        style={{ flex:1, padding:"8px 0", borderRadius:8, border:"none", fontWeight:700, fontSize:13, cursor:"pointer", transition:"all .15s",
+                          background: billingMode===mode ? "#064E3B" : "transparent",
+                          color:      billingMode===mode ? "#fff"    : "#777",
+                        }}>
+                        {mode === "monthly" ? "📅 Monthly" : "📦 Pay per Term"}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Show one card per plan */}
                   {plans.map(plan => {
-                    const baseAmount = plan.amount;
+                    const baseAmount = plan.amount; // monthly rate
                     const currency   = plan.currency || "NGN";
                     const terms = [
                       { n:1, label:"1 Term",  months:3,  amount: baseAmount * 3,                    save: 0 },
@@ -503,6 +525,7 @@ const EnrollmentPayment = () => {
                     ];
                     const activeTerm = selectedTerms[plan.id] ?? 1;
                     const chosen = terms.find(t => t.n === activeTerm) || terms[0];
+                    const displayAmount = billingMode === "monthly" ? baseAmount : chosen.amount;
                     return (
                       <div key={plan.id} className="ep-pcard sel" style={{ display:"flex", flexDirection:"column", gap:14 }}>
                         {/* Plan header */}
@@ -512,33 +535,39 @@ const EnrollmentPayment = () => {
                             <p style={{ fontSize:12, color:"#aaa", margin:0, fontFamily:"serif" }}>رسوم الفصل الدراسي</p>
                           </div>
                           <div style={{ textAlign:"right" as const }}>
-                            <p style={{ fontSize:26, fontWeight:900, color:"#064E3B", margin:"0 0 2px" }}>{fmt(chosen.amount, currency)}</p>
-                            <p style={{ fontSize:11, color:"#aaa", margin:0 }}>{chosen.months} months</p>
-                          </div>
-                        </div>
-                        {/* Term selector */}
-                        <div>
-                          <p style={{ fontSize:11, fontWeight:700, color:"#aaa", textTransform:"uppercase" as const, letterSpacing:.5, margin:"0 0 8px" }}>How many terms?</p>
-                          <div style={{ display:"flex", gap:8 }}>
-                            {terms.map(t => (
-                              <button key={t.n} type="button"
-                                onClick={() => { setSelectedTerms(prev => ({...prev, [plan.id]: t.n})); setSelectedPlan(plan); }}
-                                style={{ flex:1, padding:"10px 6px", borderRadius:10, border:`2px solid ${activeTerm===t.n?"#064E3B":"#e0e0e0"}`, background:activeTerm===t.n?"#064E3B":"#fff", color:activeTerm===t.n?"#fff":"#555", fontWeight:800, fontSize:13, cursor:"pointer", transition:"all .15s", position:"relative" as const }}>
-                                {t.label}
-                                {t.save > 0 && (
-                                  <span style={{ position:"absolute", top:-8, right:-4, background:"#C9922A", color:"#fff", borderRadius:10, padding:"1px 6px", fontSize:9, fontWeight:800 }}>
-                                    -10%
-                                  </span>
-                                )}
-                              </button>
-                            ))}
-                          </div>
-                          {chosen.save > 0 && (
-                            <p style={{ fontSize:11, color:"#C9922A", fontWeight:700, margin:"6px 0 0" }}>
-                              🎉 You save {fmt(chosen.save, currency)} by paying 3 terms upfront!
+                            <p style={{ fontSize:26, fontWeight:900, color:"#064E3B", margin:"0 0 2px" }}>{fmt(displayAmount, currency)}</p>
+                            <p style={{ fontSize:11, color:"#aaa", margin:0 }}>
+                              {billingMode === "monthly" ? "per month" : `${chosen.months} months`}
                             </p>
-                          )}
+                          </div>
                         </div>
+
+                        {/* Term selector — only shown in term mode */}
+                        {billingMode === "term" && (
+                          <div>
+                            <p style={{ fontSize:11, fontWeight:700, color:"#aaa", textTransform:"uppercase" as const, letterSpacing:.5, margin:"0 0 8px" }}>How many terms?</p>
+                            <div style={{ display:"flex", gap:8 }}>
+                              {terms.map(t => (
+                                <button key={t.n} type="button"
+                                  onClick={() => { setSelectedTerms(prev => ({...prev, [plan.id]: t.n})); setSelectedPlan(plan); }}
+                                  style={{ flex:1, padding:"10px 6px", borderRadius:10, border:`2px solid ${activeTerm===t.n?"#064E3B":"#e0e0e0"}`, background:activeTerm===t.n?"#064E3B":"#fff", color:activeTerm===t.n?"#fff":"#555", fontWeight:800, fontSize:13, cursor:"pointer", transition:"all .15s", position:"relative" as const }}>
+                                  {t.label}
+                                  {t.save > 0 && (
+                                    <span style={{ position:"absolute", top:-8, right:-4, background:"#C9922A", color:"#fff", borderRadius:10, padding:"1px 6px", fontSize:9, fontWeight:800 }}>
+                                      -10%
+                                    </span>
+                                  )}
+                                </button>
+                              ))}
+                            </div>
+                            {chosen.save > 0 && (
+                              <p style={{ fontSize:11, color:"#C9922A", fontWeight:700, margin:"6px 0 0" }}>
+                                🎉 You save {fmt(chosen.save, currency)} by paying 3 terms upfront!
+                              </p>
+                            )}
+                          </div>
+                        )}
+
                         {/* Activate this plan */}
                         {selectedPlan?.id !== plan.id && (
                           <button type="button" onClick={() => { setSelectedPlan(plan); setSelectedTerms(prev => ({...prev, [plan.id]: activeTerm})); }}
@@ -548,7 +577,7 @@ const EnrollmentPayment = () => {
                         )}
                         {selectedPlan?.id === plan.id && (
                           <div style={{ display:"flex", alignItems:"center", gap:6, color:"#075E54", fontWeight:700, fontSize:12 }}>
-                            <CheckCircle2 size={14}/> Selected — {chosen.label} · {fmt(chosen.amount, currency)}
+                            <CheckCircle2 size={14}/> Selected — {billingMode === "monthly" ? `Monthly · ${fmt(baseAmount, currency)}` : `${chosen.label} · ${fmt(chosen.amount, currency)}`}
                           </div>
                         )}
                       </div>
@@ -557,16 +586,20 @@ const EnrollmentPayment = () => {
 
                   {/* Order summary */}
                   {selectedPlan && (() => {
-                    const st = selectedTerms[selectedPlan.id] ?? 1;
                     const ba = selectedPlan.amount;
-                    const ta: Record<number,number> = { 1:ba*3, 2:ba*6, 3:Math.round(ba*9*0.9) };
-                    const totalAmt = ta[st] || ba;
+                    const st = selectedTerms[selectedPlan.id] ?? 1;
+                    const totalAmt = billingMode === "monthly"
+                      ? ba
+                      : ({ 1:ba*3, 2:ba*6, 3:Math.round(ba*9*0.9) } as Record<number,number>)[st] || ba*3;
+                    const termsLabel = billingMode === "monthly"
+                      ? "1 Month"
+                      : `${st} Term${st>1?"s":""} (${st*3} months)`;
                     return (
                       <div style={{ background:"#F8FAF8", borderRadius:13, padding:"15px 16px", border:"1px solid #E0EDE0" }}>
                         <p style={{ fontSize:11, fontWeight:700, color:"#aaa", marginBottom:12, textTransform:"uppercase" as const, letterSpacing:.5 }}>Order Summary</p>
                         {[
                           { label:"Plan",     val: selectedPlan.name },
-                          { label:"Terms",    val: `${st} Term${st>1?"s":""} (${st*3} months)` },
+                          { label:"Period",   val: termsLabel },
                           { label:"Level",    val: levelDisplay },
                           { label:"Total",    val: fmt(totalAmt, selectedPlan.currency), bold:true, green:true },
                         ].map((r, i) => (
@@ -588,7 +621,7 @@ const EnrollmentPayment = () => {
                   >
                     {paying
                       ? <><Loader2 style={{ width:20, height:20, animation:"spin .8s linear infinite" }}/> Processing…</>
-                      : <><CreditCard size={20}/> Pay {selectedPlan ? fmt((() => { const st=selectedTerms[selectedPlan.id]??1; const ba=selectedPlan.amount; return {1:ba*3,2:ba*6,3:Math.round(ba*9*0.9)}[st]||ba*3; })(), selectedPlan.currency) : "—"}</>
+                      : <><CreditCard size={20}/> Pay {selectedPlan ? fmt((() => { const ba=selectedPlan.amount; if(billingMode==="monthly") return ba; const st=selectedTerms[selectedPlan.id]??1; return ({1:ba*3,2:ba*6,3:Math.round(ba*9*0.9)} as Record<number,number>)[st]||ba*3; })(), selectedPlan.currency) : "—"}</>
                     }
                   </button>
 
