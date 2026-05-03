@@ -1,19 +1,10 @@
 /*
   dispatch-notification — universal notification fan-out.
-  Called by a Postgres trigger on every INSERT into public.notifications,
-  and also invokable manually from the client.
+  Triggered by Postgres on every INSERT into public.notifications.
 
-  For the target user it sends:
-    1) Web Push  (works when browser/phone is closed — VAPID)
-    2) Telegram  (if telegram_chat_id is linked on profile)
-
-  Body shape: { notification_id?: uuid }  OR
-              { user_id, title, message, link?, type? }
-
-  Required env vars:
-    SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
-    TELEGRAM_BOT_TOKEN   (from @BotFather)
-    VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT  (for web push)
+  Sends:
+    1) Web Push (VAPID)
+    2) Telegram via Lovable gateway
 */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -24,15 +15,16 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+const TELEGRAM_GATEWAY = "https://connector-gateway.lovable.dev/telegram";
+
 async function sendWebPush(
   sub: { endpoint: string; p256dh: string; auth: string },
-  payload: { title: string; message: string; url: string; tag: string; minutes_left?: number }
+  payload: { title: string; message: string; url: string; tag: string }
 ): Promise<void> {
   const VAPID_PRIVATE_KEY = Deno.env.get("VAPID_PRIVATE_KEY");
   const VAPID_PUBLIC_KEY  = Deno.env.get("VAPID_PUBLIC_KEY");
   const VAPID_SUBJECT     = Deno.env.get("VAPID_SUBJECT") ?? "mailto:admin@tahleemacademy.com";
   if (!VAPID_PRIVATE_KEY || !VAPID_PUBLIC_KEY) throw new Error("VAPID not configured");
-
   const webpush: any = await import("https://esm.sh/web-push@3.6.7");
   webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
   await webpush.sendNotification(
@@ -43,31 +35,32 @@ async function sendWebPush(
 }
 
 async function sendTelegram(chatId: string, title: string, message: string, link?: string): Promise<void> {
-  const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN");
-  if (!BOT_TOKEN) throw new Error("TELEGRAM_BOT_TOKEN not configured");
+  const LOVABLE_API_KEY  = Deno.env.get("LOVABLE_API_KEY");
+  const TELEGRAM_API_KEY = Deno.env.get("TELEGRAM_API_KEY");
+  if (!LOVABLE_API_KEY || !TELEGRAM_API_KEY) throw new Error("Telegram gateway not configured");
 
   const text =
     `🕌 <b>Tahleem Academy</b>\n` +
     `<b>${title}</b>\n\n${message}` +
     (link ? `\n\n🔗 <a href="${link}">Open Academy</a>` : "");
 
-  const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+  const res = await fetch(`${TELEGRAM_GATEWAY}/sendMessage`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id: chatId,
-      text,
-      parse_mode: "HTML",
-      disable_web_page_preview: false,
-    }),
+    headers: {
+      "Authorization":         `Bearer ${LOVABLE_API_KEY}`,
+      "X-Connection-Api-Key":  TELEGRAM_API_KEY,
+      "Content-Type":          "application/json",
+    },
+    body: JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML", disable_web_page_preview: false }),
   });
   if (!res.ok) throw new Error(`Telegram ${res.status}: ${await res.text()}`);
 }
 
-function absUrl(link: string | null | undefined, baseHost: string): string {
-  if (!link) return baseHost;
+function absUrl(link: string | null | undefined): string {
+  const base = "https://tahleemacademy.vercel.app";
+  if (!link) return base;
   if (link.startsWith("http")) return link;
-  return `${baseHost}${link.startsWith("/") ? "" : "/"}${link}`;
+  return `${base}${link.startsWith("/") ? "" : "/"}${link}`;
 }
 
 Deno.serve(async (req) => {
@@ -106,8 +99,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    const baseHost = "https://tahleemacademy.vercel.app";
-    const fullUrl  = absUrl(link, baseHost);
+    const fullUrl = absUrl(link);
     const results: Record<string, string> = {};
 
     // ── 1. Web Push ──
@@ -132,7 +124,7 @@ Deno.serve(async (req) => {
     }
 
     // ── 2. Telegram ──
-    // FIX: profiles are keyed by user_id, not id
+    // FIXED: profiles use user_id as the lookup key, not id
     const { data: prof } = await supabase
       .from("profiles")
       .select("telegram_chat_id")
