@@ -370,27 +370,6 @@ const StudentDashboard = () => {
 
       <div style={{ maxWidth: 720, margin: "0 auto", padding: "20px 16px 40px", display: "flex", flexDirection: "column", gap: 18 }}>
 
-        {/* ── Private Student Banner ── */}
-        {isPrivateStudent && (
-          <div style={{ background: allowGeneralAccess ? "#FDF4FF" : "linear-gradient(135deg,#7C3AED,#9333EA)", borderRadius: 18, padding: "16px 18px", display: "flex", alignItems: "center", gap: 14, boxShadow: allowGeneralAccess ? "0 2px 12px rgba(124,58,237,.1)" : "0 4px 20px rgba(124,58,237,.35)" }}>
-            <div style={{ width: 48, height: 48, borderRadius: 14, background: allowGeneralAccess ? "#F3E8FF" : "rgba(255,255,255,.2)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-              <span style={{ fontSize: 24 }}>{allowGeneralAccess ? "🔓" : "🔒"}</span>
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <p style={{ fontSize: 13, fontWeight: 900, color: allowGeneralAccess ? "#7C3AED" : "#fff", margin: "0 0 3px" }}>
-                Private Student
-              </p>
-              <p style={{ fontSize: 11, color: allowGeneralAccess ? "#9CA3AF" : "rgba(255,255,255,.75)", margin: 0, lineHeight: 1.5 }}>
-                {allowGeneralAccess
-                  ? "You have private sessions + access to the general schedule."
-                  : "Your timetable, classes and materials are exclusive to your private sessions."}
-              </p>
-            </div>
-            <span style={{ fontSize: 10, padding: "4px 10px", borderRadius: 20, background: allowGeneralAccess ? "#EDE9FE" : "rgba(255,255,255,.2)", color: allowGeneralAccess ? "#7C3AED" : "#fff", fontWeight: 800, flexShrink: 0, border: allowGeneralAccess ? "1px solid #D8B4FE" : "none" }}>
-              {allowGeneralAccess ? "General Access ON" : "Private Only"}
-            </span>
-          </div>
-        )}
         <div style={{
           background: `linear-gradient(160deg, ${DARK_GREEN} 0%, ${MID_GREEN} 50%, #1a5c35 100%)`,
           borderRadius: 22, overflow: "hidden", position: "relative",
@@ -405,8 +384,43 @@ const StudentDashboard = () => {
               <span className="dwani-text" style={{ fontSize:12, color:"rgba(255,255,255,0.9)", fontWeight:700, letterSpacing:"0.06em", textShadow:"0 1px 6px rgba(0,0,0,0.3)", whiteSpace:"nowrap" as const }}>
                 بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ
               </span>
-              <div style={{ background:GOLD, borderRadius:30, padding:"6px 14px", display:"flex", alignItems:"center", gap:6, boxShadow:`0 2px 10px ${GOLD}66` }}>
-                <Calendar style={{ width:12, height:12, color:DARK_GREEN }} />                <span style={{ fontSize:12, color:DARK_GREEN, fontFamily:"'Amiri',serif", fontWeight:900 }} dir="rtl">{hijri.full}</span>
+              <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                {/* Level / Type badge */}
+                {(() => {
+                  const rawLevel = (displayProfile as any)?.level || (displayProfile as any)?.course_level;
+                  if (isPrivateStudent) {
+                    const hasAccess = allowGeneralAccess;
+                    return (
+                      <span style={{ display:"flex", alignItems:"center", gap:4, fontSize:10, fontWeight:800, padding:"4px 10px", borderRadius:20,
+                        background: hasAccess ? "rgba(255,255,255,0.15)" : "rgba(255,255,255,0.12)",
+                        color:"#fff", border:"1px solid rgba(255,255,255,0.25)", backdropFilter:"blur(4px)", lineHeight:1 }}>
+                        <Lock style={{ width:9, height:9, flexShrink:0 }} />
+                        <span style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:1 }}>
+                          <span>{hasAccess ? "Private + General" : "Private"}</span>
+                          <span style={{ fontFamily:"'Amiri',serif", fontSize:9, opacity:0.85 }}>{hasAccess ? "خاص + عام" : "خاص"}</span>
+                        </span>
+                      </span>
+                    );
+                  }
+                  const levelLabels: Record<string,{en:string;ar:string;bg:string;color:string}> = {
+                    beginner:     { en:"Beginner",     ar:"مبتدئ",  bg:"rgba(34,197,94,0.2)",  color:"#86efac" },
+                    intermediate: { en:"Intermediate", ar:"متوسط",  bg:"rgba(251,191,36,0.2)", color:"#fde68a" },
+                    advanced:     { en:"Advanced",     ar:"متقدم",  bg:"rgba(239,68,68,0.2)",  color:"#fca5a5" },
+                    tamhidi:      { en:"Tamhidi",      ar:"تمهيدي", bg:"rgba(99,102,241,0.2)", color:"#c7d2fe" },
+                  };
+                  const lc = levelLabels[rawLevel] || { en: rawLevel, ar: rawLevel, bg:"rgba(255,255,255,0.12)", color:"rgba(255,255,255,0.8)" };
+                  return rawLevel ? (
+                    <span style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:1, fontSize:10, fontWeight:800, padding:"4px 10px", borderRadius:20,
+                      background:lc.bg, color:lc.color, border:`1px solid ${lc.color}44`, lineHeight:1 }}>
+                      <span>{lc.en}</span>
+                      <span style={{ fontFamily:"'Amiri',serif", fontSize:9, opacity:0.9 }}>{lc.ar}</span>
+                    </span>
+                  ) : null;
+                })()}
+                <div style={{ background:GOLD, borderRadius:30, padding:"6px 14px", display:"flex", alignItems:"center", gap:6, boxShadow:`0 2px 10px ${GOLD}66` }}>
+                  <Calendar style={{ width:12, height:12, color:DARK_GREEN }} />
+                  <span style={{ fontSize:12, color:DARK_GREEN, fontFamily:"'Amiri',serif", fontWeight:900 }} dir="rtl">{hijri.full}</span>
+                </div>
               </div>
             </div>
 
