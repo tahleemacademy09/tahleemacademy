@@ -6,10 +6,14 @@
   For the target user it sends:
     1) Web Push  (works when browser/phone is closed — VAPID)
     2) Telegram  (if telegram_chat_id is linked on profile)
-  WhatsApp is intentionally skipped for now (Twilio not yet configured).
 
   Body shape: { notification_id?: uuid }  OR
               { user_id, title, message, link?, type? }
+
+  Required env vars:
+    SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+    TELEGRAM_BOT_TOKEN   (from @BotFather)
+    VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT  (for web push)
 */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -19,8 +23,6 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
-
-const TELEGRAM_GATEWAY = "https://connector-gateway.lovable.dev/telegram";
 
 async function sendWebPush(
   sub: { endpoint: string; p256dh: string; auth: string },
@@ -41,22 +43,17 @@ async function sendWebPush(
 }
 
 async function sendTelegram(chatId: string, title: string, message: string, link?: string): Promise<void> {
-  const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-  const TELEGRAM_API_KEY = Deno.env.get("TELEGRAM_API_KEY");
-  if (!LOVABLE_API_KEY || !TELEGRAM_API_KEY) throw new Error("Telegram not configured");
+  const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN");
+  if (!BOT_TOKEN) throw new Error("TELEGRAM_BOT_TOKEN not configured");
 
   const text =
     `🕌 <b>Tahleem Academy</b>\n` +
     `<b>${title}</b>\n\n${message}` +
-    (link ? `\n\n🔗 ${link}` : "");
+    (link ? `\n\n🔗 <a href="${link}">Open Academy</a>` : "");
 
-  const res = await fetch(`${TELEGRAM_GATEWAY}/sendMessage`, {
+  const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
     method: "POST",
-    headers: {
-      "Authorization": `Bearer ${LOVABLE_API_KEY}`,
-      "X-Connection-Api-Key": TELEGRAM_API_KEY,
-      "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       chat_id: chatId,
       text,
@@ -109,7 +106,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    const baseHost = "https://tahleemacademy.lovable.app";
+    const baseHost = "https://tahleemacademy.vercel.app";
     const fullUrl  = absUrl(link, baseHost);
     const results: Record<string, string> = {};
 
@@ -135,10 +132,11 @@ Deno.serve(async (req) => {
     }
 
     // ── 2. Telegram ──
+    // FIX: profiles are keyed by user_id, not id
     const { data: prof } = await supabase
       .from("profiles")
       .select("telegram_chat_id")
-      .eq("id", user_id)
+      .eq("user_id", user_id)
       .maybeSingle();
 
     const chatId = (prof as any)?.telegram_chat_id;
