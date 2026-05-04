@@ -511,9 +511,30 @@ export default function StudentManagement() {
                     <Bell size={13} color="#6B7280" />
                   </button>
                   {u.user_id !== currentUser?.id && (
-                    <button onClick={() => setDeleteDialog(u)} style={{ padding: "7px 9px", borderRadius: 8, border: "1px solid #FEE2E2", background: "#FEF2F2", cursor: "pointer" }}>
-                      <Trash2 size={13} color="#DC2626" />
-                    </button>
+                    <>
+                      <button
+                        onClick={() => toggleSuspend(u)}
+                        disabled={suspending === u.user_id}
+                        title={u.payment_status === "suspended" ? "Reactivate account" : "Suspend account (reversible)"}
+                        style={{
+                          padding: "7px 9px",
+                          borderRadius: 8,
+                          border: u.payment_status === "suspended" ? "1px solid #BBF7D0" : "1px solid #FEF3C7",
+                          background: u.payment_status === "suspended" ? "#F0FDF4" : "#FFFBEB",
+                          cursor: suspending === u.user_id ? "wait" : "pointer",
+                          opacity: suspending === u.user_id ? 0.5 : 1,
+                        }}
+                      >
+                        {suspending === u.user_id
+                          ? <Loader2 size={13} style={{ animation: "spin .8s linear infinite", color: "#92400E" }} />
+                          : u.payment_status === "suspended"
+                            ? <CheckCircle2 size={13} color="#16A34A" />
+                            : <Ban size={13} color="#D97706" />}
+                      </button>
+                      <button onClick={() => setDeleteDialog(u)} title="Delete permanently" style={{ padding: "7px 9px", borderRadius: 8, border: "1px solid #FEE2E2", background: "#FEF2F2", cursor: "pointer" }}>
+                        <Trash2 size={13} color="#DC2626" />
+                      </button>
+                    </>
                   )}
                 </div>
               </div>
