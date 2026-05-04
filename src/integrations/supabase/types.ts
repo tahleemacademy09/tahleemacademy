@@ -5349,6 +5349,7 @@ export type Database = {
       }
       student_preferences: {
         Row: {
+          announcement_notifications: boolean | null
           autoplay_recordings: boolean | null
           class_reminder: boolean | null
           class_reminder_minutes: number | null
@@ -5370,6 +5371,7 @@ export type Database = {
           whatsapp_notifications: boolean | null
         }
         Insert: {
+          announcement_notifications?: boolean | null
           autoplay_recordings?: boolean | null
           class_reminder?: boolean | null
           class_reminder_minutes?: number | null
@@ -5391,6 +5393,7 @@ export type Database = {
           whatsapp_notifications?: boolean | null
         }
         Update: {
+          announcement_notifications?: boolean | null
           autoplay_recordings?: boolean | null
           class_reminder?: boolean | null
           class_reminder_minutes?: number | null
