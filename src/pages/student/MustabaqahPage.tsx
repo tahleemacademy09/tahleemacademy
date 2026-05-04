@@ -30,7 +30,7 @@ import {
   Plus, Clock, BookOpen, CheckCircle, RefreshCw, ChevronRight,
   Award, Radio, ArrowRight, LogIn, StopCircle, Loader2,
   PhoneCall, List, LayoutGrid, Volume2, Crown, ArrowLeft,
-  TimerReset, AlertTriangle,
+  TimerReset, AlertTriangle, Settings, Wand2, Wifi, WifiOff, Sparkles, Eye,
 } from "lucide-react";
 
 const G    = "#0f2d1f";
@@ -210,7 +210,7 @@ const NumberTilePicker = ({ tiles, pickedNum, onPick, canPick, stage }: { tiles:
   </div>
 );
 
-const QuestionDisplay = ({ tile, ayahText, loadingAyah, isParticipant, isObserver }: { tile:Tile; ayahText:string|null; loadingAyah:boolean; isParticipant:boolean; isObserver?:boolean }) => (
+const QuestionDisplay = ({ tile, ayahText, loadingAyah, isParticipant, isObserver, instructions }: { tile:Tile; ayahText:string|null; loadingAyah:boolean; isParticipant:boolean; isObserver?:boolean; instructions?:string }) => (
   <div className="question-slide" style={{background:"rgba(201,168,76,.08)",border:"1.5px solid rgba(201,168,76,.35)",borderRadius:18,padding:"18px 16px",marginTop:12}}>
     <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
       <div style={{width:30,height:30,borderRadius:9,background:`linear-gradient(135deg,${GOLD},${GOLDD})`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><BookOpen size={14} color={G}/></div>
@@ -226,6 +226,13 @@ const QuestionDisplay = ({ tile, ayahText, loadingAyah, isParticipant, isObserve
         {loadingAyah ? <Loader2 size={18} color={GOLD} style={{animation:"spin 1s linear infinite"}}/>
           : ayahText ? <div style={{fontFamily:"'Amiri Quran',serif",fontSize:20,color:"#fff",lineHeight:2.2,textAlign:"center"}}>{ayahText}<span style={{color:"rgba(201,168,76,.6)",fontSize:15}}> ﴿{tile.ayah}﴾</span></div>
           : <div style={{color:"rgba(255,255,255,.3)",fontSize:12}}>Loading ayah…</div>}
+      </div>
+    )}
+    {/* Instructions block */}
+    {instructions&&(
+      <div style={{marginTop:12,background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.1)",borderRadius:10,padding:"10px 12px"}}>
+        <div style={{color:GOLD,fontSize:10,fontWeight:700,letterSpacing:1.2,textTransform:"uppercase",marginBottom:4,display:"flex",alignItems:"center",gap:4}}><Eye size={10}/> Instructions</div>
+        <div style={{color:"rgba(255,255,255,.75)",fontSize:12,lineHeight:1.7,whiteSpace:"pre-line"}}>{instructions}</div>
       </div>
     )}
     {isParticipant&&(
@@ -508,6 +515,15 @@ export default function MustabaqahPage() {
   const [form, setForm] = useState({title:"",description:"",scope_type:"juz30",total_stages:5,time_limit:300,use_criteria:true,tiles_per_stage:10,use_custom_q:false,custom_questions:""});
   const [joinForm, setJoinForm] = useState({room_code:"",name:profile?.full_name||"",school:profile?.school||""});
 
+  // ── Q-Settings panel (live editing of questions from arena) ──────
+  const [showQSettings,    setShowQSettings]    = useState(false);
+  const [qSettingsTab,     setQSettingsTab]     = useState<"manual"|"ai">("manual");
+  const [liveCustomQ,      setLiveCustomQ]      = useState("");   // editable custom questions text
+  const [aiPrompt,         setAiPrompt]         = useState("");
+  const [aiQCount,         setAiQCount]         = useState(10);
+  const [aiGenLoading,     setAiGenLoading]     = useState(false);
+  const [liveInstructions, setLiveInstructions] = useState("");   // per-competition instructions shown with question
+
   const channelRef       = useRef<any>(null);
   const timerRef         = useRef<any>(null);
   const myParticipantRef = useRef<Participant|null>(null);
@@ -738,6 +754,10 @@ export default function MustabaqahPage() {
           try{navigator.vibrate?.([200,100,200]);}catch{}
         }
       })
+      .on("broadcast",{event:"SETTINGS_UPDATE"},({payload}:any)=>{
+        // Push instructions update to all non-judge viewers
+        if (payload.instructions!==undefined) setLiveInstructions(payload.instructions);
+      })
       .on("postgres_changes" as any,{event:"*",schema:"public",table:"musabaqah_participants",filter:`competition_id=eq.${competition.id}`},()=>{ loadParticipants(); })
       .subscribe(async()=>{
         const myName=myParticipantRef.current?.participant_name||profile?.full_name||"Guest";
@@ -765,7 +785,9 @@ export default function MustabaqahPage() {
 
   const buildTiles = (comp: Competition): Tile[] => {
     const count = comp.scope_config?.tiles_per_stage ?? 10;
-    const customs: string[] = comp.scope_config?.custom_questions ?? [];
+    // Prefer live-edited questions (from Q-Settings panel) over the DB snapshot
+    const liveList = liveCustomQ.split("\n").map(s=>s.trim()).filter(Boolean);
+    const customs: string[] = liveList.length > 0 ? liveList : (comp.scope_config?.custom_questions ?? []);
     if (customs.length > 0) {
       // Each stage gets its own slice of custom questions sequentially
       const stageOffset = (comp.current_stage - 1) * count;
@@ -794,7 +816,7 @@ export default function MustabaqahPage() {
     broadcast("CALLED",{participant_id:p.id,participant_name:p.participant_name});
     broadcast("TILES_SHOWN",{tiles,stage:competition.current_stage,picker_participant_id:p.id});
     playCalled();
-    setActiveP(p); setCompetition(c=>c?{...c,current_participant_id:p.id}:c);
+    setActiveP({...p, status:"called"}); setCompetition(c=>c?{...c,current_participant_id:p.id}:c);
     setJudgeTab("controls");
     // DB async — no blocking
     supabase.from("musabaqah_participants" as any).update({status:"called"}).eq("id",p.id);
@@ -999,6 +1021,10 @@ export default function MustabaqahPage() {
     setCompetition(comp); setChatMessages([]); setUserRole(null);
     setJudgeTimerDuration(comp.time_limit_seconds);
     setJoinForm(f=>({...f,room_code:comp.room_code,name:f.name||profile?.full_name||"",school:f.school||profile?.school||""}));
+    // Init live-editable Q settings from DB
+    const cqs: string[] = comp.scope_config?.custom_questions ?? [];
+    setLiveCustomQ(cqs.join("\n"));
+    setLiveInstructions(comp.description||"");
     if (canJudge) { setView("role_select"); return; }
     const {data}=await supabase.from("musabaqah_participants" as any).select("*").eq("competition_id",comp.id).eq("user_id",user?.id).single();
     if (data) { setMyParticipant(data as Participant); setUserRole("participant"); setView("arena"); await fetchLkToken(comp.room_code); }
@@ -1051,6 +1077,43 @@ export default function MustabaqahPage() {
     if (view==="arena") { setView("list"); return; }
     if (view==="list") { navigate(-1); return; }
     setView("list");
+  };
+
+  // ── Save live Q settings to DB ───────────────────────────────────
+  const saveQSettings = async () => {
+    if (!competition) return;
+    const qList = liveCustomQ.split("\n").map(s=>s.trim()).filter(Boolean);
+    const newConfig = { ...(competition.scope_config||{}), custom_questions: qList };
+    await supabase.from("musabaqah_competitions" as any)
+      .update({ scope_config: newConfig, description: liveInstructions } as any)
+      .eq("id", competition.id);
+    setCompetition(c=>c?{...c,scope_config:newConfig,description:liveInstructions}:c);
+    broadcast("SETTINGS_UPDATE", { instructions: liveInstructions });
+    setShowQSettings(false);
+    toast({ title: `✅ Questions saved${qList.length>0?` (${qList.length} custom)`:""}`});
+  };
+
+  // ── AI question generation ───────────────────────────────────────
+  const generateAIQuestions = async () => {
+    if (!aiPrompt.trim()) { toast({title:"Enter a prompt",variant:"destructive"}); return; }
+    setAiGenLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("tahleem-ai", {
+        body: {
+          prompt: `Generate exactly ${aiQCount} concise Islamic recitation competition questions or passage assignments for a Quran/Islamic studies competition. Each item should be on its own line, formatted simply like: "Al-Fatiha full" or "Al-Baqarah 1-5" or "Surah Al-Ikhlas complete". No numbering, no bullets, just one item per line. Topic/scope context: ${aiPrompt}`,
+          max_tokens: 600,
+        }
+      });
+      if (error) throw new Error(error.message);
+      const raw = (data?.content?.[0]?.text || data?.text || data || "") as string;
+      const lines = raw.split("\n").map((s:string)=>s.replace(/^[\d\-\*\.\)]+\s*/,"").trim()).filter((s:string)=>s.length>3);
+      const merged = liveCustomQ.trim() ? liveCustomQ.trim() + "\n" + lines.join("\n") : lines.join("\n");
+      setLiveCustomQ(merged);
+      setQSettingsTab("manual");
+      toast({ title: `✨ Generated ${lines.length} questions — review & save` });
+    } catch(e:any) {
+      toast({ title:"AI generation failed", description: e.message||"Check edge function", variant:"destructive" });
+    } finally { setAiGenLoading(false); }
   };
 
   /* ════════════════════════════════════════════════════════════════
@@ -1521,7 +1584,7 @@ export default function MustabaqahPage() {
             {/* Question display for observer */}
             {pickedTile && (
               <div style={{padding:"0 16px",marginTop:8,flexShrink:0}}>
-                <QuestionDisplay tile={pickedTile} ayahText={ayahText} loadingAyah={loadingAyah} isParticipant={false} isObserver={true}/>
+                <QuestionDisplay tile={pickedTile} ayahText={ayahText} loadingAyah={loadingAyah} isParticipant={false} isObserver={true} instructions={liveInstructions||undefined}/>
               </div>
             )}
 
@@ -1576,10 +1639,17 @@ export default function MustabaqahPage() {
 
             {/* Judge controls */}
             <div style={{padding:"12px 16px 0"}}>
-              <div style={{display:"flex",gap:0,background:"rgba(255,255,255,.05)",borderRadius:12,padding:3,marginBottom:12}}>
-                {[["controls","⚙️ Controls"],["roster","👥 Roster"]].map(([tab,label])=>(
-                  <button key={tab} onClick={()=>setJudgeTab(tab as any)} style={{flex:1,background:judgeTab===tab?"rgba(201,168,76,.2)":"transparent",border:judgeTab===tab?"1px solid rgba(201,168,76,.4)":"1px solid transparent",borderRadius:10,padding:"8px 0",color:judgeTab===tab?GOLD:"rgba(255,255,255,.4)",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"Cairo,sans-serif",transition:"all .2s"}}>{label}</button>
-                ))}
+              <div style={{display:"flex",gap:4,marginBottom:12,alignItems:"center"}}>
+                <div style={{display:"flex",flex:1,gap:0,background:"rgba(255,255,255,.05)",borderRadius:12,padding:3}}>
+                  {[["controls","⚙️ Controls"],["roster","👥 Roster"]].map(([tab,label])=>(
+                    <button key={tab} onClick={()=>setJudgeTab(tab as any)} style={{flex:1,background:judgeTab===tab?"rgba(201,168,76,.2)":"transparent",border:judgeTab===tab?"1px solid rgba(201,168,76,.4)":"1px solid transparent",borderRadius:10,padding:"8px 0",color:judgeTab===tab?GOLD:"rgba(255,255,255,.4)",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"Cairo,sans-serif",transition:"all .2s"}}>{label}</button>
+                  ))}
+                </div>
+                {/* Q-Settings button */}
+                <button onClick={()=>setShowQSettings(true)} title="Question Settings"
+                  style={{background:"rgba(201,168,76,.12)",border:"1px solid rgba(201,168,76,.3)",borderRadius:10,padding:"8px 10px",cursor:"pointer",color:GOLD,display:"flex",alignItems:"center",gap:4,flexShrink:0}}>
+                  <Wand2 size={14}/><span style={{fontSize:11,fontWeight:700,fontFamily:"Cairo,sans-serif"}}>Q</span>
+                </button>
               </div>
 
               {judgeTab==="controls"&&(
@@ -1610,13 +1680,27 @@ export default function MustabaqahPage() {
                   {competition.status==="active"&&!activeP&&waiting.length>0&&(
                     <div>
                       <div style={{color:GOLD,fontSize:11,fontWeight:700,letterSpacing:1.2,textTransform:"uppercase",marginBottom:8}}>📣 Call a Participant</div>
-                      {waiting.slice(0,6).map(p=>(
-                        <button key={p.id} onClick={()=>callParticipant(p)} style={{width:"100%",background:`${GOLD}14`,border:`1px solid ${GOLD}44`,borderRadius:12,padding:"12px 14px",cursor:"pointer",display:"flex",alignItems:"center",gap:10,textAlign:"left",fontFamily:"Cairo,sans-serif",marginBottom:6}}>
-                          <Avatar name={p.participant_name} size={34}/>
-                          <div style={{flex:1,minWidth:0}}><div style={{color:"#fff",fontWeight:700,fontSize:14,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.participant_name}</div>{p.school&&<div style={{color:"rgba(255,255,255,.35)",fontSize:11,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.school}</div>}</div>
-                          <div style={{display:"flex",alignItems:"center",gap:4,color:GOLD,fontSize:12,fontWeight:700,flexShrink:0}}><PhoneCall size={13}/> Call</div>
-                        </button>
-                      ))}
+                      {waiting.slice(0,6).map(p=>{
+                        const isOnline = onlineUsers.some(u=>u.name===p.participant_name||u.name===p.participant_name.split(" ")[0]);
+                        return (
+                          <button key={p.id} onClick={()=>callParticipant(p)} style={{width:"100%",background:`${GOLD}14`,border:`1px solid ${GOLD}44`,borderRadius:12,padding:"12px 14px",cursor:"pointer",display:"flex",alignItems:"center",gap:10,textAlign:"left",fontFamily:"Cairo,sans-serif",marginBottom:6}}>
+                            <div style={{position:"relative",flexShrink:0}}>
+                              <Avatar name={p.participant_name} size={34}/>
+                              <div style={{position:"absolute",bottom:0,right:0,width:10,height:10,borderRadius:"50%",background:isOnline?GREEN:RED,border:"2px solid rgba(10,20,15,.9)"}}/>
+                            </div>
+                            <div style={{flex:1,minWidth:0}}>
+                              <div style={{color:"#fff",fontWeight:700,fontSize:14,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.participant_name}</div>
+                              <div style={{display:"flex",alignItems:"center",gap:5,marginTop:1}}>
+                                {p.school&&<span style={{color:"rgba(255,255,255,.3)",fontSize:11,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.school}</span>}
+                                <span style={{color:isOnline?GREEN:RED,fontSize:10,fontWeight:700,flexShrink:0,display:"flex",alignItems:"center",gap:3}}>
+                                  {isOnline?<Wifi size={9}/>:<WifiOff size={9}/>}{isOnline?"Online":"Offline"}
+                                </span>
+                              </div>
+                            </div>
+                            <div style={{display:"flex",alignItems:"center",gap:4,color:GOLD,fontSize:12,fontWeight:700,flexShrink:0}}><PhoneCall size={13}/> Call</div>
+                          </button>
+                        );
+                      })}
                     </div>
                   )}
 
@@ -1624,16 +1708,17 @@ export default function MustabaqahPage() {
                     <div style={{background:"rgba(10,20,15,.9)",border:"1.5px solid rgba(201,168,76,.3)",borderRadius:18,padding:"14px"}}>
                       <div style={{color:"rgba(255,255,255,.5)",fontSize:12,marginBottom:10,textAlign:"center",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
                         <span style={{fontSize:16}}>🎙️</span>
-                        <span><strong style={{color:GOLD}}>{activeP.participant_name}</strong> is picking…</span>
+                        <span><strong style={{color:GOLD}}>{activeP.participant_name}</strong> {pickedTile?"picked #"+pickedTile.num:"is picking…"}</span>
                       </div>
                       <NumberTilePicker tiles={stageTiles} pickedNum={pickedTile?.num??null} onPick={()=>{}} canPick={false} stage={competition.current_stage}/>
-                      {pickedTile&&<QuestionDisplay tile={pickedTile} ayahText={ayahText} loadingAyah={loadingAyah} isParticipant={false}/>}
+                      {pickedTile&&<QuestionDisplay tile={pickedTile} ayahText={ayahText} loadingAyah={loadingAyah} isParticipant={false} instructions={liveInstructions||undefined}/>}
                     </div>
                   )}
 
-                  {activeP?.status==="called"&&pickedTile&&(
-                    <button onClick={startReciting} style={{background:`linear-gradient(135deg,${GREEN}dd,#16a34a)`,color:"#fff",border:"none",borderRadius:14,padding:"16px",cursor:"pointer",fontWeight:800,fontFamily:"Cairo,sans-serif",fontSize:15,display:"flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:"0 4px 20px rgba(34,197,94,.3)"}}>
-                      <Play size={18}/> ▶ Start Reciting
+                  {/* ▶ Start Reciting — visible once tile is picked, prominent */}
+                  {pickedTile&&(activeP?.status==="called"||activeP?.status==="waiting")&&(
+                    <button onClick={startReciting} style={{background:`linear-gradient(135deg,${GREEN}dd,#16a34a)`,color:"#fff",border:"none",borderRadius:14,padding:"18px",cursor:"pointer",fontWeight:900,fontFamily:"Cairo,sans-serif",fontSize:16,display:"flex",alignItems:"center",justifyContent:"center",gap:10,boxShadow:"0 6px 28px rgba(34,197,94,.45)",animation:"recitingGlow 2s ease-in-out infinite"}}>
+                      <Play size={22}/> ▶ Start Reciting — {activeP?.participant_name}
                     </button>
                   )}
 
@@ -1850,7 +1935,7 @@ export default function MustabaqahPage() {
                   {stageTiles.length>0&&(
                     <NumberTilePicker tiles={stageTiles} pickedNum={pickedTile?.num??null} onPick={!pickedTile ? pickTile : ()=>{}} canPick={!pickedTile} stage={competition.current_stage}/>
                   )}
-                  {pickedTile&&<QuestionDisplay tile={pickedTile} ayahText={ayahText} loadingAyah={loadingAyah} isParticipant={true}/>}
+                  {pickedTile&&<QuestionDisplay tile={pickedTile} ayahText={ayahText} loadingAyah={loadingAyah} isParticipant={true} instructions={liveInstructions||undefined}/>}
                 </div>
               )}
 
@@ -1969,6 +2054,120 @@ export default function MustabaqahPage() {
             <span style={{fontSize:20}}>👁️</span>
             <div style={{flex:1,color:"rgba(255,255,255,.5)",fontSize:13}}>Following as Observer</div>
             <button onClick={()=>setShowChat(c=>!c)} style={{background:`${GOLD}18`,border:`1px solid ${GOLD}44`,borderRadius:10,padding:"6px 12px",cursor:"pointer",color:GOLD,fontWeight:700,fontSize:13,fontFamily:"Cairo,sans-serif"}}>💬 Chat</button>
+          </div>
+        </div>
+      )}
+
+      {/* ══ Q-SETTINGS SLIDE-IN PANEL ════════════════════════════════ */}
+      {showQSettings&&isJudge&&(
+        <div style={{position:"fixed",inset:0,zIndex:9990,display:"flex",flexDirection:"column",justifyContent:"flex-end"}} onClick={()=>setShowQSettings(false)}>
+          <div style={{position:"absolute",inset:0,background:"rgba(0,0,0,.6)",backdropFilter:"blur(6px)"}}/>
+          <div onClick={e=>e.stopPropagation()}
+            style={{position:"relative",zIndex:1,background:"linear-gradient(180deg,#0d2419 0%,#061410 100%)",borderTop:"1.5px solid rgba(201,168,76,.35)",borderRadius:"24px 24px 0 0",maxHeight:"85vh",display:"flex",flexDirection:"column",fontFamily:"Cairo,sans-serif"}}>
+
+            {/* Header */}
+            <div style={{display:"flex",alignItems:"center",gap:10,padding:"16px 20px",borderBottom:"1px solid rgba(255,255,255,.07)",flexShrink:0}}>
+              <div style={{width:34,height:34,borderRadius:10,background:`linear-gradient(135deg,${GOLD},${GOLDD})`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Wand2 size={16} color={G}/></div>
+              <div style={{flex:1}}>
+                <div style={{color:"#fff",fontWeight:800,fontSize:15}}>Question Settings</div>
+                <div style={{color:"rgba(255,255,255,.35)",fontSize:11}}>Manage questions & instructions for this session</div>
+              </div>
+              <button onClick={()=>setShowQSettings(false)} style={{background:"none",border:"none",color:"rgba(255,255,255,.35)",cursor:"pointer",fontSize:22,padding:0,lineHeight:1}}>✕</button>
+            </div>
+
+            {/* Tabs */}
+            <div style={{display:"flex",padding:"8px 16px",flexShrink:0,gap:8}}>
+              {([["manual","📝 Manual"],["ai","✨ AI Generate"]] as const).map(([t,l])=>(
+                <button key={t} onClick={()=>setQSettingsTab(t)}
+                  style={{flex:1,background:qSettingsTab===t?`rgba(201,168,76,.2)`:"transparent",border:qSettingsTab===t?`1px solid rgba(201,168,76,.4)`:"1px solid transparent",borderRadius:10,padding:"8px 0",color:qSettingsTab===t?GOLD:"rgba(255,255,255,.4)",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"Cairo,sans-serif",transition:"all .2s"}}>
+                  {l}
+                </button>
+              ))}
+            </div>
+
+            {/* Content */}
+            <div style={{flex:1,overflowY:"auto",padding:"14px 16px 0"}}>
+
+              {qSettingsTab==="manual"&&(
+                <>
+                  <div style={{color:"rgba(255,255,255,.5)",fontSize:11,marginBottom:6,lineHeight:1.6}}>
+                    One question per line. These will replace the random Quran passages when a participant picks a number.{" "}
+                    <span style={{color:GOLD}}>Leave empty to use random passages.</span>
+                  </div>
+                  <textarea
+                    value={liveCustomQ}
+                    onChange={e=>setLiveCustomQ(e.target.value)}
+                    placeholder={"Al-Fatiha full\nAl-Baqarah 1-5\nSurah Al-Ikhlas complete\n..."}
+                    rows={8}
+                    style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 14px",color:"#fff",fontSize:13,fontFamily:"Cairo,sans-serif",resize:"vertical",lineHeight:1.7,boxSizing:"border-box"}}
+                  />
+                  <div style={{color:"rgba(255,255,255,.3)",fontSize:11,marginTop:4,marginBottom:14}}>
+                    {liveCustomQ.split("\n").filter(s=>s.trim()).length} questions entered
+                  </div>
+
+                  {/* Instructions field */}
+                  <div style={{color:GOLD,fontSize:11,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:6,display:"flex",alignItems:"center",gap:4}}><Eye size={11}/> Instructions for Participants</div>
+                  <textarea
+                    value={liveInstructions}
+                    onChange={e=>setLiveInstructions(e.target.value)}
+                    placeholder={"e.g. Recite with proper Tajweed rules. Begin with Bismillah. The judge will ring the bell for each mistake."}
+                    rows={3}
+                    style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.15)",borderRadius:12,padding:"10px 14px",color:"#fff",fontSize:13,fontFamily:"Cairo,sans-serif",resize:"vertical",lineHeight:1.7,boxSizing:"border-box",marginBottom:16}}
+                  />
+                </>
+              )}
+
+              {qSettingsTab==="ai"&&(
+                <>
+                  <div style={{background:"rgba(201,168,76,.08)",border:"1px solid rgba(201,168,76,.2)",borderRadius:12,padding:"12px 14px",marginBottom:14,display:"flex",alignItems:"flex-start",gap:8}}>
+                    <Sparkles size={14} color={GOLD} style={{flexShrink:0,marginTop:2}}/>
+                    <div style={{color:"rgba(255,255,255,.6)",fontSize:12,lineHeight:1.7}}>
+                      Describe the topic and scope. AI will generate competition questions that will be added to the manual list for you to review before saving.
+                    </div>
+                  </div>
+
+                  <div style={{marginBottom:12}}>
+                    <div style={{color:GOLD,fontSize:11,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:6}}>Prompt / Scope</div>
+                    <textarea
+                      value={aiPrompt}
+                      onChange={e=>setAiPrompt(e.target.value)}
+                      placeholder={"e.g. Juz 30 short surahs for junior students, focus on Al-Fatiha to An-Nas range"}
+                      rows={4}
+                      style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 14px",color:"#fff",fontSize:13,fontFamily:"Cairo,sans-serif",resize:"none",lineHeight:1.7,boxSizing:"border-box"}}
+                    />
+                  </div>
+
+                  <div style={{marginBottom:16}}>
+                    <div style={{color:GOLD,fontSize:11,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:6}}>Number of Questions</div>
+                    <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                      {[5,8,10,12,15,20].map(n=>(
+                        <button key={n} onClick={()=>setAiQCount(n)}
+                          style={{background:aiQCount===n?`${GOLD}22`:"rgba(255,255,255,.06)",border:`1.5px solid ${aiQCount===n?GOLD:"rgba(255,255,255,.15)"}`,borderRadius:9,padding:"6px 14px",cursor:"pointer",color:aiQCount===n?GOLD:"rgba(255,255,255,.55)",fontFamily:"Cairo,sans-serif",fontWeight:700,fontSize:13}}>
+                          {n}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <button onClick={generateAIQuestions} disabled={aiGenLoading||!aiPrompt.trim()}
+                    style={{width:"100%",background:aiGenLoading||!aiPrompt.trim()?"rgba(255,255,255,.08)":`linear-gradient(135deg,${GOLD},${GOLDD})`,color:aiGenLoading||!aiPrompt.trim()?"rgba(255,255,255,.3)":G,border:"none",borderRadius:12,padding:"14px",cursor:aiGenLoading||!aiPrompt.trim()?"not-allowed":"pointer",fontWeight:800,fontSize:14,fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",gap:8,marginBottom:16,transition:"all .2s"}}>
+                    {aiGenLoading?<><Loader2 size={16} style={{animation:"spin 1s linear infinite"}}/> Generating…</>:<><Sparkles size={16}/> Generate {aiQCount} Questions</>}
+                  </button>
+                </>
+              )}
+            </div>
+
+            {/* Save footer */}
+            <div style={{padding:"12px 16px 20px",borderTop:"1px solid rgba(255,255,255,.07)",flexShrink:0,display:"flex",gap:10}}>
+              <button onClick={()=>setShowQSettings(false)}
+                style={{flex:1,background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",borderRadius:12,padding:"13px",cursor:"pointer",color:"rgba(255,255,255,.5)",fontWeight:700,fontSize:14,fontFamily:"Cairo,sans-serif"}}>
+                Cancel
+              </button>
+              <button onClick={saveQSettings}
+                style={{flex:2,background:`linear-gradient(135deg,${GOLD},${GOLDD})`,border:"none",borderRadius:12,padding:"13px",cursor:"pointer",color:G,fontWeight:800,fontSize:14,fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                <CheckCircle size={16}/> Save Changes
+              </button>
+            </div>
           </div>
         </div>
       )}
