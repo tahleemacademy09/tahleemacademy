@@ -248,7 +248,7 @@ const QuestionDisplay = ({ tile, ayahText, loadingAyah, isParticipant, isObserve
   </div>
 );
 
-/* ── Video grid — adapts to role ────────────────────────────────── */
+/* ── Video grid — DUAL panels: Judge + Participant side by side ── */
 const LiveVideoGrid = ({
   activeUserId, isJudge, isObserver, allowControls, activePStatus,
 }: {
@@ -268,79 +268,82 @@ const LiveVideoGrid = ({
   const judgeRemotePub  = judgeRemote?.getTrackPublication(Track.Source.Camera);
   const activeRemotePub = activeRemote?.getTrackPublication(Track.Source.Camera);
 
-  // Judge is dominant when participant is NOT yet reciting (idle, called-but-picking)
-  // Participant is dominant when actively reciting
   const participantIsReciting = activePStatus === "reciting";
-  const judgeIsDominant = !participantIsReciting;
 
-  // Compute dominant and pip
-  const dominantP   = judgeIsDominant
-    ? (iAmJudge ? null : judgeRemote ?? null)
-    : (iAmActive ? null : activeRemote ?? null);
-  const dominantPub = dominantP?.getTrackPublication(Track.Source.Camera);
-  const dominantIsLocal = judgeIsDominant ? !!iAmJudge : !!iAmActive;
+  // Determine which feeds we have
+  const judgeVid  = iAmJudge ? localPub : judgeRemotePub;
+  const judgeP    = iAmJudge ? null      : judgeRemote ?? null;
+  const activVid  = iAmActive? localPub  : activeRemotePub;
+  const activP    = iAmActive? null      : activeRemote ?? null;
+  const activName = activP ? getMeta(activP).name||"Participant" : (iAmActive ? localMeta.name||"You" : null);
+  const judgeName = judgeP ? getMeta(judgeP).name||"Judge"       : (iAmJudge  ? localMeta.name||"Judge" : "Judge");
 
-  const pipP = judgeIsDominant
-    ? (iAmActive ? null : activeRemote ?? null)
-    : (iAmJudge  ? null : judgeRemote ?? null);
-  const pipPub = judgeIsDominant
-    ? (iAmActive ? localPub : activeRemotePub)
-    : (iAmJudge  ? localPub : judgeRemotePub);
-  const pipIsLocal = judgeIsDominant ? !!iAmActive : !!iAmJudge;
+  const hasJudge  = !!(judgeVid?.videoTrack);
+  const hasActiv  = !!(activVid?.videoTrack);
+  const hasAny    = hasJudge || hasActiv;
 
-  const hasDominant = !!(dominantPub?.videoTrack || (dominantIsLocal && localPub?.videoTrack));
-  const hasPip      = !!(pipPub?.videoTrack || (pipIsLocal && localPub?.videoTrack));
-
-  if (!hasDominant && !hasPip) return (
-    <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:10}}>
-      <Video size={28} color="rgba(201,168,76,.25)"/>
-      <div style={{color:"rgba(255,255,255,.3)",fontSize:12,textAlign:"center",padding:"0 20px"}}>
-        {isObserver ? "Video appears when a participant is called" : "Connecting to live video…"}
+  if (!hasAny) return (
+    <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:12,background:"rgba(0,0,0,.6)"}}>
+      {/* Islamic placeholder */}
+      <div style={{fontSize:36,opacity:.3}}>﷽</div>
+      <div style={{color:"rgba(255,255,255,.25)",fontSize:12,textAlign:"center",maxWidth:220,lineHeight:1.7}}>
+        {isObserver ? "Live video appears when a participant is called" : "Connecting to live room…"}
       </div>
     </div>
   );
 
-  const dominantLabel = judgeIsDominant
-    ? `⚖️ ${dominantP ? getMeta(dominantP).name||"Judge" : "Judge"}`
-    : `🎙️ ${dominantP ? getMeta(dominantP).name||"Participant" : "You"}`;
-  const pipLabel = judgeIsDominant ? "🎙️ Participant" : "⚖️ Judge";
+  // Layout: when reciting → participant dominant (2/3), judge compact (1/3)
+  //         when idle/called → judge dominant (full), participant hidden or small
+  const showBoth = hasJudge && hasActiv && !!activeUserId;
+
+  const VideoPanel = ({
+    pub, participant: rp, name, label, dominant, compact,
+  }:{pub:any;participant:any;name:string;label:string;dominant?:boolean;compact?:boolean}) => (
+    <div style={{position:"relative",height:"100%",overflow:"hidden",background:"rgba(0,0,0,.7)",
+      flex: compact ? "0 0 30%" : dominant ? "1 1 70%" : "1 1 100%",
+      borderLeft: compact ? "1px solid rgba(201,168,76,.2)" : "none",
+    }}>
+      {pub?.videoTrack
+        ? <VideoTrack
+            trackRef={{participant: rp || localParticipant!, source: Track.Source.Camera, publication: pub}}
+            style={{width:"100%",height:"100%",objectFit:"cover",transform:"none"}}/>
+        : <div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:8}}>
+            <div style={{width:48,height:48,borderRadius:"50%",background:`linear-gradient(135deg,${GOLD}44,${GOLDD}22)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,fontWeight:800,color:GOLD,fontFamily:"Cairo,sans-serif"}}>{name[0]?.toUpperCase()}</div>
+            <div style={{color:"rgba(255,255,255,.3)",fontSize:11}}>{name}</div>
+          </div>
+      }
+      {/* Name label */}
+      <div style={{position:"absolute",bottom:0,left:0,right:0,
+        background:"linear-gradient(to top,rgba(0,0,0,.85) 0%,transparent 100%)",
+        padding:"18px 10px 6px",display:"flex",alignItems:"flex-end",gap:6}}>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{color:"#fff",fontSize:compact?9:11,fontWeight:700,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",fontFamily:"Cairo,sans-serif"}}>
+            {label}
+          </div>
+        </div>
+        <div style={{width:6,height:6,borderRadius:"50%",background:GREEN,flexShrink:0,animation:"pulseRing 2s ease-in-out infinite"}}/>
+      </div>
+    </div>
+  );
 
   return (
-    <div style={{position:"relative",width:"100%",height:"100%"}}>
-      {/* Main video (dominant) */}
-      {hasDominant && (
-        <div style={{width:"100%",height:"100%",position:"relative"}}>
-          {dominantPub?.videoTrack
-            ? <VideoTrack trackRef={{participant:dominantP!,source:Track.Source.Camera,publication:dominantPub}} style={{width:"100%",height:"100%",objectFit:"cover",transform:"none"}}/>
-            : dominantIsLocal && localPub?.videoTrack
-              ? <VideoTrack trackRef={{participant:localParticipant!,source:Track.Source.Camera,publication:localPub!}} style={{width:"100%",height:"100%",objectFit:"cover",transform:"none"}}/>
-              : null
-          }
-          <div style={{position:"absolute",bottom:8,left:8,background:"rgba(0,0,0,.75)",borderRadius:8,padding:"3px 8px",maxWidth:"60%"}}>
-            <span style={{color:"#fff",fontSize:11,fontWeight:700,fontFamily:"Cairo,sans-serif",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",display:"block"}}>
-              {dominantLabel} <span style={{color:GREEN}}>• Live</span>
-            </span>
-          </div>
-          {isObserver && (
-            <div style={{position:"absolute",top:8,right:8,background:"rgba(0,0,0,.7)",border:"1px solid rgba(255,255,255,.2)",borderRadius:8,padding:"3px 10px"}}>
-              <span style={{color:"rgba(255,255,255,.7)",fontSize:10,fontWeight:700,letterSpacing:1}}>👁️ VIEWING</span>
-            </div>
-          )}
-        </div>
-      )}
-      {/* PiP — bottom right, smaller */}
-      {hasPip && (
-        <div style={{position:"absolute",bottom:10,right:10,width:68,height:90,borderRadius:9,overflow:"hidden",border:"2px solid rgba(201,168,76,.55)",boxShadow:"0 4px 18px rgba(0,0,0,.65)",flexShrink:0}}>
-          {pipP && pipPub?.videoTrack
-            ? <VideoTrack trackRef={{participant:pipP,source:Track.Source.Camera,publication:pipPub}} style={{width:"100%",height:"100%",objectFit:"cover",transform:"none"}}/>
-            : pipIsLocal && localPub?.videoTrack
-              ? <VideoTrack trackRef={{participant:localParticipant!,source:Track.Source.Camera,publication:localPub!}} style={{width:"100%",height:"100%",objectFit:"cover",transform:"none"}}/>
-              : null
-          }
-          <div style={{position:"absolute",bottom:0,left:0,right:0,background:"rgba(0,0,0,.75)",padding:"2px 4px",textAlign:"center"}}>
-            <span style={{color:GOLD,fontSize:7,fontWeight:700}}>{pipLabel}</span>
-          </div>
-        </div>
+    <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"row",overflow:"hidden"}}>
+      {showBoth && participantIsReciting ? (
+        // Reciting: participant dominant left, judge compact right
+        <>
+          <VideoPanel pub={activVid} participant={activP} name={activName||"Participant"} label={`🎙️ ${activName||"Participant"}`} dominant/>
+          <VideoPanel pub={judgeVid} participant={judgeP} name={judgeName} label={`⚖️ ${judgeName}`} compact/>
+        </>
+      ) : showBoth && !participantIsReciting ? (
+        // Idle/Called: judge dominant left, participant compact right
+        <>
+          <VideoPanel pub={judgeVid} participant={judgeP} name={judgeName} label={`⚖️ ${judgeName}`} dominant/>
+          <VideoPanel pub={activVid} participant={activP} name={activName||"Participant"} label={`🎙️ ${activName||"Participant"}`} compact/>
+        </>
+      ) : hasJudge ? (
+        <VideoPanel pub={judgeVid} participant={judgeP} name={judgeName} label={`⚖️ ${judgeName}`}/>
+      ) : (
+        <VideoPanel pub={activVid} participant={activP} name={activName||"Participant"} label={`🎙️ ${activName||"Participant"}`}/>
       )}
     </div>
   );
@@ -523,6 +526,7 @@ export default function MustabaqahPage() {
   const [aiQCount,         setAiQCount]         = useState(10);
   const [aiGenLoading,     setAiGenLoading]     = useState(false);
   const [liveInstructions, setLiveInstructions] = useState("");   // per-competition instructions shown with question
+  const [tilePickerCollapsed, setTilePickerCollapsed] = useState(false); // collapse tile grid to icon after pick
 
   const channelRef       = useRef<any>(null);
   const timerRef         = useRef<any>(null);
@@ -810,6 +814,7 @@ export default function MustabaqahPage() {
     setTimerExpired(false); setShowScore(false);
     setScoreBreak({tajweed:"",memorize:"",fluency:"",voice:""}); setJudgeComment("");
     setPickedTile(null); setAyahText(null);
+    setTilePickerCollapsed(false);
     const tiles = buildTiles(competition);
     setStageTiles(tiles); setShowTilePicker(true);
     // Broadcast immediately (no await)
@@ -827,6 +832,8 @@ export default function MustabaqahPage() {
     setPickedTile(tile);
     if (tile.surah>0) fetchAyah(tile.surah,tile.ayah);
     playTilePick(); broadcast("QUESTION_PICKED",{tile});
+    // Auto-collapse the picker grid after picking so question is front and centre
+    setTimeout(()=>setTilePickerCollapsed(true), 900);
   };
 
   const startReciting = async () => {
@@ -1408,71 +1415,72 @@ export default function MustabaqahPage() {
   ════════════════════════════════════════════════════════════════ */
   if (view!=="arena"||!competition) return null;
 
-  const videoBlock = (showControls: boolean) => {
-    if (videoDisabled) return (
-      <div style={{margin:"10px 16px 0",height:64,background:"rgba(0,0,0,.25)",border:"1px solid rgba(201,168,76,.1)",borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-        <Video size={14} color="rgba(201,168,76,.3)"/>
-        <span style={{color:"rgba(255,255,255,.25)",fontSize:12}}>Live video not available</span>
+  /* ─ Full-bleed video hero ──────────────────────────────────────── */
+  const videoHero = (showControls: boolean) => {
+    const inner = (children: React.ReactNode) => (
+      <div style={{position:"relative",width:"100%",height:"100%",background:"#050f08",overflow:"hidden"}}>
+        {children}
+        {/* Islamic ornament corners */}
+        <div style={{position:"absolute",top:0,left:0,fontSize:22,opacity:.18,color:GOLD,lineHeight:1,padding:4,pointerEvents:"none"}}>❁</div>
+        <div style={{position:"absolute",top:0,right:0,fontSize:22,opacity:.18,color:GOLD,lineHeight:1,padding:4,pointerEvents:"none",transform:"scaleX(-1)"}}>❁</div>
+        {/* Compact mic/cam overlay top-right */}
+        {showControls&&(
+          <div style={{position:"absolute",top:8,right:8,zIndex:5,pointerEvents:"auto"}}>
+            <div style={{background:"rgba(0,0,0,.65)",backdropFilter:"blur(10px)",borderRadius:10,padding:"4px 6px",display:"flex",gap:4}}>
+              <CameraControls isActive={!!iAmParticipantActive} isJudge={isJudge}/>
+            </div>
+          </div>
+        )}
+        {/* Live badge bottom left */}
+        <div style={{position:"absolute",bottom:8,left:10,zIndex:5,display:"flex",alignItems:"center",gap:5,background:"rgba(0,0,0,.65)",backdropFilter:"blur(8px)",borderRadius:8,padding:"3px 9px",pointerEvents:"none"}}>
+          <div style={{width:6,height:6,borderRadius:"50%",background:RED,animation:"pulseRing 1.5s ease-in-out infinite"}}/>
+          <span style={{color:"#fff",fontSize:10,fontWeight:700,letterSpacing:1}}>LIVE</span>
+          {activeP&&<span style={{color:GOLD,fontSize:10,fontWeight:700}}>· {activeP.participant_name}</span>}
+        </div>
       </div>
     );
 
-    const videoHeight = isObserver ? "45vh" : 180;
+    if (videoDisabled) return inner(
+      <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:8}}>
+        <div style={{fontSize:40,opacity:.15}}>﷽</div>
+        <span style={{color:"rgba(255,255,255,.2)",fontSize:12}}>Live video not available</span>
+      </div>
+    );
 
     if (lkConnected && livekitToken && livekitUrl) return (
       <LiveKitRoom serverUrl={livekitUrl} token={livekitToken} connect={lkConnected} audio={true} video={showControls} options={LK_OPTIONS}>
         <RoomAudioRenderer/>
-        <AudioEnabler onEnabled={() => setAudioReady(true)}/>
-        <div style={{height:videoHeight,margin:"10px 16px 0",borderRadius:18,overflow:"hidden",position:"relative",background:"rgba(0,0,0,.85)",border:"1px solid rgba(201,168,76,.2)",flexShrink:0}}>
-          <LiveVideoGrid activeUserId={activeP?.user_id??null} isJudge={isJudge} isObserver={isObserver} allowControls={showControls} activePStatus={activeP?.status??null}/>
-          {/* Compact controls overlay — bottom center, small */}
-          {showControls && (
-            <div style={{position:"absolute",bottom:6,left:0,right:0,display:"flex",justifyContent:"center",pointerEvents:"auto"}}>
-              <div style={{background:"rgba(0,0,0,.55)",backdropFilter:"blur(6px)",borderRadius:10,padding:"3px 6px",display:"flex",gap:4}}>
-                <CameraControls isActive={!!iAmParticipantActive} isJudge={isJudge}/>
-              </div>
-            </div>
-          )}
-        </div>
+        <AudioEnabler onEnabled={()=>setAudioReady(true)}/>
+        {inner(<LiveVideoGrid activeUserId={activeP?.user_id??null} isJudge={isJudge} isObserver={isObserver} allowControls={showControls} activePStatus={activeP?.status??null}/>)}
       </LiveKitRoom>
     );
 
-    return (
-      <div style={{margin:"10px 16px 0",height:videoHeight,background:"rgba(0,0,0,.55)",border:"1px solid rgba(201,168,76,.15)",borderRadius:18,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:10,flexShrink:0}}>
-        {lkError ? (
+    return inner(
+      <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:12}}>
+        <div style={{fontSize:44,opacity:.12}}>﷽</div>
+        {lkError?(
           <>
-            <Radio size={24} color={GOLD} style={{opacity:.6}}/>
-            <div style={{color:"rgba(255,255,255,.45)",fontSize:12,textAlign:"center",maxWidth:240,lineHeight:1.6}}>Live video unavailable — competition continues</div>
-            <button onClick={()=>competition&&fetchLkToken(competition.room_code)} style={{background:`${GOLD}22`,color:GOLD,border:`1px solid ${GOLD}55`,borderRadius:10,padding:"7px 20px",cursor:"pointer",fontFamily:"Cairo,sans-serif",fontWeight:700,fontSize:13,display:"flex",alignItems:"center",gap:6}}>
-              <RefreshCw size={13}/> Retry
+            <div style={{color:"rgba(255,255,255,.3)",fontSize:12,textAlign:"center"}}>Live video unavailable</div>
+            <button onClick={()=>competition&&fetchLkToken(competition.room_code)} style={{background:`${GOLD}22`,color:GOLD,border:`1px solid ${GOLD}55`,borderRadius:10,padding:"6px 18px",cursor:"pointer",fontFamily:"Cairo,sans-serif",fontWeight:700,fontSize:12,display:"flex",alignItems:"center",gap:5}}>
+              <RefreshCw size={12}/> Retry
             </button>
           </>
-        ) : activeP ? (
-          <>
-            <Avatar name={activeP.participant_name} size={56} active={activeP.status==="reciting"} called={activeP.status==="called"}/>
-            <div style={{color:"#fff",fontWeight:700,fontSize:15}}>{activeP.participant_name}</div>
-            {timerActive&&<span style={{color:timerDanger?RED:timerWarning?GOLD:GREEN,fontWeight:900,fontSize:22,className:timerDanger?"timer-warning":""}}>{fmt(timerSecs)}</span>}
-            <div style={{color:"rgba(255,255,255,.25)",fontSize:11,display:"flex",alignItems:"center",gap:5}}><Loader2 size={11} style={{animation:"spin 1s linear infinite"}}/> Connecting…</div>
-          </>
-        ) : (
-          <><Radio size={28} color="rgba(201,168,76,.3)"/><div style={{color:"rgba(255,255,255,.3)",fontSize:12}}>Connecting to live room…</div></>
+        ):(
+          <><div style={{color:"rgba(255,255,255,.2)",fontSize:12}}>Connecting…</div><Loader2 size={20} color={GOLD} style={{opacity:.4,animation:"spin 1s linear infinite"}}/></>
         )}
       </div>
     );
   };
 
+
   return (
-    <div style={{minHeight:"100vh",maxHeight:"100vh",display:"flex",flexDirection:"column",fontFamily:"Cairo,sans-serif",overflow:"hidden",position:"relative"}}>
+    <div style={{minHeight:"100vh",maxHeight:"100vh",display:"flex",flexDirection:"column",fontFamily:"Cairo,sans-serif",overflow:"hidden",position:"relative",background:"#050f08"}}>
       <GlobalStyles/><IslamicBackground/>
       <BellFlash visible={bellFlash} count={bellCount}/>
       <StopFlash visible={stopFlash}/>
 
-      {/* Timer expired modal — judge only */}
       {timerExpired && isJudge && activeP && (
-        <TimerExpiredModal
-          name={activeP.participant_name}
-          onExtraTime={handleExtraTime}
-          onStop={handleTimerStop}
-        />
+        <TimerExpiredModal name={activeP.participant_name} onExtraTime={handleExtraTime} onStop={handleTimerStop}/>
       )}
 
       {/* Floating reactions */}
@@ -1485,38 +1493,32 @@ export default function MustabaqahPage() {
         ))}
       </div>
 
-      {/* ── TOP BAR ──────────────────────────────────────────────── */}
-      <div style={{position:"relative",zIndex:10,flexShrink:0,background:"rgba(5,15,8,.92)",backdropFilter:"blur(20px)",borderBottom:"1px solid rgba(201,168,76,.15)",padding:"9px 12px",display:"flex",alignItems:"center",gap:8}}>
-        {/* Back button */}
-        <button onClick={()=>setView("list")} style={{background:"rgba(255,255,255,.08)",border:"1px solid rgba(255,255,255,.12)",borderRadius:9,padding:"6px 10px",cursor:"pointer",color:"rgba(255,255,255,.7)",display:"flex",alignItems:"center",gap:4,flexShrink:0}}>
-          <ArrowLeft size={15}/><span style={{fontSize:12,fontWeight:600}}>Back</span>
+      {/* ══ HEADER (slim) ════════════════════════════════════════════ */}
+      <div style={{position:"relative",zIndex:10,flexShrink:0,background:"rgba(4,12,6,.97)",backdropFilter:"blur(20px)",borderBottom:"1px solid rgba(201,168,76,.18)",padding:"8px 12px",display:"flex",alignItems:"center",gap:8}}>
+        <button onClick={()=>setView("list")} style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.1)",borderRadius:8,padding:"5px 8px",cursor:"pointer",color:"rgba(255,255,255,.6)",display:"flex",alignItems:"center",gap:3,flexShrink:0}}>
+          <ArrowLeft size={13}/><span style={{fontSize:11}}>Back</span>
         </button>
-
         <div style={{flex:1,minWidth:0}}>
-          <div style={{color:"#fff",fontWeight:800,fontSize:14,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",fontFamily:"Cinzel,serif"}}>{competition.title}</div>
-          <div style={{display:"flex",alignItems:"center",gap:6,marginTop:1,flexWrap:"wrap"}}>
-            <span style={{fontSize:10,fontWeight:700,padding:"1px 7px",borderRadius:20,background:competition.status==="active"?`${GREEN}22`:`${GOLD}22`,color:competition.status==="active"?GREEN:GOLD,border:`1px solid ${competition.status==="active"?GREEN:GOLD}`}}>
-              {competition.status==="active"?"🔴 LIVE":competition.status.toUpperCase()}
+          <div style={{color:"#fff",fontWeight:800,fontSize:13,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"Cinzel,serif",letterSpacing:.3}}>{competition.title}</div>
+          <div style={{display:"flex",alignItems:"center",gap:5,marginTop:1,flexWrap:"nowrap"}}>
+            <span style={{fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:20,background:competition.status==="active"?`${GREEN}22`:`${GOLD}22`,color:competition.status==="active"?GREEN:GOLD,border:`1px solid ${competition.status==="active"?GREEN:GOLD}`,letterSpacing:.5,flexShrink:0}}>
+              {competition.status==="active"?"● LIVE":competition.status.toUpperCase()}
             </span>
-            <span style={{color:"rgba(255,255,255,.3)",fontSize:11}}>Stage {competition.current_stage}{'/'}{competition.total_stages}</span>
+            <span style={{color:"rgba(255,255,255,.3)",fontSize:10,flexShrink:0}}>S{competition.current_stage}/{competition.total_stages}</span>
+            <div style={{display:"flex",gap:2,flexShrink:0}}>
+              {Array.from({length:competition.total_stages},(_,i)=>(
+                <div key={i} style={{width:11,height:11,borderRadius:"50%",background:i+1<competition.current_stage?GOLD:i+1===competition.current_stage?`${GOLD}55`:"rgba(255,255,255,.07)",border:`1px solid ${i+1<=competition.current_stage?GOLD:"rgba(255,255,255,.08)"}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:6,fontWeight:800,color:i+1<competition.current_stage?G:GOLD}}>
+                  {i+1<competition.current_stage?"✓":""}
+                </div>
+              ))}
+            </div>
           </div>
         </div>
-
-        {/* Stage dots */}
-        <div style={{display:"flex",gap:3,flexShrink:0}}>
-          {Array.from({length:competition.total_stages},(_,i)=>(
-            <div key={i} style={{width:20,height:20,borderRadius:"50%",background:i+1<competition.current_stage?GOLD:i+1===competition.current_stage?`${GOLD}33`:"rgba(255,255,255,.08)",border:`1.5px solid ${i+1<=competition.current_stage?GOLD:"rgba(255,255,255,.1)"}`,display:"flex",alignItems:"center",justifyContent:"center",color:i+1<competition.current_stage?G:i+1===competition.current_stage?GOLD:"rgba(255,255,255,.3)",fontSize:9,fontWeight:800}}>
-              {i+1<competition.current_stage?"✓":i+1}
-            </div>
-          ))}
+        <div style={{background:"rgba(201,168,76,.1)",border:"1px solid rgba(201,168,76,.2)",borderRadius:7,padding:"3px 7px",flexShrink:0}}>
+          <span style={{color:GOLD,fontSize:9,fontWeight:700}}>{isJudge?"⚖️ Judge":isObserver?"👁️ Observer":"🎙️ Me"}</span>
         </div>
-
-        <div style={{display:"flex",alignItems:"center",gap:4,flexShrink:0}}>
-          <div style={{background:"rgba(201,168,76,.12)",border:"1px solid rgba(201,168,76,.3)",borderRadius:8,padding:"3px 8px",color:GOLD,fontWeight:800,fontSize:12,letterSpacing:2}}>{competition.room_code}</div>
-          <button onClick={e=>copyCode(competition.room_code,e)} style={{background:"rgba(201,168,76,.1)",border:"1px solid rgba(201,168,76,.2)",borderRadius:7,padding:"4px 6px",cursor:"pointer",color:copyFlash?GREEN:GOLD,fontSize:11}}>{copyFlash?"✓":"📋"}</button>
-        </div>
-        <button onClick={()=>setShowChat(c=>!c)} style={{background:showChat?`${GOLD}22`:"rgba(255,255,255,.07)",border:`1px solid ${showChat?GOLD:"rgba(255,255,255,.12)"}`,borderRadius:9,padding:"5px 8px",cursor:"pointer",color:showChat?GOLD:"rgba(255,255,255,.45)",flexShrink:0,position:"relative"}}>
-          💬{chatMessages.length>0&&!showChat&&<span style={{position:"absolute",top:-4,right:-4,background:RED,borderRadius:"50%",width:13,height:13,display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,color:"#fff",fontWeight:900}}>{chatMessages.length>9?"9+":chatMessages.length}</span>}
+        <button onClick={()=>setShowChat(c=>!c)} style={{background:showChat?`${GOLD}22`:"rgba(255,255,255,.06)",border:`1px solid ${showChat?GOLD:"rgba(255,255,255,.1)"}`,borderRadius:8,padding:"5px 7px",cursor:"pointer",color:showChat?GOLD:"rgba(255,255,255,.4)",flexShrink:0,position:"relative"}}>
+          💬{chatMessages.length>0&&!showChat&&<span style={{position:"absolute",top:-4,right:-4,background:RED,borderRadius:"50%",width:12,height:12,display:"flex",alignItems:"center",justifyContent:"center",fontSize:7,color:"#fff",fontWeight:900}}>{chatMessages.length>9?"9+":chatMessages.length}</span>}
         </button>
       </div>
 
@@ -1541,10 +1543,7 @@ export default function MustabaqahPage() {
                 <div key={m.id} style={{display:"flex",gap:8,alignItems:"flex-start"}}>
                   <div style={{width:28,height:28,borderRadius:"50%",background:`linear-gradient(135deg,${GOLD}88,${GOLDD}88)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,color:G,flexShrink:0}}>{m.name[0]?.toUpperCase()}</div>
                   <div style={{flex:1,minWidth:0}}>
-                    <div style={{display:"flex",alignItems:"baseline",gap:6}}>
-                      <span style={{color:GOLD,fontWeight:700,fontSize:12}}>{m.name}</span>
-                      <span style={{color:"rgba(255,255,255,.2)",fontSize:10}}>{m.time}</span>
-                    </div>
+                    <div style={{display:"flex",alignItems:"baseline",gap:6}}><span style={{color:GOLD,fontWeight:700,fontSize:12}}>{m.name}</span><span style={{color:"rgba(255,255,255,.2)",fontSize:10}}>{m.time}</span></div>
                     <div style={{color:"rgba(255,255,255,.8)",fontSize:13,marginTop:2,lineHeight:1.4,wordBreak:"break-word"}}>{m.text}</div>
                   </div>
                 </div>
@@ -1557,615 +1556,435 @@ export default function MustabaqahPage() {
         </div>
       )}
 
-      {/* ══ MAIN CONTENT ══════════════════════════════════════════ */}
-      <div style={{flex:1,overflowY:"auto",position:"relative",zIndex:1,paddingBottom:!isJudge?120:16}}>
-
-        {/* ── OBSERVER VIEW: top-half video + participant list ─────── */}
-        {isObserver && (
-          <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
-            {/* Video — half screen, VIEWING label, no controls */}
-            {videoBlock(false)}
-
-            {/* Active participant strip */}
-            {activeP && (
-              <div style={{margin:"8px 16px 0",background:"rgba(34,197,94,.08)",border:`1px solid ${GREEN}44`,borderRadius:14,padding:"10px 14px",display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
-                <Avatar name={activeP.participant_name} size={34} active={activeP.status==="reciting"} called={activeP.status==="called"}/>
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{color:"#fff",fontWeight:700,fontSize:13,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{activeP.participant_name}</div>
-                  <div style={{display:"flex",alignItems:"center",gap:6,marginTop:2}}>
-                    <span style={{color:STATUS_COLOR[activeP.status],fontSize:11,fontWeight:700}}>{STATUS_ICON[activeP.status]} {STATUS_LABEL[activeP.status]}</span>
-                    {timerActive&&<span style={{color:timerDanger?RED:timerWarning?GOLD:GREEN,fontWeight:800,fontSize:13}}><Clock size={10} style={{marginRight:3,verticalAlign:"middle"}}/>{fmt(timerSecs)}</span>}
-                    {bellCount>0&&<span style={{color:GOLD,fontSize:11}}>🔔×{bellCount}</span>}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Question display for observer */}
-            {pickedTile && (
-              <div style={{padding:"0 16px",marginTop:8,flexShrink:0}}>
-                <QuestionDisplay tile={pickedTile} ayahText={ayahText} loadingAyah={loadingAyah} isParticipant={false} isObserver={true} instructions={liveInstructions||undefined}/>
-              </div>
-            )}
-
-            {/* Participants list */}
-            <div style={{padding:"10px 16px 0",flex:1,overflowY:"auto"}}>
-              <div style={{color:"rgba(255,255,255,.4)",fontSize:11,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:8,display:"flex",alignItems:"center",gap:5}}>
-                <Users size={11} color={GOLD}/> {participants.length} Participants
-              </div>
-              <div style={{display:"flex",flexDirection:"column",gap:5,paddingBottom:100}}>
-                {participants.map(p=>{
-                  const isActive=p.id===activeP?.id;
-                  return (
-                    <div key={p.id} style={{background:isActive?"rgba(34,197,94,.07)":"rgba(255,255,255,.03)",border:`1px solid ${isActive?`${GREEN}44`:"rgba(255,255,255,.07)"}`,borderRadius:12,padding:"9px 12px",display:"flex",alignItems:"center",gap:8}}>
-                      <span style={{color:"rgba(255,255,255,.2)",fontSize:10,width:16,flexShrink:0}}>#{p.queue_position}</span>
-                      <Avatar name={p.participant_name} size={30} active={isActive&&p.status==="reciting"} called={p.status==="called"}/>
-                      <div style={{flex:1,minWidth:0}}>
-                        <div style={{color:isActive?GOLD:"#fff",fontWeight:isActive?700:500,fontSize:13,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.participant_name}</div>
-                        {p.school&&<div style={{color:"rgba(255,255,255,.25)",fontSize:10,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.school}</div>}
-                      </div>
-                      <span style={{color:STATUS_COLOR[p.status],fontSize:11,fontWeight:700,flexShrink:0}}>{STATUS_ICON[p.status]} {STATUS_LABEL[p.status]}</span>
-                      {p.total_score>0&&<span style={{color:GOLD,fontWeight:800,fontSize:13,flexShrink:0,minWidth:24,textAlign:"right"}}>{p.total_score}</span>}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ── JUDGE VIEW ────────────────────────────────────────── */}
-        {isJudge && (
-          <>
-            {/* Video with controls for judge */}
-            {videoBlock(true)}
-
-            {/* Active participant strip */}
-            {activeP&&(
-              <div style={{margin:"8px 16px 0",background:activeP.status==="reciting"?"rgba(34,197,94,.08)":"rgba(201,168,76,.08)",border:`1px solid ${activeP.status==="reciting"?`${GREEN}44`:`${GOLD}44`}`,borderRadius:14,padding:"10px 14px",display:"flex",alignItems:"center",gap:10}}>
-                <Avatar name={activeP.participant_name} size={36} active={activeP.status==="reciting"} called={activeP.status==="called"}/>
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{color:"#fff",fontWeight:700,fontSize:14,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"Cinzel,serif"}}>{activeP.participant_name}</div>
-                  <div style={{display:"flex",alignItems:"center",gap:8,marginTop:2,flexWrap:"wrap"}}>
-                    <span style={{background:`${STATUS_COLOR[activeP.status]}18`,border:`1px solid ${STATUS_COLOR[activeP.status]}`,color:STATUS_COLOR[activeP.status],borderRadius:20,padding:"1px 8px",fontSize:10,fontWeight:700}}>{STATUS_ICON[activeP.status]} {STATUS_LABEL[activeP.status]}</span>
-                    {timerActive&&<span style={{color:timerDanger?RED:timerWarning?GOLD:GREEN,fontWeight:800,fontSize:14,display:"flex",alignItems:"center",gap:3,className:timerDanger?"timer-warning":""}}>
-                      <Clock size={11}/>{fmt(timerSecs)}
-                    </span>}
-                    {bellCount>0&&<span style={{color:GOLD,fontWeight:700,fontSize:11}}>🔔×{bellCount} −{bellCount*2}pts</span>}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Judge controls */}
-            <div style={{padding:"12px 16px 0"}}>
-              <div style={{display:"flex",gap:4,marginBottom:12,alignItems:"center"}}>
-                <div style={{display:"flex",flex:1,gap:0,background:"rgba(255,255,255,.05)",borderRadius:12,padding:3}}>
-                  {[["controls","⚙️ Controls"],["roster","👥 Roster"]].map(([tab,label])=>(
-                    <button key={tab} onClick={()=>setJudgeTab(tab as any)} style={{flex:1,background:judgeTab===tab?"rgba(201,168,76,.2)":"transparent",border:judgeTab===tab?"1px solid rgba(201,168,76,.4)":"1px solid transparent",borderRadius:10,padding:"8px 0",color:judgeTab===tab?GOLD:"rgba(255,255,255,.4)",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"Cairo,sans-serif",transition:"all .2s"}}>{label}</button>
-                  ))}
-                </div>
-                {/* Q-Settings button */}
-                <button onClick={()=>setShowQSettings(true)} title="Question Settings"
-                  style={{background:"rgba(201,168,76,.12)",border:"1px solid rgba(201,168,76,.3)",borderRadius:10,padding:"8px 10px",cursor:"pointer",color:GOLD,display:"flex",alignItems:"center",gap:4,flexShrink:0}}>
-                  <Wand2 size={14}/><span style={{fontSize:11,fontWeight:700,fontFamily:"Cairo,sans-serif"}}>Q</span>
-                </button>
-              </div>
-
-              {judgeTab==="controls"&&(
-                <div style={{display:"flex",flexDirection:"column",gap:10,animation:"fadeIn .2s ease"}}>
-                  {competition.status==="open"&&(
-                    <button onClick={startCompetition} style={{background:`linear-gradient(135deg,${GREEN}dd,#16a34a)`,color:"#fff",border:"none",borderRadius:14,padding:"15px",cursor:"pointer",fontWeight:800,fontFamily:"Cairo,sans-serif",fontSize:16,display:"flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:"0 4px 20px rgba(34,197,94,.3)"}}>
-                      <Play size={18}/> Start Competition
-                    </button>
-                  )}
-
-                  {/* Timer per student setter */}
-                  {competition.status==="active"&&!activeP&&(
-                    <div style={{background:"rgba(201,168,76,.06)",border:"1px solid rgba(201,168,76,.2)",borderRadius:12,padding:"10px 14px"}}>
-                      <div style={{color:GOLD,fontSize:11,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:6,display:"flex",alignItems:"center",gap:5}}>
-                        <Clock size={12}/> Timer per student (seconds)
-                      </div>
-                      <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-                        {[60,90,120,180,300,600].map(sec=>(
-                          <button key={sec} onClick={()=>setJudgeTimerDuration(sec)}
-                            style={{background:judgeTimerDuration===sec?`${GOLD}22`:"rgba(255,255,255,.06)",border:`1.5px solid ${judgeTimerDuration===sec?GOLD:"rgba(255,255,255,.15)"}`,borderRadius:9,padding:"5px 12px",cursor:"pointer",color:judgeTimerDuration===sec?GOLD:"rgba(255,255,255,.55)",fontFamily:"Cairo,sans-serif",fontWeight:700,fontSize:12}}>
-                            {fmt(sec)}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {competition.status==="active"&&!activeP&&waiting.length>0&&(
-                    <div>
-                      <div style={{color:GOLD,fontSize:11,fontWeight:700,letterSpacing:1.2,textTransform:"uppercase",marginBottom:8}}>📣 Call a Participant</div>
-                      {waiting.slice(0,6).map(p=>{
-                        const isOnline = onlineUsers.some(u=>u.name===p.participant_name||u.name===p.participant_name.split(" ")[0]);
-                        return (
-                          <button key={p.id} onClick={()=>callParticipant(p)} style={{width:"100%",background:`${GOLD}14`,border:`1px solid ${GOLD}44`,borderRadius:12,padding:"12px 14px",cursor:"pointer",display:"flex",alignItems:"center",gap:10,textAlign:"left",fontFamily:"Cairo,sans-serif",marginBottom:6}}>
-                            <div style={{position:"relative",flexShrink:0}}>
-                              <Avatar name={p.participant_name} size={34}/>
-                              <div style={{position:"absolute",bottom:0,right:0,width:10,height:10,borderRadius:"50%",background:isOnline?GREEN:RED,border:"2px solid rgba(10,20,15,.9)"}}/>
-                            </div>
-                            <div style={{flex:1,minWidth:0}}>
-                              <div style={{color:"#fff",fontWeight:700,fontSize:14,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.participant_name}</div>
-                              <div style={{display:"flex",alignItems:"center",gap:5,marginTop:1}}>
-                                {p.school&&<span style={{color:"rgba(255,255,255,.3)",fontSize:11,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.school}</span>}
-                                <span style={{color:isOnline?GREEN:RED,fontSize:10,fontWeight:700,flexShrink:0,display:"flex",alignItems:"center",gap:3}}>
-                                  {isOnline?<Wifi size={9}/>:<WifiOff size={9}/>}{isOnline?"Online":"Offline"}
-                                </span>
-                              </div>
-                            </div>
-                            <div style={{display:"flex",alignItems:"center",gap:4,color:GOLD,fontSize:12,fontWeight:700,flexShrink:0}}><PhoneCall size={13}/> Call</div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {showTilePicker&&activeP&&stageTiles.length>0&&(
-                    <div style={{background:"rgba(10,20,15,.9)",border:"1.5px solid rgba(201,168,76,.3)",borderRadius:18,padding:"14px"}}>
-                      <div style={{color:"rgba(255,255,255,.5)",fontSize:12,marginBottom:10,textAlign:"center",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-                        <span style={{fontSize:16}}>🎙️</span>
-                        <span><strong style={{color:GOLD}}>{activeP.participant_name}</strong> {pickedTile?"picked #"+pickedTile.num:"is picking…"}</span>
-                      </div>
-                      <NumberTilePicker tiles={stageTiles} pickedNum={pickedTile?.num??null} onPick={()=>{}} canPick={false} stage={competition.current_stage}/>
-                      {pickedTile&&<QuestionDisplay tile={pickedTile} ayahText={ayahText} loadingAyah={loadingAyah} isParticipant={false} instructions={liveInstructions||undefined}/>}
-                    </div>
-                  )}
-
-                  {/* ▶ Start Reciting — visible once tile is picked, prominent */}
-                  {pickedTile&&(activeP?.status==="called"||activeP?.status==="waiting")&&(
-                    <button onClick={startReciting} style={{background:`linear-gradient(135deg,${GREEN}dd,#16a34a)`,color:"#fff",border:"none",borderRadius:14,padding:"18px",cursor:"pointer",fontWeight:900,fontFamily:"Cairo,sans-serif",fontSize:16,display:"flex",alignItems:"center",justifyContent:"center",gap:10,boxShadow:"0 6px 28px rgba(34,197,94,.45)",animation:"recitingGlow 2s ease-in-out infinite"}}>
-                      <Play size={22}/> ▶ Start Reciting — {activeP?.participant_name}
-                    </button>
-                  )}
-
-                  {/* ✅ BELL & STOP — instant feedback, no async blocking */}
-                  {activeP?.status==="reciting"&&(
-                    <div style={{display:"grid",gridTemplateColumns:"1.2fr 1fr",gap:10}}>
-                      <button onClick={ringBell} style={{background:`linear-gradient(135deg,${GOLD},#e8c96a 40%,${GOLDD})`,color:G,border:"none",borderRadius:14,padding:"20px 0",cursor:"pointer",fontWeight:900,fontSize:17,display:"flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:"0 6px 28px rgba(201,168,76,.5)",position:"relative",overflow:"hidden",userSelect:"none"}}>
-                        {bellCount>0&&<span style={{position:"absolute",top:8,right:8,background:RED,color:"#fff",borderRadius:"50%",width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:900}}>{bellCount}</span>}
-                        <Bell size={24} strokeWidth={2.5}/> Ring Bell
-                      </button>
-                      <button onClick={signalStop} style={{background:`linear-gradient(135deg,${RED},#dc2626)`,color:"#fff",border:"none",borderRadius:14,padding:"20px 0",cursor:"pointer",fontWeight:800,fontSize:16,display:"flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:"0 6px 20px rgba(239,68,68,.35)",userSelect:"none"}}>
-                        <StopCircle size={20}/> Stop
-                      </button>
-                    </div>
-                  )}
-
-                  {showScorePanel&&(
-                    <div style={{background:"rgba(201,168,76,.07)",border:"1px solid rgba(201,168,76,.25)",borderRadius:16,padding:"16px"}}>
-                      <div style={{color:GOLD,fontWeight:800,fontSize:14,marginBottom:12}}>📝 Score — {activeP?.participant_name}</div>
-                      {competition.use_criteria_scoring ? (
-                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
-                          {SCORING_CRITERIA.map(c=>(
-                            <div key={c.key}>
-                              <div style={{color:"rgba(255,255,255,.6)",fontSize:11,marginBottom:4,display:"flex",justifyContent:"space-between"}}><span>{c.label}{'/'}{c.labelAr}</span><span style={{color:GOLD}}>{'/'}{c.max}</span></div>
-                              <input type="number" min={0} max={c.max} value={scoreBreak[c.key]} onChange={e=>setScoreBreak(s=>({...s,[c.key]:e.target.value}))} placeholder={`0–${c.max}`} style={{width:"100%",background:"rgba(255,255,255,.08)",border:"1px solid rgba(255,255,255,.15)",borderRadius:8,padding:"8px 10px",color:"#fff",fontSize:14}}/>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <div style={{marginBottom:10}}>
-                          <div style={{color:"rgba(255,255,255,.6)",fontSize:12,marginBottom:4}}>Score /100</div>
-                          <input type="number" min={0} max={100} value={scoreBreak.tajweed} onChange={e=>setScoreBreak(s=>({...s,tajweed:e.target.value}))} style={{width:"100%",background:"rgba(255,255,255,.08)",border:"1px solid rgba(255,255,255,.15)",borderRadius:8,padding:"10px",color:"#fff",fontSize:16}}/>
-                        </div>
-                      )}
-                      <input value={judgeComment} onChange={e=>setJudgeComment(e.target.value)} placeholder="Judge's comment (optional)" style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.12)",borderRadius:8,padding:"8px 12px",color:"#fff",fontSize:13,marginBottom:10}}/>
-                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-                        {bellCount>0&&<span style={{color:GOLD,fontSize:12}}>⚠️ −{bellCount*2} bell penalty</span>}
-                        <span style={{color:GREEN,fontWeight:800,fontSize:16,marginLeft:"auto"}}>Final: {finalScore}/100</span>
-                      </div>
-                      <button onClick={submitScore} disabled={submittingScore} style={{width:"100%",background:submittingScore?`rgba(34,197,94,.4)`:`linear-gradient(135deg,${GREEN}dd,#16a34a)`,color:"#fff",border:"none",borderRadius:10,padding:"12px",cursor:submittingScore?"not-allowed":"pointer",fontWeight:800,fontFamily:"Cairo,sans-serif",fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-                        {submittingScore?<><span style={{animation:"spin .8s linear infinite",display:"inline-block"}}>⏳</span> Saving…</> : <><CheckCircle size={16}/> Submit Score</>}
-                      </button>
-                    </div>
-                  )}
-
-                  {competition.status==="active"&&allDone&&(
-                    <button onClick={advanceStage} style={{background:competition.current_stage>=competition.total_stages?`linear-gradient(135deg,${GOLD},${GOLDD})`:"linear-gradient(135deg,#7c3aed,#6d28d9)",color:"#fff",border:"none",borderRadius:14,padding:"14px",cursor:"pointer",fontWeight:800,fontFamily:"Cairo,sans-serif",fontSize:15,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-                      {competition.current_stage>=competition.total_stages?<><Trophy size={18}/> End & Show Results</>:<><ArrowRight size={18}/> Next Stage {competition.current_stage+1}</>}
-                    </button>
-                  )}
-
-                  <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
-                    {[["⏳",waiting.length,"Waiting"],["✅",done.length,"Done"],["👥",participants.length,"Total"]].map(([icon,n,label])=>(
-                      <div key={label as string} style={{background:"rgba(255,255,255,.04)",borderRadius:12,padding:"10px 8px",textAlign:"center"}}>
-                        <div style={{fontSize:16}}>{icon}</div><div style={{color:GOLD,fontWeight:800,fontSize:18}}>{n}</div><div style={{color:"rgba(255,255,255,.35)",fontSize:11}}>{label}</div>
-                      </div>
-                    ))}
-                  </div>
-
-                  <button onClick={()=>setView("results")} style={{background:"transparent",color:"rgba(255,255,255,.3)",border:"1px solid rgba(255,255,255,.1)",borderRadius:10,padding:"10px",cursor:"pointer",fontFamily:"Cairo,sans-serif",fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
-                    <Award size={13}/> View Live Standings
-                  </button>
-
-                  {/* End Session */}
-                  <button onClick={terminateSession} style={{background:"rgba(239,68,68,.1)",color:RED,border:`1px solid ${RED}44`,borderRadius:10,padding:"10px",cursor:"pointer",fontFamily:"Cairo,sans-serif",fontSize:12,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:4,marginTop:4}}>
-                    <StopCircle size={13}/> End Session for All
-                  </button>
-                </div>
-              )}
-
-              {judgeTab==="roster"&&(
-                <div style={{animation:"fadeIn .2s ease"}}>
-                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
-                    <span style={{color:"rgba(255,255,255,.5)",fontSize:13}}><Users size={13} style={{marginRight:4,verticalAlign:"middle"}}/>{participants.filter(p=>p.status!=="pending").length} registered</span>
-                    <div style={{display:"flex",gap:4}}>
-                      {[["list",<List size={12}/>],["grid",<LayoutGrid size={12}/>]].map(([mode,icon])=>(
-                        <button key={mode as string} onClick={()=>setRosterMode(mode as any)} style={{background:rosterMode===mode?`${GOLD}22`:"rgba(255,255,255,.05)",border:`1px solid ${rosterMode===mode?GOLD:"rgba(255,255,255,.1)"}`,borderRadius:8,padding:"5px 9px",cursor:"pointer",color:rosterMode===mode?GOLD:"rgba(255,255,255,.3)"}}>{icon}</button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* ── PENDING APPROVAL REQUESTS ── */}
-                  {participants.filter(p=>p.status==="pending").length>0&&(
-                    <div style={{marginBottom:12,background:"rgba(167,139,250,.08)",border:"1.5px solid rgba(167,139,250,.4)",borderRadius:14,padding:"12px 14px"}}>
-                      <div style={{color:"#a78bfa",fontWeight:800,fontSize:12,letterSpacing:1,textTransform:"uppercase",marginBottom:10,display:"flex",alignItems:"center",gap:5}}>
-                        🕐 Pending Approval ({participants.filter(p=>p.status==="pending").length})
-                      </div>
-                      {participants.filter(p=>p.status==="pending").map(p=>(
-                        <div key={p.id} style={{display:"flex",alignItems:"center",gap:8,padding:"9px 0",borderBottom:"1px solid rgba(255,255,255,.06)"}}>
-                          <Avatar name={p.participant_name} size={32}/>
-                          <div style={{flex:1,minWidth:0}}>
-                            <div style={{color:"#fff",fontWeight:700,fontSize:13,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.participant_name}</div>
-                            {p.school&&<div style={{color:"rgba(255,255,255,.35)",fontSize:11}}>{p.school}</div>}
-                          </div>
-                          <button onClick={async()=>{
-                            await supabase.from("musabaqah_participants" as any).update({status:"waiting"} as any).eq("id",p.id);
-                            broadcast("PARTICIPANT_APPROVED",{participant_id:p.id});
-                            loadParticipants();
-                            toast({title:`✅ ${p.participant_name} approved`});
-                          }} style={{background:"rgba(34,197,94,.2)",color:GREEN,border:`1px solid ${GREEN}55`,borderRadius:9,padding:"5px 10px",cursor:"pointer",fontWeight:700,fontSize:12,fontFamily:"Cairo,sans-serif",flexShrink:0}}>
-                            Approve
-                          </button>
-                          <button onClick={async()=>{
-                            await supabase.from("musabaqah_participants" as any).delete().eq("id",p.id);
-                            loadParticipants();
-                            toast({title:`❌ ${p.participant_name} denied`});
-                          }} style={{background:"rgba(239,68,68,.15)",color:RED,border:`1px solid ${RED}44`,borderRadius:9,padding:"5px 10px",cursor:"pointer",fontWeight:700,fontSize:12,fontFamily:"Cairo,sans-serif",flexShrink:0}}>
-                            Deny
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {participants.length===0 ? (
-                    <div style={{textAlign:"center",padding:"32px 0",color:"rgba(255,255,255,.3)"}}>
-                      <p style={{margin:0,fontSize:13}}>Share code: <strong style={{color:GOLD,letterSpacing:3}}>{competition.room_code}</strong></p>
-                    </div>
-                  ) : rosterMode==="list" ? (
-                    <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                      {participants.map(p=>{
-                        const isActive=p.id===activeP?.id;
-                        return (
-                          <div key={p.id} style={{background:isActive?"rgba(201,168,76,.1)":"rgba(255,255,255,.03)",border:`1.5px solid ${isActive?GOLD:"rgba(255,255,255,.08)"}`,borderRadius:14,padding:"11px 13px",display:"flex",alignItems:"center",gap:8}}>
-                            <span style={{color:"rgba(255,255,255,.2)",fontSize:11,width:18,flexShrink:0}}>#{p.queue_position}</span>
-                            <Avatar name={p.participant_name} size={34} active={isActive&&p.status==="reciting"} called={p.status==="called"}/>
-                            <div style={{flex:1,minWidth:0}}>
-                              <div style={{color:isActive?GOLD:"#fff",fontWeight:700,fontSize:13,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.participant_name}</div>
-                              {p.school&&<div style={{color:"rgba(255,255,255,.3)",fontSize:11,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.school}</div>}
-                            </div>
-                            <div style={{background:`${STATUS_COLOR[p.status]}18`,border:`1px solid ${STATUS_COLOR[p.status]}55`,color:STATUS_COLOR[p.status],borderRadius:20,padding:"2px 8px",fontSize:10,fontWeight:700,flexShrink:0}}>{STATUS_ICON[p.status]} {STATUS_LABEL[p.status]}</div>
-                            {p.total_score>0&&<div style={{color:GOLD,fontWeight:800,fontSize:14,flexShrink:0}}>{p.total_score}</div>}
-                            {competition.status==="active"&&p.status==="waiting"&&!activeP&&(
-                              <button onClick={()=>callParticipant(p)} style={{background:`${GOLD}22`,color:GOLD,border:`1px solid ${GOLD}55`,borderRadius:8,padding:"5px 10px",cursor:"pointer",fontWeight:700,fontSize:11,fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",gap:3,flexShrink:0}}><PhoneCall size={11}/> Call</button>
-                            )}
-                            {p.status==="waiting"&&(
-                              <button onClick={async()=>{ await supabase.from("musabaqah_participants" as any).update({status:"absent"}).eq("id",p.id); loadParticipants(); }} style={{background:"transparent",color:"rgba(255,255,255,.2)",border:"1px solid rgba(255,255,255,.08)",borderRadius:8,padding:"3px 7px",cursor:"pointer",fontSize:10,flexShrink:0}}>Absent</button>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(120px,1fr))",gap:8}}>
-                      {participants.map(p=>{
-                        const isActive=p.id===activeP?.id;
-                        return (
-                          <div key={p.id} style={{background:isActive?`${GOLD}12`:"rgba(255,255,255,.04)",border:`1.5px solid ${isActive?GOLD:"rgba(255,255,255,.09)"}`,borderRadius:14,padding:"12px 10px",textAlign:"center"}}>
-                            <Avatar name={p.participant_name} size={44} active={isActive&&p.status==="reciting"} called={p.status==="called"}/>
-                            <div style={{color:isActive?GOLD:"#fff",fontWeight:700,fontSize:11,marginTop:7,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.participant_name}</div>
-                            <div style={{color:STATUS_COLOR[p.status],fontSize:10,fontWeight:700,marginTop:3}}>{STATUS_ICON[p.status]} {STATUS_LABEL[p.status]}</div>
-                            {p.total_score>0&&<div style={{color:GOLD,fontWeight:900,fontSize:15,marginTop:3}}>{p.total_score}</div>}
-                            {competition.status==="active"&&p.status==="waiting"&&!activeP&&(
-                              <button onClick={()=>callParticipant(p)} style={{width:"100%",marginTop:7,background:`${GOLD}20`,color:GOLD,border:`1px solid ${GOLD}55`,borderRadius:8,padding:"5px 0",cursor:"pointer",fontWeight:700,fontSize:10,fontFamily:"Cairo,sans-serif"}}><PhoneCall size={10} style={{marginRight:3,verticalAlign:"middle"}}/>Call</button>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </>
-        )}
-
-        {/* ── PARTICIPANT VIEW ─────────────────────────────────── */}
-        {!isJudge && !isObserver && myParticipant && (
-          <div>
-            {/* Video — show for active participant only (with controls), others see judge only */}
-            {videoBlock(!!iAmParticipantActive)}
-
-            <div style={{padding:"12px 16px 0"}}>
-              {myParticipant.status==="pending"&&(
-                <div className="glass-card" style={{borderRadius:18,padding:"28px 22px",textAlign:"center"}}>
-                  <div style={{fontSize:40,marginBottom:10,animation:"floatUp 4s ease-in-out infinite"}}>🕐</div>
-                  <div style={{color:"#a78bfa",fontWeight:900,fontSize:18,letterSpacing:.5}}>Awaiting Approval</div>
-                  <div style={{color:"rgba(255,255,255,.45)",fontSize:13,marginTop:8,lineHeight:1.7}}>
-                    The judge will admit you shortly.<br/>
-                    <strong style={{color:"#fff"}}>{myParticipant.participant_name}</strong>
-                    {myParticipant.school&&<span style={{color:"rgba(255,255,255,.35)"}}> · {myParticipant.school}</span>}
-                  </div>
-                  <div style={{marginTop:16,background:"rgba(167,139,250,.08)",border:"1px solid rgba(167,139,250,.2)",borderRadius:12,padding:"10px 14px",fontSize:12,color:"rgba(255,255,255,.3)"}}>
-                    🔒 Your entry is pending admin review
-                  </div>
-                </div>
-              )}
-
-              {myParticipant.status==="waiting"&&(
-                <div className="glass-card" style={{borderRadius:18,padding:"22px",textAlign:"center"}}>
-                  <div style={{fontSize:36,marginBottom:8,animation:"floatUp 4s ease-in-out infinite"}}>⏳</div>
-                  <div style={{color:GOLD,fontWeight:800,fontSize:17}}>Waiting in Queue</div>
-                  <div style={{color:"rgba(255,255,255,.4)",fontSize:13,marginTop:4}}>Position #{myParticipant.queue_position} of {participants.filter(p=>p.status!=="pending").length}</div>
-                  <div style={{color:"rgba(255,255,255,.25)",fontSize:12,marginTop:10,lineHeight:1.7}}>Your judge will call you when it's your turn.</div>
-                  {activeP&&activeP.id!==myParticipant.id&&(
-                    <div style={{marginTop:12,background:"rgba(34,197,94,.08)",border:"1px solid rgba(34,197,94,.2)",borderRadius:12,padding:"10px 14px"}}>
-                      <div style={{color:GREEN,fontWeight:700,fontSize:12,marginBottom:2}}>🎙️ Now Reciting</div>
-                      <div style={{color:"#fff",fontWeight:700,fontSize:14}}>{activeP.participant_name}</div>
-                      {pickedTile&&<div style={{color:GOLD,fontSize:12,marginTop:4}}>📖 {pickedTile.label}</div>}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {myParticipant.status==="called"&&(
-                <div style={{animation:"calledGlow 2s ease-in-out infinite",background:"rgba(201,168,76,.1)",border:`2px solid ${GOLD}`,borderRadius:20,padding:"18px 16px"}}>
-                  <div style={{textAlign:"center",marginBottom:16}}>
-                    <div style={{fontSize:40,animation:"floatUp 2s ease-in-out infinite"}}>🎙️</div>
-                    <div style={{color:GOLD,fontWeight:900,fontSize:18,letterSpacing:1,marginTop:8}}>YOU HAVE BEEN CALLED!</div>
-                    {!pickedTile
-                      ? <div style={{color:"rgba(255,255,255,.7)",fontSize:13,marginTop:6,fontWeight:700}}>👇 Pick your question number below</div>
-                      : <div style={{color:GREEN,fontSize:13,marginTop:6,fontWeight:700}}>✅ Question selected — wait for judge to start</div>
-                    }
-                  </div>
-                  {stageTiles.length>0&&(
-                    <NumberTilePicker tiles={stageTiles} pickedNum={pickedTile?.num??null} onPick={!pickedTile ? pickTile : ()=>{}} canPick={!pickedTile} stage={competition.current_stage}/>
-                  )}
-                  {pickedTile&&<QuestionDisplay tile={pickedTile} ayahText={ayahText} loadingAyah={loadingAyah} isParticipant={true} instructions={liveInstructions||undefined}/>}
-                </div>
-              )}
-
-              {myParticipant.status==="reciting"&&(
-                <div style={{animation:"recitingGlow 2s ease-in-out infinite",background:"rgba(34,197,94,.08)",border:`2px solid ${GREEN}`,borderRadius:20,padding:"18px 16px"}}>
-                  <div style={{textAlign:"center",marginBottom:12}}>
-                    <div style={{fontSize:36,animation:"floatUp 1.5s ease-in-out infinite"}}>🎙️</div>
-                    <div style={{color:GREEN,fontWeight:900,fontSize:18,letterSpacing:1,marginTop:8}}>NOW RECITING</div>
-                    {timerActive&&<div style={{color:timerDanger?RED:timerWarning?GOLD:GREEN,fontWeight:900,fontSize:30,marginTop:6,fontFamily:"Cinzel,serif"}}>{fmt(timerSecs)}</div>}
-                    {bellCount>0&&<div style={{color:RED,fontWeight:700,fontSize:13,marginTop:4}}>🔔 {bellCount} error{bellCount!==1?"s":""} · −{bellCount*2} pts</div>}
-                  </div>
-                  {pickedTile&&(
-                    <div style={{background:"rgba(0,0,0,.3)",border:"1px solid rgba(255,255,255,.1)",borderRadius:14,padding:"14px"}}>
-                      <div style={{color:GOLD,fontSize:11,fontWeight:700,letterSpacing:1.5,textTransform:"uppercase",marginBottom:6}}>📖 Your Passage</div>
-                      <div style={{color:"#fff",fontWeight:700,fontSize:15,marginBottom:6}}>{pickedTile.label}</div>
-                      {ayahText&&(
-                        <div style={{fontFamily:"'Amiri Quran',serif",fontSize:20,color:"rgba(255,255,255,.9)",direction:"rtl",textAlign:"center",lineHeight:2.2,padding:"10px 8px",background:"rgba(201,168,76,.06)",borderRadius:10}}>
-                          {ayahText}<span style={{color:"rgba(201,168,76,.6)",fontSize:15}}> ﴿{pickedTile.ayah}﴾</span>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  <div style={{color:"rgba(255,255,255,.45)",fontSize:12,textAlign:"center",marginTop:12}}>Recite clearly and confidently. Judge will signal when to stop.</div>
-                </div>
-              )}
-
-              {myParticipant.status==="completed"&&(
-                <div className="glass-card" style={{borderRadius:18,padding:"22px",textAlign:"center"}}>
-                  <div style={{fontSize:44,marginBottom:8}}>✅</div>
-                  <div style={{color:GREEN,fontWeight:800,fontSize:18}}>Recitation Complete!</div>
-                  <div style={{color:GOLD,fontWeight:900,fontSize:44,marginTop:8}}>{myParticipant.total_score}</div>
-                  <div style={{color:"rgba(255,255,255,.4)",fontSize:13}}>Total Points</div>
-                  <div style={{marginTop:10,display:"flex",gap:4,justifyContent:"center",flexWrap:"wrap"}}>
-                    {Array.from({length:competition.total_stages},(_,si)=>(
-                      <div key={si} style={{background:"rgba(255,255,255,.06)",borderRadius:8,padding:"4px 10px",textAlign:"center"}}>
-                        <div style={{color:GOLD,fontWeight:700,fontSize:13}}>{(myParticipant.stage_scores||{})[si+1]??"-"}</div>
-                        <div style={{color:"rgba(255,255,255,.3)",fontSize:10}}>S{si+1}</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Clean, deduped participants list */}
-              <div style={{marginTop:14}}>
-                <div style={{color:"rgba(255,255,255,.4)",fontSize:11,fontWeight:700,marginBottom:7,display:"flex",alignItems:"center",gap:5}}><Users size={11}/> {participants.length} Participants</div>
-                <div style={{display:"flex",flexDirection:"column",gap:5,paddingBottom:100}}>
-                  {participants.map(p=>{
-                    const isMe=p.id===myParticipant?.id;
-                    return (
-                      <div key={p.id} style={{background:isMe?"rgba(201,168,76,.08)":p.id===activeP?.id?"rgba(34,197,94,.07)":"rgba(255,255,255,.03)",border:`1px solid ${isMe?`${GOLD}44`:p.id===activeP?.id?`${GREEN}44`:"rgba(255,255,255,.07)"}`,borderRadius:12,padding:"9px 12px",display:"flex",alignItems:"center",gap:8}}>
-                        <span style={{color:"rgba(255,255,255,.2)",fontSize:10,width:16,flexShrink:0}}>#{p.queue_position}</span>
-                        <Avatar name={p.participant_name} size={30} active={p.id===activeP?.id&&p.status==="reciting"} called={p.status==="called"}/>
-                        <div style={{flex:1,minWidth:0}}>
-                          <div style={{color:isMe?GOLD:"#fff",fontWeight:isMe?700:500,fontSize:13,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-                            {p.participant_name}{isMe&&<span style={{color:GREEN,fontSize:10,marginLeft:5}}>YOU</span>}
-                          </div>
-                        </div>
-                        <span style={{color:STATUS_COLOR[p.status],fontSize:11,fontWeight:700,flexShrink:0}}>{STATUS_ICON[p.status]} {STATUS_LABEL[p.status]}</span>
-                        {p.total_score>0&&<span style={{color:GOLD,fontWeight:800,fontSize:13,flexShrink:0}}>{p.total_score}</span>}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
+      {/* ══ VIDEO HERO — takes 58% of viewport ════════════════════════ */}
+      <div style={{flexShrink:0,height:"58vh",minHeight:260,maxHeight:460,position:"relative",borderBottom:`1px solid ${GOLD}1a`}}>
+        {videoHero(isJudge || !!iAmParticipantActive)}
+        {!activeP&&(
+          <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none"}}>
+            <div style={{color:GOLD,fontSize:26,opacity:.05,fontFamily:"Amiri,serif",letterSpacing:4}}>بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ</div>
           </div>
         )}
       </div>
 
-      {/* ── BOTTOM BAR — Participant ─────────────────────────────── */}
-      {!isJudge&&!isObserver&&myParticipant&&(
-        <div style={{position:"fixed",bottom:0,left:0,right:0,zIndex:20,background:"rgba(5,15,8,.97)",backdropFilter:"blur(20px)",borderTop:"1px solid rgba(201,168,76,.2)"}}>
-          {(myParticipant.status==="waiting"||myParticipant.status==="completed")&&activeP&&(
-            <div style={{padding:"7px 16px 0",display:"flex",alignItems:"center",gap:5}}>
-              <span style={{color:"rgba(255,255,255,.3)",fontSize:11,flexShrink:0}}>React:</span>
-              <div style={{display:"flex",gap:4,overflowX:"auto"}}>
-                {REACTION_EMOJIS.map(e=>(
-                  <button key={e} onClick={()=>sendReaction(e)} style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.12)",borderRadius:9,padding:"4px 8px",cursor:"pointer",fontSize:17,flexShrink:0}}>{e}</button>
-                ))}
-              </div>
-            </div>
-          )}
-          <div style={{padding:"9px 16px 12px",display:"flex",alignItems:"center",gap:10}}>
-            <Avatar name={myParticipant.participant_name} size={34} active={myParticipant.status==="reciting"} called={myParticipant.status==="called"}/>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{color:"#fff",fontWeight:700,fontSize:13,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{myParticipant.participant_name}</div>
-              <div style={{color:STATUS_COLOR[myParticipant.status],fontSize:12,fontWeight:600,marginTop:1}}>
-                {myParticipant.status==="pending"&&`🕐 Awaiting admin approval…`}
-                {myParticipant.status==="called"&&"🔔 YOU HAVE BEEN CALLED!"}
-                {myParticipant.status==="reciting"&&"🎙️ Now Reciting..."}
-                {myParticipant.status==="waiting"&&`⏳ Queue #${myParticipant.queue_position}`}
-                {myParticipant.status==="completed"&&"✅ Done"}
-              </div>
-            </div>
-            {(!audioReady||lkError)&&!videoDisabled&&<button onClick={()=>{wakeAudio(); if(lkError&&competition)fetchLkToken(competition.room_code);}} style={{background:`${GOLD}22`,border:`1px solid ${GOLD}55`,borderRadius:10,padding:"6px 10px",cursor:"pointer",color:GOLD,fontSize:11,fontWeight:700,display:"flex",alignItems:"center",gap:3,fontFamily:"Cairo,sans-serif"}}><Volume2 size={12}/> {lkError?"Retry":"Sound"}</button>}
-            {myParticipant.total_score>0&&<div style={{color:GOLD,fontWeight:900,fontSize:20,flexShrink:0}}>{myParticipant.total_score}<span style={{color:"rgba(255,255,255,.3)",fontSize:10}}> pts</span></div>}
+      {/* ══ ACTION BAR — immediately below video, always accessible ══ */}
+      {isJudge && activeP?.status==="reciting" && (
+        <div style={{flexShrink:0,display:"grid",gridTemplateColumns:"1.4fr 1fr",gap:8,padding:"8px 12px",background:"rgba(4,12,6,.98)",borderBottom:"1px solid rgba(201,168,76,.08)"}}>
+          <button onClick={ringBell} style={{background:`linear-gradient(135deg,${GOLD},#e8c96a 40%,${GOLDD})`,color:G,border:"none",borderRadius:12,padding:"13px 0",cursor:"pointer",fontWeight:900,fontSize:15,display:"flex",alignItems:"center",justifyContent:"center",gap:6,boxShadow:"0 4px 20px rgba(201,168,76,.4)",position:"relative",userSelect:"none"}}>
+            {bellCount>0&&<span style={{position:"absolute",top:5,right:7,background:RED,color:"#fff",borderRadius:"50%",width:18,height:18,display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:900}}>{bellCount}</span>}
+            <Bell size={18} strokeWidth={2.5}/> Ring Bell
+          </button>
+          <button onClick={signalStop} style={{background:`linear-gradient(135deg,${RED},#dc2626)`,color:"#fff",border:"none",borderRadius:12,padding:"13px 0",cursor:"pointer",fontWeight:800,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:6,boxShadow:"0 4px 16px rgba(239,68,68,.3)",userSelect:"none"}}>
+            <StopCircle size={16}/> Stop
+          </button>
+        </div>
+      )}
+      {isJudge && pickedTile && (activeP?.status==="called"||activeP?.status==="waiting") && (
+        <div style={{flexShrink:0,padding:"8px 12px",background:"rgba(4,12,6,.98)",borderBottom:"1px solid rgba(34,197,94,.12)"}}>
+          <button onClick={startReciting} style={{width:"100%",background:`linear-gradient(135deg,${GREEN}dd,#16a34a)`,color:"#fff",border:"none",borderRadius:11,padding:"13px",cursor:"pointer",fontWeight:900,fontFamily:"Cairo,sans-serif",fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:"0 4px 20px rgba(34,197,94,.35)",animation:"recitingGlow 2s ease-in-out infinite"}}>
+            <Play size={18}/> ▶ Start Reciting — {activeP?.participant_name}
+          </button>
+        </div>
+      )}
+      {!isJudge && !isObserver && myParticipant?.status==="reciting" && timerActive && (
+        <div style={{flexShrink:0,padding:"7px 12px",background:"rgba(4,12,6,.98)",borderBottom:"1px solid rgba(34,197,94,.12)",display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
+          <div style={{display:"flex",alignItems:"center",gap:5}}>
+            <div style={{width:7,height:7,borderRadius:"50%",background:GREEN,animation:"pulseRing 1s ease-in-out infinite"}}/>
+            <span style={{color:GREEN,fontWeight:800,fontSize:12}}>NOW RECITING</span>
           </div>
+          <div style={{color:timerDanger?RED:timerWarning?GOLD:GREEN,fontWeight:900,fontSize:20,fontFamily:"Cinzel,serif"}}>{fmt(timerSecs)}</div>
+          {bellCount>0&&<div style={{color:RED,fontSize:11,fontWeight:700}}>🔔×{bellCount}</div>}
         </div>
       )}
 
-      {/* ── BOTTOM BAR — Observer ────────────────────────────────── */}
-      {isObserver&&(
-        <div style={{position:"fixed",bottom:0,left:0,right:0,zIndex:20,background:"rgba(5,15,8,.97)",backdropFilter:"blur(20px)",borderTop:"1px solid rgba(201,168,76,.2)"}}>
-          {activeP&&(
-            <div style={{padding:"7px 16px 0",display:"flex",alignItems:"center",gap:5}}>
-              <span style={{color:"rgba(255,255,255,.3)",fontSize:11,flexShrink:0}}>React:</span>
-              <div style={{display:"flex",gap:4,overflowX:"auto"}}>
-                {REACTION_EMOJIS.map(e=>(
-                  <button key={e} onClick={()=>sendReaction(e)} style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.12)",borderRadius:9,padding:"4px 8px",cursor:"pointer",fontSize:17,flexShrink:0}}>{e}</button>
-                ))}
+      {/* ══ SCROLLABLE CONTENT — remaining space ══════════════════════ */}
+      <div style={{flex:1,overflowY:"auto",position:"relative",zIndex:1}}>
+
+        {/* ── OBSERVER ─────────────────────────────────────────────── */}
+        {isObserver&&(
+          <div style={{padding:"10px 12px 100px",display:"flex",flexDirection:"column",gap:8}}>
+            {activeP&&(
+              <div style={{background:"rgba(34,197,94,.07)",border:`1px solid ${GREEN}33`,borderRadius:11,padding:"9px 12px",display:"flex",alignItems:"center",gap:8}}>
+                <Avatar name={activeP.participant_name} size={30} active={activeP.status==="reciting"} called={activeP.status==="called"}/>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{color:"#fff",fontWeight:700,fontSize:13,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{activeP.participant_name}</div>
+                  <div style={{display:"flex",alignItems:"center",gap:5}}>
+                    <span style={{color:STATUS_COLOR[activeP.status],fontSize:10,fontWeight:700}}>{STATUS_ICON[activeP.status]} {STATUS_LABEL[activeP.status]}</span>
+                    {timerActive&&<span style={{color:timerDanger?RED:timerWarning?GOLD:GREEN,fontWeight:800,fontSize:11}}>{fmt(timerSecs)}</span>}
+                    {bellCount>0&&<span style={{color:GOLD,fontSize:10}}>🔔×{bellCount}</span>}
+                  </div>
+                </div>
               </div>
-            </div>
-          )}
-          <div style={{padding:"9px 16px 12px",display:"flex",alignItems:"center",gap:10}}>
-            <span style={{fontSize:20}}>👁️</span>
-            <div style={{flex:1,color:"rgba(255,255,255,.5)",fontSize:13}}>Following as Observer</div>
-            <button onClick={()=>setShowChat(c=>!c)} style={{background:`${GOLD}18`,border:`1px solid ${GOLD}44`,borderRadius:10,padding:"6px 12px",cursor:"pointer",color:GOLD,fontWeight:700,fontSize:13,fontFamily:"Cairo,sans-serif"}}>💬 Chat</button>
+            )}
+            {pickedTile&&<QuestionDisplay tile={pickedTile} ayahText={ayahText} loadingAyah={loadingAyah} isParticipant={false} isObserver={true} instructions={liveInstructions||undefined}/>}
+            {activeP&&(
+              <div style={{display:"flex",alignItems:"center",gap:4,overflowX:"auto"}}>
+                <span style={{color:"rgba(255,255,255,.3)",fontSize:10,flexShrink:0}}>React:</span>
+                {REACTION_EMOJIS.map(e=><button key={e} onClick={()=>sendReaction(e)} style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.1)",borderRadius:8,padding:"4px 8px",cursor:"pointer",fontSize:16,flexShrink:0}}>{e}</button>)}
+              </div>
+            )}
+            <div style={{color:"rgba(255,255,255,.35)",fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",display:"flex",alignItems:"center",gap:4,marginTop:4}}><Users size={10} color={GOLD}/>{participants.length} Participants</div>
+            {participants.map(p=>{
+              const isActive=p.id===activeP?.id;
+              return(
+                <div key={p.id} style={{background:isActive?"rgba(34,197,94,.07)":"rgba(255,255,255,.02)",border:`1px solid ${isActive?`${GREEN}33`:"rgba(255,255,255,.06)"}`,borderRadius:9,padding:"7px 10px",display:"flex",alignItems:"center",gap:7}}>
+                  <Avatar name={p.participant_name} size={26} active={isActive&&p.status==="reciting"} called={p.status==="called"}/>
+                  <div style={{flex:1,minWidth:0}}><div style={{color:isActive?GOLD:"#fff",fontWeight:isActive?700:500,fontSize:12,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.participant_name}</div></div>
+                  <span style={{color:STATUS_COLOR[p.status],fontSize:10,fontWeight:700,flexShrink:0}}>{STATUS_ICON[p.status]}</span>
+                  {p.total_score>0&&<span style={{color:GOLD,fontWeight:800,fontSize:11,flexShrink:0}}>{p.total_score}</span>}
+                </div>
+              );
+            })}
           </div>
-        </div>
-      )}
+        )}
 
-      {/* ══ Q-SETTINGS SLIDE-IN PANEL ════════════════════════════════ */}
-      {showQSettings&&isJudge&&(
-        <div style={{position:"fixed",inset:0,zIndex:9990,display:"flex",flexDirection:"column",justifyContent:"flex-end"}} onClick={()=>setShowQSettings(false)}>
-          <div style={{position:"absolute",inset:0,background:"rgba(0,0,0,.6)",backdropFilter:"blur(6px)"}}/>
-          <div onClick={e=>e.stopPropagation()}
-            style={{position:"relative",zIndex:1,background:"linear-gradient(180deg,#0d2419 0%,#061410 100%)",borderTop:"1.5px solid rgba(201,168,76,.35)",borderRadius:"24px 24px 0 0",maxHeight:"85vh",display:"flex",flexDirection:"column",fontFamily:"Cairo,sans-serif"}}>
-
-            {/* Header */}
-            <div style={{display:"flex",alignItems:"center",gap:10,padding:"16px 20px",borderBottom:"1px solid rgba(255,255,255,.07)",flexShrink:0}}>
-              <div style={{width:34,height:34,borderRadius:10,background:`linear-gradient(135deg,${GOLD},${GOLDD})`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Wand2 size={16} color={G}/></div>
-              <div style={{flex:1}}>
-                <div style={{color:"#fff",fontWeight:800,fontSize:15}}>Question Settings</div>
-                <div style={{color:"rgba(255,255,255,.35)",fontSize:11}}>Manage questions & instructions for this session</div>
+        {/* ── JUDGE ────────────────────────────────────────────────── */}
+        {isJudge&&(
+          <div style={{padding:"10px 12px 16px"}}>
+            {activeP&&(
+              <div style={{background:activeP.status==="reciting"?"rgba(34,197,94,.07)":"rgba(201,168,76,.07)",border:`1px solid ${activeP.status==="reciting"?`${GREEN}33`:`${GOLD}33`}`,borderRadius:11,padding:"9px 12px",display:"flex",alignItems:"center",gap:8,marginBottom:9}}>
+                <Avatar name={activeP.participant_name} size={30} active={activeP.status==="reciting"} called={activeP.status==="called"}/>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{color:"#fff",fontWeight:700,fontSize:13,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{activeP.participant_name}</div>
+                  <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                    <span style={{color:STATUS_COLOR[activeP.status],fontSize:10,fontWeight:700}}>{STATUS_ICON[activeP.status]} {STATUS_LABEL[activeP.status]}</span>
+                    {timerActive&&<span style={{color:timerDanger?RED:timerWarning?GOLD:GREEN,fontWeight:800,fontSize:12,display:"flex",alignItems:"center",gap:2}}><Clock size={9}/>{fmt(timerSecs)}</span>}
+                    {bellCount>0&&<span style={{color:GOLD,fontSize:10}}>🔔×{bellCount} −{bellCount*2}pts</span>}
+                  </div>
+                </div>
               </div>
-              <button onClick={()=>setShowQSettings(false)} style={{background:"none",border:"none",color:"rgba(255,255,255,.35)",cursor:"pointer",fontSize:22,padding:0,lineHeight:1}}>✕</button>
-            </div>
+            )}
 
             {/* Tabs */}
-            <div style={{display:"flex",padding:"8px 16px",flexShrink:0,gap:8}}>
-              {([["manual","📝 Manual"],["ai","✨ AI Generate"]] as const).map(([t,l])=>(
-                <button key={t} onClick={()=>setQSettingsTab(t)}
-                  style={{flex:1,background:qSettingsTab===t?`rgba(201,168,76,.2)`:"transparent",border:qSettingsTab===t?`1px solid rgba(201,168,76,.4)`:"1px solid transparent",borderRadius:10,padding:"8px 0",color:qSettingsTab===t?GOLD:"rgba(255,255,255,.4)",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"Cairo,sans-serif",transition:"all .2s"}}>
-                  {l}
-                </button>
-              ))}
+            <div style={{display:"flex",gap:4,marginBottom:9,alignItems:"center"}}>
+              <div style={{display:"flex",flex:1,background:"rgba(255,255,255,.04)",borderRadius:9,padding:2}}>
+                {[["controls","⚙️ Controls"],["roster","👥 Roster"]].map(([tab,label])=>(
+                  <button key={tab} onClick={()=>setJudgeTab(tab as any)} style={{flex:1,background:judgeTab===tab?"rgba(201,168,76,.18)":"transparent",border:judgeTab===tab?"1px solid rgba(201,168,76,.35)":"1px solid transparent",borderRadius:7,padding:"7px 0",color:judgeTab===tab?GOLD:"rgba(255,255,255,.35)",fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"Cairo,sans-serif",transition:"all .2s"}}>{label}</button>
+                ))}
+              </div>
+              <button onClick={()=>setShowQSettings(true)} style={{background:"rgba(201,168,76,.1)",border:"1px solid rgba(201,168,76,.25)",borderRadius:8,padding:"7px 9px",cursor:"pointer",color:GOLD,display:"flex",alignItems:"center",gap:3,flexShrink:0}}>
+                <Wand2 size={12}/><span style={{fontSize:10,fontWeight:700}}>Q</span>
+              </button>
             </div>
 
-            {/* Content */}
-            <div style={{flex:1,overflowY:"auto",padding:"14px 16px 0"}}>
+            {judgeTab==="controls"&&(
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {competition.status==="open"&&(
+                  <button onClick={startCompetition} style={{background:`linear-gradient(135deg,${GREEN}dd,#16a34a)`,color:"#fff",border:"none",borderRadius:11,padding:"13px",cursor:"pointer",fontWeight:800,fontFamily:"Cairo,sans-serif",fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:7,boxShadow:"0 4px 18px rgba(34,197,94,.3)"}}>
+                    <Play size={16}/> Start Competition
+                  </button>
+                )}
 
-              {qSettingsTab==="manual"&&(
-                <>
-                  <div style={{color:"rgba(255,255,255,.5)",fontSize:11,marginBottom:6,lineHeight:1.6}}>
-                    One question per line. These will replace the random Quran passages when a participant picks a number.{" "}
-                    <span style={{color:GOLD}}>Leave empty to use random passages.</span>
-                  </div>
-                  <textarea
-                    value={liveCustomQ}
-                    onChange={e=>setLiveCustomQ(e.target.value)}
-                    placeholder={"Al-Fatiha full\nAl-Baqarah 1-5\nSurah Al-Ikhlas complete\n..."}
-                    rows={8}
-                    style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 14px",color:"#fff",fontSize:13,fontFamily:"Cairo,sans-serif",resize:"vertical",lineHeight:1.7,boxSizing:"border-box"}}
-                  />
-                  <div style={{color:"rgba(255,255,255,.3)",fontSize:11,marginTop:4,marginBottom:14}}>
-                    {liveCustomQ.split("\n").filter(s=>s.trim()).length} questions entered
-                  </div>
-
-                  {/* Instructions field */}
-                  <div style={{color:GOLD,fontSize:11,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:6,display:"flex",alignItems:"center",gap:4}}><Eye size={11}/> Instructions for Participants</div>
-                  <textarea
-                    value={liveInstructions}
-                    onChange={e=>setLiveInstructions(e.target.value)}
-                    placeholder={"e.g. Recite with proper Tajweed rules. Begin with Bismillah. The judge will ring the bell for each mistake."}
-                    rows={3}
-                    style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.15)",borderRadius:12,padding:"10px 14px",color:"#fff",fontSize:13,fontFamily:"Cairo,sans-serif",resize:"vertical",lineHeight:1.7,boxSizing:"border-box",marginBottom:16}}
-                  />
-                </>
-              )}
-
-              {qSettingsTab==="ai"&&(
-                <>
-                  <div style={{background:"rgba(201,168,76,.08)",border:"1px solid rgba(201,168,76,.2)",borderRadius:12,padding:"12px 14px",marginBottom:14,display:"flex",alignItems:"flex-start",gap:8}}>
-                    <Sparkles size={14} color={GOLD} style={{flexShrink:0,marginTop:2}}/>
-                    <div style={{color:"rgba(255,255,255,.6)",fontSize:12,lineHeight:1.7}}>
-                      Describe the topic and scope. AI will generate competition questions that will be added to the manual list for you to review before saving.
-                    </div>
-                  </div>
-
-                  <div style={{marginBottom:12}}>
-                    <div style={{color:GOLD,fontSize:11,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:6}}>Prompt / Scope</div>
-                    <textarea
-                      value={aiPrompt}
-                      onChange={e=>setAiPrompt(e.target.value)}
-                      placeholder={"e.g. Juz 30 short surahs for junior students, focus on Al-Fatiha to An-Nas range"}
-                      rows={4}
-                      style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 14px",color:"#fff",fontSize:13,fontFamily:"Cairo,sans-serif",resize:"none",lineHeight:1.7,boxSizing:"border-box"}}
-                    />
-                  </div>
-
-                  <div style={{marginBottom:16}}>
-                    <div style={{color:GOLD,fontSize:11,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:6}}>Number of Questions</div>
-                    <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-                      {[5,8,10,12,15,20].map(n=>(
-                        <button key={n} onClick={()=>setAiQCount(n)}
-                          style={{background:aiQCount===n?`${GOLD}22`:"rgba(255,255,255,.06)",border:`1.5px solid ${aiQCount===n?GOLD:"rgba(255,255,255,.15)"}`,borderRadius:9,padding:"6px 14px",cursor:"pointer",color:aiQCount===n?GOLD:"rgba(255,255,255,.55)",fontFamily:"Cairo,sans-serif",fontWeight:700,fontSize:13}}>
-                          {n}
+                {competition.status==="active"&&!activeP&&(
+                  <div style={{background:"rgba(201,168,76,.05)",border:"1px solid rgba(201,168,76,.12)",borderRadius:9,padding:"8px 11px"}}>
+                    <div style={{color:GOLD,fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:5,display:"flex",alignItems:"center",gap:3}}><Clock size={10}/> Timer per student</div>
+                    <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                      {[60,90,120,180,300,600].map(sec=>(
+                        <button key={sec} onClick={()=>setJudgeTimerDuration(sec)} style={{background:judgeTimerDuration===sec?`${GOLD}22`:"rgba(255,255,255,.05)",border:`1px solid ${judgeTimerDuration===sec?GOLD:"rgba(255,255,255,.12)"}`,borderRadius:7,padding:"4px 10px",cursor:"pointer",color:judgeTimerDuration===sec?GOLD:"rgba(255,255,255,.45)",fontFamily:"Cairo,sans-serif",fontWeight:700,fontSize:11}}>
+                          {fmt(sec)}
                         </button>
                       ))}
                     </div>
                   </div>
+                )}
 
-                  <button onClick={generateAIQuestions} disabled={aiGenLoading||!aiPrompt.trim()}
-                    style={{width:"100%",background:aiGenLoading||!aiPrompt.trim()?"rgba(255,255,255,.08)":`linear-gradient(135deg,${GOLD},${GOLDD})`,color:aiGenLoading||!aiPrompt.trim()?"rgba(255,255,255,.3)":G,border:"none",borderRadius:12,padding:"14px",cursor:aiGenLoading||!aiPrompt.trim()?"not-allowed":"pointer",fontWeight:800,fontSize:14,fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",gap:8,marginBottom:16,transition:"all .2s"}}>
-                    {aiGenLoading?<><Loader2 size={16} style={{animation:"spin 1s linear infinite"}}/> Generating…</>:<><Sparkles size={16}/> Generate {aiQCount} Questions</>}
+                {competition.status==="active"&&!activeP&&waiting.length>0&&(
+                  <div>
+                    <div style={{color:GOLD,fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:6,display:"flex",alignItems:"center",gap:3}}><PhoneCall size={10}/> Call a Participant</div>
+                    {waiting.slice(0,6).map(p=>{
+                      const isOnline=onlineUsers.some(u=>u.name===p.participant_name||u.name===p.participant_name.split(" ")[0]);
+                      return(
+                        <button key={p.id} onClick={()=>callParticipant(p)} style={{width:"100%",background:`${GOLD}0e`,border:`1px solid ${GOLD}33`,borderRadius:9,padding:"9px 11px",cursor:"pointer",display:"flex",alignItems:"center",gap:8,textAlign:"left",fontFamily:"Cairo,sans-serif",marginBottom:4}}>
+                          <div style={{position:"relative",flexShrink:0}}>
+                            <Avatar name={p.participant_name} size={30}/>
+                            <div style={{position:"absolute",bottom:0,right:0,width:8,height:8,borderRadius:"50%",background:isOnline?GREEN:RED,border:"2px solid #050f08"}}/>
+                          </div>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{color:"#fff",fontWeight:700,fontSize:13,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.participant_name}</div>
+                            <span style={{color:isOnline?GREEN:RED,fontSize:10,fontWeight:700,display:"flex",alignItems:"center",gap:2}}>{isOnline?<Wifi size={8}/>:<WifiOff size={8}/>}{isOnline?"Online":"Offline"}</span>
+                          </div>
+                          <span style={{color:GOLD,fontSize:11,fontWeight:700,flexShrink:0,display:"flex",alignItems:"center",gap:2}}><PhoneCall size={10}/> Call</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Tile picker — collapsible */}
+                {showTilePicker&&activeP&&stageTiles.length>0&&(
+                  <div style={{background:"rgba(10,20,15,.95)",border:`1.5px solid ${GOLD}33`,borderRadius:12}}>
+                    <button onClick={()=>setTilePickerCollapsed(c=>!c)} style={{width:"100%",background:"none",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:7,padding:"9px 11px",fontFamily:"Cairo,sans-serif"}}>
+                      <span style={{fontSize:13}}>🎙️</span>
+                      <div style={{flex:1,minWidth:0,textAlign:"left"}}>
+                        <span style={{color:"rgba(255,255,255,.65)",fontSize:11}}><strong style={{color:GOLD}}>{activeP.participant_name}</strong> {pickedTile?`picked #${pickedTile.num}`:"is picking…"}</span>
+                      </div>
+                      {pickedTile&&<span style={{background:`${GOLD}22`,border:`1px solid ${GOLD}44`,borderRadius:5,padding:"2px 5px",color:GOLD,fontSize:9,fontWeight:700,flexShrink:0}}>#{pickedTile.num}</span>}
+                      <span style={{color:"rgba(255,255,255,.3)",fontSize:13}}>{tilePickerCollapsed?"▾":"▴"}</span>
+                    </button>
+                    {!tilePickerCollapsed&&(
+                      <div style={{padding:"0 9px 9px"}}>
+                        <NumberTilePicker tiles={stageTiles} pickedNum={pickedTile?.num??null} onPick={()=>{}} canPick={false} stage={competition.current_stage}/>
+                      </div>
+                    )}
+                    {pickedTile&&(
+                      <div style={{padding:"0 9px 9px"}}>
+                        <QuestionDisplay tile={pickedTile} ayahText={ayahText} loadingAyah={loadingAyah} isParticipant={false} instructions={liveInstructions||undefined}/>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {showScorePanel&&(
+                  <div style={{background:"rgba(201,168,76,.06)",border:"1px solid rgba(201,168,76,.2)",borderRadius:12,padding:"13px"}}>
+                    <div style={{color:GOLD,fontWeight:800,fontSize:13,marginBottom:10}}>📝 Score — {activeP?.participant_name}</div>
+                    {competition.use_criteria_scoring ? (
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:9}}>
+                        {SCORING_CRITERIA.map(c=>(
+                          <div key={c.key}>
+                            <div style={{color:"rgba(255,255,255,.5)",fontSize:10,marginBottom:3,display:"flex",justifyContent:"space-between"}}><span>{c.label}/{c.labelAr}</span><span style={{color:GOLD}}>/{c.max}</span></div>
+                            <input type="number" min={0} max={c.max} value={scoreBreak[c.key]} onChange={e=>setScoreBreak(s=>({...s,[c.key]:e.target.value}))} placeholder={`0–${c.max}`} style={{width:"100%",background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.12)",borderRadius:7,padding:"7px 9px",color:"#fff",fontSize:14}}/>
+                          </div>
+                        ))}
+                      </div>
+                    ):(
+                      <div style={{marginBottom:9}}>
+                        <div style={{color:"rgba(255,255,255,.5)",fontSize:11,marginBottom:3}}>Score /100</div>
+                        <input type="number" min={0} max={100} value={scoreBreak.tajweed} onChange={e=>setScoreBreak(s=>({...s,tajweed:e.target.value}))} style={{width:"100%",background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.12)",borderRadius:7,padding:"9px",color:"#fff",fontSize:16}}/>
+                      </div>
+                    )}
+                    <input value={judgeComment} onChange={e=>setJudgeComment(e.target.value)} placeholder="Judge's comment (optional)" style={{width:"100%",background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.1)",borderRadius:7,padding:"7px 11px",color:"#fff",fontSize:12,marginBottom:9}}/>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:9}}>
+                      {bellCount>0&&<span style={{color:GOLD,fontSize:11}}>⚠️ −{bellCount*2} penalty</span>}
+                      <span style={{color:GREEN,fontWeight:800,fontSize:14,marginLeft:"auto"}}>Final: {finalScore}/100</span>
+                    </div>
+                    <button onClick={submitScore} disabled={submittingScore} style={{width:"100%",background:submittingScore?`rgba(34,197,94,.4)`:`linear-gradient(135deg,${GREEN}dd,#16a34a)`,color:"#fff",border:"none",borderRadius:9,padding:"11px",cursor:submittingScore?"not-allowed":"pointer",fontWeight:800,fontFamily:"Cairo,sans-serif",fontSize:13,display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
+                      {submittingScore?<><span style={{animation:"spin .8s linear infinite",display:"inline-block"}}>⏳</span> Saving…</>:<><CheckCircle size={13}/> Submit Score</>}
+                    </button>
+                  </div>
+                )}
+
+                {competition.status==="active"&&allDone&&(
+                  <button onClick={advanceStage} style={{background:competition.current_stage>=competition.total_stages?`linear-gradient(135deg,${GOLD},${GOLDD})`:"linear-gradient(135deg,#7c3aed,#6d28d9)",color:"#fff",border:"none",borderRadius:11,padding:"13px",cursor:"pointer",fontWeight:800,fontFamily:"Cairo,sans-serif",fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:7}}>
+                    {competition.current_stage>=competition.total_stages?<><Trophy size={15}/> End & Show Results</>:<><ArrowRight size={15}/> Next Stage {competition.current_stage+1}</>}
+                  </button>
+                )}
+
+                <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:6}}>
+                  {[["⏳",waiting.length,"Waiting"],["✅",done.length,"Done"],["👥",participants.length,"Total"]].map(([icon,n,label])=>(
+                    <div key={label as string} style={{background:"rgba(255,255,255,.03)",borderRadius:9,padding:"8px 5px",textAlign:"center"}}>
+                      <div style={{fontSize:13}}>{icon}</div><div style={{color:GOLD,fontWeight:800,fontSize:15}}>{n}</div><div style={{color:"rgba(255,255,255,.3)",fontSize:10}}>{label}</div>
+                    </div>
+                  ))}
+                </div>
+
+                <button onClick={()=>setView("results")} style={{background:"transparent",color:"rgba(255,255,255,.3)",border:"1px solid rgba(255,255,255,.08)",borderRadius:8,padding:"8px",cursor:"pointer",fontFamily:"Cairo,sans-serif",fontSize:11,display:"flex",alignItems:"center",justifyContent:"center",gap:3}}>
+                  <Award size={11}/> View Live Standings
+                </button>
+                <button onClick={terminateSession} style={{background:"rgba(239,68,68,.07)",color:RED,border:`1px solid ${RED}33`,borderRadius:8,padding:"8px",cursor:"pointer",fontFamily:"Cairo,sans-serif",fontSize:11,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:3}}>
+                  <StopCircle size={11}/> End Session for All
+                </button>
+              </div>
+            )}
+
+            {judgeTab==="roster"&&(
+              <div>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:7}}>
+                  <span style={{color:"rgba(255,255,255,.4)",fontSize:11}}>{participants.filter(p=>p.status!=="pending").length} registered</span>
+                  <div style={{display:"flex",gap:3}}>
+                    {[["list",<List size={10}/>],["grid",<LayoutGrid size={10}/>]].map(([mode,icon])=>(
+                      <button key={mode as string} onClick={()=>setRosterMode(mode as any)} style={{background:rosterMode===mode?`${GOLD}22`:"rgba(255,255,255,.04)",border:`1px solid ${rosterMode===mode?GOLD:"rgba(255,255,255,.09)"}`,borderRadius:6,padding:"4px 7px",cursor:"pointer",color:rosterMode===mode?GOLD:"rgba(255,255,255,.25)"}}>{icon}</button>
+                    ))}
+                  </div>
+                </div>
+                {participants.filter(p=>p.status==="pending").length>0&&(
+                  <div style={{background:"rgba(167,139,250,.07)",border:"1px solid rgba(167,139,250,.2)",borderRadius:9,padding:"9px",marginBottom:7}}>
+                    <div style={{color:"#a78bfa",fontSize:9,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:6}}>⏳ Awaiting Approval</div>
+                    {participants.filter(p=>p.status==="pending").map(p=>(
+                      <div key={p.id} style={{display:"flex",alignItems:"center",gap:7,marginBottom:5}}>
+                        <Avatar name={p.participant_name} size={26}/>
+                        <div style={{flex:1,minWidth:0}}><div style={{color:"#fff",fontWeight:700,fontSize:12,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.participant_name}</div>{p.school&&<div style={{color:"rgba(255,255,255,.3)",fontSize:10}}>{p.school}</div>}</div>
+                        <button onClick={()=>approveParticipant(p)} style={{background:"rgba(34,197,94,.15)",color:GREEN,border:`1px solid ${GREEN}44`,borderRadius:7,padding:"4px 10px",cursor:"pointer",fontWeight:700,fontSize:11,flexShrink:0,fontFamily:"Cairo,sans-serif"}}>Admit</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {rosterMode==="list"
+                  ? participants.filter(p=>p.status!=="pending").map(p=>{
+                      const isActive=p.id===activeP?.id;
+                      return(
+                        <div key={p.id} style={{background:isActive?"rgba(201,168,76,.06)":"rgba(255,255,255,.02)",border:`1px solid ${isActive?`${GOLD}33`:"rgba(255,255,255,.05)"}`,borderRadius:8,padding:"7px 9px",display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+                          <span style={{color:"rgba(255,255,255,.2)",fontSize:9,width:12,flexShrink:0}}>#{p.queue_position}</span>
+                          <Avatar name={p.participant_name} size={24} active={isActive&&p.status==="reciting"} called={p.status==="called"}/>
+                          <div style={{flex:1,minWidth:0}}><div style={{color:isActive?GOLD:"#fff",fontWeight:isActive?700:500,fontSize:12,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.participant_name}</div></div>
+                          <span style={{color:STATUS_COLOR[p.status],fontSize:9,fontWeight:700,flexShrink:0}}>{STATUS_ICON[p.status]}</span>
+                          {p.total_score>0&&<span style={{color:GOLD,fontWeight:800,fontSize:11,flexShrink:0}}>{p.total_score}</span>}
+                          {competition.status==="active"&&p.status==="waiting"&&!activeP&&(
+                            <button onClick={()=>callParticipant(p)} style={{background:`${GOLD}18`,color:GOLD,border:`1px solid ${GOLD}44`,borderRadius:6,padding:"3px 7px",cursor:"pointer",fontWeight:700,fontSize:9,fontFamily:"Cairo,sans-serif",flexShrink:0}}>Call</button>
+                          )}
+                        </div>
+                      );
+                    })
+                  : (
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:5}}>
+                      {participants.filter(p=>p.status!=="pending").map(p=>{
+                        const isActive=p.id===activeP?.id;
+                        return(
+                          <div key={p.id} style={{background:isActive?`${GOLD}15`:"rgba(255,255,255,.03)",border:`1px solid ${isActive?GOLD:"rgba(255,255,255,.07)"}`,borderRadius:9,padding:"9px 5px",textAlign:"center"}}>
+                            <Avatar name={p.participant_name} size={28} active={isActive&&p.status==="reciting"} called={p.status==="called"}/>
+                            <div style={{color:isActive?GOLD:"#fff",fontWeight:700,fontSize:9,marginTop:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.participant_name}</div>
+                            <div style={{color:STATUS_COLOR[p.status],fontSize:8,fontWeight:700,marginTop:2}}>{STATUS_ICON[p.status]}</div>
+                            {p.total_score>0&&<div style={{color:GOLD,fontWeight:900,fontSize:12,marginTop:2}}>{p.total_score}</div>}
+                            {competition.status==="active"&&p.status==="waiting"&&!activeP&&(
+                              <button onClick={()=>callParticipant(p)} style={{width:"100%",marginTop:4,background:`${GOLD}18`,color:GOLD,border:`1px solid ${GOLD}44`,borderRadius:6,padding:"3px 0",cursor:"pointer",fontWeight:700,fontSize:8,fontFamily:"Cairo,sans-serif"}}>Call</button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )
+                }
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── PARTICIPANT ───────────────────────────────────────────── */}
+        {!isJudge&&!isObserver&&myParticipant&&(
+          <div style={{padding:"10px 12px 16px"}}>
+            {myParticipant.status==="pending"&&(
+              <div className="glass-card" style={{borderRadius:14,padding:"22px 16px",textAlign:"center"}}>
+                <div style={{fontSize:34,marginBottom:6,animation:"floatUp 4s ease-in-out infinite"}}>🕐</div>
+                <div style={{color:"#a78bfa",fontWeight:900,fontSize:16}}>Awaiting Approval</div>
+                <div style={{color:"rgba(255,255,255,.4)",fontSize:12,marginTop:6,lineHeight:1.7}}>The judge will admit you shortly.<br/><strong style={{color:"#fff"}}>{myParticipant.participant_name}</strong></div>
+              </div>
+            )}
+            {myParticipant.status==="waiting"&&(
+              <div className="glass-card" style={{borderRadius:14,padding:"18px",textAlign:"center"}}>
+                <div style={{fontSize:28,marginBottom:5,animation:"floatUp 4s ease-in-out infinite"}}>⏳</div>
+                <div style={{color:GOLD,fontWeight:800,fontSize:14}}>Waiting in Queue</div>
+                <div style={{color:"rgba(255,255,255,.35)",fontSize:11,marginTop:3}}>Position #{myParticipant.queue_position} of {participants.filter(p=>p.status!=="pending").length}</div>
+                {activeP&&activeP.id!==myParticipant.id&&(
+                  <div style={{marginTop:9,background:"rgba(34,197,94,.07)",border:"1px solid rgba(34,197,94,.2)",borderRadius:9,padding:"8px 11px"}}>
+                    <div style={{color:GREEN,fontWeight:700,fontSize:11}}>🎙️ Now Reciting</div>
+                    <div style={{color:"#fff",fontWeight:700,fontSize:13}}>{activeP.participant_name}</div>
+                    {pickedTile&&<div style={{color:GOLD,fontSize:11,marginTop:2}}>📖 {pickedTile.label}</div>}
+                  </div>
+                )}
+              </div>
+            )}
+            {myParticipant.status==="called"&&(
+              <div style={{animation:"calledGlow 2s ease-in-out infinite",background:"rgba(201,168,76,.09)",border:`2px solid ${GOLD}`,borderRadius:14,padding:"13px"}}>
+                <div style={{textAlign:"center",marginBottom:10}}>
+                  <div style={{fontSize:28,animation:"floatUp 2s ease-in-out infinite"}}>🎙️</div>
+                  <div style={{color:GOLD,fontWeight:900,fontSize:15,letterSpacing:.5,marginTop:5}}>YOU HAVE BEEN CALLED!</div>
+                  {!pickedTile
+                    ?<div style={{color:"rgba(255,255,255,.65)",fontSize:12,marginTop:3,fontWeight:700}}>👇 Pick your number below</div>
+                    :<div style={{color:GREEN,fontSize:12,marginTop:3,fontWeight:700}}>✅ Selected — wait for judge to start</div>
+                  }
+                </div>
+                {/* Toggle grid button after picking */}
+                {pickedTile&&(
+                  <button onClick={()=>setTilePickerCollapsed(c=>!c)} style={{width:"100%",background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.1)",borderRadius:8,padding:"6px 11px",cursor:"pointer",color:"rgba(255,255,255,.5)",fontFamily:"Cairo,sans-serif",fontSize:11,display:"flex",alignItems:"center",justifyContent:"center",gap:4,marginBottom:7}}>
+                    <span style={{color:GOLD,fontWeight:700}}>#{pickedTile.num}</span> {tilePickerCollapsed?"Show grid ▾":"Hide grid ▴"}
+                  </button>
+                )}
+                {(!pickedTile||!tilePickerCollapsed)&&stageTiles.length>0&&(
+                  <NumberTilePicker tiles={stageTiles} pickedNum={pickedTile?.num??null} onPick={!pickedTile?pickTile:()=>{}} canPick={!pickedTile} stage={competition.current_stage}/>
+                )}
+                {pickedTile&&<QuestionDisplay tile={pickedTile} ayahText={ayahText} loadingAyah={loadingAyah} isParticipant={true} instructions={liveInstructions||undefined}/>}
+              </div>
+            )}
+            {myParticipant.status==="reciting"&&(
+              <div style={{animation:"recitingGlow 2s ease-in-out infinite",background:"rgba(34,197,94,.07)",border:`2px solid ${GREEN}`,borderRadius:14,padding:"13px"}}>
+                <div style={{textAlign:"center",marginBottom:9}}>
+                  <div style={{fontSize:26,animation:"floatUp 1.5s ease-in-out infinite"}}>🎙️</div>
+                  <div style={{color:GREEN,fontWeight:900,fontSize:15,letterSpacing:.5,marginTop:5}}>NOW RECITING</div>
+                  {bellCount>0&&<div style={{color:RED,fontWeight:700,fontSize:11,marginTop:2}}>🔔 {bellCount} error{bellCount!==1?"s":""} · −{bellCount*2} pts</div>}
+                </div>
+                {pickedTile&&(
+                  <div style={{background:"rgba(0,0,0,.3)",border:"1px solid rgba(255,255,255,.08)",borderRadius:11,padding:"11px"}}>
+                    <div style={{color:GOLD,fontSize:9,fontWeight:700,letterSpacing:1.5,textTransform:"uppercase",marginBottom:3}}>📖 Your Passage</div>
+                    <div style={{color:"#fff",fontWeight:700,fontSize:13,marginBottom:5}}>{pickedTile.label}</div>
+                    {ayahText&&<div style={{fontFamily:"'Amiri Quran',serif",fontSize:18,color:"rgba(255,255,255,.9)",direction:"rtl",textAlign:"center",lineHeight:2.2,padding:"8px 5px",background:"rgba(201,168,76,.05)",borderRadius:8}}>{ayahText}<span style={{color:"rgba(201,168,76,.5)",fontSize:13}}> ﴿{pickedTile.ayah}﴾</span></div>}
+                  </div>
+                )}
+                {liveInstructions&&<div style={{marginTop:9,background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.08)",borderRadius:8,padding:"7px 10px"}}><div style={{color:GOLD,fontSize:9,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:2}}>Instructions</div><div style={{color:"rgba(255,255,255,.6)",fontSize:11,lineHeight:1.7}}>{liveInstructions}</div></div>}
+                <div style={{color:"rgba(255,255,255,.3)",fontSize:10,textAlign:"center",marginTop:9}}>Recite clearly. Judge will signal when to stop.</div>
+              </div>
+            )}
+            {myParticipant.status==="completed"&&(
+              <div className="glass-card" style={{borderRadius:14,padding:"18px",textAlign:"center"}}>
+                <div style={{fontSize:36,marginBottom:5}}>✅</div>
+                <div style={{color:GREEN,fontWeight:800,fontSize:15}}>Recitation Complete!</div>
+                <div style={{color:GOLD,fontWeight:900,fontSize:36,marginTop:5}}>{myParticipant.total_score}</div>
+                <div style={{color:"rgba(255,255,255,.35)",fontSize:11}}>Total Points</div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Observer bottom bar */}
+      {isObserver&&activeP&&(
+        <div style={{position:"fixed",bottom:0,left:0,right:0,zIndex:20,background:"rgba(4,12,6,.97)",backdropFilter:"blur(20px)",borderTop:"1px solid rgba(201,168,76,.1)",padding:"8px 12px 14px",display:"flex",alignItems:"center",gap:7}}>
+          <span style={{fontSize:16}}>👁️</span>
+          <div style={{flex:1,color:"rgba(255,255,255,.4)",fontSize:11}}>Viewing as Observer</div>
+          <button onClick={()=>setShowChat(c=>!c)} style={{background:`${GOLD}15`,border:`1px solid ${GOLD}33`,borderRadius:8,padding:"5px 10px",cursor:"pointer",color:GOLD,fontWeight:700,fontSize:11,fontFamily:"Cairo,sans-serif"}}>💬 Chat</button>
+        </div>
+      )}
+
+      {/* ══ Q-SETTINGS PANEL ══════════════════════════════════════════ */}
+      {showQSettings&&isJudge&&(
+        <div style={{position:"fixed",inset:0,zIndex:9990,display:"flex",flexDirection:"column",justifyContent:"flex-end"}} onClick={()=>setShowQSettings(false)}>
+          <div style={{position:"absolute",inset:0,background:"rgba(0,0,0,.6)",backdropFilter:"blur(6px)"}}/>
+          <div onClick={e=>e.stopPropagation()} style={{position:"relative",zIndex:1,background:"linear-gradient(180deg,#0d2419 0%,#061410 100%)",borderTop:"1.5px solid rgba(201,168,76,.35)",borderRadius:"22px 22px 0 0",maxHeight:"85vh",display:"flex",flexDirection:"column",fontFamily:"Cairo,sans-serif"}}>
+            <div style={{display:"flex",alignItems:"center",gap:9,padding:"14px 18px",borderBottom:"1px solid rgba(255,255,255,.07)",flexShrink:0}}>
+              <div style={{width:32,height:32,borderRadius:9,background:`linear-gradient(135deg,${GOLD},${GOLDD})`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Wand2 size={14} color={G}/></div>
+              <div style={{flex:1}}><div style={{color:"#fff",fontWeight:800,fontSize:14}}>Question Settings</div><div style={{color:"rgba(255,255,255,.35)",fontSize:10}}>Manage questions & instructions</div></div>
+              <button onClick={()=>setShowQSettings(false)} style={{background:"none",border:"none",color:"rgba(255,255,255,.35)",cursor:"pointer",fontSize:20,padding:0,lineHeight:1}}>✕</button>
+            </div>
+            <div style={{display:"flex",padding:"8px 14px",flexShrink:0,gap:7}}>
+              {([["manual","📝 Manual"],["ai","✨ AI Generate"]] as const).map(([t,l])=>(
+                <button key={t} onClick={()=>setQSettingsTab(t)} style={{flex:1,background:qSettingsTab===t?"rgba(201,168,76,.2)":"transparent",border:qSettingsTab===t?"1px solid rgba(201,168,76,.4)":"1px solid transparent",borderRadius:9,padding:"7px 0",color:qSettingsTab===t?GOLD:"rgba(255,255,255,.4)",fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"Cairo,sans-serif",transition:"all .2s"}}>{l}</button>
+              ))}
+            </div>
+            <div style={{flex:1,overflowY:"auto",padding:"12px 14px 0"}}>
+              {qSettingsTab==="manual"&&(
+                <>
+                  <div style={{color:"rgba(255,255,255,.45)",fontSize:11,marginBottom:5,lineHeight:1.6}}>One question per line. <span style={{color:GOLD}}>Leave empty to use random passages.</span></div>
+                  <textarea value={liveCustomQ} onChange={e=>setLiveCustomQ(e.target.value)} placeholder={"Al-Fatiha full\nAl-Baqarah 1-5\nSurah Al-Ikhlas complete\n..."} rows={7} style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:11,padding:"11px 13px",color:"#fff",fontSize:13,fontFamily:"Cairo,sans-serif",resize:"vertical",lineHeight:1.7,boxSizing:"border-box"}}/>
+                  <div style={{color:"rgba(255,255,255,.3)",fontSize:10,marginTop:3,marginBottom:12}}>{liveCustomQ.split("\n").filter(s=>s.trim()).length} questions entered</div>
+                  <div style={{color:GOLD,fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:5,display:"flex",alignItems:"center",gap:3}}><Eye size={10}/> Instructions for Participants</div>
+                  <textarea value={liveInstructions} onChange={e=>setLiveInstructions(e.target.value)} placeholder={"e.g. Recite with proper Tajweed rules. Begin with Bismillah."} rows={3} style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.15)",borderRadius:11,padding:"9px 13px",color:"#fff",fontSize:13,fontFamily:"Cairo,sans-serif",resize:"vertical",lineHeight:1.7,boxSizing:"border-box",marginBottom:14}}/>
+                </>
+              )}
+              {qSettingsTab==="ai"&&(
+                <>
+                  <div style={{background:"rgba(201,168,76,.08)",border:"1px solid rgba(201,168,76,.2)",borderRadius:11,padding:"11px 13px",marginBottom:12,display:"flex",alignItems:"flex-start",gap:7}}>
+                    <Sparkles size={13} color={GOLD} style={{flexShrink:0,marginTop:2}}/>
+                    <div style={{color:"rgba(255,255,255,.6)",fontSize:12,lineHeight:1.7}}>Describe the topic and scope. AI will generate questions added to the manual list for review before saving.</div>
+                  </div>
+                  <div style={{marginBottom:11}}>
+                    <div style={{color:GOLD,fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:5}}>Prompt / Scope</div>
+                    <textarea value={aiPrompt} onChange={e=>setAiPrompt(e.target.value)} placeholder={"e.g. Juz 30 short surahs for junior students"} rows={3} style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:11,padding:"11px 13px",color:"#fff",fontSize:13,fontFamily:"Cairo,sans-serif",resize:"none",lineHeight:1.7,boxSizing:"border-box"}}/>
+                  </div>
+                  <div style={{marginBottom:14}}>
+                    <div style={{color:GOLD,fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:5}}>Count</div>
+                    <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                      {[5,8,10,12,15,20].map(n=>(
+                        <button key={n} onClick={()=>setAiQCount(n)} style={{background:aiQCount===n?`${GOLD}22`:"rgba(255,255,255,.06)",border:`1.5px solid ${aiQCount===n?GOLD:"rgba(255,255,255,.15)"}`,borderRadius:8,padding:"5px 12px",cursor:"pointer",color:aiQCount===n?GOLD:"rgba(255,255,255,.55)",fontFamily:"Cairo,sans-serif",fontWeight:700,fontSize:12}}>{n}</button>
+                      ))}
+                    </div>
+                  </div>
+                  <button onClick={generateAIQuestions} disabled={aiGenLoading||!aiPrompt.trim()} style={{width:"100%",background:aiGenLoading||!aiPrompt.trim()?"rgba(255,255,255,.08)":`linear-gradient(135deg,${GOLD},${GOLDD})`,color:aiGenLoading||!aiPrompt.trim()?"rgba(255,255,255,.3)":G,border:"none",borderRadius:11,padding:"13px",cursor:aiGenLoading||!aiPrompt.trim()?"not-allowed":"pointer",fontWeight:800,fontSize:14,fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",gap:7,marginBottom:14,transition:"all .2s"}}>
+                    {aiGenLoading?<><Loader2 size={15} style={{animation:"spin 1s linear infinite"}}/> Generating…</>:<><Sparkles size={15}/> Generate {aiQCount} Questions</>}
                   </button>
                 </>
               )}
             </div>
-
-            {/* Save footer */}
-            <div style={{padding:"12px 16px 20px",borderTop:"1px solid rgba(255,255,255,.07)",flexShrink:0,display:"flex",gap:10}}>
-              <button onClick={()=>setShowQSettings(false)}
-                style={{flex:1,background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",borderRadius:12,padding:"13px",cursor:"pointer",color:"rgba(255,255,255,.5)",fontWeight:700,fontSize:14,fontFamily:"Cairo,sans-serif"}}>
-                Cancel
-              </button>
-              <button onClick={saveQSettings}
-                style={{flex:2,background:`linear-gradient(135deg,${GOLD},${GOLDD})`,border:"none",borderRadius:12,padding:"13px",cursor:"pointer",color:G,fontWeight:800,fontSize:14,fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-                <CheckCircle size={16}/> Save Changes
+            <div style={{padding:"11px 14px 18px",borderTop:"1px solid rgba(255,255,255,.07)",flexShrink:0,display:"flex",gap:8}}>
+              <button onClick={()=>setShowQSettings(false)} style={{flex:1,background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",borderRadius:11,padding:"12px",cursor:"pointer",color:"rgba(255,255,255,.5)",fontWeight:700,fontSize:13,fontFamily:"Cairo,sans-serif"}}>Cancel</button>
+              <button onClick={saveQSettings} style={{flex:2,background:`linear-gradient(135deg,${GOLD},${GOLDD})`,border:"none",borderRadius:11,padding:"12px",cursor:"pointer",color:G,fontWeight:800,fontSize:13,fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",gap:7}}>
+                <CheckCircle size={14}/> Save Changes
               </button>
             </div>
           </div>
