@@ -13,7 +13,7 @@ import {
   Search, User, Users, Eye, Edit2,
   Bell, Trash2, Filter, Plus, X, RefreshCw, AlertTriangle,
   Send, Loader2, Copy, CheckCheck, ShieldCheck, Clock, Activity,
-  BookOpen,
+  BookOpen, Ban, CheckCircle2,
 } from "lucide-react";
 
 const G      = "#064E3B";
@@ -242,6 +242,7 @@ export default function StudentManagement() {
   const [sending,       setSending]       = useState(false);
   const [deleting,      setDeleting]      = useState<string | null>(null);
   const [deleteDialog,  setDeleteDialog]  = useState<any | null>(null);
+  const [suspending,    setSuspending]    = useState<string | null>(null);
   const [createDialog,  setCreateDialog]  = useState(false);
   const [newUserData,   setNewUserData]   = useState<any | null>(null);
 
@@ -366,6 +367,38 @@ export default function StudentManagement() {
       toast({ title: "Delete failed", description: e.message, variant: "destructive" });
     }
     setDeleting(null);
+  };
+
+  // ── SUSPEND / UNSUSPEND (reversible) ───────────────────────────────────
+  // Sets profiles.payment_status to 'suspended' which is recognised by
+  // PaymentGuard / payment_status validator. Reverses to 'paid' on un-suspend.
+  const toggleSuspend = async (u: any) => {
+    const isSuspended = u.payment_status === "suspended";
+    setSuspending(u.user_id);
+    try {
+      const next = isSuspended ? "paid" : "suspended";
+      const { error } = await supabase
+        .from("profiles")
+        .update({ payment_status: next } as any)
+        .eq("user_id", u.user_id);
+      if (error) throw error;
+      // Audit notification so the user knows
+      await supabase.from("notifications" as any).insert({
+        user_id: u.user_id,
+        title: isSuspended ? "✅ Account Reactivated" : "🚫 Account Suspended",
+        message: isSuspended
+          ? "Your Tahleem Academy account has been reactivated by an administrator."
+          : "Your Tahleem Academy account has been suspended. Contact support to resolve.",
+        type: "admin_action",
+        is_read: false,
+        created_at: new Date().toISOString(),
+      });
+      toast({ title: isSuspended ? "✅ Account reactivated" : "🚫 Account suspended" });
+      await loadUsers();
+    } catch (e: any) {
+      toast({ title: "Action failed", description: e.message, variant: "destructive" });
+    }
+    setSuspending(null);
   };
 
   return (
