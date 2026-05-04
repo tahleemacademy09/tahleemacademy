@@ -13,7 +13,7 @@ import {
   Search, User, Users, Eye, Edit2,
   Bell, Trash2, Filter, Plus, X, RefreshCw, AlertTriangle,
   Send, Loader2, Copy, CheckCheck, ShieldCheck, Clock, Activity,
-  BookOpen,
+  BookOpen, Ban, CheckCircle2,
 } from "lucide-react";
 
 const G      = "#064E3B";
@@ -242,6 +242,7 @@ export default function StudentManagement() {
   const [sending,       setSending]       = useState(false);
   const [deleting,      setDeleting]      = useState<string | null>(null);
   const [deleteDialog,  setDeleteDialog]  = useState<any | null>(null);
+  const [suspending,    setSuspending]    = useState<string | null>(null);
   const [createDialog,  setCreateDialog]  = useState(false);
   const [newUserData,   setNewUserData]   = useState<any | null>(null);
 
@@ -297,7 +298,7 @@ export default function StudentManagement() {
       await supabase.from("private_student_subjects" as any).delete().eq("student_id", studentId).eq("subject_id", subjectId);
       setAssignedSubjectIds(prev => { const next = new Set(prev); next.delete(subjectId); return next; });
     } else {
-      await supabase.from("private_student_subjects" as any).insert({ student_id: studentId, subject_id: subjectId, assigned_by: user?.id } as any);
+      await supabase.from("private_student_subjects" as any).insert({ student_id: studentId, subject_id: subjectId, assigned_by: currentUser?.id } as any);
       setAssignedSubjectIds(prev => new Set([...prev, subjectId]));
     }
     setSubjectSaving(false);
@@ -366,6 +367,38 @@ export default function StudentManagement() {
       toast({ title: "Delete failed", description: e.message, variant: "destructive" });
     }
     setDeleting(null);
+  };
+
+  // ── SUSPEND / UNSUSPEND (reversible) ───────────────────────────────────
+  // Sets profiles.payment_status to 'suspended' which is recognised by
+  // PaymentGuard / payment_status validator. Reverses to 'paid' on un-suspend.
+  const toggleSuspend = async (u: any) => {
+    const isSuspended = u.payment_status === "suspended";
+    setSuspending(u.user_id);
+    try {
+      const next = isSuspended ? "paid" : "suspended";
+      const { error } = await supabase
+        .from("profiles")
+        .update({ payment_status: next } as any)
+        .eq("user_id", u.user_id);
+      if (error) throw error;
+      // Audit notification so the user knows
+      await supabase.from("notifications" as any).insert({
+        user_id: u.user_id,
+        title: isSuspended ? "✅ Account Reactivated" : "🚫 Account Suspended",
+        message: isSuspended
+          ? "Your Tahleem Academy account has been reactivated by an administrator."
+          : "Your Tahleem Academy account has been suspended. Contact support to resolve.",
+        type: "admin_action",
+        is_read: false,
+        created_at: new Date().toISOString(),
+      });
+      toast({ title: isSuspended ? "✅ Account reactivated" : "🚫 Account suspended" });
+      await loadUsers();
+    } catch (e: any) {
+      toast({ title: "Action failed", description: e.message, variant: "destructive" });
+    }
+    setSuspending(null);
   };
 
   return (
@@ -478,9 +511,30 @@ export default function StudentManagement() {
                     <Bell size={13} color="#6B7280" />
                   </button>
                   {u.user_id !== currentUser?.id && (
-                    <button onClick={() => setDeleteDialog(u)} style={{ padding: "7px 9px", borderRadius: 8, border: "1px solid #FEE2E2", background: "#FEF2F2", cursor: "pointer" }}>
-                      <Trash2 size={13} color="#DC2626" />
-                    </button>
+                    <>
+                      <button
+                        onClick={() => toggleSuspend(u)}
+                        disabled={suspending === u.user_id}
+                        title={u.payment_status === "suspended" ? "Reactivate account" : "Suspend account (reversible)"}
+                        style={{
+                          padding: "7px 9px",
+                          borderRadius: 8,
+                          border: u.payment_status === "suspended" ? "1px solid #BBF7D0" : "1px solid #FEF3C7",
+                          background: u.payment_status === "suspended" ? "#F0FDF4" : "#FFFBEB",
+                          cursor: suspending === u.user_id ? "wait" : "pointer",
+                          opacity: suspending === u.user_id ? 0.5 : 1,
+                        }}
+                      >
+                        {suspending === u.user_id
+                          ? <Loader2 size={13} style={{ animation: "spin .8s linear infinite", color: "#92400E" }} />
+                          : u.payment_status === "suspended"
+                            ? <CheckCircle2 size={13} color="#16A34A" />
+                            : <Ban size={13} color="#D97706" />}
+                      </button>
+                      <button onClick={() => setDeleteDialog(u)} title="Delete permanently" style={{ padding: "7px 9px", borderRadius: 8, border: "1px solid #FEE2E2", background: "#FEF2F2", cursor: "pointer" }}>
+                        <Trash2 size={13} color="#DC2626" />
+                      </button>
+                    </>
                   )}
                 </div>
               </div>
