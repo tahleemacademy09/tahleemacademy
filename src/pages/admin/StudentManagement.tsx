@@ -297,7 +297,7 @@ export default function StudentManagement() {
       await supabase.from("private_student_subjects" as any).delete().eq("student_id", studentId).eq("subject_id", subjectId);
       setAssignedSubjectIds(prev => { const next = new Set(prev); next.delete(subjectId); return next; });
     } else {
-      await supabase.from("private_student_subjects" as any).insert({ student_id: studentId, subject_id: subjectId, assigned_by: user?.id } as any);
+      await supabase.from("private_student_subjects" as any).insert({ student_id: studentId, subject_id: subjectId, assigned_by: currentUser?.id } as any);
       setAssignedSubjectIds(prev => new Set([...prev, subjectId]));
     }
     setSubjectSaving(false);
