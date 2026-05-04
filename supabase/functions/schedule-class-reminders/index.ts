@@ -30,10 +30,24 @@ const corsHeaders = {
 const THRESHOLDS = [15, 5] as const; // minutes before class start
 
 // ── Time helpers ─────────────────────────────────────────────────────────────
+// NOTE: Deno Edge Functions run in UTC. All timetable times are stored in WAT
+// (West Africa Time = UTC+1). We always work in WAT to match DB values.
 
-function nowMinutes(): number {
-  const n = new Date();
-  return n.getHours() * 60 + n.getMinutes();
+const WAT_OFFSET_MS = 60 * 60 * 1000; // UTC+1
+
+/** Current time expressed as minutes-since-midnight in WAT */
+function nowMinutesWAT(): number {
+  const watNow = new Date(Date.now() + WAT_OFFSET_MS);
+  return watNow.getUTCHours() * 60 + watNow.getUTCMinutes();
+}
+
+/** Current date info in WAT */
+function nowWAT(): { day: number; dateStr: string } {
+  const watNow = new Date(Date.now() + WAT_OFFSET_MS);
+  return {
+    day:     watNow.getUTCDay(),                        // 0=Sun … 6=Sat
+    dateStr: watNow.toISOString().split("T")[0],        // "YYYY-MM-DD"
+  };
 }
 
 function timeToMinutes(t: string): number {
@@ -46,15 +60,16 @@ function to12hr(t: string): string {
   return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`;
 }
 
+/** Minutes until a recurring timetable slot (stored in WAT) */
 function minutesUntil(timeStr: string): number {
-  return timeToMinutes(timeStr) - nowMinutes();
+  return timeToMinutes(timeStr) - nowMinutesWAT();
 }
 
+/** Minutes until a one-off private session (stored date + WAT time) */
 function minutesUntilDateTime(dateStr: string, timeStr: string): number {
-  const [h, m] = timeStr.split(":").map(Number);
-  const t = new Date(dateStr);
-  t.setHours(h, m, 0, 0);
-  return (t.getTime() - Date.now()) / 60_000;
+  // Parse as WAT explicitly so "+01:00" anchors the time correctly
+  const target = new Date(`${dateStr}T${timeStr.slice(0, 5)}+01:00`);
+  return (target.getTime() - Date.now()) / 60_000;
 }
 
 // ── Dedup key — same format the client hook uses ────────────────────────────
@@ -205,9 +220,7 @@ Deno.serve(async (req) => {
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
   );
 
-  const now        = new Date();
-  const todayIndex = now.getDay();         // 0=Sun … 6=Sat
-  const todayDate  = now.toISOString().split("T")[0]; // "YYYY-MM-DD"
+  const { day: todayIndex, dateStr: todayDate } = nowWAT(); // WAT-correct day + date
 
   const stats = { checked: 0, sent: 0, dedup: 0, errors: 0 };
 
