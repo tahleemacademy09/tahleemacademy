@@ -37,6 +37,11 @@ const BASE_TARGETS = [
   { value: "teachers", label: "All Teachers", icon: "👨‍🏫" },
 ];
 
+// `TARGETS` is dynamically extended with academic levels at runtime by the
+// root component; the module-level fallback prevents `ReferenceError` in
+// child components (TargetSelector, AICompose) before levels are loaded.
+let TARGETS: { value: string; label: string; icon: string }[] = [...BASE_TARGETS];
+
 const AUTO_EVENTS = [
   { type: "welcome",              label: "Welcome New Student",        icon: "👋", desc: "Sent when a new student joins" },
   { type: "exam_reminder",        label: "Exam Reminder",              icon: "📝", desc: "Remind students about upcoming exams" },
@@ -600,7 +605,8 @@ export default function NotificationManagement() {
   const { session } = useAuth();
   const [tab, setTab] = useState<Tab>("compose");
   const { data: academicLevels = [] } = useAcademicLevels();
-  const TARGETS = [
+  // Refresh module-level TARGETS whenever academic levels load
+  TARGETS = [
     ...BASE_TARGETS,
     ...academicLevels.map(l => {
       const cfg = getLevelConfig(l.slug, academicLevels);

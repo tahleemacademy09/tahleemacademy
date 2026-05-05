@@ -52,6 +52,26 @@ async function ensureServiceWorker(): Promise<ServiceWorkerRegistration | null> 
   }
 }
 
+let _cachedVapid: string | null = null;
+async function fetchVapidPublicKey(): Promise<string | null> {
+  if (_cachedVapid) return _cachedVapid;
+  // Prefer build-time env when present (for self-hosted), else hit the edge function
+  const fromEnv = import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined;
+  if (fromEnv) { _cachedVapid = fromEnv; return _cachedVapid; }
+  try {
+    const { data, error } = await supabase.functions.invoke("vapid-public-key");
+    if (error) throw error;
+    const key = (data as any)?.publicKey || (data as any)?.public_key;
+    if (typeof key === "string" && key.length > 0) {
+      _cachedVapid = key;
+      return key;
+    }
+  } catch (err) {
+    console.warn("[useTimetableNotifications] Could not fetch VAPID public key:", err);
+  }
+  return null;
+}
+
 async function savePushSubscription(
   userId: string,
   reg: ServiceWorkerRegistration
@@ -65,9 +85,9 @@ async function savePushSubscription(
   }
   if (permission !== "granted") return;
 
-  const vapidKey = import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined;
+  const vapidKey = await fetchVapidPublicKey();
   if (!vapidKey) {
-    console.warn("[useTimetableNotifications] VITE_VAPID_PUBLIC_KEY not set — push subscription skipped");
+    console.warn("[useTimetableNotifications] VAPID public key unavailable — push subscription skipped");
     return;
   }
 
