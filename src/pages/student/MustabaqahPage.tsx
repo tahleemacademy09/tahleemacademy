@@ -1417,14 +1417,17 @@ export default function MustabaqahPage() {
 
   /* ─ Full-bleed video hero ──────────────────────────────────────── */
   const videoHero = (showControls: boolean) => {
-    const inner = (children: React.ReactNode) => (
+    // inner() renders the shared chrome (ornaments, LIVE badge) around content.
+    // CameraControls is NOT included here — it uses useLocalParticipant() which
+    // must only be called inside <LiveKitRoom>. It is added separately below.
+    const inner = (children: React.ReactNode, withControls = false) => (
       <div style={{position:"relative",width:"100%",height:"100%",background:"#050f08",overflow:"hidden"}}>
         {children}
         {/* Islamic ornament corners */}
         <div style={{position:"absolute",top:0,left:0,fontSize:22,opacity:.18,color:GOLD,lineHeight:1,padding:4,pointerEvents:"none"}}>❁</div>
         <div style={{position:"absolute",top:0,right:0,fontSize:22,opacity:.18,color:GOLD,lineHeight:1,padding:4,pointerEvents:"none",transform:"scaleX(-1)"}}>❁</div>
-        {/* Compact mic/cam overlay top-right */}
-        {showControls&&(
+        {/* Compact mic/cam overlay — only when inside LiveKitRoom context */}
+        {withControls&&(
           <div style={{position:"absolute",top:8,right:8,zIndex:5,pointerEvents:"auto"}}>
             <div style={{background:"rgba(0,0,0,.65)",backdropFilter:"blur(10px)",borderRadius:10,padding:"4px 6px",display:"flex",gap:4}}>
               <CameraControls isActive={!!iAmParticipantActive} isJudge={isJudge}/>
@@ -1440,6 +1443,7 @@ export default function MustabaqahPage() {
       </div>
     );
 
+    // Fallback: video disabled — no LiveKitRoom, no CameraControls
     if (videoDisabled) return inner(
       <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:8}}>
         <div style={{fontSize:40,opacity:.15}}>﷽</div>
@@ -1447,14 +1451,20 @@ export default function MustabaqahPage() {
       </div>
     );
 
+    // Connected: LiveKitRoom wraps everything — pass withControls=true so
+    // CameraControls renders safely inside the room context
     if (lkConnected && livekitToken && livekitUrl) return (
       <LiveKitRoom serverUrl={livekitUrl} token={livekitToken} connect={lkConnected} audio={true} video={showControls} options={LK_OPTIONS}>
         <RoomAudioRenderer/>
         <AudioEnabler onEnabled={()=>setAudioReady(true)}/>
-        {inner(<LiveVideoGrid activeUserId={activeP?.user_id??null} isJudge={isJudge} isObserver={isObserver} allowControls={showControls} activePStatus={activeP?.status??null}/>)}
+        {inner(
+          <LiveVideoGrid activeUserId={activeP?.user_id??null} isJudge={isJudge} isObserver={isObserver} allowControls={showControls} activePStatus={activeP?.status??null}/>,
+          showControls  // ← CameraControls only rendered here, inside LiveKitRoom
+        )}
       </LiveKitRoom>
     );
 
+    // Fallback: loading / error — no LiveKitRoom, no CameraControls
     return inner(
       <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:12}}>
         <div style={{fontSize:44,opacity:.12}}>﷽</div>
