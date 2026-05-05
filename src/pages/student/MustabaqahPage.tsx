@@ -1786,6 +1786,11 @@ export default function MustabaqahPage() {
                     {pickedTile&&(
                       <div style={{padding:"0 9px 9px"}}>
                         <QuestionDisplay tile={pickedTile} ayahText={ayahText} loadingAyah={loadingAyah} isParticipant={false} instructions={liveInstructions||undefined}/>
+                        {activeP.status!=="reciting"&&activeP.status!=="completed"&&(
+                          <button onClick={startReciting} style={{width:"100%",marginTop:10,background:`linear-gradient(135deg,${GREEN}dd,#16a34a)`,color:"#fff",border:"none",borderRadius:11,padding:"14px",cursor:"pointer",fontWeight:900,fontFamily:"Cairo,sans-serif",fontSize:15,display:"flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:"0 4px 20px rgba(34,197,94,.35)",animation:"recitingGlow 2s ease-in-out infinite"}}>
+                            <Play size={18}/> ▶ Start Reciting — {activeP.participant_name}
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
