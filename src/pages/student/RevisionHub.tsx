@@ -21,6 +21,7 @@ const RevisionHub = () => {
   const navigate = useNavigate();
 
   // ✅ Use only 'level' since 'course_level' doesn't exist in your DB
+  const { data: academicLevels = [] } = useAcademicLevels();
   const studentLevel = (profile?.level || "beginner").toLowerCase();
   const isLevelAssigned = !!profile?.level;
 
