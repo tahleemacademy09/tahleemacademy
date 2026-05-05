@@ -672,10 +672,12 @@ export default function MustabaqahPage() {
         // Guard: don't let a stale DB read downgrade a locally-set status.
         // The judge fires the DB update async AFTER broadcasting CALLED/START_RECITING,
         // so the first loadParticipants() that fires may still see the old status.
-        if (prev && fetched && prev.id === fetched.id &&
-            (prev.status === "called" || prev.status === "reciting") &&
-            (fetched.status === "pending" || fetched.status === "waiting")) {
-          return { ...fetched, status: prev.status };
+        // Protect "called"→pending/waiting, and "reciting"→anything lesser.
+        if (prev && fetched && prev.id === fetched.id) {
+          const STATUS_RANK: Record<string,number> = { pending:0, waiting:1, called:2, reciting:3, completed:4 };
+          const prevRank = STATUS_RANK[prev.status] ?? 0;
+          const fetchedRank = STATUS_RANK[fetched.status] ?? 0;
+          if (prevRank > fetchedRank) return { ...fetched, status: prev.status };
         }
         return fetched;
       });
@@ -1634,7 +1636,7 @@ export default function MustabaqahPage() {
           </button>
         </div>
       )}
-      {isJudge && pickedTile && (activeP?.status==="called"||activeP?.status==="waiting") && (
+      {isJudge && pickedTile && activeP && activeP.status!=="reciting" && activeP.status!=="completed" && (
         <div style={{flexShrink:0,padding:"8px 12px",background:"rgba(4,12,6,.98)",borderBottom:"1px solid rgba(34,197,94,.12)"}}>
           <button onClick={startReciting} style={{width:"100%",background:`linear-gradient(135deg,${GREEN}dd,#16a34a)`,color:"#fff",border:"none",borderRadius:11,padding:"13px",cursor:"pointer",fontWeight:900,fontFamily:"Cairo,sans-serif",fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:"0 4px 20px rgba(34,197,94,.35)",animation:"recitingGlow 2s ease-in-out infinite"}}>
             <Play size={18}/> ▶ Start Reciting — {activeP?.participant_name}
