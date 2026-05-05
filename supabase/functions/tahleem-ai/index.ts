@@ -1,26 +1,33 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const corsHeaders = {
-  // Only allow requests from the production domain (and local dev)
-  "Access-Control-Allow-Origin":
-    ["https://tahleemacademy.vercel.app", "http://localhost:5173"].includes(
-      new URL(req.url).searchParams.get("_origin") ?? ""
-    )
-      ? (new URL(req.url).searchParams.get("_origin") as string)
-      : "https://tahleemacademy.vercel.app",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
-};
-
 /**
  * Unified AI Edge Function for Tahleem Academy
  * Actions: revision | transcribe | notify | chat | generate
  *
- * NEW: revision action now supports imageData + imageMimeType for vision
+ * FIX: corsHeaders was previously defined at MODULE LEVEL using `req.url`,
+ * but `req` only exists inside the serve() callback. This caused a
+ * ReferenceError on every invocation → "Failed to send a request to the
+ * Edge Function". corsHeaders is now computed inside serve() where req is
+ * in scope, using the standard HTTP `Origin` request header.
  */
 
+const ALLOWED_ORIGINS = [
+  "https://tahleemacademy.vercel.app",
+  "http://localhost:5173",
+];
+
 serve(async (req) => {
+  // Compute CORS headers inside serve() — req is in scope here
+  const origin = req.headers.get("origin") ?? "";
+  const corsHeaders = {
+    "Access-Control-Allow-Origin": ALLOWED_ORIGINS.includes(origin)
+      ? origin
+      : "https://tahleemacademy.vercel.app",
+    "Access-Control-Allow-Headers":
+      "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+  };
+
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
@@ -66,9 +73,7 @@ Always be scholarly, cite Quranic and Hadith references where relevant.
 Respond in the same language the student uses. If Arabic, use formal فصحى.
 Return ONLY valid JSON when asked for structured output — no markdown fences.`;
 
-        // Build user content — with or without image
         if (imageData && imageMimeType) {
-          // Vision input — Gemini / GPT-4V compatible format
           userContent = [
             {
               type: "image_url",
@@ -82,7 +87,6 @@ Return ONLY valid JSON when asked for structured output — no markdown fences.`
               text: prompt || "Analyze this image and generate educational content as requested.",
             },
           ];
-          // Use a vision-capable model
           model = "google/gemini-2.5-flash-preview";
         } else {
           userContent = prompt || context?.prompt || "";
