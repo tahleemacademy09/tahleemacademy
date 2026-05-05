@@ -74,10 +74,17 @@ const GlobalStyles = () => (
     ::-webkit-scrollbar-track{background:transparent}
     ::-webkit-scrollbar-thumb{background:rgba(201,168,76,.3);border-radius:2px}
     .timer-warning{animation:timerPulse .8s ease-in-out infinite}
-    /* ── Force NO mirror on ALL video elements — LiveKit applies scaleX(-1) for local tracks ── */
+    /* ── Force NO mirror on all video elements ──────────────────────────────
+       LiveKit v2 applies mirroring via data-lk-mirrored="true" attribute and
+       data-lk-face-camera="true". We override all possible selectors here.
+       Using !important to win over LiveKit's stylesheet regardless of load order.
+    ── */
+    video[data-lk-mirrored="true"],
+    video[data-lk-face-camera="true"],
     video[data-lk-local-participant="true"],
     [data-lk-local-participant="true"] video,
-    .lk-video-track[data-lk-local-participant],
+    [data-lk-mirrored="true"] video,
+    .lk-video-track { transform:none!important; -webkit-transform:none!important; }
     video { transform:none!important; -webkit-transform:none!important; }
   `}</style>
 );
@@ -1073,6 +1080,13 @@ export default function MustabaqahPage() {
     const time=new Date().toLocaleTimeString("en",{hour:"2-digit",minute:"2-digit"});
     setChatMessages(m=>[...m.slice(-79),{id,name,text,time}]);
     broadcast("CHAT",{name,text}); setChatInput("");
+  };
+
+  const approveParticipant = async (p: Participant) => {
+    if (!competition) return;
+    await supabase.from("musabaqah_participants" as any).update({ status: "waiting" }).eq("id", p.id);
+    broadcast("PARTICIPANT_APPROVED", { participant_id: p.id });
+    loadParticipants();
   };
 
   const confirmDelete = async () => {
