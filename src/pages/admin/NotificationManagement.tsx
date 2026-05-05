@@ -37,11 +37,6 @@ const BASE_TARGETS = [
   { value: "teachers", label: "All Teachers", icon: "👨‍🏫" },
 ];
 
-// `TARGETS` is dynamically extended with academic levels at runtime by the
-// root component; the module-level fallback prevents `ReferenceError` in
-// child components (TargetSelector, AICompose) before levels are loaded.
-let TARGETS: { value: string; label: string; icon: string }[] = [...BASE_TARGETS];
-
 const AUTO_EVENTS = [
   { type: "welcome",              label: "Welcome New Student",        icon: "👋", desc: "Sent when a new student joins" },
   { type: "exam_reminder",        label: "Exam Reminder",              icon: "📝", desc: "Remind students about upcoming exams" },
@@ -68,9 +63,11 @@ function Spin({ size = 18 }: { size?: number }) {
 }
 
 // ── Target Selector ───────────────────────────────────────────────────────────
-function TargetSelector({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+type TargetOption = { value: string; label: string; icon: string };
+function TargetSelector({ value, onChange, targets }: { value: string; onChange: (v: string) => void; targets: TargetOption[] }) {
   const [open, setOpen] = useState(false);
-  const sel = TARGETS.find(t => t.value === value) || TARGETS[0];
+  const sel = targets.find(t => t.value === value) || targets[0];
+  if (!sel) return null;
   return (
     <div style={{ position: "relative" }}>
       <button onClick={() => setOpen(v => !v)} style={{ ...inp, display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", background: "#fff" }}>
@@ -79,7 +76,7 @@ function TargetSelector({ value, onChange }: { value: string; onChange: (v: stri
       </button>
       {open && (
         <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 30, background: "#fff", border: "1.5px solid #E5E7EB", borderRadius: 10, overflow: "hidden", boxShadow: "0 8px 24px rgba(0,0,0,.12)", marginTop: 4 }}>
-          {TARGETS.map(t => (
+          {targets.map(t => (
             <button key={t.value} onClick={() => { onChange(t.value); setOpen(false); }} style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 14px", border: "none", background: t.value === value ? "#F0FDF4" : "#fff", cursor: "pointer", fontSize: 13, color: t.value === value ? G : "#374151", fontWeight: t.value === value ? 700 : 400 }}>
               <span>{t.icon}</span> {t.label}
               {t.value === value && <Check size={13} color={G} style={{ marginLeft: "auto" }} />}
@@ -94,7 +91,7 @@ function TargetSelector({ value, onChange }: { value: string; onChange: (v: stri
 // ═══════════════════════════════════════════════════════════════════════════════
 // TAB 1 — AI COMPOSE
 // ═══════════════════════════════════════════════════════════════════════════════
-function AICompose({ session }: { session: any }) {
+function AICompose({ session, targets }: { session: any; targets: TargetOption[] }) {
   const { toast } = useToast();
   const [idea,     setIdea]     = useState("");
   const [target,   setTarget]   = useState("all");
@@ -171,7 +168,7 @@ function AICompose({ session }: { session: any }) {
 
         <div>
           <label style={{ fontSize: 11, fontWeight: 700, color: "#374151", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".06em" }}>Send To</label>
-          <TargetSelector value={target} onChange={setTarget} />
+          <TargetSelector value={target} onChange={setTarget} targets={targets} />
         </div>
 
         <button onClick={compose} disabled={composing || !idea.trim()} style={{ padding: "12px", borderRadius: 12, border: "none", background: composing || !idea.trim() ? "#E5E7EB" : `linear-gradient(135deg,${G},${G2})`, color: composing || !idea.trim() ? "#9CA3AF" : "#fff", fontWeight: 800, fontSize: 14, cursor: composing || !idea.trim() ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
@@ -185,7 +182,7 @@ function AICompose({ session }: { session: any }) {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <p style={{ fontWeight: 800, fontSize: 14, color: G, margin: 0 }}>✨ AI Generated</p>
             <span style={{ fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 20, background: "#F0FDF4", color: G }}>
-              {TARGETS.find(t => t.value === (composed.suggested_target || target))?.label}
+            {targets.find(t => t.value === (composed.suggested_target || target))?.label}
             </span>
           </div>
 
@@ -220,7 +217,7 @@ function AICompose({ session }: { session: any }) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // TAB 2 — AUTO EVENTS
 // ═══════════════════════════════════════════════════════════════════════════════
-function AutoEvents() {
+function AutoEvents({ targets }: { targets: TargetOption[] }) {
   const { toast } = useToast();
   const [selected, setSelected]   = useState<string | null>(null);
   const [context,  setContext]     = useState("");
@@ -285,7 +282,7 @@ function AutoEvents() {
 
       <div>
         <label style={{ fontSize: 11, fontWeight: 700, color: "#374151", display: "block", marginBottom: 8, textTransform: "uppercase", letterSpacing: ".06em" }}>Send To</label>
-        <TargetSelector value={target} onChange={setTarget} />
+        <TargetSelector value={target} onChange={setTarget} targets={targets} />
       </div>
 
       {/* Event grid */}
@@ -605,8 +602,7 @@ export default function NotificationManagement() {
   const { session } = useAuth();
   const [tab, setTab] = useState<Tab>("compose");
   const { data: academicLevels = [] } = useAcademicLevels();
-  // Refresh module-level TARGETS whenever academic levels load
-  TARGETS = [
+  const TARGETS = [
     ...BASE_TARGETS,
     ...academicLevels.map(l => {
       const cfg = getLevelConfig(l.slug, academicLevels);
@@ -651,8 +647,8 @@ export default function NotificationManagement() {
 
       {/* Content */}
       <div style={{ maxWidth: 760, margin: "0 auto", padding: 16 }}>
-        {tab === "compose"    && <AICompose session={session} />}
-        {tab === "auto"       && <AutoEvents />}
+        {tab === "compose"    && <AICompose session={session} targets={TARGETS} />}
+        {tab === "auto"       && <AutoEvents targets={TARGETS} />}
         {tab === "moderation" && <ModerationQueue />}
         {tab === "history"    && <NotificationHistory />}
       </div>
