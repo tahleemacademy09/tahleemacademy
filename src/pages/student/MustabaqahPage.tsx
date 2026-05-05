@@ -666,7 +666,20 @@ export default function MustabaqahPage() {
     const {data}=await supabase.from("musabaqah_participants" as any).select("*").eq("competition_id",comp.id).order("queue_position");
     if (!data) return;
     setParticipants(data as Participant[]);
-    if (comp.current_participant_id) setActiveP((data as Participant[]).find(p=>p.id===comp.current_participant_id)||null);
+    if (comp.current_participant_id) {
+      const fetched = (data as Participant[]).find(p=>p.id===comp.current_participant_id) || null;
+      setActiveP(prev => {
+        // Guard: don't let a stale DB read downgrade a locally-set status.
+        // The judge fires the DB update async AFTER broadcasting CALLED/START_RECITING,
+        // so the first loadParticipants() that fires may still see the old status.
+        if (prev && fetched && prev.id === fetched.id &&
+            (prev.status === "called" || prev.status === "reciting") &&
+            (fetched.status === "pending" || fetched.status === "waiting")) {
+          return { ...fetched, status: prev.status };
+        }
+        return fetched;
+      });
+    }
     if (user) {
       const mine=(data as Participant[]).find(p=>p.user_id===user.id);
       if (mine) setMyParticipant(prev => {
