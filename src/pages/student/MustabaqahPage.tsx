@@ -74,6 +74,11 @@ const GlobalStyles = () => (
     ::-webkit-scrollbar-track{background:transparent}
     ::-webkit-scrollbar-thumb{background:rgba(201,168,76,.3);border-radius:2px}
     .timer-warning{animation:timerPulse .8s ease-in-out infinite}
+    /* ── Force NO mirror on ALL video elements — LiveKit applies scaleX(-1) for local tracks ── */
+    video[data-lk-local-participant="true"],
+    [data-lk-local-participant="true"] video,
+    .lk-video-track[data-lk-local-participant],
+    video { transform:none!important; -webkit-transform:none!important; }
   `}</style>
 );
 
@@ -248,6 +253,55 @@ const QuestionDisplay = ({ tile, ayahText, loadingAyah, isParticipant, isObserve
   </div>
 );
 
+/* ── VideoPanel — module-level so React never remounts it on re-renders ──── */
+// CRITICAL: must be defined OUTSIDE LiveVideoGrid. If defined inside, React
+// creates a new function reference on every render → unmount/remount → blink.
+const VideoPanel = ({
+  pub, participant: rp, localParticipant: lp, name, label, dominant, compact,
+}:{
+  pub:any; participant:any; localParticipant:any;
+  name:string; label:string; dominant?:boolean; compact?:boolean;
+}) => (
+  <div style={{position:"relative",height:"100%",overflow:"hidden",background:"rgba(0,0,0,.9)",
+    flex: compact ? "0 0 30%" : dominant ? "1 1 70%" : "1 1 100%",
+    borderLeft: compact ? "1px solid rgba(201,168,76,.2)" : "none",
+  }}>
+    {pub?.videoTrack
+      ? (
+        // Wrapper div + scaleX(1) forces browser to reset any transform the
+        // LiveKit CSS applies for local-participant mirroring.
+        // mirror={false} prop handles it in newer versions; CSS handles older ones.
+        <div style={{width:"100%",height:"100%",overflow:"hidden"}}>
+          <VideoTrack
+            trackRef={{participant: rp || lp, source: Track.Source.Camera, publication: pub}}
+            mirror={false}
+            style={{width:"100%",height:"100%",objectFit:"cover",
+              transform:"scaleX(1)",    // explicit — overrides any LiveKit CSS mirror
+              WebkitTransform:"scaleX(1)",
+            }}/>
+        </div>
+      )
+      : (
+        <div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:8}}>
+          <div style={{width:48,height:48,borderRadius:"50%",background:`linear-gradient(135deg,${GOLD}44,${GOLDD}22)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,fontWeight:800,color:GOLD,fontFamily:"Cairo,sans-serif"}}>{name[0]?.toUpperCase()}</div>
+          <div style={{color:"rgba(255,255,255,.3)",fontSize:11}}>{name}</div>
+        </div>
+      )
+    }
+    {/* Name label */}
+    <div style={{position:"absolute",bottom:0,left:0,right:0,
+      background:"linear-gradient(to top,rgba(0,0,0,.85) 0%,transparent 100%)",
+      padding:"18px 10px 6px",display:"flex",alignItems:"flex-end",gap:6}}>
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{color:"#fff",fontSize:compact?9:11,fontWeight:700,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",fontFamily:"Cairo,sans-serif"}}>
+          {label}
+        </div>
+      </div>
+      <div style={{width:6,height:6,borderRadius:"50%",background:GREEN,flexShrink:0,animation:"pulseRing 2s ease-in-out infinite"}}/>
+    </div>
+  </div>
+);
+
 /* ── Video grid — DUAL panels: Judge + Participant side by side ── */
 const LiveVideoGrid = ({
   activeUserId, isJudge, isObserver, allowControls, activePStatus,
@@ -270,7 +324,6 @@ const LiveVideoGrid = ({
 
   const participantIsReciting = activePStatus === "reciting";
 
-  // Determine which feeds we have
   const judgeVid  = iAmJudge ? localPub : judgeRemotePub;
   const judgeP    = iAmJudge ? null      : judgeRemote ?? null;
   const activVid  = iAmActive? localPub  : activeRemotePub;
@@ -284,7 +337,6 @@ const LiveVideoGrid = ({
 
   if (!hasAny) return (
     <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:12,background:"rgba(0,0,0,.6)"}}>
-      {/* Islamic placeholder */}
       <div style={{fontSize:36,opacity:.3}}>﷽</div>
       <div style={{color:"rgba(255,255,255,.25)",fontSize:12,textAlign:"center",maxWidth:220,lineHeight:1.7}}>
         {isObserver ? "Live video appears when a participant is called" : "Connecting to live room…"}
@@ -292,59 +344,24 @@ const LiveVideoGrid = ({
     </div>
   );
 
-  // Layout: when reciting → participant dominant (2/3), judge compact (1/3)
-  //         when idle/called → judge dominant (full), participant hidden or small
   const showBoth = hasJudge && hasActiv && !!activeUserId;
-
-  const VideoPanel = ({
-    pub, participant: rp, name, label, dominant, compact, isLocal,
-  }:{pub:any;participant:any;name:string;label:string;dominant?:boolean;compact?:boolean;isLocal?:boolean}) => (
-    <div style={{position:"relative",height:"100%",overflow:"hidden",background:"rgba(0,0,0,.7)",
-      flex: compact ? "0 0 30%" : dominant ? "1 1 70%" : "1 1 100%",
-      borderLeft: compact ? "1px solid rgba(201,168,76,.2)" : "none",
-    }}>
-      {pub?.videoTrack
-        ? <VideoTrack
-            trackRef={{participant: rp || localParticipant!, source: Track.Source.Camera, publication: pub}}
-            mirror={false}
-            style={{width:"100%",height:"100%",objectFit:"cover",transform:"none"}}/>
-        : <div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:8}}>
-            <div style={{width:48,height:48,borderRadius:"50%",background:`linear-gradient(135deg,${GOLD}44,${GOLDD}22)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,fontWeight:800,color:GOLD,fontFamily:"Cairo,sans-serif"}}>{name[0]?.toUpperCase()}</div>
-            <div style={{color:"rgba(255,255,255,.3)",fontSize:11}}>{name}</div>
-          </div>
-      }
-      {/* Name label */}
-      <div style={{position:"absolute",bottom:0,left:0,right:0,
-        background:"linear-gradient(to top,rgba(0,0,0,.85) 0%,transparent 100%)",
-        padding:"18px 10px 6px",display:"flex",alignItems:"flex-end",gap:6}}>
-        <div style={{flex:1,minWidth:0}}>
-          <div style={{color:"#fff",fontSize:compact?9:11,fontWeight:700,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",fontFamily:"Cairo,sans-serif"}}>
-            {label}
-          </div>
-        </div>
-        <div style={{width:6,height:6,borderRadius:"50%",background:GREEN,flexShrink:0,animation:"pulseRing 2s ease-in-out infinite"}}/>
-      </div>
-    </div>
-  );
 
   return (
     <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"row",overflow:"hidden"}}>
       {showBoth && participantIsReciting ? (
-        // Reciting: participant dominant left, judge compact right
         <>
-          <VideoPanel pub={activVid} participant={activP} name={activName||"Participant"} label={`🎙️ ${activName||"Participant"}`} dominant/>
-          <VideoPanel pub={judgeVid} participant={judgeP} name={judgeName} label={`⚖️ ${judgeName}`} compact/>
+          <VideoPanel pub={activVid} participant={activP} localParticipant={localParticipant} name={activName||"Participant"} label={`🎙️ ${activName||"Participant"}`} dominant/>
+          <VideoPanel pub={judgeVid} participant={judgeP} localParticipant={localParticipant} name={judgeName} label={`⚖️ ${judgeName}`} compact/>
         </>
-      ) : showBoth && !participantIsReciting ? (
-        // Idle/Called: judge dominant left, participant compact right
+      ) : showBoth ? (
         <>
-          <VideoPanel pub={judgeVid} participant={judgeP} name={judgeName} label={`⚖️ ${judgeName}`} dominant/>
-          <VideoPanel pub={activVid} participant={activP} name={activName||"Participant"} label={`🎙️ ${activName||"Participant"}`} compact/>
+          <VideoPanel pub={judgeVid} participant={judgeP} localParticipant={localParticipant} name={judgeName} label={`⚖️ ${judgeName}`} dominant/>
+          <VideoPanel pub={activVid} participant={activP} localParticipant={localParticipant} name={activName||"Participant"} label={`🎙️ ${activName||"Participant"}`} compact/>
         </>
       ) : hasJudge ? (
-        <VideoPanel pub={judgeVid} participant={judgeP} name={judgeName} label={`⚖️ ${judgeName}`}/>
+        <VideoPanel pub={judgeVid} participant={judgeP} localParticipant={localParticipant} name={judgeName} label={`⚖️ ${judgeName}`}/>
       ) : (
-        <VideoPanel pub={activVid} participant={activP} name={activName||"Participant"} label={`🎙️ ${activName||"Participant"}`}/>
+        <VideoPanel pub={activVid} participant={activP} localParticipant={localParticipant} name={activName||"Participant"} label={`🎙️ ${activName||"Participant"}`}/>
       )}
     </div>
   );
