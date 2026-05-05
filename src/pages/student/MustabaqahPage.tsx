@@ -297,8 +297,8 @@ const LiveVideoGrid = ({
   const showBoth = hasJudge && hasActiv && !!activeUserId;
 
   const VideoPanel = ({
-    pub, participant: rp, name, label, dominant, compact,
-  }:{pub:any;participant:any;name:string;label:string;dominant?:boolean;compact?:boolean}) => (
+    pub, participant: rp, name, label, dominant, compact, isLocal,
+  }:{pub:any;participant:any;name:string;label:string;dominant?:boolean;compact?:boolean;isLocal?:boolean}) => (
     <div style={{position:"relative",height:"100%",overflow:"hidden",background:"rgba(0,0,0,.7)",
       flex: compact ? "0 0 30%" : dominant ? "1 1 70%" : "1 1 100%",
       borderLeft: compact ? "1px solid rgba(201,168,76,.2)" : "none",
@@ -306,6 +306,7 @@ const LiveVideoGrid = ({
       {pub?.videoTrack
         ? <VideoTrack
             trackRef={{participant: rp || localParticipant!, source: Track.Source.Camera, publication: pub}}
+            mirror={false}
             style={{width:"100%",height:"100%",objectFit:"cover",transform:"none"}}/>
         : <div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:8}}>
             <div style={{width:48,height:48,borderRadius:"50%",background:`linear-gradient(135deg,${GOLD}44,${GOLDD}22)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,fontWeight:800,color:GOLD,fontFamily:"Cairo,sans-serif"}}>{name[0]?.toUpperCase()}</div>
@@ -1107,12 +1108,13 @@ export default function MustabaqahPage() {
     try {
       const { data, error } = await supabase.functions.invoke("tahleem-ai", {
         body: {
+          action: "generate",   // required by tahleem-ai — without this it throws "action is required"
           prompt: `Generate exactly ${aiQCount} concise Islamic recitation competition questions or passage assignments for a Quran/Islamic studies competition. Each item should be on its own line, formatted simply like: "Al-Fatiha full" or "Al-Baqarah 1-5" or "Surah Al-Ikhlas complete". No numbering, no bullets, just one item per line. Topic/scope context: ${aiPrompt}`,
-          max_tokens: 600,
         }
       });
       if (error) throw new Error(error.message);
-      const raw = (data?.content?.[0]?.text || data?.text || data || "") as string;
+      // tahleem-ai returns { text: "..." } for the "generate" action
+      const raw = (data?.text || data?.content?.[0]?.text || "") as string;
       const lines = raw.split("\n").map((s:string)=>s.replace(/^[\d\-\*\.\)]+\s*/,"").trim()).filter((s:string)=>s.length>3);
       const merged = liveCustomQ.trim() ? liveCustomQ.trim() + "\n" + lines.join("\n") : lines.join("\n");
       setLiveCustomQ(merged);
