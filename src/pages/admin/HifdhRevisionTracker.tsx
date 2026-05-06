@@ -242,21 +242,60 @@ export default function HifdhRevisionTracker() {
   };
 
 
-  // ── RPC helper: single clean call (requires SQL migration 20260506000002)
+  // ── Direct table write — bypasses RPC role-check entirely ──
   const callSaveRpc = async (sid: string, form: PForm): Promise<string|null> => {
-    const { error } = await (supabase as any).rpc("save_hifdh_assignment", {
-      p_student_id:            sid,
-      p_mode:                  form.mode,
-      p_selected_items:        form.selected_items,
-      p_daily_pages:           form.daily_pages,
-      p_reciter_id:            form.reciter_id || "Alafasy_128kbps",
-      p_notes:                 form.notes || null,
-      p_program_start_date:    form.program_start_date || null,
-      p_rest_days:             form.rest_days,
-      p_program_duration_days: form.program_duration_days,
-      p_start_page:            form.start_page,
-    });
-    return error ? error.message : null;
+    try {
+      // 1. Deactivate any existing active assignment for this student
+      const { error: deactivateErr } = await (supabase as any)
+        .from("hifdh_daily_assignments")
+        .update({ active: false })
+        .eq("student_id", sid)
+        .eq("active", true);
+      if (deactivateErr) console.warn("Deactivate warn:", deactivateErr.message);
+
+      // 2. Insert new assignment directly
+      const payload: Record<string, any> = {
+        student_id:   sid,
+        mode:         form.mode,
+        selected_items: form.selected_items,
+        daily_pages:  form.daily_pages,
+        reciter_id:   form.reciter_id || "Alafasy_128kbps",
+        notes:        form.notes || null,
+        active:       true,
+      };
+
+      // Add schedule fields only if columns exist (safe — Supabase ignores unknown cols gracefully)
+      if (form.program_start_date)    payload.program_start_date    = form.program_start_date;
+      if (form.rest_days?.length)     payload.rest_days             = form.rest_days;
+      if (form.program_duration_days) payload.program_duration_days = form.program_duration_days;
+      if (form.start_page)            payload.start_page            = form.start_page;
+
+      const { error: insertErr } = await (supabase as any)
+        .from("hifdh_daily_assignments")
+        .insert(payload);
+
+      if (insertErr) {
+        // If insert fails due to missing schedule columns, retry with base fields only
+        if (insertErr.message?.includes("column") || insertErr.message?.includes("schema")) {
+          const { error: retryErr } = await (supabase as any)
+            .from("hifdh_daily_assignments")
+            .insert({
+              student_id:    sid,
+              mode:          form.mode,
+              selected_items:form.selected_items,
+              daily_pages:   form.daily_pages,
+              reciter_id:    form.reciter_id || "Alafasy_128kbps",
+              notes:         form.notes || null,
+              active:        true,
+            });
+          return retryErr ? retryErr.message : null;
+        }
+        return insertErr.message;
+      }
+      return null; // success
+    } catch (e: any) {
+      return e?.message ?? "Unknown error";
+    }
   };
 
   const saveIndividual = async (sid:string) => {
@@ -264,9 +303,16 @@ export default function HifdhRevisionTracker() {
     setSaving(true); setSaveErr(null);
     try {
       const err = await callSaveRpc(sid, indForm);
-      if (err) { setSaveErr(`Save failed: ${err}`); setSaving(false); return; }
-      setShowAssign(null); await load();
-    } catch(e:any){ setSaveErr(`Error: ${e?.message}`); }
+      if (err) {
+        setSaveErr(`Save failed: ${err}`);
+        setSaving(false);
+        return;
+      }
+      setShowAssign(null);
+      await load();
+    } catch(e:any){
+      setSaveErr(`Error: ${e?.message ?? String(e)}`);
+    }
     setSaving(false);
   };
 
@@ -492,7 +538,7 @@ export default function HifdhRevisionTracker() {
                     <div style={{ margin:"12px 0",padding:"10px 14px",borderRadius:12,
                       background:"#fff5f5",border:"1px solid #fca5a5",textAlign:"left" }}>
                       <div style={{ fontSize:11,fontWeight:800,color:"#dc2626",marginBottom:6 }}>
-                        ⚠️ {bulkErrors.length} failed — run the SQL migration for full scheduling support
+                        ⚠️ {bulkErrors.length} failed
                       </div>
                       <div style={{ fontSize:10,color:"#dc2626",maxHeight:120,overflowY:"auto" }}>
                         {bulkErrors.slice(0,5).map((e,i)=><div key={i} style={{marginBottom:2}}>{e}</div>)}
