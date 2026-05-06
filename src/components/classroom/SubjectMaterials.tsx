@@ -185,7 +185,24 @@ function PreviewOverlay({ url, type, title, onClose, materialId }: {
         onClick={e => e.stopPropagation()}
       >
         {isImg && <img src={url} alt={title} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 8 }} />}
-        {isPdf && !isImg && <iframe src={url} title={title} style={{ width: "100%", height: "100%", border: "none" }} />}
+        {isPdf && !isImg && (
+          <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column" }}>
+            <iframe
+              src={`https://docs.google.com/viewer?url=${encodeURIComponent(url)}&embedded=true`}
+              title={title}
+              style={{ flex: 1, width: "100%", border: "none" }}
+              allowFullScreen
+            />
+            <div style={{ padding: "8px 16px", background: "rgba(0,0,0,.65)", textAlign: "center" }}>
+              <p style={{ color: "rgba(255,255,255,.5)", fontSize: 11, margin: 0 }}>
+                Preview not loading?{" "}
+                <a href={url} target="_blank" rel="noopener noreferrer" style={{ color: "#93C5FD", textDecoration: "none", fontWeight: 600 }}>Open in new tab ↗</a>
+                {" · "}
+                <a href={url} download target="_blank" rel="noopener noreferrer" style={{ color: "#86EFAC", textDecoration: "none", fontWeight: 600 }}>Download ↓</a>
+              </p>
+            </div>
+          </div>
+        )}
         {isVid && !isImg && !isPdf && (
           <video
             ref={videoRef}
@@ -476,6 +493,9 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
         visibility:      f.visibility,
         ...(!ed?.id && user ? { uploaded_by: user.id } : {}),
       };
+
+      // Include updated_at so any DB trigger that references it doesn't fail
+      if (ed?.id) payload.updated_at = new Date().toISOString();
 
       const { error: dbErr } = ed?.id
         ? await supabase.from("subject_materials").update(payload).eq("id", ed.id)
