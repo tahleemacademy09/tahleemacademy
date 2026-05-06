@@ -256,6 +256,7 @@ export default function HifdhRevisionTracker() {
       // 2. Insert new assignment directly
       const payload: Record<string, any> = {
         student_id:   sid,
+        assigned_by:  userId,          // NOT NULL — must be the current user's UUID
         mode:         form.mode,
         selected_items: form.selected_items,
         daily_pages:  form.daily_pages,
@@ -281,6 +282,7 @@ export default function HifdhRevisionTracker() {
             .from("hifdh_daily_assignments")
             .insert({
               student_id:    sid,
+              assigned_by:   userId,
               mode:          form.mode,
               selected_items:form.selected_items,
               daily_pages:   form.daily_pages,
