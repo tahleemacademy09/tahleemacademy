@@ -935,6 +935,33 @@ function SectionLabel({ children }:{ children:React.ReactNode }) {
 /* ════════════════════════════════════════════════════════
    ProgramFields — shared by individual + bulk assign form
    ════════════════════════════════════════════════════════ */
+// Pages per unit in standard Madani Mushaf (604 pages total)
+const PAGES_PER_JUZ  = 20;   // 30 juz × 20 = 600 ≈ 604
+const PAGES_PER_HIZB = 10;   // 60 hizb × 10 = 600
+
+// Approximate pages per surah (Madani Mushaf, rounded to nearest 0.5)
+const SURAH_PAGES: Record<number,number> = {
+  1:0.5,  2:48,  3:30,  4:29,  5:24,  6:24,  7:25,  8:10,  9:25, 10:18,
+  11:18, 12:17, 13:10, 14:10, 15:8,  16:19, 17:16, 18:14, 19:11, 20:14,
+  21:13, 22:12, 23:11, 24:13, 25:9,  26:12, 27:11, 28:14, 29:9,  30:8,
+  31:6,  32:4,  33:12, 34:8,  35:8,  36:6,  37:9,  38:6,  39:9,  40:9,
+  41:7,  42:7,  43:7,  44:4,  45:5,  46:5,  47:5,  48:5,  49:3,  50:3,
+  51:3,  52:3,  53:3,  54:3,  55:4,  56:4,  57:5,  58:5,  59:5,  60:4,
+  61:3,  62:2,  63:2,  64:3,  65:3,  66:3,  67:3,  68:3,  69:3,  70:2,
+  71:2,  72:2,  73:2,  74:3,  75:2,  76:2,  77:2,  78:2,  79:2,  80:1,
+  81:1,  82:1,  83:2,  84:1,  85:1,  86:1,  87:1,  88:1,  89:2,  90:1,
+  91:1,  92:1,  93:0.5,94:0.5,95:0.5,96:1, 97:0.5,98:1,  99:0.5,100:1,
+  101:0.5,102:0.5,103:0.5,104:0.5,105:0.5,106:0.5,107:0.5,108:0.5,
+  109:0.5,110:0.5,111:0.5,112:0.5,113:0.5,114:0.5,
+};
+
+function calcTotalPages(mode:"juz"|"hizb"|"surah", items:number[]): number {
+  if (!items.length) return 0;
+  if (mode==="juz")  return items.length * PAGES_PER_JUZ;
+  if (mode==="hizb") return items.length * PAGES_PER_HIZB;
+  return items.reduce((sum,n)=>sum+(SURAH_PAGES[n]??2),0);
+}
+
 function ProgramFields({ form, setForm }:{
   form:PForm; setForm:(f:PForm|((p:PForm)=>PForm))=>void;
 }) {
@@ -947,6 +974,15 @@ function ProgramFields({ form, setForm }:{
     set({ rest_days: form.rest_days.includes(d)
       ? form.rest_days.filter(x=>x!==d)
       : [...form.rest_days,d].sort() });
+
+  // Auto-calculate duration whenever mode / items / daily_pages change
+  const totalPages  = calcTotalPages(form.mode, form.selected_items);
+  const autoDays    = totalPages>0 ? Math.ceil(totalPages/form.daily_pages) : null;
+
+  // Keep form in sync when auto changes
+  useEffect(()=>{
+    if (autoDays!==null) setForm(f=>({...f,program_duration_days:autoDays}));
+  },[autoDays]);
 
   return (
     <div style={{ display:"flex",flexDirection:"column",gap:12 }}>
@@ -1017,27 +1053,57 @@ function ProgramFields({ form, setForm }:{
         <div style={{ fontSize:10,color:"#9aab94",marginTop:3 }}>Page 1 = first page of assigned Juz/Surah</div>
       </div>
 
-      {/* Duration */}
-      <div>
-        <div style={{ fontSize:10,fontWeight:800,color:"#9aab94",marginBottom:6 }}>PROGRAM DURATION</div>
-        <div style={{ display:"flex",gap:6,flexWrap:"wrap" }}>
-          {[20,30,60,90].map(d=>(
-            <button key={d} onClick={()=>set({program_duration_days:d})}
-              style={{ padding:"7px 14px",borderRadius:10,
-                border:`2px solid ${form.program_duration_days===d?G:BRD}`,
-                background:form.program_duration_days===d?G:WARM,
-                color:form.program_duration_days===d?W:"#374151",
-                fontSize:11,fontWeight:700,cursor:"pointer" }}>
-              {d===20?"20 days":d===30?"1 Month":d===60?"2 Months":"3 Months"}
-            </button>
-          ))}
-          <div style={{ display:"flex",alignItems:"center",gap:4 }}>
-            <input type="number" min={1} value={form.program_duration_days}
-              onChange={e=>set({program_duration_days:parseInt(e.target.value)||30})}
-              style={{ width:60,padding:"7px 10px",borderRadius:10,border:`1.5px solid ${BRD}`,
-                fontSize:12,color:G,background:WARM,textAlign:"center" }}/>
-            <span style={{ fontSize:11,color:"#9aab94" }}>days</span>
+      {/* Duration — auto-calculated */}
+      <div style={{ background:`${G}08`,border:`1.5px solid ${G}20`,borderRadius:12,padding:"12px 14px" }}>
+        <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6 }}>
+          <div style={{ fontSize:10,fontWeight:800,color:G }}>PROGRAM DURATION</div>
+          <div style={{ fontSize:10,color:GOLD,fontWeight:700 }}>✨ Auto-calculated</div>
+        </div>
+        {/* Calculation breakdown */}
+        <div style={{ display:"flex",alignItems:"center",gap:6,marginBottom:10,
+          fontSize:12,color:"#374151",flexWrap:"wrap" }}>
+          <span style={{ background:W,border:`1px solid ${BRD}`,borderRadius:8,
+            padding:"4px 10px",fontWeight:700,color:G }}>
+            {form.selected_items.length} {form.mode==="juz"?"Juz":form.mode==="hizb"?"Hizb":"Surah"}
+          </span>
+          <span style={{ color:"#9aab94" }}>×</span>
+          <span style={{ background:W,border:`1px solid ${BRD}`,borderRadius:8,
+            padding:"4px 10px",fontWeight:700,color:G }}>
+            {form.mode==="juz"?"20 pages":form.mode==="hizb"?"10 pages":"~"+totalPages+" pages"}
+          </span>
+          <span style={{ color:"#9aab94" }}>÷</span>
+          <span style={{ background:W,border:`1px solid ${BRD}`,borderRadius:8,
+            padding:"4px 10px",fontWeight:700,color:G }}>
+            {form.daily_pages===0.5?"½":form.daily_pages} page/day
+          </span>
+          <span style={{ color:"#9aab94" }}>=</span>
+          <span style={{ fontWeight:900,fontSize:16,color:G }}>
+            {autoDays??form.program_duration_days} days
+          </span>
+        </div>
+        {/* Result display */}
+        <div style={{ background:W,border:`1px solid ${BRD}`,borderRadius:10,
+          padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between" }}>
+          <div>
+            <div style={{ fontSize:22,fontWeight:900,color:G }}>
+              {form.program_duration_days} days
+            </div>
+            <div style={{ fontSize:10,color:"#9aab94" }}>
+              {totalPages} total pages · finishes in ~{Math.ceil(form.program_duration_days/30)} month{form.program_duration_days>30?"s":""}
+            </div>
           </div>
+          <div style={{ fontSize:28 }}>
+            {form.program_duration_days<=30?"📅":form.program_duration_days<=60?"📆":"🗓️"}
+          </div>
+        </div>
+        {/* Manual override */}
+        <div style={{ marginTop:8,display:"flex",alignItems:"center",gap:8 }}>
+          <span style={{ fontSize:10,color:"#9aab94" }}>Override:</span>
+          <input type="number" min={1} value={form.program_duration_days}
+            onChange={e=>set({program_duration_days:parseInt(e.target.value)||1})}
+            style={{ width:70,padding:"5px 8px",borderRadius:8,border:`1px solid ${BRD}`,
+              fontSize:12,color:G,background:WARM,textAlign:"center" }}/>
+          <span style={{ fontSize:10,color:"#9aab94" }}>days (optional)</span>
         </div>
       </div>
 
