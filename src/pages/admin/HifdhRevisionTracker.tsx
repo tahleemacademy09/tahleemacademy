@@ -62,6 +62,22 @@ export default function HifdhRevisionTracker() {
   });
   const [savingAssign, setSavingAssign] = useState(false);
   const [saveError,    setSaveError]    = useState<string|null>(null);
+  // ── Sort + Bulk Assign state ────────────────────────────────────────
+  const [sortBy, setSortBy] = useState<"name"|"level"|"student_id">("level");
+  const [showBulk, setShowBulk] = useState(false);
+  const [bulkForm, setBulkForm] = useState({
+    target_scope: "level" as "individual"|"level"|"group"|"all",
+    target_value: "beginner",
+    mode: "juz" as "juz"|"hizb"|"surah",
+    selected_items: [1] as number[],
+    daily_pages: 1 as number,
+    program_days: 30,
+    weekend_off: true,
+    auto_progress: true,
+    notes: "",
+  });
+  const [bulkSaving, setBulkSaving] = useState(false);
+  const [bulkResult, setBulkResult] = useState<string|null>(null);
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
@@ -223,7 +239,45 @@ export default function HifdhRevisionTracker() {
       : filter === "done"      ? !!s.todayLog?.completed
       : /* pending */            !!s.assignment && !s.todayLog?.completed;
     return mq && mf;
+  }).sort((a,b) => {
+    if (sortBy === "level") {
+      const order = ["beginner","intermediate","advanced"];
+      const ai = order.indexOf((a.level||"").toLowerCase());
+      const bi = order.indexOf((b.level||"").toLowerCase());
+      const av = ai === -1 ? 99 : ai;
+      const bv = bi === -1 ? 99 : bi;
+      if (av !== bv) return av - bv;
+      return (a.full_name||"").localeCompare(b.full_name||"");
+    }
+    if (sortBy === "student_id") {
+      return (a.student_id||"").localeCompare(b.student_id||"");
+    }
+    return (a.full_name||"").localeCompare(b.full_name||"");
   });
+
+  const runBulkAssign = async () => {
+    setBulkSaving(true); setBulkResult(null);
+    try {
+      const { data, error } = await (supabase as any).rpc("admin_bulk_assign_hifdh_revision", {
+        p_target_scope:   bulkForm.target_scope,
+        p_target_value:   bulkForm.target_value,
+        p_mode:           bulkForm.mode,
+        p_selected_items: bulkForm.selected_items,
+        p_daily_pages:    bulkForm.daily_pages,
+        p_program_days:   bulkForm.program_days,
+        p_weekend_off:    bulkForm.weekend_off,
+        p_auto_progress:  bulkForm.auto_progress,
+        p_reciter_id:     "Alafasy_128kbps",
+        p_notes:          bulkForm.notes || null,
+      });
+      if (error) throw error;
+      setBulkResult(`✅ Assigned to ${data} student${data===1?"":"s"}.`);
+      await load();
+    } catch (e:any) {
+      setBulkResult(`❌ ${e.message}`);
+    }
+    setBulkSaving(false);
+  };
 
   const stats = {
     total:      students.length,
@@ -298,7 +352,163 @@ export default function HifdhRevisionTracker() {
             </button>
           ))}
         </div>
+        {/* Sort + Bulk Assign */}
+        <div style={{ display:"flex", gap:6, marginTop:10, alignItems:"center", flexWrap:"wrap" }}>
+          <span style={{fontSize:11, color:"#6b7a6b", fontWeight:700}}>Sort:</span>
+          {(["level","name","student_id"] as const).map(s => (
+            <button key={s} onClick={()=>setSortBy(s)}
+              style={{padding:"4px 10px",borderRadius:14,fontSize:10,fontWeight:700,cursor:"pointer",
+                border:"none",background:sortBy===s?GOLD:BRD,color:sortBy===s?"#000":"#6b7a6b"}}>
+              {s==="level"?"Level":s==="name"?"Name":"Student ID"}
+            </button>
+          ))}
+          {role==="admin" && (
+            <button onClick={()=>setShowBulk(true)}
+              style={{marginLeft:"auto",padding:"6px 12px",borderRadius:14,fontSize:11,fontWeight:800,
+                cursor:"pointer",border:"none",background:G,color:"#fff",
+                display:"flex",alignItems:"center",gap:5}}>
+              <Plus size={12}/> Bulk Assign
+            </button>
+          )}
+        </div>
       </div>
+
+      {/* ── Bulk Assign Modal ──────────────────────────────────── */}
+      {showBulk && (
+        <div onClick={()=>!bulkSaving && setShowBulk(false)}
+          style={{position:"fixed",inset:0,background:"rgba(0,0,0,.55)",zIndex:9999,
+            display:"flex",alignItems:"center",justifyContent:"center",padding:14}}>
+          <div onClick={e=>e.stopPropagation()}
+            style={{background:W,borderRadius:18,maxWidth:480,width:"100%",maxHeight:"90vh",
+              overflow:"auto",border:`2px solid ${GOLD}`,boxShadow:"0 20px 60px rgba(0,0,0,.4)"}}>
+            <div style={{padding:"16px 18px",borderBottom:`1px solid ${BRD}`,
+              display:"flex",alignItems:"center",justifyContent:"space-between",
+              background:G,borderRadius:"16px 16px 0 0"}}>
+              <div style={{color:"#fff",fontWeight:800,fontSize:15}}>📋 Assign Daily Revision</div>
+              <button onClick={()=>!bulkSaving && setShowBulk(false)}
+                style={{background:"none",border:"none",cursor:"pointer",color:"#fff"}}>
+                <X size={18}/>
+              </button>
+            </div>
+            <div style={{padding:18,display:"flex",flexDirection:"column",gap:14}}>
+              {/* Target audience */}
+              <div>
+                <label style={{fontSize:11,fontWeight:700,color:"#374151"}}>Assign To</label>
+                <div style={{display:"flex",gap:6,marginTop:6,flexWrap:"wrap"}}>
+                  {(["all","level","individual"] as const).map(s => (
+                    <button key={s} onClick={()=>setBulkForm(f=>({...f,target_scope:s}))}
+                      style={{padding:"6px 12px",borderRadius:10,fontSize:11,fontWeight:700,
+                        border:`1.5px solid ${bulkForm.target_scope===s?G:BRD}`,
+                        background:bulkForm.target_scope===s?G:W,
+                        color:bulkForm.target_scope===s?"#fff":"#374151",cursor:"pointer"}}>
+                      {s==="all"?"🎓 All Students":s==="level"?"📚 By Level":"👤 Individual"}
+                    </button>
+                  ))}
+                </div>
+                {bulkForm.target_scope==="level" && (
+                  <select value={bulkForm.target_value}
+                    onChange={e=>setBulkForm(f=>({...f,target_value:e.target.value}))}
+                    style={{marginTop:8,width:"100%",padding:"8px 10px",borderRadius:8,
+                      border:`1px solid ${BRD}`,fontSize:13}}>
+                    <option value="beginner">Beginner</option>
+                    <option value="intermediate">Intermediate</option>
+                    <option value="advanced">Advanced</option>
+                  </select>
+                )}
+                {bulkForm.target_scope==="individual" && (
+                  <select value={bulkForm.target_value}
+                    onChange={e=>setBulkForm(f=>({...f,target_value:e.target.value}))}
+                    style={{marginTop:8,width:"100%",padding:"8px 10px",borderRadius:8,
+                      border:`1px solid ${BRD}`,fontSize:13}}>
+                    <option value="">— select student —</option>
+                    {students.map(s=>(
+                      <option key={s.user_id} value={s.user_id}>{s.full_name} ({s.student_id})</option>
+                    ))}
+                  </select>
+                )}
+              </div>
+              {/* Mode + items */}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                <div>
+                  <label style={{fontSize:11,fontWeight:700,color:"#374151"}}>Scope</label>
+                  <select value={bulkForm.mode}
+                    onChange={e=>setBulkForm(f=>({...f,mode:e.target.value as any}))}
+                    style={{width:"100%",padding:"8px 10px",borderRadius:8,
+                      border:`1px solid ${BRD}`,fontSize:13,marginTop:6}}>
+                    <option value="juz">Juz (1–30)</option>
+                    <option value="hizb">Hizb (1–60)</option>
+                    <option value="surah">Surah (1–114)</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={{fontSize:11,fontWeight:700,color:"#374151"}}>Start at</label>
+                  <input type="number" min={1}
+                    max={bulkForm.mode==="juz"?30:bulkForm.mode==="hizb"?60:114}
+                    value={bulkForm.selected_items[0]||1}
+                    onChange={e=>setBulkForm(f=>({...f,selected_items:[Number(e.target.value)||1]}))}
+                    style={{width:"100%",padding:"8px 10px",borderRadius:8,
+                      border:`1px solid ${BRD}`,fontSize:13,marginTop:6}}/>
+                </div>
+              </div>
+              {/* Daily pages + program days */}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                <div>
+                  <label style={{fontSize:11,fontWeight:700,color:"#374151"}}>Pages / day</label>
+                  <select value={bulkForm.daily_pages}
+                    onChange={e=>setBulkForm(f=>({...f,daily_pages:Number(e.target.value)}))}
+                    style={{width:"100%",padding:"8px 10px",borderRadius:8,
+                      border:`1px solid ${BRD}`,fontSize:13,marginTop:6}}>
+                    <option value={0.5}>½ page (half)</option>
+                    <option value={1}>1 page</option>
+                    <option value={2}>2 pages</option>
+                    <option value={3}>3 pages</option>
+                    <option value={5}>5 pages</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={{fontSize:11,fontWeight:700,color:"#374151"}}>Program (days)</label>
+                  <input type="number" min={1} max={365} value={bulkForm.program_days}
+                    onChange={e=>setBulkForm(f=>({...f,program_days:Number(e.target.value)||30}))}
+                    style={{width:"100%",padding:"8px 10px",borderRadius:8,
+                      border:`1px solid ${BRD}`,fontSize:13,marginTop:6}}/>
+                </div>
+              </div>
+              {/* Toggles */}
+              <label style={{display:"flex",alignItems:"center",gap:8,fontSize:12,color:"#374151"}}>
+                <input type="checkbox" checked={bulkForm.weekend_off}
+                  onChange={e=>setBulkForm(f=>({...f,weekend_off:e.target.checked}))}/>
+                Weekend off (skip Sundays for revision)
+              </label>
+              <label style={{display:"flex",alignItems:"center",gap:8,fontSize:12,color:"#374151"}}>
+                <input type="checkbox" checked={bulkForm.auto_progress}
+                  onChange={e=>setBulkForm(f=>({...f,auto_progress:e.target.checked}))}/>
+                Auto-advance to next page each day
+              </label>
+              {/* Notes */}
+              <div>
+                <label style={{fontSize:11,fontWeight:700,color:"#374151"}}>Notes (optional)</label>
+                <input value={bulkForm.notes}
+                  onChange={e=>setBulkForm(f=>({...f,notes:e.target.value}))}
+                  placeholder="e.g. Focus on tajweed"
+                  style={{width:"100%",padding:"8px 10px",borderRadius:8,
+                    border:`1px solid ${BRD}`,fontSize:13,marginTop:6}}/>
+              </div>
+              {bulkResult && (
+                <div style={{padding:10,borderRadius:8,fontSize:12,fontWeight:700,
+                  background:bulkResult.startsWith("✅")?"#dcfce7":"#fee2e2",
+                  color:bulkResult.startsWith("✅")?"#166534":"#991b1b"}}>{bulkResult}</div>
+              )}
+              <button onClick={runBulkAssign} disabled={bulkSaving ||
+                  (bulkForm.target_scope==="individual" && !bulkForm.target_value)}
+                style={{padding:"12px",borderRadius:10,background:G,color:"#fff",fontWeight:800,
+                  fontSize:13,border:"none",cursor:bulkSaving?"not-allowed":"pointer",
+                  opacity:bulkSaving?.6:1,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                {bulkSaving ? <><Loader2 size={14} style={{animation:"spin 1s linear infinite"}}/> Assigning…</> : "✓ Assign Now"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Student list ── */}
       <div style={{ padding:"12px 12px 40px", display:"flex", flexDirection:"column", gap:10 }}>
