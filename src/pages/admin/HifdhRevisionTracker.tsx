@@ -263,21 +263,43 @@ export default function HifdhRevisionTracker() {
     ? students
     : students.filter(s=>bulkLevels.length===0||bulkLevels.includes(s.level||""));
 
+  const [bulkProgress, setBulkProgress] = useState<{done:number;total:number}|null>(null);
+
   const saveBulk = async () => {
     setBulkSaving(true);
-    try {
-      const ids = bulkStudents.map(s=>s.user_id);
-      if (!ids.length) { setBulkSaving(false); return; }
-      const { data:count, error } = await (supabase as any).rpc("bulk_save_hifdh_assignment",{
-        p_student_ids:ids, p_mode:bulkForm.mode, p_selected_items:bulkForm.selected_items,
-        p_daily_pages:bulkForm.daily_pages, p_reciter_id:bulkForm.reciter_id||"Alafasy_128kbps",
-        p_notes:bulkForm.notes||null, p_program_start_date:bulkForm.program_start_date||null,
-        p_rest_days:bulkForm.rest_days, p_program_duration_days:bulkForm.program_duration_days,
-        p_start_page:bulkForm.start_page,
-      });
-      if (error) throw error;
-      setBulkDone(count??ids.length); await load();
-    } catch(e:any){ alert(`Bulk assign failed: ${e?.message}`); }
+    const targets = bulkStudents;
+    if (!targets.length) { setBulkSaving(false); return; }
+    setBulkProgress({done:0, total:targets.length});
+
+    let successCount = 0;
+    const errors:string[] = [];
+
+    for (const s of targets) {
+      try {
+        const { error } = await (supabase as any).rpc("save_hifdh_assignment",{
+          p_student_id:      s.user_id,
+          p_mode:            bulkForm.mode,
+          p_selected_items:  bulkForm.selected_items,
+          p_daily_pages:     bulkForm.daily_pages,
+          p_reciter_id:      bulkForm.reciter_id||"Alafasy_128kbps",
+          p_notes:           bulkForm.notes||null,
+          p_program_start_date:   bulkForm.program_start_date||null,
+          p_rest_days:            bulkForm.rest_days,
+          p_program_duration_days:bulkForm.program_duration_days,
+          p_start_page:           bulkForm.start_page,
+        });
+        if (error) errors.push(`${s.full_name}: ${error.message}`);
+        else successCount++;
+      } catch(e:any){
+        errors.push(`${s.full_name}: ${e?.message}`);
+      }
+      setBulkProgress(p=>p?{...p, done:p.done+1}:null);
+    }
+
+    setBulkProgress(null);
+    if (errors.length) console.warn("Bulk assign errors:", errors);
+    setBulkDone(successCount);
+    await load();
     setBulkSaving(false);
   };
 
@@ -501,7 +523,11 @@ export default function HifdhRevisionTracker() {
                       style={{ flex:2,padding:12,borderRadius:12,border:"none",
                         background:`linear-gradient(135deg,${G},${GM})`,
                         color:W,fontWeight:800,fontSize:13,cursor:"pointer" }}>
-                      {bulkSaving?"Assigning…":`✅ Assign to ${bulkStudents.length} Students`}
+                      {bulkSaving
+                        ? bulkProgress
+                          ? `Saving ${bulkProgress.done}/${bulkProgress.total}…`
+                          : "Preparing…"
+                        : `✅ Assign to ${bulkStudents.length} Students`}
                     </button>
                   </div>
                 </div>
