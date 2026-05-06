@@ -1693,44 +1693,68 @@ export type Database = {
         Row: {
           active: boolean
           assigned_by: string
+          auto_progress: boolean | null
           created_at: string
+          current_position: Json | null
           daily_pages: number
+          days_completed: number | null
           id: string
+          last_advance_date: string | null
           mode: string
           notes: string | null
+          program_days: number | null
           reciter_id: string
           selected_items: number[]
           starts_on: string
           student_id: string
+          target_scope: string | null
+          target_value: string | null
           updated_at: string
+          weekend_off: boolean | null
         }
         Insert: {
           active?: boolean
           assigned_by: string
+          auto_progress?: boolean | null
           created_at?: string
+          current_position?: Json | null
           daily_pages?: number
+          days_completed?: number | null
           id?: string
+          last_advance_date?: string | null
           mode: string
           notes?: string | null
+          program_days?: number | null
           reciter_id?: string
           selected_items?: number[]
           starts_on?: string
           student_id: string
+          target_scope?: string | null
+          target_value?: string | null
           updated_at?: string
+          weekend_off?: boolean | null
         }
         Update: {
           active?: boolean
           assigned_by?: string
+          auto_progress?: boolean | null
           created_at?: string
+          current_position?: Json | null
           daily_pages?: number
+          days_completed?: number | null
           id?: string
+          last_advance_date?: string | null
           mode?: string
           notes?: string | null
+          program_days?: number | null
           reciter_id?: string
           selected_items?: number[]
           starts_on?: string
           student_id?: string
+          target_scope?: string | null
+          target_value?: string | null
           updated_at?: string
+          weekend_off?: boolean | null
         }
         Relationships: [
           {
@@ -6141,6 +6165,22 @@ export type Database = {
       acknowledge_hifdh_log: {
         Args: { p_log_id: string; p_note?: string }
         Returns: undefined
+      }
+      admin_advance_hifdh_revision_daily: { Args: never; Returns: number }
+      admin_bulk_assign_hifdh_revision: {
+        Args: {
+          p_auto_progress?: boolean
+          p_daily_pages: number
+          p_mode: string
+          p_notes?: string
+          p_program_days?: number
+          p_reciter_id?: string
+          p_selected_items: number[]
+          p_target_scope: string
+          p_target_value: string
+          p_weekend_off?: boolean
+        }
+        Returns: number
       }
       admin_delete_user_account: {
         Args: { target_user_id: string }

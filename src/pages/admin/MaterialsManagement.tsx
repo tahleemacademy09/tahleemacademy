@@ -22,7 +22,7 @@ import {
 const MATERIAL_TYPES = ["PDF", "Video", "Audio", "Image", "Document"] as const;
 type MaterialType = (typeof MATERIAL_TYPES)[number];
 
-const BUCKET = "subject-materials";
+const BUCKET = "subject-materials"; // bucket created via migration with public read + admin/teacher write
 
 // ── Level display helper ───────────────────────────────────────────────────
 
