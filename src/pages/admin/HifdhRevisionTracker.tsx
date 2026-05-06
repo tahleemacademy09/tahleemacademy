@@ -241,18 +241,44 @@ export default function HifdhRevisionTracker() {
     setGrading(null);
   };
 
+
+  // ── RPC helper: tries full params (with schedule), falls back to basic 6 params
+  const callSaveRpc = async (sid: string, form: PForm): Promise<string|null> => {
+    // Try with schedule params first (requires updated RPC)
+    const { error: e1 } = await (supabase as any).rpc("save_hifdh_assignment", {
+      p_student_id:            sid,
+      p_mode:                  form.mode,
+      p_selected_items:        form.selected_items,
+      p_daily_pages:           form.daily_pages,
+      p_reciter_id:            form.reciter_id || "Alafasy_128kbps",
+      p_notes:                 form.notes || null,
+      p_program_start_date:    form.program_start_date || null,
+      p_rest_days:             form.rest_days,
+      p_program_duration_days: form.program_duration_days,
+      p_start_page:            form.start_page,
+    });
+    if (!e1) return null; // success
+
+    // Fallback: basic 6 params (original RPC signature)
+    const { error: e2 } = await (supabase as any).rpc("save_hifdh_assignment", {
+      p_student_id:    sid,
+      p_mode:          form.mode,
+      p_selected_items:form.selected_items,
+      p_daily_pages:   form.daily_pages,
+      p_reciter_id:    form.reciter_id || "Alafasy_128kbps",
+      p_notes:         form.notes || null,
+    });
+    if (!e2) return null; // success with basic params
+
+    return e2.message; // both failed
+  };
+
   const saveIndividual = async (sid:string) => {
     if (!userId) return;
     setSaving(true); setSaveErr(null);
     try {
-      const { error } = await (supabase as any).rpc("save_hifdh_assignment",{
-        p_student_id:sid, p_mode:indForm.mode, p_selected_items:indForm.selected_items,
-        p_daily_pages:indForm.daily_pages, p_reciter_id:indForm.reciter_id||"Alafasy_128kbps",
-        p_notes:indForm.notes||null, p_program_start_date:indForm.program_start_date||null,
-        p_rest_days:indForm.rest_days, p_program_duration_days:indForm.program_duration_days,
-        p_start_page:indForm.start_page,
-      });
-      if (error) { setSaveErr(`Save failed: ${error.message}`); setSaving(false); return; }
+      const err = await callSaveRpc(sid, indForm);
+      if (err) { setSaveErr(`Save failed: ${err}`); setSaving(false); return; }
       setShowAssign(null); await load();
     } catch(e:any){ setSaveErr(`Error: ${e?.message}`); }
     setSaving(false);
@@ -264,40 +290,33 @@ export default function HifdhRevisionTracker() {
     : students.filter(s=>bulkLevels.length===0||bulkLevels.includes(s.level||""));
 
   const [bulkProgress, setBulkProgress] = useState<{done:number;total:number}|null>(null);
+  const [bulkErrors,   setBulkErrors]   = useState<string[]>([]);
 
   const saveBulk = async () => {
     setBulkSaving(true);
-    const targets = bulkStudents;
+    setBulkErrors([]);
+    const targets = bulkTarget==="all"
+      ? students
+      : students.filter(s=>bulkLevels.length===0||bulkLevels.includes(s.level||""));
     if (!targets.length) { setBulkSaving(false); return; }
     setBulkProgress({done:0, total:targets.length});
 
     let successCount = 0;
-    const errors:string[] = [];
+    const errs:string[] = [];
 
     for (const s of targets) {
       try {
-        const { error } = await (supabase as any).rpc("save_hifdh_assignment",{
-          p_student_id:      s.user_id,
-          p_mode:            bulkForm.mode,
-          p_selected_items:  bulkForm.selected_items,
-          p_daily_pages:     bulkForm.daily_pages,
-          p_reciter_id:      bulkForm.reciter_id||"Alafasy_128kbps",
-          p_notes:           bulkForm.notes||null,
-          p_program_start_date:   bulkForm.program_start_date||null,
-          p_rest_days:            bulkForm.rest_days,
-          p_program_duration_days:bulkForm.program_duration_days,
-          p_start_page:           bulkForm.start_page,
-        });
-        if (error) errors.push(`${s.full_name}: ${error.message}`);
+        const errMsg = await callSaveRpc(s.user_id, bulkForm);
+        if (errMsg) errs.push(`${s.full_name}: ${errMsg}`);
         else successCount++;
       } catch(e:any){
-        errors.push(`${s.full_name}: ${e?.message}`);
+        errs.push(`${s.full_name}: ${e?.message}`);
       }
-      setBulkProgress(p=>p?{...p, done:p.done+1}:null);
+      setBulkProgress(p=>p?{...p,done:p.done+1}:null);
     }
 
     setBulkProgress(null);
-    if (errors.length) console.warn("Bulk assign errors:", errors);
+    setBulkErrors(errs);
     setBulkDone(successCount);
     await load();
     setBulkSaving(false);
@@ -478,11 +497,23 @@ export default function HifdhRevisionTracker() {
 
             <div style={{ flex:1,overflowY:"auto",padding:"16px 18px 28px" }}>
               {bulkDone!==null ? (
-                <div style={{ textAlign:"center",padding:"40px 20px" }}>
-                  <div style={{ fontSize:52,marginBottom:12 }}>✅</div>
-                  <div style={{ fontWeight:800,fontSize:20,color:G,marginBottom:6 }}>
+                <div style={{ textAlign:"center",padding:"32px 16px" }}>
+                  <div style={{ fontSize:52,marginBottom:12 }}>{bulkDone>0?"✅":"⚠️"}</div>
+                  <div style={{ fontWeight:800,fontSize:20,color:G,marginBottom:4 }}>
                     Assigned to {bulkDone} students!
                   </div>
+                  {bulkErrors.length>0 && (
+                    <div style={{ margin:"12px 0",padding:"10px 14px",borderRadius:12,
+                      background:"#fff5f5",border:"1px solid #fca5a5",textAlign:"left" }}>
+                      <div style={{ fontSize:11,fontWeight:800,color:"#dc2626",marginBottom:6 }}>
+                        ⚠️ {bulkErrors.length} failed — run the SQL migration for full scheduling support
+                      </div>
+                      <div style={{ fontSize:10,color:"#dc2626",maxHeight:120,overflowY:"auto" }}>
+                        {bulkErrors.slice(0,5).map((e,i)=><div key={i} style={{marginBottom:2}}>{e}</div>)}
+                        {bulkErrors.length>5&&<div>…and {bulkErrors.length-5} more</div>}
+                      </div>
+                    </div>
+                  )}
                   <div style={{ fontSize:13,color:"#9aab94",marginBottom:24 }}>
                     Program starts {bulkForm.program_start_date}
                   </div>
