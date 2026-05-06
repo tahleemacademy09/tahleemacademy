@@ -74,18 +74,10 @@ const GlobalStyles = () => (
     ::-webkit-scrollbar-track{background:transparent}
     ::-webkit-scrollbar-thumb{background:rgba(201,168,76,.3);border-radius:2px}
     .timer-warning{animation:timerPulse .8s ease-in-out infinite}
-    /* ── Force NO mirror on all video elements ──────────────────────────────
-       LiveKit v2 applies mirroring via data-lk-mirrored="true" attribute and
-       data-lk-face-camera="true". We override all possible selectors here.
-       Using !important to win over LiveKit's stylesheet regardless of load order.
-    ── */
-    video[data-lk-mirrored="true"],
-    video[data-lk-face-camera="true"],
-    video[data-lk-local-participant="true"],
-    [data-lk-local-participant="true"] video,
-    [data-lk-mirrored="true"] video,
-    .lk-video-track { transform:none!important; -webkit-transform:none!important; }
-    video { transform:none!important; -webkit-transform:none!important; }
+    /* Local self-view is mirrored (selfie style) — matches what the user
+       sees in the camera preview. Remote participants are NEVER mirrored. */
+    .musabaqah-local-video video { transform:scaleX(-1)!important; -webkit-transform:scaleX(-1)!important; }
+    .musabaqah-remote-video video { transform:none!important; -webkit-transform:none!important; }
   `}</style>
 );
 
@@ -275,17 +267,12 @@ const VideoPanel = ({
   }}>
     {pub?.videoTrack
       ? (
-        // Wrapper div + scaleX(1) forces browser to reset any transform the
-        // LiveKit CSS applies for local-participant mirroring.
-        // mirror={false} prop handles it in newer versions; CSS handles older ones.
-        <div style={{width:"100%",height:"100%",overflow:"hidden"}}>
+        // Local self-view is mirrored (selfie). Remote streams render as-is.
+        <div className={(rp && rp !== lp) ? "musabaqah-remote-video" : "musabaqah-local-video"}
+             style={{width:"100%",height:"100%",overflow:"hidden"}}>
           <VideoTrack
             trackRef={{participant: rp || lp, source: Track.Source.Camera, publication: pub}}
-            mirror={false}
-            style={{width:"100%",height:"100%",objectFit:"cover",
-              transform:"scaleX(1)",    // explicit — overrides any LiveKit CSS mirror
-              WebkitTransform:"scaleX(1)",
-            }}/>
+            style={{width:"100%",height:"100%",objectFit:"cover"}}/>
         </div>
       )
       : (
