@@ -267,17 +267,12 @@ const VideoPanel = ({
   }}>
     {pub?.videoTrack
       ? (
-        // Wrapper div + scaleX(1) forces browser to reset any transform the
-        // LiveKit CSS applies for local-participant mirroring.
-        // mirror={false} prop handles it in newer versions; CSS handles older ones.
-        <div style={{width:"100%",height:"100%",overflow:"hidden"}}>
+        // Local self-view is mirrored (selfie). Remote streams render as-is.
+        <div className={(rp && rp !== lp) ? "musabaqah-remote-video" : "musabaqah-local-video"}
+             style={{width:"100%",height:"100%",overflow:"hidden"}}>
           <VideoTrack
             trackRef={{participant: rp || lp, source: Track.Source.Camera, publication: pub}}
-            mirror={false}
-            style={{width:"100%",height:"100%",objectFit:"cover",
-              transform:"scaleX(1)",    // explicit — overrides any LiveKit CSS mirror
-              WebkitTransform:"scaleX(1)",
-            }}/>
+            style={{width:"100%",height:"100%",objectFit:"cover"}}/>
         </div>
       )
       : (
