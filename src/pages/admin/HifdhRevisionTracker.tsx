@@ -305,16 +305,13 @@ export default function HifdhRevisionTracker() {
               متابعة مراجعة الحفظ اليومية
             </div>
           </div>
-          {/* Bulk Assign — admin only */}
-          {role==="admin" && (
-            <button onClick={e=>{ e.stopPropagation(); setShowBulk(true); setBulkStep("config"); setBulkDone(null); setBulkForm(defaultForm()); }}
-              style={{ marginLeft:"auto", padding:"8px 14px", borderRadius:10,
-                background:`linear-gradient(135deg,${GOLD},#e8c97a)`,
-                border:"none", cursor:"pointer", display:"flex", alignItems:"center", gap:6,
-                color:G, fontWeight:800, fontSize:11, flexShrink:0 }}>
-              <Sparkles size={13}/> Bulk Assign
-            </button>
-          )}
+          <button onClick={e=>{ e.stopPropagation(); setShowBulk(true); setBulkStep("config"); setBulkDone(null); setBulkForm(defaultForm()); }}
+            style={{ marginLeft:"auto", padding:"8px 14px", borderRadius:10,
+              background:`linear-gradient(135deg,${GOLD},#e8c97a)`,
+              border:"none", cursor:"pointer", display:"flex", alignItems:"center", gap:6,
+              color:G, fontWeight:800, fontSize:11, flexShrink:0 }}>
+            <Sparkles size={13}/> Bulk Assign
+          </button>
         </div>
         {/* Stats */}
         <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8, marginTop:14 }}>
@@ -335,6 +332,15 @@ export default function HifdhRevisionTracker() {
 
       {/* ── Controls ── */}
       <div style={{ background:W, borderBottom:`1px solid ${BRD}`, padding:"10px 14px" }}>
+        {/* Bulk Assign prominent button */}
+        <button onClick={e=>{ e.stopPropagation(); setShowBulk(true); setBulkStep("config"); setBulkDone(null); setBulkForm(defaultForm()); }}
+          style={{ width:"100%", marginBottom:10, padding:"11px", borderRadius:12,
+            background:`linear-gradient(135deg,${G},${GM})`,
+            border:"none", cursor:"pointer", display:"flex", alignItems:"center",
+            justifyContent:"center", gap:8, color:W, fontWeight:800, fontSize:13 }}>
+          <Sparkles size={15} color={GOLD}/> Bulk Assign Program
+          <span style={{ fontSize:10, fontWeight:500, opacity:0.8 }}>— all / by level / individual</span>
+        </button>
         {/* Search */}
         <div style={{ display:"flex",alignItems:"center",gap:8,background:WARM,
           border:`1px solid ${BRD}`,borderRadius:10,padding:"8px 12px",marginBottom:10 }}>
