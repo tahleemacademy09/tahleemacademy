@@ -242,10 +242,9 @@ export default function HifdhRevisionTracker() {
   };
 
 
-  // ── RPC helper: tries full params (with schedule), falls back to basic 6 params
+  // ── RPC helper: single clean call (requires SQL migration 20260506000002)
   const callSaveRpc = async (sid: string, form: PForm): Promise<string|null> => {
-    // Try with schedule params first (requires updated RPC)
-    const { error: e1 } = await (supabase as any).rpc("save_hifdh_assignment", {
+    const { error } = await (supabase as any).rpc("save_hifdh_assignment", {
       p_student_id:            sid,
       p_mode:                  form.mode,
       p_selected_items:        form.selected_items,
@@ -257,20 +256,7 @@ export default function HifdhRevisionTracker() {
       p_program_duration_days: form.program_duration_days,
       p_start_page:            form.start_page,
     });
-    if (!e1) return null; // success
-
-    // Fallback: basic 6 params (original RPC signature)
-    const { error: e2 } = await (supabase as any).rpc("save_hifdh_assignment", {
-      p_student_id:    sid,
-      p_mode:          form.mode,
-      p_selected_items:form.selected_items,
-      p_daily_pages:   form.daily_pages,
-      p_reciter_id:    form.reciter_id || "Alafasy_128kbps",
-      p_notes:         form.notes || null,
-    });
-    if (!e2) return null; // success with basic params
-
-    return e2.message; // both failed
+    return error ? error.message : null;
   };
 
   const saveIndividual = async (sid:string) => {
