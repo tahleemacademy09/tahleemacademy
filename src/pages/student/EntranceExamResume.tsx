@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { useTasjeel, TASJEEL_ROUTES } from "@/hooks/useTasjeel";
 import { Loader2 } from "lucide-react";
 
 const ENTRANCE_EXAM_ID = "36ef6492-2515-44ea-b086-67c9cee02475";
@@ -16,6 +17,16 @@ const GM = "#075E54";
 const EntranceExamResume = () => {
   const { user }  = useAuth();
   const navigate  = useNavigate();
+  const { currentStep, loading: stepLoading } = useTasjeel();
+  const [status, setStatus] = useState("Finding your exam…");
+
+  // ── Step guard: if user's pipeline step isn't "exam", send them where they belong ──
+  useEffect(() => {
+    if (stepLoading || !currentStep) return;
+    if (currentStep !== "exam" && TASJEEL_ROUTES[currentStep]) {
+      navigate(TASJEEL_ROUTES[currentStep], { replace: true });
+    }
+  }, [stepLoading, currentStep, navigate]);
   const [status, setStatus] = useState("Finding your exam…");
 
   useEffect(() => {
