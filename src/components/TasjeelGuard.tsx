@@ -67,7 +67,13 @@ const TasjeelGuard = ({ children }: TasjeelGuardProps) => {
   }
 
   // Student: redirect to correct pipeline step if not completed
-  if (currentStep && currentStep !== "completed") {
+  if (!currentStep) {
+    // No tasjeel_progress row at all — should not happen for normal students
+    // but guard against it: send to register to start the pipeline.
+    return <Navigate to="/register" replace />;
+  }
+
+  if (currentStep !== "completed") {
     // level_assignment = waiting for admin approval → show waiting page
     const route = TASJEEL_ROUTES[currentStep] ?? "/student/awaiting-level";
     return <Navigate to={route} replace />;
