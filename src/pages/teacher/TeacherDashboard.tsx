@@ -2,6 +2,7 @@
 // Mobile-first responsive layout + today-only schedule with live countdown
 
 import { useEffect, useState } from "react";
+import AcademyStatusBanner from "@/components/shared/AcademyStatusBanner";
 import { Link, useNavigate } from "react-router-dom";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
@@ -319,6 +320,9 @@ const TeacherDashboard = () => {
         .td-row { display:flex; align-items:center; gap:11px; padding:11px 13px; border-radius:13px; }
         .td-icon { width:38px; height:38px; border-radius:10px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
       `}</style>
+
+      {/* Academy status banner — holiday / maintenance */}
+      <AcademyStatusBanner compact />
 
       {/* ── Hero ─────────────────────────────────────────────────── */}
       <div style={{ background: `linear-gradient(135deg,${G} 0%,${GM} 60%,#1e5c3b 100%)`, padding: "22px 18px 66px", position: "relative", overflow: "hidden" }}>
