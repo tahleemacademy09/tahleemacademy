@@ -236,6 +236,9 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
 
     // 9 ── Al-Musābaqah (updated route) ─────────────────────────
     { type:"link", to:"/admin/musabaqah", icon:Trophy, label:t("Al-Musābaqah 🏆","المسابقة 🏆") },
+
+    // 10 ── Admin Settings ────────────────────────────────────────
+    { type:"link", to:"/admin/settings", icon:UserCircle, label:t("My Settings","إعداداتي") },
   ];
 
   // ── Notification badge count for top bar ────────────────────
