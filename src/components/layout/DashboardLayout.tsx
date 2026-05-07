@@ -180,7 +180,6 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
       { to:"/admin/level-assignment",      icon:GraduationCap, label:t("New Registrations","الطلاب الجدد") },
       { to:"/admin/levels",                icon:Layers,        label:t("Manage Levels","إدارة المستويات") },
       { to:"/admin/tasjeel",               icon:ClipboardList, label:t("Pipeline Tracker","متابعة التسجيل") },
-      { to:"/admin/registration-settings", icon:Settings,      label:t("Reg. Settings","إعدادات التسجيل") },
     ]},
 
     // 2 ── Students ─────────────────────────────────────────────
@@ -224,8 +223,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
 
     // 7 ── Finance ──────────────────────────────────────────────
     { type:"group", key:"finance", icon:CreditCard, label:t("Finance","المالية"), children:[
-      { to:"/admin/payments",         icon:CreditCard, label:t("All Payments","جميع المدفوعات") },
-      { to:"/admin/payment-settings", icon:Settings,   label:t("Payment Settings","إعدادات الدفع") },
+      { to:"/admin/payments", icon:CreditCard, label:t("All Payments","جميع المدفوعات") },
     ]},
 
     // 8 ── Communication ────────────────────────────────────────
