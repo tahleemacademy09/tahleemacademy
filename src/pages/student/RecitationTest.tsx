@@ -11,7 +11,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { useToast } from "@/hooks/use-toast";
 import { useRecitationSettings } from "@/hooks/useRecitationSettings";
-import { useTasjeel } from "@/hooks/useTasjeel";
+import { useTasjeel, TASJEEL_ROUTES } from "@/hooks/useTasjeel";
 import {
   Mic, Upload, CheckCircle2, Video, Clock,
   Star, ArrowRight, Loader2, RotateCcw, BookOpen,
@@ -33,7 +33,16 @@ const RecitationTest = () => {
   const { toast }          = useToast();
   const navigate           = useNavigate();
   const { settings, loading: settingsLoading } = useRecitationSettings();
-  const { currentStep, advanceStep } = useTasjeel();
+  const { currentStep, loading: stepLoading, advanceStep } = useTasjeel();
+
+  // ── Step guard: if user's pipeline step doesn't belong here, send them to the right page ──
+  useEffect(() => {
+    if (stepLoading || !currentStep) return;
+    const allowed = ["recitation", "schedule_session", "completed"];
+    if (!allowed.includes(currentStep) && TASJEEL_ROUTES[currentStep]) {
+      navigate(TASJEEL_ROUTES[currentStep], { replace: true });
+    }
+  }, [stepLoading, currentStep, navigate]);
 
   const [stage,     setStage]     = useState<1|2|3>(1);
   const [substage,  setSubstage]  = useState<"idle"|"recording"|"recorded"|"uploading"|"done">("idle");
@@ -104,7 +113,7 @@ const RecitationTest = () => {
     (async () => {
       const { data } = await (supabase as any)
         .from("recitation_tests")
-        .select("stage, status, ai_score, virtual_session_date, virtual_session_time")
+        .select("stage, status, ai_score, audio_path, virtual_session_date, virtual_session_time")
         .eq("user_id", user.id)
         .maybeSingle();
       if (!data) return;
@@ -115,13 +124,19 @@ const RecitationTest = () => {
         setBookingDone(true);
         setStage(3);
       } else if (data.stage >= 2) {
+        // AI already scored — jump straight to session booking
         setAiScore(data.ai_score ?? null);
-        setStage(3); // let them proceed to booking
+        setStage(3);
       } else if (data.stage >= 1) {
+        // Audio uploaded but AI never ran (e.g. user refreshed mid-scoring).
+        // Re-trigger AI analysis using the saved path. runAIScoring falls back
+        // to a demo score if the blob is no longer in memory, so the user
+        // will never be stuck on a blank stage-2 screen.
         setStage(2);
+        runAIScoring(data.audio_path || "");
       }
     })();
-  }, [user]);
+  }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Recording ────────────────────────────────────────────────────────────
   const startRec = async () => {
@@ -539,6 +554,31 @@ const RecitationTest = () => {
                     <Loader2 style={{ width:48, height:48, color:GM, animation:"spin .8s linear infinite", margin:"0 auto 16px" }} />
                     <div style={{ fontSize:15, fontWeight:700, color:G, marginBottom:6 }}>Analysing recitation…</div>
                     <div style={{ fontSize:13, color:"#9ca3af" }}>This takes a few seconds</div>
+                  </div>
+                )}
+
+                {/* ── Fallback: AI done but no score (network/API failure) ── */}
+                {!scoring && aiScore === null && (
+                  <div style={{ animation:"fadeUp .4s ease", padding:"10px 0" }}>
+                    <div style={{ width:64, height:64, borderRadius:"50%", background:"#FFF7ED", border:"2px solid #FCA5A5", display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 14px", fontSize:28 }}>⚠️</div>
+                    <div style={{ fontSize:14, fontWeight:700, color:"#7C2D12", marginBottom:6 }}>AI analysis could not complete</div>
+                    <div style={{ fontSize:13, color:"#9ca3af", marginBottom:20, lineHeight:1.6 }}>
+                      Your recording was saved. You can retry the analysis or skip ahead — an instructor will evaluate your recitation live in Stage 3.
+                    </div>
+                    <div style={{ display:"flex", gap:10, flexDirection:"column" }}>
+                      <button
+                        onClick={() => runAIScoring("")}
+                        style={{ width:"100%", padding:"13px", borderRadius:13, border:"2px solid #064E3B", background:"#fff", color:"#064E3B", fontSize:14, fontWeight:700, cursor:"pointer" }}
+                      >
+                        🔄 Retry AI Analysis
+                      </button>
+                      <button
+                        onClick={() => setStage(3)}
+                        style={{ width:"100%", padding:"13px", borderRadius:13, border:"none", background:`linear-gradient(135deg,${G},${GM})`, color:"#fff", fontSize:14, fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}
+                      >
+                        Skip to Session Booking <ArrowRight size={16} />
+                      </button>
+                    </div>
                   </div>
                 )}
 
