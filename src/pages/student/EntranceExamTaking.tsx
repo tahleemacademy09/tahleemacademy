@@ -12,7 +12,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useProctoring } from "@/hooks/useProctoring";
 import ProctoringOverlay from "@/components/exam/ProctoringOverlay";
-import { useTasjeel } from "@/hooks/useTasjeel";
+import { useTasjeel, TASJEEL_ROUTES } from "@/hooks/useTasjeel";
 import { useRegistrationSettings } from "@/hooks/useRegistrationSettings";
 import {
   Clock, Flag, Send, CheckCircle2, ChevronLeft, ChevronRight,
@@ -230,7 +230,7 @@ const EntranceExamTaking = () => {
   const { user }                        = useAuth();
   const { toast }                       = useToast();
   const navigate                        = useNavigate();
-  const { advanceStep }                 = useTasjeel();
+  const { currentStep, advanceStep }    = useTasjeel();
   const { config: regConfig }           = useRegistrationSettings();
   const isMobile                        = useIsMobile();
 
@@ -267,7 +267,12 @@ const EntranceExamTaking = () => {
           .from("exam_attempts").select("*, exams(*)")
           .eq("id", attemptId).single();
         if (!att || att.user_id !== user.id) { navigate("/onboarding"); return; }
-        if (att.status !== "in_progress") { navigate("/onboarding?exam_completed=true"); return; }
+        if (att.status !== "in_progress") {
+          // Exam already done — send user to wherever their pipeline step says
+          const dest = (currentStep && TASJEEL_ROUTES[currentStep]) ? TASJEEL_ROUTES[currentStep] : "/student/recitation-test";
+          navigate(dest, { replace: true });
+          return;
+        }
 
         const ex = att.exams as any;
         setExam(ex);
