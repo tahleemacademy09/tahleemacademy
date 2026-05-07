@@ -8,6 +8,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { useTasjeel, TASJEEL_ROUTES } from "@/hooks/useTasjeel";
 import { BookOpen, ArrowRight, ArrowLeft, CheckCircle2, Loader2, ChevronDown, RotateCcw, Star } from "lucide-react";
 
 const G    = "#064E3B";
@@ -91,7 +92,16 @@ const Onboarding = () => {
   const { user } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
+  const { currentStep, loading: stepLoading } = useTasjeel();
   const restoredRef = useRef(false);
+
+  // ── Step guard: redirect if user is not on the onboarding step ────────────
+  useEffect(() => {
+    if (stepLoading || !currentStep) return;
+    if (currentStep !== "onboarding" && TASJEEL_ROUTES[currentStep]) {
+      navigate(TASJEEL_ROUTES[currentStep], { replace: true });
+    }
+  }, [stepLoading, currentStep, navigate]);
 
   const [step, setStep]     = useState(1);
   const [saving, setSaving] = useState(false);
