@@ -26,6 +26,8 @@ interface Props {
 interface Assignment {
   id: string; mode: string; selected_items: number[];
   daily_pages: number; notes?: string;
+  program_start?: string;
+  days_off?: number[]; // day-of-week indices (0=Sun … 6=Sat)
 }
 interface DailyLog {
   id: string; log_date: string; pages_revised: number;
@@ -36,6 +38,40 @@ interface DailyLog {
 
 const toAr = (n: number) =>
   String(n).replace(/\d/g, d => "٠١٢٣٤٥٦٧٨٩"[+d]);
+
+// ── Helpers ─────────────────────────────────────────────────────
+function workingDaysElapsed(startDate: string, daysOff: number[]): number {
+  const start = new Date(startDate + "T00:00:00");
+  const now   = new Date(); now.setHours(0, 0, 0, 0);
+  let count = 0;
+  const cur = new Date(start);
+  while (cur < now) {
+    if (!daysOff.includes(cur.getDay())) count++;
+    cur.setDate(cur.getDate() + 1);
+  }
+  return count;
+}
+
+function isWorkingDay(dateStr: string, daysOff: number[]): boolean {
+  return !daysOff.includes(new Date(dateStr + "T00:00:00").getDay());
+}
+
+function tomorrowDateStr(): string {
+  const d = new Date(); d.setDate(d.getDate() + 1);
+  return d.toISOString().split("T")[0];
+}
+
+function workingDaysElapsedUpTo(startDate: string, targetDate: string, daysOff: number[]): number {
+  const start  = new Date(startDate + "T00:00:00");
+  const target = new Date(targetDate + "T00:00:00");
+  let count = 0;
+  const cur = new Date(start);
+  while (cur < target) {
+    if (!daysOff.includes(cur.getDay())) count++;
+    cur.setDate(cur.getDate() + 1);
+  }
+  return count;
+}
 
 const scoreColor = (s: number) =>
   s >= 80 ? "#16a34a" : s >= 60 ? "#b7791f" : "#dc2626";
@@ -54,6 +90,8 @@ export default function RevisionDailyProgress({ userId, onGoToRevision }: Props)
   const [streak,      setStreak]      = useState(0);
   const [loading,     setLoading]     = useState(true);
   const [totalPages,  setTotalPages]  = useState(0);
+  const [tomorrowPage, setTomorrowPage] = useState<number | null>(null);
+  const [missedCount,  setMissedCount]  = useState(0);
 
   const today = new Date().toISOString().split("T")[0];
 
@@ -83,6 +121,31 @@ export default function RevisionDailyProgress({ userId, onGoToRevision }: Props)
       const todayEntry = allLogs.find(l => l.log_date === today) ?? null;
       setTodayLog(todayEntry);
       setWeekLogs(allLogs.filter(l => past7.includes(l.log_date)));
+
+      // ── Compute missed days in past 7 (working days with no log) ──
+      if (asgn) {
+        const daysOff = asgn.days_off ?? [];
+        const logDates = new Set(allLogs.map(l => l.log_date));
+        let missed = 0;
+        past7.forEach(d => {
+          if (d >= today) return; // only past days
+          if (!isWorkingDay(d, daysOff)) return; // skip off days
+          if (!logDates.has(d)) missed++;
+        });
+        setMissedCount(missed);
+
+        // ── Tomorrow's page position ──
+        if (asgn.program_start) {
+          const tmrw = tomorrowDateStr();
+          if (isWorkingDay(tmrw, daysOff)) {
+            const elapsed = workingDaysElapsedUpTo(asgn.program_start, tmrw, daysOff);
+            const page = Math.floor(elapsed * asgn.daily_pages) + 1;
+            setTomorrowPage(page);
+          } else {
+            setTomorrowPage(null); // tomorrow is an off-day
+          }
+        }
+      }
 
       // Streak: consecutive days with completed=true going back from yesterday
       let s = todayEntry?.completed ? 1 : 0;
@@ -322,11 +385,16 @@ export default function RevisionDailyProgress({ userId, onGoToRevision }: Props)
             letterSpacing:1.2, textTransform:"uppercase" as const }}>Last 7 Days</span>
         </div>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:4 }}>
-          {past7.map((date, i) => {
-            const log = weekLogs.find(l => l.log_date === date);
-            const isToday = date === today;
-            const done = log?.completed;
-            const sc = log?.avg_score;
+          {past7.map((date) => {
+            const log      = weekLogs.find(l => l.log_date === date);
+            const isToday  = date === today;
+            const isFuture = date > today;
+            const daysOff  = assignment?.days_off ?? [];
+            const isOff    = !isWorkingDay(date, daysOff);
+            const done     = log?.completed;
+            const partial  = log && !log.completed;
+            const missed   = !isFuture && !isToday && !isOff && !log;
+            const sc       = log?.avg_score;
             return (
               <div key={date} style={{ display:"flex", flexDirection:"column",
                 alignItems:"center", gap:4 }}>
@@ -334,21 +402,25 @@ export default function RevisionDailyProgress({ userId, onGoToRevision }: Props)
                   borderRadius:10, display:"flex", flexDirection:"column",
                   alignItems:"center", justifyContent:"center",
                   border: isToday ? `2px solid ${GOLD}` : "none",
-                  background: done
-                    ? (sc != null ? `${scoreColor(sc)}22` : "#16a34a18")
-                    : log ? "#fff7ed" : WARM,
+                  background: done    ? (sc != null ? `${scoreColor(sc)}22` : "#16a34a18")
+                            : partial ? "#fff7ed"
+                            : missed  ? "#FEF2F2"
+                            : isOff   ? "#F3F4F6"
+                            : WARM,
                   position:"relative" as const }}>
                   {done ? (
                     <>
-                      <CheckCircle2 size={14}
-                        color={sc != null ? scoreColor(sc) : "#16a34a"} />
+                      <CheckCircle2 size={14} color={sc != null ? scoreColor(sc) : "#16a34a"} />
                       {sc != null && (
-                        <div style={{ fontSize:8, fontWeight:800, marginTop:2,
-                          color:scoreColor(sc) }}>{sc}%</div>
+                        <div style={{ fontSize:8, fontWeight:800, marginTop:2, color:scoreColor(sc) }}>{sc}%</div>
                       )}
                     </>
-                  ) : log ? (
+                  ) : partial ? (
                     <div style={{ fontSize:9, color:"#f59e0b", fontWeight:700 }}>…</div>
+                  ) : missed ? (
+                    <div style={{ fontSize:11, color:"#DC2626", fontWeight:800 }}>✗</div>
+                  ) : isOff ? (
+                    <div style={{ fontSize:10, color:"#D1D5DB" }}>—</div>
                   ) : (
                     <div style={{ width:6, height:6, borderRadius:"50%",
                       background: isToday ? GOLD : "#e8ddd0" }} />
@@ -362,12 +434,31 @@ export default function RevisionDailyProgress({ userId, onGoToRevision }: Props)
             );
           })}
         </div>
+
+        {/* Missed-day warning */}
+        {missedCount > 0 && (
+          <div style={{ marginTop:8, padding:"8px 10px", borderRadius:10,
+            background:"#FEF2F2", border:"1px solid #FECACA",
+            display:"flex", alignItems:"center", gap:8 }}>
+            <span style={{ fontSize:14 }}>⚠️</span>
+            <div>
+              <span style={{ fontSize:11, fontWeight:800, color:"#DC2626" }}>
+                {missedCount} missed day{missedCount > 1 ? "s" : ""} this week
+              </span>
+              <span style={{ fontSize:10, color:"#B91C1C", marginLeft:6 }}>
+                — your plan auto-advances each working day
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* Legend */}
-        <div style={{ display:"flex", gap:12, marginTop:10, flexWrap:"wrap" as const }}>
+        <div style={{ display:"flex", gap:12, marginTop:8, flexWrap:"wrap" as const }}>
           {[
             { color:"#16a34a", label:"Completed" },
-            { color:"#f59e0b", label:"Partial" },
-            { color:BRD,       label:"Missed" },
+            { color:"#f59e0b", label:"Partial"   },
+            { color:"#DC2626", label:"Missed"    },
+            { color:"#D1D5DB", label:"Day off"   },
           ].map(l => (
             <div key={l.label} style={{ display:"flex", alignItems:"center", gap:4 }}>
               <div style={{ width:8, height:8, borderRadius:2, background:l.color }} />
@@ -443,6 +534,88 @@ export default function RevisionDailyProgress({ userId, onGoToRevision }: Props)
           </p>
         </div>
       )}
+
+      {/* ── Tomorrow's Plan ──────────────────────────────────────── */}
+      {assignment && (() => {
+        const daysOff = assignment.days_off ?? [];
+        const tmrw    = tomorrowDateStr();
+        const tmrwIsOff = !isWorkingDay(tmrw, daysOff);
+
+        if (tmrwIsOff) {
+          return (
+            <div style={{ borderRadius:16, padding:"14px 16px", background:W,
+              border:`1px solid ${BRD}`, display:"flex", alignItems:"center", gap:12 }}>
+              <div style={{ fontSize:28, lineHeight:1 }}>🌙</div>
+              <div>
+                <div style={{ fontWeight:800, fontSize:13, color:G, marginBottom:2 }}>
+                  Tomorrow is a Day Off
+                </div>
+                <div style={{ fontSize:11, color:"#9aab94" }}>
+                  No revision scheduled — enjoy your rest and come back refreshed!
+                </div>
+              </div>
+            </div>
+          );
+        }
+
+        // Calculate page position for tomorrow
+        const startPage = tomorrowPage ?? 1;
+        const endPage   = startPage + assignment.daily_pages - 1;
+        const modeLabel = assignment.mode === "juz"  ? "Juz"
+                        : assignment.mode === "hizb" ? "Hizb" : "Surah";
+
+        return (
+          <div style={{ borderRadius:16, overflow:"hidden",
+            border:`1.5px solid ${GOLD}44`, background:W }}>
+
+            {/* Header */}
+            <div style={{ padding:"10px 14px", background:`linear-gradient(135deg,${G}0d,${GOLD}18)`,
+              borderBottom:`1px solid ${GOLD}33`,
+              display:"flex", alignItems:"center", gap:8 }}>
+              <div style={{ width:30, height:30, borderRadius:8, background:`${GOLD}22`,
+                display:"flex", alignItems:"center", justifyContent:"center" }}>
+                <span style={{ fontSize:16 }}>📅</span>
+              </div>
+              <div style={{ flex:1 }}>
+                <div style={{ fontWeight:800, fontSize:12, color:G }}>Tomorrow's Revision Plan</div>
+                <div style={{ fontSize:10, color:"#9aab94" }}>
+                  {new Date(tmrw + "T00:00:00").toLocaleDateString("en-GB",
+                    { weekday:"long", day:"numeric", month:"short" })}
+                </div>
+              </div>
+              <div style={{ padding:"3px 10px", borderRadius:10, background:`${GOLD}22`,
+                fontSize:10, fontWeight:800, color:G }}>
+                {assignment.daily_pages} pages
+              </div>
+            </div>
+
+            {/* Body */}
+            <div style={{ padding:"12px 14px", display:"flex", gap:10, flexWrap:"wrap" as const }}>
+              {[
+                { label:"Section",    value:`${modeLabel} ${assignment.selected_items.slice(0,3).join(", ")}${assignment.selected_items.length > 3 ? "…" : ""}` },
+                { label:"Page range", value: tomorrowPage ? `p. ${startPage} – ${endPage}` : "Auto" },
+                { label:"Target",     value:`${assignment.daily_pages} pages` },
+              ].map(item => (
+                <div key={item.label} style={{ flex:1, minWidth:70, textAlign:"center" as const,
+                  background:WARM, borderRadius:10, padding:"8px 6px",
+                  border:`1px solid ${BRD}` }}>
+                  <div style={{ fontSize:9, color:"#9aab94", fontWeight:600, marginBottom:2 }}>{item.label}</div>
+                  <div style={{ fontSize:12, fontWeight:800, color:G }}>{item.value}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Auto-advance note */}
+            <div style={{ padding:"0 14px 12px" }}>
+              <div style={{ padding:"8px 10px", borderRadius:10,
+                background:`${GOLD}0d`, border:`1px solid ${GOLD}33`,
+                fontSize:11, color:"#7a6930", fontWeight:600, lineHeight:1.5 }}>
+                💡 Your plan auto-advances every working day — even if a session is missed, the next day starts from the correct page position.
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── Motivational footer ───────────────────────────────────── */}
       <div style={{ borderRadius:16, padding:"14px 16px", textAlign:"center",
