@@ -1,4 +1,5 @@
 import { useTasjeel } from "@/hooks/useTasjeel";
+import AcademyStatusBanner from "@/components/shared/AcademyStatusBanner";
 import { useImpersonation } from "@/hooks/useImpersonation";
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
@@ -369,6 +370,9 @@ const StudentDashboard = () => {
       `}</style>
 
       <div style={{ maxWidth: 720, margin: "0 auto", padding: "20px 16px 40px", display: "flex", flexDirection: "column", gap: 18 }}>
+
+        {/* Academy status banner — holiday / maintenance */}
+        <AcademyStatusBanner />
 
         <div style={{
           background: `linear-gradient(160deg, ${DARK_GREEN} 0%, ${MID_GREEN} 50%, #1a5c35 100%)`,
