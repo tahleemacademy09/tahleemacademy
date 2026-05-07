@@ -27,7 +27,6 @@ const EntranceExamResume = () => {
       navigate(TASJEEL_ROUTES[currentStep], { replace: true });
     }
   }, [stepLoading, currentStep, navigate]);
-  const [status, setStatus] = useState("Finding your exam…");
 
   useEffect(() => {
     if (!user) return;
