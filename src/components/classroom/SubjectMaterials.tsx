@@ -11,6 +11,7 @@
 // ─────────────────────────────────────────────────────────────────────
 
 import React, { useState, useRef, useCallback, useEffect } from "react";
+import PDFViewer from "./PDFViewer";
 import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -186,21 +187,8 @@ function PreviewOverlay({ url, type, title, onClose, materialId }: {
       >
         {isImg && <img src={url} alt={title} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 8 }} />}
         {isPdf && !isImg && (
-          <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column" }}>
-            <iframe
-              src={`https://docs.google.com/viewer?url=${encodeURIComponent(url)}&embedded=true`}
-              title={title}
-              style={{ flex: 1, width: "100%", border: "none" }}
-              allowFullScreen
-            />
-            <div style={{ padding: "8px 16px", background: "rgba(0,0,0,.65)", textAlign: "center" }}>
-              <p style={{ color: "rgba(255,255,255,.5)", fontSize: 11, margin: 0 }}>
-                Preview not loading?{" "}
-                <a href={url} target="_blank" rel="noopener noreferrer" style={{ color: "#93C5FD", textDecoration: "none", fontWeight: 600 }}>Open in new tab ↗</a>
-                {" · "}
-                <a href={url} download target="_blank" rel="noopener noreferrer" style={{ color: "#86EFAC", textDecoration: "none", fontWeight: 600 }}>Download ↓</a>
-              </p>
-            </div>
+          <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+            <PDFViewer url={url} bg="rgba(0,0,0,.85)" />
           </div>
         )}
         {isVid && !isImg && !isPdf && (
@@ -807,15 +795,9 @@ function MaterialCard({ m, isPrivileged, onEdit, onDelete }: {
 
   const handlePreview = async () => {
     if (isText) { setExpanded(e => !e); return; }
-    if (isLink) { window.open(m.file_url, "_blank"); return; }
+    if (isLink) { setResolvedUrl(m.file_url); setPreviewOpen(true); return; }
     const url = await resolveUrl();
-    if (!url) return;
-    // PDFs don't render in mobile iframes — open directly in the browser
-    if (m.material_type === "PDF" || /\.pdf(\?|$)/i.test(url)) {
-      window.open(url, "_blank");
-      return;
-    }
-    setPreviewOpen(true);
+    if (url) setPreviewOpen(true);
   };
 
   const handleDownload = async () => {
