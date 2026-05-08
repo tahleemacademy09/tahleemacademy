@@ -13,6 +13,7 @@ import { Track, RoomEvent, ConnectionState } from "livekit-client";
 import { createPortal } from "react-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
+import { getSignedUrl } from "../../integrations/supabase/storageClient";
 import { playJoinSound, playLeaveSound } from "@/lib/soundUtils";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -529,18 +530,31 @@ function loadResume(id:string):{time?:number;page?:number}|null{
    always remain visible. Has an opt-in fullscreen button that expands to the full
    viewport when needed. Saves / restores video time and PDF page automatically.   */
 const InClassMaterialViewer=({material,onClose,isTeacher=false}:any)=>{
-  const url=material.file_url||material.url||"";
+  const rawUrl=material.file_url||material.url||"";
+  const matId=material.id||rawUrl;
+
+  // ── resolve Supabase storage path to a signed/public URL ─────────────────
+  const [resolvedUrl, setResolvedUrl] = useState<string>(
+    rawUrl.startsWith("http") ? rawUrl : ""
+  );
+  const [urlLoading, setUrlLoading] = useState(!rawUrl.startsWith("http"));
+  useEffect(()=>{
+    if(rawUrl.startsWith("http")){ setResolvedUrl(rawUrl); setUrlLoading(false); return; }
+    setUrlLoading(true);
+    getSignedUrl(rawUrl).then(signed=>{
+      setResolvedUrl(signed||rawUrl);
+      setUrlLoading(false);
+    }).catch(()=>{ setResolvedUrl(rawUrl); setUrlLoading(false); });
+  },[rawUrl]);
+
+  const url=resolvedUrl;
   const {embedUrl,kind}=toMaterialEmbedUrl(url);
-  const matId=material.id||url;
 
   // ── resume position ──────────────────────────────────────────────────────
   const resume=loadResume(matId);
   const videoRef=useRef<HTMLVideoElement>(null);
   const iframeRef=useRef<HTMLIFrameElement>(null);
-  // For direct PDF: append #page=N so the browser PDF viewer opens at saved page
-  const pdfSrc=kind==="pdf"&&resume?.page
-    ? `${embedUrl}#page=${resume.page}`
-    : embedUrl;
+  const pdfSrc=embedUrl;
 
   // Restore video time on load
   useEffect(()=>{
@@ -591,6 +605,13 @@ const InClassMaterialViewer=({material,onClose,isTeacher=false}:any)=>{
   };
 
   const renderContent=()=>{
+    // Wait for URL resolution before rendering any media
+    if(urlLoading||!url)return(
+      <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"#0f1117",gap:14}}>
+        <div style={{width:40,height:40,borderRadius:"50%",border:"3px solid rgba(255,255,255,.1)",borderTopColor:TEAL,animation:"cv-spin .7s linear infinite"}}/>
+        <p style={{color:"#9ca3af",fontSize:13,margin:0}}>Preparing material...</p>
+      </div>
+    );
     if(kind==="image")return(
       <div style={{flex:1,background:"#000",display:"flex",alignItems:"center",justifyContent:"center",overflow:"auto"}}>
         <img src={embedUrl} alt={material.title} style={{maxWidth:"100%",maxHeight:"100%",objectFit:"contain",display:"block"}}/>
