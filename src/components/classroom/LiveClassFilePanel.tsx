@@ -355,7 +355,26 @@ function FileViewer({
     // Google Drive gets its own dedicated render
     if (embedKind === "gdrive") return renderGdrive();
 
-    /* youtube, pdf, doc, iframe */
+    /* PDF — open directly in browser (mobile iframes can't render PDFs) */
+    if (embedKind === "pdf") {
+      return (
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#0f1a14", padding: 32, textAlign: "center" }}>
+          <div style={{ fontSize: 64, marginBottom: 16 }}>📄</div>
+          <p style={{ color: "#fff", fontWeight: 700, fontSize: 16, marginBottom: 8 }}>{file.file_name}</p>
+          <p style={{ color: "#9ca3af", fontSize: 13, marginBottom: 28 }}>Tap below to open the PDF in your browser</p>
+          <a
+            href={embedUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ background: GOLD, color: "#fff", borderRadius: 12, padding: "12px 32px", textDecoration: "none", fontWeight: 700, fontSize: 15 }}
+          >
+            Open PDF ↗
+          </a>
+        </div>
+      );
+    }
+
+    /* youtube, doc, iframe */
     if (iframeBlocked) {
       return (
         <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#0f1a14", padding: 32, textAlign: "center" }}>
