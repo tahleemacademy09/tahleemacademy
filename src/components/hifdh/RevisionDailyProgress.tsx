@@ -26,8 +26,11 @@ interface Props {
 interface Assignment {
   id: string; mode: string; selected_items: number[];
   daily_pages: number; notes?: string;
+  // Support both field name variants stored by different admin RPCs
   program_start?: string;
-  days_off?: number[]; // day-of-week indices (0=Sun … 6=Sat)
+  starts_on?: string;
+  days_off?: number[];     // explicit array: [0]=Sunday off, etc.
+  weekend_off?: boolean;   // legacy boolean: true = Sunday (0) is off
 }
 interface DailyLog {
   id: string; log_date: string; pages_revised: number;
@@ -40,6 +43,17 @@ const toAr = (n: number) =>
   String(n).replace(/\d/g, d => "٠١٢٣٤٥٦٧٨٩"[+d]);
 
 // ── Helpers ─────────────────────────────────────────────────────
+function getStartDate(a: Assignment): string | undefined {
+  return a.program_start || a.starts_on || undefined;
+}
+
+function getDaysOff(a: Assignment): number[] {
+  if (Array.isArray(a.days_off)) return a.days_off;
+  if (a.weekend_off === true)  return [0];
+  if (a.weekend_off === false) return [];
+  return [];
+}
+
 function workingDaysElapsed(startDate: string, daysOff: number[]): number {
   const start = new Date(startDate + "T00:00:00");
   const now   = new Date(); now.setHours(0, 0, 0, 0);
@@ -91,6 +105,7 @@ export default function RevisionDailyProgress({ userId, onGoToRevision }: Props)
   const [loading,     setLoading]     = useState(true);
   const [totalPages,  setTotalPages]  = useState(0);
   const [tomorrowPage, setTomorrowPage] = useState<number | null>(null);
+  const [todayPage,    setTodayPage]    = useState<number | null>(null);
   const [missedCount,  setMissedCount]  = useState(0);
 
   const today = new Date().toISOString().split("T")[0];
@@ -124,25 +139,33 @@ export default function RevisionDailyProgress({ userId, onGoToRevision }: Props)
 
       // ── Compute missed days in past 7 (working days with no log) ──
       if (asgn) {
-        const daysOff = asgn.days_off ?? [];
-        const logDates = new Set(allLogs.map(l => l.log_date));
+        const daysOff   = getDaysOff(asgn);
+        const startDate = getStartDate(asgn);
+        const logDates  = new Set(allLogs.map(l => l.log_date));
         let missed = 0;
         past7.forEach(d => {
-          if (d >= today) return; // only past days
-          if (!isWorkingDay(d, daysOff)) return; // skip off days
+          if (d >= today) return;
+          if (!isWorkingDay(d, daysOff)) return;
           if (!logDates.has(d)) missed++;
         });
         setMissedCount(missed);
 
+        // ── Today's page position ──
+        if (startDate) {
+          const elapsedToday = workingDaysElapsed(startDate, daysOff);
+          const page = Math.floor(elapsedToday * asgn.daily_pages) + 1;
+          setTodayPage(page);
+        }
+
         // ── Tomorrow's page position ──
-        if (asgn.program_start) {
+        if (startDate) {
           const tmrw = tomorrowDateStr();
           if (isWorkingDay(tmrw, daysOff)) {
-            const elapsed = workingDaysElapsedUpTo(asgn.program_start, tmrw, daysOff);
+            const elapsed = workingDaysElapsedUpTo(startDate, tmrw, daysOff);
             const page = Math.floor(elapsed * asgn.daily_pages) + 1;
             setTomorrowPage(page);
           } else {
-            setTomorrowPage(null); // tomorrow is an off-day
+            setTomorrowPage(null);
           }
         }
       }
@@ -229,6 +252,7 @@ export default function RevisionDailyProgress({ userId, onGoToRevision }: Props)
                  assignment.mode === "hizb" ? `Hizb ${assignment.selected_items.join(", ")}` :
                  `${assignment.selected_items.length} Surah(s)`}
                 {" · "}{assignment.daily_pages} page{assignment.daily_pages!==1?"s":""}/day
+                {todayPage !== null && ` · Pg ${todayPage}${assignment.daily_pages > 1 ? `–${todayPage + assignment.daily_pages - 1}` : ""}`}
               </div>
             </div>
             {isAcked && (
