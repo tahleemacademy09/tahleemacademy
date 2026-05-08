@@ -32,8 +32,8 @@ const REDL = "#FEF2F2";
 const TEAL = "#0D9488";
 const TEALL= "#F0FDFA";
 
-const BUCKET = "liveclass-files";
-const SB_URL = import.meta.env.VITE_STORAGE_SUPABASE_URL || "https://ovgsleayannsxifhiraw.supabase.co";
+const BUCKET  = "subject-files";   // exists in main project, has public policies
+const MAIN_URL = import.meta.env.VITE_SUPABASE_URL || "https://wvqeubhupkddtkcdwqcm.supabase.co";
 
 /* ── types ── */
 interface LCFile {
@@ -130,6 +130,8 @@ function toEmbedUrl(url: string): {
 ════════════════════════════════════════════════════════════ */
 interface FileViewerProps {
   file:       LCFile;
+  resolvedUrl: string | null;
+  resolving:   boolean;
   minimized:  boolean;
   canGoBack:  boolean;
   canGoFwd:   boolean;
@@ -143,17 +145,17 @@ interface FileViewerProps {
 }
 
 function FileViewer({
-  file, minimized,
+  file, resolvedUrl, resolving,
+  minimized,
   canGoBack, canGoFwd, totalOpen, currentIdx,
   onClose, onMinimize, onRestore, onBack, onForward,
 }: FileViewerProps) {
   const [iframeBlocked,   setIframeBlocked]   = useState(false);
   const [loaderVisible,   setLoaderVisible]   = useState(true);
-  // After the iframe fires onLoad but content might still be blank (Drive quirk),
-  // we show a "not loading?" helper after a short delay.
   const [showDriveHelper, setShowDriveHelper] = useState(false);
 
-  const url  = file.file_url;
+  // Use resolvedUrl for display; fall back to raw file_url only if resolution failed
+  const url  = resolvedUrl || file.file_url;
   const kind = getKind(file.file_name, file.file_type);
 
   let embedKind: ReturnType<typeof toEmbedUrl>["embedKind"] = "iframe";
@@ -391,13 +393,20 @@ function FileViewer({
 
   return createPortal(
     <div
-      style={{ position: "fixed", inset: 0, zIndex: 99999, background: "rgba(0,0,0,.75)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 12 }}
+      style={{ position: "fixed", inset: 0, zIndex: 99999, background: "rgba(0,0,0,.82)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 12 }}
       onClick={onMinimize}
     >
       <div
         onClick={e => e.stopPropagation()}
-        style={{ width: "100%", maxWidth: 920, height: "min(90vh, 680px)", background: "#111827", borderRadius: 16, overflow: "hidden", display: "flex", flexDirection: "column", boxShadow: "0 25px 60px rgba(0,0,0,.6)" }}
+        style={{ width: "100%", maxWidth: 920, height: "min(92vh, 700px)", background: "#111827", borderRadius: 16, overflow: "hidden", display: "flex", flexDirection: "column", boxShadow: "0 25px 60px rgba(0,0,0,.7)" }}
       >
+        {/* Resolving overlay — shown while URL is being signed/checked */}
+        {resolving && (
+          <div style={{ position: "absolute", inset: 0, zIndex: 10, background: "#111827", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, borderRadius: 16 }}>
+            <div style={{ width: 40, height: 40, border: "3px solid rgba(255,255,255,.15)", borderTopColor: GOLD, borderRadius: "50%", animation: "lcfp-spin .8s linear infinite" }} />
+            <p style={{ color: "#9ca3af", fontSize: 13, margin: 0 }}>Opening {file.file_name}…</p>
+          </div>
+        )}
         {/* Header */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", background: "#1f2937", borderBottom: "1px solid #374151", flexShrink: 0 }}>
 
@@ -511,8 +520,50 @@ export default function LiveClassFilePanel({ subjectId }: { subjectId: string })
   const [openedFiles, setOpenedFiles] = useState<LCFile[]>([]);
   const [openIdx,     setOpenIdx]     = useState<number>(-1);
   const [minimized,   setMinimized]   = useState(false);
+  const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
+  const [resolving,   setResolving]   = useState(false);
 
   const currentFile = openIdx >= 0 ? openedFiles[openIdx] : null;
+
+  /* ── Resolve a file_url to a working viewer URL ───────────────────
+     Handles: public Supabase URLs, legacy ovgsleayannsxifhiraw URLs,
+     private bucket files (generates signed URL), external links.
+  ── */
+  const resolveViewerUrl = useCallback(async (rawUrl: string): Promise<string> => {
+    if (!rawUrl) return rawUrl;
+
+    // External links (YouTube, Google Drive, http links) — pass through
+    const isSupabaseStorage = rawUrl.includes(".supabase.co/storage");
+    if (!isSupabaseStorage) return rawUrl;
+
+    // Extract bucket + path from any Supabase storage URL format:
+    // .../storage/v1/object/public/BUCKET/PATH
+    // .../storage/v1/object/BUCKET/PATH
+    const match = rawUrl.match(/\/storage\/v1\/object\/(?:public\/)?([^/?]+)\/(.+?)(\?.*)?$/);
+    if (!match) return rawUrl;
+
+    const [, bucketName, storagePath] = match;
+
+    // 1. Try public URL from main project
+    const { data: pub } = supabase.storage.from(bucketName).getPublicUrl(storagePath);
+    if (pub?.publicUrl) {
+      try {
+        const r = await fetch(pub.publicUrl, { method: "HEAD", signal: AbortSignal.timeout(4000) });
+        if (r.ok || r.status === 304) return pub.publicUrl;
+      } catch { /* fall through to signed URL */ }
+    }
+
+    // 2. Try signed URL from main project (works for private buckets)
+    try {
+      const { data: signed } = await supabase.storage
+        .from(bucketName)
+        .createSignedUrl(storagePath, 604800); // 7 days
+      if (signed?.signedUrl) return signed.signedUrl;
+    } catch { /* fall through */ }
+
+    // 3. Return original as last resort (may still work if bucket is public)
+    return rawUrl;
+  }, []);
 
   const dragCnt = useRef(0);
 
@@ -531,27 +582,50 @@ export default function LiveClassFilePanel({ subjectId }: { subjectId: string })
 
   useEffect(() => { fetchFiles(); }, [fetchFiles]);
 
-  /* ── open file — builds a navigation history ── */
-  const openFile = useCallback((f: LCFile) => {
+  /* ── open file — builds navigation history + resolves viewer URL ── */
+  const openFile = useCallback(async (f: LCFile) => {
     setMinimized(false);
+    setResolvedUrl(null);
+    setResolving(true);
 
     setOpenedFiles(prev => {
-      // If the file is already in the list at a position after the current one, navigate there.
-      // Otherwise truncate forward history and append, just like a browser.
       const existingIdx = prev.findIndex(x => x.id === f.id);
-      if (existingIdx >= 0) {
-        setOpenIdx(existingIdx);
-        return prev;
-      }
-      // Truncate anything forward of current position and push new file
+      if (existingIdx >= 0) { setOpenIdx(existingIdx); return prev; }
       const next = [...prev.slice(0, openIdx + 1), f];
       setOpenIdx(next.length - 1);
       return next;
     });
-  }, [openIdx]);
 
-  const goBack    = useCallback(() => { setOpenIdx(i => i - 1); setMinimized(false); }, []);
-  const goForward = useCallback(() => { setOpenIdx(i => i + 1); setMinimized(false); }, []);
+    // Resolve the URL (handles legacy URLs, signed URLs, public URLs)
+    const resolved = await resolveViewerUrl(f.file_url);
+    setResolvedUrl(resolved);
+    setResolving(false);
+  }, [openIdx, resolveViewerUrl]);
+
+  // Re-resolve when navigating back/forward
+  const goBack = useCallback(async () => {
+    const newIdx = openIdx - 1;
+    if (newIdx < 0) return;
+    setOpenIdx(newIdx);
+    setMinimized(false);
+    setResolvedUrl(null);
+    setResolving(true);
+    const resolved = await resolveViewerUrl(openedFiles[newIdx].file_url);
+    setResolvedUrl(resolved);
+    setResolving(false);
+  }, [openIdx, openedFiles, resolveViewerUrl]);
+
+  const goForward = useCallback(async () => {
+    const newIdx = openIdx + 1;
+    if (newIdx >= openedFiles.length) return;
+    setOpenIdx(newIdx);
+    setMinimized(false);
+    setResolvedUrl(null);
+    setResolving(true);
+    const resolved = await resolveViewerUrl(openedFiles[newIdx].file_url);
+    setResolvedUrl(resolved);
+    setResolving(false);
+  }, [openIdx, openedFiles, resolveViewerUrl]);
 
   const closeViewer = useCallback(() => {
     setOpenedFiles([]);
@@ -565,47 +639,66 @@ export default function LiveClassFilePanel({ subjectId }: { subjectId: string })
     setUploading(true); setPct(0); setUpName(file.name); setErr(null);
 
     try {
-      const slug = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}.${file.name.split(".").pop() || "bin"}`;
-      const path = `${subjectId}/${slug}`;
+      const slug = `liveclass/${subjectId}/${Date.now()}-${Math.random().toString(36).slice(2, 7)}.${file.name.split(".").pop() || "bin"}`;
 
+      // ── Get a fresh auth token ──────────────────────────────────
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token ?? "";
+      if (!token) throw new Error("Not authenticated — please log in again.");
+
+      // ── XHR upload with progress ────────────────────────────────
       await new Promise<void>((res, rej) => {
         const xhr = new XMLHttpRequest();
-        xhr.open("POST", `${SB_URL}/storage/v1/object/${BUCKET}/${path}`);
-        const raw   = (supabase as any);
-        const token = raw?.auth?._session?.access_token ?? raw?.supabaseKey ?? "";
+        xhr.open("POST", `${MAIN_URL}/storage/v1/object/${BUCKET}/${slug}`);
         xhr.setRequestHeader("Authorization", `Bearer ${token}`);
         xhr.setRequestHeader("x-upsert", "true");
         xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
         xhr.upload.onprogress = ev => {
           if (ev.lengthComputable) setPct(Math.round(ev.loaded / ev.total * 85));
         };
-        xhr.onload  = () => (xhr.status >= 200 && xhr.status < 300) ? res() : rej(new Error(`Storage error ${xhr.status}`));
-        xhr.onerror = () => rej(new Error("Network error"));
+        xhr.onload  = () => (xhr.status >= 200 && xhr.status < 300)
+          ? res()
+          : rej(new Error(`Upload failed (${xhr.status}): ${xhr.responseText}`));
+        xhr.onerror = () => rej(new Error("Network error during upload"));
         xhr.send(file);
       });
 
       setPct(90);
-      const fileUrl = `${SB_URL}/storage/v1/object/public/${BUCKET}/${path}`;
+
+      // ── Get the correct public URL from the SDK ─────────────────
+      const { data: pub } = supabase.storage.from(BUCKET).getPublicUrl(slug);
+      const fileUrl = pub?.publicUrl ?? `${MAIN_URL}/storage/v1/object/public/${BUCKET}/${slug}`;
+
       const { error: dbErr } = await (supabase as any)
         .from("liveclass_files")
-        .insert({ subject_id: subjectId, file_name: file.name, file_url: fileUrl, file_type: file.type || null, file_size: file.size, uploaded_by: user.id });
+        .insert({
+          subject_id: subjectId, file_name: file.name, file_url: fileUrl,
+          file_type: file.type || null, file_size: file.size, uploaded_by: user.id,
+        });
       if (dbErr) throw dbErr;
+
       setPct(100);
       await fetchFiles();
-      setTimeout(() => { setUploading(false); setPct(0); setUpName(""); }, 500);
+      setTimeout(() => { setUploading(false); setPct(0); setUpName(""); }, 600);
+
     } catch (e: any) {
+      // ── SDK fallback ────────────────────────────────────────────
       try {
-        const slug2 = `${Date.now()}.${file.name.split(".").pop() || "bin"}`;
-        const path2 = `${subjectId}/${slug2}`;
-        const { error: stErr } = await storageSupabase.storage.from(BUCKET).upload(path2, file, { upsert: true });
+        const slug2 = `liveclass/${subjectId}/${Date.now()}.${file.name.split(".").pop() || "bin"}`;
+        const { error: stErr } = await storageSupabase.storage
+          .from(BUCKET).upload(slug2, file, { upsert: true, contentType: file.type });
         if (stErr) throw stErr;
-        const url2 = `${SB_URL}/storage/v1/object/public/${BUCKET}/${path2}`;
-        await (supabase as any).from("liveclass_files").insert({ subject_id: subjectId, file_name: file.name, file_url: url2, file_type: file.type || null, file_size: file.size, uploaded_by: user.id });
+        const { data: pub2 } = supabase.storage.from(BUCKET).getPublicUrl(slug2);
+        const url2 = pub2?.publicUrl ?? `${MAIN_URL}/storage/v1/object/public/${BUCKET}/${slug2}`;
+        await (supabase as any).from("liveclass_files").insert({
+          subject_id: subjectId, file_name: file.name, file_url: url2,
+          file_type: file.type || null, file_size: file.size, uploaded_by: user.id,
+        });
         setPct(100);
         await fetchFiles();
-        setTimeout(() => { setUploading(false); setPct(0); setUpName(""); }, 500);
+        setTimeout(() => { setUploading(false); setPct(0); setUpName(""); }, 600);
       } catch (e2: any) {
-        setErr(e2?.message ?? "Upload failed");
+        setErr(e2?.message ?? "Upload failed — check your connection and try again.");
         setUploading(false); setPct(0); setUpName("");
       }
     }
@@ -656,9 +749,13 @@ export default function LiveClassFilePanel({ subjectId }: { subjectId: string })
     if (!confirm(`Delete "${f.file_name}"?`)) return;
     setDelId(f.id);
     await (supabase as any).from("liveclass_files").delete().eq("id", f.id);
-    if (f.file_type !== "link" && f.file_url.includes(`/${BUCKET}/`)) {
-      const p = f.file_url.split(`/${BUCKET}/`)[1];
-      if (p) storageSupabase.storage.from(BUCKET).remove([p]);
+    if (f.file_type !== "link") {
+      // Extract path from any Supabase storage URL: .../object/(public/)?BUCKET/PATH
+      const match = f.file_url.match(/\/storage\/v1\/object\/(?:public\/)?([^/?]+)\/(.+?)(\?.*)?$/);
+      if (match) {
+        const [, bucketName, storagePath] = match;
+        storageSupabase.storage.from(bucketName).remove([storagePath]).catch(() => {});
+      }
     }
     // If the deleted file is currently open, close the viewer for it
     setOpenedFiles(prev => {
@@ -857,6 +954,8 @@ export default function LiveClassFilePanel({ subjectId }: { subjectId: string })
       {currentFile && (
         <FileViewer
           file={currentFile}
+          resolvedUrl={resolvedUrl}
+          resolving={resolving}
           minimized={minimized}
           canGoBack={openIdx > 0}
           canGoFwd={openIdx < openedFiles.length - 1}
