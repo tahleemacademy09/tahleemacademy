@@ -495,8 +495,17 @@ function toMaterialEmbedUrl(url: string): {
 
   const ext = url.split("?")[0].split(".").pop()?.toLowerCase() ?? "";
 
-  if (ext === "pdf")
+  if (ext === "pdf") {
+    // Android/iOS can't render raw PDF iframes — use Google Docs Viewer on mobile
+    const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    if (isMobile) {
+      return {
+        embedUrl: `https://docs.google.com/gviewer?url=${encodeURIComponent(url)}&embedded=true`,
+        kind: "pdf-mobile",
+      };
+    }
     return { embedUrl: url, kind: "pdf" };
+  }
   if (["mp4","webm","mov","m4v","avi","mkv"].includes(ext))
     return { embedUrl: url, kind: "video" };
   if (["mp3","wav","m4a","aac","ogg","flac","opus"].includes(ext))
@@ -582,10 +591,11 @@ const InClassMaterialViewer=({material,onClose,isTeacher=false}:any)=>{
     }
   };
 
-  // ── positioning: absolute inside content area, or fixed for fullscreen ───
-  const overlayStyle:React.CSSProperties=fullscreen
-    ?{position:"fixed",inset:0,zIndex:9990}
-    :{position:"absolute",inset:0,zIndex:60};
+  // Always use fixed positioning so the viewer covers the entire screen
+  // (including ClassroomView's top bar). zIndex 10000 > all ClassroomView layers.
+  const overlayStyle: React.CSSProperties = {
+    position: "fixed", inset: 0, zIndex: 10000,
+  };
 
   const renderContent=()=>{
     if(kind==="image")return(
@@ -607,6 +617,23 @@ const InClassMaterialViewer=({material,onClose,isTeacher=false}:any)=>{
       <div style={{flex:1,background:"#000",display:"flex",alignItems:"center",justifyContent:"center"}}>
         <video ref={videoRef} src={embedUrl} controls autoPlay playsInline
           style={{maxWidth:"100%",maxHeight:"100%",display:"block"}}/>
+      </div>
+    );
+    // PDF via Google Docs Viewer (mobile) — no page controls, GDV handles navigation
+    if(kind==="pdf-mobile")return(
+      <div style={{flex:1,position:"relative",minHeight:0,display:"flex",flexDirection:"column"}}>
+        {!loaded&&<div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"#f8f8f8",zIndex:1,gap:12}}>
+          <div style={{width:36,height:36,border:`3px solid rgba(0,0,0,.15)`,borderTopColor:TEAL,borderRadius:"50%",animation:"cv-spin .7s linear infinite"}}/>
+          <p style={{fontSize:12,color:"#6b7280",margin:0}}>Loading material…</p>
+        </div>}
+        <iframe src={embedUrl} title={material.title}
+          style={{flex:1,width:"100%",border:"none",display:"block"}}
+          allow="fullscreen" onLoad={()=>setLoaded(true)}/>
+        {resume?.page&&(
+          <div style={{padding:"4px 12px",background:"rgba(15,17,23,.92)",borderTop:"1px solid rgba(255,255,255,.08)",fontSize:11,color:"rgba(255,255,255,.5)",textAlign:"center",flexShrink:0}}>
+            ↙ resumed from page {resume.page}
+          </div>
+        )}
       </div>
     );
     // PDF with page controls
@@ -664,11 +691,7 @@ const InClassMaterialViewer=({material,onClose,isTeacher=false}:any)=>{
         <a href={url} target="_blank" rel="noopener noreferrer"
           style={{fontSize:11,color:"#d1d5db",background:"rgba(255,255,255,.1)",borderRadius:8,padding:"4px 10px",textDecoration:"none",fontWeight:600,flexShrink:0}}>↗</a>
         {/* Fullscreen toggle */}
-        <button onClick={()=>setFullscreen(v=>!v)} title={fullscreen?"Exit fullscreen":"Fullscreen"}
-          style={{width:30,height:30,borderRadius:8,background:"rgba(255,255,255,.1)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-          {fullscreen?<Minimize2 style={{width:13,height:13}}/>:<Maximize2 style={{width:13,height:13}}/>}
-        </button>
-        <button onClick={onClose}
+        <button onClick={onClose} title="Close material"
           style={{width:30,height:30,borderRadius:8,background:"rgba(255,255,255,.12)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
           <X style={{width:13,height:13}}/>
         </button>
