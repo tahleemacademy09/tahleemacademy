@@ -13,6 +13,7 @@ import HifdhExercise from "@/components/hifdh/HifdhExercise";
 import HifdhTest from "@/components/hifdh/HifdhTest";
 import QuranRevisionHub from "@/components/hifdh/QuranRevisionHub";
 import RevisionDailyProgress from "@/components/hifdh/RevisionDailyProgress";
+import HifdhDailySession from "@/components/hifdh/HifdhDailySession";
 import { RefreshCcw } from "lucide-react";
 
 type Tab = "overview" | "recitation" | "memorization" | "exercise" | "test" | "revision";
@@ -74,11 +75,17 @@ function HifdhDashboardInline({
   studentName,
   currentPage,
   onNavigate,
+  activeAssignment,
+  todayLogCompleted,
+  onStartDailySession,
 }: {
   userId: string | null;
   studentName: string;
   currentPage: number;
   onNavigate: (tab: Tab) => void;
+  activeAssignment: any | null;
+  todayLogCompleted: boolean;
+  onStartDailySession: () => void;
 }) {
   const progress = Math.round((currentPage / 604) * 100);
   const juz = Math.ceil(currentPage / 20.13);
@@ -193,6 +200,53 @@ function HifdhDashboardInline({
           <div className="flex-1 h-px" style={{ background:`linear-gradient(to left,${GOLD}44,transparent)` }} />
         </div>
 
+        {/* ── Daily Session CTA ── */}
+        {activeAssignment && (
+          <div
+            className="rounded-2xl p-4 mb-2"
+            style={{
+              background: todayLogCompleted
+                ? "linear-gradient(135deg,#14532d,#166534)"
+                : `linear-gradient(135deg,${DARK_GREEN},#1a4a2e)`,
+              border: `1px solid ${todayLogCompleted ? "#22c55e55" : GOLD + "55"}`,
+            }}
+          >
+            {todayLogCompleted ? (
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: "#22c55e22" }}>
+                  <CheckCircle2 size={20} color="#22c55e" />
+                </div>
+                <div>
+                  <p className="font-bold text-sm" style={{ color: "#22c55e" }}>Today's session complete! ✓</p>
+                  <p style={{ color: "#5a8a6a", fontSize: "0.7em", marginTop: 2 }}>Come back tomorrow for your next revision, biiznillah.</p>
+                </div>
+              </div>
+            ) : (
+              <div>
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: GOLD + "22" }}>
+                    <BookOpen size={15} color={GOLD} />
+                  </div>
+                  <div>
+                    <p className="font-bold text-sm text-white">Today's Revision Ready</p>
+                    <p style={{ color: "#5a8a6a", fontSize: "0.68em" }}>
+                      {activeAssignment.mode === "juz" ? "Juz" : activeAssignment.mode === "hizb" ? "Hizb" : "Surah"}{" "}
+                      {activeAssignment.selected_items?.slice(0, 3).join(", ")} · {activeAssignment.daily_pages} page{activeAssignment.daily_pages > 1 ? "s" : ""}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={onStartDailySession}
+                  className="w-full py-2.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2"
+                  style={{ background: GOLD, color: DARK_GREEN, border: "none", cursor: "pointer" }}
+                >
+                  <Mic size={14} /> Start Today's Session
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* ── Daily Revision Progress ── */}
         <div className="mb-2">
           <RevisionDailyProgress
@@ -263,6 +317,11 @@ export default function HifdhRevision() {
   const [fontSize,    setFontSize]    = useState(26);
   const [flipDir,     setFlipDir]     = useState<"next" | "prev" | null>(null);
   const [fullscreen,  setFullscreen]  = useState(false);
+
+  // ── Daily Session ──
+  const [activeAssignment,  setActiveAssignment]  = useState<any | null>(null);
+  const [todayLogCompleted, setTodayLogCompleted]  = useState(false);
+  const [showDailySession,  setShowDailySession]   = useState(false);
 
   // ── AI Revision Recording State ──
   const [isRecording,    setIsRecording]    = useState(false);
@@ -444,9 +503,33 @@ export default function HifdhRevision() {
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
       if (!data?.user) return;
-      setUserId(data.user.id);
-      supabase.from("profiles").select("full_name").eq("id", data.user.id).single()
+      const uid = data.user.id;
+      setUserId(uid);
+      supabase.from("profiles").select("full_name").eq("id", uid).single()
         .then(({ data: p }) => { if (p?.full_name) setStudentName(p.full_name); });
+
+      // Fetch active daily assignment
+      (supabase as any)
+        .from("hifdh_daily_assignments")
+        .select("*")
+        .eq("student_id", uid)
+        .eq("active", true)
+        .maybeSingle()
+        .then(({ data: asgn }: any) => {
+          if (asgn) setActiveAssignment(asgn);
+        });
+
+      // Check if today's log is already completed
+      const today = new Date().toISOString().split("T")[0];
+      (supabase as any)
+        .from("hifdh_daily_logs")
+        .select("completed")
+        .eq("student_id", uid)
+        .eq("log_date", today)
+        .maybeSingle()
+        .then(({ data: log }: any) => {
+          if (log?.completed) setTodayLogCompleted(true);
+        });
     });
   }, []);
 
@@ -673,12 +756,37 @@ export default function HifdhRevision() {
       <div className="flex-1 overflow-hidden relative">
 
         {/* ── لوحة Dashboard ── */}
+        {/* ── Full-screen daily session overlay ── */}
+        {showDailySession && activeAssignment && userId && (
+          <HifdhDailySession
+            assignment={activeAssignment}
+            userId={userId}
+            onClose={() => {
+              setShowDailySession(false);
+              // Refresh completed status
+              const today = new Date().toISOString().split("T")[0];
+              (supabase as any)
+                .from("hifdh_daily_logs")
+                .select("completed")
+                .eq("student_id", userId)
+                .eq("log_date", today)
+                .maybeSingle()
+                .then(({ data: log }: any) => {
+                  if (log?.completed) setTodayLogCompleted(true);
+                });
+            }}
+          />
+        )}
+
         {activeTab === "overview" && (
           <HifdhDashboardInline
             userId={userId}
             studentName={studentName}
             currentPage={currentPage}
             onNavigate={(tab) => { setActiveTab(tab); }}
+            activeAssignment={activeAssignment}
+            todayLogCompleted={todayLogCompleted}
+            onStartDailySession={() => setShowDailySession(true)}
           />
         )}
 
