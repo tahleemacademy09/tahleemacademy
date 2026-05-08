@@ -188,7 +188,7 @@ function PreviewOverlay({ url, type, title, onClose, materialId }: {
         {isPdf && !isImg && (
           <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column" }}>
             <iframe
-              src={`https://docs.google.com/viewer?url=${encodeURIComponent(url)}&embedded=true`}
+              src={url}
               title={title}
               style={{ flex: 1, width: "100%", border: "none" }}
               allowFullScreen
