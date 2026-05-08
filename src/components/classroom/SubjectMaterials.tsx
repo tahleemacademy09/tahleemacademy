@@ -188,7 +188,7 @@ function PreviewOverlay({ url, type, title, onClose, materialId }: {
         {isPdf && !isImg && (
           <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column" }}>
             <iframe
-              src={url}
+              src={`https://docs.google.com/viewer?url=${encodeURIComponent(url)}&embedded=true`}
               title={title}
               style={{ flex: 1, width: "100%", border: "none" }}
               allowFullScreen
@@ -807,9 +807,15 @@ function MaterialCard({ m, isPrivileged, onEdit, onDelete }: {
 
   const handlePreview = async () => {
     if (isText) { setExpanded(e => !e); return; }
-    if (isLink) { setResolvedUrl(m.file_url); setPreviewOpen(true); return; }
+    if (isLink) { window.open(m.file_url, "_blank"); return; }
     const url = await resolveUrl();
-    if (url) setPreviewOpen(true);
+    if (!url) return;
+    // PDFs don't render in mobile iframes — open directly in the browser
+    if (m.material_type === "PDF" || /\.pdf(\?|$)/i.test(url)) {
+      window.open(url, "_blank");
+      return;
+    }
+    setPreviewOpen(true);
   };
 
   const handleDownload = async () => {
