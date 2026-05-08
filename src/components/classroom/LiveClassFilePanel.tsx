@@ -14,6 +14,7 @@
  */
 
 import { useState, useRef, useCallback, useEffect } from "react";
+import PDFViewer from "./PDFViewer";
 import { createPortal } from "react-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
@@ -355,21 +356,11 @@ function FileViewer({
     // Google Drive gets its own dedicated render
     if (embedKind === "gdrive") return renderGdrive();
 
-    /* PDF — open directly in browser (mobile iframes can't render PDFs) */
+    /* PDF — rendered inline via pdf.js, no redirect, no download prompt */
     if (embedKind === "pdf") {
       return (
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#0f1a14", padding: 32, textAlign: "center" }}>
-          <div style={{ fontSize: 64, marginBottom: 16 }}>📄</div>
-          <p style={{ color: "#fff", fontWeight: 700, fontSize: 16, marginBottom: 8 }}>{file.file_name}</p>
-          <p style={{ color: "#9ca3af", fontSize: 13, marginBottom: 28 }}>Tap below to open the PDF in your browser</p>
-          <a
-            href={embedUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{ background: GOLD, color: "#fff", borderRadius: 12, padding: "12px 32px", textDecoration: "none", fontWeight: 700, fontSize: 15 }}
-          >
-            Open PDF ↗
-          </a>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
+          <PDFViewer url={embedUrl} bg="#0f1a14" />
         </div>
       );
     }
