@@ -188,7 +188,7 @@ function PreviewOverlay({ url, type, title, onClose, materialId }: {
         {isImg && <img src={url} alt={title} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 8 }} />}
         {isPdf && !isImg && (
           <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" }}>
-            <PDFViewer url={url} bg="rgba(0,0,0,.85)" />
+            <PDFViewer url={url} bg="rgba(0,0,0,.85)" materialId={materialId} />
           </div>
         )}
         {isVid && !isImg && !isPdf && (
