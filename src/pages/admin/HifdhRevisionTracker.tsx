@@ -28,6 +28,27 @@ const LV_ORDER: Record<string,number> = { tamhidi:0,beginner:1,intermediate:2,ad
 const todayStr = () => new Date().toISOString().split("T")[0];
 const fmtSecs  = (s:number) => `${Math.floor(s/60)}m ${s%60}s`;
 
+/* ── Compute today's Quran page for a given assignment ── */
+function workingDaysElapsedAdmin(startDate: string, daysOff: number[]): number {
+  const start = new Date(startDate + "T00:00:00");
+  const now   = new Date(); now.setHours(0, 0, 0, 0);
+  let count = 0;
+  const cur = new Date(start);
+  while (cur < now) {
+    if (!daysOff.includes(cur.getDay())) count++;
+    cur.setDate(cur.getDate() + 1);
+  }
+  return count;
+}
+
+function getTodayPage(a: Assignment): number {
+  const startDate = a.starts_on;
+  if (!startDate) return 1;
+  const daysOff = a.weekend_off ? [0] : [];
+  const elapsed = workingDaysElapsedAdmin(startDate, daysOff);
+  return Math.floor(elapsed * a.daily_pages) + 1;
+}
+
 /* ── Quran page lookup ── */
 const PAGES_PER_JUZ  = 20;
 const PAGES_PER_HIZB = 10;
@@ -667,6 +688,17 @@ export default function HifdhRevisionTracker() {
                       {assign.program_days||30} days · {assign.weekend_off?"Sundays off":"Every day"}
                       {assign.starts_on&&` · Started ${assign.starts_on}`}
                     </div>
+                    {/* Today's page indicator */}
+                    {assign.starts_on&&(
+                      <div style={{marginTop:5,padding:"4px 8px",borderRadius:8,display:"inline-flex",
+                        alignItems:"center",gap:5,
+                        background:`${GOLD}18`,border:`1px solid ${GOLD}44`}}>
+                        <span style={{fontSize:10,fontWeight:800,color:GOLD}}>
+                          📖 Today: Page {getTodayPage(assign)}
+                          {assign.daily_pages>1?`–${getTodayPage(assign)+assign.daily_pages-1}`:""}
+                        </span>
+                      </div>
+                    )}
                     {assign.notes&&<div style={{fontSize:11,color:"#6b7280",marginTop:3}}>{assign.notes}</div>}
                   </div>
                 ):(
