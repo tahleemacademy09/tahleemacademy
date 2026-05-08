@@ -34,6 +34,7 @@ import ClassParticipants from "./ClassParticipants";
 import ClassPolls        from "./ClassPolls";
 import ClassEndScreen    from "./ClassEndScreen";
 import LiveQuizOverlay   from "./LiveQuizOverlay";
+import PDFViewer         from "./PDFViewer";
 import { useIsMobile }   from "@/hooks/use-mobile";
 import { useState, useEffect, useRef, useCallback } from "react";
 
@@ -496,14 +497,6 @@ function toMaterialEmbedUrl(url: string): {
   const ext = url.split("?")[0].split(".").pop()?.toLowerCase() ?? "";
 
   if (ext === "pdf") {
-    // Android/iOS can't render raw PDF iframes — use Google Docs Viewer on mobile
-    const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-    if (isMobile) {
-      return {
-        embedUrl: `https://docs.google.com/gviewer?url=${encodeURIComponent(url)}&embedded=true`,
-        kind: "pdf-mobile",
-      };
-    }
     return { embedUrl: url, kind: "pdf" };
   }
   if (["mp4","webm","mov","m4v","avi","mkv"].includes(ext))
@@ -619,45 +612,10 @@ const InClassMaterialViewer=({material,onClose,isTeacher=false}:any)=>{
           style={{maxWidth:"100%",maxHeight:"100%",display:"block"}}/>
       </div>
     );
-    // PDF via Google Docs Viewer (mobile) — no page controls, GDV handles navigation
-    if(kind==="pdf-mobile")return(
-      <div style={{flex:1,position:"relative",minHeight:0,display:"flex",flexDirection:"column"}}>
-        {!loaded&&<div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"#f8f8f8",zIndex:1,gap:12}}>
-          <div style={{width:36,height:36,border:`3px solid rgba(0,0,0,.15)`,borderTopColor:TEAL,borderRadius:"50%",animation:"cv-spin .7s linear infinite"}}/>
-          <p style={{fontSize:12,color:"#6b7280",margin:0}}>Loading material…</p>
-        </div>}
-        <iframe src={embedUrl} title={material.title}
-          style={{flex:1,width:"100%",border:"none",display:"block"}}
-          allow="fullscreen" onLoad={()=>setLoaded(true)}/>
-        {resume?.page&&(
-          <div style={{padding:"4px 12px",background:"rgba(15,17,23,.92)",borderTop:"1px solid rgba(255,255,255,.08)",fontSize:11,color:"rgba(255,255,255,.5)",textAlign:"center",flexShrink:0}}>
-            ↙ resumed from page {resume.page}
-          </div>
-        )}
-      </div>
-    );
-    // PDF with page controls
-    if(isPdfDirect)return(
-      <div style={{flex:1,display:"flex",flexDirection:"column",background:"#fff",minHeight:0}}>
-        <div style={{flex:1,position:"relative",minHeight:0}}>
-          {!loaded&&<div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"#f8f8f8",zIndex:1}}>
-            <div style={{width:32,height:32,border:`3px solid rgba(0,0,0,.15)`,borderTopColor:TEAL,borderRadius:"50%",animation:"cv-spin .7s linear infinite"}}/>
-          </div>}
-          <iframe ref={iframeRef} src={pdfSrc} title={material.title}
-            style={{width:"100%",height:"100%",border:"none",display:"block"}}
-            allow="fullscreen" onLoad={()=>setLoaded(true)}/>
-        </div>
-        {/* PDF page navigation strip */}
-        <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:10,padding:"6px 12px",background:"rgba(15,17,23,.92)",borderTop:"1px solid rgba(255,255,255,.08)",flexShrink:0}}>
-          <button onClick={()=>navigatePdfPage(Math.max(1,pdfPage-1))}
-            style={{width:28,height:28,borderRadius:8,background:"rgba(255,255,255,.1)",border:"none",color:"#fff",cursor:"pointer",fontSize:16,display:"flex",alignItems:"center",justifyContent:"center"}}>‹</button>
-          <span style={{fontSize:12,color:"rgba(255,255,255,.7)",fontVariantNumeric:"tabular-nums"}}>
-            Page <strong style={{color:"#fff"}}>{pdfPage}</strong>
-          </span>
-          <button onClick={()=>navigatePdfPage(pdfPage+1)}
-            style={{width:28,height:28,borderRadius:8,background:"rgba(255,255,255,.1)",border:"none",color:"#fff",cursor:"pointer",fontSize:16,display:"flex",alignItems:"center",justifyContent:"center"}}>›</button>
-          <span style={{fontSize:11,color:"rgba(255,255,255,.35)",marginLeft:4}}>↙ resumed</span>
-        </div>
+    // PDF — rendered inline via pdf.js (no Google redirect, works on all devices)
+    if(kind==="pdf")return(
+      <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minHeight:0}}>
+        <PDFViewer url={embedUrl} bg="#0f1117" materialId={matId} />
       </div>
     );
     // iframes (YouTube, Google Drive, Google Docs viewer, etc.)
