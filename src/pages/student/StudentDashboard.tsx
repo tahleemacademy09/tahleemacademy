@@ -110,6 +110,8 @@ const StudentDashboard = () => {
   const [todayClasses, setTodayClasses] = useState<any[]>([]);
   const [nowTick, setNowTick] = useState(new Date());
   const [privateSubjectIds, setPrivateSubjectIds] = useState<Set<string>>(new Set());
+  const [hifdhAssignment, setHifdhAssignment] = useState<any | null>(null);
+  const [hifdhTodayDone, setHifdhTodayDone] = useState(false);
 
   // Tick every 30s so countdowns stay fresh
   useEffect(() => {
@@ -262,6 +264,26 @@ const StudentDashboard = () => {
       setSubjectAssignments(subAssignmentsRes.data || []);
       setTodayClasses((ttRes.data || []) as any[]);
       setPrivateSubjectIds(new Set((privateSubjectsRes?.data || []).map((r: any) => r.subject_id)));
+
+      // Fetch active hifdh daily assignment
+      const { data: hifdhAsgn } = await (supabase as any)
+        .from("hifdh_daily_assignments")
+        .select("*")
+        .eq("student_id", uid)
+        .eq("active", true)
+        .maybeSingle();
+      if (hifdhAsgn) {
+        setHifdhAssignment(hifdhAsgn);
+        const today2 = new Date().toISOString().split("T")[0];
+        const { data: hifdhLog } = await (supabase as any)
+          .from("hifdh_daily_logs")
+          .select("completed")
+          .eq("student_id", uid)
+          .eq("log_date", today2)
+          .maybeSingle();
+        if (hifdhLog?.completed) setHifdhTodayDone(true);
+      }
+
         setLoading(false);
       } catch (err) {
         console.error("Dashboard data fetch error:", err);
@@ -517,6 +539,57 @@ const StudentDashboard = () => {
               </div>
             </div>
           </div>        </div>
+
+        {/* ── Daily Hifdh Revision Card ── */}
+        {hifdhAssignment && (
+          <div
+            onClick={() => navigate("/student/hifdh-daily")}
+            style={{
+              ...card,
+              cursor: "pointer",
+              background: hifdhTodayDone
+                ? "linear-gradient(135deg,#14532d,#166534)"
+                : `linear-gradient(135deg,${DARK_GREEN},#1a4731)`,
+              border: `1px solid ${hifdhTodayDone ? "#22c55e55" : GOLD + "55"}`,
+            }}
+          >
+            <div style={{ padding: "16px 18px", display: "flex", alignItems: "center", gap: 14 }}>
+              <div style={{
+                width: 44, height: 44, borderRadius: 14, flexShrink: 0,
+                background: hifdhTodayDone ? "rgba(34,197,94,0.2)" : GOLD + "22",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                border: `1px solid ${hifdhTodayDone ? "#22c55e44" : GOLD + "44"}`,
+              }}>
+                {hifdhTodayDone
+                  ? <CheckCircle style={{ width: 20, height: 20, color: "#22c55e" }} />
+                  : <Mic style={{ width: 20, height: 20, color: GOLD }} />
+                }
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: hifdhTodayDone ? "#86efac" : "#fff", marginBottom: 3 }}>
+                  {hifdhTodayDone ? t("Today's Hifdh Done ✓", "تم الحفظ اليوم ✓") : t("Today's Revision Ready", "المراجعة اليومية جاهزة")}
+                </div>
+                <div style={{ fontSize: 11, color: hifdhTodayDone ? "rgba(134,239,172,0.7)" : "rgba(201,168,76,0.85)" }}>
+                  {hifdhAssignment.mode === "juz" ? "Juz" : hifdhAssignment.mode === "hizb" ? "Hizb" : "Surah"}{" "}
+                  {hifdhAssignment.selected_items?.slice(0, 3).join(", ")}
+                  {" · "}{hifdhAssignment.daily_pages} page{hifdhAssignment.daily_pages > 1 ? "s" : ""}/day
+                </div>
+              </div>
+              <ArrowRight style={{ width: 16, height: 16, color: hifdhTodayDone ? "#22c55e" : GOLD, flexShrink: 0 }} />
+            </div>
+            {!hifdhTodayDone && (
+              <div style={{ padding: "0 18px 16px" }}>
+                <div style={{
+                  background: GOLD, borderRadius: 10,
+                  padding: "10px 0", textAlign: "center",
+                  fontSize: 13, fontWeight: 800, color: DARK_GREEN,
+                }}>
+                  🎙️ {t("Start Today's Session", "ابدأ جلسة اليوم")}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* ── Quick Actions ── */}
         <div>
