@@ -38,7 +38,7 @@ const INK  = "#1a1209";
 const PASS = "#16a34a";
 const FAIL = "#dc2626";
 const AMBER = "#d97706";
-const PASS_THRESHOLD = 75;
+const PASS_THRESHOLD = 50;
 
 /* ── Interfaces ─────────────────────────────────────────────────── */
 interface Assignment {
@@ -62,6 +62,7 @@ interface Ayah {
 }
 interface PageResult {
   pageNum: number; score: number; errorWords: string[]; ayahs: Ayah[];
+  ayahCorrectness?: boolean[]; transcript?: string;
 }
 interface Question {
   id: number; type: "next_verse" | "missing_word";
@@ -250,6 +251,19 @@ function getErrorWords(transcript: string, ayahs: Ayah[]): string[] {
   }
   return errs;
 }
+/* Per-ayah correctness: returns true (green) / false (red) for each ayah */
+function getAyahCorrectness(transcript: string, ayahs: Ayah[]): boolean[] {
+  const gotW = normalizeAr(transcript).split(" ").filter(Boolean);
+  return ayahs.map(a => {
+    const refW = normalizeAr(a.text).split(" ").filter(Boolean);
+    if (!refW.length) return true;
+    let matches = 0;
+    for (const rw of refW) {
+      if (gotW.some(g => rw === g || (rw.length >= 4 && g.length >= 4 && rw.slice(0,4) === g.slice(0,4)))) matches++;
+    }
+    return (matches / refW.length) >= 0.5;
+  });
+}
 function shuffle<T>(arr:T[]): T[] {
   const a=[...arr];
   for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}
@@ -345,12 +359,17 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
   const [isListening,  setIsListening] = useState(false);
   const [recSecs,      setRecSecs]     = useState(0);
   const [submitting,   setSubmitting]  = useState(false);
+  const [audioUrl,     setAudioUrl]    = useState<string|null>(null);
+  const [lastTranscript, setLastTranscript] = useState("");
   const hadith = HADITHS[Math.floor(Math.random()*HADITHS.length)];
   const sessionStart = useRef(Date.now());
   const recognRef    = useRef<any>(null);
   const liveRef      = useRef("");
   const timerRef     = useRef<any>(null);
   const isListRef    = useRef(false);
+  const mediaRecRef  = useRef<MediaRecorder|null>(null);
+  const audioChunks  = useRef<Blob[]>([]);
+  const audioBlobRef = useRef<Blob|null>(null);
 
   /* ── fetch ayahs when phase=reading ── */
   useEffect(() => {
@@ -384,26 +403,56 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
     recognRef.current=rec;
     setIsListening(true); setRecSecs(0);
     timerRef.current=setInterval(()=>setRecSecs(s=>s+1),1000);
+
+    /* Also record audio for playback preview */
+    setAudioUrl(null); audioChunks.current=[];
+    navigator.mediaDevices.getUserMedia({audio:true}).then(stream=>{
+      const mime = ["audio/webm;codecs=opus","audio/webm","audio/mp4",""].find(
+        t=>!t||MediaRecorder.isTypeSupported(t)) ?? "";
+      const mr = new MediaRecorder(stream, mime?{mimeType:mime}:{});
+      mr.ondataavailable=(e)=>{ if(e.data.size>0) audioChunks.current.push(e.data); };
+      mr.onstop=()=>{
+        const blob=new Blob(audioChunks.current,{type:mime||"audio/webm"});
+        audioBlobRef.current=blob;
+        setAudioUrl(URL.createObjectURL(blob));
+        stream.getTracks().forEach(t=>t.stop());
+      };
+      mr.start(300);
+      mediaRecRef.current=mr;
+    }).catch(()=>{}); // Mic permission may already be held by SR — fail silently
   },[]);
 
   const stopListening = useCallback(()=>{
     isListRef.current=false;
     recognRef.current?.stop(); recognRef.current=null;
     setIsListening(false); clearInterval(timerRef.current);
+    if(mediaRecRef.current && mediaRecRef.current.state!=="inactive"){
+      mediaRecRef.current.stop();
+    }
+    mediaRecRef.current=null;
   },[]);
 
   const evaluatePage = () => {
     const tx  = liveRef.current.trim();
+    setLastTranscript(tx);
     const sc  = scoreText(tx, pageAyahs, recSecs);
     const errs= getErrorWords(tx, pageAyahs);
+    const ayahCorrectness = getAyahCorrectness(tx, pageAyahs);
     setScore(sc); setErrorWords(errs);
+    // stash for acceptPage
+    (evaluatePage as any).__last = { tx, ayahCorrectness };
     liveRef.current=""; setPhase("page_result");
   };
 
   const handleStop = () => { stopListening(); evaluatePage(); };
 
   const acceptPage = () => {
-    const r: PageResult={pageNum:todayPages[pageIdx],score:score!,errorWords,ayahs:pageAyahs};
+    const last = (evaluatePage as any).__last || {};
+    const r: PageResult={
+      pageNum:todayPages[pageIdx], score:score!, errorWords, ayahs:pageAyahs,
+      ayahCorrectness: last.ayahCorrectness,
+      transcript: last.tx,
+    };
     const newResults=[...pageResults,r];
     setPageResults(newResults); setRetryCount(0); setScore(null);
     const next=pageIdx+1;
@@ -435,6 +484,23 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
     setFinalScore(overall);
     const today=todayISO();
     const dur=Math.round((Date.now()-sessionStart.current)/1000);
+
+    // Upload audio blob to Supabase Storage
+    let audioStorageUrl: string|null = null;
+    if (audioBlobRef.current) {
+      try {
+        const ext = audioBlobRef.current.type.includes("mp4") ? "mp4" : "webm";
+        const path = `${userId}/${today}_${Date.now()}.${ext}`;
+        const { error: upErr } = await (supabase as any).storage
+          .from("hifdh-daily-audio")
+          .upload(path, audioBlobRef.current, { contentType: audioBlobRef.current.type, upsert: true });
+        if (!upErr) {
+          const { data: urlData } = (supabase as any).storage.from("hifdh-daily-audio").getPublicUrl(path);
+          audioStorageUrl = urlData?.publicUrl ?? null;
+        }
+      } catch(_) { /* storage bucket may not exist yet — silent fail */ }
+    }
+
     try {
       await (supabase as any).from("hifdh_daily_logs").upsert({
         student_id:userId, assignment_id:assignment.id,
@@ -443,24 +509,34 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
         session_data:{
           recitation_score:recAvg, test_score:tScore,
           pages_done:todayPages,
-          page_results:pageResults.map(r=>({pageNum:r.pageNum,score:r.score,errorWords:r.errorWords})),
+          audio_url: audioStorageUrl,
+          page_results:pageResults.map(r=>({
+            pageNum:r.pageNum, score:r.score, errorWords:r.errorWords,
+            ayahCorrectness: r.ayahCorrectness,
+            transcript: r.transcript,
+            ayahs: r.ayahs.map(a=>({
+              text:a.text, numberInSurah:a.numberInSurah,
+              surahName:a.surah?.englishName, surahNum:a.surah?.number,
+            })),
+          })),
           errors:pageResults.flatMap(r=>r.errorWords.map(w=>({word:w,page:r.pageNum}))).slice(0,20),
         },
         updated_at:new Date().toISOString(),
       },{onConflict:"student_id,log_date"});
 
-      // Notify
-      const {data:pf}=await supabase.from("profiles").select("full_name").eq("user_id" as any,userId).maybeSingle();
+      // Notify admins and assigned teacher
+      const {data:pf}=await supabase.from("profiles").select("full_name,assigned_teacher_id").eq("user_id" as any,userId).maybeSingle();
       const name=(pf as any)?.full_name||"A student";
+      const assignedTeacher=(pf as any)?.assigned_teacher_id;
       const modeLabel=assignment.mode==="juz"?"Juz":assignment.mode==="hizb"?"Hizb":"Surah";
       const items=assignment.selected_items.slice(0,3).join(", ");
       const msg=`${modeLabel} ${items} — Score: ${overall}% · ${todayPages.length} page${todayPages.length>1?"s":""} done`;
+      const notifBase={title:`📖 ${name} completed Daily Hifdh Revision`,message:msg,type:"hifdh_complete",read:false,created_at:new Date().toISOString()};
       const {data:admins}=await supabase.from("profiles").select("user_id").eq("role","admin" as any);
-      for(const a of (admins||[])){
-        await (supabase as any).from("notifications").insert({
-          user_id:(a as any).user_id, title:`📖 ${name} completed Daily Hifdh Revision`,
-          message:msg, type:"hifdh_complete", read:false, created_at:new Date().toISOString(),
-        });
+      const recipients=[...(admins||[]).map((a:any)=>a.user_id)];
+      if(assignedTeacher && !recipients.includes(assignedTeacher)) recipients.push(assignedTeacher);
+      for(const uid of recipients){
+        await (supabase as any).from("notifications").insert({...notifBase,user_id:uid});
       }
     } catch(e){ console.error("Submit error",e); }
     setSubmitting(false); setPhase("complete");
@@ -807,7 +883,62 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
               </div>
             )}
 
-            {errorWords.length>0&&(
+            {/* Audio playback preview */}
+            {audioUrl&&(
+              <div style={{background:W,borderRadius:14,border:`1.5px solid ${BRD}`,padding:"12px 14px"}}>
+                <p style={{margin:"0 0 8px",fontSize:10,fontWeight:800,color:G3,
+                  textTransform:"uppercase",letterSpacing:.5}}>
+                  🎙️ Your Recitation
+                </p>
+                <audio controls src={audioUrl} style={{width:"100%",height:36,borderRadius:8}}/>
+              </div>
+            )}
+
+            {/* Colored verse-by-verse breakdown */}
+            {pageAyahs.length>0&&(()=>{
+              const correctness=getAyahCorrectness(lastTranscript,pageAyahs);
+              return(
+                <div style={{background:"#fffdf6",borderRadius:12,
+                  border:`2px solid ${GOLD}66`,overflow:"hidden"}}>
+                  <div style={{padding:"8px 14px",borderBottom:`1px solid ${GOLD}33`,
+                    display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                    <span style={{fontSize:10,fontWeight:800,color:G3,textTransform:"uppercase",letterSpacing:.5}}>
+                      📖 Verse Breakdown
+                    </span>
+                    <span style={{fontSize:10,color:G3}}>
+                      <span style={{color:PASS,fontWeight:800}}>
+                        ✓{correctness.filter(Boolean).length}
+                      </span>
+                      {" / "}
+                      <span style={{color:FAIL,fontWeight:800}}>
+                        ✗{correctness.filter(v=>!v).length}
+                      </span>
+                    </span>
+                  </div>
+                  <div style={{padding:"10px 14px",direction:"rtl",
+                    fontFamily:"'Amiri Quran','Amiri',serif",fontSize:20,lineHeight:3.0,
+                    textAlign:"justify",color:INK}}>
+                    {pageAyahs.map((a,i)=>(
+                      <span key={i} style={{
+                        background:correctness[i]?`${PASS}18`:`${FAIL}14`,
+                        borderRadius:4,
+                        outline:`1px solid ${correctness[i]?PASS+"44":FAIL+"33"}`,
+                        padding:"0 3px",
+                        margin:"0 2px",
+                        display:"inline",
+                      }}>
+                        {a.text}
+                        <span style={{fontSize:12,color:GOLD,margin:"0 3px",fontFamily:"'Amiri',serif"}}>
+                          ۝{a.numberInSurah}
+                        </span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {errorWords.length>0&&score<PASS_THRESHOLD&&(
               <div style={{background:W,borderRadius:14,border:`1.5px solid #FECACA`,
                 padding:"12px 14px"}}>
                 <p style={{margin:"0 0 8px",fontSize:10,fontWeight:800,color:FAIL,
