@@ -1077,51 +1077,7 @@ export default function QuranRevisionHub({ userId }: Props) {
 
         <div style={{ padding: "14px 14px 100px", display: "flex", flexDirection: "column", gap: 12 }}>
 
-          {/* Assignment info — when teacher has assigned */}
-          {assignment && (
-            <div style={{ padding: "14px", borderRadius: 16, border: `2px solid ${GL}`,
-              background: `linear-gradient(135deg,${DG}dd,${DG2}dd)` }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                <span style={{ fontSize: 18 }}>📋</span>
-                <div>
-                  <div style={{ color: GL, fontWeight: 800, fontSize: 13 }}>Assigned Revision</div>
-                  <div style={{ color: `${GL}99`, fontSize: 10, fontFamily: "'Amiri',serif" }}>مراجعة معيّنة من المعلم</div>
-                </div>
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                <div style={{ background: "rgba(255,255,255,.08)", borderRadius: 10, padding: "8px 10px" }}>
-                  <div style={{ fontSize: 9, color: `${GL}88`, fontWeight: 700, textTransform: "uppercase" as const }}>Content</div>
-                  <div style={{ fontSize: 12, color: "#fff", fontWeight: 700, marginTop: 2 }}>
-                    {assignment.mode === "juz" ? `Juz ${assignment.selected_items.join(", ")}` :
-                     assignment.mode === "hizb" ? `Hizb ${assignment.selected_items.join(", ")}` :
-                     `${assignment.selected_items.length} Surah(s)`}
-                  </div>
-                </div>
-                <div style={{ background: "rgba(255,255,255,.08)", borderRadius: 10, padding: "8px 10px" }}>
-                  <div style={{ fontSize: 9, color: `${GL}88`, fontWeight: 700, textTransform: "uppercase" as const }}>Daily Target</div>
-                  <div style={{ fontSize: 12, color: "#fff", fontWeight: 700, marginTop: 2 }}>
-                    {assignment.daily_pages} page{assignment.daily_pages !== 1 ? "s" : ""} / day
-                  </div>
-                </div>
-              </div>
-              <button onClick={() => {
-                  const pages = buildPages(assignment.mode as SelectMode, assignment.selected_items);
-                  const p: RevisionPlan = { mode: assignment.mode as SelectMode,
-                    selected: assignment.selected_items, dailyPages: assignment.daily_pages,
-                    allPages: pages, currentIdx: 0 };
-                  setPlan(p);
-                  localStorage.setItem(`revision_plan_${userId}`, JSON.stringify(p));
-                  setSessionStart(Date.now()); setPageVisible(true);
-                  fetchPage(pages[0]); fetchPrevPage(pages[0]);
-                  setStage("reciting"); setAssignmentLoaded(true);
-                }}
-                style={{ marginTop: 12, width: "100%", padding: "12px", borderRadius: 12, border: "none",
-                  background: `linear-gradient(135deg,${GL},#e8c97a)`, color: DG,
-                  fontWeight: 800, fontSize: 14, cursor: "pointer" }}>
-                ▶ Start Assigned Revision
-              </button>
-            </div>
-          )}
+
 
           {/* Resume plan */}
           {plan && (
@@ -1315,22 +1271,6 @@ export default function QuranRevisionHub({ userId }: Props) {
 
         {/* Header */}
         <div className="flex-none border-b" style={{ borderColor: GOLD + "33", background: DG }}>
-          {/* Assignment badge — shown when teacher assigned this session */}
-          {assignment && (
-            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 12px",
-              background: `${GOLD}18`, borderBottom: `1px solid ${GOLD}22` }}>
-              <div style={{ width: 6, height: 6, borderRadius: "50%", background: GOLD, flexShrink: 0 }} />
-              <span style={{ fontSize: 10, fontWeight: 800, color: GOLD, fontFamily: "'Amiri',serif",
-                letterSpacing: 0.5 }}>
-                📋 Assigned Revision — مراجعة معيّنة
-              </span>
-              <span style={{ marginLeft: "auto", fontSize: 10, color: `${GOLD}99`, fontWeight: 700 }}>
-                {assignment.mode === "juz" ? `Juz ${assignment.selected_items.join(",")}` :
-                 assignment.mode === "hizb" ? `Hizb ${assignment.selected_items.join(",")}` :
-                 `${assignment.selected_items.length} Surah(s)`} · {assignment.daily_pages}p/day
-              </span>
-            </div>
-          )}
           <div className="px-3 py-2 flex items-center gap-2">
           {!assignment && (
             <button onClick={() => setStage("setup")} className="p-1.5 rounded-lg qr-btn" style={{ background: "#1a3025" }}>
