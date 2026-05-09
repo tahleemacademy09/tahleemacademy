@@ -580,7 +580,10 @@ export default function HifdhRevisionTracker() {
         </div>
       )}
 
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+      <style>{`
+        @keyframes spin{to{transform:rotate(360deg)}}
+        @import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Amiri:wght@400;700&display=swap');
+      `}</style>
     </div>
   );
 
@@ -809,10 +812,11 @@ export default function HifdhRevisionTracker() {
                     </div>
                   </div>
                 </div>
-                {/* Audio + transcript */}
+                {/* Audio + transcript + verse breakdown */}
                 {expandSess===log.id&&log.session_data&&(
                   <div style={{marginBottom:10,display:"flex",flexDirection:"column",gap:8}}>
-                    {log.session_data.audio_path&&(
+                    {/* Audio playback */}
+                    {(log.session_data.audio_url||log.session_data.audio_path)&&(
                       <div style={{padding:"10px 14px",borderRadius:12,background:`${G}0d`,
                         border:`1px solid ${G}22`,display:"flex",alignItems:"center",gap:10}}>
                         <div style={{width:38,height:38,borderRadius:10,background:G,
@@ -821,24 +825,134 @@ export default function HifdhRevisionTracker() {
                         </div>
                         <div style={{flex:1}}>
                           <div style={{fontSize:11,fontWeight:800,color:G}}>Student's Recitation</div>
-                          <div style={{fontSize:9,color:"#9aab94",marginTop:1}}>Tap to listen</div>
+                          <div style={{fontSize:9,color:"#9aab94",marginTop:1}}>
+                            {log.session_data.audio_url ? "Click to play recording" : "Tap to listen"}
+                          </div>
                         </div>
-                        <button onClick={()=>playAudio(log.id,log.session_data.audio_path)}
-                          disabled={audioLoad===log.id}
-                          style={{width:44,height:44,borderRadius:12,border:"none",cursor:"pointer",
-                            display:"flex",alignItems:"center",justifyContent:"center",
-                            background:audioPlay===log.id?"#dc2626":`linear-gradient(135deg,${G},${GM})`}}>
-                          {audioLoad===log.id
-                            ?<Loader2 size={18} color={GOLD} style={{animation:"spin 1s linear infinite"}}/>
-                            :audioPlay===log.id?<Pause size={18} color={GOLD}/>:<Play size={18} color={GOLD}/>}
-                        </button>
+                        {log.session_data.audio_url ? (
+                          <audio controls src={log.session_data.audio_url}
+                            style={{height:36,borderRadius:8,flex:1,maxWidth:180}}/>
+                        ) : (
+                          <button onClick={()=>playAudio(log.id,log.session_data.audio_path)}
+                            disabled={audioLoad===log.id}
+                            style={{width:44,height:44,borderRadius:12,border:"none",cursor:"pointer",
+                              display:"flex",alignItems:"center",justifyContent:"center",
+                              background:audioPlay===log.id?"#dc2626":`linear-gradient(135deg,${G},${GM})`}}>
+                            {audioLoad===log.id
+                              ?<Loader2 size={18} color={GOLD} style={{animation:"spin 1s linear infinite"}}/>
+                              :audioPlay===log.id?<Pause size={18} color={GOLD}/>:<Play size={18} color={GOLD}/>}
+                          </button>
+                        )}
                       </div>
                     )}
-                    {log.session_data.transcript&&(
+                    {/* Verse-by-verse breakdown per page */}
+                    {log.session_data.page_results?.map((pr: any, pi: number) => (
+                      <div key={pi} style={{background:"#fffdf6",borderRadius:14,
+                        border:`2px solid ${GOLD}55`,overflow:"hidden"}}>
+                        {/* Page header */}
+                        <div style={{padding:"8px 14px",borderBottom:`1px solid ${GOLD}22`,
+                          background:`linear-gradient(to right,${GOLD}10,transparent)`,
+                          display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                          <span style={{fontSize:11,fontWeight:800,color:G}}>
+                            📖 Page {pr.pageNum}
+                          </span>
+                          <div style={{display:"flex",gap:6}}>
+                            <span style={{fontSize:10,fontWeight:800,color:"#16a34a",
+                              background:"#dcfce7",padding:"2px 7px",borderRadius:6}}>
+                              ✓ {pr.ayahCorrectness?.filter(Boolean).length ?? "?"} correct
+                            </span>
+                            <span style={{fontSize:10,fontWeight:800,color:"#dc2626",
+                              background:"#fee2e2",padding:"2px 7px",borderRadius:6}}>
+                              ✗ {pr.ayahCorrectness?.filter((v: boolean)=>!v).length ?? "?"} missed
+                            </span>
+                            <span style={{fontSize:10,fontWeight:800,
+                              color:pr.score>=80?"#16a34a":pr.score>=60?"#b7791f":"#dc2626",
+                              background:pr.score>=80?"#dcfce7":pr.score>=60?"#fef3c7":"#fee2e2",
+                              padding:"2px 7px",borderRadius:6}}>
+                              {pr.score}%
+                            </span>
+                          </div>
+                        </div>
+                        {/* Ayahs with correctness */}
+                        {pr.ayahs?.length > 0 && pr.ayahCorrectness ? (
+                          <div style={{padding:"10px 14px",display:"flex",flexDirection:"column",gap:5}}>
+                            {pr.ayahs.map((ayah: any, ai: number) => {
+                              const isCorrect = pr.ayahCorrectness[ai];
+                              return (
+                                <div key={ai} style={{
+                                  borderRadius:8,
+                                  border:`1.5px solid ${isCorrect?"#16a34a55":"#dc262644"}`,
+                                  background:isCorrect?"#f0fdf4":"#fff5f5",
+                                  padding:"8px 12px",
+                                  display:"flex",gap:8,alignItems:"flex-start",
+                                }}>
+                                  <div style={{
+                                    width:22,height:22,borderRadius:6,flexShrink:0,
+                                    background:isCorrect?"#dcfce7":"#fee2e2",
+                                    display:"flex",alignItems:"center",justifyContent:"center",
+                                    fontSize:10,fontWeight:900,
+                                    color:isCorrect?"#16a34a":"#dc2626",marginTop:4,
+                                  }}>
+                                    {isCorrect?"✓":"✗"}
+                                  </div>
+                                  <div style={{flex:1,direction:"rtl",textAlign:"right"}}>
+                                    <div style={{
+                                      fontFamily:"'Amiri Quran','Amiri',serif",
+                                      fontSize:17,lineHeight:2.2,
+                                      color:isCorrect?"#14532d":"#7f1d1d",
+                                    }}>
+                                      {ayah.text}
+                                      <span style={{fontSize:11,color:GOLD,marginRight:3,fontFamily:"'Amiri',serif"}}>
+                                        ۝{ayah.numberInSurah}
+                                      </span>
+                                    </div>
+                                    {ayah.surahName && (
+                                      <div style={{fontSize:9,color:"#9aab94",direction:"ltr",textAlign:"left",marginTop:2}}>
+                                        {ayah.surahName} · Verse {ayah.numberInSurah}
+                                        {" — "}{isCorrect?"Recited correctly":"Needs practice"}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : pr.transcript ? (
+                          <div style={{padding:"10px 14px"}}>
+                            <div style={{fontSize:10,fontWeight:800,color:G,marginBottom:5}}>
+                              🎙 Student's Transcript
+                            </div>
+                            <p style={{fontSize:14,color:"#1a1a1a",lineHeight:2.2,direction:"rtl",
+                              fontFamily:"'Amiri',serif",textAlign:"right",margin:0}}>
+                              {pr.transcript}
+                            </p>
+                          </div>
+                        ) : null}
+                        {/* Error words for page */}
+                        {pr.errorWords?.length > 0 && (
+                          <div style={{padding:"8px 14px 12px",borderTop:`1px solid #fde68a`}}>
+                            <div style={{fontSize:9,fontWeight:800,color:"#b45309",
+                              textTransform:"uppercase",marginBottom:5}}>
+                              ⚠️ Words needing review ({pr.errorWords.length})
+                            </div>
+                            <div style={{display:"flex",flexWrap:"wrap",gap:4,direction:"rtl"}}>
+                              {pr.errorWords.slice(0,12).map((w: string, wi: number)=>(
+                                <span key={wi} style={{padding:"4px 10px",borderRadius:7,
+                                  background:"#fef3c7",color:"#92400e",
+                                  fontSize:14,fontFamily:"'Amiri',serif",
+                                  border:"1px solid #fde68a"}}>{w}</span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                    {/* Fallback transcript if no page_results */}
+                    {!log.session_data.page_results?.length && log.session_data.transcript&&(
                       <div style={{padding:"10px 12px",borderRadius:12,background:"#f8f8f8",border:`1px solid ${BRD}`}}>
                         <div style={{fontSize:10,fontWeight:800,color:G,marginBottom:6}}>🎙 Transcript</div>
                         <p style={{fontSize:14,color:"#1a1a1a",lineHeight:2.2,direction:"rtl",
-                          fontFamily:"'Amiri',serif",textAlign:"right",wordBreak:"break-word"}}>
+                          fontFamily:"'Amiri',serif",textAlign:"right",wordBreak:"break-word",margin:0}}>
                           {log.session_data.transcript}
                         </p>
                       </div>
