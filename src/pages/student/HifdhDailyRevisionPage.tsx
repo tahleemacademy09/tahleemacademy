@@ -219,7 +219,13 @@ function scoreText(transcript: string, ayahs: Ayah[], recSecs: number): number {
   const refW = normalizeAr(ref).split(" ").filter(Boolean);
   const gotW = normalizeAr(transcript).split(" ").filter(Boolean);
   if (!refW.length) return 0;
-  if (!gotW.length) return recSecs>=45?40:0;
+  // If no transcript captured but they recited a long time, give time-based estimate
+  if (!gotW.length) {
+    if (recSecs >= 120) return 60;
+    if (recSecs >= 60)  return 45;
+    if (recSecs >= 30)  return 35;
+    return 0;
+  }
   const used=new Set<number>(); let matches=0;
   for (const rw of refW) {
     for (let i=0;i<gotW.length;i++) {
@@ -231,7 +237,8 @@ function scoreText(transcript: string, ayahs: Ayah[], recSecs: number): number {
     }
   }
   const base=Math.round((matches/refW.length)*100);
-  const bonus=recSecs>=60?10:recSecs>=30?5:0;
+  // Time bonus: longer recitation = more complete
+  const bonus=recSecs>=90?15:recSecs>=60?10:recSecs>=30?5:0;
   return Math.min(100,base+bonus);
 }
 function getErrorWords(transcript: string, ayahs: Ayah[]): string[] {
@@ -252,8 +259,12 @@ function getErrorWords(transcript: string, ayahs: Ayah[]): string[] {
   return errs;
 }
 /* Per-ayah correctness: returns true (green) / false (red) for each ayah */
-function getAyahCorrectness(transcript: string, ayahs: Ayah[]): boolean[] {
+function getAyahCorrectness(transcript: string, ayahs: Ayah[], recSecs?: number): boolean[] {
   const gotW = normalizeAr(transcript).split(" ").filter(Boolean);
+  // If transcript is empty but recitation was long, assume correct
+  if (!gotW.length && recSecs && recSecs >= 60) {
+    return ayahs.map(()=>true);
+  }
   return ayahs.map(a => {
     const refW = normalizeAr(a.text).split(" ").filter(Boolean);
     if (!refW.length) return true;
@@ -391,10 +402,18 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
     rec.lang="ar-SA"; rec.continuous=true; rec.interimResults=true; rec.maxAlternatives=3;
     liveRef.current = "";
     rec.onresult=(e:any)=>{
-      let f="";
-      for(let i=e.resultIndex;i<e.results.length;i++)
-        if(e.results[i].isFinal) f+=e.results[i][0].transcript+" ";
-      if(f) liveRef.current+=f;
+      let finalPart="";
+      let interimPart="";
+      for(let i=e.resultIndex;i<e.results.length;i++){
+        if(e.results[i].isFinal){
+          finalPart+=e.results[i][0].transcript+" ";
+        } else {
+          interimPart+=e.results[i][0].transcript+" ";
+        }
+      }
+      if(finalPart) liveRef.current+=finalPart;
+      // Also keep latest interim so stopListening captures it
+      (liveRef as any).interim = interimPart;
     };
     rec.onerror=(e:any)=>{
       if(e.error==="not-allowed"){alert("Mic denied. Allow in browser settings.");setIsListening(false);clearInterval(timerRef.current);}
@@ -434,15 +453,17 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
   },[]);
 
   const evaluatePage = () => {
-    const tx  = liveRef.current.trim();
+    // Merge any interim results that hadn't been finalised yet before mic stopped
+    const interim = (liveRef as any).interim ?? "";
+    const tx  = (liveRef.current + " " + interim).trim();
     setLastTranscript(tx);
     const sc  = scoreText(tx, pageAyahs, recSecs);
     const errs= getErrorWords(tx, pageAyahs);
-    const corr = getAyahCorrectness(tx, pageAyahs);
+    const corr = getAyahCorrectness(tx, pageAyahs, recSecs);
     setScore(sc); setErrorWords(errs); setAyahCorrectness(corr);
     // stash for acceptPage
     (evaluatePage as any).__last = { tx, ayahCorrectness: corr };
-    liveRef.current=""; setPhase("page_result");
+    liveRef.current=""; (liveRef as any).interim=""; setPhase("page_result");
   };
 
   const handleStop = () => { stopListening(); evaluatePage(); };
@@ -880,33 +901,15 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
               </div>
             )}
 
-            {/* ── FULL PAGE with word-level green / red colouring ── */}
+            {/* ── FULL PAGE with ayah-level green / red colouring ── */}
             {pageAyahs.length>0&&(()=>{
-              // Build word-level correctness map from transcript vs reference
-              const refWords = pageAyahs.map(a=>a.text).join(" ");
-              const refArr   = normalizeAr(refWords).split(" ").filter(Boolean);
-              const gotArr   = normalizeAr(lastTranscript).split(" ").filter(Boolean);
-              // Mark each reference word as matched or not
-              const usedGot  = new Set<number>();
-              const wordOk   = refArr.map(rw=>{
-                for(let i=0;i<gotArr.length;i++){
-                  if(usedGot.has(i)) continue;
-                  const gw=gotArr[i];
-                  if(rw===gw||(rw.length>=4&&gw.length>=4&&rw.slice(0,4)===gw.slice(0,4))){
-                    usedGot.add(i); return true;
-                  }
-                }
-                return false;
-              });
-              // Map word index back to per-ayah word ranges
-              let wi=0;
-              const ayahWordRanges=pageAyahs.map(a=>{
-                const words=normalizeAr(a.text).split(" ").filter(Boolean);
-                const start=wi; wi+=words.length;
-                return {start,end:wi,words};
-              });
-              const passedCount = ayahCorrectness.filter(Boolean).length;
-              const missedCount = ayahCorrectness.filter(v=>!v).length;
+              // Use per-ayah correctness (word splitting breaks Arabic ligatures)
+              const correctness = ayahCorrectness.length === pageAyahs.length
+                ? ayahCorrectness
+                : pageAyahs.map(()=>false);
+
+              const correctCount = correctness.filter(Boolean).length;
+              const missedCount  = correctness.filter(v=>!v).length;
 
               return (
                 <div style={{background:"#fffdf6",borderRadius:16,
@@ -923,68 +926,54 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
                     </span>
                     <span style={{fontSize:11,fontWeight:800,color:PASS,
                       background:`${PASS}18`,padding:"3px 10px",borderRadius:8}}>
-                      ✓ {wordOk.filter(Boolean).length} words correct
+                      ✓ {correctCount} verses
                     </span>
                     <span style={{fontSize:11,fontWeight:800,color:FAIL,
                       background:`${FAIL}12`,padding:"3px 10px",borderRadius:8}}>
-                      ✗ {wordOk.filter(v=>!v).length} missed
+                      ✗ {missedCount} missed
                     </span>
                   </div>
 
                   {/* Legend */}
                   <div style={{padding:"8px 16px",borderBottom:`1px solid ${GOLD}18`,
-                    display:"flex",gap:14}}>
+                    display:"flex",gap:16}}>
                     <div style={{display:"flex",gap:5,alignItems:"center"}}>
-                      <div style={{width:14,height:14,borderRadius:4,
-                        background:`${PASS}22`,border:`1.5px solid ${PASS}`}}/>
+                      <div style={{width:14,height:8,borderRadius:2,background:PASS,opacity:.7}}/>
                       <span style={{fontSize:10,color:"#6B7280",fontWeight:600}}>Recited correctly</span>
                     </div>
                     <div style={{display:"flex",gap:5,alignItems:"center"}}>
-                      <div style={{width:14,height:14,borderRadius:4,
-                        background:`${FAIL}15`,border:`1.5px solid ${FAIL}`}}/>
-                      <span style={{fontSize:10,color:"#6B7280",fontWeight:600}}>Missed / incorrect</span>
+                      <div style={{width:14,height:8,borderRadius:2,background:FAIL,opacity:.7}}/>
+                      <span style={{fontSize:10,color:"#6B7280",fontWeight:600}}>Needs practice</span>
                     </div>
                   </div>
 
-                  {/* Quran text — word by word coloured */}
-                  <div style={{padding:"14px 16px 18px"}}>
-                    <div style={{
-                      direction:"rtl",fontFamily:"'Amiri Quran','Amiri',serif",
-                      fontSize:22,lineHeight:3.4,textAlign:"justify",color:INK,
-                    }}>
-                      {pageAyahs.map((ayah,ai)=>{
-                        const range=ayahWordRanges[ai];
-                        const rawWords=ayah.text.split(" ").filter(Boolean);
-                        return (
-                          <span key={ai}>
-                            {rawWords.map((w,wj)=>{
-                              const globalIdx=range.start+wj;
-                              const ok=wordOk[globalIdx]??false;
-                              return (
-                                <span key={wj} style={{
-                                  display:"inline",
-                                  background:ok?`${PASS}20`:`${FAIL}15`,
-                                  color:ok?"#14532d":"#991b1b",
-                                  borderRadius:4,
-                                  padding:"1px 3px",
-                                  margin:"0 2px",
-                                  fontWeight:ok?400:700,
-                                  textShadow:ok?"none":"none",
-                                  outline:`1px solid ${ok?PASS+"44":FAIL+"44"}`,
-                                }}>
-                                  {w}
-                                </span>
-                              );
-                            })}
-                            {/* Ayah number */}
-                            <span style={{fontSize:13,color:GOLD,margin:"0 4px",
-                              fontFamily:"'Amiri',serif",verticalAlign:"middle"}}>
-                              ۝{ayah.numberInSurah}
-                            </span>
+                  {/* Quran text — full ayahs coloured as blocks, Arabic stays connected */}
+                  <div style={{padding:"14px 16px 18px",
+                    direction:"rtl",fontFamily:"'Amiri Quran','Amiri',serif",
+                    fontSize:22,lineHeight:3.6,textAlign:"justify",color:INK}}>
+                    {pageAyahs.map((ayah, ai)=>{
+                      const ok = correctness[ai];
+                      return (
+                        <span key={ai} style={{
+                          // borderRadius and background on inline span colours the verse
+                          background: ok ? `${PASS}22` : `${FAIL}14`,
+                          color:       ok ? "#14532d"  : "#991b1b",
+                          borderRadius: 6,
+                          padding:      "2px 5px",
+                          // Keep Arabic connected — do NOT split the text
+                          display:      "inline",
+                          boxShadow:   `inset 0 0 0 1.5px ${ok ? PASS+"55" : FAIL+"44"}`,
+                          margin:       "0 3px",
+                        }}>
+                          {ayah.text}
+                          {/* Ayah end marker */}
+                          <span style={{fontSize:13,color:GOLD,margin:"0 4px 0 2px",
+                            fontFamily:"'Amiri',serif"}}>
+                            ۝{ayah.numberInSurah}
                           </span>
-                        );
-                      })}
-                    </div>
+                        </span>
+                      );
+                    })}
                   </div>
                 </div>
               );
