@@ -30,6 +30,8 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
   const [devices,  setDevices]    = useState<{ cameras: MediaDeviceInfo[]; mics: MediaDeviceInfo[] }>({ cameras: [], mics: [] });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [waitingStudents, setWaitingStudents] = useState<any[]>([]);
+  // FIX BUG 9: State to surface permission denial to the user
+  const [permError, setPermError] = useState<string | null>(null);
 
   const [waitingRoom,      setWaitingRoom]      = useState(false);
   const [muteOnEntry,      setMuteOnEntry]      = useState(true);
@@ -37,12 +39,17 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
   const [handRaiseEnabled, setHandRaiseEnabled] = useState(true);
 
   useEffect(() => {
+    // FIX BUG 3: Track the stream in a local variable so it can be stopped
+    // on unexpected unmount (e.g. nav away, error) — prevents camera LED staying on.
+    let localStream: MediaStream | null = null;
+
     const init = async () => {
       try {
         const s = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
           audio: { echoCancellation: true, noiseSuppression: true },
         });
+        localStream = s;
         setStream(s);
         s.getVideoTracks().forEach(t => { t.enabled = false; });
         s.getAudioTracks().forEach(t => { t.enabled = false; });
@@ -66,9 +73,20 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
           };
           tick();
         } catch {}
-      } catch {}
+      } catch (err: any) {
+        // FIX BUG 9: Surface permission denial instead of silently swallowing it
+        if (err?.name === "NotAllowedError" || err?.name === "PermissionDeniedError") {
+          setPermError("Camera/microphone access was denied. Please allow permissions in your browser settings and reload.");
+        }
+      }
     };
     init();
+
+    // FIX BUG 3: Cleanup — stop all tracks if user navigates away without clicking Start/Join.
+    // Without this, the camera LED stays on and the mic is held open indefinitely.
+    return () => {
+      localStream?.getTracks().forEach(t => t.stop());
+    };
   }, []);
 
   useEffect(() => {
@@ -143,6 +161,14 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
 
       {/* ── Body ── */}
       <div style={{ flex: 1, overflowY: "auto", padding: "12px 16px 8px", WebkitOverflowScrolling: "touch" as any }}>
+
+        {/* FIX BUG 9: Permission error banner */}
+        {permError && (
+          <div style={{ background: "rgba(239,68,68,.12)", border: "1px solid rgba(239,68,68,.35)", borderRadius: 12, padding: "10px 14px", marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 16 }}>⚠️</span>
+            <p style={{ fontSize: 13, color: "#fca5a5", margin: 0, lineHeight: 1.5 }}>{permError}</p>
+          </div>
+        )}
 
         {/* Camera Preview */}
         <div style={{
