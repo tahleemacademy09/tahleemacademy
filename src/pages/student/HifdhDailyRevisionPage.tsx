@@ -398,49 +398,75 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
   const startListening = useCallback(() => {
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SR) { alert("Speech recognition not supported. Please use Chrome on Android."); return; }
-    const rec = new SR();
-    rec.lang="ar-SA"; rec.continuous=true; rec.interimResults=true; rec.maxAlternatives=3;
-    liveRef.current = "";
-    rec.onresult=(e:any)=>{
-      let finalPart="";
-      let interimPart="";
-      for(let i=e.resultIndex;i<e.results.length;i++){
-        if(e.results[i].isFinal){
-          finalPart+=e.results[i][0].transcript+" ";
-        } else {
-          interimPart+=e.results[i][0].transcript+" ";
-        }
-      }
-      if(finalPart) liveRef.current+=finalPart;
-      // Also keep latest interim so stopListening captures it
-      (liveRef as any).interim = interimPart;
-    };
-    rec.onerror=(e:any)=>{
-      if(e.error==="not-allowed"){alert("Mic denied. Allow in browser settings.");setIsListening(false);clearInterval(timerRef.current);}
-    };
-    rec.onend=()=>{ if(isListRef.current){ try{rec.start();}catch{} } };
-    rec.start();
-    recognRef.current=rec;
-    setIsListening(true); setRecSecs(0);
-    timerRef.current=setInterval(()=>setRecSecs(s=>s+1),1000);
 
-    /* Also record audio for playback preview */
-    setAudioUrl(null); audioChunks.current=[];
-    navigator.mediaDevices.getUserMedia({audio:true}).then(stream=>{
+    setAudioUrl(null); audioChunks.current = [];
+
+    // Get mic stream FIRST, then start both SR and MediaRecorder on the same stream
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+      // ── MediaRecorder for playback ──
       const mime = ["audio/webm;codecs=opus","audio/webm","audio/mp4",""].find(
-        t=>!t||MediaRecorder.isTypeSupported(t)) ?? "";
-      const mr = new MediaRecorder(stream, mime?{mimeType:mime}:{});
-      mr.ondataavailable=(e)=>{ if(e.data.size>0) audioChunks.current.push(e.data); };
-      mr.onstop=()=>{
-        const blob=new Blob(audioChunks.current,{type:mime||"audio/webm"});
-        audioBlobRef.current=blob;
+        t => !t || MediaRecorder.isTypeSupported(t)) ?? "";
+      const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
+      mr.ondataavailable = (e) => { if (e.data.size > 0) audioChunks.current.push(e.data); };
+      mr.onstop = () => {
+        const blob = new Blob(audioChunks.current, { type: mime || "audio/webm" });
+        audioBlobRef.current = blob;
         setAudioUrl(URL.createObjectURL(blob));
-        stream.getTracks().forEach(t=>t.stop());
+        stream.getTracks().forEach(t => t.stop());
       };
       mr.start(300);
-      mediaRecRef.current=mr;
-    }).catch(()=>{}); // Mic permission may already be held by SR — fail silently
-  },[]);
+      mediaRecRef.current = mr;
+
+      // ── Speech recognition ──
+      const rec = new SR();
+      rec.lang = "ar-SA"; rec.continuous = true; rec.interimResults = true; rec.maxAlternatives = 3;
+      liveRef.current = "";
+      rec.onresult = (e: any) => {
+        let finalPart = "";
+        let interimPart = "";
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          if (e.results[i].isFinal) {
+            finalPart += e.results[i][0].transcript + " ";
+          } else {
+            interimPart += e.results[i][0].transcript + " ";
+          }
+        }
+        if (finalPart) liveRef.current += finalPart;
+        (liveRef as any).interim = interimPart;
+      };
+      rec.onerror = (e: any) => {
+        if (e.error === "not-allowed") { alert("Mic denied. Allow in browser settings."); setIsListening(false); clearInterval(timerRef.current); }
+      };
+      rec.onend = () => { if (isListRef.current) { try { rec.start(); } catch {} } };
+      rec.start();
+      recognRef.current = rec;
+
+      setIsListening(true); setRecSecs(0);
+      timerRef.current = setInterval(() => setRecSecs(s => s + 1), 1000);
+    }).catch(() => {
+      // Fallback: start SR without audio recording if getUserMedia fails
+      const rec = new SR();
+      rec.lang = "ar-SA"; rec.continuous = true; rec.interimResults = true; rec.maxAlternatives = 3;
+      liveRef.current = "";
+      rec.onresult = (e: any) => {
+        let finalPart = ""; let interimPart = "";
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          if (e.results[i].isFinal) finalPart += e.results[i][0].transcript + " ";
+          else interimPart += e.results[i][0].transcript + " ";
+        }
+        if (finalPart) liveRef.current += finalPart;
+        (liveRef as any).interim = interimPart;
+      };
+      rec.onerror = (e: any) => {
+        if (e.error === "not-allowed") { alert("Mic denied. Allow in browser settings."); setIsListening(false); clearInterval(timerRef.current); }
+      };
+      rec.onend = () => { if (isListRef.current) { try { rec.start(); } catch {} } };
+      rec.start();
+      recognRef.current = rec;
+      setIsListening(true); setRecSecs(0);
+      timerRef.current = setInterval(() => setRecSecs(s => s + 1), 1000);
+    });
+  }, []);
 
   const stopListening = useCallback(()=>{
     isListRef.current=false;
@@ -669,6 +695,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
         @keyframes slideUp { from{transform:translateY(12px);opacity:0} to{transform:translateY(0);opacity:1} }
         @keyframes fadeIn  { from{opacity:0} to{opacity:1} }
         @import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Amiri:wght@400;700&family=Cairo:wght@400;600;700;800;900&display=swap');
+        .ar-word { unicode-bidi: isolate; display: inline; }
       `}</style>
 
       {/* ══ INTRO ══ */}
@@ -901,15 +928,35 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
               </div>
             )}
 
-            {/* ── FULL PAGE with ayah-level green / red colouring ── */}
+            {/* ── FULL PAGE with word-level green / red colouring ── */}
             {pageAyahs.length>0&&(()=>{
-              // Use per-ayah correctness (word splitting breaks Arabic ligatures)
-              const correctness = ayahCorrectness.length === pageAyahs.length
-                ? ayahCorrectness
-                : pageAyahs.map(()=>false);
+              // Build per-word correctness: compare normalised reference words to transcript
+              const gotArr = normalizeAr(lastTranscript).split(" ").filter(Boolean);
 
-              const correctCount = correctness.filter(Boolean).length;
-              const missedCount  = correctness.filter(v=>!v).length;
+              // For each ayah, compute per-word match
+              type AyahWordData = { raw: string; ok: boolean }[];
+              const ayahWords: AyahWordData[] = pageAyahs.map(ayah => {
+                const rawWords = ayah.text.split(/\s+/).filter(Boolean);
+                const normWords = rawWords.map(w => normalizeAr(w));
+                const usedGot = new Set<number>();
+                return rawWords.map((raw, wi) => {
+                  const nw = normWords[wi];
+                  if (!nw) return { raw, ok: false };
+                  for (let gi = 0; gi < gotArr.length; gi++) {
+                    if (usedGot.has(gi)) continue;
+                    const gw = gotArr[gi];
+                    if (nw === gw || (nw.length >= 3 && gw.length >= 3 && nw.slice(0,3) === gw.slice(0,3))) {
+                      usedGot.add(gi);
+                      return { raw, ok: true };
+                    }
+                  }
+                  return { raw, ok: false };
+                });
+              });
+
+              const totalWords = ayahWords.flat().length;
+              const correctWords = ayahWords.flat().filter(w => w.ok).length;
+              const missedWords  = totalWords - correctWords;
 
               return (
                 <div style={{background:"#fffdf6",borderRadius:16,
@@ -926,54 +973,64 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
                     </span>
                     <span style={{fontSize:11,fontWeight:800,color:PASS,
                       background:`${PASS}18`,padding:"3px 10px",borderRadius:8}}>
-                      ✓ {correctCount} verses
+                      ✓ {correctWords} words
                     </span>
                     <span style={{fontSize:11,fontWeight:800,color:FAIL,
                       background:`${FAIL}12`,padding:"3px 10px",borderRadius:8}}>
-                      ✗ {missedCount} missed
+                      ✗ {missedWords} missed
                     </span>
                   </div>
 
                   {/* Legend */}
-                  <div style={{padding:"8px 16px",borderBottom:`1px solid ${GOLD}18`,
+                  <div style={{padding:"7px 16px",borderBottom:`1px solid ${GOLD}18`,
                     display:"flex",gap:16}}>
                     <div style={{display:"flex",gap:5,alignItems:"center"}}>
-                      <div style={{width:14,height:8,borderRadius:2,background:PASS,opacity:.7}}/>
+                      <div style={{width:16,height:10,borderRadius:3,
+                        background:`${PASS}30`,border:`1.5px solid ${PASS}`}}/>
                       <span style={{fontSize:10,color:"#6B7280",fontWeight:600}}>Recited correctly</span>
                     </div>
                     <div style={{display:"flex",gap:5,alignItems:"center"}}>
-                      <div style={{width:14,height:8,borderRadius:2,background:FAIL,opacity:.7}}/>
-                      <span style={{fontSize:10,color:"#6B7280",fontWeight:600}}>Needs practice</span>
+                      <div style={{width:16,height:10,borderRadius:3,
+                        background:`${FAIL}20`,border:`1.5px solid ${FAIL}`}}/>
+                      <span style={{fontSize:10,color:"#6B7280",fontWeight:600}}>Missed / incorrect</span>
                     </div>
                   </div>
 
-                  {/* Quran text — full ayahs coloured as blocks, Arabic stays connected */}
+                  {/* Quran text — word-by-word coloured, Arabic shaping preserved */}
                   <div style={{padding:"14px 16px 18px",
-                    direction:"rtl",fontFamily:"'Amiri Quran','Amiri',serif",
-                    fontSize:22,lineHeight:3.6,textAlign:"justify",color:INK}}>
-                    {pageAyahs.map((ayah, ai)=>{
-                      const ok = correctness[ai];
-                      return (
-                        <span key={ai} style={{
-                          // borderRadius and background on inline span colours the verse
-                          background: ok ? `${PASS}22` : `${FAIL}14`,
-                          color:       ok ? "#14532d"  : "#991b1b",
-                          borderRadius: 6,
-                          padding:      "2px 5px",
-                          // Keep Arabic connected — do NOT split the text
-                          display:      "inline",
-                          boxShadow:   `inset 0 0 0 1.5px ${ok ? PASS+"55" : FAIL+"44"}`,
-                          margin:       "0 3px",
-                        }}>
-                          {ayah.text}
-                          {/* Ayah end marker */}
-                          <span style={{fontSize:13,color:GOLD,margin:"0 4px 0 2px",
-                            fontFamily:"'Amiri',serif"}}>
-                            ۝{ayah.numberInSurah}
+                    direction:"rtl",
+                    fontFamily:"'Amiri Quran','Amiri',serif",
+                    fontSize:22,lineHeight:3.8,
+                    textAlign:"justify",
+                    // Critical: let words wrap naturally
+                    wordBreak:"keep-all",
+                    overflowWrap:"break-word",
+                  }}>
+                    {pageAyahs.map((ayah, ai) => (
+                      <span key={ai}>
+                        {ayahWords[ai].map((wd, wi) => (
+                          <span key={wi} className="ar-word" style={{
+                            background: wd.ok ? `${PASS}28` : `${FAIL}20`,
+                            color:       wd.ok ? "#14532d"  : "#991b1b",
+                            borderRadius: 5,
+                            boxShadow: `inset 0 0 0 1.5px ${wd.ok ? PASS+"55" : FAIL+"55"}`,
+                            padding: "2px 4px",
+                            margin: "0 2px",
+                            fontWeight: wd.ok ? 400 : 600,
+                          }}>
+                            {wd.raw}
                           </span>
+                        ))}
+                        {/* Ayah end marker */}
+                        <span className="ar-word" style={{
+                          fontSize:14,color:GOLD,
+                          margin:"0 6px",
+                          fontFamily:"'Amiri',serif",
+                        }}>
+                          ۝{ayah.numberInSurah}
                         </span>
-                      );
-                    })}
+                      </span>
+                    ))}
                   </div>
                 </div>
               );
