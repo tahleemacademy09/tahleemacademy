@@ -511,28 +511,52 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
           <Loader2 size={28} color={GOLD} style={{animation:"spin .9s linear infinite"}}/>
         </div>
       : pageAyahs.length>0
-        ? <div style={{background:W,borderRadius:16,border:`1.5px solid ${BRD}`,padding:"16px 14px"}}>
-            <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:12}}>
-              <BookMarked size={13} color={GOLD}/>
-              <span style={{fontSize:10,fontWeight:800,color:G3,letterSpacing:.5,textTransform:"uppercase"}}>
+        ? <div style={{
+            background:"#fffdf6",
+            borderRadius:8,
+            border:`2px solid ${GOLD}88`,
+            boxShadow:`0 4px 24px rgba(0,0,0,.12), inset 0 0 0 1px ${GOLD}22`,
+            overflow:"hidden",
+            position:"relative",
+          }}>
+            {/* Inner border like real Mushaf */}
+            <div style={{position:"absolute",inset:8,border:`1px solid ${GOLD}33`,borderRadius:4,pointerEvents:"none",zIndex:1}}/>
+            {/* Header */}
+            <div style={{
+              display:"flex",alignItems:"center",justifyContent:"space-between",
+              padding:"10px 20px",
+              background:`linear-gradient(to bottom,${GOLD}18,transparent)`,
+              borderBottom:`1px solid ${GOLD}44`,
+            }}>
+              <span style={{fontFamily:"'Amiri',serif",fontSize:12,fontWeight:700,color:G1,direction:"rtl"}}>
                 {pageAyahs[0]?.surah?.englishName}
                 {pageAyahs[pageAyahs.length-1]?.surah?.number!==pageAyahs[0]?.surah?.number&&
-                  ` → ${pageAyahs[pageAyahs.length-1]?.surah?.englishName}`}
-                {" · Page "}{todayPages[pageIdx]}
+                  ` — ${pageAyahs[pageAyahs.length-1]?.surah?.englishName}`}
+              </span>
+              <span style={{fontFamily:"'Amiri',serif",fontSize:12,color:GOLD}}>
+                صفحة {todayPages[pageIdx]}
               </span>
             </div>
-            <div style={{
-              direction:"rtl",fontFamily:"'Amiri Quran','Amiri',serif",
-              fontSize:20,color:INK,lineHeight:2.8,textAlign:"justify",
-            }}>
-              {pageAyahs.map((a,i)=>(
-                <span key={i}>
-                  {a.text}
-                  <span style={{fontSize:12,color:GOLD,margin:"0 5px",fontFamily:"'Amiri',serif"}}>
-                    ﴿{a.numberInSurah}﴾
+            <div style={{height:1,background:`linear-gradient(to right,transparent,${GOLD}88,transparent)`,margin:"0 16px"}}/>
+            {/* Quran text */}
+            <div style={{padding:"20px 20px 16px"}}>
+              <div style={{
+                direction:"rtl",fontFamily:"'Amiri Quran','Amiri',serif",
+                fontSize:24,color:INK,lineHeight:3.2,textAlign:"justify",
+              }}>
+                {pageAyahs.map((a,i)=>(
+                  <span key={i}>
+                    {a.text}
+                    <span style={{fontSize:14,color:GOLD,margin:"0 4px",fontFamily:"'Amiri',serif"}}>
+                      ۝{a.numberInSurah}
+                    </span>
                   </span>
-                </span>
-              ))}
+                ))}
+              </div>
+            </div>
+            <div style={{height:1,background:`linear-gradient(to right,transparent,${GOLD}88,transparent)`,margin:"0 16px"}}/>
+            <div style={{padding:"8px",textAlign:"center",fontFamily:"'Amiri',serif",color:GOLD,fontSize:13}}>
+              ─── {todayPages[pageIdx]} ───
             </div>
           </div>
         : <div style={{padding:24,textAlign:"center",color:"#9CA3AF",fontSize:13}}>
@@ -683,49 +707,38 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
               </div>
             )}
 
-            <div style={{padding:"9px 13px",borderRadius:10,
-              background:"#FFFBEB",border:"1px solid #FDE68A",
-              display:"flex",alignItems:"center",gap:8}}>
-              <Target size={13} color={AMBER}/>
-              <span style={{fontSize:11,fontWeight:700,color:AMBER}}>
-                Recite the full page clearly — need ≥{PASS_THRESHOLD}% to proceed
-              </span>
-            </div>
-
-            {/* Mic status */}
-            <div style={{background:W,borderRadius:16,padding:"20px 16px",
-              border:`2px solid ${isListening?PASS:BRD}`,textAlign:"center",
-              transition:"border-color .3s",boxShadow:isListening?`0 0 0 4px ${PASS}18`:"none"}}>
-              {isListening?(
-                <>
-                  <Wave/>
-                  <p style={{margin:"10px 0 4px",fontWeight:800,fontSize:14,color:G1}}>
-                    Listening attentively…
-                  </p>
-                  <p style={{margin:"0 0 8px",fontSize:11,color:"#6B7280"}}>
-                    Recite from start to finish — don't stop mid-verse
-                  </p>
-                  <span style={{display:"inline-block",padding:"4px 14px",borderRadius:20,
-                    background:`${PASS}14`,border:`1px solid ${PASS}44`,
-                    fontSize:12,fontWeight:800,color:PASS}}>
-                    🔴 {Math.floor(recSecs/60).toString().padStart(2,"0")}:{(recSecs%60).toString().padStart(2,"0")}
-                  </span>
-                </>
-              ):(
-                <>
-                  <div style={{width:60,height:60,borderRadius:"50%",margin:"0 auto 10px",
-                    background:`${G1}0d`,display:"flex",alignItems:"center",justifyContent:"center"}}>
-                    <MicOff size={26} color={G3}/>
+            {/* During recitation — hide text, show listening indicator */}
+            {isListening ? (
+              <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",
+                justifyContent:"center",padding:"40px 20px",gap:20,minHeight:300}}>
+                <Wave/>
+                <p style={{margin:0,fontWeight:900,fontSize:16,color:G1,textAlign:"center"}}>
+                  Listening attentively…
+                </p>
+                <p style={{margin:0,fontSize:12,color:"#6B7280",textAlign:"center",lineHeight:1.6}}>
+                  Recite from start to finish — don't stop mid-verse
+                </p>
+                <span style={{display:"inline-block",padding:"6px 20px",borderRadius:20,
+                  background:`${PASS}14`,border:`1px solid ${PASS}44`,
+                  fontSize:14,fontWeight:900,color:PASS}}>
+                  🔴 {Math.floor(recSecs/60).toString().padStart(2,"0")}:{(recSecs%60).toString().padStart(2,"0")}
+                </span>
+              </div>
+            ) : (
+              <>
+                {!retryCount && (
+                  <div style={{padding:"9px 13px",borderRadius:10,
+                    background:"#FFFBEB",border:"1px solid #FDE68A",
+                    display:"flex",alignItems:"center",gap:8}}>
+                    <Target size={13} color={AMBER}/>
+                    <span style={{fontSize:11,fontWeight:700,color:AMBER}}>
+                      Recite the full page clearly — need ≥{PASS_THRESHOLD}% to proceed
+                    </span>
                   </div>
-                  <p style={{margin:0,fontWeight:700,fontSize:13,color:G1}}>Tap to start reciting</p>
-                  <p style={{margin:"4px 0 0",fontSize:11,color:"#9CA3AF"}}>
-                    The AI will listen to your entire recitation
-                  </p>
-                </>
-              )}
-            </div>
-
-            <QuranPage/>
+                )}
+                <QuranPage/>
+              </>
+            )}
           </div>
 
           {/* Sticky bottom */}
