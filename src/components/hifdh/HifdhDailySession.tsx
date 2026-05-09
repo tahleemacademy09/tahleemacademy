@@ -778,84 +778,76 @@ export default function HifdhDailySession({ assignment, userId, onClose }: Props
             title={`Page ${pagesToRevise[pageIdx]} — Recite Aloud`}
             sub={`Page ${pageIdx + 1} of ${pagesToRevise.length}${retryCount > 0 ? ` · Attempt ${retryCount + 1}` : ""}`}
           />
-          <div style={{ flex: 1, overflowY: "auto", padding: "12px 16px 90px", display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={{ flex: 1, overflowY: "auto", padding: "10px 16px 90px", display: "flex", flexDirection: "column", gap: 10 }}>
 
-            {/* Retry encouragement (shown after a failed attempt) */}
+            {/* Retry encouragement (only on retries) */}
             {retryMsg && retryCount > 0 && (
-              <div style={{ padding: "12px 14px", borderRadius: 12, background: `${GOLD}12`, border: `1px solid ${GOLD}44`, animation: "slideUp .3s ease" }}>
+              <div style={{ padding: "10px 12px", borderRadius: 12, background: `${GOLD}12`, border: `1px solid ${GOLD}44`, animation: "slideUp .3s ease" }}>
                 <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
-                  <Heart size={16} color={GOLD} style={{ marginTop: 1, flexShrink: 0 }} />
+                  <Heart size={14} color={GOLD} style={{ marginTop: 1, flexShrink: 0 }} />
                   <p style={{ fontSize: 12, fontWeight: 600, color: "#92400E", margin: 0, lineHeight: 1.5 }}>{retryMsg}</p>
                 </div>
               </div>
             )}
 
-            {/* Pass threshold reminder */}
-            <div style={{ padding: "8px 12px", borderRadius: 10, background: "#FFFBEB", border: "1px solid #FDE68A", fontSize: 11, fontWeight: 600, color: "#92400E" }}>
-              🎯 Recite the full page clearly. You need ≥ {PASS_THRESHOLD}% to proceed.
-            </div>
-
-            {/* Listening status */}
-            <div style={{ background: W, borderRadius: 14, padding: "16px", border: `2px solid ${isListening ? PASS_COLOR : BRD}`, textAlign: "center", transition: "border-color .3s" }}>
-              {isListening ? (
-                <>
-                  {/* Animated waveform */}
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 3, marginBottom: 10 }}>
-                    {[6, 12, 18, 24, 14, 20, 10, 16, 8].map((h, i) => (
-                      <div key={i} style={{
-                        width: 4, borderRadius: 3,
-                        height: h,
-                        background: PASS_COLOR,
-                        animation: `wavePulse ${0.6 + i * 0.08}s ease-in-out ${i * 0.07}s infinite`,
-                      }} />
-                    ))}
-                  </div>
-                  <p style={{ fontWeight: 800, fontSize: 13, color: G, margin: "0 0 4px" }}>
-                    Listening attentively…
-                  </p>
-                  <p style={{ fontSize: 11, color: "#6B7280", margin: "0 0 6px" }}>
-                    Recite the full page from beginning to end
-                  </p>
-                  <div style={{ display: "inline-block", padding: "3px 12px", borderRadius: 20, background: `${PASS_COLOR}15`, border: `1px solid ${PASS_COLOR}44` }}>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: PASS_COLOR }}>
-                      🔴 {Math.floor(recitedSecs / 60)}:{String(recitedSecs % 60).padStart(2, "0")}
-                    </span>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div style={{ width: 52, height: 52, borderRadius: "50%", background: `${G}12`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 8px" }}>
-                    <MicOff size={24} color={G} />
-                  </div>
-                  <p style={{ fontWeight: 700, fontSize: 13, color: G, margin: "0 0 4px" }}>Tap below to start reciting</p>
-                  <p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>The AI will listen to your full page</p>
-                </>
-              )}
-            </div>
-
-            {/* Quran text */}
-            {fetchingPage ? (
-              <div style={{ display: "flex", justifyContent: "center", padding: 24 }}>
-                <Loader2 size={24} color={GOLD} style={{ animation: "spin .8s linear infinite" }} />
-              </div>
-            ) : pageAyahs.length > 0 ? (
-              <div style={{ background: W, borderRadius: 14, border: `1px solid ${BRD}`, padding: "14px" }}>
-                <p style={{ fontSize: 9, fontWeight: 700, color: "#9CA3AF", margin: "0 0 10px", textTransform: "uppercase", letterSpacing: .5 }}>
-                  {pageAyahs[0]?.surah?.englishName} · Page {pagesToRevise[pageIdx]}
-                </p>
-                <div style={{ direction: "rtl", fontFamily: "'Amiri Quran','Amiri',serif", fontSize: 20, color: INK, lineHeight: 2.6, textAlign: "justify" }}>
-                  {pageAyahs.map((a, i) => (
-                    <span key={i}>
-                      {a.text}
-                      <span style={{ fontSize: 13, color: GOLD, margin: "0 4px", fontFamily: "'Amiri',serif" }}>﴿{a.numberInSurah}﴾</span>
-                    </span>
+            {/* When recording: full-screen waveform (student recites from memory) */}
+            {isListening ? (
+              <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, padding: "48px 16px", background: W, borderRadius: 16, border: `2px solid ${PASS_COLOR}` }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 3 }}>
+                  {[6,14,22,30,18,26,12,20,8,16,24,10].map((h, i) => (
+                    <div key={i} style={{
+                      width: 5, borderRadius: 4, height: h,
+                      background: PASS_COLOR,
+                      animation: `wavePulse ${0.55 + i * 0.07}s ease-in-out ${i * 0.06}s infinite`,
+                    }} />
                   ))}
+                </div>
+                <p style={{ fontWeight: 900, fontSize: 17, color: G, margin: 0 }}>Listening…</p>
+                <p style={{ fontSize: 12, color: "#6B7280", margin: 0, textAlign: "center", maxWidth: 220 }}>
+                  Recite the full page from memory
+                </p>
+                <div style={{ padding: "5px 18px", borderRadius: 20, background: `${PASS_COLOR}15`, border: `1px solid ${PASS_COLOR}44` }}>
+                  <span style={{ fontSize: 14, fontWeight: 800, color: PASS_COLOR }}>
+                    🔴 {Math.floor(recitedSecs / 60)}:{String(recitedSecs % 60).padStart(2, "0")}
+                  </span>
                 </div>
               </div>
             ) : (
-              <div style={{ padding: 20, textAlign: "center", color: "#9CA3AF", fontSize: 13 }}>
-                Could not load page — check your internet connection.
-              </div>
+              /* Mushaf full page — shown when NOT yet recording */
+              fetchingPage ? (
+                <div style={{ display: "flex", justifyContent: "center", padding: 32 }}>
+                  <Loader2 size={28} color={GOLD} style={{ animation: "spin .8s linear infinite" }} />
+                </div>
+              ) : pageAyahs.length > 0 ? (
+                <div style={{
+                  background: "#fdf6e3",
+                  borderRadius: 14,
+                  border: "2px solid #c9a84c88",
+                  padding: "18px 20px",
+                  position: "relative",
+                  boxShadow: "0 4px 20px rgba(0,0,0,0.08)",
+                }}>
+                  <div style={{ position: "absolute", inset: 8, border: "1px solid #c9a84c33", borderRadius: 8, pointerEvents: "none" }} />
+                  <p style={{ fontSize: 9, fontWeight: 800, color: "#9CA3AF", margin: "0 0 8px", textTransform: "uppercase", letterSpacing: 0.5, textAlign: "center" }}>
+                    {pageAyahs[0]?.surah?.englishName} · Page {pagesToRevise[pageIdx]}
+                  </p>
+                  <div style={{ direction: "rtl", fontFamily: "'Amiri Quran','Amiri',serif", fontSize: 24, fontWeight: 700, color: "#1a1208", lineHeight: 3, textAlign: "justify" }}>
+                    {pageAyahs.map((a, i) => (
+                      <span key={i}>
+                        {a.text}
+                        <span style={{ fontSize: 15, color: "#c9a84c", margin: "0 4px", fontFamily: "'Amiri',serif" }}>﴿{a.numberInSurah}﴾</span>
+                      </span>
+                    ))}
+                  </div>
+                  <p style={{ fontSize: 10, color: "#9CA3AF", margin: "10px 0 0", textAlign: "center" }}>
+                    Read carefully, then tap <strong>Start Reciting</strong> below and recite from memory
+                  </p>
+                </div>
+              ) : (
+                <div style={{ padding: 20, textAlign: "center", color: "#9CA3AF", fontSize: 13 }}>
+                  Could not load page — check your internet connection.
+                </div>
+              )
             )}
           </div>
 
