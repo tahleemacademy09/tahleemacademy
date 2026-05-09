@@ -1,264 +1,472 @@
-/*  src/pages/admin/HifdhAdminReview.tsx  */
-import { useState, useEffect, useRef } from "react";
-import { supabase } from "@/integrations/supabase/client";
-import { audioManager } from "@/components/hifdh/audioManager";
+// src/pages/admin/HifdhAdminReview.tsx
+// Admin review of all students' daily Hifdh revision sessions
 
-interface Recording {
-  id:string; student_id:string; surah_name:string; surah_num:number;
-  ayah_start:number; audio_url:string; ai_score:number;
-  admin_score:number|null; admin_feedback:string|null;
-  status:"pending"|"reviewed"|"overridden"; transcript:string|null;
-  word_results:{word:string;result:string}[]|null; created_at:string;
+import { useState, useEffect } from "react";
+import { supabase } from "@/integrations/supabase/client";
+import {
+  Loader2, Search, ChevronDown, ChevronUp, BookOpen,
+  CheckCircle, Clock, Star, Mic, FileText, Users,
+} from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+
+/* ── palette ── */
+const G    = "#064E3B";
+const GM   = "#075E54";
+const GOLD = "#C9A84C";
+const PASS = "#16A34A";
+const FAIL = "#DC2626";
+const AMBER= "#D97706";
+const W    = "#ffffff";
+const INK  = "#1a1a2e";
+
+/* ── types ── */
+type FilterStatus = "all" | "pending" | "reviewed";
+
+interface AyahSnap { text:string; numberInSurah:number; surahName?:string; }
+interface PageResult {
+  pageNum:number; score:number; errorWords:string[];
+  ayahCorrectness?:boolean[]; transcript?:string; ayahs?:AyahSnap[];
+}
+interface SessionData {
+  recitation_score?:number; test_score?:number; pages_done?:number[];
+  audio_url?:string|null; page_results?:PageResult[]; errors?:{word:string;page:number}[];
+  review?:{ teacher_score:number; teacher_feedback:string; reviewed_by:string; reviewed_at:string; };
+}
+interface DailyLog {
+  id:string; student_id:string; assignment_id?:string; log_date:string;
+  pages_revised:number|null; avg_score:number|null; duration_secs?:number|null;
+  completed?:boolean; session_data?:SessionData; updated_at?:string;
   student_name?:string; student_email?:string;
 }
-type FilterStatus="all"|"pending"|"reviewed"|"overridden";
+
+/* ── helpers ── */
+const scoreColor=(s:number)=>s>=70?PASS:s>=50?AMBER:FAIL;
+const scoreLabel=(s:number)=>s>=70?"Excellent":s>=50?"Good":"Needs Work";
+const fmtDate=(d:string)=>new Date(d).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"});
+const fmtDur=(s?:number|null)=>!s?"—":`${Math.floor(s/60)}m ${s%60}s`;
+
+function ScoreRing({pct,size=52}:{pct:number;size?:number}) {
+  const r=size*0.38; const c=2*Math.PI*r;
+  const dash=(pct/100)*c;
+  const col=scoreColor(pct);
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{flexShrink:0}}>
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="#F3F4F6" strokeWidth={size*0.1}/>
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={col} strokeWidth={size*0.1}
+        strokeDasharray={`${dash} ${c-dash}`} strokeLinecap="round"
+        transform={`rotate(-90 ${size/2} ${size/2})`}/>
+      <text x="50%" y="50%" textAnchor="middle" dominantBaseline="central"
+        fill={col} fontSize={size*0.22} fontWeight={900}>{pct}%</text>
+    </svg>
+  );
+}
 
 export default function HifdhAdminReview() {
-  const [recordings, setRecordings] = useState<Recording[]>([]);
-  const [loading, setLoading]       = useState(true);
-  const [filter, setFilter]         = useState<FilterStatus>("pending");
-  const [search, setSearch]         = useState("");
-  const [expanded, setExpanded]     = useState<string|null>(null);
-  const [overrides, setOverrides]   = useState<Record<string,{score:string;feedback:string}>>({});
-  const [saving, setSaving]         = useState<string|null>(null);
-  const [playingId, setPlayingId]   = useState<string|null>(null);
-  const [adminId, setAdminId]       = useState<string|null>(null);
+  const { toast } = useToast();
 
-  useEffect(()=>{
-    supabase.auth.getUser().then(({data})=>{ if(data?.user) setAdminId(data.user.id); });
-    loadRecordings();
-    return ()=>{ audioManager.stop(); };
-  },[]);
+  const [logs,     setLogs]     = useState<DailyLog[]>([]);
+  const [loading,  setLoading]  = useState(true);
+  const [filter,   setFilter]   = useState<FilterStatus>("pending");
+  const [search,   setSearch]   = useState("");
+  const [expanded, setExpanded] = useState<string|null>(null);
+  const [pageTab,  setPageTab]  = useState<Record<string,number>>({});
+  const [overrides,setOverrides]= useState<Record<string,{score:string;feedback:string}>>({});
+  const [saving,   setSaving]   = useState<string|null>(null);
 
-  const loadRecordings = async () => {
+  useEffect(()=>{ loadLogs(); },[]);
+
+  const loadLogs = async () => {
     setLoading(true);
     try {
-      const {data} = await supabase.from("hifdh_recordings" as any).select("*").order("created_at",{ascending:false}).limit(100);
-      if (!data){setLoading(false);return;}
-      const ids=[...new Set(data.map((r:any)=>r.student_id))];
-      const {data:profiles} = await supabase.from("profiles").select("user_id,full_name,email").in("user_id",ids);
-      const pmap:Record<string,{name:string;email:string}>={};
-      profiles?.forEach((p:any)=>{ pmap[p.user_id]={name:p.full_name??"Student",email:p.email??""}; });
-      const enriched=data.map((r:any)=>({...r,student_name:pmap[r.student_id]?.name??"Student",student_email:pmap[r.student_id]?.email??"",word_results:typeof r.word_results==="string"?JSON.parse(r.word_results):r.word_results}));
-      setRecordings(enriched);
-      const init:Record<string,{score:string;feedback:string}>={};
-      enriched.forEach((r:Recording)=>{ init[r.id]={score:String(r.admin_score??r.ai_score),feedback:r.admin_feedback??""}; });
+      /* Admin sees all sessions */
+      const { data: rawLogs } = await (supabase as any)
+        .from("hifdh_daily_logs")
+        .select("*")
+        .order("log_date", { ascending: false })
+        .limit(300);
+
+      if (!rawLogs) { setLoading(false); return; }
+
+      const ids = [...new Set(rawLogs.map((l:any)=>l.student_id))];
+      const { data: profiles } = await supabase.from("profiles").select("user_id,full_name,email").in("user_id" as any, ids);
+      const pmap: Record<string,{name:string;email:string}> = {};
+      (profiles||[]).forEach((p:any)=>{ pmap[p.user_id]={name:p.full_name??"Student",email:p.email??""}; });
+
+      const enriched: DailyLog[] = rawLogs.map((l:any)=>({
+        ...l,
+        session_data: typeof l.session_data==="string" ? JSON.parse(l.session_data) : l.session_data,
+        student_name: pmap[l.student_id]?.name??"Student",
+        student_email: pmap[l.student_id]?.email??"",
+      }));
+
+      setLogs(enriched);
+
+      const init: Record<string,{score:string;feedback:string}> = {};
+      enriched.forEach(l=>{
+        const rev = l.session_data?.review;
+        init[l.id] = {
+          score: String(rev?.teacher_score ?? l.avg_score ?? 0),
+          feedback: rev?.teacher_feedback ?? "",
+        };
+      });
       setOverrides(init);
-    }catch(_){}
+    } catch(e) { console.error(e); }
     setLoading(false);
   };
 
-  const playRec = (rec:Recording) => {
-    if (playingId===rec.id){audioManager.stop();setPlayingId(null);return;}
-    audioManager.play(rec.audio_url,()=>setPlayingId(null),()=>setPlayingId(null));
-    setPlayingId(rec.id);
-  };
-
-  const saveOverride = async (rec:Recording) => {
-    const ov=overrides[rec.id]; if(!ov||!adminId) return;
-    setSaving(rec.id);
+  const saveReview = async (log: DailyLog) => {
+    const ov = overrides[log.id];
+    if (!ov) return;
+    const { data: me } = await supabase.auth.getUser();
+    if (!me?.user) return;
+    setSaving(log.id);
     try {
-      const newScore=parseInt(ov.score);
-      await supabase.from("hifdh_recordings" as any).update({ admin_score:newScore, admin_feedback:ov.feedback, admin_id:adminId, admin_reviewed_at:new Date().toISOString(), status:newScore!==rec.ai_score||ov.feedback?"overridden":"reviewed" }).eq("id",rec.id);
-      setRecordings(prev=>prev.map(r=>r.id===rec.id?{...r,admin_score:newScore,admin_feedback:ov.feedback,status:newScore!==rec.ai_score?"overridden":"reviewed"}:r));
-    }catch(_){}
+      const newScore = Math.min(100, Math.max(0, parseInt(ov.score)||0));
+      const updatedSession: SessionData = {
+        ...log.session_data,
+        review: {
+          teacher_score: newScore,
+          teacher_feedback: ov.feedback,
+          reviewed_by: me.user.id,
+          reviewed_at: new Date().toISOString(),
+        },
+      };
+      const { error } = await (supabase as any)
+        .from("hifdh_daily_logs")
+        .update({ session_data: updatedSession, avg_score: newScore, updated_at: new Date().toISOString() })
+        .eq("id", log.id);
+
+      if (!error) {
+        setLogs(prev=>prev.map(l=>l.id===log.id
+          ? {...l, avg_score:newScore, session_data:updatedSession}
+          : l
+        ));
+        await (supabase as any).from("notifications").insert({
+          user_id: log.student_id,
+          title: "📖 Hifdh Revision Reviewed",
+          message: `Your revision on ${fmtDate(log.log_date)} was reviewed. Score: ${newScore}%.${ov.feedback?` "${ov.feedback}"`:""}`,
+          type: "hifdh_review", read: false, created_at: new Date().toISOString(),
+        });
+        toast({ title: "✅ Review saved & student notified" });
+        setExpanded(null);
+      } else {
+        toast({ title: "Error saving", variant: "destructive" });
+      }
+    } catch { toast({ title: "Error", variant: "destructive" }); }
     setSaving(null);
   };
 
-  const filtered=recordings.filter(r=>{
-    const ms=filter==="all"||r.status===filter;
-    const mq=!search||r.student_name?.toLowerCase().includes(search.toLowerCase())||r.surah_name?.toLowerCase().includes(search.toLowerCase());
-    return ms&&mq;
+  const isReviewed = (log: DailyLog) => !!log.session_data?.review;
+  const pendingCount = logs.filter(l=>!isReviewed(l)).length;
+
+  const filtered = logs.filter(l=>{
+    if (filter==="pending"  && isReviewed(l))  return false;
+    if (filter==="reviewed" && !isReviewed(l)) return false;
+    if (search && !l.student_name?.toLowerCase().includes(search.toLowerCase()) &&
+                  !l.student_email?.toLowerCase().includes(search.toLowerCase())) return false;
+    return true;
   });
 
-  const counts={pending:recordings.filter(r=>r.status==="pending").length,reviewed:recordings.filter(r=>r.status==="reviewed").length,overridden:recordings.filter(r=>r.status==="overridden").length};
-  const sc=(s:number)=>s>=80?"#276749":s>=60?"#b7791f":"#c0392b";
-  const sb=(s:number)=>s>=80?"#f0fff4":s>=60?"#fffbeb":"#fff5f5";
-
-  const card=(ex?:React.CSSProperties):React.CSSProperties=>({background:"#fff",border:"1px solid #e2e8f0",borderRadius:16,boxShadow:"0 1px 6px rgba(0,0,0,.05)",...ex});
+  if (loading) return (
+    <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:400,gap:12}}>
+      <Loader2 size={28} color={GOLD} style={{animation:"spin .8s linear infinite"}}/>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+      <span style={{color:"#6B7280",fontWeight:600}}>Loading sessions…</span>
+    </div>
+  );
 
   return (
-    <div style={{fontFamily:"'Cairo',sans-serif",background:"#f8fafb",minHeight:"100vh"}}>
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&family=Cairo:wght@400;700;900&display=swap'); *{box-sizing:border-box} @keyframes pulse{0%,100%{opacity:.6}50%{opacity:1}} button,input,textarea{font-family:'Cairo',sans-serif;}`}</style>
+    <div style={{minHeight:"100vh",background:"#F3F4F6",fontFamily:"system-ui,sans-serif"}}>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}} @keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}`}</style>
 
       {/* Header */}
-      <div style={{background:"#fff",borderBottom:"1px solid #e2e8f0",padding:"20px 20px 16px",position:"sticky",top:0,zIndex:10}}>
-        <div style={{maxWidth:900,margin:"0 auto"}}>
-          <div style={{textAlign:"center",marginBottom:14}}>
-            <h1 style={{fontFamily:"'Amiri',serif",fontSize:26,fontWeight:700,color:"#1a3d24"}}>Hifdh Admin Review</h1>
-            <p style={{fontSize:13,color:"#b7791f",fontStyle:"italic"}}>مراجعة تسجيلات الحِفظ</p>
+      <div style={{background:`linear-gradient(135deg,${G},${GM})`,padding:"22px 20px 18px"}}>
+        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:6}}>
+          <Users size={22} color={GOLD}/>
+          <h1 style={{margin:0,fontSize:20,fontWeight:900,color:W}}>Hifdh Daily Review — Admin</h1>
+        </div>
+        <p style={{margin:0,fontSize:12,color:"rgba(255,255,255,.65)"}}>
+          All students · Review sessions, listen to recitations, and override scores
+        </p>
+        {pendingCount>0&&(
+          <div style={{marginTop:10,display:"inline-flex",alignItems:"center",gap:6,
+            padding:"4px 12px",borderRadius:20,background:"rgba(255,255,255,.12)"}}>
+            <Clock size={12} color={GOLD}/>
+            <span style={{fontSize:11,fontWeight:700,color:GOLD}}>{pendingCount} pending review{pendingCount!==1?"s":""}</span>
           </div>
-          {/* Stats */}
-          <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap" as const,justifyContent:"center"}}>
-            {[{l:"Pending",a:"معلق",v:counts.pending,c:"#b7791f",bg:"#fffbeb"},{l:"Reviewed",a:"راجع",v:counts.reviewed,c:"#276749",bg:"#f0fff4"},{l:"Overridden",a:"معدّل",v:counts.overridden,c:"#2b6cb0",bg:"#ebf8ff"}].map((s,i)=>(
-              <div key={i} style={{background:s.bg,border:`1px solid ${s.c}33`,borderRadius:10,padding:"8px 16px",display:"flex",gap:8,alignItems:"center"}}>
-                <span style={{fontSize:20,fontWeight:900,color:s.c}}>{s.v}</span>
-                <div>
-                  <div style={{fontSize:12,fontWeight:700,color:s.c}}>{s.l}</div>
-                  <div style={{fontSize:10,color:s.c}}>{s.a}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-          {/* Search + filter */}
-          <div style={{display:"flex",gap:10}}>
-            <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search student or surah…"
-              style={{flex:1,background:"#f8fafb",border:"1px solid #e2e8f0",borderRadius:10,padding:"8px 12px",fontSize:13,color:"#1a3d24"}}/>
-            <div style={{display:"flex",background:"#f8fafb",border:"1px solid #e2e8f0",borderRadius:10,overflow:"hidden"}}>
-              {(["all","pending","reviewed","overridden"] as FilterStatus[]).map(f=>(
-                <button key={f} onClick={()=>setFilter(f)}
-                  style={{padding:"8px 12px",border:"none",fontSize:11,fontWeight:filter===f?700:400,background:filter===f?"#1a3d24":"transparent",color:filter===f?"#fff":"#7a9e88"}}>
-                  {f.charAt(0).toUpperCase()+f.slice(1)}
-                </button>
-              ))}
-            </div>
-          </div>
+        )}
+      </div>
+
+      {/* Filters */}
+      <div style={{background:W,borderBottom:"1px solid #E5E7EB",padding:"10px 16px",
+        display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+        {(["pending","reviewed","all"] as FilterStatus[]).map(f=>(
+          <button key={f} onClick={()=>setFilter(f)} style={{
+            padding:"5px 14px",borderRadius:20,fontSize:11,fontWeight:700,cursor:"pointer",
+            border:`1.5px solid ${filter===f?G:"#E5E7EB"}`,
+            background:filter===f?G:W,color:filter===f?W:"#6B7280"}}>
+            {f==="pending"?`Pending (${pendingCount})`:f==="reviewed"?"Reviewed":"All"}
+          </button>
+        ))}
+        <div style={{position:"relative",flex:1,minWidth:160}}>
+          <Search size={12} style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",color:"#9CA3AF"}}/>
+          <input value={search} onChange={e=>setSearch(e.target.value)}
+            placeholder="Search student name or email…"
+            style={{paddingLeft:28,paddingRight:10,paddingTop:7,paddingBottom:7,width:"100%",
+              borderRadius:10,border:"1.5px solid #E5E7EB",fontSize:12,outline:"none",
+              background:"#FAFAFA",boxSizing:"border-box"}}/>
         </div>
       </div>
 
-      <div style={{maxWidth:900,margin:"0 auto",padding:"20px 16px",display:"flex",flexDirection:"column",gap:12}}>
-        {loading && <div style={{textAlign:"center",padding:"60px 0",fontSize:13,color:"#7a9e88",animation:"pulse 1s infinite"}}>Loading recordings…</div>}
-        {!loading&&filtered.length===0 && (
-          <div style={card({padding:"50px 20px",textAlign:"center"})}>
-            <div style={{fontSize:36,marginBottom:12}}>📭</div>
-            <div style={{fontFamily:"'Amiri',serif",fontSize:18,color:"#1a3d24"}}>No recordings found</div>
+      {/* List */}
+      <div style={{maxWidth:920,margin:"16px auto",padding:"0 16px 48px",display:"flex",flexDirection:"column",gap:10}}>
+        {filtered.length===0?(
+          <div style={{textAlign:"center",padding:"60px 24px",borderRadius:20,
+            border:"2px dashed #E5E7EB",background:"#FAFAFA",marginTop:8}}>
+            <BookOpen size={44} color="#D1D5DB" style={{marginBottom:12}}/>
+            <p style={{fontWeight:700,fontSize:15,color:"#374151",margin:"0 0 4px"}}>
+              {filter==="pending"?"No pending reviews 🎉":"No sessions found"}
+            </p>
           </div>
-        )}
-        {filtered.map(rec=>{
-          const isExp=expanded===rec.id;
-          const ov=overrides[rec.id]??{score:String(rec.ai_score),feedback:""};
-          const wasOv=rec.admin_score!==null&&rec.admin_score!==rec.ai_score;
+        ):filtered.map(log=>{
+          const isExp = expanded===log.id;
+          const reviewed = isReviewed(log);
+          const ov = overrides[log.id]||{score:String(log.avg_score??0),feedback:""};
+          const sd = log.session_data;
+          const pages = sd?.page_results||[];
+          const curPage = pageTab[log.id]??0;
+          const pr = pages[curPage];
+          const displayScore = log.avg_score??0;
+
           return (
-            <div key={rec.id} style={card({overflow:"hidden"})}>
-              <div onClick={()=>setExpanded(isExp?null:rec.id)}
-                style={{display:"flex",alignItems:"center",gap:12,padding:"14px 16px",cursor:"pointer",background:isExp?"#f8fafb":"#fff"}}>
-                <div style={{width:10,height:10,borderRadius:"50%",flexShrink:0,background:rec.status==="pending"?"#b7791f":rec.status==="overridden"?"#2b6cb0":"#276749"}}/>
-                <div style={{flex:1}}>
-                  <div style={{fontSize:14,fontWeight:900,color:"#1a3d24"}}>
-                    {rec.student_name}
-                    <span style={{fontSize:11,fontWeight:400,color:"#7a9e88",marginLeft:8}}>{rec.student_email}</span>
+            <div key={log.id} style={{background:W,borderRadius:16,border:"1px solid #E5E7EB",
+              overflow:"hidden",boxShadow:"0 1px 6px rgba(0,0,0,.04)",animation:"fadeIn .2s ease"}}>
+
+              {/* Row */}
+              <div onClick={()=>setExpanded(isExp?null:log.id)}
+                style={{padding:"14px 16px",display:"flex",alignItems:"center",gap:12,cursor:"pointer"}}>
+                <div style={{width:38,height:38,borderRadius:"50%",background:G,flexShrink:0,
+                  display:"flex",alignItems:"center",justifyContent:"center",
+                  fontWeight:900,fontSize:15,color:W}}>
+                  {(log.student_name||"S")[0].toUpperCase()}
+                </div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:700,fontSize:13,color:G,
+                    overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                    {log.student_name}
                   </div>
-                  <div style={{fontSize:12,color:"#7a9e88"}}>{rec.surah_name} · Ayah {rec.ayah_start} · {new Date(rec.created_at).toLocaleDateString()}</div>
-                </div>
-                <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                  <div style={{textAlign:"center",background:sb(rec.ai_score),border:`1px solid ${sc(rec.ai_score)}33`,borderRadius:8,padding:"4px 10px"}}>
-                    <div style={{fontSize:10,fontWeight:600,color:"#7a9e88"}}>AI</div>
-                    <div style={{fontSize:15,fontWeight:900,color:sc(rec.ai_score)}}>{rec.ai_score}%</div>
+                  <div style={{fontSize:11,color:"#9CA3AF",marginTop:1}}>
+                    {fmtDate(log.log_date)} · {log.pages_revised??0} page{(log.pages_revised||0)!==1?"s":""}
+                    {" · "}{fmtDur(log.duration_secs)}
+                    {log.student_email&&<span style={{marginLeft:6,color:"#D1D5DB"}}>·</span>}
+                    {log.student_email&&<span style={{marginLeft:6,color:"#9CA3AF",fontSize:10}}>{log.student_email}</span>}
                   </div>
-                  {rec.admin_score!==null&&(
-                    <div style={{textAlign:"center",background:sb(rec.admin_score),border:`1px solid ${sc(rec.admin_score)}33`,borderRadius:8,padding:"4px 10px"}}>
-                      <div style={{fontSize:10,fontWeight:600,color:"#7a9e88"}}>Admin</div>
-                      <div style={{fontSize:15,fontWeight:900,color:sc(rec.admin_score)}}>{rec.admin_score}%</div>
-                    </div>
-                  )}
                 </div>
-                <div style={{fontSize:10,padding:"4px 10px",borderRadius:20,fontWeight:700,whiteSpace:"nowrap" as const,background:rec.status==="pending"?"#fffbeb":rec.status==="overridden"?"#ebf8ff":"#f0fff4",color:rec.status==="pending"?"#b7791f":rec.status==="overridden"?"#2b6cb0":"#276749",border:`1px solid ${rec.status==="pending"?"#f6d860":rec.status==="overridden"?"#90cdf4":"#9ae6b4"}`}}>
-                  {rec.status==="pending"?"Pending":rec.status==="overridden"?"Overridden":"Reviewed"}
-                </div>
-                <div style={{fontSize:14,color:"#7a9e88"}}>{isExp?"▲":"▼"}</div>
+                <ScoreRing pct={displayScore}/>
+                <span style={{padding:"3px 10px",borderRadius:20,fontSize:10,fontWeight:700,flexShrink:0,
+                  background:reviewed?"#F0FDF4":"#FEF9C3",color:reviewed?PASS:"#854D0E"}}>
+                  {reviewed?"✓ Reviewed":"⏳ Pending"}
+                </span>
+                {isExp?<ChevronUp size={15} color="#9CA3AF"/>:<ChevronDown size={15} color="#9CA3AF"/>}
               </div>
 
-              {isExp && (
-                <div style={{padding:"0 16px 16px",borderTop:"1px solid #e2e8f0"}}>
-                  {/* Audio */}
-                  <div style={{background:"#f8fafb",border:"1px solid #e2e8f0",borderRadius:12,padding:"14px 16px",margin:"14px 0"}}>
-                    <div style={{textAlign:"center",marginBottom:10}}>
-                      <div style={{fontSize:15,fontWeight:900,color:"#1a3d24"}}>🎙️ Student Recording</div>
-                      <div style={{fontSize:11,color:"#b7791f"}}>تسجيل الطالب</div>
-                    </div>
-                    {rec.audio_url ? (
-                      <div style={{display:"flex",alignItems:"center",gap:12}}>
-                        <button onClick={()=>playRec(rec)}
-                          style={{width:46,height:46,borderRadius:"50%",background:playingId===rec.id?"#c0392b":"#1a3d24",border:"none",color:"#fff",fontSize:18,display:"flex",alignItems:"center",justifyContent:"center"}}>
-                          {playingId===rec.id?"⏹":"▶"}
-                        </button>
-                        <div style={{flex:1,fontSize:13,fontWeight:700,color:playingId===rec.id?"#b7791f":"#7a9e88"}}>
-                          {playingId===rec.id?"● Playing…":"Click to listen"}
-                        </div>
-                        <a href={rec.audio_url} download target="_blank" rel="noreferrer"
-                          style={{fontSize:11,color:"#2b6cb0",textDecoration:"none",padding:"5px 10px",border:"1px solid #90cdf4",borderRadius:8,fontWeight:700}}>
-                          ⬇ Download
-                        </a>
+              {/* Detail */}
+              {isExp&&(
+                <div style={{borderTop:"1px solid #F3F4F6",background:"#FAFAFA",
+                  padding:"16px",display:"flex",flexDirection:"column",gap:14}}>
+
+                  {/* Summary */}
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
+                    {[
+                      {icon:<Star size={13} color={GOLD}/>,label:"Recitation",value:`${sd?.recitation_score??displayScore}%`},
+                      {icon:<FileText size={13} color={G}/>,label:"Test",value:`${sd?.test_score??0}%`},
+                      {icon:<Mic size={13} color={FAIL}/>,label:"Duration",value:fmtDur(log.duration_secs)},
+                    ].map((item,i)=>(
+                      <div key={i} style={{background:W,borderRadius:10,padding:"8px 10px",
+                        border:"1px solid #E5E7EB",textAlign:"center"}}>
+                        <div style={{display:"flex",justifyContent:"center",marginBottom:4}}>{item.icon}</div>
+                        <div style={{fontWeight:900,fontSize:14,color:G}}>{item.value}</div>
+                        <div style={{fontSize:9,color:"#9CA3AF",fontWeight:700,textTransform:"uppercase",letterSpacing:.4}}>{item.label}</div>
                       </div>
-                    ):(
-                      <div style={{textAlign:"center",fontSize:13,color:"#7a9e88"}}>No audio recording available</div>
-                    )}
+                    ))}
                   </div>
 
-                  {/* Words */}
-                  {rec.word_results&&rec.word_results.length>0&&(
-                    <div style={{margin:"14px 0"}}>
-                      <div style={{textAlign:"center",marginBottom:8}}>
-                        <div style={{fontSize:14,fontWeight:900,color:"#1a3d24"}}>Word Breakdown</div>
-                        <div style={{fontSize:11,color:"#b7791f"}}>تحليل الكلمات</div>
+                  {/* Audio */}
+                  {sd?.audio_url&&(
+                    <div style={{background:W,borderRadius:12,border:"1px solid #E5E7EB",padding:"10px 14px"}}>
+                      <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
+                        <Mic size={12} color={G}/>
+                        <span style={{fontSize:11,fontWeight:800,color:G,textTransform:"uppercase",letterSpacing:.4}}>
+                          Recitation Audio
+                        </span>
                       </div>
-                      <div style={{display:"flex",flexWrap:"wrap" as const,gap:6,direction:"rtl",marginBottom:8}}>
-                        {rec.word_results.map((w,wi)=>(
-                          <div key={wi} style={{padding:"4px 10px",borderRadius:20,fontSize:14,fontFamily:"'Amiri',serif",fontWeight:700,background:w.result==="correct"?"#f0fff4":w.result==="wrong"?"#fff5f5":"#f8fafb",color:w.result==="correct"?"#276749":w.result==="wrong"?"#c0392b":"#1a3d24",border:`1px solid ${w.result==="correct"?"#9ae6b4":w.result==="wrong"?"#fca5a5":"#e2e8f0"}`}}>
-                            {w.word}
-                          </div>
-                        ))}
-                      </div>
-                      <div style={{display:"flex",gap:10}}>
-                        {[["#276749","#f0fff4","Correct",rec.word_results.filter(w=>w.result==="correct").length],["#c0392b","#fff5f5","Wrong",rec.word_results.filter(w=>w.result==="wrong").length]].map(([col,bg,label,count],i)=>(
-                          <div key={i} style={{fontSize:12,fontWeight:700,padding:"4px 12px",borderRadius:10,background:bg as string,color:col as string}}>
-                            {label}: {count}
-                          </div>
-                        ))}
-                      </div>
+                      <audio controls src={sd.audio_url} style={{width:"100%",height:34,borderRadius:8}}/>
                     </div>
                   )}
 
-                  {/* Transcript */}
-                  {rec.transcript&&(
-                    <div style={{margin:"14px 0"}}>
-                      <div style={{textAlign:"center",marginBottom:6}}>
-                        <div style={{fontSize:14,fontWeight:900,color:"#1a3d24"}}>Transcript</div>
-                        <div style={{fontSize:11,color:"#b7791f"}}>النص المُسجَّل</div>
+                  {/* Page tabs */}
+                  {pages.length>0&&(
+                    <>
+                      {pages.length>1&&(
+                        <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                          {pages.map((p,i)=>(
+                            <button key={i} onClick={()=>setPageTab(t=>({...t,[log.id]:i}))}
+                              style={{padding:"4px 12px",borderRadius:20,fontSize:11,fontWeight:700,cursor:"pointer",
+                                border:`1.5px solid ${curPage===i?G:"#E5E7EB"}`,
+                                background:curPage===i?G:W,color:curPage===i?W:"#6B7280"}}>
+                              Page {p.pageNum}
+                              <span style={{marginLeft:4,fontSize:10,color:curPage===i?GOLD:scoreColor(p.score)}}>{p.score}%</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
+                      {pr&&(
+                        <div style={{background:W,borderRadius:12,border:"1px solid #E5E7EB",overflow:"hidden"}}>
+                          <div style={{padding:"8px 14px",background:`${G}08`,borderBottom:"1px solid #E5E7EB",
+                            display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                            <span style={{fontWeight:800,fontSize:12,color:G}}>
+                              📖 Page {pr.pageNum}{pr.ayahs?.[0]?.surahName&&` · ${pr.ayahs[0].surahName}`}
+                            </span>
+                            <span style={{fontWeight:900,fontSize:13,color:scoreColor(pr.score)}}>
+                              {pr.score}% — {scoreLabel(pr.score)}
+                            </span>
+                          </div>
+
+                          {/* Verse coloring */}
+                          {pr.ayahs&&pr.ayahs.length>0&&(
+                            <div style={{padding:"12px 14px"}}>
+                              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                                <span style={{fontSize:10,fontWeight:800,color:"#6B7280",textTransform:"uppercase",letterSpacing:.4}}>
+                                  Verse Breakdown
+                                </span>
+                                {pr.ayahCorrectness&&(
+                                  <span style={{fontSize:10,fontWeight:700}}>
+                                    <span style={{color:PASS}}>✓{pr.ayahCorrectness.filter(Boolean).length}</span>
+                                    {" · "}
+                                    <span style={{color:FAIL}}>✗{pr.ayahCorrectness.filter(v=>!v).length}</span>
+                                  </span>
+                                )}
+                              </div>
+                              <div style={{background:"#fffdf6",borderRadius:8,border:`1.5px solid ${GOLD}55`,
+                                padding:"12px 14px",direction:"rtl",
+                                fontFamily:"'Amiri Quran','Amiri',serif",
+                                fontSize:19,lineHeight:3.0,textAlign:"justify",color:INK}}>
+                                {pr.ayahs.map((a,i)=>{
+                                  const correct=pr.ayahCorrectness?pr.ayahCorrectness[i]:true;
+                                  return (
+                                    <span key={i} style={{
+                                      background:correct?`${PASS}18`:`${FAIL}14`,
+                                      borderRadius:4,outline:`1px solid ${correct?PASS+"33":FAIL+"22"}`,
+                                      padding:"0 3px",margin:"0 2px",display:"inline"}}>
+                                      {a.text}
+                                      <span style={{fontSize:12,color:GOLD,margin:"0 3px",fontFamily:"'Amiri',serif"}}>
+                                        ۝{a.numberInSurah}
+                                      </span>
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Error words */}
+                          {pr.errorWords&&pr.errorWords.length>0&&(
+                            <div style={{padding:"0 14px 12px"}}>
+                              <p style={{fontSize:10,fontWeight:800,color:FAIL,
+                                textTransform:"uppercase",letterSpacing:.4,margin:"0 0 6px"}}>
+                                ⚠️ Missed words ({Math.min(pr.errorWords.length,15)})
+                              </p>
+                              <div style={{display:"flex",flexWrap:"wrap",gap:4,direction:"rtl"}}>
+                                {pr.errorWords.slice(0,15).map((w,i)=>(
+                                  <span key={i} style={{padding:"4px 10px",borderRadius:8,
+                                    background:"#FEF2F2",border:"1px solid #FECACA",
+                                    color:FAIL,fontSize:14,fontFamily:"'Amiri',serif"}}>{w}</span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Transcript */}
+                          {pr.transcript&&(
+                            <div style={{padding:"0 14px 12px"}}>
+                              <p style={{fontSize:10,fontWeight:800,color:"#6B7280",
+                                textTransform:"uppercase",letterSpacing:.4,margin:"0 0 4px"}}>
+                                Transcript (AI heard)
+                              </p>
+                              <p style={{margin:0,fontSize:13,color:"#374151",lineHeight:1.7,
+                                direction:"rtl",fontFamily:"'Amiri',serif",
+                                background:"#F9FAFB",borderRadius:8,padding:"8px 10px"}}>
+                                {pr.transcript}
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {/* Existing review */}
+                  {reviewed&&log.session_data?.review&&(
+                    <div style={{padding:"10px 14px",borderRadius:10,background:"#F0FDF4",border:"1px solid #86EFAC"}}>
+                      <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+                        <CheckCircle size={13} color={PASS}/>
+                        <span style={{fontSize:11,fontWeight:700,color:PASS}}>
+                          Reviewed {fmtDate(log.session_data.review.reviewed_at)} · Score: {log.session_data.review.teacher_score}%
+                        </span>
                       </div>
-                      <div style={{background:"#f8fafb",border:"1px solid #e2e8f0",borderRadius:10,padding:"12px 14px",fontSize:18,fontWeight:700,color:"#1a3d24",direction:"rtl",fontFamily:"'Amiri',serif",lineHeight:2}}>
-                        {rec.transcript}
-                      </div>
+                      {log.session_data.review.teacher_feedback&&(
+                        <p style={{margin:0,fontSize:12,color:"#166534",fontStyle:"italic"}}>
+                          "{log.session_data.review.teacher_feedback}"
+                        </p>
+                      )}
                     </div>
                   )}
 
-                  {/* Override */}
-                  <div style={{background:wasOv?"#ebf8ff":"#f8fafb",border:`1px solid ${wasOv?"#90cdf4":"#e2e8f0"}`,borderRadius:12,padding:"16px"}}>
-                    <div style={{textAlign:"center",marginBottom:12}}>
-                      <div style={{fontSize:15,fontWeight:900,color:"#1a3d24"}}>✏️ Override Score</div>
-                      <div style={{fontSize:11,color:"#b7791f"}}>تعديل الدرجة</div>
-                    </div>
-                    <div style={{display:"flex",gap:10,marginBottom:14}}>
-                      <div style={{flex:1,background:sb(rec.ai_score),borderRadius:10,padding:"10px",textAlign:"center"}}>
-                        <div style={{fontSize:11,fontWeight:600,color:"#7a9e88",marginBottom:4}}>AI Score</div>
-                        <div style={{fontSize:26,fontWeight:900,color:sc(rec.ai_score)}}>{rec.ai_score}%</div>
+                  {/* Override form */}
+                  <div style={{background:W,borderRadius:12,border:"1px solid #E5E7EB",padding:"12px 14px"}}>
+                    <p style={{margin:"0 0 10px",fontSize:12,fontWeight:800,color:G}}>
+                      {reviewed?"✏️ Update Review":"✅ Submit Review"}
+                    </p>
+                    <div style={{display:"grid",gridTemplateColumns:"110px 1fr",gap:8,marginBottom:10}}>
+                      <div>
+                        <label style={{fontSize:10,fontWeight:700,color:"#374151",display:"block",marginBottom:3}}>
+                          Override Score
+                        </label>
+                        <input type="number" min={0} max={100}
+                          value={ov.score}
+                          onChange={e=>setOverrides(o=>({...o,[log.id]:{...ov,score:e.target.value}}))}
+                          style={{width:"100%",padding:"7px 10px",borderRadius:8,
+                            border:`1.5px solid ${G}44`,fontSize:13,outline:"none",
+                            background:"#FAFAFA",boxSizing:"border-box" as const}}/>
                       </div>
-                      <div style={{display:"flex",alignItems:"center",fontSize:20,color:"#7a9e88"}}>→</div>
-                      <div style={{flex:1,background:sb(parseInt(ov.score)||0),borderRadius:10,padding:"10px",textAlign:"center"}}>
-                        <div style={{fontSize:11,fontWeight:600,color:"#7a9e88",marginBottom:4}}>Admin Score</div>
-                        <div style={{fontSize:26,fontWeight:900,color:sc(parseInt(ov.score)||0)}}>{ov.score||"—"}%</div>
+                      <div>
+                        <label style={{fontSize:10,fontWeight:700,color:"#374151",display:"block",marginBottom:3}}>
+                          Feedback for Student
+                        </label>
+                        <input value={ov.feedback}
+                          onChange={e=>setOverrides(o=>({...o,[log.id]:{...ov,feedback:e.target.value}}))}
+                          placeholder="e.g. Good effort, focus on page 300 words…"
+                          style={{width:"100%",padding:"7px 10px",borderRadius:8,
+                            border:"1.5px solid #E5E7EB",fontSize:13,outline:"none",
+                            background:"#FAFAFA",boxSizing:"border-box" as const}}/>
                       </div>
                     </div>
-                    <div style={{marginBottom:10}}>
-                      <div style={{fontSize:12,fontWeight:700,color:"#1a3d24",marginBottom:6}}>Score (0–100)</div>
-                      <div style={{display:"flex",gap:10,alignItems:"center"}}>
-                        <input type="range" min={0} max={100} value={ov.score} onChange={e=>setOverrides(p=>({...p,[rec.id]:{...ov,score:e.target.value}}))} style={{flex:1,accentColor:"#1a3d24"}}/>
-                        <input type="number" min={0} max={100} value={ov.score} onChange={e=>setOverrides(p=>({...p,[rec.id]:{...ov,score:e.target.value}}))} style={{width:60,background:"#fff",border:"1px solid #e2e8f0",borderRadius:8,padding:"6px",fontSize:15,fontWeight:900,textAlign:"center",color:"#1a3d24"}}/>
-                      </div>
-                    </div>
-                    <div style={{marginBottom:12}}>
-                      <div style={{fontSize:12,fontWeight:700,color:"#1a3d24",marginBottom:6}}>Feedback for student</div>
-                      <textarea value={ov.feedback} onChange={e=>setOverrides(p=>({...p,[rec.id]:{...ov,feedback:e.target.value}}))} rows={3} placeholder="Write feedback…"
-                        style={{width:"100%",background:"#fff",border:"1px solid #e2e8f0",borderRadius:10,padding:"10px 12px",fontSize:13,color:"#1a3d24",resize:"vertical" as const}}/>
-                    </div>
-                    <div style={{display:"flex",gap:10}}>
-                      <button onClick={()=>saveOverride(rec)} disabled={saving===rec.id}
-                        style={{flex:1,padding:"12px 0",borderRadius:12,background:saving===rec.id?"#f0f4f0":"#1a3d24",border:"none",color:saving===rec.id?"#7a9e88":"#fff",fontSize:14,fontWeight:900,cursor:saving===rec.id?"not-allowed":"pointer"}}>
-                        {saving===rec.id?"Saving…":"Save Review"}
+                    <div style={{display:"flex",gap:8}}>
+                      <button onClick={()=>saveReview(log)} disabled={saving===log.id}
+                        style={{flex:1,padding:"9px",borderRadius:10,border:"none",cursor:"pointer",
+                          background:saving===log.id?"#E5E7EB":`linear-gradient(135deg,${G},${GM})`,
+                          color:saving===log.id?"#9CA3AF":W,
+                          fontSize:12,fontWeight:800,fontFamily:"inherit",
+                          display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+                        {saving===log.id
+                          ?<><Loader2 size={13} style={{animation:"spin .8s linear infinite"}}/>Saving…</>
+                          :<><CheckCircle size={13}/>{reviewed?"Update Review":"Save & Notify Student"}</>}
                       </button>
-                      <button onClick={()=>{setOverrides(p=>({...p,[rec.id]:{...ov,score:String(rec.ai_score)}}));}}
-                        style={{padding:"12px 16px",borderRadius:12,background:"#f0fff4",border:"1px solid #9ae6b4",color:"#276749",fontSize:13,fontWeight:700}}>
-                        ✓ Approve AI
+                      <button onClick={()=>setExpanded(null)}
+                        style={{padding:"9px 14px",borderRadius:10,border:"1.5px solid #E5E7EB",
+                          background:W,color:"#6B7280",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+                        Close
                       </button>
                     </div>
                   </div>
