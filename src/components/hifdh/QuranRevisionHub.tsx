@@ -432,14 +432,11 @@ export default function QuranRevisionHub({ userId }: Props) {
             && existingPlan.mode === mode
             && JSON.stringify([...existingPlan.selected].sort()) === JSON.stringify([...selectedItems].sort());
 
-          console.log("[Hifdh] sameContent:", sameContent, "existingPlan:", existingPlan);
-
           let planToUse: RevisionPlan;
           if (sameContent && existingPlan) {
             planToUse = existingPlan;
           } else {
             const pages = buildPages(mode, selectedItems);
-            console.log("[Hifdh] buildPages result:", pages.slice(0, 5), "...(", pages.length, "pages)");
             planToUse = {
               mode, selected: selectedItems,
               dailyPages: Number(data.daily_pages) || 1,
@@ -448,15 +445,22 @@ export default function QuranRevisionHub({ userId }: Props) {
             localStorage.setItem(`revision_plan_${userId}`, JSON.stringify(planToUse));
           }
 
-          startSession(planToUse);
+          // Populate plan but stay on setup screen — user clicks Resume/Start to begin
+          setPlan(planToUse);
+          didStartRef.current = true;
+          setAssignmentLoaded(true);
         } else {
           // No assignment — fall back to localStorage or show setup
           const saved = localStorage.getItem(`revision_plan_${userId}`);
-          console.log("[Hifdh] No assignment. localStorage plan:", saved ? "exists" : "none");
           if (!saved) { setAssignmentLoaded(true); return; }
           try {
             const p: RevisionPlan = JSON.parse(saved);
-            startSession(p);
+            setPlan(p);
+            setSelectMode(p.mode);
+            setSelected(p.selected);
+            setDailyPages(p.dailyPages);
+            didStartRef.current = true;
+            setAssignmentLoaded(true);
           } catch {
             setAssignmentLoaded(true);
           }
