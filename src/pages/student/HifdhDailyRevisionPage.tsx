@@ -78,6 +78,48 @@ interface ProgramDay {
   log?: DailyLog;
 }
 
+/* ── Quran page maps (Madani Mushaf, 604 pages) ─────────────────── */
+const JUZ_START_PAGES: Record<number, number> = {
+  1:1,   2:22,  3:42,  4:62,  5:82,  6:102, 7:122, 8:142, 9:162, 10:182,
+  11:202,12:222,13:242,14:262,15:282,16:302,17:322,18:342,19:362,20:382,
+  21:402,22:422,23:442,24:462,25:482,26:502,27:522,28:542,29:562,30:582,
+};
+
+// Hizb = half a Juz (~10 pages each). 60 hizbs total.
+function getHizbStartPage(h: number): number {
+  const juz = Math.ceil(h / 2);
+  const isSecond = h % 2 === 0;
+  return (JUZ_START_PAGES[juz] ?? 1) + (isSecond ? 10 : 0);
+}
+
+const SURAH_START_PAGES: Record<number, number> = {
+  1:1,   2:2,   3:50,  4:77,  5:106, 6:128, 7:151, 8:177, 9:187, 10:208,
+  11:221,12:235,13:249,14:255,15:262,16:267,17:282,18:293,19:305,20:312,
+  21:322,22:332,23:342,24:350,25:359,26:367,27:377,28:385,29:396,30:404,
+  31:411,32:415,33:418,34:428,35:434,36:440,37:446,38:453,39:458,40:467,
+  41:477,42:483,43:489,44:496,45:499,46:502,47:507,48:511,49:515,50:518,
+  51:520,52:523,53:526,54:528,55:531,56:534,57:537,58:542,59:545,60:549,
+  61:551,62:553,63:554,64:556,65:558,66:560,67:562,68:564,69:566,70:568,
+  71:570,72:572,73:574,74:575,75:577,76:578,77:580,78:582,79:583,80:585,
+  81:586,82:587,83:587,84:589,85:590,86:591,87:591,88:592,89:593,90:594,
+  91:595,92:595,93:596,94:596,95:597,96:597,97:598,98:598,99:599,100:599,
+  101:600,102:601,103:601,104:601,105:602,106:602,107:602,108:603,109:603,110:603,
+  111:603,112:604,113:604,114:604,
+};
+
+/**
+ * Returns the absolute Quran page number where the assignment content begins.
+ * For Juz 28 → 542, so day 1 = page 542, day 2 = page 543, etc.
+ */
+function getAssignmentStartPage(a: Assignment): number {
+  const first = a.selected_items?.[0];
+  if (!first) return 1;
+  if (a.mode === "juz")   return JUZ_START_PAGES[first]  ?? 1;
+  if (a.mode === "hizb")  return getHizbStartPage(first);
+  if (a.mode === "surah") return SURAH_START_PAGES[first] ?? 1;
+  return 1;
+}
+
 /* ── Helpers ────────────────────────────────────────────────────── */
 function getStartDate(a: Assignment): string|undefined {
   return a.program_start || a.starts_on || undefined;
@@ -105,7 +147,7 @@ function workingDaysElapsed(startDate: string, daysOff: number[]): number {
   return count;
 }
 
-/** Build full programme day list */
+/** Build full programme day list with correct absolute Quran page numbers */
 function buildProgramDays(
   a: Assignment,
   logs: DailyLog[],
@@ -113,6 +155,7 @@ function buildProgramDays(
 ): ProgramDay[] {
   const startDate = getStartDate(a);
   if (!startDate) return [];
+  const base       = getAssignmentStartPage(a);  // e.g. Juz 28 → page 542
   const daysOff    = getDaysOff(a);
   const totalDays  = a.program_days ?? 30;
   const logMap     = new Map(logs.map(l => [l.log_date, l]));
@@ -125,11 +168,11 @@ function buildProgramDays(
     const dayOfWeek = new Date(date+"T00:00:00").getDay();
     const isWork    = !daysOff.includes(dayOfWeek);
     if (isWork) {
-      const startPage = Math.floor(workDayIdx * a.daily_pages) + 1;
-      const pages     = Array.from({length: a.daily_pages}, (_,i) => startPage+i)
-                              .filter(p=>p>=1&&p<=604);
-      const log       = logMap.get(date);
-      let status: ProgramDay["status"] =
+      const offset = Math.floor(workDayIdx * a.daily_pages);
+      const pages  = Array.from({length: a.daily_pages}, (_, i) => base + offset + i)
+                          .filter(p => p >= 1 && p <= 604);
+      const log    = logMap.get(date);
+      const status: ProgramDay["status"] =
         date < today  ? (log?.completed ? "done" : "missed")
         : date===today ? "today"
         : "future";
@@ -137,18 +180,19 @@ function buildProgramDays(
       workDayIdx++;
     }
     calDay++;
-    if (calDay > totalDays*3) break; // safety
+    if (calDay > totalDays*3) break;
   }
   return days;
 }
 
-/** Today's page numbers */
+/** Today's absolute Quran page numbers, offset from the Juz/Hizb/Surah start */
 function getTodayPages(a: Assignment): number[] {
+  const base      = getAssignmentStartPage(a);   // e.g. Juz 28 → 542
   const startDate = getStartDate(a);
-  if (!startDate) return [1];
-  const elapsed   = workingDaysElapsed(startDate, getDaysOff(a));
-  const startPage = Math.floor(elapsed * a.daily_pages) + 1;
-  return Array.from({length:a.daily_pages},(_,i)=>startPage+i).filter(p=>p>=1&&p<=604);
+  const elapsed   = startDate ? workingDaysElapsed(startDate, getDaysOff(a)) : 0;
+  const offset    = Math.floor(elapsed * a.daily_pages); // pages already covered
+  return Array.from({length: a.daily_pages}, (_, i) => base + offset + i)
+              .filter(p => p >= 1 && p <= 604);
 }
 
 /* ── Quran fetcher ──────────────────────────────────────────────── */
