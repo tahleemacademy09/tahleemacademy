@@ -45,6 +45,17 @@ const scoreLabel=(s:number)=>s>=70?"Excellent":s>=50?"Good":"Needs Work";
 const fmtDate=(d:string)=>new Date(d).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"});
 const fmtDur=(s?:number|null)=>!s?"—":`${Math.floor(s/60)}m ${s%60}s`;
 
+/** Strip diacritics + normalise alef variants for Arabic word comparison */
+function normalizeAr(t: string): string {
+  return t
+    .replace(/[\u064B-\u065F\u0610-\u061A\u0670]/g,"")
+    .replace(/[\u0622\u0623\u0625\u0627]/g,"\u0627")
+    .replace(/\u0629/g,"\u0647").replace(/\u0649/g,"\u064A")
+    .replace(/\u0640/g,"")
+    .replace(/[^\u0621-\u063A\u0641-\u064A\s]/g,"")
+    .replace(/\s+/g," ").trim();
+}
+
 function ScoreRing({pct,size=52}:{pct:number;size?:number}) {
   const r=size*0.38; const c=2*Math.PI*r;
   const dash=(pct/100)*c;
@@ -333,57 +344,59 @@ export default function HifdhAdminReview() {
                             </span>
                           </div>
 
-                          {/* Verse coloring */}
+                          {/* Word-by-word coloring — same approach as student مراجعة */}
                           {pr.ayahs&&pr.ayahs.length>0&&(
                             <div style={{padding:"12px 14px"}}>
                               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
                                 <span style={{fontSize:10,fontWeight:800,color:"#6B7280",textTransform:"uppercase",letterSpacing:.4}}>
-                                  Verse Breakdown
+                                  Word-by-Word Analysis
                                 </span>
-                                {pr.ayahCorrectness&&(
+                                {pr.errorWords&&(
                                   <span style={{fontSize:10,fontWeight:700}}>
-                                    <span style={{color:PASS}}>✓{pr.ayahCorrectness.filter(Boolean).length}</span>
+                                    <span style={{color:PASS}}>
+                                      ✓{pr.ayahs.reduce((acc,a)=>acc+a.text.split(/\s+/).filter(Boolean).length,0)-pr.errorWords.length}
+                                    </span>
                                     {" · "}
-                                    <span style={{color:FAIL}}>✗{pr.ayahCorrectness.filter(v=>!v).length}</span>
+                                    <span style={{color:FAIL}}>✗{pr.errorWords.length}</span>
                                   </span>
                                 )}
                               </div>
-                              <div style={{background:"#fffdf6",borderRadius:8,border:`1.5px solid ${GOLD}55`,
-                                padding:"12px 14px",direction:"rtl",
-                                fontFamily:"'Amiri Quran','Amiri',serif",
-                                fontSize:19,lineHeight:3.0,textAlign:"justify",color:INK}}>
-                                {pr.ayahs.map((a,i)=>{
-                                  const correct=pr.ayahCorrectness?pr.ayahCorrectness[i]:true;
-                                  return (
-                                    <span key={i} style={{
-                                      background:correct?`${PASS}18`:`${FAIL}14`,
-                                      borderRadius:4,outline:`1px solid ${correct?PASS+"33":FAIL+"22"}`,
-                                      padding:"0 3px",margin:"0 2px",display:"inline"}}>
-                                      {a.text}
-                                      <span style={{fontSize:12,color:GOLD,margin:"0 3px",fontFamily:"'Amiri',serif"}}>
-                                        ۝{a.numberInSurah}
+                              {(()=>{
+                                const errSet=new Set((pr.errorWords||[]).map(w=>normalizeAr(w)));
+                                return (
+                                  <div style={{
+                                    background:"#fffdf6",borderRadius:8,
+                                    border:`1.5px solid ${GOLD}55`,
+                                    padding:"12px 14px",
+                                    direction:"rtl",
+                                    fontFamily:"'Amiri Quran','Amiri',serif",
+                                    fontSize:20,lineHeight:3.8,
+                                    textAlign:"justify",
+                                    wordBreak:"keep-all",overflowWrap:"break-word",
+                                  }}>
+                                    {pr.ayahs.map((a,ai)=>(
+                                      <span key={ai}>
+                                        {a.text.split(/\s+/).filter(Boolean).map((wd,wi)=>{
+                                          const ok=!errSet.has(normalizeAr(wd));
+                                          return (
+                                            <span key={wi} style={{
+                                              background:ok?`${PASS}28`:`${FAIL}20`,
+                                              color:ok?"#14532d":"#991b1b",
+                                              borderRadius:5,
+                                              boxShadow:`inset 0 0 0 1.5px ${ok?PASS+"55":FAIL+"55"}`,
+                                              padding:"2px 4px",margin:"0 2px",
+                                              fontWeight:ok?400:600,
+                                            }}>{wd}</span>
+                                          );
+                                        })}
+                                        <span style={{fontSize:13,color:GOLD,margin:"0 6px",fontFamily:"'Amiri',serif"}}>
+                                          ۝{a.numberInSurah}
+                                        </span>
                                       </span>
-                                    </span>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Error words */}
-                          {pr.errorWords&&pr.errorWords.length>0&&(
-                            <div style={{padding:"0 14px 12px"}}>
-                              <p style={{fontSize:10,fontWeight:800,color:FAIL,
-                                textTransform:"uppercase",letterSpacing:.4,margin:"0 0 6px"}}>
-                                ⚠️ Missed words ({Math.min(pr.errorWords.length,15)})
-                              </p>
-                              <div style={{display:"flex",flexWrap:"wrap",gap:4,direction:"rtl"}}>
-                                {pr.errorWords.slice(0,15).map((w,i)=>(
-                                  <span key={i} style={{padding:"4px 10px",borderRadius:8,
-                                    background:"#FEF2F2",border:"1px solid #FECACA",
-                                    color:FAIL,fontSize:14,fontFamily:"'Amiri',serif"}}>{w}</span>
-                                ))}
-                              </div>
+                                    ))}
+                                  </div>
+                                );
+                              })()}
                             </div>
                           )}
 
