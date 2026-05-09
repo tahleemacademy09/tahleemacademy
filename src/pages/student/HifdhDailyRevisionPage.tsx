@@ -841,183 +841,192 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
       {/* ══ PAGE RESULT ══ */}
       {phase==="page_result"&&score!==null&&(
         <>
+          {/* Header bar */}
           <div style={{background:`linear-gradient(160deg,${G1},${G2})`,padding:"14px 16px",
             display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
             <BackBtn onClick={()=>setPhase("reading")}/>
-            <p style={{margin:0,fontWeight:800,fontSize:14,color:W,flex:1}}>
-              Page {todayPages[pageIdx]} — Result
-            </p>
-          </div>
-          <div style={{flex:1,overflowY:"auto",padding:"20px 16px 28px",
-            display:"flex",flexDirection:"column",gap:14,animation:"fadeIn .3s ease"}}>
-
-            <ScoreRing pct={score}/>
-            <div style={{textAlign:"center",marginBottom:4}}>
-              <p style={{margin:0,fontWeight:900,fontSize:18,color:score>=PASS_THRESHOLD?PASS:FAIL}}>
-                {score>=PASS_THRESHOLD
-                  ?(pageIdx+1<todayPages.length?"ممتاز! Next page →":"ممتاز! All pages done!")
-                  :"يحتاج تحسين — Try Again"}
+            <div style={{flex:1}}>
+              <p style={{margin:0,fontWeight:800,fontSize:14,color:W}}>
+                Page {todayPages[pageIdx]} — Result
               </p>
-              <p style={{margin:"5px 0 0",fontSize:12,color:"#6B7280"}}>
-                {score>=PASS_THRESHOLD
-                  ?`You scored ${score}% — excellent work!`
-                  :`Scored ${score}% — below the ${PASS_THRESHOLD}% pass mark`}
+              <p style={{margin:0,fontSize:10,color:`${GOLD}cc`}}>
+                {score>=PASS_THRESHOLD?"Passed ✓":"Below pass mark — review & record again"}
               </p>
             </div>
+            {/* Score pill in header */}
+            <div style={{
+              padding:"6px 14px",borderRadius:20,fontWeight:900,fontSize:15,
+              background:score>=PASS_THRESHOLD?PASS:FAIL,color:W,
+              boxShadow:`0 2px 10px ${score>=PASS_THRESHOLD?PASS:FAIL}55`,
+            }}>
+              {score}%
+            </div>
+          </div>
 
-            {score<PASS_THRESHOLD&&(
-              <div style={{padding:"14px",borderRadius:14,background:`${GOLD}0e`,
-                border:`1.5px solid ${GOLD}55`,animation:"slideUp .35s ease"}}>
-                <div style={{display:"flex",gap:10,alignItems:"flex-start"}}>
-                  <div style={{width:38,height:38,borderRadius:10,background:`${GOLD}22`,
-                    display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                    <Heart size={19} color={GOLD}/>
-                  </div>
-                  <div>
-                    <p style={{margin:"0 0 4px",fontWeight:900,fontSize:13,color:"#92400E"}}>Focus & Try Again</p>
-                    <p style={{margin:0,fontSize:12,color:"#78350F",lineHeight:1.65}}>
-                      Read through the page once more, focusing on the words highlighted below.
-                      Then recite again — every attempt builds your hifdh. 🌟
-                    </p>
-                  </div>
-                </div>
-              </div>
-            )}
+          {/* Scrollable content */}
+          <div style={{flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch",
+            padding:"12px 14px 100px",display:"flex",flexDirection:"column",gap:12,
+            animation:"fadeIn .3s ease"}}>
 
-            {/* Audio playback preview */}
+            {/* Audio playback */}
             {audioUrl&&(
-              <div style={{background:W,borderRadius:14,border:`1.5px solid ${BRD}`,padding:"12px 14px"}}>
-                <p style={{margin:"0 0 8px",fontSize:10,fontWeight:800,color:G3,
-                  textTransform:"uppercase",letterSpacing:.5}}>
+              <div style={{background:W,borderRadius:12,border:`1px solid ${BRD}`,
+                padding:"10px 14px",display:"flex",alignItems:"center",gap:10}}>
+                <span style={{fontSize:10,fontWeight:800,color:G3,
+                  textTransform:"uppercase",letterSpacing:.5,flexShrink:0}}>
                   🎙️ Your Recitation
-                </p>
-                <audio controls src={audioUrl} style={{width:"100%",height:36,borderRadius:8}}/>
+                </span>
+                <audio controls src={audioUrl} style={{flex:1,height:32,borderRadius:8}}/>
               </div>
             )}
 
-            {/* Colored verse-by-verse breakdown — full page with green/red */}
-            {pageAyahs.length>0&&ayahCorrectness.length>0&&(()=>{
-              const correctness=ayahCorrectness;
-              const correct = correctness.filter(Boolean).length;
-              const incorrect = correctness.filter(v=>!v).length;
-              return(
+            {/* ── FULL PAGE with word-level green / red colouring ── */}
+            {pageAyahs.length>0&&(()=>{
+              // Build word-level correctness map from transcript vs reference
+              const refWords = pageAyahs.map(a=>a.text).join(" ");
+              const refArr   = normalizeAr(refWords).split(" ").filter(Boolean);
+              const gotArr   = normalizeAr(lastTranscript).split(" ").filter(Boolean);
+              // Mark each reference word as matched or not
+              const usedGot  = new Set<number>();
+              const wordOk   = refArr.map(rw=>{
+                for(let i=0;i<gotArr.length;i++){
+                  if(usedGot.has(i)) continue;
+                  const gw=gotArr[i];
+                  if(rw===gw||(rw.length>=4&&gw.length>=4&&rw.slice(0,4)===gw.slice(0,4))){
+                    usedGot.add(i); return true;
+                  }
+                }
+                return false;
+              });
+              // Map word index back to per-ayah word ranges
+              let wi=0;
+              const ayahWordRanges=pageAyahs.map(a=>{
+                const words=normalizeAr(a.text).split(" ").filter(Boolean);
+                const start=wi; wi+=words.length;
+                return {start,end:wi,words};
+              });
+              const passedCount = ayahCorrectness.filter(Boolean).length;
+              const missedCount = ayahCorrectness.filter(v=>!v).length;
+
+              return (
                 <div style={{background:"#fffdf6",borderRadius:16,
-                  border:`2px solid ${GOLD}66`,overflow:"hidden",
-                  boxShadow:"0 4px 20px rgba(0,0,0,.08)"}}>
-                  {/* Header */}
-                  <div style={{padding:"10px 16px",borderBottom:`1px solid ${GOLD}33`,
-                    background:`linear-gradient(to right,${GOLD}12,transparent)`,
-                    display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                    <span style={{fontSize:11,fontWeight:800,color:G2,textTransform:"uppercase",letterSpacing:.5}}>
-                      📖 Verse Breakdown — Page {todayPages[pageIdx]}
+                  border:`2px solid ${GOLD}55`,overflow:"hidden",
+                  boxShadow:"0 4px 20px rgba(0,0,0,.07)"}}>
+
+                  {/* Stats strip */}
+                  <div style={{padding:"10px 16px",borderBottom:`1px solid ${GOLD}22`,
+                    background:`linear-gradient(to right,${GOLD}10,transparent)`,
+                    display:"flex",alignItems:"center",gap:8}}>
+                    <span style={{fontSize:11,fontWeight:800,color:G2,
+                      textTransform:"uppercase",letterSpacing:.4,flex:1}}>
+                      📖 Page {todayPages[pageIdx]}
                     </span>
-                    <div style={{display:"flex",gap:8}}>
-                      <span style={{fontSize:11,fontWeight:800,color:PASS,
-                        background:`${PASS}18`,padding:"2px 8px",borderRadius:6}}>
-                        ✓ {correct} correct
-                      </span>
-                      <span style={{fontSize:11,fontWeight:800,color:FAIL,
-                        background:`${FAIL}14`,padding:"2px 8px",borderRadius:6}}>
-                        ✗ {incorrect} missed
-                      </span>
-                    </div>
+                    <span style={{fontSize:11,fontWeight:800,color:PASS,
+                      background:`${PASS}18`,padding:"3px 10px",borderRadius:8}}>
+                      ✓ {wordOk.filter(Boolean).length} words correct
+                    </span>
+                    <span style={{fontSize:11,fontWeight:800,color:FAIL,
+                      background:`${FAIL}12`,padding:"3px 10px",borderRadius:8}}>
+                      ✗ {wordOk.filter(v=>!v).length} missed
+                    </span>
                   </div>
-                  {/* Ayah list */}
-                  <div style={{padding:"12px 16px",display:"flex",flexDirection:"column",gap:6}}>
-                    {pageAyahs.map((a,i)=>(
-                      <div key={i} style={{
-                        borderRadius:10,
-                        border:`1.5px solid ${correctness[i]?PASS+"55":FAIL+"44"}`,
-                        background:correctness[i]?`${PASS}0e`:`${FAIL}08`,
-                        padding:"10px 14px",
-                        display:"flex",gap:10,alignItems:"flex-start",
-                      }}>
-                        {/* Ayah number badge */}
-                        <div style={{
-                          width:28,height:28,borderRadius:8,flexShrink:0,
-                          background:correctness[i]?`${PASS}22`:`${FAIL}18`,
-                          border:`1.5px solid ${correctness[i]?PASS:FAIL}`,
-                          display:"flex",alignItems:"center",justifyContent:"center",
-                          fontSize:10,fontWeight:900,color:correctness[i]?PASS:FAIL,
-                          marginTop:2,
-                        }}>
-                          {correctness[i]?"✓":"✗"}
-                        </div>
-                        {/* Ayah text */}
-                        <div style={{flex:1,direction:"rtl",textAlign:"right"}}>
-                          <div style={{
-                            fontFamily:"'Amiri Quran','Amiri',serif",
-                            fontSize:20,color:INK,lineHeight:2.4,
-                          }}>
-                            {a.text}
-                            <span style={{fontSize:12,color:GOLD,marginRight:4,fontFamily:"'Amiri',serif"}}>
-                              ۝{a.numberInSurah}
-                            </span>
-                          </div>
-                          <div style={{fontSize:10,color:correctness[i]?PASS:FAIL,
-                            fontWeight:700,marginTop:2,textAlign:"left",direction:"ltr"}}>
-                            {correctness[i]
-                              ?`✓ Verse ${a.numberInSurah} — recited correctly`
-                              :`✗ Verse ${a.numberInSurah} — needs practice`}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+
                   {/* Legend */}
-                  <div style={{padding:"8px 16px 12px",borderTop:`1px solid ${GOLD}22`,
-                    display:"flex",gap:16,justifyContent:"center"}}>
+                  <div style={{padding:"8px 16px",borderBottom:`1px solid ${GOLD}18`,
+                    display:"flex",gap:14}}>
                     <div style={{display:"flex",gap:5,alignItems:"center"}}>
-                      <div style={{width:12,height:12,borderRadius:3,background:PASS}}/> 
-                      <span style={{fontSize:10,color:"#6B7280"}}>Recited correctly</span>
+                      <div style={{width:14,height:14,borderRadius:4,
+                        background:`${PASS}22`,border:`1.5px solid ${PASS}`}}/>
+                      <span style={{fontSize:10,color:"#6B7280",fontWeight:600}}>Recited correctly</span>
                     </div>
                     <div style={{display:"flex",gap:5,alignItems:"center"}}>
-                      <div style={{width:12,height:12,borderRadius:3,background:FAIL}}/> 
-                      <span style={{fontSize:10,color:"#6B7280"}}>Needs more practice</span>
+                      <div style={{width:14,height:14,borderRadius:4,
+                        background:`${FAIL}15`,border:`1.5px solid ${FAIL}`}}/>
+                      <span style={{fontSize:10,color:"#6B7280",fontWeight:600}}>Missed / incorrect</span>
+                    </div>
+                  </div>
+
+                  {/* Quran text — word by word coloured */}
+                  <div style={{padding:"14px 16px 18px"}}>
+                    <div style={{
+                      direction:"rtl",fontFamily:"'Amiri Quran','Amiri',serif",
+                      fontSize:22,lineHeight:3.4,textAlign:"justify",color:INK,
+                    }}>
+                      {pageAyahs.map((ayah,ai)=>{
+                        const range=ayahWordRanges[ai];
+                        const rawWords=ayah.text.split(" ").filter(Boolean);
+                        return (
+                          <span key={ai}>
+                            {rawWords.map((w,wj)=>{
+                              const globalIdx=range.start+wj;
+                              const ok=wordOk[globalIdx]??false;
+                              return (
+                                <span key={wj} style={{
+                                  display:"inline",
+                                  background:ok?`${PASS}20`:`${FAIL}15`,
+                                  color:ok?"#14532d":"#991b1b",
+                                  borderRadius:4,
+                                  padding:"1px 3px",
+                                  margin:"0 2px",
+                                  fontWeight:ok?400:700,
+                                  textShadow:ok?"none":"none",
+                                  outline:`1px solid ${ok?PASS+"44":FAIL+"44"}`,
+                                }}>
+                                  {w}
+                                </span>
+                              );
+                            })}
+                            {/* Ayah number */}
+                            <span style={{fontSize:13,color:GOLD,margin:"0 4px",
+                              fontFamily:"'Amiri',serif",verticalAlign:"middle"}}>
+                              ۝{ayah.numberInSurah}
+                            </span>
+                          </span>
+                        );
+                      })}
                     </div>
                   </div>
                 </div>
               );
             })()}
 
-            {errorWords.length>0&&score<PASS_THRESHOLD&&(
-              <div style={{background:W,borderRadius:14,border:`1.5px solid #FECACA`,
-                padding:"12px 14px"}}>
-                <p style={{margin:"0 0 8px",fontSize:10,fontWeight:800,color:FAIL,
-                  textTransform:"uppercase",letterSpacing:.5}}>
-                  ⚠️ Words to focus on ({Math.min(errorWords.length,15)})
-                </p>
-                <div style={{display:"flex",flexWrap:"wrap",gap:5,direction:"rtl"}}>
-                  {errorWords.slice(0,15).map((w,i)=>(
-                    <span key={i} style={{padding:"5px 11px",borderRadius:8,background:"#FEE2E2",
-                      color:FAIL,fontSize:15,fontFamily:"'Amiri',serif"}}>{w}</span>
-                  ))}
-                </div>
-                <p style={{margin:"8px 0 0",fontSize:10,color:"#9CA3AF"}}>
-                  Study these words before you re-read the page.
+            {/* Encouragement banner when failed */}
+            {score<PASS_THRESHOLD&&(
+              <div style={{padding:"12px 14px",borderRadius:12,
+                background:`${GOLD}0e`,border:`1.5px solid ${GOLD}44`,
+                display:"flex",gap:10,alignItems:"center"}}>
+                <Heart size={18} color={GOLD} style={{flexShrink:0}}/>
+                <p style={{margin:0,fontSize:12,color:"#92400E",fontWeight:600,lineHeight:1.6}}>
+                  Study the <span style={{color:FAIL,fontWeight:800}}>red words</span> above carefully,
+                  then record again — every attempt builds your hifdh! 🌟
                 </p>
               </div>
             )}
+          </div>
 
-            {score>=PASS_THRESHOLD
-              ?(
-                <button onClick={acceptPage}
-                  style={{padding:"15px",borderRadius:14,border:"none",cursor:"pointer",
-                    background:`linear-gradient(135deg,${PASS},#15803d)`,color:W,
-                    fontWeight:900,fontSize:14,fontFamily:"inherit",
-                    boxShadow:`0 4px 16px ${PASS}44`}}>
-                  {pageIdx+1<todayPages.length?"Continue to Next Page →":"Proceed to Test →"}
-                </button>
-              ):(
-                <button onClick={retryPage}
-                  style={{padding:"15px",borderRadius:14,border:"none",cursor:"pointer",
-                    background:`linear-gradient(135deg,${AMBER},#b45309)`,color:W,
-                    fontWeight:900,fontSize:14,fontFamily:"inherit",
-                    boxShadow:`0 4px 16px ${AMBER}44`}}>
-                  🔄 Re-read Page & Recite Again
-                </button>
-              )
-            }
+          {/* Sticky bottom button */}
+          <div style={{padding:"12px 16px",background:W,borderTop:`1px solid ${BRD}`,flexShrink:0}}>
+            {score>=PASS_THRESHOLD?(
+              <button onClick={acceptPage}
+                style={{width:"100%",padding:"15px",borderRadius:14,border:"none",cursor:"pointer",
+                  background:`linear-gradient(135deg,${PASS},#15803d)`,color:W,
+                  fontWeight:900,fontSize:15,fontFamily:"inherit",
+                  display:"flex",alignItems:"center",justifyContent:"center",gap:8,
+                  boxShadow:`0 4px 16px ${PASS}44`}}>
+                <CheckCircle2 size={18}/>
+                {pageIdx+1<todayPages.length?"Continue to Next Page →":"Proceed to Test →"}
+              </button>
+            ):(
+              <button onClick={retryPage}
+                style={{width:"100%",padding:"15px",borderRadius:14,border:"none",cursor:"pointer",
+                  background:`linear-gradient(135deg,${FAIL},#b91c1c)`,color:W,
+                  fontWeight:900,fontSize:15,fontFamily:"inherit",
+                  display:"flex",alignItems:"center",justifyContent:"center",gap:8,
+                  boxShadow:`0 4px 16px ${FAIL}44`}}>
+                <Mic size={18}/>
+                Record Again — Need {PASS_THRESHOLD}% to pass
+              </button>
+            )}
           </div>
         </>
       )}
