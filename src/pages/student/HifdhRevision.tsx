@@ -12,7 +12,6 @@ import HifdhMemorization from "@/components/hifdh/HifdhMemorization";
 import HifdhExercise from "@/components/hifdh/HifdhExercise";
 import HifdhTest from "@/components/hifdh/HifdhTest";
 import QuranRevisionHub from "@/components/hifdh/QuranRevisionHub";
-import RevisionDailyProgress from "@/components/hifdh/RevisionDailyProgress";
 import HifdhDailySession from "@/components/hifdh/HifdhDailySession";
 import { RefreshCcw } from "lucide-react";
 
@@ -246,14 +245,6 @@ function HifdhDashboardInline({
             )}
           </div>
         )}
-
-        {/* ── Daily Revision Progress ── */}
-        <div className="mb-2">
-          <RevisionDailyProgress
-            userId={userId}
-            onGoToRevision={() => onNavigate("revision")}
-          />
-        </div>
 
         {/* ── Action cards ── */}
         <div className="flex flex-col gap-2.5">
