@@ -59,8 +59,9 @@ const EntranceExamTaking  = lazy(() => import("./pages/student/EntranceExamTakin
 const EntranceExamResume  = lazy(() => import("./pages/student/EntranceExamResume"));
 const EntranceResults     = lazy(() => import("./pages/student/EntranceResults"));
 const RevisionHub         = lazy(() => import("./pages/student/RevisionHub"));
-const HifdhRevision       = lazy(() => import("./pages/student/HifdhRevision"));
-const RevisionRoom        = lazy(() => import("./pages/student/RevisionRoom"));
+const HifdhRevision          = lazy(() => import("./pages/student/HifdhRevision"));
+const HifdhDailyRevisionPage = lazy(() => import("./pages/student/HifdhDailyRevisionPage"));
+const RevisionRoom           = lazy(() => import("./pages/student/RevisionRoom"));
 const PaymentScreen       = lazy(() => import("./pages/student/PaymentScreen"));
 const RecordingPlayer     = lazy(() => import("./pages/student/RecordingPlayer"));
 const EnrollmentPayment   = lazy(() => import("./pages/student/EnrollmentPayment"));
@@ -210,6 +211,7 @@ const App = () => (
                     <Route path="/student/live-classes"        element={<LearningHub defaultTab="live" />} />
                     <Route path="/student/revision"            element={<RevisionHub />} />
                     <Route path="/student/hifdh"               element={<HifdhRevision />} />
+                    <Route path="/student/hifdh-daily"         element={<HifdhDailyRevisionPage />} />
                     <Route path="/student/revision/:subjectId" element={<RevisionRoom />} />
                     <Route path="/student/timetable"           element={<StudentTimetable />} />
                     <Route path="/student/profile"             element={<ProfileSettings />} />
