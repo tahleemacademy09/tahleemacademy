@@ -996,36 +996,32 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
                     </div>
                   </div>
 
-                  {/* Quran text — word-by-word coloured, Arabic shaping preserved */}
-                  <div style={{padding:"14px 16px 18px",
+                  {/* Quran text — compact word pills, matching مراجعة style */}
+                  <div style={{
+                    display:"flex", flexWrap:"wrap", gap:6,
+                    padding:"14px 16px 18px",
                     direction:"rtl",
-                    fontFamily:"'Amiri Quran','Amiri',serif",
-                    fontSize:22,lineHeight:3.8,
-                    textAlign:"justify",
-                    // Critical: let words wrap naturally
-                    wordBreak:"keep-all",
-                    overflowWrap:"break-word",
                   }}>
                     {pageAyahs.map((ayah, ai) => (
-                      <span key={ai}>
+                      <span key={ai} style={{display:"contents"}}>
                         {ayahWords[ai].map((wd, wi) => (
-                          <span key={wi} className="ar-word" style={{
-                            background: wd.ok ? `${PASS}28` : `${FAIL}20`,
-                            color:       wd.ok ? "#14532d"  : "#991b1b",
-                            borderRadius: 5,
-                            boxShadow: `inset 0 0 0 1.5px ${wd.ok ? PASS+"55" : FAIL+"55"}`,
-                            padding: "2px 4px",
-                            margin: "0 2px",
-                            fontWeight: wd.ok ? 400 : 600,
+                          <span key={wi} style={{
+                            padding:"3px 8px",
+                            borderRadius:4,
+                            fontFamily:"'Amiri Quran','Amiri',serif",
+                            fontSize:16,
+                            fontWeight:600,
+                            background: wd.ok ? "#dcfce7" : "#fee2e2",
+                            color:       wd.ok ? "#166534" : "#dc2626",
                           }}>
                             {wd.raw}
                           </span>
                         ))}
                         {/* Ayah end marker */}
-                        <span className="ar-word" style={{
-                          fontSize:14,color:GOLD,
-                          margin:"0 6px",
+                        <span style={{
+                          fontSize:13, color:GOLD,
                           fontFamily:"'Amiri',serif",
+                          alignSelf:"center",
                         }}>
                           ۝{ayah.numberInSurah}
                         </span>
