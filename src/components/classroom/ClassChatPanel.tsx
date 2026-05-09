@@ -23,24 +23,39 @@ const ClassChatPanel = ({ sessionId, sessionStartedAt }: ClassChatPanelProps) =>
   const [showEmoji, setShowEmoji] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // FIX BUG 11: Use a ref to track in-flight profile fetches, preventing duplicate
+  // requests when multiple messages arrive rapidly with the same sender IDs.
+  const fetchingIds = useRef(new Set<string>());
+
   // Profiles cache
   const loadProfiles = async (userIds: string[]) => {
-    const missing = userIds.filter(id => !profiles[id]);
+    // FIX BUG 11: Filter out IDs already cached OR currently being fetched
+    const missing = userIds.filter(id => !profiles[id] && !fetchingIds.current.has(id));
     if (missing.length === 0) return;
-    const { data } = await supabase.from("profiles").select("user_id, full_name").in("user_id", missing);
-    const { data: roles } = await supabase.from("user_roles").select("user_id, role").in("user_id", missing);
-    const newProfiles: Record<string, { name: string; role: string }> = {};
-    (data || []).forEach(p => {
-      const userRole = (roles || []).find(r => r.user_id === p.user_id);
-      newProfiles[p.user_id] = { name: p.full_name || "Student", role: userRole?.role || "student" };
-    });
-    setProfiles(prev => ({ ...prev, ...newProfiles }));
+    missing.forEach(id => fetchingIds.current.add(id));
+    try {
+      const { data } = await supabase.from("profiles").select("user_id, full_name").in("user_id", missing);
+      const { data: roles } = await supabase.from("user_roles").select("user_id, role").in("user_id", missing);
+      const newProfiles: Record<string, { name: string; role: string }> = {};
+      (data || []).forEach(p => {
+        const userRole = (roles || []).find(r => r.user_id === p.user_id);
+        newProfiles[p.user_id] = { name: p.full_name || "Student", role: userRole?.role || "student" };
+      });
+      setProfiles(prev => ({ ...prev, ...newProfiles }));
+    } finally {
+      missing.forEach(id => fetchingIds.current.delete(id));
+    }
   };
 
   // Clear messages whenever we switch sessions
-  useEffect(() => { setMessages([]); setProfiles({}); }, [sessionId]);
+  useEffect(() => { setMessages([]); setProfiles({}); fetchingIds.current.clear(); }, [sessionId]);
 
   useEffect(() => {
+    // FIX BUG 12: Guard — do not subscribe or load if sessionId is empty string.
+    // This prevents orphaned DB queries and false subscriptions during the brief
+    // join window before the session row is resolved.
+    if (!sessionId) return;
+
     const load = async () => {
       let q = supabase
         .from("class_chat_messages")
@@ -60,6 +75,8 @@ const ClassChatPanel = ({ sessionId, sessionStartedAt }: ClassChatPanelProps) =>
     const channel = supabase.channel(`class-chat-${sessionId}`)
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "class_chat_messages", filter: `session_id=eq.${sessionId}` },
         (payload) => {
+          // FIX BUG 4 (partial): If sessionStartedAt is set, only show messages at or after it
+          if (sessionStartedAt && payload.new.created_at < sessionStartedAt) return;
           setMessages(prev => [...prev, payload.new]);
           loadProfiles([payload.new.sender_id]);
         })
@@ -83,7 +100,8 @@ const ClassChatPanel = ({ sessionId, sessionStartedAt }: ClassChatPanelProps) =>
 
   const sendMessage = async (text?: string) => {
     const msg = text || input.trim();
-    if (!msg || !user) return;
+    // FIX BUG 12: Also guard here — never send to an empty sessionId
+    if (!msg || !user || !sessionId) return;
     await supabase.from("class_chat_messages").insert({
       session_id: sessionId,
       sender_id: user.id,
