@@ -214,6 +214,13 @@ const AdminMuteListener = ({ isPrivileged }: { isPrivileged: boolean }) => {
 
 const MediaAutoPublish = ({ lobbyMic = false, lobbyCam = false }: { lobbyMic?: boolean; lobbyCam?: boolean }) => {
   const room = useRoomContext();
+  // FIX BUG 5: Capture the latest lobby values in a ref so the async effect always
+  // reads the current state even if React batches the prop update after mount.
+  // The empty dependency array is intentional — we only want this to run once on
+  // join, but we read from the ref (not the closure) to get fresh values.
+  const optsRef = useRef({ lobbyMic, lobbyCam });
+  optsRef.current = { lobbyMic, lobbyCam }; // keep ref fresh every render
+
   useEffect(() => {
     let cancelled = false;
     const init = async () => {
@@ -222,24 +229,26 @@ const MediaAutoPublish = ({ lobbyMic = false, lobbyCam = false }: { lobbyMic?: b
       if (cancelled) return;
       try {
         const lp = room.localParticipant;
+        const { lobbyMic: mic, lobbyCam: cam } = optsRef.current; // read latest via ref
         // Apply the exact lobby choices — not a blanket disable
-        if (lp.isMicrophoneEnabled !== lobbyMic) await lp.setMicrophoneEnabled(lobbyMic);
-        if (lp.isCameraEnabled     !== lobbyCam) await lp.setCameraEnabled(lobbyCam);
+        if (lp.isMicrophoneEnabled !== mic) await lp.setMicrophoneEnabled(mic);
+        if (lp.isCameraEnabled     !== cam) await lp.setCameraEnabled(cam);
       } catch {}
     };
     init();
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, []); // safe: reads optsRef which is always up-to-date
   return null;
 };
 
 /* ══ ROOM DATA LISTENER ══ */
-const RoomDataListener = ({ onWbOpen,onWbClose,strokesBuffer,onMatOpen,onMatClose,onWbAllowWrite,onRecAllowed,onEmojiReact,onGroupRecite,onHandRaise,onAdminMuteAll,onClassEnded }:any) => {
+const RoomDataListener = ({ onWbOpen,onWbClose,strokesBuffer,onMatOpen,onMatClose,onWbAllowWrite,onRecAllowed,onEmojiReact,onGroupRecite,onHandRaise,onAdminMuteAll,onClassEnded,roomRef }:any) => {
   const room = useRoomContext();
   useEffect(() => {
-    // Expose room to window so endSession's disconnect() call can reach it
-    (window as any).__lkRoom__ = room;
+    // FIX BUG 10: Store room in a React ref instead of window.__lkRoom__ global.
+    // The global breaks when multiple tabs run simultaneously (each overwrites the other).
+    if (roomRef) roomRef.current = room;
     const h = (payload:Uint8Array,participant?:any) => {
       try {
         const msg = JSON.parse(new TextDecoder().decode(payload));
@@ -259,7 +268,7 @@ const RoomDataListener = ({ onWbOpen,onWbClose,strokesBuffer,onMatOpen,onMatClos
       } catch {}
     };
     room.on(RoomEvent.DataReceived,h);
-    return ()=>{ room.off(RoomEvent.DataReceived,h); delete (window as any).__lkRoom__; };
+    return ()=>{ room.off(RoomEvent.DataReceived,h); if(roomRef) roomRef.current=null; };
   },[room]);
   return null;
 };
@@ -1806,7 +1815,7 @@ const VideoGrid=({layout="grid"}:{layout?:LayoutMode})=>{
 };
 
 /* ══ BOTTOM BAR ══ */
-const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeaveClass,chatUnread,onToggleWhiteboard,whiteboardOpen,onGroupRecite,groupReciteMode,onShareMaterial,isPrivileged,canStudentWriteProp,canStudentRecProp,onPermChange,onMinimize,room,isMobile,onToggleMaterials,matPanelOpen,onSendEmoji,layout,onLayoutChange}:any)=>{
+const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeaveClass,chatUnread,onToggleWhiteboard,whiteboardOpen,onGroupRecite,groupReciteMode,onShareMaterial,isPrivileged,canStudentWriteProp,canStudentRecProp,onPermChange,onMinimize,room,isMobile,onToggleMaterials,matPanelOpen,onSendEmoji,layout,onLayoutChange,onLaunchQuiz}:any)=>{
   const{user}=useAuth();
   const[micOn,setMicOn]=useState(false);
   const[camOn,setCamOn]=useState(false);
@@ -2121,6 +2130,10 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
           <button onClick={()=>{onGroupRecite(room);setMoreOpen(false);}} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"11px 14px",background:"none",border:"none",cursor:"pointer",color:groupReciteMode?GREEN:"#fff",fontSize:13,borderBottom:"1px solid rgba(255,255,255,.05)",textAlign:"left"as const}}>
             <Volume2 style={{width:14,height:14}}/> {groupReciteMode?"End Group Recitation":"Group Recitation"}
           </button>
+          {/* FIX BUG 2: Live Quiz button — previously LiveQuizOverlay was permanently disabled */}
+          {onLaunchQuiz&&<button onClick={()=>{onLaunchQuiz();setMoreOpen(false);}} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"11px 14px",background:"none",border:"none",cursor:"pointer",color:"#fbbf24",fontSize:13,borderBottom:"1px solid rgba(255,255,255,.05)",textAlign:"left"as const}}>
+            <span style={{fontSize:14}}>📝</span> Live Quiz
+          </button>}
           <button onClick={()=>{onPermChange?.("write",!canStudentWriteProp,room);setMoreOpen(false);}} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"11px 14px",background:"none",border:"none",cursor:"pointer",color:canStudentWriteProp?GREEN:"#fff",fontSize:13,borderBottom:"1px solid rgba(255,255,255,.05)",textAlign:"left"as const}}>
             <PenTool style={{width:14,height:14}}/> {canStudentWriteProp?"Revoke Board Access":"Allow Students to Write"}
           </button>
@@ -2341,6 +2354,8 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[sessionId,phase,user?.id]);
   const[sideTab,setSideTab]=useState<"chat"|"polls">("chat");const[showEnd,setShowEnd]=useState(false);
+  // FIX BUG 2: quizOpen state — LiveQuizOverlay was permanently disabled with hardcoded isOpen={false}
+  const[quizOpen,setQuizOpen]=useState(false);
   const[wbOpen,setWbOpen]=useState(false);const[matOpen,setMatOpen]=useState<any>(null);const[matPicker,setMatPicker]=useState(false);const[matPanelOpen,setMatPanelOpen]=useState(false);
   const[groupRecite,setGroupRecite]=useState(false);const[canStudentWrite,setCanStudentWrite]=useState(false);const[canStudentRec,setCanStudentRec]=useState(false);
   const[floatingEmojis,setFloatingEmojis]=useState<FloatingEmoji[]>([]);
@@ -2348,8 +2363,14 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   const[layout,setLayout]=useState<LayoutMode>("horizontal");
   const[groupReciteDialog,setGroupReciteDialog]=useState(false);
   const emojiIdRef=useRef(0);
-  const wbBuffer=useRef<any[]|null>(null);const prefetch=useRef<{token:string;url:string}|null>(null);
-  useEffect(()=>{supabase.functions.invoke("livekit-token",{body:{subject_id:subject.id,action:isPrivileged?"start_session":"join"}}).then(({data})=>{if(data?.token&&data?.url)prefetch.current={token:data.token,url:data.url};}).catch(()=>{});},[subject.id,isPrivileged]);
+  const wbBuffer=useRef<any[]|null>(null);
+  // FIX BUG 10: roomRef stores the LiveKit Room object via RoomDataListener — replaces __lkRoom__ global
+  const roomRef=useRef<any>(null);
+  // FIX BUG 8: ref to hold the session-end channel so we can subscribe immediately on join
+  const sessionEndChannelRef=useRef<any>(null);
+  // FIX BUG 6: prefetch includes a fetchedAt timestamp so stale tokens can be detected
+  const prefetch=useRef<{token:string;url:string;fetchedAt:number}|null>(null);
+  useEffect(()=>{supabase.functions.invoke("livekit-token",{body:{subject_id:subject.id,action:isPrivileged?"start_session":"join"}}).then(({data})=>{if(data?.token&&data?.url)prefetch.current={token:data.token,url:data.url,fetchedAt:Date.now()};}).catch(()=>{});},[subject.id,isPrivileged]);
   useEffect(()=>{
     if(!autoJoin)return;
     const t=setTimeout(()=>{
@@ -2364,9 +2385,13 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
 
   /* ── Student auto-kick: watch DB for session.status → "ended" ────────────
      Two-pronged approach: LiveKit data channel (fast) + Supabase realtime (backup).
-     Both converge on setPhase("ended") which shows ClassEndScreen.              */
+     Both converge on setPhase("ended") which shows ClassEndScreen.
+     FIX BUG 8: The channel is also stored in sessionEndChannelRef so connect() can
+     subscribe immediately when the fresh sessionId is known — before this effect runs. */
   useEffect(()=>{
     if(!sessionId||isPrivileged||phase!=="live")return;
+    // If connect() already set up a channel for this sessionId, reuse it — don't double-subscribe
+    if(sessionEndChannelRef.current)return;
     const ch=supabase.channel(`session-end-${sessionId}`)
       .on("postgres_changes",{event:"UPDATE",schema:"public",table:"live_sessions",filter:`id=eq.${sessionId}`},
         (payload:any)=>{
@@ -2376,7 +2401,10 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
           }
         })
       .subscribe();
-    return()=>{supabase.removeChannel(ch);};
+    sessionEndChannelRef.current=ch;
+    return()=>{
+      if(sessionEndChannelRef.current){supabase.removeChannel(sessionEndChannelRef.current);sessionEndChannelRef.current=null;}
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[sessionId,isPrivileged,phase]);
   useEffect(()=>{if(phase!=="live")return;const ti=setInterval(()=>setDuration(d=>d+1),1000);return()=>clearInterval(ti);},[phase]);
@@ -2398,12 +2426,34 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     if(!user){setError("Session expired. Please refresh the page.");return;}
     setLoading(true);setError(null);
     try{
-      let tk=prefetch.current?.token||null,url=prefetch.current?.url||null;
+      // FIX BUG 6: Consume and clear the prefetch so it is never reused stale.
+      // Also check freshness — tokens older than 5 min are discarded (room state may have changed).
+      const isFresh=prefetch.current&&(Date.now()-prefetch.current.fetchedAt)<5*60_000;
+      let tk=isFresh?prefetch.current!.token:null;
+      let url=isFresh?prefetch.current!.url:null;
+      prefetch.current=null; // always clear after reading so Try Again fetches a new token
       if(!tk||!url){const{data,error:e}=await supabase.functions.invoke("livekit-token",{body:{subject_id:subject.id,action}});if(e)throw e;if(data?.error)throw new Error(data.error);tk=data.token;url=data.url;}
-      if(settings&&sessionId)await supabase.from("live_sessions").update({...settings,actual_start_time:new Date().toISOString(),status:"live"}).eq("id",sessionId);
       setToken(tk!);setWsUrl(url!);
       const{data:sessions}=await supabase.from("live_sessions").select("*").eq("subject_id",subject.id).in("status",["live","active","scheduled"]).order("scheduled_at",{ascending:false,nullsFirst:false}).limit(1);
-      if(sessions?.length){setSessionId(sessions[0].id);setSessionInfo(sessions[0]);const{data:att}=await supabase.from("attendance_logs").insert({session_id:sessions[0].id,user_id:user.id,device_info:navigator.userAgent}).select("id").single();if(att)setAttendanceId(att.id);await supabase.from("class_participants").upsert({session_id:sessions[0].id,student_id:user.id,joined_at:new Date().toISOString(),is_muted:!isPrivileged,camera_on:true,left_at:null,left_minutes:null},{onConflict:"session_id,student_id"});}
+      if(sessions?.length){
+        const freshSessionId=sessions[0].id;
+        // FIX BUG 1: Apply class settings using the freshly-retrieved session ID, not the
+        // stale sessionId state (which is null when a teacher starts a new class for the first time).
+        if(settings){await supabase.from("live_sessions").update({...settings,actual_start_time:new Date().toISOString(),status:"live"}).eq("id",freshSessionId);}
+        setSessionId(freshSessionId);setSessionInfo(sessions[0]);
+        const{data:att}=await supabase.from("attendance_logs").insert({session_id:freshSessionId,user_id:user.id,device_info:navigator.userAgent}).select("id").single();
+        if(att)setAttendanceId(att.id);
+        await supabase.from("class_participants").upsert({session_id:freshSessionId,student_id:user.id,joined_at:new Date().toISOString(),is_muted:!isPrivileged,camera_on:true,left_at:null,left_minutes:null},{onConflict:"session_id,student_id"});
+        // FIX BUG 8: Subscribe to session-end immediately here — before the useEffect cycle —
+        // so there is no window where the teacher can end the class and students miss the event.
+        if(!isPrivileged&&!sessionEndChannelRef.current){
+          const endCh=supabase.channel(`session-end-${freshSessionId}`)
+            .on("postgres_changes",{event:"UPDATE",schema:"public",table:"live_sessions",filter:`id=eq.${freshSessionId}`},
+              (payload:any)=>{if(payload.new?.status==="ended"&&!intentionalLeaveRef.current)setPhase("ended");})
+            .subscribe();
+          sessionEndChannelRef.current=endCh;
+        }
+      }
       setPhase("live");
       try { playJoinSound(); } catch {}
     }catch(e:any){setError(e?.message||"Failed to connect");}finally{setLoading(false);}
@@ -2422,10 +2472,14 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
       return;
     }
     setReconnecting(true);
+    // FIX BUG 7 (partial) + REC 1: Exponential backoff — 1s, 2s, 4s, 8s, 15s cap
+    const backoffMs=Math.min(1000*Math.pow(2,autoReconnectCount),15000);
+    await new Promise(r=>setTimeout(r,backoffMs));
     try{
       const{data}=await supabase.functions.invoke("livekit-token",{body:{subject_id:subject.id,action:isPrivileged?"start_session":"join"}});
       if(data?.token&&data?.url){
-        prefetch.current={token:data.token,url:data.url};
+        // FIX BUG 6: Store with fetchedAt timestamp so connect() can check freshness
+        prefetch.current={token:data.token,url:data.url,fetchedAt:Date.now()};
         setToken(data.token);
         setWsUrl(data.url);
         setRoomKey(k=>k+1); // remount LiveKitRoom with the fresh token
@@ -2458,7 +2512,8 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
         // 2. Broadcast class_ended via LiveKit data channel so students disconnect immediately
         // (faster than waiting for DB subscription)
         try{
-          const room=(window as any).__lkRoom__;
+          // FIX BUG 10: Use roomRef instead of window.__lkRoom__ global
+          const room=roomRef.current;
           if(room?.localParticipant){
             room.localParticipant.publishData(
               new TextEncoder().encode(JSON.stringify({type:"class_ended"})),
@@ -2575,11 +2630,11 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
           {/* onDisconnected wired to autoReconnect — handles Android tab suspension */}
           <ReconnectMonitor
             onReconnecting={()=>setReconnecting(true)}
-            onReconnected={()=>setReconnecting(false)}
+            onReconnected={()=>{setReconnecting(false);setAutoReconnectCount(0);/* FIX BUG 7: reset counter so the next disconnection gets a fresh 5 attempts */}}
             onDisconnected={autoReconnect}
           />
           <RoomDataListener onWbOpen={()=>setWbOpen(true)} onWbClose={()=>setWbOpen(false)} strokesBuffer={wbBuffer} onMatOpen={mat=>setMatOpen(mat)} onMatClose={()=>setMatOpen(null)} onWbAllowWrite={allow=>setCanStudentWrite(allow)} onRecAllowed={allow=>setCanStudentRec(allow)} onEmojiReact={(emoji:string,sender:string)=>addFloatingEmoji(emoji,sender)} onGroupRecite={handleGroupReciteFromTeacher} onHandRaise={handleHandRaise} onAdminMuteAll={()=>{}}
-            onClassEnded={!isPrivileged?()=>setPhase("ended"):undefined}/>
+            onClassEnded={!isPrivileged?()=>setPhase("ended"):undefined} roomRef={roomRef}/>{/* FIX BUG 10: pass roomRef */}
           {reconnecting&&<div style={{position:"absolute",inset:0,zIndex:200,background:"rgba(0,0,0,.82)",backdropFilter:"blur(8px)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:14}}><div style={{width:48,height:48,border:`3px solid ${TEAL}`,borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .8s linear infinite"}}/><p style={{color:"#fff",fontSize:15,fontWeight:700}}>Reconnecting…</p><p style={{color:"rgba(255,255,255,.4)",fontSize:13}}>Please stay on the page</p></div>}
           {/* Top bar */}
           <div style={{height:52,background:GLASS,backdropFilter:"blur(16px)",WebkitBackdropFilter:"blur(16px)",display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 10px 0 12px",flexShrink:0,borderBottom:"1px solid rgba(255,255,255,.05)",gap:6}}>
@@ -2633,7 +2688,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
                   {[["chat","💬","Chat"],["polls","📊","Polls"]].map(([k,ic,lb])=>(<button key={k} onClick={()=>{setSideTab(k as any);if(k==="chat")setChatUnread(0);}} style={{flex:1,padding:"12px 4px",background:"none",border:"none",color:sideTab===k?"#fff":"rgba(255,255,255,.35)",fontSize:13,fontWeight:sideTab===k?700:400,borderBottom:sideTab===k?`2px solid ${TEAL}`:"2px solid transparent",cursor:"pointer"}}>{ic} {lb}</button>))}
                   <button onClick={()=>setChatOpen(false)} style={{background:"none",border:"none",color:"rgba(255,255,255,.3)",cursor:"pointer",padding:"0 12px"}}><X style={{width:16,height:16}}/></button>
                 </div>
-                <div style={{flex:1,overflow:"hidden"}}>{sideTab==="chat"?<ClassChatPanel sessionId={sessionId||""}/>:<ClassPolls sessionId={sessionId||""}/>}</div>
+                <div style={{flex:1,overflow:"hidden"}}>{sideTab==="chat"?<ClassChatPanel sessionId={sessionId||""} sessionStartedAt={sessionInfo?.started_at??sessionInfo?.actual_start_time}/>:<ClassPolls sessionId={sessionId||""}/>}</div>
               </div>
             )}
           </div>
@@ -2644,10 +2699,11 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               onDecline={()=>{setGroupReciteDialog(false);setGroupRecite(false);}}
             />
           )}
-          <BottomBarBridge sessionId={sessionId||""} onToggleChat={()=>{setChatOpen(v=>!v);if(!chatOpen)setChatUnread(0);}} onToggleParticipants={()=>setPartOpen(v=>!v)} onEndClass={()=>setShowEnd(true)} onLeaveClass={leaveSession} chatUnread={chatUnread} onToggleWhiteboard={()=>setWbOpen(v=>!v)} whiteboardOpen={wbOpen} onGroupRecite={handleGroupRecite} groupReciteMode={groupRecite} onShareMaterial={()=>setMatPicker(true)} isPrivileged={isPrivileged} canStudentWriteProp={canStudentWrite} canStudentRecProp={canStudentRec} onPermChange={(type:any,allow:any,room:any)=>handlePermChange(type,allow,room)} onMinimize={onMinimize} onToggleMaterials={()=>setMatPanelOpen(v=>!v)} matPanelOpen={matPanelOpen} onSendEmoji={addFloatingEmoji} layout={layout} onLayoutChange={setLayout}/>
-          {isMobile&&chatOpen&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setChatOpen(false)}><div style={{position:"absolute",bottom:0,left:0,right:0,background:"#13181f",borderRadius:"22px 22px 0 0",maxHeight:"82vh",display:"flex",flexDirection:"column",animation:"slide-up .22s ease",paddingBottom:"env(safe-area-inset-bottom,0px)"}} onClick={e=>e.stopPropagation()}><div style={{display:"flex",alignItems:"center",padding:"12px 16px 0",flexShrink:0}}><div style={{flex:1,display:"flex"}}>{[["chat","💬","Chat"],["polls","📊","Polls"]].map(([k,ic,lb])=>(<button key={k} onClick={()=>setSideTab(k as any)} style={{flex:1,padding:"10px 6px",background:"none",border:"none",color:sideTab===k?"#fff":"rgba(255,255,255,.35)",fontSize:13,fontWeight:sideTab===k?700:400,borderBottom:sideTab===k?`2px solid ${TEAL}`:"2px solid transparent",cursor:"pointer"}}>{ic} {lb}</button>))}</div><button onClick={()=>setChatOpen(false)} style={{width:32,height:32,borderRadius:"50%",background:"rgba(255,255,255,.1)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><X style={{width:14,height:14}}/></button></div><div style={{flex:1,overflow:"hidden",minHeight:340}}>{sideTab==="chat"?<ClassChatPanel sessionId={sessionId||""}/>:<ClassPolls sessionId={sessionId||""}/>}</div></div></div>)}
+          <BottomBarBridge sessionId={sessionId||""} onToggleChat={()=>{setChatOpen(v=>!v);if(!chatOpen)setChatUnread(0);}} onToggleParticipants={()=>setPartOpen(v=>!v)} onEndClass={()=>setShowEnd(true)} onLeaveClass={leaveSession} chatUnread={chatUnread} onToggleWhiteboard={()=>setWbOpen(v=>!v)} whiteboardOpen={wbOpen} onGroupRecite={handleGroupRecite} groupReciteMode={groupRecite} onShareMaterial={()=>setMatPicker(true)} isPrivileged={isPrivileged} canStudentWriteProp={canStudentWrite} canStudentRecProp={canStudentRec} onPermChange={(type:any,allow:any,room:any)=>handlePermChange(type,allow,room)} onMinimize={onMinimize} onToggleMaterials={()=>setMatPanelOpen(v=>!v)} matPanelOpen={matPanelOpen} onSendEmoji={addFloatingEmoji} layout={layout} onLayoutChange={setLayout} onLaunchQuiz={()=>setQuizOpen(true)}/>{/* FIX BUG 2: quiz launcher */}
+          {isMobile&&chatOpen&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setChatOpen(false)}><div style={{position:"absolute",bottom:0,left:0,right:0,background:"#13181f",borderRadius:"22px 22px 0 0",maxHeight:"82vh",display:"flex",flexDirection:"column",animation:"slide-up .22s ease",paddingBottom:"env(safe-area-inset-bottom,0px)"}} onClick={e=>e.stopPropagation()}><div style={{display:"flex",alignItems:"center",padding:"12px 16px 0",flexShrink:0}}><div style={{flex:1,display:"flex"}}>{[["chat","💬","Chat"],["polls","📊","Polls"]].map(([k,ic,lb])=>(<button key={k} onClick={()=>setSideTab(k as any)} style={{flex:1,padding:"10px 6px",background:"none",border:"none",color:sideTab===k?"#fff":"rgba(255,255,255,.35)",fontSize:13,fontWeight:sideTab===k?700:400,borderBottom:sideTab===k?`2px solid ${TEAL}`:"2px solid transparent",cursor:"pointer"}}>{ic} {lb}</button>))}</div><button onClick={()=>setChatOpen(false)} style={{width:32,height:32,borderRadius:"50%",background:"rgba(255,255,255,.1)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><X style={{width:14,height:14}}/></button></div><div style={{flex:1,overflow:"hidden",minHeight:340}}>{sideTab==="chat"?<ClassChatPanel sessionId={sessionId||""} sessionStartedAt={sessionInfo?.started_at??sessionInfo?.actual_start_time}/>:<ClassPolls sessionId={sessionId||""}/>}</div></div></div>)}
           {isMobile&&partOpen&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setPartOpen(false)}><div style={{position:"absolute",bottom:BAR_H,left:0,right:0,background:"#13181f",borderRadius:"22px 22px 0 0",maxHeight:"65vh",overflow:"auto"}} onClick={e=>e.stopPropagation()}><div style={{width:40,height:4,borderRadius:2,background:"rgba(255,255,255,.18)",margin:"12px auto 6px"}}/><ClassParticipants sessionId={sessionId||""}/></div></div>)}
-          <LiveQuizOverlay sessionId={sessionId||""} isOpen={false} onClose={()=>{}}/>
+          {/* FIX BUG 2: LiveQuizOverlay now controlled by quizOpen state — was permanently disabled with hardcoded isOpen={false} */}
+          <LiveQuizOverlay sessionId={sessionId||""} isOpen={quizOpen} onClose={()=>setQuizOpen(false)}/>
         </LiveKitRoom>
       )}
       {matPicker&&<MatPickerBridge subjectId={subject.id} onShare={(mat:any,room:any)=>{setMatOpen(mat);setMatPicker(false);try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"mat_open",material:mat})),{reliable:true});}catch{}}} onClose={()=>setMatPicker(false)}/>}
