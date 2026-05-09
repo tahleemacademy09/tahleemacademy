@@ -332,17 +332,51 @@ export default function HifdhDailySession({ assignment, userId, onClose }: Props
     const startDate = getStartDate(assignment);
     const daysOff   = getDaysOff(assignment);
 
+    // Page offsets per section type so we always open the correct mushaf pages
+    const JUZ_PAGE_STARTS = [
+      1,22,42,62,82,102,122,142,162,182,
+      202,222,242,262,282,302,322,342,362,382,
+      402,422,442,462,482,502,522,542,562,582,
+    ];
+    const SURAH_PAGE_STARTS: Record<number,number> = {
+      1:1,2:2,3:50,4:77,5:106,6:128,7:151,8:177,9:187,10:208,
+      11:221,12:235,13:249,14:255,15:262,16:267,17:282,18:293,19:305,20:312,
+      21:322,22:332,23:342,24:350,25:359,26:367,27:377,28:385,29:396,30:404,
+      31:411,32:415,33:418,34:428,35:434,36:440,37:446,38:453,39:458,40:467,
+      41:477,42:483,43:489,44:496,45:499,46:502,47:507,48:511,49:515,50:518,
+      51:520,52:523,53:526,54:528,55:531,56:534,57:537,58:542,59:545,60:549,
+      61:551,62:553,63:554,64:556,65:558,66:560,67:562,68:564,69:566,70:568,
+      71:570,72:572,73:574,74:575,75:577,76:578,77:580,78:582,79:583,
+      80:585,81:586,82:587,83:587,84:589,85:590,86:591,87:591,
+      88:592,89:593,90:594,91:595,92:595,93:596,94:596,95:597,
+      96:597,97:598,98:598,99:599,100:600,101:600,102:600,
+      103:601,104:601,105:601,106:602,107:602,108:602,
+      109:603,110:603,111:603,112:604,113:604,114:604,
+    };
+
+    // Compute section base-page offset so we open the right mushaf pages
+    let baseOffset = 0;
+    const firstItem = assignment.selected_items?.[0] ?? 1;
+    if (assignment.mode === "juz") {
+      baseOffset = (JUZ_PAGE_STARTS[firstItem - 1] ?? 1) - 1;
+    } else if (assignment.mode === "hizb") {
+      // Each hizb ≈ 10 pages; hizb N starts at page (N-1)*10 + 1
+      baseOffset = (firstItem - 1) * 10;
+    } else if (assignment.mode === "surah") {
+      baseOffset = (SURAH_PAGE_STARTS[firstItem] ?? 1) - 1;
+    }
+
     if (!startDate) {
-      // Fallback: if no start date, always revise page 1
+      // Fallback: start from section base page
       setPagesToRevise(
-        Array.from({ length: assignment.daily_pages }, (_, i) => i + 1)
+        Array.from({ length: assignment.daily_pages }, (_, i) => baseOffset + 1 + i)
           .filter(p => p >= 1 && p <= 604)
       );
       return;
     }
 
     const elapsed   = workingDaysElapsed(startDate, daysOff);
-    const startPage = Math.floor(elapsed * assignment.daily_pages) + 1;
+    const startPage = Math.floor(elapsed * assignment.daily_pages) + 1 + baseOffset;
     const pages     = Array.from({ length: assignment.daily_pages }, (_, i) => startPage + i)
       .filter(p => p >= 1 && p <= 604);
     setPagesToRevise(pages);
@@ -881,22 +915,54 @@ export default function HifdhDailySession({ assignment, userId, onClose }: Props
               </div>
             )}
 
-            {/* Error words (shown even for fail so student can focus) */}
-            {errorWords.length > 0 && (
-              <div style={{ background: W, borderRadius: 14, border: "1.5px solid #FECACA", padding: "12px 14px" }}>
-                <p style={{ fontSize: 11, fontWeight: 700, color: FAIL_COLOR, margin: "0 0 8px" }}>
-                  ⚠️ Words that need attention ({Math.min(errorWords.length, 15)})
-                </p>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 5, direction: "rtl" }}>
-                  {errorWords.slice(0, 15).map((w, i) => (
-                    <span key={i} style={{ padding: "4px 10px", borderRadius: 8, background: "#FEE2E2", color: FAIL_COLOR, fontSize: 14, fontFamily: "'Amiri',serif" }}>{w}</span>
-                  ))}
+            {/* Full transcription — all words shown, errors highlighted red */}
+            {pageAyahs.length > 0 && (() => {
+              const errorSet = new Set(errorWords.map(w => normalizeAr(w)));
+              const allWords = pageAyahs.flatMap(a =>
+                a.text.split(/\s+/).filter(Boolean).map(w => ({
+                  display: w,
+                  norm: normalizeAr(w),
+                }))
+              );
+              const correctCount = allWords.filter(({ norm }) => {
+                if (errorSet.has(norm)) return false;
+                for (const e of errorSet) {
+                  if (norm.length >= 3 && e.length >= 3 && norm.slice(0, 4) === e.slice(0, 4)) return false;
+                }
+                return true;
+              }).length;
+              return (
+                <div style={{ background: W, borderRadius: 14, border: "1.5px solid #E5E7EB", padding: "12px 14px" }}>
+                  <p style={{ fontSize: 11, fontWeight: 700, color: INK, margin: "0 0 10px" }}>
+                    📖 Full Page — Recitation Review
+                  </p>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 5, direction: "rtl" }}>
+                    {allWords.map(({ display, norm }, i) => {
+                      let isError = errorSet.has(norm);
+                      if (!isError) {
+                        for (const e of errorSet) {
+                          if (norm.length >= 3 && e.length >= 3 && norm.slice(0, 4) === e.slice(0, 4)) { isError = true; break; }
+                        }
+                      }
+                      return (
+                        <span key={i} style={{
+                          padding: "4px 10px", borderRadius: 8, fontSize: 15,
+                          fontFamily: "'Amiri Quran','Amiri',serif",
+                          background: isError ? "#FEE2E2" : "#DCFCE7",
+                          color: isError ? FAIL_COLOR : PASS_COLOR,
+                        }}>
+                          {display}
+                        </span>
+                      );
+                    })}
+                  </div>
+                  <div style={{ display: "flex", gap: 14, marginTop: 10, fontSize: 10, color: "#6B7280" }}>
+                    <span>🟢 Correct: {correctCount}</span>
+                    <span>🔴 Needs attention: {errorWords.length}</span>
+                  </div>
                 </div>
-                <p style={{ fontSize: 10, color: "#9CA3AF", margin: "8px 0 0" }}>
-                  Focus on these words when you re-read the page.
-                </p>
-              </div>
-            )}
+              );
+            })()}
 
             {currentScore >= PASS_THRESHOLD ? (
               <Btn
