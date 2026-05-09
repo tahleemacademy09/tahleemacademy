@@ -361,6 +361,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
   const [submitting,   setSubmitting]  = useState(false);
   const [audioUrl,     setAudioUrl]    = useState<string|null>(null);
   const [lastTranscript, setLastTranscript] = useState("");
+  const [ayahCorrectness, setAyahCorrectness] = useState<boolean[]>([]);
   const hadith = HADITHS[Math.floor(Math.random()*HADITHS.length)];
   const sessionStart = useRef(Date.now());
   const recognRef    = useRef<any>(null);
@@ -437,10 +438,10 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
     setLastTranscript(tx);
     const sc  = scoreText(tx, pageAyahs, recSecs);
     const errs= getErrorWords(tx, pageAyahs);
-    const ayahCorrectness = getAyahCorrectness(tx, pageAyahs);
-    setScore(sc); setErrorWords(errs);
+    const corr = getAyahCorrectness(tx, pageAyahs);
+    setScore(sc); setErrorWords(errs); setAyahCorrectness(corr);
     // stash for acceptPage
-    (evaluatePage as any).__last = { tx, ayahCorrectness };
+    (evaluatePage as any).__last = { tx, ayahCorrectness: corr };
     liveRef.current=""; setPhase("page_result");
   };
 
@@ -894,45 +895,86 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
               </div>
             )}
 
-            {/* Colored verse-by-verse breakdown */}
-            {pageAyahs.length>0&&(()=>{
-              const correctness=getAyahCorrectness(lastTranscript,pageAyahs);
+            {/* Colored verse-by-verse breakdown — full page with green/red */}
+            {pageAyahs.length>0&&ayahCorrectness.length>0&&(()=>{
+              const correctness=ayahCorrectness;
+              const correct = correctness.filter(Boolean).length;
+              const incorrect = correctness.filter(v=>!v).length;
               return(
-                <div style={{background:"#fffdf6",borderRadius:12,
-                  border:`2px solid ${GOLD}66`,overflow:"hidden"}}>
-                  <div style={{padding:"8px 14px",borderBottom:`1px solid ${GOLD}33`,
+                <div style={{background:"#fffdf6",borderRadius:16,
+                  border:`2px solid ${GOLD}66`,overflow:"hidden",
+                  boxShadow:"0 4px 20px rgba(0,0,0,.08)"}}>
+                  {/* Header */}
+                  <div style={{padding:"10px 16px",borderBottom:`1px solid ${GOLD}33`,
+                    background:`linear-gradient(to right,${GOLD}12,transparent)`,
                     display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                    <span style={{fontSize:10,fontWeight:800,color:G3,textTransform:"uppercase",letterSpacing:.5}}>
-                      📖 Verse Breakdown
+                    <span style={{fontSize:11,fontWeight:800,color:G2,textTransform:"uppercase",letterSpacing:.5}}>
+                      📖 Verse Breakdown — Page {todayPages[pageIdx]}
                     </span>
-                    <span style={{fontSize:10,color:G3}}>
-                      <span style={{color:PASS,fontWeight:800}}>
-                        ✓{correctness.filter(Boolean).length}
+                    <div style={{display:"flex",gap:8}}>
+                      <span style={{fontSize:11,fontWeight:800,color:PASS,
+                        background:`${PASS}18`,padding:"2px 8px",borderRadius:6}}>
+                        ✓ {correct} correct
                       </span>
-                      {" / "}
-                      <span style={{color:FAIL,fontWeight:800}}>
-                        ✗{correctness.filter(v=>!v).length}
+                      <span style={{fontSize:11,fontWeight:800,color:FAIL,
+                        background:`${FAIL}14`,padding:"2px 8px",borderRadius:6}}>
+                        ✗ {incorrect} missed
                       </span>
-                    </span>
+                    </div>
                   </div>
-                  <div style={{padding:"10px 14px",direction:"rtl",
-                    fontFamily:"'Amiri Quran','Amiri',serif",fontSize:20,lineHeight:3.0,
-                    textAlign:"justify",color:INK}}>
+                  {/* Ayah list */}
+                  <div style={{padding:"12px 16px",display:"flex",flexDirection:"column",gap:6}}>
                     {pageAyahs.map((a,i)=>(
-                      <span key={i} style={{
-                        background:correctness[i]?`${PASS}18`:`${FAIL}14`,
-                        borderRadius:4,
-                        outline:`1px solid ${correctness[i]?PASS+"44":FAIL+"33"}`,
-                        padding:"0 3px",
-                        margin:"0 2px",
-                        display:"inline",
+                      <div key={i} style={{
+                        borderRadius:10,
+                        border:`1.5px solid ${correctness[i]?PASS+"55":FAIL+"44"}`,
+                        background:correctness[i]?`${PASS}0e`:`${FAIL}08`,
+                        padding:"10px 14px",
+                        display:"flex",gap:10,alignItems:"flex-start",
                       }}>
-                        {a.text}
-                        <span style={{fontSize:12,color:GOLD,margin:"0 3px",fontFamily:"'Amiri',serif"}}>
-                          ۝{a.numberInSurah}
-                        </span>
-                      </span>
+                        {/* Ayah number badge */}
+                        <div style={{
+                          width:28,height:28,borderRadius:8,flexShrink:0,
+                          background:correctness[i]?`${PASS}22`:`${FAIL}18`,
+                          border:`1.5px solid ${correctness[i]?PASS:FAIL}`,
+                          display:"flex",alignItems:"center",justifyContent:"center",
+                          fontSize:10,fontWeight:900,color:correctness[i]?PASS:FAIL,
+                          marginTop:2,
+                        }}>
+                          {correctness[i]?"✓":"✗"}
+                        </div>
+                        {/* Ayah text */}
+                        <div style={{flex:1,direction:"rtl",textAlign:"right"}}>
+                          <div style={{
+                            fontFamily:"'Amiri Quran','Amiri',serif",
+                            fontSize:20,color:INK,lineHeight:2.4,
+                          }}>
+                            {a.text}
+                            <span style={{fontSize:12,color:GOLD,marginRight:4,fontFamily:"'Amiri',serif"}}>
+                              ۝{a.numberInSurah}
+                            </span>
+                          </div>
+                          <div style={{fontSize:10,color:correctness[i]?PASS:FAIL,
+                            fontWeight:700,marginTop:2,textAlign:"left",direction:"ltr"}}>
+                            {correctness[i]
+                              ?`✓ Verse ${a.numberInSurah} — recited correctly`
+                              :`✗ Verse ${a.numberInSurah} — needs practice`}
+                          </div>
+                        </div>
+                      </div>
                     ))}
+                  </div>
+                  {/* Legend */}
+                  <div style={{padding:"8px 16px 12px",borderTop:`1px solid ${GOLD}22`,
+                    display:"flex",gap:16,justifyContent:"center"}}>
+                    <div style={{display:"flex",gap:5,alignItems:"center"}}>
+                      <div style={{width:12,height:12,borderRadius:3,background:PASS}}/> 
+                      <span style={{fontSize:10,color:"#6B7280"}}>Recited correctly</span>
+                    </div>
+                    <div style={{display:"flex",gap:5,alignItems:"center"}}>
+                      <div style={{width:12,height:12,borderRadius:3,background:FAIL}}/> 
+                      <span style={{fontSize:10,color:"#6B7280"}}>Needs more practice</span>
+                    </div>
                   </div>
                 </div>
               );
