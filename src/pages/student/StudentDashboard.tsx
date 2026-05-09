@@ -613,7 +613,7 @@ const StudentDashboard = () => {
               {/* CTA button */}
               <div style={{ padding: "12px 16px 16px" }}>
                 <button
-                  onClick={() => navigate("/student/hifdh")}
+                  onClick={() => navigate("/student/hifdh-daily")}
                   style={{
                     width: "100%", padding: "11px 0", borderRadius: 12, border: "none",
                     background: completed
@@ -646,7 +646,7 @@ const StudentDashboard = () => {
               { to:"/student/transcripts",  icon:GraduationCap, label:t("Transcripts","السجلات"),        ar:"السجلات",      color:"#b7791f", bg:"#fffbeb", show: true },
               { to:"/student/live-classes", icon:Video,         label:t("Live Classes","الفصول الحية"), ar:"الفصول الحية", color:"#2b6cb0", bg:"#ebf8ff", show: !isPrivateStudent || allowGeneralAccess },
               { to:"/student/majlis",       icon:MessageCircle, label:t("Al-Majlis","المجلس"),           ar:"المجلس",       color:"#6b46c1", bg:"#faf5ff", show: true },
-              { to:"/student/hifdh",        icon:Mic,           label:t("AI-Hifdh","الحِفظ الذكي"),     ar:"الحِفظ الذكي", color:DARK_GREEN, bg:"#f0fdf4", show: true },
+              { to:"/student/hifdh-daily",   icon:Mic,           label:t("Daily Hifdh","الحفظ اليومي"),     ar:"الحفظ اليومي",  color:DARK_GREEN, bg:"#f0fdf4", show: true },
               { to:"/student/courses",      icon:BookOpen,      label:t("Courses","الدروس"),             ar:"الدروس",       color:"#c0392b", bg:"#fff5f5", show: true },
             ] as const).filter(link => link.show).map((link,i) => (
               <Link to={link.to} key={i} style={{ textDecoration:"none" }}>
