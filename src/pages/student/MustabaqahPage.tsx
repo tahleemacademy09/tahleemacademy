@@ -533,7 +533,9 @@ export default function MustabaqahPage() {
   // ── Q-Settings panel (live editing of questions from arena) ──────
   const [showQSettings,    setShowQSettings]    = useState(false);
   const [qSettingsTab,     setQSettingsTab]     = useState<"manual"|"ai">("manual");
-  const [liveCustomQ,      setLiveCustomQ]      = useState("");   // editable custom questions text
+  const [qSettingsStage,   setQSettingsStage]   = useState<number>(1); // which stage's questions are being edited
+  const [stageQuestions,   setStageQuestions]   = useState<Record<string,string>>({}); // stageNum -> newline-separated questions
+  const [liveCustomQ,      setLiveCustomQ]      = useState("");   // editable custom questions text (all-stages fallback)
   const [aiPrompt,         setAiPrompt]         = useState("");
   const [aiQCount,         setAiQCount]         = useState(10);
   const [aiGenLoading,     setAiGenLoading]     = useState(false);
@@ -690,6 +692,25 @@ export default function MustabaqahPage() {
 
   useEffect(()=>{ if (competition) { loadParticipants(); loadAttempts(); } },[competition]);
 
+  // ── Polling fallback for pending participants ─────────────────────
+  // Real-time broadcast can arrive before the channel finishes subscribing.
+  // This ensures approval is never missed regardless of timing.
+  useEffect(()=>{
+    if (!competition || !myParticipant || myParticipant.status !== "pending") return;
+    const iv = setInterval(async () => {
+      const { data } = await supabase
+        .from("musabaqah_participants" as any)
+        .select("status")
+        .eq("id", myParticipant.id)
+        .single();
+      if (data && (data as any).status !== "pending") {
+        loadParticipants();
+      }
+    }, 2500);
+    return () => clearInterval(iv);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[competition?.id, myParticipant?.id, myParticipant?.status]);
+
   useEffect(()=>{
     if (!competition) return;
     if (channelRef.current) supabase.removeChannel(channelRef.current);
@@ -757,6 +778,7 @@ export default function MustabaqahPage() {
       })
       .on("broadcast",{event:"STAGE_CHANGE"},({payload}:any)=>{
         setCompetition(c=>c?{...c,current_stage:payload.stage}:c);
+        setQSettingsStage(payload.stage); // sync stage editor to new stage
         setPickedTile(null); setStageTiles([]); setShowTilePicker(false); setAyahText(null); setPickerParticipantId(null);
         setActiveP(null); setCurAttempt(null); setTimerActive(false); setTimerSecs(0); setElapsedSecs(0);
         setTimerExpired(false); elapsedRef.current=0;
@@ -777,6 +799,8 @@ export default function MustabaqahPage() {
         setTimeout(()=>setFloatReactions(r=>r.filter(rx=>rx.id!==id)),3000);
       })
       .on("broadcast",{event:"PARTICIPANT_APPROVED"},({payload}:any)=>{
+        // Always reload — catches DB change even if broadcast races with subscription init
+        loadParticipants();
         const mine=myParticipantRef.current;
         if (mine&&payload.participant_id===mine.id) {
           setMyParticipant(p=>p?{...p,status:"waiting"}:p);
@@ -816,20 +840,33 @@ export default function MustabaqahPage() {
 
   const buildTiles = (comp: Competition): Tile[] => {
     const count = comp.scope_config?.tiles_per_stage ?? 10;
-    // Prefer live-edited questions (from Q-Settings panel) over the DB snapshot
+    const stageKey = String(comp.current_stage);
+
+    // 1. Prefer per-stage questions from the live editor
+    const stageLive = stageQuestions[stageKey]?.split("\n").map(s=>s.trim()).filter(Boolean) ?? [];
+    const stageDb: string[] = comp.scope_config?.stage_questions?.[stageKey] ?? [];
+    const stageSpecific = stageLive.length > 0 ? stageLive : stageDb;
+    if (stageSpecific.length > 0) {
+      return Array.from({length: Math.min(count, stageSpecific.length)}, (_,i) => ({
+        num: i+1, label: stageSpecific[i], labelAr: "",
+        surah: 0, ayah: 0, surahName: "", surahAr: "",
+      }));
+    }
+
+    // 2. Fall back to flat custom questions (all-stages list, sliced by stage)
     const liveList = liveCustomQ.split("\n").map(s=>s.trim()).filter(Boolean);
     const customs: string[] = liveList.length > 0 ? liveList : (comp.scope_config?.custom_questions ?? []);
     if (customs.length > 0) {
-      // Each stage gets its own slice of custom questions sequentially
       const stageOffset = (comp.current_stage - 1) * count;
       const slice = customs.slice(stageOffset, stageOffset + count);
-      // If we've exhausted custom questions, wrap around
       const effective = slice.length > 0 ? slice : customs.slice(0, count);
       return Array.from({length: Math.min(count, effective.length)}, (_,i) => ({
         num: i+1, label: effective[i] ?? genQuestion(comp.scope_type).label, labelAr: "",
         surah: 0, ayah: 0, surahName: "", surahAr: "",
       }));
     }
+
+    // 3. Fall back to random Quran passages
     return genTiles(comp.scope_type, count);
   };
 
@@ -1028,6 +1065,11 @@ export default function MustabaqahPage() {
     if (error) { toast({title:"Error",description:error.message,variant:"destructive"}); return; }
     const comp=data as Competition;
     setCompetition(comp); setJudgeTimerDuration(comp.time_limit_seconds);
+    // Init per-stage question state
+    const sqText: Record<string,string> = {};
+    for (let i=1; i<=comp.total_stages; i++) sqText[String(i)] = "";
+    setStageQuestions(sqText); setQSettingsStage(1);
+    setLiveCustomQ(customQList.join("\n")); setLiveInstructions(form.description.trim());
     setView("arena"); await fetchLkToken(room_code);
     toast({title:`🏆 Created! Code: ${room_code}`});
   };
@@ -1059,6 +1101,14 @@ export default function MustabaqahPage() {
     const cqs: string[] = comp.scope_config?.custom_questions ?? [];
     setLiveCustomQ(cqs.join("\n"));
     setLiveInstructions(comp.description||"");
+    // Init per-stage questions
+    const sq: Record<string,string[]> = comp.scope_config?.stage_questions ?? {};
+    const sqText: Record<string,string> = {};
+    for (let i=1; i<=comp.total_stages; i++) {
+      sqText[String(i)] = (sq[String(i)] ?? []).join("\n");
+    }
+    setStageQuestions(sqText);
+    setQSettingsStage(comp.current_stage);
     if (canJudge) { setView("role_select"); return; }
     const {data}=await supabase.from("musabaqah_participants" as any).select("*").eq("competition_id",comp.id).eq("user_id",user?.id).single();
     if (data) { setMyParticipant(data as Participant); setUserRole("participant"); setView("arena"); await fetchLkToken(comp.room_code); }
@@ -1107,7 +1157,8 @@ export default function MustabaqahPage() {
   const waiting = participants.filter(p=>p.status==="waiting");
   const pending = participants.filter(p=>p.status==="pending");
   const done    = participants.filter(p=>p.status==="completed");
-  const allDone = waiting.length===0 && participants.length>0 && !activeP;
+  // allDone: no waiting, no pending, at least one participant completed, no active participant
+  const allDone = waiting.length===0 && pending.length===0 && done.length>0 && !activeP;
   const totalCrit = competition?.use_criteria_scoring ? SCORING_CRITERIA.reduce((s,c)=>s+(Number(scoreBreak[c.key])||0),0) : Number(scoreBreak.tajweed)||0;
   const finalScore = Math.max(0,totalCrit-bellCount*2);
   const timerWarning = timerSecs > 0 && timerSecs <= 30;
@@ -1124,14 +1175,28 @@ export default function MustabaqahPage() {
   const saveQSettings = async () => {
     if (!competition) return;
     const qList = liveCustomQ.split("\n").map(s=>s.trim()).filter(Boolean);
-    const newConfig = { ...(competition.scope_config||{}), custom_questions: qList };
+    // Build stage_questions map from the live stageQuestions state
+    const stageQMap: Record<string,string[]> = {};
+    for (let i=1; i<=competition.total_stages; i++) {
+      const lines = (stageQuestions[String(i)]||"").split("\n").map(s=>s.trim()).filter(Boolean);
+      if (lines.length > 0) stageQMap[String(i)] = lines;
+    }
+    const newConfig = {
+      ...(competition.scope_config||{}),
+      custom_questions: qList,
+      stage_questions: stageQMap,
+    };
     await supabase.from("musabaqah_competitions" as any)
       .update({ scope_config: newConfig, description: liveInstructions } as any)
       .eq("id", competition.id);
     setCompetition(c=>c?{...c,scope_config:newConfig,description:liveInstructions}:c);
     broadcast("SETTINGS_UPDATE", { instructions: liveInstructions });
     setShowQSettings(false);
-    toast({ title: `✅ Questions saved${qList.length>0?` (${qList.length} custom)`:""}`});
+    const stageCount = Object.keys(stageQMap).length;
+    const msg = stageCount > 0
+      ? `✅ Saved — ${stageCount} stage(s) with custom questions`
+      : qList.length > 0 ? `✅ ${qList.length} flat custom questions saved` : "✅ Settings saved (random passages)";
+    toast({ title: msg });
   };
 
   // ── AI question generation ───────────────────────────────────────
@@ -1149,10 +1214,13 @@ export default function MustabaqahPage() {
       // tahleem-ai returns { text: "..." } for the "generate" action
       const raw = (data?.text || data?.content?.[0]?.text || "") as string;
       const lines = raw.split("\n").map((s:string)=>s.replace(/^[\d\-\*\.\)]+\s*/,"").trim()).filter((s:string)=>s.length>3);
-      const merged = liveCustomQ.trim() ? liveCustomQ.trim() + "\n" + lines.join("\n") : lines.join("\n");
-      setLiveCustomQ(merged);
+      // Add to the current stage's questions
+      const stageKey = String(qSettingsStage);
+      const existing = (stageQuestions[stageKey]||"").trim();
+      const merged = existing ? existing + "\n" + lines.join("\n") : lines.join("\n");
+      setStageQuestions(sq=>({...sq, [stageKey]: merged}));
       setQSettingsTab("manual");
-      toast({ title: `✨ Generated ${lines.length} questions — review & save` });
+      toast({ title: `✨ Generated ${lines.length} questions for Stage ${qSettingsStage} — review & save` });
     } catch(e:any) {
       toast({ title:"AI generation failed", description: e.message||"Check edge function", variant:"destructive" });
     } finally { setAiGenLoading(false); }
@@ -1706,7 +1774,7 @@ export default function MustabaqahPage() {
                   <button key={tab} onClick={()=>setJudgeTab(tab as any)} style={{flex:1,background:judgeTab===tab?"rgba(201,168,76,.18)":"transparent",border:judgeTab===tab?"1px solid rgba(201,168,76,.35)":"1px solid transparent",borderRadius:7,padding:"7px 0",color:judgeTab===tab?GOLD:"rgba(255,255,255,.35)",fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"Cairo,sans-serif",transition:"all .2s"}}>{label}</button>
                 ))}
               </div>
-              <button onClick={()=>setShowQSettings(true)} style={{background:"rgba(201,168,76,.1)",border:"1px solid rgba(201,168,76,.25)",borderRadius:8,padding:"7px 9px",cursor:"pointer",color:GOLD,display:"flex",alignItems:"center",gap:3,flexShrink:0}}>
+              <button onClick={()=>{ setQSettingsStage(competition.current_stage); setShowQSettings(true); }} style={{background:"rgba(201,168,76,.1)",border:"1px solid rgba(201,168,76,.25)",borderRadius:8,padding:"7px 9px",cursor:"pointer",color:GOLD,display:"flex",alignItems:"center",gap:3,flexShrink:0}}>
                 <Wand2 size={12}/><span style={{fontSize:10,fontWeight:700}}>Q</span>
               </button>
             </div>
@@ -1986,23 +2054,86 @@ export default function MustabaqahPage() {
       {showQSettings&&isJudge&&(
         <div style={{position:"fixed",inset:0,zIndex:9990,display:"flex",flexDirection:"column",justifyContent:"flex-end"}} onClick={()=>setShowQSettings(false)}>
           <div style={{position:"absolute",inset:0,background:"rgba(0,0,0,.6)",backdropFilter:"blur(6px)"}}/>
-          <div onClick={e=>e.stopPropagation()} style={{position:"relative",zIndex:1,background:"linear-gradient(180deg,#0d2419 0%,#061410 100%)",borderTop:"1.5px solid rgba(201,168,76,.35)",borderRadius:"22px 22px 0 0",maxHeight:"85vh",display:"flex",flexDirection:"column",fontFamily:"Cairo,sans-serif"}}>
+          <div onClick={e=>e.stopPropagation()} style={{position:"relative",zIndex:1,background:"linear-gradient(180deg,#0d2419 0%,#061410 100%)",borderTop:"1.5px solid rgba(201,168,76,.35)",borderRadius:"22px 22px 0 0",maxHeight:"90vh",display:"flex",flexDirection:"column",fontFamily:"Cairo,sans-serif"}}>
+            {/* Header */}
             <div style={{display:"flex",alignItems:"center",gap:9,padding:"14px 18px",borderBottom:"1px solid rgba(255,255,255,.07)",flexShrink:0}}>
               <div style={{width:32,height:32,borderRadius:9,background:`linear-gradient(135deg,${GOLD},${GOLDD})`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Wand2 size={14} color={G}/></div>
-              <div style={{flex:1}}><div style={{color:"#fff",fontWeight:800,fontSize:14}}>Question Settings</div><div style={{color:"rgba(255,255,255,.35)",fontSize:10}}>Manage questions & instructions</div></div>
+              <div style={{flex:1}}>
+                <div style={{color:"#fff",fontWeight:800,fontSize:14}}>Question Settings</div>
+                <div style={{color:"rgba(255,255,255,.35)",fontSize:10}}>Set questions & instructions per stage</div>
+              </div>
               <button onClick={()=>setShowQSettings(false)} style={{background:"none",border:"none",color:"rgba(255,255,255,.35)",cursor:"pointer",fontSize:20,padding:0,lineHeight:1}}>✕</button>
             </div>
-            <div style={{display:"flex",padding:"8px 14px",flexShrink:0,gap:7}}>
-              {([["manual","📝 Manual"],["ai","✨ AI Generate"]] as const).map(([t,l])=>(
+
+            {/* Tab bar: Manual / AI */}
+            <div style={{display:"flex",padding:"8px 14px 4px",flexShrink:0,gap:7}}>
+              {([["manual","📝 Questions"],["ai","✨ AI Generate"]] as const).map(([t,l])=>(
                 <button key={t} onClick={()=>setQSettingsTab(t)} style={{flex:1,background:qSettingsTab===t?"rgba(201,168,76,.2)":"transparent",border:qSettingsTab===t?"1px solid rgba(201,168,76,.4)":"1px solid transparent",borderRadius:9,padding:"7px 0",color:qSettingsTab===t?GOLD:"rgba(255,255,255,.4)",fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"Cairo,sans-serif",transition:"all .2s"}}>{l}</button>
               ))}
             </div>
-            <div style={{flex:1,overflowY:"auto",padding:"12px 14px 0"}}>
-              {qSettingsTab==="manual"&&(
+
+            {/* Stage selector (only for manual tab) */}
+            {qSettingsTab==="manual"&&competition&&(
+              <div style={{padding:"6px 14px 4px",flexShrink:0}}>
+                <div style={{color:"rgba(255,255,255,.4)",fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:5}}>
+                  Editing Stage
+                </div>
+                <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                  {Array.from({length:competition.total_stages},(_,i)=>{
+                    const s=i+1;
+                    const hasQ=(stageQuestions[String(s)]||"").trim().length>0;
+                    const isCurrent=s===competition.current_stage;
+                    return(
+                      <button key={s} onClick={()=>setQSettingsStage(s)}
+                        style={{background:qSettingsStage===s?`${GOLD}22`:"rgba(255,255,255,.04)",border:`1.5px solid ${qSettingsStage===s?GOLD:hasQ?"rgba(34,197,94,.4)":"rgba(255,255,255,.12)"}`,borderRadius:9,padding:"5px 12px",cursor:"pointer",color:qSettingsStage===s?GOLD:hasQ?GREEN:"rgba(255,255,255,.45)",fontWeight:700,fontSize:12,fontFamily:"Cairo,sans-serif",position:"relative",display:"flex",alignItems:"center",gap:4}}>
+                        S{s}{isCurrent&&<span style={{fontSize:8,background:`${GOLD}33`,color:GOLD,borderRadius:4,padding:"1px 4px",lineHeight:1.3}}>NOW</span>}
+                        {hasQ&&<span style={{width:5,height:5,borderRadius:"50%",background:GREEN,flexShrink:0}}/>}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div style={{flex:1,overflowY:"auto",padding:"10px 14px 0"}}>
+              {qSettingsTab==="manual"&&competition&&(
                 <>
-                  <div style={{color:"rgba(255,255,255,.45)",fontSize:11,marginBottom:5,lineHeight:1.6}}>One question per line. <span style={{color:GOLD}}>Leave empty to use random passages.</span></div>
-                  <textarea value={liveCustomQ} onChange={e=>setLiveCustomQ(e.target.value)} placeholder={"Al-Fatiha full\nAl-Baqarah 1-5\nSurah Al-Ikhlas complete\n..."} rows={7} style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:11,padding:"11px 13px",color:"#fff",fontSize:13,fontFamily:"Cairo,sans-serif",resize:"vertical",lineHeight:1.7,boxSizing:"border-box"}}/>
-                  <div style={{color:"rgba(255,255,255,.3)",fontSize:10,marginTop:3,marginBottom:12}}>{liveCustomQ.split("\n").filter(s=>s.trim()).length} questions entered</div>
+                  <div style={{color:"rgba(255,255,255,.45)",fontSize:11,marginBottom:6,lineHeight:1.6}}>
+                    <strong style={{color:GOLD}}>Stage {qSettingsStage} questions</strong> — one per line.{" "}
+                    <span style={{color:"rgba(255,255,255,.3)"}}>Leave empty to use random Quran passages.</span>
+                  </div>
+                  <textarea
+                    value={stageQuestions[String(qSettingsStage)]||""}
+                    onChange={e=>setStageQuestions(sq=>({...sq,[String(qSettingsStage)]:e.target.value}))}
+                    placeholder={"Al-Fatiha full\nAl-Baqarah 1-5\nSurah Al-Ikhlas complete\n..."}
+                    rows={7}
+                    style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:11,padding:"11px 13px",color:"#fff",fontSize:13,fontFamily:"Cairo,sans-serif",resize:"vertical",lineHeight:1.7,boxSizing:"border-box"}}
+                  />
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                    <div style={{color:"rgba(255,255,255,.3)",fontSize:10,marginTop:3}}>
+                      {(stageQuestions[String(qSettingsStage)]||"").split("\n").filter(s=>s.trim()).length} questions for Stage {qSettingsStage}
+                    </div>
+                    <button onClick={()=>setStageQuestions(sq=>({...sq,[String(qSettingsStage)]:""}))}
+                      style={{background:"none",border:"none",color:"rgba(239,68,68,.5)",fontSize:10,cursor:"pointer",fontFamily:"Cairo,sans-serif",padding:0}}>
+                      Clear Stage {qSettingsStage}
+                    </button>
+                  </div>
+
+                  {/* Flat fallback list */}
+                  <details style={{marginBottom:10}}>
+                    <summary style={{color:"rgba(255,255,255,.35)",fontSize:11,cursor:"pointer",userSelect:"none",marginBottom:6}}>
+                      📋 All-stages fallback list ({liveCustomQ.split("\n").filter(s=>s.trim()).length} entries)
+                    </summary>
+                    <div style={{color:"rgba(255,255,255,.35)",fontSize:10,marginBottom:4}}>Used only if a stage has no specific questions above.</div>
+                    <textarea
+                      value={liveCustomQ}
+                      onChange={e=>setLiveCustomQ(e.target.value)}
+                      placeholder={"Al-Fatiha full\nAl-Baqarah 1-5\n..."}
+                      rows={4}
+                      style={{width:"100%",background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.1)",borderRadius:9,padding:"9px 11px",color:"rgba(255,255,255,.7)",fontSize:12,fontFamily:"Cairo,sans-serif",resize:"vertical",lineHeight:1.6,boxSizing:"border-box"}}
+                    />
+                  </details>
+
                   <div style={{color:GOLD,fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:5,display:"flex",alignItems:"center",gap:3}}><Eye size={10}/> Instructions for Participants</div>
                   <textarea value={liveInstructions} onChange={e=>setLiveInstructions(e.target.value)} placeholder={"e.g. Recite with proper Tajweed rules. Begin with Bismillah."} rows={3} style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.15)",borderRadius:11,padding:"9px 13px",color:"#fff",fontSize:13,fontFamily:"Cairo,sans-serif",resize:"vertical",lineHeight:1.7,boxSizing:"border-box",marginBottom:14}}/>
                 </>
@@ -2011,8 +2142,27 @@ export default function MustabaqahPage() {
                 <>
                   <div style={{background:"rgba(201,168,76,.08)",border:"1px solid rgba(201,168,76,.2)",borderRadius:11,padding:"11px 13px",marginBottom:12,display:"flex",alignItems:"flex-start",gap:7}}>
                     <Sparkles size={13} color={GOLD} style={{flexShrink:0,marginTop:2}}/>
-                    <div style={{color:"rgba(255,255,255,.6)",fontSize:12,lineHeight:1.7}}>Describe the topic and scope. AI will generate questions added to the manual list for review before saving.</div>
+                    <div style={{color:"rgba(255,255,255,.6)",fontSize:12,lineHeight:1.7}}>
+                      AI generates questions for <strong style={{color:GOLD}}>Stage {qSettingsStage}</strong>. They're added to that stage's list for review before saving.
+                    </div>
                   </div>
+                  {/* Stage selector for AI tab too */}
+                  {competition&&(
+                    <div style={{marginBottom:12}}>
+                      <div style={{color:GOLD,fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:5}}>Target Stage</div>
+                      <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                        {Array.from({length:competition.total_stages},(_,i)=>{
+                          const s=i+1;
+                          return(
+                            <button key={s} onClick={()=>setQSettingsStage(s)}
+                              style={{background:qSettingsStage===s?`${GOLD}22`:"rgba(255,255,255,.04)",border:`1.5px solid ${qSettingsStage===s?GOLD:"rgba(255,255,255,.12)"}`,borderRadius:9,padding:"5px 12px",cursor:"pointer",color:qSettingsStage===s?GOLD:"rgba(255,255,255,.45)",fontWeight:700,fontSize:12,fontFamily:"Cairo,sans-serif"}}>
+                              S{s}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                   <div style={{marginBottom:11}}>
                     <div style={{color:GOLD,fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:5}}>Prompt / Scope</div>
                     <textarea value={aiPrompt} onChange={e=>setAiPrompt(e.target.value)} placeholder={"e.g. Juz 30 short surahs for junior students"} rows={3} style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:11,padding:"11px 13px",color:"#fff",fontSize:13,fontFamily:"Cairo,sans-serif",resize:"none",lineHeight:1.7,boxSizing:"border-box"}}/>
@@ -2026,7 +2176,7 @@ export default function MustabaqahPage() {
                     </div>
                   </div>
                   <button onClick={generateAIQuestions} disabled={aiGenLoading||!aiPrompt.trim()} style={{width:"100%",background:aiGenLoading||!aiPrompt.trim()?"rgba(255,255,255,.08)":`linear-gradient(135deg,${GOLD},${GOLDD})`,color:aiGenLoading||!aiPrompt.trim()?"rgba(255,255,255,.3)":G,border:"none",borderRadius:11,padding:"13px",cursor:aiGenLoading||!aiPrompt.trim()?"not-allowed":"pointer",fontWeight:800,fontSize:14,fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",gap:7,marginBottom:14,transition:"all .2s"}}>
-                    {aiGenLoading?<><Loader2 size={15} style={{animation:"spin 1s linear infinite"}}/> Generating…</>:<><Sparkles size={15}/> Generate {aiQCount} Questions</>}
+                    {aiGenLoading?<><Loader2 size={15} style={{animation:"spin 1s linear infinite"}}/> Generating…</>:<><Sparkles size={15}/> Generate {aiQCount} Questions for Stage {qSettingsStage}</>}
                   </button>
                 </>
               )}
@@ -2034,7 +2184,7 @@ export default function MustabaqahPage() {
             <div style={{padding:"11px 14px 18px",borderTop:"1px solid rgba(255,255,255,.07)",flexShrink:0,display:"flex",gap:8}}>
               <button onClick={()=>setShowQSettings(false)} style={{flex:1,background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",borderRadius:11,padding:"12px",cursor:"pointer",color:"rgba(255,255,255,.5)",fontWeight:700,fontSize:13,fontFamily:"Cairo,sans-serif"}}>Cancel</button>
               <button onClick={saveQSettings} style={{flex:2,background:`linear-gradient(135deg,${GOLD},${GOLDD})`,border:"none",borderRadius:11,padding:"12px",cursor:"pointer",color:G,fontWeight:800,fontSize:13,fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",gap:7}}>
-                <CheckCircle size={14}/> Save Changes
+                <CheckCircle size={14}/> Save All Changes
               </button>
             </div>
           </div>
