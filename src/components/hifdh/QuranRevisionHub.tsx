@@ -705,8 +705,8 @@ export default function QuranRevisionHub({ userId }: Props) {
           });
         } catch { /* ignore */ }
 
-        // hifdh_daily_logs is owned exclusively by HifdhDailyRevisionPage.
-        // مراجعة sessions are tracked in hifdh_revision_sessions only.
+        // hifdh_daily_logs is written exclusively by HifdhDailyRevisionPage.
+        // مراجعة sessions are tracked in hifdh_revision_sessions above.
       }
     } catch (e) {
       console.error(e);
