@@ -314,7 +314,6 @@ export default function QuranRevisionHub({ userId }: Props) {
 
   // Assignment / daily log
   const [assignment,       setAssignment]       = useState<{id:string;mode:string;selected_items:number[];daily_pages:number;reciter_id:string}|null>(null);
-  const [todayLogId,       setTodayLogId]       = useState<string|null>(null);
   const [assignmentLoaded, setAssignmentLoaded] = useState(false);
 
   const remMediaRef  = useRef<MediaRecorder | null>(null);
@@ -706,34 +705,8 @@ export default function QuranRevisionHub({ userId }: Props) {
           });
         } catch { /* ignore */ }
 
-        // Upsert daily log so teacher/admin can track progress
-        try {
-          const isLastPage = plan.currentIdx >= plan.allPages.length - 1;
-          const { data: logData } = await (supabase as any).rpc("upsert_hifdh_daily_log", {
-            p_student_id:    userId,
-            p_assignment_id: assignment?.id ?? null,
-            p_pages:         dailyPages,
-            p_score:         score,
-            p_duration:      recTime,
-            p_session_data:  {
-              page:       plan.allPages[plan.currentIdx],
-              score,
-              transcript,
-              audio_path: uploadedPath,
-              words:      words.slice(0, 80),
-              errors:     errors.map(e => ({
-                ayah:    e.ayah.numberInSurah,
-                surah:   e.ayah.surah?.number,
-                surahAr: e.ayah.surah?.nameAr,
-                missing: e.missing,
-              })),
-              attempts:   recitationAttempts + 1,
-              timestamp:  new Date().toISOString(),
-            },
-            p_completed:     isLastPage,
-          });
-          if (logData) setTodayLogId(logData);
-        } catch { /* ignore */ }
+        // hifdh_daily_logs is owned exclusively by HifdhDailyRevisionPage.
+        // مراجعة sessions are tracked in hifdh_revision_sessions only.
       }
     } catch (e) {
       console.error(e);
