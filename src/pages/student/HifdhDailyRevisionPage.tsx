@@ -395,6 +395,40 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
   /* ── keep recSecsRef in sync so mr.onstop can read it ── */
   useEffect(() => { recSecsRef.current = recSecs; }, [recSecs]);
 
+  /* ── save partial log whenever a page evaluation lands ── */
+  /* This lets the admin see the attempt even if the student never passes */
+  useEffect(() => {
+    if (phase !== "page_result" || score === null) return;
+    const today = todayISO();
+    const last = lastResultRef.current;
+    (supabase as any).from("hifdh_daily_logs").upsert({
+      student_id:    userId,
+      assignment_id: assignment.id,
+      log_date:      today,
+      pages_revised: todayPages.length,
+      avg_score:     score,
+      duration_secs: recSecsRef.current,
+      completed:     false,
+      session_data: {
+        recitation_score: score,
+        test_score:       null,
+        pages_done:       todayPages.slice(0, pageIdx + 1),
+        page_results: [
+          ...pageResults,
+          {
+            pageNum:         todayPages[pageIdx],
+            score,
+            transcript:      last?.tx ?? "",
+            ayahCorrectness: last?.ayahCorrectness ?? [],
+            errorWords,
+          },
+        ],
+      },
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "student_id,log_date" }).catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, score]);
+
   const startRecording = useCallback(async () => {
     try {
       setAudioUrl(null); audioChunks.current = []; audioBlobRef.current = null;
