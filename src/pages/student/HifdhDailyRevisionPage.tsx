@@ -446,58 +446,88 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
   const evaluatePage = async () => {
     const tx  = liveRef.current.trim();
     setLastTranscript(tx);
-    const sc             = scoreText(tx, pageAyahs, recSecs);
-    const errs           = getErrorWords(tx, pageAyahs);
+    const sc              = scoreText(tx, pageAyahs, recSecs);
+    const errs            = getErrorWords(tx, pageAyahs);
     const ayahCorrectness = getAyahCorrectness(tx, pageAyahs);
     setScore(sc); setErrorWords(errs);
     (evaluatePage as any).__last = { tx, ayahCorrectness };
     liveRef.current = ""; setPhase("page_result");
 
-    /* ── Save every attempt to hifdh_daily_logs (overwrite until ≥50%) ── */
-    if (userId && assignment?.id) {
-      const today = todayISO();
-      const dur   = Math.round((Date.now() - sessionStart.current) / 1000);
-      const snapAyahs = pageAyahs.map(a => ({
-        text: a.text, numberInSurah: a.numberInSurah,
-        surahName: a.surah?.englishName, surahNum: a.surah?.number,
-      }));
-      const thisPageResult = {
-        pageNum: todayPages[pageIdx], score: sc, errorWords: errs,
-        ayahCorrectness, transcript: tx, ayahs: snapAyahs,
-      };
-      // Merge with already-accepted pages
-      const allResults = [
-        ...pageResults.filter(r => r.pageNum !== todayPages[pageIdx]),
-        thisPageResult,
-      ];
+    /* ── Save every attempt to hifdh_daily_logs ─────────────────────────
+       Overwrite on retry. Uses same RPC as QuranRevisionHub (مراجعة).
+       Falls back to explicit SELECT → INSERT/UPDATE if RPC unavailable. */
+    if (!userId || !assignment?.id) return;
+
+    const today     = todayISO();
+    const dur       = Math.round((Date.now() - sessionStart.current) / 1000);
+    const snapAyahs = pageAyahs.map(a => ({
+      text: a.text, numberInSurah: a.numberInSurah,
+      surahName: a.surah?.englishName, surahNum: a.surah?.number,
+    }));
+    const thisPageResult = {
+      pageNum: todayPages[pageIdx], score: sc, errorWords: errs,
+      ayahCorrectness, transcript: tx, ayahs: snapAyahs,
+    };
+    const allResults = [
+      ...pageResults.filter(r => r.pageNum !== todayPages[pageIdx]),
+      thisPageResult,
+    ];
+    const sessionData = {
+      recitation_score: sc,
+      test_score:       0,
+      pages_done:       todayPages.slice(0, pageIdx + 1),
+      audio_url:        null,
+      page_results:     allResults.map(r => ({
+        pageNum:         r.pageNum,
+        score:           r.score,
+        errorWords:      r.errorWords,
+        ayahCorrectness: (r as any).ayahCorrectness ?? ayahCorrectness,
+        transcript:      (r as any).transcript ?? tx,
+        ayahs:           (r as any).ayahs ?? snapAyahs,
+      })),
+      errors:      errs.map(w => ({ word: w, page: todayPages[pageIdx] })).slice(0, 20),
+      in_progress: true,
+      attempts:    retryCount + 1,
+    };
+
+    /* Primary: same RPC the مراجعة uses — handles upsert cleanly in DB */
+    let saved = false;
+    try {
+      const { error: rpcErr } = await (supabase as any).rpc("upsert_hifdh_daily_log", {
+        p_student_id:    userId,
+        p_assignment_id: assignment.id,
+        p_pages:         todayPages.length,
+        p_score:         sc,
+        p_duration:      dur,
+        p_session_data:  sessionData,
+        p_completed:     false,
+      });
+      if (!rpcErr) saved = true;
+    } catch { /* fall through */ }
+
+    /* Fallback: explicit SELECT → INSERT or UPDATE */
+    if (!saved) {
       try {
-        await (supabase as any).from("hifdh_daily_logs").upsert({
-          student_id:    userId,
-          assignment_id: assignment.id,
-          log_date:      today,
-          pages_revised: allResults.length,
-          avg_score:     sc,
-          duration_secs: dur,
-          completed:     false,
-          session_data: {
-            recitation_score: sc,
-            test_score:       0,
-            pages_done:       todayPages.slice(0, pageIdx + 1),
-            audio_url:        null,          // blob URL is local; uploaded only on final submit
-            page_results:     allResults.map(r => ({
-              pageNum:          r.pageNum,
-              score:            r.score,
-              errorWords:       r.errorWords,
-              ayahCorrectness:  r.ayahCorrectness,
-              transcript:       r.transcript,
-              ayahs:            (r as any).ayahs ?? snapAyahs,
-            })),
-            errors:       errs.map(w => ({ word: w, page: todayPages[pageIdx] })).slice(0, 20),
-            in_progress:  true,
-          },
-          updated_at: new Date().toISOString(),
-        }, { onConflict: "student_id,log_date" });
-      } catch (e) { console.error("Interim save error", e); }
+        const { data: existing } = await (supabase as any)
+          .from("hifdh_daily_logs")
+          .select("id")
+          .eq("student_id", userId)
+          .eq("log_date", today)
+          .maybeSingle();
+
+        const row = {
+          student_id: userId, assignment_id: assignment.id,
+          log_date: today, pages_revised: allResults.length,
+          avg_score: sc, duration_secs: dur, completed: false,
+          session_data: sessionData, updated_at: new Date().toISOString(),
+        };
+
+        if (existing?.id) {
+          await (supabase as any).from("hifdh_daily_logs").update(row).eq("id", existing.id);
+        } else {
+          await (supabase as any).from("hifdh_daily_logs").insert(row);
+        }
+      } catch (e2) { console.error("Daily log save error:", e2); }
     }
   };
 
@@ -558,30 +588,60 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
       } catch(_) { /* storage bucket may not exist yet — silent fail */ }
     }
 
-    try {
-      await (supabase as any).from("hifdh_daily_logs").upsert({
-        student_id:userId, assignment_id:assignment.id,
-        log_date:today, pages_revised:todayPages.length,
-        avg_score:overall, duration_secs:dur, completed:true,
-        session_data:{
-          recitation_score:recAvg, test_score:tScore,
-          pages_done:todayPages,
-          audio_url: audioStorageUrl,
-          page_results:pageResults.map(r=>({
-            pageNum:r.pageNum, score:r.score, errorWords:r.errorWords,
-            ayahCorrectness: r.ayahCorrectness,
-            transcript: r.transcript,
-            ayahs: r.ayahs.map(a=>({
-              text:a.text, numberInSurah:a.numberInSurah,
-              surahName:a.surah?.englishName, surahNum:a.surah?.number,
-            })),
-          })),
-          errors:pageResults.flatMap(r=>r.errorWords.map(w=>({word:w,page:r.pageNum}))).slice(0,20),
-        },
-        updated_at:new Date().toISOString(),
-      },{onConflict:"student_id,log_date"});
+    const finalSessionData = {
+      recitation_score: recAvg, test_score: tScore,
+      pages_done: todayPages,
+      audio_url: audioStorageUrl,
+      page_results: pageResults.map(r=>({
+        pageNum: r.pageNum, score: r.score, errorWords: r.errorWords,
+        ayahCorrectness: r.ayahCorrectness,
+        transcript: r.transcript,
+        ayahs: r.ayahs.map(a=>({
+          text: a.text, numberInSurah: a.numberInSurah,
+          surahName: a.surah?.englishName, surahNum: a.surah?.number,
+        })),
+      })),
+      errors: pageResults.flatMap(r=>r.errorWords.map(w=>({word:w,page:r.pageNum}))).slice(0,20),
+      in_progress: false,
+    };
 
-      // Notify admins and assigned teacher
+    /* Primary: same RPC as مراجعة */
+    let saved = false;
+    try {
+      const { error: rpcErr } = await (supabase as any).rpc("upsert_hifdh_daily_log", {
+        p_student_id:    userId,
+        p_assignment_id: assignment.id,
+        p_pages:         todayPages.length,
+        p_score:         overall,
+        p_duration:      dur,
+        p_session_data:  finalSessionData,
+        p_completed:     true,
+      });
+      if (!rpcErr) saved = true;
+    } catch { /* fall through */ }
+
+    /* Fallback: explicit SELECT → INSERT or UPDATE */
+    if (!saved) {
+      try {
+        const { data: existing } = await (supabase as any)
+          .from("hifdh_daily_logs").select("id")
+          .eq("student_id", userId).eq("log_date", today).maybeSingle();
+        const row = {
+          student_id: userId, assignment_id: assignment.id,
+          log_date: today, pages_revised: todayPages.length,
+          avg_score: overall, duration_secs: dur, completed: true,
+          session_data: finalSessionData, updated_at: new Date().toISOString(),
+        };
+        if (existing?.id) {
+          await (supabase as any).from("hifdh_daily_logs").update(row).eq("id", existing.id);
+        } else {
+          await (supabase as any).from("hifdh_daily_logs").insert(row);
+        }
+      } catch(e) { console.error("Submit save error", e); }
+    }
+
+    // Notify admins and assigned teacher
+    try {
       const {data:pf}=await supabase.from("profiles").select("full_name,assigned_teacher_id").eq("user_id" as any,userId).maybeSingle();
       const name=(pf as any)?.full_name||"A student";
       const assignedTeacher=(pf as any)?.assigned_teacher_id;
@@ -595,7 +655,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
       for(const uid of recipients){
         await (supabase as any).from("notifications").insert({...notifBase,user_id:uid});
       }
-    } catch(e){ console.error("Submit error",e); }
+    } catch(e){ console.error("Notify error",e); }
     setSubmitting(false); setPhase("complete");
   };
 
