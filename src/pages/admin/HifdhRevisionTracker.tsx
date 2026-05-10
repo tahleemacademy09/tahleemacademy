@@ -401,7 +401,14 @@ export default function HifdhRevisionTracker() {
         };
       });
       const lMap: Record<string,DailyLog> = {};
-      (logs||[]).forEach((l:any) => { lMap[l.student_id] = l; });
+      (logs||[]).forEach((l:any) => {
+        lMap[l.student_id] = {
+          ...l,
+          session_data: typeof l.session_data === "string"
+            ? JSON.parse(l.session_data)
+            : l.session_data,
+        };
+      });
 
       setStudents(profiles.map((p:any) => ({
         ...p,
