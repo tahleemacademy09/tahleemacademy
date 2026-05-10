@@ -205,74 +205,74 @@ async function fetchPageAyahs(page: number): Promise<Ayah[]> {
 }
 
 /* ── Arabic scoring ─────────────────────────────────────────────── */
+/* ── Arabic normalisation (strip diacritics, unify alef, ta-marbuta) ── */
+function stripDiacritics(t: string): string {
+  return t.replace(/[\u064B-\u065F\u0670\u0610-\u061A\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED]/g, "");
+}
 function normalizeAr(t: string): string {
-  return t
-    .replace(/[\u064B-\u065F\u0610-\u061A\u0670]/g,"")
-    .replace(/[\u0622\u0623\u0625\u0627]/g,"\u0627")
-    .replace(/\u0629/g,"\u0647").replace(/\u0649/g,"\u064A")
-    .replace(/\u0640/g,"")
-    .replace(/[^\u0621-\u063A\u0641-\u064A\s]/g,"")
-    .replace(/\s+/g," ").trim();
+  return stripDiacritics(t)
+    .replace(/[\u0622\u0623\u0625\u0627]/g, "\u0627")   // unify alef variants
+    .replace(/\u0629/g, "\u0647")                         // ta-marbuta → ha
+    .replace(/\u0649/g, "\u064A")                         // alef maqsura → ya
+    .replace(/\u0640/g, "")                               // tatweel
+    .replace(/[^\u0621-\u063A\u0641-\u064A\s]/g, "")
+    .replace(/\s+/g, " ").trim();
 }
+
+/* ── Word-level comparison (same algorithm as QuranRevisionHub) ─────────── */
+interface WordResult { word: string; status: "correct"|"missing"; }
+function compareWordsAr(refText: string, gotText: string): WordResult[] {
+  const refWords = normalizeAr(refText).split(/\s+/).filter(Boolean);
+  const gotWords = normalizeAr(gotText).split(/\s+/).filter(Boolean);
+  const usedGot  = new Set<number>();
+  return refWords.map(rw => {
+    for (let i = 0; i < gotWords.length; i++) {
+      if (usedGot.has(i)) continue;
+      const gw = gotWords[i];
+      const match = rw === gw || (rw.length > 3 && gw.length > 3 &&
+        (rw.startsWith(gw.slice(0, 3)) || gw.startsWith(rw.slice(0, 3))));
+      if (match) { usedGot.add(i); return { word: rw, status: "correct" }; }
+    }
+    return { word: rw, status: "missing" };
+  });
+}
+
+/* ── Overall page score ─────────────────────────────────────────────────── */
 function scoreText(transcript: string, ayahs: Ayah[], recSecs: number): number {
-  const ref  = ayahs.map(a=>a.text).join(" ");
-  const refW = normalizeAr(ref).split(" ").filter(Boolean);
-  const gotW = normalizeAr(transcript).split(" ").filter(Boolean);
-  if (!refW.length) return 0;
-  // If no transcript captured but they recited a long time, give time-based estimate
-  if (!gotW.length) {
-    if (recSecs >= 120) return 60;
-    if (recSecs >= 60)  return 45;
-    if (recSecs >= 30)  return 35;
-    return 0;
-  }
-  const used=new Set<number>(); let matches=0;
-  for (const rw of refW) {
-    for (let i=0;i<gotW.length;i++) {
-      if (used.has(i)) continue;
-      const gw=gotW[i];
-      if (rw===gw||(rw.length>=4&&gw.length>=4&&rw.slice(0,4)===gw.slice(0,4))) {
-        matches++; used.add(i); break;
-      }
-    }
-  }
-  const base=Math.round((matches/refW.length)*100);
-  // Time bonus: longer recitation = more complete
-  const bonus=recSecs>=90?15:recSecs>=60?10:recSecs>=30?5:0;
-  return Math.min(100,base+bonus);
+  if (!ayahs.length) return 0;
+  const refText = ayahs.map(a => a.text).join(" ");
+  const results = compareWordsAr(refText, transcript);
+  const correct = results.filter(r => r.status === "correct").length;
+  const base    = Math.round((correct / Math.max(1, results.length)) * 100);
+  const bonus   = recSecs >= 60 ? 8 : recSecs >= 30 ? 4 : 0;
+  return Math.min(100, base + bonus);
 }
+
+/* ── Error words (missing from transcript) ──────────────────────────────── */
 function getErrorWords(transcript: string, ayahs: Ayah[]): string[] {
-  const ref  = ayahs.map(a=>a.text).join(" ");
-  const refW = normalizeAr(ref).split(" ").filter(Boolean);
-  const gotW = normalizeAr(transcript).split(" ").filter(Boolean);
-  const used = new Set<number>(); const errs: string[]=[];
-  for (const rw of refW) {
-    let found=false;
-    for (let i=0;i<gotW.length;i++) {
-      if (used.has(i)) continue;
-      if (rw===gotW[i]||(rw.length>=4&&gotW[i].length>=4&&rw.slice(0,4)===gotW[i].slice(0,4))){
-        used.add(i); found=true; break;
-      }
-    }
-    if (!found) errs.push(rw);
-  }
-  return errs;
+  const refText = ayahs.map(a => a.text).join(" ");
+  return compareWordsAr(refText, transcript)
+    .filter(r => r.status === "missing")
+    .map(r => r.word);
 }
-/* Per-ayah correctness: returns true (green) / false (red) for each ayah */
-function getAyahCorrectness(transcript: string, ayahs: Ayah[], recSecs?: number): boolean[] {
-  const gotW = normalizeAr(transcript).split(" ").filter(Boolean);
-  // If transcript is empty but recitation was long, assume correct
-  if (!gotW.length && recSecs && recSecs >= 60) {
-    return ayahs.map(()=>true);
-  }
-  return ayahs.map(a => {
-    const refW = normalizeAr(a.text).split(" ").filter(Boolean);
-    if (!refW.length) return true;
-    let matches = 0;
-    for (const rw of refW) {
-      if (gotW.some(g => rw === g || (rw.length >= 4 && g.length >= 4 && rw.slice(0,4) === g.slice(0,4)))) matches++;
-    }
-    return (matches / refW.length) >= 0.5;
+
+/* ── Per-ayah correctness via SEQUENTIAL alignment ──────────────────────── *
+ *  Concatenate all ayah texts → compareWords once (each got-word used once)
+ *  → slice result back per-ayah by word count.
+ *  This matches the approach in QuranRevisionHub and avoids every ayah
+ *  stealing words from the same global transcript pool independently.     */
+function getAyahCorrectness(transcript: string, ayahs: Ayah[]): boolean[] {
+  if (!ayahs.length) return [];
+  if (!transcript.trim()) return ayahs.map(() => false);
+  const fullRef = ayahs.map(a => a.text).join(" ");
+  const results = compareWordsAr(fullRef, transcript);
+  let wordIdx = 0;
+  return ayahs.map(ayah => {
+    const wordCount = normalizeAr(ayah.text).split(/\s+/).filter(Boolean).length;
+    const slice     = results.slice(wordIdx, wordIdx + wordCount);
+    wordIdx += wordCount;
+    const correct   = slice.filter(r => r.status === "correct").length;
+    return (correct / Math.max(1, slice.length)) >= 0.5;
   });
 }
 function shuffle<T>(arr:T[]): T[] {
@@ -372,7 +372,6 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
   const [submitting,   setSubmitting]  = useState(false);
   const [audioUrl,     setAudioUrl]    = useState<string|null>(null);
   const [lastTranscript, setLastTranscript] = useState("");
-  const [ayahCorrectness, setAyahCorrectness] = useState<boolean[]>([]);
   const hadith = HADITHS[Math.floor(Math.random()*HADITHS.length)];
   const sessionStart = useRef(Date.now());
   const recognRef    = useRef<any>(null);
@@ -398,75 +397,41 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
   const startListening = useCallback(() => {
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SR) { alert("Speech recognition not supported. Please use Chrome on Android."); return; }
+    const rec = new SR();
+    rec.lang="ar-SA"; rec.continuous=true; rec.interimResults=true; rec.maxAlternatives=3;
+    liveRef.current = "";
+    rec.onresult=(e:any)=>{
+      let f="";
+      for(let i=e.resultIndex;i<e.results.length;i++)
+        if(e.results[i].isFinal) f+=e.results[i][0].transcript+" ";
+      if(f) liveRef.current+=f;
+    };
+    rec.onerror=(e:any)=>{
+      if(e.error==="not-allowed"){alert("Mic denied. Allow in browser settings.");setIsListening(false);clearInterval(timerRef.current);}
+    };
+    rec.onend=()=>{ if(isListRef.current){ try{rec.start();}catch{} } };
+    rec.start();
+    recognRef.current=rec;
+    setIsListening(true); setRecSecs(0);
+    timerRef.current=setInterval(()=>setRecSecs(s=>s+1),1000);
 
-    setAudioUrl(null); audioChunks.current = [];
-
-    // Get mic stream FIRST, then start both SR and MediaRecorder on the same stream
-    navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
-      // ── MediaRecorder for playback ──
+    /* Also record audio for playback preview */
+    setAudioUrl(null); audioChunks.current=[];
+    navigator.mediaDevices.getUserMedia({audio:true}).then(stream=>{
       const mime = ["audio/webm;codecs=opus","audio/webm","audio/mp4",""].find(
-        t => !t || MediaRecorder.isTypeSupported(t)) ?? "";
-      const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
-      mr.ondataavailable = (e) => { if (e.data.size > 0) audioChunks.current.push(e.data); };
-      mr.onstop = () => {
-        const blob = new Blob(audioChunks.current, { type: mime || "audio/webm" });
-        audioBlobRef.current = blob;
+        t=>!t||MediaRecorder.isTypeSupported(t)) ?? "";
+      const mr = new MediaRecorder(stream, mime?{mimeType:mime}:{});
+      mr.ondataavailable=(e)=>{ if(e.data.size>0) audioChunks.current.push(e.data); };
+      mr.onstop=()=>{
+        const blob=new Blob(audioChunks.current,{type:mime||"audio/webm"});
+        audioBlobRef.current=blob;
         setAudioUrl(URL.createObjectURL(blob));
-        stream.getTracks().forEach(t => t.stop());
+        stream.getTracks().forEach(t=>t.stop());
       };
       mr.start(300);
-      mediaRecRef.current = mr;
-
-      // ── Speech recognition ──
-      const rec = new SR();
-      rec.lang = "ar-SA"; rec.continuous = true; rec.interimResults = true; rec.maxAlternatives = 3;
-      liveRef.current = "";
-      rec.onresult = (e: any) => {
-        let finalPart = "";
-        let interimPart = "";
-        for (let i = e.resultIndex; i < e.results.length; i++) {
-          if (e.results[i].isFinal) {
-            finalPart += e.results[i][0].transcript + " ";
-          } else {
-            interimPart += e.results[i][0].transcript + " ";
-          }
-        }
-        if (finalPart) liveRef.current += finalPart;
-        (liveRef as any).interim = interimPart;
-      };
-      rec.onerror = (e: any) => {
-        if (e.error === "not-allowed") { alert("Mic denied. Allow in browser settings."); setIsListening(false); clearInterval(timerRef.current); }
-      };
-      rec.onend = () => { if (isListRef.current) { try { rec.start(); } catch {} } };
-      rec.start();
-      recognRef.current = rec;
-
-      setIsListening(true); setRecSecs(0);
-      timerRef.current = setInterval(() => setRecSecs(s => s + 1), 1000);
-    }).catch(() => {
-      // Fallback: start SR without audio recording if getUserMedia fails
-      const rec = new SR();
-      rec.lang = "ar-SA"; rec.continuous = true; rec.interimResults = true; rec.maxAlternatives = 3;
-      liveRef.current = "";
-      rec.onresult = (e: any) => {
-        let finalPart = ""; let interimPart = "";
-        for (let i = e.resultIndex; i < e.results.length; i++) {
-          if (e.results[i].isFinal) finalPart += e.results[i][0].transcript + " ";
-          else interimPart += e.results[i][0].transcript + " ";
-        }
-        if (finalPart) liveRef.current += finalPart;
-        (liveRef as any).interim = interimPart;
-      };
-      rec.onerror = (e: any) => {
-        if (e.error === "not-allowed") { alert("Mic denied. Allow in browser settings."); setIsListening(false); clearInterval(timerRef.current); }
-      };
-      rec.onend = () => { if (isListRef.current) { try { rec.start(); } catch {} } };
-      rec.start();
-      recognRef.current = rec;
-      setIsListening(true); setRecSecs(0);
-      timerRef.current = setInterval(() => setRecSecs(s => s + 1), 1000);
-    });
-  }, []);
+      mediaRecRef.current=mr;
+    }).catch(()=>{}); // Mic permission may already be held by SR — fail silently
+  },[]);
 
   const stopListening = useCallback(()=>{
     isListRef.current=false;
@@ -478,85 +443,65 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
     mediaRecRef.current=null;
   },[]);
 
-  const GROQ_KEY = import.meta.env.VITE_GROQ_API_KEY || "";
-
-  // Transcribe audio blob via Groq Whisper, with Supabase edge fn fallback
-  const transcribeAudio = async (blob: Blob): Promise<string> => {
-    // 1. Groq Whisper
-    if (GROQ_KEY) {
-      try {
-        const fd = new FormData();
-        fd.append("file", new File([blob], "recitation.webm", { type: blob.type || "audio/webm" }));
-        fd.append("model", "whisper-large-v3");
-        fd.append("language", "ar");
-        fd.append("response_format", "json");
-        fd.append("temperature", "0");
-        fd.append("prompt", "بسم الله الرحمن الرحيم الحمد لله رب العالمين الرحمن الرحيم");
-        const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
-          method: "POST", headers: { Authorization: `Bearer ${GROQ_KEY}` }, body: fd,
-        });
-        if (r.ok) {
-          const tx = (await r.json()).text || "";
-          if (tx) return tx;
-        }
-      } catch { /* fall through */ }
-    }
-    // 2. Supabase edge function fallback
-    try {
-      const b64 = await new Promise<string>(resolve => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve((reader.result as string).split(",")[1] || "");
-        reader.readAsDataURL(blob);
-      });
-      const { data } = await supabase.functions.invoke("transcribe-hifdh", {
-        body: { audio: b64, mimeType: blob.type || "audio/webm" },
-      });
-      return data?.transcript || "";
-    } catch { return ""; }
-  };
-
-  const evaluatePage = (tx: string) => {
+  const evaluatePage = async () => {
+    const tx  = liveRef.current.trim();
     setLastTranscript(tx);
-    const sc  = scoreText(tx, pageAyahs, recSecs);
-    const errs= getErrorWords(tx, pageAyahs);
-    const corr = getAyahCorrectness(tx, pageAyahs, recSecs);
-    setScore(sc); setErrorWords(errs); setAyahCorrectness(corr);
-    (evaluatePage as any).__last = { tx, ayahCorrectness: corr };
-    liveRef.current=""; (liveRef as any).interim="";
-    setPhase("page_result");
+    const sc             = scoreText(tx, pageAyahs, recSecs);
+    const errs           = getErrorWords(tx, pageAyahs);
+    const ayahCorrectness = getAyahCorrectness(tx, pageAyahs);
+    setScore(sc); setErrorWords(errs);
+    (evaluatePage as any).__last = { tx, ayahCorrectness };
+    liveRef.current = ""; setPhase("page_result");
+
+    /* ── Save every attempt to hifdh_daily_logs (overwrite until ≥50%) ── */
+    if (userId && assignment?.id) {
+      const today = todayISO();
+      const dur   = Math.round((Date.now() - sessionStart.current) / 1000);
+      const snapAyahs = pageAyahs.map(a => ({
+        text: a.text, numberInSurah: a.numberInSurah,
+        surahName: a.surah?.englishName, surahNum: a.surah?.number,
+      }));
+      const thisPageResult = {
+        pageNum: todayPages[pageIdx], score: sc, errorWords: errs,
+        ayahCorrectness, transcript: tx, ayahs: snapAyahs,
+      };
+      // Merge with already-accepted pages
+      const allResults = [
+        ...pageResults.filter(r => r.pageNum !== todayPages[pageIdx]),
+        thisPageResult,
+      ];
+      try {
+        await (supabase as any).from("hifdh_daily_logs").upsert({
+          student_id:    userId,
+          assignment_id: assignment.id,
+          log_date:      today,
+          pages_revised: allResults.length,
+          avg_score:     sc,
+          duration_secs: dur,
+          completed:     false,
+          session_data: {
+            recitation_score: sc,
+            test_score:       0,
+            pages_done:       todayPages.slice(0, pageIdx + 1),
+            audio_url:        null,          // blob URL is local; uploaded only on final submit
+            page_results:     allResults.map(r => ({
+              pageNum:          r.pageNum,
+              score:            r.score,
+              errorWords:       r.errorWords,
+              ayahCorrectness:  r.ayahCorrectness,
+              transcript:       r.transcript,
+              ayahs:            (r as any).ayahs ?? snapAyahs,
+            })),
+            errors:       errs.map(w => ({ word: w, page: todayPages[pageIdx] })).slice(0, 20),
+            in_progress:  true,
+          },
+          updated_at: new Date().toISOString(),
+        }, { onConflict: "student_id,log_date" });
+      } catch (e) { console.error("Interim save error", e); }
+    }
   };
 
-  const handleStop = () => {
-    stopListening();
-    // Show result screen immediately; fill in Whisper transcript once ready
-    setPhase("page_result");
-    setScore(null); // null = transcribing loading state
-    const capturedSecs = recSecs;
-
-    const waitForBlob = (attempts = 0) => {
-      if (audioBlobRef.current) {
-        const blob = audioBlobRef.current;
-        transcribeAudio(blob).then(tx => {
-          if (!tx) {
-            tx = (liveRef.current + " " + ((liveRef as any).interim ?? "")).trim();
-          }
-          liveRef.current = ""; (liveRef as any).interim = "";
-          setLastTranscript(tx);
-          const sc   = scoreText(tx, pageAyahs, capturedSecs);
-          const errs = getErrorWords(tx, pageAyahs);
-          const corr = getAyahCorrectness(tx, pageAyahs, capturedSecs);
-          setScore(sc); setErrorWords(errs); setAyahCorrectness(corr);
-          (evaluatePage as any).__last = { tx, ayahCorrectness: corr };
-        });
-      } else if (attempts < 30) {
-        setTimeout(() => waitForBlob(attempts + 1), 100);
-      } else {
-        const tx = (liveRef.current + " " + ((liveRef as any).interim ?? "")).trim();
-        evaluatePage(tx);
-      }
-    };
-    waitForBlob();
-  };
+  const handleStop = () => { stopListening(); void evaluatePage(); };
 
   const acceptPage = () => {
     const last = (evaluatePage as any).__last || {};
@@ -759,7 +704,6 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
         @keyframes slideUp { from{transform:translateY(12px);opacity:0} to{transform:translateY(0);opacity:1} }
         @keyframes fadeIn  { from{opacity:0} to{opacity:1} }
         @import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Amiri:wght@400;700&family=Cairo:wght@400;600;700;800;900&display=swap');
-        .ar-word { unicode-bidi: isolate; display: inline; }
       `}</style>
 
       {/* ══ INTRO ══ */}
@@ -950,206 +894,193 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
         </>
       )}
 
-      {/* ══ PAGE RESULT — transcribing loader ══ */}
-      {phase==="page_result"&&score===null&&(
-        <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",
-          justifyContent:"center",gap:16,background:G0,padding:32}}>
-          <Loader2 size={40} color={GOLD} style={{animation:"spin .9s linear infinite"}}/>
-          <p style={{margin:0,color:"#e5c76b",fontWeight:700,fontSize:15,textAlign:"center"}}>
-            Analysing your recitation…
-          </p>
-          <p style={{margin:0,color:"#6B7280",fontSize:12,textAlign:"center"}}>
-            Using AI to check your Arabic — this takes a few seconds
-          </p>
-        </div>
-      )}
-
       {/* ══ PAGE RESULT ══ */}
-      {phase==="page_result"&&score!==null&&(
-        <>
-          {/* Header bar */}
-          <div style={{background:`linear-gradient(160deg,${G1},${G2})`,padding:"14px 16px",
-            display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
-            <BackBtn onClick={()=>setPhase("reading")}/>
-            <div style={{flex:1}}>
-              <p style={{margin:0,fontWeight:800,fontSize:14,color:W}}>
-                Page {todayPages[pageIdx]} — Result
-              </p>
-              <p style={{margin:0,fontSize:10,color:`${GOLD}cc`}}>
-                {score>=PASS_THRESHOLD?"Passed ✓":"Below pass mark — review & record again"}
-              </p>
-            </div>
-            {/* Score pill in header */}
-            <div style={{
-              padding:"6px 14px",borderRadius:20,fontWeight:900,fontSize:15,
-              background:score>=PASS_THRESHOLD?PASS:FAIL,color:W,
-              boxShadow:`0 2px 10px ${score>=PASS_THRESHOLD?PASS:FAIL}55`,
-            }}>
-              {score}%
-            </div>
-          </div>
-
-          {/* Scrollable content */}
-          <div style={{flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch",
-            padding:"12px 14px 100px",display:"flex",flexDirection:"column",gap:12,
-            animation:"fadeIn .3s ease"}}>
-
-            {/* Audio playback */}
-            {audioUrl&&(
-              <div style={{background:W,borderRadius:12,border:`1px solid ${BRD}`,
-                padding:"10px 14px",display:"flex",alignItems:"center",gap:10}}>
-                <span style={{fontSize:10,fontWeight:800,color:G3,
-                  textTransform:"uppercase",letterSpacing:.5,flexShrink:0}}>
-                  🎙️ Your Recitation
-                </span>
-                <audio controls src={audioUrl} style={{flex:1,height:32,borderRadius:8}}/>
-              </div>
-            )}
-
-            {/* ── FULL PAGE with word-level green / red colouring ── */}
-            {pageAyahs.length>0&&(()=>{
-              // Build per-word correctness: compare normalised reference words to transcript
-              const gotArr = normalizeAr(lastTranscript).split(" ").filter(Boolean);
-
-              // For each ayah, compute per-word match
-              type AyahWordData = { raw: string; ok: boolean }[];
-              const ayahWords: AyahWordData[] = pageAyahs.map(ayah => {
-                const rawWords = ayah.text.split(/\s+/).filter(Boolean);
-                const normWords = rawWords.map(w => normalizeAr(w));
-                const usedGot = new Set<number>();
-                return rawWords.map((raw, wi) => {
-                  const nw = normWords[wi];
-                  if (!nw) return { raw, ok: false };
-                  for (let gi = 0; gi < gotArr.length; gi++) {
-                    if (usedGot.has(gi)) continue;
-                    const gw = gotArr[gi];
-                    if (nw === gw || (nw.length >= 3 && gw.length >= 3 && nw.slice(0,3) === gw.slice(0,3))) {
-                      usedGot.add(gi);
-                      return { raw, ok: true };
-                    }
-                  }
-                  return { raw, ok: false };
-                });
-              });
-
-              const totalWords = ayahWords.flat().length;
-              const correctWords = ayahWords.flat().filter(w => w.ok).length;
-              const missedWords  = totalWords - correctWords;
-
-              return (
-                <div style={{background:"#fffdf6",borderRadius:16,
-                  border:`2px solid ${GOLD}55`,
-                  boxShadow:"0 4px 20px rgba(0,0,0,.07)"}}>
-
-                  {/* Stats strip */}
-                  <div style={{padding:"10px 16px",borderBottom:`1px solid ${GOLD}22`,
-                    background:`linear-gradient(to right,${GOLD}10,transparent)`,
-                    display:"flex",alignItems:"center",gap:8}}>
-                    <span style={{fontSize:11,fontWeight:800,color:G2,
-                      textTransform:"uppercase",letterSpacing:.4,flex:1}}>
-                      📖 Page {todayPages[pageIdx]}
-                    </span>
-                    <span style={{fontSize:11,fontWeight:800,color:PASS,
-                      background:`${PASS}18`,padding:"3px 10px",borderRadius:8}}>
-                      ✓ {correctWords} words
-                    </span>
-                    <span style={{fontSize:11,fontWeight:800,color:FAIL,
-                      background:`${FAIL}12`,padding:"3px 10px",borderRadius:8}}>
-                      ✗ {missedWords} missed
-                    </span>
-                  </div>
-
-                  {/* Legend */}
-                  <div style={{padding:"7px 16px",borderBottom:`1px solid ${GOLD}18`,
-                    display:"flex",gap:16}}>
-                    <div style={{display:"flex",gap:5,alignItems:"center"}}>
-                      <div style={{width:16,height:10,borderRadius:3,
-                        background:`${PASS}30`,border:`1.5px solid ${PASS}`}}/>
-                      <span style={{fontSize:10,color:"#6B7280",fontWeight:600}}>Recited correctly</span>
-                    </div>
-                    <div style={{display:"flex",gap:5,alignItems:"center"}}>
-                      <div style={{width:16,height:10,borderRadius:3,
-                        background:`${FAIL}20`,border:`1.5px solid ${FAIL}`}}/>
-                      <span style={{fontSize:10,color:"#6B7280",fontWeight:600}}>Missed / incorrect</span>
-                    </div>
-                  </div>
-
-                  {/* Quran text — compact word pills, matching مراجعة style */}
-                  <div style={{
-                    display:"flex", flexWrap:"wrap", gap:6,
-                    padding:"14px 16px 18px",
-                    direction:"rtl",
-                  }}>
-                    {pageAyahs.map((ayah, ai) => (
-                      <span key={ai} style={{display:"contents"}}>
-                        {ayahWords[ai].map((wd, wi) => (
-                          <span key={wi} style={{
-                            padding:"3px 8px",
-                            borderRadius:4,
-                            fontFamily:"'Amiri Quran','Amiri',serif",
-                            fontSize:16,
-                            fontWeight:600,
-                            background: wd.ok ? "#dcfce7" : "#fee2e2",
-                            color:       wd.ok ? "#166534" : "#dc2626",
-                          }}>
-                            {wd.raw}
-                          </span>
-                        ))}
-                        {/* Ayah end marker */}
-                        <span style={{
-                          fontSize:13, color:GOLD,
-                          fontFamily:"'Amiri',serif",
-                          alignSelf:"center",
-                        }}>
-                          ۝{ayah.numberInSurah}
-                        </span>
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              );
-            })()}
-
-            {/* Encouragement banner when failed */}
-            {score<PASS_THRESHOLD&&(
-              <div style={{padding:"12px 14px",borderRadius:12,
-                background:`${GOLD}0e`,border:`1.5px solid ${GOLD}44`,
-                display:"flex",gap:10,alignItems:"center"}}>
-                <Heart size={18} color={GOLD} style={{flexShrink:0}}/>
-                <p style={{margin:0,fontSize:12,color:"#92400E",fontWeight:600,lineHeight:1.6}}>
-                  Study the <span style={{color:FAIL,fontWeight:800}}>red words</span> above carefully,
-                  then record again — every attempt builds your hifdh! 🌟
+      {phase==="page_result"&&score!==null&&(()=>{
+        const pass = score >= PASS_THRESHOLD;
+        const correctness = getAyahCorrectness(lastTranscript, pageAyahs);
+        const correctCount = correctness.filter(Boolean).length;
+        const wrongCount   = correctness.filter(v=>!v).length;
+        return (
+          <>
+            {/* Header */}
+            <div style={{background:`linear-gradient(160deg,${G1},${G2})`,padding:"14px 16px",
+              display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
+              <BackBtn onClick={()=>setPhase("reading")}/>
+              <div style={{flex:1}}>
+                <p style={{margin:0,fontWeight:800,fontSize:14,color:W}}>
+                  Page {todayPages[pageIdx]} — Result
+                </p>
+                <p style={{margin:0,fontSize:11,color:"rgba(255,255,255,.6)"}}>
+                  Attempt {retryCount+1}
                 </p>
               </div>
-            )}
-          </div>
+              {/* Inline score badge in header */}
+              <div style={{textAlign:"center",minWidth:48}}>
+                <div style={{fontSize:22,fontWeight:900,color:pass?GOLD:FAIL,lineHeight:1}}>{score}%</div>
+                <div style={{fontSize:9,fontWeight:700,color:pass?"rgba(255,255,255,.7)":"rgba(255,255,255,.5)",
+                  textTransform:"uppercase",letterSpacing:.5}}>{pass?"Passed":"Try Again"}</div>
+              </div>
+            </div>
 
-          {/* Sticky bottom button */}
-          <div style={{padding:"12px 16px",background:W,borderTop:`1px solid ${BRD}`,flexShrink:0}}>
-            {score>=PASS_THRESHOLD?(
-              <button onClick={acceptPage}
-                style={{width:"100%",padding:"15px",borderRadius:14,border:"none",cursor:"pointer",
-                  background:`linear-gradient(135deg,${PASS},#15803d)`,color:W,
-                  fontWeight:900,fontSize:15,fontFamily:"inherit",
-                  display:"flex",alignItems:"center",justifyContent:"center",gap:8,
-                  boxShadow:`0 4px 16px ${PASS}44`}}>
-                <CheckCircle2 size={18}/>
-                {pageIdx+1<todayPages.length?"Continue to Next Page →":"Proceed to Test →"}
-              </button>
-            ):(
-              <button onClick={retryPage}
-                style={{width:"100%",padding:"15px",borderRadius:14,border:"none",cursor:"pointer",
-                  background:`linear-gradient(135deg,${FAIL},#b91c1c)`,color:W,
-                  fontWeight:900,fontSize:15,fontFamily:"inherit",
-                  display:"flex",alignItems:"center",justifyContent:"center",gap:8,
-                  boxShadow:`0 4px 16px ${FAIL}44`}}>
-                <Mic size={18}/>
-                Record Again — Need {PASS_THRESHOLD}% to pass
-              </button>
-            )}
-          </div>
-        </>
-      )}
+            {/* Scrollable body — block layout for Android */}
+            <div style={{flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch",
+              padding:"14px 14px 100px"}}>
+
+              {/* Score arc + status */}
+              <div style={{textAlign:"center",marginBottom:16}}>
+                <ScoreRing pct={score}/>
+                <p style={{margin:"0 0 3px",fontWeight:900,fontSize:17,
+                  color:pass?PASS:FAIL,lineHeight:1.2}}>
+                  {pass
+                    ?(pageIdx+1<todayPages.length?"ممتاز! Continue →":"ممتاز! All pages done!")
+                    :"يحتاج تحسين — Try Again"}
+                </p>
+                <p style={{margin:0,fontSize:12,color:"#6B7280"}}>
+                  {pass
+                    ?`${score}% — great work, keep it up!`
+                    :`${score}% — need ≥${PASS_THRESHOLD}% to proceed`}
+                </p>
+              </div>
+
+              {/* Audio player */}
+              {audioUrl&&(
+                <div style={{marginBottom:12,background:W,borderRadius:12,
+                  border:`1.5px solid ${BRD}`,padding:"10px 14px"}}>
+                  <p style={{margin:"0 0 6px",fontSize:10,fontWeight:800,color:G3,
+                    textTransform:"uppercase",letterSpacing:.5}}>🎙️ Your Recitation</p>
+                  <audio controls src={audioUrl} style={{width:"100%",height:36,borderRadius:8}}/>
+                </div>
+              )}
+
+              {/* ── MAIN: Full Quran page with verse coloring ── */}
+              <div style={{marginBottom:12,borderRadius:10,overflow:"visible",
+                border:`2px solid ${GOLD}66`,background:"#fffdf6"}}>
+
+                {/* Page header */}
+                <div style={{padding:"8px 14px",borderBottom:`1px solid ${GOLD}33`,
+                  background:`linear-gradient(to bottom,${GOLD}14,transparent)`,
+                  display:"flex",alignItems:"center",justifyContent:"space-between",
+                  borderRadius:"8px 8px 0 0"}}>
+                  <span style={{fontSize:10,fontWeight:800,color:G1,textTransform:"uppercase",letterSpacing:.5}}>
+                    📖 Page {todayPages[pageIdx]}
+                    {pageAyahs[0]?.surah?.englishName&&` · ${pageAyahs[0].surah.englishName}`}
+                  </span>
+                  <span style={{fontSize:11,fontWeight:900}}>
+                    <span style={{color:PASS}}>✓{correctCount}</span>
+                    <span style={{color:"#D1D5DB",margin:"0 4px"}}>/</span>
+                    <span style={{color:FAIL}}>✗{wrongCount}</span>
+                  </span>
+                </div>
+
+                {/* Legend */}
+                <div style={{padding:"6px 14px",borderBottom:`1px solid ${GOLD}22`,
+                  display:"flex",gap:14,alignItems:"center"}}>
+                  <span style={{display:"flex",alignItems:"center",gap:4,fontSize:10,fontWeight:700,color:PASS}}>
+                    <span style={{display:"inline-block",width:10,height:10,borderRadius:2,background:`${PASS}25`,border:`1px solid ${PASS}55`}}/>
+                    Correct
+                  </span>
+                  <span style={{display:"flex",alignItems:"center",gap:4,fontSize:10,fontWeight:700,color:FAIL}}>
+                    <span style={{display:"inline-block",width:10,height:10,borderRadius:2,background:`${FAIL}20`,border:`1px solid ${FAIL}44`}}/>
+                    Needs work
+                  </span>
+                </div>
+
+                {/* Quran text — FULL PAGE */}
+                <div style={{padding:"16px 14px",
+                  direction:"rtl",fontFamily:"'Amiri Quran','Amiri',serif",
+                  fontSize:22,color:INK,lineHeight:3.2,textAlign:"justify"}}>
+                  {pageAyahs.map((a,i)=>{
+                    const ok = correctness[i] ?? true;
+                    return (
+                      <span key={i}>
+                        <span style={{
+                          background:ok?`${PASS}1a`:`${FAIL}18`,
+                          borderBottom:`2px solid ${ok?PASS:FAIL}`,
+                          borderRadius:"2px 2px 0 0",
+                          padding:"2px 1px 0",
+                        }}>
+                          {a.text}
+                        </span>
+                        <span style={{
+                          fontSize:13,fontFamily:"'Amiri',serif",
+                          color:ok?PASS:FAIL,
+                          margin:"0 4px",
+                          fontWeight:700,
+                        }}>
+                          ۝{a.numberInSurah}
+                        </span>
+                        {" "}
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Words to focus on */}
+              {!pass&&errorWords.length>0&&(
+                <div style={{marginBottom:12,background:W,borderRadius:12,
+                  border:"1.5px solid #FECACA",padding:"12px 14px"}}>
+                  <p style={{margin:"0 0 8px",fontSize:10,fontWeight:800,color:FAIL,
+                    textTransform:"uppercase",letterSpacing:.5}}>
+                    ⚠️ Focus on these words ({Math.min(errorWords.length,15)})
+                  </p>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:5,direction:"rtl"}}>
+                    {errorWords.slice(0,15).map((w,i)=>(
+                      <span key={i} style={{padding:"5px 12px",borderRadius:8,
+                        background:"#FEE2E2",color:FAIL,
+                        fontSize:15,fontFamily:"'Amiri',serif"}}>{w}</span>
+                    ))}
+                  </div>
+                  <p style={{margin:"8px 0 0",fontSize:10,color:"#9CA3AF"}}>
+                    Re-read the page focusing on these words, then recite again.
+                  </p>
+                </div>
+              )}
+
+              {/* Encouragement for retry */}
+              {!pass&&(
+                <div style={{marginBottom:12,padding:"12px 14px",borderRadius:12,
+                  background:`${GOLD}0e`,border:`1.5px solid ${GOLD}44`}}>
+                  <div style={{display:"flex",gap:10,alignItems:"flex-start"}}>
+                    <div style={{width:34,height:34,borderRadius:8,background:`${GOLD}22`,
+                      display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                      <Heart size={17} color={GOLD}/>
+                    </div>
+                    <p style={{margin:0,fontSize:12,color:"#78350F",lineHeight:1.7}}>
+                      Study the <span style={{fontWeight:800,color:FAIL}}>red verses</span> carefully,
+                      then recite the full page again from memory.
+                      Every attempt strengthens your hifdh. 🌟
+                    </p>
+                  </div>
+                </div>
+              )}
+
+            </div>
+
+            {/* Sticky action button */}
+            <div style={{padding:"12px 14px",background:W,
+              borderTop:`1px solid ${BRD}`,flexShrink:0}}>
+              {pass?(
+                <button onClick={acceptPage}
+                  style={{width:"100%",padding:"15px",borderRadius:14,border:"none",cursor:"pointer",
+                    background:`linear-gradient(135deg,${PASS},#15803d)`,color:W,
+                    fontWeight:900,fontSize:14,fontFamily:"inherit",
+                    boxShadow:`0 4px 16px ${PASS}44`}}>
+                  {pageIdx+1<todayPages.length?"▶ Continue to Next Page":"▶ Proceed to Test"}
+                </button>
+              ):(
+                <button onClick={retryPage}
+                  style={{width:"100%",padding:"15px",borderRadius:14,border:"none",cursor:"pointer",
+                    background:`linear-gradient(135deg,${AMBER},#b45309)`,color:W,
+                    fontWeight:900,fontSize:14,fontFamily:"inherit",
+                    boxShadow:`0 4px 16px ${AMBER}44`}}>
+                  🔄 Re-read Page & Recite Again
+                </button>
+              )}
+            </div>
+          </>
+        );
+      })()}
 
       {/* ══ TESTING ══ */}
       {phase==="testing"&&testScore===null&&(
