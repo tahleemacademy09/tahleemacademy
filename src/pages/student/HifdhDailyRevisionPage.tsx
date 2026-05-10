@@ -401,31 +401,35 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
     if (phase !== "page_result" || score === null) return;
     const today = todayISO();
     const last = lastResultRef.current;
-    (supabase as any).from("hifdh_daily_logs").upsert({
-      student_id:    userId,
-      assignment_id: assignment.id,
-      log_date:      today,
-      pages_revised: todayPages.length,
-      avg_score:     score,
-      duration_secs: recSecsRef.current,
-      completed:     false,
-      session_data: {
-        recitation_score: score,
-        test_score:       null,
-        pages_done:       todayPages.slice(0, pageIdx + 1),
-        page_results: [
-          ...pageResults,
-          {
-            pageNum:         todayPages[pageIdx],
-            score,
-            transcript:      last?.tx ?? "",
-            ayahCorrectness: last?.ayahCorrectness ?? [],
-            errorWords,
+    (async () => {
+      try {
+        await (supabase as any).from("hifdh_daily_logs").upsert({
+          student_id:    userId,
+          assignment_id: assignment.id,
+          log_date:      today,
+          pages_revised: todayPages.length,
+          avg_score:     score,
+          duration_secs: recSecsRef.current,
+          completed:     false,
+          session_data: {
+            recitation_score: score,
+            test_score:       null,
+            pages_done:       todayPages.slice(0, pageIdx + 1),
+            page_results: [
+              ...pageResults,
+              {
+                pageNum:         todayPages[pageIdx],
+                score,
+                transcript:      last?.tx ?? "",
+                ayahCorrectness: last?.ayahCorrectness ?? [],
+                errorWords,
+              },
+            ],
           },
-        ],
-      },
-      updated_at: new Date().toISOString(),
-    }, { onConflict: "student_id,log_date" }).catch(() => {});
+          updated_at: new Date().toISOString(),
+        }, { onConflict: "student_id,log_date" });
+      } catch { /* silent — partial save is best-effort */ }
+    })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, score]);
 
