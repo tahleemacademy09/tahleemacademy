@@ -30,7 +30,7 @@ import {
   Plus, Clock, BookOpen, CheckCircle, RefreshCw, ChevronRight,
   Award, Radio, ArrowRight, LogIn, StopCircle, Loader2,
   PhoneCall, List, LayoutGrid, Volume2, Crown, ArrowLeft,
-  TimerReset, AlertTriangle, Settings, Wand2, Wifi, WifiOff, Sparkles, Eye,
+  TimerReset, AlertTriangle, Settings, Wand2, Wifi, WifiOff, Sparkles, Eye, Shuffle,
 } from "lucide-react";
 
 const G    = "#0f2d1f";
@@ -325,19 +325,20 @@ const LiveVideoGrid = ({
   const activName = activP ? getMeta(activP).name||"Participant" : (iAmActive ? localMeta.name||"You" : null);
   const judgeName = judgeP ? getMeta(judgeP).name||"Judge"       : (iAmJudge  ? localMeta.name||"Judge" : "Judge");
 
-  const hasJudge  = !!(judgeVid?.videoTrack);
-  const hasActiv  = !!(activVid?.videoTrack);
+  const hasJudge  = !!(judgeVid?.videoTrack) || iAmJudge || !!judgeRemote;
+  const hasActiv  = !!(activVid?.videoTrack) || (!!iAmActive && !!activeUserId) || !!activeRemote;
   const hasAny    = hasJudge || hasActiv;
 
   if (!hasAny) return (
     <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:12,background:"rgba(0,0,0,.6)"}}>
       <div style={{fontSize:36,opacity:.3}}>﷽</div>
       <div style={{color:"rgba(255,255,255,.25)",fontSize:12,textAlign:"center",maxWidth:220,lineHeight:1.7}}>
-        {isObserver ? "Live video appears when a participant is called" : "Connecting to live room…"}
+        {isObserver ? "Live video appears when a participant is called" : "Joining live room…"}
       </div>
     </div>
   );
 
+  // showBoth: both feeds present (track OR known presence)
   const showBoth = hasJudge && hasActiv && !!activeUserId;
 
   return (
@@ -1159,6 +1160,13 @@ export default function MustabaqahPage() {
   const done    = participants.filter(p=>p.status==="completed");
   // allDone: no waiting, no pending, at least one participant completed, no active participant
   const allDone = waiting.length===0 && pending.length===0 && done.length>0 && !activeP;
+
+  // Auto-switch judge to controls tab when all participants in this stage are done
+  // so the "Next Stage" / "End Competition" button is immediately visible
+  useEffect(() => {
+    if (allDone && isJudge) setJudgeTab("controls");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allDone, isJudge]);
   const totalCrit = competition?.use_criteria_scoring ? SCORING_CRITERIA.reduce((s,c)=>s+(Number(scoreBreak[c.key])||0),0) : Number(scoreBreak.tajweed)||0;
   const finalScore = Math.max(0,totalCrit-bellCount*2);
   const timerWarning = timerSecs > 0 && timerSecs <= 30;
@@ -1200,21 +1208,59 @@ export default function MustabaqahPage() {
   };
 
   // ── AI question generation ───────────────────────────────────────
+  /** Auto-fill all stages with Quran questions from the competition's scope,
+   *  distributing a unique set of tiles to each stage. No AI needed. */
+  const autoFillAllStages = () => {
+    if (!competition) return;
+    const count = competition.scope_config?.tiles_per_stage ?? 10;
+    const total = competition.total_stages;
+    const pool = competition.scope_type === "juz30"
+      ? SURAHS.filter(s => s.juz === 30)
+      : competition.scope_type === "juz29"
+      ? SURAHS.filter(s => s.juz >= 29)
+      : SURAHS;
+
+    // Build a large unique pool of questions, shuffled
+    const questions: string[] = [];
+    // Generate up to 5x what we need to ensure uniqueness across stages
+    const needed = count * total;
+    const attempts = needed * 6;
+    const seen = new Set<string>();
+    for (let i = 0; i < attempts && questions.length < needed; i++) {
+      const s = pool[Math.floor(Math.random() * pool.length)];
+      const a = Math.floor(Math.random() * s.v) + 1;
+      const key = `${s.n}-${a}`;
+      if (!seen.has(key)) { seen.add(key); questions.push(`${s.en} — Ayah ${a}`); }
+    }
+    // Pad if not enough unique questions (small scope)
+    while (questions.length < needed) {
+      const s = pool[Math.floor(Math.random() * pool.length)];
+      const a = Math.floor(Math.random() * s.v) + 1;
+      questions.push(`${s.en} — Ayah ${a}`);
+    }
+
+    const newSQ: Record<string, string> = {};
+    for (let i = 0; i < total; i++) {
+      newSQ[String(i + 1)] = questions.slice(i * count, (i + 1) * count).join("\n");
+    }
+    setStageQuestions(newSQ);
+    toast({ title: `✅ Generated ${count} questions for each of ${total} stages from ${competition.scope_type}` });
+  };
+
   const generateAIQuestions = async () => {
     if (!aiPrompt.trim()) { toast({title:"Enter a prompt",variant:"destructive"}); return; }
     setAiGenLoading(true);
     try {
       const { data, error } = await supabase.functions.invoke("tahleem-ai", {
         body: {
-          action: "generate",   // required by tahleem-ai — without this it throws "action is required"
+          action: "generate",
           prompt: `Generate exactly ${aiQCount} concise Islamic recitation competition questions or passage assignments for a Quran/Islamic studies competition. Each item should be on its own line, formatted simply like: "Al-Fatiha full" or "Al-Baqarah 1-5" or "Surah Al-Ikhlas complete". No numbering, no bullets, just one item per line. Topic/scope context: ${aiPrompt}`,
         }
       });
       if (error) throw new Error(error.message);
-      // tahleem-ai returns { text: "..." } for the "generate" action
       const raw = (data?.text || data?.content?.[0]?.text || "") as string;
+      if (!raw.trim()) throw new Error("Empty response from AI");
       const lines = raw.split("\n").map((s:string)=>s.replace(/^[\d\-\*\.\)]+\s*/,"").trim()).filter((s:string)=>s.length>3);
-      // Add to the current stage's questions
       const stageKey = String(qSettingsStage);
       const existing = (stageQuestions[stageKey]||"").trim();
       const merged = existing ? existing + "\n" + lines.join("\n") : lines.join("\n");
@@ -1222,7 +1268,12 @@ export default function MustabaqahPage() {
       setQSettingsTab("manual");
       toast({ title: `✨ Generated ${lines.length} questions for Stage ${qSettingsStage} — review & save` });
     } catch(e:any) {
-      toast({ title:"AI generation failed", description: e.message||"Check edge function", variant:"destructive" });
+      // AI failed — offer to auto-fill from scope instead
+      toast({
+        title: "AI generation unavailable",
+        description: "Use 'Fill from Quran scope' instead — no internet needed.",
+        variant: "destructive"
+      });
     } finally { setAiGenLoading(false); }
   };
 
@@ -2098,7 +2149,18 @@ export default function MustabaqahPage() {
             <div style={{flex:1,overflowY:"auto",padding:"10px 14px 0"}}>
               {qSettingsTab==="manual"&&competition&&(
                 <>
-                  <div style={{color:"rgba(255,255,255,.45)",fontSize:11,marginBottom:6,lineHeight:1.6}}>
+                  {/* Quick-fill banner — one click populates all stages from scope */}
+                  <div style={{background:"rgba(34,197,94,.07)",border:"1px solid rgba(34,197,94,.25)",borderRadius:12,padding:"10px 13px",marginBottom:12,display:"flex",alignItems:"center",gap:10}}>
+                    <Shuffle size={13} color={GREEN} style={{flexShrink:0}}/>
+                    <div style={{flex:1}}>
+                      <div style={{color:GREEN,fontWeight:700,fontSize:12}}>Fill all stages from Quran scope</div>
+                      <div style={{color:"rgba(255,255,255,.35)",fontSize:10,marginTop:1}}>Auto-distributes unique ayahs across all {competition.total_stages} stages from {competition.scope_type}. No AI needed.</div>
+                    </div>
+                    <button onClick={autoFillAllStages}
+                      style={{background:"rgba(34,197,94,.15)",border:"1px solid rgba(34,197,94,.35)",borderRadius:9,padding:"6px 11px",cursor:"pointer",color:GREEN,fontWeight:700,fontSize:12,fontFamily:"Cairo,sans-serif",flexShrink:0,whiteSpace:"nowrap"}}>
+                      Auto-fill
+                    </button>
+                  </div>
                     <strong style={{color:GOLD}}>Stage {qSettingsStage} questions</strong> — one per line.{" "}
                     <span style={{color:"rgba(255,255,255,.3)"}}>Leave empty to use random Quran passages.</span>
                   </div>
