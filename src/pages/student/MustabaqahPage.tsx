@@ -769,6 +769,28 @@ export default function MustabaqahPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[competition?.id, myParticipant?.id, myParticipant?.status]);
 
+  // ── Tile fallback: participant is "called" but hasn't received tiles yet ──
+  // Polls competition.scope_config.current_tiles from DB every 1.5s until tiles arrive.
+  // This handles: missed broadcast, late channel subscription, stage-change race condition.
+  useEffect(()=>{
+    if (!competition || !myParticipant || myParticipant.status !== "called" || stageTiles.length > 0) return;
+    const iv = setInterval(async () => {
+      const { data } = await supabase
+        .from("musabaqah_competitions" as any)
+        .select("scope_config")
+        .eq("id", competition.id)
+        .single();
+      const cfg = (data as any)?.scope_config;
+      if (cfg?.current_tiles?.length > 0 && cfg?.current_called_id === myParticipant.id) {
+        setStageTiles(cfg.current_tiles);
+        setShowTilePicker(true);
+        setPickerParticipantId(myParticipant.id);
+      }
+    }, 1500);
+    return () => clearInterval(iv);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[competition?.id, myParticipant?.id, myParticipant?.status, stageTiles.length]);
+
   useEffect(()=>{
     if (!competition) return;
     if (channelRef.current) supabase.removeChannel(channelRef.current);
@@ -806,7 +828,9 @@ export default function MustabaqahPage() {
         }
       })
       .on("broadcast",{event:"TILES_SHOWN"},({payload}:any)=>{
-        setStageTiles(payload.tiles??[]); setPickedTile(null); setAyahText(null);
+        // Only process if tiles are actually present — never clear working tiles with empty payload
+        if (!payload.tiles?.length) return;
+        setStageTiles(payload.tiles); setPickedTile(null); setAyahText(null);
         setShowTilePicker(true); setPickerParticipantId(payload.picker_participant_id??null);
       })
       .on("broadcast",{event:"QUESTION_PICKED"},({payload}:any)=>{
@@ -958,15 +982,31 @@ export default function MustabaqahPage() {
     setTilePickerCollapsed(false);
     const tiles = buildTiles(competition);
     setStageTiles(tiles); setShowTilePicker(true);
-    // Broadcast immediately (no await)
+    setActiveP({...p, status:"called"}); setCompetition(c=>c?{...c,current_participant_id:p.id}:c);
+    setJudgeTab("controls");
+
+    // Broadcast immediately for fast delivery
     broadcast("CALLED",{participant_id:p.id,participant_name:p.participant_name});
     broadcast("TILES_SHOWN",{tiles,stage:competition.current_stage,picker_participant_id:p.id});
     playCalled();
-    setActiveP({...p, status:"called"}); setCompetition(c=>c?{...c,current_participant_id:p.id}:c);
-    setJudgeTab("controls");
-    // DB async — no blocking
-    supabase.from("musabaqah_participants" as any).update({status:"called"}).eq("id",p.id);
-    supabase.from("musabaqah_competitions" as any).update({current_participant_id:p.id}).eq("id",competition.id);
+
+    // Persist tiles + caller info to DB — participant polls this as a fallback if
+    // the broadcast was missed (stage-change interruption, reconnect, etc.)
+    const newCfg = {
+      ...(competition.scope_config||{}),
+      current_tiles: tiles,
+      current_called_id: p.id,
+      current_stage_num: competition.current_stage,
+    };
+    await Promise.all([
+      supabase.from("musabaqah_participants" as any).update({status:"called"}).eq("id",p.id),
+      supabase.from("musabaqah_competitions" as any)
+        .update({current_participant_id:p.id, scope_config: newCfg} as any)
+        .eq("id",competition.id),
+    ]);
+
+    // Re-broadcast after DB write to catch late subscribers
+    setTimeout(()=>broadcast("TILES_SHOWN",{tiles,stage:competition.current_stage,picker_participant_id:p.id}), 800);
   };
 
   const pickTile = (tile:Tile) => {
@@ -1103,9 +1143,14 @@ export default function MustabaqahPage() {
       await supabase.from("musabaqah_competitions" as any).update({status:"completed",current_participant_id:null}).eq("id",competition.id);
       broadcast("COMPETITION_END"); setView("results"); return;
     }
+    // Clear current_tiles and current_called_id so the polling fallback doesn't
+    // serve old tiles to participants in the new stage
+    const cleanConfig = { ...(competition.scope_config||{}), current_tiles: [], current_called_id: null, current_stage_num: next };
     await supabase.from("musabaqah_participants" as any).update({status:"waiting"}).eq("competition_id",competition.id);
-    await supabase.from("musabaqah_competitions" as any).update({current_stage:next,current_participant_id:null}).eq("id",competition.id);
-    setCompetition(c=>c?{...c,current_stage:next,current_participant_id:null}:c);
+    await supabase.from("musabaqah_competitions" as any)
+      .update({current_stage:next, current_participant_id:null, scope_config:cleanConfig} as any)
+      .eq("id",competition.id);
+    setCompetition(c=>c?{...c,current_stage:next,current_participant_id:null,scope_config:cleanConfig}:c);
     broadcast("STAGE_CHANGE",{stage:next});
     toast({title:`🎯 Stage ${next} begins!`}); loadParticipants();
   };
@@ -2171,6 +2216,14 @@ export default function MustabaqahPage() {
                 )}
                 {(!pickedTile||!tilePickerCollapsed)&&stageTiles.length>0&&(
                   <NumberTilePicker tiles={stageTiles} pickedNum={pickedTile?.num??null} onPick={!pickedTile?pickTile:()=>{}} canPick={!pickedTile} stage={competition.current_stage}/>
+                )}
+                {/* Waiting for tiles — shown when broadcast/DB hasn't delivered yet */}
+                {!pickedTile&&stageTiles.length===0&&(
+                  <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:8,padding:"18px 0"}}>
+                    <Loader2 size={28} color={GOLD} style={{animation:"spin 1s linear infinite"}}/>
+                    <div style={{color:"rgba(255,255,255,.4)",fontSize:12,textAlign:"center"}}>Loading your numbers…</div>
+                    <div style={{color:"rgba(255,255,255,.2)",fontSize:10,textAlign:"center"}}>If this takes too long, ask the judge to re-call you.</div>
+                  </div>
                 )}
                 {pickedTile&&<QuestionDisplay tile={pickedTile} ayahText={ayahText} loadingAyah={loadingAyah} isParticipant={true} instructions={liveInstructions||undefined}/>}
               </div>
