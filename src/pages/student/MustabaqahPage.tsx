@@ -2161,6 +2161,7 @@ export default function MustabaqahPage() {
                       Auto-fill
                     </button>
                   </div>
+                  <div style={{color:"rgba(255,255,255,.45)",fontSize:11,marginBottom:6,lineHeight:1.6}}>
                     <strong style={{color:GOLD}}>Stage {qSettingsStage} questions</strong> — one per line.{" "}
                     <span style={{color:"rgba(255,255,255,.3)"}}>Leave empty to use random Quran passages.</span>
                   </div>
