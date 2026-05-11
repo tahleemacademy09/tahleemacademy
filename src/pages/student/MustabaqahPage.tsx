@@ -296,7 +296,7 @@ const VideoPanel = ({
   </div>
 );
 
-/* ── Video grid — DUAL panels: Judge + Participant side by side ── */
+/* ── Video grid — PiP layout: main dominant + self-view corner overlay ── */
 const LiveVideoGrid = ({
   activeUserId, isJudge, isObserver, allowControls, activePStatus,
 }: {
@@ -307,29 +307,56 @@ const LiveVideoGrid = ({
 
   const getMeta = (p:any) => { try { return JSON.parse(p?.metadata||"{}"); } catch { return {}; } };
   const localMeta  = getMeta(localParticipant);
-  const iAmJudge   = localMeta.role==="judge";
-  const iAmActive  = activeUserId && localMeta.user_id===activeUserId;
+  const iAmJudge   = localMeta.role === "judge";
+  const iAmActive  = !!(activeUserId && localMeta.user_id === activeUserId);
 
   const judgeRemote  = remoteParticipants.find(p=>getMeta(p).role==="judge");
   const activeRemote = remoteParticipants.find(p=>getMeta(p).user_id===activeUserId);
   const localPub     = localParticipant?.getTrackPublication(Track.Source.Camera);
-  const judgeRemotePub  = judgeRemote?.getTrackPublication(Track.Source.Camera);
-  const activeRemotePub = activeRemote?.getTrackPublication(Track.Source.Camera);
+  const judgeRemotePub   = judgeRemote?.getTrackPublication(Track.Source.Camera);
+  const activeRemotePub  = activeRemote?.getTrackPublication(Track.Source.Camera);
 
-  const participantIsReciting = activePStatus === "reciting";
+  // ── Decide main view (dominant) and PiP self-view ──────────────────
+  // Judge:  active participant dominant — self as PiP bottom-right
+  // Active participant: judge dominant — self as PiP bottom-right
+  // Observer / waiting: judge dominant, no PiP
 
-  const judgeVid  = iAmJudge ? localPub : judgeRemotePub;
-  const judgeP    = iAmJudge ? null      : judgeRemote ?? null;
-  const activVid  = iAmActive? localPub  : activeRemotePub;
-  const activP    = iAmActive? null      : activeRemote ?? null;
-  const activName = activP ? getMeta(activP).name||"Participant" : (iAmActive ? localMeta.name||"You" : null);
-  const judgeName = judgeP ? getMeta(judgeP).name||"Judge"       : (iAmJudge  ? localMeta.name||"Judge" : "Judge");
+  let mainPub:any, mainParticipant:any, mainName:string, mainLabel:string;
+  let pipShow = false;
 
-  const hasJudge  = !!(judgeVid?.videoTrack) || iAmJudge || !!judgeRemote;
-  const hasActiv  = !!(activVid?.videoTrack) || (!!iAmActive && !!activeUserId) || !!activeRemote;
-  const hasAny    = hasJudge || hasActiv;
+  if (iAmJudge) {
+    // Judge sees participant as main
+    mainPub = activeRemotePub;
+    mainParticipant = activeRemote ?? null;
+    mainName  = getMeta(activeRemote).name || (activeUserId ? "Participant" : "—");
+    mainLabel = activeUserId ? `🎙️ ${mainName}` : "⚖️ Waiting for participant…";
+    pipShow   = true; // judge always sees self PiP
+  } else if (iAmActive) {
+    // Active participant sees judge as main
+    mainPub = judgeRemotePub;
+    mainParticipant = judgeRemote ?? null;
+    mainName  = getMeta(judgeRemote).name || "Judge";
+    mainLabel = `⚖️ ${mainName}`;
+    pipShow   = true; // active participant sees self PiP
+  } else {
+    // Observers / waiting participants: see whoever is active (judge or active p)
+    if (judgeRemote || judgeRemotePub) {
+      mainPub = judgeRemotePub;
+      mainParticipant = judgeRemote ?? null;
+      mainName  = getMeta(judgeRemote).name || "Judge";
+      mainLabel = `⚖️ ${mainName}`;
+    } else {
+      mainPub = activeRemotePub;
+      mainParticipant = activeRemote ?? null;
+      mainName  = getMeta(activeRemote).name || "Live";
+      mainLabel = `🎙️ ${mainName}`;
+    }
+    pipShow = false;
+  }
 
-  if (!hasAny) return (
+  const hasMain = !!(mainPub?.videoTrack) || !!mainParticipant || iAmJudge || iAmActive;
+
+  if (!hasMain) return (
     <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:12,background:"rgba(0,0,0,.6)"}}>
       <div style={{fontSize:36,opacity:.3}}>﷽</div>
       <div style={{color:"rgba(255,255,255,.25)",fontSize:12,textAlign:"center",maxWidth:220,lineHeight:1.7}}>
@@ -338,25 +365,55 @@ const LiveVideoGrid = ({
     </div>
   );
 
-  // showBoth: both feeds present (track OR known presence)
-  const showBoth = hasJudge && hasActiv && !!activeUserId;
-
   return (
-    <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"row",overflow:"hidden"}}>
-      {showBoth && participantIsReciting ? (
-        <>
-          <VideoPanel pub={activVid} participant={activP} localParticipant={localParticipant} name={activName||"Participant"} label={`🎙️ ${activName||"Participant"}`} dominant/>
-          <VideoPanel pub={judgeVid} participant={judgeP} localParticipant={localParticipant} name={judgeName} label={`⚖️ ${judgeName}`} compact/>
-        </>
-      ) : showBoth ? (
-        <>
-          <VideoPanel pub={judgeVid} participant={judgeP} localParticipant={localParticipant} name={judgeName} label={`⚖️ ${judgeName}`} dominant/>
-          <VideoPanel pub={activVid} participant={activP} localParticipant={localParticipant} name={activName||"Participant"} label={`🎙️ ${activName||"Participant"}`} compact/>
-        </>
-      ) : hasJudge ? (
-        <VideoPanel pub={judgeVid} participant={judgeP} localParticipant={localParticipant} name={judgeName} label={`⚖️ ${judgeName}`}/>
-      ) : (
-        <VideoPanel pub={activVid} participant={activP} localParticipant={localParticipant} name={activName||"Participant"} label={`🎙️ ${activName||"Participant"}`}/>
+    <div style={{position:"relative",width:"100%",height:"100%",background:"#000",overflow:"hidden"}}>
+
+      {/* ── Main dominant video (full area) ── */}
+      <div style={{position:"absolute",inset:0}}>
+        <VideoPanel
+          pub={mainPub}
+          participant={mainParticipant}
+          localParticipant={localParticipant}
+          name={mainName}
+          label={mainLabel}
+        />
+      </div>
+
+      {/* ── PiP self-view — bottom-right corner ── */}
+      {pipShow && (
+        <div style={{
+          position:"absolute",
+          bottom:44,   // above the LIVE badge
+          right:8,
+          width:88,
+          height:116,
+          borderRadius:12,
+          overflow:"hidden",
+          border:`2px solid rgba(201,168,76,.55)`,
+          boxShadow:"0 4px 20px rgba(0,0,0,.7)",
+          zIndex:8,
+          background:"#111",
+        }}>
+          {localPub?.videoTrack ? (
+            <div className="musabaqah-local-video" style={{width:"100%",height:"100%"}}>
+              <VideoTrack
+                trackRef={{participant:localParticipant, source:Track.Source.Camera, publication:localPub}}
+                style={{width:"100%",height:"100%",objectFit:"cover"}}
+              />
+            </div>
+          ) : (
+            <div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:4}}>
+              <div style={{width:32,height:32,borderRadius:"50%",background:`${GOLD}22`,display:"flex",alignItems:"center",justifyContent:"center",color:GOLD,fontWeight:800,fontSize:14,fontFamily:"Cairo,sans-serif"}}>
+                {(localMeta.name||"?")[0]?.toUpperCase()}
+              </div>
+              <div style={{color:"rgba(255,255,255,.35)",fontSize:8,textAlign:"center",padding:"0 4px"}}>You</div>
+            </div>
+          )}
+          {/* Small "YOU" label */}
+          <div style={{position:"absolute",bottom:0,left:0,right:0,background:"linear-gradient(to top,rgba(0,0,0,.8),transparent)",padding:"10px 4px 3px",textAlign:"center"}}>
+            <span style={{color:"rgba(255,255,255,.6)",fontSize:8,fontWeight:700,letterSpacing:.5}}>YOU</span>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -1048,7 +1105,9 @@ export default function MustabaqahPage() {
     if (!competition) return;
     await supabase.from("musabaqah_competitions" as any).update({status:"active"}).eq("id",competition.id);
     setCompetition(c=>c?{...c,status:"active"}:c);
-    toast({title:"🎯 Competition started!"});
+    broadcast("COMP_START", {});
+    setJudgeTab("controls"); // jump straight to Controls so Call button is visible
+    toast({title:"🎯 Competition started! Call the first participant."});
   };
 
   const createCompetition = async () => {
@@ -1167,6 +1226,12 @@ export default function MustabaqahPage() {
     if (allDone && isJudge) setJudgeTab("controls");
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allDone, isJudge]);
+
+  // Auto-switch judge to Controls tab the moment competition becomes active
+  useEffect(() => {
+    if (competition?.status === "active" && isJudge && !activeP) setJudgeTab("controls");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [competition?.status, isJudge]);
   const totalCrit = competition?.use_criteria_scoring ? SCORING_CRITERIA.reduce((s,c)=>s+(Number(scoreBreak[c.key])||0),0) : Number(scoreBreak.tajweed)||0;
   const finalScore = Math.max(0,totalCrit-bellCount*2);
   const timerWarning = timerSecs > 0 && timerSecs <= 30;
@@ -1580,7 +1645,7 @@ export default function MustabaqahPage() {
         {/* Islamic ornament corners */}
         <div style={{position:"absolute",top:0,left:0,fontSize:22,opacity:.18,color:GOLD,lineHeight:1,padding:4,pointerEvents:"none"}}>❁</div>
         <div style={{position:"absolute",top:0,right:0,fontSize:22,opacity:.18,color:GOLD,lineHeight:1,padding:4,pointerEvents:"none",transform:"scaleX(-1)"}}>❁</div>
-        {/* Compact mic/cam overlay — only when inside LiveKitRoom context */}
+        {/* Compact mic/cam overlay — always visible inside LiveKitRoom context */}
         {withControls&&(
           <div style={{position:"absolute",top:8,right:8,zIndex:5,pointerEvents:"auto"}}>
             <div style={{background:"rgba(0,0,0,.65)",backdropFilter:"blur(10px)",borderRadius:10,padding:"4px 6px",display:"flex",gap:4}}>
@@ -1608,12 +1673,12 @@ export default function MustabaqahPage() {
     // Connected: LiveKitRoom wraps everything — pass withControls=true so
     // CameraControls renders safely inside the room context
     if (lkConnected && livekitToken && livekitUrl) return (
-      <LiveKitRoom serverUrl={livekitUrl} token={livekitToken} connect={lkConnected} audio={true} video={showControls} options={LK_OPTIONS}>
+      <LiveKitRoom serverUrl={livekitUrl} token={livekitToken} connect={lkConnected} audio={true} video={true} options={LK_OPTIONS}>
         <RoomAudioRenderer/>
         <AudioEnabler onEnabled={()=>setAudioReady(true)}/>
         {inner(
-          <LiveVideoGrid activeUserId={activeP?.user_id??null} isJudge={isJudge} isObserver={isObserver} allowControls={showControls} activePStatus={activeP?.status??null}/>,
-          showControls  // ← CameraControls only rendered here, inside LiveKitRoom
+          <LiveVideoGrid activeUserId={activeP?.user_id??null} isJudge={isJudge} isObserver={isObserver} allowControls={true} activePStatus={activeP?.status??null}/>,
+          true  // always show mic/cam controls to all connected users
         )}
       </LiveKitRoom>
     );
@@ -1722,7 +1787,7 @@ export default function MustabaqahPage() {
 
       {/* ══ VIDEO HERO — takes 58% of viewport ════════════════════════ */}
       <div style={{flexShrink:0,height:"58vh",minHeight:260,maxHeight:460,position:"relative",borderBottom:`1px solid ${GOLD}1a`}}>
-        {videoHero(isJudge || !!iAmParticipantActive)}
+        {videoHero(true)}
         {!activeP&&(
           <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none"}}>
             <div style={{color:GOLD,fontSize:26,opacity:.05,fontFamily:"Amiri,serif",letterSpacing:4}}>بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ</div>
@@ -1853,20 +1918,27 @@ export default function MustabaqahPage() {
 
                 {competition.status==="active"&&!activeP&&waiting.length>0&&(
                   <div>
-                    <div style={{color:GOLD,fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:6,display:"flex",alignItems:"center",gap:3}}><PhoneCall size={10}/> Call a Participant</div>
+                    {/* Prominent call banner */}
+                    <div style={{background:"rgba(201,168,76,.12)",border:"1.5px solid rgba(201,168,76,.4)",borderRadius:12,padding:"10px 13px",marginBottom:8,display:"flex",alignItems:"center",gap:8,animation:"recitingGlow 2s ease-in-out infinite"}}>
+                      <PhoneCall size={16} color={GOLD}/>
+                      <div>
+                        <div style={{color:GOLD,fontWeight:800,fontSize:13}}>Call a Participant</div>
+                        <div style={{color:"rgba(255,255,255,.4)",fontSize:10,marginTop:1}}>{waiting.length} waiting — tap a name below to call</div>
+                      </div>
+                    </div>
                     {waiting.slice(0,6).map(p=>{
                       const isOnline=onlineUsers.some(u=>u.name===p.participant_name||u.name===p.participant_name.split(" ")[0]);
                       return(
-                        <button key={p.id} onClick={()=>callParticipant(p)} style={{width:"100%",background:`${GOLD}0e`,border:`1px solid ${GOLD}33`,borderRadius:9,padding:"9px 11px",cursor:"pointer",display:"flex",alignItems:"center",gap:8,textAlign:"left",fontFamily:"Cairo,sans-serif",marginBottom:4}}>
+                        <button key={p.id} onClick={()=>callParticipant(p)} style={{width:"100%",background:`${GOLD}0e`,border:`1.5px solid ${GOLD}44`,borderRadius:11,padding:"11px 13px",cursor:"pointer",display:"flex",alignItems:"center",gap:8,textAlign:"left",fontFamily:"Cairo,sans-serif",marginBottom:6,boxShadow:"0 2px 12px rgba(201,168,76,.1)",transition:"all .15s"}}>
                           <div style={{position:"relative",flexShrink:0}}>
-                            <Avatar name={p.participant_name} size={30}/>
-                            <div style={{position:"absolute",bottom:0,right:0,width:8,height:8,borderRadius:"50%",background:isOnline?GREEN:RED,border:"2px solid #050f08"}}/>
+                            <Avatar name={p.participant_name} size={34}/>
+                            <div style={{position:"absolute",bottom:0,right:0,width:9,height:9,borderRadius:"50%",background:isOnline?GREEN:RED,border:"2px solid #050f08"}}/>
                           </div>
                           <div style={{flex:1,minWidth:0}}>
-                            <div style={{color:"#fff",fontWeight:700,fontSize:13,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.participant_name}</div>
-                            <span style={{color:isOnline?GREEN:RED,fontSize:10,fontWeight:700,display:"flex",alignItems:"center",gap:2}}>{isOnline?<Wifi size={8}/>:<WifiOff size={8}/>}{isOnline?"Online":"Offline"}</span>
+                            <div style={{color:"#fff",fontWeight:700,fontSize:14,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.participant_name}</div>
+                            <span style={{color:isOnline?GREEN:"rgba(255,255,255,.3)",fontSize:10,fontWeight:700,display:"flex",alignItems:"center",gap:2}}>{isOnline?<Wifi size={8}/>:<WifiOff size={8}/>}{isOnline?"Online · Ready":"Offline"}</span>
                           </div>
-                          <span style={{color:GOLD,fontSize:11,fontWeight:700,flexShrink:0,display:"flex",alignItems:"center",gap:2}}><PhoneCall size={10}/> Call</span>
+                          <div style={{background:`linear-gradient(135deg,${GOLD},${GOLDD})`,color:G,borderRadius:8,padding:"6px 12px",fontWeight:800,fontSize:12,flexShrink:0,display:"flex",alignItems:"center",gap:4}}><PhoneCall size={11}/> Call</div>
                         </button>
                       );
                     })}
@@ -1956,6 +2028,12 @@ export default function MustabaqahPage() {
 
             {judgeTab==="roster"&&(
               <div>
+                {/* Next Stage / End button shown here too so judge never has to hunt for it */}
+                {competition.status==="active"&&allDone&&(
+                  <button onClick={advanceStage} style={{width:"100%",marginBottom:10,background:competition.current_stage>=competition.total_stages?`linear-gradient(135deg,${GOLD},${GOLDD})`:"linear-gradient(135deg,#7c3aed,#6d28d9)",color:"#fff",border:"none",borderRadius:11,padding:"13px",cursor:"pointer",fontWeight:800,fontFamily:"Cairo,sans-serif",fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:7}}>
+                    {competition.current_stage>=competition.total_stages?<><Trophy size={15}/> End & Show Results</>:<><ArrowRight size={15}/> Next Stage {competition.current_stage+1} →</>}
+                  </button>
+                )}
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:7}}>
                   <span style={{color:"rgba(255,255,255,.4)",fontSize:11}}>{participants.filter(p=>p.status!=="pending").length} registered</span>
                   <div style={{display:"flex",gap:3}}>
