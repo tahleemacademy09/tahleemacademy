@@ -38,8 +38,12 @@ serve(async (req) => {
 
     if (!action) throw new Error("action is required");
 
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
+    const LOVABLE_API_KEY  = Deno.env.get("LOVABLE_API_KEY");
+    const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
+
+    if (!LOVABLE_API_KEY && !ANTHROPIC_API_KEY) {
+      throw new Error("No AI provider configured. Set ANTHROPIC_API_KEY or LOVABLE_API_KEY in Supabase secrets.");
+    }
 
     let userId: string | null = null;
     const authHeader = req.headers.get("Authorization");
@@ -56,7 +60,6 @@ serve(async (req) => {
     let systemPrompt = "";
     let userContent: any = prompt || "";
     let model = "google/gemini-2.5-flash-preview";
-    let stream = false;
 
     switch (action) {
       case "revision": {
@@ -127,7 +130,6 @@ Only respond with valid JSON.`;
       }
 
       case "chat": {
-        stream = true;
         systemPrompt = `You are Mu'allim (المعلّم), a scholarly AI assistant for Tahleem Academy.
 Be formal, scholarly in both Arabic and English. Patient and encouraging.
 Answer questions about Islamic studies, provide curriculum knowledge.
@@ -155,42 +157,72 @@ ${context?.studentContext || ""}`;
       ];
     }
 
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model,
-        messages: aiMessages,
-        stream,
+    // ── Provider selection: Anthropic first, Lovable fallback ─────────
+    let responseText = "";
+
+    if (ANTHROPIC_API_KEY) {
+      // Anthropic Messages API
+      const anthropicBody: any = {
+        model: "claude-haiku-4-5-20251001",
         max_tokens: 4096,
-        ...(action === "transcribe" || action === "notify"
-          ? { response_format: { type: "json_object" } }
-          : {}),
-      }),
-    });
+        messages: aiMessages.filter((m: any) => m.role !== "system"),
+      };
+      if (systemPrompt) anthropicBody.system = systemPrompt;
 
-    if (!response.ok) {
-      const errText = await response.text();
-      console.error("AI gateway error:", response.status, errText);
-      if (response.status === 429) {
-        return new Response(JSON.stringify({ error: "Rate limit exceeded. Please try again shortly." }), {
-          status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      throw new Error(`AI service error: ${response.status}`);
-    }
-
-    if (stream) {
-      return new Response(response.body, {
-        headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
+      const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "x-api-key": ANTHROPIC_API_KEY,
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(anthropicBody),
       });
+
+      if (!anthropicRes.ok) {
+        const errText = await anthropicRes.text();
+        console.error("Anthropic error:", anthropicRes.status, errText);
+        throw new Error(`Anthropic API error ${anthropicRes.status}`);
+      }
+
+      const anthropicData = await anthropicRes.json();
+      responseText = anthropicData.content?.[0]?.text || "";
+
+    } else {
+      // Lovable AI gateway (OpenAI-compatible)
+      const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${LOVABLE_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model,
+          messages: aiMessages,
+          stream: false,
+          max_tokens: 4096,
+          ...(action === "transcribe" || action === "notify"
+            ? { response_format: { type: "json_object" } }
+            : {}),
+        }),
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        console.error("Lovable gateway error:", response.status, errText);
+        if (response.status === 429) {
+          return new Response(JSON.stringify({ error: "Rate limit exceeded. Please try again shortly." }), {
+            status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        throw new Error(`AI service error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      responseText = data.choices?.[0]?.message?.content || "";
     }
 
-    const data = await response.json();
-    const text = data.choices?.[0]?.message?.content || "";
+    const text = responseText;
 
     if (action === "transcribe" || action === "notify") {
       try {
