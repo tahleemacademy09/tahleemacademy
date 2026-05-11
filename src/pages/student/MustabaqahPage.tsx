@@ -896,6 +896,25 @@ export default function MustabaqahPage() {
     broadcast("REACTION",{emoji,name});
   };
 
+  /** Parse one line from Q-Settings into a Tile.
+   *  Auto-generated lines carry a §surahNum:ayahNum suffix so we can
+   *  reconstruct the full Tile (with surah>0) and trigger fetchAyah. */
+  const parseTileLine = (line: string, num: number): Tile => {
+    const match = line.match(/§(\d+):(\d+)$/);
+    if (match) {
+      const surahN = parseInt(match[1]);
+      const ayahN  = parseInt(match[2]);
+      const label  = line.replace(/\s*§\d+:\d+$/, "").trim();
+      const sd = SURAHS.find(s => s.n === surahN);
+      return {
+        num, label, labelAr: sd ? `سورة ${sd.ar} — الآية ${ayahN}` : "",
+        surah: surahN, ayah: ayahN,
+        surahName: sd?.en ?? "", surahAr: sd?.ar ?? "",
+      };
+    }
+    return { num, label: line, labelAr: "", surah: 0, ayah: 0, surahName: "", surahAr: "" };
+  };
+
   const buildTiles = (comp: Competition): Tile[] => {
     const count = comp.scope_config?.tiles_per_stage ?? 10;
     const stageKey = String(comp.current_stage);
@@ -905,10 +924,10 @@ export default function MustabaqahPage() {
     const stageDb: string[] = comp.scope_config?.stage_questions?.[stageKey] ?? [];
     const stageSpecific = stageLive.length > 0 ? stageLive : stageDb;
     if (stageSpecific.length > 0) {
-      return Array.from({length: Math.min(count, stageSpecific.length)}, (_,i) => ({
-        num: i+1, label: stageSpecific[i], labelAr: "",
-        surah: 0, ayah: 0, surahName: "", surahAr: "",
-      }));
+      return Array.from(
+        {length: Math.min(count, stageSpecific.length)},
+        (_, i) => parseTileLine(stageSpecific[i], i + 1)
+      );
     }
 
     // 2. Fall back to flat custom questions (all-stages list, sliced by stage)
@@ -918,10 +937,10 @@ export default function MustabaqahPage() {
       const stageOffset = (comp.current_stage - 1) * count;
       const slice = customs.slice(stageOffset, stageOffset + count);
       const effective = slice.length > 0 ? slice : customs.slice(0, count);
-      return Array.from({length: Math.min(count, effective.length)}, (_,i) => ({
-        num: i+1, label: effective[i] ?? genQuestion(comp.scope_type).label, labelAr: "",
-        surah: 0, ayah: 0, surahName: "", surahAr: "",
-      }));
+      return Array.from(
+        {length: Math.min(count, effective.length)},
+        (_, i) => parseTileLine(effective[i] ?? genQuestion(comp.scope_type).label, i + 1)
+      );
     }
 
     // 3. Fall back to random Quran passages
@@ -1217,8 +1236,11 @@ export default function MustabaqahPage() {
   const waiting = participants.filter(p=>p.status==="waiting");
   const pending = participants.filter(p=>p.status==="pending");
   const done    = participants.filter(p=>p.status==="completed");
-  // allDone: no waiting, no pending, at least one participant completed, no active participant
-  const allDone = waiting.length===0 && pending.length===0 && done.length>0 && !activeP;
+  // allDone: no waiting, no pending, at least one completed, and either no active participant
+  // OR the active one is already completed with the score panel dismissed (curAttempt cleared).
+  // This handles the case where activeP gets stuck as "completed" without a score panel.
+  const allDone = waiting.length===0 && pending.length===0 && done.length>0 &&
+    (!activeP || (activeP.status==="completed" && !currentAttempt && !showScorePanel));
 
   // Auto-switch judge to controls tab when all participants in this stage are done
   // so the "Next Stage" / "End Competition" button is immediately visible
@@ -1226,6 +1248,15 @@ export default function MustabaqahPage() {
     if (allDone && isJudge) setJudgeTab("controls");
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allDone, isJudge]);
+
+  // Safety: if activeP is "completed" but the score panel was never opened (curAttempt null),
+  // the judge has no way to clear it. Auto-clear after 800ms so allDone can become true.
+  useEffect(() => {
+    if (!activeP || activeP.status !== "completed" || currentAttempt || showScorePanel) return;
+    const t = setTimeout(() => setActiveP(null), 800);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeP?.status, currentAttempt, showScorePanel]);
 
   // Auto-switch judge to Controls tab the moment competition becomes active
   useEffect(() => {
@@ -1285,31 +1316,35 @@ export default function MustabaqahPage() {
       ? SURAHS.filter(s => s.juz >= 29)
       : SURAHS;
 
-    // Build a large unique pool of questions, shuffled
-    const questions: string[] = [];
-    // Generate up to 5x what we need to ensure uniqueness across stages
+    // Build a large unique pool of {surah, ayah} pairs, shuffled
     const needed = count * total;
-    const attempts = needed * 6;
     const seen = new Set<string>();
-    for (let i = 0; i < attempts && questions.length < needed; i++) {
+    const pairs: {s: typeof SURAHS[0], a: number}[] = [];
+
+    for (let attempt = 0; attempt < needed * 8 && pairs.length < needed; attempt++) {
       const s = pool[Math.floor(Math.random() * pool.length)];
       const a = Math.floor(Math.random() * s.v) + 1;
-      const key = `${s.n}-${a}`;
-      if (!seen.has(key)) { seen.add(key); questions.push(`${s.en} — Ayah ${a}`); }
+      const key = `${s.n}:${a}`;
+      if (!seen.has(key)) { seen.add(key); pairs.push({s, a}); }
     }
-    // Pad if not enough unique questions (small scope)
-    while (questions.length < needed) {
+    // Pad if scope is too small
+    while (pairs.length < needed) {
       const s = pool[Math.floor(Math.random() * pool.length)];
       const a = Math.floor(Math.random() * s.v) + 1;
-      questions.push(`${s.en} — Ayah ${a}`);
+      pairs.push({s, a});
     }
+
+    // Format: "Al-'Alaq — Ayah 16 §96:16"
+    // The §surah:ayah suffix is parsed by parseTileLine/buildTiles to produce
+    // a proper Tile with surah>0, which triggers fetchAyah to load the verse text.
+    const questions = pairs.map(({s, a}) => `${s.en} — Ayah ${a} §${s.n}:${a}`);
 
     const newSQ: Record<string, string> = {};
     for (let i = 0; i < total; i++) {
       newSQ[String(i + 1)] = questions.slice(i * count, (i + 1) * count).join("\n");
     }
     setStageQuestions(newSQ);
-    toast({ title: `✅ Generated ${count} questions for each of ${total} stages from ${competition.scope_type}` });
+    toast({ title: `✅ ${count} unique verses set for each of ${total} stages — verse text will load during recitation` });
   };
 
   const generateAIQuestions = async () => {
@@ -2253,6 +2288,8 @@ export default function MustabaqahPage() {
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
                     <div style={{color:"rgba(255,255,255,.3)",fontSize:10,marginTop:3}}>
                       {(stageQuestions[String(qSettingsStage)]||"").split("\n").filter(s=>s.trim()).length} questions for Stage {qSettingsStage}
+                      {(stageQuestions[String(qSettingsStage)]||"").includes("§") &&
+                        <span style={{color:GREEN,marginLeft:5}}>· verse text enabled ✓</span>}
                     </div>
                     <button onClick={()=>setStageQuestions(sq=>({...sq,[String(qSettingsStage)]:""}))}
                       style={{background:"none",border:"none",color:"rgba(239,68,68,.5)",fontSize:10,cursor:"pointer",fontFamily:"Cairo,sans-serif",padding:0}}>
