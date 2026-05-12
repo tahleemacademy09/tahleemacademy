@@ -337,6 +337,88 @@ export default function GlobalClassroomOverlay() {
 
   if (!inCall || !activeSubject) return null;
 
+  /* ── Minimized floating pill (like WhatsApp call bar) ─────────────────── */
+  if (minimized) {
+    return (
+      <div
+        style={{
+          position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 9999,
+          display: "flex", alignItems: "center",
+          background: "linear-gradient(135deg, #064E3B 0%, #0f2d1f 100%)",
+          borderTop: "1.5px solid rgba(201,168,76,.35)",
+          padding: "10px 16px", gap: 12,
+          boxShadow: "0 -4px 24px rgba(0,0,0,.55)",
+          animation: "fade-in .2s ease",
+        }}
+      >
+        {/* Pulsing live dot */}
+        <div style={{ position: "relative", flexShrink: 0 }}>
+          <div style={{
+            width: 10, height: 10, borderRadius: "50%", background: "#ef4444",
+            boxShadow: "0 0 0 0 rgba(239,68,68,.6)",
+            animation: "lc-pulse 1.4s ease-in-out infinite",
+          }}/>
+          <style>{`
+            @keyframes lc-pulse {
+              0%   { box-shadow: 0 0 0 0 rgba(239,68,68,.6); }
+              70%  { box-shadow: 0 0 0 8px rgba(239,68,68,0); }
+              100% { box-shadow: 0 0 0 0 rgba(239,68,68,0); }
+            }
+          `}</style>
+        </div>
+
+        {/* Class info */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <p style={{ margin: 0, fontSize: 13, fontWeight: 800, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {title}
+          </p>
+          <p style={{ margin: 0, fontSize: 10, color: "rgba(201,168,76,.9)", fontWeight: 600 }}>
+            🟢 Live · Tap to return
+          </p>
+        </div>
+
+        {/* Mic toggle */}
+        <button
+          onClick={handleToggleMic}
+          title={localMic ? "Mute mic" : "Unmute mic"}
+          style={{
+            width: 40, height: 40, borderRadius: "50%", border: "none", cursor: "pointer",
+            background: localMic ? "rgba(201,168,76,.18)" : "rgba(239,68,68,.25)",
+            display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+          }}
+        >
+          <span style={{ fontSize: 18 }}>{localMic ? "🎤" : "🔇"}</span>
+        </button>
+
+        {/* Return to class */}
+        <button
+          onClick={handleReturn}
+          title="Return to class"
+          style={{
+            height: 40, borderRadius: 20, border: "none", cursor: "pointer",
+            background: "rgba(201,168,76,.18)", color: "#c9a84c",
+            padding: "0 16px", fontWeight: 800, fontSize: 13, flexShrink: 0,
+            display: "flex", alignItems: "center", gap: 6,
+          }}
+        >
+          <span style={{ fontSize: 15 }}>📹</span> Open
+        </button>
+
+        {/* Leave call */}
+        <button
+          onClick={handleLeave}
+          title="Leave class"
+          style={{
+            width: 40, height: 40, borderRadius: "50%", border: "none", cursor: "pointer",
+            background: "rgba(239,68,68,.25)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+          }}
+        >
+          <span style={{ fontSize: 18 }}>📵</span>
+        </button>
+      </div>
+    );
+  }
+
   return (
     /*
      * FIX: use visibility + pointerEvents instead of display:none.
