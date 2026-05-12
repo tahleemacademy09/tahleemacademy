@@ -112,7 +112,6 @@ export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
   useEffect(() => {
     if (!state.inCall) return;
     const onPop = (e: PopStateEvent) => {
-      // If we consumed our guard state, re-push it and minimize
       if (!e.state?.[HISTORY_STATE]) {
         history.pushState({ [HISTORY_STATE]: true }, "");
       }
@@ -120,25 +119,6 @@ export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
     };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
-  }, [state.inCall]);
-
-  // Phone home button / browser swipe-away → minimize
-  useEffect(() => {
-    if (!state.inCall) return;
-    const onVis = () => {
-      if (document.visibilityState === "hidden") {
-        setState(prev => prev.inCall ? { ...prev, minimized: true, autoJoin: false } : prev);
-      }
-    };
-    const onBlur = () => {
-      setState(prev => prev.inCall ? { ...prev, minimized: true, autoJoin: false } : prev);
-    };
-    document.addEventListener("visibilitychange", onVis);
-    window.addEventListener("blur", onBlur);
-    return () => {
-      document.removeEventListener("visibilitychange", onVis);
-      window.removeEventListener("blur", onBlur);
-    };
   }, [state.inCall]);
 
   const joinClass = useCallback((subject: any) => {
