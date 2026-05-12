@@ -542,6 +542,9 @@ const InClassMaterialViewer=({material,onClose,isTeacher=false}:any)=>{
   const rawUrl=material.file_url||material.url||"";
   const matId=material.id||rawUrl;
 
+  // ── minimized state ───────────────────────────────────────────────────────
+  const [minimized, setMinimized] = useState(false);
+
   // ── resolve Supabase storage path to a signed/public URL ─────────────────
   const [resolvedUrl, setResolvedUrl] = useState<string>(
     rawUrl.startsWith("http") ? rawUrl : ""
@@ -664,6 +667,39 @@ const InClassMaterialViewer=({material,onClose,isTeacher=false}:any)=>{
 
   const resumeBadge=resume?.time||resume?.page;
 
+  // ── Minimized pill — floats at bottom-centre above the bottom bar ─────────
+  if (minimized) {
+    return (
+      <div
+        onClick={() => setMinimized(false)}
+        title="Restore material"
+        style={{
+          position: "fixed", bottom: 72, left: "50%", transform: "translateX(-50%)",
+          zIndex: 10000, display: "flex", alignItems: "center", gap: 8,
+          background: "rgba(6,78,59,.97)", border: "1.5px solid rgba(201,168,76,.45)",
+          borderRadius: 40, padding: "8px 16px 8px 12px", cursor: "pointer",
+          boxShadow: "0 4px 20px rgba(0,0,0,.5)", animation: "fade-in .18s ease",
+          maxWidth: "calc(100vw - 48px)",
+        }}
+      >
+        <span style={{fontSize:15}}>{MAT_TYPE_ICON[material.material_type||"document"]||"📄"}</span>
+        <span style={{fontSize:12,fontWeight:700,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:180}}>
+          {material.title||"Material"}
+        </span>
+        <span style={{fontSize:10,color:"rgba(201,168,76,.9)",background:"rgba(201,168,76,.12)",borderRadius:10,padding:"2px 8px",flexShrink:0,fontWeight:600}}>
+          Tap to restore
+        </span>
+        <button
+          onClick={e => { e.stopPropagation(); onClose(); }}
+          title="Close material"
+          style={{width:22,height:22,borderRadius:"50%",background:"rgba(255,255,255,.15)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,marginLeft:2}}
+        >
+          <X style={{width:10,height:10}}/>
+        </button>
+      </div>
+    );
+  }
+
   return(
     <div style={{...overlayStyle,background:"#0f1117",display:"flex",flexDirection:"column",animation:"fade-in .18s ease"}}>
       {/* Viewer header */}
@@ -678,7 +714,12 @@ const InClassMaterialViewer=({material,onClose,isTeacher=false}:any)=>{
         {!isTeacher&&<span style={{fontSize:10,color:"rgba(255,255,255,.4)",flexShrink:0}}>Shared by teacher</span>}
         <a href={url} target="_blank" rel="noopener noreferrer"
           style={{fontSize:11,color:"#d1d5db",background:"rgba(255,255,255,.1)",borderRadius:8,padding:"4px 10px",textDecoration:"none",fontWeight:600,flexShrink:0}}>↗</a>
-        {/* Fullscreen toggle */}
+        {/* Minimize button */}
+        <button onClick={() => setMinimized(true)} title="Minimize material"
+          style={{width:30,height:30,borderRadius:8,background:"rgba(255,255,255,.12)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          <Minimize2 style={{width:13,height:13}}/>
+        </button>
+        {/* Close button */}
         <button onClick={onClose} title="Close material"
           style={{width:30,height:30,borderRadius:8,background:"rgba(255,255,255,.12)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
           <X style={{width:13,height:13}}/>
