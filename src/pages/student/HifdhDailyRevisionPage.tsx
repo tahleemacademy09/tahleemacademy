@@ -205,74 +205,64 @@ async function fetchPageAyahs(page: number): Promise<Ayah[]> {
 }
 
 /* ── Arabic scoring ─────────────────────────────────────────────── */
-function normalizeAr(t: string): string {
-  return t
-    .replace(/[\u064B-\u065F\u0610-\u061A\u0670]/g,"")
-    .replace(/[\u0622\u0623\u0625\u0627]/g,"\u0627")
-    .replace(/\u0629/g,"\u0647").replace(/\u0649/g,"\u064A")
-    .replace(/\u0640/g,"")
-    .replace(/[^\u0621-\u063A\u0641-\u064A\s]/g,"")
-    .replace(/\s+/g," ").trim();
+// ── Exact same normalisation used by مراجعة (QuranRevisionHub) ──────────────
+// Strips the full diacritic + extended Arabic mark range so Whisper output
+// (which often omits tashkeel) matches the Uthmani reference text correctly.
+function stripDiacritics(t: string): string {
+  return t.replace(
+    /[\u064B-\u065F\u0670\u0610-\u061A\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED]/g,
+    ""
+  );
 }
-function scoreText(transcript: string, ayahs: Ayah[], recSecs: number): number {
-  const ref  = ayahs.map(a=>a.text).join(" ");
-  const refW = normalizeAr(ref).split(" ").filter(Boolean);
-  const gotW = normalizeAr(transcript).split(" ").filter(Boolean);
-  if (!refW.length) return 0;
-  // If no transcript captured but they recited a long time, give time-based estimate
-  if (!gotW.length) {
-    if (recSecs >= 120) return 60;
-    if (recSecs >= 60)  return 45;
-    if (recSecs >= 30)  return 35;
-    return 0;
-  }
-  const used=new Set<number>(); let matches=0;
-  for (const rw of refW) {
-    for (let i=0;i<gotW.length;i++) {
-      if (used.has(i)) continue;
-      const gw=gotW[i];
-      if (rw===gw||(rw.length>=4&&gw.length>=4&&rw.slice(0,4)===gw.slice(0,4))) {
-        matches++; used.add(i); break;
-      }
+
+// ── Exact same word-comparison used by مراجعة ────────────────────────────────
+// 3-character prefix match (مراجعة uses 3, daily used 4 — 3 is more forgiving)
+interface WordResult { word: string; status: "correct" | "missing"; }
+function compareWords(refText: string, gotText: string): WordResult[] {
+  const refWords = stripDiacritics(refText).split(/\s+/).filter(Boolean);
+  const gotWords = stripDiacritics(gotText).split(/\s+/).filter(Boolean);
+  const results: WordResult[] = [];
+  const usedGot = new Set<number>();
+  for (const rw of refWords) {
+    let found = false;
+    for (let i = 0; i < gotWords.length; i++) {
+      if (usedGot.has(i)) continue;
+      const gw = gotWords[i];
+      const match =
+        rw === gw ||
+        (rw.length > 3 && gw.length > 3 &&
+          (rw.startsWith(gw.slice(0, 3)) || gw.startsWith(rw.slice(0, 3))));
+      if (match) { results.push({ word: rw, status: "correct" }); usedGot.add(i); found = true; break; }
     }
+    if (!found) results.push({ word: rw, status: "missing" });
   }
-  const base=Math.round((matches/refW.length)*100);
-  // Time bonus: longer recitation = more complete
-  const bonus=recSecs>=90?15:recSecs>=60?10:recSecs>=30?5:0;
-  return Math.min(100,base+bonus);
+  return results;
 }
+
+// scoreText: pure word-match ratio — no time bonus (same as مراجعة)
+function scoreText(transcript: string, ayahs: Ayah[], _recSecs: number): number {
+  const ref = ayahs.map(a => a.text).join(" ");
+  const words = compareWords(ref, transcript);
+  if (!words.length) return 0;
+  const correct = words.filter(w => w.status === "correct").length;
+  return Math.round((correct / words.length) * 100);
+}
+
+// getErrorWords: words from reference that were missing in transcript
 function getErrorWords(transcript: string, ayahs: Ayah[]): string[] {
-  const ref  = ayahs.map(a=>a.text).join(" ");
-  const refW = normalizeAr(ref).split(" ").filter(Boolean);
-  const gotW = normalizeAr(transcript).split(" ").filter(Boolean);
-  const used = new Set<number>(); const errs: string[]=[];
-  for (const rw of refW) {
-    let found=false;
-    for (let i=0;i<gotW.length;i++) {
-      if (used.has(i)) continue;
-      if (rw===gotW[i]||(rw.length>=4&&gotW[i].length>=4&&rw.slice(0,4)===gotW[i].slice(0,4))){
-        used.add(i); found=true; break;
-      }
-    }
-    if (!found) errs.push(rw);
-  }
-  return errs;
+  const ref = ayahs.map(a => a.text).join(" ");
+  return compareWords(ref, transcript)
+    .filter(w => w.status === "missing")
+    .map(w => w.word);
 }
-/* Per-ayah correctness: returns true (green) / false (red) for each ayah */
-function getAyahCorrectness(transcript: string, ayahs: Ayah[], recSecs?: number): boolean[] {
-  const gotW = normalizeAr(transcript).split(" ").filter(Boolean);
-  // If transcript is empty but recitation was long, assume correct
-  if (!gotW.length && recSecs && recSecs >= 60) {
-    return ayahs.map(()=>true);
-  }
+
+/* Per-ayah correctness: true (green) / false (red) — exact مراجعة threshold */
+function getAyahCorrectness(transcript: string, ayahs: Ayah[], _recSecs?: number): boolean[] {
   return ayahs.map(a => {
-    const refW = normalizeAr(a.text).split(" ").filter(Boolean);
-    if (!refW.length) return true;
-    let matches = 0;
-    for (const rw of refW) {
-      if (gotW.some(g => rw === g || (rw.length >= 4 && g.length >= 4 && rw.slice(0,4) === g.slice(0,4)))) matches++;
-    }
-    return (matches / refW.length) >= 0.5;
+    const words = compareWords(a.text, transcript);
+    if (!words.length) return true;
+    const correct = words.filter(w => w.status === "correct").length;
+    return (correct / words.length) >= 0.5;
   });
 }
 function shuffle<T>(arr:T[]): T[] {
@@ -473,28 +463,43 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
 
   const GROQ_KEY = import.meta.env.VITE_GROQ_API_KEY || "";
 
-  // Transcribe audio blob via Groq Whisper, with Supabase edge fn fallback
+  // ── Exact same transcription pipeline as مراجعة (QuranRevisionHub) ──────────
+  // Uses verbose_json so we can check no_speech_prob and reject silence/noise.
+  // Style prompt sets diacritised Quranic script WITHOUT including the verse
+  // being recited (Whisper would hallucinate the reference text as the transcript).
   const transcribeAudio = async (blob: Blob): Promise<string> => {
-    // 1. Groq Whisper
+    // Correct extension so Groq identifies the codec properly (same as مراجعة)
+    const ext = blob.type.includes("mp4") ? "mp4"
+      : blob.type.includes("ogg") ? "ogg"
+      : "webm";
+
+    const stylePrompt =
+      "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ";
+
+    // 1. Groq Whisper (verbose_json gives no_speech_prob to detect silence)
     if (GROQ_KEY) {
       try {
         const fd = new FormData();
-        fd.append("file", new File([blob], "recitation.webm", { type: blob.type || "audio/webm" }));
+        fd.append("file", new File([blob], `recitation.${ext}`, { type: blob.type || "audio/webm" }));
         fd.append("model", "whisper-large-v3");
         fd.append("language", "ar");
-        fd.append("response_format", "json");
-        fd.append("temperature", "0");
-        fd.append("prompt", "بسم الله الرحمن الرحيم الحمد لله رب العالمين الرحمن الرحيم");
+        fd.append("response_format", "verbose_json"); // gives word-level confidence
+        fd.append("temperature", "0");               // deterministic, no hallucination
+        fd.append("prompt", stylePrompt);            // sets Quranic script/style only
         const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
           method: "POST", headers: { Authorization: `Bearer ${GROQ_KEY}` }, body: fd,
         });
         if (r.ok) {
-          const tx = (await r.json()).text || "";
-          if (tx) return tx;
+          const json = await r.json();
+          // Reject if Whisper thinks there's no speech (silence or background noise)
+          const noSpeech = json.segments?.[0]?.no_speech_prob ?? 0;
+          const txt = (json.text ?? "").trim();
+          if (noSpeech < 0.6 && txt.length > 0) return txt;
+          if (noSpeech >= 0.6) return ""; // treat as silence
         }
-      } catch { /* fall through */ }
+      } catch { /* fall through to edge function */ }
     }
-    // 2. Supabase edge function fallback
+    // 2. Supabase edge function fallback (Deepgram)
     try {
       const b64 = await new Promise<string>(resolve => {
         const reader = new FileReader();
@@ -504,7 +509,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
       const { data } = await supabase.functions.invoke("transcribe-hifdh", {
         body: { audio: b64, mimeType: blob.type || "audio/webm" },
       });
-      return data?.transcript || "";
+      return data?.text ?? data?.transcript ?? "";
     } catch { return ""; }
   };
 
@@ -970,14 +975,14 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
 
             {/* ── FULL PAGE with word-level green / red colouring ── */}
             {pageAyahs.length>0&&(()=>{
-              // Build per-word correctness: compare normalised reference words to transcript
-              const gotArr = normalizeAr(lastTranscript).split(" ").filter(Boolean);
+              // Build per-word correctness using the same stripDiacritics as مراجعة
+              const gotArr = stripDiacritics(lastTranscript).split(" ").filter(Boolean);
 
               // For each ayah, compute per-word match
               type AyahWordData = { raw: string; ok: boolean }[];
               const ayahWords: AyahWordData[] = pageAyahs.map(ayah => {
                 const rawWords = ayah.text.split(/\s+/).filter(Boolean);
-                const normWords = rawWords.map(w => normalizeAr(w));
+                const normWords = rawWords.map(w => stripDiacritics(w));
                 const usedGot = new Set<number>();
                 return rawWords.map((raw, wi) => {
                   const nw = normWords[wi];
@@ -985,7 +990,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
                   for (let gi = 0; gi < gotArr.length; gi++) {
                     if (usedGot.has(gi)) continue;
                     const gw = gotArr[gi];
-                    if (nw === gw || (nw.length >= 3 && gw.length >= 3 && nw.slice(0,3) === gw.slice(0,3))) {
+                    if (nw === gw || (nw.length > 3 && gw.length > 3 && (nw.startsWith(gw.slice(0,3)) || gw.startsWith(nw.slice(0,3))))) {
                       usedGot.add(gi);
                       return { raw, ok: true };
                     }
