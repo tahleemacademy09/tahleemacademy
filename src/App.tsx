@@ -96,7 +96,7 @@ const TranscriptManagement  = lazy(() => import("./pages/admin/TranscriptManagem
 const AttendanceManagement  = lazy(() => import("./pages/admin/AttendanceManagement"));
 const PaymentManagement     = lazy(() => import("./pages/admin/PaymentManagement"));
 const AcademicCalendar      = lazy(() => import("./pages/admin/AcademicCalendar"));
-const PaymentSettings       = lazy(() => import("./pages/admin/PaymentSettings"));
+const PaymentSettings       = lazy(() => import("./pages/admin/PaymentSettings.tsx"));
 const PublicClassManagement = lazy(() => import("./pages/admin/PublicClassManagement"));
 const HifdhAdminReview      = lazy(() => import("./pages/admin/HifdhAdminReview"));
 const HifdhRevisionTracker  = lazy(() => import("./pages/admin/HifdhRevisionTracker"));
