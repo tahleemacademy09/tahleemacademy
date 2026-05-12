@@ -205,48 +205,76 @@ async function fetchPageAyahs(page: number): Promise<Ayah[]> {
 }
 
 /* ── Arabic scoring ─────────────────────────────────────────────── */
-// ── Exact same normalisation used by مراجعة (QuranRevisionHub) ──────────────
-// Strips the full diacritic + extended Arabic mark range so Whisper output
-// (which often omits tashkeel) matches the Uthmani reference text correctly.
-function stripDiacritics(t: string): string {
+
+/**
+ * normalizeArabic — strips tashkeel and unifies character variants so that
+ * the ar.uthmani API text and Groq/Whisper transcripts can be compared reliably.
+ *
+ * Key fixes vs the naïve stripDiacritics approach:
+ *  • Dagger Alef \u0670 is CONVERTED to regular Alef \u0627 (not stripped).
+ *    In Uthmani script it represents an actual long-vowel 'a' that Groq writes
+ *    as a full Alef letter — e.g. عَٰقِبَتَهُمَا → عاقبتهما.
+ *    Stripping it produces عقبتهما which never matches the transcript.
+ *  • Alef Wasla ٱ \u0671 → \u0627  (appears on virtually every definite article "ال")
+ *  • Alef Hamza Above/Below / Alef Madda → \u0627
+ *  • Alef Maqsura ى → Ya ي  (Groq always uses Ya)
+ *  • Ta Marbuta ة → Ha ه
+ *  • Tatweel / Kashida ـ stripped
+ *  • Quranic stop/pause/ayah-end markers stripped
+ */
+function normalizeArabic(t: string): string {
   return t
-    // 1. Strip tashkeel + Quranic annotation characters
-    .replace(/[\u064B-\u065F\u0670\u0610-\u061A\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED]/g, "")
-    // 2. Normalise Alef variants → plain Alef ا
-    //    Critical: ar.uthmani API uses Alef Wasla ٱ(\u0671) on almost every
-    //    definite article "ال", so without this every such word silently fails to match.
-    //    Also covers: Alef Hamza Above أ(\u0623), Alef Hamza Below إ(\u0625), Alef Madda آ(\u0622)
+    // 1. Convert dagger alef to regular alef FIRST (before the bulk strip)
+    .replace(/\u0670/g, "\u0627")
+    // 2. Strip remaining tashkeel + Quranic annotation characters
+    .replace(/[\u064B-\u065F\u0610-\u061A\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED]/g, "")
+    // 3. Normalise all Alef variants → plain Alef ا
     .replace(/[\u0671\u0622\u0623\u0625]/g, "\u0627")
-    // 3. Alef Maqsura ى(\u0649) → Ya ي(\u064A) — Groq always outputs Ya
+    // 4. Alef Maqsura ى → Ya ي
     .replace(/\u0649/g, "\u064A")
-    // 4. Ta Marbuta ة(\u0629) → Ha ه(\u0647)
+    // 5. Ta Marbuta ة → Ha ه
     .replace(/\u0629/g, "\u0647")
-    // 5. Strip Tatweel / Kashida ـ(\u0640)
+    // 6. Strip Tatweel / Kashida ـ
     .replace(/\u0640/g, "")
-    // 6. Strip Quranic end-of-ayah ۝(\u06DD) and rub el-hizb ۞(\u06DE) markers
+    // 7. Strip Quranic end-of-ayah ۝ and rub-el-hizb ۞ markers
     .replace(/[\u06DD\u06DE]/g, "");
 }
 
-// ── Exact same word-comparison used by مراجعة ────────────────────────────────
-// 3-character prefix match (مراجعة uses 3, daily used 4 — 3 is more forgiving)
+// Keep the old name as an alias so nothing else in the file needs to change
+function stripDiacritics(t: string): string { return normalizeArabic(t); }
+
+// ── Word-by-word comparison ───────────────────────────────────────────────────
+// Stores the ORIGINAL diacritic form of each reference word so the result
+// grid can display full tashkeel while still using normalised text for matching.
 interface WordResult { word: string; status: "correct" | "missing"; }
 function compareWords(refText: string, gotText: string): WordResult[] {
-  const refWords = stripDiacritics(refText).split(/\s+/).filter(Boolean);
-  const gotWords = stripDiacritics(gotText).split(/\s+/).filter(Boolean);
+  // Split on whitespace — keep originals for display, normalize for matching
+  const origRef = refText.split(/\s+/).filter(Boolean);
+  const normRef = origRef.map(w => normalizeArabic(w));
+  const normGot = normalizeArabic(gotText).split(/\s+/).filter(Boolean);
+
   const results: WordResult[] = [];
   const usedGot = new Set<number>();
-  for (const rw of refWords) {
+
+  for (let ri = 0; ri < normRef.length; ri++) {
+    const rw = normRef[ri];
     let found = false;
-    for (let i = 0; i < gotWords.length; i++) {
+    for (let i = 0; i < normGot.length; i++) {
       if (usedGot.has(i)) continue;
-      const gw = gotWords[i];
+      const gw = normGot[i];
       const match =
         rw === gw ||
         (rw.length > 3 && gw.length > 3 &&
           (rw.startsWith(gw.slice(0, 3)) || gw.startsWith(rw.slice(0, 3))));
-      if (match) { results.push({ word: rw, status: "correct" }); usedGot.add(i); found = true; break; }
+      if (match) {
+        // Store the original (with diacritics) so the UI renders full tashkeel
+        results.push({ word: origRef[ri], status: "correct" });
+        usedGot.add(i);
+        found = true;
+        break;
+      }
     }
-    if (!found) results.push({ word: rw, status: "missing" });
+    if (!found) results.push({ word: origRef[ri], status: "missing" });
   }
   return results;
 }
