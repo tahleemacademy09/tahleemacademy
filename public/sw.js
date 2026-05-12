@@ -153,11 +153,40 @@ self.addEventListener("push", (event) => {
   );
 });
 
-// ── Client-sent message (app is open in foreground) ─────────────────────────
+// ── Live class keep-alive ping ───────────────────────────────────────────────
+//
+//  While a live class is active, the app pings the SW every 20 seconds via
+//  postMessage({ type: "LIVE_CLASS_KEEPALIVE" }). The SW responds to keep
+//  the service worker alive (prevents the browser from suspending it), which
+//  in turn keeps the tab's WebRTC connection from being throttled/killed.
+//
+let keepAliveInterval = null;
 self.addEventListener("message", (event) => {
   // Allow the page to trigger a SW update
   if (event.data && event.data.type === "SKIP_WAITING") {
     self.skipWaiting();
+    return;
+  }
+
+  if (event.data && event.data.type === "LIVE_CLASS_KEEPALIVE") {
+    // Respond immediately so the app knows the SW is awake
+    if (event.source) event.source.postMessage({ type: "LIVE_CLASS_KEEPALIVE_ACK" });
+    return;
+  }
+
+  if (event.data && event.data.type === "LIVE_CLASS_START") {
+    // Start a periodic self-ping to keep the SW alive
+    if (keepAliveInterval) clearInterval(keepAliveInterval);
+    keepAliveInterval = setInterval(() => {
+      self.clients.matchAll().then(clients => {
+        clients.forEach(c => c.postMessage({ type: "SW_ALIVE" }));
+      });
+    }, 20000);
+    return;
+  }
+
+  if (event.data && event.data.type === "LIVE_CLASS_END") {
+    if (keepAliveInterval) { clearInterval(keepAliveInterval); keepAliveInterval = null; }
     return;
   }
 
