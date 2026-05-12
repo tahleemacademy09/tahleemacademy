@@ -12,6 +12,32 @@ import {
 const STORAGE_KEY   = "tahleem_live_class";
 const HISTORY_STATE = "tahleem-live-class";
 
+/* ── SW keep-alive: pings the service worker every 20s during a live class
+   to prevent the browser from suspending the tab and killing WebRTC.     */
+function useLiveClassKeepAlive(inCall: boolean) {
+  useEffect(() => {
+    if (!inCall) return;
+    const sw = navigator.serviceWorker?.controller;
+    // Tell SW a live class started
+    sw?.postMessage({ type: "LIVE_CLASS_START" });
+
+    const ping = () => {
+      navigator.serviceWorker?.controller?.postMessage({ type: "LIVE_CLASS_KEEPALIVE" });
+    };
+    // Ping every 20 seconds
+    const iv = setInterval(ping, 20_000);
+    // Also ping immediately when tab becomes visible again (wake from background)
+    const onVis = () => { if (document.visibilityState === "visible") ping(); };
+    document.addEventListener("visibilitychange", onVis);
+
+    return () => {
+      clearInterval(iv);
+      document.removeEventListener("visibilitychange", onVis);
+      navigator.serviceWorker?.controller?.postMessage({ type: "LIVE_CLASS_END" });
+    };
+  }, [inCall]);
+}
+
 /* ── localStorage helpers ── */
 function persist(data: Record<string, any>) {
   try {
@@ -61,6 +87,9 @@ export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
 
   const toggleMicFnRef = useRef<() => void>(() => {});
   const toggleCamFnRef = useRef<() => void>(() => {});
+
+  // SW keep-alive during live class
+  useLiveClassKeepAlive(state.inCall);
 
   // Persist call state
   useEffect(() => {
