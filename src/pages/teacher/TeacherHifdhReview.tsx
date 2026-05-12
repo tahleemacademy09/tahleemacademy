@@ -173,7 +173,7 @@ export default function TeacherHifdhReview() {
       };
       const { error } = await (supabase as any)
         .from("hifdh_daily_logs")
-        .update({ session_data: updatedSession, avg_score: newScore, updated_at: new Date().toISOString() })
+        .update({ session_data: updatedSession, avg_score: newScore })
         .eq("id", log.id);
 
       if (!error) {
