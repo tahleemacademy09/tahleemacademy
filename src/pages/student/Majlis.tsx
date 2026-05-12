@@ -561,12 +561,17 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
   // Load messages for active channel
   useEffect(()=>{
     if(!activeChannelId) return;
+    // ── FIX: cancelled flag prevents stale async state updates (React error #310) ──
+    let cancelled = false;
+
     setLoadingMessages(true); setMessages([]); setSelectMode(false); setSelectedIds(new Set());
     const load=async()=>{
       const {data:memData}=await supabase.from("chat_members" as any).select("user_id").eq("channel_id",activeChannelId);
+      if(cancelled) return;
       if(memData&&memData.length>0){
         const memberUids=[...new Set((memData as any[]).map((m:any)=>m.user_id))];
         const {data:memberProfs}=await supabase.from("profiles").select("user_id,full_name,full_name_ar,avatar_url,level,email,student_id").in("user_id",memberUids);
+        if(cancelled) return;
         if(memberProfs){
           const map:Record<string,UserProfile>={};
           (memberProfs as any[]).forEach((p:any)=>{map[p.user_id]=p;});
@@ -574,27 +579,32 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
         }
       }
       const {data}=await supabase.from("chat_messages").select("*").eq("channel_id",activeChannelId).order("created_at",{ascending:false}).limit(80);
+      if(cancelled) return;
       const msgs=((data||[]) as unknown as ChatMessage[]).reverse();
       setMessages(msgs);
 
       const uids=[...new Set(msgs.map(m=>m.user_id))];
       if(uids.length>0){
         const {data:profs}=await supabase.from("profiles").select("user_id,full_name,full_name_ar,avatar_url,level,email,student_id").in("user_id",uids);
+        if(cancelled) return;
         const map:Record<string,UserProfile>={};
         (profs||[]).forEach((p:any)=>{map[p.user_id]=p;});
         setProfiles(prev=>({...prev,...map}));
       }
 
       await supabase.from("chat_members" as any).update({last_read_at:new Date().toISOString()}).eq("channel_id",activeChannelId).eq("user_id",user!.id);
+      if(cancelled) return;
       setUnreadCounts(prev=>({...prev,[activeChannelId]:0}));
 
       const ids=msgs.map(m=>m.id);
       if(ids.length>0){
         const {data:rd}=await supabase.from("message_reactions" as any).select("message_id,user_id,emoji").in("message_id",ids);
+        if(cancelled) return;
         const rm:Record<string,Record<string,string[]>>={};
         (rd||[]).forEach((r:any)=>{if(!rm[r.message_id])rm[r.message_id]={};if(!rm[r.message_id][r.emoji])rm[r.message_id][r.emoji]=[];rm[r.message_id][r.emoji].push(r.user_id);});
         setReactions(rm);
       }
+      if(cancelled) return;
       setPinnedMessages(msgs.filter(m=>(m as any).is_pinned));
       setLoadingMessages(false);
     };
@@ -626,7 +636,7 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
           typingTimerRef.current=setTimeout(()=>setTypingUsers([]),3000);
         }
       }).subscribe();
-    return ()=>{supabase.removeChannel(rCh);};
+    return ()=>{ cancelled = true; supabase.removeChannel(rCh); };
   },[activeChannelId]);
 
   useEffect(()=>{ if(scrollRef.current) scrollRef.current.scrollTop=scrollRef.current.scrollHeight; },[messages]);
@@ -663,6 +673,8 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
       @keyframes pulse { 0%,100%{opacity:1;}50%{opacity:.4;} }
       @keyframes bounce { 0%,80%,100%{transform:scaleY(1);}40%{transform:scaleY(1.5);} }
       @keyframes popIn { 0%{transform:scale(.5);opacity:0;}100%{transform:scale(1);opacity:1;} }
+      @keyframes msgIn { from{opacity:0;transform:scale(.96) translateY(4px);}to{opacity:1;transform:none;} }
+      @keyframes onlinePulse { 0%,100%{box-shadow:0 0 0 0 rgba(37,211,102,.4);}50%{box-shadow:0 0 0 4px rgba(37,211,102,0);} }
 
       .majlis-wrap { display:flex; height:100dvh; overflow:hidden; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; }
       .majlis-sidebar { width:100%; max-width:380px; display:flex; flex-direction:column; border-right:1px solid #e0e0e0; background:#fff; flex-shrink:0; height:100dvh; }
@@ -677,7 +689,7 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
         .majlis-sidebar { display:flex !important; }
       }
 
-      .msg-bubble { animation:fadeIn .15s ease; }
+      .msg-bubble { animation:msgIn .18s ease; }
 
       /* WhatsApp-exact message bubble tails */
       .bubble-tail-me::after {
@@ -689,7 +701,7 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
       .bubble-tail-me-dark::after {
         content:''; position:absolute; bottom:0; right:-7px;
         width:0; height:0;
-        border-left:8px solid #DCF8C6;
+        border-left:8px solid #005c4b;
         border-bottom:8px solid transparent;
       }
       .bubble-tail-other::after {
@@ -725,9 +737,9 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
       .unread-badge { background:#25D366; color:#fff; border-radius:50%; min-width:20px; height:20px; font-size:11px; display:flex; align-items:center; justify-content:center; font-weight:800; padding:0 5px; box-shadow:0 1px 4px rgba(37,211,102,.4); }
 
       .attach-btn-item { display:flex; flex-direction:column; align-items:center; gap:6px; cursor:pointer; }
-      .attach-icon-circle { width:52px; height:52px; border-radius:50%; display:flex; align-items:center; justify-content:center; animation:popIn .2s ease; }
+      .attach-icon-circle { width:52px; height:52px; border-radius:50%; display:flex; align-items:center; justify-content:center; animation:popIn .2s ease; transition:transform .15s; }
       .attach-btn-item span { font-size:11px; color:#555; font-weight:500; }
-      .attach-btn-item:active .attach-icon-circle { transform:scale(.92); }
+      .attach-btn-item:active .attach-icon-circle { transform:scale(.9); }
 
       .msg-bubble:hover .msg-actions-hint { opacity:1; }
       .msg-actions-hint { opacity:0; transition:opacity .15s; }
@@ -735,6 +747,16 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
       .typing-dot { width:7px; height:7px; border-radius:50%; background:#999; display:inline-block; animation:bounce .8s infinite; }
       .typing-dot:nth-child(2) { animation-delay:.15s; }
       .typing-dot:nth-child(3) { animation-delay:.3s; }
+
+      .online-dot { animation:onlinePulse 2s infinite; }
+
+      .send-btn:active { transform:scale(.92); }
+      .ch-row-content:hover { background:rgba(0,0,0,.02); }
+
+      /* WhatsApp wallpaper texture */
+      .wa-wallpaper { 
+        background-image: url("data:image/svg+xml,%3Csvg width='300' height='300' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%23000' fill-opacity='.03'%3E%3Cpath d='M150 75l75 130H75z'/%3E%3Cpath d='M150 225l75-130H75z'/%3E%3C/g%3E%3C/svg%3E");
+      }
     `;
     document.head.appendChild(s);
   },[]);
@@ -1097,7 +1119,7 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
             <div style={{position:"relative"}}>
               {chAvatarEl(ch,50)}
               {onlineUsers.size>0&&(
-                <div style={{position:"absolute",bottom:1,right:1,width:12,height:12,borderRadius:"50%",background:WA_TEAL,border:"2px solid "+(isDark?"#111b21":"#fff")}}/>
+                <div className="online-dot" style={{position:"absolute",bottom:1,right:1,width:13,height:13,borderRadius:"50%",background:WA_TEAL,border:"2px solid "+(isDark?"#111b21":"#fff")}}/>
               )}
             </div>
             <div style={{flex:1,minWidth:0}}>
@@ -1164,7 +1186,7 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
     if(isExp) return null;
     const isStarred=starredMessages.has(m.id);
 
-    const bubbleBg=isMe?WA_BUBBLE_ME:(isDark?"#202c33":"#fff");
+    const bubbleBg=isMe?(isDark?"#005c4b":WA_BUBBLE_ME):(isDark?"#202c33":"#fff");
     const tailClass=isMe?(isDark?"bubble-tail-me-dark":"bubble-tail-me"):(isDark?"bubble-tail-other-dark":"bubble-tail-other");
 
     return (
@@ -1681,10 +1703,30 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
                   <Loader2 style={{width:28,height:28,color:WA_GREEN,animation:"spin .8s linear infinite"}}/>
                 </div>
               )}
+              {!loadingMessages&&messages.length===80&&(
+                <div style={{display:"flex",justifyContent:"center",padding:"8px 0"}}>
+                  <button onClick={async()=>{
+                    const oldest=messages[0];
+                    if(!oldest||!activeChannelId) return;
+                    const {data}=await supabase.from("chat_messages").select("*").eq("channel_id",activeChannelId).order("created_at",{ascending:false}).lt("created_at",oldest.created_at).limit(40);
+                    const older=((data||[]) as unknown as ChatMessage[]).reverse();
+                    if(older.length>0) setMessages(prev=>[...older,...prev]);
+                  }} style={{background:"rgba(255,255,255,.9)",border:"none",borderRadius:20,padding:"6px 16px",fontSize:12,color:"#555",cursor:"pointer",boxShadow:"0 1px 4px rgba(0,0,0,.1)",fontWeight:600}}>
+                    Load older messages
+                  </button>
+                </div>
+              )}
+              {!loadingMessages&&messages.length===0&&(
+                <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",flex:1,padding:40,gap:10,textAlign:"center",marginTop:60}}>
+                  <div style={{width:60,height:60,borderRadius:"50%",background:"rgba(255,255,255,.9)",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 2px 8px rgba(0,0,0,.08)"}}><MessageCircle style={{width:28,height:28,color:WA_GREEN}}/></div>
+                  <div style={{fontSize:14,fontWeight:600,color:"#555"}}>No messages yet</div>
+                  <div style={{fontSize:12,color:"#888"}}>Be the first to say السلام عليكم! 🌙</div>
+                </div>
+              )}
               {msgsWithSeps.map((item,i)=>
                 item.type==="date"
-                  ?<DateSep key={`d-${i}`} date={item.date}/>
-                  :renderMsg(item.msg)
+                  ?<DateSep key={`d-${i}-${item.date}`} date={item.date}/>
+                  :<div key={item.msg.id}>{renderMsg(item.msg)}</div>
               )}
               {/* FIXED: Typing indicator uses CSS .typing-dot class with bounce animation */}
               {typingUsers.length>0&&(
@@ -1816,7 +1858,7 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
 
               {/* Send or Mic */}
               {input.trim()?(
-                <button onClick={()=>sendMessage()} style={{width:46,height:46,borderRadius:"50%",background:WA_GREEN,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:"0 2px 8px rgba(7,94,84,.35)",transition:"transform .1s",active:{transform:"scale(.95)"}}}>
+                <button onClick={()=>sendMessage()} className="send-btn" style={{width:46,height:46,borderRadius:"50%",background:WA_GREEN,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:"0 2px 8px rgba(7,94,84,.35)",transition:"transform .1s"}}>
                   {uploading?<Loader2 style={{width:18,height:18,color:"#fff",animation:"spin .8s linear infinite"}}/>:<Send style={{width:18,height:18,color:"#fff"}}/>}
                 </button>
               ):(
@@ -1843,7 +1885,7 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
             {/* Gallery: no capture — shows gallery on mobile */}
             <input ref={galleryInputRef} id="majlis-gallery-input" type="file" accept="image/*,video/*" style={{position:"absolute",width:1,height:1,opacity:0,overflow:"hidden"}} onChange={e=>e.target.files?.[0]&&handleFileUpload(e.target.files[0],"image")}/>
             {/* Camera: capture="camera" — opens camera directly */}
-            <input ref={cameraInputRef} id="majlis-camera-input" type="file" accept="image/*" capture="camera" style={{position:"absolute",width:1,height:1,opacity:0,overflow:"hidden"}} onChange={e=>e.target.files?.[0]&&handleFileUpload(e.target.files[0],"image")}/>
+            <input ref={cameraInputRef} id="majlis-camera-input" type="file" accept="image/*" capture="environment" style={{position:"absolute",width:1,height:1,opacity:0,overflow:"hidden"}} onChange={e=>e.target.files?.[0]&&handleFileUpload(e.target.files[0],"image")}/>
             {/* Document: any file type */}
             <input ref={fileInputRef} id="majlis-file-input" type="file" style={{position:"absolute",width:1,height:1,opacity:0,overflow:"hidden"}} onChange={e=>e.target.files?.[0]&&handleFileUpload(e.target.files[0],"file")}/>
             {/* Audio files */}
@@ -2056,7 +2098,40 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
               </div>
               <div style={{padding:"14px 20px",display:"flex",gap:12}}>
                 {selectedMember.user_id!==user?.id&&(
-                  <button onClick={()=>{setShowStudentProfile(false);toast({title:"DM coming soon!"});}} style={{flex:1,padding:"12px",borderRadius:12,background:WA_GREEN,border:"none",color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                  <button onClick={async()=>{
+                    if(!user||!selectedMember?.user_id) return;
+                    // Find or create DM channel
+                    const {data:existingMems}=await supabase.from("chat_members" as any)
+                      .select("channel_id").eq("user_id",user.id);
+                    const myChIds=(existingMems||[]).map((m:any)=>m.channel_id);
+                    const {data:theirMems}=await supabase.from("chat_members" as any)
+                      .select("channel_id").eq("user_id",selectedMember.user_id);
+                    const theirChIds=(theirMems||[]).map((m:any)=>m.channel_id);
+                    const sharedIds=myChIds.filter((id:string)=>theirChIds.includes(id));
+                    if(sharedIds.length>0){
+                      const {data:dmCh}=await supabase.from("chat_channels" as any)
+                        .select("*").in("id",sharedIds).eq("type","dm").maybeSingle();
+                      if(dmCh){
+                        setShowStudentProfile(false);
+                        selectChannel((dmCh as any).id);
+                        setChannels(prev=>prev.find(c=>c.id===(dmCh as any).id)?prev:[dmCh as unknown as ChatChannel,...prev]);
+                        return;
+                      }
+                    }
+                    // Create new DM channel
+                    const {data:newCh,error}=await supabase.from("chat_channels" as any)
+                      .insert({name:`DM`,type:"dm",created_by:user.id,is_private:true}).select().single();
+                    if(!error&&newCh){
+                      await supabase.from("chat_members" as any).insert([
+                        {channel_id:(newCh as any).id,user_id:user.id,role:"admin"},
+                        {channel_id:(newCh as any).id,user_id:selectedMember.user_id,role:"member"},
+                      ]);
+                      setShowStudentProfile(false);
+                      setChannels(prev=>[newCh as unknown as ChatChannel,...prev]);
+                      selectChannel((newCh as any).id);
+                      toast({title:`Chat started with ${selectedMember.full_name||"student"}!`});
+                    }
+                  }} style={{flex:1,padding:"12px",borderRadius:12,background:WA_GREEN,border:"none",color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
                     <MessageCircle size={16}/> Message
                   </button>
                 )}
