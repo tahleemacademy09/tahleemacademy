@@ -5,6 +5,11 @@
 // where roles[] is briefly empty, causing ProtectedRoute to redirect incorrectly.
 // Also added: mounted guard, 8s safety timeout so loading never hangs forever,
 // and exponential-backoff retry for transient network errors on fetchUserData.
+//
+// Fix (2026-05-12): timedOutRef guard was blocking SIGNED_IN events that fired after
+// the 8s timeout (e.g. user typed slowly then clicked Sign In). This caused the
+// "must refresh to login" bug. Now only INITIAL_SESSION is suppressed after timeout;
+// genuine new auth events (SIGNED_IN etc.) reset the guard and proceed normally.
 
 import React, { createContext, useContext, useState, useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
@@ -112,8 +117,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     // ── Safety timeout — loading must resolve within 8 seconds no matter what ──
     // Prevents users getting permanently stuck on the spinner.
-    // timedOutRef prevents stale fetchUserData callbacks (which may still be in
-    // flight) from calling setRoles/setProfile after the timeout has fired.
+    // timedOutRef prevents the slow INITIAL_SESSION fetch from overwriting state
+    // after the timeout has already forced loading=false.
     const timedOutRef = { current: false };
 
     const safetyTimeout = setTimeout(() => {
@@ -129,9 +134,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // so we do NOT need getSession() — calling both causes a double-fetch race.
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, sess) => {
       if (!mountedRef.current) return;
-      // If the 8s safety timeout already fired, ignore auth state changes that
-      // would otherwise cause stale state to overwrite the resolved auth context.
-      if (timedOutRef.current) return;
+
+      // After the 8s safety timeout we suppress INITIAL_SESSION only — that one
+      // was already too slow and loading=false has been forced. But genuine new
+      // auth events (SIGNED_IN, SIGNED_OUT, TOKEN_REFRESHED) must still be
+      // processed, otherwise clicking Sign In after ~8s on the page does nothing
+      // and the user has to refresh (the "must refresh to login" bug).
+      if (timedOutRef.current) {
+        if (_event === "INITIAL_SESSION") return;
+        timedOutRef.current = false; // reset so subsequent events flow normally
+      }
 
       setSession(sess);
       setUser(sess?.user ?? null);
