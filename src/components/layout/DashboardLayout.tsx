@@ -292,6 +292,15 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     setUnreadNotifs(p => Math.max(0, p - 1));
   };
 
+  const markAllRead = async () => {
+    if (!user) return;
+    const unreadIds = notifList.filter((n: any) => !n.is_read).map((n: any) => n.id);
+    if (unreadIds.length === 0) return;
+    await supabase.from("notifications").update({ is_read: true }).eq("user_id", user.id).eq("is_read", false);
+    setNotifList(p => p.map(n => ({ ...n, is_read: true })));
+    setUnreadNotifs(0);
+  };
+
   // ── Shared sidebar content ────────────────────────────────────
   const SidebarContent = ({ onNavigate }: { onNavigate?: () => void }) => {
     const nav = role === "student" ? studentNav : adminNav;
@@ -512,10 +521,22 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                     </span>
                   )}
                 </div>
-                <button onClick={() => setShowNotifPanel(false)}
-                  className="w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10">
-                  ✕
-                </button>              </div>
+                <div className="flex items-center gap-2">
+                  {unreadNotifs > 0 && (
+                    <button
+                      onClick={markAllRead}
+                      className="text-[11px] font-semibold px-3 py-1 rounded-full transition-colors"
+                      style={{ background:"rgba(201,168,76,.18)", color:"#c9a84c", border:"1px solid rgba(201,168,76,.35)" }}
+                    >
+                      Mark all read
+                    </button>
+                  )}
+                  <button onClick={() => setShowNotifPanel(false)}
+                    className="w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10">
+                    ✕
+                  </button>
+                </div>
+              </div>
               <div className="overflow-y-auto flex-1">
                 {notifList.length === 0 ? (
                   <div className="text-center py-10 text-muted-foreground text-sm">No notifications yet</div>
