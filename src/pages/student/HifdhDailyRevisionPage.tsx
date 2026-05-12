@@ -413,7 +413,10 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
   const timerRef     = useRef<any>(null);
   const mediaRecRef  = useRef<MediaRecorder|null>(null);
   const audioChunks  = useRef<Blob[]>([]);
-  const audioBlobRef = useRef<Blob|null>(null);
+  const audioBlobRef       = useRef<Blob|null>(null);
+  // Populated by mr.onstop after the upload completes — read by interim save + submitSession.
+  // Must be set BEFORE setScore() fires so the interim-save useEffect sees it (race condition fix).
+  const audioStorageUrlRef = useRef<string|null>(null);
   // capture pageAyahs in a ref so mr.onstop closure can read latest value
   const pageAyahsRef = useRef<Ayah[]>([]);
   const recSecsRef   = useRef(0);
@@ -453,6 +456,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
             recitation_score: score,
             test_score:       null,
             pages_done:       todayPages.slice(0, pageIdx + 1),
+            // audioStorageUrlRef is guaranteed populated before setScore fires (see mr.onstop fix)
+            audio_url:        audioStorageUrlRef.current,
             page_results: [
               ...pageResults,
               {
@@ -489,16 +494,39 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
         setAudioUrl(URL.createObjectURL(blob));
         const capturedSecs = recSecsRef.current;
         const ayahs = pageAyahsRef.current;
-        // Show evaluating state, then run Groq Whisper
         setPhase("page_result");
         setScore(null);
-        transcribeAudio(blob).then(tx => {
+
+        // Upload audio to storage — defined inline so it can close over blob/userId/today
+        const uploadAudioToStorage = async (): Promise<string|null> => {
+          try {
+            const today = todayISO();
+            const ext   = blob.type.includes("mp4") ? "mp4" : "webm";
+            const path  = `${userId}/${today}_${Date.now()}.${ext}`;
+            const { error: upErr } = await (supabase as any).storage
+              .from("hifdh-daily-audio")
+              .upload(path, blob, { contentType: blob.type, upsert: true });
+            if (!upErr) {
+              const { data: urlData } = (supabase as any).storage
+                .from("hifdh-daily-audio")
+                .getPublicUrl(path);
+              return urlData?.publicUrl ?? null;
+            }
+          } catch { /* bucket may not exist yet — silent fail */ }
+          return null;
+        };
+
+        // Run transcription AND storage upload in parallel.
+        // setScore must only fire AFTER both resolve — otherwise the interim-save
+        // useEffect fires while audioStorageUrlRef is still null (the race condition).
+        Promise.all([transcribeAudio(blob), uploadAudioToStorage()]).then(([tx, storageUrl]) => {
+          audioStorageUrlRef.current = storageUrl; // set BEFORE setScore triggers the useEffect
           const sc   = scoreText(tx, ayahs, capturedSecs);
           const errs = getErrorWords(tx, ayahs);
           const corr = getAyahCorrectness(tx, ayahs, capturedSecs);
           setLastTranscript(tx);
-          setScore(sc); setErrorWords(errs); setAyahCorrectness(corr);
           lastResultRef.current = { tx, ayahCorrectness: corr };
+          setScore(sc); setErrorWords(errs); setAyahCorrectness(corr);
         });
       };
       mr.start(200);
@@ -613,21 +641,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
     const today=todayISO();
     const dur=Math.round((Date.now()-sessionStart.current)/1000);
 
-    // Upload audio blob to Supabase Storage
-    let audioStorageUrl: string|null = null;
-    if (audioBlobRef.current) {
-      try {
-        const ext = audioBlobRef.current.type.includes("mp4") ? "mp4" : "webm";
-        const path = `${userId}/${today}_${Date.now()}.${ext}`;
-        const { error: upErr } = await (supabase as any).storage
-          .from("hifdh-daily-audio")
-          .upload(path, audioBlobRef.current, { contentType: audioBlobRef.current.type, upsert: true });
-        if (!upErr) {
-          const { data: urlData } = (supabase as any).storage.from("hifdh-daily-audio").getPublicUrl(path);
-          audioStorageUrl = urlData?.publicUrl ?? null;
-        }
-      } catch(_) { /* storage bucket may not exist yet — silent fail */ }
-    }
+    // Audio was already uploaded in mr.onstop via Promise.all — just read the ref.
+    const audioStorageUrl: string|null = audioStorageUrlRef.current;
 
     try {
       await (supabase as any).from("hifdh_daily_logs").upsert({
