@@ -170,6 +170,53 @@ self.addEventListener("message", (event) => {
   );
 });
 
+// ── Background Sync — retry failed requests when connection restores ─────────
+//
+//  Usage from the app:
+//    navigator.serviceWorker.ready.then(reg =>
+//      reg.sync.register('tahleem-sync')
+//    );
+//
+self.addEventListener("sync", (event) => {
+  if (event.tag === "tahleem-sync") {
+    event.waitUntil(
+      // Re-attempt any queued fetch that failed while offline
+      // (extend here if you queue Supabase writes during offline mode)
+      Promise.resolve().then(() => {
+        console.log("[Tahleem SW] Background sync fired — connection restored");
+      })
+    );
+  }
+});
+
+// ── Periodic Background Sync — refresh timetable data in background ──────────
+//
+//  Register from the app (requires permission):
+//    const reg = await navigator.serviceWorker.ready;
+//    await reg.periodicSync.register('tahleem-timetable-refresh', {
+//      minInterval: 60 * 60 * 1000  // once per hour
+//    });
+//
+self.addEventListener("periodicsync", (event) => {
+  if (event.tag === "tahleem-timetable-refresh") {
+    event.waitUntil(
+      // Fetch fresh timetable data and cache it so the app shows
+      // up-to-date class info even before the user opens the app
+      fetch("/student/timetable", { cache: "no-store" })
+        .then((res) => {
+          if (res.ok) {
+            return caches.open(OFFLINE_CACHE).then((cache) =>
+              cache.put("/student/timetable", res)
+            );
+          }
+        })
+        .catch(() => {
+          // Silently ignore — offline or server unavailable
+        })
+    );
+  }
+});
+
 // ── Notification click ───────────────────────────────────────────────────────
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
