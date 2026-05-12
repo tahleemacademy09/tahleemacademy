@@ -402,7 +402,7 @@ export default function HifdhAdminReview(){
           reviewed_by:me.user.id,reviewed_at:new Date().toISOString()},
       };
       const {error}=await (supabase as any).from("hifdh_daily_logs")
-        .update({session_data:updatedSession,avg_score:newScore,updated_at:new Date().toISOString()})
+        .update({session_data:updatedSession,avg_score:newScore})
         .eq("id",log.id);
       if(!error){
         setLogs(prev=>prev.map(l=>l.id===log.id?{...l,avg_score:newScore,session_data:updatedSession}:l));
