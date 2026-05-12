@@ -14,7 +14,7 @@
 //    → testing (MCQ, ≥75% gate) → complete (submit + notify)
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import {
@@ -54,7 +54,12 @@ interface DailyLog {
   avg_score: number | null; pages_revised: number | null;
   duration_secs: number | null;
   acknowledged_at?: string | null;
-  session_data?: { page_results?: PageResult[]; errors?: any[] };
+  session_data?: {
+    page_results?: PageResult[]; errors?: any[];
+    audio_url?: string | null;
+    recitation_score?: number; test_score?: number;
+    pages_done?: number[];
+  };
 }
 interface Ayah {
   number: number; numberInSurah: number; text: string;
@@ -1379,6 +1384,243 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
   );
 }
 
+/* ── AudioPlayerWidget ──────────────────────────────────────────── */
+function AudioPlayerWidget({url,label="Recitation Recording"}:{url:string;label?:string}) {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [playing,  setPlaying]  = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [loaded,   setLoaded]   = useState(false);
+
+  useEffect(()=>{
+    const el=audioRef.current; if(!el) return;
+    const onMeta =()=>{setDuration(el.duration);setLoaded(true);};
+    const onTime =()=>setProgress(el.currentTime/(el.duration||1));
+    const onEnded=()=>{setPlaying(false);setProgress(0);el.currentTime=0;};
+    el.addEventListener("loadedmetadata",onMeta);
+    el.addEventListener("timeupdate",onTime);
+    el.addEventListener("ended",onEnded);
+    return()=>{el.removeEventListener("loadedmetadata",onMeta);
+               el.removeEventListener("timeupdate",onTime);
+               el.removeEventListener("ended",onEnded);};
+  },[url]);
+
+  const toggle=()=>{
+    const el=audioRef.current; if(!el) return;
+    if(playing){el.pause();setPlaying(false);}
+    else{el.play().catch(()=>{});setPlaying(true);}
+  };
+  const seek=(e:React.MouseEvent<HTMLDivElement>)=>{
+    const el=audioRef.current; if(!el) return;
+    const rect=e.currentTarget.getBoundingClientRect();
+    const ratio=Math.max(0,Math.min(1,(e.clientX-rect.left)/rect.width));
+    el.currentTime=ratio*el.duration; setProgress(ratio);
+  };
+  const fmt=(s:number)=>`${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`;
+
+  return(
+    <div style={{background:`linear-gradient(135deg,${G1}08,${G2}14)`,
+      border:`1.5px solid ${GOLD}55`,borderRadius:16,padding:"14px 16px"}}>
+      <audio ref={audioRef} src={url} preload="metadata"/>
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+        <div style={{width:38,height:38,borderRadius:"50%",
+          background:`linear-gradient(135deg,${G2},${G3})`,
+          display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          <Mic size={16} color={GOLD}/>
+        </div>
+        <div style={{flex:1}}>
+          <p style={{margin:0,fontWeight:800,fontSize:13,color:G1}}>{label}</p>
+          <p style={{margin:0,fontSize:10,color:"#9CA3AF"}}>
+            {loaded?`Duration: ${fmt(duration)}`:"Loading…"}
+          </p>
+        </div>
+        <button onClick={toggle} style={{width:46,height:46,borderRadius:"50%",border:"none",
+          cursor:"pointer",background:`linear-gradient(135deg,${GOLD},${GOLD_L})`,
+          display:"flex",alignItems:"center",justifyContent:"center",
+          boxShadow:`0 3px 12px ${GOLD}55`,flexShrink:0}}>
+          {playing
+            ?<span style={{display:"flex",gap:3}}>
+               <span style={{width:4,height:14,background:G0,borderRadius:2}}/>
+               <span style={{width:4,height:14,background:G0,borderRadius:2}}/>
+             </span>
+            :<Play size={16} color={G0} style={{marginLeft:2}}/>}
+        </button>
+      </div>
+      <div onClick={seek} style={{height:6,borderRadius:4,background:"#E5E7EB",
+        cursor:"pointer",overflow:"hidden"}}>
+        <div style={{height:"100%",borderRadius:4,
+          background:`linear-gradient(to right,${GOLD},${GOLD_L})`,
+          width:`${progress*100}%`,transition:"width .1s"}}/>
+      </div>
+      <div style={{display:"flex",justifyContent:"space-between",marginTop:4,
+        fontSize:9,color:"#9CA3AF",fontWeight:600}}>
+        <span>{fmt(audioRef.current?.currentTime||0)}</span>
+        <span>{loaded?fmt(duration):"--:--"}</span>
+      </div>
+    </div>
+  );
+}
+
+/* ── DayDetailModal ─────────────────────────────────────────────── */
+function DayDetailModal({day,totalPagesInProg,pagesReadSoFar,onClose}:{
+  day:ProgramDay; totalPagesInProg:number; pagesReadSoFar:number; onClose:()=>void;
+}) {
+  const log=day.log;
+  const sd=log?.session_data;
+  const pageResults:PageResult[]=sd?.page_results??[];
+  const audioUrl:string|null=sd?.audio_url??null;
+  const pagesLeft=Math.max(0,totalPagesInProg-pagesReadSoFar);
+
+  return(
+    <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:500,
+      background:"rgba(0,0,0,.6)",backdropFilter:"blur(6px)",
+      display:"flex",alignItems:"flex-end",justifyContent:"center",
+      fontFamily:"'Cairo',sans-serif"}}>
+      <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxWidth:560,
+        background:WARM,borderRadius:"24px 24px 0 0",
+        maxHeight:"88dvh",overflowY:"auto",
+        boxShadow:"0 -8px 48px rgba(0,0,0,.35)",
+        animation:"slideUp .25s ease"}}>
+
+        {/* Handle */}
+        <div style={{display:"flex",justifyContent:"center",padding:"10px 0 0"}}>
+          <div style={{width:40,height:4,borderRadius:2,background:"#D1D5DB"}}/>
+        </div>
+
+        {/* Header */}
+        <div style={{
+          background:day.status==="done"
+            ?"linear-gradient(135deg,#14532d,#166534)"
+            :"linear-gradient(135deg,#7f1d1d,#991b1b)",
+          margin:"10px 12px",borderRadius:18,padding:"16px"}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+            <div>
+              <p style={{margin:0,fontSize:10,fontWeight:700,color:"rgba(255,255,255,.5)",
+                textTransform:"uppercase",letterSpacing:.5}}>
+                Day {day.dayNum} — {fmtDate(day.date)}
+              </p>
+              <p style={{margin:"3px 0 0",fontWeight:900,fontSize:18,color:W}}>
+                {day.status==="done"?"✓ Session Complete":"✗ Missed Session"}
+              </p>
+            </div>
+            {day.status==="done"&&log?.avg_score!=null&&(
+              <div style={{width:56,height:56,borderRadius:"50%",
+                background:"rgba(255,255,255,.12)",
+                border:`2px solid ${scoreColor(log.avg_score)}`,
+                display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
+                <p style={{margin:0,fontWeight:900,fontSize:16,color:W}}>{log.avg_score}%</p>
+                <p style={{margin:0,fontSize:7,color:"rgba(255,255,255,.5)",fontWeight:700}}>SCORE</p>
+              </div>
+            )}
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+            {[
+              {label:"Pages", value:`${day.pages[0]}${day.pages.length>1?`–${day.pages[day.pages.length-1]}`:""}` },
+              {label:"Time",  value:fmtSecs(log?.duration_secs)},
+              {label:"Recit.",value:sd?.recitation_score!=null?`${sd.recitation_score}%`:"—"},
+            ].map(s=>(
+              <div key={s.label} style={{background:"rgba(255,255,255,.1)",borderRadius:10,
+                padding:"8px",textAlign:"center"}}>
+                <p style={{margin:0,fontWeight:900,fontSize:14,color:W}}>{s.value}</p>
+                <p style={{margin:0,fontSize:8,fontWeight:700,color:"rgba(255,255,255,.4)",
+                  textTransform:"uppercase"}}>{s.label}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div style={{padding:"0 16px 32px",display:"flex",flexDirection:"column",gap:12}}>
+
+          {/* Pages read / left */}
+          <div style={{background:W,borderRadius:16,border:`1px solid ${BRD}`,padding:"14px 16px"}}>
+            <p style={{margin:"0 0 10px",fontSize:10,fontWeight:800,color:G3,
+              textTransform:"uppercase",letterSpacing:.5}}>Programme Status</p>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+              <div style={{padding:"12px",borderRadius:12,
+                background:`${PASS}10`,border:`1.5px solid ${PASS}33`,textAlign:"center"}}>
+                <p style={{margin:0,fontWeight:900,fontSize:22,color:PASS}}>{pagesReadSoFar}</p>
+                <p style={{margin:0,fontSize:9,fontWeight:700,color:"#6B7280",textTransform:"uppercase"}}>Pages Read</p>
+              </div>
+              <div style={{padding:"12px",borderRadius:12,
+                background:`${GOLD}10`,border:`1.5px solid ${GOLD}33`,textAlign:"center"}}>
+                <p style={{margin:0,fontWeight:900,fontSize:22,color:AMBER}}>{pagesLeft}</p>
+                <p style={{margin:0,fontSize:9,fontWeight:700,color:"#6B7280",textTransform:"uppercase"}}>Pages Left</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Per-page scores */}
+          {pageResults.length>0&&(
+            <div style={{background:W,borderRadius:16,border:`1px solid ${BRD}`,padding:"14px 16px"}}>
+              <p style={{margin:"0 0 10px",fontSize:10,fontWeight:800,color:G3,
+                textTransform:"uppercase",letterSpacing:.5}}>Per-Page Scores</p>
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {pageResults.map((pr,i)=>(
+                  <div key={i} style={{display:"flex",alignItems:"center",gap:12,
+                    padding:"10px 12px",borderRadius:12,
+                    background:`${scoreColor(pr.score)}08`,
+                    border:`1.5px solid ${scoreColor(pr.score)}30`}}>
+                    <div style={{width:46,height:46,borderRadius:"50%",flexShrink:0,
+                      background:`${scoreColor(pr.score)}18`,
+                      border:`2.5px solid ${scoreColor(pr.score)}`,
+                      display:"flex",alignItems:"center",justifyContent:"center"}}>
+                      <span style={{fontWeight:900,fontSize:11,color:scoreColor(pr.score)}}>{pr.score}%</span>
+                    </div>
+                    <div style={{flex:1}}>
+                      <p style={{margin:0,fontWeight:800,fontSize:13,color:G1}}>Page {pr.pageNum}</p>
+                      {pr.errorWords&&pr.errorWords.length>0
+                        ?<p style={{margin:"2px 0 0",fontSize:10,color:FAIL,fontWeight:600,direction:"rtl"}}>
+                           ✗ {pr.errorWords.slice(0,5).join("، ")}
+                           {pr.errorWords.length>5?` +${pr.errorWords.length-5} more`:""}
+                         </p>
+                        :<p style={{margin:"2px 0 0",fontSize:10,color:PASS,fontWeight:600}}>✓ No errors detected</p>
+                      }
+                    </div>
+                    <div style={{padding:"4px 10px",borderRadius:8,fontSize:9,fontWeight:900,
+                      textTransform:"uppercase" as const,
+                      background:pr.score>=70?`${PASS}18`:pr.score>=50?`${AMBER}18`:`${FAIL}18`,
+                      color:scoreColor(pr.score)}}>
+                      {pr.score>=70?"Excellent":pr.score>=50?"Good":"Retry"}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Audio player */}
+          {audioUrl&&(
+            <div style={{background:W,borderRadius:16,border:`1px solid ${BRD}`,padding:"14px 16px"}}>
+              <p style={{margin:"0 0 10px",fontSize:10,fontWeight:800,color:G3,
+                textTransform:"uppercase",letterSpacing:.5}}>Recitation Audio</p>
+              <AudioPlayerWidget url={audioUrl} label={`Day ${day.dayNum} — Page ${day.pages[0]}`}/>
+            </div>
+          )}
+
+          {/* Missed explanation */}
+          {day.status==="missed"&&(
+            <div style={{padding:"14px 16px",borderRadius:16,
+              background:`${FAIL}08`,border:`1.5px solid ${FAIL}30`}}>
+              <p style={{margin:"0 0 4px",fontSize:12,fontWeight:800,color:FAIL}}>
+                Session was not completed
+              </p>
+              <p style={{margin:0,fontSize:11,color:"#6B7280",lineHeight:1.6}}>
+                No session was recorded for this day. This counts against your streak.
+              </p>
+            </div>
+          )}
+
+          <button onClick={onClose} style={{width:"100%",padding:"14px",borderRadius:14,
+            border:`1.5px solid ${BRD}`,background:W,color:G1,fontWeight:800,fontSize:14,
+            cursor:"pointer",fontFamily:"inherit"}}>
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ══════════════════════════════════════════════════════════════════
    MAIN PAGE
 ═══════════════════════════════════════════════════════════════════*/
@@ -1394,6 +1636,7 @@ export default function HifdhDailyRevisionPage() {
   const [showSession,  setShowSession]  = useState(false);
   const [historyOpen,  setHistoryOpen]  = useState<string|null>(null);
   const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [selectedDay,  setSelectedDay]  = useState<ProgramDay|null>(null);
   const today = todayISO();
 
   /* ── Load data ── */
@@ -1744,38 +1987,63 @@ export default function HifdhDailyRevisionPage() {
                 </div>
               </div>
 
-              {/* Week strip */}
+              {/* All-Days History Strip */}
               <div style={{background:W,borderRadius:16,border:`1px solid ${BRD}`,
                 padding:"14px 14px 12px"}}>
-                <p style={{margin:"0 0 10px",fontSize:10,fontWeight:800,color:G3,
-                  textTransform:"uppercase",letterSpacing:.5}}>This Week</p>
-                <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:5}}>
-                  {last7.map(({date,log,isToday,dayName})=>{
-                    const done=!!log?.completed;
-                    const isFuture=date>today;
-                    const col=done?PASS:isFuture?"#E5E7EB":isToday?GOLD:FAIL;
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+                  <p style={{margin:0,fontSize:10,fontWeight:800,color:G3,
+                    textTransform:"uppercase",letterSpacing:.5}}>Daily History — Tap to view</p>
+                  <div style={{display:"flex",gap:10,fontSize:9,fontWeight:700}}>
+                    <span style={{color:PASS}}>✓ {doneDays.length}</span>
+                    <span style={{color:FAIL}}>✗ {missedDays.length}</span>
+                    <span style={{color:"#9CA3AF"}}>• {totalDays-doneDays.length-missedDays.length}</span>
+                  </div>
+                </div>
+                <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:8,
+                  scrollbarWidth:"none" as any}}>
+                  {programDays.map((day)=>{
+                    const isDone  =day.status==="done";
+                    const isMiss  =day.status==="missed";
+                    const isToday2=day.status==="today";
+                    const clickable=isDone||isMiss;
+                    const bg  =isDone?`${PASS}20`:isMiss?`${FAIL}15`:isToday2?`${GOLD}18`:"#F3F4F6";
+                    const bdr =isDone?PASS:isMiss?FAIL:isToday2?GOLD:"#E5E7EB";
                     return(
-                      <div key={date} style={{textAlign:"center"}}>
-                        <p style={{margin:"0 0 4px",fontSize:8,fontWeight:700,
-                          color:isToday?G2:"#9CA3AF",textTransform:"uppercase"}}>{dayName}</p>
-                        <div style={{width:"100%",aspectRatio:"1/1",borderRadius:10,
-                          background:done?`${PASS}18`:isFuture?"#F9FAFB":isToday?`${GOLD}18`:`${FAIL}10`,
-                          border:`1.5px solid ${col}`,
-                          display:"flex",alignItems:"center",justifyContent:"center"}}>
-                          {done?<CheckCircle2 size={14} color={PASS}/>
-                           :isFuture?<Lock size={11} color="#D1D5DB"/>
-                           :isToday?<Play size={12} color={GOLD}/>
-                           :<AlertCircle size={13} color={FAIL}/>}
+                      <div key={day.date}
+                        onClick={()=>clickable&&setSelectedDay(day)}
+                        style={{flexShrink:0,display:"flex",flexDirection:"column",
+                          alignItems:"center",gap:3,cursor:clickable?"pointer":"default"}}>
+                        <div style={{width:36,height:36,borderRadius:"50%",
+                          background:bg,border:`2px solid ${bdr}`,
+                          display:"flex",alignItems:"center",justifyContent:"center",
+                          boxShadow:isToday2?`0 0 0 3px ${GOLD}33`:undefined,
+                          transition:"transform .1s"}}
+                          onMouseEnter={e=>{if(clickable)(e.currentTarget as HTMLDivElement).style.transform="scale(1.15)";}}
+                          onMouseLeave={e=>{(e.currentTarget as HTMLDivElement).style.transform="scale(1)";}}>
+                          {isDone
+                            ?<CheckCircle2 size={13} color={PASS}/>
+                            :isMiss
+                            ?<AlertCircle size={12} color={FAIL}/>
+                            :isToday2
+                            ?<Play size={11} color={GOLD}/>
+                            :<span style={{fontSize:8,fontWeight:700,color:"#C4C4C4"}}>{day.dayNum}</span>}
                         </div>
-                        {done&&log?.avg_score!=null&&(
-                          <p style={{margin:"3px 0 0",fontSize:7,fontWeight:700,color:scoreColor(log.avg_score)}}>
-                            {log.avg_score}%
-                          </p>
+                        <span style={{fontSize:7,fontWeight:700,
+                          color:isToday2?G2:"#9CA3AF",textTransform:"uppercase"}}>
+                          {isToday2?"Now":`D${day.dayNum}`}
+                        </span>
+                        {isDone&&day.log?.avg_score!=null&&(
+                          <span style={{fontSize:7,fontWeight:800,color:scoreColor(day.log.avg_score)}}>
+                            {day.log.avg_score}%
+                          </span>
                         )}
                       </div>
                     );
                   })}
                 </div>
+                <p style={{margin:"4px 0 0",fontSize:9,color:"#9CA3AF",textAlign:"center"}}>
+                  Tap ✓ or ✗ to see session details & audio
+                </p>
               </div>
 
               {/* Assignment info */}
@@ -2047,6 +2315,14 @@ export default function HifdhDailyRevisionPage() {
           )}
         </div>
       </div>
+      {selectedDay&&(
+        <DayDetailModal
+          day={selectedDay}
+          totalPagesInProg={totalDays*(assignment?.daily_pages??1)}
+          pagesReadSoFar={doneDays.length*(assignment?.daily_pages??1)}
+          onClose={()=>setSelectedDay(null)}
+        />
+      )}
     </>
   );
 }
