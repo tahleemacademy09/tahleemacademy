@@ -2,17 +2,56 @@
   "name": "Tahleem Academy",
   "short_name": "Tahleem",
   "description": "Online Quran, Tajweed, Arabic Language & Islamic Sciences",
+  "id": "tahleem-academy-pwa",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
   "orientation": "portrait",
   "background_color": "#0f2419",
   "theme_color": "#1a3a2a",
   "lang": "en",
-  "categories": [
-    "education",
-    "lifestyle"
+  "dir": "auto",
+  "categories": ["education", "lifestyle"],
+
+  "iarc_rating_id": "e84b072d-71b3-4d3e-86ae-31a8ce4e53b7",
+
+  "prefer_related_applications": false,
+  "related_applications": [
+    {
+      "platform": "webapp",
+      "url": "https://tahleemacademy.vercel.app/manifest.json",
+      "id": "tahleem-academy-pwa"
+    }
   ],
+
+  "launch_handler": {
+    "client_mode": ["focus-existing", "auto"]
+  },
+
+  "handle_links": "preferred",
+
+  "share_target": {
+    "action": "/share-target",
+    "method": "GET",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url"
+    }
+  },
+
+  "protocol_handlers": [
+    {
+      "protocol": "web+tahleem",
+      "url": "/?protocol=%s"
+    }
+  ],
+
+  "edge_side_panel": {
+    "preferred_width": 400
+  },
+
   "icons": [
     {
       "src": "/icons/icon-72x72.png",
@@ -48,7 +87,7 @@
       "src": "/icons/icon-192x192.png",
       "sizes": "192x192",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "maskable"
     },
     {
       "src": "/icons/icon-384x384.png",
@@ -60,18 +99,33 @@
       "src": "/icons/icon-512x512.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icons/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
     }
   ],
+
   "screenshots": [
     {
-      "src": "/images/hero-bg.jpg",
-      "sizes": "1920x1080",
-      "type": "image/jpeg",
+      "src": "/images/screenshot-narrow.png",
+      "sizes": "390x844",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Tahleem Academy student dashboard on mobile"
+    },
+    {
+      "src": "/images/screenshot-wide.png",
+      "sizes": "1280x720",
+      "type": "image/png",
       "form_factor": "wide",
-      "label": "Tahleem Academy homepage"
+      "label": "Tahleem Academy homepage on desktop"
     }
   ],
+
   "shortcuts": [
     {
       "name": "My Dashboard",
@@ -81,7 +135,8 @@
       "icons": [
         {
           "src": "/icons/icon-96x96.png",
-          "sizes": "96x96"
+          "sizes": "96x96",
+          "type": "image/png"
         }
       ]
     },
@@ -93,10 +148,23 @@
       "icons": [
         {
           "src": "/icons/icon-96x96.png",
-          "sizes": "96x96"
+          "sizes": "96x96",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Live Classes",
+      "short_name": "Live",
+      "description": "Join a live class session",
+      "url": "/live-classes",
+      "icons": [
+        {
+          "src": "/icons/icon-96x96.png",
+          "sizes": "96x96",
+          "type": "image/png"
         }
       ]
     }
-  ],
-  "dir": "auto"
+  ]
 }
