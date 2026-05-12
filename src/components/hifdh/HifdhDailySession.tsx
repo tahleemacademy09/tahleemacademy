@@ -130,15 +130,17 @@ function workingDaysElapsed(startDate: string, daysOff: number[]): number {
 
 function normalizeAr(text: string): string {
   return text
-    .replace(/[\u064B-\u065F\u0610-\u061A\u0670]/g, "")
+    // Convert dagger alef \u0670 → regular Alef BEFORE stripping
+    // (represents actual long-vowel 'a' in Uthmani script, e.g. عَٰقِبَتَهُمَا → عاقبتهما)
+    .replace(/\u0670/g, "\u0627")
+    .replace(/[\u064B-\u065F\u0610-\u061A]/g, "")
     // Normalise ALL Alef variants → plain Alef ا
-    // \u0671 (Alef Wasla ٱ) was missing — it appears on virtually every "ال"
-    // in ar.uthmani text, causing near-total match failure
+    // \u0671 (Alef Wasla ٱ) was missing — appears on virtually every "ال" in ar.uthmani
     .replace(/[\u0671\u0622\u0623\u0625\u0627]/g, "\u0627")
     .replace(/\u0629/g, "\u0647")
     .replace(/\u0649/g, "\u064A")
     .replace(/\u0640/g, "")
-    // Strip Quranic stop markers \u06D6-\u06DC and end-of-ayah/rub markers
+    // Strip Quranic stop/pause/ayah-end markers
     .replace(/[\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED\u06DD\u06DE]/g, "")
     .replace(/[^\u0621-\u063A\u0641-\u064A\s]/g, "")
     .replace(/\s+/g, " ").trim();
