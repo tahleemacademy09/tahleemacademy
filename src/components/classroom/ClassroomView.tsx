@@ -2636,10 +2636,21 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   if(error)return(
     <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100dvh",background:DARK}}>
       <style>{CSS}</style>
-      <div style={{textAlign:"center",maxWidth:320,padding:28}}>
+      <div style={{textAlign:"center",maxWidth:340,padding:28}}>
         <div style={{width:64,height:64,borderRadius:"50%",background:"rgba(239,68,68,.12)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px"}}><X style={{width:28,height:28,color:RED}}/></div>
         <h2 style={{fontSize:20,fontWeight:700,color:"#fff",marginBottom:8}}>Connection Failed</h2>
-        <p style={{color:"rgba(255,255,255,.45)",fontSize:14,marginBottom:22}}>{error}</p>
+        {/* Friendly translation of the raw edge function error */}
+        {error.toLowerCase().includes("non-2xx")||error.toLowerCase().includes("not configured")||error.toLowerCase().includes("livekit")?(<>
+          <p style={{color:"rgba(255,255,255,.55)",fontSize:13,marginBottom:6,lineHeight:1.5}}>
+            The live class server could not be reached.<br/>This is usually a temporary issue.
+          </p>
+          <p style={{color:"rgba(255,255,255,.3)",fontSize:11,marginBottom:22}}>
+            Please wait a moment and tap <strong style={{color:"rgba(255,255,255,.5)"}}>Try Again</strong>.<br/>
+            If this keeps happening, contact your teacher.
+          </p>
+        </>):(<>
+          <p style={{color:"rgba(255,255,255,.45)",fontSize:14,marginBottom:22}}>{error}</p>
+        </>)}
         <div style={{display:"flex",gap:10,justifyContent:"center"}}>
           {/* Try Again: reset guard + counter, clear stale tokens, reconnect directly */}
           <button onClick={()=>{
