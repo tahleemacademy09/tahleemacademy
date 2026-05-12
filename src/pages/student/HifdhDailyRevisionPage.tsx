@@ -209,10 +209,22 @@ async function fetchPageAyahs(page: number): Promise<Ayah[]> {
 // Strips the full diacritic + extended Arabic mark range so Whisper output
 // (which often omits tashkeel) matches the Uthmani reference text correctly.
 function stripDiacritics(t: string): string {
-  return t.replace(
-    /[\u064B-\u065F\u0670\u0610-\u061A\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED]/g,
-    ""
-  );
+  return t
+    // 1. Strip tashkeel + Quranic annotation characters
+    .replace(/[\u064B-\u065F\u0670\u0610-\u061A\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED]/g, "")
+    // 2. Normalise Alef variants → plain Alef ا
+    //    Critical: ar.uthmani API uses Alef Wasla ٱ(\u0671) on almost every
+    //    definite article "ال", so without this every such word silently fails to match.
+    //    Also covers: Alef Hamza Above أ(\u0623), Alef Hamza Below إ(\u0625), Alef Madda آ(\u0622)
+    .replace(/[\u0671\u0622\u0623\u0625]/g, "\u0627")
+    // 3. Alef Maqsura ى(\u0649) → Ya ي(\u064A) — Groq always outputs Ya
+    .replace(/\u0649/g, "\u064A")
+    // 4. Ta Marbuta ة(\u0629) → Ha ه(\u0647)
+    .replace(/\u0629/g, "\u0647")
+    // 5. Strip Tatweel / Kashida ـ(\u0640)
+    .replace(/\u0640/g, "")
+    // 6. Strip Quranic end-of-ayah ۝(\u06DD) and rub el-hizb ۞(\u06DE) markers
+    .replace(/[\u06DD\u06DE]/g, "");
 }
 
 // ── Exact same word-comparison used by مراجعة ────────────────────────────────
