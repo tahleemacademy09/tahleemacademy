@@ -1,15 +1,16 @@
 // src/components/ErrorBoundary.tsx
 // Fixed:
-// • ChunkLoadError (Vite lazy chunk 404 after Vercel redeploy) → auto-reloads once
-//   silently so users never see the error screen for a deploy-related failure
-// • Other errors → friendly UI with Reload button + error details for debugging
-// • Prevents reload loop: marks in sessionStorage so it only auto-reloads once per error
+// • ChunkLoadError (Vite lazy chunk 404 after Vercel redeploy) → auto-reloads silently
+// • ANY React runtime error → auto-reloads once silently (e.g. React error #310)
+// • Second error after reload → shows friendly UI with Reload button
+// • Prevents reload loop: per-error key in sessionStorage so each unique error only
+//   triggers one auto-reload. Clears automatically after 60 s.
 
 import React from "react";
 
 interface State {
-  hasError:    boolean;
-  error:       Error | null;
+  hasError:      boolean;
+  error:         Error | null;
   didAutoReload: boolean;
 }
 
@@ -27,6 +28,13 @@ function isChunkError(err: Error | null): boolean {
   );
 }
 
+/** Stable key for this particular error so we only auto-reload once per error. */
+function errorKey(err: Error | null): string {
+  if (!err) return "unknown";
+  // Use first 60 chars of message to keep key manageable
+  return `eb_reloaded_${(err.message || err.name || "err").slice(0, 60).replace(/\W+/g, "_")}`;
+}
+
 export class ErrorBoundary extends React.Component<
   { children: React.ReactNode },
   State
@@ -40,22 +48,30 @@ export class ErrorBoundary extends React.Component<
   componentDidCatch(error: Error, info: React.ErrorInfo) {
     console.error("[ErrorBoundary] caught:", error.name, error.message, info.componentStack);
 
-    // Auto-reload once for chunk errors (Vercel redeploy invalidates old chunks)
-    if (isChunkError(error)) {
-      const reloadKey = "eb_chunk_reloaded";
-      const alreadyReloaded = sessionStorage.getItem(reloadKey);
-      if (!alreadyReloaded) {
-        sessionStorage.setItem(reloadKey, "1");
-        // Small delay so the render cycle settles before reload
-        setTimeout(() => window.location.reload(), 300);
-        this.setState({ didAutoReload: true });
-        return;
-      }
+    const key = errorKey(error);
+    const alreadyReloaded = sessionStorage.getItem(key);
+
+    if (!alreadyReloaded) {
+      // Mark so we don't loop, then auto-reload silently
+      sessionStorage.setItem(key, Date.now().toString());
+
+      // Clean up the key after 60 s so a future genuine reload is possible
+      setTimeout(() => sessionStorage.removeItem(key), 60_000);
+
+      // Small delay so React's render cycle settles before reload
+      setTimeout(() => window.location.reload(), 400);
+      this.setState({ didAutoReload: true });
+      return;
     }
+
+    // Already tried reloading for this exact error — show the UI
   }
 
   handleReload = () => {
-    sessionStorage.removeItem("eb_chunk_reloaded");
+    // Clear all eb_ keys so user gets a clean slate
+    Object.keys(sessionStorage)
+      .filter(k => k.startsWith("eb_"))
+      .forEach(k => sessionStorage.removeItem(k));
     window.location.reload();
   };
 
@@ -64,63 +80,67 @@ export class ErrorBoundary extends React.Component<
 
     if (!hasError) return this.props.children;
 
-    // Show a minimal spinner while auto-reloading for chunk errors
-    if (didAutoReload || isChunkError(error)) {
+    // Show spinner while auto-reload is in progress
+    if (didAutoReload || !sessionStorage.getItem(errorKey(error))) {
       return (
         <div style={{
           display: "flex", flexDirection: "column", alignItems: "center",
           justifyContent: "center", minHeight: "100vh",
-          fontFamily: "'Cairo', sans-serif", background: "#f9fafb",
+          fontFamily: "'Cairo', -apple-system, sans-serif", background: "#f0faf4",
         }}>
           <div style={{
-            width: 36, height: 36, borderRadius: "50%",
-            border: "3px solid #064E3B", borderTopColor: "transparent",
-            animation: "spin .7s linear infinite", marginBottom: 16,
+            width: 40, height: 40, borderRadius: "50%",
+            border: "4px solid #064E3B", borderTopColor: "transparent",
+            animation: "eb_spin .7s linear infinite", marginBottom: 16,
           }} />
-          <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
-          <p style={{ color: "#6b7280", fontSize: 14 }}>Updating app… please wait</p>
+          <style>{`@keyframes eb_spin{to{transform:rotate(360deg)}}`}</style>
+          <p style={{ color: "#064E3B", fontSize: 14, fontWeight: 600 }}>
+            Updating… please wait
+          </p>
         </div>
       );
     }
 
-    // Generic error screen
+    // Persistent error — show friendly screen with manual reload
     return (
       <div style={{
         display: "flex", flexDirection: "column", alignItems: "center",
         justifyContent: "center", minHeight: "100vh", padding: 32,
-        fontFamily: "'Cairo', sans-serif", background: "#f9fafb", textAlign: "center",
+        fontFamily: "'Cairo', -apple-system, sans-serif",
+        background: "#f0faf4", textAlign: "center",
       }}>
         <div style={{
-          width: 64, height: 64, borderRadius: 16,
-          background: "linear-gradient(135deg,#0f2d1f,#1a4731)",
+          width: 72, height: 72, borderRadius: 20,
+          background: "linear-gradient(135deg,#064E3B,#0a7c5c)",
           display: "flex", alignItems: "center", justifyContent: "center",
-          marginBottom: 20, fontSize: 28,
+          marginBottom: 20, fontSize: 34, boxShadow: "0 8px 24px rgba(6,78,59,.25)",
         }}>
           📖
         </div>
-        <h2 style={{ color: "#0f2d1f", fontSize: 20, fontWeight: 800, margin: "0 0 8px" }}>
+        <h2 style={{ color: "#064E3B", fontSize: 22, fontWeight: 800, margin: "0 0 8px" }}>
           Something went wrong
         </h2>
-        <p style={{ color: "#6b7280", fontSize: 14, margin: "0 0 24px", maxWidth: 320 }}>
-          The page encountered an unexpected error. Reloading usually fixes this.
+        <p style={{ color: "#6b7280", fontSize: 14, margin: "0 0 28px", maxWidth: 320, lineHeight: 1.6 }}>
+          The page encountered an unexpected error. Tapping reload usually fixes this.
         </p>
         <button
           onClick={this.handleReload}
           style={{
-            padding: "12px 28px", borderRadius: 12, border: "none", cursor: "pointer",
-            background: "linear-gradient(135deg,#0f2d1f,#1a4731)",
-            color: "#fff", fontSize: 14, fontWeight: 700,
+            padding: "13px 32px", borderRadius: 14, border: "none", cursor: "pointer",
+            background: "linear-gradient(135deg,#064E3B,#0a7c5c)",
+            color: "#fff", fontSize: 15, fontWeight: 700,
+            boxShadow: "0 4px 14px rgba(6,78,59,.3)",
           }}
         >
           Reload Page
         </button>
         {error?.message && (
-          <details style={{ marginTop: 24, maxWidth: 480, textAlign: "left" }}>
+          <details style={{ marginTop: 28, maxWidth: 480, textAlign: "left" }}>
             <summary style={{ color: "#9ca3af", fontSize: 12, cursor: "pointer" }}>
-              Error details
+              ▶ Error details
             </summary>
             <pre style={{
-              marginTop: 8, padding: "10px 12px", borderRadius: 8,
+              marginTop: 8, padding: "10px 14px", borderRadius: 10,
               background: "#f3f4f6", color: "#4b5563", fontSize: 11,
               whiteSpace: "pre-wrap", overflowWrap: "anywhere",
             }}>
