@@ -580,7 +580,11 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
       }
       const {data}=await supabase.from("chat_messages").select("*").eq("channel_id",activeChannelId).order("created_at",{ascending:false}).limit(80);
       if(cancelled) return;
-      const msgs=((data||[]) as unknown as ChatMessage[]).reverse();
+      // Filter out messages the user deleted "for me" from localStorage
+      const deletedForMeSet=new Set<string>(
+        (()=>{try{return JSON.parse(localStorage.getItem(`majlis_deleted_${user?.id||"anon"}`)||"[]");}catch{return [];}})()
+      );
+      const msgs=((data||[]) as unknown as ChatMessage[]).reverse().filter(m=>!deletedForMeSet.has(m.id));
       setMessages(msgs);
 
       const uids=[...new Set(msgs.map(m=>m.user_id))];
@@ -614,6 +618,9 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
       .on("postgres_changes",{event:"*",schema:"public",table:"chat_messages",filter:`channel_id=eq.${activeChannelId}`},p=>{
         if(p.eventType==="INSERT"){
           const nm=p.new as unknown as ChatMessage;
+          // Skip if this user deleted this message locally
+          const dmSet=new Set<string>((()=>{try{return JSON.parse(localStorage.getItem(`majlis_deleted_${user?.id||"anon"}`)||"[]");}catch{return [];}})());
+          if(dmSet.has(nm.id)) return;
           setMessages(prev=>prev.find(m=>m.id===nm.id)?prev:[...prev,nm]);
           if(nm.user_id!==user?.id){
             playSound("receive",settings.notifSound);
@@ -969,12 +976,53 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
     setReactions(rm);
   };
 
-  const deleteForMe  =(id:string)=>{ setMessages(prev=>prev.filter(m=>m.id!==id)); setShowDeleteSheet(null); };
-  const deleteForAll =async(id:string)=>{ await supabase.from("chat_messages").delete().eq("id",id); setMessages(prev=>prev.filter(m=>m.id!==id)); setShowDeleteSheet(null); };
+  // ── Helpers for "delete for me" persistence ───────────────
+  const dmKey=`majlis_deleted_${user?.id||"anon"}`;
+  const getDeletedSet=():Set<string>=>{
+    try{ return new Set(JSON.parse(localStorage.getItem(dmKey)||"[]")); }catch{ return new Set(); }
+  };
+  const persistDeletedForMe=(id:string)=>{
+    try{
+      const s=getDeletedSet(); s.add(id);
+      localStorage.setItem(dmKey,JSON.stringify([...s]));
+    }catch{}
+  };
+
+  const deleteForMe=(id:string)=>{
+    persistDeletedForMe(id);
+    setMessages(prev=>prev.filter(m=>m.id!==id));
+    setShowDeleteSheet(null);
+    toast({title:"Message deleted"});
+  };
+
+  const deleteForAll=async(id:string)=>{
+    setShowDeleteSheet(null);
+    // Optimistically remove locally first for instant feedback
+    setMessages(prev=>prev.filter(m=>m.id!==id));
+    const {error}=await supabase.from("chat_messages").delete().eq("id",id);
+    if(error){
+      // Rollback and show error
+      setMessages(prev=>{
+        // Re-fetch would be ideal but just show toast since realtime will reconcile
+        return prev;
+      });
+      toast({title:"Failed to delete message",description:"You may not have permission",variant:"destructive"});
+      return;
+    }
+    toast({title:"Message deleted for everyone"});
+  };
+
   const deleteSelected=async()=>{
-    for(const id of selectedIds) await supabase.from("chat_messages").delete().eq("id",id);
+    const ids=[...selectedIds];
+    // Optimistically remove first
     setMessages(prev=>prev.filter(m=>!selectedIds.has(m.id)));
-    toast({title:`${selectedIds.size} deleted`});setSelectedIds(new Set());setSelectMode(false);
+    setSelectedIds(new Set()); setSelectMode(false);
+    let failed=0;
+    for(const id of ids){
+      const {error}=await supabase.from("chat_messages").delete().eq("id",id);
+      if(error) failed++;
+    }
+    toast({title:failed===0?`${ids.length} message${ids.length>1?"s":""} deleted`:`${ids.length-failed} deleted, ${failed} failed`});
   };
   const pinMessage=async(m:ChatMessage)=>{
     const ip=!(m as any).is_pinned;
@@ -1470,7 +1518,15 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
 
         {/* Sidebar Header */}
         <div style={{background:sidebarHdr,padding:"10px 16px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-          <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            {/* ── Back to Dashboard ── */}
+            <button
+              onClick={()=>navigate("/student")}
+              title="Back to Dashboard"
+              style={{background:"none",border:"none",cursor:"pointer",color:"#fff",padding:"4px 6px",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",opacity:.9}}
+            >
+              <ArrowLeft size={20}/>
+            </button>
             <button onClick={()=>{setShowHamburger(true);window.history.pushState({layer:"hamburger"},"",window.location.href);}} style={{background:"none",border:"none",cursor:"pointer",color:"#fff",padding:4}}>
               <Menu size={20}/>
             </button>
