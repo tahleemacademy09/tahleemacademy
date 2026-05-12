@@ -599,6 +599,9 @@ export default function MustabaqahPage() {
   const [aiGenLoading,     setAiGenLoading]     = useState(false);
   const [liveInstructions, setLiveInstructions] = useState("");   // per-competition instructions shown with question
   const [tilePickerCollapsed, setTilePickerCollapsed] = useState(false); // collapse tile grid to icon after pick
+  // Per-participant stage tracking — one participant goes through ALL stages before next is called
+  const [activeParticipantStage, setActiveParticipantStage] = useState(1); // which stage the active participant is currently on
+  const [pickerStage, setPickerStage] = useState(1);                        // stage shown in the tile picker (participant side)
 
   const channelRef       = useRef<any>(null);
   const timerRef         = useRef<any>(null);
@@ -785,6 +788,7 @@ export default function MustabaqahPage() {
         setStageTiles(cfg.current_tiles);
         setShowTilePicker(true);
         setPickerParticipantId(myParticipant.id);
+        if (cfg.current_stage_num) setPickerStage(cfg.current_stage_num);
       }
     }, 1500);
     return () => clearInterval(iv);
@@ -817,6 +821,7 @@ export default function MustabaqahPage() {
         setBellCount(0); setTimerSecs(0); setElapsedSecs(0); elapsedRef.current=0;
         setTimerExpired(false); setShowScore(false);
         setPickedTile(null); setStageTiles([]); setAyahText(null); setPickerParticipantId(null);
+        setPickerStage(1);
         const mine=myParticipantRef.current;
         if (payload.participant_id===mine?.id) {
           // Update local status immediately — don't wait for DB round-trip
@@ -832,6 +837,16 @@ export default function MustabaqahPage() {
         if (!payload.tiles?.length) return;
         setStageTiles(payload.tiles); setPickedTile(null); setAyahText(null);
         setShowTilePicker(true); setPickerParticipantId(payload.picker_participant_id??null);
+        if (payload.stage) setPickerStage(payload.stage);
+      })
+      .on("broadcast",{event:"NEXT_STAGE"},({payload}:any)=>{
+        // Fired after judge scores a stage and advances to next stage for the same participant
+        const mine=myParticipantRef.current;
+        if (mine && payload.participant_id===mine.id) {
+          setPickerStage(payload.stage);
+          toast({ title:`🎯 Stage ${payload.stage - 1} done: ${payload.prev_score} pts! Now Stage ${payload.stage} — pick your number` });
+          try{navigator.vibrate?.([200,100,200,100,400]);}catch{}
+        }
       })
       .on("broadcast",{event:"QUESTION_PICKED"},({payload}:any)=>{
         const tile=payload.tile as Tile; setPickedTile(tile);
@@ -852,10 +867,12 @@ export default function MustabaqahPage() {
         loadParticipants(); loadAttempts();
         setShowScore(false); setShowTilePicker(false); setTimerExpired(false);
         setActiveP(null); setCurAttempt(null); setPickedTile(null); setPickerParticipantId(null);
+        setPickerStage(1);
         const mine=myParticipantRef.current;
         if (payload.participant_id===mine?.id) {
-          setMyParticipant(p=>p?{...p,status:"completed",total_score:(p.total_score||0)+payload.score}:p);
-          toast({title:`🏆 Your score: ${payload.score} pts`});
+          // payload.score is the grand total after all stages
+          setMyParticipant(p=>p?{...p,status:"completed",total_score:payload.score}:p);
+          toast({title:`🏆 All stages complete! Your total: ${payload.score} pts`});
         }
       })
       .on("broadcast",{event:"STAGE_CHANGE"},({payload}:any)=>{
@@ -939,9 +956,9 @@ export default function MustabaqahPage() {
     return { num, label: line, labelAr: "", surah: 0, ayah: 0, surahName: "", surahAr: "" };
   };
 
-  const buildTiles = (comp: Competition): Tile[] => {
+  const buildTiles = (comp: Competition, stageNum?: number): Tile[] => {
     const count = comp.scope_config?.tiles_per_stage ?? 10;
-    const stageKey = String(comp.current_stage);
+    const stageKey = String(stageNum ?? comp.current_stage);
 
     // 1. Prefer per-stage questions from the live editor
     const stageLive = stageQuestions[stageKey]?.split("\n").map(s=>s.trim()).filter(Boolean) ?? [];
@@ -980,14 +997,17 @@ export default function MustabaqahPage() {
     setScoreBreak({tajweed:"",memorize:"",fluency:"",voice:""}); setJudgeComment("");
     setPickedTile(null); setAyahText(null);
     setTilePickerCollapsed(false);
-    const tiles = buildTiles(competition);
+    // Always start this participant at stage 1 — they'll do ALL stages in one sitting
+    setActiveParticipantStage(1);
+    setPickerStage(1);
+    const tiles = buildTiles(competition, 1);
     setStageTiles(tiles); setShowTilePicker(true);
     setActiveP({...p, status:"called"}); setCompetition(c=>c?{...c,current_participant_id:p.id}:c);
     setJudgeTab("controls");
 
     // Broadcast immediately for fast delivery
     broadcast("CALLED",{participant_id:p.id,participant_name:p.participant_name});
-    broadcast("TILES_SHOWN",{tiles,stage:competition.current_stage,picker_participant_id:p.id});
+    broadcast("TILES_SHOWN",{tiles,stage:1,picker_participant_id:p.id});
     playCalled();
 
     // Persist tiles + caller info to DB — participant polls this as a fallback if
@@ -1006,7 +1026,7 @@ export default function MustabaqahPage() {
     ]);
 
     // Re-broadcast after DB write to catch late subscribers
-    setTimeout(()=>broadcast("TILES_SHOWN",{tiles,stage:competition.current_stage,picker_participant_id:p.id}), 800);
+    setTimeout(()=>broadcast("TILES_SHOWN",{tiles,stage:1,picker_participant_id:p.id}), 800);
   };
 
   const pickTile = (tile:Tile) => {
@@ -1029,7 +1049,7 @@ export default function MustabaqahPage() {
     supabase.from("musabaqah_participants" as any).update({status:"reciting"}).eq("id",activeP.id);
     const {data:att}=await supabase.from("musabaqah_attempts" as any).insert({
       competition_id:competition.id, participant_id:activeP.id,
-      stage_number:competition.current_stage,
+      stage_number:activeParticipantStage,
       scope_label:pickedTile.label, scope_label_ar:pickedTile.labelAr,
       bell_count:0, status:"reciting",
     }).select().single();
@@ -1096,7 +1116,7 @@ export default function MustabaqahPage() {
         const { data: att } = await supabase.from("musabaqah_attempts" as any).insert({
           competition_id: competition.id,
           participant_id: activeP.id,
-          stage_number: competition.current_stage,
+          stage_number: activeParticipantStage,
           scope_label: pickedTile?.label || "Manual entry",
           scope_label_ar: pickedTile?.labelAr || "",
           bell_count: bellCount,
@@ -1113,22 +1133,89 @@ export default function MustabaqahPage() {
         SCORING_CRITERIA.forEach(c => { const v = Math.min(Number(scoreBreak[c.key]) || 0, c.max); breakdown[c.key] = v; total += v; });
       } else { total = Number(scoreBreak.tajweed) || 0; }
       total = Math.max(0, total - bellCount * 2);
+
+      // Save this stage's attempt
       await supabase.from("musabaqah_attempts" as any).update({
         judge_score: total, score_breakdown: breakdown,
         judge_comment: judgeComment, bell_count: bellCount, status: "scored",
       } as any).eq("id", attempt.id);
+
+      const newStageScores = { ...(activeP.stage_scores || {}), [activeParticipantStage]: total };
       const newTotal = (activeP.total_score || 0) + total;
-      await supabase.from("musabaqah_participants" as any).update({
-        status: "completed", total_score: newTotal,
-        stage_scores: { ...(activeP.stage_scores || {}), [competition!.current_stage]: total },
-      } as any).eq("id", activeP.id);
-      broadcast("SCORE_SUBMITTED", { participant_id: activeP.id, score: total });
-      toast({ title: `✅ Score saved: ${total} pts` });
-      setActiveP(null); setCurAttempt(null); setShowScore(false);
-      setBellCount(0); setTimerSecs(0); setElapsedSecs(0); elapsedRef.current = 0;
-      setTimerActive(false); setTimerExpired(false);
-      setShowTilePicker(false); setPickedTile(null); setAyahText(null);
-      setJudgeTab("roster"); loadParticipants(); loadAttempts();
+
+      const nextStage = activeParticipantStage + 1;
+      const hasMoreStages = nextStage <= competition.total_stages;
+
+      if (hasMoreStages) {
+        // ── More stages remain — keep participant called, show next stage tiles ──────
+        await supabase.from("musabaqah_participants" as any).update({
+          total_score: newTotal,
+          stage_scores: newStageScores,
+          status: "called",
+        } as any).eq("id", activeP.id);
+
+        // Update local activeP so UI reflects new total and reset status
+        setActiveP(p => p ? { ...p, total_score: newTotal, stage_scores: newStageScores, status: "called" } : p);
+
+        // Advance to next stage for this participant
+        setActiveParticipantStage(nextStage);
+        setPickerStage(nextStage);
+
+        // Generate fresh tiles for next stage
+        const newTiles = buildTiles(competition, nextStage);
+        setStageTiles(newTiles);
+        setPickedTile(null);
+        setAyahText(null);
+        setShowTilePicker(true);
+        setPickerParticipantId(activeP.id);
+        setTilePickerCollapsed(false);
+        setCurAttempt(null);
+        setBellCount(0);
+        setTimerSecs(judgeTimerDuration);
+        setElapsedSecs(0);
+        elapsedRef.current = 0;
+        setTimerActive(false);
+        setTimerExpired(false);
+        setShowScore(false);
+        setScoreBreak({ tajweed: "", memorize: "", fluency: "", voice: "" });
+        setJudgeComment("");
+
+        // Persist new tiles to DB so participant polling fallback works
+        const newCfg = {
+          ...(competition.scope_config || {}),
+          current_tiles: newTiles,
+          current_called_id: activeP.id,
+          current_stage_num: nextStage,
+        };
+        supabase.from("musabaqah_competitions" as any)
+          .update({ scope_config: newCfg } as any)
+          .eq("id", competition.id);
+
+        // Notify participant: new stage starting
+        broadcast("NEXT_STAGE", { participant_id: activeP.id, stage: nextStage, prev_score: total });
+        // Send new tiles
+        broadcast("TILES_SHOWN", { tiles: newTiles, stage: nextStage, picker_participant_id: activeP.id });
+        setTimeout(() => broadcast("TILES_SHOWN", { tiles: newTiles, stage: nextStage, picker_participant_id: activeP.id }), 800);
+
+        toast({ title: `✅ Stage ${activeParticipantStage} scored: ${total} pts — Now Stage ${nextStage}!` });
+        loadAttempts();
+      } else {
+        // ── All stages complete for this participant ───────────────────────────────
+        await supabase.from("musabaqah_participants" as any).update({
+          status: "completed", total_score: newTotal,
+          stage_scores: newStageScores,
+        } as any).eq("id", activeP.id);
+
+        broadcast("SCORE_SUBMITTED", { participant_id: activeP.id, score: newTotal });
+        toast({ title: `🏆 All ${competition.total_stages} stages complete! Total: ${newTotal} pts` });
+
+        setActiveP(null); setCurAttempt(null); setShowScore(false);
+        setBellCount(0); setTimerSecs(0); setElapsedSecs(0); elapsedRef.current = 0;
+        setTimerActive(false); setTimerExpired(false);
+        setShowTilePicker(false); setPickedTile(null); setAyahText(null);
+        setActiveParticipantStage(1);
+        setJudgeTab("roster"); loadParticipants(); loadAttempts();
+      }
     } catch (err: any) {
       toast({ title: "Save failed", description: err.message, variant: "destructive" });
     } finally {
@@ -1959,6 +2046,21 @@ export default function MustabaqahPage() {
                     {timerActive&&<span style={{color:timerDanger?RED:timerWarning?GOLD:GREEN,fontWeight:800,fontSize:12,display:"flex",alignItems:"center",gap:2}}><Clock size={9}/>{fmt(timerSecs)}</span>}
                     {bellCount>0&&<span style={{color:GOLD,fontSize:10}}>🔔×{bellCount} −{bellCount*2}pts</span>}
                   </div>
+                  {/* Stage progress dots for current participant */}
+                  <div style={{display:"flex",alignItems:"center",gap:4,marginTop:4}}>
+                    <span style={{color:"rgba(255,255,255,.3)",fontSize:9}}>Stage:</span>
+                    {Array.from({length:competition.total_stages},(_,i)=>{
+                      const s=i+1;
+                      const done=s<activeParticipantStage;
+                      const current=s===activeParticipantStage;
+                      return(
+                        <div key={s} style={{width:16,height:16,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,fontWeight:800,background:done?GOLD:current?`${GOLD}55`:"rgba(255,255,255,.07)",border:`1px solid ${done||current?GOLD:"rgba(255,255,255,.12)"}`,color:done?G:current?GOLD:"rgba(255,255,255,.25)",flexShrink:0,transition:"all .3s"}}>
+                          {done?"✓":s}
+                        </div>
+                      );
+                    })}
+                    <span style={{color:GOLD,fontWeight:800,fontSize:10}}>{activeParticipantStage}/{competition.total_stages}</span>
+                  </div>
                 </div>
               </div>
             )}
@@ -2038,7 +2140,7 @@ export default function MustabaqahPage() {
                     </button>
                     {!tilePickerCollapsed&&(
                       <div style={{padding:"0 9px 9px"}}>
-                        <NumberTilePicker tiles={stageTiles} pickedNum={pickedTile?.num??null} onPick={()=>{}} canPick={false} stage={competition.current_stage}/>
+                        <NumberTilePicker tiles={stageTiles} pickedNum={pickedTile?.num??null} onPick={()=>{}} canPick={false} stage={activeParticipantStage}/>
                       </div>
                     )}
                     {pickedTile&&(
@@ -2056,7 +2158,7 @@ export default function MustabaqahPage() {
 
                 {showScorePanel&&(
                   <div style={{background:"rgba(201,168,76,.06)",border:"1px solid rgba(201,168,76,.2)",borderRadius:12,padding:"13px"}}>
-                    <div style={{color:GOLD,fontWeight:800,fontSize:13,marginBottom:10}}>📝 Score — {activeP?.participant_name}</div>
+                    <div style={{color:GOLD,fontWeight:800,fontSize:13,marginBottom:10}}>📝 Stage {activeParticipantStage} Score — {activeP?.participant_name}</div>
                     {competition.use_criteria_scoring ? (
                       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:9}}>
                         {SCORING_CRITERIA.map(c=>(
@@ -2203,6 +2305,21 @@ export default function MustabaqahPage() {
                 <div style={{textAlign:"center",marginBottom:10}}>
                   <div style={{fontSize:28,animation:"floatUp 2s ease-in-out infinite"}}>🎙️</div>
                   <div style={{color:GOLD,fontWeight:900,fontSize:15,letterSpacing:.5,marginTop:5}}>YOU HAVE BEEN CALLED!</div>
+                  {/* Stage progress */}
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:5,marginTop:6,marginBottom:4}}>
+                    {Array.from({length:competition.total_stages},(_,i)=>{
+                      const s=i+1;
+                      const stageScores=myParticipant.stage_scores||{};
+                      const isDone=stageScores[s]!==undefined;
+                      const isCurrent=s===pickerStage;
+                      return(
+                        <div key={s} style={{width:20,height:20,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:800,background:isDone?GOLD:isCurrent?`${GOLD}55`:"rgba(255,255,255,.07)",border:`1.5px solid ${isDone||isCurrent?GOLD:"rgba(255,255,255,.12)"}`,color:isDone?G:isCurrent?GOLD:"rgba(255,255,255,.25)",flexShrink:0,transition:"all .3s"}}>
+                          {isDone?"✓":s}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div style={{color:"rgba(255,255,255,.5)",fontSize:11,fontWeight:700}}>Stage {pickerStage} of {competition.total_stages}</div>
                   {!pickedTile
                     ?<div style={{color:"rgba(255,255,255,.65)",fontSize:12,marginTop:3,fontWeight:700}}>👇 Pick your number below</div>
                     :<div style={{color:GREEN,fontSize:12,marginTop:3,fontWeight:700}}>✅ Selected — wait for judge to start</div>
@@ -2215,7 +2332,7 @@ export default function MustabaqahPage() {
                   </button>
                 )}
                 {(!pickedTile||!tilePickerCollapsed)&&stageTiles.length>0&&(
-                  <NumberTilePicker tiles={stageTiles} pickedNum={pickedTile?.num??null} onPick={!pickedTile?pickTile:()=>{}} canPick={!pickedTile} stage={competition.current_stage}/>
+                  <NumberTilePicker tiles={stageTiles} pickedNum={pickedTile?.num??null} onPick={!pickedTile?pickTile:()=>{}} canPick={!pickedTile} stage={pickerStage}/>
                 )}
                 {/* Waiting for tiles — shown when broadcast/DB hasn't delivered yet */}
                 {!pickedTile&&stageTiles.length===0&&(
@@ -2233,6 +2350,21 @@ export default function MustabaqahPage() {
                 <div style={{textAlign:"center",marginBottom:9}}>
                   <div style={{fontSize:26,animation:"floatUp 1.5s ease-in-out infinite"}}>🎙️</div>
                   <div style={{color:GREEN,fontWeight:900,fontSize:15,letterSpacing:.5,marginTop:5}}>NOW RECITING</div>
+                  {/* Stage progress */}
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:5,marginTop:6}}>
+                    {Array.from({length:competition.total_stages},(_,i)=>{
+                      const s=i+1;
+                      const stageScores=myParticipant.stage_scores||{};
+                      const isDone=stageScores[s]!==undefined;
+                      const isCurrent=s===pickerStage;
+                      return(
+                        <div key={s} style={{width:20,height:20,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:800,background:isDone?GOLD:isCurrent?`${GREEN}55`:"rgba(255,255,255,.07)",border:`1.5px solid ${isDone?GOLD:isCurrent?GREEN:"rgba(255,255,255,.12)"}`,color:isDone?G:isCurrent?GREEN:"rgba(255,255,255,.25)",flexShrink:0,transition:"all .3s"}}>
+                          {isDone?"✓":s}
+                        </div>
+                      );
+                    })}
+                    <span style={{color:GREEN,fontWeight:800,fontSize:11}}>Stage {pickerStage}/{competition.total_stages}</span>
+                  </div>
                   {bellCount>0&&<div style={{color:RED,fontWeight:700,fontSize:11,marginTop:2}}>🔔 {bellCount} error{bellCount!==1?"s":""} · −{bellCount*2} pts</div>}
                 </div>
                 {pickedTile&&(
@@ -2249,9 +2381,24 @@ export default function MustabaqahPage() {
             {myParticipant.status==="completed"&&(
               <div className="glass-card" style={{borderRadius:14,padding:"18px",textAlign:"center"}}>
                 <div style={{fontSize:36,marginBottom:5}}>✅</div>
-                <div style={{color:GREEN,fontWeight:800,fontSize:15}}>Recitation Complete!</div>
+                <div style={{color:GREEN,fontWeight:800,fontSize:15}}>All Stages Complete!</div>
                 <div style={{color:GOLD,fontWeight:900,fontSize:36,marginTop:5}}>{myParticipant.total_score}</div>
                 <div style={{color:"rgba(255,255,255,.35)",fontSize:11}}>Total Points</div>
+                {/* Per-stage scores breakdown */}
+                {Object.keys(myParticipant.stage_scores||{}).length>0&&(
+                  <div style={{display:"flex",justifyContent:"center",gap:6,marginTop:12,flexWrap:"wrap"}}>
+                    {Array.from({length:competition.total_stages},(_,i)=>{
+                      const s=i+1;
+                      const score=(myParticipant.stage_scores||{})[s];
+                      return score!==undefined?(
+                        <div key={s} style={{background:"rgba(255,255,255,.05)",border:"1px solid rgba(201,168,76,.2)",borderRadius:8,padding:"6px 10px",minWidth:44}}>
+                          <div style={{color:"rgba(255,255,255,.35)",fontSize:9,fontWeight:700,letterSpacing:.5}}>S{s}</div>
+                          <div style={{color:GOLD,fontWeight:800,fontSize:14}}>{score}</div>
+                        </div>
+                      ):null;
+                    })}
+                  </div>
+                )}
               </div>
             )}
           </div>
