@@ -1,7 +1,7 @@
 // src/pages/admin/HifdhAdminReview.tsx
 // Admin review of all students' daily Hifdh revision sessions
 
-import { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import {
   Loader2, Search, ChevronDown, ChevronUp, BookOpen,
@@ -69,6 +69,106 @@ function ScoreRing({pct,size=52}:{pct:number;size?:number}) {
       <text x="50%" y="50%" textAnchor="middle" dominantBaseline="central"
         fill={col} fontSize={size*0.22} fontWeight={900}>{pct}%</text>
     </svg>
+  );
+}
+
+/* ── AdminAudioPlayer ───────────────────────────────────────────── */
+function AdminAudioPlayer({url,studentName,logDate}:{url:string;studentName:string;logDate:string}) {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [playing,  setPlaying]  = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [loaded,   setLoaded]   = useState(false);
+
+  useEffect(()=>{
+    const el=audioRef.current; if(!el) return;
+    const onMeta =()=>{setDuration(el.duration);setLoaded(true);};
+    const onTime =()=>setProgress(el.currentTime/(el.duration||1));
+    const onEnded=()=>{setPlaying(false);setProgress(0);el.currentTime=0;};
+    el.addEventListener("loadedmetadata",onMeta);
+    el.addEventListener("timeupdate",onTime);
+    el.addEventListener("ended",onEnded);
+    return()=>{el.removeEventListener("loadedmetadata",onMeta);
+               el.removeEventListener("timeupdate",onTime);
+               el.removeEventListener("ended",onEnded);};
+  },[url]);
+
+  const toggle=()=>{
+    const el=audioRef.current; if(!el) return;
+    if(playing){el.pause();setPlaying(false);}
+    else{el.play().catch(()=>{});setPlaying(true);}
+  };
+  const seek=(e:React.MouseEvent<HTMLDivElement>)=>{
+    const el=audioRef.current; if(!el) return;
+    const rect=e.currentTarget.getBoundingClientRect();
+    const ratio=Math.max(0,Math.min(1,(e.clientX-rect.left)/rect.width));
+    el.currentTime=ratio*el.duration; setProgress(ratio);
+  };
+  const fmt=(s:number)=>`${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`;
+
+  return(
+    <div style={{background:`linear-gradient(135deg,${G}08,${GM}12)`,
+      border:`2px solid ${GOLD}55`,borderRadius:16,padding:"14px 16px",marginBottom:4}}>
+      <audio ref={audioRef} src={url} preload="metadata"/>
+      {/* Header row */}
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+        <div style={{width:40,height:40,borderRadius:"50%",
+          background:`linear-gradient(135deg,${G},${GM})`,flexShrink:0,
+          display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <Mic size={17} color={GOLD}/>
+        </div>
+        <div style={{flex:1}}>
+          <p style={{margin:0,fontWeight:800,fontSize:13,color:G}}>
+            🎙 Recitation Recording
+          </p>
+          <p style={{margin:0,fontSize:10,color:"#6B7280"}}>
+            {studentName} · {fmtDate(logDate)}
+            {loaded&&` · ${fmt(duration)}`}
+          </p>
+        </div>
+        {/* Play / Pause */}
+        <button onClick={toggle} style={{width:48,height:48,borderRadius:"50%",border:"none",
+          cursor:"pointer",flexShrink:0,
+          background:`linear-gradient(135deg,${GOLD},#e6c97a)`,
+          display:"flex",alignItems:"center",justifyContent:"center",
+          boxShadow:`0 3px 14px ${GOLD}66`}}>
+          {playing
+            ?<span style={{display:"flex",gap:3}}>
+               <span style={{width:4,height:16,background:"#061409",borderRadius:2}}/>
+               <span style={{width:4,height:16,background:"#061409",borderRadius:2}}/>
+             </span>
+            :<span style={{marginLeft:3,display:"flex",alignItems:"center"}}>
+               <svg width="16" height="16" viewBox="0 0 24 24" fill="#061409"><polygon points="5,3 19,12 5,21"/></svg>
+             </span>}
+        </button>
+      </div>
+      {/* Seekbar */}
+      <div onClick={seek} style={{height:7,borderRadius:4,background:"#E5E7EB",
+        cursor:"pointer",overflow:"hidden",marginBottom:6}}>
+        <div style={{height:"100%",borderRadius:4,
+          background:`linear-gradient(to right,${GOLD},#e6c97a)`,
+          width:`${progress*100}%`,transition:"width .1s"}}/>
+      </div>
+      <div style={{display:"flex",justifyContent:"space-between",fontSize:9,
+        color:"#9CA3AF",fontWeight:600,marginBottom:10}}>
+        <span>{fmt(audioRef.current?.currentTime||0)}</span>
+        <span>{loaded?fmt(duration):"--:--"}</span>
+      </div>
+      {/* Download */}
+      <a href={url} download
+        style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,
+          padding:"9px",borderRadius:10,background:"#FFFFFF",
+          border:"1.5px solid #E5E7EB",fontSize:11,fontWeight:700,
+          color:G,textDecoration:"none"}}>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2.5" strokeLinecap="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="7 10 12 15 17 10"/>
+          <line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+        Download Audio File
+      </a>
+    </div>
   );
 }
 
@@ -304,15 +404,7 @@ export default function HifdhAdminReview() {
 
                   {/* Audio */}
                   {sd?.audio_url&&(
-                    <div style={{background:W,borderRadius:12,border:"1px solid #E5E7EB",padding:"10px 14px"}}>
-                      <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
-                        <Mic size={12} color={G}/>
-                        <span style={{fontSize:11,fontWeight:800,color:G,textTransform:"uppercase",letterSpacing:.4}}>
-                          Recitation Audio
-                        </span>
-                      </div>
-                      <audio controls src={sd.audio_url} style={{width:"100%",height:34,borderRadius:8}}/>
-                    </div>
+                    <AdminAudioPlayer url={sd.audio_url} studentName={log.student_name??""} logDate={log.log_date}/>
                   )}
 
                   {/* Page tabs */}
