@@ -942,11 +942,11 @@ export default function HifdhRevisionTracker() {
                       </div>
 
                       {/* Audio + page-by-page breakdown */}
-                      {expandSess===log.id&&log.session_data&&(
+                      {expandSess===log.id&&(
                         <div style={{marginBottom:10,display:"flex",flexDirection:"column",gap:8}}>
 
                           {/* Audio player — direct URL (daily revision) or signed path (legacy) */}
-                          {(log.session_data.audio_url||log.session_data.audio_path)&&(
+                          {(log.session_data?.audio_url||log.session_data?.audio_path)&&(
                             <div style={{padding:"10px 14px",borderRadius:12,
                               background:`${G}0d`,border:`1px solid ${G}22`,
                               display:"flex",alignItems:"center",gap:10}}>
@@ -960,11 +960,11 @@ export default function HifdhRevisionTracker() {
                                   {log.session_data.audio_url ? "Click to play recording" : "Tap to listen"}
                                 </div>
                               </div>
-                              {log.session_data.audio_url ? (
+                              {log.session_data?.audio_url ? (
                                 <audio controls src={log.session_data.audio_url}
                                   style={{height:36,borderRadius:8,flex:1,maxWidth:180}}/>
                               ) : (
-                                <button onClick={()=>playAudio(log.id,log.session_data.audio_path)}
+                                <button onClick={()=>playAudio(log.id,log.session_data?.audio_path)}
                                   disabled={audioLoading===log.id}
                                   style={{width:44,height:44,borderRadius:12,border:"none",cursor:"pointer",
                                     display:"flex",alignItems:"center",justifyContent:"center",
@@ -978,7 +978,7 @@ export default function HifdhRevisionTracker() {
                           )}
 
                           {/* Verse-by-verse breakdown per page (daily revision data) */}
-                          {log.session_data.page_results?.map((pr: any, pi: number) => (
+                          {log.session_data?.page_results?.map((pr: any, pi: number) => (
                             <div key={pi} style={{background:"#fffdf6",borderRadius:14,
                               border:`2px solid ${GOLD}55`}}>
                               {/* Page header */}
@@ -1081,12 +1081,25 @@ export default function HifdhRevisionTracker() {
                           ))}
 
                           {/* Fallback: flat transcript only (no page_results) */}
-                          {!log.session_data.page_results?.length && log.session_data.transcript&&(
+                          {!log.session_data?.page_results?.length && log.session_data?.transcript&&(
                             <div style={{padding:"10px 12px",borderRadius:12,background:"#f8f8f8",border:`1px solid ${BRD}`}}>
                               <div style={{fontSize:10,fontWeight:800,color:G,marginBottom:6}}>🎙 Transcript</div>
                               <p style={{fontSize:14,color:"#1a1a1a",lineHeight:2.2,direction:"rtl" as const,
                                 fontFamily:"'Amiri',serif",textAlign:"right" as const,wordBreak:"break-word" as const,margin:0}}>
                                 {log.session_data.transcript}
+                              </p>
+                            </div>
+                          )}
+
+                          {/* No session data saved yet */}
+                          {!log.session_data&&(
+                            <div style={{padding:"14px",borderRadius:12,background:"#FFF7ED",
+                              border:"1px solid #FED7AA",textAlign:"center" as const}}>
+                              <p style={{margin:0,fontSize:12,color:"#92400E",fontWeight:600}}>
+                                ⏳ Session data not yet saved — student may still be in progress, or the session submit failed.
+                              </p>
+                              <p style={{margin:"6px 0 0",fontSize:11,color:"#B45309"}}>
+                                Ask the student to re-open and complete their session if stuck.
                               </p>
                             </div>
                           )}
