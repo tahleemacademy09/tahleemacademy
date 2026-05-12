@@ -159,33 +159,55 @@ const toAr = (n: number) => String(n).replace(/[0-9]/g, d => "٠١٢٣٤٥٦٧٨
 const fmtTime = (s: number) =>
   `${Math.floor(s / 60).toString().padStart(2, "0")}:${(s % 60).toString().padStart(2, "0")}`;
 
-function stripDiacritics(t: string) {
-  return t.replace(/[\u064B-\u065F\u0670\u0610-\u061A\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED]/g, "");
+function normalizeArabic(t: string): string {
+  return t
+    // 1. Convert dagger alef \u0670 → regular Alef \u0627 BEFORE the bulk strip.
+    //    In Uthmani script this represents an actual long vowel 'a' that Groq
+    //    writes as a full Alef — e.g. عَٰقِبَتَهُمَا → عاقبتهما.
+    .replace(/\u0670/g, "\u0627")
+    // 2. Strip remaining tashkeel + Quranic annotation characters
+    .replace(/[\u064B-\u065F\u0610-\u061A\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED]/g, "")
+    // 3. Normalise all Alef variants → plain Alef ا
+    //    Alef Wasla ٱ(\u0671) appears on virtually every "ال" in ar.uthmani text
+    .replace(/[\u0671\u0622\u0623\u0625]/g, "\u0627")
+    // 4. Alef Maqsura ى → Ya ي (Groq always uses Ya)
+    .replace(/\u0649/g, "\u064A")
+    // 5. Ta Marbuta ة → Ha ه
+    .replace(/\u0629/g, "\u0647")
+    // 6. Strip Tatweel / Kashida ـ
+    .replace(/\u0640/g, "")
+    // 7. Strip Quranic end-of-ayah ۝ and rub-el-hizb ۞ markers
+    .replace(/[\u06DD\u06DE]/g, "");
 }
 
+function stripDiacritics(t: string) { return normalizeArabic(t); }
+
 function compareWords(refText: string, gotText: string): WordResult[] {
-  const refWords = stripDiacritics(refText).split(/\s+/).filter(Boolean);
-  const gotWords = stripDiacritics(gotText).split(/\s+/).filter(Boolean);
+  // Keep originals for display; normalize separately for matching
+  const origRef = refText.split(/\s+/).filter(Boolean);
+  const normRef = origRef.map(w => normalizeArabic(w));
+  const normGot = normalizeArabic(gotText).split(/\s+/).filter(Boolean);
   const results: WordResult[] = [];
   const usedGot = new Set<number>();
 
-  for (const rw of refWords) {
+  for (let ri = 0; ri < normRef.length; ri++) {
+    const rw = normRef[ri];
     let found = false;
-    for (let i = 0; i < gotWords.length; i++) {
+    for (let i = 0; i < normGot.length; i++) {
       if (usedGot.has(i)) continue;
-      const gw = gotWords[i];
+      const gw = normGot[i];
       const match =
         rw === gw ||
         (rw.length > 3 && gw.length > 3 &&
           (rw.startsWith(gw.slice(0, 3)) || gw.startsWith(rw.slice(0, 3))));
       if (match) {
-        results.push({ word: rw, status: "correct" });
+        results.push({ word: origRef[ri], status: "correct" });
         usedGot.add(i);
         found = true;
         break;
       }
     }
-    if (!found) results.push({ word: rw, status: "missing" });
+    if (!found) results.push({ word: origRef[ri], status: "missing" });
   }
   return results;
 }
