@@ -291,11 +291,15 @@ export default function GlobalClassroomOverlay() {
     await h.pip();
   }, []);
 
-  /* ── Minimize button (↓) — direct user gesture, always works ── */
+  /* ── Minimize button (↓) — just shows the floating pill, no PiP ── */
   const handleMinimize = useCallback(() => {
     setMinimized(true);
-    triggerPiP();
-  }, [setMinimized, triggerPiP]);
+    // NOTE: We intentionally do NOT call triggerPiP() here.
+    // On Android Chrome, requestPictureInPicture() opens a floating window
+    // that when tapped fires leavepictureinpicture → handleReturn, causing
+    // a navigation loop. The floating pill (rendered when minimized=true)
+    // gives the same "background call" UX without the PiP navigation issue.
+  }, [setMinimized]);
 
   /* ── Back button (popstate) ──────────────────────────────────────────
      Android hardware back button fires popstate.
