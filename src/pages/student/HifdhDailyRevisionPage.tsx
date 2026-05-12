@@ -1131,8 +1131,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
               </div>
             </div>
 
-            <div style={{flex:1,overflowY:"auto",padding:"16px 16px 28px",
-              display:"flex",flexDirection:"column",gap:14}}>
+            <div style={{flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch",padding:"16px 16px 28px",
+              display:"flex",flexDirection:"column",gap:14,overscrollBehavior:"contain"}}>
               {/* Progress bar */}
               <div style={{height:4,borderRadius:4,background:"#E5E7EB",overflow:"hidden"}}>
                 <div style={{height:"100%",borderRadius:4,
@@ -1150,7 +1150,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
               {(()=>{
                 const q=questions[qIdx]; const ans=answers[qIdx];
                 return(
-                  <div style={{background:W,borderRadius:16,border:`1px solid ${BRD}`,overflow:"hidden",
+                  <div style={{background:W,borderRadius:16,border:`1px solid ${BRD}`,
                     boxShadow:"0 2px 12px rgba(0,0,0,.07)"}}>
                     <div style={{padding:"14px 16px",background:`${G1}0a`,borderBottom:`1px solid ${BRD}`}}>
                       <p style={{margin:"0 0 6px",fontSize:9,fontWeight:800,color:"#9CA3AF",
@@ -1390,7 +1390,19 @@ export default function HifdhDailyRevisionPage() {
       ]);
 
       if((pf as any)?.full_name) setStudentName((pf as any).full_name);
-      if(asgn) setAssignment(asgn as Assignment);
+      if(asgn) {
+        // The RPC stores programStart/programDays/daysOff inside the notes JSON field.
+        // Enrich the assignment so getTodayPages() can compute the correct page.
+        let extra: any = {};
+        try { extra = JSON.parse((asgn as any).notes || "{}"); } catch {}
+        const enriched: Assignment = {
+          ...(asgn as Assignment),
+          program_start: extra.programStart ?? (asgn as any).program_start ?? (asgn as any).starts_on,
+          program_days:  extra.programDays  ?? (asgn as any).program_days,
+          days_off:      extra.daysOff      ?? (asgn as any).days_off ?? [],
+        };
+        setAssignment(enriched);
+      }
       const allLogs=(lgs??[]) as DailyLog[];
       setLogs(allLogs);
       setTodayLog(allLogs.find(l=>l.log_date===today)??null);
