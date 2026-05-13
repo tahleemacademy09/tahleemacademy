@@ -134,7 +134,7 @@ function LiveClassesTab({user,t}:any){
         if(error)throw error;
         await load();
       }
-      joinClass({id:subId,title:subTitle});
+      joinClass({id:subId,title:subTitle},{autoJoin:true});
     }catch(e:any){toast({title:t("Failed to start","فشل"),description:e?.message,variant:"destructive"});}
     setStarting(null);
   };
@@ -186,7 +186,7 @@ function LiveClassesTab({user,t}:any){
                   </div>
                   {lv?(
                     <button style={{...bs(true),background:"#DC2626",display:"flex",alignItems:"center",gap:5,flexShrink:0}}
-                      onClick={()=>joinClass({id:slot.subject_id,title})}>
+                      onClick={()=>joinClass({id:slot.subject_id,title},{autoJoin:true})}>
                       <Play size={13}/>{t("Join","انضم")}
                     </button>
                   ):(
@@ -215,7 +215,7 @@ function LiveClassesTab({user,t}:any){
                 {s.topic&&<div style={{fontSize:12,color:"#6b7280"}}>{s.topic}</div>}
               </div>
               <button style={{...bs(true),background:"#DC2626",display:"flex",alignItems:"center",gap:5}}
-                onClick={()=>joinClass({id:s.subject_id,title:s.subjects?.title})}>
+                onClick={()=>joinClass({id:s.subject_id,title:s.subjects?.title},{autoJoin:true})}>
                 <Play size={13}/>{t("Join","انضم")}
               </button>
             </div>
@@ -341,7 +341,7 @@ function TimetableTab({user,t,language}:any){
         if(error)throw error;
         await load();
       }
-      joinClass({id:slot.subject_id,title});
+      joinClass({id:slot.subject_id,title},{autoJoin:true});
     }catch(e:any){toast({title:t("Failed to start","فشل"),description:e?.message,variant:"destructive"});}
     setStarting(null);
   };
@@ -411,7 +411,7 @@ function TimetableTab({user,t,language}:any){
                   {/* KEY FIX: was navigate("/teacher/classes"), now calls joinClass/startSlot */}
                   {lv?(
                     <button style={{...bs(true),background:"#DC2626",padding:"8px 14px",display:"flex",alignItems:"center",gap:5,flexShrink:0}}
-                      onClick={()=>joinClass({id:slot.subject_id,title})}>
+                      onClick={()=>joinClass({id:slot.subject_id,title},{autoJoin:true})}>
                       <Play size={13}/>{t("Join","انضم")}
                     </button>
                   ):(
@@ -505,7 +505,7 @@ function SubjectsTab({user,t,language}:any){
           {selected.title_ar&&<div style={{fontSize:12,color:GOLD,direction:"rtl"}}>{selected.title_ar}</div>}
           <div style={{fontSize:12,color:"#7a9e88",marginTop:2}}>{counts[selected.id]?.students||0} {t("students","طلاب")} · {counts[selected.id]?.materials||0} {t("materials","مواد")}</div>
         </div>
-        <button style={{...bs(true),display:"flex",alignItems:"center",gap:5}} onClick={()=>joinClass(selected)}>
+        <button style={{...bs(true),display:"flex",alignItems:"center",gap:5}} onClick={()=>joinClass(selected,{autoJoin:true})}>
           <Play size={13}/>{t("Start Class","ابدأ الفصل")}
         </button>
       </div>
