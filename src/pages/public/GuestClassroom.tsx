@@ -206,7 +206,15 @@ const RecordingController = ({ sessionId, classId, userName, isHost, onSavingCha
       )}
       {savingRecording && <Badge variant="secondary" className="gap-1"><Loader2 className="h-3 w-3 animate-spin" />Saving...</Badge>}
       {!recording && !savingRecording && (
-        <Button size="sm" variant="outline" onClick={startRecording} className="gap-1 text-xs"><Circle className="h-2 w-2 fill-red-500 text-red-500" />Record</Button>
+        <Button
+          size="sm"
+          onClick={startRecording}
+          className="gap-1.5 text-xs shrink-0 rounded-full font-semibold"
+          style={{ background: "#ef4444", color: "#fff", border: "none", minWidth: "76px" }}
+        >
+          <Circle className="h-2.5 w-2.5 fill-white text-white" />
+          Record
+        </Button>
       )}
       {recording && (
         <>
@@ -458,18 +466,8 @@ const GuestClassroom = () => {
             onLaunchQuiz={isHost ? () => setShowQuiz(true) : undefined}
           />
         ) : (
-          /* Fallback controls if no sessionId */
-          <div className="h-14 shrink-0 bg-background/95 backdrop-blur border-t flex items-center justify-center gap-3 px-4">
-            <Button size="sm" variant="outline" onClick={() => setChatOpen(!chatOpen)} className="gap-1">
-              <MessageSquare className="h-4 w-4" /> Chat
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => setParticipantsOpen(!participantsOpen)} className="gap-1">
-              <Users className="h-4 w-4" /> Participants
-            </Button>
-            <Button size="sm" variant="destructive" onClick={handleLeave} className="gap-1">
-              <LogOut className="h-4 w-4" /> Leave
-            </Button>
-          </div>
+          /* Fallback footer — just a safe-area divider line */
+          <div className="shrink-0 border-t" style={{ height: "1px", background: "rgba(255,255,255,0.08)" }} />
         )}
 
         {/* Live Quiz Overlay */}
