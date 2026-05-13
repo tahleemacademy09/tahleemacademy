@@ -4,9 +4,10 @@
 */
 
 import {
-  LiveKitRoom, RoomAudioRenderer, useRoomContext,
+  LiveKitRoom, RoomAudioRenderer, VideoConference, useRoomContext,
   useParticipants, useLocalParticipant,
 } from "@livekit/components-react";
+import ClassControls from "./ClassControls";
 // @ts-ignore
 import "@livekit/components-styles";
 import { Track, RoomEvent, ConnectionState } from "livekit-client";
@@ -2674,31 +2675,34 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               {isPrivileged&&<RecController sessionId={sessionId} subjectId={subject.id} userEmail={user?.email||""} onSavingChange={setSavingRec} stopRecRef={recStopRef}/>}
             </div>
           </div>
-          {/* ── Main content: VideoGrid + side panels ── */}
+          {/* ── Main content: VideoConference + side panels (mirrors GuestClassroom) ── */}
           <div style={{flex:1,display:"flex",minHeight:0,overflow:"hidden"}}>
-            <div style={{flex:1,position:"relative",minWidth:0}}>
-              <VideoGrid layout={layout}/>
+            {/* Participants panel (desktop) */}
+            {partOpen&&!isMobile&&(
+              <div className="w-56 bg-background border-e flex flex-col shrink-0">
+                <ClassParticipants sessionId={sessionId||""}/>
+              </div>
+            )}
+            {/* Video area — VideoConference has built-in expand/collapse arrows */}
+            <div className="flex-1 relative min-w-0">
+              <VideoConference/>
               <FloatingEmojiLayer emojis={floatingEmojis}/>
               <RaisedHandsOverlay hands={raisedHands}/>
               {matPanelOpen&&<SubjectMaterialsPanel subjectId={subject.id} subject={subject} onClose={()=>setMatPanelOpen(false)}/>}
               {matOpen&&<MatViewerInlineBridge material={matOpen} isPrivileged={isPrivileged} onClose={()=>setMatOpen(null)}/>}
             </div>
+            {/* Right panel: Chat/Polls (desktop) */}
             {chatOpen&&!isMobile&&(
               <div className="w-72 bg-background border-s flex flex-col shrink-0">
                 <div className="flex border-b">
                   <button
                     className={`flex-1 py-2 text-xs font-medium transition-colors ${sideTab==="chat" ? "border-b-2 border-primary text-foreground" : "text-muted-foreground"}`}
                     onClick={()=>{setSideTab("chat");setChatUnread(0);}}
-                  >
-                    💬 Chat
-                  </button>
+                  >💬 Chat</button>
                   <button
                     className={`flex-1 py-2 text-xs font-medium transition-colors ${sideTab==="polls" ? "border-b-2 border-primary text-foreground" : "text-muted-foreground"}`}
                     onClick={()=>setSideTab("polls")}
-                  >
-                    📊 Polls
-                  </button>
-                  <button onClick={()=>setChatOpen(false)} className="px-3 text-muted-foreground hover:text-foreground"><X className="h-4 w-4"/></button>
+                  >📊 Polls</button>
                 </div>
                 <div className="flex-1 overflow-hidden">{sideTab==="chat"?<ClassChatPanel sessionId={sessionId||""} sessionStartedAt={sessionInfo?.started_at??sessionInfo?.actual_start_time}/>:<ClassPolls sessionId={sessionId||""}/>}</div>
               </div>
@@ -2711,33 +2715,20 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               onDecline={()=>{setGroupReciteDialog(false);setGroupRecite(false);}}
             />
           )}
-          <BottomBarBridge
+          {/* Bottom bar — ClassControls (identical to GuestClassroom) */}
+          <ClassControls
             sessionId={sessionId||""}
             onToggleChat={()=>{setChatOpen(v=>!v);if(!chatOpen)setChatUnread(0);}}
             onToggleParticipants={()=>setPartOpen(v=>!v)}
             onEndClass={()=>setShowEnd(true)}
             onLeaveClass={leaveSession}
             chatUnread={chatUnread}
-            onToggleWhiteboard={()=>setWbOpen(v=>!v)}
-            whiteboardOpen={wbOpen}
-            onGroupRecite={handleGroupRecite}
-            groupReciteMode={groupRecite}
-            onShareMaterial={()=>setMatPicker(true)}
-            isPrivileged={isPrivileged}
-            canStudentWriteProp={canStudentWrite}
-            canStudentRecProp={canStudentRec}
-            onPermChange={(type:any,allow:any,room:any)=>handlePermChange(type,allow,room)}
-            onMinimize={onMinimize}
-            onToggleMaterials={()=>setMatPanelOpen(v=>!v)}
-            matPanelOpen={matPanelOpen}
-            onSendEmoji={addFloatingEmoji}
-            layout={layout}
-            onLayoutChange={setLayout}
+            onLaunchPoll={()=>{setChatOpen(true);setSideTab("polls");}}
             onLaunchQuiz={()=>setQuizOpen(true)}
           />
           {/* Mobile bottom sheets */}
           {isMobile&&chatOpen&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setChatOpen(false)}><div style={{position:"absolute",bottom:0,left:0,right:0,background:"#13181f",borderRadius:"22px 22px 0 0",maxHeight:"82vh",display:"flex",flexDirection:"column",animation:"slide-up .22s ease",paddingBottom:"env(safe-area-inset-bottom,0px)"}} onClick={e=>e.stopPropagation()}><div style={{display:"flex",alignItems:"center",padding:"12px 16px 0",flexShrink:0}}><div style={{flex:1,display:"flex"}}>{[["chat","💬","Chat"],["polls","📊","Polls"]].map(([k,ic,lb])=>(<button key={k} onClick={()=>setSideTab(k as any)} style={{flex:1,padding:"10px 6px",background:"none",border:"none",color:sideTab===k?"#fff":"rgba(255,255,255,.35)",fontSize:13,fontWeight:sideTab===k?700:400,borderBottom:sideTab===k?`2px solid ${TEAL}`:"2px solid transparent",cursor:"pointer"}}>{ic} {lb}</button>))}</div><button onClick={()=>setChatOpen(false)} style={{width:32,height:32,borderRadius:"50%",background:"rgba(255,255,255,.1)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><X style={{width:14,height:14}}/></button></div><div style={{flex:1,overflow:"hidden",minHeight:340}}>{sideTab==="chat"?<ClassChatPanel sessionId={sessionId||""} sessionStartedAt={sessionInfo?.started_at??sessionInfo?.actual_start_time}/>:<ClassPolls sessionId={sessionId||""}/>}</div></div></div>)}
-          {isMobile&&partOpen&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setPartOpen(false)}><div style={{position:"absolute",bottom:BAR_H,left:0,right:0,background:"#13181f",borderRadius:"22px 22px 0 0",maxHeight:"65vh",overflow:"auto"}} onClick={e=>e.stopPropagation()}><div style={{width:40,height:4,borderRadius:2,background:"rgba(255,255,255,.18)",margin:"12px auto 6px"}}/><ClassParticipants sessionId={sessionId||""}/></div></div>)}
+          {isMobile&&partOpen&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setPartOpen(false)}><div style={{position:"absolute",bottom:0,left:0,right:0,background:"#13181f",borderRadius:"22px 22px 0 0",maxHeight:"65vh",overflow:"auto"}} onClick={e=>e.stopPropagation()}><div style={{width:40,height:4,borderRadius:2,background:"rgba(255,255,255,.18)",margin:"12px auto 6px"}}/><ClassParticipants sessionId={sessionId||""}/></div></div>)}
           <LiveQuizOverlay sessionId={sessionId||""} isOpen={quizOpen} onClose={()=>setQuizOpen(false)}/>
         </LiveKitRoom>
       )}
