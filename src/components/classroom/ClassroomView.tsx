@@ -2092,7 +2092,7 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
       </div>,portal
     )}
 
-    {/* More menu — Reactions and Materials only */}
+    {/* More menu */}
     {moreOpen&&portal&&createPortal(
       <div style={{
         position:"fixed",
@@ -2100,13 +2100,63 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
         right:(morePos as any).right,
         background:"#0a2216",border:"1px solid rgba(255,255,255,.08)",
         borderRadius:18,boxShadow:"0 12px 48px rgba(0,0,0,.8)",
-        minWidth:200,zIndex:9200,overflow:"hidden",
+        minWidth:230,zIndex:9200,overflow:"hidden",
       }}>
-        <button onClick={()=>{setEmojisOpen(true);setMoreOpen(false);}} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"13px 16px",background:"none",border:"none",cursor:"pointer",color:"#fff",fontSize:13,borderBottom:"1px solid rgba(255,255,255,.05)",textAlign:"left"as const}}>
+        {/* Layout switcher */}
+        <div style={{padding:"10px 14px",borderBottom:"1px solid rgba(255,255,255,.06)"}}>
+          <div style={{fontSize:10,fontWeight:700,color:"rgba(255,255,255,.3)",letterSpacing:1,textTransform:"uppercase"as const,marginBottom:7}}>View</div>
+          <div style={{display:"flex",gap:4,flexWrap:"wrap"as const}}>
+            {(["horizontal","grid","spotlight","focus"] as const).map(m=>(
+              <button key={m} onClick={()=>{onLayoutChange(m);setMoreOpen(false);}} style={{
+                padding:"5px 9px",borderRadius:8,border:"1px solid",fontSize:11,fontWeight:600,cursor:"pointer",
+                borderColor:layout===m?"#22c55e":"rgba(255,255,255,.1)",
+                background:layout===m?"rgba(34,197,94,.12)":"rgba(255,255,255,.04)",
+                color:layout===m?"#22c55e":"rgba(255,255,255,.45)",
+                textTransform:"capitalize"as const,
+              }}>{m}</button>
+            ))}
+          </div>
+        </div>
+        {/* Participants (with live count) */}
+        <button onClick={()=>{onToggleParticipants();setMoreOpen(false);}} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"11px 14px",background:"none",border:"none",cursor:"pointer",color:"#fff",fontSize:13,borderBottom:"1px solid rgba(255,255,255,.05)",textAlign:"left"as const}}>
+          <Users style={{width:14,height:14,opacity:.6}}/> Participants
+          {liveCount>0&&<span style={{marginLeft:"auto",background:"rgba(34,197,94,.18)",color:"#4ade80",borderRadius:12,padding:"1px 7px",fontSize:11,fontWeight:700}}>{liveCount}</span>}
+        </button>
+        <button onClick={()=>{setEmojisOpen(true);setMoreOpen(false);}} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"11px 14px",background:"none",border:"none",cursor:"pointer",color:"#fff",fontSize:13,borderBottom:"1px solid rgba(255,255,255,.05)",textAlign:"left"as const}}>
           <Smile style={{width:14,height:14,opacity:.6}}/> Reactions
         </button>
-        <button onClick={()=>{onToggleMaterials();setMoreOpen(false);}} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"13px 16px",background:"none",border:"none",cursor:"pointer",color:"#fff",fontSize:13,textAlign:"left"as const}}>
+        <button onClick={()=>{onToggleMaterials();setMoreOpen(false);}} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"11px 14px",background:"none",border:"none",cursor:"pointer",color:"#fff",fontSize:13,borderBottom:"1px solid rgba(255,255,255,.05)",textAlign:"left"as const}}>
           <Eye style={{width:14,height:14,opacity:.6}}/> Materials
+        </button>
+        {isPrivileged&&<>
+          <button onClick={()=>{onGroupRecite(room);setMoreOpen(false);}} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"11px 14px",background:"none",border:"none",cursor:"pointer",color:groupReciteMode?GREEN:"#fff",fontSize:13,borderBottom:"1px solid rgba(255,255,255,.05)",textAlign:"left"as const}}>
+            <Volume2 style={{width:14,height:14}}/> {groupReciteMode?"End Group Recitation":"Group Recitation"}
+          </button>
+          {/* FIX BUG 2: Live Quiz button — previously LiveQuizOverlay was permanently disabled */}
+          {onLaunchQuiz&&<button onClick={()=>{onLaunchQuiz();setMoreOpen(false);}} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"11px 14px",background:"none",border:"none",cursor:"pointer",color:"#fbbf24",fontSize:13,borderBottom:"1px solid rgba(255,255,255,.05)",textAlign:"left"as const}}>
+            <span style={{fontSize:14}}>📝</span> Live Quiz
+          </button>}
+          <button onClick={()=>{onPermChange?.("write",!canStudentWriteProp,room);setMoreOpen(false);}} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"11px 14px",background:"none",border:"none",cursor:"pointer",color:canStudentWriteProp?GREEN:"#fff",fontSize:13,borderBottom:"1px solid rgba(255,255,255,.05)",textAlign:"left"as const}}>
+            <PenTool style={{width:14,height:14}}/> {canStudentWriteProp?"Revoke Board Access":"Allow Students to Write"}
+          </button>
+          <button onClick={async()=>{
+            await supabase.from("class_participants").update({is_muted:true}).eq("session_id",sessionId);
+            try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"admin_mute_all"})),{reliable:true});}catch{}
+            toast({title:"\uD83D\uDD07 All students muted"});setMoreOpen(false);
+          }} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"11px 14px",background:"none",border:"none",cursor:"pointer",color:"#fb923c",fontSize:13,borderBottom:"1px solid rgba(255,255,255,.05)",textAlign:"left"as const}}>
+            <MicOff style={{width:14,height:14}}/> Mute All Students
+          </button>
+        </>}
+        {!isPrivileged&&canStudentRecProp&&(
+          <button onClick={()=>{toggleStuRecord();setMoreOpen(false);}} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"11px 14px",background:"none",border:"none",cursor:"pointer",color:stuRec?"#ef4444":"#fff",fontSize:13,borderBottom:"1px solid rgba(255,255,255,.05)",textAlign:"left"as const}}>
+            <Circle style={{width:12,height:12,fill:stuRec?"#ef4444":"none",color:stuRec?"#ef4444":"#fff"}}/> {stuRec?"Stop Recording":"Record Audio"}
+          </button>
+        )}
+        {onMinimize&&<button onClick={()=>{onMinimize();setMoreOpen(false);}} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"11px 14px",background:"none",border:"none",cursor:"pointer",color:"#fff",fontSize:13,borderBottom:"1px solid rgba(255,255,255,.05)",textAlign:"left"as const}}>
+          <ChevronDown style={{width:14,height:14,opacity:.6}}/> Minimize
+        </button>}
+        <button onClick={isPrivileged?onEndClass:onLeaveClass} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"11px 14px",background:"none",border:"none",cursor:"pointer",color:"#f87171",fontSize:13,textAlign:"left"as const}}>
+          <Phone style={{width:14,height:14,transform:"rotate(135deg)"}}/> {isPrivileged?"End Class for All":"Leave Class"}
         </button>
       </div>,portal
     )}
@@ -2259,9 +2309,7 @@ const RoomToContextBridge = () => {
   return null;
 };
 
-/* ══ EXPAND / COLLAPSE BUTTON (top-bar) ══
-   Mirrors the diagonal-arrow button visible in GuestClassroom's video tile.
-   Clicking it toggles the browser's Fullscreen API for the classroom root.   */
+/* ══ EXPAND / COLLAPSE BUTTON ══ */
 const ExpandCollapseBtn = () => {
   const [isFs, setIsFs] = useState(false);
   useEffect(() => {
@@ -2280,23 +2328,11 @@ const ExpandCollapseBtn = () => {
     } catch {}
   };
   return (
-    <button onClick={toggle} title={isFs ? "Exit fullscreen" : "Expand to fullscreen"}
-      style={{
-        width: 32, height: 32, borderRadius: 8,
-        background: "rgba(255,255,255,.08)", border: "1px solid rgba(255,255,255,.12)",
-        color: "#fff", cursor: "pointer",
-        display: "flex", alignItems: "center", justifyContent: "center",
-        flexShrink: 0,
-      }}>
+    <button onClick={toggle} title={isFs ? "Exit fullscreen" : "Fullscreen"}
+      style={{width:32,height:32,borderRadius:8,background:"rgba(255,255,255,.08)",border:"1px solid rgba(255,255,255,.12)",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
       {isFs
-        ? /* compress arrows */
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/>
-          </svg>
-        : /* expand arrows */
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/>
-          </svg>
+        ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/></svg>
+        : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg>
       }
     </button>
   );
@@ -2616,7 +2652,6 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
         // ensuring LiveKit starts with a fresh connection and token.
         <LiveKitRoom key={roomKey} serverUrl={wsUrl} token={token} connect={phase==="live"} audio={false} video={false} options={{adaptiveStream:{pixelDensity:"screen"},dynacast:true,disconnectOnPageLeave:false,audioCaptureDefaults:{echoCancellation:true,noiseSuppression:true,autoGainControl:true,sampleRate:48000,channelCount:1},publishDefaults:{audioPreset:{maxBitrate:32000},dtx:true,red:false,stopMicTrackOnMute:false,videoEncoding:{maxBitrate:700_000,maxFramerate:20},backupCodec:true},videoCaptureDefaults:{resolution:{width:640,height:480,frameRate:20},facingMode:"user"}}} style={{flex:1,display:"flex",flexDirection:"column",minHeight:0,position:"relative"}} data-lk-theme="default">
           <RoomAudioRenderer/>
-          <RoomToContextBridge />
           <MediaAutoPublish lobbyMic={lobbyMic} lobbyCam={lobbyCam}/>
           <WbSyncBridge wbOpen={wbOpen} isTeacher={isPrivileged}/>
           <AdminMuteListener isPrivileged={isPrivileged}/>
@@ -2670,12 +2705,11 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               )}
             </div>
             <div className="flex items-center gap-2 shrink-0">
-              {/* Fullscreen expand/collapse button — replaces layout switcher */}
               <ExpandCollapseBtn/>
               {isPrivileged&&<RecController sessionId={sessionId} subjectId={subject.id} userEmail={user?.email||""} onSavingChange={setSavingRec} stopRecRef={recStopRef}/>}
             </div>
           </div>
-          {/* ── Main content: VideoConference + side panels (mirrors GuestClassroom) ── */}
+          {/* ── Main content: mirrors GuestClassroom layout ── */}
           <div style={{flex:1,display:"flex",minHeight:0,overflow:"hidden"}}>
             {/* Participants panel (desktop) */}
             {partOpen&&!isMobile&&(
@@ -2683,7 +2717,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
                 <ClassParticipants sessionId={sessionId||""}/>
               </div>
             )}
-            {/* Video area — VideoConference has built-in expand/collapse arrows */}
+            {/* Video area — VideoConference has built-in tile expand/collapse arrows */}
             <div className="flex-1 relative min-w-0">
               <VideoConference/>
               <FloatingEmojiLayer emojis={floatingEmojis}/>
@@ -2691,7 +2725,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               {matPanelOpen&&<SubjectMaterialsPanel subjectId={subject.id} subject={subject} onClose={()=>setMatPanelOpen(false)}/>}
               {matOpen&&<MatViewerInlineBridge material={matOpen} isPrivileged={isPrivileged} onClose={()=>setMatOpen(null)}/>}
             </div>
-            {/* Right panel: Chat/Polls (desktop) */}
+            {/* Chat/Polls panel (desktop) */}
             {chatOpen&&!isMobile&&(
               <div className="w-72 bg-background border-s flex flex-col shrink-0">
                 <div className="flex border-b">
@@ -2715,7 +2749,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               onDecline={()=>{setGroupReciteDialog(false);setGroupRecite(false);}}
             />
           )}
-          {/* Bottom bar — ClassControls (identical to GuestClassroom) */}
+          {/* Bottom bar — ClassControls, identical to GuestClassroom */}
           <ClassControls
             sessionId={sessionId||""}
             onToggleChat={()=>{setChatOpen(v=>!v);if(!chatOpen)setChatUnread(0);}}
@@ -2726,8 +2760,9 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
             onLaunchPoll={()=>{setChatOpen(true);setSideTab("polls");}}
             onLaunchQuiz={()=>setQuizOpen(true)}
           />
-          {/* Mobile bottom sheets */}
+          {/* Mobile chat bottom sheet */}
           {isMobile&&chatOpen&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setChatOpen(false)}><div style={{position:"absolute",bottom:0,left:0,right:0,background:"#13181f",borderRadius:"22px 22px 0 0",maxHeight:"82vh",display:"flex",flexDirection:"column",animation:"slide-up .22s ease",paddingBottom:"env(safe-area-inset-bottom,0px)"}} onClick={e=>e.stopPropagation()}><div style={{display:"flex",alignItems:"center",padding:"12px 16px 0",flexShrink:0}}><div style={{flex:1,display:"flex"}}>{[["chat","💬","Chat"],["polls","📊","Polls"]].map(([k,ic,lb])=>(<button key={k} onClick={()=>setSideTab(k as any)} style={{flex:1,padding:"10px 6px",background:"none",border:"none",color:sideTab===k?"#fff":"rgba(255,255,255,.35)",fontSize:13,fontWeight:sideTab===k?700:400,borderBottom:sideTab===k?`2px solid ${TEAL}`:"2px solid transparent",cursor:"pointer"}}>{ic} {lb}</button>))}</div><button onClick={()=>setChatOpen(false)} style={{width:32,height:32,borderRadius:"50%",background:"rgba(255,255,255,.1)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><X style={{width:14,height:14}}/></button></div><div style={{flex:1,overflow:"hidden",minHeight:340}}>{sideTab==="chat"?<ClassChatPanel sessionId={sessionId||""} sessionStartedAt={sessionInfo?.started_at??sessionInfo?.actual_start_time}/>:<ClassPolls sessionId={sessionId||""}/>}</div></div></div>)}
+          {/* Mobile participants bottom sheet */}
           {isMobile&&partOpen&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setPartOpen(false)}><div style={{position:"absolute",bottom:0,left:0,right:0,background:"#13181f",borderRadius:"22px 22px 0 0",maxHeight:"65vh",overflow:"auto"}} onClick={e=>e.stopPropagation()}><div style={{width:40,height:4,borderRadius:2,background:"rgba(255,255,255,.18)",margin:"12px auto 6px"}}/><ClassParticipants sessionId={sessionId||""}/></div></div>)}
           <LiveQuizOverlay sessionId={sessionId||""} isOpen={quizOpen} onClose={()=>setQuizOpen(false)}/>
         </LiveKitRoom>
