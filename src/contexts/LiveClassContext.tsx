@@ -68,7 +68,7 @@ interface LiveClassState {
   camEnabled:    boolean;
 }
 interface LiveClassContextType extends LiveClassState {
-  joinClass:      (subject: any) => void;
+  joinClass:      (subject: any, opts?: { autoJoin?: boolean }) => void;
   leaveClass:     () => void;
   setMinimized:   (v: boolean) => void;
   setMicEnabled:  (v: boolean) => void;
@@ -121,9 +121,9 @@ export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
     return () => window.removeEventListener("popstate", onPop);
   }, [state.inCall]);
 
-  const joinClass = useCallback((subject: any) => {
+  const joinClass = useCallback((subject: any, opts?: { autoJoin?: boolean }) => {
     clearPersist();
-    setState({ activeSubject: subject, inCall: true, minimized: false, autoJoin: false, micEnabled: false, camEnabled: false });
+    setState({ activeSubject: subject, inCall: true, minimized: false, autoJoin: opts?.autoJoin ?? false, micEnabled: false, camEnabled: false });
     if ("Notification" in window && Notification.permission === "default") {
       Notification.requestPermission().catch(() => {});
     }
