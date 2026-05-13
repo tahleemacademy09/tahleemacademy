@@ -219,7 +219,7 @@ const LiveClassManagement = () => {
       title: subject.title,
       title_ar: subject.title_ar || "",
       livekit_room_name: subject.livekit_room_name,
-    });
+    }, { autoJoin: true });
   };
 
   const viewAttendance = async (session: any) => {
