@@ -2276,6 +2276,24 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
         {/* More */}
         <Btn bRef={moreBtnRef} active={moreOpen} title="More options" onClick={openMore}><MoreVertical style={{...IS,color:"rgba(255,255,255,.9)"}}/></Btn>
       </div>
+
+      {/* RIGHT — Leave / End */}
+      <button
+        onClick={isPrivileged ? onEndClass : onLeaveClass}
+        style={{
+          height:BTN_H, padding:isMobile?"0 14px":"0 18px",
+          borderRadius:26, border:"none", cursor:"pointer",
+          background:"#ea4335", color:"#fff",
+          display:"flex", alignItems:"center", gap:6,
+          fontWeight:700, fontSize:isMobile?12:13,
+          boxShadow:"0 3px 14px rgba(234,67,53,.4)",
+          flexShrink:0, transition:"background .15s",
+        }}
+        onMouseEnter={e=>(e.currentTarget.style.background="#c5352a")}
+        onMouseLeave={e=>(e.currentTarget.style.background="#ea4335")}
+      >
+        <Phone style={{width:15,height:15,transform:"rotate(135deg)"}}/>{isMobile?"":(isPrivileged?" End":" Leave")}
+      </button>
     </div>
   </>);
 };
@@ -2693,38 +2711,40 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
           <RoomDataListener onWbOpen={()=>setWbOpen(true)} onWbClose={()=>setWbOpen(false)} strokesBuffer={wbBuffer} onMatOpen={mat=>setMatOpen(mat)} onMatClose={()=>setMatOpen(null)} onWbAllowWrite={allow=>setCanStudentWrite(allow)} onRecAllowed={allow=>setCanStudentRec(allow)} onEmojiReact={(emoji:string,sender:string)=>addFloatingEmoji(emoji,sender)} onGroupRecite={handleGroupReciteFromTeacher} onHandRaise={handleHandRaise} onAdminMuteAll={()=>{}}
             onClassEnded={!isPrivileged?()=>setPhase("ended"):undefined} roomRef={roomRef}/>{/* FIX BUG 10: pass roomRef */}
           {reconnecting&&<div style={{position:"absolute",inset:0,zIndex:200,background:"rgba(0,0,0,.82)",backdropFilter:"blur(8px)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:14}}><div style={{width:48,height:48,border:`3px solid ${TEAL}`,borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .8s linear infinite"}}/><p style={{color:"#fff",fontSize:15,fontWeight:700}}>Reconnecting…</p><p style={{color:"rgba(255,255,255,.4)",fontSize:13}}>Please stay on the page</p></div>}
-          {/* Top bar — matches GuestClassroom style */}
-          <div className="h-11 shrink-0 bg-background/95 backdrop-blur border-b flex items-center justify-between px-3 z-10" style={{flexShrink:0}}>
-            <div className="flex items-center gap-2 min-w-0">
+          {/* Top bar — dark, fully visible */}
+          <div style={{height:44,flexShrink:0,background:"#0f2d1f",borderBottom:"1px solid rgba(255,255,255,.08)",display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 10px",gap:6,zIndex:10,overflowX:"auto",overflowY:"hidden",scrollbarWidth:"none"}}>
+            <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
+              {/* LIVE / Student badge */}
               {isPrivileged ? (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold animate-pulse shrink-0" style={{background:"rgba(239,68,68,.15)",border:"1px solid rgba(239,68,68,.4)",color:"#fca5a5"}}>
+                <span style={{display:"inline-flex",alignItems:"center",gap:4,padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:800,background:"rgba(239,68,68,.2)",border:"1px solid rgba(239,68,68,.5)",color:"#fca5a5",animation:"pip-pulse 1.8s ease-in-out infinite",flexShrink:0}}>
                   <Radio style={{width:10,height:10}}/> LIVE
                 </span>
               ) : (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold shrink-0" style={{background:"rgba(201,168,76,.1)",border:"1px solid rgba(201,168,76,.35)",color:"#c9a84c"}}>
+                <span style={{display:"inline-flex",alignItems:"center",gap:4,padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:700,background:"rgba(201,168,76,.15)",border:"1px solid rgba(201,168,76,.4)",color:"#c9a84c",flexShrink:0}}>
                   Student
                 </span>
               )}
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold shrink-0" style={{background:"rgba(34,197,94,.1)",border:"1px solid rgba(34,197,94,.25)",color:"#4ade80"}}>
-                <Circle style={{width:6,height:6,fill:"#4ade80",color:"#4ade80"}}/>
-                <span className="truncate max-w-[120px]">{subject.title}</span>
+              {/* Class name */}
+              <span style={{display:"inline-flex",alignItems:"center",gap:5,padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:700,background:"rgba(34,197,94,.15)",border:"1px solid rgba(34,197,94,.35)",color:"#4ade80",flexShrink:0,maxWidth:130,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                <Circle style={{width:6,height:6,fill:"#4ade80",color:"#4ade80",flexShrink:0}}/>{subject.title}
               </span>
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold shrink-0" style={{background:"rgba(239,68,68,.1)",border:"1px solid rgba(239,68,68,.2)",color:"#fca5a5"}}>
+              {/* Timer */}
+              <span style={{display:"inline-flex",alignItems:"center",gap:4,padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:800,background:"rgba(239,68,68,.15)",border:"1px solid rgba(239,68,68,.35)",color:"#fca5a5",flexShrink:0,fontVariantNumeric:"tabular-nums"}}>
                 <Circle style={{width:5,height:5,fill:"#ef4444",color:"#ef4444",animation:"rec-pulse 1.4s ease-in-out infinite"}}/>{fmtT(duration)}
               </span>
               <ParticipantCountBadge />
               {!isPrivileged&&canStudentWrite&&(
-                <span title="You can write on the board" className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold shrink-0 cursor-pointer" style={{background:"rgba(52,211,153,.12)",border:"1px solid rgba(52,211,153,.3)",color:"#34d399"}} onClick={()=>setWbOpen(v=>!v)}>
+                <span title="Write on board" style={{display:"inline-flex",alignItems:"center",gap:4,padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:700,background:"rgba(52,211,153,.15)",border:"1px solid rgba(52,211,153,.35)",color:"#34d399",cursor:"pointer",flexShrink:0}} onClick={()=>setWbOpen(v=>!v)}>
                   <PenTool style={{width:10,height:10}}/>Board
                 </span>
               )}
               {isPrivileged&&raisedHands.length>0&&(
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold shrink-0" style={{background:"rgba(251,191,36,.15)",border:"1px solid rgba(251,191,36,.35)",color:"#fbbf24"}}>
+                <span style={{display:"inline-flex",alignItems:"center",gap:4,padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:700,background:"rgba(251,191,36,.18)",border:"1px solid rgba(251,191,36,.4)",color:"#fbbf24",flexShrink:0}}>
                   <span style={{animation:"hand-bounce 1.2s ease-in-out infinite"}}>✋</span>{raisedHands.length}
                 </span>
               )}
             </div>
-            <div className="flex items-center gap-2 shrink-0">
+            <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
               <ConnectionQualityBadge />
               <LayoutSwitcher layout={layout} onChange={setLayout}/>
               {isPrivileged&&<RecController sessionId={sessionId} subjectId={subject.id} userEmail={user?.email||""} onSavingChange={setSavingRec} stopRecRef={recStopRef}/>}
