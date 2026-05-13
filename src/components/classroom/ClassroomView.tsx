@@ -2790,7 +2790,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
 };
 
 const MatPickerBridge=({subjectId,onShare,onClose}:any)=>{const room=useRoomContext();return<MaterialPicker subjectId={subjectId} onShare={(mat:any)=>onShare(mat,room)} onClose={onClose}/>;};
-// MatViewerBride (legacy — kept for backwards compat, now delegates to InClassMaterialViewer)
+// MatViewerBridge (legacy — kept for backwards compat, now delegates to InClassMaterialViewer)
 const MatViewerBridge=({material,isTeacher,onClose}:any)=>{const room=useRoomContext();return<InClassMaterialViewer material={material} isTeacher={isTeacher} onClose={()=>onClose(room)}/>;};
 // MatViewerInlineBridge — renders INSIDE LiveKitRoom (has room context) so mat_close can be broadcast
 const MatViewerInlineBridge=({material,isPrivileged,onClose}:any)=>{
