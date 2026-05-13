@@ -18,7 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   BookOpen, Video, FileText, ClipboardList, Megaphone,
-  Calendar, ArrowLeft, Users, Clock, Maximize2, X,
+  Calendar, ArrowLeft, Users, Clock, X,
 } from "lucide-react";
 import { useLiveClass } from "@/contexts/LiveClassContext";
 import { usePrivateStudent } from "@/hooks/usePrivateStudent";
@@ -180,27 +180,6 @@ const LiveClasses = () => {
             {t("Join live sessions and access course materials", "انضم للجلسات الحية واستعرض مواد الدورة")}
           </p>
         </div>
-      </div>
-
-      {/* Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {[
-          { val: liveSessions?.length || 0, label: t("Live Now", "مباشر الآن"), Icon: Video, color: "emerald" },
-          { val: subjects?.length || 0, label: t("Total Subjects", "إجمالي المواد"), Icon: BookOpen, color: "amber" },
-          { val: user?.user_metadata?.student_count || 0, label: t("Students", "الطلاب"), Icon: Users, color: "blue" },
-        ].map(({ val, label, Icon, color }) => (
-          <Card key={label} className="bg-white/80 dark:bg-emerald-900/30 border-emerald-200 dark:border-emerald-800">
-            <CardContent className="p-4 flex items-center gap-3">
-              <div className={`h-10 w-10 rounded-lg bg-${color}-100 dark:bg-${color}-900/30 flex items-center justify-center`}>
-                <Icon className={`h-5 w-5 text-${color}-600 dark:text-${color}-400`} />
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-emerald-950 dark:text-emerald-50">{val}</p>
-                <p className="text-sm text-emerald-700 dark:text-emerald-300">{label}</p>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
       </div>
 
       {/* Subjects Grid */}
