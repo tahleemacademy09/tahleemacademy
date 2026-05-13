@@ -21,9 +21,9 @@ import { Button } from "@/components/ui/button";
 import { toast } from "@/hooks/use-toast";
 import {
   Mic, MicOff, Video, VideoOff, Monitor, MonitorOff, Hand,
-  MessageCircle, Users, MoreHorizontal, Phone, Smile, LogOut,
-  BarChart3, Zap, Settings, X, Check, Volume2,
-  Captions, CaptionsOff, Blend, BarChart2,
+  MessageCircle, Users, MoreHorizontal, Smile, LogOut,
+  BarChart3, Zap, Settings, X, Check,
+  Captions, CaptionsOff, Blend,
 } from "lucide-react";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
@@ -481,11 +481,14 @@ const ClassControls = ({
   };
 
   // ── Button style helpers ──────────────────────────────────────────────
-  const btnBase = "rounded-full h-10 px-3 gap-1.5 text-xs font-medium";
-  const btnOn   = "text-white hover:opacity-90";
-  const btnOff  = "bg-destructive text-destructive-foreground hover:bg-destructive/90";
-  const btnNeutral = "text-white hover:opacity-80";
-  const btnStyle = {background:"rgba(255,255,255,0.12)"} as React.CSSProperties;
+  const btnBase = "rounded-full h-10 gap-1.5 text-xs font-medium text-white";
+  const btnNeutral = "hover:opacity-80";
+  const btnStyle = { background: "rgba(255,255,255,0.12)" } as React.CSSProperties;
+  // Neutral chevron — never red, always subtle white
+  const chevronStyle = {
+    background: "rgba(255,255,255,0.08)",
+    borderLeft: "1px solid rgba(255,255,255,0.1)",
+  } as React.CSSProperties;
 
   return (
     <>
@@ -523,151 +526,231 @@ const ClassControls = ({
       {/* ── Settings modal ── */}
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} room={room} />}
 
-      {/* ══ MAIN CONTROL BAR ══════════════════════════════════════════════ */}
-      <style>{`.lk-control-bar-btn,.lk-button,[class*="btnBase"]{color:#fff!important;} `}</style>
-      <div className="h-16 flex items-center justify-between px-2 md:px-4 gap-1 lk-control-bar" style={{background:"#111b21",flexShrink:0}}>
+      {/* ══ MAIN CONTROL BAR — matches GuestClassroom screenshot exactly ══
+          Layout: [Mic ▼] [Cam ▼]  ·····  [Chat] [⋯] [Leave]
+          Rules:
+            • ▼ chevron is ALWAYS neutral (rgba white), never red/destructive
+            • Mic/Cam icon turns red when muted — but only the icon half, not the ▼
+            • Everything else (hand, reactions, screen, participants, blur, captions, polls, quiz) lives inside ⋯
+      ══════════════════════════════════════════════════════════════════════ */}
+      <style>{`
+        .lk-control-bar-btn, .lk-button { color: #fff !important; }
+        /* Ensure dropdown trigger arrow never inherits destructive red */
+        .ctrl-chevron { color: rgba(255,255,255,0.7) !important; }
+      `}</style>
 
-        {/* ── LEFT: Mic · Cam · Cam-flip · Screen ── */}
-        <div className="flex items-center gap-1">
+      <div
+        className="h-16 flex items-center justify-between px-3 md:px-5 lk-control-bar"
+        style={{ background: "#111b21", flexShrink: 0 }}
+      >
 
-          {/* Mic */}
-          <Button size="sm" className={`${btnBase} ${micEnabled ? btnOn : btnOff}`} style={micEnabled ? btnStyle : {}} onClick={toggleMic}>
-            {micEnabled ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4" />}
-            <span className="hidden sm:inline">{micEnabled ? t("Mic","مايك") : t("Muted","صامت")}</span>
-          </Button>
+        {/* ── LEFT: [Mic ▼] [Cam ▼] ── */}
+        <div className="flex items-center gap-2">
 
-          {/* Cam */}
-          <Button size="sm" className={`${btnBase} ${camEnabled ? btnOn : "bg-muted"}`} style={camEnabled ? btnStyle : {background:"rgba(255,255,255,.08)",color:"rgba(255,255,255,.4)"}} onClick={toggleCam}>
-            {camEnabled ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4" />}
-            <span className="hidden sm:inline">{camEnabled ? t("Cam","كام") : t("Off","مغلق")}</span>
-          </Button>
-
-          {/* Screen share */}
-          <Button size="sm"
-            className={`${btnBase} ${screenSharing ? btnOff : btnNeutral}`}
-            style={screenSharing ? {} : btnStyle}
-            onClick={toggleScreenShare}>
-            {screenSharing ? <MonitorOff className="h-4 w-4" /> : <Monitor className="h-4 w-4" />}
-            <span className="hidden sm:inline">{screenSharing ? t("Stop","إيقاف") : t("Share","مشاركة")}</span>
-          </Button>
-        </div>
-
-        {/* ── CENTER: Hand · Reactions · Captions · Blur ── */}
-        <div className="flex items-center gap-1">
-
-          {/* Raise hand (students only) */}
-          {!isPrivileged && (
-            <Button size="sm"
-              className={`${btnBase} ${handRaised ? "bg-secondary text-secondary-foreground" : btnNeutral}`}
-              style={handRaised ? {} : btnStyle}
-              onClick={toggleHand}>
-              <Hand className="h-4 w-4" />
-              <span className="hidden sm:inline">{handRaised ? t("Lower","أنزل") : t("Hand","يد")}</span>
-            </Button>
-          )}
-
-          {/* Reactions */}
-          <div className="relative">
-            <Button size="sm" className={`${btnBase} ${btnNeutral}`} style={btnStyle} onClick={() => setShowReactions(v => !v)}>
-              <Smile className="h-4 w-4" />
-            </Button>
-            {showReactions && (
-              <div className="absolute bottom-12 left-1/2 -translate-x-1/2 bg-card rounded-full shadow-lg px-2 py-1 flex gap-1 z-50">
-                {REACTION_EMOJIS.map(e => (
-                  <button key={e} onClick={() => sendReaction(e)} className="text-lg hover:scale-125 transition-transform p-1">{e}</button>
-                ))}
-              </div>
-            )}
+          {/* ── Mic split-button ── */}
+          <div className="flex items-center rounded-full overflow-hidden" style={{ outline: "1px solid rgba(255,255,255,0.1)" }}>
+            {/* Icon half — red when muted */}
+            <button
+              onClick={toggleMic}
+              className="h-10 px-3 flex items-center gap-1.5 text-xs font-medium transition-opacity hover:opacity-80"
+              style={micEnabled ? btnStyle : { background: "#e53e3e", color: "#fff" }}
+            >
+              {micEnabled ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4" />}
+              <span className="hidden sm:inline">{micEnabled ? t("Mic", "مايك") : t("Muted", "صامت")}</span>
+            </button>
+            {/* Chevron half — ALWAYS neutral, never red */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  className="ctrl-chevron h-10 px-1.5 flex items-center transition-opacity hover:opacity-80"
+                  style={chevronStyle}
+                >
+                  <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
+                    <path d="M2 3.5L5 6.5L8 3.5" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
+                  </svg>
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-52">
+                <DropdownMenuItem onClick={toggleMic}>
+                  {micEnabled ? <MicOff className="h-4 w-4 mr-2" /> : <Mic className="h-4 w-4 mr-2" />}
+                  {micEnabled ? t("Mute", "كتم الصوت") : t("Unmute", "رفع الكتم")}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => setShowSettings(true)}>
+                  <Settings className="h-4 w-4 mr-2" /> {t("Audio Settings", "إعدادات الصوت")}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
 
-          {/* Captions (Google Meet parity) */}
-          <Button size="sm"
-            className={`${btnBase} ${captionsOn ? "bg-blue-600/80 text-white hover:bg-blue-600" : btnNeutral}`}
-            style={captionsOn ? {} : btnStyle}
-            onClick={toggleCaptions}
-            title={t("Live Captions","الترجمة المباشرة")}>
-            {captionsOn ? <Captions className="h-4 w-4" /> : <CaptionsOff className="h-4 w-4" />}
-            <span className="hidden lg:inline">{t("CC","ترجمة")}</span>
-          </Button>
-
-          {/* Background blur */}
-          <Button size="sm"
-            className={`${btnBase} ${blurOn ? "bg-purple-600/80 text-white hover:bg-purple-600" : btnNeutral}`}
-            style={blurOn ? {} : btnStyle}
-            onClick={toggleBlur}
-            title={t("Background blur","تشويش الخلفية")}>
-            <Blend className="h-4 w-4" />
-            <span className="hidden lg:inline">{t("Blur","تشويش")}</span>
-          </Button>
+          {/* ── Cam split-button ── */}
+          <div className="flex items-center rounded-full overflow-hidden" style={{ outline: "1px solid rgba(255,255,255,0.1)" }}>
+            {/* Icon half — dimmed when off */}
+            <button
+              onClick={toggleCam}
+              className="h-10 px-3 flex items-center gap-1.5 text-xs font-medium transition-opacity hover:opacity-80"
+              style={camEnabled ? btnStyle : { background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.4)" }}
+            >
+              {camEnabled ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4" />}
+              <span className="hidden sm:inline">{camEnabled ? t("Cam", "كام") : t("Off", "مغلق")}</span>
+            </button>
+            {/* Chevron half — ALWAYS neutral */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  className="ctrl-chevron h-10 px-1.5 flex items-center transition-opacity hover:opacity-80"
+                  style={chevronStyle}
+                >
+                  <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
+                    <path d="M2 3.5L5 6.5L8 3.5" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
+                  </svg>
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-52">
+                <DropdownMenuItem onClick={toggleCam}>
+                  {camEnabled ? <VideoOff className="h-4 w-4 mr-2" /> : <Video className="h-4 w-4 mr-2" />}
+                  {camEnabled ? t("Turn Off Camera", "إيقاف الكاميرا") : t("Turn On Camera", "تشغيل الكاميرا")}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => setShowSettings(true)}>
+                  <Settings className="h-4 w-4 mr-2" /> {t("Video Settings", "إعدادات الفيديو")}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </div>
 
-        {/* ── RIGHT: Chat · Participants · Settings · More · End ── */}
-        <div className="flex items-center gap-1">
+        {/* ── CENTER: user avatar pill (shows profile image or initials) ── */}
+        <div className="flex items-center gap-2">
+          {user?.avatar_url ? (
+            <img
+              src={user.avatar_url}
+              alt={user.user_metadata?.full_name ?? "you"}
+              className="h-8 w-8 rounded-full object-cover ring-2 ring-white/20"
+            />
+          ) : (
+            <div
+              className="h-8 w-8 rounded-full flex items-center justify-center text-xs font-bold text-white"
+              style={{ background: "rgba(255,255,255,0.18)" }}
+            >
+              {(user?.user_metadata?.full_name ?? user?.email ?? "?")[0].toUpperCase()}
+            </div>
+          )}
+          <span className="hidden md:inline text-xs text-white/60 max-w-[120px] truncate">
+            {user?.user_metadata?.full_name ?? user?.email ?? ""}
+          </span>
+        </div>
 
-          {/* Chat */}
-          <Button size="sm" className={`${btnBase} ${btnNeutral} relative`} style={btnStyle} onClick={onToggleChat}>
+        {/* ── RIGHT: [Chat] [⋯] [Leave] ── */}
+        <div className="flex items-center gap-2">
+
+          {/* Chat — with unread badge */}
+          <button
+            onClick={onToggleChat}
+            className={`${btnBase} ${btnNeutral} relative h-10 px-3 rounded-full flex items-center gap-1.5`}
+            style={btnStyle}
+          >
             <MessageCircle className="h-4 w-4" />
+            <span className="hidden sm:inline text-xs">{t("Chat", "دردشة")}</span>
             {chatUnread > 0 && (
-              <span className="absolute -top-1 -right-1 bg-destructive text-destructive-foreground rounded-full h-4 w-4 text-[10px] flex items-center justify-center">
+              <span className="absolute -top-1 -right-1 bg-destructive text-white rounded-full h-4 w-4 text-[10px] flex items-center justify-center">
                 {chatUnread}
               </span>
             )}
-          </Button>
+          </button>
 
-          {/* Participants */}
-          <Button size="sm" className={`${btnBase} ${btnNeutral}`} style={btnStyle} onClick={onToggleParticipants}>
-            <Users className="h-4 w-4" />
-          </Button>
-
-          {/* More menu */}
+          {/* ⋯ More — contains EVERYTHING else */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button size="sm" className={`${btnBase} ${btnNeutral}`} style={btnStyle}>
+              <button
+                className={`${btnBase} ${btnNeutral} h-10 px-3 rounded-full flex items-center`}
+                style={btnStyle}
+              >
                 <MoreHorizontal className="h-4 w-4" />
-              </Button>
+              </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-52">
-              {isPrivileged && (
-                <>
-                  <DropdownMenuItem onClick={onLaunchPoll}>
-                    <BarChart3 className="h-4 w-4 mr-2" /> {t("Launch Poll","إطلاق تصويت")}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={onLaunchQuiz}>
-                    <Zap className="h-4 w-4 mr-2" /> {t("Live Quiz","اختبار مباشر")}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={muteAllStudents}>
-                    <MicOff className="h-4 w-4 mr-2" /> {t("Mute All Students","كتم الجميع")}
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                </>
+            <DropdownMenuContent align="end" className="w-56">
+
+              {/* Participants */}
+              <DropdownMenuItem onClick={onToggleParticipants}>
+                <Users className="h-4 w-4 mr-2" /> {t("Participants", "المشاركون")}
+              </DropdownMenuItem>
+
+              {/* Raise hand (students only) */}
+              {!isPrivileged && (
+                <DropdownMenuItem onClick={toggleHand}>
+                  <Hand className="h-4 w-4 mr-2" />
+                  {handRaised ? t("Lower Hand", "أنزل يدك") : t("Raise Hand", "ارفع يدك")}
+                </DropdownMenuItem>
               )}
-              <DropdownMenuItem onClick={toggleCaptions}>
-                <Captions className="h-4 w-4 mr-2" /> {captionsOn ? t("Turn Off Captions","إيقاف الترجمة") : t("Turn On Captions","تشغيل الترجمة")}
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={toggleBlur}>
-                <Blend className="h-4 w-4 mr-2" /> {blurOn ? t("Remove Background Blur","إزالة التشويش") : t("Blur Background","تشويش الخلفية")}
-              </DropdownMenuItem>
+
+              {/* Reactions */}
+              <DropdownMenu>
+                <DropdownMenuTrigger className="w-full">
+                  <DropdownMenuItem onSelect={(e) => e.preventDefault()}>
+                    <Smile className="h-4 w-4 mr-2" /> {t("Reactions", "تعبيرات")}
+                  </DropdownMenuItem>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent side="left" className="p-2">
+                  <div className="flex gap-1">
+                    {REACTION_EMOJIS.map(e => (
+                      <button key={e} onClick={() => sendReaction(e)} className="text-xl hover:scale-125 transition-transform p-1">{e}</button>
+                    ))}
+                  </div>
+                </DropdownMenuContent>
+              </DropdownMenu>
+
+              {/* Screen share */}
               <DropdownMenuItem onClick={toggleScreenShare}>
                 {screenSharing ? <MonitorOff className="h-4 w-4 mr-2" /> : <Monitor className="h-4 w-4 mr-2" />}
-                {screenSharing ? t("Stop Sharing","إيقاف المشاركة") : t("Share Screen","مشاركة الشاشة")}
+                {screenSharing ? t("Stop Sharing", "إيقاف المشاركة") : t("Share Screen", "مشاركة الشاشة")}
               </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={isPrivileged ? onEndClass : onLeaveClass}>
-                <LogOut className="h-4 w-4 mr-2 text-destructive" />
-                <span className="text-destructive">
-                  {isPrivileged ? t("End Class for All","إنهاء الحصة للجميع") : t("Leave Class","مغادرة الحصة")}
-                </span>
+
+              {/* Captions */}
+              <DropdownMenuItem onClick={toggleCaptions}>
+                {captionsOn ? <Captions className="h-4 w-4 mr-2" /> : <CaptionsOff className="h-4 w-4 mr-2" />}
+                {captionsOn ? t("Turn Off Captions", "إيقاف الترجمة") : t("Live Captions", "الترجمة المباشرة")}
               </DropdownMenuItem>
+
+              {/* Background blur */}
+              <DropdownMenuItem onClick={toggleBlur}>
+                <Blend className="h-4 w-4 mr-2" />
+                {blurOn ? t("Remove Blur", "إزالة التشويش") : t("Blur Background", "تشويش الخلفية")}
+              </DropdownMenuItem>
+
+              {/* Settings */}
+              <DropdownMenuItem onClick={() => setShowSettings(true)}>
+                <Settings className="h-4 w-4 mr-2" /> {t("Settings", "الإعدادات")}
+              </DropdownMenuItem>
+
+              {/* Teacher-only tools */}
+              {isPrivileged && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={onLaunchPoll}>
+                    <BarChart3 className="h-4 w-4 mr-2" /> {t("Launch Poll", "إطلاق تصويت")}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={onLaunchQuiz}>
+                    <Zap className="h-4 w-4 mr-2" /> {t("Live Quiz", "اختبار مباشر")}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={muteAllStudents}>
+                    <MicOff className="h-4 w-4 mr-2" /> {t("Mute All Students", "كتم الجميع")}
+                  </DropdownMenuItem>
+                </>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
 
-          {/* End / Leave button */}
-          <Button size="sm"
-            className="rounded-full h-10 px-4 text-xs bg-destructive text-destructive-foreground hover:bg-destructive/90 gap-1.5"
-            onClick={isPrivileged ? onEndClass : onLeaveClass}>
-            <Phone className="h-4 w-4 rotate-[135deg]" />
-            <span className="hidden sm:inline">{isPrivileged ? t("End","إنهاء") : t("Leave","مغادرة")}</span>
-          </Button>
+          {/* Leave / End — red pill, right-most */}
+          <button
+            onClick={isPrivileged ? onEndClass : onLeaveClass}
+            className="rounded-full h-10 px-4 text-xs font-semibold flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white transition-colors"
+          >
+            <LogOut className="h-4 w-4" />
+            <span className="hidden sm:inline">
+              {isPrivileged ? t("End", "إنهاء") : t("Leave", "مغادرة")}
+            </span>
+          </button>
         </div>
       </div>
     </>
