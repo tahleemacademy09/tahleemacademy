@@ -5,7 +5,7 @@
 
 import {
   LiveKitRoom, RoomAudioRenderer, useRoomContext,
-  useParticipants, useLocalParticipant, VideoConference,
+  useParticipants, useLocalParticipant,
 } from "@livekit/components-react";
 // @ts-ignore
 import "@livekit/components-styles";
@@ -27,14 +27,13 @@ import {
   Circle, Loader2, X, Smile, Play, Pause,
   Volume2, ChevronDown, Users, Eye,
   LayoutGrid, AlignJustify, Columns, Rows, Maximize2, Minimize2,
-  SwitchCamera, Settings, Check, Wifi, Radio,
+  SwitchCamera, Settings, Check, Wifi,
 } from "lucide-react";
 import ClassLobby        from "./ClassLobby";
 import ClassChatPanel    from "./ClassChatPanel";
 import ClassParticipants from "./ClassParticipants";
 import ClassPolls        from "./ClassPolls";
 import ClassEndScreen    from "./ClassEndScreen";
-import ClassControls     from "./ClassControls";
 import LiveQuizOverlay   from "./LiveQuizOverlay";
 import PDFViewer         from "./PDFViewer";
 import { useIsMobile }   from "@/hooks/use-mobile";
@@ -65,25 +64,6 @@ const CSS = `
   @keyframes rec-pulse  { 0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.5)}70%{box-shadow:0 0 0 8px rgba(239,68,68,0)} }
   @keyframes hand-bounce{ 0%,100%{transform:translateY(0)}45%{transform:translateY(-7px)} }
   [data-lk-theme]{ height:100%!important;display:flex!important;flex-direction:column!important; }
-  /* ── Force LiveKit dark theme — overrides data-lk-theme="default" (light) CSS variables ── */
-  [data-lk-theme],[data-lk-theme="default"]{
-    --lk-fg:  #ffffff !important;
-    --lk-fg2: rgba(255,255,255,.7) !important;
-    --lk-fg3: rgba(255,255,255,.35) !important;
-    --lk-bg:  #0f1117 !important;
-    --lk-bg2: #161b22 !important;
-    --lk-bg3: #1c2128 !important;
-    --lk-border: rgba(255,255,255,.08) !important;
-    --lk-accent-fg: #4ade80 !important;
-    --lk-accent-bg: rgba(10,124,104,.25) !important;
-  }
-  .lk-video-conference{ background:#0f1117 !important; }
-  .lk-grid-layout{ background:#0f1117 !important; }
-  .lk-focus-layout{ background:#0f1117 !important; }
-  .lk-participant-tile{ background:#161b22 !important; }
-  .lk-participant-placeholder{ background:#1c2128 !important; }
-  .lk-prejoin{ background:#0f1117 !important; color:#fff !important; }
-  .lk-connection-state{ background:#0f1117 !important; }
   [data-classroom-root]{
     overscroll-behavior:none;-webkit-overflow-scrolling:touch;
     touch-action:pan-y;padding-bottom:env(safe-area-inset-bottom,0px);
@@ -562,9 +542,6 @@ const InClassMaterialViewer=({material,onClose,isTeacher=false}:any)=>{
   const rawUrl=material.file_url||material.url||"";
   const matId=material.id||rawUrl;
 
-  // ── minimized state ───────────────────────────────────────────────────────
-  const [minimized, setMinimized] = useState(false);
-
   // ── resolve Supabase storage path to a signed/public URL ─────────────────
   const [resolvedUrl, setResolvedUrl] = useState<string>(
     rawUrl.startsWith("http") ? rawUrl : ""
@@ -687,39 +664,6 @@ const InClassMaterialViewer=({material,onClose,isTeacher=false}:any)=>{
 
   const resumeBadge=resume?.time||resume?.page;
 
-  // ── Minimized pill — floats at bottom-centre above the bottom bar ─────────
-  if (minimized) {
-    return (
-      <div
-        onClick={() => setMinimized(false)}
-        title="Restore material"
-        style={{
-          position: "fixed", bottom: 72, left: "50%", transform: "translateX(-50%)",
-          zIndex: 10000, display: "flex", alignItems: "center", gap: 8,
-          background: "rgba(6,78,59,.97)", border: "1.5px solid rgba(201,168,76,.45)",
-          borderRadius: 40, padding: "8px 16px 8px 12px", cursor: "pointer",
-          boxShadow: "0 4px 20px rgba(0,0,0,.5)", animation: "fade-in .18s ease",
-          maxWidth: "calc(100vw - 48px)",
-        }}
-      >
-        <span style={{fontSize:15}}>{MAT_TYPE_ICON[material.material_type||"document"]||"📄"}</span>
-        <span style={{fontSize:12,fontWeight:700,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:180}}>
-          {material.title||"Material"}
-        </span>
-        <span style={{fontSize:10,color:"rgba(201,168,76,.9)",background:"rgba(201,168,76,.12)",borderRadius:10,padding:"2px 8px",flexShrink:0,fontWeight:600}}>
-          Tap to restore
-        </span>
-        <button
-          onClick={e => { e.stopPropagation(); onClose(); }}
-          title="Close material"
-          style={{width:22,height:22,borderRadius:"50%",background:"rgba(255,255,255,.15)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,marginLeft:2}}
-        >
-          <X style={{width:10,height:10}}/>
-        </button>
-      </div>
-    );
-  }
-
   return(
     <div style={{...overlayStyle,background:"#0f1117",display:"flex",flexDirection:"column",animation:"fade-in .18s ease"}}>
       {/* Viewer header */}
@@ -734,12 +678,7 @@ const InClassMaterialViewer=({material,onClose,isTeacher=false}:any)=>{
         {!isTeacher&&<span style={{fontSize:10,color:"rgba(255,255,255,.4)",flexShrink:0}}>Shared by teacher</span>}
         <a href={url} target="_blank" rel="noopener noreferrer"
           style={{fontSize:11,color:"#d1d5db",background:"rgba(255,255,255,.1)",borderRadius:8,padding:"4px 10px",textDecoration:"none",fontWeight:600,flexShrink:0}}>↗</a>
-        {/* Minimize button */}
-        <button onClick={() => setMinimized(true)} title="Minimize material"
-          style={{width:30,height:30,borderRadius:8,background:"rgba(255,255,255,.12)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-          <Minimize2 style={{width:13,height:13}}/>
-        </button>
-        {/* Close button */}
+        {/* Fullscreen toggle */}
         <button onClick={onClose} title="Close material"
           style={{width:30,height:30,borderRadius:8,background:"rgba(255,255,255,.12)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
           <X style={{width:13,height:13}}/>
@@ -2297,22 +2236,20 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
         <Btn bRef={moreBtnRef} active={moreOpen} title="More options" onClick={openMore}><MoreVertical style={{...IS,color:"rgba(255,255,255,.9)"}}/></Btn>
       </div>
 
-      {/* RIGHT — Leave / End */}
-      <button
-        onClick={isPrivileged ? onEndClass : onLeaveClass}
-        style={{
-          height:BTN_H, padding:isMobile?"0 14px":"0 18px",
-          borderRadius:26, border:"none", cursor:"pointer",
-          background:"#ea4335", color:"#fff",
-          display:"flex", alignItems:"center", gap:6,
-          fontWeight:700, fontSize:isMobile?12:13,
-          boxShadow:"0 3px 14px rgba(234,67,53,.4)",
-          flexShrink:0, transition:"background .15s",
-        }}
+      {/* RIGHT — End/Leave */}
+      <button onClick={isPrivileged?onEndClass:onLeaveClass} style={{
+        height:BTN_H,padding:isMobile?"0 14px":"0 20px",
+        borderRadius:26,border:"none",cursor:"pointer",
+        background:"#ea4335",color:"#fff",
+        display:"flex",alignItems:"center",gap:6,
+        fontWeight:700,fontSize:isMobile?12:13,
+        boxShadow:"0 3px 14px rgba(234,67,53,.4)",
+        flexShrink:0,transition:"background .15s",
+      }}
         onMouseEnter={e=>(e.currentTarget.style.background="#c5352a")}
         onMouseLeave={e=>(e.currentTarget.style.background="#ea4335")}
       >
-        <Phone style={{width:15,height:15,transform:"rotate(135deg)"}}/>{isMobile?"":(isPrivileged?" End":" Leave")}
+        <Phone style={{width:15,height:15,transform:"rotate(135deg)"}}/> {isPrivileged?"End":"Leave"}
       </button>
     </div>
   </>);
@@ -2651,27 +2588,6 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
       </div>
     );
   };
-  const ConnectionQualityBadge=()=>{
-    const room=useRoomContext();
-    const [quality,setQuality]=useState<"excellent"|"good"|"fair"|"poor">("excellent");
-    useEffect(()=>{
-      const iv=setInterval(()=>{
-        const q=room.localParticipant.connectionQuality as unknown as number;
-        if(q>=3)setQuality("excellent");else if(q>=2)setQuality("good");else if(q>=1)setQuality("fair");else setQuality("poor");
-      },3000);return()=>clearInterval(iv);
-    },[room]);
-    const cols={excellent:"#4ade80",good:"#86efac",fair:"#fbbf24",poor:"#f87171"};
-    const bars={excellent:4,good:3,fair:2,poor:1};
-    return(
-      <div className="flex items-center gap-1">
-        <div className="flex items-end gap-px" style={{height:14}}>
-          {[1,2,3,4].map(i=>(
-            <div key={i} style={{width:3,borderRadius:1,background:i<=bars[quality]?cols[quality]:"rgba(255,255,255,.15)",height:`${i*3+2}px`,transition:"background .3s"}}/>
-          ))}
-        </div>
-      </div>
-    );
-  };
   const fmtT=(s:number)=>`${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
   if(phase==="ended")return<ClassEndScreen subject={subject} session={sessionInfo} duration={duration} participantCount={participantCountRef.current} onGoToDashboard={onLeave} onGoToRevision={()=>{window.location.href=`/student/revision/${subject.id}`;}} />;
   if(phase==="lobby"&&!loading&&!error&&!autoJoin)return<ClassLobby subject={subject} session={sessionInfo} onStartClass={(s:any,media?:any)=>connect("start_session",s,media)} onJoinClass={(media?:any)=>connect("join",undefined,media)} onBack={onLeave} isLive={isSessionLive}/>;
@@ -2679,21 +2595,10 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   if(error)return(
     <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100dvh",background:DARK}}>
       <style>{CSS}</style>
-      <div style={{textAlign:"center",maxWidth:340,padding:28}}>
+      <div style={{textAlign:"center",maxWidth:320,padding:28}}>
         <div style={{width:64,height:64,borderRadius:"50%",background:"rgba(239,68,68,.12)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px"}}><X style={{width:28,height:28,color:RED}}/></div>
         <h2 style={{fontSize:20,fontWeight:700,color:"#fff",marginBottom:8}}>Connection Failed</h2>
-        {/* Friendly translation of the raw edge function error */}
-        {error.toLowerCase().includes("non-2xx")||error.toLowerCase().includes("not configured")||error.toLowerCase().includes("livekit")?(<>
-          <p style={{color:"rgba(255,255,255,.55)",fontSize:13,marginBottom:6,lineHeight:1.5}}>
-            The live class server could not be reached.<br/>This is usually a temporary issue.
-          </p>
-          <p style={{color:"rgba(255,255,255,.3)",fontSize:11,marginBottom:22}}>
-            Please wait a moment and tap <strong style={{color:"rgba(255,255,255,.5)"}}>Try Again</strong>.<br/>
-            If this keeps happening, contact your teacher.
-          </p>
-        </>):(<>
-          <p style={{color:"rgba(255,255,255,.45)",fontSize:14,marginBottom:22}}>{error}</p>
-        </>)}
+        <p style={{color:"rgba(255,255,255,.45)",fontSize:14,marginBottom:22}}>{error}</p>
         <div style={{display:"flex",gap:10,justifyContent:"center"}}>
           {/* Try Again: reset guard + counter, clear stale tokens, reconnect directly */}
           <button onClick={()=>{
@@ -2731,109 +2636,77 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
           <RoomDataListener onWbOpen={()=>setWbOpen(true)} onWbClose={()=>setWbOpen(false)} strokesBuffer={wbBuffer} onMatOpen={mat=>setMatOpen(mat)} onMatClose={()=>setMatOpen(null)} onWbAllowWrite={allow=>setCanStudentWrite(allow)} onRecAllowed={allow=>setCanStudentRec(allow)} onEmojiReact={(emoji:string,sender:string)=>addFloatingEmoji(emoji,sender)} onGroupRecite={handleGroupReciteFromTeacher} onHandRaise={handleHandRaise} onAdminMuteAll={()=>{}}
             onClassEnded={!isPrivileged?()=>setPhase("ended"):undefined} roomRef={roomRef}/>{/* FIX BUG 10: pass roomRef */}
           {reconnecting&&<div style={{position:"absolute",inset:0,zIndex:200,background:"rgba(0,0,0,.82)",backdropFilter:"blur(8px)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:14}}><div style={{width:48,height:48,border:`3px solid ${TEAL}`,borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .8s linear infinite"}}/><p style={{color:"#fff",fontSize:15,fontWeight:700}}>Reconnecting…</p><p style={{color:"rgba(255,255,255,.4)",fontSize:13}}>Please stay on the page</p></div>}
-          {/* Top bar — dark, fully visible */}
-          <div style={{height:44,flexShrink:0,background:"#0f2d1f",borderBottom:"1px solid rgba(255,255,255,.08)",display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 10px",gap:6,zIndex:10,overflowX:"auto",overflowY:"hidden",scrollbarWidth:"none"}}>
-            <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
-              {/* LIVE / Student badge */}
-              {isPrivileged ? (
-                <span style={{display:"inline-flex",alignItems:"center",gap:4,padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:800,background:"rgba(239,68,68,.2)",border:"1px solid rgba(239,68,68,.5)",color:"#fca5a5",animation:"pip-pulse 1.8s ease-in-out infinite",flexShrink:0}}>
-                  <Radio style={{width:10,height:10}}/> LIVE
-                </span>
-              ) : (
-                <span style={{display:"inline-flex",alignItems:"center",gap:4,padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:700,background:"rgba(201,168,76,.15)",border:"1px solid rgba(201,168,76,.4)",color:"#c9a84c",flexShrink:0}}>
-                  Student
-                </span>
-              )}
-              {/* Class name */}
-              <span style={{display:"inline-flex",alignItems:"center",gap:5,padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:700,background:"rgba(34,197,94,.15)",border:"1px solid rgba(34,197,94,.35)",color:"#4ade80",flexShrink:0,maxWidth:130,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-                <Circle style={{width:6,height:6,fill:"#4ade80",color:"#4ade80",flexShrink:0}}/>{subject.title}
-              </span>
-              {/* Timer */}
-              <span style={{display:"inline-flex",alignItems:"center",gap:4,padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:800,background:"rgba(239,68,68,.15)",border:"1px solid rgba(239,68,68,.35)",color:"#fca5a5",flexShrink:0,fontVariantNumeric:"tabular-nums"}}>
-                <Circle style={{width:5,height:5,fill:"#ef4444",color:"#ef4444",animation:"rec-pulse 1.4s ease-in-out infinite"}}/>{fmtT(duration)}
-              </span>
+          {/* Top bar */}
+          <div style={{height:52,background:GLASS,backdropFilter:"blur(16px)",WebkitBackdropFilter:"blur(16px)",display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 10px 0 12px",flexShrink:0,borderBottom:"1px solid rgba(255,255,255,.05)",gap:6}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,flex:1,minWidth:0}}>
+              <div style={{display:"flex",alignItems:"center",gap:6,background:"rgba(34,197,94,.12)",borderRadius:20,padding:"4px 10px",border:"1px solid rgba(34,197,94,.25)",flexShrink:0}}>
+                <span style={{width:7,height:7,borderRadius:"50%",background:GREEN,display:"inline-block",animation:"pip-pulse 1.8s ease-in-out infinite"}}/>
+                <span style={{fontSize:12,color:"#fff",fontWeight:600,maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{subject.title}</span>
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:5,background:"rgba(239,68,68,.12)",borderRadius:16,padding:"3px 8px",border:"1px solid rgba(239,68,68,.25)",flexShrink:0}}>
+                <Circle style={{width:5,height:5,fill:RED,color:RED}}/><span style={{fontSize:11,color:"#fca5a5",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>{fmtT(duration)}</span>
+              </div>
               <ParticipantCountBadge />
               {!isPrivileged&&canStudentWrite&&(
-                <span title="Write on board" style={{display:"inline-flex",alignItems:"center",gap:4,padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:700,background:"rgba(52,211,153,.15)",border:"1px solid rgba(52,211,153,.35)",color:"#34d399",cursor:"pointer",flexShrink:0}} onClick={()=>setWbOpen(v=>!v)}>
-                  <PenTool style={{width:10,height:10}}/>Board
-                </span>
+                <div title="You can write on the board" style={{display:"flex",alignItems:"center",gap:4,background:"rgba(52,211,153,.15)",borderRadius:14,padding:"3px 8px",border:"1px solid rgba(52,211,153,.3)",flexShrink:0,cursor:"pointer"}} onClick={()=>setWbOpen(v=>!v)}>
+                  <PenTool style={{width:11,height:11,color:"#34d399"}}/>
+                  <span style={{fontSize:10,color:"#34d399",fontWeight:700}}>{isMobile?"Board":"Write"}</span>
+                </div>
+              )}
+              {!isPrivileged&&canStudentRec&&(
+                <div title="You can record" style={{display:"flex",alignItems:"center",gap:4,background:"rgba(239,68,68,.15)",borderRadius:14,padding:"3px 8px",border:"1px solid rgba(239,68,68,.3)",flexShrink:0}}>
+                  <Circle style={{width:9,height:9,fill:RED,color:RED,animation:"rec-pulse 1.4s ease-in-out infinite"}}/>
+                  <span style={{fontSize:10,color:"#fca5a5",fontWeight:700}}>Record</span>
+                </div>
               )}
               {isPrivileged&&raisedHands.length>0&&(
-                <span style={{display:"inline-flex",alignItems:"center",gap:4,padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:700,background:"rgba(251,191,36,.18)",border:"1px solid rgba(251,191,36,.4)",color:"#fbbf24",flexShrink:0}}>
-                  <span style={{animation:"hand-bounce 1.2s ease-in-out infinite"}}>✋</span>{raisedHands.length}
-                </span>
+                <div style={{display:"flex",alignItems:"center",gap:4,background:"rgba(251,191,36,.18)",borderRadius:14,padding:"3px 8px",border:"1px solid rgba(251,191,36,.4)",flexShrink:0}}>
+                  <span style={{fontSize:13,animation:"hand-bounce 1.2s ease-in-out infinite"}}>✋</span>
+                  <span style={{fontSize:11,color:"#fbbf24",fontWeight:700}}>{raisedHands.length}</span>
+                </div>
               )}
             </div>
-            <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
-              <ConnectionQualityBadge />
+            <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
               <LayoutSwitcher layout={layout} onChange={setLayout}/>
               {isPrivileged&&<RecController sessionId={sessionId} subjectId={subject.id} userEmail={user?.email||""} onSavingChange={setSavingRec} stopRecRef={recStopRef}/>}
             </div>
           </div>
-          {/* Content — same layout as GuestClassroom */}
+          {/* Content — material panels render here so footer always stays visible */}
           <div style={{flex:1,display:"flex",minHeight:0,overflow:"hidden"}}>
-            {partOpen&&!isMobile&&sessionId&&(
-              <div style={{width:224,background:"#111",borderRight:"1px solid rgba(255,255,255,.07)",display:"flex",flexDirection:"column",flexShrink:0}}>
-                <ClassParticipants sessionId={sessionId}/>
-              </div>
-            )}
-            <div style={{flex:1,position:"relative",minWidth:0,height:"100%",display:"flex",flexDirection:"column"}}>
-              <VideoConference style={{flex:1,minHeight:0}}/>
+            <div style={{flex:1,position:"relative",minWidth:0}}>
+              <VideoGrid layout={layout}/>
+              <FloatingEmojiLayer emojis={floatingEmojis}/>
+              <RaisedHandsOverlay hands={raisedHands}/>
+              {/* Materials panel — absolute inside content, footer always visible */}
+              {matPanelOpen&&<SubjectMaterialsPanel subjectId={subject.id} subject={subject} onClose={()=>setMatPanelOpen(false)}/>}
+              {/* Teacher-shared material viewer — absolute inside content */}
               {matOpen&&<MatViewerInlineBridge material={matOpen} isPrivileged={isPrivileged} onClose={()=>setMatOpen(null)}/>}
             </div>
-            {chatOpen&&!isMobile&&sessionId&&(
-              <div style={{width:288,background:"#111",borderLeft:"1px solid rgba(255,255,255,.07)",display:"flex",flexDirection:"column",flexShrink:0}}>
-                <div style={{display:"flex",borderBottom:"1px solid rgba(255,255,255,.07)"}}>
-                  {[["chat","💬","Chat"],["polls","📊","Polls"]].map(([k,ic,lb])=>(
-                    <button key={k} onClick={()=>{setSideTab(k as any);if(k==="chat")setChatUnread(0);}} style={{flex:1,padding:"12px 4px",background:"none",border:"none",color:sideTab===k?"#fff":"rgba(255,255,255,.35)",fontSize:13,fontWeight:sideTab===k?700:400,borderBottom:sideTab===k?`2px solid ${TEAL}`:"2px solid transparent",cursor:"pointer"}}>{ic} {lb}</button>
-                  ))}
+            {chatOpen&&!isMobile&&(
+              <div style={{width:320,background:"#13181f",borderLeft:"1px solid rgba(255,255,255,.06)",display:"flex",flexDirection:"column",flexShrink:0,animation:"slide-up .2s ease"}}>
+                <div style={{display:"flex",borderBottom:"1px solid rgba(255,255,255,.07)",flexShrink:0}}>
+                  {[["chat","💬","Chat"],["polls","📊","Polls"]].map(([k,ic,lb])=>(<button key={k} onClick={()=>{setSideTab(k as any);if(k==="chat")setChatUnread(0);}} style={{flex:1,padding:"12px 4px",background:"none",border:"none",color:sideTab===k?"#fff":"rgba(255,255,255,.35)",fontSize:13,fontWeight:sideTab===k?700:400,borderBottom:sideTab===k?`2px solid ${TEAL}`:"2px solid transparent",cursor:"pointer"}}>{ic} {lb}</button>))}
                   <button onClick={()=>setChatOpen(false)} style={{background:"none",border:"none",color:"rgba(255,255,255,.3)",cursor:"pointer",padding:"0 12px"}}><X style={{width:16,height:16}}/></button>
                 </div>
-                <div style={{flex:1,overflow:"hidden"}}>{sideTab==="chat"?<ClassChatPanel sessionId={sessionId} sessionStartedAt={sessionInfo?.started_at??sessionInfo?.actual_start_time}/>:<ClassPolls sessionId={sessionId}/>}</div>
+                <div style={{flex:1,overflow:"hidden"}}>{sideTab==="chat"?<ClassChatPanel sessionId={sessionId||""} sessionStartedAt={sessionInfo?.started_at??sessionInfo?.actual_start_time}/>:<ClassPolls sessionId={sessionId||""}/>}</div>
               </div>
             )}
           </div>
           {wbOpen&&<WhiteboardBridge onClose={()=>setWbOpen(false)} isTeacher={isPrivileged} initialStrokes={wbBuffer.current} subjectId={subject.id} canStudentWrite={canStudentWrite}/>}
           {groupReciteDialog&&!isPrivileged&&(
-            <GroupRecitePermDialog onAccept={()=>setGroupReciteDialog(false)} onDecline={()=>{setGroupReciteDialog(false);setGroupRecite(false);}}/>
+            <GroupRecitePermDialog
+              onAccept={()=>{setGroupReciteDialog(false);}}
+              onDecline={()=>{setGroupReciteDialog(false);setGroupRecite(false);}}
+            />
           )}
-          <ClassControls
-            sessionId={sessionId||""}
-            onToggleChat={()=>{setChatOpen(v=>!v);if(!chatOpen)setChatUnread(0);}}
-            onToggleParticipants={()=>setPartOpen(v=>!v)}
-            onEndClass={()=>setShowEnd(true)}
-            onLeaveClass={leaveSession}
-            chatUnread={chatUnread}
-            onLaunchPoll={()=>{setChatOpen(true);setSideTab("polls");}}
-            onLaunchQuiz={()=>setQuizOpen(true)}
-          />
-          {isMobile&&chatOpen&&(
-            <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setChatOpen(false)}>
-              <div style={{position:"absolute",bottom:0,left:0,right:0,background:"#13181f",borderRadius:"22px 22px 0 0",maxHeight:"82vh",display:"flex",flexDirection:"column"}} onClick={e=>e.stopPropagation()}>
-                <div style={{width:40,height:4,borderRadius:2,background:"rgba(255,255,255,.18)",margin:"12px auto 4px"}}/>
-                <div style={{display:"flex",borderBottom:"1px solid rgba(255,255,255,.07)"}}>
-                  {[["chat","💬","Chat"],["polls","📊","Polls"]].map(([k,ic,lb])=>(
-                    <button key={k} onClick={()=>setSideTab(k as any)} style={{flex:1,padding:"10px 6px",background:"none",border:"none",color:sideTab===k?"#fff":"rgba(255,255,255,.35)",fontSize:13,fontWeight:sideTab===k?700:400,borderBottom:sideTab===k?`2px solid ${TEAL}`:"2px solid transparent",cursor:"pointer"}}>{ic} {lb}</button>
-                  ))}
-                  <button onClick={()=>setChatOpen(false)} style={{width:32,height:32,borderRadius:"50%",background:"rgba(255,255,255,.1)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,margin:"6px 8px 0 0"}}><X style={{width:14,height:14}}/></button>
-                </div>
-                <div style={{flex:1,overflow:"hidden",minHeight:340}}>{sideTab==="chat"?<ClassChatPanel sessionId={sessionId||""} sessionStartedAt={sessionInfo?.started_at??sessionInfo?.actual_start_time}/>:<ClassPolls sessionId={sessionId||""}/>}</div>
-              </div>
-            </div>
-          )}
-          {isMobile&&partOpen&&(
-            <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setPartOpen(false)}>
-              <div style={{position:"absolute",bottom:0,left:0,right:0,background:"#13181f",borderRadius:"22px 22px 0 0",maxHeight:"65vh",overflow:"auto"}} onClick={e=>e.stopPropagation()}>
-                <div style={{width:40,height:4,borderRadius:2,background:"rgba(255,255,255,.18)",margin:"12px auto 6px"}}/>
-                <ClassParticipants sessionId={sessionId||""}/>
-              </div>
-            </div>
-          )}
+          <BottomBarBridge sessionId={sessionId||""} onToggleChat={()=>{setChatOpen(v=>!v);if(!chatOpen)setChatUnread(0);}} onToggleParticipants={()=>setPartOpen(v=>!v)} onEndClass={()=>setShowEnd(true)} onLeaveClass={leaveSession} chatUnread={chatUnread} onToggleWhiteboard={()=>setWbOpen(v=>!v)} whiteboardOpen={wbOpen} onGroupRecite={handleGroupRecite} groupReciteMode={groupRecite} onShareMaterial={()=>setMatPicker(true)} isPrivileged={isPrivileged} canStudentWriteProp={canStudentWrite} canStudentRecProp={canStudentRec} onPermChange={(type:any,allow:any,room:any)=>handlePermChange(type,allow,room)} onMinimize={onMinimize} onToggleMaterials={()=>setMatPanelOpen(v=>!v)} matPanelOpen={matPanelOpen} onSendEmoji={addFloatingEmoji} layout={layout} onLayoutChange={setLayout} onLaunchQuiz={()=>setQuizOpen(true)}/>{/* FIX BUG 2: quiz launcher */}
+          {isMobile&&chatOpen&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setChatOpen(false)}><div style={{position:"absolute",bottom:0,left:0,right:0,background:"#13181f",borderRadius:"22px 22px 0 0",maxHeight:"82vh",display:"flex",flexDirection:"column",animation:"slide-up .22s ease",paddingBottom:"env(safe-area-inset-bottom,0px)"}} onClick={e=>e.stopPropagation()}><div style={{display:"flex",alignItems:"center",padding:"12px 16px 0",flexShrink:0}}><div style={{flex:1,display:"flex"}}>{[["chat","💬","Chat"],["polls","📊","Polls"]].map(([k,ic,lb])=>(<button key={k} onClick={()=>setSideTab(k as any)} style={{flex:1,padding:"10px 6px",background:"none",border:"none",color:sideTab===k?"#fff":"rgba(255,255,255,.35)",fontSize:13,fontWeight:sideTab===k?700:400,borderBottom:sideTab===k?`2px solid ${TEAL}`:"2px solid transparent",cursor:"pointer"}}>{ic} {lb}</button>))}</div><button onClick={()=>setChatOpen(false)} style={{width:32,height:32,borderRadius:"50%",background:"rgba(255,255,255,.1)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><X style={{width:14,height:14}}/></button></div><div style={{flex:1,overflow:"hidden",minHeight:340}}>{sideTab==="chat"?<ClassChatPanel sessionId={sessionId||""} sessionStartedAt={sessionInfo?.started_at??sessionInfo?.actual_start_time}/>:<ClassPolls sessionId={sessionId||""}/>}</div></div></div>)}
+          {isMobile&&partOpen&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setPartOpen(false)}><div style={{position:"absolute",bottom:BAR_H,left:0,right:0,background:"#13181f",borderRadius:"22px 22px 0 0",maxHeight:"65vh",overflow:"auto"}} onClick={e=>e.stopPropagation()}><div style={{width:40,height:4,borderRadius:2,background:"rgba(255,255,255,.18)",margin:"12px auto 6px"}}/><ClassParticipants sessionId={sessionId||""}/></div></div>)}
+          {/* FIX BUG 2: LiveQuizOverlay now controlled by quizOpen state — was permanently disabled with hardcoded isOpen={false} */}
           <LiveQuizOverlay sessionId={sessionId||""} isOpen={quizOpen} onClose={()=>setQuizOpen(false)}/>
-          {/* MatPickerBridge MUST be inside LiveKitRoom — it calls useRoomContext() */}
-          {matPicker&&<MatPickerBridge subjectId={subject.id} onShare={(mat:any,room:any)=>{setMatOpen(mat);setMatPicker(false);try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"mat_open",material:mat})),{reliable:true});}catch{}}} onClose={()=>setMatPicker(false)}/>}
         </LiveKitRoom>
       )}
+      {matPicker&&<MatPickerBridge subjectId={subject.id} onShare={(mat:any,room:any)=>{setMatOpen(mat);setMatPicker(false);try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"mat_open",material:mat})),{reliable:true});}catch{}}} onClose={()=>setMatPicker(false)}/>}
       {showEnd&&createPortal(
         <div style={{position:"fixed",inset:0,zIndex:9500,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,.72)",backdropFilter:"blur(6px)"}} onClick={()=>setShowEnd(false)}>
           <div style={{background:"#17202a",borderRadius:20,padding:"28px 28px 24px",width:"100%",maxWidth:380,margin:"0 16px",boxShadow:"0 24px 64px rgba(0,0,0,.7)",border:"1px solid rgba(255,255,255,.1)",animation:"fade-in .18s ease"}} onClick={e=>e.stopPropagation()}>
