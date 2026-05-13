@@ -65,6 +65,25 @@ const CSS = `
   @keyframes rec-pulse  { 0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.5)}70%{box-shadow:0 0 0 8px rgba(239,68,68,0)} }
   @keyframes hand-bounce{ 0%,100%{transform:translateY(0)}45%{transform:translateY(-7px)} }
   [data-lk-theme]{ height:100%!important;display:flex!important;flex-direction:column!important; }
+  /* ── Force LiveKit dark theme — overrides data-lk-theme="default" (light) CSS variables ── */
+  [data-lk-theme],[data-lk-theme="default"]{
+    --lk-fg:  #ffffff !important;
+    --lk-fg2: rgba(255,255,255,.7) !important;
+    --lk-fg3: rgba(255,255,255,.35) !important;
+    --lk-bg:  #0f1117 !important;
+    --lk-bg2: #161b22 !important;
+    --lk-bg3: #1c2128 !important;
+    --lk-border: rgba(255,255,255,.08) !important;
+    --lk-accent-fg: #4ade80 !important;
+    --lk-accent-bg: rgba(10,124,104,.25) !important;
+  }
+  .lk-video-conference{ background:#0f1117 !important; }
+  .lk-grid-layout{ background:#0f1117 !important; }
+  .lk-focus-layout{ background:#0f1117 !important; }
+  .lk-participant-tile{ background:#161b22 !important; }
+  .lk-participant-placeholder{ background:#1c2128 !important; }
+  .lk-prejoin{ background:#0f1117 !important; color:#fff !important; }
+  .lk-connection-state{ background:#0f1117 !important; }
   [data-classroom-root]{
     overscroll-behavior:none;-webkit-overflow-scrolling:touch;
     touch-action:pan-y;padding-bottom:env(safe-area-inset-bottom,0px);
@@ -2811,9 +2830,10 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
             </div>
           )}
           <LiveQuizOverlay sessionId={sessionId||""} isOpen={quizOpen} onClose={()=>setQuizOpen(false)}/>
+          {/* MatPickerBridge MUST be inside LiveKitRoom — it calls useRoomContext() */}
+          {matPicker&&<MatPickerBridge subjectId={subject.id} onShare={(mat:any,room:any)=>{setMatOpen(mat);setMatPicker(false);try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"mat_open",material:mat})),{reliable:true});}catch{}}} onClose={()=>setMatPicker(false)}/>}
         </LiveKitRoom>
       )}
-      {matPicker&&<MatPickerBridge subjectId={subject.id} onShare={(mat:any,room:any)=>{setMatOpen(mat);setMatPicker(false);try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"mat_open",material:mat})),{reliable:true});}catch{}}} onClose={()=>setMatPicker(false)}/>}
       {showEnd&&createPortal(
         <div style={{position:"fixed",inset:0,zIndex:9500,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,.72)",backdropFilter:"blur(6px)"}} onClick={()=>setShowEnd(false)}>
           <div style={{background:"#17202a",borderRadius:20,padding:"28px 28px 24px",width:"100%",maxWidth:380,margin:"0 16px",boxShadow:"0 24px 64px rgba(0,0,0,.7)",border:"1px solid rgba(255,255,255,.1)",animation:"fade-in .18s ease"}} onClick={e=>e.stopPropagation()}>
