@@ -2758,8 +2758,8 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
                 <ClassParticipants sessionId={sessionId}/>
               </div>
             )}
-            <div style={{flex:1,position:"relative",minWidth:0}}>
-              <VideoConference/>
+            <div style={{flex:1,position:"relative",minWidth:0,height:"100%",display:"flex",flexDirection:"column"}}>
+              <VideoConference style={{flex:1,minHeight:0}}/>
               {matOpen&&<MatViewerInlineBridge material={matOpen} isPrivileged={isPrivileged} onClose={()=>setMatOpen(null)}/>}
             </div>
             {chatOpen&&!isMobile&&sessionId&&(
