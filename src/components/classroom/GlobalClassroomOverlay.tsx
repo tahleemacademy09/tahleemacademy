@@ -312,18 +312,28 @@ export default function GlobalClassroomOverlay() {
   if (!inCall || !activeSubject) return null;
 
   return (
-    <div style={{
-      position:      "fixed", inset: 0, zIndex: 8000,
-      display:       "flex", flexDirection: "column",
-      visibility:    minimized ? "hidden" : "visible",
-      pointerEvents: minimized ? "none"   : "all",
-    }}>
-      <ClassroomView
-        subject={activeSubject}
-        onLeave={leaveClass}
-        onMinimize={handleMinimize}
-        autoJoin={autoJoin}
-      />
-    </div>
+    <>
+      {/* White blank screen shown when minimized — covers the page behind the overlay */}
+      {minimized && (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 7999,
+          background: "#ffffff",
+          pointerEvents: "none",
+        }} />
+      )}
+      <div style={{
+        position:      "fixed", inset: 0, zIndex: 8000,
+        display:       "flex", flexDirection: "column",
+        visibility:    minimized ? "hidden" : "visible",
+        pointerEvents: minimized ? "none"   : "all",
+      }}>
+        <ClassroomView
+          subject={activeSubject}
+          onLeave={leaveClass}
+          onMinimize={handleMinimize}
+          autoJoin={autoJoin}
+        />
+      </div>
+    </>
   );
 }
