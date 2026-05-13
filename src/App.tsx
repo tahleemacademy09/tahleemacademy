@@ -306,9 +306,11 @@ const App = () => (
                 </Routes>
               </Suspense>
             </ErrorBoundary>
+            <ErrorBoundary>
             <Suspense fallback={null}>
               <GlobalClassroomOverlay />
             </Suspense>
+            </ErrorBoundary>
             </LiveClassProvider>
             </RecordingPlayerProvider>
           </BrowserRouter>
