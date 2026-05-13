@@ -87,7 +87,7 @@ const LiveClasses = () => {
     const found = subjects.find((s: any) => s.id === subjectId);
     if (found && !inClass) {
       setSelectedSubject(found);
-      if (autoJoin) joinClass(found);  // FIX: was setInClass(true) — not defined
+      if (autoJoin) joinClass(found, { autoJoin: true });  // FIX: was setInClass(true) — not defined
     }
   }, [subjects, searchParams]);
 
@@ -95,7 +95,7 @@ const LiveClasses = () => {
   const isSubjectLive = (subjectId: string) =>
     liveSessions?.some((s: any) => s.subject_id === subjectId);
 
-  const handleJoinClass  = () => { if (selectedSubject) joinClass(selectedSubject); };
+  const handleJoinClass  = () => { if (selectedSubject) joinClass(selectedSubject, { autoJoin: true }); };
   const handleLeaveClass = () => { leaveClass(); setSelectedSubject(null); };
   const handleBack       = () => { setSelectedSubject(null); };
 
