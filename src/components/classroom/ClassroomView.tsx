@@ -6,6 +6,7 @@
 import {
   LiveKitRoom, RoomAudioRenderer, useRoomContext,
   useParticipants, useLocalParticipant,
+  VideoConference,
 } from "@livekit/components-react";
 // @ts-ignore
 import "@livekit/components-styles";
@@ -30,6 +31,7 @@ import {
   SwitchCamera, Settings, Check, Wifi,
 } from "lucide-react";
 import ClassLobby        from "./ClassLobby";
+import ClassControls      from "./ClassControls";
 import ClassChatPanel    from "./ClassChatPanel";
 import ClassParticipants from "./ClassParticipants";
 import ClassPolls        from "./ClassPolls";
@@ -46,8 +48,8 @@ interface RaisedHand   { identity:string; name:string; raisedAt:number; }
 
 const TEAL  = "#0a7c68";
 const TEAL2 = "#064E3B";
-const DARK  = "#0f1117";
-const GLASS = "rgba(15,17,23,0.88)";
+const DARK  = "#111";
+const GLASS = "rgba(10,40,25,0.92)";
 const GLASSB= "rgba(255,255,255,0.08)";
 const GREEN = "#22c55e";
 const RED   = "#ef4444";
@@ -308,7 +310,7 @@ const RaisedHandsOverlay=({hands}:{hands:RaisedHand[]})=>{
 /* ══ GROUP RECITE PERMISSION DIALOG ══ */
 const GroupRecitePermDialog=({onAccept,onDecline}:{onAccept:()=>void;onDecline:()=>void})=>createPortal(
   <div style={{position:"fixed",inset:0,zIndex:9600,background:"rgba(0,0,0,.72)",backdropFilter:"blur(6px)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-    <div style={{background:"#17202a",borderRadius:20,padding:"28px 24px",maxWidth:340,width:"100%",boxShadow:"0 24px 60px rgba(0,0,0,.7)",border:"1px solid rgba(255,255,255,.1)",animation:"fade-in .18s ease",textAlign:"center"}}>
+    <div style={{background:"#0c2518",borderRadius:20,padding:"28px 24px",maxWidth:340,width:"100%",boxShadow:"0 24px 60px rgba(0,0,0,.7)",border:"1px solid rgba(255,255,255,.1)",animation:"fade-in .18s ease",textAlign:"center"}}>
       <div style={{fontSize:44,marginBottom:12}}>🎙️</div>
       <h2 style={{fontSize:17,fontWeight:800,color:"#fff",marginBottom:8}}>Group Recitation</h2>
       <p style={{fontSize:13,color:"rgba(255,255,255,.55)",marginBottom:22,lineHeight:1.55}}>
@@ -341,7 +343,7 @@ const LayoutSwitcher=({layout,onChange}:{layout:LayoutMode;onChange:(m:LayoutMod
       </button>
       {open&&createPortal(
         <div onClick={()=>setOpen(false)} style={{position:"fixed",inset:0,zIndex:9200}}>
-          <div onClick={e=>e.stopPropagation()} style={{position:"fixed",top:58,right:14,background:"#17202a",border:"1px solid rgba(255,255,255,.1)",borderRadius:16,overflow:"hidden",minWidth:170,boxShadow:"0 8px 36px rgba(0,0,0,.65)",animation:"fade-in .15s ease"}}>
+          <div onClick={e=>e.stopPropagation()} style={{position:"fixed",top:58,right:14,background:"#0c2518",border:"1px solid rgba(255,255,255,.1)",borderRadius:16,overflow:"hidden",minWidth:170,boxShadow:"0 8px 36px rgba(0,0,0,.65)",animation:"fade-in .15s ease"}}>
             {LAYOUT_OPTIONS.map(o=>(
               <button key={o.mode} onClick={()=>{onChange(o.mode);setOpen(false);}}
                 style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"11px 16px",background:layout===o.mode?`rgba(10,124,104,.35)`:"none",border:"none",cursor:"pointer",color:layout===o.mode?"#4ade80":"#fff",fontSize:13,fontWeight:layout===o.mode?700:400,borderBottom:"1px solid rgba(255,255,255,.05)"}}>
@@ -446,7 +448,7 @@ const MaterialPicker=({subjectId,onShare,onClose}:any)=>{
   const[mats,setMats]=useState<any[]>([]);const[busy,setBusy]=useState(true);
   useEffect(()=>{supabase.from("subject_materials").select("*").eq("subject_id",subjectId).order("created_at",{ascending:false}).then(({data})=>{setMats(data||[]);setBusy(false);});},[subjectId]);
   return createPortal(<div style={{position:"fixed",inset:0,zIndex:9997,background:"rgba(0,0,0,.72)",backdropFilter:"blur(8px)",display:"flex",alignItems:"flex-end"}} onClick={onClose}>
-    <div style={{width:"100%",background:"#17202a",borderRadius:"22px 22px 0 0",maxHeight:"70vh",display:"flex",flexDirection:"column"}} onClick={e=>e.stopPropagation()}>
+    <div style={{width:"100%",background:"#0c2518",borderRadius:"22px 22px 0 0",maxHeight:"70vh",display:"flex",flexDirection:"column"}} onClick={e=>e.stopPropagation()}>
       <div style={{padding:"14px 18px",borderBottom:"1px solid rgba(255,255,255,.08)",display:"flex",alignItems:"center",gap:10}}>
         <BookOpen style={{width:17,height:17,color:TEAL}}/><span style={{color:"#fff",fontWeight:700,fontSize:15,flex:1}}>Share Material with Class</span>
         <button onClick={onClose} style={{background:"none",border:"none",color:"rgba(255,255,255,.4)",cursor:"pointer"}}><X style={{width:17,height:17}}/></button>
@@ -1296,7 +1298,7 @@ const SubjectMaterialsPanel=({subjectId,subject,onClose}:any)=>{
     <div style={{position:"absolute",inset:0,zIndex:55,background:"rgba(0,0,0,.55)"}} onClick={onClose}>
       {/* Panel slides in from right */}
       <div onClick={e=>e.stopPropagation()}
-        style={{position:"absolute",top:0,right:0,bottom:0,width:"min(360px,100%)",background:"#13181f",borderLeft:"1px solid rgba(255,255,255,.08)",display:"flex",flexDirection:"column",animation:"slide-up .2s ease",boxShadow:"-8px 0 32px rgba(0,0,0,.5)"}}>
+        style={{position:"absolute",top:0,right:0,bottom:0,width:"min(360px,100%)",background:"#0c2216",borderLeft:"1px solid rgba(255,255,255,.08)",display:"flex",flexDirection:"column",animation:"slide-up .2s ease",boxShadow:"-8px 0 32px rgba(0,0,0,.5)"}}>
         <div style={{display:"flex",alignItems:"center",gap:10,padding:"14px 16px",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0}}>
           <Eye style={{width:16,height:16,color:TEAL}}/>
           <span style={{flex:1,fontSize:14,fontWeight:700,color:"#fff"}}>Subject Materials</span>
@@ -1550,7 +1552,7 @@ const RoomSettingsModal = ({ onClose, room }: { onClose: () => void; room: any }
   return createPortal(
     <div style={{ position:"fixed",inset:0,zIndex:9999,background:"rgba(0,0,0,.65)",display:"flex",alignItems:"center",justifyContent:"center" }}
       onClick={onClose}>
-      <div style={{ background:"#17202a",borderRadius:20,width:"min(460px,96vw)",maxHeight:"85vh",
+      <div style={{ background:"#0c2518",borderRadius:20,width:"min(460px,96vw)",maxHeight:"85vh",
         display:"flex",flexDirection:"column",overflow:"hidden",boxShadow:"0 24px 64px rgba(0,0,0,.7)" }}
         onClick={e=>e.stopPropagation()}>
         {/* Header */}
@@ -1699,7 +1701,7 @@ const ParticipantTile=({participant,isLocal,size="normal"}:{participant:any;isLo
   const avatarSz=size==="large"?72:size==="small"?36:52;
   const fontSize=size==="large"?28:size==="small"?14:20;
   return(
-    <div style={{position:"relative",width:"100%",height:"100%",background:"linear-gradient(145deg,#1a2035,#0e1420)",borderRadius:size==="small"?10:14,overflow:"hidden",border:isSpeaking?`2px solid ${GREEN}`:"2px solid rgba(255,255,255,.06)",transition:"border-color .2s,box-shadow .2s",boxShadow:isSpeaking?`0 0 0 2px ${GREEN}44,0 4px 24px rgba(34,197,94,.25)`:"0 2px 12px rgba(0,0,0,.4)"}}>
+    <div style={{position:"relative",width:"100%",height:"100%",background:"linear-gradient(145deg,#0a2518,#0f2d1f)",borderRadius:size==="small"?10:14,overflow:"hidden",border:isSpeaking?`2px solid ${GREEN}`:"2px solid rgba(255,255,255,.06)",transition:"border-color .2s,box-shadow .2s",boxShadow:isSpeaking?`0 0 0 2px ${GREEN}44,0 4px 24px rgba(34,197,94,.25)`:"0 2px 12px rgba(0,0,0,.4)"}}>
       <video ref={videoRef} autoPlay playsInline muted={isLocal} style={{width:"100%",height:"100%",objectFit:"cover",display:hasVideo?"block":"none",transform:isLocal?"scaleX(-1)":"none"}}/>
       {!hasVideo&&<div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"linear-gradient(145deg,#0e1a14,#1a2e22)"}}>
         <div style={{width:avatarSz,height:avatarSz,borderRadius:"50%",background:`linear-gradient(135deg,${TEAL},#064E3B)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize,fontWeight:800,color:"#fff",border:isSpeaking?`3px solid ${GREEN}`:"3px solid rgba(255,255,255,.1)",boxShadow:isSpeaking?`0 0 16px ${GREEN}55`:"none",transition:"border-color .2s,box-shadow .2s"}}>{initials}</div>
@@ -2021,7 +2023,7 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
       bottom:pos.bottom,
       left:pos.left!==undefined?pos.left:undefined,
       right:pos.right!==undefined?pos.right:undefined,
-      background:"#14201a",
+      background:"#0a2216",
       border:"1px solid rgba(255,255,255,.1)",
       borderRadius:16,width,zIndex:9200,
       boxShadow:"0 16px 48px rgba(0,0,0,.75)",
@@ -2073,7 +2075,7 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
         position:"fixed",
         bottom:BTN_H+20+(isMobile?4:8),
         left:"50%",transform:"translateX(-50%)",
-        background:"#14201a",border:"1px solid rgba(255,255,255,.1)",
+        background:"#0a2216",border:"1px solid rgba(255,255,255,.1)",
         borderRadius:40,padding:"8px 12px",
         display:"flex",gap:6,zIndex:9200,
         boxShadow:"0 12px 40px rgba(0,0,0,.7)",
@@ -2096,7 +2098,7 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
         position:"fixed",
         bottom:morePos.bottom,
         right:(morePos as any).right,
-        background:"#14201a",border:"1px solid rgba(255,255,255,.08)",
+        background:"#0a2216",border:"1px solid rgba(255,255,255,.08)",
         borderRadius:18,boxShadow:"0 12px 48px rgba(0,0,0,.8)",
         minWidth:230,zIndex:9200,overflow:"hidden",
       }}>
@@ -2162,7 +2164,7 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
     {/* ══ BAR ══ */}
     <div className="cv-bar" style={{
       height:isMobile?62:72,minHeight:isMobile?62:72,
-      background:"rgba(10,15,12,0.97)",
+      background:"rgba(8,28,16,0.97)",
       backdropFilter:"blur(24px)",WebkitBackdropFilter:"blur(24px)",
       borderTop:"1px solid rgba(255,255,255,.07)",
       display:"flex",alignItems:"center",
@@ -2671,26 +2673,26 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               {isPrivileged&&<RecController sessionId={sessionId} subjectId={subject.id} userEmail={user?.email||""} onSavingChange={setSavingRec} stopRecRef={recStopRef}/>}
             </div>
           </div>
-          {/* Content — material panels render here so footer always stays visible */}
-          <div style={{flex:1,display:"flex",minHeight:0,overflow:"hidden"}}>
-            <div style={{flex:1,position:"relative",minWidth:0}}>
-              <VideoGrid layout={layout}/>
+          {/* ── Main content: VideoConference + side panels ── */}
+          <div style={{flex:1,display:"flex",minHeight:0,overflow:"hidden",position:"relative"}}>
+            {/* Participants panel (desktop) */}
+            {partOpen&&!isMobile&&(<div style={{width:224,background:"#111b21",borderRight:"1px solid rgba(255,255,255,.07)",display:"flex",flexDirection:"column",flexShrink:0}}><ClassParticipants sessionId={sessionId||""}/></div>)}
+            {/* Video area — LiveKit VideoConference matches the grey-silhouette look in the image */}
+            <div style={{flex:1,position:"relative",minWidth:0,background:"#111"}}>
+              <VideoConference/>
               <FloatingEmojiLayer emojis={floatingEmojis}/>
               <RaisedHandsOverlay hands={raisedHands}/>
-              {/* Materials panel — absolute inside content, footer always visible */}
               {matPanelOpen&&<SubjectMaterialsPanel subjectId={subject.id} subject={subject} onClose={()=>setMatPanelOpen(false)}/>}
-              {/* Teacher-shared material viewer — absolute inside content */}
               {matOpen&&<MatViewerInlineBridge material={matOpen} isPrivileged={isPrivileged} onClose={()=>setMatOpen(null)}/>}
             </div>
-            {chatOpen&&!isMobile&&(
-              <div style={{width:320,background:"#13181f",borderLeft:"1px solid rgba(255,255,255,.06)",display:"flex",flexDirection:"column",flexShrink:0,animation:"slide-up .2s ease"}}>
-                <div style={{display:"flex",borderBottom:"1px solid rgba(255,255,255,.07)",flexShrink:0}}>
-                  {[["chat","💬","Chat"],["polls","📊","Polls"]].map(([k,ic,lb])=>(<button key={k} onClick={()=>{setSideTab(k as any);if(k==="chat")setChatUnread(0);}} style={{flex:1,padding:"12px 4px",background:"none",border:"none",color:sideTab===k?"#fff":"rgba(255,255,255,.35)",fontSize:13,fontWeight:sideTab===k?700:400,borderBottom:sideTab===k?`2px solid ${TEAL}`:"2px solid transparent",cursor:"pointer"}}>{ic} {lb}</button>))}
-                  <button onClick={()=>setChatOpen(false)} style={{background:"none",border:"none",color:"rgba(255,255,255,.3)",cursor:"pointer",padding:"0 12px"}}><X style={{width:16,height:16}}/></button>
-                </div>
-                <div style={{flex:1,overflow:"hidden"}}>{sideTab==="chat"?<ClassChatPanel sessionId={sessionId||""} sessionStartedAt={sessionInfo?.started_at??sessionInfo?.actual_start_time}/>:<ClassPolls sessionId={sessionId||""}/>}</div>
+            {/* Chat panel (desktop) */}
+            {chatOpen&&!isMobile&&(<div style={{width:288,background:"#111b21",borderLeft:"1px solid rgba(255,255,255,.07)",display:"flex",flexDirection:"column",flexShrink:0}}>
+              <div style={{display:"flex",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0}}>
+                {[["chat","💬","Chat"],["polls","📊","Polls"]].map(([k,ic,lb])=>(<button key={k} onClick={()=>{setSideTab(k as any);if(k==="chat")setChatUnread(0);}} style={{flex:1,padding:"11px 4px",background:"none",border:"none",color:sideTab===k?"#fff":"rgba(255,255,255,.35)",fontSize:13,fontWeight:sideTab===k?700:400,borderBottom:sideTab===k?`2px solid ${TEAL}`:"2px solid transparent",cursor:"pointer"}}>{ic} {lb}</button>))}
+                <button onClick={()=>setChatOpen(false)} style={{background:"none",border:"none",color:"rgba(255,255,255,.3)",cursor:"pointer",padding:"0 12px"}}><X style={{width:15,height:15}}/></button>
               </div>
-            )}
+              <div style={{flex:1,overflow:"hidden"}}>{sideTab==="chat"?<ClassChatPanel sessionId={sessionId||""} sessionStartedAt={sessionInfo?.started_at??sessionInfo?.actual_start_time}/>:<ClassPolls sessionId={sessionId||""}/>}</div>
+            </div>)}
           </div>
           {wbOpen&&<WhiteboardBridge onClose={()=>setWbOpen(false)} isTeacher={isPrivileged} initialStrokes={wbBuffer.current} subjectId={subject.id} canStudentWrite={canStudentWrite}/>}
           {groupReciteDialog&&!isPrivileged&&(
@@ -2699,17 +2701,27 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               onDecline={()=>{setGroupReciteDialog(false);setGroupRecite(false);}}
             />
           )}
-          <BottomBarBridge sessionId={sessionId||""} onToggleChat={()=>{setChatOpen(v=>!v);if(!chatOpen)setChatUnread(0);}} onToggleParticipants={()=>setPartOpen(v=>!v)} onEndClass={()=>setShowEnd(true)} onLeaveClass={leaveSession} chatUnread={chatUnread} onToggleWhiteboard={()=>setWbOpen(v=>!v)} whiteboardOpen={wbOpen} onGroupRecite={handleGroupRecite} groupReciteMode={groupRecite} onShareMaterial={()=>setMatPicker(true)} isPrivileged={isPrivileged} canStudentWriteProp={canStudentWrite} canStudentRecProp={canStudentRec} onPermChange={(type:any,allow:any,room:any)=>handlePermChange(type,allow,room)} onMinimize={onMinimize} onToggleMaterials={()=>setMatPanelOpen(v=>!v)} matPanelOpen={matPanelOpen} onSendEmoji={addFloatingEmoji} layout={layout} onLayoutChange={setLayout} onLaunchQuiz={()=>setQuizOpen(true)}/>{/* FIX BUG 2: quiz launcher */}
-          {isMobile&&chatOpen&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setChatOpen(false)}><div style={{position:"absolute",bottom:0,left:0,right:0,background:"#13181f",borderRadius:"22px 22px 0 0",maxHeight:"82vh",display:"flex",flexDirection:"column",animation:"slide-up .22s ease",paddingBottom:"env(safe-area-inset-bottom,0px)"}} onClick={e=>e.stopPropagation()}><div style={{display:"flex",alignItems:"center",padding:"12px 16px 0",flexShrink:0}}><div style={{flex:1,display:"flex"}}>{[["chat","💬","Chat"],["polls","📊","Polls"]].map(([k,ic,lb])=>(<button key={k} onClick={()=>setSideTab(k as any)} style={{flex:1,padding:"10px 6px",background:"none",border:"none",color:sideTab===k?"#fff":"rgba(255,255,255,.35)",fontSize:13,fontWeight:sideTab===k?700:400,borderBottom:sideTab===k?`2px solid ${TEAL}`:"2px solid transparent",cursor:"pointer"}}>{ic} {lb}</button>))}</div><button onClick={()=>setChatOpen(false)} style={{width:32,height:32,borderRadius:"50%",background:"rgba(255,255,255,.1)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><X style={{width:14,height:14}}/></button></div><div style={{flex:1,overflow:"hidden",minHeight:340}}>{sideTab==="chat"?<ClassChatPanel sessionId={sessionId||""} sessionStartedAt={sessionInfo?.started_at??sessionInfo?.actual_start_time}/>:<ClassPolls sessionId={sessionId||""}/>}</div></div></div>)}
-          {isMobile&&partOpen&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setPartOpen(false)}><div style={{position:"absolute",bottom:BAR_H,left:0,right:0,background:"#13181f",borderRadius:"22px 22px 0 0",maxHeight:"65vh",overflow:"auto"}} onClick={e=>e.stopPropagation()}><div style={{width:40,height:4,borderRadius:2,background:"rgba(255,255,255,.18)",margin:"12px auto 6px"}}/><ClassParticipants sessionId={sessionId||""}/></div></div>)}
-          {/* FIX BUG 2: LiveQuizOverlay now controlled by quizOpen state — was permanently disabled with hardcoded isOpen={false} */}
+          {/* ── ClassControls bottom bar — matches the image exactly ── */}
+          <ClassControls
+            sessionId={sessionId||""}
+            onToggleChat={()=>{setChatOpen(v=>!v);if(!chatOpen)setChatUnread(0);}}
+            onToggleParticipants={()=>setPartOpen(v=>!v)}
+            onEndClass={isPrivileged?()=>setShowEnd(true):undefined}
+            onLeaveClass={leaveSession}
+            chatUnread={chatUnread}
+            onLaunchPoll={isPrivileged?()=>{setChatOpen(true);setSideTab("polls");}:undefined}
+            onLaunchQuiz={isPrivileged?()=>setQuizOpen(true):undefined}
+          />
+          {/* Mobile bottom sheets */}
+          {isMobile&&chatOpen&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setChatOpen(false)}><div style={{position:"absolute",bottom:0,left:0,right:0,background:"#111b21",borderRadius:"22px 22px 0 0",maxHeight:"82vh",display:"flex",flexDirection:"column",paddingBottom:"env(safe-area-inset-bottom,0px)"}} onClick={e=>e.stopPropagation()}><div style={{display:"flex",alignItems:"center",padding:"12px 16px 0",flexShrink:0}}><div style={{flex:1,display:"flex"}}>{[["chat","💬","Chat"],["polls","📊","Polls"]].map(([k,ic,lb])=>(<button key={k} onClick={()=>setSideTab(k as any)} style={{flex:1,padding:"10px 6px",background:"none",border:"none",color:sideTab===k?"#fff":"rgba(255,255,255,.35)",fontSize:13,fontWeight:sideTab===k?700:400,borderBottom:sideTab===k?`2px solid ${TEAL}`:"2px solid transparent",cursor:"pointer"}}>{ic} {lb}</button>))}</div><button onClick={()=>setChatOpen(false)} style={{width:32,height:32,borderRadius:"50%",background:"rgba(255,255,255,.1)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><X style={{width:14,height:14}}/></button></div><div style={{flex:1,overflow:"hidden",minHeight:340}}>{sideTab==="chat"?<ClassChatPanel sessionId={sessionId||""} sessionStartedAt={sessionInfo?.started_at??sessionInfo?.actual_start_time}/>:<ClassPolls sessionId={sessionId||""}/>}</div></div></div>)}
+          {isMobile&&partOpen&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setPartOpen(false)}><div style={{position:"absolute",bottom:64,left:0,right:0,background:"#111b21",borderRadius:"22px 22px 0 0",maxHeight:"65vh",overflow:"auto"}} onClick={e=>e.stopPropagation()}><div style={{width:40,height:4,borderRadius:2,background:"rgba(255,255,255,.18)",margin:"12px auto 6px"}}/><ClassParticipants sessionId={sessionId||""}/></div></div>)}
           <LiveQuizOverlay sessionId={sessionId||""} isOpen={quizOpen} onClose={()=>setQuizOpen(false)}/>
         </LiveKitRoom>
       )}
       {matPicker&&<MatPickerBridge subjectId={subject.id} onShare={(mat:any,room:any)=>{setMatOpen(mat);setMatPicker(false);try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"mat_open",material:mat})),{reliable:true});}catch{}}} onClose={()=>setMatPicker(false)}/>}
       {showEnd&&createPortal(
         <div style={{position:"fixed",inset:0,zIndex:9500,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,.72)",backdropFilter:"blur(6px)"}} onClick={()=>setShowEnd(false)}>
-          <div style={{background:"#17202a",borderRadius:20,padding:"28px 28px 24px",width:"100%",maxWidth:380,margin:"0 16px",boxShadow:"0 24px 64px rgba(0,0,0,.7)",border:"1px solid rgba(255,255,255,.1)",animation:"fade-in .18s ease"}} onClick={e=>e.stopPropagation()}>
+          <div style={{background:"#0c2518",borderRadius:20,padding:"28px 28px 24px",width:"100%",maxWidth:380,margin:"0 16px",boxShadow:"0 24px 64px rgba(0,0,0,.7)",border:"1px solid rgba(255,255,255,.1)",animation:"fade-in .18s ease"}} onClick={e=>e.stopPropagation()}>
             <div style={{width:52,height:52,borderRadius:16,background:"rgba(239,68,68,.15)",border:"1.5px solid rgba(239,68,68,.35)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px"}}>
               <Phone style={{width:22,height:22,color:"#ef4444",transform:"rotate(135deg)"}}/>
             </div>
