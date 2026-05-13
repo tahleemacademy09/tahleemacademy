@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
@@ -8,10 +8,10 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { 
-  BookOpen, Video, VideoOff, Mic, MicOff, FileText, 
-  ClipboardList, Megaphone, Calendar, ArrowLeft, 
-  Monitor, Users, Clock, X
+import {
+  BookOpen, Video, FileText,
+  ClipboardList, Megaphone, Calendar, ArrowLeft,
+  Users, Clock, X
 } from "lucide-react";
 import ClassroomView from "@/components/classroom/ClassroomView";
 import SubjectRecordings from "@/components/classroom/SubjectRecordings";
@@ -21,16 +21,12 @@ import SubjectAssignments from "@/components/classroom/SubjectAssignments";
 import SubjectAnnouncements from "@/components/classroom/SubjectAnnouncements";
 
 const LiveClasses = () => {
-  const { t, isRTL } = useLanguage();
-  const { user, hasRole } = useAuth();
+  const { t } = useLanguage();
+  const { hasRole } = useAuth();
   const [searchParams] = useSearchParams();
   const [selectedSubject, setSelectedSubject] = useState<any>(null);
   const [inClass, setInClass] = useState(false);
-  const [minimized, setMinimized] = useState(false); // PiP minimize state
-  const [cameraOn, setCameraOn] = useState(true);
-  const [micOn, setMicOn] = useState(true);
-  const [stream, setStream] = useState<MediaStream | null>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const [minimized, setMinimized] = useState(false);
   const isPrivileged = hasRole("admin") || hasRole("teacher");
 
   const { data: subjects, isLoading } = useQuery({
@@ -50,6 +46,7 @@ const LiveClasses = () => {
     },
     refetchInterval: 5000,
   });
+
   // Auto-select subject from timetable URL param (?subject=id)
   useEffect(() => {
     const subjectId = searchParams.get("subject");
@@ -57,97 +54,41 @@ const LiveClasses = () => {
       const found = subjects.find((s: any) => s.id === subjectId);
       if (found) {
         setSelectedSubject(found);
-        setInClass(true); // go straight to classroom
+        setInClass(true);
       }
     }
   }, [searchParams, subjects]);
 
-  // Resume class if user returns from minimized/background state
+  // Restore from minimized when page becomes visible
   useEffect(() => {
     const handleVisibility = () => {
       if (!document.hidden && minimized && inClass && selectedSubject) {
-        setMinimized(false); // restore full view
+        setMinimized(false);
       }
     };
     document.addEventListener("visibilitychange", handleVisibility);
     return () => document.removeEventListener("visibilitychange", handleVisibility);
   }, [minimized, inClass, selectedSubject]);
 
-  // Camera preview setup
-  useEffect(() => {
-    if (selectedSubject && !inClass && cameraOn) {
-      startCamera();
-    } else if (!cameraOn && stream) {
-      stopCamera();
-    }
-    return () => {
-      if (stream) stopCamera();
-    };
-  }, [selectedSubject, inClass, cameraOn]);
+  const isSubjectLive = (subjectId: string) =>
+    liveSessions?.some((s: any) => s.subject_id === subjectId);
 
-  const startCamera = async () => {
-    try {
-      const mediaStream = await navigator.mediaDevices.getUserMedia({ 
-        video: { 
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          facingMode: "user"
-        }, 
-        audio: micOn 
-      });
-      setStream(mediaStream);
-      if (videoRef.current) {
-        videoRef.current.srcObject = mediaStream;
-      }
-    } catch (err) {
-      console.error("Error accessing camera:", err);
-    }
-  };
-
-  const stopCamera = () => {
-    if (stream) {
-      stream.getTracks().forEach(track => track.stop());
-      setStream(null);
-    }
-  };
-
-  const toggleCamera = () => {
-    setCameraOn(!cameraOn);
-  };
-
-  const toggleMic = () => {
-    setMicOn(!micOn);
-    if (stream) {
-      const audioTrack = stream.getAudioTracks()[0];
-      if (audioTrack) {        audioTrack.enabled = !micOn;
-      }
-    }
-  };
-
-  const isSubjectLive = (subjectId: string) => liveSessions?.some((s) => s.subject_id === subjectId);
-
-  const handleJoinClass = () => {
-    // Go directly to classroom — no waiting room
-    setInClass(true);
-  };
+  const handleJoinClass = () => setInClass(true);
 
   const handleLeaveClass = () => {
     setInClass(false);
     setMinimized(false);
-    stopCamera();
   };
 
   const handleBackToSubjects = () => {
     setSelectedSubject(null);
     setInClass(false);
     setMinimized(false);
-    stopCamera();
   };
 
-  // Classroom View — full screen with minimize option
+  // ── CLASSROOM VIEW ──────────────────────────────────
   if (inClass && selectedSubject) {
     if (minimized) {
-      // Google Meet-style PiP strip at bottom
       return (
         <div style={{ position: "fixed", bottom: 16, left: "50%", transform: "translateX(-50%)", zIndex: 9999, display: "flex", alignItems: "center", gap: 10, background: "rgba(6,78,59,.96)", backdropFilter: "blur(12px)", borderRadius: 50, padding: "8px 16px 8px 10px", boxShadow: "0 8px 32px rgba(0,0,0,.5)", border: "1.5px solid rgba(255,255,255,.15)" }}>
           <div style={{ width: 36, height: 36, borderRadius: "50%", background: "rgba(34,197,94,.2)", border: "2px solid #22c55e", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -176,171 +117,95 @@ const LiveClasses = () => {
     );
   }
 
-  // Subject Detail View — go directly to class when Join is clicked
+  // ── SUBJECT DETAIL VIEW ─────────────────────────────
   if (selectedSubject) {
     return (
-      <div className="p-4 md:p-6 space-y-6">
-        <div className="flex items-center gap-3">
-          <Button 
-            variant="ghost" 
+      <div className="p-4 md:p-6 space-y-6 bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-950 dark:to-teal-950 min-h-screen">
+        <div className="flex items-center gap-3 flex-wrap">
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={handleBackToSubjects}
-            className="gap-2 hover:bg-emerald-100 dark:hover:bg-emerald-900/30"
+            className="text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/30"
           >
-            <ArrowLeft className="h-4 w-4" />
+            <ArrowLeft className="h-4 w-4 me-2" />
             {t("Back", "رجوع")}
           </Button>
-          <div className="flex-1">
-            <h1 className="text-2xl font-bold text-emerald-950 dark:text-emerald-50">
+          <div className="flex-1 min-w-0">
+            <h2 className="text-xl font-bold text-emerald-950 dark:text-emerald-50 truncate">
               {selectedSubject.title}
-            </h1>
-            {selectedSubject.title_ar && (              <p className="text-sm text-emerald-700 dark:text-emerald-300 font-arabic" dir="rtl">
+            </h2>
+            {selectedSubject.title_ar && (
+              <p className="text-sm text-emerald-700 dark:text-emerald-300 font-arabic" dir="rtl">
                 {selectedSubject.title_ar}
               </p>
             )}
           </div>
           {isSubjectLive(selectedSubject.id) && (
             <Badge className="bg-red-500 text-white animate-pulse">
-              <span className="w-2 h-2 bg-white rounded-full me-1 animate-pulse" />
+              <span className="w-1.5 h-1.5 bg-white rounded-full me-1 animate-pulse" />
               LIVE
             </Badge>
           )}
         </div>
 
-        {/* Quick Actions */}
-        <div className="flex gap-3 flex-wrap">
-          <Button 
-            onClick={handleJoinClass} 
-            className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white"
-            size="lg"
-          >
-            <Video className="h-5 w-5" />
-            {isPrivileged ? t("Start Class", "بدء الفصل") : t("Join Class", "انضمام للفصل")}
-          </Button>
-        </div>
+        {/* Join button */}
+        <Button
+          size="lg"
+          onClick={handleJoinClass}
+          className="w-full gap-2 bg-emerald-700 hover:bg-emerald-800 text-white h-14 text-base font-bold"
+        >
+          <Video className="h-5 w-5" />
+          {isSubjectLive(selectedSubject.id)
+            ? t("Join Live Class", "انضم للحصة المباشرة")
+            : isPrivileged
+              ? t("Start Class", "بدء الفصل")
+              : t("Enter Classroom", "ادخل الفصل")}
+        </Button>
 
         {/* Tabs */}
         <Tabs defaultValue="recordings" className="w-full">
-          <TabsList className="grid grid-cols-3 md:grid-cols-5 gap-2 bg-emerald-100 dark:bg-emerald-900/30 p-1">
-            <TabsTrigger 
-              value="recordings" 
-              className="gap-2 data-[state=active]:bg-white dark:data-[state=active]:bg-emerald-800"
-            >
-              <Video className="h-4 w-4" />
-              <span className="hidden sm:inline">{t("Recordings", "التسجيلات")}</span>
-            </TabsTrigger>
-            <TabsTrigger 
-              value="syllabus"
-              className="gap-2 data-[state=active]:bg-white dark:data-[state=active]:bg-emerald-800"
-            >
-              <Calendar className="h-4 w-4" />
-              <span className="hidden sm:inline">{t("Syllabus", "المنهج")}</span>
-            </TabsTrigger>
-            <TabsTrigger 
-              value="materials"
-              className="gap-2 data-[state=active]:bg-white dark:data-[state=active]:bg-emerald-800"
-            >
-              <FileText className="h-4 w-4" />
-              <span className="hidden sm:inline">{t("Materials", "المواد")}</span>
-            </TabsTrigger>
-            <TabsTrigger               value="assignments"
-              className="gap-2 data-[state=active]:bg-white dark:data-[state=active]:bg-emerald-800"
-            >
-              <ClipboardList className="h-4 w-4" />
-              <span className="hidden sm:inline">{t("Assignments", "الواجبات")}</span>
-            </TabsTrigger>
-            <TabsTrigger 
-              value="announcements"
-              className="gap-2 data-[state=active]:bg-white dark:data-[state=active]:bg-emerald-800"
-            >
-              <Megaphone className="h-4 w-4" />
-              <span className="hidden sm:inline">{t("Announcements", "الإعلانات")}</span>
-            </TabsTrigger>
+          <TabsList className="grid w-full grid-cols-5 bg-white/80 dark:bg-emerald-900/30">
+            {[
+              { val: "recordings",    Icon: Video,         en: "Recordings",    ar: "التسجيلات" },
+              { val: "syllabus",      Icon: Calendar,      en: "Syllabus",      ar: "المنهج" },
+              { val: "materials",     Icon: FileText,      en: "Materials",     ar: "المواد" },
+              { val: "assignments",   Icon: ClipboardList, en: "Assignments",   ar: "الواجبات" },
+              { val: "announcements", Icon: Megaphone,     en: "Announcements", ar: "الإعلانات" },
+            ].map(({ val, Icon, en, ar }) => (
+              <TabsTrigger key={val} value={val}
+                className="gap-2 data-[state=active]:bg-white dark:data-[state=active]:bg-emerald-800">
+                <Icon className="h-4 w-4" />
+                <span className="hidden sm:inline">{t(en, ar)}</span>
+              </TabsTrigger>
+            ))}
           </TabsList>
-          <TabsContent value="recordings" className="mt-4">
-            <SubjectRecordings subjectId={selectedSubject.id} />
-          </TabsContent>
-          <TabsContent value="syllabus" className="mt-4">
-            <SubjectSyllabus subjectId={selectedSubject.id} />
-          </TabsContent>
-          <TabsContent value="materials" className="mt-4">
-            <SubjectMaterials subjectId={selectedSubject.id} />
-          </TabsContent>
-          <TabsContent value="assignments" className="mt-4">
-            <SubjectAssignments subjectId={selectedSubject.id} />
-          </TabsContent>
-          <TabsContent value="announcements" className="mt-4">
-            <SubjectAnnouncements subjectId={selectedSubject.id} />
-          </TabsContent>
+          <TabsContent value="recordings"    className="mt-4"><SubjectRecordings    subjectId={selectedSubject.id} /></TabsContent>
+          <TabsContent value="syllabus"      className="mt-4"><SubjectSyllabus      subjectId={selectedSubject.id} /></TabsContent>
+          <TabsContent value="materials"     className="mt-4"><SubjectMaterials     subjectId={selectedSubject.id} /></TabsContent>
+          <TabsContent value="assignments"   className="mt-4"><SubjectAssignments   subjectId={selectedSubject.id} /></TabsContent>
+          <TabsContent value="announcements" className="mt-4"><SubjectAnnouncements subjectId={selectedSubject.id} /></TabsContent>
         </Tabs>
       </div>
     );
   }
 
-  // Subjects List View
+  // ── SUBJECTS LIST VIEW ──────────────────────────────
   return (
     <div className="p-4 md:p-6 space-y-6 bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-950 dark:to-teal-950 min-h-screen">
       {/* Header */}
-      <div className="space-y-2">
-        <div className="flex items-center gap-3">
-          <div className="h-12 w-12 rounded-xl bg-emerald-600 flex items-center justify-center">
-            <BookOpen className="h-6 w-6 text-white" />
-          </div>
-          <div>
-            <h1 className="text-3xl font-bold text-emerald-950 dark:text-emerald-50">
-              {t("Live Classes", "الفصول الحية")}
-            </h1>
-            <p className="text-emerald-700 dark:text-emerald-300">
-              {t("Join live sessions and access course materials", "انضم للجلسات الحية واستعرض مواد الدورة")}
-            </p>          </div>
+      <div className="flex items-center gap-3">
+        <div className="h-12 w-12 rounded-xl bg-emerald-600 flex items-center justify-center">
+          <BookOpen className="h-6 w-6 text-white" />
         </div>
-      </div>
-
-      {/* Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card className="bg-white/80 dark:bg-emerald-900/30 border-emerald-200 dark:border-emerald-800">
-          <CardContent className="p-4 flex items-center gap-3">
-            <div className="h-10 w-10 rounded-lg bg-emerald-100 dark:bg-emerald-800 flex items-center justify-center">
-              <Video className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-emerald-950 dark:text-emerald-50">
-                {liveSessions?.length || 0}
-              </p>
-              <p className="text-sm text-emerald-700 dark:text-emerald-300">
-                {t("Live Now", "مباشر الآن")}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="bg-white/80 dark:bg-emerald-900/30 border-emerald-200 dark:border-emerald-800">
-          <CardContent className="p-4 flex items-center gap-3">
-            <div className="h-10 w-10 rounded-lg bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
-              <BookOpen className="h-5 w-5 text-amber-600 dark:text-amber-400" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-emerald-950 dark:text-emerald-50">
-                {subjects?.length || 0}
-              </p>
-              <p className="text-sm text-emerald-700 dark:text-emerald-300">
-                {t("Total Subjects", "إجمالي المواد")}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="bg-white/80 dark:bg-emerald-900/30 border-emerald-200 dark:border-emerald-800">
-          <CardContent className="p-4 flex items-center gap-3">
-            <div className="h-10 w-10 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
-              <Users className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-emerald-950 dark:text-emerald-50">
-                {user?.user_metadata?.student_count || 0}
-              </p>
-              <p className="text-sm text-emerald-700 dark:text-emerald-300">
-                {t("Students", "الطلاب")}
-              </p>
-            </div>
-          </CardContent>        </Card>
+        <div>
+          <h1 className="text-3xl font-bold text-emerald-950 dark:text-emerald-50">
+            {t("Live Classes", "الفصول الحية")}
+          </h1>
+          <p className="text-emerald-700 dark:text-emerald-300">
+            {t("Join live sessions and access course materials", "انضم للجلسات الحية واستعرض مواد الدورة")}
+          </p>
+        </div>
       </div>
 
       {/* Subjects Grid */}
@@ -361,9 +226,9 @@ const LiveClasses = () => {
         </Card>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {subjects.map((subject) => (
-            <Card 
-              key={subject.id} 
+          {subjects.map((subject: any) => (
+            <Card
+              key={subject.id}
               className="group cursor-pointer transition-all duration-300 hover:shadow-xl hover:-translate-y-1 bg-white dark:bg-emerald-900/40 border-emerald-200 dark:border-emerald-800 hover:border-emerald-400 dark:hover:border-emerald-600"
               onClick={() => setSelectedSubject(subject)}
             >
@@ -389,8 +254,9 @@ const LiveClasses = () => {
                       <span className="w-1.5 h-1.5 bg-white rounded-full me-1 animate-pulse" />
                       LIVE
                     </Badge>
-                  )}                </div>
-                
+                  )}
+                </div>
+
                 <p className="text-sm text-emerald-700 dark:text-emerald-300 line-clamp-2">
                   {subject.description || t("No description", "لا يوجد وصف")}
                 </p>
@@ -406,13 +272,13 @@ const LiveClasses = () => {
                   </div>
                 </div>
 
-                <Button 
-                  variant="outline" 
-                  size="sm" 
+                <Button
+                  variant="outline"
+                  size="sm"
                   className="w-full gap-2 border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-800"
                 >
                   <Video className="h-4 w-4" />
-                  {t("View Subject", "عرض المادة")}
+                  {isSubjectLive(subject.id) ? t("Join Live", "انضم الآن") : t("View Subject", "عرض المادة")}
                 </Button>
               </CardContent>
             </Card>
