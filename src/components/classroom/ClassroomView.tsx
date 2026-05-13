@@ -6,7 +6,6 @@
 import {
   LiveKitRoom, RoomAudioRenderer, useRoomContext,
   useParticipants, useLocalParticipant,
-  VideoConference,
 } from "@livekit/components-react";
 // @ts-ignore
 import "@livekit/components-styles";
@@ -31,7 +30,6 @@ import {
   SwitchCamera, Settings, Check, Wifi,
 } from "lucide-react";
 import ClassLobby        from "./ClassLobby";
-import ClassControls      from "./ClassControls";
 import ClassChatPanel    from "./ClassChatPanel";
 import ClassParticipants from "./ClassParticipants";
 import ClassPolls        from "./ClassPolls";
@@ -2673,26 +2671,24 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               {isPrivileged&&<RecController sessionId={sessionId} subjectId={subject.id} userEmail={user?.email||""} onSavingChange={setSavingRec} stopRecRef={recStopRef}/>}
             </div>
           </div>
-          {/* ── Main content: VideoConference + side panels ── */}
-          <div style={{flex:1,display:"flex",minHeight:0,overflow:"hidden",position:"relative"}}>
-            {/* Participants panel (desktop) */}
-            {partOpen&&!isMobile&&(<div style={{width:224,background:"#111b21",borderRight:"1px solid rgba(255,255,255,.07)",display:"flex",flexDirection:"column",flexShrink:0}}><ClassParticipants sessionId={sessionId||""}/></div>)}
-            {/* Video area — LiveKit VideoConference matches the grey-silhouette look in the image */}
-            <div style={{flex:1,position:"relative",minWidth:0,background:"#111"}}>
-              <VideoConference/>
+          {/* ── Main content: VideoGrid + side panels ── */}
+          <div style={{flex:1,display:"flex",minHeight:0,overflow:"hidden"}}>
+            <div style={{flex:1,position:"relative",minWidth:0}}>
+              <VideoGrid layout={layout}/>
               <FloatingEmojiLayer emojis={floatingEmojis}/>
               <RaisedHandsOverlay hands={raisedHands}/>
               {matPanelOpen&&<SubjectMaterialsPanel subjectId={subject.id} subject={subject} onClose={()=>setMatPanelOpen(false)}/>}
               {matOpen&&<MatViewerInlineBridge material={matOpen} isPrivileged={isPrivileged} onClose={()=>setMatOpen(null)}/>}
             </div>
-            {/* Chat panel (desktop) */}
-            {chatOpen&&!isMobile&&(<div style={{width:288,background:"#111b21",borderLeft:"1px solid rgba(255,255,255,.07)",display:"flex",flexDirection:"column",flexShrink:0}}>
-              <div style={{display:"flex",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0}}>
-                {[["chat","💬","Chat"],["polls","📊","Polls"]].map(([k,ic,lb])=>(<button key={k} onClick={()=>{setSideTab(k as any);if(k==="chat")setChatUnread(0);}} style={{flex:1,padding:"11px 4px",background:"none",border:"none",color:sideTab===k?"#fff":"rgba(255,255,255,.35)",fontSize:13,fontWeight:sideTab===k?700:400,borderBottom:sideTab===k?`2px solid ${TEAL}`:"2px solid transparent",cursor:"pointer"}}>{ic} {lb}</button>))}
-                <button onClick={()=>setChatOpen(false)} style={{background:"none",border:"none",color:"rgba(255,255,255,.3)",cursor:"pointer",padding:"0 12px"}}><X style={{width:15,height:15}}/></button>
+            {chatOpen&&!isMobile&&(
+              <div style={{width:320,background:"#13181f",borderLeft:"1px solid rgba(255,255,255,.06)",display:"flex",flexDirection:"column",flexShrink:0,animation:"slide-up .2s ease"}}>
+                <div style={{display:"flex",borderBottom:"1px solid rgba(255,255,255,.07)",flexShrink:0}}>
+                  {[["chat","💬","Chat"],["polls","📊","Polls"]].map(([k,ic,lb])=>(<button key={k} onClick={()=>{setSideTab(k as any);if(k==="chat")setChatUnread(0);}} style={{flex:1,padding:"12px 4px",background:"none",border:"none",color:sideTab===k?"#fff":"rgba(255,255,255,.35)",fontSize:13,fontWeight:sideTab===k?700:400,borderBottom:sideTab===k?`2px solid ${TEAL}`:"2px solid transparent",cursor:"pointer"}}>{ic} {lb}</button>))}
+                  <button onClick={()=>setChatOpen(false)} style={{background:"none",border:"none",color:"rgba(255,255,255,.3)",cursor:"pointer",padding:"0 12px"}}><X style={{width:16,height:16}}/></button>
+                </div>
+                <div style={{flex:1,overflow:"hidden"}}>{sideTab==="chat"?<ClassChatPanel sessionId={sessionId||""} sessionStartedAt={sessionInfo?.started_at??sessionInfo?.actual_start_time}/>:<ClassPolls sessionId={sessionId||""}/>}</div>
               </div>
-              <div style={{flex:1,overflow:"hidden"}}>{sideTab==="chat"?<ClassChatPanel sessionId={sessionId||""} sessionStartedAt={sessionInfo?.started_at??sessionInfo?.actual_start_time}/>:<ClassPolls sessionId={sessionId||""}/>}</div>
-            </div>)}
+            )}
           </div>
           {wbOpen&&<WhiteboardBridge onClose={()=>setWbOpen(false)} isTeacher={isPrivileged} initialStrokes={wbBuffer.current} subjectId={subject.id} canStudentWrite={canStudentWrite}/>}
           {groupReciteDialog&&!isPrivileged&&(
@@ -2701,20 +2697,33 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               onDecline={()=>{setGroupReciteDialog(false);setGroupRecite(false);}}
             />
           )}
-          {/* ── ClassControls bottom bar — matches the image exactly ── */}
-          <ClassControls
+          <BottomBarBridge
             sessionId={sessionId||""}
             onToggleChat={()=>{setChatOpen(v=>!v);if(!chatOpen)setChatUnread(0);}}
             onToggleParticipants={()=>setPartOpen(v=>!v)}
-            onEndClass={isPrivileged?()=>setShowEnd(true):undefined}
+            onEndClass={()=>setShowEnd(true)}
             onLeaveClass={leaveSession}
             chatUnread={chatUnread}
-            onLaunchPoll={isPrivileged?()=>{setChatOpen(true);setSideTab("polls");}:undefined}
-            onLaunchQuiz={isPrivileged?()=>setQuizOpen(true):undefined}
+            onToggleWhiteboard={()=>setWbOpen(v=>!v)}
+            whiteboardOpen={wbOpen}
+            onGroupRecite={handleGroupRecite}
+            groupReciteMode={groupRecite}
+            onShareMaterial={()=>setMatPicker(true)}
+            isPrivileged={isPrivileged}
+            canStudentWriteProp={canStudentWrite}
+            canStudentRecProp={canStudentRec}
+            onPermChange={(type:any,allow:any,room:any)=>handlePermChange(type,allow,room)}
+            onMinimize={onMinimize}
+            onToggleMaterials={()=>setMatPanelOpen(v=>!v)}
+            matPanelOpen={matPanelOpen}
+            onSendEmoji={addFloatingEmoji}
+            layout={layout}
+            onLayoutChange={setLayout}
+            onLaunchQuiz={()=>setQuizOpen(true)}
           />
           {/* Mobile bottom sheets */}
-          {isMobile&&chatOpen&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setChatOpen(false)}><div style={{position:"absolute",bottom:0,left:0,right:0,background:"#111b21",borderRadius:"22px 22px 0 0",maxHeight:"82vh",display:"flex",flexDirection:"column",paddingBottom:"env(safe-area-inset-bottom,0px)"}} onClick={e=>e.stopPropagation()}><div style={{display:"flex",alignItems:"center",padding:"12px 16px 0",flexShrink:0}}><div style={{flex:1,display:"flex"}}>{[["chat","💬","Chat"],["polls","📊","Polls"]].map(([k,ic,lb])=>(<button key={k} onClick={()=>setSideTab(k as any)} style={{flex:1,padding:"10px 6px",background:"none",border:"none",color:sideTab===k?"#fff":"rgba(255,255,255,.35)",fontSize:13,fontWeight:sideTab===k?700:400,borderBottom:sideTab===k?`2px solid ${TEAL}`:"2px solid transparent",cursor:"pointer"}}>{ic} {lb}</button>))}</div><button onClick={()=>setChatOpen(false)} style={{width:32,height:32,borderRadius:"50%",background:"rgba(255,255,255,.1)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><X style={{width:14,height:14}}/></button></div><div style={{flex:1,overflow:"hidden",minHeight:340}}>{sideTab==="chat"?<ClassChatPanel sessionId={sessionId||""} sessionStartedAt={sessionInfo?.started_at??sessionInfo?.actual_start_time}/>:<ClassPolls sessionId={sessionId||""}/>}</div></div></div>)}
-          {isMobile&&partOpen&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setPartOpen(false)}><div style={{position:"absolute",bottom:64,left:0,right:0,background:"#111b21",borderRadius:"22px 22px 0 0",maxHeight:"65vh",overflow:"auto"}} onClick={e=>e.stopPropagation()}><div style={{width:40,height:4,borderRadius:2,background:"rgba(255,255,255,.18)",margin:"12px auto 6px"}}/><ClassParticipants sessionId={sessionId||""}/></div></div>)}
+          {isMobile&&chatOpen&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setChatOpen(false)}><div style={{position:"absolute",bottom:0,left:0,right:0,background:"#13181f",borderRadius:"22px 22px 0 0",maxHeight:"82vh",display:"flex",flexDirection:"column",animation:"slide-up .22s ease",paddingBottom:"env(safe-area-inset-bottom,0px)"}} onClick={e=>e.stopPropagation()}><div style={{display:"flex",alignItems:"center",padding:"12px 16px 0",flexShrink:0}}><div style={{flex:1,display:"flex"}}>{[["chat","💬","Chat"],["polls","📊","Polls"]].map(([k,ic,lb])=>(<button key={k} onClick={()=>setSideTab(k as any)} style={{flex:1,padding:"10px 6px",background:"none",border:"none",color:sideTab===k?"#fff":"rgba(255,255,255,.35)",fontSize:13,fontWeight:sideTab===k?700:400,borderBottom:sideTab===k?`2px solid ${TEAL}`:"2px solid transparent",cursor:"pointer"}}>{ic} {lb}</button>))}</div><button onClick={()=>setChatOpen(false)} style={{width:32,height:32,borderRadius:"50%",background:"rgba(255,255,255,.1)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><X style={{width:14,height:14}}/></button></div><div style={{flex:1,overflow:"hidden",minHeight:340}}>{sideTab==="chat"?<ClassChatPanel sessionId={sessionId||""} sessionStartedAt={sessionInfo?.started_at??sessionInfo?.actual_start_time}/>:<ClassPolls sessionId={sessionId||""}/>}</div></div></div>)}
+          {isMobile&&partOpen&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setPartOpen(false)}><div style={{position:"absolute",bottom:BAR_H,left:0,right:0,background:"#13181f",borderRadius:"22px 22px 0 0",maxHeight:"65vh",overflow:"auto"}} onClick={e=>e.stopPropagation()}><div style={{width:40,height:4,borderRadius:2,background:"rgba(255,255,255,.18)",margin:"12px auto 6px"}}/><ClassParticipants sessionId={sessionId||""}/></div></div>)}
           <LiveQuizOverlay sessionId={sessionId||""} isOpen={quizOpen} onClose={()=>setQuizOpen(false)}/>
         </LiveKitRoom>
       )}
