@@ -2091,7 +2091,7 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
       </div>,portal
     )}
 
-    {/* More menu */}
+    {/* More menu — Reactions and Materials only */}
     {moreOpen&&portal&&createPortal(
       <div style={{
         position:"fixed",
@@ -2099,63 +2099,13 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
         right:(morePos as any).right,
         background:"#0a2216",border:"1px solid rgba(255,255,255,.08)",
         borderRadius:18,boxShadow:"0 12px 48px rgba(0,0,0,.8)",
-        minWidth:230,zIndex:9200,overflow:"hidden",
+        minWidth:200,zIndex:9200,overflow:"hidden",
       }}>
-        {/* Layout switcher */}
-        <div style={{padding:"10px 14px",borderBottom:"1px solid rgba(255,255,255,.06)"}}>
-          <div style={{fontSize:10,fontWeight:700,color:"rgba(255,255,255,.3)",letterSpacing:1,textTransform:"uppercase"as const,marginBottom:7}}>View</div>
-          <div style={{display:"flex",gap:4,flexWrap:"wrap"as const}}>
-            {(["horizontal","grid","spotlight","focus"] as const).map(m=>(
-              <button key={m} onClick={()=>{onLayoutChange(m);setMoreOpen(false);}} style={{
-                padding:"5px 9px",borderRadius:8,border:"1px solid",fontSize:11,fontWeight:600,cursor:"pointer",
-                borderColor:layout===m?"#22c55e":"rgba(255,255,255,.1)",
-                background:layout===m?"rgba(34,197,94,.12)":"rgba(255,255,255,.04)",
-                color:layout===m?"#22c55e":"rgba(255,255,255,.45)",
-                textTransform:"capitalize"as const,
-              }}>{m}</button>
-            ))}
-          </div>
-        </div>
-        {/* Participants (with live count) */}
-        <button onClick={()=>{onToggleParticipants();setMoreOpen(false);}} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"11px 14px",background:"none",border:"none",cursor:"pointer",color:"#fff",fontSize:13,borderBottom:"1px solid rgba(255,255,255,.05)",textAlign:"left"as const}}>
-          <Users style={{width:14,height:14,opacity:.6}}/> Participants
-          {liveCount>0&&<span style={{marginLeft:"auto",background:"rgba(34,197,94,.18)",color:"#4ade80",borderRadius:12,padding:"1px 7px",fontSize:11,fontWeight:700}}>{liveCount}</span>}
-        </button>
-        <button onClick={()=>{setEmojisOpen(true);setMoreOpen(false);}} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"11px 14px",background:"none",border:"none",cursor:"pointer",color:"#fff",fontSize:13,borderBottom:"1px solid rgba(255,255,255,.05)",textAlign:"left"as const}}>
+        <button onClick={()=>{setEmojisOpen(true);setMoreOpen(false);}} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"13px 16px",background:"none",border:"none",cursor:"pointer",color:"#fff",fontSize:13,borderBottom:"1px solid rgba(255,255,255,.05)",textAlign:"left"as const}}>
           <Smile style={{width:14,height:14,opacity:.6}}/> Reactions
         </button>
-        <button onClick={()=>{onToggleMaterials();setMoreOpen(false);}} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"11px 14px",background:"none",border:"none",cursor:"pointer",color:"#fff",fontSize:13,borderBottom:"1px solid rgba(255,255,255,.05)",textAlign:"left"as const}}>
+        <button onClick={()=>{onToggleMaterials();setMoreOpen(false);}} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"13px 16px",background:"none",border:"none",cursor:"pointer",color:"#fff",fontSize:13,textAlign:"left"as const}}>
           <Eye style={{width:14,height:14,opacity:.6}}/> Materials
-        </button>
-        {isPrivileged&&<>
-          <button onClick={()=>{onGroupRecite(room);setMoreOpen(false);}} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"11px 14px",background:"none",border:"none",cursor:"pointer",color:groupReciteMode?GREEN:"#fff",fontSize:13,borderBottom:"1px solid rgba(255,255,255,.05)",textAlign:"left"as const}}>
-            <Volume2 style={{width:14,height:14}}/> {groupReciteMode?"End Group Recitation":"Group Recitation"}
-          </button>
-          {/* FIX BUG 2: Live Quiz button — previously LiveQuizOverlay was permanently disabled */}
-          {onLaunchQuiz&&<button onClick={()=>{onLaunchQuiz();setMoreOpen(false);}} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"11px 14px",background:"none",border:"none",cursor:"pointer",color:"#fbbf24",fontSize:13,borderBottom:"1px solid rgba(255,255,255,.05)",textAlign:"left"as const}}>
-            <span style={{fontSize:14}}>📝</span> Live Quiz
-          </button>}
-          <button onClick={()=>{onPermChange?.("write",!canStudentWriteProp,room);setMoreOpen(false);}} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"11px 14px",background:"none",border:"none",cursor:"pointer",color:canStudentWriteProp?GREEN:"#fff",fontSize:13,borderBottom:"1px solid rgba(255,255,255,.05)",textAlign:"left"as const}}>
-            <PenTool style={{width:14,height:14}}/> {canStudentWriteProp?"Revoke Board Access":"Allow Students to Write"}
-          </button>
-          <button onClick={async()=>{
-            await supabase.from("class_participants").update({is_muted:true}).eq("session_id",sessionId);
-            try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"admin_mute_all"})),{reliable:true});}catch{}
-            toast({title:"\uD83D\uDD07 All students muted"});setMoreOpen(false);
-          }} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"11px 14px",background:"none",border:"none",cursor:"pointer",color:"#fb923c",fontSize:13,borderBottom:"1px solid rgba(255,255,255,.05)",textAlign:"left"as const}}>
-            <MicOff style={{width:14,height:14}}/> Mute All Students
-          </button>
-        </>}
-        {!isPrivileged&&canStudentRecProp&&(
-          <button onClick={()=>{toggleStuRecord();setMoreOpen(false);}} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"11px 14px",background:"none",border:"none",cursor:"pointer",color:stuRec?"#ef4444":"#fff",fontSize:13,borderBottom:"1px solid rgba(255,255,255,.05)",textAlign:"left"as const}}>
-            <Circle style={{width:12,height:12,fill:stuRec?"#ef4444":"none",color:stuRec?"#ef4444":"#fff"}}/> {stuRec?"Stop Recording":"Record Audio"}
-          </button>
-        )}
-        {onMinimize&&<button onClick={()=>{onMinimize();setMoreOpen(false);}} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"11px 14px",background:"none",border:"none",cursor:"pointer",color:"#fff",fontSize:13,borderBottom:"1px solid rgba(255,255,255,.05)",textAlign:"left"as const}}>
-          <ChevronDown style={{width:14,height:14,opacity:.6}}/> Minimize
-        </button>}
-        <button onClick={isPrivileged?onEndClass:onLeaveClass} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"11px 14px",background:"none",border:"none",cursor:"pointer",color:"#f87171",fontSize:13,textAlign:"left"as const}}>
-          <Phone style={{width:14,height:14,transform:"rotate(135deg)"}}/> {isPrivileged?"End Class for All":"Leave Class"}
         </button>
       </div>,portal
     )}
@@ -2306,6 +2256,49 @@ const RoomToContextBridge = () => {
   }, [room, setMicEnabled, setCamEnabled]);
 
   return null;
+};
+
+/* ══ EXPAND / COLLAPSE BUTTON (top-bar) ══
+   Mirrors the diagonal-arrow button visible in GuestClassroom's video tile.
+   Clicking it toggles the browser's Fullscreen API for the classroom root.   */
+const ExpandCollapseBtn = () => {
+  const [isFs, setIsFs] = useState(false);
+  useEffect(() => {
+    const onChange = () => setIsFs(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
+  const toggle = async () => {
+    try {
+      if (!document.fullscreenElement) {
+        const el = document.querySelector("[data-classroom-root]") || document.documentElement;
+        await (el as any).requestFullscreen?.();
+      } else {
+        await document.exitFullscreen?.();
+      }
+    } catch {}
+  };
+  return (
+    <button onClick={toggle} title={isFs ? "Exit fullscreen" : "Expand to fullscreen"}
+      style={{
+        width: 32, height: 32, borderRadius: 8,
+        background: "rgba(255,255,255,.08)", border: "1px solid rgba(255,255,255,.12)",
+        color: "#fff", cursor: "pointer",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        flexShrink: 0,
+      }}>
+      {isFs
+        ? /* compress arrows */
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/>
+          </svg>
+        : /* expand arrows */
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/>
+          </svg>
+      }
+    </button>
+  );
 };
 
 const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewProps)=>{
@@ -2676,7 +2669,8 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               )}
             </div>
             <div className="flex items-center gap-2 shrink-0">
-              <LayoutSwitcher layout={layout} onChange={setLayout}/>
+              {/* Fullscreen expand/collapse button — replaces layout switcher */}
+              <ExpandCollapseBtn/>
               {isPrivileged&&<RecController sessionId={sessionId} subjectId={subject.id} userEmail={user?.email||""} onSavingChange={setSavingRec} stopRecRef={recStopRef}/>}
             </div>
           </div>
