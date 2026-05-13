@@ -482,9 +482,10 @@ const ClassControls = ({
 
   // ── Button style helpers ──────────────────────────────────────────────
   const btnBase = "rounded-full h-10 px-3 gap-1.5 text-xs font-medium";
-  const btnOn   = "bg-primary-foreground/10 text-primary-foreground hover:bg-primary-foreground/20";
+  const btnOn   = "text-white hover:opacity-90";
   const btnOff  = "bg-destructive text-destructive-foreground hover:bg-destructive/90";
-  const btnNeutral = "bg-primary-foreground/10 text-primary-foreground hover:bg-primary-foreground/20";
+  const btnNeutral = "text-white hover:opacity-80";
+  const btnStyle = {background:"rgba(255,255,255,0.12)"} as React.CSSProperties;
 
   return (
     <>
@@ -523,19 +524,20 @@ const ClassControls = ({
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} room={room} />}
 
       {/* ══ MAIN CONTROL BAR ══════════════════════════════════════════════ */}
-      <div className="h-16 bg-primary flex items-center justify-between px-2 md:px-4 gap-1">
+      <style>{`.lk-control-bar-btn,.lk-button,[class*="btnBase"]{color:#fff!important;} `}</style>
+      <div className="h-16 flex items-center justify-between px-2 md:px-4 gap-1 lk-control-bar" style={{background:"#111b21",flexShrink:0}}>
 
         {/* ── LEFT: Mic · Cam · Cam-flip · Screen ── */}
         <div className="flex items-center gap-1">
 
           {/* Mic */}
-          <Button size="sm" className={`${btnBase} ${micEnabled ? btnOn : btnOff}`} onClick={toggleMic}>
+          <Button size="sm" className={`${btnBase} ${micEnabled ? btnOn : btnOff}`} style={micEnabled ? btnStyle : {}} onClick={toggleMic}>
             {micEnabled ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4" />}
             <span className="hidden sm:inline">{micEnabled ? t("Mic","مايك") : t("Muted","صامت")}</span>
           </Button>
 
           {/* Cam */}
-          <Button size="sm" className={`${btnBase} ${camEnabled ? btnOn : "bg-muted text-muted-foreground hover:bg-muted/90"}`} onClick={toggleCam}>
+          <Button size="sm" className={`${btnBase} ${camEnabled ? btnOn : "bg-muted"}`} style={camEnabled ? btnStyle : {background:"rgba(255,255,255,.08)",color:"rgba(255,255,255,.4)"}} onClick={toggleCam}>
             {camEnabled ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4" />}
             <span className="hidden sm:inline">{camEnabled ? t("Cam","كام") : t("Off","مغلق")}</span>
           </Button>
@@ -543,6 +545,7 @@ const ClassControls = ({
           {/* Screen share */}
           <Button size="sm"
             className={`${btnBase} ${screenSharing ? btnOff : btnNeutral}`}
+            style={screenSharing ? {} : btnStyle}
             onClick={toggleScreenShare}>
             {screenSharing ? <MonitorOff className="h-4 w-4" /> : <Monitor className="h-4 w-4" />}
             <span className="hidden sm:inline">{screenSharing ? t("Stop","إيقاف") : t("Share","مشاركة")}</span>
@@ -556,6 +559,7 @@ const ClassControls = ({
           {!isPrivileged && (
             <Button size="sm"
               className={`${btnBase} ${handRaised ? "bg-secondary text-secondary-foreground" : btnNeutral}`}
+              style={handRaised ? {} : btnStyle}
               onClick={toggleHand}>
               <Hand className="h-4 w-4" />
               <span className="hidden sm:inline">{handRaised ? t("Lower","أنزل") : t("Hand","يد")}</span>
@@ -564,7 +568,7 @@ const ClassControls = ({
 
           {/* Reactions */}
           <div className="relative">
-            <Button size="sm" className={`${btnBase} ${btnNeutral}`} onClick={() => setShowReactions(v => !v)}>
+            <Button size="sm" className={`${btnBase} ${btnNeutral}`} style={btnStyle} onClick={() => setShowReactions(v => !v)}>
               <Smile className="h-4 w-4" />
             </Button>
             {showReactions && (
@@ -579,6 +583,7 @@ const ClassControls = ({
           {/* Captions (Google Meet parity) */}
           <Button size="sm"
             className={`${btnBase} ${captionsOn ? "bg-blue-600/80 text-white hover:bg-blue-600" : btnNeutral}`}
+            style={captionsOn ? {} : btnStyle}
             onClick={toggleCaptions}
             title={t("Live Captions","الترجمة المباشرة")}>
             {captionsOn ? <Captions className="h-4 w-4" /> : <CaptionsOff className="h-4 w-4" />}
@@ -588,6 +593,7 @@ const ClassControls = ({
           {/* Background blur */}
           <Button size="sm"
             className={`${btnBase} ${blurOn ? "bg-purple-600/80 text-white hover:bg-purple-600" : btnNeutral}`}
+            style={blurOn ? {} : btnStyle}
             onClick={toggleBlur}
             title={t("Background blur","تشويش الخلفية")}>
             <Blend className="h-4 w-4" />
@@ -599,7 +605,7 @@ const ClassControls = ({
         <div className="flex items-center gap-1">
 
           {/* Chat */}
-          <Button size="sm" className={`${btnBase} ${btnNeutral} relative`} onClick={onToggleChat}>
+          <Button size="sm" className={`${btnBase} ${btnNeutral} relative`} style={btnStyle} onClick={onToggleChat}>
             <MessageCircle className="h-4 w-4" />
             {chatUnread > 0 && (
               <span className="absolute -top-1 -right-1 bg-destructive text-destructive-foreground rounded-full h-4 w-4 text-[10px] flex items-center justify-center">
@@ -609,14 +615,14 @@ const ClassControls = ({
           </Button>
 
           {/* Participants */}
-          <Button size="sm" className={`${btnBase} ${btnNeutral}`} onClick={onToggleParticipants}>
+          <Button size="sm" className={`${btnBase} ${btnNeutral}`} style={btnStyle} onClick={onToggleParticipants}>
             <Users className="h-4 w-4" />
           </Button>
 
           {/* More menu */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button size="sm" className={`${btnBase} ${btnNeutral}`}>
+              <Button size="sm" className={`${btnBase} ${btnNeutral}`} style={btnStyle}>
                 <MoreHorizontal className="h-4 w-4" />
               </Button>
             </DropdownMenuTrigger>
