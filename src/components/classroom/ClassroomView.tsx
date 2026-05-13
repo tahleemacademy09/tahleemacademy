@@ -27,7 +27,7 @@ import {
   Circle, Loader2, X, Smile, Play, Pause,
   Volume2, ChevronDown, Users, Eye,
   LayoutGrid, AlignJustify, Columns, Rows, Maximize2, Minimize2,
-  SwitchCamera, Settings, Check, Wifi,
+  SwitchCamera, Settings, Check, Wifi, Radio,
 } from "lucide-react";
 import ClassLobby        from "./ClassLobby";
 import ClassChatPanel    from "./ClassChatPanel";
@@ -2276,22 +2276,6 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
         {/* More */}
         <Btn bRef={moreBtnRef} active={moreOpen} title="More options" onClick={openMore}><MoreVertical style={{...IS,color:"rgba(255,255,255,.9)"}}/></Btn>
       </div>
-
-      {/* RIGHT — End/Leave */}
-      <button onClick={isPrivileged?onEndClass:onLeaveClass} style={{
-        height:BTN_H,padding:isMobile?"0 14px":"0 20px",
-        borderRadius:26,border:"none",cursor:"pointer",
-        background:"#ea4335",color:"#fff",
-        display:"flex",alignItems:"center",gap:6,
-        fontWeight:700,fontSize:isMobile?12:13,
-        boxShadow:"0 3px 14px rgba(234,67,53,.4)",
-        flexShrink:0,transition:"background .15s",
-      }}
-        onMouseEnter={e=>(e.currentTarget.style.background="#c5352a")}
-        onMouseLeave={e=>(e.currentTarget.style.background="#ea4335")}
-      >
-        <Phone style={{width:15,height:15,transform:"rotate(135deg)"}}/> {isPrivileged?"End":"Leave"}
-      </button>
     </div>
   </>);
 };
@@ -2629,6 +2613,27 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
       </div>
     );
   };
+  const ConnectionQualityBadge=()=>{
+    const room=useRoomContext();
+    const [quality,setQuality]=useState<"excellent"|"good"|"fair"|"poor">("excellent");
+    useEffect(()=>{
+      const iv=setInterval(()=>{
+        const q=room.localParticipant.connectionQuality as unknown as number;
+        if(q>=3)setQuality("excellent");else if(q>=2)setQuality("good");else if(q>=1)setQuality("fair");else setQuality("poor");
+      },3000);return()=>clearInterval(iv);
+    },[room]);
+    const cols={excellent:"#4ade80",good:"#86efac",fair:"#fbbf24",poor:"#f87171"};
+    const bars={excellent:4,good:3,fair:2,poor:1};
+    return(
+      <div className="flex items-center gap-1">
+        <div className="flex items-end gap-px" style={{height:14}}>
+          {[1,2,3,4].map(i=>(
+            <div key={i} style={{width:3,borderRadius:1,background:i<=bars[quality]?cols[quality]:"rgba(255,255,255,.15)",height:`${i*3+2}px`,transition:"background .3s"}}/>
+          ))}
+        </div>
+      </div>
+    );
+  };
   const fmtT=(s:number)=>`${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
   if(phase==="ended")return<ClassEndScreen subject={subject} session={sessionInfo} duration={duration} participantCount={participantCountRef.current} onGoToDashboard={onLeave} onGoToRevision={()=>{window.location.href=`/student/revision/${subject.id}`;}} />;
   if(phase==="lobby"&&!loading&&!error&&!autoJoin)return<ClassLobby subject={subject} session={sessionInfo} onStartClass={(s:any,media?:any)=>connect("start_session",s,media)} onJoinClass={(media?:any)=>connect("join",undefined,media)} onBack={onLeave} isLive={isSessionLive}/>;
@@ -2688,37 +2693,39 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
           <RoomDataListener onWbOpen={()=>setWbOpen(true)} onWbClose={()=>setWbOpen(false)} strokesBuffer={wbBuffer} onMatOpen={mat=>setMatOpen(mat)} onMatClose={()=>setMatOpen(null)} onWbAllowWrite={allow=>setCanStudentWrite(allow)} onRecAllowed={allow=>setCanStudentRec(allow)} onEmojiReact={(emoji:string,sender:string)=>addFloatingEmoji(emoji,sender)} onGroupRecite={handleGroupReciteFromTeacher} onHandRaise={handleHandRaise} onAdminMuteAll={()=>{}}
             onClassEnded={!isPrivileged?()=>setPhase("ended"):undefined} roomRef={roomRef}/>{/* FIX BUG 10: pass roomRef */}
           {reconnecting&&<div style={{position:"absolute",inset:0,zIndex:200,background:"rgba(0,0,0,.82)",backdropFilter:"blur(8px)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:14}}><div style={{width:48,height:48,border:`3px solid ${TEAL}`,borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .8s linear infinite"}}/><p style={{color:"#fff",fontSize:15,fontWeight:700}}>Reconnecting…</p><p style={{color:"rgba(255,255,255,.4)",fontSize:13}}>Please stay on the page</p></div>}
-          {/* Top bar */}
-          <div style={{height:52,background:GLASS,backdropFilter:"blur(16px)",WebkitBackdropFilter:"blur(16px)",display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 10px 0 12px",flexShrink:0,borderBottom:"1px solid rgba(255,255,255,.05)",gap:6}}>
-            <div style={{display:"flex",alignItems:"center",gap:8,flex:1,minWidth:0}}>
-              <div style={{display:"flex",alignItems:"center",gap:6,background:"rgba(34,197,94,.12)",borderRadius:20,padding:"4px 10px",border:"1px solid rgba(34,197,94,.25)",flexShrink:0}}>
-                <span style={{width:7,height:7,borderRadius:"50%",background:GREEN,display:"inline-block",animation:"pip-pulse 1.8s ease-in-out infinite"}}/>
-                <span style={{fontSize:12,color:"#fff",fontWeight:600,maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{subject.title}</span>
-              </div>
-              <div style={{display:"flex",alignItems:"center",gap:5,background:"rgba(239,68,68,.12)",borderRadius:16,padding:"3px 8px",border:"1px solid rgba(239,68,68,.25)",flexShrink:0}}>
-                <Circle style={{width:5,height:5,fill:RED,color:RED}}/><span style={{fontSize:11,color:"#fca5a5",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>{fmtT(duration)}</span>
-              </div>
+          {/* Top bar — matches GuestClassroom style */}
+          <div className="h-11 shrink-0 bg-background/95 backdrop-blur border-b flex items-center justify-between px-3 z-10" style={{flexShrink:0}}>
+            <div className="flex items-center gap-2 min-w-0">
+              {isPrivileged ? (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold animate-pulse shrink-0" style={{background:"rgba(239,68,68,.15)",border:"1px solid rgba(239,68,68,.4)",color:"#fca5a5"}}>
+                  <Radio style={{width:10,height:10}}/> LIVE
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold shrink-0" style={{background:"rgba(201,168,76,.1)",border:"1px solid rgba(201,168,76,.35)",color:"#c9a84c"}}>
+                  Student
+                </span>
+              )}
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold shrink-0" style={{background:"rgba(34,197,94,.1)",border:"1px solid rgba(34,197,94,.25)",color:"#4ade80"}}>
+                <Circle style={{width:6,height:6,fill:"#4ade80",color:"#4ade80"}}/>
+                <span className="truncate max-w-[120px]">{subject.title}</span>
+              </span>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold shrink-0" style={{background:"rgba(239,68,68,.1)",border:"1px solid rgba(239,68,68,.2)",color:"#fca5a5"}}>
+                <Circle style={{width:5,height:5,fill:"#ef4444",color:"#ef4444",animation:"rec-pulse 1.4s ease-in-out infinite"}}/>{fmtT(duration)}
+              </span>
               <ParticipantCountBadge />
               {!isPrivileged&&canStudentWrite&&(
-                <div title="You can write on the board" style={{display:"flex",alignItems:"center",gap:4,background:"rgba(52,211,153,.15)",borderRadius:14,padding:"3px 8px",border:"1px solid rgba(52,211,153,.3)",flexShrink:0,cursor:"pointer"}} onClick={()=>setWbOpen(v=>!v)}>
-                  <PenTool style={{width:11,height:11,color:"#34d399"}}/>
-                  <span style={{fontSize:10,color:"#34d399",fontWeight:700}}>{isMobile?"Board":"Write"}</span>
-                </div>
-              )}
-              {!isPrivileged&&canStudentRec&&(
-                <div title="You can record" style={{display:"flex",alignItems:"center",gap:4,background:"rgba(239,68,68,.15)",borderRadius:14,padding:"3px 8px",border:"1px solid rgba(239,68,68,.3)",flexShrink:0}}>
-                  <Circle style={{width:9,height:9,fill:RED,color:RED,animation:"rec-pulse 1.4s ease-in-out infinite"}}/>
-                  <span style={{fontSize:10,color:"#fca5a5",fontWeight:700}}>Record</span>
-                </div>
+                <span title="You can write on the board" className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold shrink-0 cursor-pointer" style={{background:"rgba(52,211,153,.12)",border:"1px solid rgba(52,211,153,.3)",color:"#34d399"}} onClick={()=>setWbOpen(v=>!v)}>
+                  <PenTool style={{width:10,height:10}}/>Board
+                </span>
               )}
               {isPrivileged&&raisedHands.length>0&&(
-                <div style={{display:"flex",alignItems:"center",gap:4,background:"rgba(251,191,36,.18)",borderRadius:14,padding:"3px 8px",border:"1px solid rgba(251,191,36,.4)",flexShrink:0}}>
-                  <span style={{fontSize:13,animation:"hand-bounce 1.2s ease-in-out infinite"}}>✋</span>
-                  <span style={{fontSize:11,color:"#fbbf24",fontWeight:700}}>{raisedHands.length}</span>
-                </div>
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold shrink-0" style={{background:"rgba(251,191,36,.15)",border:"1px solid rgba(251,191,36,.35)",color:"#fbbf24"}}>
+                  <span style={{animation:"hand-bounce 1.2s ease-in-out infinite"}}>✋</span>{raisedHands.length}
+                </span>
               )}
             </div>
-            <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+            <div className="flex items-center gap-2 shrink-0">
+              <ConnectionQualityBadge />
               <LayoutSwitcher layout={layout} onChange={setLayout}/>
               {isPrivileged&&<RecController sessionId={sessionId} subjectId={subject.id} userEmail={user?.email||""} onSavingChange={setSavingRec} stopRecRef={recStopRef}/>}
             </div>
