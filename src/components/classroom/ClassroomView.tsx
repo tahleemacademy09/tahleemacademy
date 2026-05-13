@@ -21,13 +21,14 @@ import { useLiveClass } from "@/contexts/LiveClassContext";
 import { toast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import {
   Mic, MicOff, Video, VideoOff, Phone, Hand,
   PenTool, MessageCircle, MoreVertical, BookOpen,
   Circle, Loader2, X, Smile, Play, Pause,
   Volume2, ChevronDown, Users, Eye,
   LayoutGrid, AlignJustify, Columns, Rows, Maximize2, Minimize2,
-  SwitchCamera, Settings, Check, Wifi,
+  SwitchCamera, Settings, Check, Wifi, Radio,
 } from "lucide-react";
 import ClassLobby        from "./ClassLobby";
 import ClassChatPanel    from "./ClassChatPanel";
@@ -2582,10 +2583,9 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     },[all.length]);
     if(all.length===0)return null;
     return(
-      <div style={{display:"flex",alignItems:"center",gap:4,background:"rgba(255,255,255,.07)",borderRadius:16,padding:"3px 10px",border:"1px solid rgba(255,255,255,.1)"}}>
-        <Users style={{width:10,height:10,color:"rgba(255,255,255,.45)"}}/>
-        <span style={{fontSize:11,color:"#fff",fontWeight:600}}>{all.length}</span>
-      </div>
+      <Badge variant="outline" className="gap-1 shrink-0">
+        <Users className="h-3 w-3" />{all.length}
+      </Badge>
     );
   };
   const fmtT=(s:number)=>`${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
@@ -2636,37 +2636,46 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
           <RoomDataListener onWbOpen={()=>setWbOpen(true)} onWbClose={()=>setWbOpen(false)} strokesBuffer={wbBuffer} onMatOpen={mat=>setMatOpen(mat)} onMatClose={()=>setMatOpen(null)} onWbAllowWrite={allow=>setCanStudentWrite(allow)} onRecAllowed={allow=>setCanStudentRec(allow)} onEmojiReact={(emoji:string,sender:string)=>addFloatingEmoji(emoji,sender)} onGroupRecite={handleGroupReciteFromTeacher} onHandRaise={handleHandRaise} onAdminMuteAll={()=>{}}
             onClassEnded={!isPrivileged?()=>setPhase("ended"):undefined} roomRef={roomRef}/>{/* FIX BUG 10: pass roomRef */}
           {reconnecting&&<div style={{position:"absolute",inset:0,zIndex:200,background:"rgba(0,0,0,.82)",backdropFilter:"blur(8px)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:14}}><div style={{width:48,height:48,border:`3px solid ${TEAL}`,borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .8s linear infinite"}}/><p style={{color:"#fff",fontSize:15,fontWeight:700}}>Reconnecting…</p><p style={{color:"rgba(255,255,255,.4)",fontSize:13}}>Please stay on the page</p></div>}
-          {/* Top bar */}
-          <div style={{height:52,background:GLASS,backdropFilter:"blur(16px)",WebkitBackdropFilter:"blur(16px)",display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 10px 0 12px",flexShrink:0,borderBottom:"1px solid rgba(255,255,255,.05)",gap:6}}>
-            <div style={{display:"flex",alignItems:"center",gap:8,flex:1,minWidth:0}}>
-              <div style={{display:"flex",alignItems:"center",gap:6,background:"rgba(34,197,94,.12)",borderRadius:20,padding:"4px 10px",border:"1px solid rgba(34,197,94,.25)",flexShrink:0}}>
-                <span style={{width:7,height:7,borderRadius:"50%",background:GREEN,display:"inline-block",animation:"pip-pulse 1.8s ease-in-out infinite"}}/>
-                <span style={{fontSize:12,color:"#fff",fontWeight:600,maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{subject.title}</span>
-              </div>
-              <div style={{display:"flex",alignItems:"center",gap:5,background:"rgba(239,68,68,.12)",borderRadius:16,padding:"3px 8px",border:"1px solid rgba(239,68,68,.25)",flexShrink:0}}>
-                <Circle style={{width:5,height:5,fill:RED,color:RED}}/><span style={{fontSize:11,color:"#fca5a5",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>{fmtT(duration)}</span>
-              </div>
+          {/* Top bar — matches GuestClassroom style */}
+          <div className="h-11 shrink-0 bg-background/95 backdrop-blur border-b flex items-center justify-between px-3 z-10">
+            <div className="flex items-center gap-2 min-w-0">
+              {isPrivileged ? (
+                <Badge variant="destructive" className="gap-1 shrink-0 animate-pulse">
+                  <Radio className="h-3 w-3" /> LIVE
+                </Badge>
+              ) : (
+                <Badge variant="outline" className="shrink-0">Student</Badge>
+              )}
+              <Badge variant="outline" className="gap-1 shrink-0">
+                <Circle className="h-2 w-2 fill-primary text-primary" />
+                <span className="truncate max-w-[120px]">{subject.title}</span>
+              </Badge>
+              <Badge variant="secondary" className="text-[10px] gap-1 shrink-0">
+                <Circle className="h-1.5 w-1.5 fill-destructive text-destructive animate-pulse" />
+                {fmtT(duration)}
+              </Badge>
               <ParticipantCountBadge />
               {!isPrivileged&&canStudentWrite&&(
-                <div title="You can write on the board" style={{display:"flex",alignItems:"center",gap:4,background:"rgba(52,211,153,.15)",borderRadius:14,padding:"3px 8px",border:"1px solid rgba(52,211,153,.3)",flexShrink:0,cursor:"pointer"}} onClick={()=>setWbOpen(v=>!v)}>
-                  <PenTool style={{width:11,height:11,color:"#34d399"}}/>
-                  <span style={{fontSize:10,color:"#34d399",fontWeight:700}}>{isMobile?"Board":"Write"}</span>
-                </div>
+                <Badge
+                  variant="outline"
+                  className="gap-1 shrink-0 cursor-pointer border-emerald-500 text-emerald-500"
+                  onClick={()=>setWbOpen(v=>!v)}
+                >
+                  <PenTool className="h-3 w-3" />{isMobile?"Board":"Write"}
+                </Badge>
               )}
               {!isPrivileged&&canStudentRec&&(
-                <div title="You can record" style={{display:"flex",alignItems:"center",gap:4,background:"rgba(239,68,68,.15)",borderRadius:14,padding:"3px 8px",border:"1px solid rgba(239,68,68,.3)",flexShrink:0}}>
-                  <Circle style={{width:9,height:9,fill:RED,color:RED,animation:"rec-pulse 1.4s ease-in-out infinite"}}/>
-                  <span style={{fontSize:10,color:"#fca5a5",fontWeight:700}}>Record</span>
-                </div>
+                <Badge variant="outline" className="gap-1 shrink-0 border-destructive text-destructive">
+                  <Circle className="h-2 w-2 fill-destructive animate-pulse" />Record
+                </Badge>
               )}
               {isPrivileged&&raisedHands.length>0&&(
-                <div style={{display:"flex",alignItems:"center",gap:4,background:"rgba(251,191,36,.18)",borderRadius:14,padding:"3px 8px",border:"1px solid rgba(251,191,36,.4)",flexShrink:0}}>
-                  <span style={{fontSize:13,animation:"hand-bounce 1.2s ease-in-out infinite"}}>✋</span>
-                  <span style={{fontSize:11,color:"#fbbf24",fontWeight:700}}>{raisedHands.length}</span>
-                </div>
+                <Badge variant="outline" className="gap-1 shrink-0 border-yellow-400 text-yellow-400">
+                  ✋ {raisedHands.length}
+                </Badge>
               )}
             </div>
-            <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+            <div className="flex items-center gap-2 shrink-0">
               <LayoutSwitcher layout={layout} onChange={setLayout}/>
               {isPrivileged&&<RecController sessionId={sessionId} subjectId={subject.id} userEmail={user?.email||""} onSavingChange={setSavingRec} stopRecRef={recStopRef}/>}
             </div>
@@ -2681,12 +2690,23 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               {matOpen&&<MatViewerInlineBridge material={matOpen} isPrivileged={isPrivileged} onClose={()=>setMatOpen(null)}/>}
             </div>
             {chatOpen&&!isMobile&&(
-              <div style={{width:320,background:"#13181f",borderLeft:"1px solid rgba(255,255,255,.06)",display:"flex",flexDirection:"column",flexShrink:0,animation:"slide-up .2s ease"}}>
-                <div style={{display:"flex",borderBottom:"1px solid rgba(255,255,255,.07)",flexShrink:0}}>
-                  {[["chat","💬","Chat"],["polls","📊","Polls"]].map(([k,ic,lb])=>(<button key={k} onClick={()=>{setSideTab(k as any);if(k==="chat")setChatUnread(0);}} style={{flex:1,padding:"12px 4px",background:"none",border:"none",color:sideTab===k?"#fff":"rgba(255,255,255,.35)",fontSize:13,fontWeight:sideTab===k?700:400,borderBottom:sideTab===k?`2px solid ${TEAL}`:"2px solid transparent",cursor:"pointer"}}>{ic} {lb}</button>))}
-                  <button onClick={()=>setChatOpen(false)} style={{background:"none",border:"none",color:"rgba(255,255,255,.3)",cursor:"pointer",padding:"0 12px"}}><X style={{width:16,height:16}}/></button>
+              <div className="w-72 bg-background border-s flex flex-col shrink-0">
+                <div className="flex border-b">
+                  <button
+                    className={`flex-1 py-2 text-xs font-medium transition-colors ${sideTab==="chat" ? "border-b-2 border-primary text-foreground" : "text-muted-foreground"}`}
+                    onClick={()=>{setSideTab("chat");setChatUnread(0);}}
+                  >
+                    💬 Chat
+                  </button>
+                  <button
+                    className={`flex-1 py-2 text-xs font-medium transition-colors ${sideTab==="polls" ? "border-b-2 border-primary text-foreground" : "text-muted-foreground"}`}
+                    onClick={()=>setSideTab("polls")}
+                  >
+                    📊 Polls
+                  </button>
+                  <button onClick={()=>setChatOpen(false)} className="px-3 text-muted-foreground hover:text-foreground"><X className="h-4 w-4"/></button>
                 </div>
-                <div style={{flex:1,overflow:"hidden"}}>{sideTab==="chat"?<ClassChatPanel sessionId={sessionId||""} sessionStartedAt={sessionInfo?.started_at??sessionInfo?.actual_start_time}/>:<ClassPolls sessionId={sessionId||""}/>}</div>
+                <div className="flex-1 overflow-hidden">{sideTab==="chat"?<ClassChatPanel sessionId={sessionId||""} sessionStartedAt={sessionInfo?.started_at??sessionInfo?.actual_start_time}/>:<ClassPolls sessionId={sessionId||""}/>}</div>
               </div>
             )}
           </div>
